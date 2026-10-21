@@ -1,8 +1,10 @@
 import { product } from '../lib/product-client.js';
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, BotMessageSquare, Code2, Copy, CornerDownLeft, Download, ExternalLink, FileText, FolderOpen, Send, Sparkles, Star, Trash2 } from 'lucide-react';
 import './inbox-detail.css';
+import { composeSeqFor, useInboxReplyDrafts } from '../stores/inbox-reply-drafts.js';
+import { InboxQuoteSelection } from './InboxQuoteSelection.js';
 import { useCompactLayout } from '../hooks/useCompactLayout.js';
 import { createResultCache, useInboxThread } from '../hooks/useInboxThread.js';
 import { reopenInboxThread, sendInboxThreadReply } from '../lib/inbox-thread.js';
@@ -46,8 +48,9 @@ import { inboxPrimaryTitle, inboxShortTitle, inboxContextLine } from '../lib/inb
 import { classifyEntry } from '@zana-ai/zcc-domain/feed-categories';
 import { resolveAnswerSurface } from '../lib/answerSurface.js';
 import { respondToInboxBlocker } from '../lib/inboxBlockerRespond.js';
-import { useExecutionInboxBlockerState } from '../lib/executionInboxBlockerState.js';
+import { useExecutionInboxBlockerState, type ExecutionInboxBlockerState } from '../lib/executionInboxBlockerState.js';
 import { isClaudeProfile, knownProfile, projectDefaultProfile } from '../lib/launchProfile.js';
+import { fileManagerName } from '../lib/file-manager.js';
 import type {
   InboxDoc,
   InboxEntry,
@@ -60,7 +63,6 @@ import type {
   TerminalSession
 } from '@zana-ai/zcc-domain/product';
 import { platformShortcut } from '../lib/platformShortcut.js';
-import { useRetainedText } from './composer/ComposerDraft.js';
 
 interface InboxDetailProps {
   /**
@@ -114,6 +116,7 @@ export function InboxDetail({ visible, onBack }: InboxDetailProps) {
       }
 
       await deleteInboxEntry(id);
+      useInboxReplyDrafts.getState().clearDraft(id);
     },
     [entries, select, markRead]
   );
@@ -184,7 +187,12 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
   const [reopenedSessionId, setReopenedSessionId] = useState<string | null>(null);
   // In reopen mode, a plain (non-question) report doesn't auto-open the answer
   // box — it shows a quiet "Reply…" button. This tracks the user expanding it.
-  const [replyExpanded, setReplyExpanded] = useState(false);
+  // A kept draft keeps the box open when the entry is selected again, without taking focus.
+  const [replyExpanded, setReplyExpanded] = useState(() => !!useInboxReplyDrafts.getState().drafts[entry.id]);
+  const [focusReply, setFocusReply] = useState(false);
+  const detailRef = useRef<HTMLDivElement>(null);
+  const composeCount = useInboxReplyDrafts(composeSeqFor(entry.id));
+  const seenCompose = useRef(composeCount);
 
   const aliveProject = projects.find((p) => p.id === entry.projectId) ?? null;
   const projectAlive = aliveProject !== null;
@@ -533,6 +541,49 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
   // Unknown ownership is fail-closed until main confirms this exact entry is non-host.
   const ownershipLoading = ownership?.loading ?? true;
   const ownershipError = ownership?.error === true;
+  const answered = useInboxAnswered((s) => !!s.answeredIds[entry.id]);
+  const blockerState = useExecutionInboxBlockerState(entry, answered);
+  // An execution-linked box is collapsed (and cannot reopen) once its blocker is no longer actionable.
+  const blockerClosed = !!entry.executionId && !!entry.blockerId
+    && blockerState !== 'actionable' && blockerState !== 'unknown';
+  // True when the dock shows a ReplyBox or the reopen shell (R and Quote in reply target it).
+  const replyTarget = !questionFirst && !hostAction && !squadDetailsNotice && !ownershipLoading && !ownershipError
+    && projectAlive && !threadLookup.loading && !threadLookup.error && questionSet.length === 0 && !blockerClosed
+    && (!!originatingThread || (deliveryMode === 'live' && !!aliveSession) || deliveryMode === 'reopen');
+
+  // A new compose request opens the collapsed reopen shell; a mounted ReplyBox focuses itself.
+  useEffect(() => {
+    const previous = seenCompose.current;
+    seenCompose.current = composeCount;
+    // 0 means the latest request now targets another entry.
+    if (composeCount === 0 || composeCount === previous) return;
+    setReplyExpanded(true);
+    setFocusReply(true);
+  }, [composeCount]);
+
+  // R jumps to the reply box. isInboxListShortcut ignores typing, modals and modifier keys.
+  useEffect(() => {
+    if (!replyTarget) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.key !== 'r' && e.key !== 'R') || e.repeat || !isInboxListShortcut(e)) return;
+      e.preventDefault();
+      useInboxReplyDrafts.getState().requestCompose(entry.id);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [replyTarget, entry.id]);
+
+  // Esc in the reply box hands focus to this scroller, so j / k / R work again.
+  useEffect(() => {
+    const scroller = detailRef.current?.closest<HTMLElement>('.inbox-view-detail');
+    if (!scroller) return;
+    const previous = scroller.getAttribute('tabindex');
+    scroller.tabIndex = -1;
+    return () => {
+      if (previous === null) scroller.removeAttribute('tabindex');
+      else scroller.setAttribute('tabindex', previous);
+    };
+  }, []);
   const hostActionSurface = squadDetailsNotice && (!hostAction || hostAction.kind === 'squad-worktree-lifecycle') ? (
     <div className="inbox-reply" role="status">
       <p>{entry.decisionGuidance?.kind === 'plan-correction'
@@ -662,6 +713,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
             ) : (
               <ReplyBox
                 entry={entry}
+                blockerState={blockerState}
                 sessionTitle={originatingThread.title}
                 onReply={answerOnThread}
               />
@@ -679,6 +731,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
             ) : (
               <ReplyBox
                 entry={entry}
+                blockerState={blockerState}
                 sessionId={aliveSession.id}
                 sessionTitle={aliveSession.title}
               />
@@ -698,10 +751,11 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
               ) : (
                 <ReplyBox
                   entry={entry}
+                  blockerState={blockerState}
                   sessionTitle={sessionTitleForTombstone(entry)}
                   onAnswerDeadSession={answerOnDeadSession}
                   deadSessionBusy={reopening}
-                  autoFocus={compact && replyExpanded}
+                  autoFocus={focusReply}
                 />
               )
             ) : (
@@ -709,10 +763,12 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
                 <button
                   type="button"
                   className="inbox-reply-composer"
-                  onClick={() => setReplyExpanded(true)}
+                  onClick={() => { setReplyExpanded(true); setFocusReply(true); }}
                   aria-label="Leave a reply"
+                  aria-keyshortcuts="R"
                 >
                   Leave a reply…
+                  <kbd className="inbox-reply-hint inbox-reply-composer-hint">R</kbd>
                 </button>
               </div>
             )
@@ -731,7 +787,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
   );
 
   return (
-    <div className="inbox-detail">
+    <div className="inbox-detail" ref={detailRef}>
       <div className="inbox-detail-header">
         <button
           type="button"
@@ -897,6 +953,17 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
         </div>
       )}
 
+      {relatedSuggestions.length > 0 && (
+        <RelatedNextSteps
+          suggestions={relatedSuggestions}
+          onOpen={() => {
+            setNav('suggestions');
+          }}
+        />
+      )}
+
+      {replyTarget && !compact && <InboxQuoteSelection entryId={entry.id} rootRef={detailRef} />}
+
       <div className="inbox-detail-dock">
         <div className="inbox-detail-footer">
           {canOpen ? (
@@ -927,15 +994,6 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
         </div>
          {(ownershipLoading || ownershipError || hostAction || questionFirst) ? null : answerSurface}
       </div>
-
-      {relatedSuggestions.length > 0 && (
-        <RelatedNextSteps
-          suggestions={relatedSuggestions}
-          onOpen={() => {
-            setNav('suggestions');
-          }}
-        />
-      )}
 
       {launcherOpen && aliveProject && (
         <AgentLauncher
@@ -1183,8 +1241,13 @@ function RelatedNextSteps({
  * to a confirmation line; the user can reply again via the "reply again" link
  * if the agent asks a follow-up on the same session.
  */
+const REPLY_MIN_HEIGHT = 72;
+/** The reply box never grows past this share of the window height. */
+const REPLY_MAX_VIEWPORT_RATIO = 0.4;
+
 function ReplyBox({
   entry,
+  blockerState,
   sessionId,
   sessionTitle,
   onReply,
@@ -1193,6 +1256,8 @@ function ReplyBox({
   autoFocus = false
 }: {
   entry: InboxEntry;
+  /** Execution blocker state, computed once by InboxDetail so R and Quote agree with the collapsed box. */
+  blockerState: ExecutionInboxBlockerState;
   /** The LIVE session to inject into — the originating tab, or a reopened one.
    *  Absent in dead-session mode (the session ended); then `onAnswerDeadSession`
    *  carries the answer by reopening the agent. */
@@ -1208,15 +1273,63 @@ function ReplyBox({
   autoFocus?: boolean;
 }) {
   const answered = useInboxAnswered((s) => !!s.answeredIds[entry.id]);
-  const blockerState = useExecutionInboxBlockerState(entry, answered);
-  const [text, setText] = useRetainedText(JSON.stringify(['inbox-reply', entry.id]));
+  const draft = useInboxReplyDrafts((s) => s.drafts[entry.id] ?? '');
+  // The store drops whitespace-only text, so a leading space or Enter lives here until real text follows.
+  const [blank, setBlank] = useState('');
+  const text = draft || blank;
+  const setText = (value: string) => {
+    setBlank(value.trim() === '' ? value : '');
+    useInboxReplyDrafts.getState().setDraft(entry.id, value);
+  };
+  const composeCount = useInboxReplyDrafts(composeSeqFor(entry.id));
+  const seenCompose = useRef(composeCount);
+  const wantFocus = useRef(false);
   const [sending, setSending] = useState(false);
   const [reopened, setReopened] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const dead = !sessionId && !!onAnswerDeadSession;
   const busy = sending || deadSessionBusy;
   const executionLinked = !!entry.executionId && !!entry.blockerId;
   const collapsed = (executionLinked ? blockerState !== 'actionable' && blockerState !== 'unknown' : answered) && !reopened;
+
+  // Grow with the draft so a long reply stays visible inside the pinned bar.
+  // Reset before measuring so deleting lines shrinks it again.
+  const resize = useCallback(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    // The stylesheet may cap lower than 40% (mobile); size and overflow must follow the cap that applies.
+    const cssMax = parseFloat(getComputedStyle(input).maxHeight);
+    const max = Math.max(REPLY_MIN_HEIGHT, Math.min(Math.round(window.innerHeight * REPLY_MAX_VIEWPORT_RATIO), Number.isFinite(cssMax) ? cssMax : Infinity));
+    input.style.height = '0px';
+    const next = Math.min(Math.max(input.scrollHeight, REPLY_MIN_HEIGHT), max);
+    input.style.height = `${next}px`;
+    input.style.overflowY = input.scrollHeight > max ? 'auto' : 'hidden';
+  }, []);
+  // Also on mount: the textarea is absent while the "Replied to" box is collapsed, so `collapsed` is a dependency.
+  useLayoutEffect(resize, [text, collapsed, resize]);
+  // The cap follows the window, so a resize must re-measure a long draft.
+  useEffect(() => {
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, [resize]);
+  // A compose request (R, Quote in reply) expands a collapsed box, then focuses it with the caret at the end.
+  useEffect(() => {
+    const previous = seenCompose.current;
+    seenCompose.current = composeCount;
+    if (composeCount === 0 || composeCount === previous) return;
+    // A collapsed execution-linked box cannot open, so there is nothing to focus later.
+    if (collapsed && executionLinked) return;
+    wantFocus.current = true;
+    if (collapsed) setReopened(true);
+  });
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!wantFocus.current || !input) return;
+    wantFocus.current = false;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  });
 
   const submit = async () => {
     if (busy || !text.trim()) return;
@@ -1234,7 +1347,8 @@ function ReplyBox({
       setSending(false);
     }
     if (ok) {
-      setText('');
+      useInboxReplyDrafts.getState().clearDraft(entry.id);
+      setBlank('');
       setReopened(false);
     }
   };
@@ -1265,6 +1379,7 @@ function ReplyBox({
   return (
     <div className="inbox-reply">
       <textarea
+        ref={inputRef}
         className="inbox-reply-input"
         autoFocus={autoFocus}
         value={text}
@@ -1273,6 +1388,10 @@ function ReplyBox({
           if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
             e.preventDefault();
             void submit();
+          } else if (e.key === 'Escape' && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            e.currentTarget.blur();
+            e.currentTarget.closest<HTMLElement>('.inbox-view-detail')?.focus({ preventScroll: true });
           }
         }}
         rows={2}
@@ -1280,7 +1399,7 @@ function ReplyBox({
         aria-label="Reply to the originating agent"
       />
       <div className="inbox-reply-actions">
-        <span className="inbox-reply-hint">{platformShortcut('⌘↵ to send')}</span>
+        <span className="inbox-reply-hint">{platformShortcut('⌘↵ to send · Esc to keep reading')}</span>
         <button
           type="button"
           className="inbox-reply-send"
@@ -1593,8 +1712,8 @@ function DocActions({
         type="button"
         className="inbox-doc-open"
         onClick={stop(onReveal)}
-        title="Reveal in Finder"
-        aria-label={`Reveal ${label} in Finder`}
+        title={`Reveal in ${fileManagerName()}`}
+        aria-label={`Reveal ${label} in ${fileManagerName()}`}
       >
         <FolderOpen size={12} strokeWidth={1.75} />
       </button>

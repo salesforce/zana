@@ -41,10 +41,10 @@ export interface RegisterSquadProposalToolsOpts {
 }
 
 export const SQUAD_PROPOSE_DESCRIPTION =
-  "Prepare a Squad launch in YOUR project from files you wrote (design, portable plan). Nothing starts until the user reviews it in the Inbox card and presses Launch. Use planning 'provided' with a validated portable plan as a source when list_teams says canInferPlan is false. Files must be inside this project. Members of a running Squad cannot propose.";
+  "Prepare a Squad launch in YOUR project from files you wrote or read (design, portable plan). Nothing starts until the user reviews it in the Inbox card and presses Launch. Use planning 'provided' with a validated portable plan as a source when list_teams says canInferPlan is false. Pass the files' exact paths, wherever they are: this project, the user's home folder or the clone root (protected locations such as ~/.ssh are refused with SOURCE_NOT_ALLOWED). Do not copy them. Members of a running Squad cannot propose.";
 
 export const SQUAD_PLAN_CHECK_DESCRIPTION =
-  'Check a portable-executable plan exactly as a Squad Launch will in Plan provided in goal mode. Pass a project file path or the plan text. Returns the parsed steps or the reason it fails. Read-only.';
+  'Check a portable-executable plan exactly as a Squad Launch will in Plan provided in goal mode. Pass the plan file path (in this project, the home folder or the clone root) or the plan text. Returns the parsed steps or the reason it fails. Read-only.';
 
 /**
  * Transport bounds only (Rule 5): four times the real limits. The proposal service enforces
@@ -64,10 +64,10 @@ const FIELD_HELP = {
   teamId: 'The id of the Squad to propose (from list_teams).',
   goal: `What the Squad should accomplish (at most ${SQUAD_PROPOSAL_LIMITS.goalChars} characters).`,
   planning: "'infer': the orchestrator plans. 'provided': a portable plan in sources is used.",
-  sources: `Project file paths to attach (design, plan); at most ${SQUAD_PROPOSAL_LIMITS.maxSources}. Must be inside this project.`,
+  sources: `Exact paths of the files to attach (design, plan); at most ${SQUAD_PROPOSAL_LIMITS.maxSources}. Relative paths are read from the project root; files outside it may be under the home folder or the clone root.`,
   title: `Short card title (at most ${SQUAD_PROPOSAL_LIMITS.titleChars} characters).`,
   summary: `One-paragraph summary for the card (at most ${SQUAD_PROPOSAL_LIMITS.summaryChars} characters).`,
-  planPath: 'Project file path of the plan.',
+  planPath: 'Path of the plan file: relative to the project, or absolute (home folder or clone root).',
   planText: 'The plan text (at most 1 MiB).'
 } as const;
 

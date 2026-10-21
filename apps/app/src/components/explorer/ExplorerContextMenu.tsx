@@ -1,5 +1,6 @@
 import React from 'react';
 import type { FsEntry, GitFileCode } from '@zana-ai/zcc-domain/product';
+import { fileManagerName } from '../../lib/file-manager.js';
 
 interface ExplorerContextMenuProps {
   entry: FsEntry;
@@ -82,7 +83,7 @@ export function ExplorerContextMenu({
           )}
           {onRevealInFinder && (
             <button onClick={onRevealInFinder}>
-              Reveal in Finder
+              Reveal in {fileManagerName()}
             </button>
           )}
         </>

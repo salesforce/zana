@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { flattenThreadInput, requestAutoThreadTitle, threadTitle } from './conversation-create.js';
+import { flattenThreadInput, requestAutoThreadTitle, threadTitle, threadTitleSource } from './conversation-create.js';
 import { PluginHostArtifactRegistry } from '../../plugins/plugin-host-artifact-registry.js';
 import {
   bridgeLaunchForProvider,
@@ -8,6 +8,7 @@ import {
   getThreadProvider,
   listThreadProviders,
   registerThreadProvider,
+  holdThreadProviderStartup,
   trackThreadProviderStartup,
   waitForThreadProvider
 } from './thread-provider-catalog.js';
@@ -32,6 +33,12 @@ describe('threadTitle', () => {
     expect(threadTitle({}, ['  Fix   the login  '])).toBe('Fix the login');
     expect(threadTitle({}, ['a'.repeat(41)])).toBe(`${'a'.repeat(40)}…`);
     expect(threadTitle({}, [])).toBe('Thread');
+  });
+
+  it('marks an explicit title as user-set and a prompt snippet as a placeholder', () => {
+    expect(threadTitleSource({ title: '  My Name  ' })).toBe('user');
+    expect(threadTitleSource({ title: '   ' })).toBe('prompt');
+    expect(threadTitleSource({})).toBe('prompt');
   });
 });
 
@@ -290,6 +297,18 @@ describe('waitForThreadProvider', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('holds waits from before plugin startup begins until released', async () => {
+    vi.useFakeTimers();
+    const release = holdThreadProviderStartup();
+    let resolved = false;
+    const waiting = waitForThreadProvider('claude-code').then(() => { resolved = true; });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(resolved).toBe(false);
+    release();
+    await waiting;
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('gives up after the wait bound when startup never settles', async () => {
     vi.useFakeTimers();
     trackThreadProviderStartup(new Promise(() => {}));
@@ -336,7 +355,8 @@ describe('unmanaged environment reuse', () => {
 describe('thread title namer wiring', () => {
   it('persists a successful namer title and emits threads:updated', () => {
     const source = readFileSync(new URL('../../http/product-context.ts', import.meta.url), 'utf8');
-    expect(source).toContain('updateConversationThreadTitle(db, threadId, title)');
+    expect(source).toContain("updateConversationThreadTitle(db, threadId, title, 'auto')");
+    expect(source).toContain('canAutoTitle: (threadId) => conversationThreadTitleIsPlaceholder(db, threadId)');
     expect(source).toContain("hub.emit('threads:updated', conversationThreadView(ctx, updated))");
     expect(source).toContain('autoRenameTabs !== false');
     expect(source).toContain('join(dataDir, \'llm-prompts\')');

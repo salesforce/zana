@@ -379,7 +379,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           'Controls a selected desktop window through zcc.sdk.experimental_desktopBrowsers. With this, a plugin can:',
         bullets: [
           'Discover instances on an explicit host and create thread-owned tabs with separate automation profiles',
-          'Acquire expiring control; reveal the first tab only in the already focused thread. Personal tabs require an explicit handoff',
+          'Acquire expiring control; reveal the first tab when its thread is focused, never switching threads. Personal tabs require an explicit handoff',
           'Give a worker on that host a private, scoped CDP WebSocket connection',
           'Capture or reveal a tab and release control while preserving the tab and its login',
           'Observe changed tab and control state with a disposable two-second polling subscription',

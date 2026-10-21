@@ -34,6 +34,8 @@ const DESIGN = '.zcc/library/designs/e2e-design.md';
 const PLAN = '.zcc/library/runbooks/e2e-plan.md';
 const GOAL = 'Build the Atlas site exactly as the attached plan describes.';
 const FAKE_ACP_PREFIX = 'FAKE_ACP: ';
+/** Under the E2E HOME, outside the project: a design vault the proposer reads from. */
+const NOTES_DIR = 'zcc-notes';
 
 // Portable plan whose step ids match the fake cohort's SUCCESS_PLAN, so a seeded DAG runs end to end.
 const PLAN_MD = [
@@ -101,7 +103,9 @@ async function reviewAndLaunch(
   window: Page,
   outputPath: (name: string) => string,
   electron: Parameters<typeof captureElectronScreenshot>[0],
-  proposerTitle?: string
+  proposerTitle?: string,
+  /** The files live outside the project: their chips show the path and the marker. */
+  outsideProject = false
 ): Promise<void> {
   await window.getByRole('button', { name: 'Review Squad launch' }).click();
   const modal = window.getByTestId('launch-modal');
@@ -112,6 +116,8 @@ async function reviewAndLaunch(
   const sources = modal.getByLabel('Attached sources');
   await expect(sources).toContainText('e2e-design.md');
   await expect(sources).toContainText('e2e-plan.md');
+  await expect(sources.locator('.launch-attachment-outside')).toHaveCount(outsideProject ? 2 : 0);
+  if (outsideProject) await expect(sources).toContainText(`~/${NOTES_DIR}/e2e-design.md`);
   await expect(modal.getByLabel('Squad planning')).toContainText('Plan provided in goal');
   await expect(modal.getByLabel('Squad', { exact: true })).toContainText('E2E Job Team');
   await captureElectronScreenshot(electron, window, outputPath('02-prefilled-composer.png'));
@@ -339,7 +345,7 @@ test.describe('CLI Agent proposer', () => {
     }
   });
 
-  test('rejects unsafe or invalid proposals without creating a card', async ({ app }) => {
+  test('rejects unsafe or invalid proposals without creating a card', async ({ app, home }) => {
     const ctx: JobTeamContext = createJobTeamContext(app, { tmpPrefix: 'zcc-squad-reject-' });
     const { window, projectDir } = ctx;
     // A uniquely named sibling of the project, so the escape attempt never touches shared $TMPDIR files.
@@ -355,10 +361,13 @@ test.describe('CLI Agent proposer', () => {
         proposals: [
           { label: 'infer', input: { teamId: 'e2e-job-team', goal: GOAL, planning: 'infer', title: 'Infer attempt' } },
           { label: 'outside', input: { teamId: 'e2e-job-team', goal: GOAL, planning: 'provided', sources: [`../${basename(outsideDir)}/outside.md`], title: 'Outside attempt' } },
+          { label: 'secret', input: { teamId: 'e2e-job-team', goal: GOAL, planning: 'provided', sources: [join(home, '.ssh', 'id_e2e')], title: 'Secret attempt' } },
           { label: 'broken', input: { teamId: 'e2e-job-team', goal: GOAL, planning: 'provided', sources: ['.zcc/library/runbooks/broken-plan.md'], title: 'Broken attempt' } }
         ]
       }));
       writeFileSync(join(outsideDir, 'outside.md'), 'outside the project');
+      mkdirSync(join(home, '.ssh'), { recursive: true });
+      writeFileSync(join(home, '.ssh', 'id_e2e'), 'PRIVATE');
       const projectId = await launchJobTeamCliOwner(ctx, {
         workerQuantity: 2, prompt: 'E2E propose Squad', orchestratorExtra: { deniedTools: ['Write', 'Edit'] }
       });
@@ -366,7 +375,8 @@ test.describe('CLI Agent proposer', () => {
       await expect.poll(() => loggedResult(readCoordinatorLog(ctx), 'propose[broken]'), { timeout: 30_000, intervals: [500] }).not.toBeNull();
       const log = readCoordinatorLog(ctx);
       expect(loggedResult(log, 'propose[infer]')?.error).toContain('ORCHESTRATOR_CANNOT_PLAN');
-      expect(loggedResult(log, 'propose[outside]')?.error).toContain('SOURCE_OUTSIDE_PROJECT');
+      expect(loggedResult(log, 'propose[outside]')?.error).toContain('SOURCE_NOT_ALLOWED');
+      expect(loggedResult(log, 'propose[secret]')?.error).toMatch(/SOURCE_NOT_ALLOWED: .*protected location/);
       expect(loggedResult(log, 'propose[broken]')?.error).toContain('INVALID_PLAN');
 
       // A card is stored before squad_propose answers, so once all three errors are logged
@@ -421,14 +431,25 @@ test.describe('Modern proposer', () => {
       projectId = await setUpModernProject(window, projectDir, agent.path);
       threadId = await startModernThread(window, projectId);
       const callTool = hostToolCaller(window, home, threadId);
-      const check = await callTool('squad_plan_check', { path: PLAN });
+      // This proposer keeps its design and plan in a vault under HOME, outside the project,
+      // and passes their exact paths: nothing is copied into the checkout.
+      const notes = join(home, NOTES_DIR);
+      mkdirSync(notes, { recursive: true });
+      writeFileSync(join(notes, 'e2e-design.md'), readFileSync(join(projectDir, DESIGN)));
+      writeFileSync(join(notes, 'e2e-plan.md'), PLAN_MD);
+      const check = await callTool('squad_plan_check', { path: join(notes, 'e2e-plan.md') });
       expect(check.success, `${check.text}\n${diagnostics.join('\n')}`).toBe(true);
       expect(JSON.parse(check.text)).toMatchObject({ ok: true });
-      const proposed = await callTool('squad_propose', { teamId: 'e2e-job-team', goal: GOAL, sources: [DESIGN, PLAN], title: TITLE });
+      const proposed = await callTool('squad_propose', {
+        teamId: 'e2e-job-team', goal: GOAL, sources: [join(notes, 'e2e-design.md'), join(notes, 'e2e-plan.md')], title: TITLE
+      });
       expect(proposed.success, `${proposed.text}\n${diagnostics.join('\n')}`).toBe(true);
 
       await openInboxCard(window, `Squad launch ready: ${TITLE}`);
-      await reviewAndLaunch(window, (name) => testInfo.outputPath(`modern-${name}`), app.electron);
+      await expect(window.locator('.inbox-detail').getByText(
+        `Files: ~/${NOTES_DIR}/e2e-design.md (outside the Project), ~/${NOTES_DIR}/e2e-plan.md (outside the Project)`
+      )).toBeVisible();
+      await reviewAndLaunch(window, (name) => testInfo.outputPath(`modern-${name}`), app.electron, undefined, true);
       await answerAndExpectResult(window, projectDir, projectId, await findJobExecutionId(window, projectId, TITLE));
       await expectThreadCompletionReport(window, threadId);
     } catch (error) {

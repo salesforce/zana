@@ -507,7 +507,7 @@ test('Main views and populated Inbox fit phone and tablet screens', async ({ app
           await expect(page.locator('.inbox-doc-preview')).toHaveCount(0);
           await page.getByRole('button', { name: 'results.md', exact: true }).click();
           await expect(page.locator('.inbox-doc-preview')).toContainText('The second document is readable.');
-          await expect(page.getByRole('button', { name: /in Finder|in Cursor|in VS Code/ })).toHaveCount(0);
+          await expect(page.getByRole('button', { name: /in (Finder|Explorer|file manager)|in Cursor|in VS Code/ })).toHaveCount(0);
           await page.screenshot({ path: testInfo.outputPath(`${width}-inbox-documents.png`) });
           expect.soft(await capture(page), `${width}px inbox documents`).toEqual([]);
           await page.getByRole('button', { name: 'results.md', exact: true }).click();

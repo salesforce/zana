@@ -15,6 +15,13 @@ export function assertToolkitImports(outputs) {
   }
 }
 
+/** A prerequisite check must inspect the installed package without npm name resolution. */
+export function patchCodeAnalyzerProbe(source) {
+  const probe = 'exec("sf", ["plugins", "inspect", "code-analyzer", "--json"]';
+  if (source.split(probe).length !== 2) throw Error('Toolkit Code Analyzer probe contract changed');
+  return source.replace(probe, 'exec("sf", ["plugins", "inspect", "@salesforce/plugin-code-analyzer", "--json"]');
+}
+
 /** Keep the SDK's import.meta.url assets separate from the host's server bundle. */
 export async function buildToolkitRuntime(output = join(pluginRoot, 'toolkit-runtime')) {
   const tarball = await readFile(join(pluginRoot, 'vendor/sf-agentic-tools-0.2.0.tgz'));
@@ -23,7 +30,7 @@ export async function buildToolkitRuntime(output = join(pluginRoot, 'toolkit-run
   const catalog = await readFile(join(pluginRoot, 'vendor/catalog.json'));
   if (createHash('sha256').update(catalog).digest('hex') !== manifest.assets.find(a => a.name.endsWith('-catalog.json')).sha256) throw Error('Toolkit catalog integrity mismatch');
   const lockHash = createHash('sha256').update(await readFile(join(pluginRoot, '../../pnpm-lock.yaml'))).digest('hex');
-  const stamp = `${manifest.sourceCommit}:${lockHash}:8`;
+  const stamp = `${manifest.sourceCommit}:${lockHash}:9`;
   if (await readFile(join(output, 'build-stamp'), 'utf8').catch(() => '') === stamp && await stat(join(output, 'sdk.mjs')).catch(() => null)) return;
   const stage = `${output}.stage-${randomUUID()}`;
   await mkdir(stage, { recursive: true });
@@ -44,6 +51,12 @@ export async function buildToolkitRuntime(output = join(pluginRoot, 'toolkit-run
         setup(build) {
           build.onLoad({ filter: /\.[cm]?js$/ }, async args => {
             let source = await readFile(args.path, 'utf8');
+            if (args.path.startsWith(packageRoot + '/') && /\/code-analyzer-[^/]+\.js$/.test(args.path)) {
+              // A short name makes oclif query npm before inspecting the local
+              // plugin. Offline hosts and private certificate chains then time
+              // out even when Code Analyzer is already installed and ready.
+              return { contents: patchCodeAnalyzerProbe(source), loader: 'js' };
+            }
             if (args.path.startsWith(packageRoot + '/') && source.includes('import(AGENTFORCE_SDK_PACKAGE)')) {
               // This computed import evades esbuild's dependency graph and
               // otherwise silently depends on the development node_modules.

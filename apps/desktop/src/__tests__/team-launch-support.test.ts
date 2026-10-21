@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createDesktopNativeRecovery, findProposalExecution, gateInvalidProvidedPlan, recoverSquadStateAtBoot, runSpawnLifecycle, slotRecoveryLaunch,
-  sweepUnretainedSquadWorktrees, teamAdmissionRequirements, teamJobFailureResponse, withProposalLaunch
+  sweepUnretainedSquadWorktrees, teamAdmissionRequirements, splitProposedGoalSources, teamJobFailureResponse, withProposalLaunch
 } from '../team-launch-support.js';
 
 describe('withProposalLaunch', () => {
@@ -20,7 +20,7 @@ describe('withProposalLaunch', () => {
     const d = deps();
     const start = vi.fn(async () => started);
     expect(await withProposalLaunch(d, undefined, 'p1', start)).toBe(started);
-    expect(start).toHaveBeenCalledWith(undefined);
+    expect(start).toHaveBeenCalledWith(undefined, []);
     expect(d.beginLaunch).not.toHaveBeenCalled();
     expect(d.releaseLaunch).not.toHaveBeenCalled();
   });
@@ -30,9 +30,16 @@ describe('withProposalLaunch', () => {
     const start = vi.fn(async () => started);
     expect(await withProposalLaunch(d, 'prop-1', 'p1', start)).toBe(started);
     expect(d.beginLaunch).toHaveBeenCalledWith('prop-1', 'p1');
-    expect(start).toHaveBeenCalledWith(proposal);
+    expect(start).toHaveBeenCalledWith(proposal, []);
     expect(d.markLaunched).toHaveBeenCalledWith('prop-1', 'exec-1');
     expect(d.releaseLaunch).not.toHaveBeenCalled();
+  });
+
+  it('hands the start the sources the reviewed card listed', async () => {
+    const d = deps({ ok: true, value: { proposal, sourcePaths: ['/home/me/notes.md'] } });
+    const start = vi.fn(async () => started);
+    await withProposalLaunch(d, 'prop-1', 'p1', start);
+    expect(start).toHaveBeenCalledWith(proposal, ['/home/me/notes.md']);
   });
 
   it('logs a failed launch record but still reports the running Squad', async () => {
@@ -59,6 +66,35 @@ describe('withProposalLaunch', () => {
     await expect(withProposalLaunch(d, 'prop-1', 'p1', async () => { throw new Error('boom'); })).rejects.toThrow('boom');
     expect(d.releaseLaunch).toHaveBeenCalledTimes(2);
     expect(d.markLaunched).not.toHaveBeenCalled();
+  });
+});
+
+describe('splitProposedGoalSources', () => {
+  const file = (canonicalPath: string) => ({ canonicalPath });
+  const project = '/work/proj';
+
+  it('attaches Project files and refuses an outside file the card did not list', () => {
+    const inside = file('/work/proj/docs/plan.md');
+    expect(splitProposedGoalSources([inside], project, [])).toEqual({ attach: [inside], known: [inside] });
+    const outside = file('/Users/me/notes.md');
+    expect(splitProposedGoalSources([inside, outside], project, [])).toEqual({ attach: [], known: [], refused: outside });
+    // Another reviewed path, a sibling folder with the Project's name as a prefix, and the Project root itself are not the Project.
+    expect(splitProposedGoalSources([outside], project, ['/Users/me/other.md']).refused).toBe(outside);
+    expect(splitProposedGoalSources([file('/work/proj-two/a.md')], project, []).refused).toBeDefined();
+    expect(splitProposedGoalSources([file('/work/proj')], project, []).refused).toBeDefined();
+  });
+
+  it('keeps an outside file the card listed out of the attachments, but known for redaction', () => {
+    const listed = file('/Users/me/notes.md');
+    const inside = file('/work/proj/a.md');
+    expect(splitProposedGoalSources([listed, inside], project, ['/Users/me/notes.md'])).toEqual({ attach: [inside], known: [listed, inside] });
+  });
+
+  it('treats every file as outside when the Project folder does not resolve', () => {
+    const inside = file('/work/proj/a.md');
+    expect(splitProposedGoalSources([inside], undefined, []).refused).toBe(inside);
+    expect(splitProposedGoalSources([inside], undefined, ['/work/proj/a.md'])).toEqual({ attach: [], known: [inside] });
+    expect(splitProposedGoalSources([], undefined, [])).toEqual({ attach: [], known: [] });
   });
 });
 

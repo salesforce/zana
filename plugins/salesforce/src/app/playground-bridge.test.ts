@@ -54,6 +54,11 @@ describe('playground bridge', () => {
       isHostToPlayground({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'setOrg', org: null })
     ).toBe(true);
     expect(isHostToPlayground({ type: 'flushSave' })).toBe(false);
+    const changed = { source: PLAYGROUND_BRIDGE_SOURCE, type: 'fileChanged', draftKey: 'k', content: 'x', sha256: 'f'.repeat(64) };
+    expect(isHostToPlayground(changed)).toBe(true);
+    for (const change of [{ draftKey: '' }, { draftKey: 'k'.repeat(2001) }, { content: 1 }, { content: 'x'.repeat(AGENT_SOURCE_MAX + 1) }, { sha256: 'abc' }, { sha256: 'F'.repeat(64) }]) {
+      expect(isHostToPlayground({ ...changed, ...change })).toBe(false);
+    }
     expect(isPlaygroundToHost({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'dirty' })).toBe(false);
     expect(isPlaygroundToHost({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'dirty', dirty: true })).toBe(true);
   });

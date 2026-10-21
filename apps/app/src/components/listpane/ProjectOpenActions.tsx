@@ -3,6 +3,7 @@ import type { OpenTarget, Project } from '@zana-ai/zcc-domain/product';
 import { product } from '../../lib/product-client.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { copyText } from '../../lib/copy-text.js';
+import { fileManagerName } from '../../lib/file-manager.js';
 import { useUi } from '../../store.js';
 import { isRemoteWorkspaceProject } from '../composer-project-default.js';
 import { CursorIcon } from '../icons/CursorIcon.js';
@@ -34,7 +35,7 @@ export function ProjectOpenActions({ project, onClose }: { project: Project; onC
             <Code2 size={12} /><span>Open in IntelliJ IDEA</span>
           </button>
           <button type="button" className="project-menu-item" onClick={() => void open('finder')}>
-            <FolderOpen size={12} /><span>Reveal in Finder</span>
+            <FolderOpen size={12} /><span>Reveal in {fileManagerName()}</span>
           </button>
           <button type="button" className="project-menu-item" onClick={() => void open('terminal')}>
             <TerminalSquare size={12} /><span>Open in external Terminal</span>

@@ -58,12 +58,16 @@ if (!root) {
       if (!isRepair) {
         // Every window needs main's open plugin and thread view sets from the
         // start, so a navigation can bring an open one forward before any pane subscribes.
-        const [{ startPluginViewMirror }, { startThreadViewMirror }] = await Promise.all([
+        // Browser reveals are queued from the start too, so one aimed at a thread
+        // that is not open yet is shown when the user opens it.
+        const [{ startPluginViewMirror }, { startThreadViewMirror }, { startDesktopBrowserRevealQueue }] = await Promise.all([
           import('./plugins/plugin-view-windows.js'),
-          import('./lib/thread-view-windows.js')
+          import('./lib/thread-view-windows.js'),
+          import('./lib/desktop-browser-reveal-queue.js')
         ]);
         startPluginViewMirror();
         startThreadViewMirror();
+        startDesktopBrowserRevealQueue();
       }
       let content: ReactElement;
       if (isRepair) {

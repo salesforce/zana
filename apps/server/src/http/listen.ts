@@ -9,6 +9,7 @@ import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 import { standaloneModernTeamLaunchSource } from '../services/agents/modern-team-launch-config.js';
 import { createTeamOpsViaControl } from './team-ops-via-control.js';
 import { createCliAgentOpsViaControl, retainProductServerCredential } from './cli-agent-ops.js';
+import { holdThreadProviderStartup } from '../services/threads/thread-provider-catalog.js';
 
 const port = serverPortFromEnv();
 const dataDir = resolveZccDataDir();
@@ -37,6 +38,8 @@ const peerKeyPresent = peerKey !== null;
 peerKey?.fill(0);
 process.stdout.write(`zcc-server peer key: ${peerKeyPresent ? 'present' : 'absent (peer links and invitations unavailable)'}\n`);
 
+// A host daemon can connect once the server listens, before plugins start.
+const releaseProviderStartup = holdThreadProviderStartup();
 const host = await startProductServer({
   host: '127.0.0.1',
   port,
@@ -58,7 +61,7 @@ await attachProductPluginService(host.ctx, {
     () => host.ctx.config.getConfig(),
     process.env.ZCC_E2E_HOME ? join(process.env.ZCC_E2E_HOME, 'electron-user-data') : undefined
   )
-});
+}).finally(releaseProviderStartup);
 
 process.stdout.write(`zcc-server listening on ${host.url}\n`);
 

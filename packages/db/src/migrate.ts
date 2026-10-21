@@ -503,13 +503,17 @@ export function migrate(database: SqliteDatabase): void {
       opened_at INTEGER NOT NULL
     )`
   ]);
+  // Thread title provenance: 'prompt' = placeholder the auto-namer may replace,
+  // 'auto' = auto-named, 'user' = explicit. NULL (legacy, forks, plugin threads) is fixed.
+  if (!applied.has(38)) applyVersion(database, 38,
+    hasColumn(database, 'threads', 'title_source') ? [] : ['ALTER TABLE threads ADD COLUMN title_source TEXT']);
   // Branch builds used 33/34 for enrollment capabilities and 35 for host purpose.
-  // Keep 35 replayable, including its prerequisites; v38 repairs main/pre-release
-  // histories that already recorded those IDs without the peer schema. v37 is
-  // owned by main (thread_open_sessions), so the branch replay-repair moved from
-  // 37 to 38. Never rewrite history or overwrite persisted capabilities, names,
-  // or link uses.
-  for (const version of [35, 38]) {
+  // Keep 35 replayable, including its prerequisites; v39 repairs main/pre-release
+  // histories that already recorded those IDs without the peer schema. v37
+  // (thread_open_sessions) and v38 (title_source) are owned by main, so the branch
+  // replay-repair moved from 37 to 39. Never rewrite history or overwrite persisted
+  // capabilities, names, or link uses.
+  for (const version of [35, 39]) {
     if (!applied.has(version)) applyVersion(database, version, [
       ...(hasColumn(database, 'hosts', 'enrollment_capability')
         ? []

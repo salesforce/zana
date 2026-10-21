@@ -39,6 +39,7 @@ import type { ZccDatabase } from '@zana-ai/zcc-db';
 import type { PluginService } from './plugins/plugin-service.js';
 import { decideMainOwnedToolPolicy } from './plugins/native-tool-policy.js';
 import { createMenubarThreadSource } from './services/threads/menubar-thread-source.js';
+import { holdThreadProviderStartup } from './services/threads/thread-provider-catalog.js';
 import {
   bundledPluginsRootFromDataDir,
   createAttachedProductPluginService,
@@ -91,6 +92,7 @@ parentPort.on('message', ({ data }) => {
 
 async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void> {
   if (message.type === 'start' && message.rendererRoot && !close) {
+    let releaseProviderStartup: (() => void) | null = null;
     try {
       installRuntimeLog(message.dataDir, 'server', import.meta.url);
       diagnostics.start();
@@ -157,6 +159,8 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
           });
         }
       });
+      // The daemon can reconnect once the host listens, before plugins start.
+      releaseProviderStartup = holdThreadProviderStartup();
       const host = await startStaticHost({
         rootDir: message.rendererRoot,
         port: preferredPort,
@@ -199,8 +203,9 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
       runtimeMcpConfig.started();
       void startAttachedProductPluginService(product, plugins).catch((error) => {
         console.error('[plugins] background startup failed:', error instanceof Error ? error.message : error);
-      });
+      }).finally(releaseProviderStartup);
     } catch (error) {
+      releaseProviderStartup?.();
       diagnostics.stop();
       if (hostConnectionRenewal) {
         clearInterval(hostConnectionRenewal);

@@ -1,4 +1,5 @@
 import { product } from '../lib/product-client.js';
+import { fileManagerName } from '../lib/file-manager.js';
 import { Code2, FolderOpen, TerminalSquare } from 'lucide-react';
 import type { OpenTarget } from '@zana-ai/zcc-domain/product';
 import { useData, useUi } from '../store.js';
@@ -31,7 +32,7 @@ const TARGETS: Array<{
   { key: 'cursor', label: 'Open in Cursor', render: (s) => <CursorIcon size={s} /> },
   { key: 'code', label: 'Open in VS Code', render: (s) => <Code2 size={s} /> },
   { key: 'intellij', label: 'Open in IntelliJ IDEA', render: (s) => <IntelliJIcon size={s} /> },
-  { key: 'finder', label: 'Reveal in Finder', render: (s) => <FolderOpen size={s} /> },
+  { key: 'finder', label: `Reveal in ${fileManagerName()}`, render: (s) => <FolderOpen size={s} /> },
   { key: 'terminal', label: 'Open external Terminal', render: (s) => <TerminalSquare size={s} /> }
 ];
 

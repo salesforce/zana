@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { readFile } from 'node:fs/promises';
@@ -128,6 +129,84 @@ describe('execution MCP tools', () => {
     expect(text(result)).toBe('execution.start unavailable: session MCP is not authorized for this live session.');
   });
 
+  it('reports to a Modern owner as a thread when it asks, and to nobody otherwise', async () => {
+    const execution = service();
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, {
+      sessionId: 'thread-1', projectId: 'project-1', service: execution as never, reportKind: 'thread',
+      validateRouteIdentity: () => false, validateOwnerRouteIdentity: async () => true
+    });
+    const request = { version: 1, teamId: 'team-1', launchRequestId: 'request-1', slots: [{ initialTask: 'work' }] };
+    await tools.get('execution.start')!({ ...request, notify: true });
+    expect(execution.start).toHaveBeenLastCalledWith('thread-1', 'project-1', expect.not.objectContaining({ notify: true }), { reportTo: { kind: 'thread', id: 'thread-1', role: 'owner' } });
+    // Opt-in: without notify (or with false) the owner keeps polling, exactly as before.
+    await tools.get('execution.start')!(request);
+    expect(execution.start).toHaveBeenLastCalledWith('thread-1', 'project-1', expect.anything(), undefined);
+    await tools.get('execution.start')!({ ...request, notify: false });
+    expect(execution.start).toHaveBeenLastCalledWith('thread-1', 'project-1', expect.anything(), undefined);
+  });
+
+  it('refuses a blocker answer over 16 KiB with its size, and leaves slot replies alone', async () => {
+    const execution = { ...service(), respondToHumanBlockerAsOwner: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', state: 'RUNNING', stateVersion: 8 } })) };
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, {
+      sessionId: 'thread-1', projectId: 'project-1', service: execution as never,
+      validateRouteIdentity: () => true, validateOwnerRouteIdentity: async () => true
+    });
+    const respond = tools.get('execution.respond')!;
+    const tooBig = await respond({ executionId: 'execution-1', expectedStateVersion: 7, blockerId: 'b1', message: 'x'.repeat(16 * 1024 + 1) });
+    expect(tooBig.isError).toBe(true);
+    expect(text(tooBig)).toBe('execution.respond failed: answer is 16385 bytes; max 16384.');
+    expect(execution.respondToHumanBlockerAsOwner).not.toHaveBeenCalled();
+    expect((await respond({ executionId: 'execution-1', expectedStateVersion: 7, blockerId: 'b1', message: 'x'.repeat(16 * 1024) })).isError).toBeFalsy();
+    await respond({ executionId: 'execution-1', expectedStateVersion: 7, slotId: 's', message: 'x'.repeat(20 * 1024) });
+    expect(execution.respond).toHaveBeenCalledOnce();
+  });
+
+  it('lets the owner answer a human blocker with execution.respond, and keeps slot replies as they were', async () => {
+    const execution = { ...service(), respondToHumanBlockerAsOwner: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', state: 'RUNNING', stateVersion: 8, deliveries: ['secret'] } })) };
+    const { server, tools } = fakeServer();
+    let ownerLive = true;
+    registerExecutionTools(server as never, {
+      sessionId: 'thread-1', projectId: 'project-1', service: execution as never,
+      validateRouteIdentity: () => false, validateOwnerRouteIdentity: async () => ownerLive
+    });
+    const respond = tools.get('execution.respond')!;
+    const answered = await respond({ executionId: 'execution-1', expectedStateVersion: 7, blockerId: 'b1', message: 'About Atlas', clientRequestId: 'c1' });
+    expect(answered.isError).toBeFalsy();
+    expect(JSON.parse(text(answered))).toEqual({ executionId: 'execution-1', blockerId: 'b1', stateVersion: 8, state: 'RUNNING' });
+    expect(execution.respondToHumanBlockerAsOwner).toHaveBeenCalledWith('thread-1', 'project-1', 'execution-1', 7, 'b1', 'c1', 'About Atlas');
+    await respond({ executionId: 'execution-1', expectedStateVersion: 7, blockerId: 'b1', message: 'again' });
+    expect(execution.respondToHumanBlockerAsOwner).toHaveBeenLastCalledWith('thread-1', 'project-1', 'execution-1', 7, 'b1', expect.stringMatching(/^mcp:/), 'again');
+    execution.respondToHumanBlockerAsOwner.mockResolvedValueOnce({ ok: false, code: 'NOT_FOUND', message: 'execution blocker not found' } as never);
+    expect(text(await respond({ executionId: 'execution-1', expectedStateVersion: 7, blockerId: 'gone', message: 'x' }))).toBe('execution.respond failed: execution blocker not found');
+    for (const bad of [{ slotId: 's', blockerId: 'b' }, {}]) {
+      expect(text(await respond({ executionId: 'execution-1', expectedStateVersion: 7, message: 'x', ...bad }))).toBe('execution.respond failed: pass exactly one of slotId or blockerId');
+    }
+    ownerLive = false;
+    expect(text(await respond({ executionId: 'execution-1', expectedStateVersion: 7, blockerId: 'b1', message: 'x' }))).toContain('session MCP is not authorized');
+    // A slot reply still needs the PTY route gate.
+    expect(text(await respond({ executionId: 'execution-1', expectedStateVersion: 7, slotId: 's', message: 'x' }))).toContain('session MCP is not authorized');
+    expect(execution.respond).not.toHaveBeenCalled();
+  });
+
+  it('lets an owner answer a blocker without an expectedStateVersion, but a slot reply still needs one', async () => {
+    const execution = { ...service(), respondToHumanBlockerAsOwner: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', state: 'RUNNING', stateVersion: 9 } })) };
+    const { server, tools, definitions } = fakeServer();
+    registerExecutionTools(server as never, {
+      sessionId: 'thread-1', projectId: 'project-1', service: execution as never,
+      validateRouteIdentity: () => true, validateOwnerRouteIdentity: async () => true
+    });
+    const respond = tools.get('execution.respond')!;
+    expect((await respond({ executionId: 'execution-1', blockerId: 'b1', message: 'Atlas', clientRequestId: 'c1' })).isError).toBeFalsy();
+    expect(execution.respondToHumanBlockerAsOwner).toHaveBeenCalledWith('thread-1', 'project-1', 'execution-1', undefined, 'b1', 'c1', 'Atlas');
+    const noVersionSlot = await respond({ executionId: 'execution-1', slotId: 's', message: 'x' });
+    expect(noVersionSlot.isError).toBe(true);
+    expect(text(noVersionSlot)).toContain('expectedStateVersion is required with slotId');
+    expect(execution.respond).not.toHaveBeenCalled();
+    expect(z.object((definitions.get('execution.respond') as { inputSchema: Record<string, z.ZodTypeAny> }).inputSchema).safeParse({ executionId: 'execution-1', blockerId: 'b1', message: 'x' }).success).toBe(true);
+  });
+
   it('accepts owner start when only the owner-session gate is live', async () => {
     const execution = service();
     const { server, tools } = fakeServer();
@@ -140,7 +219,7 @@ describe('execution MCP tools', () => {
       version: 1, teamId: 'team-1', launchRequestId: 'request-1', slots: [{ initialTask: 'work' }]
     });
     expect(started.isError).toBeFalsy();
-    expect(execution.start).toHaveBeenCalledWith('thread-1', 'project-1', expect.objectContaining({ teamId: 'team-1' }));
+    expect(execution.start).toHaveBeenCalledWith('thread-1', 'project-1', expect.objectContaining({ teamId: 'team-1' }), undefined);
 
     const plan = await tools.get('execution.plan.register')!({
       executionId: 'execution-1', workUnits: [{ id: 'unit-1', title: 'Unit', task: 'Do it', dependencies: [] }]
@@ -169,7 +248,7 @@ describe('execution MCP tools', () => {
     await expect(tools.get('execution.start')!({
       version: 1, teamId: 'team-1', launchRequestId: 'request-1', slots: [{ initialTask: 'work' }], workUnits
     })).resolves.not.toMatchObject({ isError: true });
-    expect(execution.start).toHaveBeenCalledWith('session-1', 'project-1', expect.objectContaining({ workUnits }));
+    expect(execution.start).toHaveBeenCalledWith('session-1', 'project-1', expect.objectContaining({ workUnits }), undefined);
   });
 
   it('rejects work-unit requirement names outside the portable contract bounds', () => {
@@ -243,7 +322,7 @@ describe('execution MCP tools', () => {
     expect(execution.start).toHaveBeenCalledWith('session-1', 'project-1', expect.objectContaining({
       teamId: 'team-1',
       workUnits: [{ id: 'preplanned', title: 'Preplanned', task: 'Use request file plan', dependencies: [], readOnly: true }]
-    }));
+    }), undefined);
   });
 
   it('rejects request files outside user home without reading them', async () => {
@@ -279,7 +358,7 @@ describe('execution MCP tools', () => {
       version: 1, launchKind: 'team', launchDisplay: { label: 'Release execution' }, teamId: 'team-1', launchRequestId: 'request-1', slots: [{ initialTask: 'work' }]
     });
     expect(definitions.get('execution.start')).toMatchObject({ description: expect.not.stringMatching(/Squad|Team/) });
-    expect(execution.start).toHaveBeenCalledWith('session-1', 'project-1', expect.objectContaining({ launchKind: 'team', launchDisplay: { label: 'Release execution' } }));
+    expect(execution.start).toHaveBeenCalledWith('session-1', 'project-1', expect.objectContaining({ launchKind: 'team', launchDisplay: { label: 'Release execution' } }), undefined);
   });
 
   it('redacts either recovery credential independently and forwards optional start policy', async () => {
@@ -300,7 +379,7 @@ describe('execution MCP tools', () => {
       expect(text(result)).not.toContain('resumeToken');
       expect(execution.start).toHaveBeenCalledWith('session-1', 'project-1', expect.objectContaining({
         workflow: { kind: 'dag' }, policy: { deadlineMs: 1_000, maxConcurrent: 2, maxLaunches: 3 }
-      }));
+      }), undefined);
     }
   });
 
@@ -340,13 +419,14 @@ describe('execution MCP tools', () => {
     const execution = service();
     execution.completeWork.mockResolvedValueOnce({ ok: true, value: {
       id: 'execution-1', state: 'RUNNING', deliveries: [], usageObservations: [{ cumulative: { inputTokens: 9 } }], usageBaseline: { inputTokens: 5 },
-      workUnits: [{ id: 'unit-1', structuredResult: { raw: 'secret' } }]
+      workUnits: [{ id: 'unit-1', state: 'COMPLETED', claimGeneration: 2, structuredResult: { raw: 'secret' } }]
     } } as never);
     const binding = { executionId: 'execution-1', projectId: 'project-1', slotId: 'slot-1', role: 'worker' as const };
     const { server, tools } = fakeServer();
     registerExecutionTools(server as never, { sessionId: 'worker', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true, resolveCohortBinding: () => binding });
     const payload = JSON.parse(text(await tools.get('execution.work.complete')!({ executionId: 'execution-1', workUnitId: 'unit-1', result: 'done' })));
-    expect(payload.workUnits[0]).not.toHaveProperty('structuredResult');
+    expect(payload).toMatchObject({ ok: true, workUnitId: 'unit-1', status: 'COMPLETED', claimGeneration: 2 });
+    expect(payload).not.toHaveProperty('workUnits');
     expect(payload).not.toHaveProperty('usageObservations');
     expect(payload).not.toHaveProperty('usageBaseline');
   });
@@ -582,7 +662,7 @@ describe('execution MCP tools', () => {
     await tools.get('execution.list')!({});
     await tools.get('execution.events')!({ executionId: 'execution-1', after: 1 });
     expect(started.isError).toBeFalsy();
-    expect(execution.start).toHaveBeenCalledWith('session-1', 'project-1', expect.objectContaining({ teamId: 'team-1' }));
+    expect(execution.start).toHaveBeenCalledWith('session-1', 'project-1', expect.objectContaining({ teamId: 'team-1' }), undefined);
     expect(execution.list).toHaveBeenCalledWith('session-1', 'project-1');
     expect(execution.events).toHaveBeenCalledWith('session-1', 'project-1', 'execution-1', 1, 100);
     await tools.get('execution.mint_resume_grant')!({ executionId: 'execution-1' });
@@ -726,7 +806,7 @@ describe('execution MCP tools', () => {
     registerExecutionTools(server as never, { sessionId: 'session-1', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true });
     const unit = { id: 'u1', title: 'T', task: 'do', dependencies: [], requires: { skills: ['review'], mcpServers: ['repo'] } };
     await tools.get('execution.start')!({ version: 1, teamId: 'team-1', launchRequestId: 'request-1', slots: [{ initialTask: 'work' }], worktree: true, workUnits: [unit] });
-    expect(execution.start).toHaveBeenLastCalledWith('session-1', 'project-1', expect.objectContaining({ worktree: true, workUnits: [unit] }));
+    expect(execution.start).toHaveBeenLastCalledWith('session-1', 'project-1', expect.objectContaining({ worktree: true, workUnits: [unit] }), undefined);
     await tools.get('execution.start')!({ version: 1, teamId: 'team-1', launchRequestId: 'request-2', slots: [{ initialTask: 'work' }] });
     expect(execution.start.mock.calls.at(-1)![2]).not.toHaveProperty('worktree');
   });

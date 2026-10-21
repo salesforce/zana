@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import type { LaunchProfileId, Persona, Project, Team, TeamJobLaunchResponse, TeamJobRenewedSources } from '@zana-ai/zcc-domain/product';
 import type { ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
 import type { InboxInput } from '@zana-ai/zcc-server/services/inbox/inbox-store';
@@ -93,7 +93,7 @@ export function teamJobFailureResponse(result: FailedLaunch): TeamJobLaunchRespo
 }
 
 export interface ProposalLaunchDeps<P> {
-  beginLaunch(proposalId: string, projectId: string): Promise<{ ok: true; value: { proposal: P } } | { ok: false; code: string; message: string }>;
+  beginLaunch(proposalId: string, projectId: string): Promise<{ ok: true; value: { proposal: P; sourcePaths?: readonly string[] } } | { ok: false; code: string; message: string }>;
   markLaunched(proposalId: string, executionId: string): Promise<void>;
   releaseLaunch(proposalId: string): void;
   logError(context: string, error: unknown): void;
@@ -101,7 +101,7 @@ export interface ProposalLaunchDeps<P> {
 
 /**
  * Hold a proposal for exactly one launch. `start` receives the proposal (undefined for an
- * ordinary launch). Every exit before a Squad starts (a refused source or plan, a failed or
+ * ordinary launch) and the realpaths of the sources the reviewed card listed (empty for an ordinary launch). Every exit before a Squad starts (a refused source or plan, a failed or
  * throwing start) releases the hold so the user can retry at once; a started Squad is
  * recorded and never launched again from the same proposal.
  */
@@ -109,14 +109,14 @@ export async function withProposalLaunch<P>(
   deps: ProposalLaunchDeps<P>,
   proposalId: string | undefined,
   projectId: string,
-  start: (proposal: P | undefined) => Promise<TeamJobLaunchResponse>
+  start: (proposal: P | undefined, reviewedSourcePaths: readonly string[]) => Promise<TeamJobLaunchResponse>
 ): Promise<TeamJobLaunchResponse> {
-  if (proposalId === undefined) return start(undefined);
+  if (proposalId === undefined) return start(undefined, []);
   const begun = await deps.beginLaunch(proposalId, projectId);
   if (!begun.ok) return { ok: false, code: begun.code, message: begun.message } as TeamJobLaunchResponse;
   let launched = false;
   try {
-    const response = await start(begun.value.proposal);
+    const response = await start(begun.value.proposal, begun.value.sourcePaths ?? []);
     if (response.ok) {
       launched = true;
       // The Squad is already running; a ledger failure is logged, never surfaced as a failed launch.
@@ -127,6 +127,33 @@ export async function withProposalLaunch<P>(
   } finally {
     if (!launched) deps.releaseLaunch(proposalId);
   }
+}
+
+/** A goal-named file as discovery reports it; only its realpath matters here. */
+export interface GoalSourceFile { canonicalPath: string }
+
+/**
+ * A proposed launch attaches the files its goal names only when the user saw them. Inside the
+ * Project they are attached as for a manual launch. Outside it, a file must be one the reviewed
+ * card listed (`reviewedPaths`, realpaths), which is already attached through the card's own
+ * source capability: it is kept out of `attach` (attaching it twice is refused) but stays in
+ * `known` so the goal's wording is still redacted. Any other outside file is `refused`: the goal
+ * is agent-written, the file never appeared on the card, and it could even be created after the review.
+ */
+export function splitProposedGoalSources<D extends GoalSourceFile>(
+  descriptors: readonly D[], projectRealPath: string | undefined, reviewedPaths: readonly string[]
+): { attach: D[]; known: D[]; refused?: D } {
+  const reviewed = new Set(reviewedPaths);
+  const attach: D[] = [];
+  const known: D[] = [];
+  for (const descriptor of descriptors) {
+    const rel = projectRealPath === undefined ? undefined : relative(projectRealPath, descriptor.canonicalPath);
+    const inside = rel !== undefined && rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+    if (inside) { attach.push(descriptor); known.push(descriptor); continue; }
+    if (!reviewed.has(descriptor.canonicalPath)) return { attach: [], known: [], refused: descriptor };
+    known.push(descriptor);
+  }
+  return { attach, known };
 }
 
 /** Newest executions first, bounded to 5 pages (Rule 5); a proposal's run is always recent. */

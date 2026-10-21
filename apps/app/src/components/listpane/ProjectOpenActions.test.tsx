@@ -13,6 +13,7 @@ vi.mock('../../store.js', () => ({ useUi: (selector: (state: unknown) => unknown
 
 import { ProjectOpenActions } from './ProjectOpenActions.js';
 import { FocusedProjectMenu } from './FocusedProjectMenu.js';
+import { fileManagerName } from '../../lib/file-manager.js';
 
 const project: Project = { id: 'p1', name: 'Example', path: '/tmp/project with spaces', createdAt: 0, lastActiveAt: 0 };
 const close = vi.fn();
@@ -22,7 +23,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 describe('project open actions', () => {
   it.each([
     ['Open in Cursor', 'cursor'], ['Open in VS Code', 'code'], ['Open in IntelliJ IDEA', 'intellij'],
-    ['Reveal in Finder', 'finder'], ['Open in external Terminal', 'terminal']
+    [`Reveal in ${fileManagerName()}`, 'finder'], ['Open in external Terminal', 'terminal']
   ])('opens the project root with %s and closes the menu', async (label, target) => {
     render(<ProjectOpenActions project={project} onClose={close} />);
     fireEvent.click(screen.getByRole('button', { name: label }));

@@ -52,7 +52,7 @@ test('opening a thread replaces the old inspector so its browser reveal is visib
     const tabId = 'browser:thread-open-preview';
     await execute({ type: 'desktop.browser.create_tab', tabId, url,
       profile: { kind: 'automation', id: 'thread-open-preview' }, presentation: 'hidden' });
-    // A background reveal must keep the current inspector in place.
+    // A background reveal must keep the current inspector in place and wait.
     await execute({ type: 'desktop.browser.reveal_tab', tabId });
     await expect(modal).toHaveAttribute('aria-label', 'Previous inspector');
     expect((await execute({ type: 'desktop.browser.list_tabs' })).tabs).toEqual([
@@ -69,7 +69,7 @@ test('opening a thread replaces the old inspector so its browser reveal is visib
     }, targetId);
     await expect(modal).toHaveAttribute('aria-label', 'Preview owner');
     await expect(window.getByTestId('thread-modal')).toHaveCount(1);
-    await execute({ type: 'desktop.browser.reveal_tab', tabId });
+    // The background reveal waited for its thread, so opening it shows the tab.
     await expect(modal.getByTestId('thread-browser-tab')).toBeVisible();
     await expect(modal.getByTestId('thread-browser-address')).toHaveValue(url);
 

@@ -13,6 +13,7 @@ import {
   openDatabase,
   recoverInterruptedDeferredThreadMessages,
   updateConversationThreadTitle,
+  conversationThreadTitleIsPlaceholder,
   type ZccDatabase
 } from '@zana-ai/zcc-db';
 import { ClaudeCliProvider, LlmService, PromptRegistry } from '@zana-ai/zcc-llm';
@@ -395,11 +396,12 @@ export function createProductHttpContext(
       return llmService.run(entry, vars, dedupeKey);
     },
     applyTitle: (threadId, title) => {
-      const updated = updateConversationThreadTitle(db, threadId, title);
+      const updated = updateConversationThreadTitle(db, threadId, title, 'auto');
       if (!updated) return;
       hub.emit('threads:updated', conversationThreadView(ctx, updated));
     },
-    stillLive: (threadId) => Boolean(getConversationThread(db, threadId))
+    stillLive: (threadId) => Boolean(getConversationThread(db, threadId)),
+    canAutoTitle: (threadId) => conversationThreadTitleIsPlaceholder(db, threadId)
   });
 
   const closeSummary = new CloseSummaryService({

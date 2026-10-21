@@ -37,6 +37,16 @@ const SECTIONS: Section[] = [
     ]
   },
   {
+    title: 'Inbox',
+    rows: [
+      { keys: ['j', 'k'], label: 'Next / previous message' },
+      { keys: ['R'], label: 'Reply to the open message' },
+      { keys: ['⌘', '↵'], label: 'Send the reply' },
+      { keys: ['Esc'], label: 'Leave the reply box and keep reading' },
+      { keys: ['Delete'], label: 'Delete the open message' }
+    ]
+  },
+  {
     title: 'Tabs',
     rows: [
       { keys: ['⌘', 'T'], label: 'New tab (uses project’s default profile)' },

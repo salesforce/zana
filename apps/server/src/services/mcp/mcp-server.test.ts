@@ -32,6 +32,14 @@ describe('matchMcpRoute', () => {
     });
   });
 
+  it('reads the Modern thread route mark, only on a session route', () => {
+    expect(matchMcpRoute('/mcp/proj-1/thread-1/credential?route=thread')).toEqual({
+      projectId: 'proj-1', sessionId: 'thread-1', sessionCredential: 'credential', routeKind: 'thread'
+    });
+    expect(matchMcpRoute('/mcp/proj-1?route=thread')).toEqual({ projectId: 'proj-1' });
+    expect(matchMcpRoute('/mcp/proj-1/sess-A?route=pty')).toEqual({ projectId: 'proj-1', sessionId: 'sess-A' });
+  });
+
   it('url-decodes captured segments', () => {
     expect(matchMcpRoute('/mcp/proj%2F1/sess%20A')).toEqual({
       projectId: 'proj/1',

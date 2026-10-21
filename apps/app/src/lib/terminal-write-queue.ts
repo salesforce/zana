@@ -61,6 +61,8 @@ export function createTerminalWriteQueue(write: Entry['write'], visible: boolean
     },
     setVisible(value: boolean) { entry.visible = value; schedule(); },
     clear,
+    /** Drop a pending omitted-output marker without touching queued text or byte accounting. Call before `setVisible(true)`; `setVisible` only schedules a flush. */
+    clearGap() { if (!entry.stopped) entry.gap = false; },
     /** Run `callback` once everything queued so far has been written (immediately when idle). */
     whenIdle(callback: () => void) {
       if (entry.stopped) return;

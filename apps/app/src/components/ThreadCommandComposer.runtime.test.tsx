@@ -93,7 +93,8 @@ vi.mock('./composer/use-composer-prompt-field.js', () => ({
 }));
 vi.mock('./thread/voice/useVoiceInput.js', () => ({ useVoiceInput: (args: typeof h.voiceArgs) => { h.voiceArgs = args; return h.voice; } }));
 vi.mock('./thread/voice/waveform.js', () => ({ startWaveform: () => () => undefined }));
-vi.mock('../plugins/PluginComposerChrome.js', () => ({ PluginComposerChrome: ({ children }: { children: ReactNode }) => <>{children}</> }));
+vi.mock('../plugins/PluginComposerChrome.js', () => ({ PluginComposerChrome: ({ children, allowCreatePlugin }: { children: ReactNode; allowCreatePlugin?: boolean }) =>
+  <div data-testid="plugin-chrome" data-create-plugin={String(allowCreatePlugin ?? true)}>{children}</div> }));
 vi.mock('../plugins/PluginComposerSlots.js', () => ({ PluginComposerAdvanced: () => null, PluginComposerMeta: () => null }));
 vi.mock('./composer/ComposerPromptField.js', () => ({ ComposerPromptField: () => <div /> }));
 vi.mock('./EnvironmentPicker.js', () => ({ EnvironmentPicker: () => null, defaultWorkspaceChoice: () => ({ kind: 'unmanaged' }) }));
@@ -200,6 +201,35 @@ describe('Modern composer catalogue scope', () => {
     h.threads = [];
     render(composer({ threadId: undefined }));
     expect(h.fieldArgs).toEqual(expect.objectContaining({ projectId: 'p1', projectRoot: '/tmp/project' }));
+  });
+});
+
+describe('Modern composer beside a plugin page', () => {
+  const pluginPanel = { pluginId: 'salesforce', panel: 'salesforce' };
+
+  it('fixes the page project and run target, and drops Create plugin', async () => {
+    h.threads = [];
+    const view = render(composer({ threadId: undefined, pluginPanel }));
+    expect(view.container.querySelector('.thread-command-project')).toBeNull();
+    expect(screen.queryByText('Working folder')).toBeNull();
+    expect(screen.getByTestId('host-action')).toBeTruthy();
+    expect(screen.getByTestId('plugin-chrome').dataset.createPlugin).toBe('false');
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(h.create).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'p1', pluginPanel })));
+  });
+
+  it('keeps the project and run pickers when the page has no project', () => {
+    h.threads = [];
+    const view = render(composer({ threadId: undefined, project: undefined, composerProjectId: 'p1', pluginPanel }));
+    expect(view.container.querySelector('.thread-command-project')).not.toBeNull();
+    expect(screen.getByText('Working folder')).toBeTruthy();
+    expect(screen.getByTestId('plugin-chrome').dataset.createPlugin).toBe('false');
+  });
+
+  it('keeps Create plugin on an ordinary new-thread composer', () => {
+    h.threads = [];
+    render(composer({ threadId: undefined }));
+    expect(screen.getByTestId('plugin-chrome').dataset.createPlugin).toBe('true');
   });
 });
 

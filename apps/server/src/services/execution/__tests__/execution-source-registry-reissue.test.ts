@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdir, mkdtemp, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ExecutionSourceError, createExecutionSourceRegistry } from '../source-registry.js';
@@ -225,5 +225,22 @@ describe('execution source registry reissue', () => {
   it('throws TOO_MANY_SOURCES above maxFiles', async () => fixture(async (dir, clock) => {
     const r = make(dir, clock, { maxFiles: 2 });
     expect(await code(reissue(r, ['a', 'b', 'c']))).toBe('TOO_MANY_SOURCES');
+  }));
+  it('keeps refusing a hard link when renewing a capability issued under a source policy, and only then', async () => fixture(async (dir, clock) => {
+    const project = join(dir, 'project');
+    await mkdir(project);
+    const planned = join(project, 'plan.md');
+    const picked = join(project, 'picked.md');
+    await writeFile(planned, 'plan');
+    await writeFile(picked, 'picked');
+    const r = make(dir, clock);
+    const [fromPolicy] = await issue(r, [planned], { policy: { roots: [project], home: join(dir, 'home') } });
+    const [fromPicker] = await issue(r, [picked]);
+    await resolve(r, [fromPolicy.id, fromPicker.id]);
+    await link(planned, join(dir, 'planned-link.md'));
+    await link(picked, join(dir, 'picked-link.md'));
+    const out = await reissue(r, [fromPolicy.id, fromPicker.id]);
+    expect(out.dropped).toEqual([{ previousId: fromPolicy.id, name: 'plan.md', reason: 'unreadable' }]);
+    expect(out.renewed.map(({ previousId }) => previousId)).toEqual([fromPicker.id]);
   }));
 });

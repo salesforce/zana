@@ -25612,6 +25612,11 @@ button.launch-persona {
   font-size: 12px;
 }
 
+.launch-attachment-outside {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 .launch-attachment-pill button {
   display: inline-flex;
   align-items: center;

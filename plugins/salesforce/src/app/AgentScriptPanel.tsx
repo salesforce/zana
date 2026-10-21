@@ -167,6 +167,7 @@ export function dependencyContext(target: string, kind: string, apiName: string,
   return { path, label: `${basename(path)}${detail}${others ? ` · +${others}` : ''}`, title: [path, ...usedBy.filter(row => row !== path)].join('\n') };
 }
 const SAVE_DEBOUNCE_MS = 150;
+const DISK_POLL_MS = 2500;
 /** Edits reported this soon after an agent reveal come from the reveal, not the person. */
 const OWN_MOVE_MS = 1000;
 
@@ -572,6 +573,22 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playgroundReady, studio.activeTab]);
 
+  const checkingDisk = useRef(false);
+  const checkDisk = useCallback(async () => {
+    const path = activePathRef.current;
+    const draftKey = activeDraft.current;
+    if (!path || !draftKey || checkingDisk.current || saving.current) return;
+    checkingDisk.current = true;
+    const generation = fileEpoch.current;
+    try {
+      const result = (await callPluginRpc(pluginId, 'agentFiles.read', rpcArgs({ path }))) as { ok?: boolean; file?: { content: string; sha256: string } };
+      const file = result?.ok ? result.file : undefined;
+      if (!alive.current || generation !== fileEpoch.current || activePathRef.current !== path || !file || file.sha256 === shaRef.current) return;
+      send.fileChanged({ draftKey, content: file.content, sha256: file.sha256 });
+    } catch { /* the next check retries */ } finally {
+      checkingDisk.current = false;
+    }
+  }, [pluginId, rpcArgs, send]);
   const loadComments = useCallback(async () => {
     const path = activePathRef.current;
     if (!projectId || !path) { setComments([]); return; }
@@ -594,8 +611,24 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     const changed = payload as { projectId?: string; path?: string; kind?: string } | null;
     if (changed?.kind === 'comments' && (!changed.projectId || changed.projectId === projectId)) void loadComments();
     // Fetch latest wrote org files into the project.
-    if (changed?.kind === 'files' && (!changed.projectId || changed.projectId === projectId)) void refreshFiles().catch(() => undefined);
+    if (changed?.kind === 'files' && (!changed.projectId || changed.projectId === projectId)) {
+      void refreshFiles().catch(() => undefined);
+      if (!changed.path || changed.path === activePathRef.current) void checkDisk();
+    }
   });
+  // An agent can write the open file through the Studio or straight to disk: poll while the Studio is in view.
+  useEffect(() => {
+    if (!playgroundReady || !activePath) return;
+    const tick = () => { if (document.visibilityState === 'visible') void checkDisk(); };
+    const timer = window.setInterval(tick, DISK_POLL_MS);
+    window.addEventListener('focus', tick);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', tick);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, [activePath, checkDisk, playgroundReady]);
   useEffect(() => { if (playgroundReady) send.setComments(comments); }, [comments, playgroundReady, send]);
 
   const editorCompact = editorCompactOverride ?? !wide;
@@ -873,7 +906,6 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       pendingProposals.current.delete(message.proposalId);
       if (pendingProposals.current.size === 0) setProposalSource(null);
       setSource(message.content);
-      if (message.outcome !== 'rejected') setDirty(true);
       resolve?.({
         outcome: message.outcome, acceptedHunks: message.acceptedHunks, rejectedHunks: message.rejectedHunks,
         ...(message.sha256 ? { sha256: message.sha256 } : {}), ...(message.note ? { note: message.note } : {})

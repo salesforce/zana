@@ -19,6 +19,8 @@ function setup(over: Partial<SquadProposalNotifierDeps> = {}, current: () => Exe
     getRecord: vi.fn(async () => current()),
     markReported: vi.fn(async () => undefined),
     listUnreported: vi.fn(async () => [] as ExecutionRecord[]),
+    markBlockerReported: vi.fn(async () => undefined),
+    listUnreportedBlockers: vi.fn(async () => [] as ExecutionRecord[]),
     reply: vi.fn(() => true),
     ptyLive: vi.fn(() => true),
     ptyState: vi.fn(() => state),
@@ -200,11 +202,12 @@ describe('onTerminal', () => {
     expect(deps.markReported).toHaveBeenCalledWith('e1', 1);
   });
 
-  it('logs a throwing delivery dep and still marks reported', async () => {
+  it('logs a throwing delivery dep and leaves the run unmarked for boot replay', async () => {
     const { deps, notifier } = setup({ ptyLive: vi.fn(() => { throw new Error('boom'); }) });
     await expect(notifier.onTerminal(record())).resolves.toBeUndefined();
     expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('delivery failed'), expect.any(Error));
-    expect(deps.markReported).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.markReported).not.toHaveBeenCalled();
   });
 
   it('never throws even when getRecord throws', async () => {
@@ -404,11 +407,12 @@ describe('thread proposer', () => {
     expect(deps.markReported).toHaveBeenCalledWith('e1', 1);
   });
 
-  it('logs a failed queue and still marks reported', async () => {
+  it('logs a failed queue and leaves the run unmarked for boot replay', async () => {
     const { deps, notifier } = setup({ queueThreadTurn: vi.fn(async () => ({ ok: false, reason: 'deferred_queue_full' })) }, threadRecord);
     await notifier.onTerminal(threadRecord());
     expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('deferred_queue_full'));
-    expect(deps.markReported).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.markReported).not.toHaveBeenCalled();
   });
 
   it('logs a failure without a reason', async () => {
@@ -438,9 +442,11 @@ describe('onHumanBlocker', () => {
     const { deps, notifier } = setup();
     await notifier.onHumanBlocker(record(), blocker);
     await notifier.onHumanBlocker(record(), blocker);
+    await vi.advanceTimersByTimeAsync(0);
     expect(deps.reply).toHaveBeenCalledOnce();
     expect(deps.reply).toHaveBeenCalledWith('s1', expect.stringContaining('is waiting for an answer in the Inbox: "Which file?"'));
     await notifier.onHumanBlocker(record(), { id: 'b2', question: 'Another?' } as never);
+    await vi.advanceTimersByTimeAsync(0);
     expect(deps.reply).toHaveBeenCalledTimes(2);
     expect(deps.appendInbox).not.toHaveBeenCalled();
     expect(deps.markReported).not.toHaveBeenCalled();
@@ -449,18 +455,22 @@ describe('onHumanBlocker', () => {
   it('forgets an execution\'s blockers once its terminal report is handled', async () => {
     const { deps, notifier } = setup();
     await notifier.onHumanBlocker(record({ state: 'RUNNING' as never }), blocker);
+    await vi.advanceTimersByTimeAsync(0);
     await notifier.onTerminal(record());
+    await vi.advanceTimersByTimeAsync(0);
     await notifier.onHumanBlocker(record({ state: 'RUNNING' as never }), blocker);
+    await vi.advanceTimersByTimeAsync(0);
     expect(deps.reply.mock.calls.filter((call) => String((call as unknown[])[1]).includes('Which file?'))).toHaveLength(2);
   });
 
   it('bounds how many executions it remembers blockers for', async () => {
     const { deps, notifier } = setup();
-    for (let i = 0; i <= 256; i++) await notifier.onHumanBlocker(record({ id: `e${i}` }), blocker);
+    for (let i = 0; i <= 256; i++) { await notifier.onHumanBlocker(record({ id: `e${i}` }), blocker); await vi.advanceTimersByTimeAsync(0); }
     expect(deps.reply).toHaveBeenCalledTimes(257);
     // The oldest execution was forgotten; the newest is still remembered.
     await notifier.onHumanBlocker(record({ id: 'e0' }), blocker);
     await notifier.onHumanBlocker(record({ id: 'e256' }), blocker);
+    await vi.advanceTimersByTimeAsync(0);
     expect(deps.reply).toHaveBeenCalledTimes(258);
   });
 
@@ -468,6 +478,170 @@ describe('onHumanBlocker', () => {
     const { deps, notifier } = setup({ ptyLive: vi.fn(() => { throw new Error('x'); }) });
     await expect(notifier.onHumanBlocker(record(), blocker)).resolves.toBeUndefined();
     expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('blocker report failed'), expect.any(Error));
+  });
+});
+
+describe('blocker report survives a restart', () => {
+  const owner = (over: Partial<ExecutionRecord> = {}) => record({
+    state: 'BLOCKED' as never, proposal: undefined, reportTo: { kind: 'pty', id: 's1', role: 'owner' }, ...over
+  });
+  const blocker = { id: 'b1', question: 'Which file?', resolved: false };
+
+  it('marks a blocker reported once it is delivered', async () => {
+    const { deps, notifier } = setup({}, owner);
+    await notifier.onHumanBlocker(owner(), blocker as never);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.markBlockerReported).toHaveBeenCalledWith('e1', 'b1');
+  });
+
+  it('does not send a blocker the record says was already reported', async () => {
+    const { deps, notifier } = setup({}, owner);
+    await notifier.onHumanBlocker(owner({ reportedBlockerIds: ['b1'] }), blocker as never);
+    expect(deps.reply).not.toHaveBeenCalled();
+    expect(deps.markBlockerReported).not.toHaveBeenCalled();
+  });
+
+  it('boot replay sends an unreported open human blocker and skips coordinator and resolved ones', async () => {
+    const live = owner({ blockers: [blocker, { ...blocker, id: 'b2', audience: 'coordinator' }, { ...blocker, id: 'b3', resolved: true }] as never });
+    const { deps, notifier } = setup({ listUnreportedBlockers: vi.fn(async () => [live]) }, () => live);
+    await notifier.replayUnreported();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.reply).toHaveBeenCalledOnce();
+    expect(String((deps.reply.mock.calls[0] as unknown[])[1])).toContain('blocker b1');
+    expect(deps.markBlockerReported).toHaveBeenCalledOnce();
+    expect(deps.markBlockerReported).toHaveBeenCalledWith('e1', 'b1');
+    // Replaying again in the same process does not send it twice.
+    await notifier.replayUnreported();
+    expect(deps.reply).toHaveBeenCalledOnce();
+  });
+
+  it('does not mark a blocker when a liveness check throws, a thread turn is not queued or the PTY refuses the text', async () => {
+    const throwing = setup({ ptyLive: vi.fn(() => { throw new Error('boom'); }) }, owner);
+    await throwing.notifier.onHumanBlocker(owner(), blocker as never);
+    const refused = setup({ reply: vi.fn(() => false) }, owner);
+    await refused.notifier.onHumanBlocker(owner(), blocker as never);
+    const thread = setup({ queueThreadTurn: vi.fn(async () => ({ ok: false, reason: 'timeout' })) }, owner);
+    await thread.notifier.onHumanBlocker(owner({ reportTo: { kind: 'thread', id: 't1', role: 'owner' } }), blocker as never);
+    const threadThrows = setup({ threadLive: vi.fn(async () => { throw new Error('down'); }) }, owner);
+    await threadThrows.notifier.onHumanBlocker(owner({ reportTo: { kind: 'thread', id: 't1', role: 'owner' } }), blocker as never);
+    await vi.advanceTimersByTimeAsync(0);
+    for (const { deps } of [throwing, refused, thread, threadThrows]) expect(deps.markBlockerReported).not.toHaveBeenCalled();
+  });
+
+  it('does not mark an owner blocker whose conversation is gone, and re-sends it once the target moves', async () => {
+    let live = false;
+    let current = owner();
+    const { deps, notifier } = setup({ ptyLive: vi.fn((id: string) => live || id === 'new') }, () => current);
+    await notifier.onHumanBlocker(owner(), blocker as never);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.markBlockerReported).not.toHaveBeenCalled();
+    // resume_binding moved the target: the service offers the blocker again.
+    current = owner({ reportTo: { kind: 'pty', id: 'new', role: 'owner' } });
+    await notifier.onHumanBlocker(current, blocker as never);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.reply).toHaveBeenCalledWith('new', expect.stringContaining('blocker b1'));
+    expect(deps.markBlockerReported).toHaveBeenCalledWith('e1', 'b1');
+  });
+
+  it('does not mark an owner blocker queued for a PTY that disappears before the text is typed', async () => {
+    let live = true;
+    const { deps, notifier } = setup({ ptyLive: vi.fn(() => live) }, owner);
+    deps.lastInputAt.mockReturnValue(Date.now());
+    await notifier.onHumanBlocker(owner(), blocker as never);
+    live = false;
+    notifier.forget('s1');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.markBlockerReported).not.toHaveBeenCalled();
+  });
+
+  it('drops a queued blocker report that was resolved before it is typed', async () => {
+    let resolved = false;
+    const { deps, notifier } = setup({}, () => owner({ blockers: [{ ...blocker, resolved }] as never }));
+    deps.lastInputAt.mockReturnValue(Date.now());
+    await notifier.onHumanBlocker(owner(), blocker as never);
+    resolved = true;
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(deps.reply).not.toHaveBeenCalled();
+    expect(deps.markBlockerReported).toHaveBeenCalledWith('e1', 'b1');
+  });
+
+  it('re-offers a queued blocker report to the current target when resume_binding moved it while it waited', async () => {
+    let current = owner({ blockers: [blocker] as never });
+    const { deps, notifier } = setup({}, () => current);
+    const typedAt = Date.now();
+    deps.lastInputAt.mockImplementation((id: string) => (id === 's1' ? typedAt : undefined));
+    await notifier.onHumanBlocker(owner(), blocker as never);
+    expect(deps.reply).not.toHaveBeenCalled();
+    // The owner target moves to a fresh session; the old PTY stays live and quiet time passes.
+    current = owner({ reportTo: { kind: 'pty', id: 'new', role: 'owner' }, blockers: [blocker] as never });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(deps.reply).not.toHaveBeenCalledWith('s1', expect.anything());
+    expect(deps.reply).toHaveBeenCalledOnce();
+    expect(deps.reply).toHaveBeenCalledWith('new', expect.stringContaining('blocker b1'));
+    expect(deps.markBlockerReported).toHaveBeenCalledOnce();
+    expect(deps.markBlockerReported).toHaveBeenCalledWith('e1', 'b1');
+  });
+
+  it('does not mark the blocker reported for the old target when it moved and the new one is gone', async () => {
+    let current = owner({ blockers: [blocker] as never });
+    const { deps, notifier } = setup({ ptyLive: vi.fn((id: string) => id === 's1') }, () => current);
+    deps.lastInputAt.mockReturnValue(Date.now());
+    await notifier.onHumanBlocker(owner(), blocker as never);
+    current = owner({ reportTo: { kind: 'pty', id: 'new', role: 'owner' }, blockers: [blocker] as never });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(deps.reply).not.toHaveBeenCalled();
+    expect(deps.markBlockerReported).not.toHaveBeenCalled();
+  });
+
+  it('boot replay skips a record without its own reportTo (written before report-back)', async () => {
+    const legacy = owner({ reportTo: undefined, proposal: { id: 'p', proposerKind: 'pty', proposerId: 's1' } as never, blockers: [blocker] as never });
+    const { deps, notifier } = setup({ listUnreportedBlockers: vi.fn(async () => [legacy]) }, () => legacy);
+    await notifier.replayUnreported();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.reply).not.toHaveBeenCalled();
+    expect(deps.markBlockerReported).not.toHaveBeenCalled();
+  });
+
+  it('marks a blocker whose conversation is gone, for a PTY and for a thread, when the target is a proposer', async () => {
+    const prop = (over: Partial<ExecutionRecord> = {}) => owner({ reportTo: { kind: 'pty', id: 's1', role: 'proposer' }, ...over });
+    const pty = setup({ ptyLive: vi.fn(() => false) }, prop);
+    await pty.notifier.onHumanBlocker(prop(), blocker as never);
+    const thread = setup({ threadLive: vi.fn(async () => false) }, prop);
+    await thread.notifier.onHumanBlocker(prop({ reportTo: { kind: 'thread', id: 't1', role: 'proposer' } }), blocker as never);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(pty.deps.markBlockerReported).toHaveBeenCalledWith('e1', 'b1');
+    expect(thread.deps.markBlockerReported).toHaveBeenCalledWith('e1', 'b1');
+  });
+
+  it('leaves a blocker raised before boot replay to the replay, neither sent nor marked', async () => {
+    const live = owner({ blockers: [blocker] as never });
+    // Giving listUnreported keeps setup() from booting the notifier, so it is not ready yet.
+    const { deps, notifier } = setup({ listUnreported: vi.fn(async () => []), listUnreportedBlockers: vi.fn(async () => [live]) }, () => live);
+    await notifier.onHumanBlocker(live, blocker as never);
+    expect(deps.reply).not.toHaveBeenCalled();
+    expect(deps.markBlockerReported).not.toHaveBeenCalled();
+    await notifier.replayUnreported();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.reply).toHaveBeenCalledOnce();
+    expect(deps.markBlockerReported).toHaveBeenCalledWith('e1', 'b1');
+  });
+
+  it('a failing mark or list is logged and never throws', async () => {
+    const live = owner({ blockers: [blocker] as never });
+    const failing = setup({ markBlockerReported: vi.fn(async () => { throw new Error('disk'); }), listUnreportedBlockers: vi.fn(async () => [live]) }, () => live);
+    await failing.notifier.replayUnreported();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(failing.deps.log).toHaveBeenCalledWith(expect.stringContaining('blocker mark failed'), expect.any(Error));
+    const noList = setup({ listUnreportedBlockers: vi.fn(async () => { throw new Error('x'); }) });
+    await expect(noList.notifier.replayUnreported()).resolves.toBeUndefined();
+    expect(noList.deps.log).toHaveBeenCalledWith(expect.stringContaining('blocker replay list failed'), expect.any(Error));
+  });
+
+  it('a blocker whose delivery throws is logged by the replay loop', async () => {
+    const live = owner({ blockers: [blocker] as never });
+    const { deps, notifier } = setup({ listUnreportedBlockers: vi.fn(async () => [live]), ptyLive: vi.fn(() => { throw new Error('boom'); }) }, () => live);
+    await notifier.replayUnreported();
+    expect(deps.log).toHaveBeenCalled();
   });
 });
 
@@ -495,13 +669,14 @@ describe('replayUnreported', () => {
     expect(deps.markReported).toHaveBeenCalledTimes(3);
   });
 
-  it('treats a throwing liveness check as not live and still posts the Inbox result', async () => {
+  it('leaves a run unreported when the boot liveness check throws (it is not the same as gone)', async () => {
     const thr = record({ proposal: { id: 'r', proposerKind: 'thread', proposerId: 't1' } as never });
     const { deps, notifier } = setup({ listUnreported: vi.fn(async () => [thr]), threadLive: vi.fn(async () => { throw new Error('timeout'); }) }, () => thr);
     await notifier.replayUnreported();
     expect(deps.queueThreadTurn).not.toHaveBeenCalled();
-    expect(deps.appendInbox).toHaveBeenCalledOnce();
-    expect(deps.markReported).toHaveBeenCalledWith('e1', 1);
+    expect(deps.appendInbox).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.markReported).not.toHaveBeenCalled();
   });
 
   it('leaves a run whose worktree effects are still pending for the handler to report', async () => {
@@ -525,9 +700,9 @@ describe('replayUnreported', () => {
     expect(failing.deps.log).toHaveBeenCalledWith(expect.stringContaining('replay list failed'), expect.any(Error));
     const bad = setup({ listUnreported: vi.fn(async () => [record()]), ptyLive: vi.fn(() => { throw new Error('y'); }) });
     await expect(bad.notifier.replayUnreported()).resolves.toBeUndefined();
-    // A throwing liveness probe is logged and treated as not live; the record is still reported.
+    // A throwing liveness probe is logged and the record is left for the next boot.
     expect(bad.deps.log).toHaveBeenCalledWith(expect.stringContaining('replay liveness check failed for e1'), expect.any(Error));
-    expect(bad.deps.markReported).toHaveBeenCalledWith('e1', 1);
+    expect(bad.deps.markReported).not.toHaveBeenCalled();
   });
 });
 
@@ -535,5 +710,65 @@ describe('logging safety', () => {
   it('survives a throwing logger', async () => {
     const { notifier } = setup({ log: vi.fn(() => { throw new Error('log'); }), getRecord: vi.fn(async () => { throw new Error('x'); }) });
     await expect(notifier.onTerminal(record())).resolves.toBeUndefined();
+  });
+});
+
+describe('owner report target (agent-owned execution.start)', () => {
+  const ownerPty = () => record({ proposal: undefined, reportTo: { kind: 'pty', id: 's1', role: 'owner' } } as never);
+  const ownerThread = () => record({ proposal: undefined, reportTo: { kind: 'thread', id: 't1', role: 'owner' } } as never);
+
+  it('types the terminal report into the owner PTY and marks it reported, with no Inbox result entry', async () => {
+    const { deps, notifier } = setup({}, ownerPty);
+    await notifier.onTerminal(ownerPty());
+    expect(deps.reply).toHaveBeenCalledWith('s1', expect.stringContaining('[Squad report] "Ship it" completed'));
+    expect(deps.reply).toHaveBeenCalledWith('s1', expect.stringContaining('Tell the user what it did; execution.snapshot has the details.'));
+    expect(deps.appendInbox).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.markReported).toHaveBeenCalledWith('e1', 1);
+  });
+
+  it('tells the owner how to answer a human blocker itself', async () => {
+    const { deps, notifier } = setup({}, ownerPty);
+    await notifier.onHumanBlocker(ownerPty(), { id: 'b1', question: 'Which file?' } as never);
+    await vi.advanceTimersByTimeAsync(0);
+    const text = String((deps.reply.mock.calls[0] as unknown[])[1]);
+    expect(text).toContain('is waiting for an answer: "Which file?" (execution e1, blocker b1). You own this run: answer with execution.respond');
+    expect(text).not.toContain('do not answer it yourself');
+  });
+
+  it('queues the report into an owner Modern thread', async () => {
+    const { deps, notifier } = setup({}, ownerThread);
+    await notifier.onTerminal(ownerThread());
+    expect(deps.queueThreadTurn).toHaveBeenCalledWith('t1', 'p1', expect.stringContaining('[Squad report]'));
+    expect(deps.appendInbox).not.toHaveBeenCalled();
+  });
+
+  it('prefers reportTo over the legacy proposal and honours the new reported mark', async () => {
+    const both = record({ reportTo: { kind: 'pty', id: 's9', role: 'proposer' } } as never);
+    const { deps, notifier } = setup({}, () => both);
+    await notifier.onTerminal(both);
+    expect(deps.reply).toHaveBeenCalledWith('s9', expect.any(String));
+    expect(deps.appendInbox).toHaveBeenCalledOnce();
+    const done = setup({}, () => record({ reportNoticeVersion: 1 } as never));
+    await done.notifier.onTerminal(record({ reportNoticeVersion: 1 } as never));
+    expect(done.deps.getRecord).not.toHaveBeenCalled();
+  });
+
+  it('logs an owner thread that could not take the report, and leaves the run unmarked for boot replay', async () => {
+    const { deps, notifier } = setup({ queueThreadTurn: vi.fn(async () => ({ ok: false, reason: 'deferred_queue_full' })) }, ownerThread);
+    await notifier.onTerminal(ownerThread());
+    expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('deferred_queue_full'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.markReported).not.toHaveBeenCalled();
+  });
+
+  it('replays an unreported owner run once, to its live owner', async () => {
+    let owned = ownerPty();
+    const markReported = vi.fn(async () => { owned = { ...owned, reportNoticeVersion: 1 }; });
+    const { deps, notifier } = setup({ listUnreported: vi.fn(async () => [owned]), markReported }, () => owned);
+    await notifier.replayUnreported();
+    await notifier.onTerminal(owned);
+    expect(deps.reply).toHaveBeenCalledOnce();
+    expect(deps.appendInbox).not.toHaveBeenCalled();
   });
 });

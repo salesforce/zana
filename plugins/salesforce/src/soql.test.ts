@@ -1,7 +1,32 @@
 import { describe, expect, it } from 'vitest';
-import { applyLimit, inspectSoql, parseSoqlInput } from '../lib/soql.js';
+import { applyLimit, inspectSoql, parseSoqlInput, searchSObjects } from '../lib/soql.js';
 
 describe('soql plans', () => {
+  it('bounds schema previews and honors the requested limit', () => {
+    for (const [limit, expected] of [[undefined, 25], [5.9, 5], [0, 1], [-5, 1], [300, 25], [NaN, 25], [Infinity, 25]]) {
+      expect(parseSoqlInput({ action: 'schema.search', term: 'Account', limit })).toMatchObject({ ok: true, plan: { limit: expected } });
+    }
+  });
+
+  it('ranks exact names, exact labels and prefixes before substring matches without mutating the catalog', () => {
+    const rows = [
+      ...Array.from({ length: 30 }, (_, i) => ({ name: `ns__Account_${i}__c`, label: `Namespace Account ${i}` })),
+      {}, { name: 'Unrelated' }, { label: 'Account history' },
+      { name: 'AccountHistory', label: 'History' },
+      { name: 'Customer__c', label: 'Account' },
+      { name: 'Account', label: 'Customer' },
+    ];
+    const before = [...rows];
+    expect(searchSObjects(rows, 'ACCOUNT', 5)).toEqual([
+      { name: 'Account', label: 'Customer' },
+      { name: 'Customer__c', label: 'Account' },
+      { name: 'AccountHistory', label: 'History' },
+      { name: undefined, label: 'Account history' },
+      rows[0],
+    ]);
+    expect(searchSObjects(rows, 'missing', 25)).toEqual([]);
+    expect(rows).toEqual(before);
+  });
   it('rejects DML and non-query statements', () => {
     expect(inspectSoql('delete from Account').ok).toBe(false);
     expect(inspectSoql('').ok).toBe(false);

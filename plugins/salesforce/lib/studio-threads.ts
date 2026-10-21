@@ -3,7 +3,8 @@
  * the open .agent file, a bounded per-project link store lists the threads that
  * work on it, and thread lifecycle events keep the list fresh.
  */
-import { buildStudioPrompt, MAX_STUDIO_REQUEST_LENGTH, roleForAction, studioActionById } from './studio-agent-actions.js';
+import { randomUUID } from 'node:crypto';
+import { buildStudioContext, buildStudioRequest, MAX_STUDIO_REQUEST_LENGTH, roleForAction, studioActionById } from './studio-agent-actions.js';
 import { isStudioDiagnostics, STUDIO_CHANGED_CHANNEL, STUDIO_RPC, type StudioThreadLink } from './studio-contract.js';
 import { rpcFailure, rpcString, type StudioServerContext } from './studio-server-context.js';
 import { readOpenComments, viewStoreFor } from './studio-view.js';
@@ -89,6 +90,8 @@ export function registerStudioAssistant(studio: StudioServerContext): { linkPane
   const views = viewStoreFor(zcc);
   const projectOf = () => studio.contexts.current()?.projectId ?? '';
   const drafts = new PendingDrafts();
+  // The Studio context each conversation started with, handed back on every launch (a relaunch rebuilds instructions).
+  const briefs = new BoundedMap<string>(MAX_SEEN_PANEL_THREADS);
   const changed = (projectId: string, path?: string) => {
     try { zcc.realtime.publish(STUDIO_CHANGED_CHANNEL, { projectId, ...(path ? { path } : {}), kind: 'threads' }); } catch { /* realtime is best effort */ }
   };
@@ -113,7 +116,8 @@ export function registerStudioAssistant(studio: StudioServerContext): { linkPane
     return {
       projectId, path, action,
       title: `${action ? action.label : 'Agent script'} · ${path.split('/').pop()}`.slice(0, 120),
-      brief: buildStudioPrompt({ path, view: sameFile, action, prompt, comments, diagnostics })
+      request: buildStudioRequest({ path, view: sameFile, action, prompt }),
+      context: buildStudioContext({ path, view: sameFile, action, comments, diagnostics })
     };
   };
 
@@ -122,25 +126,28 @@ export function registerStudioAssistant(studio: StudioServerContext): { linkPane
     if ('failure' in request) return request.failure;
     const { projectId, path, action, title } = request;
     const providerId = rpcString(args, 'providerId');
+    // The thread may launch before spawn returns, so the context is keyed by an id it carries.
+    const briefId = randomUUID();
+    briefs.set(briefId, request.context);
     const thread = await zcc.sdk.threads.spawn({
       projectId,
-      prompt: request.brief,
+      prompt: request.request,
       title,
       ...(providerId ? { providerId } : {}),
       visibility: 'visible',
-      pluginMetadata: { sfAgentPath: path, ...(action ? { action: action.id } : {}) }
+      pluginMetadata: { sfAgentPath: path, sfBriefId: briefId, ...(action ? { action: action.id } : {}) }
     });
     await links.link(projectId, { threadId: thread.id, title, role: roleForAction(action?.id), ...(action ? { action: action.id } : {}), path });
     changed(projectId, path);
     return { ok: true, threadId: thread.id, title };
   });
 
-  // The brief for the side panel's composer: the user picks the harness and sends it there.
+  // The side panel's composer gets the short request; the context joins the conversation the user sends from it.
   studio.registerRpc(STUDIO_RPC.draftAgent, async args => {
     const request = await prepare(args);
     if ('failure' in request) return request.failure;
-    drafts.remember(request.projectId, request.path, { title: request.title, action: request.action?.id });
-    return { ok: true, prompt: request.brief, title: request.title };
+    drafts.remember(request.projectId, request.path, { title: request.title, action: request.action?.id, context: request.context });
+    return { ok: true, prompt: request.request, title: request.title };
   });
 
   studio.registerRpc(STUDIO_RPC.threads, async args => {
@@ -182,16 +189,20 @@ export function registerStudioAssistant(studio: StudioServerContext): { linkPane
   const linkPanelThreads = () => zcc.agents.configure(async ctx => {
     const threadId = ctx.thread?.id ?? ctx.threadId;
     const projectId = ctx.projectId ?? ctx.project?.id;
+    const briefId = (ctx.pluginMetadata as { sfBriefId?: unknown } | undefined)?.sfBriefId;
+    if (threadId && typeof briefId === 'string' && briefs.has(briefId)) { briefs.set(threadId, briefs.get(briefId)!); briefs.delete(briefId); }
+    const brief = (): { instructions?: string } => { const text = threadId ? briefs.get(threadId) : undefined; return text ? { instructions: text } : {}; };
     const path = panelAgentPath(ctx.pluginMetadata);
-    if (!threadId || !projectId || !path || seen.has(threadId)) return {};
+    if (!threadId || !projectId || !path || seen.has(threadId)) return brief();
     seen.add(threadId);
     const draft = drafts.take(projectId, path);
+    if (draft?.context) briefs.set(threadId, draft.context);
     const title = draft?.title || ctx.thread?.title?.trim()?.slice(0, 120) || `Agent script · ${path.split('/').pop()}`;
     try {
       await links.link(projectId, { threadId, title, role: roleForAction(draft?.action), ...(draft?.action ? { action: draft.action } : {}), path });
       changed(projectId, path);
     } catch { /* the list is a convenience; never block the launch */ }
-    return {};
+    return brief();
   });
   return { linkPanelThreads };
 }
@@ -219,23 +230,37 @@ export class BoundedSet {
   }
 }
 
+/** Insertion-ordered map that forgets its oldest entries past `max`. */
+export class BoundedMap<T> {
+  private readonly items = new Map<string, T>();
+  constructor(private readonly max: number) {}
+  has(key: string) { return this.items.has(key); }
+  get(key: string) { return this.items.get(key); }
+  delete(key: string) { this.items.delete(key); }
+  set(key: string, value: T) {
+    this.items.delete(key);
+    this.items.set(key, value);
+    while (this.items.size > this.max) this.items.delete(this.items.keys().next().value as string);
+  }
+}
+
 /**
  * The last draft handed to the side panel per file, so the conversation the user
  * sends from it keeps the action's title and role. Capped and short-lived.
  */
 export class PendingDrafts {
-  private readonly items = new Map<string, { title: string; action?: string; at: number }>();
+  private readonly items = new Map<string, { title: string; action?: string; context?: string; at: number }>();
   constructor(private readonly now: () => number = Date.now) {}
-  remember(projectId: string, path: string, draft: { title: string; action?: string }) {
+  remember(projectId: string, path: string, draft: { title: string; action?: string; context?: string }) {
     const key = `${projectId}\0${path}`;
     this.items.delete(key);
     this.items.set(key, { ...draft, at: this.now() });
     while (this.items.size > MAX_PENDING_DRAFTS) this.items.delete(this.items.keys().next().value as string);
   }
-  take(projectId: string, path: string): { title: string; action?: string } | null {
+  take(projectId: string, path: string): { title: string; action?: string; context?: string } | null {
     const key = `${projectId}\0${path}`;
     const hit = this.items.get(key);
     this.items.delete(key);
-    return hit && this.now() - hit.at <= DRAFT_TTL_MS ? { title: hit.title, ...(hit.action ? { action: hit.action } : {}) } : null;
+    return hit && this.now() - hit.at <= DRAFT_TTL_MS ? { title: hit.title, ...(hit.action ? { action: hit.action } : {}), ...(hit.context ? { context: hit.context } : {}) } : null;
   }
 }

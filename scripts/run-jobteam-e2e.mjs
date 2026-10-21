@@ -9,6 +9,7 @@ process.exitCode = await main([
   'e2e/cli-agent-job-team-run.spec.ts',
   'e2e/modern-owner-job-team-run.spec.ts',
   'e2e/squad-proposal-flow.spec.ts',
+  'e2e/squad-direct-report.spec.ts',
   'e2e/job-team-stuck-worker-reclaim.spec.ts',
   'e2e/job-team-kickoff-churn.spec.ts',
   'e2e/job-team-stopped-worker-recovery.spec.ts',

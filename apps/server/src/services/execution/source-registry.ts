@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import { mkdir, open, realpath, readdir, rm, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve as resolvePath, sep } from 'node:path';
 import { atomicDurableWrite, createSerializedTransactionQueue } from '../harness-routing/storage.js';
+import { allowedLocationsText, sourceRefusal, type SourcePolicy } from './source-policy.js';
 import type { ExecutionSourceCapabilityView, ExecutionSourceSnapshot } from '@zana-ai/zcc-domain/product';
 
 export const EXECUTION_SOURCE_LIMITS = Object.freeze({
@@ -49,6 +50,8 @@ interface Capability {
   issuedAt: number;
   expiresAt: number;
   used: boolean;
+  /** Issued under a source policy: a renewal keeps refusing hard-linked files. */
+  policy: boolean;
 }
 
 interface RetiredCapability {
@@ -60,6 +63,7 @@ interface RetiredCapability {
   representations: string[];
   name: string;
   digest: string;
+  policy: boolean;
   retiredAt: number;
 }
 
@@ -294,7 +298,7 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
     retired.set(capability.id, {
       id: capability.id, windowId: capability.windowId, projectId: capability.projectId, path: capability.path,
       exactPath: capability.exactPath, representations: [...capability.representations], name: capability.name,
-      digest: capability.digest, retiredAt: now()
+      digest: capability.digest, policy: capability.policy, retiredAt: now()
     });
     trimRetired();
   }
@@ -309,26 +313,26 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
     }
   }
 
-  function outsideRoot(real: string, realRoot: string): boolean {
-    const rel = relative(realRoot, real);
-    return rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel);
-  }
+  /** What `issue()` saw when it stat'ed the path: the handle it reads must be that same file. */
+  interface IssuedFile { dev: number; ino: number; policy: boolean }
 
-  async function statAndRead(path: string, afterStat?: (size: number) => void): Promise<{ bytes: Buffer; size: number }> {
+  async function statAndRead(path: string, options: { policy?: boolean; afterStat?: (size: number) => void } = {}): Promise<{ bytes: Buffer; size: number }> {
     const info = await stat(path);
     if (!info.isFile()) throw new ExecutionSourceError('NOT_REGULAR_FILE', 'Execution source must be a regular file');
+    // realpath does not resolve hard links, so `ln ~/.ssh/id_rsa ~/notes.md` passes the path policy.
+    if (options.policy && info.nlink > 1) throw new ExecutionSourceError('UNSUPPORTED_SOURCE', `${basename(path)} is a hard-linked file`);
     if (info.size > limits.maxFileBytes) throw new ExecutionSourceError('SOURCE_TOO_LARGE', `${basename(path)} exceeds per-file limit`);
-    afterStat?.(info.size);
-    const bytes = await boundedRead(path);
+    options.afterStat?.(info.size);
+    const bytes = await boundedRead(path, { dev: info.dev, ino: info.ino, policy: !!options.policy });
     if (bytes.byteLength > limits.maxFileBytes) throw new ExecutionSourceError('SOURCE_TOO_LARGE', `${basename(path)} exceeds per-file limit`);
     return { bytes, size: info.size };
   }
 
-  async function boundedRead(path: string): Promise<Buffer> {
+  async function boundedRead(path: string, issued?: IssuedFile): Promise<Buffer> {
     let timer: NodeJS.Timeout | undefined;
     try {
       return await Promise.race([
-        readBytes ? readBytes(path) : readDescriptorBounded(path, limits.maxFileBytes),
+        readBytes ? readBytes(path) : readDescriptorBounded(path, limits.maxFileBytes, issued),
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(() => reject(new ExecutionSourceError('EXTRACTION_TIMEOUT', 'Execution source read timed out')), readTimeoutMs);
         })
@@ -338,7 +342,7 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
     }
   }
 
-  async function readDescriptorBounded(path: string, maxBytes: number): Promise<Buffer> {
+  async function readDescriptorBounded(path: string, maxBytes: number, issued?: IssuedFile): Promise<Buffer> {
     // Open once (no-follow) and read via the fd, then re-fstat the SAME handle and
     // compare identity/size — this detects a file swapped or resized underneath us
     // during the read without a second open() that could race a replacement.
@@ -346,6 +350,12 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
     try {
       const info = await handle.stat();
       if (!info.isFile()) throw new ExecutionSourceError('NOT_REGULAR_FILE', 'Execution source must be a regular file');
+      if (issued) {
+        // A file renamed over the path after issue() checked it (`ln ~/.ssh/id_rsa /tmp/x && mv /tmp/x ~/notes.md`)
+        // is another inode, and may be a hard link to a secret.
+        if (info.dev !== issued.dev || info.ino !== issued.ino) throw new ExecutionSourceError('SOURCE_CHANGED', 'Execution source changed during read');
+        if (issued.policy && info.nlink > 1) throw new ExecutionSourceError('UNSUPPORTED_SOURCE', `${basename(path)} is a hard-linked file`);
+      }
       // `path` is canonical, so the handle must be the file it names now: a folder on the
       // way swapped for a symlink after the realpath check would have opened another inode.
       // Without openat this narrows the race rather than closing it.
@@ -404,26 +414,23 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
   }
 
   /**
-   * `withinRoot` (optional) confines every source to that directory, checked against the
-   * realpath taken here. `resolve` later requires the same realpath, so a symlink swapped in
-   * after this check cannot redirect the capability outside the root.
+   * `policy` (optional) confines every source to its allowed folders and refuses its protected
+   * ones, checked against the realpath taken here. `resolve` later requires the same realpath,
+   * so a symlink swapped in after this check cannot redirect the capability elsewhere. Picker
+   * selections pass no policy: the user chose the file.
    */
-  async function issue(input: { windowId: number; projectId: string; paths: string[]; withinRoot?: string }): Promise<ExecutionSourceCapabilityView[]> {
+  async function issue(input: { windowId: number; projectId: string; paths: string[]; policy?: SourcePolicy }): Promise<ExecutionSourceCapabilityView[]> {
     pruneCapabilities();
     if (input.paths.length > limits.maxFiles) throw new ExecutionSourceError('TOO_MANY_SOURCES', `Select at most ${limits.maxFiles} execution sources`);
-    let realRoot: string | undefined;
-    if (input.withinRoot !== undefined) {
-      try { realRoot = await realpath(input.withinRoot); } catch { throw new ExecutionSourceError('UNSUPPORTED_SOURCE', 'Execution source root is unavailable'); }
-    }
     const canonical: Array<{ exactPath: string; canonicalPath: string; representations: string[] }> = [];
     for (const exactPath of input.paths) {
       let real: string;
       try { real = await realpath(exactPath); } catch { throw new ExecutionSourceError('SOURCE_CHANGED', 'Selected execution source is unavailable'); }
-      if (realRoot !== undefined) {
-        if (outsideRoot(real, realRoot)) {
-          throw new ExecutionSourceError('UNSUPPORTED_SOURCE', 'Execution source is outside the project');
-        }
-      }
+      // The link walk covers the path as given (a link into a protected file resolves to an allowed realpath).
+      const refusal = input.policy ? await sourceRefusal(exactPath, real, input.policy) : undefined;
+      if (refusal === 'outside') throw new ExecutionSourceError('UNSUPPORTED_SOURCE', `${basename(real)} is outside ${allowedLocationsText(input.policy)}`);
+      if (refusal === 'sensitive') throw new ExecutionSourceError('UNSUPPORTED_SOURCE', `${basename(real)} is in a protected location`);
+      if (refusal === 'links') throw new ExecutionSourceError('UNSUPPORTED_SOURCE', `${basename(real)} is reached through too many links`);
       if (canonical.some(({ canonicalPath }) => canonicalPath === real)) throw new ExecutionSourceError('DUPLICATE_SOURCE', 'Duplicate execution source selected');
       canonical.push({ exactPath, canonicalPath: real, representations: pathRepresentations(exactPath, real) });
     }
@@ -447,14 +454,17 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
       if (capabilities.size >= limits.maxOutstandingCapabilities) {
         throw new ExecutionSourceError('TOO_MANY_SOURCES', 'Too many outstanding execution source capabilities');
       }
-      const { bytes } = await statAndRead(path, (size) => {
-        total += size;
-        if (total > limits.maxTotalBytes) throw new ExecutionSourceError('TOTAL_SOURCE_TOO_LARGE', 'Execution sources exceed total byte limit');
+      const { bytes } = await statAndRead(path, {
+        policy: !!input.policy,
+        afterStat: (size) => {
+          total += size;
+          if (total > limits.maxTotalBytes) throw new ExecutionSourceError('TOTAL_SOURCE_TOO_LARGE', 'Execution sources exceed total byte limit');
+        }
       });
       const issuedAt = now();
       const capability: Capability = {
         id: id(), windowId: input.windowId, projectId: input.projectId, path, exactPath, representations, name: basename(path),
-        byteSize: bytes.byteLength, digest: digest(bytes), issuedAt, expiresAt: issuedAt + ttlMs, used: false
+        byteSize: bytes.byteLength, digest: digest(bytes), issuedAt, expiresAt: issuedAt + ttlMs, used: false, policy: !!input.policy
       };
       capabilities.set(capability.id, capability);
       createdIds.push(capability.id);
@@ -506,7 +516,7 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
           continue;
         }
         if (capabilities.size >= limits.maxOutstandingCapabilities) { drop('unreadable'); continue; }
-        const { bytes } = await statAndRead(record.path);
+        const { bytes } = await statAndRead(record.path, { policy: record.policy });
         const raced = findLive(record.path);
         if (raced) {
           retired.delete(previousId);
@@ -518,7 +528,7 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
         const capability: Capability = {
           id: id(), windowId: input.windowId, projectId: input.projectId, path: record.path, exactPath: record.exactPath,
           representations: [...record.representations], name: record.name, byteSize: bytes.byteLength, digest: digest(bytes),
-          issuedAt, expiresAt: issuedAt + ttlMs, used: false
+          issuedAt, expiresAt: issuedAt + ttlMs, used: false, policy: record.policy
         };
         capabilities.set(capability.id, capability);
         retired.delete(previousId);

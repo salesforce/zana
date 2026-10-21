@@ -112,6 +112,7 @@ function PluginPageSidePanelHost({
         threadId={closable.threadId}
         draft={closable.draft}
         draftProjectId={closable.draftProjectId}
+        projectId={scopeId}
         pluginPanel={{ pluginId, panel: panelPath, ...(view ? { view } : {}) }}
         onCreated={(threadId) => panel.patchTab(tabId, { threadId, draft: undefined, draftProjectId: undefined, draftView: undefined })}
         onOpenConversation={({ id, title }) => {
