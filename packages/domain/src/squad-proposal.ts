@@ -162,11 +162,9 @@ export interface SquadLaunchNowResult {
 
 /** Refusals a Squad start without review adds to the proposal ones. */
 export type SquadLaunchNowErrorCode =
-  | SquadProposalErrorCode | 'LAUNCH_NOW_DISABLED' | 'LAUNCH_REVIEW_REQUIRED' | 'LAUNCH_APPROVAL_UNAVAILABLE'
+  | SquadProposalErrorCode | 'LAUNCH_REVIEW_REQUIRED' | 'LAUNCH_APPROVAL_UNAVAILABLE'
   | 'LAUNCH_IN_PROGRESS' | 'TOO_MANY_LAUNCHES';
 
-export const LAUNCH_NOW_DISABLED_MESSAGE =
-  "Starting a Squad immediately is turned off. Use squad_launch with mode 'review' so the user can Launch it from the Inbox.";
 export const LAUNCH_REVIEW_REQUIRED_MESSAGE =
   "This Squad requires review before launch. Use squad_launch with mode 'review' so the user can Launch it from the Inbox.";
 

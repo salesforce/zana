@@ -41,7 +41,7 @@ describe('squad proposal skills', () => {
     expect(brainstorm).toContain("Call `squad_launch` with `mode: 'review'`");
     expect(inbox).toContain("`squad_launch` with `mode: 'review'`; do not call `execution.start`");
     expect(inbox).toContain('It is the\nlow-level path (explicit slots, work units, policy) and is deprecated for agent\nuse');
-    for (const code of ['LAUNCH_NOW_DISABLED', 'LAUNCH_REVIEW_REQUIRED', 'LAUNCH_IN_PROGRESS', 'TOO_MANY_LAUNCHES']) {
+    for (const code of ['LAUNCH_REVIEW_REQUIRED', 'LAUNCH_IN_PROGRESS', 'TOO_MANY_LAUNCHES']) {
       expect(inbox).toContain(code);
     }
     expect(brainstorm).toContain('LAUNCH_REVIEW_REQUIRED');

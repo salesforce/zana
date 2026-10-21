@@ -326,10 +326,9 @@ Agents launch Squads with the `squad_launch` tool (`mode: 'review'` or `'now'`);
 the low-level path (explicit slots, work units, policy) and is deprecated for
 agent use.
 
-**Launch approval.** Start-now is off by default: turn on `squadLaunchNowEnabled`
-in the instance settings to allow it, otherwise an agent asking for `now` gets
-`LAUNCH_NOW_DISABLED` and falls back to review. Each Squad (Squad editor) and each
-Project (Project settings) also has a **Launch approval** setting. **Review before
+**Launch approval.** The agent picks the mode from what you asked: `now` only
+when you explicitly said to run it now, `review` otherwise. Each Squad (Squad
+editor) and each Project (Project settings) also has a **Launch approval** setting. **Review before
 launch** makes agents propose the run so you press Launch from the Inbox: `now`,
 agent `execution.start` and agent `launch_team` are refused with
 `LAUNCH_REVIEW_REQUIRED`. Review is a floor: if either the Squad or its Project

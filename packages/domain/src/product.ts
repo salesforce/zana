@@ -2541,11 +2541,6 @@ export interface AppConfig {
    * Default on; explicit false provides an operator opt-out.
    */
   teamJobLaunchEnabled?: boolean;
-  /**
-   * Opt-in: lets an agent start a Squad straight away (`squad_launch` with mode
-   * `now`) instead of proposing it for the user to Launch. Only `true` enables.
-   */
-  squadLaunchNowEnabled?: boolean;
   /** Opt-in: route structured work only to cheapest qualified existing Team slot. */
   teamRoutingEnforcementEnabled?: boolean;
   /** Observe expired execution claims and recovery classifications without mutation. */

@@ -6238,7 +6238,6 @@ const squadProposalServiceDeps: SquadProposalServiceDeps = {
   findLaunchedExecution: findExecutionForProposal,
   logError: (context, error) => logMainError(context, error),
   launchNow: {
-    enabled: () => store.getConfig().squadLaunchNowEnabled === true,
     projectLaunchApproval: async (projectId) => (await getAuthoritativeProjectSettings(projectId)).launchApproval,
     squadLaunchReviewRequired: (teamId) => teams.launchReviewRequired(teamId),
     activeOwnedRuns: activeOwnedSquadRuns,

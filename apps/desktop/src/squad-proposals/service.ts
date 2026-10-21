@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { InboxEntry, Persona, Team, TeamJobLaunchResponse } from '@zana-ai/zcc-domain/product';
 import {
-  LAUNCH_NOW_DISABLED_MESSAGE,
   LAUNCH_REVIEW_REQUIRED_MESSAGE,
   SQUAD_PROPOSAL_LIMITS,
   personaCanWriteFiles,
@@ -83,8 +82,6 @@ export interface SquadLaunchNowRequest {
 }
 
 export interface SquadLaunchNowDeps {
-  /** The instance opt-in; only true lets an agent start a Squad without review. */
-  enabled(): boolean;
   /** The Project's launch-approval setting; review here applies whatever the Squad says. */
   projectLaunchApproval(projectId: string): Promise<LaunchApproval | undefined>;
   /** True when any stored record of this Squad id asks for review, so a shadowing file cannot lift it. */
@@ -520,7 +517,9 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
       try {
         if (!deps.enabled()) return fail('DISABLED', 'Squad launches are turned off in Settings.');
         const launchNow = deps.launchNow;
-        if (!launchNow?.enabled()) return fail('LAUNCH_NOW_DISABLED', LAUNCH_NOW_DISABLED_MESSAGE);
+        if (!launchNow) {
+          return fail('LAUNCH_APPROVAL_UNAVAILABLE', 'Starting a Squad immediately is not available here, so the run was not started.');
+        }
         const proposer = await deps.lookupProposer(route.sessionId, route.projectId);
         if (!proposer) return fail('NOT_LIVE', 'This conversation is not live in the project.');
         if (proposer.squadMember) return fail('PROPOSER_IN_SQUAD', 'Members of a running Squad cannot launch a Squad.');

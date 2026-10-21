@@ -81,9 +81,9 @@ Start now only when the user's message explicitly asks to start immediately. Do 
 infer it from urgency or from "go ahead". If unsure, propose and tell the user they
 can say "run it now with X" next time to skip the Inbox.
 
-Start now is off by default (`LAUNCH_NOW_DISABLED`), and a Squad or Project whose
-Launch approval is "Review before launch" refuses it (`LAUNCH_REVIEW_REQUIRED`).
-On either refusal, retry with `mode: 'review'` and tell the user why.
+A Squad or Project whose Launch approval is "Review before launch" refuses start
+now (`LAUNCH_REVIEW_REQUIRED`). On that refusal, retry with `mode: 'review'` and
+tell the user why.
 
 Say which path you took, in one line: "Prepared a Squad launch for your review in
 the Inbox" or "Started X now; I own the run". The user can then catch a misroute.

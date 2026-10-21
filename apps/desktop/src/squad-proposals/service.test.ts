@@ -41,7 +41,6 @@ let slotCount: number;
 let projectOk: boolean;
 let readFails: boolean;
 let enabledFlag: boolean;
-let nowEnabled: boolean;
 const projectLaunchApproval = vi.fn<SquadLaunchNowDeps['projectLaunchApproval']>();
 const activeOwnedRuns = vi.fn<SquadLaunchNowDeps['activeOwnedRuns']>();
 const squadLaunchReviewRequired = vi.fn<NonNullable<SquadLaunchNowDeps['squadLaunchReviewRequired']>>();
@@ -72,7 +71,6 @@ function build() {
     sourceBases: () => ({ home: homeDir, cloneRoot: cloneDir }),
     logError,
     launchNow: {
-      enabled: () => nowEnabled,
       projectLaunchApproval: (...a) => projectLaunchApproval(...a),
       squadLaunchReviewRequired: (...a) => squadLaunchReviewRequired(...a),
       activeOwnedRuns: (...a) => activeOwnedRuns(...a),
@@ -97,7 +95,6 @@ beforeEach(() => {
   clock = 1000;
   ids = 0;
   enabledFlag = true;
-  nowEnabled = true;
   projectLaunchApproval.mockReset().mockResolvedValue(undefined);
   squadLaunchReviewRequired.mockReset().mockReturnValue(false);
   activeOwnedRuns.mockReset().mockResolvedValue(0);
@@ -501,21 +498,17 @@ describe('launchSquadNow', () => {
     expect(appendOnce).not.toHaveBeenCalled();
   };
 
-  it('is off unless the instance setting is on, and checks nothing else first', async () => {
-    nowEnabled = false;
-    lookup = vi.fn(lookup);
-    expect(await now()).toEqual({
-      ok: false, code: 'LAUNCH_NOW_DISABLED',
-      message: "Starting a Squad immediately is turned off. Use squad_launch with mode 'review' so the user can Launch it from the Inbox."
+  it('fails closed when starting immediately is not wired, before any other check', async () => {
+    const lookupSpy = vi.fn();
+    const unwired = createSquadProposalService({ ...({} as SquadProposalServiceDeps), enabled: () => true, lookupProposer: lookupSpy });
+    expect(await unwired.launchSquadNow(route, input)).toEqual({
+      ok: false, code: 'LAUNCH_APPROVAL_UNAVAILABLE',
+      message: 'Starting a Squad immediately is not available here, so the run was not started.'
     });
-    expect(lookup).not.toHaveBeenCalled();
-    expect(resolveSquadPlan).not.toHaveBeenCalled();
-    nothingStarted();
-    const unwired = createSquadProposalService({ ...({} as SquadProposalServiceDeps), enabled: () => true });
-    expect(code(await unwired.launchSquadNow(route, input))).toBe('LAUNCH_NOW_DISABLED');
+    expect(lookupSpy).not.toHaveBeenCalled();
   });
 
-  it('refuses when Team jobs are off, before the setting', async () => {
+  it('refuses when Team jobs are off, before anything else', async () => {
     enabledFlag = false;
     expect(code(await now())).toBe('DISABLED');
     nothingStarted();

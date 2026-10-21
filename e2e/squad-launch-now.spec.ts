@@ -91,7 +91,6 @@ async function inboxEntries(window: Page, projectId: string) {
 async function startLauncher(ctx: JobTeamContext, proposals: Array<{ label: string; input: Record<string, unknown> }>, opts: {
   answerReports?: boolean;
   teamExtra?: Record<string, unknown>;
-  squadLaunchNowEnabled?: boolean;
 }): Promise<string> {
   writeProjectFiles(ctx.projectDir);
   writeFileSync(join(ctx.projectDir, '.e2e-proposal.json'), JSON.stringify({
@@ -99,7 +98,6 @@ async function startLauncher(ctx: JobTeamContext, proposals: Array<{ label: stri
     answerReports: opts.answerReports === true,
     proposals: proposals.map((entry) => ({ ...entry, tool: 'squad_launch' }))
   }));
-  if (opts.squadLaunchNowEnabled) await ctx.window.evaluate(() => window.cc.config.set({ squadLaunchNowEnabled: true }));
   return launchJobTeamCliOwner(ctx, {
     workerQuantity: 2,
     prompt: LAUNCHER_PROMPT,
@@ -117,27 +115,6 @@ test.describe('CLI Agent launcher', () => {
   });
   test.setTimeout(300_000);
 
-  test('refuses mode now with LAUNCH_NOW_DISABLED while the setting is off, and starts nothing', async ({ app }) => {
-    const ctx = createJobTeamContext(app, { tmpPrefix: 'zcc-squad-now-off-' });
-    try {
-      const projectId = await startLauncher(ctx, [{ label: 'off', input: { ...NOW_INPUT } }], {});
-      await expect.poll(() => loggedResult(readCoordinatorLog(ctx), 'propose[off]'), { timeout: 30_000, intervals: [500] }).not.toBeNull();
-      const log = readCoordinatorLog(ctx);
-      expect(loggedResult(log, 'propose[off]')?.ok, log).toBe(false);
-      expect(loggedResult(log, 'propose[off]')?.error).toContain('LAUNCH_NOW_DISABLED');
-      expect(log).not.toContain('snapshot[off]');
-      expect(await boardTitles(ctx.window, projectId)).toEqual([]);
-      expect((await inboxEntries(ctx.window, projectId)).filter((entry) => entry.squadProposal)).toEqual([]);
-      const squadSessions = await ctx.window.evaluate(async (id) =>
-        (await window.cc.terminals.list(id)).filter((session) => !session.title.includes('E2E launch Squad')).length, projectId);
-      expect(squadSessions).toBe(0);
-    } catch (error) {
-      throw jobTeamFailure(ctx, error);
-    } finally {
-      await teardownJobTeam(ctx);
-    }
-  });
-
   test('starts with no click, owns the run, answers its blocker, and a repeat is deduped', async ({ app }) => {
     const ctx = createJobTeamContext(app, { tmpPrefix: 'zcc-squad-now-' });
     const { window } = ctx;
@@ -145,7 +122,7 @@ test.describe('CLI Agent launcher', () => {
       const projectId = await startLauncher(ctx, [
         { label: 'now-1', input: { ...NOW_INPUT } },
         { label: 'now-2', input: { ...NOW_INPUT } }
-      ], { answerReports: true, squadLaunchNowEnabled: true });
+      ], { answerReports: true });
 
       await expect.poll(() => loggedResult(readCoordinatorLog(ctx), 'propose[now-2]'), { timeout: 60_000, intervals: [500] }).not.toBeNull();
       const log = readCoordinatorLog(ctx);
@@ -196,7 +173,7 @@ test.describe('CLI Agent launcher', () => {
       const projectId = await startLauncher(ctx, [
         { label: 'secret', input: { ...NOW_INPUT, sources: [join(home, '.ssh', 'config')] } },
         { label: 'review', input: { ...NOW_INPUT } }
-      ], { squadLaunchNowEnabled: true, teamExtra: { launchApproval: 'review' } });
+      ], { teamExtra: { launchApproval: 'review' } });
       await expect.poll(() => loggedResult(readCoordinatorLog(ctx), 'propose[review]'), { timeout: 60_000, intervals: [500] }).not.toBeNull();
       const log = readCoordinatorLog(ctx);
       expect(loggedResult(log, 'propose[secret]')?.error, log).toMatch(/SOURCE_NOT_ALLOWED: .*protected location/);
@@ -215,7 +192,7 @@ test.describe('CLI Agent launcher', () => {
     const ctx = createJobTeamContext(app, { tmpPrefix: 'zcc-squad-now-gone-' });
     const { window } = ctx;
     try {
-      const projectId = await startLauncher(ctx, [{ label: 'now', input: { ...NOW_INPUT } }], { squadLaunchNowEnabled: true });
+      const projectId = await startLauncher(ctx, [{ label: 'now', input: { ...NOW_INPUT } }], {});
       await expect.poll(() => readCoordinatorLog(ctx), { timeout: 60_000, intervals: [500] }).toMatch(/snapshot\[now\] \{"ok":true/);
       expect(loggedResult(readCoordinatorLog(ctx), 'propose[now]')?.ok).toBe(true);
       const closed = await window.evaluate(async ({ id, prompt }) => {
@@ -240,7 +217,7 @@ test.describe('CLI Agent launcher', () => {
 test.describe('Modern launcher', () => {
   test.use({
     e2e: true,
-    initialConfig: { teamJobLaunchEnabled: true, composerShowAutonomousTeam: true, harnessOpenCodeEnabled: true, sponsorPromptDismissed: true, autoRenameTabs: false, squadLaunchNowEnabled: true },
+    initialConfig: { teamJobLaunchEnabled: true, composerShowAutonomousTeam: true, harnessOpenCodeEnabled: true, sponsorPromptDismissed: true, autoRenameTabs: false },
     // The polyglot fake `opencode` speaks the ACP bridge, so the thread is live with no model call.
     launchEnv: {
       PATH: `${fixtureBin}${delimiter}${process.env.PATH ?? ''}`,
@@ -266,7 +243,7 @@ test.describe('Modern launcher', () => {
     try {
       writeProjectFiles(projectDir);
       await window.evaluate((bin) => window.cc.config.set({
-        teamJobLaunchEnabled: true, sponsorPromptDismissed: true, claudeBinary: bin, harnessOpenCodeEnabled: true, opencodeBinary: undefined, squadLaunchNowEnabled: true
+        teamJobLaunchEnabled: true, sponsorPromptDismissed: true, claudeBinary: bin, harnessOpenCodeEnabled: true, opencodeBinary: undefined
       }), agent.path);
       await window.evaluate(() => window.cc.personas.save({
         id: 'e2e-orchestrator', name: 'E2E Orchestrator', description: 'Durable test coordinator',

@@ -363,7 +363,7 @@ when the user explicitly asks to start now; otherwise hand it to a Squad the
 `squad_launch { teamId, goal, planning?, sources?, title?, summary?, mode }`
 takes `mode: 'review'` (Inbox card, the user presses Launch) or `mode: 'now'`
 (you own the run and get the `[Squad report]`; answer blockers with
-`execution.respond`). `now` is off by default (`LAUNCH_NOW_DISABLED`), and a
+`execution.respond`). A
 Squad or Project with Launch approval "Review before launch" refuses `now`,
 agent `execution.start` and `launch_team` (`LAUNCH_REVIEW_REQUIRED`): use
 `mode: 'review'`. Bounds:

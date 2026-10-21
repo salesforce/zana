@@ -566,9 +566,6 @@ describe('normalizeConfig — catch-up summary flags', () => {
     expect(normalizeConfig({ composerShowAutonomousTeam: false }).composerShowAutonomousTeam).toBe(false);
     expect(normalizeConfig({ teamJobLaunchEnabled: true }).teamJobLaunchEnabled).toBe(true);
     expect(normalizeConfig({ teamJobLaunchEnabled: false }).teamJobLaunchEnabled).toBe(false);
-    expect(normalizeConfig({ squadLaunchNowEnabled: true }).squadLaunchNowEnabled).toBe(true);
-    // @ts-expect-error intentional bad input
-    expect(normalizeConfig({ squadLaunchNowEnabled: 'yes' }).squadLaunchNowEnabled).toBeUndefined();
     // @ts-expect-error intentional bad input
     expect(normalizeConfig({ composerShowCliAgent: 'yes' }).composerShowCliAgent).toBeUndefined();
     // @ts-expect-error intentional bad input

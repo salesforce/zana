@@ -154,7 +154,6 @@ describe('registerSquadProposalTools', () => {
   });
 
   it.each([
-    ['LAUNCH_NOW_DISABLED', 'turned off'],
     ['LAUNCH_REVIEW_REQUIRED', 'requires review'],
     ['LAUNCH_APPROVAL_UNAVAILABLE', 'could not be read'],
     ['LAUNCH_IN_PROGRESS', 'already starting'],
