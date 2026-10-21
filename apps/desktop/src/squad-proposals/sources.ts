@@ -112,6 +112,25 @@ export interface RefusedGoalPath {
   reason: 'policy' | 'outside-project' | 'hard-linked';
 }
 
+const MENTION = /(?:^|[\s(])@((?:[A-Za-z]:[/\\])?[^\s`'"),;:@]+)/g;
+const WINDOWS_DRIVE = /^[A-Za-z]:[/\\]/;
+
+/**
+ * The `@path` mentions in a goal, as the composer writes a dropped, picked or typeahead file:
+ * relative inside the project, absolute (POSIX or a Windows drive) outside it. A relative one is
+ * resolved against `projectRoot`, and skipped without one. One tokenizer for Launch's goal-source
+ * discovery and the proposal check, so both see the same files.
+ */
+export function goalMentionPaths(goal: string, projectRoot?: string): string[] {
+  const paths: string[] = [];
+  for (const m of goal.matchAll(MENTION)) {
+    const path = m[1]!;
+    if (isAbsolute(path) || WINDOWS_DRIVE.test(path)) paths.push(path);
+    else if (projectRoot) paths.push(resolve(projectRoot, path));
+  }
+  return paths;
+}
+
 /**
  * The absolute paths a goal names, cleaned of quotes and trailing punctuation, in order. Same
  * token rules as the host's goal-source discovery (`goalExecutionSourcePaths`): an `@path`
@@ -121,11 +140,7 @@ export function goalPathTokens(goal: string, projectRoot?: string): string[] {
   const raw: string[] = [];
   for (const m of goal.matchAll(/["'`]((?:[A-Za-z]:[/\\]|\/)[^"'`]+)["'`]/g)) if (m[1]) raw.push(m[1]);
   for (const m of goal.matchAll(/(?:^|[\s(])((?:[A-Za-z]:[/\\]|\/)[^\s`'"),;:]+)/g)) if (m[1]) raw.push(m[1]);
-  for (const m of goal.matchAll(/(?:^|[\s(])@([^\s`'"),;:@]+)/g)) {
-    if (!m[1]) continue;
-    if (isAbsolute(m[1])) raw.push(m[1]);
-    else if (projectRoot) raw.push(resolve(projectRoot, m[1]));
-  }
+  raw.push(...goalMentionPaths(goal, projectRoot));
   return raw.map((token) => token.trim().replace(/^[`'"(]+|[`'"),;:]+$/g, ''));
 }
 

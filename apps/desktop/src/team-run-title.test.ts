@@ -14,14 +14,14 @@ describe('teamRunNamerInput', () => {
     expect(teamRunNamerInput('Ship the export button @plan.md', ['# Other']).fallbackTitle).toBe('Ship the export button');
   });
 
-  it('caps the excerpt and skips empty sources', () => {
+  it('caps the excerpt and skips empty or unredactable sources', () => {
     const long = `# Big\n${'x'.repeat(TEAM_NAMER_SOURCE_EXCERPT_CHARS * 2)}`;
-    const { prompt } = teamRunNamerInput('@big.md', ['  ', long]);
+    const { prompt } = teamRunNamerInput('@big.md', [undefined, '  ', long]);
     expect(prompt).toBe(`@big.md\n\nAttached plan:\n${long.slice(0, TEAM_NAMER_SOURCE_EXCERPT_CHARS)}`);
   });
 
   it('leaves a goal without sources unchanged and never puts a path in the fallback', () => {
-    expect(teamRunNamerInput('Fix login redirect', [])).toEqual({ prompt: 'Fix login redirect', fallbackTitle: 'Fix login redirect' });
+    expect(teamRunNamerInput('Fix login redirect')).toEqual({ prompt: 'Fix login redirect', fallbackTitle: 'Fix login redirect' });
     expect(teamRunNamerInput('@/Users/alice/plan.md', ['no heading here']).fallbackTitle).toBe('Team run');
     expect(teamRunNamerInput('@x.md', ['# Read /Users/alice/secret.md']).fallbackTitle).toBe('Read');
   });

@@ -145,7 +145,7 @@ function setup(script: Script) {
   });
 
   const inferred = createInferredPlanCorrection({
-    reviewInvalid: (ctx, reason) => correction.reviewInvalid(ctx, reason),
+    reviewInvalid: (ctx) => correction.reviewInvalid(ctx),
     begin: (executionId, reason, unattended) => correction.begin(executionId, reason, unattended)
   });
   const handoff: TeamPlanHandoff = new TeamPlanHandoff({

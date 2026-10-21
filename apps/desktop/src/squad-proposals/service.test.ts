@@ -7,7 +7,7 @@ import type { Persona, Team } from '@zana-ai/zcc-domain/product';
 import { ExecutionSourceError } from '@zana-ai/zcc-server/services/execution/source-registry';
 import { InboxActionOperatorError } from '../inbox-actions/registry.js';
 import { createSquadProposalStore } from './store.js';
-import { confineSource, goalPathNotAllowed, goalPathTokens, sourceScope, type SquadProposalFs, type SquadSourceScope } from './sources.js';
+import { confineSource, goalMentionPaths, goalPathNotAllowed, goalPathTokens, sourceScope, type SquadProposalFs, type SquadSourceScope } from './sources.js';
 import {
   SQUAD_LAUNCH_PROPOSAL_ACTION,
   createSquadProposalService,
@@ -866,6 +866,13 @@ describe('goal paths and the reviewed card', () => {
   it('reads @mentions like the host: absolute always, relative only against a project root', () => {
     expect(goalPathTokens('Run @/v/plan.md and (@docs/a.md).')).toEqual(['/v/plan.md']);
     expect(goalPathTokens('Run @/v/plan.md and (@docs/a.md).', '/p')).toEqual(['/v/plan.md', '/p/docs/a.md']);
+  });
+
+  it('reads an absolute Windows @mention whole, drive colon included', () => {
+    const goal = 'Run @C:\\plans\\plan.md, @D:/x/y.md and @C';
+    expect(goalMentionPaths(goal)).toEqual(['C:\\plans\\plan.md', 'D:/x/y.md']);
+    expect(goalMentionPaths(goal, '/p')).toEqual(['C:\\plans\\plan.md', 'D:/x/y.md', '/p/C']);
+    expect(goalPathTokens(goal)).toEqual(['C:\\plans\\plan.md', 'D:/x/y.md']);
   });
 
   it('judges a relative @mention against the Project: inside passes, an escape is refused', async () => {

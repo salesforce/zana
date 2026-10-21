@@ -303,6 +303,8 @@ export interface PlanHandoffDeps {
   nudge(sessionId: string, text: string): void;
   cleanup(projectRoot: string, executionId: string): Promise<void>;
   logError(message: string, error: unknown): void;
+  /** Expected, non-error events worth a trace (a plan registered after normalization). */
+  logInfo?(message: string, detail: string): void;
   /** Nudges allowed before deferring to the plan-readiness watchdog. Default 2. */
   maxNudges?: number;
 }
@@ -362,7 +364,7 @@ export class TeamPlanHandoff {
           entry.done = true;
           // Repairs never gate registration, but they must not be silent either.
           if (accepted.normalizations?.length) {
-            this.deps.logError(
+            this.deps.logInfo?.(
               `team plan handoff ${ctx.executionId}: registered plan after normalizing`,
               accepted.normalizations.join('; ')
             );

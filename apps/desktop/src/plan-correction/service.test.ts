@@ -384,10 +384,10 @@ describe('PlanCorrectionService', () => {
     expect(appendInbox).toHaveBeenCalledOnce();
 
     for (let edge = 1; edge < PLAN_CORRECTION_STALL_IDLE_EDGES; edge += 1) {
-      await expect(service.reviewInvalid(ctx, 'mutating work unit requires file scope')).resolves.toBe('wait');
+      await expect(service.reviewInvalid(ctx)).resolves.toBe('wait');
       expect(appendInbox).toHaveBeenCalledOnce();
     }
-    await expect(service.reviewInvalid(ctx, 'mutating work unit requires file scope')).resolves.toBe('wait');
+    await expect(service.reviewInvalid(ctx)).resolves.toBe('wait');
 
     expect(appendInbox).toHaveBeenCalledTimes(2);
     expect(appendInbox.mock.calls[1]![0].comments).toContain('without writing a corrected plan');
@@ -400,10 +400,10 @@ describe('PlanCorrectionService', () => {
     await service.begin(ctx.executionId, 'bad plan', false);
     await service.review(ctx, { status: 'invalid', reason: 'bad' });
     await service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction));
-    await service.reviewInvalid(ctx, 'bad plan');
+    await service.reviewInvalid(ctx);
 
     readCorrectedPlan.mockResolvedValue(source);
-    await service.reviewInvalid(ctx, 'bad plan');
+    await service.reviewInvalid(ctx);
     expect(appendInbox).toHaveBeenCalledTimes(2);
     expect(appendInbox.mock.calls[1]![0].comments).not.toContain('without writing');
     expect(latestOffer(bindInboxAction).digest).not.toBe('');
@@ -415,14 +415,14 @@ describe('PlanCorrectionService', () => {
     await service.begin(ctx.executionId, 'bad plan', false);
     await service.review(ctx, { status: 'invalid', reason: 'bad' });
     await service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction));
-    await service.reviewInvalid(ctx, 'bad plan');
+    await service.reviewInvalid(ctx);
     readCorrectedPlan.mockResolvedValue(source);
-    await service.reviewInvalid(ctx, 'bad plan');
+    await service.reviewInvalid(ctx);
     await service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction));
     readCorrectedPlan.mockResolvedValue({ status: 'missing' });
     const before = appendInbox.mock.calls.length;
 
-    await service.reviewInvalid(ctx, 'bad plan');
+    await service.reviewInvalid(ctx);
     expect(appendInbox).toHaveBeenCalledTimes(before);
   });
 
@@ -460,7 +460,7 @@ describe('PlanCorrectionService', () => {
     readCorrectedPlan.mockResolvedValue({ status: 'missing' });
     await service.begin(ctx.executionId, 'bad plan', false);
 
-    await expect(service.reviewInvalid(ctx, 'bad plan')).resolves.toBe('wait');
+    await expect(service.reviewInvalid(ctx)).resolves.toBe('wait');
     expect(nudge).not.toHaveBeenCalled();
     expect(appendInbox).toHaveBeenCalledOnce();
   });
@@ -470,7 +470,7 @@ describe('PlanCorrectionService', () => {
     readCorrectedPlan.mockResolvedValue({ status: 'invalid', reason: 'missing Write scope' });
     await service.begin(ctx.executionId, 'bad plan', false);
 
-    await expect(service.reviewInvalid(ctx, 'bad plan')).resolves.toBe('wait');
+    await expect(service.reviewInvalid(ctx)).resolves.toBe('wait');
 
     expect(nudge).not.toHaveBeenCalled();
     expect(appendInbox).toHaveBeenCalledOnce();
@@ -665,23 +665,23 @@ describe('PlanCorrectionService', () => {
 
   it('leaves non-correction invalid plans to normal handoff nudges', async () => {
     const { service } = create();
-    await expect(service.reviewInvalid(ctx, 'missing verification')).resolves.toBeUndefined();
+    await expect(service.reviewInvalid(ctx)).resolves.toBeUndefined();
   });
 
   it('reads corrected plan for invalid authored handoff and retains its pending offer', async () => {
     const { service, appendInbox, records } = create();
     await service.begin(ctx.executionId, 'bad plan', false);
-    expect(await service.reviewInvalid(ctx, 'authored plan is invalid')).toBe('wait');
+    expect(await service.reviewInvalid(ctx)).toBe('wait');
     const pending = records.get(ctx.executionId);
     expect(appendInbox).toHaveBeenCalledOnce();
     expect(pending).toMatchObject({ status: 'pending', offeredUnits: source.units });
-    // The card names the launch defect, not the handoff's "no plan file found" reason.
+    // The card names the launch defect recorded by begin().
     expect(pending.reason).toBe('bad plan');
     expect(appendInbox.mock.calls[0]![0].comments).toContain('Problem with the supplied plan: bad plan');
     expect(appendInbox.mock.calls[0]![0].comments).not.toContain('authored plan is invalid');
     expect(appendInbox.mock.calls[0]![0].decisionGuidance).toMatchObject({ diagnostic: 'bad plan' });
 
-    expect(await service.reviewInvalid(ctx, 'still invalid')).toBe('wait');
+    expect(await service.reviewInvalid(ctx)).toBe('wait');
     expect(appendInbox).toHaveBeenCalledOnce();
     expect(records.get(ctx.executionId)).toMatchObject({
       status: 'pending', offeredDigest: pending.offeredDigest, offeredActionId: pending.offeredActionId

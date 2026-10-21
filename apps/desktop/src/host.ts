@@ -296,6 +296,7 @@ import { personaCanWriteFiles, type SquadProposalInput } from '@zana-ai/zcc-doma
 import { createSquadProposalStore } from './squad-proposals/store.js';
 import { createSquadProposalService, SQUAD_LAUNCH_PROPOSAL_ACTION, type SquadProposalServiceDeps } from './squad-proposals/service.js';
 import { createSquadProposalNotifier } from './squad-proposals/notifier.js';
+import { goalMentionPaths } from './squad-proposals/sources.js';
 import { parseSshConfig } from '@zana-ai/zcc-server/services/projects/ssh-config';
 import {
   SshHostProviderRegistry,
@@ -563,6 +564,11 @@ function e2eTimingOverrideMs(name: string): number | undefined {
 // claimDock + the dock-icon guard).
 if (E2E_LAUNCH && process.platform === 'darwin') {
   app.setActivationPolicy('accessory');
+}
+
+export function logMainInfo(context: string, message: string) {
+  testTap.recordLog('info', context, message);
+  console.info(`[main] ${context}: ${message}`);
 }
 
 export function logMainError(context: string, err: unknown) {
@@ -2097,7 +2103,7 @@ function fireTabNamer(sessionId: string, text: string): void {
   });
 }
 
-async function nameTeamExecution(launchId: string, objective: string, explicitTitle?: string, sourceTexts: readonly string[] = []): Promise<string> {
+async function nameTeamExecution(launchId: string, objective: string, explicitTitle?: string, sourceTexts?: readonly (string | undefined)[]): Promise<string> {
   const { prompt, fallbackTitle: fallback } = teamRunNamerInput(objective, sourceTexts);
   const title = await resolveNamedTitle({
     id: launchId,
@@ -4869,9 +4875,7 @@ export async function goalExecutionSourcePaths(
   }
   // 3. `@path` mentions, as the composer writes a dropped, picked or typeahead file:
   // project-relative inside the project, absolute outside it. Same policy checks below.
-  for (const m of goal.matchAll(/(?:^|[\s(])@([^\s`'"),;:@]+)/g)) {
-    if (m[1]) rawCandidates.push(isAbsolute(m[1]) ? m[1] : resolve(home, m[1]));
-  }
+  rawCandidates.push(...goalMentionPaths(goal, home));
   for (const match of rawCandidates) {
     const raw = match.trim().replace(/^[`'"(]+|[`'"),;:]+$/g, '');
     const candidates = [raw];
@@ -6316,7 +6320,8 @@ teamPlanHandoff = new TeamPlanHandoff({
   },
   nudge: (sessionId, text) => ptys.reply(sessionId, text),
   cleanup: (projectRoot, executionId) => cleanupHandoffFiles(projectRoot, executionId),
-  logError: (message, error) => logMainError(message, error)
+  logError: (message, error) => logMainError(message, error),
+  logInfo: logMainInfo
 });
 const squadSessionExit = {
   executionStore,
@@ -6556,7 +6561,7 @@ async function buildTeamJobStartRequest(args: {
   if (planRefusal) return { ok: false, response: planRefusal };
   const sanitizedJobTitle = await nameTeamExecution(
     launchRequestId, sanitizedGoal, sanitizedExplicitTitle,
-    (sourceBundle?.sources ?? []).map((source) => redactCapturedExecutionSourcePaths(source.extractedText, capturedPathDescriptors) ?? '')
+    sourceBundle?.sources.map((source) => redactCapturedExecutionSourcePaths(source.extractedText, capturedPathDescriptors))
   );
   const sharedTask = [
     `Shared job goal: ${sanitizedGoal}`,

@@ -318,18 +318,55 @@ function canonicalizeLabels(
   return { ok: true, labels };
 }
 
-/** Map one executable-step block onto a work unit, or explain why it is invalid. */
-function parseStep(block: PlanStepBlock): StepParse {
-  const headingText = stripInlineComment(block.heading);
+type Failure = { ok: false; reason: string };
+
+/** `id: title` from a step heading, with the id normalized (a rename is noted). */
+function parseStepHeading(
+  heading: string,
+  normalizations: string[]
+): { ok: true; rawId: string; id: string; title: string } | Failure {
+  const headingText = stripInlineComment(heading);
   const colon = headingText.indexOf(':');
   if (colon <= 0) return { ok: false, reason: `step heading missing "id: title": ${headingText}` };
   const rawId = headingText.slice(0, colon).trim();
   const title = headingText.slice(colon + 1).trim();
   const id = normalizeStepId(rawId);
   if (!STEP_ID.test(id)) return { ok: false, reason: `invalid step id: ${rawId}` };
-  const normalizations: string[] = [];
   if (id !== rawId) normalizations.push(`step "${rawId}" id normalized to "${id}"`);
   if (!title) return { ok: false, reason: `step ${id} missing title` };
+  return { ok: true, rawId, id, title };
+}
+
+/** `Depends on` references, each normalized like a step id when that makes it valid. */
+function parseDependencies(value: string | undefined, id: string, normalizations: string[]): string[] {
+  return parseList(value ?? 'None').map((reference) => {
+    const normalized = normalizeStepId(reference);
+    // An unrepairable reference stays as written; the DAG check names it missing.
+    if (normalized === reference || !STEP_ID.test(normalized)) return reference;
+    normalizations.push(`step ${id} dependency "${reference}" normalized to "${normalized}"`);
+    return normalized;
+  });
+}
+
+/** The routing level an `Execution class` pins; an unknown class fails rather than silently routing at any level. */
+function parseExecutionClass(value: string | undefined, id: string): { ok: true; minimumLevel?: 'low' | 'medium' | 'high' } | Failure {
+  // Coordinators write sentence-style values (`Routine.`); only the first line
+  // names the class, so continuation prose beneath it cannot fail the lookup.
+  const raw = stripSentencePeriod((value ?? '').split('\n')[0]);
+  const executionClass = raw.toLowerCase();
+  if (!executionClass) return { ok: true };
+  if (!Object.hasOwn(EXECUTION_CLASS_LEVEL, executionClass)) {
+    return { ok: false, reason: `step ${id}: could not pin minimumLevel for execution class "${raw}" (expected Routine, Standard, or Expert)` };
+  }
+  return { ok: true, minimumLevel: EXECUTION_CLASS_LEVEL[executionClass] };
+}
+
+/** Map one executable-step block onto a work unit, or explain why it is invalid. */
+function parseStep(block: PlanStepBlock): StepParse {
+  const normalizations: string[] = [];
+  const heading = parseStepHeading(block.heading, normalizations);
+  if (!heading.ok) return heading;
+  const { rawId, id, title } = heading;
 
   const canonical = canonicalizeLabels(parseStepLabels(block.body), id, normalizations);
   if (!canonical.ok) return canonical;
@@ -337,50 +374,39 @@ function parseStep(block: PlanStepBlock): StepParse {
 
   const task = labels.get('work');
   if (!task) return { ok: false, reason: `step ${id} missing Work` };
+  const dependencies = parseDependencies(labels.get('depends on'), id, normalizations);
+  const executionClass = parseExecutionClass(labels.get('execution class'), id);
+  if (!executionClass.ok) return executionClass;
+  const parsedRequires = parseRequires(labels.get('requires') ?? '', id);
+  if (!parsedRequires.ok) return parsedRequires;
+  return { ok: true, rawId, normalizations, unit: buildWorkUnit(id, title, task, dependencies, labels, executionClass.minimumLevel, parsedRequires.requires) };
+}
 
-  const dependencies = parseList(labels.get('depends on') ?? 'None').map((reference) => {
-    const normalized = normalizeStepId(reference);
-    // An unrepairable reference stays as written; the DAG check names it missing.
-    if (normalized === reference || !STEP_ID.test(normalized)) return reference;
-    normalizations.push(`step ${id} dependency "${reference}" normalized to "${normalized}"`);
-    return normalized;
-  });
+function buildWorkUnit(
+  id: string,
+  title: string,
+  task: string,
+  dependencies: string[],
+  labels: Map<string, string>,
+  minimumLevel: 'low' | 'medium' | 'high' | undefined,
+  requires: ExecutionWorkUnitInput['requires'] | undefined
+): ExecutionWorkUnitInput {
   const files = parseList(labels.get('write scope') ?? 'None');
   const verificationText = labels.get('verification');
   const readOnly = /read[-\s]?only/i.test(labels.get('mode') ?? '');
-  // Coordinators write sentence-style values (`Routine.`); only the first line
-  // names the class, so continuation prose beneath it cannot fail the lookup.
-  const executionClassRaw = stripSentencePeriod((labels.get('execution class') ?? '').split('\n')[0]);
-  const executionClass = executionClassRaw.toLowerCase();
-  if (executionClass && !Object.hasOwn(EXECUTION_CLASS_LEVEL, executionClass)) {
-    return {
-      ok: false,
-      reason: `step ${id}: could not pin minimumLevel for execution class "${executionClassRaw}" (expected Routine, Standard, or Expert)`
-    };
-  }
-  const minimumLevel = executionClass ? EXECUTION_CLASS_LEVEL[executionClass] : undefined;
   const requiredRole = stripBackticks(labels.get('required role') ?? '');
-  const parsedRequires = parseRequires(labels.get('requires') ?? '', id);
-  if (!parsedRequires.ok) return parsedRequires;
-  const requires = parsedRequires.requires;
-
   return {
-    ok: true,
-    rawId,
-    normalizations,
-    unit: {
-      id,
-      title,
-      task,
-      dependencies,
-      ...(files.length ? { files } : {}),
-      ...(verificationText ? { verification: [verificationText] } : {}),
-      ...(readOnly ? { readOnly: true } : {}),
-      ...(minimumLevel || requiredRole
-        ? { routing: { version: 1, ...(minimumLevel ? { minimumLevel } : {}), ...(requiredRole ? { requiredRole } : {}) } }
-        : {}),
-      ...(requires ? { requires } : {})
-    }
+    id,
+    title,
+    task,
+    dependencies,
+    ...(files.length ? { files } : {}),
+    ...(verificationText ? { verification: [verificationText] } : {}),
+    ...(readOnly ? { readOnly: true } : {}),
+    ...(minimumLevel || requiredRole
+      ? { routing: { version: 1, ...(minimumLevel ? { minimumLevel } : {}), ...(requiredRole ? { requiredRole } : {}) } }
+      : {}),
+    ...(requires ? { requires } : {})
   };
 }
 

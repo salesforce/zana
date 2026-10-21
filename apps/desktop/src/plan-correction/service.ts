@@ -137,16 +137,18 @@ export class PlanCorrectionService {
     });
   }
 
-  async reviewInvalid(ctx: CoordinatorHandoffContext, _reason: string): Promise<Extract<AuthoredPlanRead, { status: 'ok' }> | 'wait' | 'reject' | undefined> {
+  /**
+   * Review a corrected plan for a run parked by begin(). The handoff's own invalid-plan reason is
+   * not taken: it only says no authored plan was found (a parked coordinator never writes one),
+   * and the card must keep naming the launch defect begin() recorded.
+   */
+  async reviewInvalid(ctx: CoordinatorHandoffContext): Promise<Extract<AuthoredPlanRead, { status: 'ok' }> | 'wait' | 'reject' | undefined> {
     return this.serialize(ctx.executionId, async () => {
       const current = await this.deps.store.get(ctx.executionId);
       // This invalid plan is not a rejected provided plan. Let normal handoff
       // nudges recover inferred or coordinator-authored plans.
       if (!current) return undefined;
       current.ctx = ctx;
-      // Keep the launch defect from begin(). `_reason` only says why the handoff found
-      // no authored plan (a parked coordinator never writes one), not what is wrong
-      // with the supplied plan.
       const corrected = await this.deps.readCorrectedPlan(ctx.projectRoot, ctx.executionId);
       return this.reviewCorrected(current, corrected);
     });

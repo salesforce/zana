@@ -11,8 +11,8 @@ const MENTION = /(^|[\s(])@[^\s`'"),;:@]+/g;
  * The first attached source's opening text goes with the goal, and its first heading is the
  * fallback when the goal has no words of its own.
  */
-export function teamRunNamerInput(goal: string, sourceTexts: readonly string[]): { prompt: string; fallbackTitle: string } {
-  const source = sourceTexts.find((text) => text.trim())?.trim() ?? '';
+export function teamRunNamerInput(goal: string, sourceTexts: readonly (string | undefined)[] = []): { prompt: string; fallbackTitle: string } {
+  const source = sourceTexts.find((text) => text?.trim())?.trim() ?? '';
   const excerpt = source.slice(0, TEAM_NAMER_SOURCE_EXCERPT_CHARS);
   const heading = /^#{1,6}[ \t]+(.+?)[ \t#]*$/m.exec(source)?.[1] ?? '';
   return {

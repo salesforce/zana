@@ -356,7 +356,7 @@ describe('TeamPlanHandoff.onCoordinatorIdle', () => {
       isPlanless: async () => true,
       readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/root/.zana/authored.md' }),
       review: (handoffCtx, read) => correction.review(handoffCtx, read),
-      reviewInvalid: (handoffCtx, reason) => correction.reviewInvalid(handoffCtx, reason),
+      reviewInvalid: (handoffCtx) => correction.reviewInvalid(handoffCtx),
       register,
       nudge,
       cleanup: async () => {},
@@ -404,7 +404,7 @@ describe('TeamPlanHandoff.onCoordinatorIdle', () => {
     handoff = new TeamPlanHandoff({
       isPlanless: async () => true,
       readAuthoredPlan: async () => ({ status: 'invalid', reason: 'still invalid' }),
-      reviewInvalid: (handoffCtx, reason) => correction.reviewInvalid(handoffCtx, reason),
+      reviewInvalid: (handoffCtx) => correction.reviewInvalid(handoffCtx),
       register,
       nudge: vi.fn(),
       cleanup: async () => {},
@@ -444,7 +444,7 @@ describe('TeamPlanHandoff.onCoordinatorIdle', () => {
     const handoff = new TeamPlanHandoff({
       isPlanless: async () => true,
       readAuthoredPlan: async () => ({ status: 'invalid', reason: 'still invalid' }),
-      reviewInvalid: (handoffCtx, reason) => correction.reviewInvalid(handoffCtx, reason),
+      reviewInvalid: (handoffCtx) => correction.reviewInvalid(handoffCtx),
       register,
       nudge: vi.fn(),
       cleanup: async () => {},
@@ -497,9 +497,9 @@ describe('TeamPlanHandoff review verdicts', () => {
       await mkdir(join(root, '.zana'), { recursive: true });
       await writeFile(join(root, authoredPlanRelPath('exec-1')), VALID_PLAN.replace('### home:', '### Home:'), 'utf8');
       const reviewInvalid = vi.fn(async () => 'wait' as const);
-      const logError = vi.fn();
+      const logInfo = vi.fn(), logError = vi.fn();
       const { handoff, register, cleanup } = build({
-        readAuthoredPlan: () => readAuthoredPlan(root, 'exec-1'), reviewInvalid, logError
+        readAuthoredPlan: () => readAuthoredPlan(root, 'exec-1'), reviewInvalid, logInfo, logError
       });
       await handoff.onCoordinatorIdle({ ...ctx, projectRoot: root });
       await handoff.onCoordinatorIdle({ ...ctx, projectRoot: root });
@@ -507,8 +507,9 @@ describe('TeamPlanHandoff review verdicts', () => {
       expect((register.mock.calls[0] as unknown[])[1]).toMatchObject([{ id: 'home' }]);
       expect(reviewInvalid).not.toHaveBeenCalled();
       expect(cleanup).toHaveBeenCalledOnce();
-      expect(logError).toHaveBeenCalledOnce();
-      expect(logError).toHaveBeenCalledWith(
+      expect(logInfo).toHaveBeenCalledOnce();
+      expect(logError).not.toHaveBeenCalled();
+      expect(logInfo).toHaveBeenCalledWith(
         'team plan handoff exec-1: registered plan after normalizing',
         'step "Home" id normalized to "home"'
       );
@@ -520,34 +521,41 @@ describe('TeamPlanHandoff review verdicts', () => {
   it('joins several repair notes and does not log when registration is rejected', async () => {
     const notes = ['n1', 'n2'];
     const logged = vi.fn();
-    const ok = build({ readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/r', normalizations: notes }), logError: logged });
+    const ok = build({ readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/r', normalizations: notes }), logInfo: logged });
     await ok.handoff.onCoordinatorIdle(ctx);
     expect(logged).toHaveBeenCalledWith(expect.any(String), 'n1; n2');
 
-    const logError = vi.fn();
-    const rejected = build({ readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/r', normalizations: notes }), logError }, { ok: false });
+    const logInfo = vi.fn();
+    const rejected = build({ readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/r', normalizations: notes }), logInfo }, { ok: false });
     await rejected.handoff.onCoordinatorIdle(ctx);
-    expect(logError).not.toHaveBeenCalled();
+    expect(logInfo).not.toHaveBeenCalled();
   });
 
   it('does not log for a clean plan', async () => {
-    const logError = vi.fn();
-    const { handoff, register } = build({ logError });
+    const logInfo = vi.fn();
+    const { handoff, register } = build({ logInfo });
     await handoff.onCoordinatorIdle(ctx);
     expect(register).toHaveBeenCalledOnce();
-    expect(logError).not.toHaveBeenCalled();
+    expect(logInfo).not.toHaveBeenCalled();
   });
 
   it('does not log when the accepted plan is a corrected-plan verdict without normalizations', async () => {
-    const logError = vi.fn();
+    const logInfo = vi.fn();
     const { handoff, register } = build({
       readAuthoredPlan: async () => ({ status: 'invalid', reason: 'bad' }),
       reviewInvalid: async () => ({ status: 'ok', units, realPath: '/r' }),
-      logError
+      logInfo
     });
     await handoff.onCoordinatorIdle(ctx);
     expect(register).toHaveBeenCalledOnce();
-    expect(logError).not.toHaveBeenCalled();
+    expect(logInfo).not.toHaveBeenCalled();
+  });
+
+  it('registers a normalized plan without an info logger wired', async () => {
+    const { handoff, register, cleanup } = build({ readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/r', normalizations: ['n1'] }) });
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledOnce();
   });
 
   it('latches done without registering when review rejects the plan', async () => {
