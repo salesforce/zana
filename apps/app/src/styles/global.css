@@ -14323,6 +14323,7 @@ body.resizing-col .explorer-resizer::after {
 .execution-details-close { flex: none; }
 .execution-details-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .execution-details-primary-actions { margin: 12px 0 16px; }
+.execution-details-recovery-reason { margin: 0; align-self: center; color: var(--text-muted); font-size: 12px; }
 .execution-worktree { margin: 16px 0; }
 .execution-worktree textarea { margin-top: 10px; }
 .execution-worktree .execution-details-actions { margin-top: 10px; }
