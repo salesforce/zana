@@ -55,3 +55,12 @@ describe('SquadsView transport labels', () => {
     expect(item!.classList.contains('is-modern')).toBe(true);
   });
 });
+
+describe('SquadsView empty squad', () => {
+  it('shows the empty-agents message when an expanded squad has no slots or orchestrator', () => {
+    const { container } = render(<SquadsView />);
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Core squad to see agents' }));
+    const empty = container.querySelector('li[data-settings-target="squads.squad.builtin:core"] .teams-agents-empty');
+    expect(empty?.textContent).toContain('No agents configured for this squad');
+  });
+});

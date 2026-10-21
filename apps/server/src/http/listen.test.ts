@@ -66,3 +66,18 @@ it('retains credential for authorized send but removes it before server and plug
   expect(formerMember('thread-1')).toBe(true);
   expect(deps.isSquadMemberThread).toHaveBeenCalledExactlyOnceWith(ctx, 'thread-1');
 });
+
+it('passes the E2E electron user-data dir to the modern team launch source when ZCC_E2E_HOME is set', async () => {
+  const previousHome = process.env.ZCC_E2E_HOME;
+  process.env.ZCC_E2E_HOME = '/tmp/e2e-home';
+  vi.resetModules();
+  deps.standaloneModernTeamLaunchSource.mockClear();
+  deps.startProductServer.mockResolvedValueOnce({ url: 'http://127.0.0.1:8780/', ctx: { config: { getConfig: vi.fn() } }, close: vi.fn(async () => {}) });
+  try {
+    await import('./listen.js');
+    expect(deps.standaloneModernTeamLaunchSource.mock.calls[0]![2]).toBe('/tmp/e2e-home/electron-user-data');
+  } finally {
+    if (previousHome === undefined) delete process.env.ZCC_E2E_HOME;
+    else process.env.ZCC_E2E_HOME = previousHome;
+  }
+});

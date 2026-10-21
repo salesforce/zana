@@ -30,6 +30,7 @@ const h = vi.hoisted(() => {
     dispatchReady: null as null | ((...args: any[]) => any),
     modernMembers: new Map<string, SquadMemberRuntimeRequest>(),
     modernStopped: new Set<string>(),
+    reserveOverride: null as null | ((reservation: any) => any),
     afterModernAck: null as null | ((recordId: string, slotId: string, acknowledged: boolean) => Promise<void>),
     squadOpts: undefined as any,
     drainOpts: undefined as any,
@@ -123,6 +124,12 @@ vi.mock('@zana-ai/zcc-server/services/launch/team-lifecycle-store', async (impor
         await h.afterModernAck?.(recordId, slotId, acknowledged);
         return acknowledged;
       };
+      const reserve = store.reserveModernWorker;
+      // Test seam: let a test reshape the reservation main receives (e.g. a fenced, non-creatable one).
+      store.reserveModernWorker = async (...reserveArgs: Parameters<typeof reserve>) => {
+        const reservation = await reserve(...reserveArgs);
+        return h.reserveOverride ? h.reserveOverride(reservation) : reservation;
+      };
       return store;
     }
   };
@@ -194,6 +201,7 @@ beforeEach(() => {
   h.sessions.clear();
   h.createImpl = null;
   h.afterModernAck = null;
+  h.reserveOverride = null;
 });
 
 afterAll(() => {
@@ -810,6 +818,14 @@ describe('launchTeam Modern structured path', () => {
       expect(h.creates).toEqual([]);
     });
 
+    it('stringifies a non-Error preflight failure into the UNSUPPORTED refusal', async () => {
+      h.runtime.preflightSquadRuntime.mockRejectedValue('runtime offline');
+      expect(await launchTeam('team1', 'p1', structuredReq())).toMatchObject({
+        ok: false, code: 'UNSUPPORTED', message: 'runtime offline'
+      });
+      expect(h.runtime.createSquadMember).not.toHaveBeenCalled();
+    });
+
     it('falls back to a generic refusal when an unavailable runtime gives no reason', async () => {
       h.runtime.preflightSquadRuntime.mockResolvedValue({ ...readyRuntime(), ready: false });
       expect(await launchTeam('team1', 'p1', structuredReq())).toMatchObject({
@@ -847,6 +863,26 @@ describe('launchTeam Modern structured path', () => {
       expect(h.runtime.createSquadMember).toHaveBeenCalledTimes(1);
       expect(result.ok ? result.value.failedSlots.length : 1).toBeGreaterThan(0);
       expect(h.creates).toEqual([]);
+    });
+
+    it('stops a slot whose reservation cannot create without calling the runtime', async () => {
+      h.reserveOverride = (reservation) => ({ ...reservation, mayCreate: false });
+      const result = await launchTeam('team1', 'p1', structuredReq());
+      expect(h.runtime.createSquadMember).not.toHaveBeenCalled();
+      expect(result.ok ? result.value.launched : 0).toBe(0);
+      expect(h.creates).toEqual([]);
+    });
+
+    it('marks a slot uncertain when create fails with a non-Error value', async () => {
+      const req = structuredReq();
+      h.runtime.createSquadMember.mockRejectedValue('create receipt lost');
+      h.runtime.getSquadMemberStatus.mockRejectedValue('runtime status unavailable');
+      h.runtime.isSquadMemberLive.mockResolvedValue(false);
+      h.runtime.stopSquadMember.mockResolvedValue(false);
+      expect((await launchTeam('team1', 'p1', req)).ok).toBe(false);
+      const lost = h.runtime.createSquadMember.mock.calls[0][0];
+      expect(lifecycle(req.launchRequestId).workers.find(worker => worker.threadId === lost.bindingId))
+        .toMatchObject({ bindingState: 'UNCERTAIN', capacityReleased: false });
     });
 
     it('refuses to create once the launch deadline elapses during preflight', async () => {
@@ -930,6 +966,29 @@ describe('launchTeam Modern structured path', () => {
       expect(await h.squadOpts.replyToSession('not-a-member', 'nobody')).toBe(false);
       expect(h.runtime.deliverSquadMember).not.toHaveBeenCalled();
       expect(h.drainOpts.isReplyIdempotent(member.bindingId)).toBe(true);
+    });
+
+    it('routes assignments, replies and drain checks for a CLI session through the PTY path', async () => {
+      const execution = await claimExecution(`exec-pty-${reqId()}`);
+      h.sessions.set('pty-1', { id: 'pty-1', status: 'running', projectId: 'p1', cohort: { executionId: execution.id, slotId: 'w1', role: 'worker' } });
+      // A CLI session has no Modern binding, so the legacy injector answers (not the runtime).
+      expect(['accepted', 'rejected']).toContain((await h.squadOpts.deliverAssignment('pty-1', 'cli work', correlation(execution.id))).state);
+      expect(typeof await h.squadOpts.deliverToWorker('pty-1', 'cli worker')).toBe('boolean');
+      await h.squadOpts.replyToSession('pty-1', 'cli reply');
+      expect(h.runtime.deliverSquadMember).not.toHaveBeenCalled();
+      // The session carries its own cohort, so no lifecycle lookup is needed and nothing is pending.
+      expect(await h.drainOpts.pending('pty-1')).toEqual([]);
+      expect(h.drainOpts.isReplyIdempotent('pty-1')).toBe(false);
+      expect(h.drainOpts.isRestful('pty-1')).toBe(false);
+    });
+
+    it('treats an idle live Modern member as restful and a working one as not', async () => {
+      const { req, member } = await launchBound();
+      h.runtime.getSquadMemberStatus.mockImplementation(async request => ({ ...statusFor(request), status: 'idle', live: true }));
+      await host.cancelTeamLaunch(req.callerPrincipalId, req.launchRequestId);
+      expect(h.squadOpts.getAgentState(member.bindingId)).toBe('idle');
+      expect(h.squadOpts.getWorkerLiveness(member.bindingId)).toBe('alive');
+      expect(h.drainOpts.isRestful(member.bindingId)).toBe(true);
     });
 
     it('drains pending deliveries only for an active bound Modern member', async () => {
