@@ -917,6 +917,25 @@ describe('execution MCP tools', () => {
     expect(execution.resume).toHaveBeenCalledWith('session-1', 'project-1', 'execution-1', 6, 'slot-1', 'Continue');
   });
 
+  it('describes fresh-plan recovery tools as launching a NEW cohort, never as resume', () => {
+    const { server, definitions } = fakeServer();
+    registerExecutionTools(server as never, { sessionId: 'session-1', projectId: 'project-1', service: service() as never, validateRouteIdentity: () => true });
+    const describeTool = (name: string) => (definitions.get(name) as { description: string }).description;
+
+    expect(describeTool('execution.relaunch_retained_plan')).toContain('NEW cohort');
+    expect(describeTool('execution.resume_run')).toContain('NEW cohort');
+
+    const recover = describeTool('execution.recover_retained');
+    expect(recover).toMatch(/fresh-plan[^.]*NEW cohort/);
+    expect(recover).toMatch(/exact-native[^.]*resumes the existing agents/);
+    expect(recover.replace(/resumes the existing agents/, '')).not.toMatch(/resume/i);
+
+    // relaunch only negates resume. Resume grants, handoffs and live-slot messages resume existing work, not a new cohort.
+    const mayMentionResume = /^(execution\.work\.answer|execution\.resume|execution\.resume_run|execution\.relaunch_retained_plan|execution\.recover_retained|execution\.resume_binding|execution\.mint_resume_grant|execution\.revoke_resume_grant|execution_handoff_.*|execute_execution_.*|request_execution_.*)$/;
+    const stray = [...definitions.keys()].filter((name) => /resume/i.test(describeTool(name)) && !mayMentionResume.test(name));
+    expect(stray).toEqual([]);
+  });
+
   it('forwards worktree and per-unit requires on execution.start', async () => {
     const execution = service();
     const { server, tools } = fakeServer();
