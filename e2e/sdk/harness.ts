@@ -344,7 +344,10 @@ const execMatch = PROMPT.match(new RegExp('execution ' + BT + '([^' + BT + ']+)'
 const EXECUTION_ID = execMatch ? execMatch[1] : null;
 const IS_ORCHESTRATOR = /coordinator of Team/.test(PROMPT);
 const IS_WORKER = /worker standby/.test(PROMPT);
-const IS_OWNER = /E2E start Job Team/.test(PROMPT);
+// Owner that started the run itself: 'E2E own Squad reports' also answers the blocker its
+// [Squad report] names with execution.respond, then rests idle for the completion report.
+const ANSWERS_REPORTS = /E2E own Squad reports/.test(PROMPT);
+const IS_OWNER = ANSWERS_REPORTS || /E2E start Job Team/.test(PROMPT);
 // Design-session role: proposes a Squad launch from files the spec wrote, then rests idle.
 const IS_PROPOSER = /E2E propose Squad/.test(PROMPT);
 const FAILED_DAG = ${JSON.stringify(flags.failedDag)};
@@ -477,9 +480,10 @@ async function owner() {
     version: 1,
     teamId: 'e2e-job-team',
     launchRequestId: 'e2e-cli-agent-job-' + process.pid,
-    jobTitle: CHURN ? 'CLI Agent kickoff churn job' : STALLED ? 'CLI Agent stalled job' : STREAMING ? 'CLI Agent streaming job' : HANDOFF ? 'CLI Agent handoff job' : 'CLI Agent durable job',
+    jobTitle: ANSWERS_REPORTS ? 'CLI Agent reporting job' : CHURN ? 'CLI Agent kickoff churn job' : STALLED ? 'CLI Agent stalled job' : STREAMING ? 'CLI Agent streaming job' : HANDOFF ? 'CLI Agent handoff job' : 'CLI Agent durable job',
     summary: 'Full Job Team route started by a CLI Agent owner.',
     workUnits: PLAN,
+    ...(ANSWERS_REPORTS ? { notify: true } : {}),
     // Stalled repro shrinks the wall-clock ceiling so the backstop reclaims the
     // stuck non-restful claim in bounded test time (paired with the E2E-only
     // ZCC_WORK_CLAIM_LEASE_MS / ZCC_EXECUTION_RECONCILE_INTERVAL_MS host knobs).
@@ -504,7 +508,39 @@ async function owner() {
         ]
   });
   log('owner execution started', started && started.id);
+  if (ANSWERS_REPORTS) await answerReports();
   await hold();
+}
+
+// Reports are typed into this PTY only while it rests, so it idles between them. A
+// blocker report names (execution <id>, blocker <id>); the owner answers it itself.
+async function answerReports() {
+  const REPORT_RE = /\(execution ([^,]+), blocker ([^)]+)\)/;
+  let buf = '';
+  let answering = false;
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', function (chunk) {
+    log('stdin', JSON.stringify(String(chunk)));
+    buf += String(chunk);
+    const m = buf.match(REPORT_RE);
+    if (!m || answering) return;
+    answering = true;
+    buf = '';
+    (async function () {
+      setWorking();
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const snap = await tryMcp('execution.snapshot', { executionId: m[1], after: 0 });
+        const version = snap.ok && snap.value && snap.value.execution ? snap.value.execution.stateVersion : 0;
+        const answered = await tryMcp('execution.respond', { executionId: m[1], expectedStateVersion: version, blockerId: m[2], message: 'About Atlas' });
+        log('owner respond', JSON.stringify(answered));
+        if (answered.ok) break;
+        await sleep(500);
+      }
+      setIdle();
+    })();
+  });
+  process.stdin.resume();
+  setIdle();
 }
 
 // Design session that hands a design to a Squad: reads the proposals the spec

@@ -56,6 +56,7 @@ export const MODERN_TEAM_LAUNCH_TOOL_NAMES = [
 export const MODERN_OWNER_EXECUTION_TOOL_NAMES = [
   'execution_start',
   'execution_snapshot',
+  'execution_respond',
   'execution_resume_binding',
   'squad_propose',
   'squad_plan_check',
@@ -190,9 +191,22 @@ const OWNER_START_SCHEMA = {
     maxLaunches: { type: 'number' },
     workflow: { type: 'object' },
     workUnits: { type: 'array', items: { type: 'object' } },
-    slots: { type: 'array', items: { type: 'object' } }
+    slots: { type: 'array', items: { type: 'object' } },
+    notify: { type: 'boolean', description: 'true: get a [Squad report] turn when the run ends or needs a human answer, instead of polling execution_snapshot.' }
   },
   required: ['version', 'teamId', 'launchRequestId', 'slots']
+};
+
+const OWNER_RESPOND_SCHEMA = {
+  type: 'object',
+  properties: {
+    executionId: { type: 'string' },
+    expectedStateVersion: { type: 'number', description: 'Optional: the stateVersion from execution_snapshot. Omit it to answer against the latest state.' },
+    blockerId: { type: 'string', description: 'The human blocker to answer, as named in its [Squad report].' },
+    clientRequestId: { type: 'string', description: 'Idempotency key; generated when omitted.' },
+    message: { type: 'string' }
+  },
+  required: ['executionId', 'blockerId', 'message']
 };
 
 const OWNER_SNAPSHOT_SCHEMA = {
@@ -227,6 +241,12 @@ const OWNER_EXECUTION_TOOL_DEFS: readonly ToolDef[] = [
     inputSchema: OWNER_SNAPSHOT_SCHEMA
   },
   {
+    name: 'execution_respond',
+    mcpName: 'execution.respond',
+    description: 'Answer a human blocker of an execution you own (the question a [Squad report] named), when you can decide it. Otherwise ask the user.',
+    inputSchema: OWNER_RESPOND_SCHEMA
+  },
+  {
     name: 'execution_resume_binding',
     mcpName: 'execution.resume_binding',
     description: 'Bind this fresh session to an execution using a durable resume grant. Retry same token after a transient binding failure.',
@@ -258,10 +278,13 @@ const OWNER_EXECUTION_MCP_NAMES: ReadonlySet<string> = new Set(
   OWNER_EXECUTION_TOOL_DEFS.map((def) => def.mcpName ?? def.name)
 );
 
-/** Build the credentialed loopback MCP route for one thread's tool call. */
+/**
+ * Build the credentialed loopback MCP route for one thread's tool call. `?route=thread` tells
+ * the MCP server the session is a Modern thread, so its `[Squad report]` is a queued turn.
+ */
 export function modernTeamLaunchRoute(base: string, projectId: string, threadId: string, credential: string): string {
   const trimmed = base.replace(/\/+$/, '');
-  return `${trimmed}/mcp/${encodeURIComponent(projectId)}/${encodeURIComponent(threadId)}/${encodeURIComponent(credential)}`;
+  return `${trimmed}/mcp/${encodeURIComponent(projectId)}/${encodeURIComponent(threadId)}/${encodeURIComponent(credential)}?route=thread`;
 }
 
 function extractText(result: unknown): string {

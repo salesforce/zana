@@ -23,6 +23,7 @@ import {
   type LibraryPhantomFolder
 } from './libraryTree.js';
 import { matchLibraryDeepLink, type LibraryDeepLink } from './library-deep-link.js';
+import { fileManagerName } from '../../lib/file-manager.js';
 
 // Width of the folder-tree column. Persisted like LibraryView's own list
 // width, under a distinct key — this is a different panel with its own layout.
@@ -527,7 +528,7 @@ export function LibraryPanel({ deepLink = null }: { deepLink?: LibraryDeepLink |
                     })
                   }
                   hidden={compact}
-                  title="Reveal in Finder"
+                  title={`Reveal in ${fileManagerName()}`}
                 >
                   <ExternalLink size={14} />
                 </button>
@@ -615,7 +616,7 @@ export function LibraryPanel({ deepLink = null }: { deepLink?: LibraryDeepLink |
               setMenu(null);
             }}
           >
-            Reveal in Finder
+            Reveal in {fileManagerName()}
           </button>
           {!menu.node.isBucketRoot && (
             <button

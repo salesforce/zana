@@ -2720,6 +2720,24 @@ describe('SquadExecutionService', () => {
     expect(await store.get(source.id)).toMatchObject({ state: 'STOPPED', timeoutReason: 'unresolved-blocker', successorExecutionId: 'execution-2' });
   }));
 
+  it('keeps the proposal and the report target on a recovered timed-out run', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: (() => { let next = 0; return () => `execution-${++next}`; })(), now: () => now });
+    const service = new SquadExecutionService(deps(filePath, { store, now: () => now }));
+    const proposal = { id: 'proposal-1', proposerKind: 'thread' as const, proposerId: 'thread-1', proposerTitle: 'Fix login' };
+    const reportTo = { kind: 'thread' as const, id: 'thread-1', role: 'proposer' as const };
+    const started = await service.start('owner', 'project-1', { ...request, launchRequestId: 'source', policy: { deadlineMs: 100 } }, { proposal, reportTo });
+    if (!started.ok) throw new Error('source launch failed');
+    let source = started.value;
+    source = await store.registerPlan(source.id, source.stateVersion, [{ id: 'unit', title: 'Read', task: 'Inspect', dependencies: [], readOnly: true }]);
+    source = await store.claimWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
+    source = await store.blockWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit', { id: 'blocker', question: 'Need decision' });
+    now = 1_101;
+    source = (await store.decideDeadline(source.id, 1_100, 0)).record;
+    await expect(service.recoverTimedOut('owner', 'project-1', source.id, source.stateVersion, 'recover-1')).resolves.toMatchObject({ ok: true, value: { id: 'execution-2' } });
+    expect(await store.get('execution-2')).toMatchObject({ proposal, reportTo });
+  }));
+
   it('resumes retained failed work in place, retaining completed units and resetting claims', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const service = new SquadExecutionService(deps(filePath, { store }));
@@ -3820,6 +3838,30 @@ describe('SquadExecutionService', () => {
     await expect(service.stop('session-2', 'project-1', 'execution-1', record.stateVersion)).resolves.toMatchObject({ ok: true });
     expect(cancelTeamLaunch).toHaveBeenCalledWith('session-1', 'request-1');
     await expect(service.resumeBinding('session-3', 'project-1', 'execution-1', started.value.resumeToken)).resolves.toMatchObject({ ok: false });
+  }));
+
+  it('moves an owner\'s report target to the rebound session, never a proposer\'s', async () => fixture(async (filePath) => {
+    const grants = createResumeGrantStore({ filePath: `${filePath}.grants`, token: () => 'resume-token' });
+    const service = new SquadExecutionService(deps(filePath, { resumeGrants: grants }));
+    const started = await service.start('session-1', 'project-1', request, { reportTo: { kind: 'pty', id: 'session-1', role: 'owner', title: 'Design thread' } });
+    if (!started.ok || !started.value.resumeToken) throw new Error('missing resume token');
+    const rebound = await service.resumeBinding('thread-2', 'project-1', 'execution-1', started.value.resumeToken, 'thread');
+    expect(rebound).toMatchObject({ ok: true, value: { reportTo: { kind: 'thread', id: 'thread-2', role: 'owner', title: 'Design thread' } } });
+
+    const proposed = new SquadExecutionService(deps(`${filePath}.proposed`, { resumeGrants: createResumeGrantStore({ filePath: `${filePath}.grants2`, token: () => 'resume-token-2' }) }));
+    const target = { kind: 'thread' as const, id: 'design-thread', role: 'proposer' as const };
+    const second = await proposed.start('session-1', 'project-1', request, { reportTo: target });
+    if (!second.ok || !second.value.resumeToken) throw new Error('missing resume token');
+    expect(await proposed.resumeBinding('session-9', 'project-1', 'execution-1', second.value.resumeToken, 'pty')).toMatchObject({ ok: true, value: { reportTo: target } });
+  }));
+
+  it('keeps the first report target when the same launch request is replayed', async () => fixture(async (filePath) => {
+    const service = new SquadExecutionService(deps(filePath));
+    const owner = { kind: 'pty' as const, id: 'session-1', role: 'owner' as const };
+    expect((await service.start('session-1', 'project-1', request, { reportTo: owner })).ok).toBe(true);
+    const replay = await service.start('session-1', 'project-1', request);
+    expect(replay).toMatchObject({ ok: true });
+    expect(await service.status('session-1', 'project-1', 'execution-1')).toMatchObject({ reportTo: owner });
   }));
 
   it('rejects resume binding while an existing execution owner remains live', async () => fixture(async (filePath) => {

@@ -36,12 +36,12 @@ const tool = (src: ReturnType<typeof source>, name: string) => {
 describe('modernTeamLaunchRoute', () => {
   it('builds the credentialed loopback route with encoded segments', () => {
     expect(modernTeamLaunchRoute('http://127.0.0.1:5123', 'proj/1', 'thread 2', 'ab+cd')).toBe(
-      'http://127.0.0.1:5123/mcp/proj%2F1/thread%202/ab%2Bcd'
+      'http://127.0.0.1:5123/mcp/proj%2F1/thread%202/ab%2Bcd?route=thread'
     );
   });
 
   it('strips a trailing slash from the base', () => {
-    expect(modernTeamLaunchRoute('http://127.0.0.1:5123/', 'p', 't', 'c')).toBe('http://127.0.0.1:5123/mcp/p/t/c');
+    expect(modernTeamLaunchRoute('http://127.0.0.1:5123/', 'p', 't', 'c')).toBe('http://127.0.0.1:5123/mcp/p/t/c?route=thread');
   });
 });
 
@@ -68,7 +68,7 @@ describe('createModernTeamLaunchSource', () => {
     expect(calls[0].name).toBe('launch_team');
     expect(calls[0].input).toEqual({ teamId: 't', launchRequestId: 'r', slots: [] });
     // credential derived from ctx.threadId, identity from ctx (never input)
-    expect(calls[0].url).toBe('http://127.0.0.1:9/mcp/project-1/thread-1/cred-for-thread-1');
+    expect(calls[0].url).toBe('http://127.0.0.1:9/mcp/project-1/thread-1/cred-for-thread-1?route=thread');
   });
 
   it('forwards execution.start when job launch is enabled', async () => {
@@ -84,6 +84,22 @@ describe('createModernTeamLaunchSource', () => {
     expect(result).toBe('{"id":"execution-1","state":"RUNNING"}');
     expect(calls[0].name).toBe('execution.start');
     expect(calls[0].input).toEqual({ requestPath: '/tmp/req.json' });
+  });
+
+  it('execution_respond leaves expectedStateVersion optional and forwards a call without it', async () => {
+    const calls: CallMcpToolArgs[] = [];
+    const src = source(
+      { mcpBaseUrl: 'http://127.0.0.1:9', teamLaunchEnabled: false, teamJobLaunchEnabled: true },
+      async (args) => { calls.push(args); return { ok: true, text: '{"ok":true}' }; }
+    );
+    const respond = tool(src, 'execution_respond');
+    const schema = respond.inputSchema as { properties: Record<string, unknown>; required: string[] };
+    expect(schema.properties).toHaveProperty('expectedStateVersion');
+    expect(schema.required).toEqual(['executionId', 'blockerId', 'message']);
+    const input = { executionId: 'execution-1', blockerId: 'b1', message: 'Atlas' };
+    await expect(respond.execute(input, ctx())).resolves.toBe('{"ok":true}');
+    expect(calls[0]).toMatchObject({ name: 'execution.respond', input });
+    expect(calls[0].input).not.toHaveProperty('expectedStateVersion');
   });
 
   it('does not call the route when job launch is disabled', async () => {
@@ -196,6 +212,7 @@ describe('Modern owner execution catalog', () => {
     expect(session.tools.map((row) => row.name)).toEqual([
       'execution_start',
       'execution_snapshot',
+      'execution_respond',
       'execution_resume_binding',
       'squad_propose',
       'squad_plan_check',

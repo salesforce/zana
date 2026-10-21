@@ -300,9 +300,9 @@ cc.teams.launchAutonomous("feature-squad", projectId, "Implement [feature descri
 You can design in a CLI Agent or Modern session and hand the result to a Squad
 in the same Project.
 
-1. **Say it.** In the session, say "build it with <Squad>". The agent saves the
-   design (and a plan, if it has one) to the Project library, checks the plan, and
-   prepares the launch.
+1. **Say it.** In the session, say "build it with <Squad>". The agent uses the
+   design (and a plan, if it has one) it wrote or read, wherever it keeps them,
+   checks the plan, and prepares the launch.
 2. **Open the Inbox card.** A "Squad launch ready" card appears in the Inbox. It
    names the Squad, the planning mode and the files. Nothing has started.
 3. **Review.** Press **Review Squad launch**. The Squad composer opens already
@@ -321,8 +321,41 @@ Only an explicit "run it now with X", "start X immediately" or "skip the Inbox"
 makes the agent start the Squad straight away with `execution.start`, as the run's
 owner. Either way the agent says in one line which path it took.
 
-Rules: the Squad always runs in the proposing session's Project, and files must be
-inside that Project. Members of a running Squad cannot propose. Proposals expire
+An owner that starts the run with `notify: true` (the bundled skills do) gets the
+same `[Squad report]` when its run finishes or needs a human answer, so it doesn't
+have to poll; the reports follow it to a fresh session that takes the run over
+with `execution.resume_binding` (Recover orchestrator relaunches the run's coordinator
+and leaves the reports with the owner's session). It may answer
+such a question itself with `execution.respond` when what you told it decides it;
+otherwise it asks you, and the question is in your Inbox too. An owner gets no
+"Squad completed" Inbox entry: the run is on its board, and if the owner's session is gone when the run ends, the report is dropped with no Inbox fallback. Without `notify: true`,
+`execution.start` behaves as before.
+
+Rules: the Squad always runs in the proposing session's Project. Its files can be
+in that Project, your home folder (for example a doc vault or `~/.zcc/library`) or
+the clone root. A file outside the Project shows its full path, marked "outside the
+Project", on the card and in the composer, so you see what leaves the checkout
+before Launch. A file is attached either through the proposal's `sources` or by
+name in the goal; a goal that names a file outside the Project is refused, and the
+agent is told to pass it in `sources` so it shows on the card. Some locations are always refused, for proposals and for paths
+named in any Squad goal:
+- credential stores and agent sessions (`~/.ssh`, `~/.aws`, `~/.gnupg`,
+  `~/.config/gh`, `~/.config/gcloud`, `~/.netrc`, `~/.docker/config.json`,
+  `~/.codex`, `~/.cursor`, `~/.claude/sessions`, `~/.local/share/opencode`,
+  `~/.pi`, `~/.grok`, `~/.gemini`, `~/.git-credentials`,
+  `~/.npmrc`, `~/.pypirc`, `~/.kube`, `~/.claude.json`,
+  `~/.claude/.credentials.json`, `~/.claude/projects`, `~/Library/Keychains`),
+  even through a symlink (a link is followed step by step, so a link into one of
+  these, or a link inside one of these, is refused; so is a loop of links); a
+  hard-linked file is refused too. Inside the Project itself only `~/.ssh` and
+  `~/.aws` stay refused from this list, so a Project that lives under, say,
+  `~/.claude/projects` keeps its own files;
+- the app's own data;
+- Zana's data folders (`~/.zcc`, `~/.zcc-dev`, `~/.zcc-machines`, `~/.cc-center`, `ZCC_DATA_DIR`).
+  Only their `library`, `personas`, `teams`, `templates` and `saved` folders and
+  the checkouts Zana manages there can be read.
+
+A clone root that is a disk root, contains your home folder, is world-writable on macOS or Linux (such as `/tmp`) or is `/Volumes` is not used, and a refusal names only the locations that are in use. Members of a running Squad cannot propose. Proposals expire
 after 7 days. If the Squad's orchestrator cannot write files, "Infer plan from
 goal" is refused; the agent proposes a plan it has written and checked instead
 (`planning: "provided"`). Use `defaultPlanning` on the Squad to preselect a mode.

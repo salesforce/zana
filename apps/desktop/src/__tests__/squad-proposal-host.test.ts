@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -226,11 +226,15 @@ describe('report-back wiring', () => {
   const record = (kind: 'pty' | 'thread') => ({ id: 'exec-1', projectId: 'p1', proposal: proposal(kind), state: 'RUNNING', attempt: 1 }) as never;
   const blocker = { id: 'b1', question: 'Which label?', audience: 'human' } as never;
 
+  // As the app does once sessions are back; before this a blocker is left to the replay.
+  beforeAll(async () => { await host.squadProposalNotifier.replayUnreported(); });
+
   it('delivers a blocker report to an idle PTY proposer, arms the quiet-gate timer and forgets the session', async () => {
     h.sessions.set('s1', pty({ lastInputAt: 0 }));
     await host.squadProposalNotifier.onHumanBlocker(record('pty'), blocker);
     host.squadProposalNotifier.onState('s1', 'idle');
-    expect(h.replies.at(-1)?.[0]).toBe('s1');
+    // Delivery re-checks that the blocker is still open before typing, so it lands a tick later.
+    await vi.waitFor(() => expect(h.replies.at(-1)?.[0]).toBe('s1'));
     expect(h.replies.at(-1)?.[1]).toContain('[Squad report]');
 
     // A recent keystroke holds delivery behind the quiet gate; forget drops the held report.
@@ -238,10 +242,12 @@ describe('report-back wiring', () => {
     h.sessions.set('s1', pty({ lastInputAt: Date.now() }));
     await host.squadProposalNotifier.onHumanBlocker(record('pty'), { ...blocker, id: 'b2' });
     host.squadProposalNotifier.onState('s1', 'idle');
+    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(h.replies).toHaveLength(delivered);
     host.squadProposalNotifier.forget('s1');
     h.sessions.set('s1', pty({ lastInputAt: 0 }));
     host.squadProposalNotifier.onState('s1', 'idle');
+    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(h.replies).toHaveLength(delivered);
   });
 

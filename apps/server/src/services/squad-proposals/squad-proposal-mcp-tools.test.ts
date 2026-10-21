@@ -125,9 +125,9 @@ describe('registerSquadProposalTools', () => {
     expect(checkPlan).toHaveBeenLastCalledWith({ projectId: 'p' }, { path: 'plan.md' });
     await tools.get('squad_plan_check')!({ text: 'hi' });
     expect(checkPlan).toHaveBeenLastCalledWith({ projectId: 'p' }, { text: 'hi' });
-    const failed = setup({ checkPlan: async () => ({ ok: false, code: 'SOURCE_OUTSIDE_PROJECT', message: 'nope' }) });
+    const failed = setup({ checkPlan: async () => ({ ok: false, code: 'SOURCE_NOT_ALLOWED', message: 'nope' }) });
     expect((await failed.tools.get('squad_plan_check')!({ path: '/etc/x' })).content[0].text)
-      .toBe('squad_plan_check failed: SOURCE_OUTSIDE_PROJECT: nope');
+      .toBe('squad_plan_check failed: SOURCE_NOT_ALLOWED: nope');
     const logError = vi.fn();
     const thrown = setup({ checkPlan: async () => { throw new Error('EIO /Users/me/x'); }, logError });
     expect((await thrown.tools.get('squad_plan_check')!({ path: 'x' })).content[0].text)

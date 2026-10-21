@@ -40,6 +40,7 @@ vi.mock('@/store', () => ({
     })
 }));
 import { SkillsBody } from './SkillsView.js';
+import { fileManagerName } from '../../lib/file-manager.js';
 const skill = {
   id: 'user:review',
   name: 'review',
@@ -91,7 +92,7 @@ it('shows commands, origins and author flags, and only offers authorized toggles
   expect(screen.getByText('Agent only')).toBeTruthy();
   expect(screen.getAllByText('Manual only')).toHaveLength(2);
   expect(screen.getAllByText('Linked')).toHaveLength(1);
-  fireEvent.click(screen.getByRole('button', { name: 'Reveal in Finder' }));
+  fireEvent.click(screen.getByRole('button', { name: `Reveal in ${fileManagerName()}` }));
   expect(state.reveal).toHaveBeenCalledWith('user:review', '/project');
   fireEvent.click(screen.getByRole('checkbox'));
   await waitFor(() => expect(state.toggle).toHaveBeenCalledWith('review', false));

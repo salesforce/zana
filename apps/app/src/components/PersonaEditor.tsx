@@ -16,6 +16,7 @@ import { StencilForm } from './ui/Skeleton.js';
 import { HarnessOptionSelect } from './HarnessOptionSelect.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import { effectivePersonaRouting } from '../lib/personaRouting.js';
+import { fileManagerName } from '../lib/file-manager.js';
 import {
   PERSONA_ICON_NAMES,
   personaIconByName,
@@ -885,7 +886,7 @@ export function RevealPersonasButton() {
       type="button"
       className="settings-btn"
       onClick={() => product.personas.revealDir().catch(() => {})}
-      title="Open the personas directory in Finder"
+      title={`Open the personas directory in ${fileManagerName()}`}
     >
       <FolderOpen size={12} /> Reveal personas dir
     </button>

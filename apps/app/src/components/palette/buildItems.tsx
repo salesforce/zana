@@ -30,6 +30,7 @@ import { buildPluginPaletteItems } from './plugin-palette-actions.js';
 import type { PluginCommandPaletteActionRegistration } from '@zana-ai/zcc-plugin-sdk';
 import { cliAgentRestartConfirm } from '../agentCardActions.js';
 import { refreshModelsWithToast } from '../thread/pickers/model-refresh.js';
+import { fileManagerName } from '../../lib/file-manager.js';
 
 /** A category a palette item belongs to, used for empty-query grouping. */
 export type PaletteCategory = 'Projects' | 'Threads' | 'Tabs' | 'Actions' | 'Extensions' | 'Settings';
@@ -487,7 +488,7 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
       {
         key: 'action:open-finder',
         icon: <FolderOpen size={14} />,
-        label: `Reveal ${selectedProject.name} in Finder`,
+        label: `Reveal ${selectedProject.name} in ${fileManagerName()}`,
         hint: path,
         category: 'Actions',
         source: 'core',

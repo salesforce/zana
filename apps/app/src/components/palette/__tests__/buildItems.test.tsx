@@ -130,6 +130,22 @@ describe('buildPaletteItems', () => {
     ]);
   });
 
+  it('names the platform file manager on the reveal action', () => {
+    const original = Object.getOwnPropertyDescriptor(navigator, 'platform');
+    const labelOn = (platform: string) => {
+      Object.defineProperty(navigator, 'platform', { value: platform, configurable: true });
+      return buildPaletteItems(baseCtx()).find((item) => item.key === 'action:open-finder')!.label;
+    };
+    try {
+      expect(labelOn('Win32')).toBe('Reveal proj-p1 in Explorer');
+      expect(labelOn('MacIntel')).toBe('Reveal proj-p1 in Finder');
+      expect(labelOn('Linux x86_64')).toBe('Reveal proj-p1 in file manager');
+    } finally {
+      if (original) Object.defineProperty(navigator, 'platform', original);
+      else delete (navigator as { platform?: string }).platform;
+    }
+  });
+
   it('emits a launch row per persona, keyed + keyworded for fuzzy match', () => {
     const personas: Persona[] = [
       { id: 'reviewer', name: 'Code Reviewer', description: 'terse reviewer' },

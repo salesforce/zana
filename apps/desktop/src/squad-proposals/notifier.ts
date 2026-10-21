@@ -1,11 +1,10 @@
 import type { AgentState } from '@zana-ai/zcc-domain/product';
-import type { ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
+import { executionReportTarget, reportedAttempt, type ExecutionRecord, type ExecutionReportTarget } from '@zana-ai/zcc-server/services/execution/store';
 import type { InboxInput } from '@zana-ai/zcc-server/services/inbox/inbox-store';
 import { shouldReplaySquadWorktreeTerminalEffects } from '../squad-worktree-lifecycle.js';
 import { createPtyReportQueue, type PtyReportQueueDeps } from './pty-report-queue.js';
 import { buildSquadBlockerReport, buildSquadReport, squadOutcomeLabel, type SquadWorktreeOutcome } from './report.js';
 
-type Proposal = NonNullable<ExecutionRecord['proposal']>;
 type Blocker = NonNullable<ExecutionRecord['blockers']>[number];
 
 const TERMINAL = new Set(['COMPLETED', 'FAILED', 'STOPPED']);
@@ -16,6 +15,10 @@ export interface SquadProposalNotifierDeps extends PtyReportQueueDeps {
   getRecord(executionId: string): Promise<ExecutionRecord | undefined>;
   markReported(executionId: string, attempt: number): Promise<unknown>;
   listUnreported(): Promise<ExecutionRecord[]>;
+  /** Remember that a human blocker was reported, so a restart neither repeats nor drops it. */
+  markBlockerReported(executionId: string, blockerId: string): Promise<unknown>;
+  /** Live runs with an open human blocker that was not reported yet. */
+  listUnreportedBlockers(): Promise<ExecutionRecord[]>;
   threadLive(threadId: string, projectId: string): Promise<boolean>;
   queueThreadTurn(threadId: string, projectId: string, text: string): Promise<{ ok: boolean; reason?: string }>;
   appendInbox(input: InboxInput): Promise<unknown>;
@@ -23,6 +26,10 @@ export interface SquadProposalNotifierDeps extends PtyReportQueueDeps {
   log(message: string, error?: unknown): void;
 }
 
+/**
+ * `[Squad report]` delivery to the conversation a run reports to: the agent that owns it
+ * (`execution.start`) or the one that proposed it (the Inbox card).
+ */
 export interface SquadProposalNotifier {
   /**
    * Report a terminal run. `worktree` is what the Squad worktree terminal handler did in
@@ -37,8 +44,8 @@ export interface SquadProposalNotifier {
   /**
    * Boot entry point, called once sessions and the server runtime are back. Until it runs,
    * `onTerminal` leaves records unreported (boot-time transitions would otherwise see every
-   * proposer as gone). It then delivers to live proposers, and for gone ones posts the
-   * Inbox result before marking the run reported.
+   * conversation as gone). It then delivers to live ones; for a gone proposer it still posts
+   * the Inbox result before marking the run reported.
    */
   replayUnreported(): Promise<void>;
 }
@@ -53,22 +60,30 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
   const safeLog = (message: string, error?: unknown) => { try { if (error === undefined) deps.log(message); else deps.log(message, error); } catch { /* logging must not throw */ } };
   const ptyQueue = createPtyReportQueue(deps, safeLog);
 
-  /** Hand `text` to the proposer. `settle` runs once it is delivered or dropped for good, never on dispose. */
-  async function deliver(proposal: Proposal, projectId: string, text: string, settle: () => void = () => undefined): Promise<void> {
-    let queued = false;
-    try {
-      if (proposal.proposerKind === 'pty') {
-        if (!deps.ptyLive(proposal.proposerId)) return;
-        queued = true;
-        ptyQueue.enqueue(proposal.proposerId, { text, settle });
-        return;
-      }
-      if (!(await deps.threadLive(proposal.proposerId, projectId))) return;
-      const result = await deps.queueThreadTurn(proposal.proposerId, projectId, text);
-      if (!result.ok) safeLog(`squad proposal thread report not queued for ${proposal.proposerId}: ${result.reason ?? 'unknown'}`);
-    } finally {
-      if (!queued) settle();
+  /**
+   * Hand `text` to the conversation. `settle` runs once it is delivered or the conversation is
+   * definitively gone, never on dispose and never on a transient failure (a liveness check that
+   * throws, a thread turn that was not queued, a PTY that refused the text): those stay
+   * unmarked so boot replay delivers them again.
+   */
+  async function deliver(
+    target: ExecutionReportTarget, projectId: string, text: string, settle: () => void = () => undefined,
+    opts: { onGone?: () => void; stillWanted?: () => Promise<boolean> } = {}
+  ): Promise<void> {
+    // `onGone` replaces settling when the conversation is gone: the item stays unreported.
+    const gone = opts.onGone ?? settle;
+    if (target.kind === 'pty') {
+      if (!deps.ptyLive(target.id)) { gone(); return; }
+      ptyQueue.enqueue(target.id, { text, settle, ...(opts.stillWanted ? { stillWanted: opts.stillWanted } : {}), ...(opts.onGone ? { onDrop: opts.onGone } : {}) });
+      return;
     }
+    if (!(await deps.threadLive(target.id, projectId))) { gone(); return; }
+    const result = await deps.queueThreadTurn(target.id, projectId, text);
+    if (!result.ok) {
+      safeLog(`squad proposal thread report not queued for ${target.id}: ${result.reason ?? 'unknown'}`);
+      return;
+    }
+    settle();
   }
 
   /** Worktree outcome for the report, or `undefined` while terminal effects are still pending. */
@@ -121,23 +136,27 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
     };
   }
 
-  async function report(record: ExecutionRecord, given: SquadWorktreeOutcome | undefined, proposerLive: boolean | undefined): Promise<void> {
-    if (disposed || !record?.proposal || record.proposalNoticeVersion === record.attempt || !TERMINAL.has(record.state)) return;
+  const unreported = (record: ExecutionRecord): boolean =>
+    !!executionReportTarget(record) && reportedAttempt(record) !== record.attempt && TERMINAL.has(record.state);
+
+  async function report(record: ExecutionRecord, given: SquadWorktreeOutcome | undefined, targetLive: boolean | undefined): Promise<void> {
+    if (disposed || !record || !unreported(record)) return;
     const key = `${record.id}:${record.attempt}`;
     if (claimed.has(key)) return;
     claimed.add(key);
     let handedOff = false;
     try {
       const fresh = (await deps.getRecord(record.id)) ?? record;
-      const proposal = fresh.proposal;
-      if (!proposal || fresh.proposalNoticeVersion === fresh.attempt || !TERMINAL.has(fresh.state)) return;
+      const target = executionReportTarget(fresh);
+      if (!target || !unreported(fresh)) return;
       const outcome = worktreeOutcome(fresh, given);
       if (outcome === undefined) return;
-      const text = buildSquadReport(fresh, outcome === 'none' ? {} : { worktree: outcome });
-      const settle = settler(fresh, key, await postResult(fresh, text));
+      const text = buildSquadReport(fresh, { ...(outcome === 'none' ? {} : { worktree: outcome }), role: target.role });
+      // A proposer also gets the Inbox result entry; an owner already has the run on its board.
+      const settle = settler(fresh, key, target.role === 'owner' ? true : await postResult(fresh, text));
       handedOff = true;
-      if (proposerLive === false) { settle(); return; }
-      try { await deliver(proposal, fresh.projectId, text, settle); } catch (error) { safeLog(`squad proposal delivery failed for ${fresh.id}`, error); }
+      if (targetLive === false) { settle(); return; }
+      try { await deliver(target, fresh.projectId, text, settle); } catch (error) { safeLog(`squad proposal delivery failed for ${fresh.id}`, error); }
     } catch (error) {
       safeLog(`squad proposal report failed for ${record.id}`, error);
     } finally {
@@ -166,22 +185,54 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
   }
 
   async function onHumanBlocker(record: ExecutionRecord, blocker: Blocker): Promise<void> {
-    if (disposed || !record?.proposal || !firstSighting(record.id, blocker.id)) return;
+    const target = record ? executionReportTarget(record) : undefined;
+    // Before boot replay the conversations are not restored: leave it to replayBlockers instead of reading them as gone.
+    if (disposed || !ready || !target || record.reportedBlockerIds?.includes(blocker.id) || !firstSighting(record.id, blocker.id)) return;
+    // Marked once delivered or dropped for good; a dispose before that leaves it for boot replay.
+    // Not marked when the report target moved while it waited: the new target still has to get it.
+    let moved = false;
+    const settle = () => {
+      if (moved) return;
+      void Promise.resolve()
+        .then(() => deps.markBlockerReported(record.id, blocker.id))
+        .catch((error: unknown) => safeLog(`squad proposal blocker mark failed for ${record.id}`, error));
+    };
+    // An owner that is gone may come back through resume_binding, which moves the target and
+    // re-offers the blocker: it stays unreported (and forgotten here) until some session gets it.
+    const owner = target.role === 'owner';
+    const onGone = owner ? () => { seenBlockers.get(record.id)?.delete(blocker.id); } : undefined;
+    const stillWanted = async () => {
+      const fresh = await deps.getRecord(record.id);
+      const current = fresh?.blockers?.find((candidate) => candidate.id === blocker.id);
+      // Only a blocker the store says is resolved is dropped; anything unclear is still delivered.
+      if (current?.resolved === true) return false;
+      const now = fresh ? executionReportTarget(fresh) : undefined;
+      if (fresh && now && (now.kind !== target.kind || now.id !== target.id)) {
+        // resume_binding moved the target while this report waited for a quiet old session: drop this
+        // item unmarked and offer the blocker to the current target (its first offer was ignored as seen).
+        moved = true;
+        seenBlockers.get(record.id)?.delete(blocker.id);
+        void onHumanBlocker(fresh, blocker).catch((error: unknown) => safeLog(`squad proposal blocker re-offer failed for ${record.id}`, error));
+        return false;
+      }
+      return true;
+    };
     try {
-      await deliver(record.proposal, record.projectId, buildSquadBlockerReport(record, blocker));
+      await deliver(target, record.projectId, buildSquadBlockerReport(record, blocker, target.role), settle, { stillWanted, ...(onGone ? { onGone } : {}) });
     } catch (error) {
       safeLog(`squad proposal blocker report failed for ${record.id}`, error);
     }
   }
 
-  async function proposerLive(record: ExecutionRecord, proposal: Proposal): Promise<boolean> {
+  /** Whether the target conversation is live; undefined when the check itself failed (not the same as gone). */
+  async function targetLive(record: ExecutionRecord, target: ExecutionReportTarget): Promise<boolean | undefined> {
     try {
-      return proposal.proposerKind === 'pty'
-        ? deps.ptyLive(proposal.proposerId)
-        : await deps.threadLive(proposal.proposerId, record.projectId);
+      return target.kind === 'pty'
+        ? deps.ptyLive(target.id)
+        : await deps.threadLive(target.id, record.projectId);
     } catch (error) {
       safeLog(`squad proposal replay liveness check failed for ${record.id}`, error);
-      return false;
+      return undefined;
     }
   }
 
@@ -192,9 +243,32 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
     try { records = await deps.listUnreported(); } catch (error) { safeLog('squad proposal replay list failed', error); return; }
     for (const record of records) {
       try {
-        if (record.proposal) await report(record, undefined, await proposerLive(record, record.proposal));
+        const target = executionReportTarget(record);
+        if (!target) continue;
+        const live = await targetLive(record, target);
+        // A failed check is not a gone conversation: leave the report unmarked for the next boot.
+        if (live !== undefined) await report(record, undefined, live);
       } catch (error) {
         safeLog(`squad proposal replay failed for ${record.id}`, error);
+      }
+    }
+    await replayBlockers();
+  }
+
+  /** Open human blockers raised before a restart that were not reported yet. */
+  async function replayBlockers(): Promise<void> {
+    let records: ExecutionRecord[];
+    try { records = await deps.listUnreportedBlockers(); } catch (error) { safeLog('squad proposal blocker replay list failed', error); return; }
+    for (const record of records) {
+      // Records from before report-back have no target of their own: their blockers were already delivered.
+      if (!record.reportTo) continue;
+      for (const blocker of record.blockers ?? []) {
+        if (blocker.resolved || blocker.audience === 'coordinator') continue;
+        try {
+          await onHumanBlocker(record, blocker);
+        } catch (error) {
+          safeLog(`squad proposal blocker replay failed for ${record.id}`, error);
+        }
       }
     }
   }

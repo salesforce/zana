@@ -11,7 +11,9 @@ describe('squad proposal skills', () => {
     for (const name of ['mcp__zcc-inbox__squad_plan_check', 'mcp__zcc-inbox__squad_propose', 'zcc_squad_plan_check', 'zcc_squad_propose', 'zcc_list_teams']) {
       expect(brainstorm).toContain(name);
     }
-    expect(brainstorm).toContain('project library');
+    expect(brainstorm).toContain('wherever they are: this project, your home folder (a doc vault, `~/.zcc/library`)');
+    expect(brainstorm).toContain('`SOURCE_NOT_ALLOWED`');
+    expect(brainstorm).not.toContain('cannot be attached');
     expect(brainstorm).toContain('[Squad report]');
     expect(brainstorm).toContain('On the review-first path, never use `execution.start`, `launch_team` or\n`zana_start_team`');
     expect(brainstorm).not.toContain('Never use `execution.start`, `launch_team` or `zana_start_team` for this.');
@@ -57,8 +59,18 @@ describe('squad proposal skills', () => {
       }
     });
 
+    it('teaches the owner of a started run to wait for reports, not poll, and how to answer', () => {
+      expect(inbox).toContain('After Start you will receive a\n   `[Squad report]` when the run finishes or needs a human answer. Don\'t poll in\n   a loop');
+      expect(inbox).toContain('`execution.respond { executionId, expectedStateVersion, blockerId, message }`');
+      expect(inbox).toContain('Add `notify: true` so the run\n   reports back to you.');
+      expect(inbox).toContain('| Answer a question it reported | `mcp__zcc-inbox__execution.respond` | `zcc_execution_respond` |');
+      expect(inbox).not.toContain('advance `after` to the newest event cursor');
+      expect(brainstorm).toContain('A Squad you started yourself (start now) is yours to answer');
+    });
+
     it('scopes the execution.start ban to the review-first path', () => {
-      expect(inbox).toContain('Review first: save the files to the project library, run `squad_plan_check`, pick\na Squad with `list_teams`, then call `squad_propose`; do not call `execution.start`.');
+      expect(inbox).toContain('then call `squad_propose`; do not call `execution.start`.');
+      expect(inbox).toContain('by their exact paths (do not copy them)');
       expect(inbox).toContain('Use it to build a design only when the user explicitly asks to start now');
     });
   });

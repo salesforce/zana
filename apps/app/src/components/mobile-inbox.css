@@ -137,9 +137,8 @@ body:has(.app-shell[data-mobile='true']) .modal.inbox-mobile-actions-sheet {
   flex-wrap: wrap;
   align-items: stretch;
   gap: 8px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
-  margin-top: 20px;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  margin: 20px -16px 0;
 }
 .app-shell[data-mobile='true'] .inbox-detail-dock .inbox-detail-footer { margin-left: 0; }
 .app-shell[data-mobile='true'] .inbox-detail :is(.inbox-detail-open, .inbox-reply-composer) { border-radius: 12px; min-height: 48px; padding: 10px 12px; font-size: 14px; }
@@ -211,3 +210,5 @@ body:has(.app-shell[data-mobile='true']) .modal.inbox-mobile-actions-sheet {
 @media (hover: none) {
   .app-shell[data-mobile='true'] .inbox-sidebar-list .inbox-row:not(.active):hover { background: transparent; }
 }
+
+.app-shell[data-mobile='true'] .inbox-detail:has(> .inbox-detail-dock) { padding-bottom: 0; }

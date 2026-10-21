@@ -217,6 +217,18 @@ describe('TeamComposer prefill', () => {
     });
   });
 
+  it('shows the full path of a source outside the project, marked as such', () => {
+    render(<TeamComposer prefill={{ ...prefill, sources: [
+      { id: 'c1', name: 'design.md', byteSize: 10, expiresAt: Date.now() + 60_000, path: '~/vault/design.md', outsideProject: true },
+      { id: 'c2', name: 'plan.md', byteSize: 20, expiresAt: Date.now() + 60_000 }
+    ] }} />);
+    const chips = screen.getByLabelText('Attached sources');
+    expect(chips.textContent).toContain('~/vault/design.mdoutside the Project');
+    expect(chips.textContent).toContain('plan.md');
+    expect(chips.querySelectorAll('.launch-attachment-outside')).toHaveLength(1);
+    expect(chips.querySelector('li[title="~/vault/design.md"]')).not.toBeNull();
+  });
+
   it('removing a chip removes its id from the launch', async () => {
     startJob.mockResolvedValue({ ok: true, value: { executionId: 'e', state: 'RUNNING' } });
     render(<TeamComposer prefill={prefill} />);

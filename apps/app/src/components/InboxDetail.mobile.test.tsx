@@ -38,6 +38,7 @@ vi.mock('./MarkdownContent.js', () => ({ MarkdownContent: ({ text }: { text: str
 vi.mock('../lib/renderReportHtml.js', () => ({ renderReportHtml: vi.fn(async () => '<p>Report</p>') }));
 vi.mock('../lib/executionInboxBlockerState.js', () => ({ useExecutionInboxBlockerState: () => 'actionable' }));
 import { InboxDetail } from './InboxDetail.js';
+import { fileManagerName } from '../lib/file-manager.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -171,7 +172,7 @@ it('keeps reading chrome compact and loads documents only when opened', async ()
   fireEvent.click(screen.getByRole('button', { name: 'report.md', exact: true }));
   await screen.findByText('Full document content');
   expect(state.readFile).toHaveBeenCalledWith('/project/.zcc/library/report.md');
-  expect(screen.queryByRole('button', { name: /in Finder|in Cursor|in VS Code/ })).toBeNull();
+  expect(screen.queryByRole('button', { name: /in (Finder|Explorer|file manager)|in Cursor|in VS Code/ })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Copy path to .zcc/library/report.md' }));
   await waitFor(() => expect(state.copy).toHaveBeenCalledWith('/project/.zcc/library/report.md'));
 });
@@ -231,7 +232,7 @@ it('keeps desktop actions and file preview behavior, and resets reply drafts for
   expect(screen.queryByRole('button', { name: 'Message actions' })).toBeNull();
   expect(screen.getByRole('button', { name: 'Download this inbox entry as PDF' })).toBeTruthy();
   await screen.findByText('Full document content');
-  expect(screen.getByRole('button', { name: /in Finder/ })).toBeTruthy();
+  expect(screen.getByRole('button', { name: new RegExp(`in ${fileManagerName()}`) })).toBeTruthy();
 });
 
 it.each([true, false])('streams resolved video attachments without reading binary content (compact=%s)', async (compact) => {

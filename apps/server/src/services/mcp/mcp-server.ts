@@ -572,6 +572,8 @@ function buildProjectMcpServer(opts: {
   projectRoot?: string;
   sessionId?: string;
   sessionCredential?: string;
+  /** The route serves a Modern thread (the agent-tool bridge marks it); otherwise a PTY session. */
+  routeKind?: 'thread';
   inboxStore: IInboxStore;
   heldQuestions?: McpServerOptions['heldQuestions'];
   suggestionsStore: ISuggestionsStore;
@@ -863,6 +865,7 @@ function buildProjectMcpServer(opts: {
       handoffs: opts.executionHandoffs,
       validateHandoffTarget: opts.validateExecutionHandoffTarget,
       approveHandoff: opts.approveExecutionHandoff,
+      reportKind: opts.routeKind === 'thread' ? 'thread' : 'pty',
       validateRouteIdentity: (sessionId, projectId) => routeAuthenticated
         && (opts.validateTeamRouteIdentity?.(sessionId, projectId) ?? false),
       validateOwnerRouteIdentity: async (sessionId, projectId) => {
@@ -971,14 +974,19 @@ function safeDecode(seg: string): string | null {
 /**
  * Match `/mcp/:projectId` or `/mcp/:projectId/:sessionId`. Strict: any
  * other shape 404s. Returns null when no match. Exported for unit tests.
+ * `?route=thread` marks a Modern thread's route (it only picks how that
+ * session receives reports; the credential still proves the session).
  */
 export function matchMcpRoute(
   rawUrl: string | undefined
-): { projectId: string; sessionId?: string; sessionCredential?: string } | null {
+): { projectId: string; sessionId?: string; sessionCredential?: string; routeKind?: 'thread' } | null {
   if (!rawUrl) return null;
   let pathname: string;
+  let routeKind: 'thread' | undefined;
   try {
-    pathname = new URL(rawUrl, 'http://127.0.0.1').pathname;
+    const url = new URL(rawUrl, 'http://127.0.0.1');
+    pathname = url.pathname;
+    if (url.searchParams.get('route') === 'thread') routeKind = 'thread';
   } catch {
     return null;
   }
@@ -991,7 +999,8 @@ export function matchMcpRoute(
   return {
     projectId,
     ...(sessionId ? { sessionId } : {}),
-    ...(sessionCredential ? { sessionCredential } : {})
+    ...(sessionCredential ? { sessionCredential } : {}),
+    ...(sessionId && routeKind ? { routeKind } : {})
   };
 }
 
@@ -1939,6 +1948,7 @@ async function handleRequest(
     projectRoot: project?.path,
     sessionId,
     sessionCredential: route.sessionCredential,
+    ...(route.routeKind ? { routeKind: route.routeKind } : {}),
     inboxStore: opts.inboxStore,
     heldQuestions: opts.heldQuestions,
     suggestionsStore: opts.suggestionsStore,

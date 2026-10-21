@@ -348,26 +348,35 @@ because each UI's provider applies its MCP namespace:
 |---|---|---|
 | Start | `mcp__zcc-inbox__execution.start` | `zcc_execution_start` |
 | Monitor | `mcp__zcc-inbox__execution.snapshot` | `zcc_execution_snapshot` |
+| Answer a question it reported | `mcp__zcc-inbox__execution.respond` | `zcc_execution_respond` |
 | Recover after restart | `mcp__zcc-inbox__execution.resume_binding` | `zcc_execution_resume_binding` |
 | Check a Squad plan | `mcp__zcc-inbox__squad_plan_check` | `zcc_squad_plan_check` |
 | Propose a Squad launch to the user | `mcp__zcc-inbox__squad_propose` | `zcc_squad_propose` |
 
-`execution.start` is for agent-owned orchestration: you own the run and monitor
-it. Use it to build a design only when the user explicitly asks to start now;
+`execution.start` is for agent-owned orchestration: you own the run.
+Use it to build a design only when the user explicitly asks to start now;
 otherwise hand it to a Squad the **user** launches (the subsection below).
 
 1. Build one bounded `execution.start` request with squad `teamId`, a unique
    `launchRequestId`, and one `initialTask` per expanded slot: each worker slot
    in order, then the orchestrator last. The orchestrator is the LAST slot of the
-   task list, so the brief goes on the last slot. Call Start once; the job-team
-   engine launches workers and gives each slot its task.
-2. Keep returned `executionId`. Call Monitor with `{ executionId, after }`, then
-   advance `after` to the newest event cursor. Treat execution state, work units,
-   blockers, and events as authoritative.
-3. Continue monitoring until `COMPLETED`, `FAILED`, or `STOPPED`. When blocked,
-   surface the durable question to the user; do not invent an answer.
+   task list, so the brief goes on the last slot. Add `notify: true` so the run
+   reports back to you. Call Start once; the job-team engine launches workers and
+   gives each slot its task.
+2. Keep the returned `executionId`. After Start you will receive a
+   `[Squad report]` when the run finishes or needs a human answer. Don't poll in
+   a loop; call Monitor (`{ executionId, after }`) only when the user asks for
+   detail or after a report. Treat execution state, work units, blockers, and
+   events as authoritative. Without `notify: true` there are no reports, so
+   monitor the run yourself until it ends.
+3. When a report names a waiting question (`blocker <id>`), answer it with
+   `execution.respond { executionId, expectedStateVersion, blockerId, message }`
+   only if what the user already told you decides it (take
+   `expectedStateVersion` from Monitor). Otherwise ask the user; never invent an
+   answer. The question is in the user's Inbox too.
 4. Use Recover only after owner session restart and only with the stored resume
-   token. Do not call it during normal kickoff.
+   token. Do not call it during normal kickoff. Reports then follow you to the new
+   session.
 
 Do not launch an ad-hoc bare squad and separately simulate durable work. Start is
 the single owner handoff; job-team execution owns planning, worker work delivery,
@@ -381,7 +390,7 @@ path. Review first is the default.
 | User says (examples) | Path | Tools |
 |---|---|---|
 | "build it with X", "prepare a launch for X", "propose X for this plan", "set up X to build this" | Review first | `squad_plan_check` → `list_teams` → `squad_propose`; tell the user to open the "Squad launch ready" Inbox card |
-| "run this with X now", "start X on this now", "launch X immediately, no review", "skip the Inbox and run it with X" | Start now | `execution.start` (you own the run; monitor with `execution.snapshot`) |
+| "run this with X now", "start X on this now", "launch X immediately, no review", "skip the Inbox and run it with X" | Start now | `execution.start` (you own the run; a `[Squad report]` tells you when it ends or needs an answer) |
 | Anything else, or unclear | Review first | Same as row 1 |
 
 Start now only when the user's message explicitly asks to start immediately. Do not
@@ -391,8 +400,9 @@ can say "run it now with X" next time to skip the Inbox.
 Say which path you took, in one line: "Prepared a Squad launch for your review in
 the Inbox" or "Started X now; I own the run". The user can then catch a misroute.
 
-Review first: save the files to the project library, run `squad_plan_check`, pick
-a Squad with `list_teams`, then call `squad_propose`; do not call `execution.start`.
+Review first: pass the design and plan files you wrote or read, wherever they are,
+by their exact paths (do not copy them), run `squad_plan_check`, pick a Squad with
+`list_teams`, then call `squad_propose`; do not call `execution.start`.
 The user reviews the Inbox card and presses Launch. Follow the steps in the
 `brainstorm` skill ("When the user wants it built"). A `[Squad report]` message
 later is for you to summarise to the user, not to act on.

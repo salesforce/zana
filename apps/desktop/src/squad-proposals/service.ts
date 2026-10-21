@@ -15,16 +15,21 @@ import {
   type SquadProposer
 } from '@zana-ai/zcc-domain/squad-proposal';
 import { ExecutionSourceError } from '@zana-ai/zcc-server/services/execution/source-registry';
+import { sourcePolicyText, type SourcePolicy } from '@zana-ai/zcc-server/services/execution/source-policy';
 import type { InboxInput } from '@zana-ai/zcc-server/services/inbox/inbox-store';
 import { InboxActionOperatorError } from '../inbox-actions/registry.js';
 import {
   FILE_MAX_BYTES,
   TOTAL_MAX_BYTES,
-  confineToProject,
-  goalPathOutsideProject,
+  confineSource,
+  goalPathNotAllowed,
+  goalPathTokens,
   readConfinedSource,
+  sourceScope,
   type ConfinedSource,
-  type SquadProposalFs
+  type SquadProposalFs,
+  type SquadSourceBases,
+  type SquadSourceScope
 } from './sources.js';
 import type { SquadProposalStore } from './store.js';
 
@@ -64,14 +69,16 @@ export interface SquadProposalServiceDeps {
     texts: string[]
   ): { workUnits?: Array<{ id: string; title: string; dependencies: string[]; files?: string[] }>; planError?: string };
   fs: SquadProposalFs;
+  /** HOME, the clone root and Zana's data folders: with the project, the bases of the source policy. */
+  sourceBases(): SquadSourceBases;
   inbox: { appendOnce(input: InboxInput): Promise<InboxEntry> };
   actions: {
     /** Returns false when the action could not be bound (e.g. inert registry). */
     bind(entry: InboxEntry, action: { kind: string; ref: string }): boolean | void;
     markUnavailable(kind: string, ref: string, message: string): void;
   };
-  /** `withinRoot` confines each source to the project at capability time (re-checked against the issued realpath). */
-  issueSources(windowId: number | string, projectId: string, paths: string[], withinRoot: string): Promise<Array<{ id: string; name: string; byteSize: number; expiresAt: number }>>;
+  /** `policy` confines each source at capability time (re-checked against the issued realpath). */
+  issueSources(windowId: number | string, projectId: string, paths: string[], policy: SourcePolicy): Promise<Array<{ id: string; name: string; byteSize: number; expiresAt: number }>>;
   now(): number;
   newId(): string;
   /**
@@ -113,6 +120,8 @@ function validateInput(input: SquadProposalInput): string | undefined {
 
 interface Prepared {
   project: ProjectRef;
+  /** Undefined only when the project folder is unavailable and nothing needed it. */
+  scope?: SquadSourceScope;
   team: Team;
   orchestrator: Persona;
   workers: number;
@@ -141,16 +150,17 @@ function resolveSquad(deps: SquadProposalServiceDeps, projectId: string, teamId:
   return ok({ project, team, orchestrator, slots });
 }
 
-/** Every source confined to the project, de-duplicated by realpath and within the size caps. */
-async function confineSources(fs: SquadProposalFs, projectRoot: string, rawSources: string[]): Promise<SquadProposalOutcome<ConfinedSource[]>> {
+/** Every source allowed by the source policy, de-duplicated by realpath and within the size caps. */
+async function confineSources(fs: SquadProposalFs, scope: SquadSourceScope | undefined, rawSources: string[]): Promise<SquadProposalOutcome<ConfinedSource[]>> {
   if (rawSources.length > SQUAD_PROPOSAL_LIMITS.maxSources) {
     return fail('TOO_MANY_SOURCES', `At most ${SQUAD_PROPOSAL_LIMITS.maxSources} source files are allowed.`);
   }
+  if (rawSources.length && !scope) return fail('NOT_FOUND', 'The project folder is not available.');
   const sources: ConfinedSource[] = [];
   const seen = new Set<string>();
   let total = 0;
   for (const raw of rawSources) {
-    const confined = await confineToProject(fs, projectRoot, raw);
+    const confined = await confineSource(fs, scope!, raw);
     if (!confined.ok) return confined;
     if (seen.has(confined.source.path)) continue;
     seen.add(confined.source.path);
@@ -164,10 +174,10 @@ async function confineSources(fs: SquadProposalFs, projectRoot: string, rawSourc
 
 /** A provided plan must parse into steps from the sources (read through verified handles) plus the goal. */
 async function checkProvidedPlan(
-  deps: SquadProposalServiceDeps, projectRoot: string, sources: ConfinedSource[], goal: string
+  deps: SquadProposalServiceDeps, scope: SquadSourceScope | undefined, sources: ConfinedSource[], goal: string
 ): Promise<SquadProposalOutcome<SquadPlanStep[]>> {
   let texts: string[];
-  try { texts = await Promise.all(sources.map((s) => readConfinedSource(deps.fs, projectRoot, s))); } catch {
+  try { texts = await Promise.all(sources.map((s) => readConfinedSource(deps.fs, scope!, s))); } catch {
     return fail('SOURCE_UNREADABLE', 'A source file could not be read, or it changed after it was checked.');
   }
   const plan = deps.resolveSquadPlan('provided', [...texts, goal]);
@@ -183,11 +193,23 @@ async function prepare(
   const squad = resolveSquad(deps, projectId, teamId);
   if (!squad.ok) return squad;
   const { project, team, orchestrator, slots } = squad.value;
-  const sources = await confineSources(deps.fs, project.path, rawSources);
+  const scope = await sourceScope(deps.fs, project.path, deps.sourceBases());
+  const sources = await confineSources(deps.fs, scope, rawSources);
   if (!sources.ok) return sources;
-  const outsideGoalPath = await goalPathOutsideProject(deps.fs, project.path, goal);
-  if (outsideGoalPath) {
-    return fail('SOURCE_OUTSIDE_PROJECT', `The goal names ${outsideGoalPath}, which is outside this project. Move the file into the project, or remove the path from the goal.`);
+  // Without the project folder nothing can be judged, and Launch would otherwise discover the goal's paths unchecked.
+  if (!scope && goalPathTokens(goal).length) {
+    return fail('NOT_FOUND', 'The project folder is not available, so the paths named in the goal can\'t be checked. Remove them from the goal, or try again once the project folder is back.');
+  }
+  const listed = new Set(sources.value.map((s) => s.source.path));
+  const refusedGoalPath = scope ? await goalPathNotAllowed(deps.fs, scope, goal, listed) : undefined;
+  if (refusedGoalPath?.reason === 'outside-project') {
+    return fail('SOURCE_NOT_ALLOWED', `The goal names ${refusedGoalPath.path}, which is outside this project. Pass it in sources instead, so the user sees it on the card before Launch.`);
+  }
+  if (refusedGoalPath?.reason === 'hard-linked') {
+    return fail('SOURCE_NOT_ALLOWED', `The goal names ${refusedGoalPath.path}, a hard-linked file, which can't be attached. Remove the path from the goal, or name a file that can be.`);
+  }
+  if (refusedGoalPath) {
+    return fail('SOURCE_NOT_ALLOWED', `The goal names ${refusedGoalPath.path}, which can't be attached. ${sourcePolicyText(scope?.policy)} Remove the path from the goal, or name a file that can be.`);
   }
   const planning: SquadPlanning = planningInput ?? team.defaultPlanning ?? (personaCanWriteFiles(orchestrator) ? 'infer' : 'provided');
   if (planning === 'infer' && !personaCanWriteFiles(orchestrator)) {
@@ -196,12 +218,13 @@ async function prepare(
   }
   let planSteps: SquadPlanStep[] | undefined;
   if (planning === 'provided') {
-    const plan = await checkProvidedPlan(deps, project.path, sources.value, goal);
+    const plan = await checkProvidedPlan(deps, scope, sources.value, goal);
     if (!plan.ok) return plan;
     planSteps = plan.value;
   }
   return ok({
-    project, team, orchestrator, workers: Math.max(0, slots - 1), planning, sources: sources.value.map((s) => s.source), ...(planSteps ? { planSteps } : {})
+    project, ...(scope ? { scope } : {}), team, orchestrator, workers: Math.max(0, slots - 1), planning,
+    sources: sources.value.map((s) => s.source), ...(planSteps ? { planSteps } : {})
   });
 }
 
@@ -233,7 +256,7 @@ function proposalCard(record: SquadProposalRecord, prepared: Prepared, proposer:
   const comments = [
     `- Squad: ${team.name} (${orchestrator.name} + ${plural(workers, 'worker')})`,
     `- Planning: ${PLANNING_LABEL[planning]}${planSteps ? ` — plan checked: ${plural(planSteps.length, 'step')}` : ''}`,
-    ...(sources.length ? [`- Files: ${sources.map((s) => s.relPath).join(', ')}`] : []),
+    ...(sources.length ? [`- Files: ${sources.map((s) => (s.outsideProject ? `${s.relPath} (outside the Project)` : s.relPath)).join(', ')}`] : []),
     '- Nothing starts until you press Launch.'
   ].join('\n');
   const origin = proposer.origin ?? (proposer.kind === 'thread' ? { threadId: proposer.id } : undefined);
@@ -242,7 +265,8 @@ function proposalCard(record: SquadProposalRecord, prepared: Prepared, proposer:
     subject: `Squad launch ready: ${record.title}`,
     intent: `Prepared in "${proposer.title ?? 'a conversation'}"`,
     comments,
-    docs: sources.map((s) => ({ path: s.relPath })),
+    // Inbox documents open inside the project; a file outside it is named in the comments instead.
+    docs: sources.filter((s) => !s.outsideProject).map((s) => ({ path: s.relPath })),
     hostActionRequired: true,
     squadProposal: { proposalId: record.id },
     questions: [{ prompt: 'Squad launch', options: [{ id: 'dismiss', label: 'Dismiss' }] }],
@@ -260,7 +284,7 @@ function proposalResult(record: SquadProposalRecord, prepared: Prepared, entry: 
     team: { id: team.id, name: team.name, workers, orchestrator: orchestrator.name },
     planning,
     plan: planSteps ? { steps: planSteps.map((s) => ({ id: s.id, title: s.title })) } : null,
-    sources: sources.map((s) => ({ path: s.relPath, bytes: s.bytes })),
+    sources: sources.map((s) => ({ path: s.relPath, bytes: s.bytes, ...(s.outsideProject ? { outsideProject: true } : {}) })),
     expiresAt: record.expiresAt
   };
 }
@@ -274,7 +298,14 @@ function launchPrefill(record: SquadProposalRecord, prepared: Prepared, issued: 
     goal: record.goal,
     ...(record.title ? { title: record.title } : {}),
     ...(record.summary ? { summary: record.summary } : {}),
-    sources: issued.map((s) => ({ id: s.id, name: s.name, byteSize: s.byteSize, expiresAt: s.expiresAt })),
+    // issueSources returns one capability per path, in order.
+    sources: issued.map((s, index) => {
+      const source = prepared.sources[index];
+      return {
+        id: s.id, name: s.name, byteSize: s.byteSize, expiresAt: s.expiresAt,
+        ...(source?.outsideProject ? { path: source.relPath, outsideProject: true } : {})
+      };
+    }),
     ...(record.proposer.title ? { proposerTitle: record.proposer.title } : {}),
     ...(prepared.planSteps ? { planStepCount: prepared.planSteps.length } : {})
   };
@@ -366,14 +397,16 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
     return ok(record);
   }
 
-  /** A plan file named by squad_plan_check, confined and read like a source. */
+  /** A plan file named by squad_plan_check, checked and read like a source. */
   async function readPlanFile(projectId: string, path: string): Promise<SquadProposalOutcome<string>> {
     const project = deps.projects.get(projectId);
     if (!project) return fail('NOT_FOUND', 'Project not found.');
-    const confined = await confineToProject(deps.fs, project.path, path);
+    const scope = await sourceScope(deps.fs, project.path, deps.sourceBases());
+    if (!scope) return fail('NOT_FOUND', 'The project folder is not available.');
+    const confined = await confineSource(deps.fs, scope, path);
     if (!confined.ok) return confined;
     if (confined.source.bytes > FILE_MAX_BYTES) return fail('SOURCE_TOO_LARGE', `${path} is larger than 4 MiB.`);
-    try { return ok(await readConfinedSource(deps.fs, project.path, confined)); } catch {
+    try { return ok(await readConfinedSource(deps.fs, scope, confined)); } catch {
       return fail('SOURCE_UNREADABLE', `${path} could not be read, or it changed after it was checked.`);
     }
   }
@@ -444,13 +477,18 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         if (leases.active(proposalId)) return fail('NOT_PENDING', 'This Squad launch is already starting.');
         const prepared = await prepare(deps, record.projectId, record.teamId, record.goal, record.planning, record.sources.map((s) => s.path));
         if (!prepared.ok) return prepared;
-        let issued: Awaited<ReturnType<SquadProposalServiceDeps['issueSources']>>;
+        let issued: Awaited<ReturnType<SquadProposalServiceDeps['issueSources']>> = [];
         try {
-          issued = await deps.issueSources(windowId, record.projectId, prepared.value.sources.map((s) => s.path), prepared.value.project.path);
+          const { scope } = prepared.value;
+          if (scope) issued = await deps.issueSources(windowId, record.projectId, prepared.value.sources.map((s) => s.path), scope.policy);
         } catch (error) {
           // The registry's own errors are written for users (file names only); anything else is logged.
           if (error instanceof ExecutionSourceError) return fail('SOURCE_UNREADABLE', `The source files could not be attached (${error.code}): ${error.message}`);
           return unexpected(`${proposalId} review sources`, error, 'The source files could not be attached. Try again.', 'SOURCE_UNREADABLE');
+        }
+        // launchPrefill maps capabilities back to paths by index, so a count mismatch must not launch.
+        if (issued.length !== prepared.value.sources.length) {
+          return fail('SOURCE_UNREADABLE', 'The source files could not be attached. Try again.');
         }
         return ok(launchPrefill(record, prepared.value, issued));
       } catch (error) {
@@ -460,6 +498,8 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
 
     async beginLaunch(proposalId: string, projectId: string): Promise<SquadProposalOutcome<{
       proposal: { id: string; proposerKind: 'pty' | 'thread'; proposerId: string; proposerTitle?: string };
+      /** Realpaths of the sources the reviewed card listed: the only files outside the Project a goal may add at Launch. */
+      sourcePaths: string[];
     }>> {
       // Take the hold before any await, so two Launch presses (or two windows) can't both pass.
       if (leases.active(proposalId)) return fail('NOT_PENDING', 'This Squad launch is already starting.');
@@ -476,7 +516,8 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         held = true;
         const { proposer } = pending.value;
         return ok({
-          proposal: { id: proposalId, proposerKind: proposer.kind, proposerId: proposer.id, ...(proposer.title ? { proposerTitle: proposer.title } : {}) }
+          proposal: { id: proposalId, proposerKind: proposer.kind, proposerId: proposer.id, ...(proposer.title ? { proposerTitle: proposer.title } : {}) },
+          sourcePaths: pending.value.sources.map((source) => source.path)
         });
       } catch (error) {
         return unexpected(`${proposalId} launch`, error, 'This Squad launch could not start. Try again.');

@@ -376,6 +376,8 @@ function extractLifecycleInfo(lifecycle: any): ExtractedLifecycle | undefined {
  *  text (Rule 5 bound) — a chosen label fits; a whole upstream document won't be
  *  pasted into the task prompt. Mirrors the projection's `MAX_UNIT_RESULT_CHARS`. */
 export const MAX_DEP_RESULT_CHARS = 2_048;
+/** Largest answer a human or owner agent may deliver to one blocker (UTF-8 bytes). */
+export const MAX_BLOCKER_ANSWER_BYTES = 16 * 1024;
 
 /** Summary stamped when the engine auto-finalizes a fully-completed DAG that the
  *  orchestrator never explicitly closed. A later coordinator execution.complete
@@ -571,7 +573,10 @@ export class ExecutionService {
     return { ...request, resolvedModels: await this.deps.resolveTeamModelSnapshots(projectId, request) };
   }
 
-  async start(callerPrincipalId: string, projectId: string, request: ExecutionRequestV1, opts?: { proposal?: ExecutionRecord['proposal'] }): Promise<
+  async start(
+    callerPrincipalId: string, projectId: string, request: ExecutionRequestV1,
+    opts?: { proposal?: ExecutionRecord['proposal']; reportTo?: ExecutionRecord['reportTo'] }
+  ): Promise<
     { ok: true; value: ExecutionRecord & { resumeToken?: string; resumeTokenExpiresAt?: number } }
     | { ok: false; code: string; message: string; requirementFailure?: TeamRequirementFailure; availabilityUnknown?: TeamAvailabilityUnknown }
   > {
@@ -636,6 +641,7 @@ export class ExecutionService {
         ...(request.coordinationMode ? { coordinationMode: request.coordinationMode } : {}),
         ...(request.origin ? { origin: request.origin } : {}),
         ...(opts?.proposal ? { proposal: opts.proposal } : {}),
+        ...(opts?.reportTo ? { reportTo: opts.reportTo } : {}),
         launchRequestId: request.launchRequestId,
         request: { version: 1, launchKind: request.launchKind ?? 'team', ...(request.launchDisplay ? { launchDisplay: request.launchDisplay } : {}), slots: request.slots, policy: effectivePolicy, workflow: request.workflow, resolvedModels, sourceBundle: request.sourceBundle, objective: request.objective, ...(request.worktree === undefined ? {} : { worktree: request.worktree }), ...(request.onComplete === undefined ? {} : { onComplete: request.onComplete }) },
         ...(request.workUnits ? { workUnits: request.workUnits } : {}),
@@ -1854,7 +1860,7 @@ export class ExecutionService {
    */
   async answerBlockerByCoordinator(binding: ExecutionCohortBinding, blockerId: string, answer: string) {
     if (binding.role !== 'orchestrator') return deniedBound('only coordinator can answer a coordinator-directed blocker');
-    if (!blockerId.trim() || !answer.trim() || Buffer.byteLength(answer, 'utf8') > 16 * 1024) {
+    if (!blockerId.trim() || !answer.trim() || Buffer.byteLength(answer, 'utf8') > MAX_BLOCKER_ANSWER_BYTES) {
       return { ok: false as const, code: 'INVALID', message: 'invalid execution blocker answer request' };
     }
     const record = await this.getBound(binding);
@@ -2272,7 +2278,11 @@ export class ExecutionService {
       })),
       coordinationMode: reserved.coordinationMode
     };
-    const recovered = await this.start(callerPrincipalId, projectId, request, reserved.proposal ? { proposal: reserved.proposal } : undefined);
+    // The recovered run keeps its proposal and its report target.
+    const recovered = await this.start(callerPrincipalId, projectId, request, {
+      ...(reserved.proposal ? { proposal: reserved.proposal } : {}),
+      ...(reserved.reportTo ? { reportTo: reserved.reportTo } : {})
+    });
     if (!recovered.ok) return recovered;
     await this.deps.store.linkTimeoutSuccessor(source.id, clientRequestId, recovered.value.id);
     return { ok: true as const, value: recovered.value, source };
@@ -2509,6 +2519,26 @@ export class ExecutionService {
     return this.deliverToBlocker(callerPrincipalId, projectId, executionId, expectedStateVersion, blockerId, clientRequestId, message, false);
   }
 
+  /**
+   * Owner-agent answer to a human blocker (MCP `execution.respond {blockerId}`). Unlike the Inbox path
+   * it refuses coordinator-audience blockers, and with no `expectedStateVersion` it uses the latest
+   * version (retrying on a concurrent write): the open blocker id already prevents a double answer.
+   */
+  async respondToHumanBlockerAsOwner(callerPrincipalId: string, projectId: string, executionId: string, expectedStateVersion: number | undefined, blockerId: string, clientRequestId: string, message: string) {
+    if (!blockerId.trim() || !clientRequestId.trim() || !message.trim() || Buffer.byteLength(message, 'utf8') > MAX_BLOCKER_ANSWER_BYTES) {
+      return { ok: false as const, code: 'INVALID', message: 'invalid execution blocker delivery request' };
+    }
+    for (let attempt = 0; ; attempt += 1) {
+      const record = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);
+      if (!record) return { ok: false as const, code: 'NOT_FOUND', message: 'execution not found for caller' };
+      const blocker = record.blockers?.find((candidate) => candidate.id === blockerId && !candidate.resolved);
+      if (!blocker) return { ok: false as const, code: 'NOT_FOUND', message: 'execution blocker not found' };
+      if (blocker.audience === 'coordinator') return { ok: false as const, code: 'DENIED', message: `blocker ${blocker.id} is for the coordinator, not the owner` };
+      const result = await this.enqueueOwnedBlocker(record, expectedStateVersion ?? record.stateVersion, blocker, clientRequestId, message, false);
+      if (result.ok || result.code !== 'CONFLICT' || expectedStateVersion !== undefined || attempt >= 4) return result;
+    }
+  }
+
   async resumeBlocker(callerPrincipalId: string, projectId: string, executionId: string, expectedStateVersion: number, blockerId: string, clientRequestId: string, message: string) {
     return this.deliverToBlocker(callerPrincipalId, projectId, executionId, expectedStateVersion, blockerId, clientRequestId, message, true);
   }
@@ -2693,7 +2723,8 @@ export class ExecutionService {
       : begin();
   }
 
-  async resumeBinding(callerPrincipalId: string, projectId: string, executionId: string, token: string) {
+  /** `reportKind`: how the binding session receives reports, so an owner's [Squad report]s follow it. */
+  async resumeBinding(callerPrincipalId: string, projectId: string, executionId: string, token: string, reportKind?: 'pty' | 'thread') {
     return this.serializeBinding(executionId, async () => {
       const record = await this.deps.store.getInProject(projectId, executionId);
       if (!record || isResumeGrantTerminal(record.state) || !this.deps.resumeGrants) {
@@ -2710,8 +2741,14 @@ export class ExecutionService {
       try {
         await this.deps.resumeGrants.consume({ token, executionId, projectId, effectiveOwnerPrincipalId: callerPrincipalId, generation: record.recoveryGeneration });
         this.pendingBindingOwners.set(executionId, callerPrincipalId);
-        const value = await this.deps.store.addEffectiveOwner(executionId, callerPrincipalId);
+        const value = await this.deps.store.addEffectiveOwner(executionId, callerPrincipalId, reportKind);
         this.pendingBindingOwners.delete(executionId);
+        if (reportKind && value.reportTo?.role === 'owner') {
+          // The report target moved to this session: it gets the human blockers the previous one never saw.
+          for (const blocker of value.blockers ?? []) {
+            if (!blocker.resolved && blocker.audience !== 'coordinator' && !value.reportedBlockerIds?.includes(blocker.id)) this.fireHumanBlocker(value, blocker);
+          }
+        }
         return { ok: true as const, value };
       } catch (error) {
         if (this.pendingBindingOwners.get(executionId) === callerPrincipalId) {
@@ -2831,7 +2868,7 @@ export class ExecutionService {
     text: string,
     resume: boolean
   ) {
-    if (!blockerId.trim() || !clientRequestId.trim() || !text.trim() || Buffer.byteLength(text, 'utf8') > 16 * 1024) {
+    if (!blockerId.trim() || !clientRequestId.trim() || !text.trim() || Buffer.byteLength(text, 'utf8') > MAX_BLOCKER_ANSWER_BYTES) {
       return { ok: false as const, code: 'INVALID', message: 'invalid execution blocker delivery request' };
     }
     const record = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);

@@ -41,9 +41,18 @@ it('selects the Squad proposal specs for proposal, team and composer seams', () 
     'apps/server/src/services/execution/store.ts',
     'apps/server/src/services/execution/projection.ts',
     'apps/desktop/src/squad-worktree-runtime.ts',
-    'apps/desktop/src/squad-session-lifecycle.ts'
+    'apps/desktop/src/squad-session-lifecycle.ts',
+    'apps/server/src/services/execution/execution-mcp-tool.ts',
+    'apps/desktop/src/squad-proposals/notifier.ts'
   ]) {
+    expect(boundarySpecs([path])).toEqual(expect.arrayContaining([
+      'e2e/squad-proposal-flow.spec.ts', 'e2e/squad-direct-report.spec.ts', 'e2e/job-team-launch-ui.spec.ts'
+    ]));
+  }
+  // The shared source policy selects the proposal and launch specs, not the owner report-back one.
+  for (const path of ['apps/server/src/services/execution/source-policy.ts', 'apps/server/src/services/execution/source-registry.ts']) {
     expect(boundarySpecs([path])).toEqual(expect.arrayContaining(['e2e/squad-proposal-flow.spec.ts', 'e2e/job-team-launch-ui.spec.ts']));
+    expect(boundarySpecs([path])).not.toContain('e2e/squad-direct-report.spec.ts');
   }
   // Unrelated Squad and launcher files must not pull in the slow proposal specs.
   for (const path of [
@@ -55,6 +64,18 @@ it('selects the Squad proposal specs for proposal, team and composer seams', () 
   ]) {
     expect(boundarySpecs([path])).not.toContain('e2e/squad-proposal-flow.spec.ts');
   }
+});
+
+it('selects squad-direct-report for the owner report-back seams', () => {
+  for (const path of [
+    'apps/server/src/services/execution/service.ts',
+    'apps/server/src/services/mcp/mcp-server.ts',
+    'apps/desktop/src/squad-proposals/notifier.ts',
+    'apps/desktop/src/squad-proposals/report.ts'
+  ]) {
+    expect(boundarySpecs([path])).toContain('e2e/squad-direct-report.spec.ts');
+  }
+  expect(boundarySpecs(['apps/server/src/services/execution/service-helpers.ts'])).not.toContain('e2e/squad-direct-report.spec.ts');
 });
 
 it('selects the Squad source retry spec for the picker, registry and composer seams', () => {
@@ -261,7 +282,7 @@ it('includes the Squad proposal flow in the job-team E2E runner', async () => {
   try {
     await import('./run-jobteam-e2e.mjs');
     expect(main).toHaveBeenCalledOnce();
-    expect(main.mock.calls[0]![0]).toEqual(expect.arrayContaining(['--build', 'e2e/squad-proposal-flow.spec.ts']));
+    expect(main.mock.calls[0]![0]).toEqual(expect.arrayContaining(['--build', 'e2e/squad-proposal-flow.spec.ts', 'e2e/squad-direct-report.spec.ts']));
   } finally {
     process.exitCode = previousExitCode;
     vi.doUnmock('./run-electron-e2e.mjs');
