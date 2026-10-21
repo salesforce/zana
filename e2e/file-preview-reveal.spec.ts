@@ -4,7 +4,7 @@ import { test, expect } from './fixtures/app.js';
 
 test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, isolateBundledCatalog: true, initialConfig: { sponsorPromptDismissed: true } });
 
-test('file previews reveal confined local files through main in built Electron', async ({ app }, testInfo) => {
+test('file previews reveal confined local files through main in built Electron', async ({ app }) => {
   const { window, electron, home } = app;
   mkdirSync(join(home, 'reveal-project', 'dist'), { recursive: true });
   const root = realpathSync(join(home, 'reveal-project'));
@@ -59,8 +59,6 @@ test('file previews reveal confined local files through main in built Electron',
   await expect(panel).not.toContainText('file exceeds the read cap');
   await panel.getByRole('button', { name: label, exact: true }).last().click();
   await expect.poll(calls).toEqual([installer]);
-  await window.screenshot({ path: testInfo.outputPath('installer-reveal.png') });
-
   await open('notes.md');
   await expect(panel.getByRole('heading', { name: 'Readable document' })).toBeVisible();
   await expect(panel.getByRole('button', { name: label, exact: true })).toHaveCount(1);
