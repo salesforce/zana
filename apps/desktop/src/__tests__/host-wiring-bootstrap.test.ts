@@ -40,6 +40,7 @@ const h = vi.hoisted(() => {
     lifecycleStore: undefined as any,
     lifecycleIntegration: undefined as any,
     lifecycleOverride: {} as Record<string, (...a: any[]) => any>,
+    runtimeOverride: {} as Record<string, (...a: any[]) => any>,
     controlPlaneDeps: undefined as any,
     browserManager: undefined as any,
     mobileStart: vi.fn(),
@@ -198,9 +199,18 @@ vi.mock('../desktop-browser-view.js', async () => {
     return h.browserManager;
   } };
 });
-vi.mock('../runtime/runtime-supervisor.js', () => ({
-  startRuntimeSupervisor: async () => { throw new Error('no runtime in unit test'); }
-}));
+vi.mock('../runtime/runtime-supervisor.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../runtime/runtime-supervisor.js')>();
+  return {
+    ...actual,
+    // Dev product-route runtime, with per-test method overrides for Modern member probes.
+    createProductRouteSquadRuntime: (...args: Parameters<typeof actual.createProductRouteSquadRuntime>) => {
+      const real = actual.createProductRouteSquadRuntime(...args);
+      return new Proxy(real, { get: (t, k) => (typeof k === 'string' && h.runtimeOverride[k]) || (t as any)[k] });
+    },
+    startRuntimeSupervisor: async () => { throw new Error('no runtime in unit test'); }
+  };
+});
 vi.mock('@zana-ai/zcc-server/mobile/manager', () => ({
   MobileGatewayManager: class { start() { h.mobileStart(); return Promise.reject(new Error('port held')); } close() { return Promise.resolve(); } status() { return {}; } }
 }));
@@ -621,6 +631,83 @@ describe('host bootstrap wiring', () => {
     expect(await h.squadOpts.getTeamLaunch('c', 'ok')).toEqual({ id: 'rec' });
     expect(await h.squadOpts.cancelTeamLaunch('c', 'ok')).toMatchObject({ ok: true });
     h.lifecycleOverride = {};
+  });
+
+  it('checks Modern team models against the ACP runtime and snapshots canonical providers', async () => {
+    const c = ctx();
+    const o = h.squadOpts;
+    vi.spyOn(c.teams, 'list').mockReturnValue([{ id: 'tm', transport: 'MODERN', slots: [{ personaId: 'ma' }, { personaId: 'mb' }], orchestratorPersonaId: 'mo' }]);
+    vi.spyOn(c.personas, 'list').mockReturnValue([
+      { id: 'ma', name: 'A', baseProfile: 'claude', model: 'sonnet' },
+      { id: 'mb', name: 'B', baseProfile: 'opencode', model: 'prov/model-b' },
+      { id: 'mo', name: 'O', baseProfile: 'claude' }
+    ]);
+    const preflight = vi.fn(async () => ({ ready: true, providers: [] }));
+    h.runtimeOverride.preflightSquadRuntime = preflight;
+    try {
+      const request = { teamId: 'tm', workUnits: [], slots: [{ initialTask: 'a' }, { initialTask: 'b' }], coordinationMode: 'durable' };
+      const ready = await o.admissionInput(project.id, request);
+      expect(preflight).toHaveBeenCalled();
+      const [checked] = preflight.mock.calls.at(-1)! as unknown as [{ projectId: string; providerIds: string[]; selections: unknown[] }];
+      expect(checked.projectId).toBe(project.id);
+      // ACP ids, never CLI harness families: CLI inventories cannot attest ACP model ids.
+      expect(checked.providerIds).toContain('claude-code');
+      expect(checked.providerIds).not.toContain('claude');
+      expect(JSON.stringify(ready)).toContain('available');
+      preflight.mockResolvedValue({ ready: false, providers: [] });
+      expect(JSON.stringify(await o.admissionInput(project.id, request))).toContain('unavailable');
+
+      const snapshots = await o.resolveTeamModelSnapshots(project.id, { teamId: 'tm', slots: [{ initialTask: 'a' }, { initialTask: 'b' }, { initialTask: 'o' }] });
+      expect(snapshots.map((snapshot: { provider: string }) => snapshot.provider)).toEqual(['claude-code', 'acp-opencode', 'claude-code']);
+    } finally {
+      vi.mocked(c.teams.list).mockRestore();
+      vi.mocked(c.personas.list).mockRestore();
+      h.runtimeOverride = {};
+    }
+  });
+
+  it('fences Modern execution bindings and route identities to the exact live member generation', async () => {
+    const deps = h.mcpDeps;
+    const modern = { executionId: 'e-modern', slotId: '0:w1:0', role: 'worker', authorizationId: 'auth-modern', generation: 3 };
+    h.lifecycleOverride.resolveModernBinding = async (sessionId: string, projectId: string) =>
+      sessionId === 'modern-1' && projectId === 'p1' ? modern : undefined;
+    const live = vi.fn(async () => true);
+    h.runtimeOverride.isSquadMemberLive = live;
+    const findBinding = vi.spyOn(h.lifecycleStore, 'findModernWorkerBinding');
+    try {
+      const expected = { executionId: 'e-modern', projectId: 'p1', slotId: '0:w1:0', role: 'worker', principalId: 'modern-1',
+        authorizationId: 'auth-modern', memberFence: { bindingId: 'modern-1', generation: 3 } };
+      expect(await deps.resolveExecutionCohortBinding('modern-1', 'p1')).toEqual(expected);
+      expect(await deps.resolveExecutionCohortBinding('modern-1', 'p1', { bindingId: 'modern-1', generation: 3 })).toEqual(expected);
+      // A stale generation or another member's fence never resolves the binding.
+      expect(await deps.resolveExecutionCohortBinding('modern-1', 'p1', { bindingId: 'modern-1', generation: 2 })).toBeUndefined();
+      expect(await deps.resolveExecutionCohortBinding('modern-1', 'p1', { bindingId: 'modern-2', generation: 3 })).toBeUndefined();
+      expect(await deps.resolveExecutionCohortBinding('modern-1', 'p2')).toBeUndefined();
+      expect(await deps.resolveExecutionCohortBinding('nobody', 'p1')).toBeUndefined();
+
+      // An exited PTY in the same project falls through to the Modern lookup instead of authorizing.
+      h.ptys.sessions.set('pty-exited', sessionFixture({ id: 'pty-exited', status: 'exited',
+        cohort: { executionId: 'e-pty', slotId: 's', role: 'worker' } }));
+      expect(await deps.resolveExecutionCohortBinding('pty-exited', 'p1')).toBeUndefined();
+      expect(await deps.validateExecutionRouteIdentity('pty-exited', 'p1')).toBe(false);
+
+      expect(await deps.validateExecutionRouteIdentity('modern-1', 'p1')).toBe(true);
+      expect(live).toHaveBeenCalledWith('modern-1', 'p1', 3);
+      live.mockResolvedValueOnce(false);
+      expect(await deps.validateExecutionRouteIdentity('modern-1', 'p1')).toBe(false);
+      live.mockClear();
+      expect(await deps.validateExecutionRouteIdentity('nobody', 'p1')).toBe(false);
+      expect(live).not.toHaveBeenCalled();
+
+      // A Modern member is never a launch owner, even if it otherwise looks live.
+      findBinding.mockResolvedValueOnce({ generation: 3 } as never);
+      expect(await deps.validateLaunchRouteIdentity('modern-1', 'p1')).toBe(false);
+    } finally {
+      h.ptys.sessions.delete('pty-exited');
+      findBinding.mockRestore();
+      h.lifecycleOverride = {};
+      h.runtimeOverride = {};
+    }
   });
 
   it('reports team task outcomes for known and unknown workers', async () => {

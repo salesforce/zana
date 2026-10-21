@@ -2,6 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { SQUAD_RUNTIME_OPERATION_PATH } from '@zana-ai/zcc-contracts/runtime';
+import { NATIVE_TOOL_POLICY_PROOF_HEADER, signNativeToolPolicyRequest } from './native-tool-policy-proof.js';
 import { startProductServer, type ProductServer } from './product-server.js';
 
 let server: ProductServer | undefined;
@@ -12,6 +14,27 @@ afterEach(async () => {
   server = undefined;
   if (dataDir) rmSync(dataDir, { recursive: true, force: true });
   dataDir = undefined;
+});
+
+describe('startProductServer squad runtime route', () => {
+  // Development main reaches the Modern squad runtime through this listener, not static-host.
+  it('serves the signed main squad-runtime operation instead of a bodiless 404', async () => {
+    const secret = 's'.repeat(64);
+    dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-server-'));
+    server = await startProductServer({ dataDir, uiSendSecret: secret, origins: { serverPort: 0, devAppPort: 5173 } });
+    const url = `http://127.0.0.1:${server.port}${SQUAD_RUNTIME_OPERATION_PATH}`;
+    const post = (body: string, proof?: string) => fetch(url, { method: 'POST', body,
+      headers: { 'content-type': 'application/json', ...(proof ? { [NATIVE_TOOL_POLICY_PROOF_HEADER]: proof } : {}) } });
+
+    const unsigned = await post('{}');
+    expect(unsigned.status).toBe(403);
+    expect(await unsigned.json()).toEqual({ error: 'squad runtime request is not signed by main' });
+
+    const body = JSON.stringify({ operation: 'squad-runtime-preflight', request: {} });
+    const malformed = await post(body, signNativeToolPolicyRequest(secret, body));
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toEqual({ error: 'invalid squad runtime operation' });
+  });
 });
 
 describe('startProductServer pairing forwarder', () => {

@@ -6,7 +6,8 @@ import type { AgentState, ExecutionBoardProjection, IdleResolution, IdleTriageRe
 import { scheduleSummary } from '@zana-ai/zcc-domain/schedule-spec';
 import { profileIcon, personaIcon } from '../lib/profileIcon.js';
 import { isRecentlyFinished } from '../lib/sessionBuckets.js';
-import { sortProjectsForDisplay, usePersonas, useData, useScheduler, useUi } from '../store.js';
+import { sortProjectsForDisplay, usePersonas, useData, useScheduler, useTeams, useUi } from '../store.js';
+import { agentSessionTransport, isModernSquadThread, squadTransportClass, squadTransportKind } from '../lib/squad-transport.js';
 import { useSessionGit } from '../lib/gitInfo.js';
 import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from './agentCardActions.js';
 import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from './threadCardActions.js';
@@ -21,6 +22,7 @@ import { SwipeToCloseCard } from './SwipeToCloseCard.js';
 import { useCompactLayout } from '../hooks/useCompactLayout.js';
 import { MobileAgentBoard } from './MobileAgentBoard.js';
 import { isUnreadThread } from '../lib/unread-threads.js';
+import type { ThreadListItem } from '../thread-store.js';
 import {
   agentCardRuntimeLabel,
   agentFleetItem,
@@ -75,6 +77,10 @@ export interface AgentCard {
   liveSubagents?: number;
   /** Board-only job host when an execution outlives its live orchestrator tab. */
   isSyntheticExecutionHost?: boolean;
+  /** Modern squad member: an ACP thread carrying its squad's cohort stamp. */
+  modernThreadId?: string;
+  /** The member's thread row, when listed, for thread-native actions. */
+  modernThread?: ThreadListItem;
 }
 
 /**
@@ -205,16 +211,18 @@ export function isReclaimableIdle(c: AgentCard): boolean {
     isIdleAgent(c) &&
     !isBackgroundAgent(c) &&
     c.triage?.resolution !== 'awaiting-reply' &&
-    (c.liveSubagents ?? 0) === 0
+    (c.liveSubagents ?? 0) === 0 &&
+    !c.modernThreadId
   );
 }
 
 /**
  * CLI agents a lane "Close all" may terminate. Threads and schedule catalog
- * cards are skipped; synthetic Job Team hosts keep their own Stop/Dismiss.
+ * cards are skipped; synthetic Job Team hosts keep their own Stop/Dismiss, and
+ * Modern squad members are threads stopped through their Job.
  */
 export function closeableLaneAgents(items: FleetItem[]): AgentCard[] {
-  return fleetAgentCards(items).filter((c) => !c.isSyntheticExecutionHost);
+  return fleetAgentCards(items).filter((c) => !c.isSyntheticExecutionHost && !c.modernThreadId);
 }
 
 interface LaneDef {
@@ -417,7 +425,9 @@ function executionHost(member: AgentCard | undefined, execution: ExecutionBoardP
       id: synthetic ? `execution:${execution.executionId}` : session.id,
       title: displayTitle,
       status: terminal ? 'exited' : 'running',
-      headless: synthetic || session.headless,
+      // A Modern squad has no PTY, so its Job host is always synthetic; it is
+      // foreground work while any member thread is live, not a background run.
+      headless: (synthetic && !execution.modernMembers?.some((member) => member.live)) || session.headless,
       cohort: {
         ...(session.cohort ?? { cohortId: execution.executionId, teamId: execution.teamId ?? 'execution', teamName: execution.teamName ?? 'Squad', role: 'orchestrator' }),
         executionId: execution.executionId,
@@ -654,12 +664,15 @@ function SquadWorkers({
   workers,
   now,
   onInspect,
+  onContextMenu,
   personas,
   execution
 }: {
   workers: AgentCard[];
   now: number;
   onInspect: (c: AgentCard) => void;
+  /** Own menu per worker so right-click never falls through to the lane menu. */
+  onContextMenu: (e: MouseEvent<HTMLElement>, c: AgentCard) => void;
   personas: Persona[];
   execution?: ExecutionBoardProjection;
 }) {
@@ -682,12 +695,14 @@ function SquadWorkers({
           <button
             key={t.id}
             type="button"
-            className={`agent-squad-worker ${exited ? 'exited' : ''}`}
+            className={`agent-squad-worker ${exited ? 'exited' : ''}${w.modernThreadId ? ' is-modern' : ''}`}
             onClick={() => onInspect(w)}
+            onContextMenu={(e) => onContextMenu(e, w)}
             title={`${slotLabel} · ${activity} · ${exited ? `ran ${dur}` : dur}`}
           >
             <span className={`tab-agent-dot agent-${exited ? 'done' : w.state}`} aria-hidden="true" />
             <span className="agent-squad-worker-label">{slotLabel}</span>
+            <FleetKindChip kind={w.modernThreadId ? 'thread' : 'agent'} />
             <span className="agent-squad-worker-dur">{exited ? `ran ${dur}` : dur}</span>
           </button>
         );
@@ -741,6 +756,7 @@ interface AgentBoardLanesProps {
 export function AgentBoardLanes({ cards, activeId, onInspect, showProject, executions, hasMoreExecutions, onLoadMoreExecutions, onDismissExecution, onCloseLaneAgents }: AgentBoardLanesProps) {
   const compact = useCompactLayout();
   const personas = usePersonas((s) => s.personas);
+  const teams = useTeams((s) => s.teams);
   // Idle-attention sensitivity (mirror of AppConfig, hydrated in the data
   // store): governs which triaged idle agents the "Needs you" lane pulls up.
   // Advisory per CLAUDE.md rule 1 — main owns/normalizes the value.
@@ -799,7 +815,10 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
 
   const now = Date.now();
   const agentCards = useMemo(() => fleetAgentCards(cards), [cards]);
-  const threadItems = useMemo(() => cards.filter((item) => item.kind === 'thread'), [cards]);
+  const threadItems = useMemo(
+    () => cards.filter((item): item is Extract<FleetItem, { kind: 'thread' }> => item.kind === 'thread'),
+    [cards]
+  );
   const scheduleItems = useMemo(() => cards.filter(isScheduleFleet), [cards]);
   // Collapse each launched squad into a single board card: a cohort with a live
   // orchestrator keeps only that card in the lanes, with its workers nested
@@ -961,6 +980,9 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
     const cohort = cardCohort(c);
     const execution = cohort?.executionId ? executions?.find((candidate) => candidate.executionId === cohort.executionId) : undefined;
     const isOrchestrator = cohort?.role === 'orchestrator';
+    // A live session is always a CLI agent; a Modern member card is Modern, and
+    // a synthetic Job host borrows its squad's transport.
+    const transport = agentSessionTransport(t, teams, Boolean(c.isSyntheticExecutionHost), Boolean(c.modernThreadId));
     const teamRunTooltip = execution
       ? [
           `Squad: ${execution.teamName ?? cohort?.teamName ?? 'Squad'}`,
@@ -989,7 +1011,8 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
         {...dragProps(agentFleetItem(c), laneKey)}
         className={`agent-card lane-${laneKey} ${active ? 'active' : ''} ${bad ? 'bad' : ''} ${
           cohort ? `has-cohort ${isOrchestrator ? 'cohort-orch' : 'cohort-worker'}` : ''
-        } ${execution ? 'has-execution' : ''}`}
+        } ${execution ? 'has-execution' : ''} ${cohort ? squadTransportClass(transport) : ''}`}
+        data-squad-transport={cohort ? transport : undefined}
         onClick={() => onInspect(agentFleetItem(c))}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -1023,7 +1046,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
             {persona ? personaIcon(persona, 14) : profileIcon(t.profile, 14)}
           </span>
           <span className="agent-card-title">{cohort?.executionJobTitle ?? t.title}</span>
-          <FleetKindChip kind="agent" />
+          <FleetKindChip kind={squadTransportKind(transport)} />
           {!exited && <span className={`tab-agent-dot agent-${c.state}`} aria-hidden="true" />}
           {!c.isSyntheticExecutionHost && <FavoriteStar session={t} className="agent-card-fav" />}
         </span>
@@ -1157,7 +1180,18 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
     return (
       <div key={t.id} className="agent-squad">
         {cardButton}
-        <SquadWorkers workers={nestedWorkers} now={now} onInspect={(card) => onInspect(agentFleetItem(card))} personas={personas} execution={execution} />
+        <SquadWorkers workers={nestedWorkers} now={now} onInspect={(card) => onInspect(agentFleetItem(card))} onContextMenu={(e, card) => {
+          setLaneMenu(null);
+          if (card.modernThread) {
+            setMenu(null);
+            openThreadMenu(e, card.modernThread, setThreadMenu);
+            return;
+          }
+          e.preventDefault();
+          e.stopPropagation();
+          setThreadMenu(null);
+          setMenu({ card, ...clampMenuAnchor(e) });
+        }} personas={personas} execution={execution} />
       </div>
     );
   };
@@ -1179,8 +1213,9 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
       <button
         key={item.id}
         type="button"
-        className={`agent-card is-thread lane-${laneKey} ${item.id === activeId ? 'active' : ''}`}
+        className={`agent-card is-thread lane-${laneKey} ${item.id === activeId ? 'active' : ''}${isModernSquadThread(item.thread) ? ' is-modern' : ''}`}
         data-kind="thread"
+        data-squad-transport={isModernSquadThread(item.thread) ? 'MODERN' : undefined}
         {...dragProps(item, laneKey)}
         onClick={() => onInspect(item)}
         onContextMenu={(e) => {

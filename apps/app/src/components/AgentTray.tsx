@@ -13,6 +13,7 @@ import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from './threadCa
 import { PromptModal } from './PromptModal.js';
 import type { AgentCard } from './AgentBoard.js';
 import { FleetKindChip } from './FleetKindChip.js';
+import { isModernSquadThread } from '../lib/squad-transport.js';
 import { isVisibleThread, threadTitle } from './fleet-item.js';
 import { threadStatusToAgentState } from './thread/thread-timeline-model.js';
 
@@ -68,6 +69,8 @@ interface TrayThread {
   projectName: string;
   projectColor?: string;
   state: AgentState;
+  /** Member of a Modern-transport squad (dotted border). */
+  modernSquad?: boolean;
 }
 
 type TrayItem = TrayAgent | TrayThread;
@@ -156,7 +159,8 @@ export function AgentTray({
         providerId: thread.providerId,
         projectName: project?.name ?? 'Unknown',
         projectColor: project?.color,
-        state
+        state,
+        ...(isModernSquadThread(thread) ? { modernSquad: true } : {})
       });
     }
     out.sort((a, b) => {
@@ -225,8 +229,9 @@ export function AgentTray({
               <button
                 key={item.id}
                 type="button"
-                className={`agent-tray-row is-thread ${item.projectColor ? 'project-tinted' : ''}`}
+                className={`agent-tray-row is-thread ${item.projectColor ? 'project-tinted' : ''}${item.modernSquad ? ' is-modern' : ''}`}
                 data-kind="thread"
+                data-squad-transport={item.modernSquad ? 'MODERN' : undefined}
                 onClick={() => navigate(getThreadRoutePath(item.id, projectId))}
                 onContextMenu={(e) => {
                   const thread = threads.find((row) => row.id === item.id);

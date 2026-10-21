@@ -2,13 +2,14 @@ import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Trash2, Copy, Pencil, Plus, GripVertical, Crown } from 'lucide-react';
 import { ImprovePromptButton } from './ImprovePromptButton.js';
-import type { Persona, Team, TeamInput, TeamSlot } from '@zana-ai/zcc-domain/product';
+import type { Persona, SquadTransport, Team, TeamInput, TeamSlot } from '@zana-ai/zcc-domain/product';
 import { usePersonas, useData, useUi } from '../store.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
 import { personaIcon } from '../lib/profileIcon.js';
 import { PERSONA_ICON_NAMES, personaIconByName } from '../lib/profileIcon.js';
 import { getScopedProjectId } from '../lib/windowScope.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
+import { SquadTransportChip } from './SquadTransportChip.js';
 
 /**
  * Team detail + editor modal — the Teams counterpart of {@link PersonaEditor}.
@@ -124,6 +125,7 @@ function TeamDetail({
             <Icon size={16} />
           </span>
           {team.name}
+          <SquadTransportChip team={team} />
         </h3>
         <button className="icon-button" onClick={onClose} aria-label="Close">
           <X size={16} />
@@ -255,6 +257,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
   const [defaultProjectId, setDefaultProjectId] = useState(team?.defaultProjectId ?? '');
   const [worktreeIsolation, setWorktreeIsolation] = useState<boolean | undefined>(team?.worktreeIsolation);
   const [routingEnforced, setRoutingEnforced] = useState<boolean | undefined>(team?.routingEnforced);
+  const [transport, setTransport] = useState<SquadTransport>(team?.transport ?? 'CLI');
   const [defaultPlanning, setDefaultPlanning] = useState<'' | 'infer' | 'provided'>(team?.defaultPlanning ?? '');
   const [slots, setSlots] = useState<SlotDraft[]>(() => {
     const base = (team?.slots ?? []).map((s) => ({
@@ -340,6 +343,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
       defaultProjectId: defaultProjectId || undefined,
       worktreeIsolation,
       routingEnforced,
+      transport,
       ...(defaultPlanning ? { defaultPlanning } : {})
     };
     if (keepsId && team) input.id = team.id;
@@ -427,6 +431,20 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
             onChange={(e) => setDescription(e.target.value)}
             placeholder="One line shown in the catalogue"
           />
+        </div>
+
+        <div className="scheduler-form-field">
+          <label htmlFor="team-transport">Transport</label>
+          <select
+            id="team-transport"
+            value={transport}
+            onChange={(event) => setTransport(event.target.value as SquadTransport)}
+            aria-label="Squad transport"
+          >
+            <option value="CLI">CLI Agent</option>
+            <option value="MODERN">Modern</option>
+          </select>
+          <span className="settings-help">One transport applies to every worker and orchestrator.</span>
         </div>
 
         <div className="scheduler-form-field">

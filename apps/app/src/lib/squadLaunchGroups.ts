@@ -65,8 +65,9 @@ export function squadLaunchGroups(
     if (agentSessionIds.has(s.id)) continue;
     add(s.cohort?.cohortId ?? SOLO_LAUNCH_ID, s.createdAt);
   }
+  // Modern squad member threads carry their squad's cohort; other threads are Solo.
   for (const thread of threadParticipants) {
-    add(SOLO_LAUNCH_ID, thread.createdAt);
+    add(thread.cohort?.cohortId ?? SOLO_LAUNCH_ID, thread.createdAt);
   }
 
   const groups: SquadLaunchGroup[] = [...acc.entries()].map(([launchId, v]) => ({

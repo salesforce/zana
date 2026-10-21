@@ -6,6 +6,7 @@ import { showOngoingThreadWork, threadStatusLabel, threadStatusTone } from './th
 import { useThreadWorkingPhrase } from './thread/useThreadWorkingPhrase.js';
 import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
 import { FleetKindChip } from './FleetKindChip.js';
+import { isModernSquadThread } from '../lib/squad-transport.js';
 import {
   getThreadListIndicatorLabel,
   resolveThreadListIndicator,
@@ -30,6 +31,7 @@ export function ThreadListEntry({
   onContextMenu?: (e: MouseEvent) => void;
 }) {
   const navigate = useNavigate();
+  const modernSquad = isModernSquadThread(thread);
   const displayStatus = thread.runtime?.displayStatus ?? thread.status;
   const waitingOnUser = displayStatus !== 'error' && Boolean(thread.hasPendingInteraction);
   const working = showOngoingThreadWork(displayStatus, waitingOnUser);
@@ -52,9 +54,10 @@ export function ThreadListEntry({
   return (
     <button
       type="button"
-      className={`agents-row is-thread ${active ? 'active' : ''}`}
+      className={`agents-row is-thread ${active ? 'active' : ''}${modernSquad ? ' is-modern' : ''}`}
       data-testid="thread-list-entry"
       data-kind="thread"
+      data-squad-transport={modernSquad ? 'MODERN' : undefined}
       data-status={thread.status}
       onPointerDown={onPointerDown}
       onClick={(e) => {

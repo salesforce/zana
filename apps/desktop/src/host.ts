@@ -51,7 +51,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isTrustedRendererUrl, productServerUrl, rendererUrl, setProductionRendererOrigin } from './window/renderer-url.js';
 import { refreshRemoteStartPathHosts, stampedProjectRemote } from './remote-workspace.js';
 import { resolveIconPath } from './resolve-icon-path.js';
-import { startRuntimeSupervisor, type RuntimeSupervisor } from './runtime/runtime-supervisor.js';
+import { createProductRouteSquadRuntime, startRuntimeSupervisor, type RuntimeSupervisor } from './runtime/runtime-supervisor.js';
 import { createRuntimeRecovery } from './runtime/runtime-recovery.js';
 import { createTeamProductOps } from './team-product-ops.js';
 import { jobCoordinatorPrompt } from './team-coordinator-prompt.js';
@@ -76,7 +76,7 @@ import { runtimeHostAvailable, setRuntimeHostSupervisor } from '@zana-ai/zcc-hos
 import { IPC, resolveDeepLinkChannel, type PluginViewTarget, type ThreadViewTarget } from '@zana-ai/zcc-desktop-contract';
 import { createDeepLinkHost, registerDeepLinkIpc, registerDeepLinkScheme, wantsSingleInstanceLock } from './deep-link-host.js';
 import { signUiSend } from '@zana-ai/zcc-server/http/ui-send-proof';
-import { MenubarThreadOpenResultSchema, MenubarThreadsListResultSchema } from '@zana-ai/zcc-contracts/runtime';
+import { MenubarThreadOpenResultSchema, MenubarThreadsListResultSchema, type SquadMemberStatus } from '@zana-ai/zcc-contracts/runtime';
 import { createDesktopBrowserViewManager } from './desktop-browser-view.js';
 import { registerDesktopBrowserIpc } from './desktop-browser-main-ipc.js';
 import {
@@ -94,7 +94,8 @@ import type { IpcCtx } from './ipc/ctx.js';
 import { sanitizeExtraArgs } from '@zana-ai/zcc-domain/launch-sanitize';
 import { teamRunNamerInput } from './team-run-title.js';
 import { MANAGED_WORKTREE_DIR_NAME, PERSONAL_WORKSPACE_DIR_NAME, type MenubarThreadAgent } from '@zana-ai/zcc-domain';
-import { providerCapabilities, isClaudeProfile, isCodexProfile, isOpenCodeProfile, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
+import { providerCapabilities, harnessFamilyOf, isClaudeProfile, isCodexProfile, isOpenCodeProfile, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
+import { canonicalThreadProviderId } from '@zana-ai/zcc-server/services/threads/thread-provider-catalog';
 import { EXTENSION_PROJECT_CATEGORY, store, scratchWorkspaceRoot, worktreeRoot, worktreeTargetDir } from '@zana-ai/zcc-server/services/projects/store';
 import { electronZccDataDir } from '@zana-ai/zcc-server/electron-data-dir';
 import { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
@@ -110,7 +111,7 @@ import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
 import { launchExecutionScope, usesCliRemoteToolProxy } from './cli-remote-tool-proxy.js';
 import { createRestoreCapabilityStore, type RestoreCapability } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
-import { createTeamLifecycleIntegration, createTeamLifecycleStore } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
+import { createTeamLifecycleIntegration, createTeamLifecycleStore, type TeamLifecycleRecord, type TeamModernWorkerObservation } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
 import { createRemoteReapLedger, remoteReapOrphans, type RemoteReapEntry } from '@zana-ai/zcc-server/services/launch/remote-reap-ledger';
 import { createExecutionStore, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
@@ -1188,6 +1189,10 @@ const teamLifecycleIntegration = createTeamLifecycleIntegration({
     return !!session && session.status !== 'exited';
   },
   closeSession: (sessionId) => terminateSession(sessionId),
+  isLiveModernThread: (threadId, projectId, generation) =>
+    squadRuntime().isSquadMemberLive(threadId, projectId, generation),
+  closeModernThread: (threadId, projectId, generation) =>
+    squadRuntime().stopSquadMember(threadId, projectId, generation),
   releaseCapacity: (authorizationId) => launchAuthorization.complete(authorizationId),
   restoreCapacity: (capacity, activeAuthorizationIds) => {
     launchPrincipals.set(capacity.principal.id, capacity.principal);
@@ -2225,18 +2230,25 @@ const mailDrain = new AgentMailDrainService({
     agentMessageLog.pull(sessionId).map((m) => ({ id: m.id, fromHandle: m.fromHandle })),
   reply: (sessionId, text) => ptys.reply(sessionId, text)
 });
-const executionDeliveryDrain = new ExecutionDeliveryDrainService({
+  const executionDeliveryDrain = new ExecutionDeliveryDrainService({
   pending: async (sessionId) => {
     const session = ptys.getSession(sessionId);
     const cohort = session?.cohort;
-    if (!session || !cohort || (cohort.role !== 'worker' && cohort.role !== 'orchestrator') || !cohort.executionId) return [];
-    const record = await executionStore.getInProject(session.projectId, cohort.executionId);
+    const modern = !session ? (await teamLifecycle.list()).flatMap(record => record.state === 'active' ? record.workers : [])
+      .find(worker => worker.transport === 'MODERN' && worker.threadId === sessionId && worker.bindingState === 'BOUND') : undefined;
+    const projectId = session?.projectId ?? modern?.projectId;
+    const executionId = cohort?.executionId ?? modern?.modernContext?.executionId;
+    const slotId = cohort?.slotId ?? modern?.slotId;
+    if (!projectId || !executionId || !slotId) return [];
+    const record = await executionStore.getInProject(projectId, executionId);
     return (record?.deliveries ?? [])
-      .filter((delivery) => delivery.slotId === cohort.slotId && delivery.state === 'PENDING')
-      .map((delivery) => ({ id: delivery.id, executionId: record!.id, attempt: delivery.attempt }));
+      .filter((delivery) => delivery.slotId === slotId && delivery.state === 'PENDING')
+      .map((delivery) => ({ id: delivery.id, executionId: record!.id, attempt: delivery.attempt, manualRetryCount: delivery.manualRetryCount }));
   },
-  isRestful: (sessionId) => isRestfulAgentState(agentStatus.get(sessionId)),
-  reply: (sessionId, text) => ptys.reply(sessionId, text)
+  isRestful: (sessionId) => modernMemberStatus.has(sessionId)
+    ? modernMemberStatus.get(sessionId)?.status === 'idle' : isRestfulAgentState(agentStatus.get(sessionId)),
+  reply: replyToSquadMember,
+  isReplyIdempotent: sessionId => !ptys.getSession(sessionId)
 });
 /**
  * Keep-awake: hold a `prevent-app-suspension` power-save block while any agent
@@ -3088,6 +3100,77 @@ function ensureProductServerCredential(): string {
 // In development the launcher supplies this to multiple processes. Remove it
 // before any main-owned agent/utility can be spawned, not on the first UI click.
 ensureProductServerCredential();
+const productRouteSquadRuntime = createProductRouteSquadRuntime({
+  serverUrl: productServerUrl, credential: ensureProductServerCredential
+});
+function squadRuntime() {
+  return runtimeSupervisor ?? productRouteSquadRuntime;
+}
+const modernMemberStatus = new Map<string, SquadMemberStatus>();
+/** Threads whose status failure was already logged; cleared on the next success so a flapping runtime logs once per outage. */
+const modernStatusFailureLogged = new Set<string>();
+let modernReconcilePending: Promise<void> | undefined;
+let modernReconcileCursor = 0;
+
+/** Only exact runtime binding evidence releases capacity. Missing runtime stays uncertain. */
+async function reconcileModernMembers(records?: readonly TeamLifecycleRecord[]): Promise<void> {
+  if (!records && modernReconcilePending) return modernReconcilePending;
+  const run = async () => {
+    const candidates = (records ?? await teamLifecycle.list()).flatMap(record => record.workers
+      .filter(worker => worker.transport === 'MODERN' && worker.threadId && worker.generation && !worker.capacityReleased)
+      .map(worker => ({ record, worker })));
+    const page = records ? candidates : candidates.slice(modernReconcileCursor, modernReconcileCursor + 100);
+    if (!records) modernReconcileCursor = modernReconcileCursor + 100 >= candidates.length ? 0 : modernReconcileCursor + 100;
+    for (let offset = 0; offset < page.length; offset += 100) {
+      const observations: TeamModernWorkerObservation[] = [];
+      for (const { record, worker } of page.slice(offset, offset + 100)) {
+        const reference = { recordId: record.id, slotId: worker.slotId, generation: worker.generation!, threadId: worker.threadId! };
+        try {
+          const status = await squadRuntime().getSquadMemberStatus({ bindingId: reference.threadId,
+            generation: reference.generation, projectId: worker.projectId });
+          const previous = modernMemberStatus.get(reference.threadId);
+          modernMemberStatus.set(reference.threadId, status);
+          modernStatusFailureLogged.delete(reference.threadId);
+           // Prepared threads are not proof that main authorized a first turn.
+           if (status.status === 'stopped' || status.live || worker.bindingState !== 'CREATING') {
+             observations.push({ ...reference, state: status.status === 'stopped' ? 'terminal' : status.live ? 'bound' : 'unknown' });
+           }
+          if (status.live) {
+            executionDeliveryDrain.observe(worker.sessionId, status.status === 'idle' ? 'idle' : 'working');
+            if (status.eventSequence > (previous?.eventSequence ?? 0) && status.status === 'active' && worker.modernContext?.executionId) {
+              await squadExecutionService.renewWorkerLease(worker.modernContext.executionId, worker.slotId);
+            }
+          } else executionDeliveryDrain.remove(worker.sessionId);
+          if (status.status === 'stopped') { modernMemberStatus.delete(reference.threadId); modernStatusFailureLogged.delete(reference.threadId); }
+        } catch (error) {
+          if (!modernStatusFailureLogged.has(reference.threadId)) {
+            modernStatusFailureLogged.add(reference.threadId);
+            logMainError(`modern squad member status ${reference.threadId}`, error);
+          }
+          modernMemberStatus.delete(reference.threadId);
+          observations.push({ ...reference, state: 'unknown' });
+        }
+      }
+      await teamLifecycleIntegration.reconcileModernWorkers(observations);
+    }
+  };
+  if (records) return run();
+  modernReconcilePending = run().finally(() => { modernReconcilePending = undefined; });
+  return modernReconcilePending;
+}
+
+async function replyToSquadMember(sessionId: string, text: string, correlation?: { assignmentId: string; idempotencyKey: string }): Promise<boolean> {
+  const session = ptys.getSession(sessionId);
+  if (session) return ptys.reply(sessionId, text);
+  const binding = (await teamLifecycle.list()).flatMap(record => record.state === 'active' ? record.workers : [])
+    .find(worker => worker.transport === 'MODERN' && worker.threadId === sessionId && worker.bindingState === 'BOUND'
+      && worker.process === 'running' && !worker.capacityReleased);
+  if (!binding?.threadId || !binding.generation) return false;
+  const id = correlation?.assignmentId ?? randomUUID();
+  const receipt = await squadRuntime().deliverSquadMember({ bindingId: binding.threadId, generation: binding.generation,
+    projectId: binding.projectId, assignmentId: id, idempotencyKey: correlation?.idempotencyKey ?? id, message: text });
+  return receipt.state !== 'rejected';
+}
 // Main's /hook/nativetool handler (OBL-004), wired into the MCP server in
 // bootstrapNormal. Identity comes from the live PTY record; the decision comes
 // over the supervised runtime channel. electron-vite dev never starts one (the
@@ -3229,6 +3312,9 @@ async function ensureRendererStaticHost(): Promise<void> {
     safeSend(IPC.projectSettings.onChanged, projectId);
   });
   runtimeSupervisor.onLibraryChanged(() => { void libraryNotifications.invalidate(); });
+  runtimeSupervisor.onMenubarThreadsChanged(() => {
+    void reconcileModernMembers().catch(error => logMainError('squad modern progress', error));
+  });
   runtimeSupervisor.onProjectsChanged(() => {
     void projectsNotifications.invalidate();
     void libraryNotifications.invalidate();
@@ -4993,7 +5079,7 @@ async function resolveTeamModelSnapshots(
   const config = store.getConfig();
   const projectSettings = await getAuthoritativeProjectSettings(projectId);
   const personaSnapshot = personas.list();
-  const verified = await verifyHarnesses(config);
+   const verified = await verifyHarnesses(config);
   const observedAt = Date.now();
   return Promise.all(slots.map(async (slot, index) => {
     const persona = personaSnapshot.find((candidate) => candidate.id === slot.personaId);
@@ -5002,7 +5088,7 @@ async function resolveTeamModelSnapshots(
     const sharedProvider = providerFor(profile);
     const input = { config, persona, projectSettings, profile, extraArgs: [], scope: launchExecutionScope(project, {}, config) };
     // Slots resolve concurrently: each gets its own live-inventory view.
-    const provider = await liveScopedProviderFor(sharedProvider, { cwd: project.path, config });
+    const provider = team.transport === 'MODERN' ? sharedProvider : await liveScopedProviderFor(sharedProvider, { cwd: project.path, config });
     const model = resolveModelTarget(provider, input);
     const role = resolveRoleTarget(provider, input);
     const roleOwnedModel = !!role.targetId && provider.nativeRolePinsModel;
@@ -5014,7 +5100,7 @@ async function resolveTeamModelSnapshots(
       // Execution MCP supplies opaque ordered tasks; index disambiguates duplicate personas.
       slotId: slots[index].slotId,
       personaId: slot.personaId,
-      provider: provider.adapter.descriptor.id,
+      provider: team.transport === 'MODERN' ? canonicalThreadProviderId(harnessFamilyOf(profile) ?? profile) : provider.adapter.descriptor.id,
       ...(roleOwnedModel || !model.targetId ? {} : { model: model.targetId }),
       ...(model.level ? { level: model.level } : {}),
       ...(target?.level ? { level: target.level } : {}),
@@ -5443,6 +5529,9 @@ export async function launchTeam(
     });
   const taskBindingFailure = (personaId: string): string | undefined => {
     if (!structured) return undefined;
+    // ACP member creation supplies the first turn through the trusted runtime.
+    // PTY adapter spawn-binding capability does not apply to this transport.
+    if (team.transport === 'MODERN') return undefined;
     const provider = providerFor(profileFor(personaId));
     const scope = project.remote ? 'remote' : 'local';
     return adapterBindsInitialTask(provider, scope)
@@ -5553,6 +5642,41 @@ export async function launchTeam(
   if (expectedSlots.length > runLimit) {
     return { ok: false, code: 'RESOURCE_LIMIT', message: `team launch requests ${expectedSlots.length} slots but limit is ${runLimit}` };
   }
+  const modernSlots = new Map<string, { providerId: string; model?: string; permissionMode?: 'accept-edits' | 'auto' | 'full'; systemPrompt?: string }>();
+  let modernHostId: string | undefined;
+  if (team.transport === 'MODERN') {
+    try {
+      if (project.remote) throw new Error('Modern squad runtime requires a local project');
+      if (structured?.slots.some(slot => slot.nativeRecovery)) throw new Error('Modern squads cannot adopt CLI native recovery');
+      const projectSettings = await getAuthoritativeProjectSettings(targetProjectId);
+      for (const slot of expectedSlots) {
+        const persona = personaSnapshot.find(candidate => candidate.id === slot.personaId);
+        if (!persona) throw new Error(`unknown persona: ${slot.personaId}`);
+        const profile = profileFor(slot.personaId);
+        const provider = providerFor(profile);
+        const input = { config: currentConfig, projectSettings, persona, profile, extraArgs: [], scope: 'local' as const };
+        if (resolveRoleTarget(provider, input).targetId) throw new Error('Modern squad native role selection is not supported');
+        if (persona.allowedTools?.length || persona.deniedTools?.length || persona.addDirs?.length || persona.mcpServers?.length
+          || persona.codexSandbox || persona.codexApproval) throw new Error('Modern squad persona tool or sandbox overrides are not supported');
+        const execution = resolveExecutionState(provider, input);
+        if (execution.state === 'plan' || persona.permissionMode === 'plan') throw new Error('Modern squad plan-only execution is not supported');
+        const unrestricted = provider.adapter.descriptor.profiles.find(candidate => candidate.id === profile)?.posture === 'unrestricted';
+        const permissionMode = unrestricted || persona.permissionMode === 'bypassPermissions' ? 'full' as const
+          : autonomous || execution.state === 'autonomous' ? 'auto' as const
+            : execution.state === 'accept-edits' || persona.permissionMode === 'acceptEdits' ? 'accept-edits' as const : undefined;
+        modernSlots.set(slot.slotId, { providerId: canonicalThreadProviderId(harnessFamilyOf(profile) ?? profile),
+          model: resolveModelTarget(provider, input).targetId, permissionMode, systemPrompt: persona.appendSystemPrompt });
+      }
+      const preflight = await squadRuntime().preflightSquadRuntime({ projectId: targetProjectId,
+        ...(project.hostId ? { hostId: project.hostId } : {}), providerIds: [...new Set([...modernSlots.values()].map(slot => slot.providerId))],
+        selections: [...modernSlots.values()].map(({ providerId, model, permissionMode }) => ({ providerId, model, permissionMode })) });
+      if (!preflight.ready || preflight.providers.some(provider => !provider.available)) throw new Error(preflight.reason ?? 'Modern squad runtime is unavailable');
+      modernHostId = preflight.hostId;
+    } catch (error) {
+      revokeRequestAuthorizations();
+      return { ok: false, code: 'UNSUPPORTED', message: error instanceof Error ? error.message : String(error) };
+    }
+  }
   const runPrincipal = bindLaunchPrincipal(teamPrincipalRef, {
     id: teamPrincipalRef.id, allowedProjectIds: [targetProjectId], maxConcurrent: concurrentLimit, maxLaunchesPerRun: runLimit
   }, team.id) as Extract<LaunchPrincipal, { kind: 'team' }>;
@@ -5578,7 +5702,7 @@ export async function launchTeam(
     expectedSlot: { slotId: string; personaId: string; label?: string; role: 'worker' | 'orchestrator' },
     request: CreateTerminalRequest,
     tabNamerPrompt: string | null
-  ): Promise<Result<TerminalSession>> => {
+  ): Promise<Result<{ id: string }>> => {
     const { slotId, personaId } = expectedSlot;
     let authorizationId = structured?.slots.find((slot) => slot.slotId === slotId)?.authorizationId;
     if (!structured?.requirePreauthorization) {
@@ -5616,6 +5740,77 @@ export async function launchTeam(
     if (!releaseColdStart) {
       if (authorizationId) launchAuthorization.revoke(authorizationId);
       return { ok: false, code: 'CANCEL_PENDING', message: 'team launch canceled before cold start' };
+    }
+    if (team.transport === 'MODERN') {
+      let reservation: Awaited<ReturnType<typeof teamLifecycle.reserveModernWorker>>;
+      try {
+        const selected = modernSlots.get(slotId)!;
+        const authorization = authorizationId ? launchAuthorization.get(authorizationId) : undefined;
+        if (!authorization) return { ok: false, code: 'DENIED', message: 'unknown authorization' };
+        const currentProject = store.listProjects().find(candidate => candidate.id === targetProjectId);
+        if (!currentProject || projectIdentityDigest(currentProject) !== authorization.binding.projectIdentityDigest
+          || launchDigest({ team: teams.list().find(candidate => candidate.id === team.id), personas: personas.list() }) !== authorization.binding.storeRevision) {
+          throw new Error('Modern launch context changed after authorization');
+        }
+        if (launchDeadlineAt !== undefined && launchDeadlineAt <= Date.now()) throw new Error('team launch deadline elapsed before create');
+        const effective = resolveEffectiveLaunch(request, currentProject);
+        if (request.worktreeInfo && !effective.worktree) throw new Error('Modern squad worktree confinement failed');
+        const revalidated = revalidateEffectiveLaunch(effective, currentProject);
+        if (!revalidated.ok) throw new Error(revalidated.reason);
+        const consumed = launchAuthorization.consumePreissued(authorization.id, {
+          principal: teamPrincipalRef, projectId: targetProjectId, binding: authorization.binding
+        });
+        if (!consumed.ok) return { ok: false, code: 'DENIED', message: consumed.reason };
+        const sessionId = randomUUID();
+        const record = await teamLifecycle.addWorker(claim.record.id, {
+          sessionId, authorizationId: authorization.id, cohortId, slotId, personaId, projectId: targetProjectId,
+          transport: 'MODERN', process: 'authorized', attention: 'active', task: 'unknown', delivery: 'bound-at-spawn',
+          bindingState: 'RESERVED', generation: 0,
+          modernContext: { teamId: team.id, cohortId, role: expectedSlot.role, projectId: targetProjectId,
+            hostId: modernHostId!, providerId: selected.providerId, worktreePath: effective.cwd,
+            ...(structured?.executionId ? { executionId: structured.executionId } : {}),
+            personaSnapshot: { id: personaId, profile: profileFor(personaId), model: selected.model,
+              permissionMode: selected.permissionMode, systemPrompt: selected.systemPrompt } }
+        });
+        teamLifecycleIntegration.track(record);
+        reservation = await teamLifecycle.reserveModernWorker(record.id, slotId);
+        if (!reservation?.mayCreate) return { ok: false, code: 'CANCEL_PENDING', message: 'Modern squad reservation cannot create' };
+        const runtimeRequest = { bindingId: reservation.threadId, generation: reservation.generation,
+          projectId: targetProjectId, teamId: team.id, cohortId, hostId: modernHostId!, providerId: selected.providerId,
+          role: expectedSlot.role, worktreePath: effective.cwd, executionId: structured?.executionId,
+          model: selected.model, permissionMode: selected.permissionMode,
+          prompt: [selected.systemPrompt, !durableCoordination ? personaSnapshot.find(persona => persona.id === personaId)?.initialPrompt : undefined,
+             request.prompt ?? 'Await squad instructions.'].filter(Boolean).join('\n\n'), title: (request.title ?? personaName(personaId)).slice(0, 120) };
+        const created = await squadRuntime().createSquadMember(runtimeRequest);
+        if (!await teamLifecycle.acknowledgeModernWorker(record.id, slotId, reservation.generation, created.threadId)) {
+          await squadRuntime().stopSquadMember(reservation.threadId, targetProjectId, reservation.generation);
+          const fenced = await teamLifecycle.get(record.id);
+          if (fenced) await reconcileModernMembers([fenced]);
+          return { ok: false, code: 'CANCEL_PENDING', message: 'Modern squad launch canceled during create' };
+        }
+        const bound = await teamLifecycle.get(record.id);
+        if (bound) teamLifecycleIntegration.track(bound);
+        // A cancel can land between acknowledge and activate. Main's lifecycle record is the
+        // authority: only an active run whose slot is still BOUND to this exact generation and
+        // thread may receive its first turn. Otherwise stop the prepared thread and let exact
+        // runtime evidence (reconcile) release capacity — never release it here.
+        const boundWorker = bound?.workers.find(worker => worker.slotId === slotId);
+        if (bound?.state !== 'active' || boundWorker?.bindingState !== 'BOUND' || boundWorker.process !== 'running'
+          || boundWorker.generation !== reservation.generation || boundWorker.threadId !== created.threadId
+          || boundWorker.capacityReleased) {
+          await squadRuntime().stopSquadMember(reservation.threadId, targetProjectId, reservation.generation);
+          const fenced = await teamLifecycle.get(record.id);
+          if (fenced) await reconcileModernMembers([fenced]);
+          return { ok: false, code: 'CANCEL_PENDING', message: 'Modern squad launch canceled before activation' };
+        }
+        launchAuthorizationBySession.set(created.threadId, authorization.id);
+        await squadRuntime().activateSquadMember(runtimeRequest);
+        return { ok: true, value: { id: created.threadId } };
+      } catch (error) {
+        if (reservation) await teamLifecycle.markModernWorkerUncertain(claim.record.id, slotId, reservation.generation, reservation.threadId);
+        else if (authorizationId) launchAuthorization.complete(authorizationId);
+        return { ok: false, code: reservation ? 'UNCERTAIN' : 'DENIED', message: error instanceof Error ? error.message : String(error) };
+      } finally { releaseColdStart(); }
     }
     const result = await launchAuthorizedTerminal(
       request,
@@ -5875,7 +6070,12 @@ export async function cancelTeamLaunch(
   if (!callerPrincipalId.trim() || !launchRequestId.trim()) {
     return { ok: false, code: 'INVALID', message: 'callerPrincipalId and launchRequestId are required' };
   }
-  const canceled = await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId);
+  let canceled = await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId);
+  const record = await teamLifecycle.findRequest(callerPrincipalId, launchRequestId);
+  if (record?.workers.some(worker => worker.transport === 'MODERN' && !worker.capacityReleased)) {
+    await reconcileModernMembers([record]);
+    canceled = await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId);
+  }
   return canceled.ok
     ? { ok: true, value: {
         canceledSessionIds: canceled.canceledSessionIds,
@@ -6133,8 +6333,30 @@ const squadExecutionService = new SquadExecutionService({
   revokeTeamAuthorizations: (authorizationIds) => {
     for (const id of authorizationIds) launchAuthorization.revoke(id);
   },
-  replyToSession: (sessionId, text) => ptys.reply(sessionId, text),
-  deliverToWorker: (sessionId, text) => workerInjector.deliver(sessionId, text),
+   replyToSession: replyToSquadMember,
+    deliverToWorker: (sessionId, text) => ptys.getSession(sessionId)
+      ? workerInjector.deliver(sessionId, text) : replyToSquadMember(sessionId, text),
+   deliverAssignment: async (sessionId, text, correlation) => {
+     const execution = await executionStore.get(correlation.executionId);
+     if (!execution) return { state: 'rejected' };
+     const member = await teamLifecycle.findModernWorkerBinding(sessionId, execution.projectId);
+     if (!member) {
+       // No ACP -> PTY fallback. Only an actual CLI session uses the legacy injector.
+       return { state: ptys.getSession(sessionId) && workerInjector.deliver(sessionId, text) ? 'accepted' : 'rejected' };
+     }
+     if (member.worker.modernContext?.executionId !== correlation.executionId) return { state: 'rejected' };
+     return squadRuntime().deliverSquadMember({ bindingId: sessionId, generation: member.generation,
+       projectId: execution.projectId, assignmentId: correlation.assignmentId, idempotencyKey: correlation.idempotencyKey, message: text });
+   },
+   onWorkSettled: async correlation => {
+     const execution = await executionStore.get(correlation.executionId);
+     if (!execution) return;
+     const member = await teamLifecycle.findModernWorkerBinding(correlation.workerSessionId, execution.projectId);
+     if (!member || member.worker.modernContext?.executionId !== execution.id) return;
+     const receipt = await squadRuntime().completeSquadMemberDelivery({ bindingId: correlation.workerSessionId, generation: member.generation,
+       projectId: execution.projectId, assignmentId: correlation.assignmentId, idempotencyKey: correlation.idempotencyKey });
+     if (receipt.state !== 'completed') throw new Error('Modern assignment completion receipt rejected');
+   },
   resumeGrants: executionResumeGrants,
   hasLivePredecessor: (projectId, ownerPrincipalIds) => {
     const owners = new Set(ownerPrincipalIds);
@@ -6192,8 +6414,10 @@ const squadExecutionService = new SquadExecutionService({
   , claimRecoveryObserveEnabled: () => store.getConfig().executionClaimRecoveryObserveEnabled === true
   , claimRecoveryEnforceEnabled: () => store.getConfig().executionClaimRecoveryEnforceEnabled === true
   , planStartupGraceMs: () => store.getConfig().executionPlanStartupGraceMs ?? 0
-  , getAgentState: (sessionId) => agentStatus.get(sessionId)
-  , getWorkerLiveness: (sessionId) => workerLivenessCache.get(sessionId)
+   , getAgentState: (sessionId) => modernMemberStatus.has(sessionId)
+     ? modernMemberStatus.get(sessionId)?.status === 'idle' ? 'idle' : 'working' : agentStatus.get(sessionId)
+   , getWorkerLiveness: (sessionId) => modernMemberStatus.has(sessionId)
+     ? modernMemberStatus.get(sessionId)?.live ? 'alive' : 'unknown' : workerLivenessCache.get(sessionId)
   // Reap a proven-dead worker's surviving outer shell/tmux wrapper. closeExpected
   // marks a clean exit, is idempotent (no-op if already gone), and for a
   // tmux-backed remote runs killRemoteTmux — the ONLY thing that kills the
@@ -6249,6 +6473,16 @@ const squadExecutionService = new SquadExecutionService({
         });
       },
       modelHealth: async (models) => {
+        if (models.length === 0) return [];
+        // ACP validates selected models against its own catalog before provider start.
+        // CLI model inventories cannot attest ACP model IDs.
+        if (team?.transport === 'MODERN') {
+          const checked = await squadRuntime().preflightSquadRuntime({ projectId,
+            ...(project?.hostId ? { hostId: project.hostId } : {}),
+            providerIds: [...new Set(models.map(model => canonicalThreadProviderId(model.provider)))],
+            selections: models.map(({ id, provider }) => ({ providerId: canonicalThreadProviderId(provider), model: id })) });
+          return models.map(({ id, provider }) => ({ id, provider, status: checked.ready ? 'available' as const : 'unavailable' as const }));
+        }
         const requiredProviderIds = new Set(models.map((model) => model.provider));
         const liveByProvider = new Map(await Promise.all([...providers]
           .filter(([id]) => requiredProviderIds.has(id))
@@ -7654,6 +7888,7 @@ function registerIpc() {
     get stopAutonomousRun() { return stopAutonomousRun; },
     get suggestionsStore() { return suggestionsStore; },
     get teams() { return teams; },
+    get teamLifecycle() { return teamLifecycle; },
     get templates() { return templates; },
     get terminateSession() { return terminateSession; },
     get tray() { return tray; },
@@ -8919,14 +9154,21 @@ async function bootstrapNormal() {
     reportTeamTask: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? reportTeamTask : undefined,
     executionService: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? squadExecutionService : undefined,
     executionHandoffs: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? executionHandoffs : undefined,
-    resolveExecutionCohortBinding: (sessionId, projectId) => {
+    resolveExecutionCohortBinding: async (sessionId, projectId, fence) => {
       const session = ptys.getSession(sessionId);
       const cohort = session?.cohort;
-      return session && session.status !== 'exited' && session.projectId === projectId
+      const ptyBinding = session && session.status !== 'exited' && session.projectId === projectId
         && cohort?.executionId && cohort.slotId && (cohort.role === 'worker' || cohort.role === 'orchestrator')
         ? { executionId: cohort.executionId, projectId, slotId: cohort.slotId, role: cohort.role,
             principalId: session.id, authorizationId: launchAuthorizationBySession.get(session.id) }
         : undefined;
+      if (ptyBinding) return ptyBinding;
+      const modern = await teamLifecycleIntegration.resolveModernBinding(sessionId, projectId);
+      if (modern && fence && (fence.bindingId !== sessionId || fence.generation !== modern.generation)) return undefined;
+      return modern ? {
+        executionId: modern.executionId, projectId, slotId: modern.slotId, role: modern.role,
+        principalId: sessionId, authorizationId: modern.authorizationId, memberFence: { bindingId: sessionId, generation: modern.generation }
+      } : undefined;
     },
     validateExecutionRecoveryBinding: async (sessionId, binding) => {
       if (binding.slotId !== 'orchestrator:recovery') return true;
@@ -8968,9 +9210,17 @@ async function bootstrapNormal() {
     validateTeamRouteIdentity: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled())
       ? (sessionId, projectId) => {
           const session = ptys.getSession(sessionId);
-          return !!session && session.status !== 'exited' && session.projectId === projectId;
-        }
-      : undefined,
+          if (session && session.status !== 'exited' && session.projectId === projectId) return true;
+           return false;
+         }
+       : undefined,
+    validateExecutionRouteIdentity: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled())
+      ? async (sessionId, projectId) => {
+          const session = ptys.getSession(sessionId);
+          if (session && session.status !== 'exited' && session.projectId === projectId) return true;
+          const member = await teamLifecycleIntegration.resolveModernBinding(sessionId, projectId);
+          return !!member && await squadRuntime().isSquadMemberLive(sessionId, projectId, member.generation);
+        } : undefined,
     // Owner-session identity for launch_team AND execution.start / snapshot /
     // resume_binding. Accepts a live pty session (same check as above) OR —
     // for the Modern/ACP loopback forwarder, which has no pty — a live
@@ -8978,7 +9228,8 @@ async function bootstrapNormal() {
     // thread store. Cohort / worker execution verbs stay pty-only via
     // validateTeamRouteIdentity.
     validateLaunchRouteIdentity: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled())
-      ? async (sessionId, projectId) => {
+       ? async (sessionId, projectId) => {
+           if (await teamLifecycle.findModernWorkerBinding(sessionId, projectId)) return false;
           const session = ptys.getSession(sessionId);
           if (session && session.status !== 'exited' && session.projectId === projectId) return true;
           // Modern/ACP loopback owner has no pty — probe conversation-thread
@@ -9196,7 +9447,8 @@ async function bootstrapNormal() {
       } catch (err) {
         logMainError('remoteReap.bootOrphanReap', err);
       }
-      await teamLifecycleIntegration.reconcileStartup([...recovered]);
+       await teamLifecycleIntegration.reconcileStartup([...recovered]);
+       await reconcileModernMembers();
       await squadExecutionService.reconcileActive();
       await sweepUnretainedSquadWorktrees({ executionStore, projects: store, sweepManagedWorktrees, logError: logMainError });
       /* v8 ignore next -- boot callback runs in built Electron; helper is unit-tested */
@@ -9205,7 +9457,7 @@ async function bootstrapNormal() {
       await squadExecutionService.drainPendingCoordinatorWakes();
       flushStaleWorkerInjections();
       executionClaimReconcileTimer ??= setInterval(() => {
-        void squadExecutionService.reconcileActive().catch((err) => logMainError('execution.reconcileActive', err));
+        void reconcileModernMembers().then(() => squadExecutionService.reconcileActive()).catch((err) => logMainError('execution.reconcileActive', err));
         void squadExecutionService.redispatchStalled().catch((err) => logMainError('execution.redispatchStalled', err));
         // Deliver a queued coordinator wake BEFORE escalating its blocker: a remote
         // coordinator never emits a raw idle edge, so this poll is the only path that

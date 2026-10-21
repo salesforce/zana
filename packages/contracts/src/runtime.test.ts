@@ -13,6 +13,13 @@ import {
   RuntimeOutboundSchema,
   SERVER_RUNTIME_PROTOCOL_VERSION,
   ServerRuntimeInboundSchema,
+  SquadMemberRuntimeRequestSchema,
+  SquadMemberDeliveryRequestSchema,
+  SquadMemberDeliveryResultSchema,
+  SquadMemberDeliveryCompletionSchema,
+  SquadRuntimeOperationSchema,
+  SquadMemberStatusSchema,
+  SquadRuntimePreflightResultSchema,
   normalizeNativeToolPolicyReason,
   PluginAppSnapshotSchema
 } from './runtime.js';
@@ -112,6 +119,59 @@ describe('server runtime contract', () => {
   it('rejects incompatible utility-process protocol versions before dispatch', () => {
     expect(ServerRuntimeInboundSchema.safeParse({ ...request, protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION + 1, operation: 'projects-list' }).success).toBe(false);
     expect(RuntimeOutboundSchema.safeParse({ type: 'stopped', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION + 1 }).success).toBe(false);
+  });
+  it('accepts only main-attested Modern squad binding context', () => {
+    const request = {
+      bindingId: '00000000-0000-4000-8000-000000000001', generation: 1, projectId: 'project-1',
+      teamId: 'team-1', cohortId: '00000000-0000-4000-8000-000000000002', role: 'worker',
+      providerId: 'claude-code', prompt: 'Do work', title: 'Worker', worktreePath: '/tmp/worktree'
+    };
+    expect(ServerRuntimeInboundSchema.safeParse({ type: 'request', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: '00000000-0000-4000-8000-000000000003', deadlineAt: '2026-08-19T12:00:00.000Z', operation: 'squad-member-create', request }).success).toBe(true);
+    expect(SquadMemberRuntimeRequestSchema.safeParse({ ...request, role: 'owner' }).success).toBe(false);
+    expect(SquadMemberRuntimeRequestSchema.safeParse({ ...request, worktreePath: '' }).success).toBe(false);
+  });
+  it('requires bounded generation for member status and stop, never generic thread liveness', () => {
+    const control = { bindingId: request.id, projectId: 'p', generation: 2 };
+    for (const operation of ['squad-member-status', 'squad-member-stop']) {
+      expect(ServerRuntimeInboundSchema.safeParse({ ...request, operation, request: control }).success).toBe(true);
+      expect(ServerRuntimeInboundSchema.safeParse({ ...request, operation, threadId: request.id, projectId: 'p' }).success).toBe(false);
+      for (const generation of [undefined, 0, -1, 1.2]) {
+        expect(ServerRuntimeInboundSchema.safeParse({ ...request, operation, request: { ...control, generation } }).success).toBe(false);
+      }
+    }
+    const status = { ...control, live: true, status: 'active', hostOnline: true, providerStarted: true, eventSequence: 3, updatedAt: 1 };
+    expect(SquadMemberStatusSchema.safeParse(status).success).toBe(true);
+    expect(SquadMemberStatusSchema.safeParse({ ...status, eventSequence: -1 }).success).toBe(false);
+  });
+  it('requires correlated delivery and distinguishes admission from completion', () => {
+    const delivery = { bindingId: request.id, projectId: 'p', generation: 1, assignmentId: 'a', idempotencyKey: 'i', message: 'work' };
+    expect(SquadMemberDeliveryRequestSchema.safeParse(delivery).success).toBe(true);
+    for (const patch of [{ assignmentId: undefined }, { idempotencyKey: '' }, { message: 'x'.repeat(65537) }]) {
+      expect(SquadMemberDeliveryRequestSchema.safeParse({ ...delivery, ...patch }).success).toBe(false);
+    }
+    const { message: _message, ...correlation } = delivery;
+    for (const state of ['accepted', 'completed', 'uncertain', 'rejected']) {
+      expect(SquadMemberDeliveryResultSchema.safeParse({ ...correlation, state }).success).toBe(true);
+    }
+    expect(SquadMemberDeliveryResultSchema.safeParse({ ...correlation, accepted: true }).success).toBe(false);
+  });
+  it('bounds preflight providers and reports unwired policy explicitly', () => {
+    const value = { projectId: 'p', providerIds: ['codex'], nativeToolPolicyRequired: true };
+    expect(ServerRuntimeInboundSchema.safeParse({ ...request, operation: 'squad-runtime-preflight', request: value }).success).toBe(true);
+    expect(ServerRuntimeInboundSchema.safeParse({ ...request, operation: 'squad-runtime-preflight', request: { ...value, providerIds: Array(33).fill('codex') } }).success).toBe(false);
+    expect(SquadRuntimePreflightResultSchema.safeParse({ ready: false, hostId: request.id, policyInventoryReady: true,
+      nativeToolPolicyRequired: true, nativeToolPolicyWired: false, reason: 'not wired', providers: [{ providerId: 'codex', available: true }] }).success).toBe(true);
+  });
+  it('accepts generation-bound completion only through trusted runtime contracts', () => {
+    const completion = { bindingId: request.id, projectId: 'p', generation: 1, assignmentId: 'a', idempotencyKey: 'i' };
+    const operation = { operation: 'squad-member-delivery-complete', request: completion };
+    expect(SquadMemberDeliveryCompletionSchema.safeParse(completion).success).toBe(true);
+    expect(SquadRuntimeOperationSchema.safeParse(operation).success).toBe(true);
+    expect(ServerRuntimeInboundSchema.safeParse({ ...request, ...operation }).success).toBe(true);
+    for (const patch of [{ assignmentId: undefined }, { idempotencyKey: '' }, { generation: 0 }, { message: 'untrusted' }]) {
+      expect(SquadMemberDeliveryCompletionSchema.safeParse({ ...completion, ...patch }).success).toBe(false);
+      expect(SquadRuntimeOperationSchema.safeParse({ ...operation, request: { ...completion, ...patch } }).success).toBe(false);
+    }
   });
   it('accepts bounded coding-agent display grouping without allowing arbitrary manifest data', () => {
     const snapshot = { id: 'custom-agent', name: 'Agent', description: '', icon: 'Terminal', enabled: false,

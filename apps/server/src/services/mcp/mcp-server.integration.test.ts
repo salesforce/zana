@@ -203,6 +203,65 @@ describe('inbox MCP server (end-to-end)', () => {
     expect(cancelTeamLaunch).not.toHaveBeenCalled();
   });
 
+  it('forwards async member gates and generation fences without owner launch tools', async () => {
+    let generation = 1;
+    const gate = vi.fn(async () => true);
+    const claimWork = vi.fn(async () => ({ ok: true, value: { workUnitId: 'unit-1' } }));
+    const resolveExecutionCohortBinding = vi.fn(async () => ({
+      executionId: 'execution-1', projectId: 'proj-1', role: 'worker' as const, slotId: 'worker-1',
+      memberFence: { bindingId: 'binding-1', generation }
+    }));
+    handle = await startMcpServer({
+      inboxStore: createMemoryInboxStore(), suggestionsStore: createMemorySuggestionsStore(),
+      projects: { get: () => makeProject('proj-1', 'My Project') },
+      launchTeam: vi.fn() as never,
+      executionService: { claimWork } as never,
+      validateLaunchRouteIdentity: async () => true,
+      validateExecutionRouteIdentity: gate, resolveExecutionCohortBinding,
+      log: () => {}
+    });
+    const credential = controlCredentialForSession('thread-1');
+    const client = await connectClient(handle.url, `proj-1/thread-1/${credential}/member/binding-1/1`);
+    clients.push(client);
+    const names = (await client.listTools()).tools.map((tool) => tool.name);
+    expect(names).toContain('execution.work.claim');
+    expect(names).not.toContain('execution.start');
+    expect(names).not.toContain('execution.resume_binding');
+    expect(names).not.toContain('launch_team');
+    expect(names).not.toContain('authorize_team_launch');
+    const args = { name: 'execution.work.claim', arguments: { executionId: 'execution-1', workUnitId: 'unit-1' } };
+    expect((await client.callTool(args)).isError).toBeFalsy();
+    expect(gate).toHaveBeenCalledWith('thread-1', 'proj-1');
+    expect(resolveExecutionCohortBinding).toHaveBeenCalledWith('thread-1', 'proj-1', { bindingId: 'binding-1', generation: 1 });
+    expect(claimWork).toHaveBeenCalledOnce();
+    const unfenced = await connectClient(handle.url, `proj-1/thread-1/${credential}`);
+    clients.push(unfenced);
+    expect((await unfenced.callTool(args)).isError).toBe(true);
+    expect((await unfenced.callTool({ name: 'execution.start', arguments: { version: 1, teamId: 't', launchRequestId: 'r', slots: [{ initialTask: 'work' }] } })).isError).toBe(true);
+    expect((await unfenced.callTool({ name: 'cancel_team_launch', arguments: { launchRequestId: 'r' } })).isError).toBe(true);
+    generation = 2;
+    expect((await client.callTool(args)).isError).toBe(true);
+    expect(claimWork).toHaveBeenCalledOnce();
+    gate.mockResolvedValue(false);
+    generation = 1;
+    expect((await client.callTool(args)).isError).toBe(true);
+    expect(claimWork).toHaveBeenCalledOnce();
+  });
+
+  it('rejects forged member credentials before resolving async binding', async () => {
+    const resolveExecutionCohortBinding = vi.fn(async () => undefined);
+    handle = await startMcpServer({
+      inboxStore: createMemoryInboxStore(), suggestionsStore: createMemorySuggestionsStore(),
+      projects: { get: () => makeProject('proj-1', 'My Project') },
+      executionService: {} as never,
+      validateExecutionRouteIdentity: async () => true, resolveExecutionCohortBinding, log: () => {}
+    });
+    const client = await connectClient(handle.url, 'proj-1/thread-1/forged/member/binding-1/1');
+    clients.push(client);
+    expect((await client.callTool({ name: 'execution.delivery.pull', arguments: {} })).isError).toBe(true);
+    expect(resolveExecutionCohortBinding).not.toHaveBeenCalled();
+  });
+
   describe('squad proposal tools', () => {
     const okResult = {
       ok: true as const,
@@ -234,6 +293,19 @@ describe('inbox MCP server (end-to-end)', () => {
         { projectId: 'proj-1', sessionId: 'caller-session' },
         expect.objectContaining({ teamId: 't1', goal: 'do it' })
       );
+    });
+
+    it('hides both tools on a member-fenced route', async () => {
+      handle = await startMcpServer({
+        ...baseOpts(), proposeSquad: vi.fn(async () => okResult), checkSquadPlan: vi.fn(), validateLaunchRouteIdentity: async () => true,
+        executionService: {} as never, validateExecutionRouteIdentity: async () => true,
+        resolveExecutionCohortBinding: async () => ({ executionId: 'e', projectId: 'proj-1', role: 'worker' as const, slotId: 'w', memberFence: { bindingId: 'binding-1', generation: 1 } })
+      });
+      const client = await connectClient(handle.url, `proj-1/thread-1/${controlCredentialForSession('thread-1')}/member/binding-1/1`);
+      clients.push(client);
+      const names = (await client.listTools()).tools.map((t) => t.name);
+      expect(names).not.toContain('squad_propose');
+      expect(names).not.toContain('squad_plan_check');
     });
 
     it('hides both tools without the deps', async () => {

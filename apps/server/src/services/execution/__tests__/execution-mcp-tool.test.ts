@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { registerExecutionTools } from '../execution-mcp-tool.js';
+import { registerExecutionTools, EXECUTION_MEMBER_TOOL_NAMES, getExecutionToolDescriptors } from '../execution-mcp-tool.js';
 import { createExecutionHandoffStore } from '../handoff-store.js';
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
@@ -95,6 +95,123 @@ async function tools_failure(tools: Map<string, ToolHandler>, name: string, extr
 const contractFixturePath = fileURLToPath(new URL('../../../../test/fixtures/execution-contract-v1.json', import.meta.url));
 
 describe('execution MCP tools', () => {
+  it('awaits async false authorization across every execution and handoff verb', async () => {
+    const execution = service();
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, {
+      sessionId: 'thread-1', projectId: 'project-1', service: execution as never,
+      validateRouteIdentity: async () => false,
+      handoffs: {} as never, validateHandoffTarget: async () => false, approveHandoff: async () => false
+    });
+    for (const [name, handler] of tools) {
+      const result = await handler({});
+      expect(result.isError, name).toBe(true);
+      expect(text(result), name).toBe(`${name} unavailable: session MCP is not authorized for this live session.`);
+    }
+    for (const method of Object.values(execution)) expect(method).not.toHaveBeenCalled();
+  });
+
+  it('awaits separate async owner denial without widening member or legacy authority', async () => {
+    const execution = service();
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, {
+      sessionId: 'thread-1', projectId: 'project-1', service: execution as never,
+      validateRouteIdentity: async () => true, validateOwnerRouteIdentity: async () => false
+    });
+    for (const name of ['execution.start', 'execution.snapshot', 'execution.resume_binding']) {
+      expect((await tools.get(name)!({ executionId: 'execution-1', token: 'token' })).isError).toBe(true);
+    }
+    expect(execution.start).not.toHaveBeenCalled();
+    expect(execution.snapshot).not.toHaveBeenCalled();
+    expect(execution.resumeBinding).not.toHaveBeenCalled();
+  });
+
+  it('awaits cohort binding and forwards only host identity', async () => {
+    const execution = service();
+    const { server, tools } = fakeServer();
+    const bound = { executionId: 'execution-1', projectId: 'project-1', role: 'worker' as const, slotId: 'worker-1' };
+    const resolveCohortBinding = vi.fn(async () => bound);
+    registerExecutionTools(server as never, {
+      sessionId: 'thread-1', projectId: 'project-1', service: execution as never,
+      validateRouteIdentity: async () => true, resolveCohortBinding
+    });
+    expect((await tools.get('execution.work.claim')!({ executionId: 'execution-1', workUnitId: 'unit-1' })).isError).toBeFalsy();
+    expect(resolveCohortBinding).toHaveBeenCalledWith('thread-1', 'project-1', undefined);
+    expect(execution.claimWork).toHaveBeenCalledWith(bound, 'unit-1', undefined);
+  });
+
+  it.each([
+    { projectId: 'wrong-project' }, { executionId: 'wrong-execution' },
+    { memberFence: { bindingId: 'wrong-binding', generation: 1 } },
+    { memberFence: { bindingId: 'binding-1', generation: 2 } }, { memberFence: undefined }
+  ])('rejects async mismatched member binding %j without owner fallback', async (override) => {
+    const execution = service();
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, {
+      sessionId: 'thread-1', projectId: 'project-1', service: execution as never,
+      memberFence: { bindingId: 'binding-1', generation: 1 },
+      validateRouteIdentity: async () => true, validateOwnerRouteIdentity: async () => true,
+      resolveCohortBinding: async () => ({
+        executionId: 'execution-1', projectId: 'project-1', role: 'worker', slotId: 'worker-1',
+        memberFence: { bindingId: 'binding-1', generation: 1 }, ...override
+      })
+    });
+    for (const name of ['execution.work.claim', 'execution.snapshot', 'execution.event', 'execution.complete']) {
+      expect((await tools.get(name)!({ executionId: 'execution-1', workUnitId: 'unit-1' })).isError, name).toBe(true);
+    }
+    for (const method of Object.values(execution)) expect(method).not.toHaveBeenCalled();
+    expect(tools.has('execution.start')).toBe(false);
+    expect(tools.has('execution.resume_binding')).toBe(false);
+    expect(tools.has('execution.stop')).toBe(false);
+  });
+
+  it.each(['worker', 'orchestrator'] as const)('checks %s allowlist before invoking service on fenced routes', async (role) => {
+    const execution = service();
+    const { server, tools } = fakeServer();
+    const memberFence = { bindingId: 'binding-1', generation: 1 };
+    registerExecutionTools(server as never, {
+      sessionId: 'thread-1', projectId: 'project-1', service: execution as never, memberFence,
+      validateRouteIdentity: async () => true,
+      resolveCohortBinding: async () => ({ executionId: 'execution-1', projectId: 'project-1', role, slotId: 'slot-1', memberFence })
+    });
+    const other = role === 'worker' ? 'execution.plan.register' : 'execution.work.claim';
+    expect((await tools.get(other)!({ executionId: 'execution-1', workUnits: [], workUnitId: 'unit-1' })).isError).toBe(true);
+    expect(execution.registerPlan).not.toHaveBeenCalled();
+    expect(execution.claimWork).not.toHaveBeenCalled();
+    expect((await tools.get('execution.snapshot')!({ executionId: 'execution-1' })).isError).toBeFalsy();
+    expect(execution.snapshotBound).toHaveBeenCalled();
+    expect(execution.snapshot).not.toHaveBeenCalled();
+    expect((await tools.get('execution.event')!({ executionId: 'execution-1', slotId: 'forged', producerRole: 'orchestrator' })).isError).toBe(true);
+    expect(execution.reportBoundEvent).not.toHaveBeenCalled();
+    expect([...tools.keys()].sort()).toEqual([...new Set(Object.values(EXECUTION_MEMBER_TOOL_NAMES).flat())].sort());
+  });
+
+  it('captures canonical strict schemas including requestPath without running service', () => {
+    const descriptors = getExecutionToolDescriptors();
+    expect(getExecutionToolDescriptors()).toBe(descriptors);
+    const start = descriptors.find((descriptor) => descriptor.name === 'execution.start')!;
+    expect(start.schema.safeParse({ requestPath: '/tmp/request.json' }).success).toBe(true);
+    expect(start.schema.safeParse({ requestPath: '/tmp/request.json', projectId: 'forged' }).success).toBe(false);
+    expect(start.inputSchema).toHaveProperty('anyOf');
+  });
+
+  it('rejects Modern member execution calls with stripped route fence even when owner gate accepts liveness', async () => {
+    const execution = service();
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, {
+      sessionId: 'thread-1', projectId: 'project-1', service: execution as never,
+      validateRouteIdentity: async () => true, validateOwnerRouteIdentity: async () => true,
+      resolveCohortBinding: async () => ({
+        executionId: 'execution-1', projectId: 'project-1', role: 'worker', slotId: 'worker-1',
+        memberFence: { bindingId: 'binding-1', generation: 1 }
+      })
+    });
+    for (const [name, handler] of tools) {
+      expect((await handler({ executionId: 'execution-1' })).isError, name).toBe(true);
+    }
+    for (const method of Object.values(execution)) expect(method).not.toHaveBeenCalled();
+  });
+
   it('registers only route-scoped execution controls', () => {
     const { server, tools } = fakeServer();
     registerExecutionTools(server as never, { sessionId: 'session-1', projectId: 'project-1', service: service() as never, validateRouteIdentity: () => true });

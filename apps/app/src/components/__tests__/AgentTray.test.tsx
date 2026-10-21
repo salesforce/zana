@@ -29,6 +29,7 @@ const h = vi.hoisted(() => ({
     status: string;
     title: string;
     archivedAt?: number | null;
+    originPluginId?: string | null;
   }>
 }));
 
@@ -114,6 +115,23 @@ describe('AgentTray', () => {
     );
     expect(global).not.toContain('Idle review');
     expect(global).toContain('No active agents');
+  });
+
+  it('marks a Modern squad member thread row dotted and keeps the Thread pill', () => {
+    h.data.terminals = {} as typeof h.data.terminals;
+    h.status.byId = {} as typeof h.status.byId;
+    h.threads = [
+      { id: 'thread-m', projectId: 'project-1', providerId: 'claude-code', status: 'idle', title: 'Modern lead', originPluginId: 'host-modern-squad' },
+      { id: 'thread-p', projectId: 'project-1', providerId: 'claude-code', status: 'idle', title: 'Plain thread' }
+    ];
+    const markup = renderToStaticMarkup(
+      <MemoryRouter>
+        <AgentTray placement="inline" projectId="project-1" />
+      </MemoryRouter>
+    );
+    expect(markup.match(/is-modern/g)).toHaveLength(1);
+    expect(markup).toContain('data-squad-transport="MODERN"');
+    expect(markup.match(/fleet-kind-thread/g)).toHaveLength(2);
   });
 
   it('stars thread rows with the same favorite control as CLI agents', () => {

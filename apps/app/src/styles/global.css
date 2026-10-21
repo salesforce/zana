@@ -15002,6 +15002,51 @@ body.resizing-col .explorer-resizer::after {
   background: color-mix(in srgb, var(--accent-blue, #4d8dff) 16%, transparent);
 }
 
+/* Modern-transport squad members (ACP threads) read apart from CLI squads by a
+   dotted edge in the Thread pill's blue. Bordered surfaces switch their border
+   to dotted (keeping any cohort accent color); borderless rows get an inset
+   dotted outline so layout never shifts. CLI squads are untouched. */
+.agent-card.is-modern,
+.agent-card.has-cohort.is-modern,
+.skills-row.team-row.is-modern {
+  border-style: dotted;
+  border-color: color-mix(in srgb, var(--accent-blue, #4d8dff) 55%, transparent);
+}
+.agent-card.cohort-orch.is-modern {
+  border-left-color: var(--accent-blue, #4d8dff);
+}
+.agents-row.is-modern,
+.project-terminal-row.is-modern,
+.agent-tray-row.is-modern,
+.teams-agent-item.is-modern,
+.agent-squad-worker.is-modern,
+.agents-worker-row.is-modern,
+.agent-monitor-row.is-modern {
+  outline: 1px dotted color-mix(in srgb, var(--accent-blue, #4d8dff) 55%, transparent);
+  outline-offset: -1px;
+  border-radius: 5px;
+}
+.agents-row.is-modern {
+  border-left-style: dotted;
+}
+.teams-agent-item.is-modern {
+  padding: 4px 6px;
+}
+
+/* Squad picker option row: name + transport pill. */
+.squad-picklist-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.squad-picklist-option-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .agent-card.is-schedule-off {
   opacity: 0.62;
 }
@@ -40746,6 +40791,12 @@ body.split-frame-guard webview {
 .squad-flow-node:focus-visible {
   outline: 2px solid var(--accent-blue);
   outline-offset: 2px;
+}
+/* Modern squad member nodes read dotted, like Modern cards elsewhere. Declared
+   before the orchestrator/state modifiers so their edge colors still win. */
+.squad-flow-node--modern {
+  border-style: dotted;
+  border-color: color-mix(in srgb, var(--accent-blue, #4d8dff) 55%, transparent);
 }
 .squad-flow-node--orch {
   border-color: color-mix(in srgb, var(--accent-gold) 55%, var(--border-strong));

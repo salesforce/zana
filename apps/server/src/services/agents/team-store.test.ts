@@ -35,6 +35,12 @@ describe('sanitizeTeam', () => {
       .toMatchObject({ routingEnforced: undefined });
   });
 
+  it('defaults legacy teams to CLI and preserves the whole-squad Modern transport', () => {
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [] })?.transport).toBe('CLI');
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], transport: 'MODERN' })?.transport).toBe('MODERN');
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], transport: 'mixed' })?.transport).toBe('CLI');
+  });
+
   it('keeps only the infer and provided default planning modes', () => {
     for (const mode of ['provided', 'infer'] as const) {
       expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], defaultPlanning: mode })).toMatchObject({ defaultPlanning: mode });

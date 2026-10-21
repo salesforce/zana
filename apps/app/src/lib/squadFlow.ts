@@ -20,6 +20,7 @@ import type {
   SquadFlowGraph,
   SquadFlowNode,
   SquadSummary,
+  SessionCohort,
   SubagentChild,
   TerminalSession
 } from '@zana-ai/zcc-domain/product';
@@ -34,33 +35,23 @@ export const SQUAD_FLOW_EDGE_MESSAGE_CAP = 200;
  */
 export const SOLO_LAUNCH_ID = '__solo__';
 
-/** Renderer-neutral Modern thread projection. */
+/**
+ * Renderer-neutral thread projection. A Modern squad member carries its
+ * squad's cohort stamp, so it joins that squad's launch group exactly like a
+ * CLI member; any other thread is an isolated Solo node.
+ */
 export interface SquadFlowThreadParticipant {
   id: string;
   label: string;
   state: AgentState;
   createdAt: number;
+  cohort?: SessionCohort;
+  exited?: boolean;
 }
 
-/** Add renderer-projected Modern threads as isolated Solo flow nodes. */
-function addThreadParticipants(
-  bySession: Map<string, SquadFlowNode>,
-  participants: readonly SquadFlowThreadParticipant[] | undefined,
-  include: boolean
-): void {
-  if (!include) return;
-  for (const thread of participants ?? []) {
-    const sessionId = `thread:${thread.id}`;
-    bySession.set(sessionId, {
-      sessionId,
-      inspectionTarget: { type: 'thread', id: thread.id },
-      label: thread.label,
-      state: thread.state,
-      liveSubagents: 0,
-      exited: false,
-      isOrchestrator: false
-    });
-  }
+/** Flow node key for a thread participant. */
+export function threadParticipantNodeId(id: string): string {
+  return `thread:${id}`;
 }
 
 /**
@@ -270,6 +261,21 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
       sessionByExecutionSlot.set(`${s.cohort.executionId}\0${s.cohort.slotId}`, s.id);
     }
   }
+  // Modern squad members join the same cohort maps under their thread node key.
+  for (const thread of input.threadParticipants ?? []) {
+    const cohort = thread.cohort;
+    if (!cohort) continue;
+    const nodeId = threadParticipantNodeId(thread.id);
+    exitedBySession.set(nodeId, thread.exited ?? false);
+    if (cohort.slotLabel) cohortLabelBySession.set(nodeId, cohort.slotLabel);
+    if (cohort.executionId) executionIdBySession.set(nodeId, cohort.executionId);
+    cohortRoleBySession.set(nodeId, cohort.role);
+    cohortIdBySession.set(nodeId, cohort.cohortId);
+    if (cohort.slotId) slotIdBySession.set(nodeId, cohort.slotId);
+    if (cohort.executionId && cohort.slotId && !thread.exited) {
+      sessionByExecutionSlot.set(`${cohort.executionId}\0${cohort.slotId}`, nodeId);
+    }
+  }
 
   // Node set: every registry agent, plus any live non-shell session that never
   // registered. Keyed by sessionId so a session that is BOTH never double-counts.
@@ -353,7 +359,14 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
     if (!inScope(s.cohort?.cohortId)) continue;
     bySession.set(s.id, makeNode(s.id, s.cohort?.slotLabel, s.cohort?.slotLabel ?? s.title, undefined, undefined));
   }
-  addThreadParticipants(bySession, input.threadParticipants, inScope(undefined));
+  for (const thread of input.threadParticipants ?? []) {
+    if (!inScope(thread.cohort?.cohortId)) continue;
+    const nodeId = threadParticipantNodeId(thread.id);
+    const node = thread.cohort
+      ? makeNode(nodeId, thread.cohort.slotLabel ?? thread.label, thread.cohort.slotLabel ?? thread.label, undefined, undefined)
+      : { sessionId: nodeId, label: thread.label, liveSubagents: 0, exited: false, isOrchestrator: false } as SquadFlowNode;
+    bySession.set(nodeId, { ...node, inspectionTarget: { type: 'thread', id: thread.id }, state: thread.state });
+  }
 
   // Detached CLAIMED workers: synthesize a node straight from the durable board
   // for any CLAIMED slot no live session covers (see synthesizeDetachedClaimedNodes).
@@ -477,7 +490,8 @@ export function buildSquadFlow(input: SquadFlowInputs): SquadFlowGraph | null {
 
   const scopedCohorts = input.launchFilter === undefined || input.launchFilter === SOLO_LAUNCH_ID
     ? []
-    : input.sessions.map((session) => session.cohort).filter((cohort) => cohort?.cohortId === input.launchFilter);
+    : [...input.sessions.map((session) => session.cohort), ...(input.threadParticipants ?? []).map((thread) => thread.cohort)]
+      .filter((cohort) => cohort?.cohortId === input.launchFilter);
   const teamName = scopedCohorts.find((cohort) => cohort?.teamName)?.teamName;
   const executionId = scopedCohorts.find((cohort) => cohort?.executionId)?.executionId;
   const executionJobTitle = scopedCohorts.find((cohort) => cohort?.executionJobTitle)?.executionJobTitle;

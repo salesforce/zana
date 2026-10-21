@@ -9,16 +9,16 @@ import {
   useAgentStatus,
   useSubagents,
   useSubagentChildren,
-  agentViewTerminals
+  agentViewTerminals,
+  usePersonas
 } from '@/store';
 import { inspectAgentSession, inspectThread } from '@/lib/inspect-session';
 import { useThreads } from '@/thread-store';
-import { isVisibleThread, threadTitle } from '@/components/fleet-item';
-import { threadStatusToAgentState } from '@/components/thread/thread-timeline-model';
 import { useCanvasPan } from '@/hooks/useCanvasPan';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import './mobile-canvas.css';
-import { buildSquadFlow, isQuiescentSquad, type SquadFlowThreadParticipant } from '@/lib/squadFlow';
+import { buildSquadFlow, isQuiescentSquad } from '@/lib/squadFlow';
+import { modernFlowParticipants } from '@/lib/modern-squad-members';
 import { squadFlowBounds, type FlowPoint } from '@/lib/squadFlowBounds';
 import {
   ALL_SQUADS,
@@ -572,7 +572,8 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
       setDraggingId(null);
       if (!drag.moved) {
         const node = graph.nodes.find((candidate) => candidate.sessionId === drag.sessionId);
-        if (node?.job?.executionId && onInspectExecution) {
+        // A nested Modern member opens its thread; Job nodes open details.
+        if (node?.job?.executionId && onInspectExecution && (node.inspectionTarget.type !== 'thread' || node.isOrchestrator)) {
           onInspectExecution(graph.projectId, node.job.executionId);
           return;
         }
@@ -684,7 +685,7 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
               <button
                 key={node.sessionId}
                 type="button"
-                className={`squad-flow-node ${node.isOrchestrator ? 'squad-flow-node--orch' : ''} ${node.exited ? 'squad-flow-node--exited' : ''} ${working && !quiescent ? 'squad-flow-node--working' : ''} ${streaming && !quiescent ? 'squad-flow-node--streaming' : ''} ${claimed && !quiescent ? 'squad-flow-node--claimed' : ''} ${isDragging ? 'squad-flow-node--dragging' : ''}`}
+                className={`squad-flow-node ${node.isOrchestrator ? 'squad-flow-node--orch' : ''} ${node.inspectionTarget.type === 'thread' && node.job ? 'squad-flow-node--modern' : ''} ${node.exited ? 'squad-flow-node--exited' : ''} ${working && !quiescent ? 'squad-flow-node--working' : ''} ${streaming && !quiescent ? 'squad-flow-node--streaming' : ''} ${claimed && !quiescent ? 'squad-flow-node--claimed' : ''} ${isDragging ? 'squad-flow-node--dragging' : ''}`}
                 style={{ left: x + bounds.offsetX, top: y + bounds.offsetY, width: NODE_W }}
                 onPointerDown={compact ? undefined : (e) => handlePointerDown(e, node, x, y)}
                 onPointerMove={compact ? undefined : handlePointerMove}
@@ -775,6 +776,7 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
   const terminals = useData((s) => s.terminals);
   const projects = useData((s) => s.projects);
   const threads = useThreads((s) => s.threads);
+  const personas = usePersonas((s) => s.personas);
   const agents = useAgentMesh((s) => s.agents);
   const messages = useAgentMesh((s) => s.messages);
   const statusById = useAgentStatus((s) => s.byId);
@@ -786,21 +788,10 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
   const { isPanning: isStackPanning, canvasPanProps: stackPanProps } = useCanvasPan();
   const [executions, setExecutions] = useState<ExecutionBoardProjection[]>([]);
 
-  const threadParticipantsByProject = useMemo(() => {
-    const byProject = new Map<string, SquadFlowThreadParticipant[]>();
-    for (const thread of threads) {
-      if (!isVisibleThread(thread)) continue;
-      const list = byProject.get(thread.projectId) ?? [];
-      list.push({
-        id: thread.id,
-        label: threadTitle(thread),
-        state: threadStatusToAgentState(thread.status, thread.hasPendingInteraction, thread.activity),
-        createdAt: thread.createdAt
-      });
-      byProject.set(thread.projectId, list);
-    }
-    return byProject;
-  }, [threads]);
+  const threadParticipantsByProject = useMemo(
+    () => modernFlowParticipants(threads, executions, personas),
+    [threads, executions, personas]
+  );
 
   useEffect(() => {
     let cancelled = false;

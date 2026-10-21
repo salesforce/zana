@@ -14,13 +14,15 @@ import {
   useFavoriteAgents,
   useScheduler,
   favoriteKey,
-  agentViewTerminals
+  agentViewTerminals,
+  usePersonas
 } from '@/store';
 import { useThreads } from '@/thread-store';
 import { useEnsureThreads } from '@/hooks/useEnsureThreads';
 import { threadIdFromPath } from '@/lib/route-paths';
 import { inspectAgentSession, inspectThread } from '@/lib/inspect-session';
 import { AgentBoardLanes, isReclaimableIdle, type AgentCard } from '@/components/AgentBoard';
+import { modernMemberThreadId, withModernSquadMembers } from '@/lib/modern-squad-members';
 import { AgentViewToggle, ScheduledColumnToggle, useAgentsBoardView } from '@/components/AgentViewToggle';
 import { SquadFlowView } from '@/views/agents/SquadFlowView';
 import { AgentMonitor } from '@/components/AgentMonitor';
@@ -140,6 +142,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   // scoped to one project (with `before`-paginated Load more); in global scope
   // they're the flattened union across every project.
   const [executions, setExecutions] = useState<ExecutionBoardProjection[]>([]);
+  const personas = usePersonas((s) => s.personas);
   const [hasMoreExecutions, setHasMoreExecutions] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [selectedExecution, setSelectedExecution] = useState<{ projectId: string; executionId: string } | null>(null);
@@ -270,8 +273,9 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
         scopedProject?.id
       )
     );
-    return items;
-  }, [cards, threads, projects, scopedProject, scheduledTasks, includeScheduled]);
+    const memberExecutions = executions.filter((e) => byProjectId.has(e.projectId) && (!scopedProject || e.projectId === scopedProject.id));
+    return withModernSquadMembers(items, memberExecutions, personas);
+  }, [cards, threads, projects, scopedProject, scheduledTasks, includeScheduled, executions, personas]);
 
   const q = isGlobal ? filter.trim().toLowerCase() : '';
   const visibleFleet = q
@@ -304,6 +308,12 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
     }
     if (item.kind === 'schedule') {
       openScheduleFromAgents(item.task, terminals, navigate);
+      return;
+    }
+    // A nested Modern squad member opens its thread; its Job host opens details.
+    const memberThreadId = modernMemberThreadId(item.card);
+    if (memberThreadId) {
+      inspectThread(memberThreadId, item.projectId, navigate);
       return;
     }
     const executionId = item.card.session.cohort?.executionId;
