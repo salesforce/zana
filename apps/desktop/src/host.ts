@@ -1532,7 +1532,7 @@ function sessionHasUnreliableStatusChannel(session: TerminalSession): boolean {
  * OpenCode) have no OSC glyph and rest in `waiting`, so `waiting` is a deliverable rest state for
  * them. Headless cohort workers rest deliverable too (see {@link suppressesInteractiveBlocked}).
  */
-function sessionRestsInWaiting(session: TerminalSession | null | undefined): boolean {
+export function sessionRestsInWaiting(session: TerminalSession | null | undefined): boolean {
   if (!session) return false;
   if (suppressesInteractiveBlocked(session)) return true;
   const mode = providerFor(session.profile as LaunchProfileId).adapter.status?.mode;
@@ -6188,6 +6188,14 @@ export async function lookupProposer(sessionId: string, projectId: string) {
   return null;
 }
 
+/** Review wins when the Squad (including a shadowed project copy) or its Project asks for it. */
+export async function resolveTeamLaunchApproval(teamId: string, projectId: string) {
+  return resolveLaunchApproval({
+    squad: teams.launchReviewRequired(teamId) ? { launchApproval: 'review' } : teams.list().find((team) => team.id === teamId),
+    project: await getAuthoritativeProjectSettings(projectId)
+  });
+}
+
 /**
  * Non-terminal runs a session owns in a project, from its newest (bounded) execution list.
  * The launch-now cap counts every owned non-terminal run, however it was started,
@@ -9005,10 +9013,7 @@ async function bootstrapNormal() {
     reportTeamTask: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? reportTeamTask : undefined,
     executionService: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? squadExecutionService : undefined,
     executionHandoffs: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? executionHandoffs : undefined,
-    resolveExecutionLaunchApproval: async (teamId, projectId) => resolveLaunchApproval({
-      squad: teams.launchReviewRequired(teamId) ? { launchApproval: 'review' } : teams.list().find((team) => team.id === teamId),
-      project: await getAuthoritativeProjectSettings(projectId)
-    }),
+    resolveExecutionLaunchApproval: resolveTeamLaunchApproval,
     resolveExecutionCohortBinding: async (sessionId, projectId, fence) => {
       const session = ptys.getSession(sessionId);
       const cohort = session?.cohort;

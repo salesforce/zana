@@ -13,7 +13,10 @@ const h = vi.hoisted(() => ({
   sessions: new Map<string, any>(),
   projects: [] as any[],
   replies: [] as Array<[string, string]>,
-  replyThrows: false
+  replyThrows: false,
+  projectSettings: {} as Record<string, unknown>,
+  reviewIds: new Set<string>(),
+  executionStores: [] as any[]
 }));
 
 vi.stubEnv('ZCC_DATA_DIR', h.root);
@@ -34,7 +37,7 @@ vi.mock('@zana-ai/zcc-host-daemon/pty', () => ({
   isClaudeProfile: () => false
 }));
 vi.mock('@zana-ai/zcc-server/services/projects/store', () => ({
-  store: { listProjects: () => h.projects, getConfig: () => h.config, getProjectSettings: () => ({}) },
+  store: { listProjects: () => h.projects, getConfig: () => h.config, getProjectSettings: () => h.projectSettings },
   scratchWorkspaceRoot: () => '/tmp/scratch-root',
   worktreeRoot: () => '/tmp/zcc-worktrees',
   worktreeTargetDir: () => '/tmp/zcc-worktrees/target'
@@ -54,12 +57,21 @@ vi.mock('@zana-ai/zcc-server/services/agents/team-store', async (importOriginal)
   const actual = await importOriginal<typeof import('@zana-ai/zcc-server/services/agents/team-store')>();
   class FakeTeamStore extends actual.TeamStore {
     list() { return h.teams; }
+    launchReviewRequired(id: string) { return h.reviewIds.has(id); }
     start() {}
     stop() {}
     refresh() {}
     rebindProjects() {}
   }
   return { ...actual, TeamStore: FakeTeamStore };
+});
+vi.mock('@zana-ai/zcc-server/services/execution/store', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@zana-ai/zcc-server/services/execution/store')>();
+  return { ...actual, createExecutionStore: (...args: Parameters<typeof actual.createExecutionStore>) => {
+    const created = actual.createExecutionStore(...args);
+    h.executionStores.push(created);
+    return created;
+  } };
 });
 vi.mock('electron', () => ({
   safeStorage: { isEncryptionAvailable: () => false },
@@ -73,6 +85,7 @@ vi.mock('../updater.js', () => ({ createUpdater: () => ({}) }));
 vi.mock('../test-tap.js', () => ({ record: () => {}, recordLog: () => {}, isEnabled: () => false, enable: () => {}, drain: () => ({ entries: [], cursor: 0 }), snapshot: () => ({ entries: [] }), reset: () => {} }));
 
 const host = await import('../host.js');
+const { SquadExecutionService } = await import('@zana-ai/zcc-server/services/execution/service');
 
 afterAll(() => {
   vi.unstubAllEnvs();
@@ -85,6 +98,8 @@ beforeEach(() => {
   h.projects = [];
   h.replies = [];
   h.replyThrows = false;
+  h.projectSettings = {};
+  h.reviewIds.clear();
   h.teams = [{ id: 'team1', name: 'Team', orchestratorPersonaId: 'orch', slots: [] }];
   h.personas = [{ id: 'orch', name: 'Orch', baseProfile: 'claude' }];
 });
@@ -375,5 +390,115 @@ describe('report-back wiring', () => {
       lifecycle.mockRestore();
       report.mockRestore();
     }
+  });
+});
+
+describe('sessionRestsInWaiting', () => {
+  it('is false for an unknown session and for an OSC harness', () => {
+    expect(host.sessionRestsInWaiting(undefined)).toBe(false);
+    expect(host.sessionRestsInWaiting(null)).toBe(false);
+    expect(host.sessionRestsInWaiting(pty() as never)).toBe(false);
+  });
+
+  it('is true for output-activity and screen-scan harnesses and a headless cohort worker', () => {
+    expect(host.sessionRestsInWaiting(pty({ profile: 'codex' }) as never)).toBe(true);
+    expect(host.sessionRestsInWaiting(pty({ profile: 'opencode' }) as never)).toBe(true);
+    expect(host.sessionRestsInWaiting(pty({ headless: true, cohort: { role: 'worker' } }) as never)).toBe(true);
+  });
+});
+
+describe('resolveTeamLaunchApproval', () => {
+  it('is direct for an unknown team with no project requirement', async () => {
+    expect(await host.resolveTeamLaunchApproval('ghost', 'p1')).toBe('direct');
+    expect(await host.resolveTeamLaunchApproval('team1', 'p1')).toBe('direct');
+  });
+
+  it('is review when the Squad file, a shadowed copy, or the Project asks for it', async () => {
+    h.teams = [{ id: 'team1', name: 'Team', launchApproval: 'review', slots: [] }];
+    expect(await host.resolveTeamLaunchApproval('team1', 'p1')).toBe('review');
+    h.teams = [{ id: 'team1', name: 'Team', slots: [] }];
+    h.reviewIds.add('team1');
+    expect(await host.resolveTeamLaunchApproval('team1', 'p1')).toBe('review');
+    h.reviewIds.clear();
+    h.projectSettings = { launchApproval: 'review' };
+    expect(await host.resolveTeamLaunchApproval('team1', 'p1')).toBe('review');
+  });
+});
+
+describe('squad_launch wiring (launchNow deps)', () => {
+  const dirs: string[] = [];
+  afterAll(() => dirs.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
+  const route = { projectId: 'p1', sessionId: 's1' };
+  const input = { teamId: 'team1', goal: 'Do the thing', planning: 'infer' as const };
+  const setup = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'squad-now-project-'));
+    dirs.push(dir);
+    h.projects = [{ id: 'p1', name: 'Proj', path: dir }];
+    h.sessions.set('s1', pty());
+    h.teams = [{ id: 'team1', name: 'Team', orchestratorPersonaId: 'orch', slots: [{ personaId: 'worker', quantity: 1 }] }];
+    h.personas = [{ id: 'orch', name: 'Orch', baseProfile: 'claude' }, { id: 'worker', name: 'Worker', baseProfile: 'claude' }];
+    return vi.spyOn(SquadExecutionService.prototype, 'start')
+      .mockImplementation(async () => ({ ok: true, value: { id: `exec-${Math.random()}`, state: 'RUNNING' } }) as never);
+  };
+  const spyStores = (fns: { list?: unknown[]; get?: unknown }) => {
+    for (const created of h.executionStores) {
+      if (fns.list) vi.spyOn(created, 'list').mockResolvedValue(fns.list as never);
+      if ('get' in fns) vi.spyOn(created, 'get').mockResolvedValue(fns.get as never);
+    }
+  };
+
+  it('starts a Squad owned by the calling session with an agent-prefixed launch id', async () => {
+    const start = setup();
+    const outcome = await host.squadProposalService.launchSquadNow({ ...route }, { ...input, goal: 'Own launch' });
+    expect(outcome).toMatchObject({ ok: true, value: { state: 'RUNNING' } });
+    const [principal, projectId, request, options] = start.mock.calls[0] as unknown as [string, string, { launchRequestId: string; objective: string }, unknown];
+    expect([principal, projectId]).toEqual(['s1', 'p1']);
+    expect(request.launchRequestId).toMatch(/^agent:/);
+    expect(request.objective).toBe('Own launch');
+    expect(options).toMatchObject({ reportTo: { kind: 'pty', id: 's1', role: 'owner' } });
+  });
+
+  it('also routes through the MCP dep', async () => {
+    const start = setup();
+    const { launchSquadNow } = host.squadProposalMcpDeps() as { launchSquadNow: (r: typeof route, i: typeof input) => Promise<unknown> };
+    expect(await launchSquadNow(route, { ...input, goal: 'Via MCP' })).toMatchObject({ ok: true });
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('dedupes a repeat while the run is live, and starts afresh when its state is gone or terminal', async () => {
+    const start = setup();
+    const repeat = { ...input, goal: 'Repeat me' };
+    expect(await host.squadProposalService.launchSquadNow(route, repeat)).toMatchObject({ ok: true });
+    spyStores({ list: [], get: { state: 'RUNNING' } });
+    expect(await host.squadProposalService.launchSquadNow(route, repeat)).toMatchObject({ ok: true, value: { deduped: true } });
+    expect(start).toHaveBeenCalledTimes(1);
+    spyStores({ get: undefined });
+    expect(await host.squadProposalService.launchSquadNow(route, repeat)).toMatchObject({ ok: true });
+    expect(start).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses at the per-session cap counting only non-terminal owned runs', async () => {
+    const start = setup();
+    spyStores({ list: [{ state: 'RUNNING' }, { state: 'RUNNING' }, { state: 'RUNNING' }, { state: 'COMPLETED' }], get: undefined });
+    expect(await host.squadProposalService.launchSquadNow(route, { ...input, goal: 'Capped' })).toMatchObject({ ok: false, code: 'TOO_MANY_LAUNCHES' });
+    spyStores({ list: [{ state: 'RUNNING' }, { state: 'COMPLETED' }, { state: 'FAILED' }] });
+    expect(await host.squadProposalService.launchSquadNow(route, { ...input, goal: 'Under cap' })).toMatchObject({ ok: true });
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('requires review when the Project or the Squad asks for it, without starting a run', async () => {
+    const start = setup();
+    h.projectSettings = { launchApproval: 'review' };
+    expect(await host.squadProposalService.launchSquadNow(route, input)).toMatchObject({ ok: false, code: 'LAUNCH_REVIEW_REQUIRED' });
+    h.projectSettings = {};
+    h.reviewIds.add('team1');
+    expect(await host.squadProposalService.launchSquadNow(route, input)).toMatchObject({ ok: false, code: 'LAUNCH_REVIEW_REQUIRED' });
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a refused start as the failure code', async () => {
+    const start = setup();
+    start.mockResolvedValue({ ok: false, code: 'TEAM_NOT_FOUND', message: 'nope' } as never);
+    expect(await host.squadProposalService.launchSquadNow(route, { ...input, goal: 'Refused' })).toMatchObject({ ok: false });
   });
 });

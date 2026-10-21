@@ -22,6 +22,8 @@ vi.mock('@/store', async (importOriginal) => {
 });
 
 import { ProjectLaunchApprovalSettings } from './ProjectSettingsView.js';
+import { entries } from '../../lib/settings-search/entries/project.js';
+import type { SettingsValueSnapshot } from '../../lib/settings-search/types.js';
 
 const project: Project = { id: 'project-1', name: 'Project', path: '/tmp/project', createdAt: 0, lastActiveAt: 0 };
 
@@ -87,5 +89,54 @@ describe('ProjectLaunchApprovalSettings', () => {
     get.mockRejectedValue(new Error('offline'));
     renderSettings();
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('offline'));
+  });
+
+  it('ignores a second choice while a save is in flight', async () => {
+    get.mockResolvedValue({});
+    let finish: (v: unknown) => void = () => {};
+    set.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const onSaved = renderSettings();
+    await waitFor(() => screen.getByTestId('picker'));
+    fireEvent.mouseDown(screen.getByText('choose review'));
+    await waitFor(() => expect(screen.getByTestId('picker').getAttribute('data-disabled')).toBe('true'));
+    fireEvent.mouseDown(screen.getByText('choose review'));
+    expect(set).toHaveBeenCalledTimes(1);
+    finish({ launchApproval: 'review' });
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+  });
+
+  it('drops a load result that arrives after unmount', async () => {
+    let resolveGet: (v: unknown) => void = () => {};
+    get.mockReturnValue(new Promise((resolve) => { resolveGet = resolve; }));
+    renderSettings();
+    cleanup();
+    resolveGet({ launchApproval: 'review' });
+    await Promise.resolve();
+    expect(screen.queryByTestId('picker')).toBeNull();
+  });
+
+  it('drops a load failure that arrives after unmount', async () => {
+    let rejectGet: (e: unknown) => void = () => {};
+    get.mockReturnValue(new Promise((_, reject) => { rejectGet = reject; }));
+    renderSettings();
+    cleanup();
+    rejectGet(new Error('late'));
+    await Promise.resolve();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+});
+
+describe('launch approval search entries', () => {
+  const policy = entries.find((e) => e.id === 'project.launch-approval-policy');
+  const snapshot = (launchApproval?: string) =>
+    ({ project: { settings: launchApproval ? { launchApproval } : {} } }) as unknown as SettingsValueSnapshot;
+
+  it('reports the review policy', () => {
+    expect(policy && 'value' in policy ? policy.value?.(snapshot('review')) : undefined).toBe('Review before launch');
+  });
+
+  it('reports direct launch when unset or direct', () => {
+    expect(policy && 'value' in policy ? policy.value?.(snapshot()) : undefined).toBe('Agents can launch directly');
+    expect(policy && 'value' in policy ? policy.value?.(snapshot('direct')) : undefined).toBe('Agents can launch directly');
   });
 });
