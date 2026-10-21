@@ -5,6 +5,7 @@ import { replyToInboxEntry, useInboxAnswered } from '../store.js';
 import { respondToInboxBlocker } from '../lib/inboxBlockerRespond.js';
 import { MarkdownContent } from './MarkdownContent.js';
 import { useExecutionInboxBlockerState } from '../lib/executionInboxBlockerState.js';
+import { platformShortcut } from '../lib/platformShortcut.js';
 
 /**
  * Structured multiple-choice question form — the interactive half of the
@@ -327,7 +328,7 @@ export function QuestionBlock({
           className="inbox-question-continue"
           onClick={() => void submit()}
           disabled={busy || !canSend || hostActionUnavailable}
-          title="Continue (⌘↵)"
+          title={platformShortcut('Continue (⌘↵)')}
         >
           {busy ? (dead ? 'Reopening…' : 'Sending…') : dead ? 'Reopen & answer' : 'Continue'}
           <CornerDownLeft size={13} strokeWidth={1.75} />

@@ -344,7 +344,12 @@ const execMatch = PROMPT.match(new RegExp('execution ' + BT + '([^' + BT + ']+)'
 const EXECUTION_ID = execMatch ? execMatch[1] : null;
 const IS_ORCHESTRATOR = /coordinator of Team/.test(PROMPT);
 const IS_WORKER = /worker standby/.test(PROMPT);
-const IS_OWNER = /E2E start Job Team/.test(PROMPT);
+// Owner that started the run itself: 'E2E own Squad reports' also answers the blocker its
+// [Squad report] names with execution.respond, then rests idle for the completion report.
+const ANSWERS_REPORTS = /E2E own Squad reports/.test(PROMPT);
+const IS_OWNER = ANSWERS_REPORTS || /E2E start Job Team/.test(PROMPT);
+// Design-session role: proposes a Squad launch from files the spec wrote, then rests idle.
+const IS_PROPOSER = /E2E propose Squad/.test(PROMPT);
 const FAILED_DAG = ${JSON.stringify(flags.failedDag)};
 // Stuck-worker reclaim repro (run df216947): the worker claims its unit, goes
 // ✻ working (NON-restful), and holds forever — never completes/blocks/idles. The
@@ -384,7 +389,7 @@ const HANDOFF = ${JSON.stringify(flags.handoff)};
 const PLAN_CORRECTION = ${JSON.stringify(flags.planCorrection)};
 const PLAN_CORRECTION_SILENT = ${JSON.stringify(flags.planCorrectionSilent)};
 
-const ROLE = IS_ORCHESTRATOR ? 'ORCH' : IS_WORKER ? 'WORK' : IS_OWNER ? 'OWNR' : 'UNKN';
+const ROLE = IS_ORCHESTRATOR ? 'ORCH' : IS_WORKER ? 'WORK' : IS_OWNER ? 'OWNR' : IS_PROPOSER ? 'PROP' : 'UNKN';
 // Progress goes to stderr (Playwright captures it on failure) and a per-process
 // log in the project cwd. Each line carries role + pid so the 3-process cohort
 // interleaves legibly.
@@ -475,9 +480,10 @@ async function owner() {
     version: 1,
     teamId: 'e2e-job-team',
     launchRequestId: 'e2e-cli-agent-job-' + process.pid,
-    jobTitle: CHURN ? 'CLI Agent kickoff churn job' : STALLED ? 'CLI Agent stalled job' : STREAMING ? 'CLI Agent streaming job' : HANDOFF ? 'CLI Agent handoff job' : 'CLI Agent durable job',
+    jobTitle: ANSWERS_REPORTS ? 'CLI Agent reporting job' : CHURN ? 'CLI Agent kickoff churn job' : STALLED ? 'CLI Agent stalled job' : STREAMING ? 'CLI Agent streaming job' : HANDOFF ? 'CLI Agent handoff job' : 'CLI Agent durable job',
     summary: 'Full Job Team route started by a CLI Agent owner.',
     workUnits: PLAN,
+    ...(ANSWERS_REPORTS ? { notify: true } : {}),
     // Stalled repro shrinks the wall-clock ceiling so the backstop reclaims the
     // stuck non-restful claim in bounded test time (paired with the E2E-only
     // ZCC_WORK_CLAIM_LEASE_MS / ZCC_EXECUTION_RECONCILE_INTERVAL_MS host knobs).
@@ -502,7 +508,59 @@ async function owner() {
         ]
   });
   log('owner execution started', started && started.id);
+  if (ANSWERS_REPORTS) await answerReports();
   await hold();
+}
+
+// Reports are typed into this PTY only while it rests, so it idles between them. A
+// blocker report names (execution <id>, blocker <id>); the owner answers it itself.
+async function answerReports() {
+  const REPORT_RE = /\(execution ([^,]+), blocker ([^)]+)\)/;
+  let buf = '';
+  let answering = false;
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', function (chunk) {
+    log('stdin', JSON.stringify(String(chunk)));
+    buf += String(chunk);
+    const m = buf.match(REPORT_RE);
+    if (!m || answering) return;
+    answering = true;
+    buf = '';
+    (async function () {
+      setWorking();
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const snap = await tryMcp('execution.snapshot', { executionId: m[1], after: 0 });
+        const version = snap.ok && snap.value && snap.value.execution ? snap.value.execution.stateVersion : 0;
+        const answered = await tryMcp('execution.respond', { executionId: m[1], expectedStateVersion: version, blockerId: m[2], message: 'About Atlas' });
+        log('owner respond', JSON.stringify(answered));
+        if (answered.ok) break;
+        await sleep(500);
+      }
+      setIdle();
+    })();
+  });
+  process.stdin.resume();
+  setIdle();
+}
+
+// Design session that hands a design to a Squad: reads the proposals the spec
+// wrote, checks the plan and proposes each. It then rests idle (so the host sees
+// a restful agent and delivers [Squad report] text) and logs every stdin chunk.
+async function proposer() {
+  log('proposer start');
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', function (chunk) { log('stdin', JSON.stringify(String(chunk))); });
+  process.stdin.resume();
+  const spec = JSON.parse(fs.readFileSync(path.join(CWD, '.e2e-proposal.json'), 'utf8'));
+  const check = await tryMcp('squad_plan_check', { path: spec.planPath });
+  log('plan_check', JSON.stringify(check));
+  for (const entry of spec.proposals) {
+    const proposed = await tryMcp('squad_propose', entry.input);
+    log('propose[' + entry.label + ']', JSON.stringify(proposed));
+  }
+  setIdle();
+  log('proposer idle');
+  await new Promise(function () {});
 }
 
 async function orchestrator() {
@@ -927,9 +985,10 @@ async function worker() {
 
 (async function () {
   log('boot', 'mcp=' + (MCP_URL ? 'yes' : 'no'), 'exec=' + EXECUTION_ID, 'promptHead=' + JSON.stringify(PROMPT.slice(0, 120)));
-  if (!MCP_URL || (!EXECUTION_ID && !IS_OWNER)) { log('missing MCP_URL/EXECUTION_ID', MCP_URL, EXECUTION_ID); await hold(); return; }
+  if (!MCP_URL || (!EXECUTION_ID && !IS_OWNER && !IS_PROPOSER)) { log('missing MCP_URL/EXECUTION_ID', MCP_URL, EXECUTION_ID); await hold(); return; }
   try {
     if (IS_OWNER) await owner();
+    else if (IS_PROPOSER) await proposer();
     else if (IS_ORCHESTRATOR) await (PLAN_CORRECTION || PLAN_CORRECTION_SILENT ? planCorrectionOrchestrator() : orchestrator());
     else if (IS_WORKER) await worker();
     else { log('unknown role; prompt head:', PROMPT.slice(0, 200)); await hold(); }

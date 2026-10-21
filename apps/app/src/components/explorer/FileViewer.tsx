@@ -8,6 +8,7 @@ import { DiffViewer } from '../DiffViewer.js';
 import { OpenerButtons } from '../OpenerButtons.js';
 import { languageFromPath } from '../../lib/monacoLanguage.js';
 import { StencilLines } from '../ui/Skeleton.js';
+import { platformShortcut } from '../../lib/platformShortcut.js';
 
 interface FileViewerProps {
   project: Project;
@@ -181,7 +182,7 @@ export function FileViewer({
             <button
               type="button"
               className="opener-btn active"
-              title="Save (⌘S)"
+              title={platformShortcut('Save (⌘S)')}
               disabled={saving}
               onClick={onSave}
             >
@@ -217,7 +218,7 @@ export function FileViewer({
           {isRemote ? (
             <span className="explorer-viewer-warn">remote · {project.remote?.host}</span>
           ) : (
-            nativeFiles ? <OpenerButtons path={explorerFile} editorPath={viewRoot} /> : null
+            nativeFiles ? <OpenerButtons path={explorerFile} projectRoot={viewRoot} /> : null
           )}
         </span>
       </div>

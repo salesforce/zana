@@ -92,6 +92,10 @@ export interface TeamSummary {
   description?: string;
   /** Number of slot rows (NOT the total tab count — slots may have quantity > 1). */
   slotCount: number;
+  /** Planning mode preselected for this Squad. Absent ⇒ the global default. */
+  defaultPlanning?: 'infer' | 'provided';
+  /** Whether the orchestrator can write files, so it can infer a plan. */
+  canInferPlan?: boolean;
 }
 
 export type InboxNotifyLevel = 'silent' | 'quiet' | 'loud';

@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { X } from 'lucide-react';
+import { platformKey, platformShortcut } from '../lib/platformShortcut.js';
 
 interface Props {
   onClose: () => void;
@@ -33,6 +34,16 @@ const SECTIONS: Section[] = [
       { keys: ['⌘', 'J'], label: 'Toggle Scheduler' },
       { keys: ['⌘', ','], label: 'Toggle Settings' },
       { keys: ['⌘', '?'], label: 'This help' }
+    ]
+  },
+  {
+    title: 'Inbox',
+    rows: [
+      { keys: ['j', 'k'], label: 'Next / previous message' },
+      { keys: ['R'], label: 'Reply to the open message' },
+      { keys: ['⌘', '↵'], label: 'Send the reply' },
+      { keys: ['Esc'], label: 'Leave the reply box and keep reading' },
+      { keys: ['Delete'], label: 'Delete the open message' }
     ]
   },
   {
@@ -120,10 +131,10 @@ export function ShortcutsHelp({ onClose }: Props) {
                 <div key={i} className="shortcut-row">
                   <span className="shortcut-keys">
                     {r.keys.map((k, j) => (
-                      <kbd key={j}>{k}</kbd>
+                      <kbd key={j}>{platformKey(k)}</kbd>
                     ))}
                   </span>
-                  <span className="shortcut-label">{r.label}</span>
+                  <span className="shortcut-label">{platformShortcut(r.label)}</span>
                 </div>
               ))}
             </section>

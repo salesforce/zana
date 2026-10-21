@@ -23,6 +23,7 @@ import { defaultBundledRoot } from '@zana-ai/zcc-server/plugins/plugin-service';
 import {
   PluginAppSnapshotSchema,
   MenubarThreadOpenResultSchema,
+  ThreadQueueTurnResultSchema,
   MenubarThreadsListResultSchema,
   RuntimeOutboundSchema,
   SERVER_RUNTIME_PROTOCOL_VERSION,
@@ -93,6 +94,11 @@ export interface RuntimeSupervisor {
   getSquadMemberStatus(request: SquadMemberControlRequest): Promise<SquadMemberStatus>;
   isSquadMemberLive(threadId: string, projectId: string, generation: number): Promise<boolean>;
   stopSquadMember(threadId: string, projectId: string, generation: number): Promise<boolean>;
+  /**
+   * Queue a text turn into a live Modern thread. Never rejects for a dead
+   * thread or a missing runtime; resolves `{ ok: false, reason }`.
+   */
+  queueThreadTurn(threadId: string, projectId: string, text: string): Promise<{ ok: boolean; queued?: boolean; reason?: string }>;
   listMenubarThreads(limit?: number): Promise<{
     agents: MenubarThreadAgent[];
     needsYou: number;
@@ -353,6 +359,7 @@ export async function startRuntimeSupervisor(options: StartRuntimeSupervisorOpti
     getSquadMemberStatus: async () => { throw new Error('Modern squad runtime is unavailable'); },
     isSquadMemberLive: async () => false,
     stopSquadMember: async () => false,
+    queueThreadTurn: async () => ({ ok: false, reason: 'runtime-unavailable' }),
     listMenubarThreads: async () => ({ agents: [], needsYou: 0, working: 0 }),
     openMenubarThread: async () => ({ ok: false, reason: 'thread service unavailable' }),
     onMenubarThreadsChanged: () => () => {},
@@ -448,6 +455,7 @@ interface UtilityRuntime {
   request(operation: 'squad-member-delivery-complete', request: SquadMemberDeliveryCompletion): Promise<unknown>;
   request(operation: 'squad-runtime-preflight', request: SquadRuntimePreflightRequest): Promise<unknown>;
   request(operation: 'squad-member-status' | 'squad-member-stop', request: SquadMemberControlRequest): Promise<unknown>;
+  request(operation: 'thread-queue-turn', threadId: string, projectId: string, text: string): Promise<unknown>;
   request(operation: 'menubar-threads-list', limit: number): Promise<unknown>;
   request(operation: 'menubar-thread-open', threadId: string, projectId: string): Promise<unknown>;
   request(operation: 'projects-add', path: string): Promise<unknown>;
@@ -688,6 +696,18 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     isThreadLive: async (threadId, projectId) =>
       (await server.request('thread-live', threadId, projectId)) === true,
     ...createSquadMemberRuntimeAdapter((operation, request) => server.request(operation as 'squad-member-status', request as SquadMemberControlRequest)),
+    // Never rejects: a request timeout, a dead child or a stopped service resolve to ok:false.
+    queueThreadTurn: async (threadId, projectId, text) => {
+      try {
+        const parsed = ThreadQueueTurnResultSchema.safeParse(
+          await server.request('thread-queue-turn', threadId, projectId, text)
+        );
+        return parsed.success ? parsed.data : { ok: false, reason: 'invalid thread response' };
+      } catch (error) {
+        // server.request only rejects with Error (error reply, timeout, exited child, stopped service).
+        return { ok: false, reason: (error as Error).message };
+      }
+    },
     listMenubarThreads: async (limit = 100) => {
       const parsed = MenubarThreadsListResultSchema.safeParse(
         await server.request('menubar-threads-list', Math.max(1, Math.min(limit, 100)))
@@ -871,8 +891,8 @@ export function createUtilityRuntime(runtime: { child: UtilityChild; url: string
   return {
     ...runtime,
     request(
-      operation: 'cli-callback-grant' | 'cli-discovery' | 'library-agent' | 'library-document' | 'project-metadata' | 'project-catalogs' | 'project-history' | 'project-feed' | 'product-event' | 'app-version' | 'thread-live' | 'squad-runtime-preflight' | 'squad-member-create' | 'squad-member-activate' | 'squad-member-deliver' | 'squad-member-delivery-complete' | 'squad-member-status' | 'squad-member-stop' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'projects-touch' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-call-rpc' | 'plugins-tool-policy' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
-        ...args: [number] | [CliCallbackControl] | [CliDiscoveryRequest] | [LibraryAgentRequest] | [LibraryDocumentRequest] | [ProjectMetadataRequest] | [ProjectCatalogRequest] | [NativeToolPolicyRequest] | [SquadMemberRuntimeRequest] | [SquadMemberDeliveryRequest] | [SquadMemberDeliveryCompletion] | [SquadMemberControlRequest] | [SquadRuntimePreflightRequest] | [string, unknown[]] | [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, Record<string, string | number | boolean | null>] | [string, string[]] | [string, string[], { projectId?: string; threadId?: string; cwd?: string }?] | []
+      operation: 'cli-callback-grant' | 'cli-discovery' | 'library-agent' | 'library-document' | 'project-metadata' | 'project-catalogs' | 'project-history' | 'project-feed' | 'product-event' | 'app-version' | 'thread-live' | 'thread-queue-turn' | 'squad-runtime-preflight' | 'squad-member-create' | 'squad-member-activate' | 'squad-member-deliver' | 'squad-member-delivery-complete' | 'squad-member-status' | 'squad-member-stop' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'projects-touch' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-call-rpc' | 'plugins-tool-policy' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
+        ...args: [number] | [CliCallbackControl] | [CliDiscoveryRequest] | [LibraryAgentRequest] | [LibraryDocumentRequest] | [ProjectMetadataRequest] | [ProjectCatalogRequest] | [NativeToolPolicyRequest] | [SquadMemberRuntimeRequest] | [SquadMemberDeliveryRequest] | [SquadMemberDeliveryCompletion] | [SquadMemberControlRequest] | [SquadRuntimePreflightRequest] | [string, unknown[]] | [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, string, string] | [string, Record<string, string | number | boolean | null>] | [string, string[]] | [string, string[], { projectId?: string; threadId?: string; cwd?: string }?] | []
     ) {
       if (stopped || stopping) return Promise.reject(new Error('Background service stopped. Restart Zana to reconnect.'));
       const id = randomUUID();
@@ -901,6 +921,7 @@ export function createUtilityRuntime(runtime: { child: UtilityChild; url: string
             ...(operation === 'squad-member-delivery-complete' ? { request: args[0] as SquadMemberDeliveryCompletion } : {}),
            ...(operation === 'squad-runtime-preflight' ? { request: args[0] as SquadRuntimePreflightRequest } : {}),
            ...((operation === 'squad-member-status' || operation === 'squad-member-stop') ? { request: args[0] as SquadMemberControlRequest } : {}),
+          ...(operation === 'thread-queue-turn' ? { threadId: args[0] as string, projectId: args[1] as string, text: args[2] as string } : {}),
           ...(operation === 'menubar-threads-list' ? { limit: args[0] as number } : {}),
           ...(operation === 'menubar-thread-open' ? { threadId: args[0] as string, projectId: args[1] as string } : {}),
           ...(operation === 'terminal-execute' ? { command: args[0] as TerminalRequestCommand } : {}),

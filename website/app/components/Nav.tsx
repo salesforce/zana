@@ -252,7 +252,7 @@ export function Footer() {
             </p>
           </div>
           <div className="foot-col">
-            <h4>Product</h4>
+            <h2>Product</h2>
             <Link href="/">Home</Link>
             <Link href="/features/">Features</Link>
             <Link href="/download/">Download</Link>
@@ -260,13 +260,13 @@ export function Footer() {
             <Link href="/dashboard/">Publish</Link>
           </div>
           <div className="foot-col">
-            <h4>Docs</h4>
+            <h2>Docs</h2>
             <Link href="/docs/">Documentation</Link>
             <Link href="/docs/cli/">The zcc CLI</Link>
             <Link href="/extensions/">Plugins</Link>
           </div>
           <div className="foot-col">
-            <h4>Resources</h4>
+            <h2>Resources</h2>
             <a href={site.repo}>Source</a>
             <a href={site.releasesRepo}>Releases</a>
             <a href={site.readmeUrl}>README</a>
@@ -274,7 +274,7 @@ export function Footer() {
         </div>
         <div className="foot-bottom">
           <span>© {year} Zana Command Center. Free and open source.</span>
-          <span>macOS today · Windows and Linux soon</span>
+          <span>macOS and Windows today · Linux soon</span>
         </div>
       </div>
     </footer>

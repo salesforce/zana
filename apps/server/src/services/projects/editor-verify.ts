@@ -13,10 +13,15 @@
  * that NEVER throws (missing bin / non-zero exit / timeout all resolve to
  * `installed: false`). The probed binary honours the user's per-editor override
  * (`AppConfig.editor*Binary`), else the built-in default.
+ *
+ * On Windows the shims are batch files `execFile` can't run, so "installed"
+ * means `resolveWindowsEditor` found the GUI executable the opener launches,
+ * and the version is read from its install files (see `editor-windows.ts`).
  */
 
 import { execFile } from 'node:child_process';
 import type { AppConfig, EditorTarget, EditorVerifyResult } from '@zana-ai/zcc-domain/product';
+import { resolveWindowsEditor, windowsEditorVersion, WINDOWS_INSTALL_HINTS } from './editor-windows.js';
 
 interface EditorDef {
   target: EditorTarget;
@@ -82,10 +87,24 @@ function runVersion(cmd: string, timeoutMs = 8_000): Promise<{ ok: boolean; out:
  * settings row displays. Best-effort: a probe failure is reported as
  * `installed: false`, never thrown.
  */
-export async function verifyEditors(config: AppConfig): Promise<EditorVerifyResult[]> {
+export async function verifyEditors(
+  config: AppConfig,
+  platform: NodeJS.Platform = process.platform
+): Promise<EditorVerifyResult[]> {
   return Promise.all(
     EDITORS.map(async (def): Promise<EditorVerifyResult> => {
       const binary = editorBinary(def, config);
+      if (platform === 'win32') {
+        const exe = await resolveWindowsEditor(def.target, binary);
+        return {
+          target: def.target,
+          label: def.label,
+          binary,
+          installed: exe !== null,
+          version: exe ? await windowsEditorVersion(def.target, exe) : undefined,
+          installHint: WINDOWS_INSTALL_HINTS[def.target]
+        };
+      }
       const probe = await runVersion(binary);
       return {
         target: def.target,

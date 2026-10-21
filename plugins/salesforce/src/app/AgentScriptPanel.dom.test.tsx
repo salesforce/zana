@@ -3,7 +3,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
-import { fireEvent, within } from '@testing-library/react';
+import { fireEvent, waitFor, within } from '@testing-library/react';
 import { readAgentDraft, writeAgentDraft } from './agent-script-drafts.js';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -14,6 +14,7 @@ import { parseAgentScriptSource } from '../../lib/agent-script-parse.js';
 import { ACTION_AGENT } from '../action-fixtures.js';
 
 const rpc = vi.fn(async (_pluginId: string, method: string, args?: { path?: string; projectId?: string }) => {
+  if (method === 'agentPreview.context') return { ok: true, fields: [] };
   if (method === 'status') {
     return { dxProject: true, agentScriptDialect: 'agentforce', projectRoot: '/proj' };
   }
@@ -294,7 +295,7 @@ describe('AgentScriptPanel', () => {
     await act(async () => { window.dispatchEvent(new MessageEvent('message', { origin: window.location.origin, data })); });
     expect(start.disabled).toBe(true);
     await act(async () => { window.dispatchEvent(new MessageEvent('message', { origin: window.location.origin, source: el.querySelector('iframe')!.contentWindow, data })); });
-    expect(start.disabled).toBe(false);
+    await waitFor(() => expect(start.disabled).toBe(false));
     await openTool(el, 'Tests');
     const tests = within(el).getByRole('tabpanel', { name: 'Tests' });
     await act(async () => { within(tests).getByRole('button', { name: 'Role-play' }).click(); });

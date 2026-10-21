@@ -12,7 +12,7 @@ import { isMachinePath, MACHINE_CREDENTIAL_HEADER, MACHINE_HOST_HEADER, MACHINE_
 const principalKey = Symbol('connectPrincipal');
 const rejectSocket = (socket, status) => socket.end(`HTTP/1.1 ${status} Rejected\r\nConnection: close\r\n\r\n`);
 
-export function createConnectGateway({ registry, db, sessionSecret, allowLocal = false, maxTunnels = 128, checkIntervalMs = 5000 }) {
+export function createConnectGateway({ registry, db, sessionSecret, allowLocal = false, maxTunnels = 128, checkIntervalMs = 5000, reconnectGraceMs = 8000 }) {
   const accountOrigin = new URL(registry.accountUrl);
   const browser = createBrowserAccess(db, registry);
   const navigation = req => req.method === 'GET' && req.headers['sec-fetch-mode'] === 'navigate' && req.headers['sec-fetch-dest'] === 'document';
@@ -26,6 +26,19 @@ export function createConnectGateway({ registry, db, sessionSecret, allowLocal =
     const entry = entries.get(id);
     if (!entry) return;
     entries.delete(id); entry.relay.close();
+  };
+  // A tunnel redials within a second or two after a network blip or a web
+  // restart. Hold a visitor for a computer seen recently instead of showing
+  // the offline page in that gap; a computer that is really off fails at once.
+  const connectedEntry = async (server, gone) => {
+    const deadline = Date.now() + reconnectGraceMs;
+    const recent = Number(server.last_seen_at) > Date.now() - 90_000;
+    for (;;) {
+      const entry = entries.get(server.id);
+      if (entry?.relay.connected()) return entry;
+      if (!recent || closed || gone() || Date.now() >= deadline) return null;
+      await new Promise(resolve => setTimeout(resolve, 100).unref());
+    }
   };
   const onRevoke = (kind, id) => {
     if (kind === 'server') closeEntry(id);
@@ -220,7 +233,9 @@ export function createConnectGateway({ registry, db, sessionSecret, allowLocal =
         }
         if (closed) throw new ConnectError('connect_unavailable', 503);
         if (res.destroyed) return;
-        const entry = preview ?? entries.get(server.id);
+        const entry = preview ?? await connectedEntry(server, () => res.destroyed);
+        if (closed) throw new ConnectError('connect_unavailable', 503);
+        if (res.destroyed) return;
         if (!entry?.relay.connected()) throw new ConnectError('computer_offline', 503);
         if (device.kind === 'machine' && !entry.machines) throw new ConnectError('server_update_required', 409);
         responses.set(res, { ...device, server, serverId: server.id, deviceId: device.id });
@@ -271,7 +286,7 @@ export function createConnectGateway({ registry, db, sessionSecret, allowLocal =
           if (closed || socket.destroyed) return;
           closeEntry(server.id);
           const internalToken = randomBytes(32).toString('base64url');
-          const relay = createRelay({ token: internalToken, publicUrl: registry.serverUrl(server.label), allowLocal,
+          const relay = createRelay({ token: internalToken, publicUrl: registry.serverUrl(server.label), allowLocal, edge: true,
             onVisitor(ws, request) {
               const device = request[principalKey];
               if (!device) { ws.close(1008); return; }
@@ -290,7 +305,8 @@ export function createConnectGateway({ registry, db, sessionSecret, allowLocal =
         if (!preview && !['/ws', '/ws/'].includes(req.url) && !isMachinePath('GET', req.url, true)) throw new ConnectError('not_found', 404);
         req[principalKey] = await visitor(req, server, true);
         if (closed) throw new ConnectError('connect_unavailable', 503);
-        const entry = preview ?? entries.get(server.id);
+        const entry = preview ?? await connectedEntry(server, () => socket.destroyed);
+        if (closed) throw new ConnectError('connect_unavailable', 503);
         if (!entry?.relay.connected()) throw new ConnectError('computer_offline', 503);
         if (req[principalKey].kind === 'machine' && !entry.machines) throw new ConnectError('server_update_required', 409);
         if (!socket.destroyed) { routeToTunnel(req, server); entry.relay.handleUpgrade(req, socket, head); }

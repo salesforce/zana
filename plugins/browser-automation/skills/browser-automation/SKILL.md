@@ -20,8 +20,8 @@ names fail before opening a session.
 Choose `--backend local --headless --machine <host-id>` for headless Chrome on
 an enrolled host. Choose `--backend desktop --machine <host-id> --desktop
 <instance-id>` for a new dedicated desktop automation tab. Starting desktop
-control opens the side panel and selects the browser tab only if its thread is
-already focused. New or activated controller pages follow the same rule;
+control opens the side panel and selects the browser tab when its thread is
+focused, or the next time the user opens that thread. New or activated controller pages follow the same rule;
 automation does not switch threads or bring the desktop window forward. Headless sessions remain headless.
 Plugin-owned local/headless Chrome launches with `--no-sandbox`, disabling Chrome's
 sandbox. Desktop attachment does not change the browser's launch flags.

@@ -7,6 +7,7 @@ import type {
   Project,
   TerminalSession
 } from '@zana-ai/zcc-domain/product';
+import type { SquadLaunchPrefill } from '@zana-ai/zcc-domain/squad-proposal';
 import { useData, useTeams } from '../store.js';
 import { profileIcon } from '../lib/profileIcon.js';
 import { TeamComposer } from './TeamComposer.js';
@@ -94,6 +95,19 @@ interface Props {
    * still edit it before launching.
    */
   initialPrompt?: string;
+  /**
+   * Preselect this project in an unpinned launcher (a project row's "+"). An
+   * explicit pick, so it applies to remote projects too — the composers' own
+   * unpinned default is local-only. The picker stays editable.
+   */
+  initialProjectId?: string;
+  /**
+   * Open on the Squad composer when it is available, ignoring the stored mode.
+   * The stored preference is left untouched.
+   */
+  initialMode?: 'team';
+  /** Pre-fill the Squad composer from a reviewed proposal; also preselects its project. */
+  squadPrefill?: SquadLaunchPrefill;
 }
 
 export const AgentLauncher = memo(function AgentLauncher({
@@ -101,9 +115,21 @@ export const AgentLauncher = memo(function AgentLauncher({
   project,
   backgroundTabs,
   onLaunched,
-  initialPrompt
+  initialPrompt,
+  initialProjectId,
+  initialMode,
+  squadPrefill
 }: Props) {
-  const sessionKey = JSON.stringify(['launcher', project?.id ?? null]);
+  // A reviewed proposal gets its own draft, so a retained launcher draft never overrides it.
+  // A row "+" open gets its own draft too, so its project pick never carries into
+  // a generic open (whose unpinned default deliberately stays local).
+  const rowProjectId = project ? undefined : initialProjectId;
+  const sessionKey = JSON.stringify([
+    'launcher',
+    project?.id ?? null,
+    squadPrefill?.proposalId ?? null,
+    ...(rowProjectId ? [rowProjectId] : [])
+  ]);
   const session = useMemo(() => composerSession(sessionKey), [sessionKey]);
   const restoreTerminal = useData((s) => s.restoreTerminal);
   const loadProjects = useData((s) => s.loadProjects);
@@ -122,10 +148,11 @@ export const AgentLauncher = memo(function AgentLauncher({
   // Target project for a SCRATCH-mode launch. `null` = the built-in scratch
   // workspace (the default). Unused in project mode (the target is fixed).
   const [targetProjectId] = useState<string | null>(null);
-  const [composerProjectId, setComposerProjectId] = useComposerSetting(session, 'projectId', project?.id ?? '');
+  const [composerProjectId, setComposerProjectId] = useComposerSetting(session, 'projectId', project?.id ?? initialProjectId ?? squadPrefill?.projectId ?? '');
   useEffect(() => {
     if (project?.id) setComposerProjectId(project.id);
-  }, [project?.id]);
+    else if (initialProjectId) setComposerProjectId(initialProjectId);
+  }, [project?.id, initialProjectId]);
   // Launch mode: Modern thread (HTTP), CLI Agent (PTY spawn), or an autonomous
   // team run. Each mode mounts its own composer below. Last-used is the default.
   const [storedMode, setStoredMode] = useLaunchModePreference();
@@ -140,7 +167,11 @@ export const AgentLauncher = memo(function AgentLauncher({
     showModern: composerShowModern,
     showTeam: composerShowAutonomousTeam || teamJobLaunchEnabled
   }, { hasTeams: teams.length > 0 });
-  const mode = resolveAvailableLaunchMode(sessionMode, available);
+  // `initialMode` wins over the stored mode until the user picks a mode here.
+  const [forceTeam, setForceTeam] = useState(initialMode === 'team');
+  const mode = forceTeam && available.showTeam
+    ? 'team'
+    : resolveAvailableLaunchMode(sessionMode, available);
   const showLaunchSwitcher = visibleLaunchModeCount(available) > 1;
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -243,7 +274,11 @@ export const AgentLauncher = memo(function AgentLauncher({
           <div className="launch-row">
             <LaunchModeSegmented
               value={mode}
-              onChange={mode => { setSessionMode(mode); setStoredMode(mode); }}
+              onChange={(next) => {
+                setForceTeam(false);
+                setSessionMode(next);
+                setStoredMode(next);
+              }}
               showCliAgent={available.showCliAgent}
               showModern={available.showModern}
               showTeam={available.showTeam}
@@ -283,6 +318,7 @@ export const AgentLauncher = memo(function AgentLauncher({
               composerProjectId={composerProjectId}
               onComposerProjectIdChange={setComposerProjectId}
               initialText={initialPrompt}
+              prefill={squadPrefill}
               onClose={onClose}
             />
           </div>

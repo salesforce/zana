@@ -573,6 +573,9 @@ export const IPC = {
    * Main validates the target, keeps one window per tab and project, and
    * pushes the open set on `onPluginViewsChanged`. `showInMain` asks main to
    * route the main window (`onNavigate`) to a relative in-app path.
+   *
+   * Thread view windows show one thread and its side panel the same way: one
+   * window per thread, with the open set pushed on `onThreadViewsChanged`.
    */
   windows: {
     openProject: 'windows:openProject',
@@ -580,6 +583,10 @@ export const IPC = {
     closePluginView: 'windows:closePluginView',
     listPluginViews: 'windows:listPluginViews',
     onPluginViewsChanged: 'windows:onPluginViewsChanged',
+    openThreadView: 'windows:openThreadView',
+    closeThreadView: 'windows:closeThreadView',
+    listThreadViews: 'windows:listThreadViews',
+    onThreadViewsChanged: 'windows:onThreadViewsChanged',
     showInMain: 'windows:showInMain',
     onNavigate: 'windows:onNavigate'
   },
@@ -750,6 +757,7 @@ export const IPC = {
     launch: 'teams:launch',
     cancel: 'teams:cancel',
     startJob: 'teams:startJob',
+    reviewProposal: 'teams:reviewProposal',
     launchAutonomous: 'teams:launchAutonomous',
     stopAutonomous: 'teams:stopAutonomous',
     exportBundle: 'teams:exportBundle',

@@ -1,4 +1,5 @@
 import { product } from '../lib/product-client.js';
+import { fileManagerName } from '../lib/file-manager.js';
 import { Code2, FolderOpen, TerminalSquare } from 'lucide-react';
 import type { OpenTarget } from '@zana-ai/zcc-domain/product';
 import { useData, useUi } from '../store.js';
@@ -8,12 +9,12 @@ import { IntelliJIcon } from './icons/IntelliJIcon.js';
 interface Props {
   path: string;
   /**
-   * Path handed to editor targets (Cursor / VS Code) instead of `path`. Use it
-   * to open the whole project/source root in the editor rather than the single
-   * file under the cursor. Finder/terminal still act on `path`. Falls back to
-   * `path` when omitted.
+   * Project folder the editor targets (Cursor / VS Code / IntelliJ) open the
+   * file at `path` in, so it lands in that project's window rather than a bare
+   * file window. Main only honours a registered project (or worktree) that
+   * contains the file. Finder/terminal ignore it and act on `path`.
    */
-  editorPath?: string;
+  projectRoot?: string;
   size?: number;
   className?: string;
 }
@@ -31,18 +32,19 @@ const TARGETS: Array<{
   { key: 'cursor', label: 'Open in Cursor', render: (s) => <CursorIcon size={s} /> },
   { key: 'code', label: 'Open in VS Code', render: (s) => <Code2 size={s} /> },
   { key: 'intellij', label: 'Open in IntelliJ IDEA', render: (s) => <IntelliJIcon size={s} /> },
-  { key: 'finder', label: 'Reveal in Finder', render: (s) => <FolderOpen size={s} /> },
+  { key: 'finder', label: `Reveal in ${fileManagerName()}`, render: (s) => <FolderOpen size={s} /> },
   { key: 'terminal', label: 'Open external Terminal', render: (s) => <TerminalSquare size={s} /> }
 ];
 
-export function OpenerButtons({ path, editorPath, size = 14, className }: Props) {
+export function OpenerButtons({ path, projectRoot, size = 14, className }: Props) {
   const pushToast = useUi((s) => s.pushToast);
   // Targets the user hid in Settings → Editor are dropped from every opener bar.
   const hidden = useData((s) => s.openerHiddenTargets);
 
   const onClick = async (target: OpenTarget) => {
-    const dest = EDITOR_TARGETS.has(target) ? editorPath ?? path : path;
-    const r = await product.openers.openIn(target, dest);
+    const r = projectRoot && EDITOR_TARGETS.has(target)
+      ? await product.openers.openIn(target, path, { projectRoot })
+      : await product.openers.openIn(target, path);
     if (!r.ok) pushToast(r.message ?? `Failed to open in ${target}`, 'error');
   };
 

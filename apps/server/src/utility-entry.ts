@@ -28,8 +28,10 @@ import { createTerminalExecutionService, type TerminalExecutionService } from '.
 import { TerminalSessionService } from './terminal-session-service.js';
 import { createRuntimeDatabase, type TerminalSessionRepository } from './runtime-database.js';
 import { createTerminalLaunchAuthority } from './terminal-launch-authority.js';
-import { createModernTeamLaunchConfigSource } from './services/agents/modern-team-launch-config.js';
+import { createModernTeamLaunchConfigSource, pushedRuntimeAppConfig } from './services/agents/modern-team-launch-config.js';
 import { createRuntimeMcpConfig } from './services/agents/runtime-mcp-config.js';
+import { sendConversationTurn } from './services/threads/conversation-lifecycle.js';
+import { ThreadCreateError } from './http/thread-create.js';
 import { isThreadLiveInProject } from './services/agents/thread-liveness.js';
 import { getConversationThread } from '@zana-ai/zcc-db';
 import { activateSquadMemberConversation, completeSquadMemberDelivery, createSquadMemberConversation, deliverSquadMemberConversation, preflightSquadRuntime, resolveSquadMember, squadMemberStatus, stopSquadMemberConversation } from './services/threads/squad-member-runtime.js';
@@ -37,6 +39,7 @@ import type { ZccDatabase } from '@zana-ai/zcc-db';
 import type { PluginService } from './plugins/plugin-service.js';
 import { decideMainOwnedToolPolicy } from './plugins/native-tool-policy.js';
 import { createMenubarThreadSource } from './services/threads/menubar-thread-source.js';
+import { holdThreadProviderStartup } from './services/threads/thread-provider-catalog.js';
 import {
   bundledPluginsRootFromDataDir,
   createAttachedProductPluginService,
@@ -88,6 +91,7 @@ parentPort.on('message', ({ data }) => {
 
 async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void> {
   if (message.type === 'start' && message.rendererRoot && !close) {
+    let releaseProviderStartup: (() => void) | null = null;
     try {
       installRuntimeLog(message.dataDir, 'server', import.meta.url);
       diagnostics.start();
@@ -140,7 +144,7 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
         hostAgentToolSource: createModernTeamLaunchConfigSource({
           getMcpBaseUrl: () => runtimeMcpConfig.get().mcpBaseUrl,
           resolveMember: (threadId, projectId) => resolveSquadMember(product, threadId, projectId),
-          getAppConfig: () => runtimeMcpConfig.get()
+          getAppConfig: () => pushedRuntimeAppConfig(runtimeMcpConfig.get())
         }),
         onAgentCapabilitiesChanged: (contributors) => {
           parentPort.postMessage({
@@ -157,6 +161,8 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
           });
         }
       });
+      // The daemon can reconnect once the host listens, before plugins start.
+      releaseProviderStartup = holdThreadProviderStartup();
       const host = await startStaticHost({
         rootDir: message.rendererRoot,
         port: preferredPort,
@@ -199,8 +205,9 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
       runtimeMcpConfig.started();
       void startAttachedProductPluginService(product, plugins).catch((error) => {
         console.error('[plugins] background startup failed:', error instanceof Error ? error.message : error);
-      });
+      }).finally(releaseProviderStartup);
     } catch (error) {
+      releaseProviderStartup?.();
       diagnostics.stop();
       if (hostConnectionRenewal) {
         clearInterval(hostConnectionRenewal);
@@ -320,6 +327,24 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
       const value = productContext
         ? await stopSquadMemberConversation(productContext, message.request)
         : false;
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value });
+    }
+    if (message.operation === 'thread-queue-turn') {
+      // Never throws and always posts a result: the caller is a loopback
+      // notifier that must not hang on a dead or full thread.
+      let value: { ok: boolean; queued?: boolean; reason?: string };
+      try {
+        const row = threadDb ? getConversationThread(threadDb, message.threadId) : null;
+        if (!productContext || !isThreadLiveInProject(row, message.projectId)) {
+          value = { ok: false, reason: 'not-live' };
+        } else {
+          const queued = row?.status === 'active' || row?.status === 'starting';
+          await sendConversationTurn(productContext, message.threadId, [{ type: 'text', text: message.text, mentions: [] }], 'queue-if-active');
+          value = { ok: true, queued };
+        }
+      } catch (error) {
+        value = { ok: false, reason: error instanceof ThreadCreateError ? error.code : 'error' };
+      }
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value });
     }
     if (message.operation === 'menubar-threads-list') {

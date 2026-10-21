@@ -23,6 +23,7 @@ import {
   type LibraryPhantomFolder
 } from './libraryTree.js';
 import { matchLibraryDeepLink, type LibraryDeepLink } from './library-deep-link.js';
+import { fileManagerName } from '../../lib/file-manager.js';
 
 interface Props {
   project: Project;
@@ -683,7 +684,7 @@ export function LibraryView({ project, deepLink = null }: Props) {
                   type="button"
                   onClick={() => handleReveal(selectedDoc.scope ?? 'global', selectedDoc.scope === 'project' ? selectedDoc.projectId : undefined)}
                   hidden={compact}
-                  title="Reveal in Finder"
+                  title={`Reveal in ${fileManagerName()}`}
                 >
                   <ExternalLink size={14} />
                 </button>
@@ -779,7 +780,7 @@ export function LibraryView({ project, deepLink = null }: Props) {
               setMenu(null);
             }}
           >
-            Reveal in Finder
+            Reveal in {fileManagerName()}
           </button>
           {!menu.node.isBucketRoot && (
             <button

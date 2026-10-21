@@ -88,6 +88,33 @@ describe('buildLocalExplorer', () => {
     expect(usesOf(last)).toEqual([{ kind: 'apex', apiName: `C${EXPLORER_LIMITS.scanAgents + 4}` }]);
     expect(usesOf('../outside.agent')).toBeUndefined();
   });
+  it('scans unfolded agents after the focus, and the project before its .zcc copies', () => {
+    const extra: Record<string, string> = {};
+    // `.zcc/` sorts first in the listing; its copies must not take the scan window from the project's own agents.
+    for (let i = 0; i < EXPLORER_LIMITS.scanAgents; i++) extra[`.zcc/agent-versions/V${String(i).padStart(3, '0')}.agent`] = `x: apex://Old${i}`;
+    for (let i = 0; i < EXPLORER_LIMITS.scanAgents + 5; i++) extra[`agents/A${String(i).padStart(3, '0')}.agent`] = `x: apex://C${i}`;
+    const root = project(extra);
+    const name = (i: number) => `agents/A${String(i).padStart(3, '0')}.agent`;
+    const usesOf = (result: ReturnType<typeof buildLocalExplorer>, path: string) => result.nodes.find(node => node.kind === 'agent' && node.path === path)?.uses;
+    const plain = buildLocalExplorer(root, createNodeDeps());
+    expect(usesOf(plain, name(0))).toEqual([{ kind: 'apex', apiName: 'C0' }]);
+    expect(usesOf(plain, '.zcc/agent-versions/V000.agent')).toBeUndefined();
+    const last = name(EXPLORER_LIMITS.scanAgents + 4);
+    const other = name(EXPLORER_LIMITS.scanAgents + 3);
+    const unfolded = buildLocalExplorer(root, createNodeDeps(), last, [other, '../outside.agent', '']);
+    expect(usesOf(unfolded, last)).toEqual([{ kind: 'apex', apiName: `C${EXPLORER_LIMITS.scanAgents + 4}` }]);
+    expect(usesOf(unfolded, other)).toEqual([{ kind: 'apex', apiName: `C${EXPLORER_LIMITS.scanAgents + 3}` }]);
+    // Only the first `expand` entries count.
+    const many = Array.from({ length: EXPLORER_LIMITS.expand }, (_, i) => name(EXPLORER_LIMITS.scanAgents - EXPLORER_LIMITS.expand + i)).concat(last);
+    expect(usesOf(buildLocalExplorer(root, createNodeDeps(), '', many), last)).toBeUndefined();
+  });
+  it('lists what a .zcc copy references without counting it as a user', () => {
+    const copy = '.zcc/agent-versions/Support/Support.agent';
+    const result = buildLocalExplorer(project({ [copy]: 'x: apex://OrderLookup\ny: flow://OnlyOld\n' }), createNodeDeps(), copy);
+    expect(result.nodes.find(node => node.path === copy)!.uses).toEqual([{ kind: 'apex', apiName: 'OrderLookup' }, { kind: 'flow', apiName: 'OnlyOld' }]);
+    expect(result.nodes.find(node => node.kind === 'apex' && node.apiName === 'OrderLookup')!.usedBy).not.toContain(copy);
+    expect(result.nodes.find(node => node.kind === 'flow' && node.apiName === 'OnlyOld')).toEqual({ kind: 'flow', apiName: 'OnlyOld', usedBy: [] });
+  });
   it('locates a target without reading its source', () => {
     const root = project({ 'force-app/main/default/classes/Big.cls': 'x'.repeat(800_000), 'agents/Big.agent': 'x: apex://Big' });
     const deps = createNodeDeps();
@@ -152,6 +179,15 @@ describe('studio.explorer RPC', () => {
     const last = `agents/A${String(EXPLORER_LIMITS.scanAgents + 1).padStart(3, '0')}.agent`;
     const result = await setup({ root: project(extra) }).call({ focus: last });
     expect(result.nodes.find((node: any) => node.path === last).uses).toEqual([{ kind: 'flow', apiName: `F${EXPLORER_LIMITS.scanAgents + 1}` }]);
+  });
+  it('passes unfolded agents through, ignoring entries that are not paths', async () => {
+    const extra: Record<string, string> = {};
+    for (let i = 0; i < EXPLORER_LIMITS.scanAgents + 2; i++) extra[`agents/A${String(i).padStart(3, '0')}.agent`] = `x: flow://F${i}`;
+    const last = `agents/A${String(EXPLORER_LIMITS.scanAgents + 1).padStart(3, '0')}.agent`;
+    const { call } = setup({ root: project(extra) });
+    const usesOf = (result: any) => result.nodes.find((node: any) => node.path === last).uses;
+    expect(usesOf(await call({ expand: [7, null, 'x'.repeat(1001), last] }))).toEqual([{ kind: 'flow', apiName: `F${EXPLORER_LIMITS.scanAgents + 1}` }]);
+    expect(usesOf(await call({ expand: 'not-a-list' }))).toBeUndefined();
   });
   it('flags an org listing past the explorer cap so the count reads as a floor', async () => {
     const many = JSON.stringify({ status: 0, result: Array.from({ length: EXPLORER_LIMITS.orgAgents + 1 }, (_, i) => ({ fullName: `Bot${i}_v1` })) });

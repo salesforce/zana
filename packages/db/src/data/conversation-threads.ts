@@ -7,6 +7,8 @@ import {
 
 export type ConversationThreadStatus = 'idle' | 'starting' | 'active' | 'stopping' | 'error';
 export type ConversationThreadVisibility = 'visible' | 'hidden';
+/** 'prompt' is a placeholder the auto-namer may replace; 'auto' and 'user' are final. */
+export type ConversationThreadTitleSource = 'prompt' | 'auto' | 'user';
 
 export interface ConversationThreadRow {
   id: string;
@@ -80,6 +82,8 @@ export function createConversationThread(
     providerId: string;
     status?: ConversationThreadStatus;
     title?: string | null;
+    /** Omitted: the title is fixed and never auto-named. */
+    titleSource?: ConversationThreadTitleSource | null;
     visibility?: ConversationThreadVisibility;
     parentThreadId?: string | null;
     originKind?: 'fork' | null;
@@ -91,9 +95,9 @@ export function createConversationThread(
   db.sqlite.prepare(
     `INSERT INTO threads (
        id, project_id, host_id, environment_id, provider_id, status, origin_kind,
-       origin_plugin_id, visibility, title, provider_thread_id, parent_thread_id, archived_at,
+       origin_plugin_id, visibility, title, title_source, provider_thread_id, parent_thread_id, archived_at,
        pinned_at, pin_order, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, NULL, ?, ?)`
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, NULL, ?, ?)`
   ).run(
     id,
     input.projectId,
@@ -105,6 +109,7 @@ export function createConversationThread(
     input.originPluginId ?? null,
     input.visibility ?? 'visible',
     input.title ?? null,
+    input.titleSource ?? null,
     input.parentThreadId ?? null,
     now,
     now
@@ -226,6 +231,40 @@ export function listLiveConversationThreadsForHost(
      WHERE host_id = ? AND archived_at IS NULL AND status IN ('starting', 'active', 'stopping')
      ORDER BY updated_at DESC LIMIT ?`
   ).all(hostId, limit) as ConversationThreadSqlRow[]).map(toThread);
+}
+
+/** Record that a thread's provider session is open (a run started on it). */
+export function markConversationSessionOpen(db: ZccDatabase, threadId: string, at = Date.now()): void {
+  db.sqlite.prepare(
+    `INSERT INTO thread_open_sessions (thread_id, opened_at) VALUES (?, ?)
+     ON CONFLICT(thread_id) DO UPDATE SET opened_at = excluded.opened_at`
+  ).run(threadId, at);
+}
+
+/** Forget an open provider session the user released (stop, plan cancel, archive). */
+export function clearConversationSessionOpen(db: ZccDatabase, threadId: string): void {
+  db.sqlite.prepare('DELETE FROM thread_open_sessions WHERE thread_id = ?').run(threadId);
+}
+
+/** Forget every open-session mark on a host, whose sessions all ended with its daemon. */
+export function clearConversationSessionsOpenForHost(db: ZccDatabase, hostId: string): void {
+  db.sqlite.prepare(
+    'DELETE FROM thread_open_sessions WHERE thread_id IN (SELECT id FROM threads WHERE host_id = ?)'
+  ).run(hostId);
+}
+
+/** Unarchived threads on a host whose provider session was open, most recent first. */
+export function listOpenSessionConversationThreadsForHost(
+  db: ZccDatabase,
+  hostId: string,
+  limit: number
+): ConversationThreadRow[] {
+  return (db.sqlite.prepare(
+    `SELECT threads.* FROM threads
+     JOIN thread_open_sessions AS open_session ON open_session.thread_id = threads.id
+     WHERE threads.host_id = ? AND threads.archived_at IS NULL
+     ORDER BY open_session.opened_at DESC LIMIT ?`
+  ).all(hostId, Math.max(1, Math.trunc(limit) || 1)) as ConversationThreadSqlRow[]).map(toThread);
 }
 
 /** Cap for the unscoped visible-thread list (idle + error included). */
@@ -352,6 +391,7 @@ export function applyConversationThreadLifecycleEventOnRow(
       detail: `status changed from ${thread.status} while applying ${event.type}`
     };
   }
+  if (evaluation.to === 'active') markConversationSessionOpen(db, thread.id, now);
   const next = getConversationThread(db, thread.id);
   if (!next) {
     return {
@@ -396,14 +436,29 @@ export function updateConversationThreadParent(
   return getConversationThread(db, id);
 }
 
+/**
+ * A 'user' title always wins. An 'auto' title only replaces a 'prompt'
+ * placeholder, so it can never overwrite a rename; null when nothing changed.
+ */
 export function updateConversationThreadTitle(
   db: ZccDatabase,
   id: string,
-  title: string
+  title: string,
+  source: Exclude<ConversationThreadTitleSource, 'prompt'> = 'user'
 ): ConversationThreadRow | null {
   const now = Date.now();
-  db.sqlite.prepare('UPDATE threads SET title = ?, updated_at = ? WHERE id = ?').run(title, now, id);
-  return getConversationThread(db, id);
+  const result = db.sqlite.prepare(
+    `UPDATE threads SET title = ?, title_source = ?, updated_at = ?
+     WHERE id = ?${source === 'auto' ? " AND title_source = 'prompt'" : ''}`
+  ).run(title, source, now, id);
+  return result.changes > 0 ? getConversationThread(db, id) : null;
+}
+
+/** True while the thread still carries a placeholder title the auto-namer may replace. */
+export function conversationThreadTitleIsPlaceholder(db: ZccDatabase, id: string): boolean {
+  const row = db.sqlite.prepare('SELECT title_source FROM threads WHERE id = ?').get(id) as
+    { title_source: string | null } | undefined;
+  return row?.title_source === 'prompt';
 }
 
 /** Show a hidden thread in the Agents list ("Open as thread"). One-way. */

@@ -7,13 +7,24 @@ export function addressError(label) {
   return null;
 }
 
+/**
+ * A label stays reserved for its owner after the computer holding it is
+ * revoked or purged, so re-enrolling that computer can take its name back.
+ * Runs inside the owner's transaction; another account never matches.
+ */
+export async function reclaimAddress(query, userId, serverId, label) {
+  const rows = await query('UPDATE connect_addresses SET server_id=$1 WHERE label=$2 AND user_id=$3 AND (server_id IS NULL OR server_id IN (SELECT id FROM connect_servers WHERE revoked_at IS NOT NULL)) RETURNING label', [serverId, label, userId]);
+  return rows.length > 0;
+}
+
 export function createAddresses(db, { browserUrl, now, limit }) {
   return {
-    async addressAvailability(label) {
+    async addressAvailability(label, userId = null) {
       const error = addressError(label);
       if (error) throw new ConnectError(error);
-      const rows = await db.query('SELECT label FROM connect_addresses WHERE label=$1', [label]);
-      return { available: rows.length === 0, browserUrl: browserUrl(label) };
+      const [row] = await db.query('SELECT a.user_id,a.server_id,v.revoked_at FROM connect_addresses a LEFT JOIN connect_servers v ON v.id=a.server_id WHERE a.label=$1', [label]);
+      const available = !row || (userId !== null && row.user_id === userId && (row.server_id == null || row.revoked_at != null));
+      return { available, browserUrl: browserUrl(label) };
     },
     async claimAddress(userId, serverId, label) {
       const error = addressError(label);
@@ -26,6 +37,7 @@ export function createAddresses(db, { browserUrl, now, limit }) {
           if (existing.label !== label) throw new ConnectError('address_already_claimed', 409);
           return { label, browserUrl: browserUrl(label) };
         }
+        if (await reclaimAddress(query, userId, serverId, label)) return { label, browserUrl: browserUrl(label) };
         const [count] = await query('SELECT COUNT(*) AS n FROM connect_addresses WHERE user_id=$1', [userId]);
         if (Number(count.n) >= limit) throw new ConnectError('account_limit', 409);
         const rows = await query('INSERT INTO connect_addresses(label,server_id,user_id,created_at) VALUES($1,$2,$3,$4) ON CONFLICT(label) DO NOTHING RETURNING label', [label, serverId, userId, now()]);

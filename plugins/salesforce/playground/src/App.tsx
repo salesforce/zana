@@ -35,7 +35,8 @@ export default function App() {
   const [errorCount, setErrorCount] = useState(0);
   const [org, setOrg] = useState<PublicOrgView | null>(null);
 
-  const draftRef = useRef<{ key?: string; baseSha?: string; baseline: string; applying: boolean }>({ baseline: '', applying: false });
+  // `disk` is a newer version on disk, offered over unsaved edits; until it is resolved a save still conflicts.
+  const draftRef = useRef<{ key?: string; baseSha?: string; baseline: string; applying: boolean; disk?: { content: string; sha256: string; proposalId: string } }>({ baseline: '', applying: false });
   const publishDraft = (content: string) => {
     const draft = draftRef.current;
     const dirty = content !== draft.baseline;
@@ -45,6 +46,24 @@ export default function App() {
       else clearAgentDraft(draft.key);
     }
     postToHost({ type: 'dirty', dirty, draftKey: draft.key, baseSha: draft.baseSha, persisted });
+  };
+  // Unsaved edits stay; the version on disk is offered hunk by hunk. Once the person decides, the edits sit on that version.
+  const proposeDiskVersion = (content: string, sha256: string) => {
+    const proposalId = `disk:${sha256.slice(0, 16)}`;
+    draftRef.current.disk = { content, sha256, proposalId };
+    layerRef.current?.setProposal({ proposalId, content, summary: 'Accept takes the new version, Reject keeps your edits', actor: 'File changed on disk' });
+  };
+  const onLayerPost = (message: Record<string, unknown>) => {
+    const draft = draftRef.current;
+    const disk = draft.disk;
+    // A proposal closed by a file switch or a newer proposal (`note`) was not decided, so a save keeps conflicting.
+    if (message.type === 'proposalResolved' && disk && disk.proposalId === message.proposalId && !message.note) {
+      draft.baseline = disk.content;
+      draft.baseSha = disk.sha256;
+      draft.disk = undefined;
+      publishDraft(editorRef.current?.getValue() ?? '');
+    }
+    postToHost(message);
   };
   const refreshAnalysis = useCallback((source: string, nextDialect: AgentScriptDialect) => {
     setAgentScriptLspDialect(nextDialect);
@@ -89,7 +108,7 @@ export default function App() {
       glyphMargin: true
     });
     editorRef.current = instance;
-    const layer = new StudioLayer(host, instance, postToHost);
+    const layer = new StudioLayer(host, instance, onLayerPost);
     layerRef.current = layer;
     const sub = instance.onDidChangeModelContent(() => {
       if (draftRef.current.applying) return;
@@ -175,7 +194,9 @@ export default function App() {
         const nextDialect = message.dialect;
         dialectRef.current = nextDialect;
         setDialect(nextDialect);
-        draftRef.current = { key: message.draftKey, baseline: message.content, baseSha: recovered?.baseSha ?? message.sha256, applying: true };
+        // A draft written against an older version keeps its edits and is offered what is on disk now.
+        const stale = Boolean(recovered?.baseSha && message.sha256 && recovered.baseSha !== message.sha256);
+        draftRef.current = { key: message.draftKey, baseline: message.content, baseSha: stale && recovered!.content === message.content ? message.sha256 : recovered?.baseSha ?? message.sha256, applying: true };
         const value = recovered?.content ?? message.content;
         layerRef.current?.onFileSwitched();
         const model = modelRef.current;
@@ -183,6 +204,24 @@ export default function App() {
         draftRef.current.applying = false;
         publishDraft(value);
         refreshAnalysis(value, nextDialect);
+        if (stale && value !== message.content) proposeDiskVersion(message.content, message.sha256!);
+        return;
+      }
+      if (message.type === 'fileChanged') {
+        const draft = draftRef.current;
+        if (message.draftKey !== draft.key || message.sha256 === draft.baseSha || message.sha256 === draft.disk?.sha256) return;
+        const model = modelRef.current;
+        const current = model?.getValue() ?? '';
+        if (current !== draft.baseline && current !== message.content) { proposeDiskVersion(message.content, message.sha256); return; }
+        draft.baseline = message.content;
+        draft.baseSha = message.sha256;
+        draft.disk = undefined;
+        if (model && current !== message.content) {
+          // One undoable edit; the content listener republishes the draft and the analysis.
+          model.pushEditOperations([], [{ range: model.getFullModelRange(), text: message.content }], () => null);
+          return;
+        }
+        publishDraft(current);
         return;
       }
       if (message.type === 'saved') {

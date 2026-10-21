@@ -89,11 +89,26 @@ export function parseSoqlInput(input: unknown): { ok: true; plan: SoqlPlan } | {
       action: action as SoqlAction,
       sobject,
       term,
-      limit: QUERY_SAMPLE_LIMIT,
+      limit: action === 'schema.search' ? Math.min(25, Math.max(1, requestedLimit ?? 25)) : QUERY_SAMPLE_LIMIT,
       allRows: false,
       unbounded: false
     }
   };
+}
+
+/** Exact API names and labels must survive the bounded preview in large, namespaced orgs. */
+export function searchSObjects(rows: readonly { name?: string; label?: string }[], term: string, limit: number) {
+  const query = term.toLowerCase();
+  const rank = (row: { name?: string; label?: string }) => {
+    const name = (row.name ?? '').toLowerCase();
+    const label = (row.label ?? '').toLowerCase();
+    return name === query ? 0 : label === query ? 1 : name.startsWith(query) ? 2 : label.startsWith(query) ? 3 : 4;
+  };
+  return rows
+    .filter(row => `${row.name ?? ''} ${row.label ?? ''}`.toLowerCase().includes(query))
+    .sort((a, b) => rank(a) - rank(b))
+    .slice(0, limit)
+    .map(row => ({ name: row.name, label: row.label }));
 }
 
 function clampLimit(limit: number, action: string): number {

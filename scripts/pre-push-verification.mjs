@@ -7,7 +7,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, join, posix, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const ZERO_OID = /^0+$/;
@@ -133,7 +133,7 @@ export function configuredAliases(run, configured = process.env.ZANA_GITHUB_SSH_
   return aliases;
 }
 
-export function withSnapshot({ oid, root = process.cwd(), run = spawnSync, log = console.log }, verify) {
+export function withSnapshot({ oid, root = process.cwd(), run = spawnCommand, log = console.log }, verify) {
   if (!oid) throw new Error('no pushed object available for snapshot verification');
   const snapshot = mkdtempSync(join(tmpdir(), 'zana-pre-push-'));
   // Git hooks inherit repository routing variables. Strip them before spawning
@@ -178,19 +178,41 @@ export function selectedTestFiles(inputs, root) {
   const tests = new Set(inputs.filter(isTestFile));
   for (const input of inputs.filter((path) => !isTestFile(path))) {
     const name = basename(input).replace(/\.[cm]?[jt]sx?$/, '');
-    for (const directory of [dirname(input), join(dirname(input), '__tests__')]) {
+    // Git paths use '/'; keep them that way on Windows so vitest gets repo-style paths.
+    for (const directory of [posix.dirname(input), posix.join(posix.dirname(input), '__tests__')]) {
       const absoluteDirectory = join(root, directory);
       if (!existsSync(absoluteDirectory)) continue;
       for (const entry of readdirSync(absoluteDirectory, { withFileTypes: true })) {
         if (!entry.isFile() || !isTestFile(entry.name)) continue;
         const testName = entry.name.replace(/(?:\.coverage)?\.(?:test|spec)\.[cm]?[jt]sx?$/, '');
         if (testName === name) {
-          tests.add(join(directory, entry.name));
+          tests.add(posix.join(directory, entry.name));
         }
       }
     }
   }
   return [...tests].sort();
+}
+
+// pnpm is usually a .cmd shim on Windows. spawnSync can start one only through
+// cmd.exe, which would reparse arguments (test paths with spaces, &, |). Resolve
+// the script the shim runs and start it with this node, so arguments pass verbatim.
+export function windowsPnpm(path = process.env.PATH ?? '') {
+  for (const directory of path.split(';').map((entry) => entry.replaceAll('"', '')).filter(Boolean)) {
+    const exe = join(directory, 'pnpm.exe');
+    if (existsSync(exe)) return [exe];
+    const shim = join(directory, 'pnpm.cmd');
+    if (!existsSync(shim)) continue;
+    const script = readFileSync(shim, 'utf8').match(/"%~?dp0%?\\([^"%]+\.[cm]?js)"/i)?.[1];
+    if (script) return [process.execPath, join(directory, ...script.split('\\'))];
+  }
+  return ['pnpm'];
+}
+
+export function spawnCommand(command, args, options, platform = process.platform) {
+  if (command !== 'pnpm' || platform !== 'win32') return spawnSync(command, args, options);
+  const [resolved, ...prefix] = windowsPnpm();
+  return spawnSync(resolved, [...prefix, ...args], options);
 }
 
 const SLACK_BRIDGE = 'plugins/slack-bridge-2ff2/';
@@ -203,7 +225,7 @@ function prepareSlackAssets(snapshot, run, log, mode) {
   if (assets.status !== 0) throw new Error('snapshot Slack runtime asset preparation failed');
 }
 
-export function runFullVerification({ oid, root = process.cwd(), run = spawnSync, log = console.log }) {
+export function runFullVerification({ oid, root = process.cwd(), run = spawnCommand, log = console.log }) {
   return withSnapshot({ oid, root, run, log }, (snapshot) => {
     log('pre-push: full (est. install)');
     const install = run('pnpm', ['install', '--frozen-lockfile'], { cwd: snapshot, stdio: 'inherit' });
@@ -221,7 +243,7 @@ function guardTests(snapshot, run) {
   return result.stdout.trim().split('\n').filter(Boolean).sort();
 }
 
-export function runFastVerification({ oid, base, paths = [], root = process.cwd(), run = spawnSync, log = console.log }) {
+export function runFastVerification({ oid, base, paths = [], root = process.cwd(), run = spawnCommand, log = console.log }) {
   if (!base) throw new Error('no base object available for fast verification');
   return withSnapshot({ oid, root, run, log }, (snapshot) => {
     log('pre-push: fast (est. install)');
@@ -254,7 +276,7 @@ export function runFastVerification({ oid, base, paths = [], root = process.cwd(
   });
 }
 
-export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, root = process.cwd(), log = console.log, error = console.error, select = selectPush, verify = runFullVerification, fastVerify = runFastVerification, run = spawnSync } = {}) {
+export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, root = process.cwd(), log = console.log, error = console.error, select = selectPush, verify = runFullVerification, fastVerify = runFastVerification, run = spawnCommand } = {}) {
   if (!remoteUrl) {
     error('pre-push: Git did not provide remote URL; aborting push.');
     return 1;

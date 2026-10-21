@@ -12,11 +12,12 @@ import {
   openDatabase,
   recoverInterruptedDeferredThreadMessages,
   updateConversationThreadTitle,
+  conversationThreadTitleIsPlaceholder,
   type ZccDatabase
 } from '@zana-ai/zcc-db';
 import { ClaudeCliProvider, LlmService, PromptRegistry } from '@zana-ai/zcc-llm';
 import { listJsonFiles, writeJsonFile } from './disk-json.js';
-import { CloseSummaryService } from '../services/followups/close-summary.js';
+import { CloseSummaryService, warnCloseSummary } from '../services/followups/close-summary.js';
 import { createProjectStore, type ProjectStore } from '../project-store.js';
 import { createConfigStore } from '../services/config/config-store.js';
 import { createInboxStore, type IInboxStore } from '../services/inbox/inbox-store.js';
@@ -41,7 +42,8 @@ import { PluginHostArtifactRegistry } from '../plugins/plugin-host-artifact-regi
 import {
   flushDueConversationSendsForHost,
   flushHeldConversationSends,
-  reconcileStoppingConversationThreadsOnHostConnect
+  reconcileStoppingConversationThreadsOnHostConnect,
+  resumeOpenConversationSessionsAfterHostRestart
 } from '../services/threads/conversation-lifecycle.js';
 import { publishConversationLifecycleOutcome } from '../services/threads/conversation-lifecycle-outcome.js';
 import { healDisconnectedConversationThreadsForHost } from '../services/threads/conversation-host-recovery.js';
@@ -172,6 +174,8 @@ export function createProductHttpContext(
   let pendingInteractions: PendingInteractionLifecycle;
   let ctx!: ProductHttpContext;
   const disconnectHealTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // Hosts whose daemon came back as a new process; their sessions need reopening.
+  const restartedHosts = new Set<string>();
   const tunnelHosts = createDbTunnelHostStore({ db, dataDir });
   // The primary's SSH tunnels die with its daemon and target this server's
   // per-process pairing port, so each primary connect reopens them.
@@ -188,6 +192,7 @@ export function createProductHttpContext(
         hostId,
         'host-daemon-restarted'
       );
+      restartedHosts.add(hostId);
     },
     onHostConnected: (hostId) => {
       const timer = disconnectHealTimers.get(hostId);
@@ -200,6 +205,9 @@ export function createProductHttpContext(
       tunnelReopener.hostConnected(hostId);
       ctx.remoteEnvironment.hostConnected(hostId);
       void reconcileStoppingConversationThreadsOnHostConnect(ctx, hostId).catch(() => undefined);
+      if (restartedHosts.delete(hostId)) {
+        void resumeOpenConversationSessionsAfterHostRestart(ctx, hostId).catch(() => undefined);
+      }
       void flushDueConversationSendsForHost(ctx, hostId).catch(() => undefined);
       for (const provider of listThreadProviders().filter((row) => row.models?.scope === 'host')) {
         try {
@@ -304,15 +312,17 @@ export function createProductHttpContext(
       return llmService.run(entry, vars, dedupeKey);
     },
     applyTitle: (threadId, title) => {
-      const updated = updateConversationThreadTitle(db, threadId, title);
+      const updated = updateConversationThreadTitle(db, threadId, title, 'auto');
       if (!updated) return;
       hub.emit('threads:updated', conversationThreadView(ctx, updated));
     },
-    stillLive: (threadId) => Boolean(getConversationThread(db, threadId))
+    stillLive: (threadId) => Boolean(getConversationThread(db, threadId)),
+    canAutoTitle: (threadId) => conversationThreadTitleIsPlaceholder(db, threadId)
   });
 
   const closeSummary = new CloseSummaryService({
     getSession: () => null,
+    log: warnCloseSummary,
     hasTranscript: () => false,
     readLastTurn: async () => '',
     runSummary: (lastTurn, dedupeKey) => {

@@ -1,3 +1,4 @@
+import type { PreviewContextVariable } from './preview-context.js';
 export type LabEngine = 'preview' | 'rehearsal';
 // Salesforce-managed (Azure OpenAI) GPT-4o mini: orgs often disable the direct OpenAI, Bedrock and Vertex providers.
 export const DEFAULT_LAB_MODEL = 'sfdc_ai__DefaultGPT4OmniMini';
@@ -21,6 +22,7 @@ export interface LabVerdict {
   evidence: string[];
 }
 export interface LabSnapshot {
+  contextVariables?: PreviewContextVariable[];
   id: string;
   engine: LabEngine;
   orgAlias: string;

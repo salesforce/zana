@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -138,6 +138,87 @@ describe('execution source registry', () => {
       snapshotKey: 'escape-heavy'
     })).rejects.toMatchObject({ code: 'SERIALIZED_SNAPSHOT_TOO_LARGE' });
     await expect(stat(join(dir, 'store', 'escape-heavy', 'sources.json'))).rejects.toThrow();
+  }));
+
+  it('applies the source policy against the realpath it issues', async () => fixture(async (dir) => {
+    const root = await realpath(dir);
+    const project = join(root, 'project');
+    const home = join(root, 'home');
+    const outside = join(root, 'outside');
+    await mkdir(join(project, 'cfg'), { recursive: true });
+    await mkdir(join(home, '.ssh'), { recursive: true });
+    await mkdir(outside);
+    await writeFile(join(project, 'cfg', 'plan.md'), 'inside');
+    await writeFile(join(home, 'notes.md'), 'home notes');
+    await writeFile(join(home, '.ssh', 'id_rsa'), 'PRIVATE');
+    await writeFile(join(outside, 'plan.md'), 'secret');
+    const policy = { roots: [project, home], home };
+    const registry = createExecutionSourceRegistry({ rootDir: join(root, 'store') });
+    // Under an allowed base (the project or HOME): issued as usual.
+    await expect(issue(registry, [join(project, 'cfg', 'plan.md'), join(home, 'notes.md')], { policy })).resolves.toHaveLength(2);
+    // A credential store under HOME is refused.
+    await expect(issue(registry, [join(home, '.ssh', 'id_rsa')], { policy }))
+      .rejects.toMatchObject({ code: 'UNSUPPORTED_SOURCE', message: 'id_rsa is in a protected location' });
+    // A directory swapped to a symlink pointing outside after an earlier check is caught here.
+    await rename(join(project, 'cfg'), join(project, 'cfg-real'));
+    await symlink(outside, join(project, 'cfg'));
+    await expect(issue(registry, [join(project, 'cfg', 'plan.md')], { policy }))
+      .rejects.toMatchObject({ code: 'UNSUPPORTED_SOURCE', message: 'plan.md is outside the project and your home folder' });
+    // A base itself is not a source.
+    await expect(issue(registry, [project], { policy })).rejects.toMatchObject({ code: 'UNSUPPORTED_SOURCE' });
+    // Without a policy the existing picker behaviour is unchanged.
+    await expect(issue(registry, [join(outside, 'plan.md')])).resolves.toHaveLength(1);
+  }));
+
+  it('follows the link chain of the given path under a policy, but not for a picker selection', async () => fixture(async (dir) => {
+    const root = await realpath(dir);
+    const home = join(root, 'home');
+    await mkdir(join(home, '.ssh'), { recursive: true });
+    await mkdir(join(home, 'dotfiles'), { recursive: true });
+    await writeFile(join(home, 'dotfiles', 'id_rsa'), 'PRIVATE');
+    await writeFile(join(home, 'dotfiles', 'ok.md'), 'fine');
+    await symlink(join(home, 'dotfiles', 'id_rsa'), join(home, '.ssh', 'id_rsa'));
+    await symlink(join(home, '.ssh', 'id_rsa'), join(home, 'notes.md'));
+    await symlink(join(home, 'dotfiles', 'ok.md'), join(home, 'linked.md'));
+    await symlink(join(home, 'loop-b'), join(home, 'loop-a'));
+    await symlink(join(home, 'loop-a'), join(home, 'loop-b'));
+    const policy = { roots: [home], home, protectedRoots: [join(home, '.ssh')] };
+    const registry = createExecutionSourceRegistry({ rootDir: join(root, 'store') });
+    // The realpath of both is dotfiles/id_rsa, which the path policy alone would allow.
+    await expect(issue(registry, [join(home, '.ssh', 'id_rsa')], { policy }))
+      .rejects.toMatchObject({ code: 'UNSUPPORTED_SOURCE', message: 'id_rsa is in a protected location' });
+    await expect(issue(registry, [join(home, 'notes.md')], { policy }))
+      .rejects.toMatchObject({ code: 'UNSUPPORTED_SOURCE', message: 'id_rsa is in a protected location' });
+    // An ordinary link between two allowed locations still works.
+    await expect(issue(registry, [join(home, 'linked.md')], { policy })).resolves.toHaveLength(1);
+    // A picker selection has no policy.
+    await expect(issue(registry, [join(home, 'notes.md')])).resolves.toHaveLength(1);
+  }));
+
+  it('names only the active allowed locations in a refusal', async () => fixture(async (dir) => {
+    const root = await realpath(dir);
+    await mkdir(join(root, 'project'));
+    await mkdir(join(root, 'elsewhere'));
+    await writeFile(join(root, 'elsewhere', 'plan.md'), 'x');
+    const registry = createExecutionSourceRegistry({ rootDir: join(root, 'store') });
+    const noClone = { roots: [join(root, 'project')], home: join(root, 'home') };
+    await expect(issue(registry, [join(root, 'elsewhere', 'plan.md')], { policy: noClone }))
+      .rejects.toMatchObject({ message: 'plan.md is outside the project' });
+    await expect(issue(registry, [join(root, 'elsewhere', 'plan.md')], { policy: { ...noClone, cloneRoot: join(root, 'c'), roots: [...noClone.roots, noClone.home] } }))
+      .rejects.toMatchObject({ message: 'plan.md is outside the project, your home folder and the clone root' });
+  }));
+
+  it('refuses a hard-linked file under a policy, but not a picker selection', async () => fixture(async (dir) => {
+    const root = await realpath(dir);
+    const home = join(root, 'home');
+    await mkdir(join(home, '.ssh'), { recursive: true });
+    await writeFile(join(home, '.ssh', 'id_rsa'), 'PRIVATE');
+    await link(join(home, '.ssh', 'id_rsa'), join(home, 'notes.md'));
+    const policy = { roots: [home], home };
+    const registry = createExecutionSourceRegistry({ rootDir: join(root, 'store') });
+    await expect(issue(registry, [join(home, 'notes.md')], { policy }))
+      .rejects.toMatchObject({ code: 'UNSUPPORTED_SOURCE', message: 'notes.md is a hard-linked file' });
+    await expect(issue(registry, [join(home, 'notes.md')])).resolves.toHaveLength(1);
   }));
 
   it('rolls back capabilities created before a later source issue fails', async () => fixture(async (dir) => {

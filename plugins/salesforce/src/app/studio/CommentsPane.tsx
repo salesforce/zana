@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import type { StudioComment } from '../../../lib/studio-contract.js';
+import { STUDIO_LIMITS, type StudioComment } from '../../../lib/studio-contract.js';
 
-/** Review comments for the open file: open/resolved tabs, jump to line, resolve with a note, hand off to the agent. */
+/** Review comments for the open file: open/resolved tabs, jump to line, resolve with a note, edit, delete, hand off to the agent. */
 export interface CommentsPaneProps {
   pluginId: string;
   projectId?: string;
@@ -9,6 +9,8 @@ export interface CommentsPaneProps {
   comments: StudioComment[];
   onReveal?(line: number): void;
   onResolve?(id: string, note: string): void;
+  onEdit?(id: string, body: string): void;
+  onDelete?(id: string): void;
   onAddressWithAgent?(): void;
 }
 
@@ -18,6 +20,7 @@ const STYLES = `
 .sf-cm-tab, .sf-cm-btn { border: 1px solid var(--sf-border); background: transparent; color: var(--sf-text); border-radius: 6px; padding: 2px 8px; font: inherit; cursor: pointer; }
 .sf-cm-tab[aria-selected="true"] { border-color: var(--sf-accent); color: var(--sf-accent); }
 .sf-cm-btn.is-primary { border-color: var(--sf-accent); color: var(--sf-accent); }
+.sf-cm-btn.is-danger { border-color: var(--sf-danger); color: var(--sf-danger); }
 .sf-cm-btn:disabled { opacity: 0.5; cursor: default; }
 .sf-cm-spacer { flex: 1; }
 .sf-cm-card { border: 1px solid var(--sf-border); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
@@ -28,14 +31,18 @@ const STYLES = `
 .sf-cm-body { white-space: pre-wrap; }
 .sf-cm-note { color: var(--sf-success); }
 .sf-cm-actions { display: flex; gap: 4px; }
+.sf-cm-edit { width: 100%; box-sizing: border-box; min-height: 48px; resize: vertical; border: 1px solid var(--sf-border); background: transparent; color: var(--sf-text); border-radius: 6px; padding: 4px 6px; font: inherit; }
 .sf-cm-input { flex: 1; min-width: 0; border: 1px solid var(--sf-border); background: transparent; color: var(--sf-text); border-radius: 6px; padding: 2px 6px; font: inherit; }
 .sf-cm-empty { color: var(--sf-muted); padding: 12px 4px; }
 `;
 
-export function CommentsPane({ path, comments, onReveal, onResolve, onAddressWithAgent }: CommentsPaneProps) {
+export function CommentsPane({ path, comments, onReveal, onResolve, onEdit, onDelete, onAddressWithAgent }: CommentsPaneProps) {
   const [tab, setTab] = useState<'open' | 'resolved'>('open');
   const [resolving, setResolving] = useState<string | null>(null);
   const [note, setNote] = useState('');
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+  const [deleting, setDeleting] = useState<string | null>(null);
   const scoped = comments.filter(row => !path || row.path === path);
   const open = scoped.filter(row => !row.resolved);
   const resolved = scoped.filter(row => row.resolved);
@@ -47,7 +54,13 @@ export function CommentsPane({ path, comments, onReveal, onResolve, onAddressWit
     setResolving(null);
     setNote('');
   };
-  return (
+  const startEdit = (comment: StudioComment) => { setEditing(comment.id); setDraft(comment.body); setResolving(null); setDeleting(null); };
+  const saveEdit = (comment: StudioComment) => {
+    const text = draft.trim();
+    if (!text) return;
+    if (text !== comment.body.trim()) onEdit?.(comment.id, text);
+    setEditing(null);
+  };  return (
     <section className="sf-cm" aria-label="Review comments" data-testid="studio-comments-pane">
       <style>{STYLES}</style>
       <div className="sf-cm-tabs" role="tablist">
@@ -61,15 +74,37 @@ export function CommentsPane({ path, comments, onReveal, onResolve, onAddressWit
         <article key={comment.id} className={`sf-cm-card${comment.resolved ? ' is-resolved' : ''}`}>
           <div className="sf-cm-meta">
             <span>{comment.author.name}</span>
+            {comment.editedAt && <span>(edited)</span>}
             <button type="button" className="sf-cm-line" onClick={() => onReveal?.(comment.line)} aria-label={`Jump to line ${comment.line}`}>
               {comment.endLine > comment.line ? `L${comment.line}-${comment.endLine}` : `L${comment.line}`}
             </button>
           </div>
           {comment.quote && <blockquote className="sf-cm-quote">{comment.quote.split('\n').slice(0, 3).join('\n')}</blockquote>}
-          <div className="sf-cm-body">{comment.body}</div>
+          {editing === comment.id ? (
+            <textarea className="sf-cm-edit" autoFocus aria-label="Edit comment" maxLength={STUDIO_LIMITS.commentBody} value={draft}
+              onChange={event => setDraft(event.target.value)}
+              onKeyDown={event => { if (event.key === 'Escape') setEditing(null); if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) saveEdit(comment); }} />
+          ) : <div className="sf-cm-body">{comment.body}</div>}
           {comment.resolved && <div className="sf-cm-note">Resolved by {comment.resolved.by}: {comment.resolved.note}</div>}
-          {!comment.resolved && resolving !== comment.id && (
-            <div className="sf-cm-actions"><button type="button" className="sf-cm-btn" onClick={() => { setResolving(comment.id); setNote(''); }}>Resolve</button></div>
+          {editing === comment.id && (
+            <div className="sf-cm-actions">
+              <button type="button" className="sf-cm-btn is-primary" disabled={!draft.trim()} onClick={() => saveEdit(comment)}>Save</button>
+              <button type="button" className="sf-cm-btn" onClick={() => setEditing(null)}>Cancel</button>
+            </div>
+          )}
+          {deleting === comment.id && (
+            <div className="sf-cm-actions">
+              <span className="sf-cm-meta">Delete this comment?</span>
+              <button type="button" className="sf-cm-btn is-danger" onClick={() => { setDeleting(null); onDelete?.(comment.id); }}>Delete</button>
+              <button type="button" className="sf-cm-btn" onClick={() => setDeleting(null)}>Cancel</button>
+            </div>
+          )}
+          {resolving !== comment.id && editing !== comment.id && deleting !== comment.id && (
+            <div className="sf-cm-actions">
+              {!comment.resolved && <button type="button" className="sf-cm-btn" onClick={() => { setResolving(comment.id); setNote(''); setEditing(null); }}>Resolve</button>}
+              {!comment.resolved && comment.author.kind === 'user' && onEdit && <button type="button" className="sf-cm-btn" onClick={() => startEdit(comment)}>Edit</button>}
+              {onDelete && <button type="button" className="sf-cm-btn" onClick={() => { setDeleting(comment.id); setEditing(null); }}>Delete</button>}
+            </div>
           )}
           {resolving === comment.id && (
             <div className="sf-cm-actions">

@@ -1,5 +1,33 @@
 import { describe, it, expect } from 'vitest';
-import { tildify, shortenProjectPath } from '../path.js';
+import { folderPathPlaceholder, tildify, shortenProjectPath } from '../path.js';
+
+describe('folderPathPlaceholder', () => {
+  const WIN = 'C:\\path\\to\\project';
+  const POSIX = '/path/to/project';
+
+  it('follows a Windows home dir reported by the daemon', () => {
+    expect(folderPathPlaceholder({ homeDir: 'C:\\Users\\me', isPrimary: true }, 'MacIntel')).toBe(WIN);
+    expect(folderPathPlaceholder({ homeDir: 'D:/Users/me', isPrimary: false }, 'Linux x86_64')).toBe(WIN);
+    expect(folderPathPlaceholder({ homeDir: '\\\\server\\home\\me', isPrimary: false }, '')).toBe(WIN);
+  });
+  it('follows a POSIX home dir even when the renderer runs on Windows', () => {
+    expect(folderPathPlaceholder({ homeDir: '/home/me', isPrimary: false }, 'Win32')).toBe(POSIX);
+  });
+  it('falls back to the renderer platform for this machine when home is unknown', () => {
+    expect(folderPathPlaceholder({ homeDir: null, isPrimary: true }, 'Win32')).toBe(WIN);
+    expect(folderPathPlaceholder({ isPrimary: true }, 'MacIntel')).toBe(POSIX);
+    expect(folderPathPlaceholder(undefined, 'Win32')).toBe(WIN);
+    expect(folderPathPlaceholder(undefined, 'Linux x86_64')).toBe(POSIX);
+  });
+  it('assumes POSIX for a remote machine with no reported home', () => {
+    expect(folderPathPlaceholder({ homeDir: null, isPrimary: false }, 'Win32')).toBe(POSIX);
+  });
+  it('reads navigator.platform by default', () => {
+    expect(folderPathPlaceholder(undefined)).toBe(
+      navigator.platform.toUpperCase().startsWith('WIN') ? WIN : POSIX
+    );
+  });
+});
 
 describe('tildify', () => {
   it('replaces a leading home prefix with ~', () => {

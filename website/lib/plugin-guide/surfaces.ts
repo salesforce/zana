@@ -90,7 +90,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           '`global: false` hides the global sidebar entry.',
           '`detachable: true` adds Open in new window (desktop). One window per project owns the tab; other windows show `detachedPlaceholder` (`focusWindow()`, `bringBack()`) or a host card. In that window `useZccContext().surface` is `"plugin-view"`.',
           '`useWindowTitle({ title, detail, badge, tone })` titles that window while mounted, e.g. a `danger` "Production" badge; elsewhere it does nothing.',
-          'Sits beside the host side panel, also in its own window (`useZccContext().sidePanel`). `openPanelAgent` shows a conversation or prefills a composer there; `openPanelTool` opens one of your `"plugin-page"` thread-panel tabs. Both return false without a side panel, so keep a fallback.'
+          'Shares the host rail and tabbed side panel with nav pages, also on web and in its own window (`useZccContext().sidePanel`). `openPanelAgent` shows a conversation or prefills a composer there; `openPanelTool` opens one of your `"plugin-page"` thread-panel tabs. Both return false outside a page host, so keep a navigation fallback.'
         ],
         apiSymbols: ['PluginAppSlots.projectTab', 'PluginProjectTabRegistration', 'PluginDetachedTabProps', 'useWindowTitle', 'ZccWindowTitle'],
         firstParty: ['Library', 'Salesforce']
@@ -379,7 +379,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           'Controls a selected desktop window through zcc.sdk.experimental_desktopBrowsers. With this, a plugin can:',
         bullets: [
           'Discover instances on an explicit host and create thread-owned tabs with separate automation profiles',
-          'Acquire expiring control; reveal the first tab only in the already focused thread. Personal tabs require an explicit handoff',
+          'Acquire expiring control; reveal the first tab when its thread is focused, never switching threads. Personal tabs require an explicit handoff',
           'Give a worker on that host a private, scoped CDP WebSocket connection',
           'Capture or reveal a tab and release control while preserving the tab and its login',
           'Observe changed tab and control state with a disposable two-second polling subscription',

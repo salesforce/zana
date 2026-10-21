@@ -72,6 +72,27 @@ it('arbitrates concurrent claims across accounts and keeps revoked addresses res
   expect(await registry.addressAvailability('my-computer')).toMatchObject({ available: false });
   expect((await db.query('SELECT server_id FROM connect_addresses'))[0].server_id).toBeNull();
 });
+it('lets the owner take a revoked or purged computer address back for a new enrollment', async () => {
+  await registry.claimAddress('alice', server.id, 'my-computer');
+  const replacement = await enroll('alice');
+  expect(await registry.addressAvailability('my-computer', 'alice')).toMatchObject({ available: false });
+  await expect(registry.claimAddress('alice', replacement.id, 'my-computer')).rejects.toThrow('address_taken');
+  await registry.revoke('alice', 'server', server.id);
+  expect(await registry.addressAvailability('my-computer', 'bob')).toMatchObject({ available: false });
+  expect(await registry.addressAvailability('my-computer', 'alice')).toMatchObject({ available: true });
+  const bobs = await enroll('bob');
+  await expect(registry.claimAddress('bob', bobs.id, 'my-computer')).rejects.toThrow('address_taken');
+  const limited = createRegistry(db, { domain: 'connect.example.com', accountUrl: 'https://example.com', now: () => clock, limit: 1 });
+  expect(await limited.claimAddress('alice', replacement.id, 'my-computer')).toMatchObject({ label: 'my-computer' });
+  expect(await registry.resolveServer('my-computer')).toEqual(replacement);
+  await registry.revoke('alice', 'server', replacement.id);
+  clock += 91 * 24 * 60 * 60_000; await registry.prune();
+  expect((await db.query('SELECT server_id FROM connect_addresses'))[0].server_id).toBeNull();
+  const third = await enroll('alice');
+  expect(await registry.addressAvailability('my-computer', 'alice')).toMatchObject({ available: true });
+  await registry.claimAddress('alice', third.id, 'my-computer');
+  expect(await registry.resolveServer('my-computer')).toEqual(third);
+});
 it.each(['ab', 'a'.repeat(31), 'UPPER', 'end-', '-start', 'two--dashes', 'a.b', 'www', 'admin', 's-computer', null])('rejects invalid or reserved address %s', async label => {
   expect(addressError(label)).not.toBeNull();
   await expect(registry.claimAddress('alice', server.id, label)).rejects.toThrow();

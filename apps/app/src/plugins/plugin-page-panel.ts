@@ -34,15 +34,25 @@ interface PluginPanelToolRequest {
 }
 
 const PluginPagePanelContext = createContext<PluginThreadPanelPage | null>(null);
+const PluginPagePanelOpenContext = createContext<boolean | undefined>(undefined);
 
-/** Marks a plugin page as sitting beside a host side panel (`useZccContext().sidePanel`). */
-export function PluginPagePanelProvider({ page, children }: { page: PluginThreadPanelPage; children: ReactNode }) {
-  return createElement(PluginPagePanelContext.Provider, { value: page }, children);
+/**
+ * Marks a plugin page as sitting beside a host side panel (`useZccContext().sidePanel`);
+ * `open` is whether that panel is showing (`useZccContext().sidePanelOpen`).
+ */
+export function PluginPagePanelProvider({ page, open, children }: { page: PluginThreadPanelPage; open?: boolean; children: ReactNode }) {
+  return createElement(PluginPagePanelContext.Provider, { value: page },
+    createElement(PluginPagePanelOpenContext.Provider, { value: open }, children));
 }
 
 /** The page whose side panel encloses the caller, or null outside one. */
 export function usePluginPagePanel(): PluginThreadPanelPage | null {
   return useContext(PluginPagePanelContext);
+}
+
+/** Whether the enclosing side panel is showing; undefined when the layout does not say. */
+export function usePluginPagePanelOpen(): boolean | undefined {
+  return useContext(PluginPagePanelOpenContext);
 }
 
 function jsonParams(value: unknown): JsonValue | null | undefined {

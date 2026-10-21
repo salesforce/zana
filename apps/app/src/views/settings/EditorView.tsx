@@ -6,6 +6,7 @@ import { CursorIcon } from '@/components/icons/CursorIcon';
 import { IntelliJIcon } from '@/components/icons/IntelliJIcon';
 import { Section, Field, ToggleSwitch } from '@/components/settings/FormFields';
 import { RevealContext } from '@/lib/settings-search/reveal';
+import { fileManagerBlurb, fileManagerTitle } from '@/lib/file-manager';
 
 /**
  * Settings → Editor. Configures the `OpenerButtons` "open in editor / terminal"
@@ -240,8 +241,8 @@ export function EditorView({
           searchId="editor.finder"
           anchorId="editor-finder"
           target="finder"
-          name="Finder"
-          blurb="Reveals a path in the macOS Finder."
+          name={fileManagerTitle()}
+          blurb={fileManagerBlurb()}
           shown={isShown('finder')}
           onToggle={(on) => setShown('finder', on)}
         />
@@ -256,9 +257,9 @@ export function EditorView({
           onToggle={(on) => setShown('terminal', on)}
           advanced={override(
             'Preferred terminal app',
-            'macOS app name launched via ‘open -a <name>’. Blank ⇒ auto-pick iTerm → WezTerm → Alacritty → Terminal.',
+            'macOS: app name launched via ‘open -a <name>’; blank ⇒ auto-pick iTerm → WezTerm → Alacritty → Terminal. Windows: program name or path started in the folder, without arguments, such as pwsh or cmd; blank ⇒ PowerShell.',
             'terminalApp',
-            'iTerm',
+            navigator.platform.toUpperCase().startsWith('WIN') ? 'pwsh' : 'iTerm',
             { searchId: 'editor.terminal-app' }
           )}
         />

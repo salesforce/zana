@@ -9,6 +9,7 @@ import { standaloneModernTeamLaunchSource } from '../services/agents/modern-team
 import { resolveSquadMember } from '../services/threads/squad-member-runtime.js';
 import { createTeamOpsViaControl } from './team-ops-via-control.js';
 import { createCliAgentOpsViaControl, retainProductServerCredential } from './cli-agent-ops.js';
+import { holdThreadProviderStartup } from '../services/threads/thread-provider-catalog.js';
 
 const port = serverPortFromEnv();
 const dataDir = resolveZccDataDir();
@@ -28,6 +29,8 @@ const enrollToken = process.env.ZCC_HOST_ENROLL_TOKEN && process.env.ZCC_HOST_EN
   : randomBytes(32).toString('hex');
 writeFileSync(join(dataDir, 'host-enroll.token'), enrollToken, { encoding: 'utf8', mode: 0o600 });
 
+// A host daemon can connect once the server listens, before plugins start.
+const releaseProviderStartup = holdThreadProviderStartup();
 const host = await startProductServer({
   host: '127.0.0.1',
   port,
@@ -49,7 +52,7 @@ await attachProductPluginService(host.ctx, {
     process.env.ZCC_E2E_HOME ? join(process.env.ZCC_E2E_HOME, 'electron-user-data') : undefined,
     (threadId, projectId) => resolveSquadMember(host.ctx, threadId, projectId)
   )
-});
+}).finally(releaseProviderStartup);
 
 process.stdout.write(`zcc-server listening on ${host.url}\n`);
 

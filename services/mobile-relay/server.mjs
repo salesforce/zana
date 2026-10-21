@@ -1,4 +1,4 @@
-import { PREVIEW_TARGET, PREVIEW_PROTOCOL, previewTargets, previewHeaders, previewPathAllowed } from './preview-policy.mjs';
+import { PREVIEW_TARGET, PREVIEW_PROTOCOL, previewTargets, previewHeaders, previewPathAllowed, edgeCookies } from './preview-policy.mjs';
 import { createServer } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -6,8 +6,10 @@ import { isMachinePath, machineIdentity } from './machine-routes.mjs';
 import { TUNNEL_PATH, LIMITS, headers, validPath, parseFrame, send, createDataFrameQueue, bytes, heartbeat, remoteOrigin, validToken } from './protocol.mjs';
 
 /** One authenticated computer per relay process. Pairing remains on that computer. */
-export function createRelay({ token, publicUrl, allowLocal = false, heartbeatMs = 20_000, requestTimeoutMs = 25_000, queueTimeoutMs = 5000, onVisitor = () => {}, preview = false }) {
+export function createRelay({ token, publicUrl, allowLocal = false, heartbeatMs = 20_000, requestTimeoutMs = 25_000, queueTimeoutMs = 5000, onVisitor = () => {}, preview = false, edge = false }) {
   if (!validToken(token)) throw new Error('Relay token must be 43–128 URL-safe characters');
+  // An edge that authenticates visitors itself (Connect) keeps its cookies to itself.
+  const relayHeaders = (input, response = false) => edge ? edgeCookies(headers(input, response), response) : headers(input, response);
   const origin = remoteOrigin(publicUrl, allowLocal);
   const streams = new Map();
   const pendingReads = new Map();
@@ -125,7 +127,7 @@ export function createRelay({ token, publicUrl, allowLocal = false, heartbeatMs 
     if (!validPath(req.url) || !['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return fail(res, 404, 'Not found');
     if (desktop?.readyState !== WebSocket.OPEN) return fail(res, 503, 'Computer is offline. Keep Zana running and retry.');
     let incoming;
-    try { incoming = preview ? previewHeaders(req.headers, false, req[PREVIEW_TARGET]) : headers(req.headers); } catch { return fail(res, 400, 'Invalid headers'); }
+    try { incoming = preview ? previewHeaders(req.headers, false, req[PREVIEW_TARGET]) : relayHeaders(req.headers); } catch { return fail(res, 400, 'Invalid headers'); }
     if (Number(incoming['content-length'] ?? 0) > LIMITS.request) return fail(res, 413, 'Body too large');
     if (!available()) return queueRead(req, res, incoming);
     forwardHttp(req, res, incoming);
@@ -167,7 +169,7 @@ export function createRelay({ token, publicUrl, allowLocal = false, heartbeatMs 
               stream.arm();
               if (frame.type === 'response') {
                 if (stream.res.headersSent || !Number.isInteger(frame.status) || frame.status < 200 || frame.status > 599) throw new Error('Invalid response');
-                stream.res.writeHead(frame.status, preview ? previewHeaders(frame.headers, true, stream.target) : headers(frame.headers, true));
+                stream.res.writeHead(frame.status, preview ? previewHeaders(frame.headers, true, stream.target) : relayHeaders(frame.headers, true));
               } else if (frame.type === 'response-data') {
                 if (!stream.res.headersSent) throw new Error('Missing response');
                 const chunk = bytes(frame);
@@ -204,7 +206,7 @@ export function createRelay({ token, publicUrl, allowLocal = false, heartbeatMs 
       }
       if ((!['/ws', '/ws/'].includes(req.url) && !(machineIdentity(req.headers) && isMachinePath('GET', req.url, true))) || !available()) return reject(503);
       let incoming;
-      try { incoming = preview ? previewHeaders(req.headers, false, req[PREVIEW_TARGET]) : headers(req.headers); } catch { return reject(400); }
+      try { incoming = preview ? previewHeaders(req.headers, false, req[PREVIEW_TARGET]) : relayHeaders(req.headers); } catch { return reject(400); }
       wss.handleUpgrade(req, socket, head, ws => {
         const key = id();
         streams.set(key, { ws });

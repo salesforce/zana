@@ -38,6 +38,7 @@ import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 import { squadPicklistOption } from '@/components/SquadTransportChip';
 import { useNowTick } from '@/hooks/useNowTick';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
+import { platformShortcut } from '../../lib/platformShortcut.js';
 
 const PROFILES = VALID_PROFILES;
 const PROFILE_LABEL: Record<LaunchProfileId, string> = {
@@ -859,7 +860,7 @@ function GoalModal({
             className="btn primary"
             onClick={save}
             disabled={!canSave || saving}
-            title={canSave ? '⌘+Enter to save' : 'Fill in title + objective'}
+            title={canSave ? platformShortcut('⌘+Enter to save') : 'Fill in title + objective'}
           >
             {saving ? 'Saving…' : isNew ? 'Create goal' : 'Save changes'}
           </button>

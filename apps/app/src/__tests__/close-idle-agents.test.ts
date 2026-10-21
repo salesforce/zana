@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   closeFollowupProgressMessage,
+  closedToastMessage,
   selectCloseableIdleIds,
   runCloseIdleAgents
 } from '../lib/close-idle-agents.js';
@@ -112,7 +113,7 @@ describe('runCloseIdleAgents', () => {
     expect(order).toEqual(['mark', 'progress', 'followup', 'close', 'dismiss', 'closed', 'clear']);
     expect(d.closeFollowup).toHaveBeenCalledWith('p1', ['s1']);
     expect(d.closeTerminal).toHaveBeenCalledWith('s1', 'p1');
-    expect(d.pushClosedToast).toHaveBeenCalledWith(1, 1, 1);
+    expect(d.pushClosedToast).toHaveBeenCalledWith(1, 1, 1, undefined);
     expect(d.pushProgressToast).toHaveBeenCalledWith(1);
     expect(d.dismissProgressToast).toHaveBeenCalledWith('progress-toast');
     expect(d.markClosing).toHaveBeenCalledWith(['s1']);
@@ -168,7 +169,7 @@ describe('runCloseIdleAgents', () => {
     });
 
     expect(res).toEqual({ closed: 1, summarized: 0, followedUp: 0 });
-    expect(d.pushClosedToast).toHaveBeenCalledWith(1, 0, 0);
+    expect(d.pushClosedToast).toHaveBeenCalledWith(1, 0, 0, undefined);
   });
 
   it('skips the progress toast when summarize is off', async () => {
@@ -220,5 +221,58 @@ describe('runCloseIdleAgents', () => {
     expect(res.closed).toBe(0);
     expect(d.dismissProgressToast).toHaveBeenCalledWith('progress-toast');
     expect(d.clearClosing).toHaveBeenCalledWith(['s1']);
+  });
+});
+
+describe('closedToastMessage', () => {
+  it('keeps the generic hint when failures are absent or empty', () => {
+    expect(closedToastMessage(1, 0, 0)).toBe('Closed 1 agent · no readable transcript found.');
+    expect(closedToastMessage(2, 0, 0, [{ reason: 'empty' }])).toBe('Closed 2 agents · no readable transcript found.');
+  });
+
+  it('names a summary failure, with or without detail', () => {
+    expect(closedToastMessage(1, 0, 0, [{ reason: 'summary-failed', detail: 'spawn EACCES' }])).toBe('Closed 1 agent · the AI summary failed (details in the log).');
+    expect(closedToastMessage(1, 0, 0, [{ reason: 'summary-failed' }])).toBe('Closed 1 agent · the AI summary failed (details in the log).');
+  });
+
+  it('names unparseable and write failures', () => {
+    expect(closedToastMessage(1, 0, 0, [{ reason: 'unparseable' }])).toBe('Closed 1 agent · the AI reply could not be understood.');
+    expect(closedToastMessage(1, 0, 0, [{ reason: 'write-failed' }])).toBe('Closed 1 agent · could not save the summary or follow-up.');
+  });
+
+  it('never shows the raw error detail in the toast', () => {
+    expect(closedToastMessage(1, 0, 0, [{ reason: 'summary-failed', detail: 'spawn EACCES' }])).not.toContain('EACCES');
+  });
+
+  it('says the follow-up could not be filed when its write failed after a summary', () => {
+    expect(closedToastMessage(1, 1, 0, [{ reason: 'write-failed', detail: 'disk' }])).toBe('Closed 1 agent · 1 summarized to inbox · could not file the follow-up.');
+    // Inbox write failed but the follow-up was filed: the lost summary is mentioned.
+    expect(closedToastMessage(1, 0, 1, [{ reason: 'write-failed' }])).toBe('Closed 1 agent · 1 follow-up filed · could not save the summary.');
+    expect(closedToastMessage(1, 0, 1)).toBe('Closed 1 agent · 1 follow-up filed.');
+    expect(closedToastMessage(1, 1, 1, [{ reason: 'write-failed' }])).toBe('Closed 1 agent · 1 summarized to inbox · 1 follow-up filed.');
+    expect(closedToastMessage(1, 1, 0, [])).toBe('Closed 1 agent · 1 summarized to inbox · no unfinished work found.');
+  });
+
+
+  it('ignores unrelated failures when something was summarized or filed', () => {
+    expect(closedToastMessage(1, 1, 0, [{ reason: 'empty' }])).toBe('Closed 1 agent · 1 summarized to inbox · no unfinished work found.');
+    expect(closedToastMessage(1, 1, 2, [{ reason: 'empty' }])).toBe('Closed 1 agent · 1 summarized to inbox · 2 follow-ups filed.');
+  });
+});
+
+describe('runCloseIdleAgents failures', () => {
+  it('passes failures from closeFollowup to the closed toast', async () => {
+    const failures = [{ reason: 'summary-failed' as const, detail: 'x' }];
+    const pushClosedToast = vi.fn();
+    await runCloseIdleAgents({
+      projectId: 'p', sessionIds: ['s1'], summarize: true, force: false,
+      deps: {
+        statusById: {}, alreadyClosingIds: new Set(), markClosing: vi.fn(), clearClosing: vi.fn(),
+        closeFollowup: vi.fn(async () => ({ summarized: 0, followedUp: 0, failures })),
+        closeTerminal: vi.fn(async () => {}), pushBusyToast: vi.fn(), pushErrorToast: vi.fn(), pushClosedToast,
+        pushProgressToast: vi.fn(() => 't'), dismissProgressToast: vi.fn()
+      }
+    });
+    expect(pushClosedToast).toHaveBeenCalledWith(1, 0, 0, failures);
   });
 });

@@ -6,8 +6,8 @@ import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { MobilePageHeader } from '@/components/MobilePageHeader';
 import { DesktopOnlyPlugin } from './DesktopOnlyPlugin.js';
 /**
- * Extensions hub. Installed is a host-wide PluginService collection (icon,
- * Official badge, description, enable switch); clicking a row opens the
+ * Extensions hub. Installed is a host-wide PluginService card collection;
+ * clicking a card opens the
  * existing `/extensions/plugins/:id` About + settings detail. Core stays
  * extension-agnostic — it never names a module here; each one supplies its own
  * settings UI through `AppModule.settingsPanel`.
@@ -30,9 +30,6 @@ import {
   Search,
   ChevronLeft,
   ChevronDown,
-  ChevronRight,
-  ArrowUpAZ,
-  ArrowDownAZ,
   ArrowUpCircle,
   GitBranch
 } from 'lucide-react';
@@ -40,7 +37,6 @@ import { EXTENSION_PERMISSIONS } from '@zana-ai/zcc-extension-sdk';
 import type { AppModule } from '@zana-ai/zcc-extension-sdk/renderer';
 import type { ExtensionEntry, MarketplaceEntry, PluginAppEntry } from '@zana-ai/zcc-domain/product';
 import { useMergedModules } from '@/modules';
-import { reconcilePluginApps } from '@/plugins/plugin-app-loader';
 import { getHost } from '@/modules/ModulePanelHost';
 import { resolveIcon } from '@/lib/resolveIcon';
 import { appNavigate } from '@/lib/app-navigate';
@@ -59,33 +55,24 @@ import { PluginSubmissionAction } from './PluginSubmissionAction.js';
 import { PluginBrowseSplit } from './PluginBrowseSplit.js';
 import { PluginMoreFromAuthor, PluginOverviewLead, PluginReleaseSection, PluginDetailsSection } from './CatalogPluginDetail.js';
 import { PluginOverviewMarkdown } from './PluginOverviewMarkdown.js';
-import { installedNotRunning, installedRuntimeStatus } from './installed-row-status.js';
+import { InstalledPluginCollection } from './InstalledPluginCollection.js';
 import { summarizePluginHealthDetail } from './plugin-health.js';
 import { useUi } from '@/store';
 import {
   buildHubRows,
   displayIcon,
-  filterInstalledRows,
   hostSettingsPanelOf,
-  installedPublisher,
   moduleHostCallReady,
-  publisherLabel,
-  rowDescription,
-  rowEnabled,
   shouldMountHostSettings,
-  type HubRow,
-  type InstalledPublisherFilter
+  type HubRow
 } from './installed-plugins.js';
 import {
-  refreshPluginAppsAfterToggle,
   reportPluginEnabledFailure,
   setHubRowEnabled
 } from './plugin-row-enabled.js';
 import { reportHubInstallFailure } from './hub-install.js';
 import { uninstallHubRow } from './plugin-row-uninstall.js';
 import {
-  applyHubPluginUpdate,
-  pluginAvailableVersion,
   pluginUpdatesCheckedMessage
 } from './plugin-row-update.js';
 
@@ -237,14 +224,14 @@ export function ExtensionsHub({
   );
 
   return (
-    <div className="ext-hub-shell">
-      {showTabs ? (
+    <div className={`ext-hub-shell${tab === 'installed' ? ' ext-hub-shell--installed' : ''}`}>
+      {showTabs && tab === 'marketplace' ? (
         <div className="ext-hub-tabs" role="tablist" aria-label="Plugins">
           <button
             type="button"
             role="tab"
-            aria-selected={tab === 'installed'}
-            className={`ext-hub-tab ${tab === 'installed' ? 'active' : ''}`}
+            aria-selected={false}
+            className="ext-hub-tab"
             onClick={() => selectTab('installed')}
           >
             Installed
@@ -268,7 +255,7 @@ export function ExtensionsHub({
         </div>
       )}
       {tab === 'installed' ? (
-        <InstalledView toolbarExtra={showTabs ? undefined : maintenanceActions} mobileActions={maintenanceButtons} />
+        <InstalledView toolbarExtra={maintenanceActions} mobileActions={maintenanceButtons} onBrowse={() => selectTab('marketplace')} />
       ) : (
         <PluginBrowseSplit
           pluginId={catalogPluginId}
@@ -279,15 +266,11 @@ export function ExtensionsHub({
   );
 }
 
-const PUBLISHER_FILTERS: { id: InstalledPublisherFilter; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'official', label: 'Official' },
-  { id: 'local', label: 'Local' },
-  { id: 'community', label: 'Community' },
-  { id: 'user', label: 'User' }
-];
-
-export function InstalledView({ toolbarExtra, mobileActions }: { toolbarExtra?: ReactNode; mobileActions?: ReactNode } = {}) {
+export function InstalledView({ toolbarExtra, mobileActions, onBrowse }: {
+  toolbarExtra?: ReactNode;
+  mobileActions?: ReactNode;
+  onBrowse?: () => void;
+} = {}) {
   const compact = useCompactLayout();
   const navigate = useNavigate();
   const modules = useMergedModules() as (AppModule & { loadError?: string })[];
@@ -299,9 +282,6 @@ export function InstalledView({ toolbarExtra, mobileActions }: { toolbarExtra?: 
   const setExtensionsTab = useUi((s) => s.setExtensionsTab);
   const [openExisting, setOpenExisting] = useState(false);
   const [installGit, setInstallGit] = useState(false);
-  const [query, setQuery] = useState('');
-  const [publisher, setPublisher] = useState<InstalledPublisherFilter>('all');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const newMenuRef = useRef<HTMLDivElement>(null);
 
@@ -319,7 +299,10 @@ export function InstalledView({ toolbarExtra, mobileActions }: { toolbarExtra?: 
       }
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setNewMenuOpen(false);
+      if (e.key === 'Escape') {
+        setNewMenuOpen(false);
+        newMenuRef.current?.querySelector('button')?.focus();
+      }
     };
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
@@ -363,36 +346,19 @@ export function InstalledView({ toolbarExtra, mobileActions }: { toolbarExtra?: 
     () => buildHubRows(modules, entries, plugins),
     [modules, entries, plugins]
   );
-  const visible = useMemo(
-    () => filterInstalledRows(rows, query, publisher, sortDir),
-    [rows, query, publisher, sortDir]
-  );
   const active = selectedId ? (rows.find((row) => row.module.id === selectedId) ?? null) : null;
-
-  const offeredFilters = useMemo(() => {
-    const present = new Set(rows.map(installedPublisher));
-    return PUBLISHER_FILTERS.filter((filter) => filter.id === 'all' || present.has(filter.id));
-  }, [rows]);
-
-  useEffect(() => {
-    if (publisher !== 'all' && !offeredFilters.some((filter) => filter.id === publisher)) {
-      setPublisher('all');
-    }
-  }, [offeredFilters, publisher]);
-
-  const sortAction = (
-    <button
-      type="button"
-      className="settings-btn"
-      onClick={() => setSortDir((dir) => (dir === 'asc' ? 'desc' : 'asc'))}
-      aria-label={`Sort by name ${sortDir === 'asc' ? 'descending' : 'ascending'}`}
-      title={sortDir === 'asc' ? 'Name A–Z' : 'Name Z–A'}
-    >
-      {sortDir === 'asc' ? <ArrowUpAZ size={14} /> : <ArrowDownAZ size={14} />}
-      Name
-    </button>
-  );
+  const browsePlugins = () => {
+    setNewMenuOpen(false);
+    if (onBrowse) onBrowse();
+    else setExtensionsTab('marketplace');
+  };
   const installActions = <>
+    <button type="button" role={compact ? undefined : 'menuitem'} className="ext-install-menu-item" onClick={browsePlugins}>
+      <Search size={14} /> Browse plugins
+    </button>
+    <button type="button" role={compact ? undefined : 'menuitem'} className="ext-install-menu-item" onClick={() => startCreatePlugin()}>
+      <Wand2 size={14} /> Create a plugin
+    </button>
     <button
       type="button"
       role={compact ? undefined : "menuitem"}
@@ -438,23 +404,6 @@ export function InstalledView({ toolbarExtra, mobileActions }: { toolbarExtra?: 
       Install from repository
     </button>
   </>;
-  const publisherFilters = <>
-    {offeredFilters.length > 1 && (
-      <div className="ext-installed-tags" role="group" aria-label="Filter by publisher">
-        {offeredFilters.map((filter) => (
-          <button
-            key={filter.id}
-            type="button"
-            className={`ext-market-tag ${publisher === filter.id ? 'is-active' : ''}`}
-            onClick={() => setPublisher(filter.id)}
-          >
-            {filter.label}
-          </button>
-        ))}
-      </div>
-    )}
-  </>;
-
   if (active) {
     return (
       <section className="ext-installed ext-installed--detail">
@@ -472,98 +421,27 @@ export function InstalledView({ toolbarExtra, mobileActions }: { toolbarExtra?: 
   }
 
   return (
-    <section className="ext-installed">
-      <MobilePageHeader title="Plugins" primary={<button type="button" className="icon-btn" aria-label="New plugin" onClick={() => startCreatePlugin()}><Plus size={20} /></button>}>
-        {sortAction}
-        <p className="mobile-menu-label">Publisher</p>
-        {publisherFilters}
-        <p className="mobile-menu-label">Install plugins</p>
-        {installActions}
-        {!hasDesktopBridge() && <p className="settings-help">Install from a folder or repository on the instance owner’s desktop.</p>}
-        {mobileActions}
-      </MobilePageHeader>
-      <header className="ext-installed-header">
-        <h3>Plugins</h3>
-        <p className="settings-help">
-          The plugins installed in this instance. Turn one on or off, apply updates, or open it for
-          settings and details.
-        </p>
-      </header>
-      <div className="ext-installed-toolbar">
-        <div className="ext-market-search">
-          <Search size={14} className="ext-market-search-icon" />
-          <input
-            type="text"
-            className="ext-market-search-input"
-            placeholder="Search installed plugins"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            aria-label="Search installed plugins"
-          />
-          <span className="ext-market-search-count">
-            {visible.length} of {rows.length}
-          </span>
-        </div>
-        {!compact && <div className="settings-btn-row">
-          {sortAction}
-          <div className="ext-install-menu-wrap ext-install-split" ref={newMenuRef}>
-            <button
-              type="button"
-              className="settings-btn primary"
-              onClick={() => startCreatePlugin()}
-              title="Create a plugin"
-            >
-              <Plus size={14} />
-              New plugin
+    <>
+      <InstalledPluginCollection rows={rows} onOpen={selectSettingsExtension} onBrowse={browsePlugins}
+        headerActions={!compact ? <>
+          <div className="ext-install-menu-wrap" ref={newMenuRef}>
+            <button type="button" className="settings-btn primary" aria-haspopup="menu"
+              aria-expanded={newMenuOpen} onClick={() => setNewMenuOpen((open) => !open)}>
+              <Plus size={14} /> Add plugin <ChevronDown size={12} />
             </button>
-            <button
-              type="button"
-              className="settings-btn primary ext-install-split-toggle"
-              onClick={() => setNewMenuOpen((open) => !open)}
-              aria-haspopup="menu"
-              aria-expanded={newMenuOpen}
-              aria-label="Install or open a plugin"
-              disabled={!hasDesktopBridge()}
-              title={hasDesktopBridge() ? 'Install or open a plugin' : 'Install from a folder or repository on the instance owner’s desktop'}
-            >
-              <ChevronDown size={12} />
-            </button>
-            {newMenuOpen && (
-              <div className="ext-install-menu" role="menu" aria-label="Install or open a plugin">
-                {installActions}
-              </div>
-            )}
+            {newMenuOpen ? <div className="ext-install-menu" role="menu" aria-label="Add a plugin">{installActions}</div> : null}
           </div>
           {toolbarExtra}
-        </div>}
-      </div>
-      {!compact && publisherFilters}
-      <div className="ext-installed-scroller">
-        {rows.length === 0 ? (
-          <p className="settings-help settings-help--muted">
-            No plugins installed. Browse the Marketplace, or create your own.
-          </p>
-        ) : visible.length === 0 ? (
-          <p className="settings-help settings-help--muted">
-            {query.trim()
-              ? `No plugins match “${query.trim()}”.`
-              : 'No plugins match these filters.'}
-          </p>
-        ) : (
-          <div className="ext-installed-panel" role="list" aria-label="Installed plugins">
-            {visible.map((row) => (
-              <InstalledPluginRow
-                key={row.module.id}
-                row={row}
-                onOpen={() => selectSettingsExtension(row.module.id)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+        </> : undefined}
+        mobileHeader={<MobilePageHeader title="Plugins" primary={<button type="button" className="icon-btn" aria-label="Create a plugin" onClick={() => startCreatePlugin()}><Plus size={20} /></button>}>
+          {installActions}
+          {!hasDesktopBridge() && <p className="settings-help">Install from a folder or repository on the instance owner’s desktop.</p>}
+          {mobileActions}
+        </MobilePageHeader>}
+      />
       {openExisting && <InstallFromGitDialog mode="open" onClose={() => setOpenExisting(false)} />}
       {installGit && <InstallFromGitDialog onClose={() => setInstallGit(false)} />}
-    </section>
+    </>
   );
 }
 
@@ -601,163 +479,6 @@ export function revealPluginSetting(settingKey: string): () => void {
   }
   observer.observe(document.body, { childList: true, subtree: true });
   return stop;
-}
-
-function InstalledPluginRow({ row, onOpen }: { row: HubRow; onOpen: () => void }) {
-  const [pending, setPending] = useState<boolean | null>(null);
-  const [updating, setUpdating] = useState(false);
-  const enabled = pending ?? rowEnabled(row);
-  const desktopOnly = !hasDesktopBridge() && !!row.entry && !row.plugin;
-  const canToggle = !desktopOnly && (row.plugin != null || row.entry != null);
-  const availableVersion = desktopOnly ? null : pluginAvailableVersion(row);
-  const publisher = installedPublisher(row);
-  const pill = publisherLabel(publisher);
-  const runtime = installedRuntimeStatus(row);
-  const notRunning =
-    !desktopOnly && enabled === true &&
-    installedNotRunning({
-      ...row,
-      plugin: row.plugin ? { ...row.plugin, enabled: true } : null
-    });
-  const health = summarizePluginHealthDetail(runtime?.detail);
-  const description = health.summary || rowDescription(row);
-  const Icon = resolveIcon(displayIcon(row.module.icon));
-  const runtimeToneClass =
-    runtime?.tone === 'error'
-      ? 'ext-installed-status--error'
-      : runtime?.tone === 'warning'
-        ? 'ext-installed-status--warning'
-        : 'ext-installed-status--muted';
-
-  const toggle = (next: boolean) => {
-    if (!canToggle) return;
-    setPending(next);
-    void setHubRowEnabled(row, next, product)
-      .then((res) => {
-        reportPluginEnabledFailure(res, useUi.getState().pushToast);
-        if (res.ok) {
-          void refreshPluginAppsAfterToggle(() => product.pluginApps.list(), reconcilePluginApps);
-        }
-      })
-      .catch((err) => {
-        reportPluginEnabledFailure(
-          {
-            ok: false,
-            message: err instanceof Error ? err.message : 'Failed to update plugin'
-          },
-          useUi.getState().pushToast
-        );
-      })
-      .finally(() => setPending(null));
-  };
-
-  const applyUpdate = () => {
-    if (!availableVersion || updating) return;
-    setUpdating(true);
-    void applyHubPluginUpdate(row, product)
-      .then((res) => {
-        if (!res.ok) {
-          useUi.getState().pushToast(res.message || 'Failed to update plugin', 'error');
-          return;
-        }
-        useUi.getState().pushToast(`Updated ${row.module.title} to ${availableVersion}`);
-      })
-      .catch((err) => {
-        useUi.getState().pushToast(
-          err instanceof Error ? err.message : 'Failed to update plugin',
-          'error'
-        );
-      })
-      .finally(() => setUpdating(false));
-  };
-
-  return (
-    <div className="ext-installed-row" data-testid={`plugin-row-${row.module.id}`} role="listitem">
-      <button
-        type="button"
-        className="ext-installed-row-open"
-        onClick={onOpen}
-        aria-label={`${row.module.title} plugin details`}
-      >
-        <span className={`ext-installed-icon${runtime ? ` is-${runtime.tone}` : ''}`}>
-          <Icon size={18} />
-          {runtime ? <span className="ext-installed-icon-badge" aria-hidden="true" /> : null}
-        </span>
-        <span className="ext-installed-row-body">
-          <span className="ext-installed-row-head">
-            <span className="ext-installed-row-title">{row.module.title}</span>
-            {desktopOnly && <span className="ext-installed-status">Owner desktop</span>}
-            {pill && (
-              <span className={`ext-installed-pill ext-market-item-source--${publisher}`}>
-                {pill}
-              </span>
-            )}
-            {runtime ? (
-              <span
-                data-testid={`plugin-runtime-status-${row.module.id}`}
-                className={`ext-installed-status ${runtimeToneClass}`}
-              >
-                {runtime.label}
-              </span>
-            ) : null}
-          </span>
-          {description ? <span className="ext-installed-row-desc">{description}</span> : null}
-        </span>
-      </button>
-      <span className="ext-installed-row-trailing">
-        {availableVersion ? (
-          <button
-            type="button"
-            className="ext-installed-update-signal"
-            disabled={updating}
-            onClick={(event) => {
-              event.stopPropagation();
-              applyUpdate();
-            }}
-            title={`Update to ${availableVersion}`}
-            aria-label={`Update ${row.module.title} to ${availableVersion}`}
-            data-testid={`plugin-update-signal-${row.module.id}`}
-          >
-            <ArrowUpCircle size={14} />
-          </button>
-        ) : null}
-        {notRunning && !runtime ? (
-          <span
-            data-testid={`plugin-not-running-${row.module.id}`}
-            className={`ext-installed-not-running ${runtimeToneClass}`}
-          >
-            not running
-          </span>
-        ) : null}
-        {canToggle ? (
-          <label className="ext-installed-switch" title={enabled ? 'Disable' : 'Enable'}>
-            <input
-              type="checkbox"
-              role="switch"
-              checked={enabled}
-              disabled={pending !== null}
-              aria-label={`${enabled ? 'Disable' : 'Enable'} ${row.module.title}${
-                notRunning ? ` (${row.plugin?.status}, not running)` : ''
-              }`}
-              onChange={(e) => toggle(e.target.checked)}
-            />
-            <span className="ext-installed-switch-ui" aria-hidden="true" />
-          </label>
-        ) : (
-          <span className="ext-installed-switch-spacer" aria-hidden="true" />
-        )}
-        <button
-          type="button"
-          className="ext-installed-row-chevron"
-          onClick={onOpen}
-          tabIndex={-1}
-          aria-hidden="true"
-        >
-          <ChevronRight size={14} />
-        </button>
-      </span>
-    </div>
-  );
 }
 
 /** Format a build ISO timestamp as a short local date+time, or '' if unparseable. */

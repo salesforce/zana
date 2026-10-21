@@ -53,11 +53,13 @@ describe('InboxDetail attention layout', () => {
     const late = source.indexOf('{(ownershipLoading || ownershipError || hostAction || questionFirst) ? null : answerSurface}');
     const footer = source.indexOf('inbox-detail-footer');
     const related = source.indexOf('<RelatedNextSteps');
+    const dock = source.indexOf('className="inbox-detail-dock"');
     expect(early).toBeGreaterThan(-1);
     expect(comments).toBeGreaterThan(early);
     expect(footer).toBeGreaterThan(comments);
     expect(late).toBeGreaterThan(footer);
-    expect(related).toBeGreaterThan(late);
+    expect(related).toBeGreaterThan(comments);
+    expect(dock).toBeGreaterThan(related);
   });
 
   it('returns to the landing as Inbox, not Overview, and drops the debug project id', () => {

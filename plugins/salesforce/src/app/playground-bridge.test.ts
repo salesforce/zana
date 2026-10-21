@@ -54,6 +54,11 @@ describe('playground bridge', () => {
       isHostToPlayground({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'setOrg', org: null })
     ).toBe(true);
     expect(isHostToPlayground({ type: 'flushSave' })).toBe(false);
+    const changed = { source: PLAYGROUND_BRIDGE_SOURCE, type: 'fileChanged', draftKey: 'k', content: 'x', sha256: 'f'.repeat(64) };
+    expect(isHostToPlayground(changed)).toBe(true);
+    for (const change of [{ draftKey: '' }, { draftKey: 'k'.repeat(2001) }, { content: 1 }, { content: 'x'.repeat(AGENT_SOURCE_MAX + 1) }, { sha256: 'abc' }, { sha256: 'F'.repeat(64) }]) {
+      expect(isHostToPlayground({ ...changed, ...change })).toBe(false);
+    }
     expect(isPlaygroundToHost({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'dirty' })).toBe(false);
     expect(isPlaygroundToHost({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'dirty', dirty: true })).toBe(true);
   });
@@ -112,7 +117,10 @@ describe('studio bridge messages', () => {
     rejects(isPlaygroundToHost, { type: 'proposalResolved', proposalId: 'p1', outcome: 'partial', acceptedHunks: 1, rejectedHunks: 1, content: 'x', sha256: 'abc' }, [{ proposalId: '' }, { proposalId: 5 }, { outcome: 'nope' }, { acceptedHunks: -1 }, { content: 3 }, { content: 'x'.repeat(AGENT_SOURCE_MAX + 1) }]);
   });
   it('validates commentAction, askSelection and saveRequest', () => {
-    rejects(isPlaygroundToHost, { type: 'commentAction', kind: 'add', line: 1, endLine: 2, quote: 'q' }, [{ kind: 'delete' }, { line: 0 }, { endLine: 0 }, { quote: 1 }, { quote: 'x'.repeat(2001) }]);
+    rejects(isPlaygroundToHost, { type: 'commentAction', kind: 'open', line: 1, endLine: 2, quote: 'q' }, [{ kind: 'add' }, { kind: 'delete' }, { line: 0 }, { endLine: 0 }, { quote: 1 }, { quote: 'x'.repeat(2001) }, { body: 'stray' }]);
+    rejects(isPlaygroundToHost, { type: 'commentAction', kind: 'submit', line: 1, endLine: 2, quote: 'q', body: 'Needs work' }, [{ body: undefined }, { body: '  ' }, { body: 3 }, { body: 'x'.repeat(2001) }, { endLine: 0 }, { id: 'c1' }]);
+    rejects(isPlaygroundToHost, { type: 'commentAction', kind: 'update', id: 'c1', line: 1, endLine: 2, quote: 'q', body: 'Reworded' }, [{ id: undefined }, { id: '' }, { id: 'x'.repeat(65) }, { id: 3 }, { body: undefined }, { body: '  ' }]);
+    rejects(isPlaygroundToHost, { type: 'commentAction', kind: 'delete', id: 'c1', line: 1, endLine: 1, quote: '' }, [{ id: undefined }, { body: 'stray' }]);
     rejects(isPlaygroundToHost, { type: 'askSelection', action: 'explain-selection', startLine: 1, endLine: 2, text: 't' }, [{ action: '' }, { action: 'x'.repeat(65) }, { startLine: 3 }, { text: 'x'.repeat(2001) }, { text: 1 }]);
     expect(isPlaygroundToHost(m({ type: 'saveRequest' }))).toBe(true);
   });

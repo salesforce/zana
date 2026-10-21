@@ -95,6 +95,10 @@ export {
   countConversationThreadsForQuit,
   listLiveConversationThreads,
   listLiveConversationThreadsForHost,
+  listOpenSessionConversationThreadsForHost,
+  markConversationSessionOpen,
+  clearConversationSessionOpen,
+  clearConversationSessionsOpenForHost,
   listConversationThreadsForHost,
   listVisibleConversationThreads,
   listMenubarConversationThreads,
@@ -106,6 +110,7 @@ export {
   applyConversationThreadLifecycleEventOnRow,
   updateConversationThreadParent,
   updateConversationThreadTitle,
+  conversationThreadTitleIsPlaceholder,
   setConversationProviderThreadId,
   archiveConversationThread,
   unarchiveConversationThread,
@@ -116,6 +121,7 @@ export {
   type ConversationThreadRow,
   type ConversationThreadListQuery,
   type ConversationThreadStatus,
+  type ConversationThreadTitleSource,
   type ApplyConversationThreadLifecycleEventOutcome,
   type ApplyConversationThreadLifecycleEventArgs
 } from './data/conversation-threads.js';

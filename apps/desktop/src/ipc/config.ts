@@ -20,19 +20,19 @@ export function registerConfigIpc(): void {
     IPC.config.set,
     (patch) => {
       // Window state is main-owned. Renderer config writes cannot alter shared
-      // unscoped-window geometry, plugin view window geometry or fullscreen
+      // unscoped-window geometry, plugin/thread view window geometry or fullscreen
       // monitor selection.
       const {
         windowBounds: _windowBounds,
         windowMaximized: _windowMaximized,
         pluginViewWindowBounds: _pluginViewWindowBounds,
+        threadViewWindowBounds: _threadViewWindowBounds,
         ...safePatch
       } = patch;
       const previous = store.getConfig();
       const next = presentAppConfig(store.setConfig(safePatch));
       reconcileHarnessConfig(previous, next, {
-        invalidate: () => { harnessVerifyState.cache = undefined; },
-        rebuildProviders: (config) => ctx.rebuildProviders(config)
+        invalidate: () => { harnessVerifyState.cache = undefined; }
       });
       // Apply a keep-awake toggle immediately: turning it OFF releases a held
       // block at once (don't wait for the grace timer / next status edge);

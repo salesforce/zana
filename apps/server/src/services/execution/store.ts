@@ -302,10 +302,48 @@ export interface ExecutionRecord {
   coordinatorWakeSequence?: number;
   coordinationMode?: import('@zana-ai/zcc-domain/product').TeamCoordinationMode;
   origin?: import('@zana-ai/zcc-domain/product').LaunchOrigin;
+  /** Squad launch proposal this run was started from. Never part of the request digest. */
+  proposal?: { id: string; proposerKind: 'pty' | 'thread'; proposerId: string; proposerTitle?: string };
+  /**
+   * Conversation that gets a `[Squad report]` when the run ends or needs a human: the agent
+   * that owns it (`execution.start`) or the one that proposed it. Never part of the digest.
+   */
+  reportTo?: ExecutionReportTarget;
+  /** `attempt` whose terminal report was already handled. */
+  reportNoticeVersion?: number;
+  /** Legacy terminal-report mark from before `reportNoticeVersion`. Read for every run; still written for proposal-backed runs so a downgrade does not type their report again. */
+  proposalNoticeVersion?: number;
+  /** Blockers already reported to `reportTo`, so a restart neither repeats nor drops one. Newest last, at most {@link MAX_REPORTED_BLOCKER_IDS}. */
+  reportedBlockerIds?: string[];
   createdAt: number;
   updatedAt: number;
   /** User hid terminal history from board; durable evidence remains retained. */
   dismissedAt?: number;
+}
+
+export interface ExecutionReportTarget {
+  kind: 'pty' | 'thread';
+  id: string;
+  title?: string;
+  role: 'owner' | 'proposer';
+}
+
+/**
+ * Where a run's reports go. Records written before `reportTo` existed report to their
+ * proposer; a record with neither gets no report, as before.
+ */
+export function executionReportTarget(record: Pick<ExecutionRecord, 'reportTo' | 'proposal'>): ExecutionReportTarget | undefined {
+  if (record.reportTo) return record.reportTo;
+  const proposal = record.proposal;
+  return proposal ? {
+    kind: proposal.proposerKind, id: proposal.proposerId, role: 'proposer',
+    ...(proposal.proposerTitle ? { title: proposal.proposerTitle } : {})
+  } : undefined;
+}
+
+/** The attempt whose terminal report was handled, under either key. */
+export function reportedAttempt(record: Pick<ExecutionRecord, 'reportNoticeVersion' | 'proposalNoticeVersion'>): number | undefined {
+  return record.reportNoticeVersion ?? record.proposalNoticeVersion;
 }
 
 export type RetainedRecoveryMode = 'exact-native' | 'fresh-plan';
@@ -324,7 +362,7 @@ export interface ExecutionNativeRecoverySnapshotV1 {
 }
 
 export type ExecutionClaimInput = Omit<ExecutionRecord,
-  'id' | 'teamLaunchRequestId' | 'attempt' | 'attemptStartedAt' | 'state' | 'stateVersion' | 'createdAt' | 'updatedAt' | 'workUnits' | 'blockers'
+  'id' | 'teamLaunchRequestId' | 'attempt' | 'attemptStartedAt' | 'state' | 'stateVersion' | 'reportNoticeVersion' | 'proposalNoticeVersion' | 'reportedBlockerIds' | 'createdAt' | 'updatedAt' | 'workUnits' | 'blockers'
 > & { workUnits?: ExecutionWorkUnitInput[] };
 
 export interface ExecutionRequestSnapshotV1 {
@@ -484,6 +522,7 @@ const MAX_STRING = 2_048;
 const MAX_WORK_UNIT_TASK = 16_384;
 const MAX_FINAL_SUMMARY = 64 * 1024;
 const MAX_WORK_UNITS = 100;
+export const MAX_REPORTED_BLOCKER_IDS = 100;
 const MAX_UNIT_LIST = 100;
 const MAX_DELIVERIES_PER_EXECUTION = 128;
 const MAX_COORDINATOR_WAKES = 100;
@@ -594,6 +633,11 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.coordinatorWakeSequence === undefined || Number.isInteger(record.coordinatorWakeSequence) && record.coordinatorWakeSequence >= 0)
     && (record.coordinationMode === undefined || record.coordinationMode === 'interactive-team' || record.coordinationMode === 'autonomous-team' || record.coordinationMode === 'job-team' || record.coordinationMode === 'structured' || record.coordinationMode === 'freeform')
     && (record.origin === undefined || record.origin === 'explicit' || record.origin === 'scheduled' || record.origin === 'goal')
+    && (record.proposal === undefined || validProposal(record.proposal))
+    && (record.reportTo === undefined || validReportTarget(record.reportTo))
+    && (record.reportNoticeVersion === undefined || validNonNegativeInteger(record.reportNoticeVersion))
+    && (record.proposalNoticeVersion === undefined || validNonNegativeInteger(record.proposalNoticeVersion))
+    && (record.reportedBlockerIds === undefined || Array.isArray(record.reportedBlockerIds) && record.reportedBlockerIds.length <= MAX_REPORTED_BLOCKER_IDS && record.reportedBlockerIds.every(validString))
     && typeof record.createdAt === 'number' && typeof record.updatedAt === 'number'
     && (record.dismissedAt === undefined || typeof record.dismissedAt === 'number');
 }
@@ -781,6 +825,22 @@ function validRouting(value: unknown): value is WorkUnitRoutingV1 {
 
 function validStringList(value: unknown): value is string[] {
   return Array.isArray(value) && value.length <= MAX_UNIT_LIST && value.every((item) => validString(item));
+}
+
+function validProposal(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const proposal = value as NonNullable<ExecutionRecord['proposal']>;
+  return validString(proposal.id) && validString(proposal.proposerId)
+    && (proposal.proposerKind === 'pty' || proposal.proposerKind === 'thread')
+    && (proposal.proposerTitle === undefined || typeof proposal.proposerTitle === 'string');
+}
+
+function validReportTarget(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const target = value as ExecutionReportTarget;
+  return validString(target.id) && (target.kind === 'pty' || target.kind === 'thread')
+    && (target.role === 'owner' || target.role === 'proposer')
+    && (target.title === undefined || typeof target.title === 'string');
 }
 
 function validNonNegativeInteger(value: unknown): boolean {
@@ -1215,7 +1275,19 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       resolvedModels: input.resolvedModels.map(normalizeModelSnapshot),
       ...(workUnits ? { workUnits, blockers: [] } : {}),
       ...(input.coordinationMode ? { coordinationMode: input.coordinationMode } : {}),
-      ...(input.origin ? { origin: input.origin } : {})
+      ...(input.origin ? { origin: input.origin } : {}),
+      ...(input.proposal ? { proposal: {
+        id: string(input.proposal.id, 'proposal id'),
+        proposerKind: input.proposal.proposerKind,
+        proposerId: string(input.proposal.proposerId, 'proposer id'),
+        ...(input.proposal.proposerTitle === undefined ? {} : { proposerTitle: string(input.proposal.proposerTitle, 'proposer title') })
+      } } : {}),
+      ...(input.reportTo ? { reportTo: {
+        kind: input.reportTo.kind === 'thread' ? 'thread' as const : 'pty' as const,
+        id: string(input.reportTo.id, 'report target id'),
+        role: input.reportTo.role === 'proposer' ? 'proposer' as const : 'owner' as const,
+        ...(input.reportTo.title === undefined ? {} : { title: string(input.reportTo.title, 'report target title') })
+      } } : {})
     };
     return storeQueue.run(async () => {
       const snapshot = read();
@@ -1336,6 +1408,50 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       if (!terminalStates.has(record.state) || !record.squadWorktree) throw new Error('terminal squad worktree is unavailable');
       if (record.terminalWorktreeEffectsStateVersion === expectedStateVersion) return clone(record);
       record.terminalWorktreeEffectsStateVersion = expectedStateVersion;
+      record.updatedAt = now();
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
+  /**
+   * Record that the terminal report for `attempt` was handled. Idempotent; keyed on attempt
+   * (not stateVersion, which notice acks bump), so it never bumps stateVersion.
+   */
+  async function markReported(executionId: string, attempt: number): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      if (!terminalStates.has(record.state) || !executionReportTarget(record)) throw new Error('terminal report target is unavailable');
+      if (record.attempt !== attempt) throw new Error('stale execution attempt');
+      if (reportedAttempt(record) === attempt) return clone(record);
+      record.reportNoticeVersion = attempt;
+      // A build from before reportNoticeVersion reads this key, so it does not type a proposer's report again.
+      if (record.proposal) record.proposalNoticeVersion = attempt;
+      record.updatedAt = now();
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
+  /**
+   * Record that a human blocker was reported to the run's report target. Idempotent; keeps the
+   * open blockers' ids, newest {@link MAX_REPORTED_BLOCKER_IDS}. Like {@link markReported} it never bumps stateVersion.
+   */
+  async function markBlockerReported(executionId: string, blockerId: string): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      if (!executionReportTarget(record)) throw new Error('report target is unavailable');
+      const safeBlockerId = string(blockerId, 'blocker id');
+      if (!record.blockers?.some((blocker) => blocker.id === safeBlockerId)) throw new Error('execution blocker not found');
+      if (record.reportedBlockerIds?.includes(safeBlockerId)) return clone(record);
+      // Drop ids of blockers that are resolved or gone first, so the cap never evicts an open one.
+      const open = new Set((record.blockers ?? []).filter((blocker) => !blocker.resolved).map((blocker) => blocker.id));
+      const kept = (record.reportedBlockerIds ?? []).filter((id) => open.has(id));
+      record.reportedBlockerIds = [...kept, safeBlockerId].slice(-MAX_REPORTED_BLOCKER_IDS);
       record.updatedAt = now();
       persist(snapshot.state, snapshot.hash);
       return clone(record);
@@ -1594,7 +1710,11 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  async function addEffectiveOwner(executionId: string, principalId: string): Promise<ExecutionRecord> {
+  /**
+   * Bind a fresh owner session. `reportKind` moves an owner's report target to that session,
+   * so the reports follow the agent that now owns the run; a proposer's target never moves.
+   */
+  async function addEffectiveOwner(executionId: string, principalId: string, reportKind?: ExecutionReportTarget['kind']): Promise<ExecutionRecord> {
     return storeQueue.run(async () => {
       const snapshot = read();
       const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
@@ -1603,6 +1723,9 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       const owners = new Set(record.effectiveOwnerPrincipalIds ?? []);
       owners.add(safePrincipalId);
       record.effectiveOwnerPrincipalIds = [...owners];
+      if (reportKind && record.reportTo?.role === 'owner') {
+        record.reportTo = { kind: reportKind === 'thread' ? 'thread' : 'pty', id: safePrincipalId, role: 'owner', ...(record.reportTo.title === undefined ? {} : { title: record.reportTo.title }) };
+      }
       record.stateVersion += 1;
       record.updatedAt = now();
       append(snapshot.state, record, record.state, 'info', 'Execution monitor rebound', record.updatedAt);
@@ -2928,6 +3051,24 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     )));
   }
 
+  async function listUnreportedExecutions(): Promise<ExecutionRecord[]> {
+    return storeQueue.run(async () => clone(read().state.records.filter((record) =>
+      executionReportTarget(record) !== undefined && terminalStates.has(record.state) && reportedAttempt(record) !== record.attempt
+    )));
+  }
+
+  /**
+   * Live runs with their own `reportTo` and an open human blocker that was not reported yet.
+   * Records written before report-back have no `reportTo`/`reportedBlockerIds`: the previous
+   * build already delivered their blockers, so they are never replayed.
+   */
+  async function listUnreportedBlockers(): Promise<ExecutionRecord[]> {
+    return storeQueue.run(async () => clone(read().state.records.filter((record) =>
+      record.reportTo !== undefined && !terminalStates.has(record.state)
+      && (record.blockers ?? []).some((blocker) => !blocker.resolved && blocker.audience !== 'coordinator' && !record.reportedBlockerIds?.includes(blocker.id))
+    )));
+  }
+
   async function listActiveClaims(after?: ActiveClaimCursor, limit = 25): Promise<ActiveClaimPage> {
     return storeQueue.run(async () => {
       const safeLimit = Math.max(1, Math.min(50, Math.floor(limit)));
@@ -3012,7 +3153,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, listInProject, listActive, listUndisposedSquadWorktrees, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, markReported, markBlockerReported, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, listInProject, listActive, listUndisposedSquadWorktrees, listUnreportedExecutions, listUnreportedBlockers, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 function normalizeModelSnapshot(snapshot: ResolvedModelSnapshotV1): ResolvedModelSnapshotV1 {

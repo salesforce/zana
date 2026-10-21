@@ -32,6 +32,12 @@ import { controlCredentialForSession } from '@zana-ai/zcc-host-daemon/control-cr
 import type { PluginAgentToolContext } from '@zana-ai/zcc-plugin-sdk/server';
 import { jsonSchemaAgentToolRecord } from '@zana-ai/zcc-plugin-sdk/internal/host-policy';
 import { LAUNCH_TEAM_DESCRIPTION } from './launch-team-mcp-tool.js';
+import {
+  SQUAD_PLAN_CHECK_DESCRIPTION,
+  SQUAD_PLAN_CHECK_JSON_SCHEMA,
+  SQUAD_PROPOSE_DESCRIPTION,
+  SQUAD_PROPOSE_JSON_SCHEMA
+} from '../squad-proposals/squad-proposal-mcp-tools.js';
 import type { PluginAgentToolSource } from '../../plugins/plugin-agent-tools.js';
 import { EXECUTION_MEMBER_TOOL_NAMES, getExecutionToolDescriptors, type ExecutionMemberFence } from '../execution/execution-mcp-tool.js';
 
@@ -51,7 +57,11 @@ export const MODERN_TEAM_LAUNCH_TOOL_NAMES = [
 export const MODERN_OWNER_EXECUTION_TOOL_NAMES = [
   'execution_start',
   'execution_snapshot',
-  'execution_resume_binding'
+  'execution_respond',
+  'execution_resume_binding',
+  'squad_propose',
+  'squad_plan_check',
+  'list_teams'
 ] as const;
 
 export interface ModernTeamLaunchConfig {
@@ -176,7 +186,31 @@ const TOOL_DEFS: readonly ToolDef[] = [
   }
 ];
 
+/** Owner verbs that are not execution tools; their definitions live with the Squad proposal surface. */
+const OWNER_SQUAD_TOOL_DEFS: readonly ToolDef[] = [
+  {
+    name: 'squad_propose',
+    mcpName: 'squad_propose',
+    description: SQUAD_PROPOSE_DESCRIPTION,
+    inputSchema: SQUAD_PROPOSE_JSON_SCHEMA
+  },
+  {
+    name: 'squad_plan_check',
+    mcpName: 'squad_plan_check',
+    description: SQUAD_PLAN_CHECK_DESCRIPTION,
+    inputSchema: SQUAD_PLAN_CHECK_JSON_SCHEMA
+  },
+  {
+    name: 'list_teams',
+    mcpName: 'list_teams',
+    description: 'List the Squads you can propose, with defaultPlanning and canInferPlan.',
+    inputSchema: { type: 'object', properties: {} }
+  }
+];
+
 const OWNER_EXECUTION_TOOL_DEFS: readonly ToolDef[] = MODERN_OWNER_EXECUTION_TOOL_NAMES.map((name) => {
+  const squadTool = OWNER_SQUAD_TOOL_DEFS.find((tool) => tool.name === name);
+  if (squadTool) return squadTool;
   const descriptor = getExecutionToolDescriptors().find((tool) => tool.name.replaceAll('.', '_') === name)!;
   return { name, mcpName: descriptor.name, description: descriptor.description, inputSchema: descriptor.inputSchema };
 });
@@ -188,14 +222,22 @@ const OWNER_EXECUTION_MCP_NAMES: ReadonlySet<string> = new Set(
 );
 const MAX_CONFIGURED_MEMBERS = 1024;
 
-/** Build the credentialed loopback MCP route for one thread's tool call. */
-export function modernTeamLaunchRoute(base: string, projectId: string, threadId: string, credential: string): string {
+/**
+ * Build the credentialed loopback MCP route for one thread's tool call. `?route=thread` tells
+ * the MCP server the session is a Modern thread, so its `[Squad report]` is a queued turn.
+ */
+function modernThreadRoutePath(base: string, projectId: string, threadId: string, credential: string): string {
   const trimmed = base.replace(/\/+$/, '');
   return `${trimmed}/mcp/${encodeURIComponent(projectId)}/${encodeURIComponent(threadId)}/${encodeURIComponent(credential)}`;
 }
 
+export function modernTeamLaunchRoute(base: string, projectId: string, threadId: string, credential: string): string {
+  return `${modernThreadRoutePath(base, projectId, threadId, credential)}?route=thread`;
+}
+
+/** The member fence is path context, so it precedes the `?route=thread` query. */
 export function modernTeamMemberRoute(base: string, projectId: string, threadId: string, credential: string, member: ExecutionMemberFence): string {
-  return `${modernTeamLaunchRoute(base, projectId, threadId, credential)}/member/${encodeURIComponent(member.bindingId)}/${member.generation}`;
+  return `${modernThreadRoutePath(base, projectId, threadId, credential)}/member/${encodeURIComponent(member.bindingId)}/${member.generation}?route=thread`;
 }
 
 function extractText(result: unknown): string {

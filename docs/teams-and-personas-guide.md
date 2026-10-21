@@ -117,6 +117,8 @@ A Team bundles multiple personas into a single-click launch:
 | `slots` | TeamSlot[] | The worker agents to spawn |
 | `defaultProjectId` | string? | Fallback project when none supplied at launch |
 | `initialPrompt` | string? | Opening text for the orchestrator's tab |
+| `worktreeIsolation` | boolean? | Shared-worktree override for Squad runs; absent follows the Project or global default |
+| `defaultPlanning` | `"infer"` \| `"provided"`? | Planning mode preselected when the Squad is picked in the composer or proposed by an agent; absent uses the global default. Set it in Settings → Squads → Default planning |
 
 ### TeamSlot
 
@@ -290,6 +292,73 @@ From the Teams panel in ZCC, click **Launch** on "Feature Squad". For autonomous
 ```
 cc.teams.launchAutonomous("feature-squad", projectId, "Implement [feature description]")
 ```
+
+---
+
+## Start a Squad from a conversation
+
+You can design in a CLI Agent or Modern session and hand the result to a Squad
+in the same Project.
+
+1. **Say it.** In the session, say "build it with <Squad>". The agent uses the
+   design (and a plan, if it has one) it wrote or read, wherever it keeps them,
+   checks the plan, and prepares the launch.
+2. **Open the Inbox card.** A "Squad launch ready" card appears in the Inbox. It
+   names the Squad, the planning mode and the files. Nothing has started.
+3. **Review.** Press **Review Squad launch**. The Squad composer opens already
+   filled in: Squad, goal, planning mode and the attached files. Change anything
+   you like. Press **Dismiss** to drop the proposal.
+4. **Launch.** Press **Launch**. The files are captured at that moment, so later
+   edits are not included.
+5. **Report back.** When the Squad finishes or needs you, the session that
+   proposed it gets a short `[Squad report]`. It can tell you what happened but
+   cannot answer the Squad's questions, stop it or steer it; you stay the owner.
+   Answers go through the Inbox.
+
+**Review first or start now.** How you phrase it picks the path. "Build it with
+X", "prepare a launch for X" or anything unclear gets the review-first card above.
+Only an explicit "run it now with X", "start X immediately" or "skip the Inbox"
+makes the agent start the Squad straight away with `execution.start`, as the run's
+owner. Either way the agent says in one line which path it took.
+
+An owner that starts the run with `notify: true` (the bundled skills do) gets the
+same `[Squad report]` when its run finishes or needs a human answer, so it doesn't
+have to poll; the reports follow it to a fresh session that takes the run over
+with `execution.resume_binding` (Recover orchestrator relaunches the run's coordinator
+and leaves the reports with the owner's session). It may answer
+such a question itself with `execution.respond` when what you told it decides it;
+otherwise it asks you, and the question is in your Inbox too. An owner gets no
+"Squad completed" Inbox entry: the run is on its board, and if the owner's session is gone when the run ends, the report is dropped with no Inbox fallback. Without `notify: true`,
+`execution.start` behaves as before.
+
+Rules: the Squad always runs in the proposing session's Project. Its files can be
+in that Project, your home folder (for example a doc vault or `~/.zcc/library`) or
+the clone root. A file outside the Project shows its full path, marked "outside the
+Project", on the card and in the composer, so you see what leaves the checkout
+before Launch. A file is attached either through the proposal's `sources` or by
+name in the goal; a goal that names a file outside the Project is refused, and the
+agent is told to pass it in `sources` so it shows on the card. Some locations are always refused, for proposals and for paths
+named in any Squad goal:
+- credential stores and agent sessions (`~/.ssh`, `~/.aws`, `~/.gnupg`,
+  `~/.config/gh`, `~/.config/gcloud`, `~/.netrc`, `~/.docker/config.json`,
+  `~/.codex`, `~/.cursor`, `~/.claude/sessions`, `~/.local/share/opencode`,
+  `~/.pi`, `~/.grok`, `~/.gemini`, `~/.git-credentials`,
+  `~/.npmrc`, `~/.pypirc`, `~/.kube`, `~/.claude.json`,
+  `~/.claude/.credentials.json`, `~/.claude/projects`, `~/Library/Keychains`),
+  even through a symlink (a link is followed step by step, so a link into one of
+  these, or a link inside one of these, is refused; so is a loop of links); a
+  hard-linked file is refused too. Inside the Project itself only `~/.ssh` and
+  `~/.aws` stay refused from this list, so a Project that lives under, say,
+  `~/.claude/projects` keeps its own files;
+- the app's own data;
+- Zana's data folders (`~/.zcc`, `~/.zcc-dev`, `~/.zcc-machines`, `~/.cc-center`, `ZCC_DATA_DIR`).
+  Only their `library`, `personas`, `teams`, `templates` and `saved` folders and
+  the checkouts Zana manages there can be read.
+
+A clone root that is a disk root, contains your home folder, is world-writable on macOS or Linux (such as `/tmp`) or is `/Volumes` is not used, and a refusal names only the locations that are in use. Members of a running Squad cannot propose. Proposals expire
+after 7 days. If the Squad's orchestrator cannot write files, "Infer plan from
+goal" is refused; the agent proposes a plan it has written and checked instead
+(`planning: "provided"`). Use `defaultPlanning` on the Squad to preselect a mode.
 
 ---
 

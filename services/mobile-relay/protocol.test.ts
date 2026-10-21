@@ -44,6 +44,13 @@ describe('bounded relay protocol', () => {
     vi.advanceTimersByTime(100); expect(ws.terminate).toHaveBeenCalledOnce();
     ws.emit('close'); expect(vi.getTimerCount()).toBe(0); expect(ws.listenerCount('pong')).toBe(0);
   });
+  it('pings again instead of terminating after its own event loop stalled', () => {
+    vi.useFakeTimers(); const ws = socket(); heartbeat(ws, 100, 50);
+    vi.advanceTimersByTime(100); expect(ws.ping).toHaveBeenCalledOnce();
+    vi.setSystemTime(Date.now() + 1_000); vi.advanceTimersByTime(100);
+    expect(ws.terminate).not.toHaveBeenCalled(); expect(ws.ping).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(100); expect(ws.terminate).toHaveBeenCalledOnce();
+  });
   it('waits for each response frame to flush and stops on cancellation or send failure', async () => {
     const ws = socket(); const active = vi.fn(() => true);
     const pending = dataFramesFlushed(ws, 'response-data', 1, Buffer.alloc(LIMITS.chunk + 5), active);

@@ -12,7 +12,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import type { TerminalSession } from '@zana-ai/zcc-domain/product';
 import { useFileDrop } from '../hooks/useFileDrop.js';
 import { posixQuote } from '../lib/quote.js';
-import { registerFinder, registerTerminal } from '../lib/findRegistry.js';
+import { markActiveTerminal, registerFinder, registerTerminal, releaseActiveTerminal } from '../lib/findRegistry.js';
 import { scrapeUrls } from '../lib/urlScrape.js';
 import { shouldSuppressWheelArrows } from '../lib/terminalWheel.js';
 import { createResizeSettleScheduler, isTerminalHostVisible, resyncXtermAndPty } from '../lib/terminalResync.js';
@@ -58,6 +58,7 @@ function TerminalViewImpl({ session, area, scrollbackLimit = TERMINAL_SCROLLBACK
   const theme = useData((s) => s.theme);
   const terminalTheme = useData((s) => s.terminalTheme);
   const disposedRef = useRef(false);
+  const shownRef = useRef(false);
   // Read by the custom wheel handler (registered once at construction) so a
   // Settings flip takes effect on this already-open terminal without reopening.
   const wheelArrowsEnabledRef = useRef(wheelArrowsEnabled);
@@ -191,6 +192,9 @@ function TerminalViewImpl({ session, area, scrollbackLimit = TERMINAL_SCROLLBACK
       clear: () => term.clear(),
       getUrls: () => scrapeUrls(term)
     });
+    // A focused pane owns Cmd+K even when it is not the primary area.
+    const onTextareaFocus = () => markActiveTerminal(session.id);
+    term.textarea?.addEventListener('focus', onTextareaFocus);
 
     // Initial fit + resize. Do NOT fit on a single bare rAF: a TerminalView that
     // mounts straight into the agent-inspector modal anchor can have its host
@@ -535,6 +539,8 @@ function TerminalViewImpl({ session, area, scrollbackLimit = TERMINAL_SCROLLBACK
       offsRef.current.forEach((off) => off());
       offFinder();
       offHandle();
+      term.textarea?.removeEventListener('focus', onTextareaFocus);
+      releaseActiveTerminal(session.id);
       // Dispose the WebGL/canvas addon before the terminal so its GPU context /
       // canvas surface is released deterministically (not left to GC).
       renderer.dispose();
@@ -590,8 +596,14 @@ function TerminalViewImpl({ session, area, scrollbackLimit = TERMINAL_SCROLLBACK
   // will also catch most pane resizes, but firing here removes a one-frame
   // mismatch when the layout class changes without a size change yet.
   useEffect(() => {
-    writesRef.current?.setVisible(visible && isTerminalHostVisible(ref.current));
+    const shown = visible && isTerminalHostVisible(ref.current);
+    // Drop a pending omitted-output marker on the hidden -> shown edge, before
+    // setVisible schedules the flush that would prepend it.
+    if (shown && !shownRef.current) writesRef.current?.clearGap();
+    shownRef.current = shown;
+    writesRef.current?.setVisible(shown);
     if (!visible) {
+      releaseActiveTerminal(session.id);
       rendererRef.current?.setVisible(false);
       settleRef.current?.cancel();
       return;
@@ -602,7 +614,12 @@ function TerminalViewImpl({ session, area, scrollbackLimit = TERMINAL_SCROLLBACK
       try {
         if (disposedRef.current || !isTerminalHostVisible(ref.current)) return;
         rendererRef.current?.setVisible(true);
+        // Only when the synchronous pass could not yet see the host as shown;
+        // re-runs while already shown must keep a pending marker.
+        if (!shownRef.current) writesRef.current?.clearGap();
+        shownRef.current = true;
         writesRef.current?.setVisible(true);
+        if (area === 'a') markActiveTerminal(session.id);
         // Split open/close can change layout without a lasting pixel delta
         // (ResizeObserver then skips). The settled-style nudge still has to
         // run so a Claude TUI redraws and xterm busts a stale cell cache.

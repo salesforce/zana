@@ -9,6 +9,7 @@ import {
   PRODUCT_EVENT_ARGS_MAX_CHARS,
   PRODUCT_EVENT_ARGS_MAX_COUNT,
   MenubarThreadsChangedMessageSchema,
+  ThreadQueueTurnResultSchema,
   RuntimeOutboundSchema,
   SERVER_RUNTIME_PROTOCOL_VERSION,
   ServerRuntimeInboundSchema,
@@ -171,6 +172,15 @@ describe('server runtime contract', () => {
       expect(SquadRuntimeOperationSchema.safeParse({ ...operation, request: { ...completion, ...patch } }).success).toBe(false);
     }
   });
+  it('accepts bounded coding-agent display grouping without allowing arbitrary manifest data', () => {
+    const snapshot = { id: 'custom-agent', name: 'Agent', description: '', icon: 'Terminal', enabled: false,
+      provenance: 'direct', status: 'disabled', appUrl: null, collection: 'coding-agents' };
+    const message = { type: 'plugin-apps-changed', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, apps: [snapshot] };
+    expect(RuntimeOutboundSchema.safeParse(message).success).toBe(true);
+    for (const patch of [{ collection: 'unknown' }, { collection: true }, { extra: { source: '/private/path' } }]) {
+      expect(RuntimeOutboundSchema.safeParse({ ...message, apps: [{ ...snapshot, ...patch }] }).success).toBe(false);
+    }
+  });
   it('accepts local plugin classification without allowing installation paths across IPC', () => {
     const snapshot = { id: 'local-panel', name: 'Local panel', description: '', icon: 'Cloud', enabled: true, provenance: 'direct', sourceKind: 'path', status: 'running', appUrl: '/plugins/local-panel/assets/app.js' };
     const message = { type: 'plugin-apps-changed', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, apps: [snapshot] };
@@ -307,5 +317,28 @@ describe('native tool policy runtime contract', () => {
       { action: 'deny', reason: 'r'.repeat(NATIVE_TOOL_POLICY_REASON_MAX_CHARS + 1) },
       { action: 'allow', reason: 'x' }, [], null
     ]) expect(NativeToolPolicyDecisionSchema.safeParse(value).success).toBe(false);
+  });
+});
+
+describe('thread-queue-turn runtime contract', () => {
+  const base = {
+    type: 'request', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+    id: '11111111-1111-4111-8111-111111111111', deadlineAt: '2026-09-25T12:00:00.000Z',
+    operation: 'thread-queue-turn', projectId: 'p1'
+  };
+
+  it('accepts a bounded text turn and rejects missing or empty fields', () => {
+    expect(ServerRuntimeInboundSchema.safeParse({ ...base, threadId: 't1', text: 'hi' }).success).toBe(true);
+    expect(ServerRuntimeInboundSchema.safeParse({ ...base, threadId: 't1', text: 'x'.repeat(4096) }).success).toBe(true);
+    expect(ServerRuntimeInboundSchema.safeParse({ ...base, text: 'hi' }).success).toBe(false);
+    expect(ServerRuntimeInboundSchema.safeParse({ ...base, threadId: 't1', text: '' }).success).toBe(false);
+    expect(ServerRuntimeInboundSchema.safeParse({ ...base, threadId: 't1', text: 'x'.repeat(4097) }).success).toBe(false);
+  });
+
+  it('validates the result shape strictly', () => {
+    expect(ThreadQueueTurnResultSchema.safeParse({ ok: true, queued: true }).success).toBe(true);
+    expect(ThreadQueueTurnResultSchema.safeParse({ ok: false, reason: 'not-live' }).success).toBe(true);
+    expect(ThreadQueueTurnResultSchema.safeParse({ ok: 'yes' }).success).toBe(false);
+    expect(ThreadQueueTurnResultSchema.safeParse({ ok: true, extra: 1 }).success).toBe(false);
   });
 });

@@ -20,6 +20,7 @@ import { squadPicklistOption } from '../SquadTransportChip.js';
 import { PROFILE_LABEL, INBOX_LEVELS, RETRY_CHOICES, missedRunChoices, scopeLabel, sourceLabel, type MissedRunChoiceValue } from './schedulerUtils.js';
 import type { ScheduleSeed } from './schedule-seed.js';
 import './schedule-runs.css';
+import { platformShortcut } from '../../lib/platformShortcut.js';
 
 type MissedRunChoice = MissedRunChoiceValue;
 
@@ -720,7 +721,7 @@ export function ScheduleEditor({
             type="submit"
             className="btn primary"
             disabled={!canSave || saving}
-            title={canSave ? '⌘+Enter to save' : 'Fix the errors above'}
+            title={canSave ? platformShortcut('⌘+Enter to save') : 'Fix the errors above'}
           >
             {saving ? 'Saving…' : isNew ? 'Create schedule' : 'Save changes'}
           </button>

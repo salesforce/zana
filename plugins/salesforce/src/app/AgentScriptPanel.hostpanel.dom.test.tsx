@@ -18,6 +18,7 @@ vi.mock('./panels/OperationsPanel.js', () => ({ OperationsPanel: () => <div data
 const { AgentScriptPanel } = await import('./AgentScriptPanel.js');
 const { StudioPanelTool } = await import('./studio/StudioPanelTool.js');
 const { resetStudioToolBridge } = await import('./studio/studio-tool-bridge.js');
+const { readStudioLayout } = await import('./studio/studio-layout.js');
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 const flush = () => act(async () => { for (let i = 0; i < 3; i++) await new Promise(r => setTimeout(r, 0)); });
@@ -44,6 +45,7 @@ const rpc = vi.fn(baseRpc);
 let realtime: ((p: unknown) => void) | undefined;
 const nodes: Array<() => void> = [];
 let sidePanel = true;
+let sidePanelOpen: boolean | undefined;
 const navigate: { toCompose: ReturnType<typeof vi.fn>; openPanelTool: ReturnType<typeof vi.fn>; openPanelAgent?: ReturnType<typeof vi.fn> } = { toCompose: vi.fn(), openPanelTool: vi.fn(() => true) };
 
 async function mount(arg: string | { subPath?: string; params?: unknown; threadId?: string } = {}, extra: { params?: unknown } = {}) {
@@ -65,7 +67,7 @@ const exec = (command: string, input: Record<string, unknown> = {}) => control.o
 const sent = (el: HTMLElement) => (el.querySelector('iframe')!.contentWindow!.postMessage as any).mock.calls.map((c: any[]) => c[0]);
 
 beforeEach(() => {
-  localStorage.clear(); rpc.mockClear(); observers.length = 0; width = 1000; realtime = undefined; sidePanel = true; resetStudioToolBridge();
+  localStorage.clear(); rpc.mockClear(); observers.length = 0; width = 1000; realtime = undefined; sidePanel = true; sidePanelOpen = undefined; resetStudioToolBridge();
   navigate.openPanelTool = vi.fn(() => true); delete navigate.openPanelAgent;
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({ width, height: 600, top: 0, left: 0, right: width, bottom: 600, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect);
   (globalThis as any).ResizeObserver = class { constructor(cb: any) { observers.push(w => cb([{ contentRect: { width: w } }])); } observe() {} disconnect() {} };
@@ -76,7 +78,7 @@ beforeEach(() => {
   (globalThis as any).__ZCC_PLUGIN_HOST__ = { callRpc: rpc, useZccNavigate: () => ({ toCompose: vi.fn() }), getSettings: async () => ({ values: { agentScriptDialect: 'agentforce' } }), setSettings: async () => undefined };
   (globalThis as any).__ZCC_PLUGIN_RUNTIME__ = {
     useZccNavigate: () => navigate,
-    useZccContext: () => ({ projectId: 'proj-1', threadId: null, sidePanel }),
+    useZccContext: () => ({ projectId: 'proj-1', threadId: null, sidePanel, ...(sidePanelOpen === undefined ? {} : { sidePanelOpen }) }),
     useSettings: () => ({ values: { agentScriptDialect: 'agentforce', defaultOrg: 'dev' }, isLoading: false }),
     useRealtime: (_c: string, h: (p: unknown) => void) => { realtime = h; }
   };
@@ -124,6 +126,20 @@ describe('AgentScriptPanel beside the host side panel', () => {
     await again.unmount();
   });
 
+  it('hides "Show side panel" while the host panel is open on another tab, and shows it once the panel hides', async () => {
+    sidePanelOpen = true;
+    const el = await mount('force-app/bots/QC.agent');
+    await ready(el);
+    // No Studio tool is shown (a thread tab is), yet the panel is open: no toggle.
+    expect(el.querySelector('[aria-label="Show side panel"]')).toBeNull();
+    await act(async () => { nodes.splice(0).forEach(fn => fn()); });
+    sidePanelOpen = false;
+    const closed = await mount('force-app/bots/QC.agent');
+    await ready(closed);
+    await act(async () => { fireEvent.click(closed.querySelector('[aria-label="Show side panel"]')!); });
+    expect(navigate.openPanelTool).toHaveBeenLastCalledWith({ actionId: 'studio-preview' });
+  });
+
   it('reopens the tool last shown in the host panel', async () => {
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);
@@ -147,6 +163,35 @@ describe('AgentScriptPanel beside the host side panel', () => {
     expect(control.options.state()).toMatchObject({ panels: { active: 'graph', open: true } });
     await graph.unmount();
     expect(control.options.state()).toMatchObject({ panels: { active: null, open: false } });
+  });
+
+  it('browses org agents in an editor tab, not the host panel', async () => {
+    const el = await mount('force-app/bots/QC.agent');
+    await ready(el);
+    await act(async () => { await exec('panel.open', { tool: 'agents' }); });
+    await flush();
+    expect(navigate.openPanelTool).not.toHaveBeenCalled();
+    const tab = [...el.querySelectorAll('.sf-etab')].find(row => row.textContent?.includes('Org agents'))!;
+    expect(tab.getAttribute('data-kind')).toBe('org');
+    expect(tab.querySelector('.sf-etab-kind')!.textContent).toBe('ORG');
+    expect(tab.querySelector('.sf-etab-ro')).toBeNull();
+    const view = el.querySelector<HTMLElement>('[data-testid="studio-org-agents-view"]')!;
+    expect(view.querySelector('[data-testid="stub-agents"]')).toBeTruthy();
+    expect(view.style.display).toBe('');
+    expect(el.querySelector('[data-testid="studio-target-view"]')).toBeNull();
+    // Publishing from the list lands on that agent's editor tab; the list stays mounted behind it.
+    const panel = view.querySelector('[data-testid="stub-agents"]');
+    await act(async () => { fireEvent.click(el.querySelector('[data-testid="stub-agents-publish"]')!); });
+    await flush();
+    expect(view.style.display).toBe('none');
+    expect(view.querySelector('[data-testid="stub-agents"]')).toBe(panel);
+    expect(navigate.openPanelTool).toHaveBeenLastCalledWith({ actionId: 'studio-release' });
+    // The tab is kept with the layout.
+    const layoutKey = Object.keys(localStorage).find(key => key.startsWith('salesforce:studio:') && !key.includes(':split:'))!;
+    expect(readStudioLayout(layoutKey).tabs).toEqual(expect.arrayContaining([{ id: 'org-agents', kind: 'org', label: 'Org agents', target: 'agents' }]));
+    // Closing the tab unmounts the list.
+    await act(async () => { fireEvent.click(el.querySelector('[aria-label="Close Org agents"]')!); });
+    expect(el.querySelector('[data-testid="studio-org-agents-view"]')).toBeNull();
   });
 
   it('shows host tools on panel.show and leaves closing them to the host panel', async () => {

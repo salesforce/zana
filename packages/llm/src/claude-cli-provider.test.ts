@@ -102,3 +102,42 @@ it('disables tools, ambient MCP servers, hooks and persistence for conversation 
   expect(spawnMock.mock.calls[0][1].slice(-2)).toEqual(['--', '--user-input']);
   child.emitStdout('answer'); child.emitClose(0); await expect(pending).resolves.toMatchObject({ ok: true, text: 'answer' });
 });
+
+describe('ClaudeCliProvider binary resolution', () => {
+  const run = async (provider: InstanceType<typeof ClaudeCliProvider>) => {
+    const child = makeFakeChild();
+    spawnMock.mockReturnValueOnce(child);
+    const p = provider.run({ system: 's', user: 'u' });
+    child.emitClose(0);
+    await p;
+  };
+
+  it('calls a getter on every run and spawns its current value', async () => {
+    let bin = '/one';
+    const getter = vi.fn(() => bin);
+    const provider = new ClaudeCliProvider(getter);
+    await run(provider);
+    bin = '/two';
+    await run(provider);
+    expect(getter).toHaveBeenCalledTimes(2);
+    expect(spawnMock.mock.calls[0][0]).toBe('/one');
+    expect(spawnMock.mock.calls[1][0]).toBe('/two');
+  });
+
+  it('still accepts a plain string', async () => {
+    await run(new ClaudeCliProvider('/plain'));
+    expect(spawnMock.mock.calls[0][0]).toBe('/plain');
+  });
+
+  it('returns ok:false instead of throwing when the getter throws', async () => {
+    const provider = new ClaudeCliProvider(() => { throw new Error('config unreadable'); });
+    const result = await provider.run({ system: 's', user: 'u' });
+    expect(result).toMatchObject({ ok: false, error: 'config unreadable' });
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it('falls back to claude for an empty getter value', async () => {
+    await run(new ClaudeCliProvider(() => '  '));
+    expect(spawnMock.mock.calls[0][0]).toBe('claude');
+  });
+});

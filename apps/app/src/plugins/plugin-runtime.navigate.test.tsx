@@ -95,6 +95,17 @@ describe('navigate.openPanelTool', () => {
     expect(renderRuntime('other', besidePage).context.sidePanel).toBeUndefined();
   });
 
+  it('tells the page owner whether its side panel is showing, when the layout says', () => {
+    expect(renderRuntime('notes', besidePage).context).not.toHaveProperty('sidePanelOpen');
+    cleanup();
+    const beside = (open: boolean) => (children: ReactNode) => <PluginPagePanelProvider page={page} open={open}>{children}</PluginPagePanelProvider>;
+    expect(renderRuntime('notes', beside(true)).context.sidePanelOpen).toBe(true);
+    cleanup();
+    expect(renderRuntime('notes', beside(false)).context.sidePanelOpen).toBe(false);
+    cleanup();
+    expect(renderRuntime('other', beside(true)).context).not.toHaveProperty('sidePanelOpen');
+  });
+
   it("asks the page's layout to open one of the plugin's own tools", () => {
     const navigate = renderRuntime('notes', besidePage).navigate;
     expect(navigate.openPanelTool?.({ actionId: 'outline' })).toBe(false);

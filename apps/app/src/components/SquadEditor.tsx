@@ -258,6 +258,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
   const [worktreeIsolation, setWorktreeIsolation] = useState<boolean | undefined>(team?.worktreeIsolation);
   const [routingEnforced, setRoutingEnforced] = useState<boolean | undefined>(team?.routingEnforced);
   const [transport, setTransport] = useState<SquadTransport>(team?.transport ?? 'CLI');
+  const [defaultPlanning, setDefaultPlanning] = useState<'' | 'infer' | 'provided'>(team?.defaultPlanning ?? '');
   const [slots, setSlots] = useState<SlotDraft[]>(() => {
     const base = (team?.slots ?? []).map((s) => ({
       personaId: s.personaId,
@@ -342,7 +343,8 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
       defaultProjectId: defaultProjectId || undefined,
       worktreeIsolation,
       routingEnforced,
-      transport
+      transport,
+      ...(defaultPlanning ? { defaultPlanning } : {})
     };
     if (keepsId && team) input.id = team.id;
 
@@ -631,6 +633,25 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
           <p className="settings-help">
             Use default follows the global setting; On tier-routes work when supported; Off falls
             back. Manual assignments are not checked.
+          </p>
+        </div>
+
+        <div className="scheduler-form-field">
+          <label htmlFor="team-default-planning">Default planning</label>
+          <PopoverPicklist
+            id="team-default-planning"
+            ariaLabel="Squad default planning"
+            searchable={false}
+            value={defaultPlanning}
+            onChange={(next) => setDefaultPlanning(next === 'infer' || next === 'provided' ? next : '')}
+            options={[
+              { value: '', label: 'Use the global default' },
+              { value: 'infer', label: 'Infer plan from goal' },
+              { value: 'provided', label: 'Plan provided in goal' }
+            ]}
+          />
+          <p className="settings-help">
+            Sets the planning mode when this Squad is picked in the composer or proposed by an agent.
           </p>
         </div>
 

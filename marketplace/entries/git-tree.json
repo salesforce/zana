@@ -1,0 +1,26 @@
+{
+  "id": "git-tree",
+  "displayName": "Git Tree",
+  "description": "Explore your project's Git history as an interactive commit graph, with commit details, diffs, two-commit comparisons, and branch, tag, and stash actions.",
+  "overview": "See the history of each project as a commit graph, the way you would in an IDE Git graph view. Open any commit to read its message, author, signature status, and changed files, and view the diff for each file.\n\n## What you get\n\n- Commit graph with local and remote branches, tags, stashes, HEAD, and uncommitted changes.\n- Commit details with changed files in a tree or list view, and inline or side-by-side diffs.\n- Compare any two commits, or compare uncommitted changes against a commit.\n- Persistent code review: mark files as reviewed for a commit or comparison.\n- Git actions from the context menu: create, checkout, rename, delete, merge, rebase, push, pull, and fetch branches; cherry-pick, revert, reset, or drop commits; manage tags and stashes; configure remotes.\n- Agent and CLI access: `zcc git-tree` from the terminal and a `git_tree_inspect` agent tool.\n\n## Requirements\n\nThe plugin reads local Git repositories and runs the `git` command installed on the host. Actions that change history or the working tree run on your machine, and you choose them from the menu. Push, pull, and fetch use the credentials your Git setup already has.\n",
+  "icon": {
+    "lucide": "GitBranch"
+  },
+  "tags": [
+    "git",
+    "version-control",
+    "history"
+  ],
+  "author": {
+    "name": "Ros Haitovich",
+    "github": "matrostik",
+    "url": "https://github.com/matrostik"
+  },
+  "source": {
+    "git": {
+      "url": "https://github.com/matrostik/zana-plugins",
+      "subdir": "plugins/git-tree",
+      "ref": "git-tree/v0.1.0"
+    }
+  }
+}

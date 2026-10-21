@@ -327,6 +327,8 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
     // at runtime, or macOS pops a real Keychain prompt on a headless E2E run.
     args: [...linuxCiElectronArgs(), '--use-mock-keychain', `--user-data-dir=${userDataDir}`, ...(!packagedExecutable ? [launchEntry] : [])],
     env: isolateTmuxEnvironment(home, env),
+    // Opt-in screen recording for demos: ZCC_E2E_RECORD_VIDEO=<absolute dir>.
+    ...(process.env.ZCC_E2E_RECORD_VIDEO ? { recordVideo: { dir: process.env.ZCC_E2E_RECORD_VIDEO, size: { width: 1440, height: 900 } } } : {}),
     timeout: 60_000
   });
   let stderrTail = '';

@@ -16,6 +16,14 @@ describe('ShortcutsHelp', () => {
     }
   });
 
+  it('lists the Inbox shortcuts', () => {
+    render(<ShortcutsHelp onClose={() => undefined} />);
+    expect(screen.getByRole('heading', { name: 'Inbox' })).toBeTruthy();
+    for (const label of ['Next / previous message', 'Reply to the open message', 'Send the reply', 'Leave the reply box and keep reading', 'Delete the open message']) {
+      expect(screen.getByText(label)).toBeTruthy();
+    }
+  });
+
   it('closes on Escape, the close button and the backdrop, but not inside the modal', () => {
     const onClose = vi.fn();
     const { container, unmount } = render(<ShortcutsHelp onClose={onClose} />);

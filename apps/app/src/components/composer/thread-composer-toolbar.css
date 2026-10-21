@@ -1,0 +1,25 @@
+/* Desktop defaults for the toolbar's disclosure markup. The composer owns them
+   so every host (main window, plugin view windows) renders the same toolbar;
+   mobile-shell.css reveals the disclosure on phones. */
+.thread-command-options,
+.thread-command-option,
+.thread-command-model,
+.thread-command-primary-actions,
+.thread-command-secondary-actions {
+  display: contents;
+}
+.thread-command-option-label,
+.thread-command-action-label,
+.thread-command-toolbar .thread-command-options-toggle {
+  display: none;
+}
+/* The disclosure uses one set of controls; retain their desktop order. */
+.thread-command-toolbar .thread-command-model > * {
+  order: 1;
+}
+.thread-command-option--reasoning > * {
+  order: 2;
+}
+.thread-command-option--send-mode > * {
+  order: 3;
+}

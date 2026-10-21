@@ -59,3 +59,34 @@ export async function stubOpenDialog(
     }) as typeof dialog.showOpenDialog;
   }, paths);
 }
+
+/**
+ * Like {@link stubOpenDialog}, but also records the options of every call so a spec can
+ * assert the chooser's default folder and properties. Reads them with {@link openDialogCalls}.
+ */
+export async function stubRecordedOpenDialog(
+  electron: ElectronApplication,
+  paths: string[][]
+): Promise<void> {
+  await electron.evaluate(({ dialog }, queued) => {
+    const root = globalThis as typeof globalThis & {
+      __zccE2eRecordedOpenDialogs?: { queued: string[][]; calls: Array<Record<string, unknown>> };
+    };
+    root.__zccE2eRecordedOpenDialogs = { queued: queued.map((paths) => [...paths]), calls: [] };
+    dialog.showOpenDialog = (async (...args: unknown[]) => {
+      const options = (args.length === 2 ? args[1] : args[0]) as Record<string, unknown>;
+      root.__zccE2eRecordedOpenDialogs!.calls.push(JSON.parse(JSON.stringify(options)) as Record<string, unknown>);
+      const filePaths = root.__zccE2eRecordedOpenDialogs!.queued.shift() ?? [];
+      return { canceled: filePaths.length === 0, filePaths };
+    }) as typeof dialog.showOpenDialog;
+  }, paths);
+}
+
+export async function openDialogCalls(electron: ElectronApplication): Promise<Array<Record<string, unknown>>> {
+  return electron.evaluate(() => {
+    const root = globalThis as typeof globalThis & {
+      __zccE2eRecordedOpenDialogs?: { calls: Array<Record<string, unknown>> };
+    };
+    return root.__zccE2eRecordedOpenDialogs?.calls ?? [];
+  });
+}

@@ -1,26 +1,4 @@
 /* Mobile is a host layout, not a preference. Desktop geometry stays independent. */
-.thread-command-options,
-.thread-command-option,
-.thread-command-model,
-.thread-command-primary-actions,
-.thread-command-secondary-actions {
-  display: contents;
-}
-.thread-command-option-label,
-.thread-command-action-label,
-.thread-command-toolbar .thread-command-options-toggle {
-  display: none;
-}
-/* The disclosure uses one set of controls; retain their desktop order. */
-.thread-command-toolbar .thread-command-model > * {
-  order: 1;
-}
-.thread-command-option--reasoning > * {
-  order: 2;
-}
-.thread-command-option--send-mode > * {
-  order: 3;
-}
 .app-shell[data-mobile='true'] {
   position: fixed;
   top: var(--mobile-viewport-top, 0px);

@@ -65,6 +65,58 @@ Tell the user where it landed ("saved to your library, tagged `idea`").
 
 ---
 
+## When the user wants it built
+
+Use this when the user wants a design built by a Squad after a design session.
+How they phrase it picks the path. Review first is the default: you prepare the
+launch and the user presses Launch, so nothing starts without that click.
+
+| User says (examples) | Path | Tools |
+|---|---|---|
+| "build it with X", "prepare a launch for X", "propose X for this plan", "set up X to build this" | Review first | `squad_plan_check` → `list_teams` → `squad_propose`; tell the user to open the "Squad launch ready" Inbox card |
+| "run this with X now", "start X on this now", "launch X immediately, no review", "skip the Inbox and run it with X" | Start now | `execution.start` (you own the run; a `[Squad report]` tells you when it ends or needs an answer) |
+| Anything else, or unclear | Review first | Same as row 1 |
+
+Start now only when the user's message explicitly asks to start immediately. Do not
+infer it from urgency or from "go ahead". If unsure, propose and tell the user they
+can say "run it now with X" next time to skip the Inbox.
+
+Say which path you took, in one line: "Prepared a Squad launch for your review in
+the Inbox" or "Started X now; I own the run". The user can then catch a misroute.
+
+The steps below are the review-first path.
+
+| Operation | CLI Agent MCP tool | Modern/OpenCode tool |
+|---|---|---|
+| Check a plan | `mcp__zcc-inbox__squad_plan_check` | `zcc_squad_plan_check` |
+| List Squads | `mcp__zcc-inbox__list_teams` | `zcc_list_teams` |
+| Propose the launch | `mcp__zcc-inbox__squad_propose` | `zcc_squad_propose` |
+
+1. Use the design and plan files you already wrote or read in this conversation,
+   wherever they are: this project, your home folder (a doc vault, `~/.zcc/library`)
+   or the clone root. Do not copy them.
+2. Check the plan with `squad_plan_check` (`{ path }` of the plan file). Fix it
+   until it passes.
+3. Call `list_teams` and pick the Squad the user names. When its `canInferPlan`
+   is false, propose with `planning: 'provided'`.
+4. Call `squad_propose` with the `teamId`, a short `goal`, and the exact absolute
+   paths of those files as `sources`. If a path is refused (`SOURCE_NOT_ALLOWED`),
+   tell the user why. Never move a file out of a protected location (`~/.ssh`,
+   `~/.aws`, Zana's own state) to get around it.
+5. Tell the user to open the "Squad launch ready" Inbox card.
+
+On the review-first path, never use `execution.start`, `launch_team` or
+`zana_start_team`: they start a Squad without the user's Launch. The start-now
+path is `execution.start`, as the `zcc-inbox` skill describes, and only when the
+user asked for it. Members of a running Squad cannot propose.
+
+When a `[Squad report]` about a Squad you proposed arrives, summarise it for the
+user. Do not act on that Squad: you cannot answer its questions, stop it or steer
+it. A Squad you started yourself (start now) is yours to answer, as `zcc-inbox`
+describes.
+
+---
+
 ## Don't
 
 - Don't write `index.json` or a parallel library manifest — library-curator owns that.

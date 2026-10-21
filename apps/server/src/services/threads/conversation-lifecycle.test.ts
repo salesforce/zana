@@ -1,9 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getThreadProvider, registerThreadProvider } from './thread-provider-catalog.js';
+import {
+  getThreadProvider,
+  registerThreadProvider,
+  THREAD_PROVIDER_STARTUP_WAIT_MS,
+  trackThreadProviderStartup
+} from './thread-provider-catalog.js';
 import { PluginHostArtifactRegistry } from '../../plugins/plugin-host-artifact-registry.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
-import { archiveConversation, cancelConversationPlan, flushHeldConversationSteerSends, forkConversation, resumeConversation, sendConversationTurn, sendHeldConversationMessage, stopConversation, unarchiveConversation } from './conversation-lifecycle.js';
+import { archiveConversation, cancelConversationPlan, flushHeldConversationSteerSends, forkConversation, RESTART_SESSION_RESUME_LIMIT, resumeConversation, resumeOpenConversationSessionsAfterHostRestart, sendConversationTurn, sendHeldConversationMessage, stopConversation, unarchiveConversation } from './conversation-lifecycle.js';
 import { conversationTimeline } from './conversation-timeline.js';
 import { publishConversationLifecycleOutcome } from './conversation-lifecycle-outcome.js';
 import {
@@ -79,6 +84,9 @@ vi.mock('@zana-ai/zcc-db', () => {
   }),
   getLatestSessionForHost: vi.fn(() => null),
   listLiveConversationThreadsForHost: vi.fn(() => []),
+  listOpenSessionConversationThreadsForHost: vi.fn(() => []),
+  clearConversationSessionOpen: vi.fn(),
+  clearConversationSessionsOpenForHost: vi.fn(),
   setConversationProviderThreadId: vi.fn(),
   archiveConversationThread: vi.fn(),
   unarchiveConversationThread: vi.fn((_db, id) => ({ ...thread, id, archivedAt: null })),
@@ -193,7 +201,10 @@ import {
   clearDispatchAdmissionGeneration,
   consumeDispatchAdmissionOverride,
   getDeferredThreadMessage,
-  listDueDeferredThreadMessages
+  listDueDeferredThreadMessages,
+  listOpenSessionConversationThreadsForHost,
+  clearConversationSessionOpen,
+  clearConversationSessionsOpenForHost
 } from '@zana-ai/zcc-db';
 
 function lifecycleCall(type: 'run.started' | 'run.failed' | 'stop.requested' | 'stop.settled' | 'run.succeeded') {
@@ -209,7 +220,7 @@ function pendingInteractionsStub(overrides?: {
   } as unknown as ProductHttpContext['pendingInteractions'];
 }
 
-function ctx(callHostOnlineRpc: (input: unknown) => Promise<unknown>): ProductHttpContext {
+function ctx(callHostOnlineRpc: (input: unknown) => Promise<unknown>, config: Record<string, unknown> = {}): ProductHttpContext {
   const pluginHostArtifacts = new PluginHostArtifactRegistry();
   pluginHostArtifacts.set('test', {
     path: '/tmp/host.js',
@@ -222,7 +233,7 @@ function ctx(callHostOnlineRpc: (input: unknown) => Promise<unknown>): ProductHt
     dataDir: '/tmp/zcc-data',
     hub: { emit: vi.fn() },
     hostHub: { callHostOnlineRpc, connectedHostIds: () => ['host-1'] },
-    config: { getConfig: () => ({}) },
+    config: { getConfig: () => config },
     modelCatalogs: { read: vi.fn(async () => ({
       models: ['claude-sonnet-5', 'chosen-model'].map(id => ({
         id, model: id, displayName: id,
@@ -273,6 +284,7 @@ beforeEach(() => {
   vi.mocked(countActiveConversationTurns).mockReturnValue(0);
   vi.mocked(pauseDeferredThreadMessagesForThread).mockClear();
   vi.mocked(deleteDeferredThreadMessagesForThread).mockClear();
+  vi.mocked(clearConversationSessionOpen).mockClear();
 });
 
 afterEach(() => {
@@ -1595,6 +1607,7 @@ describe('conversation lifecycle', () => {
       threadIds: [thread.id],
       reason: 'thread-stopped'
     });
+    expect(clearConversationSessionOpen).toHaveBeenCalledWith(context.db, thread.id);
   });
 
   it('interrupts pending interactions when archiving a thread', async () => {
@@ -1606,6 +1619,7 @@ describe('conversation lifecycle', () => {
       reason: 'thread-deleted'
     });
     expect(deleteDeferredThreadMessagesForThread).toHaveBeenCalledWith(context.db, thread.id);
+    expect(clearConversationSessionOpen).toHaveBeenCalledWith(context.db, thread.id);
     expect(context.plugins?.emitThreadEvent).toHaveBeenNthCalledWith(1, expect.objectContaining({
       name: 'thread.archived',
       threadId: thread.id,
@@ -1755,6 +1769,8 @@ describe('conversation lifecycle', () => {
       requestedMode: 'agent',
       effectiveMode: 'agent'
     });
+    // Only the confirmed cancel released the provider session.
+    expect(clearConversationSessionOpen).toHaveBeenCalledTimes(1);
   });
 
   it('records slash plan mode on send and ACP plan from execution.acpMode', async () => {
@@ -2293,5 +2309,95 @@ describe('reviewed plan send admission', () => {
       expect(rpc).not.toHaveBeenCalled();
       if (changedAt === 3) expect(applyConversationThreadLifecycleEvent).toHaveBeenCalledWith(...lifecycleCall('run.failed'));
     } finally { getPlan.mockReturnValue(null); getRevision.mockReturnValue(null); }
+  });
+});
+
+describe('resuming open sessions after a host restart', () => {
+  const row = (id: string, patch: Partial<typeof thread> = {}) => ({ ...thread, id, ...patch });
+  const idle = row('44444444-4444-4444-8444-444444444441');
+  const busy = row('44444444-4444-4444-8444-444444444442', { status: 'active' as never });
+  const archived = row('44444444-4444-4444-8444-444444444443', { archivedAt: 9 as never });
+  const sessionless = row('44444444-4444-4444-8444-444444444444', { providerThreadId: null as never });
+  const failing = row('44444444-4444-4444-8444-444444444445', { status: 'error' as never });
+  const gone = row('44444444-4444-4444-8444-444444444446');
+
+  beforeEach(() => {
+    const rows = new Map([idle, busy, archived, sessionless, failing].map(entry => [entry.id, entry]));
+    vi.mocked(getConversationThread).mockImplementation((_db, id) => rows.get(id) ?? null);
+    vi.mocked(listOpenSessionConversationThreadsForHost).mockReturnValue([idle, busy, archived, sessionless, failing, gone]);
+    vi.mocked(listConversationThreadEvents).mockReturnValue([]);
+  });
+
+  afterEach(() => {
+    vi.mocked(listOpenSessionConversationThreadsForHost).mockReset().mockReturnValue([]);
+  });
+
+  it('forgets open sessions on the host unless idle sessions are set to never be released', async () => {
+    const rpc = vi.fn(async () => ({}));
+    vi.mocked(clearConversationSessionsOpenForHost).mockClear();
+    for (const config of [{}, { threadSessionReleaseMinutes: 30 }]) {
+      const context = ctx(rpc, config);
+      await expect(resumeOpenConversationSessionsAfterHostRestart(context, 'host-1')).resolves.toBe(0);
+      expect(clearConversationSessionsOpenForHost).toHaveBeenLastCalledWith(context.db, 'host-1');
+    }
+    expect(clearConversationSessionsOpenForHost).toHaveBeenCalledTimes(2);
+    expect(listOpenSessionConversationThreadsForHost).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it('waits for a provider that is still registering after launch before resuming', async () => {
+    vi.mocked(listOpenSessionConversationThreadsForHost).mockReturnValue([idle]);
+    const declaration = getThreadProvider(idle.providerId)!;
+    for (const handle of providerHandles.splice(0)) handle.unregister();
+    trackThreadProviderStartup(new Promise(() => {}));
+    try {
+      const rpc = vi.fn(async () => ({ threadId: idle.id, resumed: true }));
+      vi.useFakeTimers();
+      const pass = resumeOpenConversationSessionsAfterHostRestart(ctx(rpc, { threadSessionReleaseMinutes: 0 }), 'host-1');
+      await vi.advanceTimersByTimeAsync(THREAD_PROVIDER_STARTUP_WAIT_MS - 1);
+      expect(rpc).not.toHaveBeenCalled();
+      vi.useRealTimers();
+      providerHandles.push(registerThreadProvider('test', declaration));
+      await expect(pass).resolves.toBe(1);
+      expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ command: expect.objectContaining({ type: 'thread.resume', threadId: idle.id }) }));
+    } finally {
+      vi.useRealTimers();
+      trackThreadProviderStartup(Promise.resolve());
+    }
+  });
+
+  it('logs and resumes nothing when the open sessions cannot be read', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.mocked(listOpenSessionConversationThreadsForHost).mockImplementation(() => { throw new Error('database locked'); });
+    const rpc = vi.fn(async () => ({}));
+    await expect(resumeOpenConversationSessionsAfterHostRestart(ctx(rpc, { threadSessionReleaseMinutes: 0 }), 'host-1')).resolves.toBe(0);
+    expect(rpc).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('host host-1'), 'database locked');
+    warn.mockRestore();
+  });
+
+  it('resumes each idle or failed open session and skips busy, archived and missing threads', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const rpc = vi.fn(async (input: unknown) => {
+      const command = (input as { command: { threadId: string } }).command;
+      if (command.threadId === failing.id) throw new Error('provider exited');
+      return { threadId: command.threadId, resumed: true };
+    });
+    const context = ctx(rpc, { threadSessionReleaseMinutes: 0 });
+    await expect(resumeOpenConversationSessionsAfterHostRestart(context, 'host-1')).resolves.toBe(1);
+    expect(listOpenSessionConversationThreadsForHost).toHaveBeenCalledWith(context.db, 'host-1', RESTART_SESSION_RESUME_LIMIT);
+    expect(rpc.mock.calls.map(([input]) => (input as { command: { type: string; threadId: string } }).command))
+      .toEqual([
+        expect.objectContaining({ type: 'thread.resume', threadId: idle.id, providerThreadId: 'prov-1' }),
+        expect.objectContaining({ type: 'thread.resume', threadId: failing.id })
+      ]);
+    // A thread without a provider session can never resume, so it is forgotten;
+    // a provider failure keeps its mark for the next restart.
+    expect(clearConversationSessionOpen).toHaveBeenCalledTimes(1);
+    expect(clearConversationSessionOpen).toHaveBeenCalledWith(context.db, sessionless.id);
+    // Only the provider failure is worth a log line, naming the host and thread.
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`host host-1 .*thread ${failing.id}`)), 'provider exited');
+    warn.mockRestore();
   });
 });

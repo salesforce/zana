@@ -1,3 +1,4 @@
+import { matchMcpRoute } from '../mcp/mcp-server.js';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createModernTeamLaunchSource,
@@ -39,12 +40,12 @@ const tool = (src: ReturnType<typeof source>, name: string) => {
 describe('modernTeamLaunchRoute', () => {
   it('builds the credentialed loopback route with encoded segments', () => {
     expect(modernTeamLaunchRoute('http://127.0.0.1:5123', 'proj/1', 'thread 2', 'ab+cd')).toBe(
-      'http://127.0.0.1:5123/mcp/proj%2F1/thread%202/ab%2Bcd'
+      'http://127.0.0.1:5123/mcp/proj%2F1/thread%202/ab%2Bcd?route=thread'
     );
   });
 
   it('strips a trailing slash from the base', () => {
-    expect(modernTeamLaunchRoute('http://127.0.0.1:5123/', 'p', 't', 'c')).toBe('http://127.0.0.1:5123/mcp/p/t/c');
+    expect(modernTeamLaunchRoute('http://127.0.0.1:5123/', 'p', 't', 'c')).toBe('http://127.0.0.1:5123/mcp/p/t/c?route=thread');
   });
 });
 
@@ -71,7 +72,7 @@ describe('createModernTeamLaunchSource', () => {
     expect(calls[0].name).toBe('launch_team');
     expect(calls[0].input).toEqual({ teamId: 't', launchRequestId: 'r', slots: [] });
     // credential derived from ctx.threadId, identity from ctx (never input)
-    expect(calls[0].url).toBe('http://127.0.0.1:9/mcp/project-1/thread-1/cred-for-thread-1');
+    expect(calls[0].url).toBe('http://127.0.0.1:9/mcp/project-1/thread-1/cred-for-thread-1?route=thread');
   });
 
   it('preserves admissionDigest on the Modern launch_team surface', async () => {
@@ -101,12 +102,44 @@ describe('createModernTeamLaunchSource', () => {
     expect(calls[0].input).toEqual({ requestPath: '/tmp/req.json' });
   });
 
+  it('execution_respond leaves expectedStateVersion optional and forwards a call without it', async () => {
+    const calls: CallMcpToolArgs[] = [];
+    const src = source(
+      { mcpBaseUrl: 'http://127.0.0.1:9', teamLaunchEnabled: false, teamJobLaunchEnabled: true },
+      async (args) => { calls.push(args); return { ok: true, text: '{"ok":true}' }; }
+    );
+    const respond = tool(src, 'execution_respond');
+    const schema = respond.inputSchema as { properties: Record<string, unknown>; required: string[] };
+    expect(schema.properties).toHaveProperty('expectedStateVersion');
+    expect(schema.required).toEqual(['executionId', 'message']);
+    expect(schema.properties).toHaveProperty('blockerId');
+    const input = { executionId: 'execution-1', blockerId: 'b1', message: 'Atlas' };
+    await expect(respond.execute(input, ctx())).resolves.toBe('{"ok":true}');
+    expect(calls[0]).toMatchObject({ name: 'execution.respond', input });
+    expect(calls[0].input).not.toHaveProperty('expectedStateVersion');
+  });
+
   it('does not call the route when job launch is disabled', async () => {
     const spy = vi.fn(async () => ({ ok: true, text: '{}' }));
     const src = source({ mcpBaseUrl: 'http://127.0.0.1:9', teamLaunchEnabled: true }, spy);
     const result = await tool(src, 'execution_start').execute({ requestPath: '/tmp/req.json' }, ctx());
     expect(result).toEqual({ ok: false, message: 'execution_start unavailable: team job launch is disabled.' });
     expect(spy).not.toHaveBeenCalled();
+  });
+
+  it.each(['squad_propose', 'squad_plan_check', 'list_teams'])('%s is gated on job launch and forwards when enabled', async (name) => {
+    const calls: CallMcpToolArgs[] = [];
+    const spy = async (args: CallMcpToolArgs) => { calls.push(args); return { ok: true, text: '{"ok":true}' }; };
+    const off = source({ mcpBaseUrl: 'http://127.0.0.1:9', teamLaunchEnabled: true }, spy);
+    expect(await tool(off, name).execute({}, ctx())).toEqual({
+      ok: false, message: `${name} unavailable: team job launch is disabled.`
+    });
+    expect(calls).toHaveLength(0);
+    const on = source({ mcpBaseUrl: 'http://127.0.0.1:9', teamLaunchEnabled: false, teamJobLaunchEnabled: true }, spy);
+    const input = { teamId: 't', goal: 'g' };
+    expect(await tool(on, name).execute(input, ctx())).toBe('{"ok":true}');
+    expect(calls[0].name).toBe(name);
+    expect(calls[0].input).toEqual(input);
   });
 
   it('surfaces a route failure as a failed tool result', async () => {
@@ -224,11 +257,14 @@ describe('Modern member execution catalog', () => {
     await expect(tool(src, 'execution_work_claim').execute(input, ctx())).resolves.toBe('{}');
     expect(resolveMember).toHaveBeenCalledWith('thread-1', 'project-1');
     expect(callMcpTool).toHaveBeenCalledWith({
-      url: 'http://127.0.0.1:9/mcp/project-1/thread-1/credential/member/binding-1/1',
+      url: 'http://127.0.0.1:9/mcp/project-1/thread-1/credential/member/binding-1/1?route=thread',
       name: 'execution.work.claim', input, signal: expect.any(AbortSignal)
     });
     expect(modernTeamMemberRoute('http://127.0.0.1:9', 'p', 't', 'c', { bindingId: 'bind/1', generation: 2 }))
-      .toBe('http://127.0.0.1:9/mcp/p/t/c/member/bind%2F1/2');
+      .toBe('http://127.0.0.1:9/mcp/p/t/c/member/bind%2F1/2?route=thread');
+    expect(matchMcpRoute('/mcp/p/t/c/member/bind%2F1/2?route=thread')).toEqual({
+      projectId: 'p', sessionId: 't', sessionCredential: 'c', memberFence: { bindingId: 'bind/1', generation: 2 }, routeKind: 'thread'
+    });
   });
 
   it.each(['execution_start', 'execution_resume_binding', 'launch_team', 'execution_plan_register'])('rejects direct member invocation of %s', async (name) => {
@@ -290,7 +326,11 @@ describe('Modern owner execution catalog', () => {
     expect(session.tools.map((row) => row.name)).toEqual([
       'execution_start',
       'execution_snapshot',
-      'execution_resume_binding'
+      'execution_respond',
+      'execution_resume_binding',
+      'squad_propose',
+      'squad_plan_check',
+      'list_teams'
     ]);
     expect(session.tools[0]?.inputSchema).toEqual(getExecutionToolDescriptors().find((descriptor) => descriptor.name === 'execution.start')!.inputSchema);
   });
@@ -308,7 +348,7 @@ describe('Modern forwarding transport', () => {
       const src = createModernTeamLaunchSource({ getConfig: () => ({ mcpBaseUrl: 'http://127.0.0.1:9', teamLaunchEnabled: true }), credentialFor: () => 'credential' });
       const result = await tool(src, 'get_team_launch').execute({ launchRequestId: 'r' }, ctx());
       expect(result).toEqual(expected);
-      expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:9/mcp/project-1/thread-1/credential', expect.objectContaining({
+      expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:9/mcp/project-1/thread-1/credential?route=thread', expect.objectContaining({
         method: 'POST', signal: expect.any(AbortSignal),
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_team_launch', arguments: { launchRequestId: 'r' } } })
       }));

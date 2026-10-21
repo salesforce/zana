@@ -579,6 +579,19 @@ function normalizePluginViewWindowBounds(
   return Object.fromEntries(entries.slice(0, PLUGIN_VIEW_BOUNDS_LIMIT));
 }
 
+function normalizeThreadViewWindowBounds(
+  input: unknown
+): AppConfig['threadViewWindowBounds'] | undefined {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
+  const { bounds, maximized } = input as Record<string, unknown>;
+  const normalizedBounds = normalizeBounds(bounds as AppConfig['windowBounds'], 720, 480);
+  if (!normalizedBounds && maximized !== true) return undefined;
+  return {
+    ...(normalizedBounds ? { bounds: normalizedBounds } : {}),
+    ...(maximized === true ? { maximized: true } : {})
+  };
+}
+
 /** Clamp bounds for a non-zero {@link AppConfig.executionPlanStartupGraceMs} (0 disables). */
 const MIN_STARTUP_GRACE_MS = 30_000;
 const MAX_STARTUP_GRACE_MS = 3_600_000;
@@ -624,8 +637,10 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (isTerminalThemeId(input.terminalTheme)) normalized.terminalTheme = input.terminalTheme;
   if (typeof input.shell === 'string' && input.shell.trim()) normalized.shell = input.shell.trim();
-  if (typeof input.claudeBinary === 'string' && input.claudeBinary.trim()) {
-    normalized.claudeBinary = input.claudeBinary.trim();
+  if (typeof input.claudeBinary === 'string') {
+    // Blank clears the override like the other harnesses; the config store
+    // restores the 'claude' default on read.
+    normalized.claudeBinary = input.claudeBinary.trim() || undefined;
   }
   if (typeof input.claudeAppendSystemPrompt === 'string') {
     const prompt = input.claudeAppendSystemPrompt.trim();
@@ -1311,6 +1326,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (Object.prototype.hasOwnProperty.call(input, 'pluginViewWindowBounds')) {
     normalized.pluginViewWindowBounds = normalizePluginViewWindowBounds(input.pluginViewWindowBounds);
+  }
+  if (Object.prototype.hasOwnProperty.call(input, 'threadViewWindowBounds')) {
+    normalized.threadViewWindowBounds = normalizeThreadViewWindowBounds(input.threadViewWindowBounds);
   }
 
   // Autonomous team run backstops: support 0-means-disabled for both timeout and

@@ -5,7 +5,7 @@ import { chromium, type Page, type Route } from '@playwright/test';
 import { test, expect } from './fixtures/app.js';
 import { startMobileGateway } from '../apps/server/src/mobile/gateway.js';
 
-test.use({ initialConfig: { sponsorPromptDismissed: true, agentsBoardView: 'flow', classicSessionViewEnabled: false, inboxGrouping: 'time' }, launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
+test.use({ initialConfig: { sponsorPromptDismissed: true, agentsBoardView: 'flow', classicSessionViewEnabled: false, inboxGrouping: 'time', voiceInputEnabled: true }, launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
 
 test.beforeEach(async ({ home }) => {
   const project = join(home, 'responsive-project');
@@ -208,20 +208,13 @@ test('Main views and populated Inbox fit phone and tablet screens', async ({ app
       await expect(drawer).toBeHidden();
       await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
       await expect(page.locator('.agent-terminal-modal, .modal-backdrop')).toHaveCount(0);
-      const cliTitle = page.locator('.mobile-thread-title-slot h1');
-      await expect(cliTitle).toHaveText('Mobile terminal');
-      const cliHeader = page.getByTestId('agent-session-view').locator('.thread-detail-header');
-      await expect(cliHeader.locator('h1')).toHaveCount(0);
-      await expect(cliHeader).toBeHidden();
-      const cliControls = page.locator('.mobile-thread-controls-slot');
-      await expect(cliControls.getByRole('img', { name: /Mobile interface verification/ })).toBeVisible();
-      await expect(cliControls.getByRole('button', { name: 'Show right panel' })).toBeVisible();
-      expect((await page.locator('.titlebar').boundingBox())!.height).toBe(48);
-      const terminal = page.locator('.agent-session-terminal .xterm');
-      await expect(terminal).toBeVisible();
-      expect((await terminal.boundingBox())!.height).toBeGreaterThan(700);
-      expect((await terminal.boundingBox())!.y).toBeLessThanOrEqual(56);
-      await page.screenshot({ path: testInfo.outputPath(`${width}-cli-agent-header.png`) });
+      // CLI Agents have no mobile surface; the session route shows the desktop-only notice.
+      const cliNotice = page.getByTestId('cli-agent-mobile-unsupported');
+      await expect(cliNotice).toBeVisible();
+      await expect(cliNotice.getByRole('heading')).toHaveText('CLI Agents aren’t supported on mobile yet');
+      await expect(page.getByTestId('agent-session-view')).toHaveCount(0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      await page.screenshot({ path: testInfo.outputPath(`${width}-cli-agent-notice.png`) });
       await page.getByRole('link', { name: 'Back to agents', exact: true }).click();
       await page.getByRole('button', { name: 'Expand sidebar', exact: true }).click();
       await search.fill('Responsive agent 1 delay');
@@ -514,7 +507,7 @@ test('Main views and populated Inbox fit phone and tablet screens', async ({ app
           await expect(page.locator('.inbox-doc-preview')).toHaveCount(0);
           await page.getByRole('button', { name: 'results.md', exact: true }).click();
           await expect(page.locator('.inbox-doc-preview')).toContainText('The second document is readable.');
-          await expect(page.getByRole('button', { name: /in Finder|in Cursor|in VS Code/ })).toHaveCount(0);
+          await expect(page.getByRole('button', { name: /in (Finder|Explorer|file manager)|in Cursor|in VS Code/ })).toHaveCount(0);
           await page.screenshot({ path: testInfo.outputPath(`${width}-inbox-documents.png`) });
           expect.soft(await capture(page), `${width}px inbox documents`).toEqual([]);
           await page.getByRole('button', { name: 'results.md', exact: true }).click();
@@ -634,13 +627,11 @@ test('Main views and populated Inbox fit phone and tablet screens', async ({ app
           await expect(terminalRow).toBeVisible();
           await terminalRow.click();
           await expect(list).toBeHidden();
-          await expect(page.getByTestId('agent-session-view')).toBeVisible();
-          await expect(page.locator('#cc-terminal-anchor-agent-monitor .xterm')).toBeVisible();
+          // The list opens CLI rows too, but on mobile they show the desktop-only notice.
+          await expect(page.getByTestId('cli-agent-mobile-unsupported')).toBeVisible();
+          await expect(page.getByTestId('agent-session-view')).toHaveCount(0);
           await expect(page.locator('.titlebar').getByRole('button', { name: 'Back to agents', exact: true })).toBeVisible();
-          await expect(page.locator('.agent-monitor-main .thread-detail-header')).toBeHidden();
-          await expect(page.locator('.agents-board-toolbar')).toBeHidden();
-          expect((await page.locator('#cc-terminal-anchor-agent-monitor .xterm').boundingBox())!.y).toBeLessThanOrEqual(56);
-          await page.screenshot({ path: testInfo.outputPath(`${width}-agents-list-terminal.png`) });
+          await page.screenshot({ path: testInfo.outputPath(`${width}-agents-list-cli-notice.png`) });
           await page.getByRole('button', { name: 'Back to agents', exact: true }).click();
           await expect(page.locator('.agent-monitor-main')).toHaveCount(0);
           await expect(list).toBeVisible();
@@ -685,9 +676,11 @@ test('Main views and populated Inbox fit phone and tablet screens', async ({ app
             await agentCard.click();
             await expect(page).toHaveURL(kind === 'thread' ? /\/threads\/[^/]+$/ : /\/sessions\/[^/]+$/);
             await expect(page.locator('.agent-terminal-modal, .modal-backdrop')).toHaveCount(0);
-            const detail = page.getByTestId(kind === 'thread' ? 'thread-detail' : 'agent-session-view');
+            // CLI Agents have no mobile surface, so the session page shows the desktop-only notice.
+            const detail = page.getByTestId(kind === 'thread' ? 'thread-detail' : 'cli-agent-mobile-unsupported');
             await expect(detail).toBeVisible();
-            expect((await detail.boundingBox())!.width).toBeGreaterThanOrEqual(width - 32);
+            if (kind === 'thread') expect((await detail.boundingBox())!.width).toBeGreaterThanOrEqual(width - 32);
+            else await expect(page.getByTestId('agent-session-view')).toHaveCount(0);
             await expect(page.getByRole('button', { name: 'Full screen', exact: true })).toHaveCount(0);
             await page.screenshot({ path: testInfo.outputPath(`${width}-agents-board-${kind}-page.png`) });
             await page.goBack();

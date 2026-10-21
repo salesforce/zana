@@ -18,6 +18,8 @@ export interface ThreadTitleNamerDeps {
   ) => Promise<LlmRunResult>;
   applyTitle: (threadId: string, title: string) => void;
   stillLive?: (threadId: string) => boolean;
+  /** Persisted gate: false once the thread has a final title, which survives a restart. */
+  canAutoTitle?: (threadId: string) => boolean;
   onError?: (err: unknown) => void;
 }
 
@@ -34,6 +36,7 @@ export function createThreadTitleNamer(deps: ThreadTitleNamerDeps): ThreadTitleN
       lockedIds.add(threadId);
     },
     request(threadId, prompt) {
+      if (deps.canAutoTitle && !deps.canAutoTitle(threadId)) return;
       void runTabNamerOnce({
         id: threadId,
         prompt,

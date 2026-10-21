@@ -14,7 +14,8 @@ import type {
   DesktopBrowserTabRef,
   DesktopBrowserViewBounds,
   PluginApprovalSheetRequest,
-  PluginViewTarget
+  PluginViewTarget,
+  ThreadViewTarget
 } from '@zana-ai/zcc-desktop-contract';
 import {
   parseDesktopBrowserAutomationOpenRequest,
@@ -773,7 +774,7 @@ const api: CcApi = {
     pick: (projectId) => ipcRenderer.invoke(IPC.executionSources.pick, projectId)
   },
   openers: {
-    openIn: (target, path) => ipcRenderer.invoke(IPC.openers.openIn, target, path)
+    openIn: (target, path, options) => ipcRenderer.invoke(IPC.openers.openIn, target, path, options)
   },
   clipboard: {
     writeText: (text) => ipcRenderer.invoke(IPC.clipboard.writeText, text)
@@ -923,6 +924,7 @@ const api: CcApi = {
     launch: (teamId, projectId) => ipcRenderer.invoke(IPC.teams.launch, teamId, projectId),
     cancel: (launchRequestId) => ipcRenderer.invoke(IPC.teams.cancel, launchRequestId),
     startJob: (input: TeamJobLaunchInput) => ipcRenderer.invoke(IPC.teams.startJob, input),
+    reviewProposal: (proposalId: string) => ipcRenderer.invoke(IPC.teams.reviewProposal, proposalId),
     launchAutonomous: (teamId, projectId, goal) =>
       ipcRenderer.invoke(IPC.teams.launchAutonomous, teamId, projectId, goal),
     stopAutonomous: (runId) => ipcRenderer.invoke(IPC.teams.stopAutonomous, runId),
@@ -1333,6 +1335,16 @@ const api: CcApi = {
       const handler = (_e: unknown, views: PluginViewTarget[]) => cb(views);
       ipcRenderer.on(IPC.windows.onPluginViewsChanged, handler);
       return () => ipcRenderer.off(IPC.windows.onPluginViewsChanged, handler);
+    },
+    openThreadView: (target: ThreadViewTarget) =>
+      ipcRenderer.invoke(IPC.windows.openThreadView, target),
+    closeThreadView: (target: ThreadViewTarget) =>
+      ipcRenderer.invoke(IPC.windows.closeThreadView, target),
+    listThreadViews: () => ipcRenderer.invoke(IPC.windows.listThreadViews),
+    onThreadViewsChanged: (cb: (views: ThreadViewTarget[]) => void) => {
+      const handler = (_e: unknown, views: ThreadViewTarget[]) => cb(views);
+      ipcRenderer.on(IPC.windows.onThreadViewsChanged, handler);
+      return () => ipcRenderer.off(IPC.windows.onThreadViewsChanged, handler);
     },
     showInMain: (path: string) => ipcRenderer.invoke(IPC.windows.showInMain, path),
     onNavigate: (cb: (path: string) => void) => {

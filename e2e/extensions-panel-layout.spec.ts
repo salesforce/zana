@@ -26,12 +26,13 @@ test('top-level Extensions view fills the content area, not the narrow list colu
   await win.getByTestId('extensions-nav-installed').click();
   await expect(win.getByRole('heading', { name: 'Plugins', level: 3 })).toBeVisible();
   await expect(win.getByLabel('Search installed plugins')).toBeVisible();
-  await expect(win.getByRole('button', { name: 'New plugin' })).toBeVisible();
+  await expect(win.getByRole('button', { name: 'Add plugin' })).toBeVisible();
 
   const docsRow = win.getByTestId('plugin-row-docs');
   await expect(docsRow).toBeVisible({ timeout: 15_000 });
   await expect(docsRow.getByText('Official')).toBeVisible();
 
+  await win.getByRole('button', { name: /^Coding agents/ }).click();
   const pluginApps = await win.evaluate(() => window.cc.pluginApps.list());
   for (const plugin of pluginApps) {
     const row = win.getByTestId(`plugin-row-${plugin.id}`);
@@ -56,20 +57,21 @@ test('top-level Extensions view fills the content area, not the narrow list colu
   // Installed must fill the inner the way Browse does — not shrink-to-fit a
   // narrow column with empty space on either side of the plugin list.
   const innerBox = await win.locator('.extensions-panel .settings-inner').boundingBox();
-  const listBox = await win.locator('.ext-installed-panel').boundingBox();
+  const listBox = await win.locator('.ext-installed-panel').first().boundingBox();
   expect(innerBox, 'settings inner has a layout box').toBeTruthy();
   expect(listBox, 'installed list has a layout box').toBeTruthy();
   expect(innerBox!.width).toBeGreaterThan(panelBox!.width * 0.9);
   expect(listBox!.width).toBeGreaterThan(innerBox!.width * 0.85);
 });
 
-test('Plugins New plugin seeds the home composer with the shared prefix', async ({ app }) => {
+test('Plugins Create a plugin seeds the home composer with the shared prefix', async ({ app }) => {
   const win = app.window;
   await win.locator('.nav-item').filter({ hasText: 'Plugins' }).first().click();
   await win.waitForSelector('.ext-hub-shell', { timeout: 15_000 });
   await win.getByTestId('extensions-nav-installed').click();
-  await expect(win.getByRole('button', { name: 'New plugin' })).toBeVisible();
-  await win.getByRole('button', { name: 'New plugin' }).click();
+  await expect(win.getByRole('button', { name: 'Add plugin' })).toBeVisible();
+  await win.getByRole('button', { name: 'Add plugin' }).click();
+  await win.getByRole('menuitem', { name: 'Create a plugin', exact: true }).click();
   const composer = win.locator('.home-agent-composer, .thread-command-composer, .new-thread-view').first();
   await expect(composer).toBeVisible({ timeout: 15_000 });
   await expect(composer.locator('.ProseMirror, [contenteditable="true"]').first()).toContainText(
@@ -94,4 +96,55 @@ test('Browse Create a plugin stays on the hub with the shared prefix', async ({ 
     'Create a new zcc plugin that',
     { timeout: 15_000 }
   );
+});
+
+test('Browse fills wide screens with readable cards and adapts to smaller windows', async ({ app }, testInfo) => {
+  const win = app.window;
+  const browserWindow = await app.electron.browserWindow(win);
+  await browserWindow.evaluate((window) => {
+    window.webContents.setZoomFactor(1);
+    window.setMinimumSize(600, 600);
+    window.setContentSize(1920, 1000);
+  });
+  await win.locator('.nav-item').filter({ hasText: 'Plugins' }).first().click();
+  await win.getByTestId('extensions-nav-marketplace').click();
+  const marketplace = win.locator('.ext-market');
+  const grid = win.locator('[data-plugin-shelf-grid]').first();
+  await expect(grid.locator('.ext-browse-card').first()).toBeVisible();
+  const columnCounts: number[] = [];
+
+  for (const width of [1920, 1440, 1000, 700]) {
+    await browserWindow.evaluate((window, size) => window.setContentSize(size, 1000), width);
+    await expect.poll(() => win.evaluate(() => window.innerWidth)).toBe(width);
+
+    const panelBox = (await win.locator('.extensions-panel').boundingBox())!;
+    const marketBox = (await marketplace.boundingBox())!;
+    // Catalogue gutters stay small even when there is room beyond the old 1024px cap.
+    expect(marketBox.width).toBeGreaterThan(panelBox.width - 100);
+
+    const layout = await grid.evaluate((el) => {
+      const style = getComputedStyle(el);
+      const columns = style.gridTemplateColumns.split(' ').map(Number.parseFloat);
+      return {
+        columns,
+        width: el.clientWidth,
+        fits: el.scrollWidth <= el.clientWidth,
+      };
+    });
+    expect(layout.fits).toBe(true);
+    expect(Math.min(...layout.columns)).toBeGreaterThanOrEqual(Math.min(layout.width, 350));
+    columnCounts.push(layout.columns.length);
+    expect(await marketplace.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+
+    if (width === 1920) {
+      expect(marketBox.width).toBeGreaterThan(1400);
+      const heroBox = (await win.locator('.ext-browse-hero-hook').boundingBox())!;
+      expect(heroBox.width).toBeLessThan(650);
+      expect(Math.abs((heroBox.x + heroBox.width / 2) - (marketBox.x + marketBox.width / 2))).toBeLessThan(2);
+      await win.screenshot({ path: testInfo.outputPath('plugins-browse-wide.png') });
+    }
+  }
+  expect(columnCounts[0]).toBeGreaterThan(2);
+  expect(columnCounts.at(-1)).toBe(1);
+  expect(columnCounts).toEqual([...columnCounts].sort((a, b) => b - a));
 });

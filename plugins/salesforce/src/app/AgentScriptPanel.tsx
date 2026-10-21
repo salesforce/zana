@@ -1,3 +1,4 @@
+import type { ContextPreset, ContextPresetList } from '../../lib/preview-context-preset-contract.js';
 import { useSalesforceControl } from './useSalesforceControl.js';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -7,6 +8,7 @@ import { type AgentScriptDialect, type PublicOrgView } from '../../lib/types.js'
 import {
   STUDIO_CHANGED_CHANNEL,
   STUDIO_RPC,
+  countProblems,
   type ExplorerNode,
   type ProposalOutcome,
   type ProposeEditInput,
@@ -28,7 +30,8 @@ import {
 import { usePlaygroundBridge } from './studio/usePlaygroundBridge.js';
 import { compilerDiagnostic, parseCompileReply, type CompileState } from './studio/compile-result.js';
 import { ReleasePane } from './studio/ReleasePane.js';
-import { TestsPane } from './studio/TestsPane.js';
+import { TESTS_PANE_STYLES, TestsPane } from './studio/TestsPane.js';
+import { OrgTestsView, type OrgTestsFocus } from './studio/OrgTestsView.js';
 import { createStudioCommandExecutor } from './studio/studio-commands.js';
 import { commandAuthor, holdCommand, holdReason, REVEAL_COMMANDS, type HeldReveal } from './studio/follow-gate.js';
 import { FollowChip, FollowToast } from './studio/FollowControl.js';
@@ -67,6 +70,7 @@ import { StudioShell } from './studio/StudioShell.js';
 import { Explorer } from './studio/Explorer.js';
 import { EditorTabs } from './studio/EditorTabs.js';
 import { LightningTypeView } from './studio/LightningTypeView.js';
+import { LwcBundleView } from './studio/LwcBundleView.js';
 import { BottomPanel, type BottomTab } from './studio/BottomPanel.js';
 import { ProblemsPanel } from './studio/ProblemsPanel.js';
 import { ToolStrip, type StripItem } from './studio/ToolStrip.js';
@@ -78,6 +82,7 @@ import { BottomTests, BottomTrace } from './studio/BottomPanes.js';
 import { STUDIO_TOKENS } from './studio/studio-tokens.js';
 import { useSuites, withSuiteBadges } from './studio/useSuites.js';
 import { useContextChangeRelay } from './context-sync.js';
+import { modShortcut } from './shortcut-label.js';
 
 const PLUGIN_ID = 'salesforce';
 const PANEL_ROOT: CSSProperties = { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' };
@@ -140,6 +145,9 @@ const COMPACT_TOOLS: readonly CompactTool[] = ['code', 'agents', 'graph', 'previ
 /** Studio can open the host side panel's tabs but not close them; the user closes them there. */
 const HOST_PANEL_CLOSE = 'Studio tools are in the ZCC side panel; close or hide them from the panel.';
 const HIDDEN_COMPACT: readonly AgentScriptTool[] = ['files'];
+const ORG_AGENTS_TAB: EditorTab = { id: 'org-agents', kind: 'org', label: 'Org agents', target: 'agents' };
+/** The org's Testing Center definitions and runs, full width beside the editor's other tabs. */
+const ORG_TESTS_TAB: EditorTab = { id: 'org-tests', kind: 'org', label: 'Org tests', target: 'tests' };
 const HIDDEN_WIDE: readonly AgentScriptTool[] = ['files'];
 const NO_HIDDEN: readonly AgentScriptTool[] = [];
 const stripItem = (id: CompactTool, badge?: number): StripItem => ({ id, title: TOOL_TITLE[id], icon: TOOL_ICON[id], ...(badge ? { badge } : {}) });
@@ -159,6 +167,7 @@ export function dependencyContext(target: string, kind: string, apiName: string,
   return { path, label: `${basename(path)}${detail}${others ? ` · +${others}` : ''}`, title: [path, ...usedBy.filter(row => row !== path)].join('\n') };
 }
 const SAVE_DEBOUNCE_MS = 150;
+const DISK_POLL_MS = 2500;
 /** Edits reported this soon after an agent reveal come from the reveal, not the person. */
 const OWN_MOVE_MS = 1000;
 
@@ -271,8 +280,6 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const [comments, setComments] = useState<StudioComment[]>([]);
   // Bumped on every successful file read so comments reload even when the same path is reopened.
   const [fileLoads, setFileLoads] = useState(0);
-  const [addComment, setAddComment] = useState<{ line: number; endLine: number; quote: string } | null>(null);
-  const [commentBody, setCommentBody] = useState('');
   const [fixBusy, setFixBusy] = useState(false);
   const [previewEngine, setPreviewEngine] = useState<StudioEngine>('simulate');
   const [previewCommand, setPreviewCommand] = useState<PreviewCommand | null>(null);
@@ -318,6 +325,8 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       else patch({ tool: 'code' });
       return;
     }
+    // Beside a host side panel, browsing org agents picks what to edit, so it opens as an editor tab.
+    if (id === 'agents' && hostCapable) { openTab(ORG_AGENTS_TAB); return; }
     if (hostCapable && isPanelTool(id)) {
       if (navigateRef.current.openPanelTool?.({ actionId: panelToolActionId(id) })) {
         if (id !== hostTool) requestedHostTool.current = id;
@@ -328,8 +337,10 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     }
     tools.openTool(id);
     patch({ tool: id });
-  }, [hostCapable, hostTool, layout, patch, tools.openTool]);
+  }, [hostCapable, hostTool, layout, openTab, patch, tools.openTool]);
   const panelShown = hostPanel ? hostTool !== null : tools.state.open;
+  // The toggle shows only while the side panel is hidden: a host panel showing another tab (a thread) is still open.
+  const panelVisible = hostPanel && typeof context.sidePanelOpen === 'boolean' ? context.sidePanelOpen : panelShown;
   const showPanel = useCallback(() => {
     if (hostPanel) openTool(lastHostTool.current);
     else tools.toggle();
@@ -364,6 +375,15 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   }, [openTool]);
   const agentsFocusHandled = useCallback((seq: number) => setAgentsFocus(current => current?.seq === seq ? null : current), []);
 
+  // The rail's Org tests entry and orgTests.open land in the Org tests tab; a named definition or run is shown once.
+  const orgTestsSeq = useRef(0);
+  const [orgTestsFocus, setOrgTestsFocus] = useState<OrgTestsFocus | null>(null);
+  const openOrgTests = useCallback((target: { name?: string; runId?: string } = {}) => {
+    if (target.name || target.runId) { orgTestsSeq.current += 1; setOrgTestsFocus({ ...target, seq: orgTestsSeq.current }); }
+    if (layout === 'legacy') openTool('test'); else openTab(ORG_TESTS_TAB);
+  }, [layout, openTab, openTool]);
+  const orgTestsFocusHandled = useCallback((seq: number) => setOrgTestsFocus(current => current?.seq === seq ? null : current), []);
+
   // The Project / Org choice carries over to every implementation view in this project.
   const actionOrigin = useRef(studio.actionOrigin);
   actionOrigin.current = studio.actionOrigin;
@@ -397,11 +417,14 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
 
   // Only the latest listing lands: an org switch must not be overwritten by a slower, older answer.
   const explorerSeq = useRef(0);
+  // Agents unfolded in the outline that the explorer had not scanned; newest first, bounded like the server's `expand`.
+  const expandedAgents = useRef<string[]>([]);
   const refreshExplorer = useCallback(async () => {
     const seq = ++explorerSeq.current;
     try {
-      // The open agent is scanned first, so it shows its references however many agents the project has.
-      const result = (await callPluginRpc(pluginId, STUDIO_RPC.explorer, rpcArgs(activePathRef.current ? { focus: activePathRef.current } : undefined))) as { ok?: boolean; nodes?: ExplorerNode[]; orgAgentsTruncated?: boolean; orgAgentsNotLocal?: number };
+      // The open agent, then unfolded ones, are scanned first, so they show their references however many agents the project has.
+      const scan = { ...(activePathRef.current ? { focus: activePathRef.current } : {}), ...(expandedAgents.current.length ? { expand: expandedAgents.current } : {}) };
+      const result = (await callPluginRpc(pluginId, STUDIO_RPC.explorer, rpcArgs(Object.keys(scan).length ? scan : undefined))) as { ok?: boolean; nodes?: ExplorerNode[]; orgAgentsTruncated?: boolean; orgAgentsNotLocal?: number };
       if (alive.current && seq === explorerSeq.current && result?.ok !== false && Array.isArray(result?.nodes)) {
         setExplorerNodes(result.nodes);
         setOrgAgentsMore(result.orgAgentsTruncated === true);
@@ -412,6 +435,12 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
 
   // A newly opened agent may sit past the explorer's scan window: list again with it in focus.
   useEffect(() => { if (activePath) void refreshExplorer(); }, [activePath, refreshExplorer]);
+  const [indexingAgents, setIndexingAgents] = useState<string[]>([]);
+  const indexAgent = useCallback((path: string) => {
+    expandedAgents.current = [path, ...expandedAgents.current.filter(row => row !== path)].slice(0, 20);
+    setIndexingAgents(current => [...current, path]);
+    void refreshExplorer().finally(() => { if (alive.current) setIndexingAgents(current => current.filter(row => row !== path)); });
+  }, [refreshExplorer]);
 
   const refreshFiles = useCallback(async () => {
     const listed = (await callPluginRpc(pluginId, 'agentFiles.list', rpcArgs())) as {
@@ -544,6 +573,22 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playgroundReady, studio.activeTab]);
 
+  const checkingDisk = useRef(false);
+  const checkDisk = useCallback(async () => {
+    const path = activePathRef.current;
+    const draftKey = activeDraft.current;
+    if (!path || !draftKey || checkingDisk.current || saving.current) return;
+    checkingDisk.current = true;
+    const generation = fileEpoch.current;
+    try {
+      const result = (await callPluginRpc(pluginId, 'agentFiles.read', rpcArgs({ path }))) as { ok?: boolean; file?: { content: string; sha256: string } };
+      const file = result?.ok ? result.file : undefined;
+      if (!alive.current || generation !== fileEpoch.current || activePathRef.current !== path || !file || file.sha256 === shaRef.current) return;
+      send.fileChanged({ draftKey, content: file.content, sha256: file.sha256 });
+    } catch { /* the next check retries */ } finally {
+      checkingDisk.current = false;
+    }
+  }, [pluginId, rpcArgs, send]);
   const loadComments = useCallback(async () => {
     const path = activePathRef.current;
     if (!projectId || !path) { setComments([]); return; }
@@ -553,12 +598,37 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     } catch { /* comments are optional */ }
   }, [pluginId, projectId]);
   useEffect(() => { void loadComments(); }, [loadComments, activePath, fileLoads]);
+  /** Runs a comment mutation, shows its failure, and reloads the list either way. */
+  const commentRpc = (method: string, args: Record<string, unknown>, fallback: string) => {
+    if (!projectId) return;
+    void Promise.resolve(callPluginRpc(pluginId, method, { projectId, ...args }))
+      .then(result => { const failure = result as { ok?: boolean; error?: string } | null; if (failure?.ok === false && alive.current) setError(failure.error || fallback); void loadComments(); })
+      .catch(err => { if (alive.current) setError(err instanceof Error ? err.message : String(err)); });
+  };
+  const updateComment = (id: string, body: string) => commentRpc(STUDIO_RPC.commentUpdate, { id, body }, 'Could not edit the comment.');
+  const deleteComment = (id: string) => commentRpc(STUDIO_RPC.commentDelete, { id }, 'Could not delete the comment.');
   useRealtime(STUDIO_CHANGED_CHANNEL, payload => {
     const changed = payload as { projectId?: string; path?: string; kind?: string } | null;
     if (changed?.kind === 'comments' && (!changed.projectId || changed.projectId === projectId)) void loadComments();
     // Fetch latest wrote org files into the project.
-    if (changed?.kind === 'files' && (!changed.projectId || changed.projectId === projectId)) void refreshFiles().catch(() => undefined);
+    if (changed?.kind === 'files' && (!changed.projectId || changed.projectId === projectId)) {
+      void refreshFiles().catch(() => undefined);
+      if (!changed.path || changed.path === activePathRef.current) void checkDisk();
+    }
   });
+  // An agent can write the open file through the Studio or straight to disk: poll while the Studio is in view.
+  useEffect(() => {
+    if (!playgroundReady || !activePath) return;
+    const tick = () => { if (document.visibilityState === 'visible') void checkDisk(); };
+    const timer = window.setInterval(tick, DISK_POLL_MS);
+    window.addEventListener('focus', tick);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', tick);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, [activePath, checkDisk, playgroundReady]);
   useEffect(() => { if (playgroundReady) send.setComments(comments); }, [comments, playgroundReady, send]);
 
   const editorCompact = editorCompactOverride ?? !wide;
@@ -702,6 +772,16 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const [driver, setDriver] = useState<string | undefined>(undefined);
   const lastEditAt = useRef(0);
   const ownMoveUntil = useRef(0);
+  /** An agent names a preset by id; it is read for the open agent and org so a wrong id fails the command, not the view. */
+  const savedPreset = async (id: string): Promise<ContextPreset> => {
+    const path = activePathRef.current;
+    if (!path) throw Error('Open an agent before using a context preset.');
+    const result = await callPluginRpc(pluginId, 'agentPreview.presets.list', rpcArgs({ path, ...(org?.alias ? { orgAlias: org.alias } : {}) })) as ContextPresetList;
+    if (!result?.ok) throw Error(result?.error || 'Presets could not be loaded.');
+    const preset = result.presets?.find(p => p.id === id);
+    if (!preset) throw Error(`No context preset ${id} for ${path}. List them with contextPresets.list.`);
+    return preset;
+  };
   const executeCommand = createStudioCommandExecutor({
     getSource: () => source,
     isBusyOrDirty: () => dirty || busy,
@@ -723,10 +803,12 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       })
     },
     preview: {
-      start: ({ engine }) => {
+      start: async ({ engine, contextVariables, presetId }) => {
+        const preset = presetId ? await savedPreset(presetId) : undefined;
         if (engine) setPreviewEngine(engine);
         openTool('preview');
-        setPreviewCommand({ seq: ++previewSeq.current, type: 'start', engine });
+        setPreviewCommand({ seq: ++previewSeq.current, type: 'start', engine, contextVariables, ...(preset ? { preset } : {}) });
+        return preset ? { presetId: preset.id, preset: preset.name } : undefined;
       },
       send: ({ text, engine }) => {
         if (engine) setPreviewEngine(engine);
@@ -734,11 +816,18 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
         setPreviewCommand({ seq: ++previewSeq.current, type: 'send', text, engine });
       }
     },
+    contextSet: async ({ values, presetId, merge }) => {
+      const preset = presetId ? await savedPreset(presetId) : undefined;
+      openTool('preview');
+      setPreviewCommand({ seq: ++previewSeq.current, type: 'context', ...(preset ? { preset } : { contextVariables: values ?? [] }), ...(merge ? { merge: true } : {}) });
+      return preset ? { context: 'preset', presetId: preset.id, preset: preset.name, variables: preset.values.length } : { context: merge ? 'merged' : 'replaced', variables: values?.length ?? 0 };
+    },
     traceFocus: () => {
       if (wide) patch({ bottomOpen: true, bottomTab: 'trace' }); else openTool('preview');
     },
     graphFocus: node => { setGraphFocus(current => ({ node, seq: current.seq + 1 })); openTool('graph'); },
-    layoutSet: setEditorCompactOverride
+    layoutSet: setEditorCompactOverride,
+    orgTestsOpen: openOrgTests
   });
 
   const applyReveal = (command: UiCommand) => {
@@ -759,7 +848,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   };
 
   useSalesforceControl({ pluginId, projectId, orgAlias: org?.alias, threadId, surface: 'agentforce', enabled: playgroundReady,
-    commands: ['state', 'file.open', 'file.filter', 'panel.open', 'panel.close', 'panel.show', 'panel.hide', 'editor.reveal', 'editor.proposeEdit', 'preview.start', 'preview.send', 'trace.focus', 'graph.focus', 'layout.set'],
+    commands: ['state', 'file.open', 'file.filter', 'panel.open', 'panel.close', 'panel.show', 'panel.hide', 'editor.reveal', 'editor.proposeEdit', 'preview.start', 'preview.send', 'trace.focus', 'graph.focus', 'layout.set', 'orgTests.open', 'context.set'],
     state: () => ({ path: activePath, dirty, issues, ready: playgroundReady, sha256, panels: hostPanel ? { host: true, tabs: hostSlots.filter(slot => slot.attached).map(slot => slot.tool), kept: hostSlots.filter(slot => !slot.attached).map(slot => slot.tool), active: requestedHostTool.current ?? hostTool, open: (requestedHostTool.current ?? hostTool) !== null } : tools.state, filter: fileQuery, layout, tool: currentTool, tabs: studio.tabs.map(tab => tab.id), follow: followPaused ? 'paused' : 'on', ...(heldReveal ? { heldReveal: heldReveal.command.command } : {}) }),
     execute: followCommand,
   });
@@ -767,7 +856,8 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   bridgeHandlers.current = {
     onSnapshot: message => {
       const nextActions = message.actions ?? [];
-      setSource(message.content); setIssues(message.issues); setActions(nextActions);
+      // The frame's `issues` counts every diagnostic; the document bar shows problems only.
+      setSource(message.content); setIssues(message.diagnostics ? countProblems(message.diagnostics) : message.issues); setActions(nextActions);
       setDiagnostics(message.diagnostics ?? []);
       setActionTabs(tabs => tabs.filter(tab => tab.action.id.startsWith('dependency:') || nextActions.some(action => action.id === tab.action.id)));
       setSelectedActionId(id => id?.startsWith('dependency:') || nextActions.some(action => action.id === id) ? id : null);
@@ -816,15 +906,19 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       pendingProposals.current.delete(message.proposalId);
       if (pendingProposals.current.size === 0) setProposalSource(null);
       setSource(message.content);
-      if (message.outcome !== 'rejected') setDirty(true);
       resolve?.({
         outcome: message.outcome, acceptedHunks: message.acceptedHunks, rejectedHunks: message.rejectedHunks,
         ...(message.sha256 ? { sha256: message.sha256 } : {}), ...(message.note ? { note: message.note } : {})
       });
     },
     onCommentAction: message => {
-      if (message.kind === 'add') { setCommentBody(''); setAddComment({ line: message.line, endLine: message.endLine, quote: message.quote }); }
-      else openTool('comments');
+      if (message.kind === 'open') { openTool('comments'); return; }
+      if (message.kind === 'update' && message.id && message.body) { updateComment(message.id, message.body); return; }
+      if (message.kind === 'delete' && message.id) { deleteComment(message.id); return; }
+      const body = message.body?.trim();
+      const path = activePath;
+      if (message.kind !== 'submit' || !body || !path || !projectId) return;
+      commentRpc(STUDIO_RPC.commentAdd, { path, line: message.line, endLine: message.endLine, quote: message.quote, body, content: sourceRef.current }, 'Could not add the comment.');
     },
     onAskSelection: message => {
       if (message.action === 'preview-topic') { openTool('preview'); return; }
@@ -877,12 +971,13 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const composeFor = (instruction: string) => navigate.toCompose({ initialPrompt: `${instruction}\nProject: ${projectId}\nSource: ${activePath}`, focusPrompt: true });
   const quickItems = useMemo<QuickOpenItem[]>(() => [
     ...files.map(file => ({ id: `file:${file.path}`, label: file.apiName || basename(file.path), detail: file.path, kind: 'agent' })),
-    ...explorerNodes.flatMap((node, index) => node.kind === 'agent' || node.kind === 'prompt' ? [] : [{ id: `node:${index}`, label: node.apiName, detail: node.path ?? node.usedBy?.[0], kind: node.kind === 'lightning-type' ? 'type' : node.kind }])
+    ...explorerNodes.flatMap((node, index) => node.kind === 'agent' || node.kind === 'prompt' ? [] : [{ id: `node:${index}`, label: node.apiName, detail: node.path ?? node.usedBy?.[0], kind: node.kind === 'lightning-type' ? 'type' : node.kind === 'lwc' ? 'LWC' : node.kind }])
   ], [files, explorerNodes]);
   const openNode = useCallback((node: ExplorerNode) => {
     if (node.kind === 'agent' && node.path) void openFile(node.path);
     else if (node.kind === 'apex' || node.kind === 'flow') openTarget(node.kind, node.apiName, node.path);
     else if (node.kind === 'lightning-type') { openTab({ id: `type:${node.apiName}`, kind: 'type', label: node.apiName, target: node.apiName, ...(node.path ? { path: node.path } : {}) }); if (compact) patch({ tool: 'code' }); }
+    else if (node.kind === 'lwc') { openTab({ id: `lwc:${node.apiName}`, kind: 'lwc', label: node.apiName, target: node.apiName, ...(node.path ? { path: node.path } : {}) }); if (compact) patch({ tool: 'code' }); }
     else if (node.kind === 'scenario') openTool('test');
     else if (node.kind === 'org-agent') browseAgents(node.apiName);
   }, [browseAgents, compact, openFile, openTab, openTarget, openTool, patch]);
@@ -900,7 +995,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const activeBundle = bundleName(activePath);
   const documentBar = (
       <AgentScriptDocumentBar path={activePath} dirty={dirty} busy={busy} issues={issues}
-        saveDisabled={saveDisabled} saveAsDisabled={!saveEnabled || busy || !playgroundReady || !activePath} panelOpen={panelShown}
+        saveDisabled={saveDisabled} saveAsDisabled={!saveEnabled || busy || !playgroundReady || !activePath} panelOpen={panelVisible}
         {...(stripOwnsWorkspace ? {} : { headerActions: <>{askAgentMenu}{props.headerActions}</>, follow: followChip, orgPicker })}
         onBrowse={() => browseAgents()} onSave={() => void save()}
         onPreview={() => openTool('preview')}
@@ -918,19 +1013,45 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     {followChip}
     {askAgentMenu}
     {props.headerActions}
-    <button type="button" className="icon-btn" title="Go to file (⌘P)" aria-label="Go to file" onClick={() => setQuickOpen(true)}><Search size={15} aria-hidden="true" /></button>
+    <button type="button" className="icon-btn" title={`Go to file (${modShortcut('P')})`} aria-label="Go to file" onClick={() => setQuickOpen(true)}><Search size={15} aria-hidden="true" /></button>
     {orgPicker && <div className="af-document-org">{orgPicker}</div>}
-    {!panelShown && !compact && <button type="button" className="icon-btn" title="Show side panel" aria-label="Show side panel" aria-expanded={false} onClick={showPanel}><PanelRight size={15} aria-hidden="true" /></button>}
+    {!panelVisible && !compact && <button type="button" className="icon-btn" title="Show side panel" aria-label="Show side panel" aria-expanded={false} onClick={showPanel}><PanelRight size={15} aria-hidden="true" /></button>}
   </> : undefined;
 
+  const orgAgentsPanel = (visible: boolean) => <OrgAgentsPanel pluginId={pluginId} projectId={projectId} visible={visible} editorReady={playgroundReady} focus={agentsFocus} onFocusHandled={agentsFocusHandled} onNew={() => setNewAgentOpen(true)} localFiles={files.filter(file => !file.path.startsWith('.zcc/')).map(file => ({ ...file, publishable: file.path.includes('aiAuthoringBundles/') }))} onLocalOpen={path => void openFile(path)} onPublish={path => void openFile(path).then(opened => { if (opened) openTool('release'); })} onOpen={openRetrieved} />;
   const showTargetTab = layout !== 'legacy' && activeEditorTab !== null && activeEditorTab.kind !== 'agent';
   const openAgentTab = (path: string) => { if (path === activePath) selectTab(`agent:${path}`); else void openFile(path); };
-  const targetTabView = showTargetTab && activeEditorTab ? (
+  // The Org agents tab stays mounted while open, so its search and retrieve status survive opening an agent.
+  const orgTabActive = activeEditorTab?.kind === 'org';
+  const orgAgentsActive = orgTabActive && activeEditorTab?.target !== 'tests';
+  const orgTestsActive = orgTabActive && activeEditorTab?.target === 'tests';
+  const orgAgentsView = layout !== 'legacy' && studio.tabs.some(tab => tab.kind === 'org' && tab.target !== 'tests') ? (
+    <div className="sf-etab-view" data-testid="studio-org-agents-view" style={orgAgentsActive ? undefined : { display: 'none' }}>{orgAgentsPanel(orgAgentsActive)}</div>
+  ) : false;
+  // Like Org agents, the Org tests tab stays mounted while open so a followed run keeps its place.
+  const orgTestsView = layout !== 'legacy' && studio.tabs.some(tab => tab.id === ORG_TESTS_TAB.id) ? (
+    <div className="sf-etab-view" data-testid="studio-org-tests-view" style={orgTestsActive ? undefined : { display: 'none' }}>
+      <section className="sf-tp is-org-tests" aria-label="Org tests"><style>{TESTS_PANE_STYLES}</style>
+        <OrgTestsView pluginId={pluginId} projectId={projectId} threadId={threadId} path={activePath} visible={orgTestsActive}
+          onAskAgent={composeFor} focus={orgTestsFocus} onFocusHandled={orgTestsFocusHandled} />
+      </section>
+    </div>
+  ) : false;
+  const targetTabView = showTargetTab && activeEditorTab && !orgTabActive ? (
     <div className="sf-etab-view" data-testid="studio-target-view">
       {activeEditorTab.kind === 'type'
         ? <LightningTypeView key={`${projectId}:${activeEditorTab.id}`} pluginId={pluginId} projectId={projectId} typeRef={activeEditorTab.target ?? activeEditorTab.label}
           usedBy={explorerNodes.find(node => node.kind === 'lightning-type' && node.apiName === (activeEditorTab.target ?? activeEditorTab.label))?.usedBy}
-          onOpenAgent={path => void openFile(path)} />
+          onOpenAgent={path => void openFile(path)}
+          onOpenComponent={ref => openNode(explorerNodes.find(node => node.kind === 'lwc' && node.apiName === ref) ?? { kind: 'lwc', apiName: ref })} />
+        : activeEditorTab.kind === 'lwc'
+        ? (() => {
+          const ref = activeEditorTab.target ?? activeEditorTab.label;
+          const node = explorerNodes.find(row => row.kind === 'lwc' && row.apiName === ref);
+          return <LwcBundleView key={`${projectId}:${activeEditorTab.id}`} pluginId={pluginId} projectId={projectId} componentRef={ref}
+            usedBy={node?.usedBy} via={node?.via} onOpenAgent={path => void openFile(path)}
+            onOpenType={type => openNode(explorerNodes.find(row => row.kind === 'lightning-type' && row.apiName === type) ?? { kind: 'lightning-type', apiName: type })} />;
+        })()
         : (() => {
           const target = activeEditorTab.target ?? `${activeEditorTab.kind}://${activeEditorTab.label}`;
           const context = dependencyContext(target, activeEditorTab.kind, activeEditorTab.label, explorerNodes, activePath, actions);
@@ -944,7 +1065,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     </div>
   ) : false;
 
-  const problemsCount = problems.length;
+  const problemsCount = countProblems(problems);
   const tabs = layout === 'legacy' ? false : (
     <EditorTabs tabs={studio.tabs} active={studio.activeTab} dirtyId={dirty && activePath ? `agent:${activePath}` : null} problems={problemsCount}
       problemsId={activePath ? `agent:${activePath}` : null} trailing={workspaceActions} onSelect={selectTab} onClose={closeTab} onCloseMany={closeTabs} />
@@ -972,7 +1093,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const explorerNode = (
     <Explorer files={files} nodes={badgedNodes} activePath={activePath} dirtyPath={dirty ? activePath : null}
       query={fileQuery} onQuery={setFileQuery} onOpenFile={path => void openFile(path)}
-      onOpenNode={openNode} onBrowseOrg={() => browseAgents()} orgLabel={org?.alias} orgAgentsMore={orgAgentsMore} orgAgentsNotLocal={orgAgentsNotLocal}
+      onOpenNode={openNode} onIndexAgent={indexAgent} indexing={indexingAgents} onBrowseOrg={() => browseAgents()} orgLabel={org?.alias} orgAgentsMore={orgAgentsMore} orgAgentsNotLocal={orgAgentsNotLocal}
       collapsed={studio.collapsedSections} onToggleSection={toggleSection} onHide={wide ? () => patch({ explorerOpen: false }) : undefined} />
   );
 
@@ -986,19 +1107,21 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   ) : false;
   const activity = wide ? (
     <ToolStrip orientation="vertical" label="Studio activity" active={studio.explorerOpen ? 'files' : null}
-      items={[stripItem('files'), stripItem('agents'), { id: 'search', title: 'Go to file', icon: <Search size={16} aria-hidden="true" /> }]}
-      onSelect={id => { if (id === 'files') patch({ explorerOpen: !studio.explorerOpen }); else if (id === 'agents') browseAgents(); else setQuickOpen(true); }} />
+      items={[stripItem('files'), stripItem('agents'), { id: 'org-tests', title: 'Org tests', icon: <FlaskConical size={16} aria-hidden="true" /> }, { id: 'search', title: 'Go to file', icon: <Search size={16} aria-hidden="true" /> }]}
+      onSelect={id => { if (id === 'files') patch({ explorerOpen: !studio.explorerOpen }); else if (id === 'agents') browseAgents(); else if (id === 'org-tests') openOrgTests(); else setQuickOpen(true); }} />
   ) : false;
 
   const splitMode = hostPanel ? 'editor' : swapCompact ? (compactTool === 'code' ? 'editor' : 'panel') : 'split';
   const splitOpen = hostPanel ? false : swapCompact ? compactTool !== 'code' : tools.state.open;
 
   const renderTool = (id: AgentScriptTool, visible: boolean): ReactNode => {
-    if (id === 'agents') return <OrgAgentsPanel pluginId={pluginId} projectId={projectId} visible={visible} editorReady={playgroundReady} focus={agentsFocus} onFocusHandled={agentsFocusHandled} onNew={() => setNewAgentOpen(true)} localFiles={files.filter(file => !file.path.startsWith('.zcc/')).map(file => ({ ...file, publishable: file.path.includes('aiAuthoringBundles/') }))} onLocalOpen={path => void openFile(path)} onPublish={path => void openFile(path).then(opened => { if (opened) openTool('release'); })} onOpen={openRetrieved} />;
+    if (id === 'agents') return orgAgentsPanel(visible);
     if (id === 'files') return layout === 'legacy' ? explorerNode : null;
     if (id === 'comments') return <CommentsPane pluginId={pluginId} projectId={projectId} path={activePath} comments={comments}
       onReveal={revealLine}
       onResolve={(commentId, note) => { void Promise.resolve(callPluginRpc(pluginId, STUDIO_RPC.commentResolve, { projectId, id: commentId, note })).then(() => loadComments()).catch(err => { if (alive.current) setError(err instanceof Error ? err.message : String(err)); }); }}
+      onEdit={updateComment}
+      onDelete={deleteComment}
       onAddressWithAgent={() => { void askAgent('address-comments').catch(err => { if (alive.current) setError(err instanceof Error ? err.message : String(err)); }); }} />;
     if (id === 'graph') return <AgentScriptGraphPanel source={source} visible={visible} compact={compact} focusNode={graphFocus.node} focusSeq={graphFocus.seq} onOpenAction={id => { const action = actions.find(row => row.id === id); if (action) openAction(action); }} />;
     if (id === 'preview') return <PreviewWorkbench pluginId={pluginId} projectId={projectId} source={source} fileLabel={activePath?.split('/').pop() ?? 'Draft'}
@@ -1036,23 +1159,6 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       {draftWarning && <div className="sf-as-banner is-error" role="alert">Local recovery is unavailable for this draft. Save it to a project file before leaving.</div>}
       {hint ? <div className="sf-as-banner">{hint}</div> : null}
       {error ? <div className="sf-as-banner is-error" role="alert">{error}</div> : null}
-      {addComment && <form className="sf-comment-form" aria-label="Add comment" onSubmit={event => {
-        event.preventDefault();
-        const body = commentBody.trim();
-        const path = activePath;
-        if (!body || !path || !projectId) return;
-        const target = addComment;
-        setAddComment(null);
-        void Promise.resolve(callPluginRpc(pluginId, STUDIO_RPC.commentAdd, { projectId, path, line: target.line, endLine: target.endLine, quote: target.quote, body, content: sourceRef.current }))
-          .then(result => { const failure = result as { ok?: boolean; error?: string } | null; if (failure?.ok === false && alive.current) setError(failure.error || 'Could not add the comment.'); void loadComments(); })
-          .catch(err => { if (alive.current) setError(err instanceof Error ? err.message : String(err)); });
-      }}>
-        <label>Comment on line{addComment.endLine > addComment.line ? `s ${addComment.line}-${addComment.endLine}` : ` ${addComment.line}`}
-          <textarea value={commentBody} autoFocus rows={2} maxLength={2000} onChange={event => setCommentBody(event.target.value)} />
-        </label>
-        <button type="submit" className="sf-btn-small" disabled={!commentBody.trim() || !activePath || !projectId}>Add comment</button>
-        <button type="button" className="sf-btn-small" onClick={() => setAddComment(null)}>Cancel</button>
-      </form>}
       <StudioShell layout={layout} tier={tier} top={top} activity={activity} explorer={wide && studio.explorerOpen ? explorerNode : false}
         explorerWidth={studio.explorerWidth} onExplorerWidth={width => patch({ explorerWidth: width })}
         quickOpen={quickOpen} quickItems={quickItems} onQuickOpenChange={setQuickOpen} onQuickPick={pickQuick} onSave={save}
@@ -1064,6 +1170,8 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
           {orgSessionLabel(org) ? <span hidden className="sf-as-crumb-seg" data-testid="salesforce-playground-org">{orgSessionLabel(org)}</span> : null}
           {heldReveal && <FollowToast held={heldReveal} onShow={showHeldReveal} onDismiss={() => setHeldReveal(null)} />}
           {targetTabView}
+          {orgAgentsView}
+          {orgTestsView}
           {playgroundFailed ? (
           <div data-testid="salesforce-agent-script-playground-error"><SalesforceState kind="error" art="code" title="Editor unavailable">{PLAYGROUND_LOAD_ERROR}</SalesforceState></div>
         ) : (

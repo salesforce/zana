@@ -75,6 +75,7 @@ import {
   registerLaunchTeamTool,
   type RegisterLaunchTeamToolOpts
 } from '../agents/launch-team-mcp-tool.js';
+import { registerSquadProposalTools, type SquadPlanCheckDep, type SquadProposeDep } from '../squad-proposals/squad-proposal-mcp-tools.js';
 import { registerExecutionTools, type RegisterExecutionToolOptions, type ExecutionMemberFence } from '../execution/execution-mcp-tool.js';
 import type { ExecutionService } from '../execution/service.js';
 import type { createExecutionHandoffStore } from '../execution/handoff-store.js';
@@ -412,6 +413,9 @@ export interface McpServerOptions {
    * tool is not registered, so the agent doesn't see it.
    */
   launchTeam?: RegisterLaunchTeamToolOpts['launchTeam'];
+  /** squad_propose / squad_plan_check deps; absent ⇒ the tools aren't registered. */
+  proposeSquad?: SquadProposeDep;
+  checkSquadPlan?: SquadPlanCheckDep;
   authorizeTeamLaunch?: RegisterLaunchTeamToolOpts['authorizeTeamLaunch'];
   evaluateTeamAdmission?: RegisterLaunchTeamToolOpts['evaluateAdmission'];
   revokeTeamAuthorizations?: RegisterLaunchTeamToolOpts['revokeTeamAuthorizations'];
@@ -568,6 +572,8 @@ function buildProjectMcpServer(opts: {
   sessionId?: string;
   sessionCredential?: string;
   memberFence?: ExecutionMemberFence;
+  /** The route serves a Modern thread (the agent-tool bridge marks it); otherwise a PTY session. */
+  routeKind?: 'thread';
   inboxStore: IInboxStore;
   heldQuestions?: McpServerOptions['heldQuestions'];
   suggestionsStore: ISuggestionsStore;
@@ -591,6 +597,8 @@ function buildProjectMcpServer(opts: {
   listPersonas?: McpServerOptions['listPersonas'];
   listTeams?: McpServerOptions['listTeams'];
   launchTeam?: McpServerOptions['launchTeam'];
+  proposeSquad?: McpServerOptions['proposeSquad'];
+  checkSquadPlan?: McpServerOptions['checkSquadPlan'];
   authorizeTeamLaunch?: McpServerOptions['authorizeTeamLaunch'];
   evaluateTeamAdmission?: McpServerOptions['evaluateTeamAdmission'];
   revokeTeamAuthorizations?: McpServerOptions['revokeTeamAuthorizations'];
@@ -860,6 +868,7 @@ function buildProjectMcpServer(opts: {
       handoffs: opts.executionHandoffs,
       validateHandoffTarget: opts.validateExecutionHandoffTarget,
       approveHandoff: opts.approveExecutionHandoff,
+      reportKind: opts.routeKind === 'thread' ? 'thread' : 'pty',
       validateRouteIdentity: async (sessionId, projectId) => {
         if (!routeAuthenticated) return false;
         const gate = opts.validateExecutionRouteIdentity ?? opts.validateTeamRouteIdentity;
@@ -870,6 +879,22 @@ function buildProjectMcpServer(opts: {
         const gate = opts.validateLaunchRouteIdentity ?? opts.validateTeamRouteIdentity;
         return (await gate?.(sessionId, projectId)) ?? false;
       }
+    });
+  }
+  // squad_propose / squad_plan_check: prepare a Squad launch for the user to
+  // review. Liveness accepts a PTY or a Modern thread and fails closed. A
+  // member-fenced route never gets this owner surface.
+  if (opts.sessionId && opts.proposeSquad && !opts.memberFence) {
+    const routeAuthenticated = !!opts.sessionCredential
+      && verifySessionControlCredential(opts.sessionId, opts.sessionCredential);
+    registerSquadProposalTools(mcp, {
+      sessionId: opts.sessionId,
+      projectId: opts.projectId,
+      propose: opts.proposeSquad,
+      checkPlan: opts.checkSquadPlan,
+      validateRouteIdentity: async (s, p) => routeAuthenticated
+        && !!opts.validateLaunchRouteIdentity
+        && (await opts.validateLaunchRouteIdentity(s, p))
     });
   }
   // list_projects: read-only project discovery. Identity-free (no sessionId
@@ -954,16 +979,22 @@ function safeDecode(seg: string): string | null {
 }
 
 /**
- * Match project/session routes, optionally credentialed and member-fenced.
- * Other shapes 404. Generation is route context, never tool input.
+ * Match `/mcp/:projectId` or `/mcp/:projectId/:sessionId`, optionally credentialed and
+ * member-fenced (`/:credential/member/:bindingId/:generation`). Strict: any other shape 404s.
+ * Generation is route context, never tool input. Returns null when no match. Exported for unit tests.
+ * `?route=thread` marks a Modern thread's route (it only picks how that
+ * session receives reports; the credential still proves the session).
  */
 export function matchMcpRoute(
   rawUrl: string | undefined
-): { projectId: string; sessionId?: string; sessionCredential?: string; memberFence?: ExecutionMemberFence } | null {
+): { projectId: string; sessionId?: string; sessionCredential?: string; memberFence?: ExecutionMemberFence; routeKind?: 'thread' } | null {
   if (!rawUrl) return null;
   let pathname: string;
+  let routeKind: 'thread' | undefined;
   try {
-    pathname = new URL(rawUrl, 'http://127.0.0.1').pathname;
+    const url = new URL(rawUrl, 'http://127.0.0.1');
+    pathname = url.pathname;
+    if (url.searchParams.get('route') === 'thread') routeKind = 'thread';
   } catch {
     return null;
   }
@@ -980,7 +1011,8 @@ export function matchMcpRoute(
     projectId,
     ...(sessionId ? { sessionId } : {}),
     ...(sessionCredential ? { sessionCredential } : {}),
-    ...(bindingId && generation ? { memberFence: { bindingId, generation } } : {})
+    ...(bindingId && generation ? { memberFence: { bindingId, generation } } : {}),
+    ...(sessionId && routeKind ? { routeKind } : {})
   };
 }
 
@@ -1929,6 +1961,7 @@ async function handleRequest(
     sessionId,
     sessionCredential: route.sessionCredential,
     memberFence: route.memberFence,
+    ...(route.routeKind ? { routeKind: route.routeKind } : {}),
     inboxStore: opts.inboxStore,
     heldQuestions: opts.heldQuestions,
     suggestionsStore: opts.suggestionsStore,
@@ -1952,6 +1985,8 @@ async function handleRequest(
     listPersonas: opts.listPersonas,
     listTeams: opts.listTeams,
     launchTeam: opts.launchTeam,
+    proposeSquad: opts.proposeSquad,
+    checkSquadPlan: opts.checkSquadPlan,
     authorizeTeamLaunch: opts.authorizeTeamLaunch,
     evaluateTeamAdmission: opts.evaluateTeamAdmission,
     revokeTeamAuthorizations: opts.revokeTeamAuthorizations,

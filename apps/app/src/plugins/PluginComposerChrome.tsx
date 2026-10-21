@@ -30,6 +30,7 @@ export function PluginComposerChrome({
   focus,
   familyId,
   providerId,
+  allowCreatePlugin = true,
   children
 }: {
   scope: PluginComposerScope;
@@ -39,6 +40,8 @@ export function PluginComposerChrome({
   focus: () => void;
   familyId?: string;
   providerId?: string;
+  /** Off beside a plugin page, where the agent is about that page. */
+  allowCreatePlugin?: boolean;
   children: ReactNode;
 }) {
   const customizations = useSyncExternalStore(
@@ -135,7 +138,7 @@ export function PluginComposerChrome({
       );
     })
   );
-  const showCreatePlugin = scope.kind === 'new-thread' || scope.kind === 'cli-agent';
+  const showCreatePlugin = allowCreatePlugin && (scope.kind === 'new-thread' || scope.kind === 'cli-agent');
   const hasActions = pluginActions.length > 0 || plusItems.length > 0 || showCreatePlugin;
 
   return (

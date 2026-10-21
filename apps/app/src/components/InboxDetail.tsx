@@ -1,8 +1,10 @@
 import { product } from '../lib/product-client.js';
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Bookmark, BookmarkCheck, BotMessageSquare, Code2, Copy, CornerDownLeft, Download, ExternalLink, FileText, FolderOpen, Send, Sparkles, Star, Trash2 } from 'lucide-react';
 import './inbox-detail.css';
+import { composeSeqFor, useInboxReplyDrafts } from '../stores/inbox-reply-drafts.js';
+import { InboxQuoteSelection } from './InboxQuoteSelection.js';
 import { useCompactLayout } from '../hooks/useCompactLayout.js';
 import { createResultCache, useInboxThread } from '../hooks/useInboxThread.js';
 import { reopenInboxThread, sendInboxThreadReply } from '../lib/inbox-thread.js';
@@ -34,8 +36,10 @@ import {
 } from '../store.js';
 import { DelayedLoading, DelayedStencilLines } from './ui/Skeleton.js';
 import { AgentLauncher } from './AgentLauncher.js';
+import type { SquadLaunchPrefill } from '@zana-ai/zcc-domain/squad-proposal';
 import { inspectAgentSession } from '../lib/inspect-session.js';
 import { QuestionBlock } from './InboxQuestionBlock.js';
+import { InboxSquadProposalSurface } from './InboxSquadProposalSurface.js';
 import { MarkdownContent } from './MarkdownContent.js';
 import { InboxDocContent, readInboxDocPreview } from './InboxDocContent.js';
 import { renderReportHtml, type ReportDoc } from '../lib/renderReportHtml.js';
@@ -44,8 +48,9 @@ import { inboxPrimaryTitle, inboxShortTitle, inboxContextLine } from '../lib/inb
 import { classifyEntry } from '@zana-ai/zcc-domain/feed-categories';
 import { resolveAnswerSurface } from '../lib/answerSurface.js';
 import { respondToInboxBlocker } from '../lib/inboxBlockerRespond.js';
-import { useExecutionInboxBlockerState } from '../lib/executionInboxBlockerState.js';
+import { useExecutionInboxBlockerState, type ExecutionInboxBlockerState } from '../lib/executionInboxBlockerState.js';
 import { isClaudeProfile, knownProfile, projectDefaultProfile } from '../lib/launchProfile.js';
+import { fileManagerName } from '../lib/file-manager.js';
 import type {
   InboxDoc,
   InboxEntry,
@@ -57,6 +62,7 @@ import type {
   SavedRecordInput,
   TerminalSession
 } from '@zana-ai/zcc-domain/product';
+import { platformShortcut } from '../lib/platformShortcut.js';
 
 interface InboxDetailProps {
   /**
@@ -110,6 +116,7 @@ export function InboxDetail({ visible, onBack }: InboxDetailProps) {
       }
 
       await deleteInboxEntry(id);
+      useInboxReplyDrafts.getState().clearDraft(id);
     },
     [entries, select, markRead]
   );
@@ -168,13 +175,24 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
   // Open the "new agent" launcher (project mode) prefilled with this report, so
   // the user can spawn a fresh agent to act on the message.
   const [launcherOpen, setLauncherOpen] = useState(false);
+  // Squad proposal card: the reviewed pre-fill that opens the Squad composer.
+  const [squadPrefill, setSquadPrefill] = useState<SquadLaunchPrefill | null>(null);
+  const [squadReviewBusy, setSquadReviewBusy] = useState(false);
+  const [squadReviewError, setSquadReviewError] = useState<string | null>(null);
+  const [squadDismissBusy, setSquadDismissBusy] = useState(false);
+  const [squadDismissError, setSquadDismissError] = useState<string | null>(null);
   // When we spawn a replacement agent (the originating tab was gone), point the
   // reply/question box at THAT new live session for the rest of this view, so a
   // follow-up answer lands on the agent the user just reopened.
   const [reopenedSessionId, setReopenedSessionId] = useState<string | null>(null);
   // In reopen mode, a plain (non-question) report doesn't auto-open the answer
   // box — it shows a quiet "Reply…" button. This tracks the user expanding it.
-  const [replyExpanded, setReplyExpanded] = useState(false);
+  // A kept draft keeps the box open when the entry is selected again, without taking focus.
+  const [replyExpanded, setReplyExpanded] = useState(() => !!useInboxReplyDrafts.getState().drafts[entry.id]);
+  const [focusReply, setFocusReply] = useState(false);
+  const detailRef = useRef<HTMLDivElement>(null);
+  const composeCount = useInboxReplyDrafts(composeSeqFor(entry.id));
+  const seenCompose = useRef(composeCount);
 
   const aliveProject = projects.find((p) => p.id === entry.projectId) ?? null;
   const projectAlive = aliveProject !== null;
@@ -233,6 +251,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
   const hasComments = (entry.comments ?? '').trim().length > 0;
   const squadDetailsNotice = !!entry.executionId && (
     entry.squadNotice === 'worktree-lifecycle'
+    || entry.squadNotice === 'proposal-result'
     || hostAction?.kind === 'squad-worktree-lifecycle'
     || entry.decisionGuidance?.kind === 'plan-correction'
   );
@@ -255,7 +274,8 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
   // from the entry's own structured question field, so a user who disabled the
   // interactive picker still gets an answer box for a real question (never null).
   const answerable = questionSet.length > 0 || classifyEntry(entry) === 'question';
-  const questionFirst = answerable;
+  // A Squad proposal card is always the primary surface (never the generic reply box).
+  const questionFirst = answerable || !!entry.squadProposal;
   // Single deterministic decision for the answer surface (see resolveAnswerSurface):
   //  live   → inject into the originating/reopened pty.
   //  reopen → no live session but project survives → reopen the agent with the
@@ -521,11 +541,56 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
   // Unknown ownership is fail-closed until main confirms this exact entry is non-host.
   const ownershipLoading = ownership?.loading ?? true;
   const ownershipError = ownership?.error === true;
+  const answered = useInboxAnswered((s) => !!s.answeredIds[entry.id]);
+  const blockerState = useExecutionInboxBlockerState(entry, answered);
+  // An execution-linked box is collapsed (and cannot reopen) once its blocker is no longer actionable.
+  const blockerClosed = !!entry.executionId && !!entry.blockerId
+    && blockerState !== 'actionable' && blockerState !== 'unknown';
+  // True when the dock shows a ReplyBox or the reopen shell (R and Quote in reply target it).
+  const replyTarget = !questionFirst && !hostAction && !squadDetailsNotice && !ownershipLoading && !ownershipError
+    && projectAlive && !threadLookup.loading && !threadLookup.error && questionSet.length === 0 && !blockerClosed
+    && (!!originatingThread || (deliveryMode === 'live' && !!aliveSession) || deliveryMode === 'reopen');
+
+  // A new compose request opens the collapsed reopen shell; a mounted ReplyBox focuses itself.
+  useEffect(() => {
+    const previous = seenCompose.current;
+    seenCompose.current = composeCount;
+    // 0 means the latest request now targets another entry.
+    if (composeCount === 0 || composeCount === previous) return;
+    setReplyExpanded(true);
+    setFocusReply(true);
+  }, [composeCount]);
+
+  // R jumps to the reply box. isInboxListShortcut ignores typing, modals and modifier keys.
+  useEffect(() => {
+    if (!replyTarget) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.key !== 'r' && e.key !== 'R') || e.repeat || !isInboxListShortcut(e)) return;
+      e.preventDefault();
+      useInboxReplyDrafts.getState().requestCompose(entry.id);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [replyTarget, entry.id]);
+
+  // Esc in the reply box hands focus to this scroller, so j / k / R work again.
+  useEffect(() => {
+    const scroller = detailRef.current?.closest<HTMLElement>('.inbox-view-detail');
+    if (!scroller) return;
+    const previous = scroller.getAttribute('tabindex');
+    scroller.tabIndex = -1;
+    return () => {
+      if (previous === null) scroller.removeAttribute('tabindex');
+      else scroller.setAttribute('tabindex', previous);
+    };
+  }, []);
   const hostActionSurface = squadDetailsNotice && (!hostAction || hostAction.kind === 'squad-worktree-lifecycle') ? (
     <div className="inbox-reply" role="status">
       <p>{entry.decisionGuidance?.kind === 'plan-correction'
         ? 'This Squad plan needs correction. Open Squad details to retain the run context while reviewing it.'
-        : 'This retained Squad worktree needs attention. Recovery and worktree actions are available from Squad details.'}</p>
+        : entry.squadNotice === 'proposal-result'
+          ? 'The full run, with its work units and results, is in Squad details.'
+          : 'This retained Squad worktree needs attention. Recovery and worktree actions are available from Squad details.'}</p>
       <button type="button" className="btn inbox-reply-open-details" onClick={() => {
         setPendingSquadDetailsTarget({ projectId: entry.projectId, executionId: entry.executionId! });
         setNav('agents');
@@ -549,13 +614,72 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
       />
     )
   ) : null;
+  const reviewSquadProposal = async () => {
+    if (!entry.squadProposal || squadReviewBusy) return;
+    setSquadReviewBusy(true);
+    setSquadReviewError(null);
+    try {
+      const res = await product.teams.reviewProposal(entry.squadProposal.proposalId);
+      if (!res.ok) {
+        setSquadReviewError(res.message);
+        // An expired or already-launched proposal changes the card's host action;
+        // refresh it so the buttons give way to main's message.
+        void resolveInboxHostAction(entry);
+        return;
+      }
+      setSquadPrefill(res.value);
+      setLauncherOpen(true);
+    } catch (err) {
+      setSquadReviewError(err instanceof Error ? err.message : String(err));
+      void resolveInboxHostAction(entry);
+    } finally {
+      setSquadReviewBusy(false);
+    }
+  };
+  const dismissSquadProposal = async () => {
+    if (squadDismissBusy) return;
+    setSquadDismissBusy(true);
+    setSquadDismissError(null);
+    try {
+      const ok = await runInboxHostAction(entry.id, { optionId: 'dismiss' });
+      if (!ok) setSquadDismissError('This Squad launch could not be dismissed. Try again.');
+    } catch (err) {
+      // The IPC error names internals; the user gets the same retry message as a refused dismiss.
+      console.warn('[inbox] squad proposal dismiss failed', err);
+      setSquadDismissError('This Squad launch could not be dismissed. Try again.');
+    } finally {
+      setSquadDismissBusy(false);
+    }
+  };
+  const closeSquadLauncher = () => {
+    setLauncherOpen(false);
+    setSquadPrefill(null);
+    // Host actions are re-resolved only on selection or after a host-action
+    // click; refresh so a launched or cancelled proposal updates the card.
+    void resolveInboxHostAction(entry);
+  };
+  const squadProposalSurface = entry.squadProposal ? (
+    <InboxSquadProposalSurface
+      hostAction={hostAction}
+      ownershipLoading={ownershipLoading}
+      ownershipError={ownershipError}
+      projectAlive={projectAlive}
+      reviewBusy={squadReviewBusy}
+      dismissBusy={squadDismissBusy}
+      reviewError={squadReviewError}
+      dismissError={squadDismissError}
+      onRetry={() => void resolveInboxHostAction(entry)}
+      onReview={() => void reviewSquadProposal()}
+      onDismiss={() => void dismissSquadProposal()}
+    />
+  ) : null;
   // Host action ownership permits only viewing its recorded origin. A fresh or
   // resumed terminal could escape the host-controlled worktree and authority.
   const ownershipPending = ownershipLoading || ownershipError;
   const canOpenHostOrigin = !!originatingThread || !!originalSession;
   const canOpen = !squadDetailsNotice && projectAlive && !ownershipPending && (!hostAction || canOpenHostOrigin);
 
-  const answerSurface = hostActionSurface ?? (
+  const answerSurface = squadProposalSurface ?? hostActionSurface ?? (
     <>
           {/* Answer surface — one deterministic decision (resolveAnswerSurface):
               • live   → the originating (or a reopened) session is alive → inject
@@ -589,6 +713,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
             ) : (
               <ReplyBox
                 entry={entry}
+                blockerState={blockerState}
                 sessionTitle={originatingThread.title}
                 onReply={answerOnThread}
               />
@@ -606,6 +731,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
             ) : (
               <ReplyBox
                 entry={entry}
+                blockerState={blockerState}
                 sessionId={aliveSession.id}
                 sessionTitle={aliveSession.title}
               />
@@ -625,10 +751,11 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
               ) : (
                 <ReplyBox
                   entry={entry}
+                  blockerState={blockerState}
                   sessionTitle={sessionTitleForTombstone(entry)}
                   onAnswerDeadSession={answerOnDeadSession}
                   deadSessionBusy={reopening}
-                  autoFocus={compact && replyExpanded}
+                  autoFocus={focusReply}
                 />
               )
             ) : (
@@ -636,10 +763,12 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
                 <button
                   type="button"
                   className="inbox-reply-composer"
-                  onClick={() => setReplyExpanded(true)}
+                  onClick={() => { setReplyExpanded(true); setFocusReply(true); }}
                   aria-label="Leave a reply"
+                  aria-keyshortcuts="R"
                 >
                   Leave a reply…
+                  <kbd className="inbox-reply-hint inbox-reply-composer-hint">R</kbd>
                 </button>
               </div>
             )
@@ -658,7 +787,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
   );
 
   return (
-    <div className="inbox-detail">
+    <div className="inbox-detail" ref={detailRef}>
       <div className="inbox-detail-header">
         <button
           type="button"
@@ -806,7 +935,8 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
           the user sees what they're answering right above the options. Rendering
           the same `comments` here too would duplicate it, so suppress this
           standalone block for question entries. */}
-      {hasComments && questionSet.length === 0 && (
+      {/* A Squad proposal has no question to answer; its summary (Squad, planning, files) is the card body. */}
+      {hasComments && (questionSet.length === 0 || !!entry.squadProposal) && (
         <div className="inbox-detail-comments">
           <MarkdownContent text={entry.comments!} exportable />
         </div>
@@ -822,6 +952,17 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
           />
         </div>
       )}
+
+      {relatedSuggestions.length > 0 && (
+        <RelatedNextSteps
+          suggestions={relatedSuggestions}
+          onOpen={() => {
+            setNav('suggestions');
+          }}
+        />
+      )}
+
+      {replyTarget && !compact && <InboxQuoteSelection entryId={entry.id} rootRef={detailRef} />}
 
       <div className="inbox-detail-dock">
         <div className="inbox-detail-footer">
@@ -845,28 +986,23 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
             </button>
           ) : !squadDetailsNotice && (
             <div className="inbox-detail-unavailable">
-              Project no longer exists — nowhere to open.
+              {entry.squadProposal && projectAlive
+                ? 'The conversation that prepared this launch is no longer open.'
+                : 'Project no longer exists — nowhere to open.'}
             </div>
           )}
         </div>
          {(ownershipLoading || ownershipError || hostAction || questionFirst) ? null : answerSurface}
       </div>
 
-      {relatedSuggestions.length > 0 && (
-        <RelatedNextSteps
-          suggestions={relatedSuggestions}
-          onOpen={() => {
-            setNav('suggestions');
-          }}
-        />
-      )}
-
       {launcherOpen && aliveProject && (
         <AgentLauncher
           project={aliveProject}
-          initialPrompt={buildSpawnPrompt(entry)}
+          {...(squadPrefill
+            ? { initialMode: 'team' as const, squadPrefill }
+            : { initialPrompt: buildSpawnPrompt(entry) })}
           onLaunched={(session, projectId) => inspectAgentSession(session.id, projectId, navigate)}
-          onClose={() => setLauncherOpen(false)}
+          onClose={squadPrefill ? closeSquadLauncher : () => setLauncherOpen(false)}
         />
       )}
     </div>
@@ -1105,8 +1241,13 @@ function RelatedNextSteps({
  * to a confirmation line; the user can reply again via the "reply again" link
  * if the agent asks a follow-up on the same session.
  */
+const REPLY_MIN_HEIGHT = 72;
+/** The reply box never grows past this share of the window height. */
+const REPLY_MAX_VIEWPORT_RATIO = 0.4;
+
 function ReplyBox({
   entry,
+  blockerState,
   sessionId,
   sessionTitle,
   onReply,
@@ -1115,6 +1256,8 @@ function ReplyBox({
   autoFocus = false
 }: {
   entry: InboxEntry;
+  /** Execution blocker state, computed once by InboxDetail so R and Quote agree with the collapsed box. */
+  blockerState: ExecutionInboxBlockerState;
   /** The LIVE session to inject into — the originating tab, or a reopened one.
    *  Absent in dead-session mode (the session ended); then `onAnswerDeadSession`
    *  carries the answer by reopening the agent. */
@@ -1130,15 +1273,63 @@ function ReplyBox({
   autoFocus?: boolean;
 }) {
   const answered = useInboxAnswered((s) => !!s.answeredIds[entry.id]);
-  const blockerState = useExecutionInboxBlockerState(entry, answered);
-  const [text, setText] = useState('');
+  const draft = useInboxReplyDrafts((s) => s.drafts[entry.id] ?? '');
+  // The store drops whitespace-only text, so a leading space or Enter lives here until real text follows.
+  const [blank, setBlank] = useState('');
+  const text = draft || blank;
+  const setText = (value: string) => {
+    setBlank(value.trim() === '' ? value : '');
+    useInboxReplyDrafts.getState().setDraft(entry.id, value);
+  };
+  const composeCount = useInboxReplyDrafts(composeSeqFor(entry.id));
+  const seenCompose = useRef(composeCount);
+  const wantFocus = useRef(false);
   const [sending, setSending] = useState(false);
   const [reopened, setReopened] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const dead = !sessionId && !!onAnswerDeadSession;
   const busy = sending || deadSessionBusy;
   const executionLinked = !!entry.executionId && !!entry.blockerId;
   const collapsed = (executionLinked ? blockerState !== 'actionable' && blockerState !== 'unknown' : answered) && !reopened;
+
+  // Grow with the draft so a long reply stays visible inside the pinned bar.
+  // Reset before measuring so deleting lines shrinks it again.
+  const resize = useCallback(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    // The stylesheet may cap lower than 40% (mobile); size and overflow must follow the cap that applies.
+    const cssMax = parseFloat(getComputedStyle(input).maxHeight);
+    const max = Math.max(REPLY_MIN_HEIGHT, Math.min(Math.round(window.innerHeight * REPLY_MAX_VIEWPORT_RATIO), Number.isFinite(cssMax) ? cssMax : Infinity));
+    input.style.height = '0px';
+    const next = Math.min(Math.max(input.scrollHeight, REPLY_MIN_HEIGHT), max);
+    input.style.height = `${next}px`;
+    input.style.overflowY = input.scrollHeight > max ? 'auto' : 'hidden';
+  }, []);
+  // Also on mount: the textarea is absent while the "Replied to" box is collapsed, so `collapsed` is a dependency.
+  useLayoutEffect(resize, [text, collapsed, resize]);
+  // The cap follows the window, so a resize must re-measure a long draft.
+  useEffect(() => {
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, [resize]);
+  // A compose request (R, Quote in reply) expands a collapsed box, then focuses it with the caret at the end.
+  useEffect(() => {
+    const previous = seenCompose.current;
+    seenCompose.current = composeCount;
+    if (composeCount === 0 || composeCount === previous) return;
+    // A collapsed execution-linked box cannot open, so there is nothing to focus later.
+    if (collapsed && executionLinked) return;
+    wantFocus.current = true;
+    if (collapsed) setReopened(true);
+  });
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!wantFocus.current || !input) return;
+    wantFocus.current = false;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  });
 
   const submit = async () => {
     if (busy || !text.trim()) return;
@@ -1156,7 +1347,8 @@ function ReplyBox({
       setSending(false);
     }
     if (ok) {
-      setText('');
+      useInboxReplyDrafts.getState().clearDraft(entry.id);
+      setBlank('');
       setReopened(false);
     }
   };
@@ -1187,6 +1379,7 @@ function ReplyBox({
   return (
     <div className="inbox-reply">
       <textarea
+        ref={inputRef}
         className="inbox-reply-input"
         autoFocus={autoFocus}
         value={text}
@@ -1195,6 +1388,10 @@ function ReplyBox({
           if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
             e.preventDefault();
             void submit();
+          } else if (e.key === 'Escape' && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            e.currentTarget.blur();
+            e.currentTarget.closest<HTMLElement>('.inbox-view-detail')?.focus({ preventScroll: true });
           }
         }}
         rows={2}
@@ -1202,7 +1399,7 @@ function ReplyBox({
         aria-label="Reply to the originating agent"
       />
       <div className="inbox-reply-actions">
-        <span className="inbox-reply-hint">⌘↵ to send</span>
+        <span className="inbox-reply-hint">{platformShortcut('⌘↵ to send · Esc to keep reading')}</span>
         <button
           type="button"
           className="inbox-reply-send"
@@ -1515,8 +1712,8 @@ function DocActions({
         type="button"
         className="inbox-doc-open"
         onClick={stop(onReveal)}
-        title="Reveal in Finder"
-        aria-label={`Reveal ${label} in Finder`}
+        title={`Reveal in ${fileManagerName()}`}
+        aria-label={`Reveal ${label} in ${fileManagerName()}`}
       >
         <FolderOpen size={12} strokeWidth={1.75} />
       </button>

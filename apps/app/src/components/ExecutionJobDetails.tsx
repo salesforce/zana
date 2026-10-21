@@ -336,6 +336,10 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
         <dt>Goal</dt><dd>{execution.objective ?? execution.jobTitle}</dd>
         <dt>Summary</dt><dd>{execution.summary ?? '—'}</dd>
         <dt>Squad</dt><dd>{execution.teamName ?? execution.teamId ?? '—'}</dd>
+        {execution.startedFrom ? (
+          <><dt>Started from</dt><dd>{execution.startedFrom.title
+            ?? (execution.startedFrom.kind === 'thread' ? 'A Modern conversation' : 'A CLI Agent session')}</dd></>
+        ) : null}
         <dt>Orchestrator</dt><dd>{execution.coordinator?.status ?? 'unknown'}{execution.coordinator?.sessionId ? ` · ${execution.coordinator.sessionId}` : ''}</dd>
       </dl>
        {execution.recoveryAttention && <p role="alert">Orchestrator lost. {execution.recovery?.status === 'available'

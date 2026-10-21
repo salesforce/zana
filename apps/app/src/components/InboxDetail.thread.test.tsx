@@ -31,11 +31,13 @@ vi.mock('../lib/renderReportHtml.js', () => ({ renderReportHtml: vi.fn() }));
 vi.mock('../lib/executionInboxBlockerState.js', () => ({ useExecutionInboxBlockerState: () => 'actionable' }));
 import { InboxDetail } from './InboxDetail.js';
 import { inboxThreadCache } from '../hooks/useInboxThread.js';
+import { resetComposerSessions } from './composer/composer-session.js';
 
 function Location() { return <output data-testid="location">{useLocation().pathname}</output>; }
 const view = () => <MemoryRouter><InboxDetail visible /><Location /></MemoryRouter>;
 beforeEach(() => {
   inboxThreadCache.clear();
+  resetComposerSessions();
   vi.resetAllMocks();
   h.compact = false; h.terminals = []; h.hostActions = {};
   h.entry = { id: 'report', ts: 1, projectId: 'p', sessionId: 'thread', subject: 'Report', comments: 'Ready for your reply.' };
@@ -64,6 +66,19 @@ it('restores an archived thread when opening an explicit thread report', async (
   fireEvent.click(screen.getByRole('button', { name: 'Reopen', exact: true }));
   await waitFor(() => expect(h.unarchive).toHaveBeenCalledWith('thread'));
   await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/projects/p/threads/thread'));
+});
+
+it('keeps an unsent reply through leaving the Inbox and clears it once sent', async () => {
+  const first = render(view());
+  fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Half-written reply' } });
+  first.unmount();
+  render(view());
+  expect(await screen.findByRole('textbox')).toHaveProperty('value', 'Half-written reply');
+  fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }));
+  await waitFor(() => expect(screen.getByRole('textbox')).toHaveProperty('value', ''));
+  cleanup();
+  render(view());
+  expect(await screen.findByRole('textbox')).toHaveProperty('value', '');
 });
 
 it('sends a reply to the thread and marks answered only after delivery', async () => {

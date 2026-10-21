@@ -57,7 +57,8 @@ import { createTeamProductOps } from './team-product-ops.js';
 import { jobCoordinatorPrompt } from './team-coordinator-prompt.js';
 import {
   createDesktopNativeRecovery, gateInvalidProvidedPlan, recoverSquadStateAtBoot, runSpawnLifecycle, slotRecoveryLaunch,
-  sweepUnretainedSquadWorktrees, teamAdmissionRequirements, teamJobFailureResponse
+  sweepUnretainedSquadWorktrees, teamAdmissionRequirements, teamJobFailureResponse, withProposalLaunch, findProposalExecution, type ProposalLaunchDeps,
+  withRenewedSources, scopedSourceRenewal, splitProposedGoalSources
 } from './team-launch-support.js';
 import { openExecutionStorage } from './execution-storage.js';
 import { createPlanCorrectionHandoff, createPlanCorrectionHost } from './plan-correction/host.js';
@@ -72,7 +73,7 @@ import { onOrchestratorIdle } from './coordinator-idle.js';
 import { finalSessionStats } from './session-stats-cache.js';
 import { applyPluginAgentCapabilities } from '@zana-ai/zcc-server/services/extensions/plugin-agent-sync';
 import { runtimeHostAvailable, setRuntimeHostSupervisor } from '@zana-ai/zcc-host-daemon/harness/execution-environment';
-import { IPC, type PluginViewTarget } from '@zana-ai/zcc-desktop-contract';
+import { IPC, type PluginViewTarget, type ThreadViewTarget } from '@zana-ai/zcc-desktop-contract';
 import { signUiSend } from '@zana-ai/zcc-server/http/ui-send-proof';
 import { MenubarThreadOpenResultSchema, MenubarThreadsListResultSchema, type SquadMemberStatus } from '@zana-ai/zcc-contracts/runtime';
 import { createDesktopBrowserViewManager } from './desktop-browser-view.js';
@@ -113,17 +114,18 @@ import { createRemoteReapLedger, remoteReapOrphans, type RemoteReapEntry } from 
 import { createExecutionStore, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
-import { KeyedColdStartSemaphore, SquadExecutionService } from '@zana-ai/zcc-server/services/execution/service';
+import { KeyedColdStartSemaphore, SquadExecutionService, type ExecutionRequestV1 } from '@zana-ai/zcc-server/services/execution/service';
 import type { ResolvedModelSnapshotV1 } from '@zana-ai/zcc-server/services/execution/store';
 import { verifyHarnesses } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
 import { IdleGatedInjector, suppressesInteractiveBlocked } from '@zana-ai/zcc-server/services/execution/idle-gated-injector';
 import { createExecutionArtifactStore } from '@zana-ai/zcc-server/services/execution/artifact-store';
 import { createExecutionSourceRegistry, ExecutionSourceError, type ExecutionSourcePathDescriptor } from '@zana-ai/zcc-server/services/execution/source-registry';
+import { resolveSourcePolicy, sourceRefusal, type SourcePolicy } from '@zana-ai/zcc-server/services/execution/source-policy';
 import { createExecutionHandoffStore } from '@zana-ai/zcc-server/services/execution/handoff-store';
 import { createResumeGrantStore } from '@zana-ai/zcc-server/services/execution/resume-grant-store';
 import { createResumeTokenStore } from '@zana-ai/zcc-server/services/execution/resume-token-store';
 import { createInboxActionRegistry } from './inbox-actions/registry.js';
-import { squadWorktreeHasActiveFollowUp, withSquadWorktreeLifecycleLock } from './squad-worktree-lifecycle.js';
+import { squadWorktreeHasActiveFollowUp, withSquadWorktreeLifecycleLock, type SquadWorktreeTerminalOutcome } from './squad-worktree-lifecycle.js';
 import { relaunchExecutionMonitor } from '@zana-ai/zcc-server/services/execution/relaunch-monitor';
 import { preflightWorkflowProfile } from '@zana-ai/zcc-server/services/agents/squad-bundle';
 import { expandTeamSlots } from '@zana-ai/zcc-server/services/agents/team-slot-expansion';
@@ -247,7 +249,15 @@ import {
   writePluginViewBounds
 } from './window/plugin-view-windows.js';
 import { createPluginViewHost } from './window/plugin-view-host.js';
-import { registerPluginViewIpc } from './ipc/windows.js';
+import {
+  cascadeThreadViewPosition,
+  readThreadViewBounds,
+  threadViewRendererParams,
+  writeThreadViewBounds
+} from './window/thread-view-windows.js';
+import { createThreadViewHost } from './window/thread-view-host.js';
+import { findUnscopedWindow, isUnscopedRegistration } from './window/main-window-registry.js';
+import { registerPluginViewIpc, registerThreadViewIpc } from './ipc/windows.js';
 import { showApprovalSheet } from './window/approval-sheet.js';
 import { createPluginApprovalHandler } from './ipc/plugin-approvals.js';
 import { listPluginAppsFromProductServer } from './ipc/plugin-apps-loopback.js';
@@ -281,7 +291,11 @@ import { SkillBundlesStore } from '@zana-ai/zcc-server/services/skills/skill-bun
 import { listCommands } from '@zana-ai/zcc-server/services/skills/commands';
 import { ScheduleGroupsStore } from '@zana-ai/zcc-server/services/scheduler/schedule-groups-store';
 import { watch as fsWatch, mkdirSync, type FSWatcher } from 'node:fs';
-import { realpath, rm } from 'node:fs/promises';
+import { lstat, open as openFile, realpath, rm } from 'node:fs/promises';
+import { personaCanWriteFiles, type SquadProposalInput } from '@zana-ai/zcc-domain/squad-proposal';
+import { createSquadProposalStore } from './squad-proposals/store.js';
+import { createSquadProposalService, SQUAD_LAUNCH_PROPOSAL_ACTION, type SquadProposalServiceDeps } from './squad-proposals/service.js';
+import { createSquadProposalNotifier } from './squad-proposals/notifier.js';
 import { parseSshConfig } from '@zana-ai/zcc-server/services/projects/ssh-config';
 import {
   SshHostProviderRegistry,
@@ -309,6 +323,7 @@ import { createDoctor, hasMissingDeps, type Doctor } from '@zana-ai/zcc-server/s
 import { TemplateStore } from '@zana-ai/zcc-server/services/library/template-store';
 import { QuickPromptStore } from '@zana-ai/zcc-server/services/library/quick-prompt-store';
 import { resolveRulesGuidance } from '@zana-ai/zcc-server/services/projects/rules-file';
+import { mainClaudeBinaryGetter } from './main-claude-binary.js';
 import { PromptRegistry, LlmService, ClaudeCliProvider, OpenAiProvider, GeminiProvider, resolveNamedTitle, runTabNamerOnce, redactTranscript, type LlmProvider } from '@zana-ai/zcc-llm';
 import { VoiceService } from './native/voice/voice-service.js';
 import { OpenAiVoiceProvider } from './native/voice/openai-provider.js';
@@ -879,14 +894,17 @@ function setActiveProjectSkillsWatcher(
  *
  * A plugin view window (`view`) shows one plugin project tab. It also carries
  * the tab's `projectId`, so it is scoped like a project window.
+ *
+ * A thread view window (`threadView`) shows one thread and its side panel. A
+ * thread may have no project, so it is never the unscoped main window either.
  */
-const windows = new Map<number, { win: BrowserWindow; projectId?: string; view?: PluginViewTarget }>();
+const windows = new Map<number, { win: BrowserWindow; projectId?: string; view?: PluginViewTarget; threadView?: ThreadViewTarget }>();
 const boundsControllers = new Map<number, ReturnType<typeof createBoundsStateController>>();
 const rendererReadiness = new RendererReadiness();
 
 function markRendererReady(win: BrowserWindow): void {
-  const registered = windows.get(win.id);
-  if (!registered || registered.win !== win || registered.projectId) return;
+  /* v8 ignore next -- registry wiring; isUnscopedRegistration is unit-tested */
+  if (!isUnscopedRegistration(windows.get(win.id), win)) return;
   rendererReadiness.markReady(win.id);
 }
 /**
@@ -900,10 +918,8 @@ function mainWindow(): BrowserWindow | null {
 }
 /** The live unscoped (full-shell) window, or null if only scoped ones exist. */
 function unscopedWindow(): BrowserWindow | null {
-  for (const { win, projectId } of windows.values()) {
-    if (!projectId && !win.isDestroyed()) return win;
-  }
-  return null;
+  /* v8 ignore next -- registry wiring; findUnscopedWindow is unit-tested */
+  return findUnscopedWindow(windows.values());
 }
 /** Any live window, scoped or not. */
 function anyWindow(): BrowserWindow | null {
@@ -1424,21 +1440,22 @@ const quickPrompts = new QuickPromptStore();
 // LLM micro-call layer: an editable prompt registry + a provider-agnostic
 // dispatcher. v1 registers only the claude-cli provider (a headless
 // `claude --print` that reuses the user's Claude Code login). The claude binary
-// is read from config at boot and refreshed on config:set so a binary change
-// takes effect without a restart.
+// is resolved from config on every run, so a binary change takes effect without a restart.
 const promptRegistry = new PromptRegistry({
   homeDir: () => app.getPath('home'),
   revealPath: (path) => shell.openPath(path)
 });
 const llmService = new LlmService(new Map<LlmProviderId, LlmProvider>());
 /** Single provider-registration path. Rebuilds the LLM providers from config.
- *  `claude-cli` is built from `config.claudeBinary`. The HTTP providers
+ *  `claude-cli` resolves its binary from `store.getConfig()` on every run
+ *  (config.json is re-read, so a change from any writer applies without a
+ *  restart). The HTTP providers
  *  (`openai`/`gemini`) are registered unconditionally with a LAZY key getter —
  *  they read the encrypted key from safeStorage at call time and resolve to an
  *  honest `ok:false` "no API key configured" when absent, so a key added/removed
  *  later takes effect without a re-register. */
-function rebuildProviders(config: AppConfig): void {
-  llmService.setProvider(new ClaudeCliProvider(config.claudeBinary));
+function rebuildProviders(): void {
+  llmService.setProvider(new ClaudeCliProvider(mainClaudeBinaryGetter(store, join(electronZccDataDir(), 'config.json'))));
   llmService.setProvider(new OpenAiProvider(() => getOpenAiKey()));
   llmService.setProvider(new GeminiProvider(() => getGeminiKey()));
 }
@@ -2320,6 +2337,7 @@ const closeSummary = new CloseSummaryService({
       })
       .then((e) => ({ id: e.id })),
   projectLabel: (projectId) => store.listProjects().find((p) => p.id === projectId)?.name,
+  log: logMainError,
   // Used only by summarizeAndClose (the CLI `term close-summary` path). Same
   // close primitive the control plane / IPC use; returns false on an unknown id.
   closeTerminal: (sessionId) => {
@@ -3376,7 +3394,7 @@ function safeSend(channel: string, ...args: unknown[]) {
 function sendToFocused(channel: string, ...args: unknown[]) {
   const target = BrowserWindow.getFocusedWindow() ?? mainWindow();
   /* v8 ignore next -- menu routing runs in built Electron; routeMenu is unit-tested */
-  if (pluginViews.routeMenu(target, channel, args)) return;
+  if (pluginViews.routeMenu(target, channel, args) || threadViews.routeMenu(target, channel, args)) return;
   if (!target || target.isDestroyed() || target.webContents.isDestroyed()) return;
   try {
     target.webContents.send(channel, ...args);
@@ -3452,10 +3470,10 @@ function openProjectWindow(projectId: string) {
     logMainError('openProjectWindow', `unknown projectId ${projectId}`);
     return;
   }
-  // A plugin view window carries the project id too, but it is not the project's window.
+  // Plugin and thread view windows carry the project id too, but they are not the project's window.
   /* v8 ignore next -- project windows open through built-Electron IPC (E2E) */
-  for (const { win, projectId: pid, view } of windows.values()) {
-    if (pid === projectId && !view && !win.isDestroyed()) {
+  for (const { win, projectId: pid, view, threadView } of windows.values()) {
+    if (pid === projectId && !view && !threadView && !win.isDestroyed()) {
       if (E2E_LAUNCH) return; // E2E: keep hidden, never steal focus
       if (win.isMinimized()) win.restore();
       win.show();
@@ -3475,6 +3493,29 @@ const pluginViews = createPluginViewHost({
   ensureMainWindowReady,
   mainWindow: unscopedWindow,
   showMainWindow,
+  broadcast: safeSend,
+  logError: logMainError,
+  keepHidden: E2E_LAUNCH
+});
+
+/* v8 ignore next -- wiring to Electron windows; createThreadViewHost is unit-tested and the windows are covered by built-Electron E2E */
+const threadViews = createThreadViewHost({
+  windows,
+  projectIds: () => store.listProjects().map((project) => project.id),
+  createWindow: (target) => createWindow(target.projectId, false, undefined, target),
+  sendToMainWindow: (channel, args) => {
+    void ensureMainWindowReady().then((ready) => {
+      const win = unscopedWindow();
+      if (!ready || !win || win.webContents.isDestroyed()) return;
+      try {
+        win.webContents.send(channel, ...args);
+      } catch (err) {
+        logMainError(`sendToMainWindow ${channel}`, err);
+        return;
+      }
+      showMainWindow();
+    });
+  },
   broadcast: safeSend,
   logError: logMainError,
   keepHidden: E2E_LAUNCH
@@ -4876,46 +4917,25 @@ export function jobWorkerPrompt(input: {
 
 /**
  * A Team goal can name source files directly. Main resolves any file the operator
- * names that resolves under a Rule-2 trust anchor — the registered project root OR
- * the user's HOME — then sends it through the same registry as picker-selected
- * sources. The location of a named plan/source NEVER constrains where execution
- * happens (that is always the project); it is only a read input to snapshot, so a
- * plan kept outside the project (e.g. a doc vault under HOME) resolves too. The
- * sensitive HOME roots (`.ssh`, `.aws`, `.zcc`) stay blocked and write confinement
- * is enforced separately at execution time, so no raw write access is granted.
+ * names that the shared source policy allows (under the project root, HOME or the
+ * clone root, never a credential store or Zana's own state) and sends it through the
+ * same registry as picker-selected sources. The location of a named plan/source NEVER
+ * constrains where execution happens (that is always the project); it is only a read
+ * input to snapshot, so a plan kept outside the project (e.g. a doc vault under HOME)
+ * resolves too. Write confinement is enforced separately at execution time.
  */
 export async function goalExecutionSourcePaths(
   goal: string,
   home: string,
-  userHome: string = homedir()
+  userHome: string = homedir(),
+  /** The clone root, Zana's data folders and other protected paths: the rest of the source policy's bases. */
+  opts: { cloneRoot?: string; dataDirs?: readonly string[]; protectedRoots?: readonly string[] } = {}
 ): Promise<ExecutionSourcePathDescriptor[]> {
   const paths = new Map<string, ExecutionSourcePathDescriptor>();
-  // Allowed READ bases follow Rule 2's trust anchors: the target project root and
-  // the user's HOME. Either may be unresolvable (a remote/nonexistent project
-  // root, or an exotic HOME); a named source under whichever base resolves is
-  // still discoverable. Only if NEITHER resolves do we skip discovery entirely.
-  const bases: string[] = [];
-  try {
-    bases.push(await realpath(home));
-  } catch {
-    // `home` is a remote/nonexistent local project root — drop that base but keep
-    // the HOME base so a locally-referenced plan is still discoverable.
-  }
-  let realUserHome: string | undefined;
-  try {
-    realUserHome = await realpath(userHome);
-    bases.push(realUserHome);
-  } catch {
-    // No resolvable HOME base either.
-  }
-  if (bases.length === 0) return [];
-  const sensitiveRoots = realUserHome
-    ? [join(realUserHome, '.ssh'), join(realUserHome, '.aws'), join(realUserHome, '.zcc')]
-    : [];
-  const withinAnyBase = (real: string): boolean => bases.some((base) => {
-    const rel = relative(base, real);
-    return rel !== '' && !(rel.startsWith(`..${sep}`) || rel === '..' || isAbsolute(rel));
-  });
+  // Allowed READ bases follow Rule 2's trust anchors (the project root, HOME and the clone
+  // root); a base that doesn't resolve (a remote project root) is dropped. Secrets inside
+  // them stay refused. One policy with Squad proposals and the source registry.
+  const policy = await resolveSourcePolicy(realpath, { projectRoot: home, home: userHome, ...opts });
   const rawCandidates: string[] = [];
   // 1. Quoted paths (preserves spaces in "C:\Program Files\..." or '/path with space/...')
   for (const m of goal.matchAll(/["'`]((?:[A-Za-z]:[/\\]|\/)[^"'`]+)["'`]/g)) {
@@ -4932,8 +4952,12 @@ export async function goalExecutionSourcePaths(
     for (const candidate of candidates) {
       try {
         const real = await realpath(candidate);
-        if (!withinAnyBase(real)) continue;
-        if (sensitiveRoots.some((root) => real === root || real.startsWith(`${root}${sep}`))) continue;
+        // The link walk sees a link into a protected location, which the realpath alone does not.
+        if (await sourceRefusal(candidate, real, policy)) continue;
+        // realpath does not resolve hard links; the registry refuses a linked file at Launch, which would fail the whole launch.
+        const linked = await lstat(real);
+        // Launch attaches regular files only (a folder fails NOT_REGULAR_FILE) and refuses a hard-linked one.
+        if (!linked.isFile() || linked.nlink > 1) continue;
         const representations = new Set([candidate, real]);
         for (const path of [...representations]) {
           if (path.startsWith('/private/var/')) representations.add(path.slice('/private'.length));
@@ -5298,7 +5322,7 @@ async function prepareCoordinatorHandoff(args: {
   return { planFilePath };
 }
 
-const squadWorktreeRuntime = createSquadWorktreeRuntime({
+export const squadWorktreeRuntime = createSquadWorktreeRuntime({
   executionStore,
   inboxStore,
   inboxActionRegistry,
@@ -6092,6 +6116,185 @@ function flushStaleWorkerInjections(): void {
 // POSITIVE `dead`.
 const workerLivenessCache = new AgentLivenessCache((sessionId) => ptys.probeAgentLiveness(sessionId));
 
+
+// ---- Squad launch proposals (an agent prepares a Squad; the user reviews it in the Inbox) ----
+/**
+ * HOME, the clone root, Zana's data folder and the app's own data (Electron userData, with its
+ * cookies and source snapshots): with the project, the bases of the shared source policy.
+ */
+export function squadSourceBases(): { home: string; cloneRoot?: string; dataDirs: string[]; protectedRoots: string[] } {
+  const cloneRoot = store.getConfig().cloneRoot?.trim();
+  return { home: homedir(), ...(cloneRoot ? { cloneRoot } : {}), dataDirs: [electronZccDataDir()], protectedRoots: [app.getPath('userData')] };
+}
+
+export const squadProposalStore = createSquadProposalStore({
+  filePath: join(app.getPath('userData'), 'squad-proposals.json')
+});
+
+/** Live-thread probe shared by proposer lookup and report-back: in-process supervisor in prod, loopback server in dev. */
+async function isConversationThreadLive(threadId: string, projectId: string): Promise<boolean> {
+  if (runtimeSupervisor) return (await runtimeSupervisor.isThreadLive(threadId, projectId)) === true;
+  return probeConversationThreadLive(threadId, projectId);
+}
+
+/** A live Modern thread's title for the proposal card ("Prepared in …"); undefined when unknown. */
+async function liveThreadTitle(threadId: string): Promise<string | undefined> {
+  try {
+    const title = (await listMenubarThreads()).find((agent) => agent.threadId === threadId)?.title?.trim();
+    return title || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function lookupProposer(sessionId: string, projectId: string) {
+  const session = ptys.getSession(sessionId);
+  if (session && session.status !== 'exited' && session.projectId === projectId) {
+    const origin = resolveInboxOrigin(sessionId);
+    return {
+      kind: 'pty' as const,
+      id: sessionId,
+      ...(session.title ? { title: session.title } : {}),
+      squadMember: !!session.cohort,
+      ...(origin ? { origin } : {})
+    };
+  }
+  if (await isConversationThreadLive(sessionId, projectId)) {
+    const title = await liveThreadTitle(sessionId);
+    return { kind: 'thread' as const, id: sessionId, ...(title ? { title } : {}), squadMember: false, origin: { threadId: sessionId } };
+  }
+  return null;
+}
+
+export function findExecutionForProposal(projectId: string, proposalId: string): Promise<string | undefined> {
+  return findProposalExecution(executionStore, projectId, proposalId);
+}
+
+/** Queue one text turn into a Modern thread (utility child in prod, loopback product server in dev). */
+export async function queueThreadTurnForProposal(threadId: string, projectId: string, text: string): Promise<{ ok: boolean; reason?: string }> {
+  if (runtimeSupervisor) {
+    try {
+      const result = await runtimeSupervisor.queueThreadTurn(threadId, projectId, text);
+      return { ok: result.ok, ...(result.reason ? { reason: result.reason } : {}) };
+    } catch (error) {
+      return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  try {
+    const response = await fetch(new URL(`api/v1/threads/${encodeURIComponent(threadId)}/send`, productServerUrl()), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ input: [{ type: 'text', text, mentions: [] }], mode: 'queue-if-active' }),
+      signal: AbortSignal.timeout(5000)
+    });
+    if (response.ok) return { ok: true };
+    const body = await response.json().catch(() => ({})) as { code?: unknown };
+    return { ok: false, reason: typeof body.code === 'string' ? body.code : `http-${response.status}` };
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+const squadProposalServiceDeps: SquadProposalServiceDeps = {
+  store: squadProposalStore,
+  enabled: teamExecutionEnabled,
+  lookupProposer,
+  projects: { get: (id) => store.listProjects().find((project) => project.id === id) },
+  teams: { get: (id) => teams.list().find((team) => team.id === id) },
+  personas: { get: (id) => personas.list().find((persona) => persona.id === id) },
+  teamHostProblem: (project) => teamHostProblem(project as Project, localHostId()),
+  expandTeamSlots,
+  resolveSquadPlan: (planSource, texts) => resolveSquadPlan(planSource, texts),
+  fs: { realpath, lstat, open: (path, flags) => openFile(path, flags) },
+  sourceBases: () => squadSourceBases(),
+  inbox: { appendOnce: (input) => inboxStore.appendOnce(input) },
+  actions: {
+    bind: (entry, action) => inboxActionRegistry.bind(entry, action),
+    markUnavailable: (kind, ref, message) => inboxActionRegistry.markUnavailable(kind, ref, message)
+  },
+  issueSources: (windowId, projectId, paths, policy) => executionSources.issue({ windowId: windowId as number, projectId, paths, policy }),
+  now: () => Date.now(),
+  newId: () => randomUUID(),
+  findLaunchedExecution: findExecutionForProposal,
+  logError: (context, error) => logMainError(context, error)
+};
+export const squadProposalService = createSquadProposalService(squadProposalServiceDeps);
+// squad_plan_check's route carries no session id: the MCP tool has already
+// proven the caller live (fail closed), so this view skips the second lookup.
+const squadPlanCheckService = createSquadProposalService({
+  ...squadProposalServiceDeps,
+  lookupProposer: async () => ({ kind: 'pty' as const, id: 'mcp-route', squadMember: false })
+});
+
+export const squadProposalNotifier = createSquadProposalNotifier({
+  getRecord: (executionId) => executionStore.get(executionId),
+  markReported: (executionId, attempt) => executionStore.markReported(executionId, attempt),
+  listUnreported: () => executionStore.listUnreportedExecutions(),
+  markBlockerReported: (executionId, blockerId) => executionStore.markBlockerReported(executionId, blockerId),
+  listUnreportedBlockers: () => executionStore.listUnreportedBlockers(),
+  reply: (sessionId, text) => ptys.reply(sessionId, text),
+  ptyLive: (id) => { const session = ptys.getSession(id); return !!session && session.status !== 'exited'; },
+  ptyState: (id) => agentStatus.get(id),
+  lastInputAt: (id) => ptys.getSession(id)?.lastInputAt,
+  deliverableWhenWaiting: (id) => suppressesInteractiveBlocked(ptys.getSession(id)),
+  threadLive: isConversationThreadLive,
+  queueThreadTurn: queueThreadTurnForProposal,
+  // appendOnce: a replayed report must not re-surface the result entry as a new occurrence.
+  appendInbox: (input) => inboxStore.appendOnce(input),
+  pathExists: existsSync,
+  now: () => Date.now(),
+  setTimer: (fn, ms) => { const handle = setTimeout(fn, ms); handle.unref?.(); return handle; },
+  clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  log: (message, error) => logMainError(message, error)
+});
+inboxActionRegistry.register(SQUAD_LAUNCH_PROPOSAL_ACTION, squadProposalService.handleAction);
+
+/**
+ * Worktree lifecycle first, then the report-back, so the report never nests inside the
+ * lifecycle lock and can name what actually happened to the worktree. The report is not
+ * awaited: delivery (thread liveness, queued turns) must never hold up the engine's
+ * terminal path. The notifier never throws.
+ */
+export async function handleSquadTerminalWithReport(
+  record: Parameters<typeof squadWorktreeRuntime.handleSquadWorktreeTerminal>[0]
+): Promise<SquadWorktreeTerminalOutcome | undefined> {
+  let worktree: SquadWorktreeTerminalOutcome | undefined;
+  let failed = false;
+  try {
+    worktree = await squadWorktreeRuntime.handleSquadWorktreeTerminal(record);
+    return worktree;
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    // A handler that threw applied nothing and the checkout is still there: report it as kept
+    // instead of leaving the report waiting for effects that will not be applied.
+    const outcome = worktree ?? (failed && record.squadWorktree ? 'kept' as const : undefined);
+    void squadProposalNotifier.onTerminal(record, outcome ? { worktree: outcome } : undefined);
+  }
+}
+
+export function canInferPlanForTeam(team: { orchestratorPersonaId?: string }): boolean {
+  const orchestrator = team.orchestratorPersonaId
+    ? personas.list().find((persona) => persona.id === team.orchestratorPersonaId)
+    : undefined;
+  return !!orchestrator && personaCanWriteFiles(orchestrator);
+}
+
+/** `list_teams` MCP output: the summary plus whether the orchestrator can write a plan. */
+export function listTeamSummariesForMcp() {
+  return teams.list().map((team) => ({ ...toTeamSummary(team), canInferPlan: canInferPlanForTeam(team) }));
+}
+
+/** MCP deps for squad_propose / squad_plan_check; empty while Team jobs are off. */
+export function squadProposalMcpDeps() {
+  if (!teamExecutionEnabled()) return {};
+  return {
+    proposeSquad: (route: { projectId: string; sessionId: string }, input: SquadProposalInput) => squadProposalService.propose(route, input),
+    checkSquadPlan: (route: { projectId: string }, input: { path?: string; text?: string }) => squadPlanCheckService.checkPlan({ ...route, sessionId: '' }, input)
+  };
+}
+
 const squadExecutionService = new SquadExecutionService({
   store: executionStore,
   artifacts: executionArtifacts,
@@ -6142,7 +6345,8 @@ const squadExecutionService = new SquadExecutionService({
   withExecutionLifecycleLock: withSquadWorktreeLifecycleLock,
   mayResumeRetainedWorktree: (executionId) => !squadWorktreeHasActiveFollowUp(executionId),
   prepareSquadWorktree: squadWorktreeRuntime.prepareSquadWorktree,
-  onTerminal: squadWorktreeRuntime.handleSquadWorktreeTerminal,
+  onTerminal: async (record) => { await handleSquadTerminalWithReport(record); },
+  onHumanBlocker: (record, blocker) => squadProposalNotifier.onHumanBlocker(record, blocker),
   clearResumeToken: (projectId, executionId) => executionResumeTokens.clear(projectId, executionId),
   cacheResumeToken: (projectId, executionId, token, expiresAt) => executionResumeTokens.set({ projectId, executionId, token, expiresAt }),
   preflightWorkflow: (teamId, workflow) => {
@@ -6337,7 +6541,7 @@ teamPlanHandoff = new TeamPlanHandoff({
 });
 const squadSessionExit = {
   executionStore,
-  handleSquadWorktreeTerminal: squadWorktreeRuntime.handleSquadWorktreeTerminal,
+  handleSquadWorktreeTerminal: handleSquadTerminalWithReport,
   teamPlanHandoff,
   inferredPlanCorrection,
   projects: store,
@@ -6431,51 +6635,146 @@ export async function startTeamJobFromUi(
   if (sourceCapabilityIds.length && !sourceContext) {
     return { ok: false, code: 'INVALID_CAPABILITY', message: 'Execution source capabilities require a trusted window' };
   }
-  const goalSourceDescriptors = await goalExecutionSourcePaths(originalGoal, project.path);
-  if (goalSourceDescriptors.length && !sourceContext) {
+  const proposed = input.proposalId !== undefined;
+  // Goal paths follow the one source policy. A proposed launch narrows them below, once its stored proposal is known.
+  const sourceBases = squadSourceBases();
+  const discoveredGoalSources = await goalExecutionSourcePaths(originalGoal, project.path, sourceBases.home, sourceBases);
+  if (discoveredGoalSources.length && !sourceContext) {
     return { ok: false, code: 'INVALID_CAPABILITY', message: 'Goal execution sources require a trusted window' };
   }
-  // Mint identity before snapshotting: source content lands in a dedicated,
-  // immutable content store and execution ledger carries only bounded metadata.
-  const launchRequestId = `ui:${randomUUID()}`;
-  let sourceBundle: Awaited<ReturnType<typeof executionSources.resolve>> | undefined;
-  try {
-    const goalSourceCapabilities = goalSourceDescriptors.length
-      ? await executionSources.issue({ windowId: sourceContext!.windowId, projectId, paths: goalSourceDescriptors.map(({ exactPath }) => exactPath) })
-      : [];
-    const allSourceCapabilityIds = [...new Set([...sourceCapabilityIds, ...goalSourceCapabilities.map(({ id }) => id)])];
-    if (allSourceCapabilityIds.length) {
-      sourceBundle = await executionSources.resolve({
-        windowId: sourceContext!.windowId,
-        projectId,
-        capabilityIds: allSourceCapabilityIds,
-        snapshotKey: launchRequestId.replace(/[^a-zA-Z0-9:_-]/g, '_')
-      });
+  // A proposed launch is bound to its stored proposal and must come from a trusted window.
+  if (proposed && !sourceContext) {
+    return { ok: false, code: 'INVALID_CAPABILITY', message: 'Proposed Squad launches must be opened from the desktop app window.' };
+  }
+  const proposalId = proposed ? (typeof input.proposalId === 'string' ? input.proposalId.trim() : '') : undefined;
+  const renewal = scopedSourceRenewal(executionSources, sourceContext?.windowId, projectId);
+  return withRenewedSources(() => withProposalLaunch(proposalLaunchDeps, proposalId, projectId, async (proposal, reviewedSourcePaths) => {
+    // A proposed launch attaches goal-named files outside the Project only when the reviewed card listed them.
+    let goalSourceDescriptors = discoveredGoalSources;
+    let redactedGoalSources = discoveredGoalSources;
+    if (proposal) {
+      const projectReal = await realpath(project.path).catch(() => undefined);
+      const split = splitProposedGoalSources(discoveredGoalSources, projectReal, reviewedSourcePaths);
+      if (split.refused) {
+        return {
+          ok: false, code: 'SOURCE_NOT_ALLOWED',
+          message: `The goal names ${split.refused.exactPath}, which is outside this project and was not listed in the proposal's sources, so the card did not show it. `
+            + 'The agent must list it in the proposal\'s `sources` (the user then sees it on the card before Launch), or remove it from the goal.'
+        } as TeamJobLaunchResponse;
+      }
+      goalSourceDescriptors = split.attach;
+      redactedGoalSources = split.known;
     }
+    // Mint identity before snapshotting: source content lands in a dedicated,
+    // immutable content store and execution ledger carries only bounded metadata.
+    const launchRequestId = `ui:${randomUUID()}`;
+    const snapshot = await snapshotTeamJobSources({
+      windowId: sourceContext?.windowId, projectId, launchRequestId, sourceCapabilityIds, goalSourceDescriptors,
+      // Re-checked against the realpath issue() takes, so a symlink swapped in after discovery can't escape.
+      policy: await resolveSourcePolicy(realpath, { projectRoot: project.path, ...sourceBases })
+    });
+    if (!snapshot.ok) return snapshot;
+    const { sourceBundle } = snapshot;
+    const built = await buildTeamJobStartRequest({
+      teamId, projectId, projectName: project.name, launchRequestId, coordinationMode, slots, attended: !!sourceContext,
+      goal: originalGoal, title: originalJobTitle, summary: originalSummary, sourceBundle, goalSourceDescriptors: redactedGoalSources
+    });
+    if (!built.ok) return built.response;
+    // A proposed run reports back to the conversation that proposed it.
+    const result = proposal
+      ? await squadExecutionService.start('interactive:local', projectId, built.request, {
+        proposal,
+        reportTo: {
+          kind: proposal.proposerKind, id: proposal.proposerId, role: 'proposer',
+          ...(proposal.proposerTitle ? { title: proposal.proposerTitle } : {})
+        }
+      })
+      : await squadExecutionService.start('interactive:local', projectId, built.request);
+    if (!result.ok && sourceBundle) await executionSources.removeSnapshot(sourceBundle.contentRef);
+    if (!result.ok) {
+      planCorrectionLaunchBinding.forgetLaunch(launchRequestId);
+      return teamJobFailureResponse(result);
+    }
+    return { ok: true, value: { executionId: result.value.id, state: result.value.state } };
+  }), sourceCapabilityIds, renewal.reissue, logMainError, renewal.discardRetired);
+}
+
+const proposalLaunchDeps: ProposalLaunchDeps<NonNullable<ExecutionRecord['proposal']>> = {
+  beginLaunch: (proposalId, projectId) => squadProposalService.beginLaunch(proposalId, projectId),
+  markLaunched: (proposalId, executionId) => squadProposalService.markLaunched(proposalId, executionId),
+  releaseLaunch: (proposalId) => squadProposalService.releaseLaunch(proposalId),
+  logError: (context, error) => logMainError(context, error)
+};
+
+type TeamJobSourceBundle = Awaited<ReturnType<typeof executionSources.resolve>>;
+
+/** Issue capabilities for the goal-named paths, then snapshot every source of a Team job launch. */
+async function snapshotTeamJobSources(args: {
+  windowId: number | undefined;
+  projectId: string;
+  launchRequestId: string;
+  sourceCapabilityIds: string[];
+  goalSourceDescriptors: ExecutionSourcePathDescriptor[];
+  policy: SourcePolicy;
+}): Promise<{ ok: true; sourceBundle?: TeamJobSourceBundle } | { ok: false; code: string; message: string }> {
+  const { windowId, projectId } = args;
+  try {
+    const goalSourceCapabilities = args.goalSourceDescriptors.length
+      ? await executionSources.issue({
+        windowId: windowId!, projectId, paths: args.goalSourceDescriptors.map(({ exactPath }) => exactPath), policy: args.policy
+      })
+      : [];
+    const capabilityIds = [...new Set([...args.sourceCapabilityIds, ...goalSourceCapabilities.map(({ id }) => id)])];
+    if (!capabilityIds.length) return { ok: true };
+    const sourceBundle = await executionSources.resolve({
+      windowId: windowId!, projectId, capabilityIds, snapshotKey: args.launchRequestId.replace(/[^a-zA-Z0-9:_-]/g, '_')
+    });
+    return { ok: true, sourceBundle };
   } catch (error) {
     return error instanceof ExecutionSourceError
       ? { ok: false, code: error.code, message: error.message }
       : { ok: false, code: 'SOURCE_SNAPSHOT_FAILED', message: error instanceof Error ? error.message : String(error) };
   }
-  const capturedPathDescriptors = [...(sourceBundle?.pathDescriptors ?? []), ...goalSourceDescriptors];
-  const sanitizedGoal = (redactCapturedExecutionSourcePaths(originalGoal, capturedPathDescriptors) ?? originalGoal).slice(0, 4_000);
-  const sanitizedExplicitTitle = redactCapturedExecutionSourcePaths(originalJobTitle, capturedPathDescriptors)?.slice(0, 256) || undefined;
-  const sanitizedSummary = redactCapturedExecutionSourcePaths(originalSummary, capturedPathDescriptors)?.slice(0, 4_000) || undefined;
+}
+
+/**
+ * Redact captured source paths, resolve the plan and build the Squad start request. An
+ * invalid provided plan parks for correction (attended) or is refused (unattended).
+ */
+async function buildTeamJobStartRequest(args: {
+  teamId: string;
+  projectId: string;
+  projectName: string;
+  launchRequestId: string;
+  coordinationMode: 'structured' | 'freeform';
+  slots: ReturnType<typeof expandTeamSlots>;
+  attended: boolean;
+  goal: string;
+  title?: string;
+  summary?: string;
+  sourceBundle?: TeamJobSourceBundle;
+  goalSourceDescriptors: ExecutionSourcePathDescriptor[];
+}): Promise<{ ok: true; request: ExecutionRequestV1 } | { ok: false; response: TeamJobLaunchResponse }> {
+  const { sourceBundle, launchRequestId } = args;
+  const capturedPathDescriptors = [...(sourceBundle?.pathDescriptors ?? []), ...args.goalSourceDescriptors];
+  const sanitizedGoal = (redactCapturedExecutionSourcePaths(args.goal, capturedPathDescriptors) ?? args.goal).slice(0, 4_000);
+  const sanitizedExplicitTitle = redactCapturedExecutionSourcePaths(args.title, capturedPathDescriptors)?.slice(0, 256) || undefined;
+  const sanitizedSummary = redactCapturedExecutionSourcePaths(args.summary, capturedPathDescriptors)?.slice(0, 4_000) || undefined;
   const sourceMetadata = sourceBundle?.sources.map(({ extractedText: _content, ...metadata }) => metadata);
   // One resolver for interactive and triggered launches: "Plan provided in goal"
   // (structured) must yield a complete durable DAG or park for plan correction;
   // "Infer plan from goal" (freeform) leaves planning to the coordinator.
   const resolvedPlan = resolveSquadPlan(
-    coordinationMode === 'structured' ? 'provided' : 'infer',
-    [...(sourceBundle?.sources ?? []).map((source) => source.extractedText), originalGoal]
+    args.coordinationMode === 'structured' ? 'provided' : 'infer',
+    [...(sourceBundle?.sources ?? []).map((source) => source.extractedText), args.goal]
   );
   const plannedWorkUnits = resolvedPlan.workUnits;
   const providedPlanError = resolvedPlan.planError;
   const planRefusal = await gateInvalidProvidedPlan(
     { inboxStore, planCorrectionLaunchBinding },
-    { planError: providedPlanError, unattended: !sourceContext, projectId, projectName: project.name, launchRequestId }
+    { planError: providedPlanError, unattended: !args.attended, projectId: args.projectId, projectName: args.projectName, launchRequestId }
   );
-  if (planRefusal) return planRefusal;
+  if (planRefusal) return { ok: false, response: planRefusal };
   const sanitizedJobTitle = await nameTeamExecution(launchRequestId, sanitizedGoal, sanitizedExplicitTitle);
   const sharedTask = [
     `Shared job goal: ${sanitizedGoal}`,
@@ -6483,35 +6782,32 @@ export async function startTeamJobFromUi(
     providedPlanError ? PlanCorrectionService.correctionPrompt(providedPlanError) : '',
     'Work toward this goal. Coordinate through the Team orchestrator when one is present.'
   ].filter(Boolean).join('\n\n');
-  const initialTask = slots.map((slot) => ({
+  const initialTask = args.slots.map((slot) => ({
     initialTask: slot.role === 'orchestrator'
       ? `${sharedTask}\n\nCoordinate workers, delegate role-specific work, and explicitly report execution completion with a summary when goal is met.`
       : `${sharedTask}\n\nCheck orchestrator instructions and report progress or blockers to it.`
   }));
-  const result = await squadExecutionService.start('interactive:local', projectId, {
-    version: 1,
-    teamId,
-    launchRequestId,
-    coordinationMode,
-    origin: 'explicit',
-    jobTitle: sanitizedJobTitle,
-    objective: sanitizedGoal,
-    summary: sanitizedSummary,
-    slots: initialTask,
-    ...(plannedWorkUnits ? { workUnits: plannedWorkUnits } : {}),
-    ...(sourceBundle && sourceMetadata ? { sourceBundle: { contentRef: sourceBundle.contentRef, sources: sourceMetadata } } : {}),
-    policy: {
-      ...(store.getConfig().autonomousTimeoutMs === 0
-        ? {}
-        : { deadlineMs: store.getConfig().autonomousTimeoutMs ?? AUTONOMOUS_DEFAULTS.timeoutMs })
+  return {
+    ok: true,
+    request: {
+      version: 1,
+      teamId: args.teamId,
+      launchRequestId,
+      coordinationMode: args.coordinationMode,
+      origin: 'explicit',
+      jobTitle: sanitizedJobTitle,
+      objective: sanitizedGoal,
+      summary: sanitizedSummary,
+      slots: initialTask,
+      ...(plannedWorkUnits ? { workUnits: plannedWorkUnits } : {}),
+      ...(sourceBundle && sourceMetadata ? { sourceBundle: { contentRef: sourceBundle.contentRef, sources: sourceMetadata } } : {}),
+      policy: {
+        ...(store.getConfig().autonomousTimeoutMs === 0
+          ? {}
+          : { deadlineMs: store.getConfig().autonomousTimeoutMs ?? AUTONOMOUS_DEFAULTS.timeoutMs })
+      }
     }
-  });
-  if (!result.ok && sourceBundle) await executionSources.removeSnapshot(sourceBundle.contentRef);
-  if (!result.ok) {
-    planCorrectionLaunchBinding.forgetLaunch(launchRequestId);
-    return teamJobFailureResponse(result);
-  }
-  return { ok: true, value: { executionId: result.value.id, state: result.value.state } };
+  };
 }
 
 /**
@@ -6614,7 +6910,7 @@ export const WINDOWS_TITLEBAR_OVERLAY_SYMBOL = '#a1a1aa';
  * out across.
  */
 /* v8 ignore next -- window construction runs only at the built-Electron boundary */
-function createWindow(projectId?: string, repairOnly = false, view?: PluginViewTarget) {
+function createWindow(projectId?: string, repairOnly = false, view?: PluginViewTarget, threadView?: ThreadViewTarget) {
   // Capture the window the user invoked from BEFORE creating the new one, so a
   // scoped window cascades off its actual opener (not whatever `mainWindow()`
   // would pick, and never off itself once it's in the map).
@@ -6623,34 +6919,49 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
   // windows open at the default size, cascaded so stacked ones don't perfectly
   // overlap — per-project bounds persistence is a deliberate later step.
   const config = store.getConfig();
-  const saved = projectId || repairOnly ? undefined : config.windowBounds;
+  // A thread view window may have no project, so it is checked on its own.
+  const scoped = !!projectId || repairOnly || !!threadView;
+  const saved = scoped ? undefined : config.windowBounds;
   const restored = restoreWindowState(
     saved,
-    projectId || repairOnly ? undefined : config.windowMaximized,
+    scoped ? undefined : config.windowMaximized,
     screen.getAllDisplays(),
     screen.getPrimaryDisplay()
   );
   // A plugin view window keeps its own geometry per tab and project.
   const viewKey = view ? pluginViewKey(view) : undefined;
+  // Thread view windows share one geometry: a new one opens where the last one was.
   const viewGeometry = viewKey
     ? pluginViewWindowGeometry(
         readPluginViewBounds(config.pluginViewWindowBounds, viewKey),
         screen.getAllDisplays(),
         screen.getPrimaryDisplay()
       )
-    : undefined;
+    : threadView
+      ? pluginViewWindowGeometry(
+          readThreadViewBounds(config.threadViewWindowBounds),
+          screen.getAllDisplays(),
+          screen.getPrimaryDisplay()
+        )
+      : undefined;
+  if (threadView && viewGeometry && viewGeometry.options.x !== undefined && viewGeometry.options.y !== undefined) {
+    const occupied = [...windows.values()]
+      .filter((entry) => entry.threadView && !entry.win.isDestroyed())
+      .map((entry) => entry.win.getBounds());
+    Object.assign(viewGeometry.options, cascadeThreadViewPosition({ x: viewGeometry.options.x, y: viewGeometry.options.y }, occupied));
+  }
 
   const win = new BrowserWindow({
     ...(viewGeometry
       ? viewGeometry.options
       : {
-          width: projectId || repairOnly ? 1400 : restored.bounds.width,
-          height: projectId || repairOnly ? 900 : restored.bounds.height,
-          x: projectId || repairOnly ? undefined : restored.bounds.x,
-          y: projectId || repairOnly ? undefined : restored.bounds.y,
-          minWidth: projectId || repairOnly ? 900 : restored.minWidth,
+          width: scoped ? 1400 : restored.bounds.width,
+          height: scoped ? 900 : restored.bounds.height,
+          x: scoped ? undefined : restored.bounds.x,
+          y: scoped ? undefined : restored.bounds.y,
+          minWidth: scoped ? 900 : restored.minWidth,
           /* v8 ignore next -- window geometry is covered by built-Electron E2E */
-          minHeight: projectId || repairOnly ? 600 : restored.minHeight
+          minHeight: scoped ? 600 : restored.minHeight
         }),
     title: 'Zana',
     icon: productIconImage(),
@@ -6695,8 +7006,9 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
     }
   });
 
-  windows.set(win.id, { win, projectId, view });
+  windows.set(win.id, { win, projectId, view, threadView });
   if (view) pluginViews.broadcast();
+  if (threadView) threadViews.broadcast();
   rendererReadiness.reset(win.id);
   /* v8 ignore next -- Electron navigation event is covered by boundary E2E; navigationStarted is unit-tested */
   win.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
@@ -6748,11 +7060,12 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
     windows.delete(win.id);
     boundsControllers.delete(win.id);
     if (view) pluginViews.broadcast();
+    if (threadView) threadViews.broadcast();
   });
 
   // A scoped window opens slightly offset from its opener so a freshly-opened
   // project window isn't hidden exactly behind the window it was opened from.
-  if (projectId && !view && opener && opener !== win && !opener.isDestroyed()) {
+  if (projectId && !view && !threadView && opener && opener !== win && !opener.isDestroyed()) {
     const b = opener.getBounds();
     win.setBounds({ x: b.x + 36, y: b.y + 36, width: b.width, height: b.height });
   }
@@ -6777,9 +7090,18 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
 
   // Persist bounds on resize/move (debounced) so a relaunch restores them.
   // The unscoped main window owns the saved bounds; a plugin view window keeps
-  // its own entry in a capped record. Project windows open at the default size.
-  if ((!projectId && !repairOnly) || viewKey) {
-    const controller = viewKey
+  // its own entry in a capped record, and thread view windows share one entry.
+  // Project windows open at the default size.
+  if (!scoped || viewKey || threadView) {
+    const controller = threadView
+      ? createBoundsStateController({
+          win,
+          initialBounds: viewGeometry?.bounds,
+          initialMaximized: viewGeometry?.maximized,
+          write: (state) =>
+            store.setConfig({ threadViewWindowBounds: writeThreadViewBounds(store.getConfig().threadViewWindowBounds, state) })
+        })
+      : viewKey
       ? createBoundsStateController({
           win,
           initialBounds: viewGeometry?.bounds,
@@ -6830,8 +7152,14 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
 
   // The scoped project id rides in as a query param so the renderer can lock to
   // it before first paint (read in main.tsx). Unscoped windows get no param. A
-  // plugin view window also names its plugin and tab.
-  const params: Record<string, string> = view ? pluginViewRendererParams(view) : projectId ? { projectId } : {};
+  // plugin view window also names its plugin and tab, a thread view window its thread.
+  const params: Record<string, string> = view
+    ? pluginViewRendererParams(view)
+    : threadView
+      ? threadViewRendererParams(threadView)
+      : projectId
+        ? { projectId }
+        : {};
   const url = rendererUrl(params);
   if (url) {
     win.loadURL(url);
@@ -6850,7 +7178,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
     });
   }
 
-  if (!projectId && !repairOnly) {
+  if (!scoped) {
     // macOS can reapply native zoom state after BrowserWindow construction on a
     // process relaunch, overriding explicit constructor bounds. Reassert normal
     // state once native window restoration has finished.
@@ -6910,6 +7238,7 @@ function wireBridgeListeners() {
   });
   ptys.on('exit', (sessionId: string, code: number, signal?: number | null, reason?: string | null) => {
     safeSend(IPC.terminals.onExit, sessionId, code);
+    squadProposalNotifier.forget(sessionId);
     const ledgerEntryId = launchLedgerEntriesBySession.get(sessionId);
     launchLedgerEntriesBySession.delete(sessionId);
     const authorizationId = launchAuthorizationBySession.get(sessionId);
@@ -7144,6 +7473,7 @@ function wireBridgeListeners() {
     // (see `workerInjector`): the moment it lands on idle its next unit's task is
     // safe to inject. Cheap no-op for non-idle states or an empty queue.
     workerInjector.onState(sessionId, state);
+    squadProposalNotifier.onState(sessionId, state);
     const session = ptys.getSession(sessionId);
     if (session) captureNativeRecoverySnapshot(session);
     if (state === 'idle' && session) {
@@ -7390,6 +7720,8 @@ function registerIpc() {
   }), () => ({ approved: false as const, reason: 'unavailable' as const }));
   /* v8 ignore next -- registered at built-Electron boot; registerPluginViewIpc is unit-tested */
   registerPluginViewIpc(safeHandle, pluginViews);
+  /* v8 ignore next -- registered at built-Electron boot; registerThreadViewIpc is unit-tested */
+  registerThreadViewIpc(safeHandle, threadViews);
   safeHandleFromWindow(IPC.sharedClient.list, () => sharedClient.instances(), err => { throw err; });
   safeHandleFromWindow(IPC.sharedClient.signIn, () => sharedClient.signIn(), err => { throw err; });
   safeHandleFromWindow(IPC.sharedClient.select, (_win, id: unknown) => sharedClient.select(id), err => { throw err; });
@@ -7437,6 +7769,7 @@ function registerIpc() {
     get executionResumeGrants() { return executionResumeGrants; },
     get executionResumeTokens() { return executionResumeTokens; },
     get executionSources() { return executionSources; },
+    get squadProposals() { return squadProposalService; },
     get executionStore() { return executionStore; },
     get exitedSessionStats() { return exitedSessionStats; },
     get extProcessHost() { return extProcessHost; },
@@ -7489,7 +7822,6 @@ function registerIpc() {
     get ptys() { return ptys; },
     get quickPrompts() { return quickPrompts; },
     get readLiveSessionStats() { return readLiveSessionStats; },
-    get rebuildProviders() { return rebuildProviders; },
     get registerExtensionProject() { return registerExtensionProject; },
     get reportTeamTask() { return reportTeamTask; },
     get resolveTheme() { return resolveTheme; },
@@ -7810,6 +8142,7 @@ async function bootstrapNormal() {
       });
     } finally {
       await recoverSquadStateAtBoot({ squadFollowUpClaims, squadWorktreeRuntime, squadExecutionService, planCorrection, logError: logMainError });
+      await squadProposalService.sweepExpired().catch((error) => logMainError('squad proposals sweepExpired', error));
     }
   } catch (error) {
     // A corrupt recovery record must surface the repair flow, not permanently
@@ -7829,7 +8162,7 @@ async function bootstrapNormal() {
   // data dir was guaranteed present. Re-bind it now that the store can resolve
   // its config so a custom `claudeBinary` takes effect this session (not just
   // after the next config:set / restart).
-  rebuildProviders(store.getConfig());
+  rebuildProviders();
   // Repair PATH before any pty/opener/scheduler spawn. A GUI launch
   // (Finder/Dock) inherits a minimal PATH that omits ~/.local/bin,
   // /opt/homebrew/bin, etc. — so a bare `claude` spawn would ENOENT and
@@ -8712,7 +9045,8 @@ async function bootstrapNormal() {
     listPersonas: () => personas.list().map(toPersonaSummary),
     // Team discovery (list_teams) — read-only metadata; lets an agent enumerate
     // the launchable teams the app surfaces.
-    listTeams: () => teams.list().map(toTeamSummary),
+    listTeams: listTeamSummariesForMcp,
+    ...squadProposalMcpDeps(),
     // Team launch (launch_team) — the agent-driven counterpart of the Teams
     // panel's Launch button. Gated behind the off-by-default `teamLaunchEnabled`
     // flag, read at boot (toggling takes effect on next launch), mirroring the
@@ -9053,7 +9387,10 @@ async function bootstrapNormal() {
         flushStaleWorkerInjections();
       }, EXECUTION_CLAIM_RECONCILE_INTERVAL_MS);
       await squadExecutionService.pruneRetainedSources();
-    })().catch((err) => logMainError('teamLifecycle.reconcileStartup', err));
+    })().catch((err) => logMainError('teamLifecycle.reconcileStartup', err))
+      // Report-back replay waits until sessions are restored and the server runtime is up, and
+      // runs even if a step above failed; until then the notifier leaves runs unreported.
+      .finally(() => squadProposalNotifier.replayUnreported().catch((error) => logMainError('squad proposals replayUnreported', error)));
   }, store.getConfig().tmuxScope === 'off' ? 0 : TMUX_REAP_GRACE_MS);
   // Auto-update: build the updater (a no-op shim in dev), kick one check on
   // boot, and arm the periodic background poll (every 30 min, cleared in
@@ -9390,6 +9727,7 @@ app.on('before-quit', (event) => {
   goals.stopAll();
   followups.stopWatching();
   squadExecutionService.dispose();
+  squadProposalNotifier.dispose();
   executionStorage.close();
   if (executionClaimReconcileTimer) {
     clearInterval(executionClaimReconcileTimer);

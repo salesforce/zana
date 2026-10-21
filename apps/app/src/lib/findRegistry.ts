@@ -33,6 +33,24 @@ export function registerTerminal(sessionId: string, h: TerminalHandle) {
   };
 }
 
+let activeTerminalId: string | null = null;
+
+/** Record `sessionId` as the terminal that currently owns keyboard focus. */
+export function markActiveTerminal(sessionId: string): void {
+  activeTerminalId = sessionId;
+}
+
+/** Clear the active terminal, but only if `sessionId` is still the active one,
+ *  so a late release from a previous terminal cannot clobber its successor. */
+export function releaseActiveTerminal(sessionId: string): void {
+  if (activeTerminalId === sessionId) activeTerminalId = null;
+}
+
+/** The session id of the terminal that currently owns focus, or null. */
+export function getActiveTerminalId(): string | null {
+  return activeTerminalId;
+}
+
 export function getTerminal(sessionId: string | undefined): TerminalHandle | null {
   if (!sessionId) return null;
   return handles.get(sessionId) ?? null;

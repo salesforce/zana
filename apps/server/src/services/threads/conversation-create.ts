@@ -16,6 +16,7 @@ import {
   updateConversationThreadStatus,
   setConversationProviderThreadId,
   type ConversationThreadRow,
+  type ConversationThreadTitleSource,
   type EnvironmentRow
 } from '@zana-ai/zcc-db';
 import {
@@ -140,6 +141,10 @@ export function threadTitle(input: Pick<CreateConversationInput, 'title'>, promp
   if (input.title?.trim()) return input.title.trim().slice(0, 120);
   if (prompt[0]) return titleFromPrompt(prompt[0]) || 'Thread';
   return 'Thread';
+}
+
+export function threadTitleSource(input: Pick<CreateConversationInput, 'title'>): ConversationThreadTitleSource {
+  return input.title?.trim() ? 'user' : 'prompt';
 }
 
 export function requestAutoThreadTitle(
@@ -482,6 +487,7 @@ export async function createConversationFromRequest(
         environmentId: existing.id,
         providerId,
         title: threadTitle(input, textPrompt),
+        titleSource: threadTitleSource(input),
         status: 'starting',
         parentThreadId: input.parentThreadId ?? null,
         visibility: input.visibility,
@@ -595,6 +601,7 @@ export async function createConversationFromRequest(
         environmentId: environment.id,
         providerId,
         title: threadTitle(input, textPrompt),
+        titleSource: threadTitleSource(input),
         status: 'starting',
         parentThreadId: input.parentThreadId ?? null,
         visibility: input.visibility,
@@ -628,6 +635,7 @@ export async function createConversationFromRequest(
         environmentId: existing.id,
         providerId,
         title: threadTitle(input, textPrompt),
+        titleSource: threadTitleSource(input),
         status: 'starting',
         parentThreadId: input.parentThreadId ?? null,
         visibility: input.visibility,

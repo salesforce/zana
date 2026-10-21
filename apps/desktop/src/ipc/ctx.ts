@@ -50,6 +50,7 @@ export interface IpcCtx {
   executionResumeGrants: any;
   executionResumeTokens: any;
   executionSources: any;
+  squadProposals: any;
   executionStore: any;
   exitedSessionStats: any;
   extProcessHost: any;
@@ -98,7 +99,6 @@ export interface IpcCtx {
   ptys: any;
   quickPrompts: any;
   readLiveSessionStats: any;
-  rebuildProviders: any;
   registerExtensionProject: any;
   reportTeamTask: any;
   resolveTheme: any;

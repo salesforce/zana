@@ -34,7 +34,7 @@ export type PlaygroundToHost =
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'persist'; path: string; content: string; draftKey?: string; create?: boolean }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'cursor'; line: number; column: number; selection?: { startLine: number; endLine: number; text: string } }
   | ({ source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'proposalResolved'; proposalId: string; content: string } & ProposalOutcome)
-  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'commentAction'; kind: 'add' | 'open'; line: number; endLine: number; quote: string }
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'commentAction'; kind: 'open' | 'submit' | 'update' | 'delete'; id?: string; line: number; endLine: number; quote: string; body?: string }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'askSelection'; action: string; startLine: number; endLine: number; text: string }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'saveRequest' };
 
@@ -69,6 +69,8 @@ export type HostToPlayground =
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'setFiles'; files: PlaygroundFileRef[] }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'setOrg'; org: PublicOrgView | null }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'saved'; sha256: string; draftKey?: string; content?: string }
+  /** The open file changed on disk (an agent or another tool wrote it). */
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'fileChanged'; draftKey: string; content: string; sha256: string }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'flushSave'; path?: string; create?: boolean }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'proposeEdit'; proposalId: string; content: string; summary: string; actor: string }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'clearProposal'; proposalId: string }
@@ -94,7 +96,9 @@ export function isPlaygroundToHost(value: unknown): value is PlaygroundToHost {
   if (value.type === 'snapshot') return typeof value.content === 'string' && value.content.length <= AGENT_SOURCE_MAX && typeof value.issues === 'number' && Number.isFinite(value.issues) && (value.actions === undefined || (Array.isArray(value.actions) && value.actions.length <= 250 && value.actions.every(isAction))) && (value.diagnostics === undefined || isStudioDiagnostics(value.diagnostics, 200));
   if (value.type === 'cursor') return isPositive(value.line) && isPositive(value.column) && (value.selection === undefined || isSelection(value.selection));
   if (value.type === 'proposalResolved') return isProposalId(value.proposalId) && typeof value.content === 'string' && value.content.length <= AGENT_SOURCE_MAX && isProposalOutcome(value);
-  if (value.type === 'commentAction') return ['add', 'open'].includes(String(value.kind)) && isPositive(value.line) && isPositive(value.endLine) && Number(value.endLine) >= Number(value.line) && typeof value.quote === 'string' && value.quote.length <= STUDIO_LIMITS.quote;
+  if (value.type === 'commentAction') return ['open', 'submit', 'update', 'delete'].includes(String(value.kind)) && isPositive(value.line) && isPositive(value.endLine) && Number(value.endLine) >= Number(value.line) && typeof value.quote === 'string' && value.quote.length <= STUDIO_LIMITS.quote
+    && (value.kind === 'update' || value.kind === 'delete' ? typeof value.id === 'string' && value.id.length > 0 && value.id.length <= 64 : value.id === undefined)
+    && (value.kind === 'open' || value.kind === 'delete' ? value.body === undefined : typeof value.body === 'string' && value.body.trim().length > 0 && value.body.length <= STUDIO_LIMITS.commentBody);
   if (value.type === 'askSelection') return typeof value.action === 'string' && value.action.length > 0 && value.action.length <= 64 && isSelection(value);
   if (value.type === 'saveRequest') return true;
   if (value.type === 'requestOpen') return typeof value.path === 'string';
@@ -136,6 +140,7 @@ export function isHostToPlayground(value: unknown): value is HostToPlayground {
     value.type === 'setFiles' ||
     value.type === 'setOrg' ||
     value.type === 'saved' ||
+    (value.type === 'fileChanged' && typeof value.draftKey === 'string' && value.draftKey.length > 0 && value.draftKey.length <= 2000 && typeof value.content === 'string' && value.content.length <= AGENT_SOURCE_MAX && typeof value.sha256 === 'string' && /^[0-9a-f]{64}$/.test(value.sha256)) ||
     value.type === 'flushSave' ||
     (value.type === 'proposeEdit' && isProposalId(value.proposalId) && typeof value.content === 'string' && value.content.length <= AGENT_SOURCE_MAX && typeof value.summary === 'string' && value.summary.length <= 1000 && typeof value.actor === 'string' && value.actor.length <= 200) ||
     (value.type === 'clearProposal' && isProposalId(value.proposalId)) ||

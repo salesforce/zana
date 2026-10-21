@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { SlidersHorizontal } from 'lucide-react';
+import './thread-composer-toolbar.css';
 
 /** Presentation only: keep each control mounted, including across viewport changes. */
 export function ThreadComposerToolbar({

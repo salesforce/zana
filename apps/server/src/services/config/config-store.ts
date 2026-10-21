@@ -121,9 +121,13 @@ export function createConfigStore(
     executionPlanStartupGraceMs: 300_000
   });
 
+  // A cleared (undefined) claudeBinary must resolve to the default, not to nothing.
+  const withDefaultBinary = (config: AppConfig): AppConfig =>
+    config.claudeBinary ? config : { ...config, claudeBinary: fallback().claudeBinary };
+
   const hydrate = (raw: Partial<AppConfig>): AppConfig =>
     ensureComposerLaunchSurfaces(
-      deps.projectConfigCompatibility({ ...fallback(), ...deps.normalizeConfig(raw), version: 1 })
+      withDefaultBinary(deps.projectConfigCompatibility({ ...fallback(), ...deps.normalizeConfig(raw), version: 1 }))
     );
 
   const applyOptionalResets = (next: AppConfig, patch: Partial<AppConfig>, normalizedPatch: Partial<AppConfig>): AppConfig => {
@@ -154,7 +158,7 @@ export function createConfigStore(
     getConfig(): AppConfig {
       const disk = readJsonRaw<Partial<AppConfig>>({});
       const stored = deps.normalizeConfig(disk.value);
-      const merged = deps.projectConfigCompatibility({ ...fallback(), ...stored, version: 1 });
+      const merged = withDefaultBinary(deps.projectConfigCompatibility({ ...fallback(), ...stored, version: 1 }));
       const healed = ensureComposerLaunchSurfaces(merged);
       if (disk.hash !== null && composerLaunchSurfacesDiffer(merged, healed)) {
         try {
@@ -170,11 +174,11 @@ export function createConfigStore(
       return { config: hydrate(disk.value), hash: disk.hash };
     },
     replaceConfig(next: AppConfig, expectedHash: string | null): AppConfig {
-      const normalized = ensureComposerLaunchSurfaces({
+      const normalized = ensureComposerLaunchSurfaces(withDefaultBinary({
         ...hydrate({}),
         ...deps.normalizeConfig(next),
         version: 1 as const
-      });
+      }));
       writeConfig(deps.canonicalConfigForWrite(normalized), expectedHash);
       return normalized;
     },

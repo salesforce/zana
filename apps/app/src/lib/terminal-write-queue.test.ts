@@ -46,3 +46,38 @@ it('runs idle callbacks only once queued output has been parsed', () => {
   done(); expect(idle).toHaveBeenCalledTimes(2);
   queue.write('def'); queue.whenIdle(idle); queue.dispose(); queue.whenIdle(idle); expect(idle).toHaveBeenCalledTimes(2);
 });
+const GAP_TEXT = 'omitted while this terminal was hidden or busy';
+const drain = (writes: string[]) => { for (let i = 0; i < 40 && frames.size; i++) frame(); return writes.join(''); };
+it('clearGap before setVisible(true) drops the pending marker and keeps the retained tail', () => {
+  const writes: string[] = []; const queue = make((text, done) => { writes.push(text); done(); }, false);
+  queue.write('x'.repeat(300000));
+  queue.clearGap(); queue.setVisible(true); frame();
+  expect(writes[0]).not.toContain(GAP_TEXT); expect(writes[0].startsWith('x')).toBe(true);
+  expect(drain(writes)).not.toContain(GAP_TEXT); expect(writes.join('').length).toBe(256 * 1024);
+});
+it('prepends the marker on refocus when clearGap is not called', () => {
+  const writes: string[] = []; const queue = make((text, done) => { writes.push(text); done(); }, false);
+  queue.write('x'.repeat(300000)); queue.setVisible(true); frame();
+  expect(writes[0].startsWith('\r\n[Some output was omitted')).toBe(true);
+});
+it('setVisible(true) only schedules and never writes synchronously', () => {
+  const write = vi.fn((_text, done) => done()); const queue = make(write, false);
+  queue.write('x'.repeat(300000)); queue.setVisible(true);
+  expect(write).toHaveBeenCalledTimes(0); expect(frames.size).toBe(1);
+  frame(); expect(write).toHaveBeenCalledTimes(1);
+});
+it('flag-only clearGap leaves aggregate byte accounting unchanged', () => {
+  const writes: string[] = []; const sink = (text: string, done: () => void) => { writes.push(text); done(); };
+  const first = make(sink, false);
+  first.write('x'.repeat(300000)); first.clearGap();
+  // 31 more full sessions bring the total to exactly the global cap: no drop yet.
+  for (let i = 0; i < 31; i++) make(sink, false).write('y'.repeat(256 * 1024));
+  // One extra byte crosses the cap exactly, so the oldest hidden session loses it and re-marks the gap.
+  make(sink, false).write('z');
+  writes.length = 0; first.setVisible(true); frame(); expect(writes[0]).toContain(GAP_TEXT);
+});
+it('clearGap after dispose is a no-op', () => {
+  const write = vi.fn((_text, done) => done()); const queue = make(write, false);
+  queue.write('x'.repeat(300000)); queue.dispose();
+  expect(() => queue.clearGap()).not.toThrow(); queue.setVisible(true); frame(); expect(write).not.toHaveBeenCalled();
+});

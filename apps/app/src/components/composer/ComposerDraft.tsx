@@ -32,6 +32,21 @@ export function useComposerSession(fallbackKey?: string) {
 }
 
 /**
+ * A plain-text reply box (Inbox, Follow-ups) keeps its unsent text per key through
+ * navigation, in the same bounded store as the rich composers. Setting '' clears it.
+ */
+export function useRetainedText(key: string): [string, Dispatch<SetStateAction<string>>] {
+  const session = useMemo(() => composerSession(key), [key]);
+  useEffect(() => {
+    const release = session.retain();
+    // An unregistered overflow session is owned here alone.
+    return () => { release(); if (session.retentionError) session.dispose(); };
+  }, [session]);
+  const [text, setText] = useComposerSetting(session, 'text', '', { content: true });
+  return [text, setText];
+}
+
+/**
  * Explicit field choices are stored separately from asynchronously arriving defaults.
  * The fallback is re-evaluated every render so late-hydrating defaults still apply
  * until the user chooses; `clear` returns the field to that fallback.

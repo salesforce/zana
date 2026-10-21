@@ -19,7 +19,7 @@ describe('harness verify cache invalidation', () => {
   ] as const)('invalidates when %s is changed or cleared, and retains unchanged config', (key) => {
     const previous = { version: 1, theme: 'dark' } as AppConfig;
     const next = { ...previous, [key]: key.endsWith('Binary') ? '/configured/binary' : true };
-    const effects = { invalidate: vi.fn(), rebuildProviders: vi.fn() };
+    const effects = { invalidate: vi.fn() };
     reconcileHarnessConfig(previous, next, effects);
     expect(effects.invalidate).toHaveBeenCalledTimes(1);
     reconcileHarnessConfig(next, { ...next }, effects);

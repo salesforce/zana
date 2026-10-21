@@ -22,8 +22,8 @@ vi.mock('@/components/HostDialogs', () => ({ HostDialogs: () => null }));
 vi.mock('@/components/Toaster', () => ({ Toaster: () => null }));
 vi.mock('@/plugins/PluginThemesHost', () => ({ PluginThemesHost: () => null }));
 vi.mock('@/views/thread-detail/PluginPanelHostLayout', () => ({
-  PluginPanelHostLayout: ({ pluginId, panelPath, scopeId, separateWindow, launchers, children }: { pluginId: string; panelPath: string; scopeId?: string; separateWindow?: boolean; launchers?: boolean; children: ReactNode }) => (
-    <div data-testid="plugin-view-side-panel" data-page={`${pluginId}/${panelPath}`} data-scope={scopeId} data-window={String(separateWindow)} data-launchers={String(launchers)}>{children}</div>
+  PluginPanelHostLayout: ({ pluginId, panelPath, scopeId, separateWindow, children }: { pluginId: string; panelPath: string; scopeId?: string; separateWindow?: boolean; children: ReactNode }) => (
+    <div data-testid="plugin-view-side-panel" data-page={`${pluginId}/${panelPath}`} data-scope={scopeId} data-window={String(separateWindow)}>{children}</div>
   )
 }));
 vi.mock('@/plugins/PluginSlotBoundary', () => ({ PluginSlotBoundary: ({ children }: { children: ReactNode }) => children }));
@@ -91,8 +91,8 @@ it('shows the detached tab under its own title strip and reconciles plugin app c
   h.title = { title: 'MyBot', detail: 'dev org', badge: 'Production', tone: 'danger' };
   const view = await mount();
   expect(screen.getByText('studio for p-1')).toBeTruthy();
-  // The detached tab keeps its side panel, opened by the page rather than launchers.
-  expect(screen.getByTestId('plugin-view-side-panel').dataset).toMatchObject({ page: 'salesforce/studio', scope: 'p-1', window: 'true', launchers: 'false' });
+  // The detached tab uses the same shared side panel as a project tab.
+  expect(screen.getByTestId('plugin-view-side-panel').dataset).toMatchObject({ page: 'salesforce/studio', scope: 'p-1', window: 'true' });
   expect(screen.getByTestId('plugin-view-title').textContent).toBe('MyBot — Acme · dev org');
   const badge = screen.getByTestId('plugin-view-title-badge');
   expect(badge.textContent).toBe('Production');

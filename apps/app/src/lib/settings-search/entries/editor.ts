@@ -1,4 +1,5 @@
 import type { SettingsSearchEntry } from '../types';
+import { fileManagerBlurb, fileManagerTitle } from '../../file-manager';
 
 const shown = (hidden: readonly string[] | undefined, target: string) => ((hidden ?? []).includes(target) ? 'Off' : 'On');
 
@@ -113,9 +114,9 @@ export const entries: readonly SettingsSearchEntry[] = [
     id: 'editor.finder',
     section: 'editor',
     anchor: 'editor-finder',
-    label: 'Finder',
-    help: 'Reveals a path in the macOS Finder. Show in the opener bar, install status and launcher overrides.',
-    keywords: ['reveal', 'file manager', 'macos', 'opener bar'],
+    label: fileManagerTitle(),
+    help: `${fileManagerBlurb()} Show in the opener bar, install status and launcher overrides.`,
+    keywords: ['reveal', 'file manager', 'finder', 'explorer', 'macos', 'windows', 'linux', 'opener bar'],
     kind: 'setting',
     value: (s) => shown(s.config.openerHiddenTargets, 'finder')
   },
@@ -134,8 +135,8 @@ export const entries: readonly SettingsSearchEntry[] = [
     section: 'editor',
     anchor: 'editor-terminal',
     label: 'Preferred terminal app',
-    help: 'macOS app name launched via ‘open -a <name>’. Blank ⇒ auto-pick iTerm → WezTerm → Alacritty → Terminal.',
-    keywords: ['iterm', 'wezterm', 'alacritty', 'open -a', 'advanced'],
+    help: 'macOS: app name launched via ‘open -a <name>’; blank ⇒ auto-pick iTerm → WezTerm → Alacritty → Terminal. Windows: program name or path started in the folder, without arguments, such as pwsh or cmd; blank ⇒ PowerShell.',
+    keywords: ['iterm', 'wezterm', 'alacritty', 'open -a', 'powershell', 'pwsh', 'cmd', 'advanced'],
     kind: 'setting',
     reveal: 'advanced',
     value: (s) => s.config.terminalApp || undefined

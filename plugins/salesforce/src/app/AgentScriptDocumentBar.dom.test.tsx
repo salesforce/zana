@@ -24,6 +24,14 @@ describe('Agent Script document toolbar', () => {
     expect(screen.queryByRole('button', { name: 'Show side panel' })).toBeNull();
   });
 
+  it.each([['Win32', 'Ctrl+P', 'Ctrl+S'], ['MacIntel', '⌘P', '⌘S']])('labels Go to file and Save shortcuts for %s', (platform, find, save) => {
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue(platform);
+    render(<AgentScriptDocumentBar {...defaults} onQuickOpen={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Go to file' }).title).toBe(`Go to file (${find})`);
+    expect(screen.getByRole('button', { name: 'Save Agentforce file' }).title).toBe(`Save Agentforce file (${save})`);
+    vi.restoreAllMocks();
+  });
+
   it('keeps toolbar actions and a labelled org picker usable', () => {
     const onBrowse = vi.fn(), onSave = vi.fn(), onSaveAs = vi.fn(), onShowPanel = vi.fn();
     render(<AgentScriptDocumentBar {...defaults} panelOpen={false} dirty issues={1}
@@ -78,25 +86,44 @@ describe('Agent Script document toolbar', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
-  it('fills one action at a time and shrinks Compile to an icon', () => {
+  it('puts Publish… under Save\'s arrow, waits for a save, and shrinks Compile to an icon', () => {
     const onCompile = vi.fn(), onPublish = vi.fn();
     const view = render(<AgentScriptDocumentBar {...defaults} dirty onCompile={onCompile} onPublish={onPublish} />);
-    const publish = () => screen.getByTestId('salesforce-agent-script-publish');
+    const more = () => screen.getByRole('button', { name: 'More save options' });
+    const publish = () => screen.getByTestId('salesforce-agent-script-publish') as HTMLButtonElement;
+    expect(screen.queryByTestId('salesforce-agent-script-publish')).toBeNull();
     expect(screen.getByRole('button', { name: 'Save Agentforce file' }).className).toContain('is-dirty');
-    expect(publish().className).not.toContain('is-primary');
     expect((screen.getByRole('button', { name: 'Compile' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(more());
+    expect(publish().getAttribute('role')).toBe('menuitem');
+    expect(publish().textContent).toBe('Publish…');
+    expect(publish().disabled).toBe(true);
+    expect(publish().title).toContain('Save first');
+    fireEvent.click(more());
     view.rerender(<AgentScriptDocumentBar {...defaults} onCompile={onCompile} onPublish={onPublish} />);
     expect(screen.getByRole('button', { name: 'Save Agentforce file' }).className).not.toContain('is-dirty');
-    expect(publish().className).toContain('is-primary');
     fireEvent.click(screen.getByRole('button', { name: 'Compile' }));
+    fireEvent.click(more());
     fireEvent.click(publish());
+    expect(screen.queryByRole('menu')).toBeNull();
     expect(onCompile).toHaveBeenCalledOnce(); expect(onPublish).toHaveBeenCalledOnce();
     view.rerender(<AgentScriptDocumentBar {...defaults} compiling onCompile={onCompile} onPublish={onPublish} />);
     expect(screen.getByRole('button', { name: 'Compiling…' }).className).toContain('is-busy');
-    // A new draft has no file yet: Save as… stands alone and is the filled action.
+    // A new draft has no file yet: Save as… stands alone and is the filled action, with nothing to publish.
     view.rerender(<AgentScriptDocumentBar {...defaults} path={null} dirty onPublish={onPublish} />);
     expect(screen.getByRole('button', { name: 'Save as…' }).className).toContain('is-dirty');
-    expect(publish().className).not.toContain('is-primary');
+    expect(screen.queryByTestId('salesforce-agent-script-publish')).toBeNull();
+  });
+
+  it('keeps the menu for Publish… when Save as… is unavailable, and closes it once neither is', () => {
+    const onPublish = vi.fn();
+    const view = render(<AgentScriptDocumentBar {...defaults} saveAsDisabled onPublish={onPublish} />);
+    fireEvent.click(screen.getByRole('button', { name: 'More save options' }));
+    expect((screen.getByRole('menuitem', { name: 'Save as…' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(document.activeElement).toBe(screen.getByTestId('salesforce-agent-script-publish'));
+    view.rerender(<AgentScriptDocumentBar {...defaults} saveAsDisabled dirty onPublish={onPublish} />);
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect((screen.getByRole('button', { name: 'More save options' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('labels the no-file state and untitled drafts, hides file save and omits an empty folder path', () => {

@@ -108,8 +108,10 @@ export interface ThreadCommandComposerProps extends ComposerProjectSelectionProp
   navigateOnCreate?: boolean;
   /**
    * New threads are bound to this plugin panel (its agent tools and context).
-   * They start in the Default Project rather than the last-used one, so a
-   * question about a plugin page never runs inside an unrelated repo.
+   * Without a pinned `project` they start in the Default Project rather than
+   * the last-used one, so a question about a plugin page never runs inside an
+   * unrelated repo. With one (a project's plugin page), the project and its run
+   * target are fixed, so the composer shows no project, folder or machine picker.
    */
   pluginPanel?: { pluginId: string; panel: string; view?: string };
   onRunTerminal?: (command: string | null) => Promise<void>;
@@ -179,6 +181,8 @@ function ThreadComposerContent({
   });
   const ensureScratchRef = useRef(false);
   const selectedProject = pinnedProject ?? projects.find((row) => row.id === projectId);
+  // Beside a project's plugin page, the project and its run target are fixed.
+  const fixedRunTarget = Boolean(pluginPanel && pinnedProject);
   const defaultHarness = useData((s) => s.defaultHarness);
   const hosts = useHosts();
   const threads = useThreads((s) => s.threads);
@@ -858,7 +862,7 @@ function ThreadComposerContent({
     />
   ) : null;
   const runMachine = hosts.find((host) => host.id === (selectedProject?.remote ? selectedProject.hostId : hostId));
-  const runSettings = !threadId ? (
+  const runSettings = !threadId && !fixedRunTarget ? (
     <ComposerRunSettings summary={composerRunSummary({
       machineName: runMachine?.name,
       remote: Boolean(selectedProject?.remote),
@@ -900,6 +904,7 @@ function ThreadComposerContent({
       replacePrompt={field.replacePrompt}
       focus={field.focus}
       providerId={resolvedProviderId}
+      allowCreatePlugin={!pluginPanel}
     >
     <div
       ref={composerRoot}
@@ -1108,6 +1113,7 @@ function ThreadComposerContent({
             </>
           ) : (
             <>
+              {!fixedRunTarget && (
               <div className="thread-command-project">
                 <span className="thread-command-project-label">Project</span>
                 <div className="thread-command-chip">
@@ -1121,6 +1127,7 @@ function ThreadComposerContent({
                   />
                 </div>
               </div>
+              )}
               {!compact && runSettings}
               <ComposerHostActionChip
                 action={hostAction}

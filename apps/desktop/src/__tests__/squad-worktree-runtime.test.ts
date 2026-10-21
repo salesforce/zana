@@ -293,7 +293,8 @@ describe('handleSquadWorktreeTerminal', () => {
     const r = rec();
     serve(deps, r);
     deps.cancelTeamLaunch.mockResolvedValue({ ok: true, value: { lifecycleState: 'canceling', pendingSessionIds: ['x'] } });
-    await runtime.handleSquadWorktreeTerminal(r);
+    // Nothing applied yet: no outcome, so a report-back waits for the call that applies it.
+    await expect(runtime.handleSquadWorktreeTerminal(r)).resolves.toBeUndefined();
     expect(deps.git.setWorktreePushProtection).not.toHaveBeenCalled();
     expect(deps.executionStore.markSquadWorktreeTerminalEffects).not.toHaveBeenCalled();
   });
@@ -310,7 +311,7 @@ describe('handleSquadWorktreeTerminal', () => {
     const { deps, runtime } = setup({ exists: false });
     const r = rec();
     serve(deps, r);
-    await runtime.handleSquadWorktreeTerminal(r);
+    await expect(runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('missing');
     expect(deps.executionStore.markSquadWorktreeTerminalEffects).toHaveBeenCalledWith(r.id, 3);
     expect(deps.git.setWorktreePushProtection).not.toHaveBeenCalled();
   });
@@ -328,7 +329,7 @@ describe('handleSquadWorktreeTerminal', () => {
       const { deps, runtime } = setup();
       const r = rec(over);
       serve(deps, r);
-      await runtime.handleSquadWorktreeTerminal(r);
+      await expect(runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('kept');
       expect(deps.git.mergeWorktree).not.toHaveBeenCalled();
       expect(deps.inboxStore.appendOnce).toHaveBeenCalledWith(expect.objectContaining({ subject: 'Squad worktree retained' }));
       expect(deps.executionStore.markSquadWorktreeTerminalEffects).toHaveBeenCalledWith(r.id, 3);
@@ -339,7 +340,7 @@ describe('handleSquadWorktreeTerminal', () => {
     const { deps, runtime } = setup();
     const r = rec({ request: { onComplete: 'merge' } });
     serve(deps, r);
-    await runtime.handleSquadWorktreeTerminal(r);
+    await expect(runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('merged');
     expect(deps.git.mergeWorktree).toHaveBeenCalledWith(ROOT, WT, 'main');
     expect(deps.git.removeWorktree).toHaveBeenCalledWith(ROOT, WT, false);
     expect(deps.inboxStore.appendOnce).not.toHaveBeenCalled();
@@ -351,7 +352,8 @@ describe('handleSquadWorktreeTerminal', () => {
     const r = rec({ request: { onComplete: 'merge' } });
     serve(s.deps, r);
     s.deps.git.mergeWorktree.mockResolvedValue({ ok: false });
-    await s.runtime.handleSquadWorktreeTerminal(r);
+    // A failed merge keeps the worktree, and says so.
+    await expect(s.runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('kept');
     expect(s.deps.git.removeWorktree).not.toHaveBeenCalled();
     expect(s.deps.inboxStore.appendOnce).toHaveBeenCalled();
 

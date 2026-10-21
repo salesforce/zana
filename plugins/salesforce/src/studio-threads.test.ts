@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { STUDIO_CHANGED_CHANNEL, STUDIO_RPC } from '../lib/studio-contract.js';
-import { BoundedSet, isSafeStudioPath, MAX_THREAD_LINKS, panelAgentPath, PendingDrafts, registerStudioAssistant, StudioLinkStore } from '../lib/studio-threads.js';
+import { BoundedMap, BoundedSet, isSafeStudioPath, MAX_THREAD_LINKS, panelAgentPath, PendingDrafts, registerStudioAssistant, StudioLinkStore } from '../lib/studio-threads.js';
 import { viewStoreFor } from '../lib/studio-view.js';
 
 function harness(projectId = 'p1') {
@@ -79,8 +79,11 @@ describe('studio.askAgent', () => {
     const spawned = h.spawn.mock.calls[0][0];
     expect(spawned).toMatchObject({ projectId: 'p1', visibility: 'visible', providerId: 'prov', pluginMetadata: { sfAgentPath: 'force-app/Help.agent', action: 'review' } });
     expect(spawned.title).toBe('Review · Help.agent');
-    expect(spawned.prompt).toContain('tighten this');
-    expect(spawned.prompt).toContain('unknown topic');
+    // The user's message stays short; the comments and problems ride as the thread's context.
+    expect(spawned.prompt).toBe('Review Help.agent.');
+    const { instructions } = await h.configure({ threadId: 't1', projectId: 'p1', pluginMetadata: spawned.pluginMetadata }) as { instructions: string };
+    expect(instructions).toContain('tighten this');
+    expect(instructions).toContain('unknown topic');
     expect((await h.call(STUDIO_RPC.threads, { path: 'force-app/Help.agent' })).threads[0]).toMatchObject({ threadId: 't1', role: 'reviewer', action: 'review' });
     expect(h.published).toContainEqual([STUDIO_CHANGED_CHANNEL, { projectId: 'p1', path: 'force-app/Help.agent', kind: 'threads' }]);
   });
@@ -89,11 +92,12 @@ describe('studio.askAgent', () => {
     const h = harness();
     const diagnostics = [{ line: 1, column: 1, endLine: 1, endColumn: 2, severity: 'error', message: 'explicit one' }];
     expect((await h.call(STUDIO_RPC.askAgent, { path: 'a.agent', prompt: 'do X', action: 'fix-problems', diagnostics })).ok).toBe(true);
-    expect(h.spawn.mock.calls[0][0].prompt).toContain('explicit one');
+    expect(h.spawn.mock.calls[0][0].prompt).toBe('do X');
+    expect((await h.configure({ threadId: 't1', projectId: 'p1', pluginMetadata: h.spawn.mock.calls[0][0].pluginMetadata }) as { instructions: string }).instructions).toContain('explicit one');
     expect(h.spawn.mock.calls[0][0]).not.toHaveProperty('providerId');
     await h.call(STUDIO_RPC.askAgent, { path: 'a.agent', prompt: 'do X' });
     expect((await h.call(STUDIO_RPC.threads)).threads.find((t: any) => t.threadId === 't2')).toMatchObject({ role: 'assistant' });
-    expect(h.spawn.mock.calls[1][0].pluginMetadata).toEqual({ sfAgentPath: 'a.agent' });
+    expect(h.spawn.mock.calls[1][0].pluginMetadata).toEqual({ sfAgentPath: 'a.agent', sfBriefId: expect.any(String) });
   });
 
   it('rejects bad input without spawning', async () => {
@@ -156,12 +160,11 @@ describe('studio.unlinkThread and lifecycle events', () => {
 describe('side-panel drafts', () => {
   const panel = (view: unknown, over: Record<string, unknown> = {}) => ({ threadId: 'pt1', projectId: 'p1', pluginMetadata: { panelAgent: { panel: 'studio', view } }, ...over });
 
-  it('studio.draftAgent returns the spawn brief without starting a thread', async () => {
+  it('studio.draftAgent returns the short request without starting a thread', async () => {
     const h = harness();
     h.kv.set('studio:comments:p1', [{ id: 'c1', path: 'force-app/Help.agent', line: 1, endLine: 1, quote: 'q', body: 'tighten this', author: { kind: 'user', name: 'u' }, createdAt: 1 }]);
     const draft = await h.call(STUDIO_RPC.draftAgent, { path: 'force-app/Help.agent', action: 'review' });
-    expect(draft).toMatchObject({ ok: true, title: 'Review · Help.agent' });
-    expect(draft.prompt).toContain('tighten this');
+    expect(draft).toEqual({ ok: true, prompt: 'Review Help.agent.', title: 'Review · Help.agent' });
     await h.call(STUDIO_RPC.askAgent, { path: 'force-app/Help.agent', action: 'review' });
     expect(h.spawn.mock.calls[0][0].prompt).toBe(draft.prompt);
     expect(h.spawn).toHaveBeenCalledTimes(1);
@@ -173,13 +176,30 @@ describe('side-panel drafts', () => {
     const h = harness();
     await h.call(STUDIO_RPC.draftAgent, { path: 'a.agent', action: 'review' });
     h.published.length = 0;
-    expect(await h.configure(panel('a.agent'))).toEqual({});
+    // The draft's context (not shown in the composer) becomes the conversation's instructions.
+    const first = await h.configure(panel('a.agent')) as { instructions?: string };
+    expect(first.instructions).toContain('"Review" action. For that request: Review this agent critically');
     expect((await h.call(STUDIO_RPC.threads, { path: 'a.agent' })).threads).toMatchObject([{ threadId: 'pt1', title: 'Review · a.agent', role: 'reviewer', action: 'review' }]);
     expect(h.published).toEqual([[STUDIO_CHANGED_CHANNEL, { projectId: 'p1', path: 'a.agent', kind: 'threads' }]]);
     // Later launches of the same thread do not undo an Unlink.
     await h.call(STUDIO_RPC.unlink, { threadId: 'pt1' });
-    await h.configure(panel('a.agent'));
+    // A relaunch rebuilds instructions, so it gets the same context again.
+    expect(await h.configure(panel('a.agent'))).toEqual(first);
     expect((await h.call(STUDIO_RPC.threads)).threads).toEqual([]);
+  });
+
+  it('hands a spawned thread its context by the brief id it carries, on every launch', async () => {
+    const h = harness();
+    const spawned = await h.call(STUDIO_RPC.askAgent, { path: 'a.agent', action: 'explain-selection' });
+    const { prompt, pluginMetadata } = h.spawn.mock.calls[0][0];
+    expect(prompt).toBe('Explain the selected lines of a.agent.');
+    expect(pluginMetadata).toMatchObject({ sfAgentPath: 'a.agent', action: 'explain-selection', sfBriefId: expect.any(String) });
+    const launch = await h.configure({ threadId: spawned.threadId, projectId: 'p1', pluginMetadata }) as { instructions?: string };
+    expect(launch.instructions).toContain('"Explain selection" action');
+    // The id is spent; the thread keeps its context under its own id.
+    expect(await h.configure({ threadId: spawned.threadId, projectId: 'p1', pluginMetadata })).toEqual(launch);
+    expect(await h.configure({ threadId: 'other', projectId: 'p1', pluginMetadata })).toEqual({});
+    expect(await h.configure({ threadId: 'other', projectId: 'p1', pluginMetadata: { sfBriefId: 7 } })).toEqual({});
   });
 
   it('titles a panel conversation without a draft from the thread, then the file', async () => {
@@ -211,8 +231,8 @@ describe('side-panel drafts', () => {
     let now = 0;
     const drafts = new PendingDrafts(() => now);
     drafts.remember('p', 'a', { title: 'old' });
-    drafts.remember('p', 'a', { title: 'new', action: 'review' });
-    expect(drafts.take('p', 'a')).toEqual({ title: 'new', action: 'review' });
+    drafts.remember('p', 'a', { title: 'new', action: 'review', context: 'ctx' });
+    expect(drafts.take('p', 'a')).toEqual({ title: 'new', action: 'review', context: 'ctx' });
     expect(drafts.take('p', 'a')).toBeNull();
     drafts.remember('p', 'a', { title: 'stale' });
     now = 31 * 60_000;
@@ -220,6 +240,14 @@ describe('side-panel drafts', () => {
     for (let i = 0; i < 60; i++) drafts.remember('p', `f${i}`, { title: `t${i}` });
     expect(drafts.take('p', 'f0')).toBeNull();
     expect(drafts.take('p', 'f59')).toEqual({ title: 't59' });
+  });
+
+  it('BoundedMap forgets the oldest entries and refreshes on set', () => {
+    const map = new BoundedMap<number>(2);
+    map.set('a', 1); map.set('b', 2); map.set('a', 3); map.set('c', 4);
+    expect([map.has('a'), map.has('b'), map.get('a'), map.get('c')]).toEqual([true, false, 3, 4]);
+    map.delete('a');
+    expect(map.get('a')).toBeUndefined();
   });
 
   it('BoundedSet forgets the oldest entries', () => {

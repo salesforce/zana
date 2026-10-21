@@ -4,6 +4,7 @@ import { STUDIO_CHANGED_CHANNEL, STUDIO_RPC, type CaseOutcome, type ScenarioCase
 import { RELEASE_RPC, type ReleasePrepared } from '../../../lib/release-contract.js';
 import { FIX_LOOP_LIMITS, type FixLoop } from '../../../lib/fix-loop.js';
 import { declined, type Message } from './ReleasePane.js';
+import { OrgTestsView } from './OrgTestsView.js';
 
 /**
  * The Tests tool: the agent's scenario suite as one table. Simulate runs the
@@ -78,6 +79,8 @@ const STYLES = `
 .sf-tp-foot { color: var(--sf-muted); margin: 0; }
 .sf-tp-empty { color: var(--sf-muted); padding: 4px 2px; }
 `;
+/** Shared by the Org tests editor tab, which reuses the pane's tables, chips and buttons. */
+export const TESTS_PANE_STYLES = STYLES;
 
 const OUTCOME_LABEL: Record<CaseOutcome, string> = { pass: 'Pass', fail: 'Fail', inconclusive: 'Unclear' };
 function Chip({ outcome, title }: { outcome?: CaseOutcome; title?: string }) {
@@ -120,7 +123,7 @@ export function TestsPane(props: TestsPaneProps) {
   const { pluginId, projectId, threadId, path, source, visible, dirty, proposalSource, roleplay, onAskAgent } = props;
   const call = props.call ?? callPluginRpc;
   const requestApproval = props.requestApproval ?? experimental_requestApproval;
-  const [view, setView] = useState<'cases' | 'roleplay'>('cases');
+  const [view, setView] = useState<'cases' | 'org' | 'roleplay'>('cases');
   const [roleplayShown, setRoleplayShown] = useState(false);
   const [suite, setSuite] = useState<Suite | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -292,10 +295,11 @@ export function TestsPane(props: TestsPaneProps) {
     return null;
   });
 
-  const showView = (next: 'cases' | 'roleplay') => { setView(next); if (next === 'roleplay') setRoleplayShown(true); };
+  const showView = (next: 'cases' | 'org' | 'roleplay') => { setView(next); if (next === 'roleplay') setRoleplayShown(true); };
   const switcher = (
     <div className="sf-tp-seg" role="group" aria-label="Tests view">
       <button type="button" aria-pressed={view === 'cases'} onClick={() => showView('cases')}>Cases</button>
+      <button type="button" aria-pressed={view === 'org'} onClick={() => showView('org')}>Org tests</button>
       <button type="button" aria-pressed={view === 'roleplay'} onClick={() => showView('roleplay')}>Role-play</button>
     </div>
   );
@@ -305,6 +309,7 @@ export function TestsPane(props: TestsPaneProps) {
     return <section className="sf-tp" aria-label="Tests" data-testid="studio-tests-pane"><style>{STYLES}</style>
       <div className="sf-tp-head"><h2>Tests</h2><span className="sf-tp-spacer" />{switcher}</div>
       {view === 'cases' && <div className="sf-tp-empty">Open an agent file to test it.</div>}
+      {view === 'org' && <OrgTestsView pluginId={pluginId} projectId={projectId} threadId={threadId} path={path} visible={visible} onAskAgent={onAskAgent} call={props.call} requestApproval={props.requestApproval} />}
       {roleplayView}
     </section>;
   }
@@ -416,6 +421,7 @@ export function TestsPane(props: TestsPaneProps) {
         </table>}
         <p className="sf-tp-foot">Simulate runs the editor source{dirty ? ', including unsaved changes' : ''}. Org eval runs <code>sf agent test run-eval</code> against the agent published on the org; a pass counts as Release eval evidence.</p>
       </>}
+      {view === 'org' && <OrgTestsView pluginId={pluginId} projectId={projectId} threadId={threadId} path={path} visible={visible} onAskAgent={onAskAgent} call={props.call} requestApproval={props.requestApproval} />}
       {roleplayView}
     </section>
   );

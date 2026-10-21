@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { waitForThreadProvider } from '../services/threads/thread-provider-catalog.js';
 
 const deps = vi.hoisted(() => ({
   retainProductServerCredential: vi.fn(),
@@ -33,15 +34,23 @@ afterEach(() => {
 it('retains credential for authorized send but removes it before server and plugin children start', async () => {
   process.env.ZCC_PRODUCT_SERVER_CREDENTIAL = 'desktop-only-secret';
   const ctx = { config: { getConfig: vi.fn() } };
+  // A host daemon can connect, and start its resume pass, as soon as the server listens.
+  let providerWaitDone = false;
+  let providerWait: Promise<void> | undefined;
   deps.startProductServer.mockImplementationOnce(async (options: unknown) => {
     expect(process.env.ZCC_PRODUCT_SERVER_CREDENTIAL).toBeUndefined();
+    providerWait = waitForThreadProvider('claude-code').then(() => { providerWaitDone = true; });
     return { url: 'http://127.0.0.1:8780/', ctx, close: vi.fn(async () => {}) };
   });
   deps.attachProductPluginService.mockImplementationOnce(async () => {
     expect(process.env.ZCC_PRODUCT_SERVER_CREDENTIAL).toBeUndefined();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(providerWaitDone).toBe(false);
   });
 
   await import('./listen.js');
+  await providerWait;
+  expect(providerWaitDone).toBe(true);
 
   expect(deps.retainProductServerCredential).toHaveBeenCalledExactlyOnceWith('desktop-only-secret');
   expect(deps.startProductServer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({

@@ -19,6 +19,7 @@ import { AttachmentPills } from './ui/AttachmentPills.js';
 import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
 import type { WalkedFile } from '@zana-ai/zcc-domain/product';
 import { ComposerIconButton, type AutoGrowTextareaHandle } from './ui/CommandComposer.js';
+import { platformShortcut } from '../lib/platformShortcut.js';
 
 /**
  * The agent-instruction box, shared by every launcher that takes a typed prompt
@@ -308,7 +309,7 @@ export const PromptComposer = forwardRef<PromptComposerHandle, Props>(function P
               onClick={onSubmit}
               disabled={submitDisabled}
               aria-label={submitLabel}
-              title={`${submitLabel} (⌘↵)`}
+              title={platformShortcut(`${submitLabel} (⌘↵)`)}
             >
               <ArrowUp size={17} aria-hidden="true" />
             </ComposerIconButton>

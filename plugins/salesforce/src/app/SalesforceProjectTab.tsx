@@ -1,5 +1,5 @@
 import { useSalesforceControl } from './useSalesforceControl.js';
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Settings2, Plus, CloudDownload } from 'lucide-react';
 import {
   Database,
@@ -39,6 +39,10 @@ import { parseAgentforcePanelFocus, type StudioFocus } from "./agentforce-panel-
 
 import { SalesforceTabs } from "./components/Tabs.js";
 import { useContextChangeRelay } from './context-sync.js';
+import { recordRecentAgent } from './recent-agents.js';
+import { readProjectView, rememberProjectView } from './project-view.js';
+
+export { readProjectView } from './project-view.js';
 
 const VIEWS: Array<[WorkbenchView, string]> = [
   ["overview", "Overview"],
@@ -57,21 +61,6 @@ const STUDIO_VIEWS: Array<[WorkbenchView, string]> = [
   ["overview", "Home"],
 ];
 const STUDIO_ICONS = { agentforce: Bot, data: Database, apex: FlaskConical, deployments: Package, overview: Home };
-
-const VIEW_IDS = VIEWS.map(([id]) => id);
-/** The Studio window keeps its own last view, so detaching does not move the main tab. */
-const viewKey = (projectId: string, studio = false) => `salesforce:${studio ? "studio-window" : "project-tab"}:${projectId}`;
-/**
- * The view last used in this project (untrusted storage: unknown values fall
- * back to Overview, or to Agentforce in the Studio window).
- */
-export function readProjectView(projectId: string, studio = false): WorkbenchView {
-  const fallback: WorkbenchView = studio ? "agentforce" : "overview";
-  try {
-    const stored = localStorage.getItem(viewKey(projectId, studio));
-    return VIEW_IDS.find(id => id === stored) ?? fallback;
-  } catch { return fallback; }
-}
 
 /**
  * The Studio window's title: the open agent or the view, the org, and a badge when the org is
@@ -110,7 +99,7 @@ export function SalesforceProjectTab(props: {
   const setView = (next: WorkbenchView) => {
     setViewState(next);
     if (next !== "agentforce") setAgentFocus(null);
-    try { localStorage.setItem(viewKey(props.projectId, studio), next); } catch { /* optional */ }
+    rememberProjectView(props.projectId, next, studio);
   };
   const [orgsOpen, setOrgsOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
@@ -159,7 +148,12 @@ export function SalesforceProjectTab(props: {
   const org = status.data?.orgs?.find(
     (row) => row.alias === alias || row.username === alias,
   );
-  const [agentPath, setAgentPath] = useState<string | null>(null);
+  const [agentPath, setAgentPathState] = useState<string | null>(null);
+  // The Salesforce hub lists agents opened here so it can reopen them.
+  const setAgentPath = useCallback((path: string | null) => {
+    setAgentPathState(path);
+    if (path) recordRecentAgent(props.projectId, path);
+  }, [props.projectId]);
   // An org the CLI no longer lists is of unknown kind, so it gets the warning too.
   useWindowTitle(studio ? studioWindowTitle({ view, agentPath, alias, orgKind: org?.kind ?? (status.data ? "unknown" : undefined) }) : null);
   useEffect(() => {
@@ -175,12 +169,16 @@ export function SalesforceProjectTab(props: {
     window.addEventListener('sf:context-changed', changed);
     return () => window.removeEventListener('sf:context-changed', changed);
   }, [props.projectId, status.refresh]);
-  const refreshConnection = () => window.dispatchEvent(new CustomEvent('sf:context-changed', { detail: { projectId: props.projectId } }));
+  const refreshConnection = async () => {
+    // The org roster is cached until sign-in; drop it so orgs added or removed from a terminal show up.
+    await call('orgs', { refresh: true }).catch(() => undefined);
+    window.dispatchEvent(new CustomEvent('sf:context-changed', { detail: { projectId: props.projectId } }));
+  };
   const connectionGuidance = <SalesforceState compact kind={readiness.kind === 'unavailable' ? 'error' : 'empty'} title={readiness.title}
     action={<>
       <button className="sf-btn primary" type="button" onClick={() => setLoginRequest(value => value + 1)}>Sign in to an org</button>
       <button className="sf-btn" type="button" onClick={() => setOrgsOpen(true)}>Choose an existing org</button>
-      <button className="sf-btn quiet" type="button" disabled={status.busy} onClick={refreshConnection}>Check again</button>
+      <button className="sf-btn quiet" type="button" disabled={status.busy} onClick={() => void refreshConnection()}>Check again</button>
     </>}>
     <p>{readiness.detail}</p>
     <p>The target applies to this project. Other projects keep their own targets.</p>

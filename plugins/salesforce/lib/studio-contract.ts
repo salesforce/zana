@@ -5,6 +5,10 @@
 export type StudioTool = 'code' | 'preview' | 'tests' | 'graph' | 'actions' | 'data' | 'deploy' | 'assistant' | 'comments' | 'agents';
 export type StudioEngine = 'rehearse' | 'simulate' | 'live';
 export interface StudioDiagnostic { line: number; column: number; endLine: number; endColumn: number; severity: 'error' | 'warning' | 'info' | 'hint'; message: string; code?: string }
+/** Problem counters count errors and warnings; info and hint entries are listed but not counted. */
+export function countProblems(diagnostics: readonly StudioDiagnostic[]): number {
+  return diagnostics.filter(item => item.severity === 'error' || item.severity === 'warning').length;
+}
 export interface StudioViewState {
   surface: 'studio' | 'sidepanel'; path: string | null; sha256?: string; dirty: boolean;
   cursor?: { line: number; column: number }; selection?: { startLine: number; endLine: number; text: string /* <=2000 */ };
@@ -15,7 +19,7 @@ export type ThreadRole = 'author' | 'editor' | 'reviewer' | 'tester' | 'assistan
 export interface StudioThreadLink { threadId: string; title: string; role: ThreadRole; action?: string; path: string; lastActivityAt: number }
 export interface StudioComment {
   id: string; path: string; line: number; endLine: number; quote: string; body: string;
-  author: { kind: 'user' | 'agent'; threadId?: string; name: string }; createdAt: number; resolved?: { at: number; note: string; by: string };
+  author: { kind: 'user' | 'agent'; threadId?: string; name: string }; createdAt: number; editedAt?: number; resolved?: { at: number; note: string; by: string };
 }
 export interface ProposeEditInput { path: string; expectedSha256: string; content?: string; edits?: Array<{ startLine: number; endLine: number; text: string }>; summary: string }
 export type ProposalOutcome = { outcome: 'accepted' | 'rejected' | 'partial'; acceptedHunks: number; rejectedHunks: number; sha256?: string; note?: string };
@@ -25,6 +29,7 @@ export interface TraceStep {
 }
 export interface TurnTrace { runId: string; turn: number; planId?: string; available: boolean; reason?: string; steps: TraceStep[] }
 export interface ScenarioCase {
+  contextVariables?: import('./preview-context.js').PreviewContextVariable[];
   id: string; name: string; utterances: string[]; expect: { topic?: string; actions?: string[]; contains?: string[]; criteria?: string };
   /** Set when the case was pinned from a Preview conversation. */
   pinned?: { runId: string; at: number };
@@ -39,21 +44,31 @@ export interface SuiteEval {
   multiTurn: string[];
 }
 export interface ScenarioSuite { id: string; path: string; cases: ScenarioCase[]; lastResults?: Record<string, { outcome: CaseOutcome; runId: string; at: number }>; lastEval?: SuiteEval }
-/** One reference an agent makes (`apex://X`, `flow://Y`, a Lightning Type), as listed on its explorer node. */
-export interface ExplorerUse { kind: 'apex' | 'flow' | 'prompt' | 'lightning-type'; apiName: string }
-/** `usedBy` lists at most 20 agent paths per reference; `uses` (agent nodes only, scanned agents only) is the uncapped inverse. */
-export interface ExplorerNode { kind: 'agent' | 'apex' | 'flow' | 'prompt' | 'lightning-type' | 'scenario' | 'org-agent'; path?: string; apiName: string; usedBy?: string[]; uses?: ExplorerUse[]; badge?: { dirty?: boolean; problems?: number; status?: 'pass' | 'fail' } }
+/** One reference an agent makes (`apex://X`, `flow://Y`, a Lightning Type, or an LWC one of its types renders with), as listed on its explorer node. */
+export interface ExplorerUse { kind: 'apex' | 'flow' | 'prompt' | 'lightning-type' | 'lwc'; apiName: string }
+/**
+ * `usedBy` lists at most 20 agent paths per reference; `uses` (agent nodes only, scanned agents only) is the uncapped inverse.
+ * `via` (LWC nodes only) names the Lightning Types whose renderer or editor uses the component.
+ */
+export interface ExplorerNode { kind: 'agent' | 'apex' | 'flow' | 'prompt' | 'lightning-type' | 'lwc' | 'scenario' | 'org-agent'; path?: string; apiName: string; usedBy?: string[]; via?: string[]; uses?: ExplorerUse[]; badge?: { dirty?: boolean; problems?: number; status?: 'pass' | 'fail' } }
 export interface LightningTypeProperty { name: string; type?: string; title?: string; description?: string; required: boolean }
 /** One Lightning Type as `studio.lightningType` returns it: a project bundle, a standard platform type, or a missing reference. */
 export interface LightningTypeView {
   ref: string; standard: boolean; status: 'ready' | 'standard' | 'missing'; path?: string; title?: string; description?: string; message?: string;
   properties: LightningTypeProperty[]; files: Array<{ path: string; content: string; truncated?: boolean }>;
+  /** The LWCs the bundle's channel renderer.json / editor.json override with; `path` is set when the component is in this project. */
+  components: LightningTypeComponent[];
 }
+/** `ref` is the `definition` as written (`c/offerCard`); `target` is the overridden property, `$` for the whole type. */
+export interface LightningTypeComponent { ref: string; namespace: string; name: string; role: 'renderer' | 'editor'; channel: string; target: string; path?: string }
+/** One LWC bundle as `studio.lwc` returns it: its source files, or why it is not in the project. */
+export interface LwcBundleView { ref: string; name: string; status: 'ready' | 'missing'; path?: string; message?: string; files: Array<{ path: string; content: string; truncated?: boolean }> }
 
 export const STUDIO_RPC = {
   askAgent: 'studio.askAgent', draftAgent: 'studio.draftAgent', threads: 'studio.threads', unlink: 'studio.unlinkThread',
-  viewPublish: 'studio.view.publish', viewGet: 'studio.view.get', explorer: 'studio.explorer', lightningType: 'studio.lightningType',
+  viewPublish: 'studio.view.publish', viewGet: 'studio.view.get', explorer: 'studio.explorer', lightningType: 'studio.lightningType', lwc: 'studio.lwc',
   comments: 'studio.comments.list', commentAdd: 'studio.comments.add', commentResolve: 'studio.comments.resolve',
+  commentUpdate: 'studio.comments.update', commentDelete: 'studio.comments.delete',
   trace: 'agentLab.trace', suites: 'studio.suites.list', suiteSave: 'studio.suites.save', suiteRun: 'studio.suites.run',
   suiteImport: 'studio.suites.import', suiteSpec: 'studio.suites.spec', suiteEval: 'studio.suites.eval',
   loopStart: 'studio.loop.start', loopStop: 'studio.loop.stop', loopGet: 'studio.loop.get',
@@ -73,7 +88,7 @@ export function contextOrigin(args: unknown): string | null {
 export const AGENT_SOURCE_MAX = 10 * 1024 * 1024;
 export const AGENT_SOURCE_MAX_LABEL = '10 MB';
 
-export const STUDIO_LIMITS = { diagnostics: 50, selectionText: 2000, quote: 2000 } as const;
+export const STUDIO_LIMITS = { diagnostics: 50, selectionText: 2000, quote: 2000, commentBody: 2000 } as const;
 export const STUDIO_TOOLS: readonly StudioTool[] = ['code', 'preview', 'tests', 'graph', 'actions', 'data', 'deploy', 'assistant', 'comments', 'agents'];
 export const STUDIO_ENGINES: readonly StudioEngine[] = ['rehearse', 'simulate', 'live'];
 /** The engines Preview offers. Rehearse is hidden for now; saved Rehearse runs still load and replay. */
@@ -111,7 +126,7 @@ export function isStudioComment(value: unknown): value is StudioComment {
   return typeof value.id === 'string' && typeof value.path === 'string' && isPos(value.line) && isPos(value.endLine) && Number(value.endLine) >= Number(value.line)
     && typeof value.quote === 'string' && value.quote.length <= STUDIO_LIMITS.quote && typeof value.body === 'string' && value.body.length <= 4000
     && (author.kind === 'user' || author.kind === 'agent') && typeof author.name === 'string' && (author.threadId === undefined || typeof author.threadId === 'string')
-    && typeof value.createdAt === 'number'
+    && typeof value.createdAt === 'number' && (value.editedAt === undefined || typeof value.editedAt === 'number')
     && (resolved === undefined || (isRecord(resolved) && typeof resolved.at === 'number' && typeof resolved.note === 'string' && typeof resolved.by === 'string'));
 }
 

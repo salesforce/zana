@@ -176,7 +176,8 @@ test('Modern owner starts a durable Job Team through the host tool-call bridge a
       return { status: toolCall.status, toolBody, toolText: (toolBody.contentItems ?? []).map((item) => item.text ?? '').join('\n') };
     };
     let tool = await callTool();
-    const policyDeadline = Date.now() + 30_000;
+    // Salesforce is installed by default; its plugin server can take a while to come up.
+    const policyDeadline = Date.now() + 90_000;
     while (tool.toolText.includes('plugin tool policy not ready') && Date.now() < policyDeadline) {
       await new Promise(resolve => setTimeout(resolve, 500));
       tool = await callTool();

@@ -303,7 +303,7 @@
   color: var(--text);
 }
 .demo-chapters button span {
-  opacity: 0.6;
+  opacity: 0.85;
   margin-right: 8px;
   font-size: 10px;
 }

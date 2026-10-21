@@ -76,10 +76,10 @@ describe('studio-tool-bridge', () => {
     const off = renderHook(() => useStudioToolSlots(null));
     act(() => {
       attachStudioTool('p1', 'release', document.createElement('div'));
-      attachStudioTool('p1', 'agents', document.createElement('div'));
+      attachStudioTool('p1', 'graph', document.createElement('div'));
       attachStudioTool('p2', 'graph', document.createElement('div'));
     });
-    expect(result.current.map(slot => slot.tool)).toEqual(['agents', 'release']);
+    expect(result.current.map(slot => slot.tool)).toEqual(['graph', 'release']);
     expect(off.result.current).toEqual([]);
   });
 
@@ -101,13 +101,13 @@ describe('studio-tool-bridge', () => {
 
   it('forgets a project once nothing uses it', () => {
     const container = document.createElement('div');
-    const release = attachStudioTool('p1', 'agents', container);
+    const release = attachStudioTool('p1', 'graph', container);
     const node = container.firstChild;
     release();
     const unregister = registerStudio('p1');
     unregister();
     const { result } = renderHook(() => useStudioToolSlots('p1'));
-    act(() => { attachStudioTool('p1', 'agents', container); });
+    act(() => { attachStudioTool('p1', 'graph', container); });
     expect(result.current[0].node).not.toBe(node);
   });
 });
