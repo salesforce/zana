@@ -25,10 +25,23 @@ const root = document.getElementById('root');
 // NOT the full shell. Critically it never imports `./App` (which pulls in the
 // heavy store: session restore, pty spawning), so the popover stays cheap and
 // can't drive app state.
-const isPopover = new URLSearchParams(window.location.search).get('surface') === 'popover';
+const surfaceParams = new URLSearchParams(window.location.search);
+const isPopover = surfaceParams.get('surface') === 'popover';
+// The Command Center rail + quick panel (`?surface=companion&part=…`) follow the
+// same rule: thin components fed by main, never the App/store.
+const isCompanion = surfaceParams.get('surface') === 'companion';
 
 if (!root) {
   console.error('[renderer] root element not found');
+} else if (isCompanion) {
+  document.documentElement.classList.add('companion-surface');
+  void import('./components/companion/Companion.js').then(({ Companion }) => {
+    createRoot(root).render(
+      <ErrorBoundary>
+        <Companion part={surfaceParams.get('part')} />
+      </ErrorBoundary>
+    );
+  });
 } else if (isPopover) {
   document.body.classList.add('menubar-popover-body');
   void import('./components/MenubarPopover.js').then(({ MenubarPopover }) => {

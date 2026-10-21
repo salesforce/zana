@@ -43,6 +43,8 @@ export interface TrayDeps {
   popover?: MenubarController | null;
   /** Live check: is the popover surface enabled (config flag + darwin)? */
   popoverEnabled: () => boolean;
+  /** Command Center entry ("Minimize to Command Center"), when the opt-in flag is on. */
+  commandCenter?: { enabled: () => boolean; enter: () => void };
   /** App icon path, resized down for the menu bar. May be null. */
   iconPath: string | null;
   logger?: (context: string, err: unknown) => void;
@@ -355,6 +357,12 @@ export class TrayController {
         label: 'Show Zana',
         click: () => this.deps.showWindow()
       });
+      if (this.deps.commandCenter?.enabled()) {
+        items.push({
+          label: 'Minimize to Command Center',
+          click: () => this.deps.commandCenter!.enter()
+        });
+      }
       items.push({ type: 'separator' });
       items.push({ label: 'Quit', role: 'quit' });
 

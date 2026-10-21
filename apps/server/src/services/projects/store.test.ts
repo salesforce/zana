@@ -78,6 +78,7 @@ describe('config — boolean feature flags round-trip through setConfig', () => 
     'inboxGuidanceEnabled',
     'voiceInputEnabled',
     'menubarPopoverEnabled',
+    'companionEnabled',
     'trustZccToolsEnabled',
     'remoteMcpEnabled',
     'steerActiveThreadOnEnter',
@@ -173,6 +174,18 @@ describe('config — boolean feature flags round-trip through setConfig', () => 
     expect(store.getConfig().menubarPopoverEnabled).toBe(true);
     store.setConfig({ menubarPopoverEnabled: false });
     expect(store.getConfig().menubarPopoverEnabled).toBe(false);
+  });
+
+  it('persists a normalized companionPlacement and drops invalid ones', () => {
+    expect(store.getConfig().companionPlacement).toBeUndefined();
+    store.setConfig({ companionPlacement: { edge: 'left', displayId: 7.2, offsetY: 120.6 } });
+    expect(store.getConfig().companionPlacement).toEqual({ edge: 'left', displayId: 7, offsetY: 121 });
+    store.setConfig({ companionPlacement: { edge: 'right', offsetY: -40 } });
+    expect(store.getConfig().companionPlacement).toEqual({ edge: 'right', offsetY: 0 });
+    store.setConfig({
+      companionPlacement: { edge: 'top', offsetY: 10 } as unknown as { edge: 'left' }
+    });
+    expect(store.getConfig().companionPlacement).toBeUndefined();
   });
 
   // Trust all ZCC tools is ON by default for every install (fresh or updated) —
