@@ -484,7 +484,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   }, [projectId, refreshOrg, refreshExplorer]);
 
   const openFile = useCallback(
-    async (path: string | null, isCurrent: () => boolean = () => true) => {
+    async (path: string | null, isCurrent: () => boolean = () => true, focus = true) => {
       if (!isCurrent()) return false;
       const generation = ++fileEpoch.current;
       setError(null);
@@ -531,8 +531,10 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       setActivePath(result.file.path);
       setSha256(result.file.sha256);
       setDirty(false);
-      openTab({ id: `agent:${result.file.path}`, kind: 'agent', label: basename(result.file.path), path: result.file.path });
-      if (compact) patch({ tool: 'code' });
+      // focus=false re-sends an already-open file to a late-ready editor without reopening its tab or
+      // stealing the active tab from a target view (Org tests, Apex, …) the user has since moved to.
+      if (focus) openTab({ id: `agent:${result.file.path}`, kind: 'agent', label: basename(result.file.path), path: result.file.path });
+      if (focus && compact) patch({ tool: 'code' });
       send.setFile({
         draftKey: activeDraft.current,
         path: result.file.path,
@@ -885,6 +887,11 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       const tabPath = activeEditorTab?.kind === 'agent' ? activeEditorTab.path : undefined;
       // A remount onto a type or target tab keeps it in front; its agent tab reopens when selected.
       const recalled = targetTabActive.current ? null : last?.startsWith('file:') ? last.slice(5) : null;
+      // A late ready (the editor signals ready after a file was already opened and the user has since
+      // moved to a target tab like Org tests) must neither drop the loaded file nor steal focus back
+      // to its agent tab: re-send the file to the editor without reopening/selecting its tab.
+      const loaded = activePathRef.current;
+      if (loaded && !initialPath && !queued && !tabPath) { void openFile(loaded, undefined, false); return; }
       const file = initialPath || queued || tabPath || recalled;
       void openFile(file);
     },

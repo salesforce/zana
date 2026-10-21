@@ -1079,7 +1079,7 @@ test('Agentforce Studio: Lightning Types, collapsible explorer sections and a hi
   await expect(view.getByRole('heading', { name: 'Order request' })).toBeVisible();
   await expect(studio.getByRole('tab', { name: /TYPE.*c__OrderRequest/ })).toHaveAttribute('aria-selected', 'true');
   await expect(view.getByRole('cell', { name: 'lightning__textType' })).toBeVisible();
-  await expect(view.getByRole('button', { name: 'Typed.agent' })).toBeVisible();
+  await expect(view.getByRole('button', { name: 'Typed', exact: true })).toBeVisible();
   await view.getByRole('button', { name: 'lightningDesktopGenAi/renderer.json' }).click();
   await expect(view.getByLabel(/Source of .*renderer\.json/)).toContainText('c/orderCard');
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('lightning-type.png'));
@@ -1841,13 +1841,19 @@ test('Agentforce Studio window: Org tests sit in the activity rail, and an agent
   const rail = panel.getByRole('toolbar', { name: 'Studio activity' });
   expect(await rail.getByRole('button').evaluateAll(nodes => nodes.map(n => n.getAttribute('aria-label')))).toEqual(['Files', 'Agents', 'Org tests', 'Go to file']);
   await caption('You: click Org tests in the left activity rail');
-  await rail.getByRole('button', { name: 'Org tests' }).click();
   const tab = panel.getByTestId('studio-org-tests-view');
-  await expect(panel.getByRole('tablist', { name: 'Open files' }).getByRole('tab', { name: /Org tests/ })).toHaveAttribute('aria-selected', 'true');
+  const orgTestsTab = panel.getByRole('tablist', { name: 'Open files' }).getByRole('tab', { name: /Org tests/ });
+  // A fresh detached window can settle the just-opened agent file right after this click and briefly
+  // reselect its tab; retry the rail open until the Org tests tab holds selection.
+  await expect(async () => {
+    await rail.getByRole('button', { name: 'Org tests' }).click();
+    await expect(orgTestsTab).toHaveAttribute('aria-selected', 'true', { timeout: 3_000 });
+  }).toPass({ timeout: 30_000 });
   await expect(tab.getByRole('heading', { name: 'Org tests' })).toBeVisible();
   await expect(tab).toContainText('studio');
   const table = tab.getByTestId('org-tests-table');
-  await expect(table.getByRole('button', { name: 'Support regression', exact: true })).toBeVisible();
+  // The org's test definitions load progressively; give the detached window headroom under load.
+  await expect(table.getByRole('button', { name: 'Support regression', exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(tab.getByText('Pick a test to see its cases and runs.')).toBeVisible();
   await caption('You: switch to All agents to see every agent\'s org tests');
   await tab.getByRole('group', { name: 'Scope' }).getByRole('button', { name: 'All agents' }).click();
@@ -1896,8 +1902,9 @@ test('Agentforce Studio window: Org tests sit in the activity rail, and an agent
   // The Studio follows: the tab comes back on the run's definition and polls the run to completion.
   await expect(tab).toBeVisible();
   await expect(tab.getByTestId('org-def-detail').getByRole('heading', { name: 'Support regression' })).toBeVisible();
+  // The run detail shows the run by time and status; the run's id identifies its history card.
+  await expect(tab.getByTestId('org-def-detail').getByRole('button', { name: /^4KB000000000001AAA / })).toBeVisible();
   const run = tab.getByTestId('org-run-detail');
-  await expect(run).toContainText('4KB000000000001AAA');
   await caption('Studio follows the run live: polling the org until it finishes');
   await beat();
   await expect(run.getByTestId('org-run-counts')).toContainText('2 pass · 1 fail · 0 error of 3', { timeout: 30_000 });
