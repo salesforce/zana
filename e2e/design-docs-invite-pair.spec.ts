@@ -98,35 +98,36 @@ test('core-paired computers share Design Docs both ways, heal a killed ssh and c
     for (const app of [a, b]) expect((await ddRpc<Array<{ id: string }>>(app, 'list')).some(doc => doc.id === fromA.id)).toBe(false);
     expect((await ddRpc<Array<{ id: string }>>(a, 'list')).some(doc => doc.id === afterHeal.id)).toBe(true);
 
-    step('Stop using keeps the core link and ends sync');
-    const region = await openDesignDocsPeers(a);
-    a.window.once('dialog', dialog => void dialog.accept());
-    await region.getByRole('button', { name: 'Stop using', exact: true }).click();
-    await expect.poll(async () => (await ddConnections(a))[0]?.usedByThisPlugin, { timeout: 60_000 }).toBe(false);
+    step('Stop syncing keeps the core link and ends sync');
+    // Fresh sync makes Design Docs count as actively transferring, so core gates the stop with its confirm.
+    await ddRpc(a, 'syncNow').catch(() => {});
     const { window: corePeers } = await reopenCorePeers(a);
+    // The active-transfer gate now lives on the per-plugin use row; it names Design Docs before cutting it off.
+    await corePeers.getByTestId('peer-link-use').getByRole('button', { name: 'Stop syncing Design Docs', exact: true }).click();
+    const active = corePeers.getByRole('alertdialog', { name: /^Active transfer with / });
+    await expect(active).toContainText('Design Docs is transferring with');
+    await active.getByRole('button', { name: 'Stop anyway', exact: true }).click();
+    await expect(active).toHaveCount(0);
+    await expect.poll(async () => (await ddConnections(a))[0]?.usedByThisPlugin, { timeout: 60_000 }).toBe(false);
     await expect(corePeers.getByTestId('peer-computer')).toHaveCount(1);
     await expect(corePeers.getByTestId('peer-computer')).toContainText('Linked');
     expect(linkSshPids(sshd)).toHaveLength(1);
 
-    step('remove the link in core Settings → Peers');
+    step('remove the computer in core Settings → Peers');
     const bHostLine = zanaLines(a).length;
     expect(bHostLine).toBeGreaterThan(0);
-    await corePeers.getByTestId('peer-link').getByRole('button', { name: 'Remove link', exact: true }).click();
-    // Sync traffic counts as an active transfer: core asks, naming Design Docs, before cutting it off.
-    const active = corePeers.getByRole('alertdialog', { name: /^Active transfer with / });
-    await expect(active).toContainText('Design Docs is transferring with');
-    await active.getByRole('button', { name: 'Stop anyway', exact: true }).click();
-    await corePeers.getByRole('alertdialog', { name: 'Confirm removing computer link' }).getByRole('button', { name: 'Confirm remove', exact: true }).click();
+    // The use is already stopped, and removal no longer gates on active transfers: plain Remove computer → confirm.
+    await corePeers.getByTestId('peer-computer').getByRole('button', { name: 'Remove computer', exact: true }).click();
+    await corePeers.getByRole('alertdialog', { name: 'Confirm removing computer link' }).getByRole('button', { name: 'Remove', exact: true }).click();
     await expect(corePeers.getByTestId('peer-link')).toHaveCount(0, { timeout: 60_000 });
     await expect.poll(() => zanaLines(a), { message: 'no zana-peer-v1 lines remain', timeout: 30_000 }).toEqual([]);
     // Removal is local to A (it never waits on B). B sees its link drop, then removes its own half in core.
     await expect.poll(async () => await linkState(b), { message: 'B stops reporting connected', timeout: 60_000 }).not.toBe('connected');
     const { window: bPeers } = await reopenCorePeers(b);
-    await expect(bPeers.getByTestId('peer-link')).toHaveCount(1);
-    await bPeers.getByTestId('peer-link').getByRole('button', { name: 'Remove link', exact: true }).click();
-    const bActive = bPeers.getByRole('alertdialog', { name: /^Active transfer with / });
-    await bActive.waitFor({ timeout: 5_000 }).then(() => bActive.getByRole('button', { name: 'Stop anyway', exact: true }).click(), () => {});
-    await bPeers.getByRole('alertdialog', { name: 'Confirm removing computer link' }).getByRole('button', { name: 'Confirm remove', exact: true }).click();
+    await expect(bPeers.getByTestId('peer-computer')).toHaveCount(1);
+    // B's peer is unreachable now, so nothing is active; the confirm names the plugin but shows no active-transfer gate.
+    await bPeers.getByTestId('peer-computer').getByRole('button', { name: 'Remove computer', exact: true }).click();
+    await bPeers.getByRole('alertdialog', { name: 'Confirm removing computer link' }).getByRole('button', { name: 'Remove', exact: true }).click();
     await expect(bPeers.getByTestId('peer-link')).toHaveCount(0, { timeout: 60_000 });
     await expect.poll(() => linkSshPids(sshd).length, { message: 'B closes its ssh', timeout: 60_000 }).toBe(0);
     await expect.poll(async () => (await ddConnections(b)).length, { timeout: 60_000 }).toBe(0);

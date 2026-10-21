@@ -880,7 +880,8 @@ export class DesignDocSyncStore {
     this.db.transaction(() => {
       this.requireTransferIdentity(transfer);
       for (const version of transfer.versions) if (Object.values(transfer.heads).includes(version.operation.id) &&
-        (transfer.manual === true || this.hasManualDoc(transfer.repoId, transfer.senderReplicaId, version.operation.docId))) {
+        (transfer.manual === true || (version.operation.kind !== 'delete' &&
+          this.hasManualDoc(transfer.repoId, transfer.senderReplicaId, version.operation.docId)))) {
         this.requireManualHead(transfer.repoId, transfer.senderReplicaId, version.operation.docId, version.operation.id);
       }
       const digest = this.localRepository()!.rosterDigest;

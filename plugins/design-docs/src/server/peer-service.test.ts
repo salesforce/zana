@@ -1006,4 +1006,33 @@ describe('peer protocol negotiation', () => {
     expect(caught).toBeInstanceOf(PeerProtocolError);
     expect(caught).toMatchObject({ code: 'invalid' });
   });
+
+  // Regression: a whole-document deletion must propagate through syncNow even when an earlier manual session for
+  // that doc was accepted on the receiver. The deletion is an archived milestone, so the private-draft manual gate
+  // must not fence it; stageTransfer once lacked the milestone exemption that `apply` already had, so the tombstone
+  // stuck as "bilateral manual consent missing for frozen head" and the doc resurrected on the originating peer.
+  it('propagates a delete via syncNow after an accepted manual session for the same doc', async () => {
+    const a = fixture('a'), b = fixture('b'); a.pair(); b.pair();
+    const doc = a.store.create({ title: 'Doc from A', status: 'approved', files: [{ path: 'note.md', content: 'written on A' }] }, user);
+    // Initial share A -> B (milestone over the pairing path, exactly like the explicit-pairing milestone test above).
+    expect(await a.service.syncNow(transport(a, b))).toMatchObject({ synced: 1 });
+
+    // B edits note.md and pushes it back to A through a bilateral manual session (A has an outbound session, so A's
+    // inbound session for this doc flips to 'accepted'). This is the leftover accepted inbound session the delete must survive.
+    b.store.writeFile(doc.id, { path: 'note.md', content: 'edited on B' }, user);
+    b.store.update(doc.id, { status: 'implemented', expectedHead: b.sync.head('repo', doc.id) }, user);
+    a.sync.prepareManual();
+    await b.service.syncNow(transport(b, a));
+    expect(a.store.readFile(doc.id, 'note.md').content).toBe('edited on B');
+
+    // B deletes the whole doc (archived 'delete' tombstone) and syncs: it must reach A and settle there, not resurrect.
+    b.store.remove(doc.id, user);
+    for (let pass = 0; pass < 4 && a.store.find(doc.id); pass++) {
+      a.sync.prepareManual();
+      await b.service.syncNow(transport(b, a));
+      await a.service.syncNow(transport(a, b));
+    }
+    expect(a.store.find(doc.id)).toBeNull();
+    expect(a.sync.version('repo', a.sync.head('repo', doc.id)!)!.operation.kind).toBe('delete');
+  });
 });
