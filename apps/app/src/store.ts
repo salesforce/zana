@@ -377,6 +377,12 @@ interface UiState {
   resumeOpen: boolean;
   /** The rich "+" launcher modal (instruction + profile/model/mode + resume). */
   launcherOpen: boolean;
+  /**
+   * Project the launcher was opened for (a project row's "+"). Seeds the
+   * composer's project pick so an explicit remote choice survives the
+   * local-only default. Null for generic opens; cleared on close.
+   */
+  launcherProjectId: string | null;
   searchOpen: boolean;
   findOpen: boolean;
   /**
@@ -576,7 +582,7 @@ interface UiState {
   setQuickOpenOpen: (open: boolean) => void;
   setShortcutsOpen: (open: boolean) => void;
   setResumeOpen: (open: boolean) => void;
-  setLauncherOpen: (open: boolean) => void;
+  setLauncherOpen: (open: boolean, projectId?: string) => void;
   /** Open / close the first-run walkthrough overlay. */
   setWalkthroughOpen: (open: boolean) => void;
   setWalkthroughHomeMode: (mode: 'thread' | 'agent' | null) => void;
@@ -1002,6 +1008,7 @@ export const useUi = create<UiState>((set, get) => ({
   shortcutsOpen: false,
   resumeOpen: false,
   launcherOpen: false,
+  launcherProjectId: null,
   walkthroughOpen: false,
   walkthroughHomeMode: null,
   setupOpen: false,
@@ -1189,7 +1196,8 @@ export const useUi = create<UiState>((set, get) => ({
   setQuickOpenOpen: (quickOpenOpen) => set({ quickOpenOpen }),
   setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
   setResumeOpen: (resumeOpen) => set({ resumeOpen }),
-  setLauncherOpen: (launcherOpen) => set({ launcherOpen }),
+  setLauncherOpen: (launcherOpen, projectId) =>
+    set({ launcherOpen, launcherProjectId: launcherOpen ? projectId ?? null : null }),
   setWalkthroughOpen: (walkthroughOpen) =>
     set(walkthroughOpen ? { walkthroughOpen } : { walkthroughOpen, walkthroughHomeMode: null }),
   setWalkthroughHomeMode: (walkthroughHomeMode) => set({ walkthroughHomeMode }),

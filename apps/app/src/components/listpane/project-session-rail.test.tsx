@@ -167,6 +167,12 @@ describe('ProjectSessionRail', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Project actions for zana-command-center' }));
     expect(screen.getByTestId('focused-project-menu').dataset.project).toBe(project.id);
   });
+  it('opens the launcher for this project from the row "+"', () => {
+    h.ui.setLauncherOpen.mockClear();
+    render(<MemoryRouter><ProjectSessionRail project={project} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'New agent in zana-command-center' }));
+    expect(h.ui.setLauncherOpen).toHaveBeenCalledWith(true, project.id);
+  });
   it('drops the project row and becomes a flat Sessions list when the titlebar owns the project', () => {
     h.data.terminals = { 'proj-1': [session({ id: 'live-cli', title: 'Running CLI' })] };
     h.threads = [thread({ id: 'live-thread', status: 'active', title: 'Working review' })];

@@ -13,14 +13,17 @@ const h = vi.hoisted(() => ({
   actions: [] as PluginProjectMenuActionRegistration[],
   createActions: [],
   run: vi.fn(),
-  loadProjects: vi.fn(async () => undefined)
+  loadProjects: vi.fn(async () => undefined),
+  selectProject: vi.fn(),
+  setLauncherOpen: vi.fn()
 }));
 
 vi.mock('../../store.js', () => ({
   useData: (select: (state: unknown) => unknown) => select({ projects: h.projects, terminals: {}, projectNavigationOrganization: 'sessions', loadProjects: h.loadProjects }),
   useUi: (select: (state: unknown) => unknown) => select({
     selectedProjectId: null, focusedProjectId: null, selectedTabId: {}, unread: {}, projectExpanded: {},
-    hideIdleProjects: false, collapsedSections: {}
+    hideIdleProjects: false, collapsedSections: {},
+    selectProject: h.selectProject, setLauncherOpen: h.setLauncherOpen
   }),
   sortProjectsForDisplay: (projects: Project[]) => projects,
   sortProjectsAlphabetically: (projects: Project[]) => projects,
@@ -77,6 +80,15 @@ afterEach(() => {
   cleanup();
   h.actions = [];
   vi.clearAllMocks();
+});
+
+describe('project row new agent', () => {
+  it('opens the launcher for the clicked project', () => {
+    renderList();
+    fireEvent.click(screen.getByRole('button', { name: 'New agent in Second' }));
+    expect(h.selectProject).toHaveBeenCalledWith('p2');
+    expect(h.setLauncherOpen).toHaveBeenCalledWith(true, 'p2');
+  });
 });
 
 describe('project plugin action titles', () => {

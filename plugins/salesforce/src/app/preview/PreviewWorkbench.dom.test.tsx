@@ -1,4 +1,5 @@
 /** @vitest-environment happy-dom */
+import { fireEvent } from '@testing-library/react';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -10,6 +11,7 @@ type Handler = (args: Record<string, unknown>) => unknown;
 let handlers: Record<string, Handler>;
 const calls: Array<{ method: string; args: Record<string, unknown> }> = [];
 let realtime: ((p: unknown) => void) | null = null;
+let presetsRealtime: ((p: unknown) => void) | null = null;
 let root: Root | null = null;
 let host: HTMLElement | null = null;
 
@@ -21,8 +23,9 @@ const suiteRow = (extra: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
-  calls.length = 0; realtime = null;
+  calls.length = 0; realtime = null; presetsRealtime = null;
   handlers = {
+    'agentPreview.context': () => ({ ok: true, fields: [] }),
     'agentLab.start': () => snap([{ role: 'agent', text: 'Welcome' }]),
     'agentLab.send': () => snap([{ role: 'agent', text: 'Welcome' }, { role: 'user', text: 'hello' }, { role: 'agent', text: 'Hi there', planId: 'p1', latencyMs: 1200 }]),
     'agentLab.end': () => ({ ok: true }),
@@ -44,7 +47,7 @@ beforeEach(() => {
   };
   (globalThis as Record<string, unknown>).__ZCC_PLUGIN_RUNTIME__ = {
     useZccContext: () => ({ projectId: 'proj-1' }),
-    useRealtime: (_c: string, h: (p: unknown) => void) => { realtime = h; },
+    useRealtime: (c: string, h: (p: unknown) => void) => { if (c === 'salesforce.context-presets.changed') presetsRealtime = h; else realtime = h; },
     useRealtimeConnectionState: () => 'connected'
   };
   (URL as unknown as Record<string, unknown>).createObjectURL = vi.fn(() => 'blob:x');
@@ -81,6 +84,105 @@ async function typeAndSend(el: HTMLElement, text: string) {
 const methods = () => calls.map(c => c.method);
 
 describe('PreviewWorkbench', () => {
+  it('reviews discovered context before starting, pins it to scenarios and keeps edits for a reviewed restart', async () => {
+    handlers['agentPreview.context'] = () => ({ ok: true, fields: [{ name: 'verified', label: 'Verified', type: 'Boolean' }] });
+    const el = await mount();
+    await click(btn(el, 'Start'));
+    expect(el.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(methods()).not.toContain('agentLab.start');
+    await click(el.querySelector('[aria-label="Set Verified"]') as HTMLElement);
+    await click(btn(el, 'Start preview'));
+    expect(calls.find(c => c.method === 'agentLab.start')?.args.contextVariables).toEqual([{ name: 'verified', type: 'Boolean', value: false }]);
+    await typeAndSend(el, 'hello');
+    await click(btn(el, 'Context'));
+    await click(el.querySelector('[aria-label="Set Verified to null"]') as HTMLElement);
+    expect(el.textContent).toContain('keeps its original context');
+    await click(btn(el, 'Review & restart'));
+    await click(btn(el, 'Cancel'));
+    expect(methods()).not.toContain('agentLab.end');
+    await click(btn(el, 'Conversation'));
+    await click(btn(el, 'Save as scenario'));
+    const nameInput = el.querySelector('form[aria-label="Save as scenario"] input') as HTMLInputElement;
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(nameInput, 'With context'); nameInput.dispatchEvent(new Event('input', { bubbles: true })); });
+    await act(async () => (el.querySelector('form[aria-label="Save as scenario"]') as HTMLFormElement).requestSubmit()); await flush();
+    expect((calls.find(c => c.method === 'studio.suites.save')!.args.cases as Array<Record<string, unknown>>).at(-1)!.contextVariables).toEqual([{ name: 'verified', type: 'Boolean', value: false }]);
+    await click(btn(el, 'Context')); await click(btn(el, 'Review & restart')); await click(btn(el, 'Restart preview'));
+    expect(calls.filter(c => c.method === 'agentLab.start').at(-1)!.args.contextVariables).toEqual([{ name: 'verified', type: 'Boolean', value: null }]);
+  });
+  it('applies Codex context to the visible preview, including Live CLI starts', async () => {
+    const contextVariables = [{ name: 'count', type: 'Number' as const, value: 0 }];
+    const el = await mount({ engine: 'live', command: { seq: 10, type: 'start', engine: 'live', contextVariables } });
+    expect(calls.find(c => c.method === 'agentPreview.start')?.args.contextVariables).toEqual(contextVariables);
+    await click(btn(el, 'Context'));
+    expect(el.textContent).toContain('Applied to this run');
+    expect((el.querySelector('.sf-context-value > input') as HTMLInputElement).value).toBe('0');
+  });
+  it('blocks incomplete context for Codex starts and keeps explicit Codex values independent of preset provenance', async () => {
+    const preset = { id: 'p', name: 'Saved preset', revision: 1, updatedAt: 1, values: [{ name: 'count', type: 'Number', value: 0 }], fields: [{ name: 'count', label: 'Count', type: 'Number', declared: true }] };
+    handlers['agentPreview.presets.list'] = () => ({ ok: true, scopeKey: 'scope', presets: [preset] });
+    handlers['agentPreview.context'] = () => ({ ok: true, fields: [{ name: 'count', label: 'Count', type: 'Number' }] });
+    const el = await mount(); await click(btn(el, 'Context'));
+    await act(async () => fireEvent.change(el.querySelector('[aria-label="Context preset"]')!, { target: { value: 'p' } }));
+    await act(async () => fireEvent.change(el.querySelector('[aria-label="Count value"]')!, { target: { value: '-' } }));
+    const props = { pluginId: 'salesforce', projectId: 'proj-1', source: 'agent_label: x', fileLabel: 'A.agent', path: 'force-app/A.agent' };
+    await act(async () => root!.render(createElement(PreviewWorkbench, { ...props, command: { seq: 1, type: 'start' } }))); await flush();
+    expect(methods()).not.toContain('agentLab.start');
+    expect(el.textContent).toContain('Enter a number');
+    const contextVariables = [{ name: 'count', type: 'Number' as const, value: 3 }];
+    await act(async () => root!.render(createElement(PreviewWorkbench, { ...props, command: { seq: 2, type: 'start', contextVariables } }))); await flush();
+    expect(calls.find(c => c.method === 'agentLab.start')!.args.contextVariables).toEqual(contextVariables);
+    await click(btn(el, 'Context'));
+    expect(el.querySelector('.sf-context-preset-provenance')).toBeNull();
+    expect((el.querySelector('[aria-label="Count value"]') as HTMLInputElement).value).toBe('3');
+  });
+  it('fills the Context tab from an agent, tags its values until edited, and starts from its preset', async () => {
+    const preset = { id: 'p', name: 'Agent preset', revision: 1, updatedAt: 1, savedBy: 'agent' as const, values: [{ name: 'count', type: 'Number' as const, value: 4 }], fields: [{ name: 'count', label: 'Count', type: 'Number' as const, declared: true }] };
+    handlers['agentPreview.presets.list'] = () => ({ ok: true, scopeKey: 'scope', presets: [] });
+    handlers['agentPreview.context'] = () => ({ ok: true, fields: [{ name: 'count', label: 'Count', type: 'Number' }, { name: 'verified', label: 'Verified', type: 'Boolean' }] });
+    const props = { pluginId: 'salesforce', projectId: 'proj-1', source: 'agent_label: x', fileLabel: 'A.agent', path: 'force-app/A.agent' };
+    const el = await mount();
+    const render = async (command: PreviewWorkbenchProps['command']) => { await act(async () => root!.render(createElement(PreviewWorkbench, { ...props, command }))); await flush(); };
+    await render({ seq: 1, type: 'context', contextVariables: [{ name: 'count', type: 'Number', value: 2 }, { name: 'extra', type: 'Text', value: 'x' }] });
+    expect(methods()).not.toContain('agentLab.start');
+    expect((el.querySelector('[aria-label="Count value"]') as HTMLInputElement).value).toBe('2');
+    expect(el.querySelectorAll('.sf-context-agent')).toHaveLength(2);
+    await render({ seq: 2, type: 'context', contextVariables: [{ name: 'verified', type: 'Boolean', value: true }], merge: true });
+    expect((el.querySelector('[aria-label="Count value"]') as HTMLInputElement).value).toBe('2');
+    expect(el.querySelectorAll('.sf-context-agent')).toHaveLength(3);
+    await act(async () => fireEvent.change(el.querySelector('[aria-label="Count value"]')!, { target: { value: '5' } }));
+    expect(el.querySelectorAll('.sf-context-agent')).toHaveLength(2);
+    await render({ seq: 3, type: 'context', contextVariables: [{ name: 'verified', type: 'Boolean', value: false }] });
+    expect((el.querySelector('[aria-label="Count value"]') as HTMLInputElement).value).toBe('');
+    expect(el.querySelectorAll('.sf-context-agent')).toHaveLength(1);
+    await render({ seq: 4, type: 'context', preset });
+    expect((el.querySelector('[aria-label="Count value"]') as HTMLInputElement).value).toBe('4');
+    // An agent's preset save reaches the picker through realtime, tagged as the agent's.
+    handlers['agentPreview.presets.list'] = () => ({ ok: true, scopeKey: 'scope', presets: [preset] });
+    const lists = calls.filter(c => c.method === 'agentPreview.presets.list').length;
+    await act(async () => { presetsRealtime?.({ projectId: 'other' }); }); await flush();
+    expect(calls.filter(c => c.method === 'agentPreview.presets.list').length).toBe(lists);
+    await act(async () => { presetsRealtime?.({ projectId: 'proj-1' }); }); await flush();
+    expect(calls.filter(c => c.method === 'agentPreview.presets.list').length).toBe(lists + 1);
+    expect(el.querySelector('[aria-label="Context preset"]')?.textContent).toContain('Agent preset · by agent');
+    await render({ seq: 5, type: 'start', preset });
+    expect(calls.find(c => c.method === 'agentLab.start')!.args.contextVariables).toEqual(preset.values);
+    await click(btn(el, 'Context'));
+    expect(el.querySelector('.sf-context-preset-provenance')?.textContent).toContain('Agent preset');
+  });
+  it('keeps the existing session and context when a reviewed restart cannot end it', async () => {
+    const contextVariables = [{ name: 'count', type: 'Number' as const, value: 0 }];
+    const el = await mount({ engine: 'live', command: { seq: 10, type: 'start', engine: 'live', contextVariables } });
+    handlers['agentPreview.end'] = () => ({ ok: false, error: 'End failed' });
+    await click(btn(el, 'Context'));
+    await click(el.querySelector('[aria-label="Set count to null"]') as HTMLElement);
+    await click(btn(el, 'Review & restart')); await click(btn(el, 'Restart preview'));
+    expect(el.querySelector('[role="dialog"]')?.textContent).toContain('End failed');
+    expect(calls.filter(c => c.method === 'agentPreview.start')).toHaveLength(1);
+    await click(btn(el, 'Cancel')); expect(btn(el, 'End')).toBeTruthy();
+    handlers['agentPreview.end'] = () => ({ ok: true });
+    await click(btn(el, 'Review & restart')); await click(btn(el, 'Restart preview'));
+    expect(calls.filter(c => c.method === 'agentPreview.start')).toHaveLength(2);
+  });
   it('loads the suite and shows chips with state', async () => {
     const el = await mount();
     expect(el.textContent).toContain('1/2 pass');

@@ -51,6 +51,8 @@ describe('studio server seams', () => {
     expect(WORKBENCH_ACTIONS['comments.list'][0]).toBe(STUDIO_RPC.comments);
     expect(WORKBENCH_ACTIONS['comments.add'][0]).toBe(STUDIO_RPC.commentAdd);
     expect(WORKBENCH_ACTIONS['comments.resolve'][0]).toBe(STUDIO_RPC.commentResolve);
+    expect(WORKBENCH_ACTIONS['comments.update'][0]).toBe(STUDIO_RPC.commentUpdate);
+    expect(WORKBENCH_ACTIONS['comments.delete'][0]).toBe(STUDIO_RPC.commentDelete);
     expect(WORKBENCH_ACTIONS['suites.list'][0]).toBe(STUDIO_RPC.suites);
     expect(WORKBENCH_ACTIONS['preview.trace']).toEqual([STUDIO_RPC.trace, 'org', expect.any(String)]);
   });

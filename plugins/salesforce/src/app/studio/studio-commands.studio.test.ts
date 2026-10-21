@@ -18,7 +18,7 @@ function setup(over: Partial<StudioCommandTargets> = {}) {
 describe('Studio verbs report unsupported when the target is absent', () => {
   it.each([
     ['editor.proposeEdit', proposal], ['preview.start', {}], ['preview.send', { text: 'hi' }],
-    ['trace.focus', {}], ['graph.focus', { node: 'n' }], ['layout.set', { compact: true }]
+    ['trace.focus', {}], ['graph.focus', { node: 'n' }], ['layout.set', { compact: true }], ['orgTests.open', {}], ['context.set', { presetId: 'p' }]
   ])('%s', async (command, input) => {
     await expect(setup().exec(command, input)).rejects.toThrow(`${command} is not supported in this view.`);
   });
@@ -83,6 +83,21 @@ describe('editor.proposeEdit', () => {
   });
 });
 
+describe('context.set', () => {
+  it('passes values, merge or a preset to the Context tab', async () => {
+    const contextSet = vi.fn(() => ({ ok: true }));
+    const { exec } = setup({ contextSet } as Partial<StudioCommandTargets>);
+    const values = [{ name: 'verified', type: 'Boolean', value: true }];
+    await exec('context.set', { values });
+    expect(contextSet).toHaveBeenLastCalledWith({ values });
+    await exec('context.set', { values, merge: true });
+    expect(contextSet).toHaveBeenLastCalledWith({ values, merge: true });
+    await exec('context.set', { presetId: 'p-1' });
+    expect(contextSet).toHaveBeenLastCalledWith({ presetId: 'p-1' });
+    await expect(exec('context.set', { values, presetId: 'p-1' })).rejects.toThrow();
+  });
+});
+
 describe('preview, trace, graph and layout verbs', () => {
   it('delegates to the optional targets', async () => {
     const targets = {
@@ -92,6 +107,12 @@ describe('preview, trace, graph and layout verbs', () => {
     const { exec } = setup(targets);
     expect(await exec('preview.start', { engine: 'simulate' })).toEqual({ runId: 'r' });
     expect(targets.preview.start).toHaveBeenCalledWith({ engine: 'simulate' });
+    const contextVariables = [{ name: 'verified', type: 'Boolean', value: false }];
+    await exec('preview.start', { contextVariables });
+    expect(targets.preview.start).toHaveBeenLastCalledWith({ engine: undefined, contextVariables });
+    await exec('preview.start', { presetId: 'p-1' });
+    expect(targets.preview.start).toHaveBeenLastCalledWith({ engine: undefined, presetId: 'p-1' });
+    await expect(exec('preview.start', { contextVariables: [{ name: 'verified', type: 'Boolean', value: 'false' }] })).rejects.toThrow('Boolean');
     expect(await exec('preview.send', { text: 'hello' })).toEqual({ turn: 1 });
     expect(targets.preview.send).toHaveBeenCalledWith({ text: 'hello', engine: undefined });
     await exec('trace.focus', { runId: 'r', turn: 2, step: 3 });
@@ -101,5 +122,27 @@ describe('preview, trace, graph and layout verbs', () => {
     expect(targets.layoutSet).toHaveBeenCalledWith(true);
     await exec('layout.set', { compact: false });
     expect(targets.layoutSet).toHaveBeenLastCalledWith(false);
+  });
+});
+
+describe('orgTests.open', () => {
+  it('opens the Org tests tab on an optional definition and run', async () => {
+    const orgTestsOpen = vi.fn();
+    const { exec } = setup({ orgTestsOpen });
+    expect(await exec('orgTests.open', {})).toEqual({});
+    expect(orgTestsOpen).toHaveBeenLastCalledWith({});
+    expect(await exec('orgTests.open', { name: 'Support_Regression', runId: '4KB000000000001AAA' })).toEqual({ name: 'Support_Regression', runId: '4KB000000000001AAA' });
+    expect(orgTestsOpen).toHaveBeenLastCalledWith({ name: 'Support_Regression', runId: '4KB000000000001AAA' });
+  });
+  it.each([
+    [{ other: 1 }, 'accepts only name and runId'],
+    [{ name: '1bad' }, 'API name'],
+    [{ name: 7 }, 'API name'],
+    [{ runId: 'short' }, '15 to 18'],
+    [{ runId: 15 }, '15 to 18']
+  ])('rejects %o', async (input, message) => {
+    const orgTestsOpen = vi.fn();
+    await expect(setup({ orgTestsOpen }).exec('orgTests.open', input)).rejects.toThrow(message);
+    expect(orgTestsOpen).not.toHaveBeenCalled();
   });
 });

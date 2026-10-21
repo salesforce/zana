@@ -5,13 +5,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createConversationThread, createEnvironment, getConversationThread, upsertHost } from '@zana-ai/zcc-db';
 import { startProductServer, type ProductServer } from './product-server.js';
 
-const { binaries } = vi.hoisted(() => ({ binaries: [] as string[] }));
+const { binaries, runs } = vi.hoisted(() => ({ binaries: [] as string[], runs: [] as unknown[] }));
 vi.mock('@zana-ai/zcc-llm', async (importOriginal) => ({
   ...await importOriginal<typeof import('@zana-ai/zcc-llm')>(),
   ClaudeCliProvider: class {
     readonly id = 'claude-cli';
     constructor(binary: string) { binaries.push(binary); }
-    async run() { return { ok: true, text: 'Configured test title', provider: this.id, ms: 0 }; }
+    async run(request: unknown) {
+      runs.push(request);
+      return { ok: true, text: 'Configured test title', provider: this.id, ms: 0 };
+    }
   },
 }));
 
@@ -22,6 +25,7 @@ afterEach(async () => {
   server = undefined;
   if (dataDir) rmSync(dataDir, { recursive: true, force: true });
   binaries.length = 0;
+  runs.length = 0;
 });
 
 describe('server background Claude configuration', () => {
@@ -37,7 +41,7 @@ describe('server background Claude configuration', () => {
     const host = upsertHost(server.ctx.db, { name: 'test', hostKeyHash: 'h'.repeat(64) });
     const environment = createEnvironment(server.ctx.db, { projectId: 'project', hostId: host.id, path: dataDir });
     const thread = createConversationThread(server.ctx.db, {
-      projectId: 'project', hostId: host.id, environmentId: environment.id, providerId: 'fake',
+      projectId: 'project', hostId: host.id, environmentId: environment.id, providerId: 'fake', titleSource: 'prompt',
     });
     server.ctx.threadTitleNamer.request(thread.id, 'Name the test thread');
     await vi.waitFor(() => expect(getConversationThread(server!.ctx.db, thread.id)?.title).toBe('Configured test title'));
@@ -49,5 +53,36 @@ describe('server background Claude configuration', () => {
       sessionId: thread.id, title: 'Test', lastTurn: 'Finished the test task',
     });
     expect(binaries).toEqual([expected, '/test/updated-claude']);
+  });
+
+  it('keeps a renamed or auto-named thread title across a server restart', async () => {
+    dataDir = mkdtempSync(join(tmpdir(), 'zcc-llm-title-restart-'));
+    server = await startProductServer({ dataDir, origins: { serverPort: 0 } });
+    const host = upsertHost(server.ctx.db, { name: 'test', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, { projectId: 'project', hostId: host.id, path: dataDir });
+    const create = () => createConversationThread(server!.ctx.db, {
+      projectId: 'project', hostId: host.id, environmentId: environment.id, providerId: 'fake', title: 'fix the login', titleSource: 'prompt',
+    });
+    const renamed = create();
+    const autoNamed = create();
+    server.ctx.threadTitleNamer.request(autoNamed.id, 'fix the login');
+    await vi.waitFor(() => expect(getConversationThread(server!.ctx.db, autoNamed.id)?.title).toBe('Configured test title'));
+    const patched = await fetch(`${server.url}api/v1/threads/${renamed.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'My name' })
+    });
+    expect(patched.status).toBe(200);
+    await server.close();
+
+    // A fresh server has an empty in-memory namer; only the persisted title source guards these.
+    server = await startProductServer({ dataDir, origins: { serverPort: 0 } });
+    runs.length = 0;
+    server.ctx.threadTitleNamer.request(renamed.id, 'now add tests');
+    server.ctx.threadTitleNamer.request(autoNamed.id, 'now add tests');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(runs).toEqual([]);
+    expect(getConversationThread(server.ctx.db, renamed.id)?.title).toBe('My name');
+    expect(getConversationThread(server.ctx.db, autoNamed.id)?.title).toBe('Configured test title');
   });
 });

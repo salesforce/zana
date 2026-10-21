@@ -11,7 +11,7 @@
  */
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 
-export const PANEL_TOOLS = ['agents', 'graph', 'preview', 'test', 'release', 'actions', 'comments', 'org-preview'] as const;
+export const PANEL_TOOLS = ['graph', 'preview', 'test', 'release', 'actions', 'comments', 'org-preview'] as const;
 export type PanelTool = typeof PANEL_TOOLS[number];
 export const isPanelTool = (value: unknown): value is PanelTool => PANEL_TOOLS.includes(value as PanelTool);
 export const panelToolActionId = (tool: PanelTool) => `studio-${tool}`;

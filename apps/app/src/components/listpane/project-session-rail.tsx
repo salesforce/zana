@@ -193,7 +193,7 @@ export function ProjectSessionRail({
             title="New agent"
             onClick={(e) => {
               e.stopPropagation();
-              setLauncherOpen(true);
+              setLauncherOpen(true, project.id);
             }}
           >
             <MessageCirclePlus size={14} />

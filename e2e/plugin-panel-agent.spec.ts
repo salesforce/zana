@@ -19,6 +19,16 @@ test('a plugin page opens an agent side panel from its launcher and New Tab', as
   await win.setViewportSize({ width: 1440, height: 900 }).catch(() => undefined);
   const install = await win.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'pr-monitor' }));
   expect(install).toMatchObject({ ok: true });
+  // Enabling waits for bundled startup to finish before isolating this fake-provider
+  // test from unrelated local harness CLIs and their tool policy hooks.
+  expect(await win.evaluate(() => window.cc.pluginApps.setEnabled('pr-monitor', true))).toMatchObject({ ok: true });
+  await win.evaluate(async () => {
+    for (const plugin of await window.cc.pluginApps.list()) {
+      if (!plugin.id.startsWith('harness-')) continue;
+      const result = await window.cc.pluginApps.setEnabled(plugin.id, false);
+      if (!result.ok) throw new Error(result.message);
+    }
+  });
   await expect.poll(() => win.evaluate(async () =>
     (await window.cc.pluginApps.list()).find((p) => p.id === 'pr-monitor')?.status
   ), { timeout: 30_000 }).toMatch(/running|needs-configuration/);

@@ -12,7 +12,9 @@ export function uiCommandReadsOrg(command: unknown, input: Record<string, unknow
     || (command === 'view.open' && input?.view !== 'agentforce')
     || (command === 'panel.open' && ['agents', 'org-preview', 'release'].includes(String(input?.tool)))
     // Preview offers only Simulate and Live, and both talk to the org.
-    || command === 'preview.start' || command === 'preview.send';
+    || command === 'preview.start' || command === 'preview.send'
+    // The Org tests tab lists the org's definitions and reads the named one or run.
+    || command === 'orgTests.open';
 }
 
 /** Registers the control.* renderer RPCs backed by WorkbenchControl. Owner of later changes: WS-2. */

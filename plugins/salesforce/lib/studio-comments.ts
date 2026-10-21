@@ -21,7 +21,7 @@ export interface CommentKv {
   set(key: string, value: unknown): Promise<void>;
 }
 
-export type StudioCommentErrorCode = 'invalid' | 'not_found' | 'limit' | 'already_resolved';
+export type StudioCommentErrorCode = 'invalid' | 'not_found' | 'limit' | 'already_resolved' | 'forbidden';
 
 export class StudioCommentError extends Error {
   constructor(readonly code: StudioCommentErrorCode, message: string) {
@@ -44,6 +44,12 @@ export interface CommentActor { kind: 'user' | 'agent'; threadId?: string; name:
 interface CommentDoc { v: 1; comments: StudioComment[] }
 
 const isPos = (value: unknown): value is number => Number.isInteger(value) && Number(value) >= 1;
+
+/** The user may edit their own comments and delete any; an agent thread may only change its own comments. */
+function mayChange(comment: StudioComment, actor: CommentActor, change: 'edit' | 'delete'): boolean {
+  if (actor.kind === 'agent') return comment.author.kind === 'agent' && !!actor.threadId && comment.author.threadId === actor.threadId;
+  return change === 'delete' || comment.author.kind === 'user';
+}
 
 function sliceQuote(lines: readonly string[], line: number, endLine: number): string {
   return lines.slice(line - 1, endLine).join('\n').slice(0, STUDIO_LIMITS.quote);
@@ -151,9 +157,37 @@ export class StudioCommentStore {
       return resolved;
     });
   }
+
+  /** Replaces the body of an open comment the actor may edit. */
+  update(projectId: string, input: { id: string; body: string }, actor: CommentActor): Promise<StudioComment> {
+    const body = input.body.trim();
+    if (!body || body.length > COMMENT_BODY_MAX) return Promise.reject(new StudioCommentError('invalid', `Comment body is required (max ${COMMENT_BODY_MAX} chars).`));
+    return this.locked(projectId, async () => {
+      const comments = await this.read(projectId);
+      const found = comments.find(row => row.id === input.id);
+      if (!found) throw new StudioCommentError('not_found', 'Comment not found.');
+      if (found.resolved) throw new StudioCommentError('already_resolved', 'Resolved comments cannot be edited.');
+      if (!mayChange(found, actor, 'edit')) throw new StudioCommentError('forbidden', 'Only the author can edit this comment.');
+      const updated: StudioComment = { ...found, body, editedAt: this.now() };
+      await this.write(projectId, comments.map(row => (row.id === found.id ? updated : row)));
+      return updated;
+    });
+  }
+
+  /** Deletes a comment (open or resolved) the actor may delete; returns what was removed. */
+  remove(projectId: string, input: { id: string }, actor: CommentActor): Promise<StudioComment> {
+    return this.locked(projectId, async () => {
+      const comments = await this.read(projectId);
+      const found = comments.find(row => row.id === input.id);
+      if (!found) throw new StudioCommentError('not_found', 'Comment not found.');
+      if (!mayChange(found, actor, 'delete')) throw new StudioCommentError('forbidden', 'Agents can only delete their own comments.');
+      await this.write(projectId, comments.filter(row => row.id !== found.id));
+      return found;
+    });
+  }
 }
 
-/** studio.comments.list / add / resolve. */
+/** studio.comments.list / add / resolve / update / delete. */
 export function registerStudioComments(studio: StudioServerContext): void {
   const store = new StudioCommentStore(studio.zcc.storage.kv);
   const projectOf = () => studio.contexts.current()?.projectId ?? '';
@@ -183,16 +217,19 @@ export function registerStudioComments(studio: StudioServerContext): void {
     return { ok: true, comments, openCount: comments.filter(row => !row.resolved).length };
   })());
 
+  const actorOf = (args: unknown): CommentActor => {
+    const threadId = rpcString(args, 'threadId');
+    return threadId ? { kind: 'agent', threadId, name: 'Agent' } : { kind: 'user', name: 'You' };
+  };
+
   studio.registerRpc(STUDIO_RPC.commentAdd, (args) => guarded(async projectId => {
     const row = (args ?? {}) as Record<string, unknown>;
     const path = rpcString(args, 'path');
-    const threadId = rpcString(args, 'threadId');
-    const author: CommentActor = threadId ? { kind: 'agent', threadId, name: 'Agent' } : { kind: 'user', name: 'You' };
     const comment = await store.add(projectId, {
       path, line: Number(row.line), endLine: row.endLine === undefined ? undefined : Number(row.endLine),
       body: typeof row.body === 'string' ? row.body : '', quote: typeof row.quote === 'string' ? row.quote : undefined,
       source: sourceFor(args, path)
-    }, author);
+    }, actorOf(args));
     changed(projectId, comment.path);
     return { ok: true, comment };
   })());
@@ -202,5 +239,18 @@ export function registerStudioComments(studio: StudioServerContext): void {
     const comment = await store.resolve(projectId, { id: rpcString(args, 'id'), note: typeof (args as { note?: unknown } | null)?.note === 'string' ? String((args as { note: string }).note) : '' }, threadId ? `agent:${threadId}` : 'user');
     changed(projectId, comment.path);
     return { ok: true, comment };
+  })());
+
+  studio.registerRpc(STUDIO_RPC.commentUpdate, (args) => guarded(async projectId => {
+    const body = (args as { body?: unknown } | null)?.body;
+    const comment = await store.update(projectId, { id: rpcString(args, 'id'), body: typeof body === 'string' ? body : '' }, actorOf(args));
+    changed(projectId, comment.path);
+    return { ok: true, comment };
+  })());
+
+  studio.registerRpc(STUDIO_RPC.commentDelete, (args) => guarded(async projectId => {
+    const comment = await store.remove(projectId, { id: rpcString(args, 'id') }, actorOf(args));
+    changed(projectId, comment.path);
+    return { ok: true, id: comment.id };
   })());
 }

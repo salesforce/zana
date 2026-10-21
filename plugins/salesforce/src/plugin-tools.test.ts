@@ -159,6 +159,21 @@ function mockDeps(options?: {
 const ctx = { threadId: 'thr-1', projectId: 'p1', signal: AbortSignal.abort() };
 
 describe('salesforce family tools', () => {
+  it('discovers preview context through confined source reads and carries typed RPC values to the CLI', async () => {
+    const base = mockDeps();
+    const execSf = vi.fn(base.execSf);
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
+    await createSalesforcePlugin(zcc, { ...base, execSf });
+    harness.setSettings({ defaultOrg: 'dev', projectRoot: '/proj' });
+    await expect(harness.callRpc('agentPreview.context', { source: 'variables:\n  sessionId: linked string\n    source: @MessagingSession.Id' })).resolves.toMatchObject({ ok: true, fields: [{ name: '$Context.sessionId', type: 'Text' }] });
+    await expect(harness.callRpc('agentPreview.context', { path: 'force-app/main/default/agents/MyBot.agent' })).resolves.toMatchObject({ ok: true, fields: [] });
+    await expect(harness.callRpc('agentPreview.context', { path: '/etc/passwd' })).resolves.toMatchObject({ ok: false });
+    const contextVariables = [{ name: 'verified', type: 'Boolean', value: false }];
+    await expect(harness.callRpc('agentPreview.start', { path: 'force-app/main/default/agents/MyBot.agent', contextVariables, startedByUser: true })).resolves.toMatchObject({ ok: true });
+    const args = execSf.mock.calls.find(([args]) => args[0] === 'agent' && args[1] === 'preview' && args[2] === 'start')![0];
+    expect(JSON.parse(args[args.indexOf('--context-variables-json') + 1]!)).toEqual(contextVariables);
+    await expect(harness.callRpc('agentPreview.start', { path: 'force-app/main/default/agents/MyBot.agent', contextVariables: {}, startedByUser: true })).resolves.toMatchObject({ ok: false, code: 'invalid_input' });
+  });
   it('lists CLI orgs once across status, org and setting reads until Refresh asks again', async () => {
     const base = mockDeps();
     let lists = 0;

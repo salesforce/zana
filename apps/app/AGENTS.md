@@ -24,6 +24,10 @@
 - Built-in panels self-setting `grid-column: 2 / -1` (`.gus-panel`, `.cu-panel`) still work as harmless no-op — do NOT rely on it for new panels; fill the slot.
 - Slot contract change means updating teaching artifacts: `packages/plugin-templates/src/files.ts` (panel root `height: '100%'`), generated starter instructions, `extension-creator` / `zcc-plugin-authoring` skills (full-slot root `height:'100%'` / `flex:1` + own `overflow`, `max-width` only on inner reading-width wrapper).
 
+## Plugin side panels
+
+Every plugin page (nav panel, project tab, legacy module, detached plugin window) uses `PluginPanelHostLayout`. The host owns the collapsed rail, tabs, resize, maximize/restore and compact layout. Never hide its launchers or gate the host on native-browser availability: only the browser tool requires that capability. Plugins open conversations with `navigate.openPanelAgent` and page tools with `navigate.openPanelTool`; do not build another embedded agent chat beside the page. Navigation trees and inspectors inside a tool remain plugin content. Keep saved panel state isolated by plugin, page, project and detached window. Guards: `plugin-side-panel-host.guard.test.ts`; behavior: `PluginPanelHostLayout.test.tsx`, `e2e/plugin-side-panel-layout.spec.ts`.
+
 ## Sidebar automation toggles config round-trip
 
 **Invariant:** `AutomationToggles` (`apps/app/src/components/Sidebar.tsx`) write `AppConfig` directly.
