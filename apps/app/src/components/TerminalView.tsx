@@ -614,7 +614,10 @@ function TerminalViewImpl({ session, area, scrollbackLimit = TERMINAL_SCROLLBACK
       try {
         if (disposedRef.current || !isTerminalHostVisible(ref.current)) return;
         rendererRef.current?.setVisible(true);
-        writesRef.current?.clearGap();
+        // Only when the synchronous pass could not yet see the host as shown;
+        // re-runs while already shown must keep a pending marker.
+        if (!shownRef.current) writesRef.current?.clearGap();
+        shownRef.current = true;
         writesRef.current?.setVisible(true);
         if (area === 'a') markActiveTerminal(session.id);
         // Split open/close can change layout without a lasting pixel delta

@@ -50,7 +50,7 @@ process.stdin.resume();
 setInterval(() => {}, 1000);
 `);
   chmodSync(bin, 0o755);
-  const { projectId, shellId, shell2Id, agentId } = await page.evaluate(async ({ path, bin }) => {
+  const { shellId, shell2Id, agentId } = await page.evaluate(async ({ path, bin }) => {
     await window.cc.config.set({ claudeBinary: bin });
     const project = await window.cc.projects.add(path);
     if (!project.ok) throw new Error(project.message);
@@ -60,7 +60,6 @@ setInterval(() => {}, 1000);
       return s.value.id;
     };
     return {
-      projectId: project.value.id,
       shellId: await create('shell', 'Flood Shell'),
       shell2Id: await create('shell', 'Scrollback Shell'),
       agentId: await create('claude', 'Modal Agent')
@@ -141,5 +140,4 @@ setInterval(() => {}, 1000);
   const tabText = await buffer(shell2Id);
   expect(tabText).toContain('TABLINE-0001');
   expect(tabText).toContain('TABLINE-2-END');
-  void projectId;
 });

@@ -132,4 +132,15 @@ describe('terminal refocus omitted-output marker', () => {
     expect(written().split(GAP_TEXT).length - 1).toBe(1);
     expect(h.reset).not.toHaveBeenCalled();
   });
+
+  it('does not clear a pending marker when the area changes while already visible', async () => {
+    h.shown = true;
+    const view = render(<TerminalView session={session} area="a" />);
+    for (let i = 0; i < 5 && h.frames.size; i++) await frames();
+    expect(h.order.filter((entry) => entry === 'clearGap')).toHaveLength(1);
+    h.order = [];
+    view.rerender(<TerminalView session={session} area="b" />);
+    for (let i = 0; i < 5 && h.frames.size; i++) await frames();
+    expect(h.order).not.toContain('clearGap');
+  });
 });
