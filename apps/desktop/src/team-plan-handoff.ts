@@ -131,7 +131,8 @@ export function correctionDiffRelPath(executionId: string): string {
 }
 
 export type AuthoredPlanRead =
-  | { status: 'ok'; units: ExecutionWorkUnitInput[]; realPath: string }
+  /** `normalizations` lists recoverable defects the parser repaired; omitted when none. */
+  | { status: 'ok'; units: ExecutionWorkUnitInput[]; realPath: string; normalizations?: string[] }
   | { status: 'missing' }
   | { status: 'invalid'; reason: string };
 
@@ -171,7 +172,7 @@ async function readPlan(projectRoot: string, rel: string): Promise<AuthoredPlanR
   if (!parsed.ok) return { status: 'invalid', reason: parsed.reason };
   try {
     const units = normalizeExecutionPlan(parsed.units, true) as ExecutionWorkUnitInput[];
-    return { status: 'ok', units, realPath: real };
+    return { status: 'ok', units, realPath: real, ...(parsed.normalizations ? { normalizations: parsed.normalizations } : {}) };
   } catch (error) {
     return { status: 'invalid', reason: error instanceof Error ? error.message : String(error) };
   }
@@ -302,6 +303,8 @@ export interface PlanHandoffDeps {
   nudge(sessionId: string, text: string): void;
   cleanup(projectRoot: string, executionId: string): Promise<void>;
   logError(message: string, error: unknown): void;
+  /** Expected, non-error events worth a trace (a plan registered after normalization). */
+  logInfo?(message: string, detail: string): void;
   /** Nudges allowed before deferring to the plan-readiness watchdog. Default 2. */
   maxNudges?: number;
 }
@@ -355,9 +358,17 @@ export class TeamPlanHandoff {
           entry.done = true;
           return;
         }
-        const registered = await this.deps.register(ctx, typeof verdict === 'object' ? verdict.units : read.units);
+        const accepted = typeof verdict === 'object' ? verdict : read;
+        const registered = await this.deps.register(ctx, accepted.units);
         if (registered.ok) {
           entry.done = true;
+          // Repairs never gate registration, but they must not be silent either.
+          if (accepted.normalizations?.length) {
+            this.deps.logInfo?.(
+              `team plan handoff ${ctx.executionId}: registered plan after normalizing`,
+              accepted.normalizations.join('; ')
+            );
+          }
           await this.deps.cleanup(ctx.projectRoot, ctx.executionId).catch(() => {});
           return;
         }

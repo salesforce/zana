@@ -1,5 +1,5 @@
 import { boundedText, LargeTextPreview } from './LargeTextPreview.js';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { ExecutionBoardSnapshot } from '@zana-ai/zcc-domain/product';
 import { useUi } from '../store';
 import { copyText } from '../lib/copy-text.js';
@@ -220,6 +220,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, string>>({});
   const [artifactContent, setArtifactContent] = useState<Record<string, string>>({});
   const [followUpInstruction, setFollowUpInstruction] = useState('');
+  const recoveryReasonId = useId();
   const refresh = useCallback(async (after = 0) => {
     const scope = scopeRef.current;
     if (!scope.live || scope.key !== `${projectId}:${executionId}` || scope.inFlight) return;
@@ -267,14 +268,18 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
   const execution = snapshot.execution;
   const isTerminal = terminal.has(execution.state);
   const retainedRecovery = execution.recovery?.actions;
-  const exactNativeUnavailableReason = retainedRecovery?.exactNative.reason === 'NATIVE_RESTORE_UNAVAILABLE'
-    ? 'Existing Squad sessions cannot be restored on this device.'
-    : undefined;
+  const planCorrectionCancelled = execution.state === 'STOPPED'
+    && execution.timeoutReason === 'plan-correction-cancelled' && !execution.successorExecutionId;
+  const exactNativeUnavailableReason = planCorrectionCancelled
+    ? 'Cancelled at plan correction. Start a new Squad to try again.'
+    : retainedRecovery?.exactNative.reason === 'NATIVE_RESTORE_UNAVAILABLE'
+      ? 'Existing Squad sessions cannot be restored on this device.'
+      : undefined;
   const recoveryActions = <div className="execution-details-actions execution-details-primary-actions">
     {execution.state === 'STOPPED' && execution.timeoutReason === 'unresolved-blocker' && !execution.successorExecutionId && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.recoverTimedOut(projectId, executionId, execution.stateVersion ?? 0, crypto.randomUUID()))}>Recover timed-out run</button>}
     {retainedRecovery?.freshPlan.available && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.recoverRetainedSquad(projectId, executionId, execution.stateVersion ?? 0, 'fresh-plan'))}>Relaunch Squad from retained plan</button>}
     {retainedRecovery?.exactNative.available && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.recoverRetainedSquad(projectId, executionId, execution.stateVersion ?? 0, 'exact-native'))}>Resume existing Squad</button>}
-    {exactNativeUnavailableReason && <button className="btn" type="button" disabled title={exactNativeUnavailableReason}>Resume existing Squad</button>}
+    {exactNativeUnavailableReason && <><button className="btn primary" type="button" disabled title={exactNativeUnavailableReason} aria-describedby={recoveryReasonId}>Resume existing Squad</button><p id={recoveryReasonId} className="execution-details-recovery-reason">{exactNativeUnavailableReason}</p></>}
     {execution.successorExecutionId && <p role="status">Recovered successor: {execution.successorExecutionId}</p>}
     {execution.recoveryAttention && execution.recovery?.status === 'available' && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.relaunchMonitor(projectId, executionId))}>Recover orchestrator</button>}
   </div>;

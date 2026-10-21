@@ -649,7 +649,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   });
 
   register('execution.recover_retained', {
-    description: 'Recover retained failed or stopped Squad work by exact native restoration or by relaunching its retained plan.', inputSchema: executionRetainedRecoverySchema
+    description: "Recover a retained stopped/failed Squad. mode 'exact-native' resumes the existing agents; mode 'fresh-plan' launches a NEW cohort from the retained plan.", inputSchema: executionRetainedRecoverySchema
   }, async ({ executionId, expectedStateVersion, mode }) => {
     if (!authorized()) return denied('execution.recover_retained');
     const result = await options.service.recoverRetained(options.sessionId!, options.projectId, executionId, expectedStateVersion, mode);
@@ -659,7 +659,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   });
 
   register('execution.relaunch_retained_plan', {
-    description: 'Relaunch retained failed or stopped Squad plan. Completed work stays retained; all other units are reprompted.', inputSchema: executionControlSchema
+    description: 'Launch a NEW cohort from the retained plan. Does not resume existing agents. Completed work stays retained; all other units are reprompted.', inputSchema: executionControlSchema
   }, async ({ executionId, expectedStateVersion }) => {
     if (!authorized()) return denied('execution.relaunch_retained_plan');
     const result = await options.service.recoverRetained(options.sessionId!, options.projectId, executionId, expectedStateVersion, 'fresh-plan');
@@ -669,7 +669,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   });
 
   register('execution.resume_run', {
-    description: 'Deprecated alias for execution.relaunch_retained_plan.', inputSchema: executionResumeRunSchema
+    description: 'Deprecated. Despite its name, launches a NEW cohort (same as execution.relaunch_retained_plan). To resume existing agents use execution.recover_retained with mode exact-native.', inputSchema: executionResumeRunSchema
   }, async ({ executionId, expectedStateVersion, replay }) => {
     if (!authorized()) return denied('execution.resume_run');
     const result = await options.service.resumeRun(options.sessionId!, options.projectId, executionId, expectedStateVersion, replay === true);

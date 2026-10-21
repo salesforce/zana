@@ -92,7 +92,8 @@ import { setDesktopBrowserBroker } from '@zana-ai/zcc-server/services/threads/de
 import { registerIpcFamilies } from './ipc/register.js';
 import type { IpcCtx } from './ipc/ctx.js';
 import { sanitizeExtraArgs } from '@zana-ai/zcc-domain/launch-sanitize';
-import { titleFromObjective, MANAGED_WORKTREE_DIR_NAME, PERSONAL_WORKSPACE_DIR_NAME, type MenubarThreadAgent } from '@zana-ai/zcc-domain';
+import { teamRunNamerInput } from './team-run-title.js';
+import { MANAGED_WORKTREE_DIR_NAME, PERSONAL_WORKSPACE_DIR_NAME, type MenubarThreadAgent } from '@zana-ai/zcc-domain';
 import { providerCapabilities, isClaudeProfile, isCodexProfile, isOpenCodeProfile, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
 import { EXTENSION_PROJECT_CATEGORY, store, scratchWorkspaceRoot, worktreeRoot, worktreeTargetDir } from '@zana-ai/zcc-server/services/projects/store';
 import { electronZccDataDir } from '@zana-ai/zcc-server/electron-data-dir';
@@ -104,7 +105,7 @@ import { LaunchAuthorizationService } from '@zana-ai/zcc-server/services/launch/
 import { createLaunchCoordinator, LaunchSpawnError } from '@zana-ai/zcc-server/services/launch/coordinator';
 import { createLaunchLedgerStore } from '@zana-ai/zcc-server/services/launch/ledger-store';
 import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, preflightLaunch } from '@zana-ai/zcc-server/services/launch/preflight';
-import { resolveSquadPlan } from './team-trigger-semantics.js';
+import { planNormalizationNote, resolveSquadPlan } from './team-trigger-semantics.js';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
 import { launchExecutionScope, usesCliRemoteToolProxy } from './cli-remote-tool-proxy.js';
@@ -297,6 +298,7 @@ import { personaCanWriteFiles, type SquadProposalInput } from '@zana-ai/zcc-doma
 import { createSquadProposalStore } from './squad-proposals/store.js';
 import { createSquadProposalService, SQUAD_LAUNCH_PROPOSAL_ACTION, type SquadProposalServiceDeps } from './squad-proposals/service.js';
 import { createSquadProposalNotifier } from './squad-proposals/notifier.js';
+import { goalMentionPaths } from './squad-proposals/sources.js';
 import { parseSshConfig } from '@zana-ai/zcc-server/services/projects/ssh-config';
 import {
   SshHostProviderRegistry,
@@ -564,6 +566,11 @@ function e2eTimingOverrideMs(name: string): number | undefined {
 // claimDock + the dock-icon guard).
 if (E2E_LAUNCH && process.platform === 'darwin') {
   app.setActivationPolicy('accessory');
+}
+
+export function logMainInfo(context: string, message: string) {
+  testTap.recordLog('info', context, message);
+  console.info(`[main] ${context}: ${message}`);
 }
 
 export function logMainError(context: string, err: unknown) {
@@ -2098,11 +2105,11 @@ function fireTabNamer(sessionId: string, text: string): void {
   });
 }
 
-async function nameTeamExecution(launchId: string, objective: string, explicitTitle?: string): Promise<string> {
-  const fallback = titleFromObjective(objective) || 'Team run';
+async function nameTeamExecution(launchId: string, objective: string, explicitTitle?: string, sourceTexts?: readonly (string | undefined)[]): Promise<string> {
+  const { prompt, fallbackTitle: fallback } = teamRunNamerInput(objective, sourceTexts);
   const title = await resolveNamedTitle({
     id: launchId,
-    prompt: objective,
+    prompt,
     namedIds: llmNamedSessions,
     enabled: store.getConfig().autoRenameTabs !== false,
     explicitTitle,
@@ -4870,6 +4877,9 @@ export async function goalExecutionSourcePaths(
   for (const m of goal.matchAll(/(?:^|[\s(])((?:[A-Za-z]:[/\\]|\/)[^\s`'"),;:]+)/g)) {
     if (m[1]) rawCandidates.push(m[1]);
   }
+  // 3. `@path` mentions, as the composer writes a dropped, picked or typeahead file:
+  // project-relative inside the project, absolute outside it. Same policy checks below.
+  rawCandidates.push(...goalMentionPaths(goal, home));
   for (const match of rawCandidates) {
     const raw = match.trim().replace(/^[`'"(]+|[`'"),;:]+$/g, '');
     const candidates = [raw];
@@ -6314,7 +6324,8 @@ teamPlanHandoff = new TeamPlanHandoff({
   },
   nudge: (sessionId, text) => ptys.reply(sessionId, text),
   cleanup: (projectRoot, executionId) => cleanupHandoffFiles(projectRoot, executionId),
-  logError: (message, error) => logMainError(message, error)
+  logError: (message, error) => logMainError(message, error),
+  logInfo: logMainInfo
 });
 const squadSessionExit = {
   executionStore,
@@ -6552,11 +6563,15 @@ async function buildTeamJobStartRequest(args: {
     { planError: providedPlanError, unattended: !args.attended, projectId: args.projectId, projectName: args.projectName, launchRequestId }
   );
   if (planRefusal) return { ok: false, response: planRefusal };
-  const sanitizedJobTitle = await nameTeamExecution(launchRequestId, sanitizedGoal, sanitizedExplicitTitle);
+  const sanitizedJobTitle = await nameTeamExecution(
+    launchRequestId, sanitizedGoal, sanitizedExplicitTitle,
+    sourceBundle?.sources.map((source) => redactCapturedExecutionSourcePaths(source.extractedText, capturedPathDescriptors))
+  );
   const sharedTask = [
     `Shared job goal: ${sanitizedGoal}`,
     sanitizedSummary ? `Context: ${sanitizedSummary}` : '',
     providedPlanError ? PlanCorrectionService.correctionPrompt(providedPlanError) : '',
+    planNormalizationNote(resolvedPlan.idRenames),
     'Work toward this goal. Coordinate through the Team orchestrator when one is present.'
   ].filter(Boolean).join('\n\n');
   const initialTask = args.slots.map((slot) => ({

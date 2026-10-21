@@ -159,7 +159,7 @@ test('scheduled defective plan parks, is corrected, approved, completes, and the
     expect(storedPrompt(s)).toBe(DEFECTIVE_PLAN);
     const executionId = await runNow(window, s);
 
-    await openCorrectionCard(window, 'No valid revised plan is ready to review');
+    await openCorrectionCard(window, 'Plan requires revisions to proceed');
     expect(await readExecution(window, s.projectId, executionId)).toMatchObject({ workTotal: 0 });
     expect(coordinatorLog(s.projectDir)).not.toContain('assigned');
     await choose(window, 'Request changes');
@@ -193,7 +193,7 @@ test('scheduled defective plan parks, is corrected, approved, completes, and the
     }).toBe('COMPLETED');
     expect(await readExecution(window, s.projectId, second)).toMatchObject({ workTotal: 1 });
     await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
-    await expect(window.locator('.inbox-question').filter({ hasText: 'No valid revised plan is ready to review' })).toHaveCount(0);
+    await expect(window.locator('.inbox-question').filter({ hasText: 'Plan requires revisions to proceed' })).toHaveCount(0);
     expect(coordinatorLog(s.projectDir).match(/plan-correction wrote corrected plan/g)?.length).toBe(1);
   } catch (error) {
     throw new Error(`${error instanceof Error ? error.message : String(error)}\n${s ? coordinatorLog(s.projectDir) : ''}`);
@@ -209,7 +209,7 @@ test('scheduled run with a silent coordinator stalls, Cancel stops it, and the s
     s = await setup(window, 'plan-correction-silent');
     const executionId = await runNow(window, s);
 
-    await openCorrectionCard(window, 'No valid revised plan is ready to review');
+    await openCorrectionCard(window, 'Plan requires revisions to proceed');
     await choose(window, 'Request changes');
     await openCorrectionCard(window, 'finished its turn without writing a corrected plan');
     expect(existsSync(join(s.projectDir, '.zana', `execution-plan-corrected-${executionId}.md`))).toBe(false);

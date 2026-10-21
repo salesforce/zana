@@ -188,12 +188,19 @@ describe('parsePortablePlan', () => {
     });
   });
 
-  it('fails on an invalid (non-kebab) step id', () => {
+  it('normalizes a non-kebab step id and records it', () => {
     const text = '### Home Step: Title <!-- executable-step -->\n\n- **Work:** do it\n';
     const result = parsePortablePlan(text);
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.reason).toContain('invalid step id');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.units[0].id).toBe('home-step');
+    expect(result.normalizations).toEqual(['step "Home Step" id normalized to "home-step"']);
+  });
+
+  it('fails on a step id that normalizes to nothing', () => {
+    const text = '### ---: Title <!-- executable-step -->\n\n- **Work:** do it\n';
+    const result = parsePortablePlan(text);
+    expect(result).toEqual({ ok: false, reason: 'invalid step id: ---' });
   });
 
   it('captures a multi-line Work body and the labels that follow it', () => {

@@ -33,10 +33,10 @@ describe('portable plan nested sub-bullets', () => {
     if (parsed.ok) expect(parsed.units[0].task).toContain('Works: fine');
   });
 
-  it('still rejects a top-level near-miss label', () => {
+  it('still fails on a top-level near-miss label that conflicts with the canonical one', () => {
     const parsed = parsePortablePlan(wrap(['- Work: Do it.', '- Works: fine'].join('\n')));
     expect(parsed.ok).toBe(false);
-    if (!parsed.ok) expect(parsed.reason).toContain('did you mean "work"?');
+    if (!parsed.ok) expect(parsed.reason).toContain('conflicting labels "work" and "works" (both read as "work")');
   });
 
   it('still treats top-level known plain labels as labels', () => {

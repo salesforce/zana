@@ -28,14 +28,17 @@ const correctionArtifactPaths = (executionId: string) => new Set([
   correctionDiffRelPath(executionId)
 ]);
 
-function planReviewSummary(reason: string, units: ExecutionWorkUnitInput[]): string {
+function planReviewSummary(reason: string, units: ExecutionWorkUnitInput[], normalizations: readonly string[] = []): string {
   const steps = units.map((unit, index) => {
     const dependencies = unit.dependencies.length ? ` after ${unit.dependencies.map((id) => `\`${id}\``).join(', ')}` : '';
     const writes = unit.files?.length ? ` Writes ${unit.files.map((path) => `\`${path}\``).join(', ')}.` : ' No declared file writes.';
     const verification = unit.verification?.length ? ` Verification: ${unit.verification.join(' ')}` : '';
     return `${index + 1}. **${unit.title}** (\`${unit.id}\`)${dependencies}.${writes}${verification}`;
   });
-  return `Correction needed: ${reason}\n\nProposed plan: ${units.length} step${units.length === 1 ? '' : 's'}.\n\n${steps.join('\n')}`;
+  const repaired = normalizations.length
+    ? `\n\nAutomatically normalized in the proposed plan:\n${normalizations.map((note) => `- ${note}`).join('\n')}`
+    : '';
+  return `Problem with the supplied plan: ${reason}\n\nProposed corrected plan: ${units.length} step${units.length === 1 ? '' : 's'}.\n\n${steps.join('\n')}${repaired}`;
 }
 
 interface PlanCorrectionActionRef {
@@ -134,14 +137,18 @@ export class PlanCorrectionService {
     });
   }
 
-  async reviewInvalid(ctx: CoordinatorHandoffContext, reason: string): Promise<Extract<AuthoredPlanRead, { status: 'ok' }> | 'wait' | 'reject' | undefined> {
+  /**
+   * Review a corrected plan for a run parked by begin(). The handoff's own invalid-plan reason is
+   * not taken: it only says no authored plan was found (a parked coordinator never writes one),
+   * and the card must keep naming the launch defect begin() recorded.
+   */
+  async reviewInvalid(ctx: CoordinatorHandoffContext): Promise<Extract<AuthoredPlanRead, { status: 'ok' }> | 'wait' | 'reject' | undefined> {
     return this.serialize(ctx.executionId, async () => {
       const current = await this.deps.store.get(ctx.executionId);
       // This invalid plan is not a rejected provided plan. Let normal handoff
       // nudges recover inferred or coordinator-authored plans.
       if (!current) return undefined;
       current.ctx = ctx;
-      current.reason = reason;
       const corrected = await this.deps.readCorrectedPlan(ctx.projectRoot, ctx.executionId);
       return this.reviewCorrected(current, corrected);
     });
@@ -190,18 +197,21 @@ export class PlanCorrectionService {
       current.offeredUnits = cloneUnits(corrected.units);
       current.status = 'correction-required';
     }
+    // Normalization notes come from the fresh read, so a republished offer after
+    // restart carries them without persisting anything beyond the digest.
+    const notes = corrected.normalizations ?? [];
     // Final offered correction remains actionable until user answers. Do not turn
     // a pending third request into an implicit rejection on later idle edges.
     if (current.status === 'pending') {
       return current.offeredActionId && this.publishedOfferIds.has(current.offeredActionId)
         ? 'wait'
-        : this.publishPendingOffer(current);
+        : this.publishPendingOffer(current, false, notes);
     }
     if (current.retries >= PLAN_CORRECTION_MAX_RETRIES) return 'reject';
-    return this.request(current);
+    return this.request(current, false, notes);
   }
 
-  private async request(current: PlanCorrectionRecord, stalled = false): Promise<'wait' | 'reject'> {
+  private async request(current: PlanCorrectionRecord, stalled = false, notes: readonly string[] = []): Promise<'wait' | 'reject'> {
     if (current.retries >= PLAN_CORRECTION_MAX_RETRIES) return 'reject';
     current.retries += 1;
     current.status = 'pending';
@@ -209,11 +219,11 @@ export class PlanCorrectionService {
     current.offeredActionId = randomUUID();
     // Persist complete offer before appendInbox exposes its approval action.
     if (!await this.persistActive(current)) return this.rejectCancelled(current);
-    return this.publishPendingOffer(current, stalled);
+    return this.publishPendingOffer(current, stalled, notes);
   }
 
   /** Re-publish a durable offer after an inbox append/bind failure or restart. */
-  private async publishPendingOffer(current: PlanCorrectionRecord, stalled = false): Promise<'wait' | 'reject'> {
+  private async publishPendingOffer(current: PlanCorrectionRecord, stalled = false, notes: readonly string[] = []): Promise<'wait' | 'reject'> {
     const ctx = current.ctx;
     const reviewReady = !!current.offeredDigest;
     const entry = await this.deps.appendInbox({
@@ -227,8 +237,8 @@ export class PlanCorrectionService {
       dedupeKey: `plan-correction:${ctx.executionId}:${current.offeredActionId ?? 'pending'}`,
       subject: 'Plan correction required',
       comments: reviewReady
-        ? `${planReviewSummary(current.reason, current.offeredUnits ?? [])}\n\nReview the proposed corrected plan below before work can continue. Approve starts work using this exact revision. Request changes sends it back for revision. Cancel stops this run.`
-        : `${stalled ? 'The coordinator finished its turn without writing a corrected plan. ' : ''}No valid revised plan is ready to review. Select Request changes, then Continue, to ask the coordinator to write a complete corrected plan. Select Cancel, then Continue, to stop this run.`,
+        ? `${planReviewSummary(current.reason, current.offeredUnits ?? [], notes)}\n\nReview the proposed corrected plan below before work can continue. Approve starts work using this exact revision. Request changes sends it back for revision. Cancel stops this run.`
+        : `${stalled ? 'The coordinator finished its turn without writing a corrected plan. ' : ''}Plan requires revisions to proceed. Problem with the supplied plan: ${current.reason.replace(/\.$/, '')}. Select Request changes, then Continue, to ask the coordinator to write a complete corrected plan. Select Cancel, then Continue, to stop this run.`,
       decisionGuidance: {
         kind: 'plan-correction',
         diagnostic: current.reason,

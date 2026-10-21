@@ -60,6 +60,27 @@ describe('createTriggeredSquadLauncher', () => {
     expect(binding.beginLaunch).not.toHaveBeenCalled();
   });
 
+  it('appends the id-rename note to slot tasks only when step ids were renamed', async () => {
+    const repaired = setup();
+    await repaired.launch(input({ planSource: 'provided', objective: PLAN.replace('### write:', '### Write:') }));
+    const repairedBody = (repaired.start.mock.calls[0] as unknown[])[2] as { objective: string; slots: Array<{ initialTask: string }> };
+    expect(repairedBody.objective).toBe(PLAN.replace('### write:', '### Write:'));
+    for (const slot of repairedBody.slots) {
+      expect(slot.initialTask).toContain('accepted after automatic normalization');
+      expect(slot.initialTask).toContain('step "Write" id normalized to "write"');
+    }
+
+    const folded = setup();
+    await folded.launch(input({ planSource: 'provided', objective: PLAN.replace('**Depends on:**', '**Depend on:**') }));
+    const foldedBody = (folded.start.mock.calls[0] as unknown[])[2] as { slots: Array<{ initialTask: string }> };
+    for (const slot of foldedBody.slots) expect(slot.initialTask).not.toContain('automatic normalization');
+
+    const clean = setup();
+    await clean.launch(input({ planSource: 'provided', objective: PLAN }));
+    const cleanBody = (clean.start.mock.calls[0] as unknown[])[2] as { slots: Array<{ initialTask: string }> };
+    for (const slot of cleanBody.slots) expect(slot.initialTask).not.toContain('automatic normalization');
+  });
+
   it('parks an invalid provided plan via launch binding', async () => {
     const { launch, binding, start } = setup();
     await launch(input({ planSource: 'provided', objective: 'just prose' }));

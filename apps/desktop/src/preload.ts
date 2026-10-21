@@ -336,8 +336,6 @@ const api: CcApi = {
       ipcRenderer.invoke(IPC.executionBoard.recoverRetained, projectId, executionId, expectedStateVersion, mode),
     worktreeAction: (projectId, executionId, expectedStateVersion, action, instruction) =>
       ipcRenderer.invoke(IPC.executionBoard.worktreeAction, projectId, executionId, expectedStateVersion, action, instruction),
-    resumeRun: (projectId, executionId, expectedStateVersion, replay) =>
-      ipcRenderer.invoke(IPC.executionBoard.resumeRun, projectId, executionId, expectedStateVersion, replay === true),
     clearResumeToken: (projectId, executionId) => ipcRenderer.invoke(IPC.executionBoard.clearResumeToken, projectId, executionId),
     relaunchMonitor: (projectId, executionId) => ipcRenderer.invoke(IPC.executionBoard.relaunchMonitor, projectId, executionId)
   },
@@ -775,6 +773,8 @@ const api: CcApi = {
     pick: (projectId) => ipcRenderer.invoke(IPC.executionSources.pick, projectId)
   },
   openers: {
+    fileLocation: (input) => ipcRenderer.invoke(IPC.openers.fileLocation, input),
+    revealFile: (input) => ipcRenderer.invoke(IPC.openers.revealFile, input),
     openIn: (target, path, options) => ipcRenderer.invoke(IPC.openers.openIn, target, path, options)
   },
   clipboard: {

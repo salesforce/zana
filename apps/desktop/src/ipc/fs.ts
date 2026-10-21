@@ -13,6 +13,8 @@ import { resolveStoredAttachmentPath } from '@zana-ai/zcc-server/services/projec
 import { electronZccDataDir } from '@zana-ai/zcc-server/electron-data-dir';
 import { store, worktreeRoot } from '@zana-ai/zcc-server/services/projects/store';
 import { openIn } from '../native/openers.js';
+import { previewFileLocation } from '../native/preview-file-location.js';
+import { readPersistedHostId } from '@zana-ai/zcc-host-daemon/identity';
 import { isWithin } from '@zana-ai/zcc-path-confine';
 import { BrowserWindow, clipboard, dialog } from 'electron';
 import { randomUUID } from 'node:crypto';
@@ -23,6 +25,27 @@ import { refreshRemoteStartPathHosts, stampedProjectRemote } from '../remote-wor
 import { productServerUrl } from '../window/renderer-url.js';
 
 export function registerFsIpc(): void {
+  const locatePreviewFile = (input: Parameters<import('@zana-ai/zcc-desktop-contract').CcApi['openers']['fileLocation']>[0]) =>
+    previewFileLocation(input, {
+      dataDir: electronZccDataDir(),
+      localHostId: ctx.runtimeSupervisor?.hostId ?? readPersistedHostId(electronZccDataDir()) ?? undefined,
+      projects: ctx.localProjects(),
+      trustedRoot: trustedProjectRoot,
+      thread: async (id) => {
+        const response = await fetch(new URL(`api/v1/threads/${encodeURIComponent(id)}`, productServerUrl()), {
+          signal: AbortSignal.timeout(2000)
+        });
+        if (response.status === 404) return null;
+        if (!response.ok) throw new Error('Thread unavailable');
+        return (await response.json()).thread;
+      }
+    });
+  ctx.safeHandle(IPC.openers.fileLocation, locatePreviewFile, () => ({ ok: false }));
+  ctx.safeHandle(IPC.openers.revealFile, async (input) => {
+    // Resolve again on click; never accept a previous renderer-visible location as authority.
+    const location = await locatePreviewFile(input);
+    return location.ok && location.path ? openIn('finder', location.path) : location;
+  }, () => ({ ok: false, message: 'Could not show this file in its folder.' }));
   
   ctx.safeHandle(
     IPC.fs.createFile,

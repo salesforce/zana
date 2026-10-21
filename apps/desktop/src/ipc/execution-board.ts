@@ -312,19 +312,6 @@ export function registerExecutionBoardIpc(): void {
     () => ({ ok: false, code: 'UNAVAILABLE', message: 'squad worktree action unavailable' })
   );
 
-  handleFromCaller<[string, string, number, boolean | undefined], Result<ExecutionBoardProjection>>(
-    IPC.executionBoard.resumeRun,
-    async (win, projectId, executionId, expectedStateVersion, replay) => {
-      if (!isExecutionProjectAllowed(win, projectId)) return { ok: false, code: 'NOT_FOUND', message: 'execution not found' };
-      if (!Number.isInteger(expectedStateVersion) || replay !== undefined && typeof replay !== 'boolean') {
-        return { ok: false, code: 'INVALID', message: 'invalid execution recovery request' };
-      }
-      const result = await squadExecutionService.resumeRun('interactive:local', projectId, executionId, expectedStateVersion, replay === true);
-      return result.ok ? { ok: true, value: executionProjection(result.value) } : { ok: false, code: result.code, message: result.message };
-    },
-    () => ({ ok: false, code: 'UNAVAILABLE', message: 'execution recovery unavailable' })
-  );
-
   const executionWorkControl = async (
     action: 'retry' | 'release' | 'reassign', projectId: string, executionId: string,
     expectedStateVersion: number, workUnitId: string, assignedSlotId?: string
