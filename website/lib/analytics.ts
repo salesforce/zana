@@ -76,8 +76,8 @@ export function trackPublicPage(id: string, pathname: string): void {
   target.gtag?.('event', 'page_view', { ...page, send_to: id });
 }
 
-export function trackDownloadClick(id: string): void {
+export function trackDownloadClick(id: string, platform = 'macOS'): void {
   (window as AnalyticsWindow).gtag?.('event', 'download_click', {
-    send_to: id, platform: 'macOS'
+    send_to: id, platform
   });
 }

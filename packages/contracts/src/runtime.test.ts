@@ -113,6 +113,15 @@ describe('server runtime contract', () => {
     expect(ServerRuntimeInboundSchema.safeParse({ ...request, protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION + 1, operation: 'projects-list' }).success).toBe(false);
     expect(RuntimeOutboundSchema.safeParse({ type: 'stopped', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION + 1 }).success).toBe(false);
   });
+  it('accepts bounded coding-agent display grouping without allowing arbitrary manifest data', () => {
+    const snapshot = { id: 'custom-agent', name: 'Agent', description: '', icon: 'Terminal', enabled: false,
+      provenance: 'direct', status: 'disabled', appUrl: null, collection: 'coding-agents' };
+    const message = { type: 'plugin-apps-changed', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, apps: [snapshot] };
+    expect(RuntimeOutboundSchema.safeParse(message).success).toBe(true);
+    for (const patch of [{ collection: 'unknown' }, { collection: true }, { extra: { source: '/private/path' } }]) {
+      expect(RuntimeOutboundSchema.safeParse({ ...message, apps: [{ ...snapshot, ...patch }] }).success).toBe(false);
+    }
+  });
   it('accepts local plugin classification without allowing installation paths across IPC', () => {
     const snapshot = { id: 'local-panel', name: 'Local panel', description: '', icon: 'Cloud', enabled: true, provenance: 'direct', sourceKind: 'path', status: 'running', appUrl: '/plugins/local-panel/assets/app.js' };
     const message = { type: 'plugin-apps-changed', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, apps: [snapshot] };

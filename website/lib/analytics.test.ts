@@ -58,6 +58,8 @@ it('sends public views and download clicks without private URL parameters', () =
   expect(target.gtag).toHaveBeenLastCalledWith('event', 'page_view', expect.objectContaining({ page_location: window.location.origin + '/docs/', page_title: 'Documentation', send_to: id }));
   trackDownloadClick(id);
   expect(target.gtag).toHaveBeenLastCalledWith('event', 'download_click', { send_to: id, platform: 'macOS' });
+  trackDownloadClick(id, 'Windows');
+  expect(target.gtag).toHaveBeenLastCalledWith('event', 'download_click', { send_to: id, platform: 'Windows' });
   delete target.gtag;
   expect(() => { trackPublicPage(id, '/'); trackDownloadClick(id); }).not.toThrow();
 });

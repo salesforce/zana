@@ -262,6 +262,9 @@ export function toPluginAppSnapshot(row: PluginUiSnapshot) {
     enabled: row.enabled,
     provenance: row.provenance,
     sourceKind: row.sourceKind,
+    ...(row.extra.threadProvider === true || row.extra.ptyHarness === true
+      ? { collection: 'coding-agents' as const }
+      : {}),
     status: row.status,
     statusDetail: row.statusDetail,
     appUrl: row.appUrl,

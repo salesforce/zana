@@ -23,10 +23,10 @@ flowchart LR
 
 ## 1. Install
 
-Download the app from the [**Download**](https://zcc-7808c5bc8f3d.herokuapp.com/download/)
-page and open it. macOS is available today; Windows and Linux are on the way.
+Download the app from the [**Download**](https://zana-ide.com/download/)
+page and open it. macOS (Apple Silicon and Intel) and Windows x64 are available today; Linux is on the way.
 
-**Prerequisites:** [Node](https://nodejs.org) 20 or newer on this Mac (**22+**
+**Prerequisites:** [Node](https://nodejs.org) 20 or newer on this computer (**22+**
 matches CI and is required on remotes), `git`, and at least one supported
 harness CLI on your `PATH`: Claude Code, Cursor, OpenCode, Codex, or Pi. If
 the harness works in your terminal, ZCC can launch it. Remote execution hosts

@@ -127,6 +127,20 @@ function writeLegacyExtension(dir: string, id: string): string {
 }
 
 describe('PluginService', () => {
+  it('preserves coding-agent display grouping for disabled installs without exposing manifest extras', async () => {
+    const dir = writePlugin(join(root(), 'custom-agent'), 'custom-agent', undefined, {
+      extra: { threadProvider: true, privateSetting: '/private/plugin/path' }
+    });
+    const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+    await service.install(dir);
+    await service.disable('custom-agent');
+    const snapshot = service.snapshot()[0]!;
+    expect(toPluginAppSnapshot(snapshot)).toMatchObject({ enabled: false, collection: 'coding-agents' });
+    expect(toPluginAppSnapshot(snapshot)).not.toHaveProperty('extra');
+    expect(toPluginAppSnapshot({ ...snapshot, extra: { ptyHarness: true } })).toHaveProperty('collection', 'coding-agents');
+    expect(toPluginAppSnapshot({ ...snapshot, extra: { threadProvider: false, ptyHarness: 'true' } })).not.toHaveProperty('collection');
+    expect(toPluginAppSnapshot({ ...snapshot, extra: {} })).not.toHaveProperty('collection');
+  });
   it('adds and removes a panel on reload without reinstalling, preserving the backend', async () => {
     const dataDir = root();
     const pluginDir = writePlugin(join(root(), 'evolving'), 'evolving', undefined, { app: undefined });

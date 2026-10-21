@@ -13,7 +13,7 @@ import {
 export const metadata: Metadata = {
   title: 'Zana — Your agents. Your projects. One clear view.',
   description:
-    'Run your favorite coding agents, keep work moving across projects, and answer when your judgment is needed. Free and open source for macOS.',
+    'Run your favorite coding agents, keep work moving across projects, and answer when your judgment is needed. Free and open source for macOS and Windows.',
   alternates: { canonical: '/' },
   openGraph: { url: '/', type: 'website', images: ['/opengraph-image'] }
 };
@@ -55,10 +55,10 @@ export default function Home() {
             '@type': 'SoftwareApplication',
             name: site.name,
             applicationCategory: 'DeveloperApplication',
-            operatingSystem: 'macOS',
+            operatingSystem: 'macOS, Windows',
             description: site.tagline,
             url: site.publicBaseUrl,
-            downloadUrl: `${site.releasesRepo}/releases/latest`,
+            downloadUrl: `${site.publicBaseUrl}/download/`,
             softwareVersion: site.latestVersion,
             offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' }
           })
@@ -87,15 +87,16 @@ export default function Home() {
                   className="zcc-btn zcc-btn-primary zcc-btn-lg"
                   href="/download/"
                 >
-                  Download for macOS <span aria-hidden="true">↗</span>
+                  Download Zana
                 </Link>
                 <a className="fairy-demo-link" href="#demo">
                   <span aria-hidden="true">▷</span> See Zana in action
                 </a>
               </div>
               <p className="fairy-hero-note">
-                Free &amp; open source<span aria-hidden="true">·</span>Your
-                tools, your control
+                Free &amp; open source<span aria-hidden="true">·</span>macOS
+                &amp; Windows<span aria-hidden="true">·</span>Your tools, your
+                control
               </p>
             </div>
             <div className="fairy-hero-art">
@@ -119,7 +120,7 @@ export default function Home() {
           </div>
           <div className="wrap fairy-hero-foot">
             <span>Built for the way you work</span>
-            <a href="#demo" aria-label="Explore the product demo">
+            <a href="#demo">
               Explore Zana <span aria-hidden="true">↓</span>
             </a>
           </div>
@@ -315,7 +316,7 @@ export default function Home() {
                 className="zcc-btn zcc-btn-primary zcc-btn-lg"
                 href="/download/"
               >
-                Download for macOS <span aria-hidden="true">↗</span>
+                Download Zana
               </Link>
               <Link
                 className="zcc-btn zcc-btn-ghost zcc-btn-lg"
@@ -325,7 +326,7 @@ export default function Home() {
               </Link>
             </div>
             <span className="fairy-final-note">
-              Free and open source · Apple Silicon &amp; Intel
+              Free and open source · macOS (Apple Silicon &amp; Intel) · Windows x64
             </span>
           </div>
         </section>

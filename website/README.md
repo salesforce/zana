@@ -28,7 +28,7 @@ npm run build        # production standalone build in .next/
 | `/docs/*` | Rendered at build time from allowlisted `docs/*.md` via `scripts/sync-docs.mjs` (internal audits, architecture notes, and the root README are NOT published) |
 | `/extensions` | In-app Plugin Guide `ProductMap` synced from `plugins/plugin-guide/` via `scripts/sync-plugin-guide.mjs` |
 | `/extensions/sdk` | SDK overview — four layers and a link to the Plugin Guide map |
-| `/download` | Parses `latest-mac.yml` from `NEXT_PUBLIC_UPDATE_FEED_URL`; links to GitHub Releases |
+| `/download` | Server-side GitHub latest-release lookup (cached 10 min) for direct macOS `.dmg` and Windows `.exe` links; falls back to GitHub Releases |
 
 ## Configure
 
@@ -56,7 +56,7 @@ origin.
 Website analytics is optional: set `NEXT_PUBLIC_GA_MEASUREMENT_ID` to the GA4
 web stream's `G-…` ID at build time (Docker `--build-arg`). Visitors can accept,
 decline, or revisit their choice through **Analytics cookies**. Public pages send
-`page_view` and the macOS download link sends `download_click`; account/pairing
+`page_view` and the download links send `download_click` with their platform; account/pairing
 and publishing pages are excluded, and URL queries/fragments are removed.
 Disable enhanced measurement on this stream because page views and download
 clicks are sent explicitly; automatic history/form events can include private

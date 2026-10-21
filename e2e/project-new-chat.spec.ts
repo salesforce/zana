@@ -8,6 +8,51 @@ test.use({
   initialConfig: { sponsorPromptDismissed: true, composerShowModern: true, composerShowCliAgent: true }
 });
 
+test('a project chat icon overrides another project selection and retained launcher picks', async ({ app }) => {
+  const { window: page, home } = app;
+  await dismissConsentOverlays(page);
+  const names = ['Previously selected project', 'Clicked chat project'];
+  for (const name of names) {
+    const path = join(home, name);
+    mkdirSync(path);
+    await page.evaluate(async (path) => {
+      const result = await window.cc.projects.add(path);
+      if (!result.ok) throw new Error(result.message);
+    }, path);
+  }
+  const heading = page.getByTestId('sidebar-projects-heading');
+  if (await heading.getAttribute('aria-expanded') === 'false') await heading.click();
+  await page.locator('.sidebar-projects').getByRole('button', { name: `Open ${names[0]}`, exact: true }).click();
+  // Home has the global project tree even after a different project was focused.
+  await page.evaluate(() => {
+    history.pushState({}, '', '/');
+    dispatchEvent(new PopStateEvent('popstate'));
+  });
+  await expect(page).toHaveURL(/\/$/);
+  const previousUrl = page.url();
+  const launcher = page.getByTestId('launch-modal');
+  const project = launcher.getByRole('button', { name: 'Project', exact: true });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const icon = page.getByRole('button', { name: `New agent in ${names[1]}`, exact: true });
+    await icon.locator('..').hover();
+    await icon.click();
+    await expect(launcher).toHaveCount(1);
+    for (const mode of ['Modern', 'CLI Agent']) {
+      await launcher.getByRole('button', { name: mode, exact: true }).click();
+      await expect(project).toContainText(names[1]);
+      await expect(project).toBeEnabled();
+    }
+    await expect(page).toHaveURL(previousUrl);
+    // A deliberate picker change must not become the default next time this
+    // project's icon is clicked, even when its draft is retained.
+    await project.click();
+    await page.getByRole('option', { name: names[0], exact: true }).click();
+    await expect(project).toContainText(names[0]);
+    await page.keyboard.press('Escape');
+    await expect(launcher).toBeHidden();
+  }
+});
+
 test('project New Chat keeps the current project selected across views and project windows', async ({ app }) => {
   const { window, home, electron } = app;
   await dismissConsentOverlays(window);
