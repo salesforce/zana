@@ -99,7 +99,6 @@ export interface IpcCtx {
   ptys: any;
   quickPrompts: any;
   readLiveSessionStats: any;
-  rebuildProviders: any;
   registerExtensionProject: any;
   reportTeamTask: any;
   resolveTheme: any;

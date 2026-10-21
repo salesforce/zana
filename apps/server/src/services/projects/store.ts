@@ -637,8 +637,10 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (isTerminalThemeId(input.terminalTheme)) normalized.terminalTheme = input.terminalTheme;
   if (typeof input.shell === 'string' && input.shell.trim()) normalized.shell = input.shell.trim();
-  if (typeof input.claudeBinary === 'string' && input.claudeBinary.trim()) {
-    normalized.claudeBinary = input.claudeBinary.trim();
+  if (typeof input.claudeBinary === 'string') {
+    // Blank clears the override like the other harnesses; the config store
+    // restores the 'claude' default on read.
+    normalized.claudeBinary = input.claudeBinary.trim() || undefined;
   }
   if (typeof input.claudeAppendSystemPrompt === 'string') {
     const prompt = input.claudeAppendSystemPrompt.trim();

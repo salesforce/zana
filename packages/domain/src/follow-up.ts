@@ -7,7 +7,9 @@ export type {
   FollowUpOrigin,
   FollowUp,
   FollowUpCreateInput,
-  FollowUpUpdateInput
+  FollowUpUpdateInput,
+  CloseFollowupFailure,
+  CloseFollowupFailureReason
 } from './product.js';
 
 export {

@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { product } from '../../lib/product-client.js';
 import { AlertTriangle, Bot, CheckCircle2, ChevronLeft, ChevronRight, Download, Laptop, MessageSquare, RefreshCw, Search, Terminal, XCircle } from 'lucide-react';
@@ -217,6 +217,9 @@ function HarnessRow({
   onCliInstall?: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [binaryDraft, setBinaryDraft] = useState<string | null>(null);
+  // Value shown when editing began: onConfigDraft rewrites `config` on every keystroke, so blur cannot read it back.
+  const binaryBaseline = useRef<{ shown: string; stored: string }>({ shown: '', stored: '' });
   const revealTarget = useContext(RevealContext).target;
   // A Settings-search jump to a control inside this collapsed row opens it first.
   useEffect(() => {
@@ -231,6 +234,10 @@ function HarnessRow({
   const enabled = enableKey ? ((config[enableKey] as boolean | undefined) ?? h.enabled) : h.enabled;
   const shown = h.alwaysEnabled || enabled;
 
+  // The server reports the 'claude' default for an unset Claude binary; show that
+  // as an empty field (placeholder) so a cleared field stays visibly cleared.
+  const storedBinary = (config[binKey] as string | undefined) ?? '';
+  const shownBinary = h.family === 'claude' && storedBinary === BINARY_PLACEHOLDER.claude ? '' : storedBinary;
   const binaryField = (
     <Field
       searchId={`${harnessRowPrefix(h.family)}binary`}
@@ -240,10 +247,27 @@ function HarnessRow({
     >
       <input
         type="text"
-        value={(config[binKey] as string | undefined) ?? ''}
+        value={binaryDraft ?? shownBinary}
         placeholder={BINARY_PLACEHOLDER[h.family]}
-        onChange={(e) => onConfigDraft({ ...config, [binKey]: e.target.value })}
-        onBlur={(e) => onUpdate({ [binKey]: e.target.value.trim() || undefined })}
+        onChange={(e) => {
+          if (binaryDraft === null) binaryBaseline.current = { shown: shownBinary, stored: storedBinary };
+          setBinaryDraft(e.target.value);
+          onConfigDraft({ ...config, [binKey]: e.target.value });
+        }}
+        onBlur={(e) => {
+          // Untouched field: nothing to save.
+          if (binaryDraft === null) return;
+          setBinaryDraft(null);
+          const next = e.target.value.trim();
+          const { shown, stored } = binaryBaseline.current;
+          if (next === shown.trim()) {
+            // Edited back to what was there: drop the draft instead of writing config.
+            onConfigDraft({ ...config, [binKey]: stored });
+            return;
+          }
+          // '' (not undefined) so the PATCH body carries the clear.
+          onUpdate({ [binKey]: next });
+        }}
         spellCheck={false}
       />
     </Field>

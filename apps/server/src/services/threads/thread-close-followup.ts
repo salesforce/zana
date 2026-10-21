@@ -7,6 +7,7 @@
 
 import { getConversationThread } from '@zana-ai/zcc-db';
 import type { ProductHttpContext } from '../../http/product-context.js';
+import type { CloseSummaryFailure } from '../followups/close-summary.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import { archiveConversation } from './conversation-lifecycle.js';
 import { conversationOutline } from './conversation-timeline.js';
@@ -31,7 +32,7 @@ export function canCloseThreadWithFollowup(thread: {
 export async function closeConversationWithFollowup(
   ctx: ProductHttpContext,
   threadId: string
-): Promise<{ ok: true; summarized: number; followedUp: number }> {
+): Promise<{ ok: true; summarized: number; followedUp: number; failures?: CloseSummaryFailure[] }> {
   const thread = getConversationThread(ctx.db, threadId);
   if (!thread) {
     throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
@@ -42,6 +43,7 @@ export async function closeConversationWithFollowup(
 
   let summarized = 0;
   let followedUp = 0;
+  let failures: CloseSummaryFailure[] | undefined;
   try {
     const lastTurn = lastAssistantPreview(conversationOutline(ctx, threadId).items);
     const paper = await ctx.closeSummary.summarizeAndFollowUpFromLastTurn(thread.projectId, {
@@ -51,6 +53,7 @@ export async function closeConversationWithFollowup(
     });
     summarized = paper.summarized;
     followedUp = paper.followedUp;
+    failures = paper.failures;
   } catch {
     /* paper trail is a courtesy — never block the archive */
   }
@@ -59,5 +62,7 @@ export async function closeConversationWithFollowup(
   if (!archived) {
     throw new ThreadCreateError(404, 'unknown-thread', 'thread is not registered');
   }
-  return { ok: true, summarized, followedUp };
+  return failures && failures.length > 0
+    ? { ok: true, summarized, followedUp, failures }
+    : { ok: true, summarized, followedUp };
 }

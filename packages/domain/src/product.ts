@@ -5095,6 +5095,15 @@ export interface FollowUpCreateInput {
   scope?: 'global' | { projectId: string };
 }
 
+/** Why Close with follow-up produced nothing for a step; the single definition shared by server, desktop contract and app. */
+export type CloseFollowupFailureReason = 'empty' | 'summary-failed' | 'unparseable' | 'write-failed';
+
+export interface CloseFollowupFailure {
+  reason: CloseFollowupFailureReason;
+  /** The LLM or write error text, trimmed by the server. */
+  detail?: string;
+}
+
 export interface FollowUpUpdateInput {
   title?: string;
   detail?: string;

@@ -32,8 +32,7 @@ export function registerConfigIpc(): void {
       const previous = store.getConfig();
       const next = presentAppConfig(store.setConfig(safePatch));
       reconcileHarnessConfig(previous, next, {
-        invalidate: () => { harnessVerifyState.cache = undefined; },
-        rebuildProviders: (config) => ctx.rebuildProviders(config)
+        invalidate: () => { harnessVerifyState.cache = undefined; }
       });
       // Apply a keep-awake toggle immediately: turning it OFF releases a held
       // block at once (don't wait for the grace timer / next status edge);

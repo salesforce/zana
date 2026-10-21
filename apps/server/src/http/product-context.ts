@@ -18,7 +18,7 @@ import {
 } from '@zana-ai/zcc-db';
 import { ClaudeCliProvider, LlmService, PromptRegistry } from '@zana-ai/zcc-llm';
 import { listJsonFiles, writeJsonFile } from './disk-json.js';
-import { CloseSummaryService } from '../services/followups/close-summary.js';
+import { CloseSummaryService, warnCloseSummary } from '../services/followups/close-summary.js';
 import { createProjectStore, type ProjectStore } from '../project-store.js';
 import { createProjectSettingsStore, type ProjectSettingsStore } from '../project-settings-store.js';
 import { createConfigStore } from '../services/config/config-store.js';
@@ -406,6 +406,7 @@ export function createProductHttpContext(
 
   const closeSummary = new CloseSummaryService({
     getSession: () => null,
+    log: warnCloseSummary,
     hasTranscript: () => false,
     readLastTurn: async () => '',
     runSummary: (lastTurn, dedupeKey) => {

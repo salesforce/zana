@@ -287,7 +287,7 @@ describe('CloseSummaryService', () => {
     });
     const svc = new CloseSummaryService(deps);
     const res = await svc.summarize('p1', ['a', 'b']);
-    expect(res).toEqual({ summarized: 0 });
+    expect(res).toMatchObject({ summarized: 0 });
     expect(deps.appendInbox).not.toHaveBeenCalled();
   });
 
@@ -299,7 +299,7 @@ describe('CloseSummaryService', () => {
     });
     const svc = new CloseSummaryService(deps);
     const res = await svc.summarize('p1', ['a']);
-    expect(res).toEqual({ summarized: 0 });
+    expect(res).toMatchObject({ summarized: 0 });
   });
 
   it('bounds concurrent micro-calls (never more than 5 in flight)', async () => {
@@ -326,7 +326,7 @@ describe('CloseSummaryService', () => {
     const deps = makeDeps();
     const svc = new CloseSummaryService(deps);
     const res = await svc.summarize('p1', []);
-    expect(res).toEqual({ summarized: 0 });
+    expect(res).toMatchObject({ summarized: 0 });
     expect(deps.appendInbox).not.toHaveBeenCalled();
   });
 
@@ -479,7 +479,7 @@ describe('CloseSummaryService.summarizeAndFollowUp', () => {
     expect(deps.createFollowUp).not.toHaveBeenCalled();
   });
 
-  it('confines to the project — foreign/stale/non-claude ids are dropped', async () => {
+  it('confines to the project — foreign/stale ids are dropped; a non-claude project session is reported empty', async () => {
     const deps = makeDeps({
       getSession: (id) =>
         id === 'foreign'
@@ -492,7 +492,7 @@ describe('CloseSummaryService.summarizeAndFollowUp', () => {
     });
     const svc = new CloseSummaryService(deps);
     const res = await svc.summarizeAndFollowUp('p1', ['mine', 'foreign', 'gone', 'shell']);
-    expect(res).toEqual({ summarized: 1, followedUp: 1 });
+    expect(res).toEqual({ summarized: 1, followedUp: 1, failures: [{ reason: 'empty' }] });
     expect(deps.createFollowUp).toHaveBeenCalledTimes(1);
   });
 
@@ -505,14 +505,14 @@ describe('CloseSummaryService.summarizeAndFollowUp', () => {
     const svc = new CloseSummaryService(deps);
     const res = await svc.summarizeAndFollowUp('p1', ['a']);
     // The combined digest failed (summarized 0) but the follow-up still went in.
-    expect(res).toEqual({ summarized: 0, followedUp: 1 });
+    expect(res).toMatchObject({ summarized: 0, followedUp: 1 });
   });
 
   it('no inbox entry and no follow-up when nothing distilled (unparseable summary)', async () => {
     const deps = makeDeps({ runSummary: vi.fn(async () => okResult('not json')) });
     const svc = new CloseSummaryService(deps);
     const res = await svc.summarizeAndFollowUp('p1', ['a']);
-    expect(res).toEqual({ summarized: 0, followedUp: 0 });
+    expect(res).toMatchObject({ summarized: 0, followedUp: 0 });
     // No distilled note ⇒ no digest written (no bare "closed" noise anymore).
     expect(deps.appendInbox).not.toHaveBeenCalled();
     expect(deps.createFollowUp).not.toHaveBeenCalled();
@@ -590,7 +590,7 @@ describe('CloseSummaryService.summarizeAndFollowUpFromLastTurn', () => {
       title: 'Empty',
       lastTurn: '  '
     });
-    expect(res).toEqual({ summarized: 0, followedUp: 0 });
+    expect(res).toMatchObject({ summarized: 0, followedUp: 0 });
     expect(deps.runSummary).not.toHaveBeenCalled();
   });
 });

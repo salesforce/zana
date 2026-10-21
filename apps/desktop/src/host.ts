@@ -324,6 +324,7 @@ import { createDoctor, hasMissingDeps, type Doctor } from '@zana-ai/zcc-server/s
 import { TemplateStore } from '@zana-ai/zcc-server/services/library/template-store';
 import { QuickPromptStore } from '@zana-ai/zcc-server/services/library/quick-prompt-store';
 import { resolveRulesGuidance } from '@zana-ai/zcc-server/services/projects/rules-file';
+import { mainClaudeBinaryGetter } from './main-claude-binary.js';
 import { PromptRegistry, LlmService, ClaudeCliProvider, OpenAiProvider, GeminiProvider, resolveNamedTitle, runTabNamerOnce, redactTranscript, type LlmProvider } from '@zana-ai/zcc-llm';
 import { VoiceService } from './native/voice/voice-service.js';
 import { OpenAiVoiceProvider } from './native/voice/openai-provider.js';
@@ -1436,21 +1437,22 @@ const quickPrompts = new QuickPromptStore();
 // LLM micro-call layer: an editable prompt registry + a provider-agnostic
 // dispatcher. v1 registers only the claude-cli provider (a headless
 // `claude --print` that reuses the user's Claude Code login). The claude binary
-// is read from config at boot and refreshed on config:set so a binary change
-// takes effect without a restart.
+// is resolved from config on every run, so a binary change takes effect without a restart.
 const promptRegistry = new PromptRegistry({
   homeDir: () => app.getPath('home'),
   revealPath: (path) => shell.openPath(path)
 });
 const llmService = new LlmService(new Map<LlmProviderId, LlmProvider>());
 /** Single provider-registration path. Rebuilds the LLM providers from config.
- *  `claude-cli` is built from `config.claudeBinary`. The HTTP providers
+ *  `claude-cli` resolves its binary from `store.getConfig()` on every run
+ *  (config.json is re-read, so a change from any writer applies without a
+ *  restart). The HTTP providers
  *  (`openai`/`gemini`) are registered unconditionally with a LAZY key getter —
  *  they read the encrypted key from safeStorage at call time and resolve to an
  *  honest `ok:false` "no API key configured" when absent, so a key added/removed
  *  later takes effect without a re-register. */
-function rebuildProviders(config: AppConfig): void {
-  llmService.setProvider(new ClaudeCliProvider(config.claudeBinary));
+function rebuildProviders(): void {
+  llmService.setProvider(new ClaudeCliProvider(mainClaudeBinaryGetter(store, join(electronZccDataDir(), 'config.json'))));
   llmService.setProvider(new OpenAiProvider(() => getOpenAiKey()));
   llmService.setProvider(new GeminiProvider(() => getGeminiKey()));
 }
@@ -2325,6 +2327,7 @@ const closeSummary = new CloseSummaryService({
       })
       .then((e) => ({ id: e.id })),
   projectLabel: (projectId) => store.listProjects().find((p) => p.id === projectId)?.name,
+  log: logMainError,
   // Used only by summarizeAndClose (the CLI `term close-summary` path). Same
   // close primitive the control plane / IPC use; returns false on an unknown id.
   closeTerminal: (sessionId) => {
@@ -7607,7 +7610,6 @@ function registerIpc() {
     get ptys() { return ptys; },
     get quickPrompts() { return quickPrompts; },
     get readLiveSessionStats() { return readLiveSessionStats; },
-    get rebuildProviders() { return rebuildProviders; },
     get registerExtensionProject() { return registerExtensionProject; },
     get reportTeamTask() { return reportTeamTask; },
     get resolveTheme() { return resolveTheme; },
@@ -7988,7 +7990,7 @@ async function bootstrapNormal() {
   // data dir was guaranteed present. Re-bind it now that the store can resolve
   // its config so a custom `claudeBinary` takes effect this session (not just
   // after the next config:set / restart).
-  rebuildProviders(store.getConfig());
+  rebuildProviders();
   // Repair PATH before any pty/opener/scheduler spawn. A GUI launch
   // (Finder/Dock) inherits a minimal PATH that omits ~/.local/bin,
   // /opt/homebrew/bin, etc. — so a bare `claude` spawn would ENOENT and

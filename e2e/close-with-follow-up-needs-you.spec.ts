@@ -105,7 +105,9 @@ test('Close with follow-up on a blocked Needs you agent closes the session', asy
     const progress = window
       .locator('.toast')
       .filter({ hasText: /Closing/ })
-      .or(window.getByRole('button', { name: 'Closing…' }));
+      .or(window.getByRole('button', { name: 'Closing…' }))
+      // The toast and the disabled button can both show at once; either one proves progress.
+      .first();
     window.once('dialog', (dialog) => void dialog.accept());
     await closeButton.click();
     await expect(progress).toBeVisible({ timeout: 8_000 });

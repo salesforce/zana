@@ -26,16 +26,17 @@ export class ClaudeCliProvider implements LlmProvider {
   readonly id = 'claude-cli' as const;
 
   /**
-   * @param binary Path to the `claude` executable (from `AppConfig.claudeBinary`).
+   * @param binary Path to the `claude` executable, or a getter resolved on every
+   *   `run` (like `OpenAiProvider`'s key getter) so a config change from any
+   *   writer applies without rebuilding the provider. Empty falls back to `claude`.
    */
-  constructor(private readonly binary: string) {}
+  constructor(private readonly binary: string | (() => string)) {}
 
   run(req: LlmRunRequest): Promise<LlmRunResult> {
     const startedAt = Date.now();
     const timeoutMs = req.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const maxOutputChars = req.maxOutputChars ?? DEFAULT_MAX_OUTPUT_CHARS;
     const model = req.model?.trim() || undefined;
-
     const args = ['--print'];
     if (req.disableTools) args.push('--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--no-session-persistence', '--settings', '{"disableAllHooks":true}');
     if (model) args.push('--model', resolveModelAlias(model));
@@ -75,7 +76,9 @@ export class ClaudeCliProvider implements LlmProvider {
 
       let proc: ReturnType<typeof spawn>;
       try {
-        proc = spawn(this.binary, args, {
+        // Resolved here, not before the promise: a getter that throws must come back as ok:false (run never throws).
+        const binary = (typeof this.binary === 'function' ? this.binary() : this.binary)?.trim() || 'claude';
+        proc = spawn(binary, args, {
           cwd: tmpdir(),
           env: { ...(process.env as Record<string, string>) },
           // No shell — argv is passed verbatim, so prompt text needs no escaping.

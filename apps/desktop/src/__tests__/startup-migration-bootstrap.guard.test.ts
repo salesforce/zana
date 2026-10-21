@@ -18,7 +18,7 @@ describe('startup migration bootstrap integration', () => {
   it('keeps owning config/provider reads inside normal bootstrap', () => {
     const gate = source.indexOf('async function runStartupMigration()');
     const normal = source.indexOf('function bootstrapNormal()');
-    const providerRead = source.indexOf('rebuildProviders(store.getConfig());');
+    const providerRead = source.indexOf('rebuildProviders();');
     expect(gate).toBeGreaterThan(-1);
     expect(normal).toBeGreaterThan(gate);
     expect(providerRead).toBeGreaterThan(normal);

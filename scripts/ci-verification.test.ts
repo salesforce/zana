@@ -66,6 +66,18 @@ it('selects the Squad proposal specs for proposal, team and composer seams', () 
   }
 });
 
+it('selects the close-with-follow-up spec for the close summary seams', () => {
+  for (const path of [
+    'apps/server/src/services/followups/close-summary.ts',
+    'apps/app/src/lib/close-idle-agents.ts',
+    'packages/llm/src/claude-cli-provider.ts',
+    'apps/desktop/src/main-claude-binary.ts'
+  ]) {
+    expect(boundarySpecs([path])).toContain('e2e/close-with-follow-up-needs-you.spec.ts');
+  }
+  expect(boundarySpecs(['apps/server/src/services/followups/other-service.ts'])).not.toContain('e2e/close-with-follow-up-needs-you.spec.ts');
+});
+
 it('selects squad-direct-report for the owner report-back seams', () => {
   for (const path of [
     'apps/server/src/services/execution/service.ts',

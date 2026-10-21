@@ -24,7 +24,7 @@
  * rather than whatever a possibly-disabled add-on happened to cache.
  */
 
-import type { LlmRunResult } from '@zana-ai/zcc-domain/product';
+import type { CloseFollowupFailure, LlmRunResult } from '@zana-ai/zcc-domain/product';
 import type { TranscriptRef } from './idle-triage.js';
 
 /** What the summarizer needs to know about a session to summarize it. */
@@ -94,7 +94,9 @@ export interface CloseSummaryDeps {
   closeTerminal?: (sessionId: string) => boolean;
   /**
    * File a durable follow-up for an agent being closed, returning the new
-   * follow-up's id (or null when nothing was created). Wired from the host's
+   * follow-up's id. Returning null means the create FAILED and the implementation has
+   * already logged why (the desktop host does), so the service records `write-failed`
+   * without logging it a second time; a throw is logged by the service. Wired from the host's
    * `FollowUpManager`; the origin/session attribution is host-stamped by the
    * caller (Rule 1), never agent free-text. Required only by
    * {@link CloseSummaryService.summarizeAndFollowUp}; absent elsewhere.
@@ -105,6 +107,23 @@ export interface CloseSummaryDeps {
     title: string;
     detail?: string;
   }) => string | null | Promise<string | null>;
+  /** Optional sink for a failed summary step (context, detail); each failure is logged exactly once. */
+  log?: (context: string, detail: string) => void;
+}
+
+/** Why a close-summary step produced nothing; names mirror {@link CloseSummaryService.summarizeOne}. */
+export type CloseSummaryFailure = CloseFollowupFailure;
+
+const FAILURE_DETAIL_MAX = 200;
+
+/** A `log` sink for hosts without a logger of their own (the standalone server). */
+export function warnCloseSummary(context: string, detail: string): void {
+  console.warn(`[zcc] ${context}: ${detail}`);
+}
+
+function failureDetail(err: unknown): string | undefined {
+  const text = (err instanceof Error ? err.message : typeof err === 'string' ? err : '').trim();
+  return text ? text.slice(0, FAILURE_DETAIL_MAX) : undefined;
 }
 
 /** One agent's distilled note. `did`/`left` may be empty when the model couldn't tell. */
@@ -153,6 +172,11 @@ interface ResolvedNote {
   sessionId: string;
   title: string;
   note: CloseSummaryNote;
+}
+
+/** Attach `failures` only when there are some, so a clean result keeps its old shape. */
+function withFailures<T extends object>(result: T, failures: CloseSummaryFailure[]): T & { failures?: CloseSummaryFailure[] } {
+  return failures.length > 0 ? { ...result, failures } : result;
 }
 
 /**
@@ -232,6 +256,21 @@ export class CloseSummaryService {
   constructor(private readonly deps: CloseSummaryDeps) {}
 
   /**
+   * Record one failure and log it once. `empty` (an agent with no transcript yet) is normal and
+   * only reported to the caller, not logged as an error.
+   */
+  private fail(
+    failures: CloseSummaryFailure[],
+    reason: CloseSummaryFailure['reason'],
+    err?: unknown,
+    alreadyLogged = false
+  ): void {
+    const detail = failureDetail(err);
+    failures.push(detail ? { reason, detail } : { reason });
+    if (reason !== 'empty' && !alreadyLogged) this.deps.log?.('close-summary', detail ? `${reason}: ${detail}` : reason);
+  }
+
+  /**
    * Resolve + confine, then run each eligible agent's close-summary micro-call
    * concurrently (bounded — each spawns a claude child, CLAUDE.md #5), returning
    * one {@link ResolvedNote} per agent that yielded a parseable did/left note.
@@ -244,15 +283,20 @@ export class CloseSummaryService {
   private async collectNotes(
     projectId: string,
     sessionIds: string[]
-  ): Promise<ResolvedNote[]> {
+  ): Promise<{ notes: ResolvedNote[]; failures: CloseSummaryFailure[] }> {
+    const failures: CloseSummaryFailure[] = [];
     const eligible = sessionIds
       .map((id) => ({ id, session: this.deps.getSession(id) }))
       .filter(
         (e): e is { id: string; session: CloseSummarySessionInfo } =>
-          e.session !== null &&
-          e.session.projectId === projectId &&
-          this.deps.hasTranscript(e.session.profile)
-      );
+          e.session !== null && e.session.projectId === projectId
+      )
+      .filter((e) => {
+        // A valid project session without a readable transcript is reported, not silently dropped.
+        if (this.deps.hasTranscript(e.session.profile)) return true;
+        this.fail(failures, 'empty');
+        return false;
+      });
 
     const resolved = await mapWithConcurrency(
       eligible,
@@ -272,26 +316,34 @@ export class CloseSummaryService {
           // still preserves user/assistant context and tool names, so use it as
           // the paper-trail source rather than silently closing with zero notes.
           const source = lastTurn.trim() || (await this.deps.readDigest(ref)).trim();
-          if (!source) return null;
+          if (!source) {
+            this.fail(failures, 'empty');
+            return null;
+          }
           const result = await this.deps.runSummary(source, `close-summary:${id}`);
-          if (!result.ok) return null;
+          if (!result.ok) {
+            this.fail(failures, 'summary-failed', result.error);
+            return null;
+          }
           const note = parseCloseSummary(result.text);
+          if (!note) this.fail(failures, 'unparseable');
           return note ? { sessionId: id, title: session.title, note } : null;
-        } catch {
+        } catch (err) {
+          this.fail(failures, 'summary-failed', err);
           return null;
         }
       }
     );
-    return resolved.filter((n): n is ResolvedNote => n !== null);
+    return { notes: resolved.filter((n): n is ResolvedNote => n !== null), failures };
   }
 
   async summarize(
     projectId: string,
     sessionIds: string[],
     opts: { closing?: boolean } = {}
-  ): Promise<{ summarized: number; entryId?: string; body?: string }> {
-    const notes = await this.collectNotes(projectId, sessionIds);
-    if (notes.length === 0) return { summarized: 0 };
+  ): Promise<{ summarized: number; entryId?: string; body?: string; failures?: CloseSummaryFailure[] }> {
+    const { notes, failures } = await this.collectNotes(projectId, sessionIds);
+    if (notes.length === 0) return withFailures({ summarized: 0 }, failures);
 
     const label = this.deps.projectLabel(projectId);
     const comments = renderCloseSummary(label ?? projectId, notes, opts);
@@ -304,11 +356,12 @@ export class CloseSummaryService {
       // `body` is the rendered combined markdown — returned so a caller (the
       // close_idle_agents MCP tool) can hand the wrap-up back to the agent for
       // it to persist elsewhere (e.g. project memory), not just the inbox.
-      return { summarized: notes.length, entryId: entry.id, body: comments };
-    } catch {
+      return withFailures({ summarized: notes.length, entryId: entry.id, body: comments }, failures);
+    } catch (err) {
       // The summary was computed but the inbox write failed — report nothing
       // written so the caller doesn't claim a summary that isn't there.
-      return { summarized: 0 };
+      this.fail(failures, 'write-failed', err);
+      return withFailures({ summarized: 0 }, failures);
     }
   }
 
@@ -337,14 +390,16 @@ export class CloseSummaryService {
   async summarizeAndFollowUp(
     projectId: string,
     sessionIds: string[]
-  ): Promise<{ summarized: number; followedUp: number }> {
-    return this.applyNotes(projectId, await this.collectNotes(projectId, sessionIds));
+  ): Promise<{ summarized: number; followedUp: number; failures?: CloseSummaryFailure[] }> {
+    const { notes, failures } = await this.collectNotes(projectId, sessionIds);
+    return this.applyNotes(projectId, notes, failures);
   }
 
   private async applyNotes(
     projectId: string,
-    notes: ResolvedNote[]
-  ): Promise<{ summarized: number; followedUp: number }> {
+    notes: ResolvedNote[],
+    failures: CloseSummaryFailure[] = []
+  ): Promise<{ summarized: number; followedUp: number; failures?: CloseSummaryFailure[] }> {
     const label = this.deps.projectLabel(projectId);
 
     // ONE folded inbox entry for the whole batch (only when something distilled).
@@ -358,8 +413,9 @@ export class CloseSummaryService {
           comments: renderCloseSummary(label ?? projectId, notes, { closing: true })
         });
         summarized = notes.length;
-      } catch {
+      } catch (err) {
         /* combined breadcrumb is best-effort */
+        this.fail(failures, 'write-failed', err);
       }
     }
 
@@ -378,13 +434,15 @@ export class CloseSummaryService {
               `\n\n_Filed when the agent was closed from the Agents view._`
           });
           if (created != null) followedUp++;
-        } catch {
+          else this.fail(failures, 'write-failed', 'the follow-up was not created', true);
+        } catch (err) {
           /* follow-up is best-effort */
+          this.fail(failures, 'write-failed', err);
         }
       }
     }
 
-    return { summarized, followedUp };
+    return withFailures({ summarized, followedUp }, failures);
   }
 
   /**
@@ -395,18 +453,29 @@ export class CloseSummaryService {
   async summarizeAndFollowUpFromLastTurn(
     projectId: string,
     item: { sessionId: string; title: string; lastTurn: string }
-  ): Promise<{ summarized: number; followedUp: number }> {
-    if (!item.lastTurn.trim()) return { summarized: 0, followedUp: 0 };
+  ): Promise<{ summarized: number; followedUp: number; failures?: CloseSummaryFailure[] }> {
+    const failures: CloseSummaryFailure[] = [];
+    if (!item.lastTurn.trim()) {
+      this.fail(failures, 'empty');
+      return withFailures({ summarized: 0, followedUp: 0 }, failures);
+    }
     try {
       const result = await this.deps.runSummary(item.lastTurn, `close-summary:${item.sessionId}`);
-      if (!result.ok) return { summarized: 0, followedUp: 0 };
+      if (!result.ok) {
+        this.fail(failures, 'summary-failed', result.error);
+        return withFailures({ summarized: 0, followedUp: 0 }, failures);
+      }
       const note = parseCloseSummary(result.text);
-      if (!note) return { summarized: 0, followedUp: 0 };
+      if (!note) {
+        this.fail(failures, 'unparseable');
+        return withFailures({ summarized: 0, followedUp: 0 }, failures);
+      }
       return this.applyNotes(projectId, [
         { sessionId: item.sessionId, title: item.title, note }
-      ]);
-    } catch {
-      return { summarized: 0, followedUp: 0 };
+      ], failures);
+    } catch (err) {
+      this.fail(failures, 'summary-failed', err);
+      return withFailures({ summarized: 0, followedUp: 0 }, failures);
     }
   }
 
