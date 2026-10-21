@@ -146,6 +146,7 @@ describe('ExecutionJobDetails phase 5 projection', () => {
     expect(resume).toHaveLength(1);
     expect((resume[0] as HTMLButtonElement).disabled).toBe(true);
     expect(resume[0].getAttribute('title')).toBe('Cancelled at plan correction. Start a new Squad to try again.');
+    expect(resume[0].classList.contains('primary')).toBe(true);
   });
 
   it('does not show the cancelled-correction explanation once a successor exists', async () => {
