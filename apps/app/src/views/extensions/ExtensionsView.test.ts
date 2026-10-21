@@ -7,7 +7,8 @@ const hero = readFileSync(
   new URL('../../components/plugin/browse-hero/BrowseHeroCarousel.tsx', import.meta.url),
   'utf8'
 );
-const hub = readFileSync(new URL('./ExtensionsHub.tsx', import.meta.url), 'utf8');
+const hub = ['ExtensionsHub.tsx', 'InstalledPluginCard.tsx', 'InstalledPluginCollection.tsx']
+  .map((file) => readFileSync(new URL(`./${file}`, import.meta.url), 'utf8')).join('\n');
 const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
 
 describe('ExtensionsView plugin catalogue', () => {
@@ -81,14 +82,13 @@ describe('ExtensionsView plugin catalogue', () => {
     );
   });
 
-  it('attaches the Installed New plugin caret as a split control', () => {
-    expect(hub).toContain('ext-install-split');
-    expect(hub).toContain('ext-install-split-toggle');
-    expect(css).toContain('.ext-install-split {\n  display: inline-flex;\n  align-items: stretch;\n  gap: 0;');
-    expect(css).toContain(
-      '.ext-install-split > .settings-btn.ext-install-split-toggle {\n  border-radius: 0 8px 8px 0;'
-    );
-    expect(css).toContain('.ext-install-split > .settings-btn:first-of-type {\n  border-radius: 8px 0 0 8px;');
+  it('uses one Add plugin menu and an adaptive card grid', () => {
+    expect(hub).toContain('Add plugin');
+    expect(hub).toContain('aria-label="Add a plugin"');
+    const collectionCss = readFileSync(new URL('./installed-plugin-collection.css', import.meta.url), 'utf8');
+    expect(collectionCss).toContain('grid-template-columns: repeat(3, minmax(0, 1fr))');
+    expect(collectionCss).toContain('@container installed-plugins (max-width: 880px)');
+    expect(collectionCss).toContain('@container installed-plugins (max-width: 560px)');
   });
 
   it('keeps primary button hover on the accent fill so the label stays readable', () => {
@@ -146,11 +146,10 @@ describe('ExtensionsView plugin catalogue', () => {
     expect(css).toContain('overflow-wrap: anywhere;');
   });
 
-  it('opens plugin details from the trailing chevron as well as the row', () => {
-    expect(hub).toContain('className="ext-installed-row-chevron"');
-    expect(hub).toContain('onClick={onOpen}');
-    const chevron = hub.slice(hub.indexOf('ext-installed-row-chevron'));
-    expect(chevron.startsWith('ext-installed-row-chevron"\n          onClick={onOpen}')).toBe(true);
+  it('opens plugin details from a card button, independently of footer actions', () => {
+    expect(hub).toContain('className="ext-installed-row-open" onClick={onOpen}');
+    expect(hub).toContain('className="ext-installed-card-footer"');
+    expect(hub).not.toContain('className="ext-installed-row-chevron"');
   });
 
   it('keeps Details as a borderless grid and boxes Release rows', () => {

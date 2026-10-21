@@ -26,12 +26,13 @@ test('top-level Extensions view fills the content area, not the narrow list colu
   await win.getByTestId('extensions-nav-installed').click();
   await expect(win.getByRole('heading', { name: 'Plugins', level: 3 })).toBeVisible();
   await expect(win.getByLabel('Search installed plugins')).toBeVisible();
-  await expect(win.getByRole('button', { name: 'New plugin' })).toBeVisible();
+  await expect(win.getByRole('button', { name: 'Add plugin' })).toBeVisible();
 
   const docsRow = win.getByTestId('plugin-row-docs');
   await expect(docsRow).toBeVisible({ timeout: 15_000 });
   await expect(docsRow.getByText('Official')).toBeVisible();
 
+  await win.getByRole('button', { name: /^Coding agents/ }).click();
   const pluginApps = await win.evaluate(() => window.cc.pluginApps.list());
   for (const plugin of pluginApps) {
     const row = win.getByTestId(`plugin-row-${plugin.id}`);
@@ -56,20 +57,21 @@ test('top-level Extensions view fills the content area, not the narrow list colu
   // Installed must fill the inner the way Browse does — not shrink-to-fit a
   // narrow column with empty space on either side of the plugin list.
   const innerBox = await win.locator('.extensions-panel .settings-inner').boundingBox();
-  const listBox = await win.locator('.ext-installed-panel').boundingBox();
+  const listBox = await win.locator('.ext-installed-panel').first().boundingBox();
   expect(innerBox, 'settings inner has a layout box').toBeTruthy();
   expect(listBox, 'installed list has a layout box').toBeTruthy();
   expect(innerBox!.width).toBeGreaterThan(panelBox!.width * 0.9);
   expect(listBox!.width).toBeGreaterThan(innerBox!.width * 0.85);
 });
 
-test('Plugins New plugin seeds the home composer with the shared prefix', async ({ app }) => {
+test('Plugins Create a plugin seeds the home composer with the shared prefix', async ({ app }) => {
   const win = app.window;
   await win.locator('.nav-item').filter({ hasText: 'Plugins' }).first().click();
   await win.waitForSelector('.ext-hub-shell', { timeout: 15_000 });
   await win.getByTestId('extensions-nav-installed').click();
-  await expect(win.getByRole('button', { name: 'New plugin' })).toBeVisible();
-  await win.getByRole('button', { name: 'New plugin' }).click();
+  await expect(win.getByRole('button', { name: 'Add plugin' })).toBeVisible();
+  await win.getByRole('button', { name: 'Add plugin' }).click();
+  await win.getByRole('menuitem', { name: 'Create a plugin', exact: true }).click();
   const composer = win.locator('.home-agent-composer, .thread-command-composer, .new-thread-view').first();
   await expect(composer).toBeVisible({ timeout: 15_000 });
   await expect(composer.locator('.ProseMirror, [contenteditable="true"]').first()).toContainText(
