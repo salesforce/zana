@@ -264,7 +264,11 @@ function AgentGroup({ label, agents, now }: { label: string; agents: CompanionAg
               type="button"
               className="cc-row"
               title={`${a.title} — ${agentStatusLabel(a)}`}
-              onClick={() => void product.companion.open({ kind: 'session', sessionId: a.sessionId })}
+              onClick={() =>
+                void product.companion.open(
+                  a.threadId ? { kind: 'thread', threadId: a.threadId } : { kind: 'session', sessionId: a.sessionId }
+                )
+              }
             >
               <span className={`cc-dot ${agentDot(a)}`} aria-hidden />
               <span className="cc-row-main">

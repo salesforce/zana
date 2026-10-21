@@ -72,12 +72,17 @@ import {
   hideAppWindows,
   snapPlacement,
   tooltipBounds,
+  tooltipHeight,
+  threadAgentState,
   TOOLTIP_HEIGHT,
+  TOOLTIP_ROW_HEIGHT,
+  TOOLTIP_ROWS_MAX,
   TOOLTIP_WIDTH,
   type CompanionDeps
 } from './companion.js';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import type { AgentState, InboxEntry, TerminalSession } from '@zana-ai/zcc-domain/product';
+import type { MenubarThreadAgent } from '@zana-ai/zcc-domain';
 
 const WORK = { x: 0, y: 25, width: 1440, height: 875 };
 
@@ -162,6 +167,8 @@ describe('placement math', () => {
     expect(sanitizeTooltip({ label: 'a', y: -1 })).toBeNull();
     expect(sanitizeTooltip({ label: 'a', y: 5000 })).toBeNull();
     expect(sanitizeTooltip({ label: 'a', y: Number.NaN })).toBeNull();
+    expect(sanitizeTooltip({ label: 'a', y: 1, panel: 'agents' })?.panel).toBe('agents');
+    expect(sanitizeTooltip({ label: 'a', y: 1, panel: 'evil' })?.panel).toBeUndefined();
   });
 
   it('resolves the saved display, then the fallback, then the primary', () => {
@@ -218,7 +225,27 @@ function question(over: Partial<InboxEntry> & { id: string }): InboxEntry {
   } as InboxEntry;
 }
 
+function thread(over: Partial<MenubarThreadAgent> & { threadId: string }): MenubarThreadAgent {
+  return {
+    kind: 'thread',
+    agentId: over.threadId,
+    rowKey: `thread:${over.threadId}`,
+    projectId: 'p1',
+    projectName: 'Proj',
+    title: `Thread ${over.threadId}`,
+    state: 'working',
+    status: 'active',
+    hasPendingInteraction: false,
+    createdAt: NOW - 120_000,
+    favorite: false,
+    canFavorite: false,
+    canReply: false,
+    ...over
+  };
+}
+
 function setup(opts: {
+  threads?: MenubarThreadAgent[];
   sessions?: TerminalSession[];
   states?: Record<string, AgentState>;
   entries?: InboxEntry[];
@@ -267,6 +294,10 @@ function setup(opts: {
   const sendToApp = vi.fn();
   const showMainWindow = vi.fn();
   const restoreWindows = vi.fn();
+  const threads = { list: opts.threads ?? [], listeners: new Set<() => void>() };
+  const listThreads = vi.fn(async () => threads.list);
+  const openThread = vi.fn();
+  const logger = vi.fn();
   const deps: CompanionDeps = {
     ptys: ptys as unknown as CompanionDeps['ptys'],
     agentStatus: agentStatus as unknown as CompanionDeps['agentStatus'],
@@ -283,12 +314,21 @@ function setup(opts: {
     showMainWindow,
     restoreWindows,
     sendToApp,
+    listThreads,
+    onThreadsChanged: (fn) => {
+      threads.listeners.add(fn);
+      return () => threads.listeners.delete(fn);
+    },
+    openThread,
     preloadPath: '/preload.js',
-    logger: () => undefined,
+    logger,
     now: () => NOW
   };
   const c = new CompanionController(deps);
-  return { c, deps, ptys, agentStatus, scheduler, inboxStore, listeners, sendToApp, showMainWindow, restoreWindows, states };
+  const threadsChanged = () => {
+    for (const fn of threads.listeners) fn();
+  };
+  return { c, deps, ptys, agentStatus, scheduler, inboxStore, listeners, sendToApp, showMainWindow, restoreWindows, states, threads, listThreads, threadsChanged, openThread, logger };
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -835,6 +875,148 @@ describe('CompanionController panel', () => {
   });
 });
 
+describe('CompanionController Modern threads', () => {
+  beforeEach(() => {
+    fake.windows.length = 0;
+  });
+
+  it('maps a thread to the app\'s Agents-list state', () => {
+    expect(threadAgentState({ status: 'active', hasPendingInteraction: false })).toBe('working');
+    expect(threadAgentState({ status: 'starting', hasPendingInteraction: false })).toBe('working');
+    expect(threadAgentState({ status: 'active', hasPendingInteraction: true })).toBe('blocked');
+    expect(threadAgentState({ status: 'error', hasPendingInteraction: false })).toBe('idle');
+  });
+
+  it('counts live threads beside pty agents and lists them in the Agents panel', async () => {
+    const env = setup({
+      sessions: [session({ id: 's1', title: 'Shell agent' })],
+      states: { s1: 'working' },
+      threads: [
+        thread({ threadId: 't1', title: 'Zana Popover PR' }),
+        thread({ threadId: 't2', status: 'error', projectName: '' }),
+        { kind: 'cli' } as unknown as MenubarThreadAgent
+      ]
+    });
+    env.c.start();
+    env.c.enter();
+    await flush();
+    expect(env.listThreads).toHaveBeenCalledOnce();
+    const snap = env.c.buildSnapshot();
+    expect(snap.counts).toMatchObject({ working: 2, idle: 1, blocked: 0 });
+    expect(snap.agents.find((a) => a.threadId === 't1')).toMatchObject({
+      sessionId: 'thread:t1',
+      title: 'Zana Popover PR',
+      projectName: 'Proj',
+      state: 'working',
+      recentlyCompleted: false
+    });
+    // An empty feed project name falls back to main's registry.
+    expect(snap.agents.find((a) => a.threadId === 't2')).toMatchObject({ projectName: 'name-p1', state: 'idle' });
+    expect(snap.agents).toHaveLength(3);
+    env.c.stop();
+  });
+
+  it('surfaces a thread waiting on you in Needs you, opened (not answered) from the rail', async () => {
+    const env = setup({
+      threads: [thread({ threadId: 't1', hasPendingInteraction: true, question: 'Allow the edit?' }), thread({ threadId: 't2', hasPendingInteraction: true })]
+    });
+    env.c.start();
+    env.c.enter();
+    await flush();
+    const reqs = env.c.buildSnapshot().requests;
+    expect(reqs).toEqual([
+      expect.objectContaining({ id: 'thread:t1', kind: 'blocked', threadId: 't1', prompt: 'Allow the edit?', answerable: false, reason: 'thread' }),
+      expect.objectContaining({ id: 'thread:t2', prompt: 'Waiting for your input' })
+    ]);
+    expect(env.c.answer('thread:t1', 'yes')).toEqual({ ok: false, reason: 'unknown' });
+    env.c.stop();
+  });
+
+  it('a thread\'s own inbox question replaces its generic blocked row', async () => {
+    const env = setup({
+      threads: [thread({ threadId: 't1', hasPendingInteraction: true })],
+      entries: [question({ id: 'e1', sessionId: undefined, origin: { threadId: 't1' } as never })]
+    });
+    env.c.start();
+    env.c.enter();
+    await flush();
+    const reqs = env.c.buildSnapshot().requests;
+    expect(reqs).toHaveLength(1);
+    expect(reqs[0]).toMatchObject({ id: 'inbox:e1', threadId: 't1', answerable: false, reason: 'thread' });
+    env.c.stop();
+  });
+
+  it('follows the feed only while the rail is up, single-flight, and drops it on stop (Rule 3)', async () => {
+    const env = setup({ threads: [thread({ threadId: 't1' })] });
+    env.c.start();
+    env.threadsChanged();
+    await flush();
+    expect(env.listThreads).not.toHaveBeenCalled();
+
+    env.c.enter();
+    await flush();
+    expect(env.listThreads).toHaveBeenCalledTimes(1);
+
+    // Two changes while a read is in flight → exactly one follow-up read.
+    let release!: (v: MenubarThreadAgent[]) => void;
+    env.listThreads.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    env.threadsChanged();
+    env.threadsChanged();
+    env.threadsChanged();
+    expect(env.listThreads).toHaveBeenCalledTimes(2);
+    release([thread({ threadId: 't9' })]);
+    await flush();
+    await flush();
+    expect(env.listThreads).toHaveBeenCalledTimes(3);
+
+    // A read that lands after stop() is discarded.
+    env.listThreads.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    env.threadsChanged();
+    env.c.stop();
+    expect(env.threads.listeners.size).toBe(0);
+    release([thread({ threadId: 'late' })]);
+    await flush();
+    expect(env.c.buildSnapshot().agents).toEqual([]);
+  });
+
+  it('logs a failed feed read and keeps the rest of the snapshot', async () => {
+    const env = setup({ sessions: [session({ id: 's1' })], states: { s1: 'working' } });
+    env.listThreads.mockRejectedValueOnce(new Error('utility down'));
+    env.c.start();
+    env.c.enter();
+    await flush();
+    expect(env.logger).toHaveBeenCalledWith('companion.refreshThreads', expect.any(Error));
+    expect(env.c.buildSnapshot().counts.working).toBe(1);
+    env.c.stop();
+  });
+
+  it('opens only a thread main\'s feed reported', async () => {
+    const env = setup({ threads: [thread({ threadId: 't1', projectId: 'p7' })] });
+    env.c.start();
+    env.c.enter();
+    await flush();
+    env.c.open({ kind: 'thread', threadId: 't1' });
+    expect(env.openThread).toHaveBeenLastCalledWith('t1', 'p7');
+    env.c.open({ kind: 'request', requestId: 'thread:t1' });
+    expect(env.openThread).toHaveBeenCalledTimes(2);
+    env.c.open({ kind: 'thread', threadId: 'forged' });
+    env.c.open({ kind: 'thread', threadId: 7 as never });
+    expect(env.openThread).toHaveBeenCalledTimes(2);
+    env.c.stop();
+  });
+
+  it('without a thread feed the companion is pty-only', () => {
+    const env = setup({});
+    const deps = { ...env.deps, listThreads: undefined, onThreadsChanged: undefined, openThread: undefined };
+    const c = new CompanionController(deps);
+    c.start();
+    c.enter();
+    c.open({ kind: 'thread', threadId: 't1' });
+    expect(c.buildSnapshot().agents).toEqual([]);
+    c.stop();
+  });
+});
+
 describe('CompanionController tooltip', () => {
   beforeEach(() => {
     fake.windows.length = 0;
@@ -854,6 +1036,60 @@ describe('CompanionController tooltip', () => {
     expect(env.c.getTooltip()).toBeNull();
     expect(sent(tip, IPC.companion.onTooltip).at(-1)?.[0]).toBeNull();
     env.c.stop();
+  });
+
+  it('the Agents icon hovers a live preview list, grown to fit', async () => {
+    const env = setup({ sessions: [session({ id: 's1', title: 'Shell agent' })], states: { s1: 'blocked' }, threads: [thread({ threadId: 't1', title: 'Popover PR' })] });
+    env.c.start();
+    env.c.enter();
+    await flush();
+    env.c.tooltip({ label: 'Agents', detail: '1 working', panel: 'agents', y: 60 });
+    const tip = partWin('tooltip')!;
+    expect(env.c.getTooltip()?.rows).toEqual([
+      { title: 'Shell agent', projectName: 'name-p1', state: 'blocked', createdAt: NOW - 60_000, recentlyCompleted: false },
+      { title: 'Popover PR', projectName: 'Proj', state: 'working', createdAt: NOW - 120_000, recentlyCompleted: false }
+    ]);
+    expect(env.c.getTooltip()?.more).toBe(0);
+    expect(tip.bounds.height).toBe(TOOLTIP_HEIGHT + 2 * TOOLTIP_ROW_HEIGHT);
+
+    // A new thread while hovering refreshes the preview in place.
+    env.threads.list = [...env.threads.list, thread({ threadId: 't2', title: 'Another' })];
+    env.threadsChanged();
+    await flush();
+    await new Promise((r) => setTimeout(r, 150));
+    expect(env.c.getTooltip()?.rows?.map((r) => r.title)).toEqual(['Shell agent', 'Another', 'Popover PR']);
+    expect(sent(tip, IPC.companion.onTooltip).at(-1)?.[0]).toMatchObject({ rows: expect.any(Array) });
+    env.c.stop();
+  });
+
+  it('caps the preview and counts the rest; other icons and empty fleets keep the pill', async () => {
+    const many = Array.from({ length: TOOLTIP_ROWS_MAX + 3 }, (_, i) => thread({ threadId: `t${i}` }));
+    const env = setup({ threads: many });
+    env.c.start();
+    env.c.enter();
+    await flush();
+    env.c.tooltip({ label: 'Agents', panel: 'agents', y: 60 });
+    expect(env.c.getTooltip()?.rows).toHaveLength(TOOLTIP_ROWS_MAX);
+    expect(env.c.getTooltip()?.more).toBe(3);
+    expect(partWin('tooltip')!.bounds.height).toBe(tooltipHeight(TOOLTIP_ROWS_MAX, 3));
+    env.c.tooltip({ label: 'Needs you', panel: 'needs-you', y: 20 });
+    expect(env.c.getTooltip()).toEqual({ label: 'Needs you', side: 'right', theme: 'light' });
+    expect(partWin('tooltip')!.bounds.height).toBe(TOOLTIP_HEIGHT);
+    env.c.stop();
+
+    const empty = setup({});
+    empty.c.enter();
+    empty.c.tooltip({ label: 'Agents', panel: 'agents', y: 60 });
+    expect(empty.c.getTooltip()).not.toHaveProperty('rows');
+    empty.c.stop();
+  });
+
+  it('sizes the preview window per row', () => {
+    expect(tooltipHeight(0, 0)).toBe(TOOLTIP_HEIGHT);
+    expect(tooltipHeight(2, 0)).toBe(TOOLTIP_HEIGHT + 2 * TOOLTIP_ROW_HEIGHT);
+    expect(tooltipHeight(6, 4)).toBe(TOOLTIP_HEIGHT + 7 * TOOLTIP_ROW_HEIGHT);
+    const b = tooltipBounds({ x: 1380, y: 300, width: 52, height: RAIL_HEIGHT }, WORK, 'right', 60, 260);
+    expect(b.height).toBe(260);
   });
 
   it('stays hidden while a panel is open', () => {

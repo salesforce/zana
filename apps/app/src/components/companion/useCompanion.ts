@@ -98,7 +98,4 @@ export function useNow(ms = 30_000): number {
   return now;
 }
 
-export const logoUrl = (theme: 'dark' | 'light') =>
-  theme === 'light'
-    ? new URL('../../assets/zana-mark-light.svg', import.meta.url).href
-    : new URL('../../assets/zana-mark.svg', import.meta.url).href;
+

@@ -57,6 +57,35 @@ it('renders nothing until a tooltip is pushed, then draws it and clears on null'
   expect(container.firstChild).toBeNull();
 });
 
+it('draws the Agents hover preview: dots, status, project, age and the overflow line', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+  const { container } = render(<CompanionTooltip />);
+  await act(async () => {});
+  act(() =>
+    push(
+      view({
+        rows: [
+          { title: 'Popover PR', projectName: 'Zana', state: 'working', createdAt: 1_000_000 - 5 * 60_000, recentlyCompleted: false },
+          { title: 'Fixer', projectName: 'Core', state: 'blocked', createdAt: 0 },
+          { title: 'Docs', projectName: 'Core', state: 'idle', recentlyCompleted: true }
+        ],
+        more: 2
+      })
+    )
+  );
+  expect(container.querySelector('.cc-tip-preview')).toBeTruthy();
+  const rows = [...container.querySelectorAll('.cc-tip-row')].map((r) => r.textContent);
+  expect(rows).toEqual(['Popover PRWorking · Zana · 5m', 'FixerNeeds you · Core', 'DocsCompleted · Core']);
+  expect(container.querySelector('.cc-tip-row .cc-dot-working')).toBeTruthy();
+  expect(container.querySelector('.cc-tip-row .cc-dot-attention')).toBeTruthy();
+  expect(container.querySelector('.cc-tip-row .cc-dot-done')).toBeTruthy();
+  expect(screen.getByText('+2 more — click to see all')).toBeTruthy();
+  act(() => push(view({ rows: [{ title: 'Solo', projectName: 'P', state: 'working' }], more: 0 })));
+  expect(screen.queryByText(/more — click/)).toBeNull();
+  expect(container.querySelector('.cc-tip-row')?.textContent).toBe('SoloWorking · P');
+  vi.restoreAllMocks();
+});
+
 it('pulls the already-showing tooltip on mount without clobbering a pushed one', async () => {
   h.tooltipState.mockResolvedValue(view({ label: 'Pulled' }));
   render(<CompanionTooltip />);

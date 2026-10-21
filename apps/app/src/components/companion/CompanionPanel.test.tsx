@@ -267,6 +267,12 @@ it('agents: groups needs-you / working / idle and opens a session', async () => 
   expect(h.open).toHaveBeenLastCalledWith({ kind: 'session', sessionId: 'a2' });
 });
 
+it('agents: a Modern thread row opens the thread', async () => {
+  await mount(snap({ agents: [agent(5, { sessionId: 'thread:t5', threadId: 't5', state: 'working' })] }), st('agents'));
+  fireEvent.click(screen.getByTitle('Worker5 — Working'));
+  expect(h.open).toHaveBeenLastCalledWith({ kind: 'thread', threadId: 't5' });
+});
+
 it('agents: omits empty groups', async () => {
   await mount(snap({ agents: [agent(1)] }), st('agents'));
   expect(document.querySelectorAll('.cc-group')).toHaveLength(1);

@@ -3,7 +3,8 @@ import { Bot, Clock, Inbox } from 'lucide-react';
 import type { CompanionPanelKind } from '@zana-ai/zcc-domain/product';
 import { product } from '../../lib/product-client.js';
 import { railIndicators, type Indicator } from './companion-model.js';
-import { logoUrl, useCompanion } from './useCompanion.js';
+import fairyGlyph from '../../assets/zana-glyph.svg';
+import { useCompanion } from './useCompanion.js';
 
 /** Pointer travel (px) before a press on the rail becomes a drag. */
 const DRAG_THRESHOLD = 4;
@@ -113,7 +114,8 @@ export function CompanionRail() {
           onClick={() => !suppressClick.current && void product.companion.exit()}
           {...tip.bind('Open Zana', 'Leave Command Center', () => !!drag.current?.dragging)}
         >
-          <img src={logoUrl(snapshot.theme)} alt="" draggable={false} />
+          {/* Mask, like the menu-bar popover: the glyph takes the theme's text colour. */}
+          <span className="cc-rail-glyph" aria-hidden style={{ mask: `url("${fairyGlyph}") center / contain no-repeat` }} />
         </button>
 
         <RailButton
@@ -147,6 +149,7 @@ export function CompanionRail() {
           dragging={() => !!drag.current?.dragging}
           label="Agents"
           detail={agentsLabel}
+          panel="agents"
           active={open === 'agents'}
           onClick={() => toggle('agents')}
           badge={<Dot indicator={ind.agents} />}
@@ -189,6 +192,7 @@ function RailButton({
   dragging,
   label,
   detail,
+  panel,
   active,
   onClick,
   badge,
@@ -198,6 +202,8 @@ function RailButton({
   dragging: () => boolean;
   label: string;
   detail: string;
+  /** Icon whose hover shows a live preview list (main builds it). */
+  panel?: CompanionPanelKind;
   active: boolean;
   onClick: () => void;
   badge?: ReactNode;
@@ -210,7 +216,7 @@ function RailButton({
       aria-label={`${label}: ${detail}`}
       aria-pressed={active}
       onClick={onClick}
-      {...tip.bind(label, detail, dragging)}
+      {...tip.bind(label, detail, dragging, panel)}
     >
       {children}
       {badge}
@@ -249,14 +255,14 @@ function useTooltip(panelOpen: boolean) {
   }, [panelOpen]);
   useEffect(() => hide, []);
 
-  const bind = (label: string, detail: string, dragging: () => boolean) => ({
+  const bind = (label: string, detail: string, dragging: () => boolean, panel?: CompanionPanelKind) => ({
     onMouseEnter: (e: React.MouseEvent<HTMLElement>) => {
       if (panelOpen || dragging()) return;
       const r = e.currentTarget.getBoundingClientRect();
       const send = () => {
         timer.current = null;
         showing.current = true;
-        void product.companion.tooltip({ label, detail, y: Math.round(r.top + r.height / 2) });
+        void product.companion.tooltip({ label, detail, panel, y: Math.round(r.top + r.height / 2) });
       };
       clear();
       if (showing.current) send();

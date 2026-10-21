@@ -143,6 +143,14 @@ it('routes an unanswerable request to the app instead of sending', () => {
   expect(h.answer).not.toHaveBeenCalled();
 });
 
+it('a thread waiting on you is opened in the app, never answered from the rail', () => {
+  renderQ(request({ id: 'thread:t1', kind: 'blocked', questions: undefined, threadId: 't1', answerable: false, reason: 'thread' }));
+  expect(screen.getByText('Waiting in a thread — open it in the app to respond.')).toBeTruthy();
+  expect(screen.queryByPlaceholderText('Reply to the agent…')).toBeNull();
+  fireEvent.click(screen.getAllByRole('button', { name: 'Open in Zana' })[0]);
+  expect(h.open).toHaveBeenCalledWith({ kind: 'request', requestId: 'thread:t1' });
+});
+
 it('ignores Enter and number keys typed into the Other field', () => {
   renderQ();
   const other = screen.getByPlaceholderText('Other…');

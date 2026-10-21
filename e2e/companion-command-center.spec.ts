@@ -161,3 +161,44 @@ test.describe('companion answers', () => {
     }
   });
 });
+
+test.describe('companion Modern threads', () => {
+  test.use({ e2e: true, launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { companionEnabled: true } });
+
+  test('companion: a running Modern thread is counted, previewed on hover, and listed', async ({ app }) => {
+    test.setTimeout(120_000);
+    const { window, electron } = app;
+    const project = await window.evaluate(async () => {
+      const response = await fetch('/api/v1/projects');
+      return (await response.json()).projects[0] as { id: string };
+    });
+    const thread = await window.evaluate(async (projectId) => {
+      const response = await fetch('/api/v1/threads', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectId, providerId: 'fake', title: 'Rail modern agent', input: 'delay:60000 rail' })
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(JSON.stringify(body));
+      return body.thread as { id: string };
+    }, project.id);
+    await expect.poll(() => window.evaluate(async (id) => {
+      return (await (await fetch(`/api/v1/threads/${id}`)).json()).thread.status;
+    }, thread.id)).toBe('active');
+
+    expect(await window.evaluate(() => window.cc.companion.enter())).toBe(true);
+    const rail = await waitForCompanion(electron, 'rail');
+    const agents = rail.getByRole('button', { name: /^Agents:/ });
+    await expect(agents).toHaveAttribute('aria-label', /^Agents: 1 working/, { timeout: 20_000 });
+
+    // Hovering the Agents icon floats a live preview of the running agents.
+    await agents.hover();
+    const tooltip = await waitForCompanion(electron, 'tooltip');
+    await expect(tooltip.locator('.cc-tip-row', { hasText: 'Rail modern agent' })).toBeVisible();
+
+    // The Agents panel lists the thread too.
+    await agents.click();
+    const panel = await waitForCompanion(electron, 'panel');
+    await expect(panel.getByText('Rail modern agent')).toBeVisible();
+  });
+});

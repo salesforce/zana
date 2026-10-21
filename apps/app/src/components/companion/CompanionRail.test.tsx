@@ -135,7 +135,9 @@ it('a shrink mid-pulse stops the pulse instead of leaving it stuck', async () =>
 });
 
 it('the logo exits Command Center', async () => {
-  await mount();
+  const { container } = await mount();
+  // The shipped glyph asset resolves (a missing file once rendered a broken image).
+  expect((container.querySelector('.cc-rail-glyph') as HTMLElement).style.mask).toContain('fairy');
   fireEvent.click(btn(/Open the full window/));
   expect(h.exit).toHaveBeenCalledOnce();
 });
@@ -148,7 +150,7 @@ it('hover shows a tooltip after a delay, then instantly for the next icon, and h
   act(() => {
     vi.advanceTimersByTime(350);
   });
-  expect(h.tooltip).toHaveBeenCalledWith({ label: 'Agents', detail: '0 working · 0 idle', y: 0 });
+  expect(h.tooltip).toHaveBeenCalledWith({ label: 'Agents', detail: '0 working · 0 idle', panel: 'agents', y: 0 });
   fireEvent.mouseLeave(agents);
   fireEvent.mouseEnter(btn(/^Scheduler:/));
   expect(h.tooltip).toHaveBeenLastCalledWith(expect.objectContaining({ label: 'Scheduler' }));

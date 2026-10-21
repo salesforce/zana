@@ -8900,6 +8900,17 @@ async function bootstrapNormal() {
       projectName: (id) => store.listProjects().find((p) => p.id === id)?.name ?? 'project',
       projectColor: (id) => store.listProjects().find((p) => p.id === id)?.color,
       triage: (sessionId) => lastTriageBySession.get(sessionId) ?? null,
+      listThreads: listMenubarThreads,
+      onThreadsChanged: (listener) => runtimeSupervisor?.onMenubarThreadsChanged(listener) ?? (() => {}),
+      openThread: (threadId, projectId) => {
+        showMainWindow();
+        void ensureMainWindowReady()
+          .then((ready) => (ready ? openMenubarThread(threadId, projectId) : { ok: false, reason: 'main renderer did not become ready' }))
+          .then((result) => {
+            if (!result?.ok) logMainError('companion open thread', result?.reason ?? 'thread unavailable');
+          })
+          .catch((err) => logMainError('companion open thread', err));
+      },
       theme: () => resolveTheme(),
       isEnabled: companionEnabled,
       getPlacement: () => store.getConfig().companionPlacement,

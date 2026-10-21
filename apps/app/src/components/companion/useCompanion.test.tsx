@@ -12,7 +12,7 @@ vi.mock('../../lib/product-client.js', () => ({
   product: { companion: { request: h.request, onSnapshot: h.onSnapshot } }
 }));
 import { ANSWERED_STORAGE_KEY } from './companion-model.js';
-import { EMPTY_SNAPSHOT, logoUrl, useCompanion, useNow } from './useCompanion.js';
+import { EMPTY_SNAPSHOT, useCompanion, useNow } from './useCompanion.js';
 
 let push: (s: CompanionSnapshot) => void;
 
@@ -129,10 +129,4 @@ it('useNow ticks on its interval and cleans up', () => {
   });
   expect(result.current).toBe(1010);
   unmount();
-});
-
-it('logoUrl picks the mark by theme', () => {
-  expect(logoUrl('light')).toContain('zana-mark-light.svg');
-  expect(logoUrl('dark')).toContain('zana-mark.svg');
-  expect(logoUrl('dark')).not.toContain('light');
 });

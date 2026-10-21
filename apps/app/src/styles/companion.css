@@ -71,10 +71,11 @@ html.companion-surface #root {
   transition: background 120ms ease, color 120ms ease;
 }
 
-.cc-rail-logo img {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+.cc-rail-glyph {
+  display: block;
+  width: 24px;
+  height: 24px;
+  background-color: var(--text-primary);
   pointer-events: none;
 }
 
@@ -661,6 +662,37 @@ html.companion-surface #root {
   font-size: 11.5px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Hover preview (Agents): a mini list under the label, one 34px line per row. */
+.cc-tip-preview {
+  width: 100%;
+  padding: 8px 10px;
+  gap: 2px;
+}
+
+.cc-tip-rows {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.cc-tip-row {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cc-tip-more {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  font-size: 11.5px;
 }
 
 @keyframes cc-tip-in {

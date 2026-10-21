@@ -153,5 +153,6 @@ export function scheduleStatus(
 export const UNANSWERABLE_COPY: Record<NonNullable<CompanionRequest['reason']>, string> = {
   ended: 'This agent is no longer running — open it in the app to continue.',
   background: 'Background job — answer it from the app.',
-  execution: 'Execution blocker — respond from the app.'
+  execution: 'Execution blocker — respond from the app.',
+  thread: 'Waiting in a thread — open it in the app to respond.'
 };

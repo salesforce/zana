@@ -3077,7 +3077,7 @@ export interface CompanionPlacement {
 export type CompanionPanelKind = 'needs-you' | 'agents' | 'scheduler' | 'status';
 
 /** Why a Needs You request can't be answered from the companion (→ "Open in Zana"). */
-export type CompanionUnanswerableReason = 'ended' | 'background' | 'execution';
+export type CompanionUnanswerableReason = 'ended' | 'background' | 'execution' | 'thread';
 
 /**
  * One "Needs You" request in the Command Center snapshot. Either a structured
@@ -3087,12 +3087,14 @@ export type CompanionUnanswerableReason = 'ended' | 'background' | 'execution';
  * and agent state — the companion renderer is a thin view (Rule 1).
  */
 export interface CompanionRequest {
-  /** `inbox:<entryId>` or `agent:<sessionId>` — the id `companion.answer` takes. */
+  /** `inbox:<entryId>`, `agent:<sessionId>` or `thread:<threadId>` — the id `companion.answer` takes. */
   id: string;
   kind: 'question' | 'blocked';
   /** Inbox entry id (question kind) — the renderer's answered-set key. */
   entryId?: string;
   sessionId?: string;
+  /** Modern thread the request came from (opened, never answered, from the rail). */
+  threadId?: string;
   projectId: string;
   projectName: string;
   projectColor?: string;
@@ -3111,7 +3113,10 @@ export interface CompanionRequest {
 
 /** One agent row in the Command Center Agents panel. */
 export interface CompanionAgent {
+  /** Pty session id, or `thread:<threadId>` for a Modern thread row (unique row key). */
   sessionId: string;
+  /** Set for a Modern (conversation) thread; opening it goes through the thread router. */
+  threadId?: string;
   projectId: string;
   projectName: string;
   projectColor?: string;
@@ -3171,14 +3176,32 @@ export interface CompanionPanelState {
 export interface CompanionTooltip {
   label: string;
   detail?: string;
+  /** Hovered icon's panel: main attaches a live preview list (Agents / Needs you). */
+  panel?: CompanionPanelKind;
   /** Icon centre, in px from the rail window's top. */
   y: number;
+}
+
+/** One line in a hover preview: an agent (state dot) or a pending request. */
+export interface CompanionTooltipRow {
+  title: string;
+  projectName: string;
+  state: AgentState;
+  /** Agent rows: start time and the green "Completed" dot. */
+  createdAt?: number;
+  recentlyCompleted?: boolean;
+  /** Request rows: the agent asking. */
+  agentTitle?: string;
 }
 
 /** What main pushes to the tooltip window (placed beside the rail). */
 export interface CompanionTooltipView {
   label: string;
   detail?: string;
+  /** Hover preview rows (Agents / Needs you), built by main from its own snapshot. */
+  rows?: CompanionTooltipRow[];
+  /** Rows beyond the preview cap. */
+  more?: number;
   /** Rail edge — the tooltip sits on the opposite (inner) side. */
   side: CompanionEdge;
   theme: 'dark' | 'light';
@@ -3197,6 +3220,7 @@ export type CompanionOpenTarget =
   | { kind: 'agents' }
   | { kind: 'scheduler'; taskId?: string }
   | { kind: 'session'; sessionId: string }
+  | { kind: 'thread'; threadId: string }
   | { kind: 'request'; requestId: string };
 
 /**

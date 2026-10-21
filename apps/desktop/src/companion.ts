@@ -9,6 +9,7 @@ import type { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
 import type { SchedulerManager } from '@zana-ai/zcc-server/services/scheduler/scheduler';
 import type { AgentStatusTracker } from '@zana-ai/zcc-server/services/agents/agent-status';
 import type { IInboxStore } from '@zana-ai/zcc-server/services/inbox/inbox-store';
+import type { MenubarThreadAgent } from '@zana-ai/zcc-domain';
 import {
   inboxQuestions,
   type AgentState,
@@ -23,6 +24,7 @@ import {
   type CompanionSchedule,
   type CompanionSnapshot,
   type CompanionTooltip,
+  type CompanionTooltipRow,
   type CompanionTooltipView,
   type IdleTriageResult,
   type InboxEntry,
@@ -45,7 +47,7 @@ import {
  *    rail window is only as wide as the rail, so it can't draw one itself).
  *
  * Every snapshot is built HERE from main's own pty / agent-state / inbox /
- * scheduler singletons, and every action the renderer fires is re-authorized
+ * scheduler singletons plus the product server's Modern-thread feed, and every action the renderer fires is re-authorized
  * against that state (Rule 1). Subscriptions are wired once in `start()` and
  * released in `stop()` (Rule 3); the inbox cache is bounded (Rule 5).
  */
@@ -58,6 +60,11 @@ export interface CompanionDeps {
   projectColor: (projectId: string) => string | undefined;
   /** Cached idle-triage verdict (what a blocked agent is waiting for), or null. */
   triage: (sessionId: string) => IdleTriageResult | null;
+  /** Live Modern (conversation) threads — the same feed the menu-bar popover reads. */
+  listThreads?: () => Promise<MenubarThreadAgent[]>;
+  onThreadsChanged?: (listener: () => void) => () => void;
+  /** Bring the main window forward on a Modern thread. */
+  openThread?: (threadId: string, projectId: string) => void;
   theme: () => 'dark' | 'light';
   /** `companionEnabled` config flag (opt-in). */
   isEnabled: () => boolean;
@@ -102,9 +109,14 @@ export const RECENT_DONE_MS = 10 * 60 * 1000;
 /** Answers are bounded so the write path can't be flooded. */
 export const ANSWER_MAX_CHARS = 4000;
 const SCHEDULES_MAX = 30;
-/** Tooltip window — fixed size; the pill inside hugs the rail side. */
+/** Tooltip window — sized per hover; the pill inside hugs the rail side. */
 export const TOOLTIP_WIDTH = 260;
 export const TOOLTIP_HEIGHT = 56;
+/** Hover preview (Agents / Needs you): row cap and the height each row adds. */
+export const TOOLTIP_ROWS_MAX = 6;
+export const TOOLTIP_ROW_HEIGHT = 34;
+/** Modern threads held for the snapshot (Rule 5). */
+export const THREADS_MAX = 100;
 const TOOLTIP_GAP = 6;
 const TOOLTIP_LABEL_MAX = 60;
 const TOOLTIP_DETAIL_MAX = 120;
@@ -179,11 +191,28 @@ export function panelLayout(rail: Rect, work: Rect, edge: CompanionEdge): Rect &
  * Tooltip window bounds beside the rail, vertically centred on the hovered
  * icon (`iconY` = px from the rail WINDOW top, pad included), kept on screen.
  */
-export function tooltipBounds(rail: Rect, work: Rect, edge: CompanionEdge, iconY: number): Rect {
+export function tooltipBounds(rail: Rect, work: Rect, edge: CompanionEdge, iconY: number, height = TOOLTIP_HEIGHT): Rect {
   const x = edge === 'right' ? rail.x - TOOLTIP_GAP - TOOLTIP_WIDTH : rail.x + rail.width + TOOLTIP_GAP;
-  const idealY = rail.y - RAIL_PAD + iconY - TOOLTIP_HEIGHT / 2;
-  const y = clamp(Math.round(idealY), work.y, work.y + work.height - TOOLTIP_HEIGHT);
-  return { x: Math.round(x), y, width: TOOLTIP_WIDTH, height: TOOLTIP_HEIGHT };
+  const idealY = rail.y - RAIL_PAD + iconY - height / 2;
+  const y = clamp(Math.round(idealY), work.y, work.y + work.height - height);
+  return { x: Math.round(x), y, width: TOOLTIP_WIDTH, height };
+}
+
+/** Tooltip window height for a hover preview of `rows` lines (+1 for "N more"). */
+export function tooltipHeight(rows: number, more: number): number {
+  const lines = rows + (more > 0 ? 1 : 0);
+  return lines === 0 ? TOOLTIP_HEIGHT : TOOLTIP_HEIGHT + lines * TOOLTIP_ROW_HEIGHT;
+}
+
+/**
+ * A Modern thread's rail state, matching the app's Agents list
+ * (`threadStatusToAgentState`): a pending interaction needs you, an errored
+ * thread reads as idle, anything else the feed returns is busy.
+ */
+export function threadAgentState(t: Pick<MenubarThreadAgent, 'status' | 'hasPendingInteraction'>): AgentState {
+  if (t.hasPendingInteraction) return 'blocked';
+  if (t.status === 'error') return 'idle';
+  return 'working';
 }
 
 /**
@@ -207,12 +236,13 @@ export function hideAppWindows<W extends Pick<BrowserWindow, 'isDestroyed' | 'is
 /** Validate a renderer-sent tooltip: short strings, finite y inside the rail window. */
 export function sanitizeTooltip(tip: unknown): CompanionTooltip | null {
   if (!tip || typeof tip !== 'object') return null;
-  const { label, detail, y } = tip as Record<string, unknown>;
+  const { label, detail, y, panel } = tip as Record<string, unknown>;
   if (typeof label !== 'string' || !label.trim()) return null;
   if (typeof y !== 'number' || !Number.isFinite(y) || y < 0 || y > RAIL_HEIGHT + 2 * RAIL_PAD) return null;
   return {
     label: label.trim().slice(0, TOOLTIP_LABEL_MAX),
     detail: typeof detail === 'string' && detail.trim() ? detail.trim().slice(0, TOOLTIP_DETAIL_MAX) : undefined,
+    panel: PANEL_KINDS.includes(panel as CompanionPanelKind) ? (panel as CompanionPanelKind) : undefined,
     y
   };
 }
@@ -268,6 +298,8 @@ export class CompanionController {
   private tip: BrowserWindow | null = null;
   /** Tooltip showing now — the tooltip window pulls it on mount (first hover). */
   private tipView: CompanionTooltipView | null = null;
+  /** The hover that produced it — re-run on each snapshot so a preview stays live. */
+  private tipRequest: CompanionTooltip | null = null;
   private active = false;
   /** App windows `enter()` (or a later minimize) put away, re-shown on `exit()`. */
   private hidden = new Set<BrowserWindow>();
@@ -277,6 +309,11 @@ export class CompanionController {
   /** Last observed state per session, to detect working → done edges. */
   private lastState = new Map<string, AgentState>();
   private completedAt = new Map<string, number>();
+  /** Modern threads from the product server, refreshed while the rail is up. */
+  private threads: MenubarThreadAgent[] = [];
+  private threadsInFlight = false;
+  private threadsDirty = false;
+  private threadsGeneration = 0;
   private offs: Array<() => void> = [];
   private pushTimer: NodeJS.Timeout | null = null;
   private dragTimer: NodeJS.Timeout | null = null;
@@ -328,6 +365,12 @@ export class CompanionController {
       () => agentStatus.off('status', onStatus),
       () => scheduler.off('changed', onFleet)
     );
+    if (this.deps.onThreadsChanged) {
+      // The feed is a cross-process read: only follow it while the rail is up.
+      this.offs.push(this.deps.onThreadsChanged(() => {
+        if (this.active) void this.refreshThreads();
+      }));
+    }
     this.offs.push(
       inboxStore.onAppended((e) => this.trackEntry(e)),
       inboxStore.onUpdated((e) => this.trackEntry(e)),
@@ -370,6 +413,8 @@ export class CompanionController {
     this.tip = null;
     this.tipView = null;
     this.hidden.clear();
+    this.threads = [];
+    this.threadsGeneration++;
     this.active = false;
   }
 
@@ -384,6 +429,7 @@ export class CompanionController {
     this.active = true;
     this.reposition();
     this.pushSnapshot();
+    void this.refreshThreads();
     rail.showInactive();
     for (const win of hideAppWindows(this.deps.mainWindows())) this.hidden.add(win);
     return true;
@@ -463,17 +509,40 @@ export class CompanionController {
         recentlyCompleted
       });
     }
+    const threadsById = new Map<string, MenubarThreadAgent>();
+    for (const t of this.threads) {
+      const state = threadAgentState(t);
+      threadsById.set(t.threadId, t);
+      if (state === 'blocked') counts.blocked++;
+      else if (state === 'working') counts.working++;
+      else counts.idle++;
+      agents.push({
+        sessionId: `thread:${t.threadId}`,
+        threadId: t.threadId,
+        projectId: t.projectId,
+        projectName: t.projectName || this.deps.projectName(t.projectId),
+        projectColor: t.projectColor ?? this.deps.projectColor(t.projectId),
+        title: t.title,
+        state,
+        createdAt: t.createdAt,
+        recentlyCompleted: false
+      });
+    }
     agents.sort((a, b) => (AGENT_RANK[a.state] ?? 9) - (AGENT_RANK[b.state] ?? 9) || a.title.localeCompare(b.title));
 
     const requests: CompanionRequest[] = [];
     const askedSessions = new Set<string>();
+    const askedThreads = new Set<string>();
     const cutoff = now - REQUEST_MAX_AGE_MS;
     const entries = [...this.questions.values()].filter((e) => e.ts >= cutoff).sort((a, b) => b.ts - a.ts);
     for (const e of entries) {
       const session = e.sessionId ? liveById.get(e.sessionId) : undefined;
       if (session) askedSessions.add(session.id);
+      const thread = e.origin?.threadId ? threadsById.get(e.origin.threadId) : undefined;
+      if (thread) askedThreads.add(thread.threadId);
       let reason: CompanionRequest['reason'];
       if (e.executionId) reason = 'execution';
+      else if (thread && !session) reason = 'thread';
       else if (!session) reason = 'ended';
       else if (!isRepliable(session)) reason = 'background';
       const questions = inboxQuestions(e);
@@ -482,6 +551,7 @@ export class CompanionController {
         kind: 'question',
         entryId: e.id,
         sessionId: e.sessionId,
+        threadId: thread?.threadId,
         projectId: e.projectId,
         projectName: e.projectLabel || this.deps.projectName(e.projectId),
         projectColor: this.deps.projectColor(e.projectId),
@@ -496,6 +566,25 @@ export class CompanionController {
     }
     for (const a of agents) {
       if (a.state !== 'blocked' || askedSessions.has(a.sessionId)) continue;
+      if (a.threadId) {
+        if (askedThreads.has(a.threadId)) continue;
+        const t = threadsById.get(a.threadId)!;
+        // A thread's pending interaction is answered in its own composer.
+        requests.push({
+          id: `thread:${a.threadId}`,
+          kind: 'blocked',
+          threadId: a.threadId,
+          projectId: a.projectId,
+          projectName: a.projectName,
+          projectColor: a.projectColor,
+          agentTitle: a.title,
+          prompt: t.question || 'Waiting for your input',
+          ts: t.createdAt,
+          answerable: false,
+          reason: 'thread'
+        });
+        continue;
+      }
       const s = liveById.get(a.sessionId)!;
       const verdict = this.deps.triage(a.sessionId);
       const repliable = isRepliable(s);
@@ -553,6 +642,29 @@ export class CompanionController {
     const at = (t: CompanionSchedule) => (t.nextRunAt ? Date.parse(t.nextRunAt) : Infinity);
     out.sort((a, b) => Number(b.running) - Number(a.running) || at(a) - at(b) || a.name.localeCompare(b.name));
     return out.slice(0, SCHEDULES_MAX);
+  }
+
+  /** Pull the Modern-thread feed (single-flight; a change mid-read re-reads). */
+  private async refreshThreads() {
+    if (!this.deps.listThreads) return;
+    if (this.threadsInFlight) {
+      this.threadsDirty = true;
+      return;
+    }
+    const generation = this.threadsGeneration;
+    this.threadsInFlight = true;
+    this.threadsDirty = false;
+    try {
+      const threads = await this.deps.listThreads();
+      if (generation !== this.threadsGeneration) return;
+      this.threads = (Array.isArray(threads) ? threads : []).filter((t) => t?.kind === 'thread').slice(0, THREADS_MAX);
+      this.refresh();
+    } catch (err) {
+      this.log('refreshThreads', err);
+    } finally {
+      this.threadsInFlight = false;
+      if (generation === this.threadsGeneration && this.threadsDirty && this.active) void this.refreshThreads();
+    }
   }
 
   private trackEntry(entry: InboxEntry, push = true) {
@@ -644,6 +756,13 @@ export class CompanionController {
         send('app:focusSession', s.id, s.projectId);
         return;
       }
+      case 'thread': {
+        // Only a thread main's own feed reported (Rule 1).
+        const t = typeof target.threadId === 'string' ? this.threads.find((x) => x.threadId === target.threadId) : undefined;
+        if (!t || !this.deps.openThread) return;
+        this.deps.openThread(t.threadId, t.projectId);
+        return;
+      }
       case 'request': {
         const id = typeof target.requestId === 'string' ? target.requestId : '';
         if (id.startsWith('inbox:')) {
@@ -653,6 +772,8 @@ export class CompanionController {
           send('app:focusInboxEntry', entry.id, entry.projectId);
         } else if (id.startsWith('agent:')) {
           this.open({ kind: 'session', sessionId: id.slice('agent:'.length) });
+        } else if (id.startsWith('thread:')) {
+          this.open({ kind: 'thread', threadId: id.slice('thread:'.length) });
         }
         return;
       }
@@ -712,18 +833,42 @@ export class CompanionController {
   // ----- tooltip ------------------------------------------------------------------
 
   /** Rail hover: float the label beside the icon (null / invalid hides it). */
-  tooltip(raw: unknown) {
+  tooltip(raw: unknown, snapshot?: CompanionSnapshot) {
     const tip = sanitizeTooltip(raw);
     if (!tip || !this.active || this.dragTimer || this.panelState || !this.rail || this.rail.isDestroyed()) {
       this.hideTooltip();
       return;
     }
+    this.tipRequest = tip;
     const win = this.ensureTip();
     const { rail, work, edge } = this.currentRail();
-    win.setBounds(tooltipBounds(rail, work, edge, tip.y), false);
-    this.tipView = { label: tip.label, detail: tip.detail, side: edge, theme: this.deps.theme() };
+    const preview = tip.panel ? this.previewRows(tip.panel, snapshot) : { rows: [], more: 0 };
+    win.setBounds(tooltipBounds(rail, work, edge, tip.y, tooltipHeight(preview.rows.length, preview.more)), false);
+    this.tipView = {
+      label: tip.label,
+      detail: tip.detail,
+      ...(preview.rows.length > 0 ? { rows: preview.rows, more: preview.more } : {}),
+      side: edge,
+      theme: this.deps.theme()
+    };
     this.sendTo(win, IPC.companion.onTooltip, this.tipView);
     if (!win.isVisible()) win.showInactive();
+  }
+
+  /**
+   * Hover preview for an icon, from main's own snapshot (never renderer data).
+   * Agents only: Needs-you's pending set depends on the renderer's answered set.
+   */
+  private previewRows(panel: CompanionPanelKind, snapshot?: CompanionSnapshot): { rows: CompanionTooltipRow[]; more: number } {
+    if (panel !== 'agents') return { rows: [], more: 0 };
+    const rows: CompanionTooltipRow[] = (snapshot ?? this.buildSnapshot()).agents.map((a) => ({
+      title: a.title,
+      projectName: a.projectName,
+      state: a.state,
+      createdAt: a.createdAt,
+      recentlyCompleted: a.recentlyCompleted
+    }));
+    return { rows: rows.slice(0, TOOLTIP_ROWS_MAX), more: Math.max(0, rows.length - TOOLTIP_ROWS_MAX) };
   }
 
   getTooltip(): CompanionTooltipView | null {
@@ -732,6 +877,7 @@ export class CompanionController {
 
   private hideTooltip() {
     this.tipView = null;
+    this.tipRequest = null;
     if (!this.tip || this.tip.isDestroyed() || !this.tip.isVisible()) return;
     this.sendTo(this.tip, IPC.companion.onTooltip, null);
     this.tip.hide();
@@ -835,6 +981,7 @@ export class CompanionController {
     for (const win of [this.rail, this.panel]) {
       if (win) this.sendTo(win, IPC.companion.onSnapshot, snapshot);
     }
+    if (this.tipRequest?.panel && this.tipView) this.tooltip(this.tipRequest, snapshot);
   }
 
   private sendTo(win: BrowserWindow, channel: string, ...args: unknown[]) {

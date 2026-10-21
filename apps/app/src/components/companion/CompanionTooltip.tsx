@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { CompanionTooltipView } from '@zana-ai/zcc-domain/product';
 import { product } from '../../lib/product-client.js';
+import { agentDot, agentStatusLabel, formatAge } from './companion-model.js';
 
 /**
  * The tooltip window (`part=tooltip`): a click-through strip main parks beside
@@ -23,9 +24,26 @@ export function CompanionTooltip() {
   if (!tip) return null;
   return (
     <div className={`cc-tip-stage cc-rail-${tip.side}`}>
-      <div className="cc-tip" role="tooltip">
+      <div className={`cc-tip${tip.rows ? ' cc-tip-preview' : ''}`} role="tooltip">
         <span className="cc-tip-label">{tip.label}</span>
         {tip.detail && <span className="cc-tip-detail">{tip.detail}</span>}
+        {tip.rows && (
+          <ul className="cc-tip-rows">
+            {tip.rows.map((r, i) => (
+              <li key={i} className="cc-tip-row">
+                <span className={`cc-dot ${agentDot({ state: r.state, recentlyCompleted: !!r.recentlyCompleted })}`} aria-hidden />
+                <span className="cc-row-main">
+                  <span className="cc-row-title">{r.title}</span>
+                  <span className="cc-row-meta">
+                    {agentStatusLabel({ state: r.state, recentlyCompleted: !!r.recentlyCompleted })} · {r.projectName}
+                    {r.state === 'working' && r.createdAt !== undefined ? ` · ${formatAge(r.createdAt, Date.now())}` : ''}
+                  </span>
+                </span>
+              </li>
+            ))}
+            {!!tip.more && <li className="cc-tip-more">+{tip.more} more — click to see all</li>}
+          </ul>
+        )}
       </div>
     </div>
   );
