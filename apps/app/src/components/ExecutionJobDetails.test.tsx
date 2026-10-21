@@ -27,7 +27,7 @@ beforeEach(() => {
   clipboardWriteText = vi.fn(async () => ({ ok: true as const }));
   Object.defineProperty(window, 'cc', { configurable: true, value: { executionBoard: {
     snapshot: vi.fn(async () => structuredClone(baseSnapshot)), stop: vi.fn(), retry: vi.fn(), retryWork: vi.fn(),
-    releaseWork: vi.fn(), reassignWork: vi.fn(), respond: vi.fn(), retryDelivery: vi.fn(), recoverTimedOut: vi.fn(), recoverRetainedSquad: vi.fn(), resumeRun: vi.fn(), readArtifact: vi.fn(), relaunchMonitor: vi.fn()
+    releaseWork: vi.fn(), reassignWork: vi.fn(), respond: vi.fn(), retryDelivery: vi.fn(), recoverTimedOut: vi.fn(), recoverRetainedSquad: vi.fn(), readArtifact: vi.fn(), relaunchMonitor: vi.fn()
   }, clipboard: { writeText: clipboardWriteText } } });
 });
 afterEach(() => {

@@ -136,12 +136,8 @@ it('exposes squad worktree, resume and inbox host-action channels with coerced r
 
   await api.executionBoard.worktreeAction('p', 'e', 2, 'instruct', 'go');
   expect(electron.invoke).toHaveBeenLastCalledWith(IPC.executionBoard.worktreeAction, 'p', 'e', 2, 'instruct', 'go');
-  await api.executionBoard.resumeRun('p', 'e', 2, true);
-  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.executionBoard.resumeRun, 'p', 'e', 2, true);
-  await api.executionBoard.resumeRun('p', 'e', 2);
-  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.executionBoard.resumeRun, 'p', 'e', 2, false);
-  await api.executionBoard.resumeRun('p', 'e', 2, 'yes');
-  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.executionBoard.resumeRun, 'p', 'e', 2, false);
+  await api.executionBoard.recoverRetainedSquad('p', 'e', 2, 'fresh-plan');
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.executionBoard.recoverRetained, 'p', 'e', 2, 'fresh-plan');
 
   await api.inbox.hostActions.list();
   expect(electron.invoke).toHaveBeenLastCalledWith(IPC.inbox.hostActions.list);
