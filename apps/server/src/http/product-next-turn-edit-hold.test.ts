@@ -150,7 +150,10 @@ it('validates the edit body and the revision it confirms against', async () => {
   const stale = await save(queued.id, { text: 'ok', expectedUpdatedAt: queued.updatedAt - 1 });
   expect(stale.status).toBe(409);
   await expect(stale.json()).resolves.toMatchObject({ error: 'queued-send-changed' });
-  const malformed = await fetch(url(queued.id), { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: '{not json' });
+  // Fresh socket (Connection: close): reusing a keep-alive socket the server half-closed after the
+  // prior stale-409 above races into a read ECONNRESET under parallel-suite load. The route always
+  // answers with a status for malformed JSON, so the reset is purely a client socket-reuse flake.
+  const malformed = await fetch(url(queued.id), { method: 'PATCH', headers: { 'content-type': 'application/json', connection: 'close' }, body: '{not json' });
   expect(malformed.status).toBeGreaterThanOrEqual(400);
   expect(row(queued.id)).toEqual(queued);
 });
