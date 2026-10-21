@@ -333,14 +333,16 @@ export function PeerSettings() {
     jobNotes.set(status.setup.peerId, { text: `Sync setup waiting${setupReason(status.setup)}`, ok: false });
   }
   const backgroundJobs = pendingJobs.filter((job) => !connectionIds.has(job.peerId));
-  // The durable roster can retain a removed member until every computer seals its retirement. The connection list is the
-  // current authority for what this computer is actually syncing with.
-  const groupSize = status?.configured ? 1 + list.filter((connection) => connection.usedByThisPlugin && connection.syncing && connection.state === 'connected' && !connection.retiring).length : 0;
+  // The roster is authoritative for the group count: members with no live core connection still belong to the group
+  // (and a member stays counted while retiring, until every computer seals its retirement).
+  const groupSize = status?.configured ? status.members.length : 0;
   // Leave Group needs a third computer to stay; with two, Stop using on the other computer ends the sync.
   const roster = !!status?.configured && groupSize >= 3;
   const lifecycle = !status || status.lifecycleAvailable;
   return (
     <section className="dd-peers" aria-label="Database sync peers">
+      {/* Core owns connections; this panel only points at them and lists what Design Docs may use. */}
+      <a className="dd-peers-core-link" href="/settings/peers">Add or remove computers in Settings → Peers</a>
       {connections ? (
         list.length ? (
           <section className="dd-peers-block dd-peers-computers" aria-label="Computers">

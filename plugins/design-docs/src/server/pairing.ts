@@ -735,7 +735,8 @@ export class DesignDocPairing {
       this.abort.signal.throwIfAborted();
       const text = error instanceof Error ? error.message : String(error);
       reason = lifecycleReasonOf(error);
-      checking = features.lifecycle && reason === 'unknown';
+      // Only an enrollment transition is a temporary status check; a definitive (even untagged) key failure fails closed.
+      checking = features.lifecycle && isTransient(error);
       if (!isTransient(error)) {
         if (text !== this.lifecycleWarning) console.warn(`[design-docs] peer lifecycle unavailable (${reason}): ${text}`);
         this.lifecycleWarning = text;

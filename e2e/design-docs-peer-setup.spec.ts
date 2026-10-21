@@ -114,20 +114,21 @@ test('Design Docs peer setup exposes lifecycle, enrolled peers and refuses fabri
     await expect(peers.getByRole('button', { name: 'Leave Group', exact: true })).toBeVisible();
     expect(await window.evaluate(() => window.cc.pluginApps.callRpc('design-docs', 'peerStatus')))
       .toMatchObject({ configured: true, members: expect.not.arrayContaining([expect.objectContaining({ replicaId: 'e2e-replica-b' })]) });
-    // Configured: the doc list shows the member count and Sync, without overflowing or truncating the header.
+    // Configured: the doc list header shows the member count without overflowing or truncating.
     await view.getByRole('button', { name: 'Back to design docs', exact: true }).click();
     const configuredList = window.locator('.dd-list');
     const settings = configuredList.getByRole('button', { name: 'Settings', exact: true });
     await expect(settings).toHaveText('');
     await expect(settings).toHaveAttribute('title', 'Design Docs settings: peers and agent');
-    const sync = configuredList.getByRole('button', { name: 'Sync', exact: true });
-    await expect(sync).toBeVisible();
-    await expect(sync).toHaveAttribute('title', /computers? syncing/);
+    // Sync is gated on a live peer connection. This isolated HOME seeds governance only
+    // (no transport grants or OS keys, see above), so no computer is connected and Sync stays hidden.
+    await expect(configuredList.getByRole('button', { name: 'Sync', exact: true })).toHaveCount(0);
     expect(await configuredList.locator('.dd-list-head').evaluate((head) => head.scrollWidth <= head.clientWidth)).toBe(true);
     expect(await configuredList.locator('.dd-list-title').evaluate((title) => title.scrollWidth <= title.clientWidth)).toBe(true);
     await configuredList.getByRole('button', { name: 'Hide doc list' }).click();
     const rail = window.getByRole('navigation', { name: 'Design docs' });
-    await expect(rail.getByRole('button', { name: 'Sync peers' })).toBeVisible();
+    // Same connection gate: with no connected computer the collapsed rail shows no Sync peers control.
+    await expect(rail.getByRole('button', { name: 'Sync peers' })).toHaveCount(0);
     await expect(rail.getByRole('button', { name: 'Settings', exact: true })).toHaveCount(0);
     await rail.getByRole('button', { name: 'Show doc list' }).click();
     await window.locator('.dd-list').getByRole('button', { name: 'Settings', exact: true }).click();
