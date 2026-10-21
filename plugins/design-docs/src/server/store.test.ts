@@ -10,13 +10,64 @@ import {
   MAX_THREAD_LINKS_PER_DOC
 } from '../shared/limits.js';
 import { formatBytes } from '../shared/display.js';
-import { AGENT_FALLBACK_LABEL, DesignDocError, DesignDocStore, applyEdits, slugify } from './store.js';
+import { AGENT_FALLBACK_LABEL, DesignDocError, DesignDocStore, applyEdits, repairLegacyPeerSyncMigrationIndexes, slugify } from './store.js';
 import { createTestDatabase } from './test-db.js';
 import { DesignDocSyncStore } from './sync-store.js';
 import { MAX_PEER_STORED_BYTES, MAX_PEER_STORED_VERSIONS } from '../shared/peer-limits.js';
 
 const user: DocActor = { kind: 'user', label: 'You', threadId: null };
 const agent: DocActor = { kind: 'agent', label: 'Planner', threadId: 'thread-1' };
+
+describe('DesignDocStore legacy migration repair', () => {
+  const hashes = [
+    '0e5d810d8f1a4bb65a824698f308f5974bc08a3a9da2fade6f420b7fae1523a4',
+    '1772c965b891ad3733a7a09f309a446618ddf2cdfb8d1ce110a2c0931f1d9452',
+    'aa5f8a86522e9269645d9cb75152b25ac056de47ec4a51b7c275e8fff2340847',
+    '18dcdf7f9c7f9f11aba3cf208e1762756c22ba77200ad996ac66bd3141a0e2af',
+    '3c30314de2fbe9d7cb7636a36bec1932e966921f3ab14d7280fac45261d590a5',
+    'c3fbd92f3bde8ad54b4e9cda5c900ec160f595855e7916c62fba72e74bfa69a0',
+    'e83e0a9271c8ff8868d43ec06cb9d40dd360fa1da2d6f7dabe2227ce8ec914a5'
+  ];
+
+  function legacyDatabase() {
+    const db = createTestDatabase();
+    db.runScript('CREATE TABLE _zcc_migrations (id INTEGER PRIMARY KEY, statement_hash TEXT, applied_at INTEGER NOT NULL)');
+    const insert = db.prepare('INSERT INTO _zcc_migrations VALUES (?, ?, ?)');
+    insert.run(0, 'docs', 100); insert.run(1, 'comments', 101);
+    hashes.forEach((hash, index) => insert.run(index + 2, hash, index + 102));
+    return db;
+  }
+
+  it('shifts only the exact complete legacy lineage once, preserving migration evidence', () => {
+    const db = legacyDatabase();
+    const before = db.prepare('SELECT * FROM _zcc_migrations ORDER BY id').all() as Array<{ id: number; statement_hash: string; applied_at: number }>;
+    repairLegacyPeerSyncMigrationIndexes(db);
+    const shifted = before.map((row) => ({ ...row, id: row.id < 2 ? row.id : row.id + 1 }));
+    expect(db.prepare('SELECT * FROM _zcc_migrations ORDER BY id').all()).toEqual(shifted);
+    repairLegacyPeerSyncMigrationIndexes(db);
+    expect(db.prepare('SELECT * FROM _zcc_migrations ORDER BY id').all()).toEqual(shifted);
+  });
+
+  it.each(['hash', 'null', 'missing', 'extra', 'gap'])('leaves nonmatching %s lineage untouched', (mode) => {
+    const db = legacyDatabase();
+    if (mode === 'hash') db.prepare('UPDATE _zcc_migrations SET statement_hash = ? WHERE id = 4').run('different');
+    if (mode === 'null') db.prepare('UPDATE _zcc_migrations SET statement_hash = NULL WHERE id = 4').run();
+    if (mode === 'missing') db.prepare('DELETE FROM _zcc_migrations WHERE id = 8').run();
+    if (mode === 'extra') db.prepare('INSERT INTO _zcc_migrations VALUES (9, ?, 109)').run('extra');
+    if (mode === 'gap') db.prepare('UPDATE _zcc_migrations SET id = 9 WHERE id = 8').run();
+    const before = db.prepare('SELECT * FROM _zcc_migrations ORDER BY id').all();
+    repairLegacyPeerSyncMigrationIndexes(db);
+    expect(db.prepare('SELECT * FROM _zcc_migrations ORDER BY id').all()).toEqual(before);
+  });
+
+  it('rolls back the whole shift if a migration-book update fails', () => {
+    const db = legacyDatabase();
+    db.runScript("CREATE TRIGGER fail_shift BEFORE UPDATE ON _zcc_migrations WHEN OLD.id = 4 BEGIN SELECT RAISE(ABORT, 'shift failed'); END");
+    const before = db.prepare('SELECT * FROM _zcc_migrations ORDER BY id').all();
+    expect(() => repairLegacyPeerSyncMigrationIndexes(db)).toThrow('shift failed');
+    expect(db.prepare('SELECT * FROM _zcc_migrations ORDER BY id').all()).toEqual(before);
+  });
+});
 
 describe('DesignDocStore peer mutation boundary', () => {
   it.each([{ status: 'approved' as const }, { title: 'Stale' }, { tags: ['stale'] }, { entryPath: 'other.md' }])(
@@ -55,6 +106,67 @@ describe('DesignDocStore peer mutation boundary', () => {
     expect(op.origin).toBe('import');
     expect(sync.version('repo', op.id)!.closure.files[0]!.content).toBe('imported');
     expect(sync.readyIntents('repo')).toEqual([]);
+  });
+
+  it('captures imported creation and its thread link as one complete import', () => {
+    const db = createTestDatabase();
+    let sync!: DesignDocSyncStore;
+    const store = new DesignDocStore(db, { onMutation: (mutation) => sync.recordLocalMutation(mutation) });
+    sync = new DesignDocSyncStore(db); sync.initialize('repo', 'replica-a');
+    sync.setGroup('repo', 'group', ['a', 'b'].map((name) => ({ replicaId: `replica-${name}`, machineId: `machine-${name}`, sponsorReplicaId: null, joinedAt: 1 })));
+    const doc = store.createImported({ title: 'Imported', status: 'approved', template: 'blank' }, user, { id: 'import-thread', title: 'Importer' });
+    expect(doc.threads).toEqual([expect.objectContaining({ threadId: 'import-thread', title: 'Importer', role: 'assistant' })]);
+    const operations = sync.operations('repo');
+    expect(operations).toHaveLength(1);
+    expect(operations[0]!.origin).toBe('import');
+    expect(sync.version('repo', sync.head('repo', doc.id)!)!.closure.threads).toHaveLength(1);
+    expect(sync.readyIntents('repo')).toEqual([]);
+  });
+
+  it('imports multiple files and entry metadata atomically with one mutation', () => {
+    const db = createTestDatabase();
+    const mutations: unknown[] = [];
+    const store = new DesignDocStore(db, { onMutation: (mutation) => mutations.push(mutation) });
+    const doc = store.create({ title: 'Import', template: 'blank' }, user);
+    store.importFiles(doc.id, [{ path: 'README.md', content: 'new readme' }, { path: 'entry.md', content: 'new entry' }], user, 'entry.md');
+    expect(mutations).toHaveLength(2);
+    expect(mutations[1]).toMatchObject({ docId: doc.id, kind: 'update', origin: 'import' });
+    expect(store.summary(doc.id).entryPath).toBe('entry.md');
+    const before = store.get(doc.id), files = store.readAllFiles(doc.id), history = store.history(doc.id);
+    expectError(() => store.importFiles(doc.id, [{ path: 'README.md', content: 'rollback' }], user, 'absent.md'), 'invalid', /entryPath/);
+    expect(store.get(doc.id)).toEqual(before);
+    expect(store.readAllFiles(doc.id)).toEqual(files);
+    expect(store.history(doc.id)).toEqual(history);
+    expect(mutations).toHaveLength(2);
+    store.writeFile(doc.id, { path: 'README.md', content: 'local again' }, user);
+    expect(mutations[2]).toMatchObject({ origin: 'local-authoring' });
+  });
+
+  it.each(['update', 'write', 'createImported'])('rolls back %s when mutation capture fails', (mode) => {
+    const db = createTestDatabase();
+    let fail = false;
+    const mutations: unknown[] = [];
+    const store = new DesignDocStore(db, { onMutation: (mutation) => {
+      if (fail) throw new Error('capture failed');
+      mutations.push(mutation);
+    } });
+    const doc = store.create({ title: 'Keep', template: 'blank' }, user);
+    const before = store.get(doc.id), files = store.readAllFiles(doc.id), history = store.history(doc.id);
+    fail = true;
+    expect(() => {
+      if (mode === 'update') store.update(doc.id, { title: 'Rollback', status: 'approved' }, agent);
+      else if (mode === 'write') store.writeFile(doc.id, { path: 'README.md', content: 'rollback' }, agent);
+      else store.createImported({ title: 'Rollback', template: 'blank' }, user, { id: 'import-thread', title: 'Importer' });
+    }).toThrow('capture failed');
+    expect(store.list()).toEqual([expect.objectContaining({ id: doc.id })]);
+    expect(store.get(doc.id)).toEqual(before);
+    expect(store.readAllFiles(doc.id)).toEqual(files);
+    expect(store.history(doc.id)).toEqual(history);
+    expect(db.prepare('SELECT * FROM doc_threads').all()).toEqual([]);
+    fail = false;
+    store.update(doc.id, { summary: 'Recovered' }, user);
+    expect(mutations).toHaveLength(2);
+    expect(mutations[1]).toMatchObject({ docId: doc.id, origin: 'local-authoring' });
   });
 
   it('rolls back nested imports when capture fails and discards failed child mutations', () => {
@@ -201,16 +313,48 @@ describe('DesignDocStore peer mutation boundary', () => {
     expect(store.find(doc.id)).not.toBeNull();
     const failing = createTestDatabase();
     const capture = new DesignDocStore(failing, { onMutation: (mutation) => { if (mutation.kind === 'delete-doc') throw new Error('tombstone failed'); } });
-    const kept = capture.create({ title: 'Kept on failure', template: 'blank' }, user);
+    const failingSync = new DesignDocSyncStore(failing); failingSync.initialize('repo', 'replica-a');
+    failingSync.setGroup('repo', 'group', ['a', 'b'].map((name) => ({ replicaId: `replica-${name}`, machineId: `machine-${name}`, sponsorReplicaId: null, joinedAt: 1 })));
+    const kept = capture.create({ title: 'Kept on failure', template: 'blank' }, agent);
+    capture.addComment(kept.id, { body: 'Keep comment' }, user);
+    const before = capture.get(kept.id), files = capture.readAllFiles(kept.id), history = capture.history(kept.id);
     expect(() => capture.remove(kept.id)).toThrow('tombstone failed');
-    expect(capture.find(kept.id)).not.toBeNull();
-    expect(failing.prepare('SELECT COUNT(*) AS n FROM doc_files WHERE doc_id = ?').get(kept.id)).toEqual({ n: 1 });
+    expect(capture.get(kept.id)).toEqual(before);
+    expect(capture.readAllFiles(kept.id)).toEqual(files);
+    expect(capture.history(kept.id)).toEqual(history);
     const other = createTestDatabase();
     const observed = new DesignDocStore(other, { onMutation: () => { throw new Error('capture failed'); } });
     expect(() => observed.create({ title: 'Rollback', status: 'approved', template: 'blank' }, user)).toThrow('capture failed');
     expect(observed.list()).toEqual([]);
     expect(other.prepare('SELECT * FROM doc_files').all()).toEqual([]);
     expect(other.prepare('SELECT * FROM doc_revisions').all()).toEqual([]);
+  });
+
+  it('deletes paired doc dependents and records a scrubbed tombstone in the same transaction', () => {
+    const db = createTestDatabase();
+    let sync!: DesignDocSyncStore;
+    const store = new DesignDocStore(db, { onMutation: (mutation) => sync.recordLocalMutation(mutation) });
+    sync = new DesignDocSyncStore(db); sync.initialize('repo', 'replica-a');
+    sync.setGroup('repo', 'group', ['a', 'b'].map((name) => ({ replicaId: `replica-${name}`, machineId: `machine-${name}`, sponsorReplicaId: null, joinedAt: 1 })));
+    const doc = store.create({ title: 'Private title', status: 'approved', template: 'blank' }, agent);
+    store.addComment(doc.id, { body: 'private comment' }, user);
+    const alternative = store.create({ title: 'Alternative', template: 'blank' }, user);
+    store.update(alternative.id, { alternativeTo: doc.id }, user);
+    db.prepare('INSERT INTO sync_doc_references VALUES (?, ?, ?)').run(doc.id, 'null', '[]');
+    db.prepare('INSERT INTO sync_history_order VALUES (?, ?, ?)').run(doc.id, 'history', 1);
+    const head = store.summary(doc.id).head;
+    store.remove(doc.id, agent);
+    expect(store.find(doc.id)).toBeNull();
+    expect(store.summary(alternative.id).alternativeTo).toBeNull();
+    for (const table of ['doc_files', 'doc_revisions', 'doc_comments', 'doc_threads', 'sync_doc_references', 'sync_history_order']) {
+      expect(db.prepare(`SELECT * FROM ${table} WHERE doc_id = ?`).all(doc.id)).toEqual([]);
+    }
+    const tombstone = sync.version('repo', sync.head('repo', doc.id)!)!;
+    expect(tombstone.operation).toMatchObject({ kind: 'delete', parents: [head], origin: 'local-authoring' });
+    expect(tombstone.closure).toMatchObject({ files: [], history: [], comments: [], threads: [], deleted: { by: JSON.stringify(agent) } });
+    expect(JSON.stringify(tombstone.closure)).not.toContain('Private title');
+    expect(JSON.stringify(tombstone.closure)).not.toContain('private comment');
+    expect(sync.readyIntents('repo')).toHaveLength(1);
   });
 
   it('keeps stable file identity across rename and freezes file/comment tombstone state', () => {

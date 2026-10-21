@@ -4,7 +4,7 @@ import type { PluginDatabase } from '@zana-ai/zcc-plugin-sdk/server';
 import { canonicalJson, canonicalPeerHash, PeerProtocolError } from '../shared/peer-contract.js';
 import { MAX_PERMANENT_JOB_ATTEMPTS, ownerText, type GroupJob, type GroupReceipt, type GroupRoster } from '../shared/peer-group.js';
 import { DesignDocSyncStore } from './sync-store.js';
-import { admissionReference, appendSeat, closeRetirement, completeRetirements, controlId as id, createRoster, finalizeRoster, genesisHash, historicalMembers, isRetiring, memberSchema,
+import { admissionReference, appendSeat, closeRetirement, completeRetirements, controlId as id, createRoster, currentMemberCount, finalizeRoster, genesisHash, historicalMembers, isRetiring, memberSchema,
   mergeRosters, ownedSeats, parseRoster, permitsRetirementCompletion, removeMember, requestRetirement, rosterCovers, transferSeat } from './peer-slots.js';
 export { isRetiring, memberSchema, parseRoster, rosterCovers } from './peer-slots.js';
 
@@ -250,7 +250,7 @@ export class DesignDocPeerGroup {
       if (members.some((member) => member.replicaId === request.member.replicaId || member.machineId === request.member.machineId)) {
         throw new PeerProtocolError('conflict', 'member already admitted with another request');
       }
-      if (members.length >= 8) throw new PeerProtocolError('limit', 'group full (8)');
+      if ((current ? currentMemberCount(current) : members.length) >= 8) throw new PeerProtocolError('limit', 'group full (8)');
       this.capacity('sync_group_admissions');
       let roster: GroupRoster;
       if (!current) roster = createRoster(local.repoId, randomUUID(), [...members, request.member], request.requestId, local.replicaId);
@@ -425,6 +425,8 @@ export class DesignDocPeerGroup {
         return;
       }
       this.db.prepare("DELETE FROM sync_group_jobs WHERE state = 'done' AND kind NOT IN ('introduce', 'roster')").run();
+      this.db.prepare(`DELETE FROM sync_group_jobs WHERE state = 'done' AND kind = 'roster' AND peer_id NOT IN
+        (SELECT machine_id FROM sync_group_members WHERE removed_at IS NULL)`).run();
       if (kind === 'retire' || kind === 'introduce' || kind === 'roster' || kind === 'revoke' || (kind === 'local-revoke' && !revocationSchema.parse(payload).localOnly)) {
         // Eight identities bound teardown work independently of the general queue.
         const row = this.db.prepare(`SELECT COUNT(*) AS n FROM sync_group_jobs WHERE kind = ?
@@ -590,6 +592,10 @@ export class DesignDocPeerGroup {
   }
 
   private capacity(table: 'sync_group_admissions' | 'sync_group_jobs', limit = MAX_CONTROL_ROWS): void {
+    if (table === 'sync_group_admissions') this.db.prepare(`DELETE FROM sync_group_admissions WHERE json_valid(request_json)
+      AND json_extract(request_json, '$.member.replicaId') IN
+        (SELECT replica_id FROM sync_group_members WHERE removed_at IS NOT NULL)
+      AND NOT EXISTS (SELECT 1 FROM sync_group_jobs WHERE peer_id = json_extract(request_json, '$.member.machineId') AND ${OPEN})`).run();
     const row = this.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
     if (row.n >= limit) throw new PeerProtocolError('limit', 'group control capacity reached');
   }

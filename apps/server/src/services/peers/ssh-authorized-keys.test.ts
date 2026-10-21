@@ -47,6 +47,15 @@ describe('SshAuthorizedKeys', () => {
       `restrict,port-forwarding,permitlisten="127.0.0.1:40001",permitopen="127.0.0.1:40002",command="/usr/bin/false" ${key('A')} zana-peer-v1:inst-1:link-1:link\n`);
   });
 
+  it('adds only the TCP-required port-forwarding token, never a stream-local policy override', async () => {
+    await mk().upsert(base());
+    const options = (await readFile(file, 'utf8')).split(' ')[0]!.split(',');
+    // port-forwarding cannot override sshd's AllowStreamLocalForwarding no; peer-ssh-local proves that policy.
+    expect(options).toEqual(['restrict', 'port-forwarding', 'permitlisten="127.0.0.1:40001"',
+      'permitopen="127.0.0.1:40002"', 'command="/usr/bin/false"']);
+    expect(options.filter(option => option === 'port-forwarding')).toHaveLength(1);
+  });
+
   it('never matches or deletes a foreign line that merely ends with a zana comment', async () => {
     await mkdir(ssh, { mode: 0o700 });
     const foreign = [

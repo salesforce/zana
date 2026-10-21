@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import { link, lstat, mkdir, open, opendir, realpath, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { peerKeyReasonSuffix, serializePeerStorage, type PeerKeyProvider } from './peer-auth.js';
+import { SERVER_RUNTIME_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/runtime';
 
 /** Injected by trusted host composition, never by HTTP or plugin code. */
 export interface PeerCryptoProvider {
@@ -113,22 +114,47 @@ export function createProtectedPeerKeyProvider(dataDir: string, cryptoProvider?:
   };
 }
 
-/** Existing boot-only utility env seam; scrub before any plugin worker can inherit it. */
+interface PeerBootPort {
+  on(event: 'message', listener: (event: { data: unknown }) => void): void;
+  removeListener(event: 'message', listener: (event: { data: unknown }) => void): void;
+}
+const consumedBootPorts = new WeakSet<PeerBootPort>();
+
+/** Register before runtime dispatch so secret bytes never reach plugin composition or logs. */
 export function consumePeerBootKey(env: NodeJS.ProcessEnv = process.env): PeerKeyProvider & { dispose(): void } {
-  const text = env[PEER_BOOT_KEY_ENV];
+  // Legacy environment secrets are never authority, even if inherited from an older launcher.
   delete env[PEER_BOOT_KEY_ENV];
   const supplied = env[PEER_KEY_REASON_ENV];
   delete env[PEER_KEY_REASON_ENV];
   const reason: PeerKeyReason | null = isPeerKeyReason(supplied) ? supplied : null;
-  const key = text && /^[A-Za-z0-9_-]{43}$/.test(text) ? Buffer.from(text, 'base64url') : null;
-  let live = !!key && key.length === 32 && key.toString('base64url') === text;
+  let key: Buffer | null = null;
+  let disposed = false;
+  const port = (process as unknown as { parentPort?: PeerBootPort }).parentPort;
+  const receive = ({ data }: { data: unknown }) => {
+    if (!data || typeof data !== 'object') return;
+    const message = data as { type?: unknown; protocolVersion?: unknown; peerBootKey?: unknown };
+    if (message.type !== 'start') return;
+    port!.removeListener('message', receive);
+    const bytes = message.peerBootKey;
+    delete message.peerBootKey;
+    if (bytes instanceof Uint8Array) {
+      try {
+        if (message.protocolVersion === SERVER_RUNTIME_PROTOCOL_VERSION && bytes.length === 32) key = Buffer.from(bytes);
+      } finally { bytes.fill(0); }
+    }
+  };
+  if (port && !consumedBootPorts.has(port)) {
+    consumedBootPorts.add(port);
+    port.on('message', receive);
+  }
   return {
     getKey: async () => {
-      if (live) return Buffer.from(key!);
+      if (disposed) return null;
+      if (key) return Buffer.from(key);
       // Absent key with a known cause: fail typed so the cause reaches plugins instead of a silent null.
       if (reason) throw new PeerKeyReasonError(reason);
       return null;
     },
-    dispose: () => { live = false; key?.fill(0); }
+    dispose: () => { disposed = true; port?.removeListener('message', receive); key?.fill(0); key = null; }
   };
 }

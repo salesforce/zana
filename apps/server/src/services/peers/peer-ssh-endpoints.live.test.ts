@@ -23,7 +23,7 @@ import { PeerTunnels, pinnedSshArgs } from '@zana-ai/zcc-host-daemon/peer-tunnel
 import { startEnrolledHostConnection, type EnrolledHostConnection } from '@zana-ai/zcc-host-daemon/server-connection';
 import { createCommandRuntime } from '@zana-ai/zcc-host-daemon/command-dispatch';
 import { HOST_RPC_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/host-rpc';
-import { getHost, listHosts } from '@zana-ai/zcc-db';
+import { getHost, listAllHosts } from '@zana-ai/zcc-db';
 import { startProductServer, type ProductServer } from '../../http/product-server.js';
 import { createPluginApi, type PluginHandle } from '../../plugins/plugin-api.js';
 import { createEnrolledPeerBridge } from './enrolled-peer-bridge.js';
@@ -198,7 +198,7 @@ describe.skipIf(!LIVE)('live SSH transport adapter (real sshd)', () => {
   }
   const installations = async (owner: App) => (await (await fetch(`${owner.server.url}api/v1/peers/installations`)).json() as {
     installations: Array<Record<string, unknown>> }).installations;
-  const forwardHosts = (owner: App) => listHosts(owner.server.ctx.db).filter(host => !host.destroyedAt && host.enrollmentCapability === 'peer.forward');
+  const forwardHosts = (owner: App) => listAllHosts(owner.server.ctx.db).filter(host => !host.destroyedAt && host.enrollmentCapability === 'peer.forward');
 
   it('an introduced peer reached only through the registered SSH tunnel enrolls, round-trips sealed peer.control, and reports unavailable when sshd dies', async () => {
     const scope = 'ssh-live-scope';

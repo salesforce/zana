@@ -408,8 +408,8 @@ it('invites, redeems and decides through the SDK with redacted projections and o
   const a = await w.make('a'), b = await w.make('b');
   const pa = inviteApi(a.dir, 'sync-plugin', { peerInvitations: a.service }), pb = inviteApi(b.dir, 'sync-plugin', { peerInvitations: b.service });
   const created = await pa.createInvitation!({ scope: INV_SCOPE });
-  expect(Object.keys(created).sort()).toEqual(['expiresAt', 'invitationId', 'token']);
-  const redeemed = await pb.redeemInvitation!({ token: created.token });
+  expect(Object.keys(created).sort()).toEqual(['code', 'expiresAt', 'invitationId', 'token']);
+  const redeemed = await pb.redeemInvitation!({ token: created.token, code: created.code });
   expect(redeemed).toMatchObject({ role: 'redeemer', state: 'redeeming', scope: INV_SCOPE, peer: { name: 'Computer a' } });
   expect(b.links.redeem).toHaveBeenCalledTimes(1);
   await w.connectLink(b.service, created.invitationId);
@@ -451,7 +451,7 @@ it('throttles plugin refresh polling to the service refresh limit', async () => 
   const a = await w.make('a'), b = await w.make('b');
   const pa = inviteApi(a.dir, 'sync-plugin', { peerInvitations: a.service }), pb = inviteApi(b.dir, 'sync-plugin', { peerInvitations: b.service });
   const created = await pa.createInvitation!({ scope: INV_SCOPE });
-  await pb.redeemInvitation!({ token: created.token });
+  await pb.redeemInvitation!({ token: created.token, code: created.code });
   // The redeemer still owes its delivery (no bootstrap link yet), so refresh may poll, but only once per interval.
   const refresh = vi.spyOn(b.service, 'refresh'), poll = vi.spyOn(b.service, 'poll');
   for (let i = 0; i < 25; i++) expect(await pb.invitationStatus!({ invitationId: created.invitationId, refresh: true })).toMatchObject({ state: 'redeeming' });
@@ -475,7 +475,7 @@ it('cancels an open invitation without proof and isolates invitations per plugin
   await expect(other.cancelInvitation!({ invitationId: created.invitationId })).rejects.toThrow('Invitation not found');
   await expect(other.decideInvitation!({ invitationId: created.invitationId, decision: 'denied' })).rejects.toThrow('Invitation not found');
   await expect(other.invitationApproval!({ invitationId: created.invitationId })).rejects.toThrow('Invitation not found');
-  await expect(theirs.redeemInvitation!({ token: created.token })).rejects.toThrow('different plugin');
+  await expect(theirs.redeemInvitation!({ token: created.token, code: created.code })).rejects.toThrow('different plugin');
   expect((await mine.invitationStatus!({ invitationId: created.invitationId })).state).toBe('open');
   await mine.cancelInvitation!({ invitationId: created.invitationId });
   expect((await mine.invitationStatus!({ invitationId: created.invitationId })).state).toBe('cancelled');
@@ -506,7 +506,7 @@ it('projects an ssh refusal with the ssh_* code as both reason and message', asy
   const peers = inviteApi(scratch(), 'sync-plugin', { peerInvitations: { create: vi.fn(), redeem: refuse, status: async () => status, list: vi.fn(), poll: async () => status, refresh: async () => status,
     decide: vi.fn(), cancel: vi.fn(), approvalRequest: vi.fn() } });
   expect(await peers.invitationStatus!({ invitationId: id, refresh: true })).toMatchObject({ state: 'failed', reason: 'ssh_unreachable' });
-  const error = await peers.redeemInvitation!({ token: 'zccinv1.' + Buffer.from('{}').toString('base64url') }).catch((caught: unknown) => caught);
+  const error = await peers.redeemInvitation!({ token: 'zccinv1.' + Buffer.from('{}').toString('base64url'), code: 'ABCD-EFGH' }).catch((caught: unknown) => caught);
   expect(error).toBeInstanceOf(InvitationError);
   expect(error).toMatchObject({ code: 'ssh_unreachable', message: 'ssh_unreachable' });
 });
@@ -519,7 +519,7 @@ it('maps unknown failures to a fixed message so tokens and secrets never reach p
   const token = 'zccinv1.' + Buffer.from('{}').toString('base64url');
   const id = randomUUID();
   const errors: unknown[] = [];
-  for (const run of [() => peers.createInvitation!({ scope: INV_SCOPE }), () => peers.redeemInvitation!({ token }), () => peers.invitationStatus!({ invitationId: id }),
+  for (const run of [() => peers.createInvitation!({ scope: INV_SCOPE }), () => peers.redeemInvitation!({ token, code: 'ABCD-EFGH' }), () => peers.invitationStatus!({ invitationId: id }),
     () => peers.invitationStatus!({ invitationId: id, refresh: true }), () => peers.listInvitations!(), () => peers.invitationApproval!({ invitationId: id }),
     () => peers.decideInvitation!({ invitationId: id, decision: 'approved', ownerProof: 'p' }), () => peers.cancelInvitation!({ invitationId: id }),
     () => peers.peerLinks!(), () => peers.reconnectPeer!(id)]) errors.push(await run().then(() => null, (error: unknown) => error));
@@ -531,8 +531,8 @@ it('maps unknown failures to a fixed message so tokens and secrets never reach p
   // Redeeming a malformed token through the real service also yields only a fixed message.
   const real = invitationWorld(), a = await real.make('a');
   const realPeers = inviteApi(a.dir, 'sync-plugin', { peerInvitations: a.service });
-  await expect(realPeers.redeemInvitation!({ token: 'zccinv1.SECRETPAYLOAD' })).rejects.toThrow('This invitation is not valid');
-  await expect(realPeers.redeemInvitation!({ token: 'zccinv1.SECRETPAYLOAD' })).rejects.not.toThrow(/SECRETPAYLOAD/);
+  await expect(realPeers.redeemInvitation!({ token: 'zccinv1.SECRETPAYLOAD', code: 'ABCD-EFGH' })).rejects.toThrow('This invitation is not valid');
+  await expect(realPeers.redeemInvitation!({ token: 'zccinv1.SECRETPAYLOAD', code: 'ABCD-EFGH' })).rejects.not.toThrow(/SECRETPAYLOAD/);
 });
 
 it('logs a sanitised diagnostic server-side when a non-Invitation error is reported as unavailable', async () => {
@@ -634,7 +634,7 @@ it('honours abort and stale contexts; a create that completes after dispose is c
   const peers = handle.api.sdk.peers;
   const pre = AbortSignal.abort(new Error('pre-cancelled'));
   await expect(peers.createInvitation!({ scope: INV_SCOPE, signal: pre })).rejects.toThrow('pre-cancelled');
-  await expect(peers.redeemInvitation!({ token: 'zccinv1.x', signal: pre })).rejects.toThrow('pre-cancelled');
+  await expect(peers.redeemInvitation!({ token: 'zccinv1.x', code: 'ABCD-EFGH', signal: pre })).rejects.toThrow('pre-cancelled');
   await expect(peers.listInvitations!({ signal: pre })).rejects.toThrow('pre-cancelled');
   expect(await a.service.list({ pluginId: 'sync-plugin' })).toEqual([]);
   // Dispose while create is in flight.

@@ -1,4 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import { SERVER_RUNTIME_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/runtime';
 import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -112,16 +114,85 @@ it.each(['unexpected', 'capacity', 'hardlink', 'directory-symlink'])('rejects %s
   await expect(provider.getKey()).rejects.toThrow('protected peer storage key unavailable');
 });
 
-it('consumes boot-only key before plugin startup and zeros provider on disposal', async () => {
+it('ignores legacy environment key material and scrubs it', async () => {
   const text = randomBytes(32).toString('base64url'), env = { [PEER_BOOT_KEY_ENV]: text };
   const provider = consumePeerBootKey(env);
   expect(env).toEqual({});
-  const key = await provider.getKey();
-  expect(Buffer.from(key!).toString('base64url')).toBe(text);
-  key!.fill(0);
-  expect(Buffer.from((await provider.getKey())!).toString('base64url')).toBe(text);
+  await expect(provider.getKey()).resolves.toBeNull();
   provider.dispose();
   await expect(provider.getKey()).resolves.toBeNull();
+});
+
+it('consumes first start IPC payload once, scrubs bytes before dispatch and zeros provider on disposal', async () => {
+  const port = new EventEmitter();
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'parentPort');
+  Object.defineProperty(process, 'parentPort', { configurable: true, value: port });
+  try {
+    const provider = consumePeerBootKey({});
+    const duplicate = consumePeerBootKey({});
+    const bytes = randomBytes(32), expected = Buffer.from(bytes);
+    const payload = { type: 'start', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, peerBootKey: bytes };
+    port.on('message', ({ data }) => {
+      expect(data).not.toHaveProperty('peerBootKey');
+      expect(bytes).toEqual(Buffer.alloc(32));
+    });
+    port.emit('message', { data: payload });
+    await expect(provider.getKey()).resolves.toEqual(expected);
+    await expect(duplicate.getKey()).resolves.toBeNull();
+    const copy = await provider.getKey();
+    copy!.fill(0);
+    await expect(provider.getKey()).resolves.toEqual(expected);
+    provider.dispose();
+    await expect(provider.getKey()).resolves.toBeNull();
+    duplicate.dispose();
+  } finally {
+    if (descriptor) Object.defineProperty(process, 'parentPort', descriptor);
+    else Reflect.deleteProperty(process, 'parentPort');
+  }
+});
+
+it.each(['wrong-version', 'short', 'oversized', 'string', 'absent'])('fails closed on %s first boot payload and cannot be rekeyed', async mode => {
+  const port = new EventEmitter();
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'parentPort');
+  Object.defineProperty(process, 'parentPort', { configurable: true, value: port });
+  try {
+    const provider = consumePeerBootKey({});
+    port.emit('message', { data: null });
+    port.emit('message', { data: 'invalid' });
+    port.emit('message', { data: { type: 'request' } });
+    expect(port.listenerCount('message')).toBe(1);
+    const bytes = mode === 'string' ? randomBytes(32).toString('base64url') : mode === 'absent' ? undefined
+      : new Uint8Array(mode === 'short' ? 31 : mode === 'oversized' ? 33 : 32).fill(19);
+    const payload = { type: 'start', protocolVersion: mode === 'wrong-version' ? -1 : SERVER_RUNTIME_PROTOCOL_VERSION, peerBootKey: bytes };
+    port.emit('message', { data: payload });
+    expect(payload).not.toHaveProperty('peerBootKey');
+    if (bytes instanceof Uint8Array) expect(bytes.every(byte => byte === 0)).toBe(true);
+    expect(port.listenerCount('message')).toBe(0);
+    await expect(provider.getKey()).resolves.toBeNull();
+    port.emit('message', { data: { type: 'start', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, peerBootKey: randomBytes(32) } });
+    await expect(provider.getKey()).resolves.toBeNull();
+    provider.dispose();
+  } finally {
+    if (descriptor) Object.defineProperty(process, 'parentPort', descriptor); else Reflect.deleteProperty(process, 'parentPort');
+  }
+});
+
+it('removes pending boot listener on disposal and prevents another consumer from claiming channel', async () => {
+  const port = new EventEmitter();
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'parentPort');
+  Object.defineProperty(process, 'parentPort', { configurable: true, value: port });
+  try {
+    const provider = consumePeerBootKey({ [PEER_KEY_REASON_ENV]: 'keychain-denied' });
+    provider.dispose();
+    expect(port.listenerCount('message')).toBe(0);
+    const duplicate = consumePeerBootKey({});
+    expect(port.listenerCount('message')).toBe(0);
+    await expect(provider.getKey()).resolves.toBeNull();
+    await expect(duplicate.getKey()).resolves.toBeNull();
+    duplicate.dispose();
+  } finally {
+    if (descriptor) Object.defineProperty(process, 'parentPort', descriptor); else Reflect.deleteProperty(process, 'parentPort');
+  }
 });
 
 it.each([undefined, '', 'plaintext', 'A'.repeat(42) + 'B'])('rejects invalid boot key %s', async text => {

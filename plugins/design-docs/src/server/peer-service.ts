@@ -25,8 +25,12 @@ export class DesignDocPeerService {
   register(zcc: ZccPluginApi): void {
     this.peers = zcc.sdk.peers;
     zcc.sdk.peers.handle('manual', async (request) => {
+      // Accept the inbound consent, but do NOT eagerly schedule delivery here: the sender follows up with an explicit
+      // 'manual-deliver' only after it has completed its own ACK (flipping its inbound session to 'accepted'). Scheduling
+      // a background delivery on bare accept races that ACK — the peer would ship a private draft while this side's
+      // inbound session is still 'waiting', tripping the strict bilateral-consent gate. 'manual-deliver' is the sanctioned,
+      // race-free delivery trigger.
       const { consent, accepted } = await this.acceptManualConsent(request);
-      if (accepted) this.mutationCommitted();
       return { manualId: consent.manualId, accepted };
     });
     zcc.sdk.peers.handle('manual-deliver', async (request) => {

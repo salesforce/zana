@@ -1,4 +1,5 @@
 import { createServer, connect, type Server } from 'node:net';
+import { access } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AuthorizedKeyInput, AuthorizedKeys } from './peer-ssh-contract.js';
 import { createLocalEndpoint, preflightPeerSsh, probeSshBanner, type PeerSshLocalDeps, type SshProcess } from './peer-ssh-local.js';
@@ -6,6 +7,7 @@ import { createLocalEndpoint, preflightPeerSsh, probeSshBanner, type PeerSshLoca
 const HOST_KEY = `ssh-ed25519 ${'A'.repeat(68)}`;
 const servers: Server[] = [];
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const server of servers.splice(0)) await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections?.(); });
 });
 
@@ -71,7 +73,9 @@ describe('createLocalEndpoint', () => {
     const override = { host: 'localhost', port: 45022, user: 'e2e', hostKey: HOST_KEY };
     const env = { ZCC_E2E_PEER_SSH_ENDPOINT: JSON.stringify(override) };
     const probeBanner = vi.fn(async () => 'refused' as const);
-    expect(await createLocalEndpoint(base({ env: { ...env, ZCC_E2E_HOME: '/tmp/e2e' }, probeBanner }))(signal())).toEqual(override);
+    const selfTest = vi.fn(async () => undefined);
+    expect(await createLocalEndpoint(base({ env: { ...env, ZCC_E2E_HOME: '/tmp/e2e' }, probeBanner, selfTest }))(signal())).toEqual(override);
+    expect(selfTest).toHaveBeenCalledWith(override, expect.anything());
     expect(probeBanner).not.toHaveBeenCalled();
     // Without the isolation marker the override is ignored and the real probe decides.
     expect(await reason(createLocalEndpoint(base({ env, probeBanner }))(signal()))).toBe('ssh_remote_login_off');
@@ -102,7 +106,18 @@ describe('default self-test', () => {
   };
   const arg = (args: string[], flag: string) => args[args.indexOf(flag) + 1]!;
   /** Fake ssh that, like the real one, listens on the -L port and relays to the -L target. */
-  const proxySsh = (mode: 'ok' | 'drop') => (args: string[]): SshProcess => {
+  const proxySsh = (mode: 'ok' | 'drop', streamLocal: 'refused' | 'allowed' = 'refused') => (args: string[]): SshProcess => {
+    const remote = arg(args, '-R');
+    if (remote.startsWith('/')) {
+      const path = remote.split(':')[0]!;
+      if (streamLocal === 'refused') return {
+        exited: Promise.resolve({ code: 255, stderr: `Error: remote port forwarding failed for listen path ${path}\r\n` }),
+        kill: () => undefined
+      };
+      const socket = createServer();
+      socket.listen(path);
+      return { exited: new Promise(() => undefined), kill: () => { socket.close(); } };
+    }
     const [, localPort, , targetPort] = arg(args, '-L').split(':');
     const server = createServer(client => {
       if (mode === 'drop') { client.destroy(); return; }
@@ -116,7 +131,7 @@ describe('default self-test', () => {
   const run = (spawnSsh: (args: string[]) => SshProcess, authorizedKeys?: AuthorizedKeys) =>
     createLocalEndpoint({ ...base({ spawnSsh, authorizedKeys }), selfTest: undefined })(signal());
 
-  it('passes when the forward reaches the scratch listener and removes the throwaway line', async () => {
+  it('passes only after TCP works and the Unix-socket remote forward is explicitly refused', async () => {
     const { calls, lines, authorizedKeys } = recorder();
     const captured: string[][] = [];
     await run(args => { captured.push(args); return proxySsh('ok')(args); }, authorizedKeys);
@@ -126,12 +141,69 @@ describe('default self-test', () => {
     expect(args).toContain('-N');
     expect(args.slice(-4)).toEqual(['-l', 'alice', '--', 'localhost']);
     expect(args[args.length - 1]).toBe('localhost');
+    expect(captured).toHaveLength(2);
+    expect(arg(captured[1]!, '-R')).toMatch(/^\/.*:127\.0\.0\.1:\d+$/);
+    expect(captured[1]).toContain('ExitOnForwardFailure=yes');
+    expect(captured[1]).not.toContain('-L');
   });
 
-  it('is skipped without an authorizedKeys manager', async () => {
+  it('refuses setup when sshd creates a Unix-socket remote listener and cleans every resource', async () => {
+    const { authorizedKeys, calls, lines } = recorder();
+    const paths: string[] = [];
+    const kills: ReturnType<typeof vi.fn>[] = [];
+    const result = run(args => {
+      const remote = arg(args, '-R');
+      if (remote.startsWith('/')) paths.push(remote.split(':')[0]!);
+      const process = proxySsh('ok', 'allowed')(args);
+      const kill = vi.fn(process.kill); kills.push(kill);
+      return { ...process, kill };
+    }, authorizedKeys);
+    expect(await reason(result)).toBe('ssh_forwarding_refused: serving sshd must disable stream-local forwarding (AllowStreamLocalForwarding no)');
+    expect(paths).toHaveLength(1);
+    await expect(access(paths[0]!)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(kills).toHaveLength(2);
+    for (const kill of kills) expect(kill).toHaveBeenCalledTimes(1);
+    expect(calls).toEqual(['upsert', 'remove']);
+    expect(lines.size).toBe(0);
+  });
+
+  it.each([
+    { code: 255, stderr: 'Permission denied (publickey).' },
+    { code: 255, stderr: 'Host key verification failed.' },
+    { code: 0, stderr: '' },
+    { code: null, stderr: 'spawn failed' },
+    { code: 255, stderr: 'remote port forwarding failed for listen path /another/path' }
+  ])('fails closed on an unproven stream-local rejection: %j', async exit => {
+    const { authorizedKeys, lines } = recorder();
+    expect(await reason(run(args => arg(args, '-R').startsWith('/')
+      ? { exited: Promise.resolve(exit), kill: () => undefined } : proxySsh('ok')(args), authorizedKeys)))
+      .toBe('ssh_forwarding_refused: serving sshd must disable stream-local forwarding (AllowStreamLocalForwarding no)');
+    expect(lines.size).toBe(0);
+  });
+
+  it('fails closed without an authorizedKeys manager', async () => {
     const spawnSsh = vi.fn();
-    expect((await run(spawnSsh as never)).user).toBe('alice');
+    expect(await reason(run(spawnSsh as never))).toBe('ssh_forwarding_refused: serving sshd must disable stream-local forwarding (AllowStreamLocalForwarding no)');
     expect(spawnSsh).not.toHaveBeenCalled();
+  });
+
+  it.each(['timeout', 'abort'] as const)('fails closed on stream-local probe %s and kills ssh', async mode => {
+    const { authorizedKeys, lines } = recorder();
+    const controller = new AbortController();
+    const kill = vi.fn();
+    const spawnSsh = (args: string[]): SshProcess => {
+      if (!arg(args, '-R').startsWith('/')) return proxySsh('ok')(args);
+      if (mode === 'abort') controller.abort();
+      else {
+        let now = Date.now();
+        vi.spyOn(Date, 'now').mockImplementation(() => { now += 11_000; return now; });
+      }
+      return { exited: new Promise(() => undefined), kill };
+    };
+    const out = createLocalEndpoint({ ...base({ spawnSsh, authorizedKeys }), selfTest: undefined })(controller.signal);
+    expect(await reason(out)).toBe('ssh_forwarding_refused: serving sshd must disable stream-local forwarding (AllowStreamLocalForwarding no)');
+    expect(kill).toHaveBeenCalledTimes(1);
+    expect(lines.size).toBe(0);
   });
 
   it('reports ssh_forwarding_refused when the forward closes without data', async () => {

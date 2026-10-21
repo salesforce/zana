@@ -16,6 +16,7 @@ import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { SshAuthorizedKeys } from './ssh-authorized-keys.js';
+import { createLocalEndpoint } from './peer-ssh-local.js';
 
 const LIVE = process.env.ZCC_LIVE_SSH === '1';
 const freePort = () => new Promise<number>((resolve, reject) => {
@@ -67,7 +68,7 @@ describe.skipIf(!LIVE)('live sshd enforcement of SshAuthorizedKeys lines', () =>
     await writeFile(join(dir, 'sshd_config'), [
       `Port ${port}`, 'ListenAddress 127.0.0.1', `HostKey ${join(dir, 'host_key')}`, `AuthorizedKeysFile ${join(dir, 'authorized_keys')}`,
       'PasswordAuthentication no', 'KbdInteractiveAuthentication no', 'UsePAM no', `PidFile ${join(dir, 'sshd.pid')}`,
-      'AllowTcpForwarding yes', 'StrictModes no', `AllowUsers ${user}`, ''].join('\n'), { mode: 0o600 });
+      'AllowTcpForwarding yes', 'AllowStreamLocalForwarding no', 'StrictModes no', `AllowUsers ${user}`, ''].join('\n'), { mode: 0o600 });
     sshd = spawn('/usr/sbin/sshd', ['-D', '-e', '-f', join(dir, 'sshd_config')], { stdio: 'ignore', detached: true });
     await vi.waitFor(() => new Promise<void>((resolve, reject) => {
       const s = connect(port, '127.0.0.1'); s.once('connect', () => { s.destroy(); resolve(); }); s.once('error', reject);
@@ -107,13 +108,8 @@ describe.skipIf(!LIVE)('live sshd enforcement of SshAuthorizedKeys lines', () =>
     await ak.remove('live-1');
     expect(await exited(tunnel('good', ['-L', `127.0.0.1:${await freePort()}:127.0.0.1:1`]))).toBe(255);
   }, 30_000);
-  /**
-   * Spike (HIGH-1): does `permitlisten` / `permitopen` also confine Unix-domain-socket forwards? The options only name
-   * `host:port`, so a key restricted by our line must NOT be able to create a streamlocal listener or reach a streamlocal target.
-   * The assertions record the behaviour observed on the OpenSSH that runs this test (see the `ssh -V` banner logged below).
-   * OBSERVED (macOS OpenSSH_10.3p1): the restricted key CAN create a Unix-socket remote forward; `permitlisten` does not apply.
-   */
-  it('OBSERVED: a key restricted by our line can still create a Unix-socket remote forward (-R /path); -L to a socket path is refused', async () => {
+  /** TCP key restrictions cannot confine Unix-socket paths; the serving sshd must disable stream-local forwarding. */
+  it('rejects Unix-socket remote forwarding (-R /path) while permitted TCP forwarding still works', async () => {
     const version = spawnSync('/usr/bin/ssh', ['-V'], { encoding: 'utf8' });
     console.info(`[live-ssh] client ${(version.stderr || version.stdout).trim()}`);
     const target = await echoServer(), listenPort = await freePort();
@@ -132,8 +128,8 @@ describe.skipIf(!LIVE)('live sshd enforcement of SshAuthorizedKeys lines', () =>
       const code = await Promise.race([exited(uds), new Promise<'alive'>(resolve => setTimeout(() => resolve('alive'), 4000))]);
       const appeared = existsSync(socketPath);
       console.info(`[live-ssh] -R ${socketPath}: ssh ${code === 'alive' ? 'stayed up' : `exited ${code}`}, socket file ${appeared ? 'CREATED' : 'absent'}`);
-      expect(appeared).toBe(true);
-      expect(code).toBe('alive');
+      expect(appeared).toBe(false);
+      expect(code).toBe(255);
       uds.kill('SIGKILL');
     } finally { await rm(socketPath, { force: true }); }
 
@@ -144,6 +140,14 @@ describe.skipIf(!LIVE)('live sshd enforcement of SshAuthorizedKeys lines', () =>
     expect(await roundTrip(l1)).toBe('');
     toUds.kill('SIGKILL');
   }, 60_000);
+
+  it('passes the real endpoint self-test with TCP allowed and stream-local forwarding disabled', async () => {
+    const endpoint = { host: 'localhost', port, user, hostKey: await pub('host_key') };
+    const setup = createLocalEndpoint({ authorizedKeys: ak,
+      env: { ...process.env, ZCC_E2E_HOME: dir, ZCC_E2E_PEER_SSH_ENDPOINT: JSON.stringify(endpoint) } });
+    expect(await setup(new AbortController().signal)).toEqual(endpoint);
+    expect((await ak.list()).some(line => line.linkId.startsWith('selftest-'))).toBe(false);
+  }, 30_000);
 
   /** Is there any per-key (or sshd_config-free) way to stop the socket? Tries every candidate; only the global sshd knob works. */
   describe('mitigation probes for the Unix-socket remote forward', () => {
@@ -174,19 +178,23 @@ describe.skipIf(!LIVE)('live sshd enforcement of SshAuthorizedKeys lines', () =>
       expect(result.created).toBe(false);
     });
 
-    it('only the sshd_config knob AllowStreamLocalForwarding closes it (private sshd, not the user\'s)', async () => {
+    it('endpoint setup refuses a real sshd that permits stream-local forwarding despite TCP key restrictions', async () => {
       const second = await freePort();
       await writeFile(join(dir, 'sshd_config2'), [
         `Port ${second}`, 'ListenAddress 127.0.0.1', `HostKey ${join(dir, 'host_key')}`, `AuthorizedKeysFile ${join(dir, 'authorized_keys')}`,
         'PasswordAuthentication no', 'KbdInteractiveAuthentication no', 'UsePAM no', `PidFile ${join(dir, 'sshd2.pid')}`,
-        'AllowTcpForwarding yes', 'AllowStreamLocalForwarding no', 'StrictModes no', `AllowUsers ${user}`, ''].join('\n'), { mode: 0o600 });
+        'AllowTcpForwarding yes', 'AllowStreamLocalForwarding yes', 'StrictModes no', `AllowUsers ${user}`, ''].join('\n'), { mode: 0o600 });
       const sshd2 = spawn('/usr/sbin/sshd', ['-D', '-e', '-f', join(dir, 'sshd_config2')], { stdio: 'ignore', detached: true });
       try {
         await vi.waitFor(() => new Promise<void>((resolve, reject) => {
           const sock = connect(second, '127.0.0.1'); sock.once('connect', () => { sock.destroy(); resolve(); }); sock.once('error', reject);
         }), { timeout: 10_000, interval: 100 });
-        const result = await attempt('uds2', base([]), second);
-        expect(result.created).toBe(false);
+        const endpoint = { host: 'localhost', port: second, user, hostKey: await pub('host_key') };
+        const setup = createLocalEndpoint({ authorizedKeys: ak,
+          env: { ...process.env, ZCC_E2E_HOME: dir, ZCC_E2E_PEER_SSH_ENDPOINT: JSON.stringify(endpoint) } });
+        await expect(setup(new AbortController().signal)).rejects.toThrow(
+          'ssh_forwarding_refused: serving sshd must disable stream-local forwarding (AllowStreamLocalForwarding no)');
+        expect((await ak.list()).some(line => line.linkId.startsWith('selftest-'))).toBe(false);
       } finally { try { process.kill(-sshd2.pid!, 'SIGKILL'); } catch { /* gone */ } }
     }, 30_000);
   });

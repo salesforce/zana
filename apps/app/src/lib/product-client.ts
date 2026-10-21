@@ -1392,8 +1392,8 @@ export const peerConnections = {
     apiJson<PeerRemoteLoginCheckResponse>('/peer-connections/remote-login', { method: 'POST' }),
   create: async (): Promise<CreatePeerConnectionResponse> =>
     apiJson<CreatePeerConnectionResponse>('/peer-connections', { method: 'POST' }),
-  join: async (token: string): Promise<PeerConnection> =>
-    apiJson<PeerConnection>('/peer-connections/join', { method: 'POST', body: JSON.stringify({ token }) }),
+  join: async (token: string, code: string): Promise<PeerConnection> =>
+    apiJson<PeerConnection>('/peer-connections/join', { method: 'POST', body: JSON.stringify({ token, code }) }),
   approve: async (invitationId: string, code: string): Promise<PeerConnection> =>
     apiJson<PeerConnection>(`/peer-connections/${encodeURIComponent(invitationId)}/approve`, { method: 'POST', body: JSON.stringify({ code }) }),
   deny: async (invitationId: string): Promise<PeerConnection> =>

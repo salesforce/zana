@@ -40,7 +40,7 @@ function status(extra: Partial<PublicInvitationStatus> = {}): PublicInvitationSt
 function fakes(s: ProductServer) {
   const invitations = {
     list: vi.fn(async () => [status(), status({ role: 'redeemer', pairingCode: 'ABCD-EFGH', inviterDecision: 'pending' })]),
-    create: vi.fn(async () => ({ invitationId: ID, token: 'zccinv1.token', expiresAt: 5000 })),
+    create: vi.fn(async () => ({ invitationId: ID, token: 'zccinv1.token', expiresAt: 5000, code: 'ABCD-EFGH' })),
     redeem: vi.fn(async () => status({ role: 'redeemer', state: 'redeeming' })),
     approvalRequest: vi.fn(async () => ({ binding: { action: 'x', target: 't', targetLabel: 'l', subject: 's' }, title: 't' })),
     decide: vi.fn(async () => status({ inviterDecision: 'approved', state: 'consented' })),
@@ -68,7 +68,7 @@ describe('/api/v1/peer-connections', () => {
     const s = await start(); const inv = fakes(s);
     const ok = await post('/peer-connections');
     expect(ok.status).toBe(201);
-    expect(await ok.json()).toEqual({ invitationId: ID, token: 'zccinv1.token', expiresAt: 5000 });
+    expect(await ok.json()).toEqual({ invitationId: ID, token: 'zccinv1.token', expiresAt: 5000, code: 'ABCD-EFGH' });
     expect(inv.create).toHaveBeenCalledWith({});
     inv.create.mockRejectedValueOnce(new InvitationError('ssh_remote_login_off'));
     const off = await post('/peer-connections');
@@ -82,10 +82,11 @@ describe('/api/v1/peer-connections', () => {
 
   it('joins with a trimmed token and rejects a malformed body', async () => {
     const s = await start(); const inv = fakes(s);
-    expect((await post('/peer-connections/join', { token: '  zccinv1.abc  ' })).status).toBe(201);
-    expect(inv.redeem).toHaveBeenCalledWith({ token: 'zccinv1.abc' });
-    expect((await post('/peer-connections/join', { token: '' })).status).toBe(400);
-    expect((await post('/peer-connections/join', { token: 'x', extra: 1 })).status).toBe(400);
+    expect((await post('/peer-connections/join', { token: '  zccinv1.abc  ', code: 'ABCD-EFGH' })).status).toBe(201);
+    expect(inv.redeem).toHaveBeenCalledWith({ token: 'zccinv1.abc', code: 'ABCD-EFGH' });
+    expect((await post('/peer-connections/join', { token: '', code: 'ABCD-EFGH' })).status).toBe(400);
+    expect((await post('/peer-connections/join', { token: 'x' })).status).toBe(400);
+    expect((await post('/peer-connections/join', { token: 'x', code: 'ABCD-EFGH', extra: 1 })).status).toBe(400);
     const bad = await fetch(url('/peer-connections/join'), { method: 'POST', headers: JSON_HEADERS, body: '{nope' });
     expect(bad.status).toBe(400);
   });

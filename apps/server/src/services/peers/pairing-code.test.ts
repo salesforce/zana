@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { PAIRING_CODE_MISMATCH_LIMIT, normalizeCode, pairingCodeMatches, pairingCodeOf } from './pairing-code.js';
+import { PAIRING_CODE_MISMATCH_LIMIT, mintApprovalCode, normalizeCode, pairingCodeMatches, pairingCodeOf } from './pairing-code.js';
 
 const CROCKFORD = /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/;
 
@@ -48,5 +48,23 @@ describe('pairing code', () => {
 
   it('limits mismatches to five', () => {
     expect(PAIRING_CODE_MISMATCH_LIMIT).toBe(5);
+  });
+
+  describe('mintApprovalCode', () => {
+    it('mints a well-formed Crockford XXXX-XXXX code that survives normalization', () => {
+      for (let i = 0; i < 200; i++) {
+        const code = mintApprovalCode();
+        expect(code).toMatch(CROCKFORD);
+        // A freshly minted code is already normalized, so normalizeCode is a no-op on it.
+        expect(normalizeCode(code)).toBe(code);
+      }
+    });
+
+    it('is random, not derived from any public value', () => {
+      const seen = new Set<string>();
+      for (let i = 0; i < 500; i++) seen.add(mintApprovalCode());
+      // 40 bits of entropy: 500 draws collide with negligible probability.
+      expect(seen.size).toBe(500);
+    });
   });
 });

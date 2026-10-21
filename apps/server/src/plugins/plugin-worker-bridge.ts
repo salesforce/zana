@@ -1,4 +1,5 @@
 import type { MessagePort, Worker } from 'node:worker_threads';
+import { isMainThread } from 'node:worker_threads';
 import { PLUGIN_INTERACTION_MAX_TIMEOUT_MS } from '@zana-ai/zcc-domain/thread-runtime';
 import type { PeerGrantLease } from '../services/peers/pair-store.js';
 
@@ -68,6 +69,8 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin', 
 }) {
   let nextId = 0;
   let stopped = false;
+  let fault: Error | undefined;
+  let pluginId: string | undefined;
   let committing = false;
   let activeCommits = 0;
   const functions = new Map<number, (...args: any[]) => any>();
@@ -88,6 +91,7 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin', 
   const shared = side === 'plugin' ? new SharedArrayBuffer(SYNC_BYTES) : undefined;
 
   function encode(value: any, path = '', depth = 0, seen = new Set<object>()): Wire {
+    if (side === 'server' && depth === 0 && typeof value?.pluginId === 'string') pluginId = value.pluginId;
     if (typeof value === 'string' && value.length > 4 * 1024 * 1024) throw new Error('Plugin string exceeds the byte limit');
     if (depth > 32) throw new Error('Plugin value exceeds the nesting limit');
     if (typeof value === 'function') {
@@ -221,7 +225,7 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin', 
 
   function invoke(fn: number, args: any[], observe = false, gate?: SharedArrayBuffer, preflight?: () => void): Promise<any> {
     if (committing) throw new Error('Plugin commit callback cannot call host APIs');
-    if (stopped) return Promise.reject(new Error('Plugin runtime stopped'));
+    if (stopped) return Promise.reject(fault ?? new Error('Plugin runtime stopped'));
     if (pending.size >= MAX_PENDING) return Promise.reject(new Error('Plugin runtime is busy'));
     const id = ++nextId;
     const owner = callerSignal(args);
@@ -240,7 +244,7 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin', 
         finish();
       };
       // Detach replies immediately, but keep the watchdog exemption until quiescence.
-      const cancel = (error: Error) => settle(() => rejectFenced(gate, error => finishCall(() => reject(error)), error));
+      const cancel = (error: Error) => settle(() => rejectFenced(gate, error => finishCall(() => reject(error)), error, id, fn));
       const onAbort = () => cancel(peerCommitFailures.get(owner!) ?? abortError(owner!));
       const timer = setTimeout(() => cancel(new Error('Plugin callback timed out')), gate ? PEER_WORKER_COMMIT_TIMEOUT_MS : owner ? SIGNALLED_CALL_TIMEOUT_MS : CALL_TIMEOUT_MS);
       pending.set(id, { resolve: value => settle(() => finishCall(() => resolve(value))), reject: error => settle(() => finishCall(() => reject(error))), cancel });
@@ -259,11 +263,20 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin', 
       } catch (error) { cancel(error as Error); }
     });
   }
-  function rejectFenced(gate: SharedArrayBuffer | undefined, reject: (error: Error) => void, error: Error) {
+  function rejectFenced(gate: SharedArrayBuffer | undefined, reject: (error: Error) => void, error: Error, callId: number, functionId: number) {
     // Never release an executing lease while its worker can still write SQLite.
     if (gate && Atomics.compareExchange(new Int32Array(gate), 0, 0, 2) === 1) {
-      // Termination failure cannot prove quiescence. Keep the lease fail-closed.
-      void options!.terminate!().then(() => reject(error), () => {});
+      const failed = (cause: unknown) => {
+        // Quiescence is unproven: invalidate admission permanently, never report success.
+        Atomics.store(new Int32Array(gate), 0, 2);
+        fault ??= Object.assign(new Error(`Plugin worker termination failed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause }), { code: 'PLUGIN_TERMINATION_FAILED' });
+        stopped = true;
+        console.error('[plugin-worker-bridge] Worker termination failed', { pluginId, callId, functionId, cause });
+        reject(fault);
+        for (const call of [...pending.values()]) call.cancel(fault);
+      };
+      try { void options!.terminate!().then(() => reject(error), failed); }
+      catch (cause) { failed(cause); }
     } else { reject(error); }
   }
   function invokeSync(fn: number, args: any[]): any {
@@ -322,8 +335,23 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin', 
         if (Atomics.load(gate, 0) !== 1) throw new Error('peer grant lease no longer active');
         // No await or message roundtrip between admission and the worker-local transaction.
         committing = true;
-        try { result = options.commitSync(() => callback(...decode(message.args))); }
-        finally { committing = false; }
+        let asyncInvalid = false;
+        try { result = options.commitSync(() => {
+          const value = callback(...decode(message.args));
+          if (value && typeof value.then === 'function') {
+            asyncInvalid = true;
+            throw new Error('peer commit fence requires synchronous callback');
+          }
+          return value;
+        }); }
+        finally {
+          committing = false;
+          if (asyncInvalid) {
+            // Rollback has finished; exit before a rejected continuation gets another turn.
+            port.postMessage({ kind: 'failure', message: 'peer commit fence requires synchronous callback' }, []);
+            if (!isMainThread) process.exit(1);
+          }
+        }
       } else { result = callback(...decode(message.args)); }
       if (message.observe) {
         if (result && typeof result.then === 'function') {
@@ -340,6 +368,7 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin', 
   port.on('message', onMessage);
   return {
     encode, decode,
+    get fault() { return fault; },
     get activeCommits() { return activeCommits; },
     get retainedFunctions() { return functions.size; },
     dispose(error = new Error('Plugin runtime stopped')) {

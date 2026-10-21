@@ -16,11 +16,20 @@ export interface PeerHandshake {
 export interface PeerAncestorStubs { stubs?: PeerOperation[] }
 export interface PeerSessionOffer extends PeerHandshake, PeerAncestorStubs {
   sessionId: string; versions: PeerVersion[]; heads: Record<string, string>; scopeHash: string;
+  /**
+   * Set by the sender when this frozen head belongs to an outbound manual ("private") session for the
+   * document. Receiver-visible advisory: it only ADDS the bilateral-consent gate for the no-inbound-session
+   * case and is deliberately excluded from scopeHash/transferQuery, so it can never weaken protection
+   * (accepted inbound sessions are still gated independently) nor perturb persisted session hashes.
+   */
+  manual?: boolean;
 }
 export interface PeerTransfer extends PeerHandshake, PeerAncestorStubs {
   sessionId: string; scopeHash: string; heads: Record<string, string>;
   versions: Array<{ operation: PeerOperation; manifestHash: string }>;
   blobs: Array<{ hash: string; bytes: number }>;
+  /** See PeerSessionOffer.manual — same receiver-visible private-session marker, excluded from the transfer hash. */
+  manual?: boolean;
 }
 /** Older stub ancestry that does not fit one inline page; delivered roots-first before the offer or transfer. */
 export interface PeerAncestryPage extends PeerHandshake { docId: string; stubs: PeerOperation[] }
@@ -57,11 +66,11 @@ export function validateManualConsent(input: unknown, expected: PeerSessionExpec
 }
 const offerSchema = handshakeSchema.extend({ sessionId: id, versions: z.array(z.object({
   operation: operationSchema, closure: z.unknown() }).strict()).max(MAX_PEER_SESSION_OPERATIONS),
-  heads: headsSchema, scopeHash: hash, stubs: stubsSchema.optional() }).strict();
+  heads: headsSchema, scopeHash: hash, stubs: stubsSchema.optional(), manual: z.boolean().optional() }).strict();
 const transferSchema = handshakeSchema.extend({ sessionId: id, scopeHash: hash, heads: headsSchema,
   versions: z.array(z.object({ operation: operationSchema, manifestHash: hash }).strict()).min(1).max(MAX_PEER_SESSION_OPERATIONS),
   blobs: z.array(z.object({ hash, bytes: z.number().int().nonnegative().max(MAX_PEER_CLOSURE_BYTES) }).strict()).min(1).max(MAX_PEER_SESSION_BLOBS),
-  stubs: stubsSchema.optional()
+  stubs: stubsSchema.optional(), manual: z.boolean().optional()
 }).strict();
 const ancestrySchema = handshakeSchema.extend({ docId: id, stubs: stubsSchema }).strict();
 const querySchema = handshakeSchema.extend({ sessionId: id, scopeHash: hash }).strict();

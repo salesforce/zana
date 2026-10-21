@@ -37,6 +37,30 @@ function retire(a: App, b: App) {
 }
 
 describe('transactional reserved-slot admission', () => {
+  it('completed removed-member receipts cannot permanently exhaust the bounded control table', () => {
+    const a = fixture('a'), b = fixture('b'), c = fixture('c'); found(a, b);
+    const { input, receipt } = join(a, c, 0); retire(a, c);
+    for (const job of a.group.jobs()) a.group.finishJob(job.id);
+    const insert = a.db.prepare('INSERT OR REPLACE INTO sync_group_admissions (request_id, request_json, receipt_json) VALUES (?, ?, ?)');
+    for (let index = 0; index < 1024; index++) insert.run(`old-${index}`, JSON.stringify(input), JSON.stringify(receipt));
+    const d = fixture('d');
+    expect(() => join(a, d, 0)).not.toThrow();
+    expect((a.db.prepare('SELECT COUNT(*) AS n FROM sync_group_admissions').get() as { n: number }).n).toBeLessThanOrEqual(1024);
+  });
+  it('80 product join/remove cycles retain admission capacity across restart and bounded governance', () => {
+    const a = fixture('a'), b = fixture('b'); found(a, b);
+    for (let index = 0; index < 80; index++) {
+      const c = fixture(`churn-${index}`);
+      join(a, c, 0); retire(a, c);
+      for (const app of [a, b, c]) for (const job of app.group.jobs()) app.group.finishJob(job.id);
+      expect(new DesignDocPeerGroup(a.db).hasCapacity()).toBe(true);
+      const roster = a.group.roster()!;
+      expect(roster.members).toHaveLength(2);
+      expect(roster.seats.every((seat) => seat.events.length <= 16)).toBe(true);
+      expect(roster.closures.length).toBeLessThanOrEqual(8);
+      expect(roster.removals.length).toBeLessThanOrEqual(64);
+    }
+  }, 20_000);
   it('lost admission ACK survives sponsor self-leave; exact immutable receipt is read-only and final initial roster excludes sponsor', () => {
     const a = fixture('a'), b = fixture('b'), c = fixture('c'); found(a, b);
     enabled(b, c); const input = request(b, c), receipt = b.group.admit(input, c.peer);
@@ -299,7 +323,7 @@ describe('transactional reserved-slot admission', () => {
     expect(f.group.hasCapacity()).toBe(true);
   });
 
-  it('eight occupied seats reject ninth; never silently reuse removed seat', () => {
+  it('eight concurrent members reject ninth; sealed removal admits replacement', () => {
     const a = fixture('a'), b = fixture('b'); found(a, b);
     for (const name of ['c', 'd', 'e']) join(a, fixture(name), 0);
     for (const name of ['f', 'g', 'h']) join(b, fixture(name), 0);
@@ -307,8 +331,11 @@ describe('transactional reserved-slot admission', () => {
     const ninth = fixture('i'); enabled(a, ninth); const input = request(a, ninth);
     expect(() => a.group.admit(input, ninth.peer)).toThrow('group full (8)');
     retire(a, b);
-    expect(() => a.group.admit(input, ninth.peer)).toThrow('group full (8)');
     expect(a.group.roster()!.members).toHaveLength(7);
+    expect(() => a.group.admit(input, ninth.peer)).not.toThrow();
+    expect(a.group.roster()!.members).toHaveLength(8);
+    const tenth = fixture('j'); enabled(a, tenth);
+    expect(() => a.group.admit(request(a, tenth), tenth.peer)).toThrow('group full (8)');
   });
 
   it('job insertion fault rolls back roster, receipt, delegated seats and sync epoch', () => {

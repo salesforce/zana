@@ -370,12 +370,15 @@ function processEnvRecord(): Record<string, string> {
 function startUtility(
   entry: string,
   startMessage: unknown,
-  extraEnv?: Record<string, string>
+  extraEnv?: Record<string, string>,
+  peerBootKey?: Uint8Array | null
 ): Promise<{ child: UtilityChild; url: string; hostId?: string; instanceId?: string }> {
   return new Promise((resolveReady, rejectReady) => {
+    const env = { ...processEnvRecord(), ...extraEnv };
+    delete env[PEER_BOOT_KEY_ENV];
     const child = utilityProcess.fork(entry, [], {
       serviceName: `zcc-${entry}`,
-      env: { ...processEnvRecord(), ...extraEnv }
+      env
     });
     let ready = false;
     let settled = false;
@@ -385,6 +388,7 @@ function startUtility(
     ) => {
       if (settled) return;
       settled = true;
+      peerBootKey?.fill(0);
       clearTimeout(timer);
       if (error) {
         child.kill();
@@ -416,7 +420,15 @@ function startUtility(
         finish(undefined, { child, url: data.url, hostId: data.hostId, instanceId: data.instanceId });
       }
     });
-    child.once('spawn', () => child.postMessage(startMessage));
+    child.once('spawn', () => {
+      if (settled) return;
+      try {
+        // Electron structured-clones bytes; unlike env, this payload is not exposed by process listings.
+        child.postMessage(peerBootKey ? { ...startMessage as object, peerBootKey } : startMessage);
+      } catch {
+        finish(new Error('runtime child boot delivery failed'));
+      } finally { peerBootKey?.fill(0); }
+    });
   });
 }
 
@@ -450,21 +462,22 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
         return null;
       })
       : null;
-    const peerEnv = { ...options.extraEnv, [PEER_BOOT_KEY_ENV]: peerKey ? Buffer.from(peerKey).toString('base64url') : '',
+    const peerEnv = { ...options.extraEnv,
       [PEER_KEY_REASON_ENV]: peerKeyReason };
-    peerKey?.fill(0);
-    renderer = await startUtility(join(runtimeDir, 'server-runtime.js'), {
-      type: 'start',
-      protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
-      rendererRoot: options.rendererRoot,
-      dataDir: options.dataDir ?? '',
-      hostUrl: host.url,
-      hostToken: options.token,
-      hostSigningKey: options.signingKey,
-      hostBinding: { hostId: host.hostId, instanceId: host.instanceId },
-      bundledPluginsRoot: defaultBundledRoot(),
-      version: options.version ?? ''
-    }, peerEnv);
+    try {
+      renderer = await startUtility(join(runtimeDir, 'server-runtime.js'), {
+        type: 'start',
+        protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        rendererRoot: options.rendererRoot,
+        dataDir: options.dataDir ?? '',
+        hostUrl: host.url,
+        hostToken: options.token,
+        hostSigningKey: options.signingKey,
+        hostBinding: { hostId: host.hostId, instanceId: host.instanceId },
+        bundledPluginsRoot: defaultBundledRoot(),
+        version: options.version ?? ''
+      }, peerEnv, peerKey);
+    } finally { peerKey?.fill(0); }
   } catch (error) {
     host.child.kill();
     throw error;

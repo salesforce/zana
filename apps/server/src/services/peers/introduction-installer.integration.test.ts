@@ -7,7 +7,7 @@ import { startProductServer, type ProductServer } from '../../http/product-serve
 import { startEnrolledHostConnection, type EnrolledHostConnection } from '@zana-ai/zcc-host-daemon/server-connection';
 import { createCommandRuntime } from '@zana-ai/zcc-host-daemon/command-dispatch';
 import { HOST_RPC_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/host-rpc';
-import { getHost, listHosts } from '@zana-ai/zcc-db';
+import { getHost, listAllHosts, listHosts } from '@zana-ai/zcc-db';
 import { controlKey, sealControl } from './peer-control-protocol.js';
 import { channelHash } from './enrolled-peer-channels.js';
 import { createPluginApi, type PluginHandle } from '../../plugins/plugin-api.js';
@@ -61,7 +61,7 @@ async function introduced() {
     : [{ app: c, id: cId, introductionId: toC }, { app: b, id: bId, introductionId: toB }];
   return { a, b, c, bId, cId, toB, toC, low, high };
 }
-const forwardHosts = (owner: App) => listHosts(owner.server.ctx.db).filter(host => !host.destroyedAt && host.enrollmentCapability === 'peer.forward');
+const forwardHosts = (owner: App) => listAllHosts(owner.server.ctx.db).filter(host => !host.destroyedAt && host.enrollmentCapability === 'peer.forward');
 const executionHostCount = (owner: App) => listHosts(owner.server.ctx.db).filter(host => !host.destroyedAt && host.enrollmentCapability === 'execution').length;
 const post = (owner: App, path: string, body: string) => fetch(`${owner.server.url}api/v1/peers/introductions/${path}`, { method: 'POST',
   headers: { 'content-type': 'application/json' }, body });

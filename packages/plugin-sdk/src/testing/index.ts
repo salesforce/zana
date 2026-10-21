@@ -492,7 +492,7 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
         async createInvitation(args) {
           assertLive();
           args.signal?.throwIfAborted();
-          return invokeSdk('peers.createInvitation', undefined, args) as Promise<{ invitationId: string; token: string; expiresAt: number }>;
+          return invokeSdk('peers.createInvitation', undefined, args) as Promise<{ invitationId: string; token: string; expiresAt: number; code: string }>;
         },
         async redeemInvitation(args) {
           assertLive();

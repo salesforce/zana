@@ -50,8 +50,46 @@ async function fixture() {
   }
   const authenticate = (envelope: PeerRequestEnvelope, body: string) => b.authenticateRequest({ envelope,
     body: Buffer.from(body), pluginId: envelope.pluginId, scope: envelope.scope, route: envelope.route, httpMethod: 'POST' });
-  return { dir, db, a, b, handle, other, bare, call, connected, grant, pair, authenticate };
+  return { dir, db, a, b, handle, other, bare, call, connected, grant, pair, authenticate, productContext };
 }
+
+it.each(['enrolled', 'enable'] as const)('%s resolves a connected peer.forward plugin-link host', async method => {
+  const { db, handle, productContext, grant } = await fixture();
+  const host = upsertHost(db, { name: 'Peer link', hostKeyHash: 'link-hash', enrollmentCapability: 'peer.forward' });
+  const proposal = { ...grant, targetHostId: host.id };
+  const resolveHost = vi.fn(async (_peerId: string, hostIds: string[]) => hostIds.includes(host.id) ? host.id : null);
+  productContext.peerChannels = { remote: async () => ({ capability: 'peer.forward' }),
+    list: async () => [{ remoteInstanceId: grant.remoteInstanceId, capability: 'peer.forward' }] } as never;
+  productContext.hostHub.getSession = vi.fn(() => ({})) as never;
+  productContext.peerAuthority = { resolveHost, ensureProposal: vi.fn(async () => proposal), activate: async () => proposal } as never;
+  if (method === 'enrolled') {
+    await expect(handle.api.sdk.peers.enrolled()).resolves.toEqual([
+      { id: grant.remoteInstanceId, hostId: host.id, name: host.name, connected: true }
+    ]);
+  } else {
+    await expect(handle.api.sdk.peers.enable(grant.remoteInstanceId, { scope: grant.scope })).resolves.toMatchObject({ id: grant.remoteInstanceId });
+    expect(productContext.peerAuthority.ensureProposal).toHaveBeenCalledWith(
+      { pluginId: grant.pluginId, remoteInstanceId: grant.remoteInstanceId, targetHostId: host.id, scope: grant.scope }, expect.any(AbortSignal));
+  }
+  expect(resolveHost).toHaveBeenCalledWith(grant.remoteInstanceId, [host.id], expect.any(AbortSignal));
+  await expect(handle.api.sdk.hosts.list()).resolves.toEqual([]);
+});
+
+it('names an authorized peer grant from its plugin-link host', async () => {
+  const { db, handle, connected, pair, grant, productContext } = await fixture();
+  const host = upsertHost(db, { name: 'Peer link', hostKeyHash: 'link-hash', enrollmentCapability: 'peer.forward' });
+  productContext.peerLinkDirectory = { describe: () => ({ peerName: 'Ada' }) } as never;
+  await pair(host.id);
+  connected.mockReturnValue([host.id]);
+  await expect(handle.api.sdk.peers.list()).resolves.toEqual([
+    { id: grant.remoteInstanceId, name: 'Ada', scope: grant.scope, grantEpoch: grant.epoch, connected: true }
+  ]);
+  productContext.peerLinkDirectory = undefined;
+  await expect(handle.api.sdk.peers.list()).resolves.toEqual([
+    { id: grant.remoteInstanceId, name: host.name, scope: grant.scope, grantEpoch: grant.epoch, connected: true }
+  ]);
+  await expect(handle.api.sdk.hosts.list()).resolves.toEqual([]);
+});
 
 it('lists enrolled hosts separately from plugin-authorized app identities and respects cancellation and disposal', async () => {
     const { db, handle, other, bare, connected, pair, a, grant } = await fixture();

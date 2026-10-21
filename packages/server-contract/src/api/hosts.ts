@@ -208,9 +208,12 @@ export const peerRemoteLoginCheckResponseSchema = z.union([
 export type PeerRemoteLoginCheckResponse = z.infer<typeof peerRemoteLoginCheckResponseSchema>;
 export const createPeerConnectionResponseSchema = z.object({
   invitationId: z.string().uuid(), token: z.string().min(1).max(4096), expiresAt: z.number().int().nonnegative(),
+  /** Approval code (`XXXX-XXXX`) the inviter's owner reads aloud; the joiner types it to unseal the invitation's bootstrap seed. */
+  code: z.string().min(1).max(32),
 }).strict();
 export type CreatePeerConnectionResponse = z.infer<typeof createPeerConnectionResponseSchema>;
-export const joinPeerConnectionRequestSchema = z.object({ token: z.string().min(1).max(4096) }).strict();
+/** `code` is the approval code read aloud by the inviter's owner; it unseals the token's bootstrap seed. */
+export const joinPeerConnectionRequestSchema = z.object({ token: z.string().min(1).max(4096), code: z.string().min(1).max(32) }).strict();
 export type JoinPeerConnectionRequest = z.infer<typeof joinPeerConnectionRequestSchema>;
 export const approvePeerConnectionRequestSchema = z.object({ code: z.string().min(1).max(32) }).strict();
 export type ApprovePeerConnectionRequest = z.infer<typeof approvePeerConnectionRequestSchema>;

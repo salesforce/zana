@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
 /**
  * Short authentication string for the invitation key exchange. Both sides derive it from the consent digest, which
@@ -15,6 +15,20 @@ export function pairingCodeOf(consentDigest: Buffer): string {
   const hash = createHash('sha256').update('zcc-pairing-code-v1\0').update(consentDigest).digest();
   let bits = 0n;
   for (const byte of hash.subarray(0, 5)) bits = (bits << 8n) | BigInt(byte);
+  let out = '';
+  for (let shift = 35n; shift >= 0n; shift -= 5n) out += ALPHABET[Number((bits >> shift) & 31n)];
+  return `${out.slice(0, 4)}-${out.slice(4)}`;
+}
+
+/**
+ * A fresh random `XXXX-XXXX` approval code (40 bits of entropy, Crockford base32). Unlike `pairingCodeOf` this is not
+ * derived from any public value: the inviter mints it, shows it to its owner to read aloud, and the redeemer's owner
+ * types it to unseal the invitation's bootstrap seed. An intercepted token never contains it.
+ */
+export function mintApprovalCode(): string {
+  const bytes = randomBytes(5);
+  let bits = 0n;
+  for (const byte of bytes) bits = (bits << 8n) | BigInt(byte);
   let out = '';
   for (let shift = 35n; shift >= 0n; shift -= 5n) out += ALPHABET[Number((bits >> shift) & 31n)];
   return `${out.slice(0, 4)}-${out.slice(4)}`;

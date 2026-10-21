@@ -774,9 +774,12 @@ export interface PluginSdkPeers {
    * Open a one-time invitation for `scope`, valid for 10 minutes. Refuses with an `ssh_*` reason when this computer
    * cannot accept the SSH link (for example Remote Login is off). A second invitation between the same two apps is refused with `already_redeemed` while a link exists.
    */
-  createInvitation?(args: { scope: string; signal?: AbortSignal }): Promise<{ invitationId: string; token: string; expiresAt: number }>;
-  /** Redeem a pasted token. Re-pasting the same token resumes the same attempt. */
-  redeemInvitation?(args: { token: string; signal?: AbortSignal }): Promise<PluginInvitationStatus>;
+  createInvitation?(args: { scope: string; signal?: AbortSignal }): Promise<{ invitationId: string; token: string; expiresAt: number; code: string }>;
+  /**
+   * Redeem a pasted token. `code` is the approval code the inviter's owner reads aloud; it unseals the invitation's
+   * bootstrap seed, so a token on its own cannot connect. Re-pasting the same token (with the same code) resumes the same attempt.
+   */
+  redeemInvitation?(args: { token: string; code: string; signal?: AbortSignal }): Promise<PluginInvitationStatus>;
   /** `refresh` makes a redeemer poll the inviter now instead of waiting for backoff, at most once per 10 s per invitation (else the stored status). */
   invitationStatus?(args: { invitationId: string; refresh?: boolean; signal?: AbortSignal }): Promise<PluginInvitationStatus>;
   /** Newest first, bounded. */

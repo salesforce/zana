@@ -15,6 +15,136 @@ function sealedRemoval(roster: GroupRoster, actor: string, target: string) {
 }
 
 describe('bounded reserved seat governance', () => {
+  it('self-leaving founder releases occupied and unused seats without needing its old authority', () => {
+    const shared = admit(genesis(), 'b', 'c');
+    const removed = sealedRemoval(shared, 'a', 'a');
+    expect(ownedSeats(removed, 'b')).toEqual([1, 3, 4, 5, 7, 8]);
+    expect(admit(removed, 'b', 'd').members.map((item) => item.replicaId)).toEqual(['b', 'c', 'd']);
+  });
+  it('later sponsor removal does not invalidate a committed reclaimed-seat admission', () => {
+    let roster = admit(genesis(), 'a', 'c');
+    roster = sealedRemoval(roster, 'a', 'c');
+    roster = admit(roster, 'a', 'd');
+    expect(() => sealedRemoval(roster, 'b', 'a')).not.toThrow();
+    const removed = sealedRemoval(roster, 'b', 'a');
+    expect(removed.members.map((item) => item.replicaId)).toEqual(['b', 'd']);
+  });
+  it('checkpoint rejects forged hash and stale forks; ancient removed admissions cannot resurrect', () => {
+    let roster = genesis();
+    const stale = admit(roster, 'a', 'ancient');
+    roster = sealedRemoval(stale, 'a', 'ancient');
+    for (let index = 0; index < 80; index++) roster = sealedRemoval(admit(roster, 'a', `later-${index}`), 'a', `later-${index}`);
+    expect(mergeRosters(roster, stale)).toEqual(roster);
+    expect(mergeRosters(stale, roster)).toEqual(roster);
+    expect(rosterCovers(roster, stale)).toBe(true);
+    expect(rosterCovers(stale, roster)).toBe(false);
+    const altered = structuredClone(roster) as GroupRoster & { checkpoint: { hash: string } };
+    altered.checkpoint.hash = '0'.repeat(64);
+    expect(() => parseRoster(altered)).toThrow(/checkpoint hash/);
+    expect(() => mergeRosters(roster, admit(genesis(), 'a', 'fork'))).toThrow(/fork|checkpoint/);
+  });
+  it('checkpoint fences converge across independent reclaim branches without dropping offline admissions', () => {
+    const root = genesis();
+    const churn = (sponsor: string, prefix: string) => {
+      let roster = root;
+      for (let index = 0; index < 9; index++) roster = sealedRemoval(admit(roster, sponsor, `${prefix}-${index}`), sponsor, `${prefix}-${index}`);
+      return admit(roster, sponsor, `${prefix}-live`);
+    };
+    const left = churn('a', 'left'), right = churn('b', 'right');
+    const merged = mergeRosters(left, right);
+    expect(merged).toEqual(mergeRosters(right, left));
+    expect(merged.members.map((item) => item.replicaId)).toEqual(['a', 'b', 'left-live', 'right-live']);
+    expect(mergeRosters(merged, root)).toEqual(merged);
+    expect(mergeRosters(merged, left)).toEqual(merged);
+    expect(parseRoster(merged)).toEqual(merged);
+    expect(mergeRosters(mergeRosters(left, root), right)).toEqual(mergeRosters(left, mergeRosters(root, right)));
+  });
+
+  it('pending offline founder does not exhaust another seat churn', () => {
+    let roster = requestRetirement(admit(genesis(), 'a', 'c'), 'a', 'b');
+    for (let index = 0; index < 80; index++) {
+      roster = sealedRemoval(admit(roster, 'a', `pending-${index}`), 'a', `pending-${index}`);
+      expect(roster.closures.length).toBeLessThanOrEqual(8);
+      expect(ownedSeats(roster, 'b')).toEqual([]);
+    }
+    expect(roster.members.map((item) => item.replicaId)).toEqual(['a', 'b', 'c']);
+    const sealed = closeRetirement(roster, 'b');
+    expect(removeMember(sealed, 'a', 'b').members.map((item) => item.replicaId)).toEqual(['a', 'c']);
+  });
+  it('reclaim/refill converges with independent unseen founder admissions in both orders', () => {
+    const shared = admit(genesis(), 'a', 'c');
+    const offline = admit(shared, 'b', 'offline');
+    const removed = sealedRemoval(shared, 'a', 'c');
+    expect(ownedSeats(removed, 'a')).toContain(3);
+    const refilled = admit(removed, 'a', 'replacement');
+    const merged = mergeRosters(refilled, offline);
+    expect(merged).toEqual(mergeRosters(offline, refilled));
+    expect(merged.members.map((item) => item.replicaId)).toEqual(['a', 'b', 'offline', 'replacement']);
+    expect(mergeRosters(merged, shared)).toEqual(merged);
+  });
+
+  it('unsealed founder capacity cannot be reassigned; sealed removal releases founder seat too', () => {
+    const shared = admit(genesis(), 'a', 'c');
+    const pending = requestRetirement(shared, 'a', 'b');
+    expect(ownedSeats(pending, 'a')).toEqual([4, 5]);
+    expect(ownedSeats(pending, 'b')).toEqual([]);
+    const removed = sealedRemoval(pending, 'a', 'b');
+    expect(ownedSeats(removed, 'a')).toEqual([2, 4, 5, 6, 7, 8]);
+  });
+  it('sealed removal frees an occupied seat without restoring a stale member', () => {
+    let full = genesis();
+    for (const name of ['c', 'd', 'e']) full = admit(full, 'a', name);
+    for (const name of ['f', 'g', 'h']) full = admit(full, 'b', name);
+    const removed = sealedRemoval(full, 'a', 'c');
+    expect(removed.members).toHaveLength(7);
+    expect(ownedSeats(removed, 'a')).toHaveLength(1);
+    const replacement = admit(removed, 'a', 'i');
+    expect(replacement.members).toHaveLength(8);
+    expect(mergeRosters(replacement, full)).toEqual(replacement);
+    expect(replacement.members.map((item) => item.replicaId)).not.toContain('c');
+    expect(ownedSeats(replacement, 'a')).toEqual([]);
+  });
+
+  it('repeated sealed join/remove stays admissible and bounded beyond every history cap', () => {
+    let roster = genesis();
+    expect(() => {
+      for (let index = 0; index < 80; index++) {
+        const before = roster, name = `churn-${index}`;
+        expect(ownedSeats(roster, 'a').length).toBeGreaterThan(0);
+        roster = admit(roster, 'a', name);
+        expect(roster.members).toHaveLength(3);
+        roster = sealedRemoval(roster, 'a', name);
+        expect(roster.members.map((item) => item.replicaId)).toEqual(['a', 'b']);
+        expect(mergeRosters(roster, before)).toEqual(roster);
+        expect(roster.seats.every((seat) => seat.events.length <= 16)).toBe(true);
+        expect(roster.retirements.length).toBeLessThanOrEqual(64);
+        expect(roster.removals.length).toBeLessThanOrEqual(64);
+        expect(roster.closures.length).toBeLessThanOrEqual(8);
+        expect(Buffer.byteLength(JSON.stringify(roster))).toBeLessThanOrEqual(256 * 1024);
+        expect(parseRoster(roster)).toEqual(roster);
+      }
+      for (const name of ['c', 'd', 'e']) roster = admit(roster, 'a', name);
+      for (const name of ['f', 'g', 'h']) roster = admit(roster, 'b', name);
+      expect(roster.members).toHaveLength(8);
+      expect(ownedSeats(roster, 'a')).toEqual([]);
+      expect(ownedSeats(roster, 'b')).toEqual([]);
+    }).not.toThrow();
+  });
+
+  it('sealed founder removal reclaims its unspent seats for a surviving member', () => {
+    const shared = admit(genesis(), 'a', 'c');
+    let roster = sealedRemoval(shared, 'a', 'b');
+    expect(ownedSeats(roster, 'b')).toEqual([]);
+    expect(() => {
+      for (const name of ['d', 'e', 'f', 'g', 'h', 'i']) {
+        expect(ownedSeats(roster, 'a').length).toBeGreaterThan(0);
+        roster = admit(roster, 'a', name);
+      }
+    }).not.toThrow();
+    expect(roster.members).toHaveLength(8);
+    expect(mergeRosters(roster, shared)).toEqual(roster);
+  });
+
   it('offline sponsor frontier preserves committed admission; closure rejects later sponsor events, not descendants', () => {
     const shared = admit(genesis(), 'a', 'c');
     const offline = admit(shared, 'b', 'd');

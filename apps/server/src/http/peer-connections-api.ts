@@ -54,7 +54,7 @@ export async function handlePeerConnectionsApi(
   if (path === '/api/v1/peer-connections' && method === 'POST') {
     try {
       const created = await invitations.create({});
-      sendJson(response, 201, { invitationId: created.invitationId, token: created.token, expiresAt: created.expiresAt });
+      sendJson(response, 201, { invitationId: created.invitationId, token: created.token, expiresAt: created.expiresAt, code: created.code });
     } catch (error) { sendInvitationError(response, error); }
     return true;
   }
@@ -69,7 +69,7 @@ export async function handlePeerConnectionsApi(
     try { body = await readJsonBody(request, 16_384); } catch { sendJson(response, 400, { error: 'invalid JSON' }); return true; }
     const parsed = joinPeerConnectionRequestSchema.safeParse(body);
     if (!parsed.success) { sendJson(response, 400, { error: 'invalid invitation', reason: 'invalid_invitation' }); return true; }
-    try { sendJson(response, 201, toPeerConnection(await invitations.redeem({ token: parsed.data.token.trim() }))); }
+    try { sendJson(response, 201, toPeerConnection(await invitations.redeem({ token: parsed.data.token.trim(), code: parsed.data.code }))); }
     catch (error) { sendInvitationError(response, error); }
     return true;
   }

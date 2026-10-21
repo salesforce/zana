@@ -3,9 +3,10 @@ import { mkdtemp, readFile, readdir, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { publicKeyLine } from '@zana-ai/zcc-host-daemon/ssh-keys';
 import {
   CORE_APPROVAL_PRINCIPAL, INVITATION_LIMITS, INVITATION_REASONS, INVITATION_TOKEN_PREFIX, InvitationError, PeerInvitations,
-  consentDigestOf, invitationFingerprint, offerDigest, parseInvitationToken, sshKeyFingerprint, terminalInvitationReason,
+  consentDigestOf, invitationFingerprint, offerDigest, parseInvitationToken, sealTokenOffer, sshKeyFingerprint, terminalInvitationReason,
   type ConsentedPairing, type InvitationLinkRef, type InvitationLinks, type InvitationReason, type InvitationTransport,
   type InvitationTransportResponse, type PairingFence, type PeerInvitationsOptions, type PublicInvitationStatus
 } from './peer-invitation.js';
@@ -13,6 +14,7 @@ import { PAIRING_CODE_MISMATCH_LIMIT, pairingCodeOf } from './pairing-code.js';
 
 const PLUGIN = 'sync-plugin';
 const SCOPE = 'repo:alpha';
+const TEST_CODE = 'ABCD-2345';
 const keyProvider = { getKey: async () => Buffer.alloc(32, 9) };
 const roots: string[] = [];
 const services: PeerInvitations[] = [];
@@ -131,7 +133,7 @@ async function world() {
   /** inviter creates, redeemer pastes, link store "connects back", redeemer delivers redeem -> both reserved. */
   const reserve = async (inviter: Node, redeemer: Node) => {
     const created = await inviter.svc.create({ pluginId: PLUGIN, scope: SCOPE });
-    const first = await redeemer.svc.redeem({ pluginId: PLUGIN, token: created.token });
+    const first = await redeemer.svc.redeem({ pluginId: PLUGIN, token: created.token, code: created.code });
     redeemer.refs.set(created.invitationId, { hostId: randomUUID(), recipientId: inviter.id });
     await redeemer.svc.nudge(created.invitationId);
     // The redeemer's implicit decision is queued as soon as it is reserved; flush it instead of waiting for the pump timer.
@@ -157,15 +159,46 @@ async function world() {
 /** A syntactically valid token from a made-up inviter (never reachable). */
 function fakeToken(over: Record<string, unknown> = {}, now = 1_800_000_000_000): string {
   const ed = randomBytes(32).toString('base64url');
+  const id = (over.id as string) ?? randomUUID();
   return encodeToken({
-    v: 3, id: randomUUID(), inviter: randomUUID(), name: 'Fake', fp: invitationFingerprint(ed), ed, x: randomBytes(32).toString('base64url'),
+    v: 3, id, inviter: randomUUID(), name: 'Fake', fp: invitationFingerprint(ed), ed, x: randomBytes(32).toString('base64url'),
     plugin: PLUGIN, scope: SCOPE, exp: now + INVITATION_LIMITS.ttlMs, s: randomBytes(32).toString('base64url'),
-    link: sshOffer(), ...over
+    link: sealTokenOffer(sshOffer(), TEST_CODE, id), ...over
   });
 }
 
 describe('PeerInvitations v3', () => {
   describe('ssh transport', () => {
+    it('does not return bootstrap private key material to the plugin in the invitation', async () => {
+      const w = await world();
+      const inv = w.make('inv');
+      const offer = sshOffer();
+      inv.links.create.mockResolvedValueOnce({ offer, expiresAt: w.clock.now + INVITATION_LIMITS.ttlMs });
+      const created = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
+
+      expect(JSON.stringify({ ...created, token: decodeToken(created.token) })).not.toContain(offer.bootstrapSeed);
+    });
+
+    it('does not serialize a bootstrap private key field into the pasted wire token', async () => {
+      const w = await world();
+      const inv = w.make('inv');
+      const created = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
+
+      expect(decodeToken(created.token).link).not.toHaveProperty('bootstrapSeed');
+    });
+
+    it('does not let an intercepted token reconstruct the authorized bootstrap SSH identity', async () => {
+      const w = await world();
+      const inv = w.make('inv');
+      const offer = sshOffer();
+      inv.links.create.mockResolvedValueOnce({ offer, expiresAt: w.clock.now + INVITATION_LIMITS.ttlMs });
+      const created = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
+      const intercepted = decodeToken(created.token).link as { bootstrapSeed?: string };
+      const recoveredIdentity = intercepted.bootstrapSeed ? publicKeyLine(intercepted.bootstrapSeed) : null;
+
+      expect(recoveredIdentity).not.toBe(publicKeyLine(offer.bootstrapSeed));
+    });
+
     it('round-trips a v3 token under the size cap and rejects v2 or malformed ssh offers', async () => {
       const w = await world();
       const inv = w.make('inv');
@@ -193,7 +226,7 @@ describe('PeerInvitations v3', () => {
       expect(await code(inv.svc.approvalRequest({ pluginId: PLUGIN, invitationId }))).toBe('not_ready');
       const b = w.make('b'), a = w.make('a');
       const created = await a.svc.create({ pluginId: PLUGIN, scope: SCOPE });
-      await b.svc.redeem({ pluginId: PLUGIN, token: created.token });
+      await b.svc.redeem({ pluginId: PLUGIN, token: created.token, code: created.code });
       b.refs.set(created.invitationId, { hostId: randomUUID(), recipientId: a.id });
       await b.svc.nudge(created.invitationId);
       const details = (await a.svc.approvalRequest({ pluginId: PLUGIN, invitationId: created.invitationId })).details;
@@ -218,10 +251,10 @@ describe('PeerInvitations v3', () => {
       const w = await world();
       const inv = w.make('inv');
       const red = w.make('red', { linkKey: async () => { throw new Error('no key'); } });
-      const { token } = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
-      expect(await code(red.svc.redeem({ pluginId: PLUGIN, token }))).toBe('unavailable');
+      const { token, code: tokenCode } = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
+      expect(await code(red.svc.redeem({ pluginId: PLUGIN, token, code: tokenCode }))).toBe('unavailable');
       const bad = w.make('bad', { linkKey: async () => 'ssh-rsa nope' });
-      expect(await code(bad.svc.redeem({ pluginId: PLUGIN, token }))).toBe('unavailable');
+      expect(await code(bad.svc.redeem({ pluginId: PLUGIN, token, code: tokenCode }))).toBe('unavailable');
     });
 
     it('mints no link key for a redeem that is refused before the record is created', async () => {
@@ -229,21 +262,22 @@ describe('PeerInvitations v3', () => {
       const inv = w.make('inv');
       const linkKey = vi.fn(async () => sshPub());
       const red = w.make('red', { linkKey });
-      const { token } = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
+      const { token, code: tokenCode } = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
       const payload = decodeToken(token);
       // own invitation, already redeemed (different secret on an existing record), and a valid first redeem: only the last mints.
       const ownKey = vi.fn(async () => sshPub());
       const own = w.make('own', { linkKey: ownKey });
-      const ownToken = (await own.svc.create({ pluginId: PLUGIN, scope: SCOPE })).token;
-      expect(await code(own.svc.redeem({ pluginId: PLUGIN, token: ownToken }))).toBe('own_invitation');
-      expect(await code(red.svc.redeem({ pluginId: 'other', token }))).toBe('wrong_plugin');
+      const ownCreated = await own.svc.create({ pluginId: PLUGIN, scope: SCOPE });
+      const ownToken = ownCreated.token;
+      expect(await code(own.svc.redeem({ pluginId: PLUGIN, token: ownToken, code: ownCreated.code }))).toBe('own_invitation');
+      expect(await code(red.svc.redeem({ pluginId: 'other', token, code: tokenCode }))).toBe('wrong_plugin');
       expect(ownKey).not.toHaveBeenCalled();
       expect(linkKey).not.toHaveBeenCalled();
-      await red.svc.redeem({ pluginId: PLUGIN, token });
+      await red.svc.redeem({ pluginId: PLUGIN, token, code: tokenCode });
       expect(linkKey).toHaveBeenCalledTimes(1);
       // Re-pasting the same token resumes the same attempt without another mint.
-      await red.svc.redeem({ pluginId: PLUGIN, token });
-      expect(await code(red.svc.redeem({ pluginId: PLUGIN, token: encodeToken({ ...payload, s: randomBytes(32).toString('base64url') }) }))).toBe('already_redeemed');
+      await red.svc.redeem({ pluginId: PLUGIN, token, code: tokenCode });
+      expect(await code(red.svc.redeem({ pluginId: PLUGIN, token: encodeToken({ ...payload, s: randomBytes(32).toString('base64url') }), code: tokenCode }))).toBe('already_redeemed');
       expect(linkKey).toHaveBeenCalledTimes(1);
     });
 
@@ -268,7 +302,7 @@ describe('PeerInvitations v3', () => {
     expect(parsed.v).toBe(3);
     expect(parsed.inviter).toBe(inv.id);
 
-    const redeemed = await red.svc.redeem({ pluginId: PLUGIN, token: created.token });
+    const redeemed = await red.svc.redeem({ pluginId: PLUGIN, token: created.token, code: created.code });
     expect(red.links.redeem).toHaveBeenCalledTimes(1);
     expect(red.links.redeem.mock.calls[0]![0]).toMatchObject({ invitationId: created.invitationId, inviterId: inv.id, inviterName: 'Computer inv', pluginId: PLUGIN, scope: SCOPE,
       link: expect.objectContaining({ v: 1, joinCode: expect.stringMatching(/^zcde_/), endpoint: expect.objectContaining({ host: 'inviter-mac.local' }) }) });
@@ -343,13 +377,15 @@ describe('PeerInvitations v3', () => {
   it('never leaks code, credentials or secrets in projections, bodies, errors or storage', async () => {
     const w = await world();
     const inv = w.make('inv'), red = w.make('red');
+    const offer = sshOffer();
+    inv.links.create.mockResolvedValueOnce({ offer, expiresAt: w.clock.now + INVITATION_LIMITS.ttlMs });
     const created = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
     const payload = decodeToken(created.token);
-    const link = payload.link as { joinCode: string; hostId: string; bootstrapSeed: string };
+    const link = { ...(payload.link as { joinCode: string; hostId: string }), bootstrapSeed: offer.bootstrapSeed };
     const secret = payload.s as string;
     expect(Object.keys(payload).sort()).toEqual(['ed', 'exp', 'fp', 'id', 'inviter', 'link', 'name', 'plugin', 's', 'scope', 'v', 'x']);
     expect(payload).not.toHaveProperty('d');
-    await red.svc.redeem({ pluginId: PLUGIN, token: created.token });
+    await red.svc.redeem({ pluginId: PLUGIN, token: created.token, code: created.code });
     red.refs.set(created.invitationId, { hostId: randomUUID(), recipientId: inv.id });
     await red.svc.nudge(created.invitationId);
     await w.approve(inv, created.invitationId);
@@ -372,7 +408,7 @@ describe('PeerInvitations v3', () => {
       expect(text).not.toContain(link.joinCode);
       expect(text).not.toContain(link.bootstrapSeed);
     }
-    const error = await red.svc.redeem({ pluginId: 'other-plugin', token: created.token }).catch(e => e as Error);
+    const error = await red.svc.redeem({ pluginId: 'other-plugin', token: created.token, code: created.code }).catch(e => e as Error);
     expect(error.message).toBe('This invitation is for a different plugin');
     for (const reason of INVITATION_REASONS) expect(new InvitationError(reason).message).not.toMatch(/[A-F0-9]{4}-[A-F0-9]{4}/);
     expect(await code(inv.svc.status({ pluginId: 'other-plugin', invitationId: created.invitationId }))).toBe('not_found');
@@ -452,7 +488,7 @@ describe('PeerInvitations v3', () => {
     it('rejects malformed, tampered, foreign, own and expired tokens before allocating', async () => {
       const w = await world();
       const inv = w.make('inv'), red = w.make('red');
-      const { token, invitationId } = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
+      const { token, invitationId, code: tokenCode } = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
       const payload = decodeToken(token);
       const link = payload.link as Record<string, unknown>;
       const v1 = { ...payload, v: 1 };
@@ -463,13 +499,13 @@ describe('PeerInvitations v3', () => {
         encodeToken({ ...payload, name: 'bad\u0007name' })]) {
         expect(() => parseInvitationToken(bad)).toThrow(InvitationError);
       }
-      expect(await code(inv.svc.redeem({ pluginId: PLUGIN, token }))).toBe('own_invitation');
-      expect(await code(red.svc.redeem({ pluginId: 'other', token }))).toBe('wrong_plugin');
-      expect(await code(red.svc.redeem({ pluginId: PLUGIN, token: encodeToken({ ...payload, fp: 'A'.repeat(43) }) }))).toBe('invalid_invitation');
-      expect(await code(red.svc.redeem({ pluginId: PLUGIN, token: encodeToken({ ...payload, exp: w.clock.now + 2 * INVITATION_LIMITS.ttlMs }) }))).toBe('expired');
-      expect(await code(red.svc.redeem({ pluginId: PLUGIN, token: undefined as never }))).toBe('invalid_invitation');
+      expect(await code(inv.svc.redeem({ pluginId: PLUGIN, token, code: tokenCode }))).toBe('own_invitation');
+      expect(await code(red.svc.redeem({ pluginId: 'other', token, code: tokenCode }))).toBe('wrong_plugin');
+      expect(await code(red.svc.redeem({ pluginId: PLUGIN, token: encodeToken({ ...payload, fp: 'A'.repeat(43) }), code: tokenCode }))).toBe('invalid_invitation');
+      expect(await code(red.svc.redeem({ pluginId: PLUGIN, token: encodeToken({ ...payload, exp: w.clock.now + 2 * INVITATION_LIMITS.ttlMs }), code: tokenCode }))).toBe('expired');
+      expect(await code(red.svc.redeem({ pluginId: PLUGIN, token: undefined as never, code: tokenCode }))).toBe('invalid_invitation');
       w.clock.now += INVITATION_LIMITS.ttlMs;
-      expect(await code(red.svc.redeem({ pluginId: PLUGIN, token }))).toBe('expired');
+      expect(await code(red.svc.redeem({ pluginId: PLUGIN, token, code: tokenCode }))).toBe('expired');
       expect(await red.svc.list({ pluginId: PLUGIN })).toEqual([]);
       expect(red.links.redeem).not.toHaveBeenCalled();
       expect(await w.status(inv, invitationId)).toMatchObject({ state: 'expired', reason: 'expired' });
@@ -479,11 +515,11 @@ describe('PeerInvitations v3', () => {
     it('requires links to redeem and rejects a token minted by an identical key (own fingerprint)', async () => {
       const w = await world();
       const inv = w.make('inv');
-      const { token } = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
-      expect(await code(w.make('nolinks', { noLinks: true }).svc.redeem({ pluginId: PLUGIN, token }))).toBe('unavailable');
+      const { token, code: tokenCode } = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
+      expect(await code(w.make('nolinks', { noLinks: true }).svc.redeem({ pluginId: PLUGIN, token, code: tokenCode }))).toBe('unavailable');
       // Same storage directory, different instance id: sealed to the original identity so it fails closed.
       const clone = w.make('clone', { dir: inv.opts.directory });
-      expect(await code(clone.svc.redeem({ pluginId: PLUGIN, token: fakeToken() }))).toContain('peer storage corrupt or key mismatch');
+      expect(await code(clone.svc.redeem({ pluginId: PLUGIN, token: fakeToken(), code: TEST_CODE }))).toContain('peer storage corrupt or key mismatch');
     });
 
     it('terminalInvitationReason only maps known terminal refusals', () => {
@@ -500,21 +536,21 @@ describe('PeerInvitations v3', () => {
     it('is idempotent for the same token and conflicts on a different secret', async () => {
       const w = await world();
       const inv = w.make('inv'), red = w.make('red');
-      const { token, invitationId } = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
-      const first = await red.svc.redeem({ pluginId: PLUGIN, token });
-      const second = await red.svc.redeem({ pluginId: PLUGIN, token });
+      const { token, invitationId, code: tokenCode } = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
+      const first = await red.svc.redeem({ pluginId: PLUGIN, token, code: tokenCode });
+      const second = await red.svc.redeem({ pluginId: PLUGIN, token, code: tokenCode });
       expect(second.invitationId).toBe(first.invitationId);
       expect(red.links.redeem).toHaveBeenCalledTimes(1);
       const payload = decodeToken(token);
-      expect(await code(red.svc.redeem({ pluginId: PLUGIN, token: encodeToken({ ...payload, s: randomBytes(32).toString('base64url') }) }))).toBe('already_redeemed');
+      expect(await code(red.svc.redeem({ pluginId: PLUGIN, token: encodeToken({ ...payload, s: randomBytes(32).toString('base64url') }), code: tokenCode }))).toBe('already_redeemed');
       expect((await red.svc.list({ pluginId: PLUGIN })).map(s => s.invitationId)).toEqual([invitationId]);
     });
 
     it('enforces the pending-record bound', async () => {
       const w = await world();
       const red = w.make('red');
-      for (let i = 0; i < INVITATION_LIMITS.pending; i++) await red.svc.redeem({ pluginId: PLUGIN, token: fakeToken({}, w.clock.now) });
-      expect(await code(red.svc.redeem({ pluginId: PLUGIN, token: fakeToken({}, w.clock.now) }))).toBe('capacity');
+      for (let i = 0; i < INVITATION_LIMITS.pending; i++) await red.svc.redeem({ pluginId: PLUGIN, token: fakeToken({}, w.clock.now), code: TEST_CODE });
+      expect(await code(red.svc.redeem({ pluginId: PLUGIN, token: fakeToken({}, w.clock.now), code: TEST_CODE }))).toBe('capacity');
       expect(red.links.redeem).toHaveBeenCalledTimes(INVITATION_LIMITS.pending);
     });
 
@@ -523,17 +559,17 @@ describe('PeerInvitations v3', () => {
       const red = w.make('red');
       for (const reason of ['ssh_host_key_mismatch', 'identity_mismatch', 'attempt_limit'] as InvitationReason[]) {
         red.links.redeem.mockRejectedValueOnce(new InvitationError(reason));
-        const status = await red.svc.redeem({ pluginId: PLUGIN, token: fakeToken({}, w.clock.now) });
+        const status = await red.svc.redeem({ pluginId: PLUGIN, token: fakeToken({}, w.clock.now), code: TEST_CODE });
         expect(status).toMatchObject({ state: 'failed', reason });
         expect(red.terminated.at(-1)).toEqual([status.invitationId, 'redeemer', reason]);
       }
       // The join code's `expired` answer near the token's own expiry reads as expired...
       red.links.redeem.mockRejectedValueOnce(new InvitationError('expired'));
-      expect(await red.svc.redeem({ pluginId: PLUGIN, token: fakeToken({ exp: w.clock.now + INVITATION_LIMITS.clockSkewMs }, w.clock.now) }))
+      expect(await red.svc.redeem({ pluginId: PLUGIN, token: fakeToken({ exp: w.clock.now + INVITATION_LIMITS.clockSkewMs }, w.clock.now), code: TEST_CODE }))
         .toMatchObject({ state: 'expired', reason: 'expired' });
       // ...but well inside the token's window the code was consumed: the invitation was already used.
       red.links.redeem.mockRejectedValueOnce(new InvitationError('expired'));
-      const used = await red.svc.redeem({ pluginId: PLUGIN, token: fakeToken({}, w.clock.now) });
+      const used = await red.svc.redeem({ pluginId: PLUGIN, token: fakeToken({}, w.clock.now), code: TEST_CODE });
       expect(used).toMatchObject({ state: 'failed', reason: 'already_redeemed' });
       expect(red.terminated.at(-1)).toEqual([used.invitationId, 'redeemer', 'already_redeemed']);
       expect(red.terminated).toHaveLength(5);
@@ -545,17 +581,17 @@ describe('PeerInvitations v3', () => {
       const red = w.make('red');
       const token = fakeToken({}, w.clock.now);
       red.links.redeem.mockRejectedValueOnce(new InvitationError('ssh_unreachable'));
-      const failed = await red.svc.redeem({ pluginId: PLUGIN, token });
+      const failed = await red.svc.redeem({ pluginId: PLUGIN, token, code: TEST_CODE });
       expect(failed).toMatchObject({ state: 'failed', reason: 'ssh_unreachable' });
       // Re-pasting starts over until the token expires.
-      const again = await red.svc.redeem({ pluginId: PLUGIN, token });
+      const again = await red.svc.redeem({ pluginId: PLUGIN, token, code: TEST_CODE });
       expect(again.state).toBe('redeeming');
       expect(red.links.redeem).toHaveBeenCalledTimes(2);
       expect(again.reason).toBeUndefined();
 
       const other = fakeToken({}, w.clock.now);
       red.links.redeem.mockRejectedValueOnce(new InvitationError('unreachable')).mockRejectedValueOnce(new Error('network'));
-      const flaky = await red.svc.redeem({ pluginId: PLUGIN, token: other });
+      const flaky = await red.svc.redeem({ pluginId: PLUGIN, token: other, code: TEST_CODE });
       expect(flaky).toMatchObject({ state: 'redeeming', reason: 'unreachable' });
       expect(red.terminated).toHaveLength(1);
       // refresh forces a delivery (owed + unreachable), then throttles within refreshMinMs.
@@ -573,8 +609,8 @@ describe('PeerInvitations v3', () => {
     it('waits for the reverse link without burning an attempt, then is nudged', async () => {
       const w = await world();
       const inv = w.make('inv'), red = w.make('red');
-      const { token, invitationId } = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
-      await red.svc.redeem({ pluginId: PLUGIN, token });
+      const { token, invitationId, code: tokenCode } = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
+      await red.svc.redeem({ pluginId: PLUGIN, token, code: tokenCode });
       const calls = vi.fn();
       red.opts.linkRef = calls;
       await red.svc.nudge(invitationId);
@@ -656,7 +692,7 @@ describe('PeerInvitations v3', () => {
     it('fail() ends with the given reason; expired maps to the expired state', async () => {
       const w = await world();
       const inv = w.make('inv'), red = w.make('red');
-      const a = await red.svc.redeem({ pluginId: PLUGIN, token: fakeToken({}, w.clock.now) });
+      const a = await red.svc.redeem({ pluginId: PLUGIN, token: fakeToken({}, w.clock.now), code: TEST_CODE });
       await red.svc.fail(a.invitationId, 'ssh_remote_login_off');
       expect(await w.status(red, a.invitationId)).toMatchObject({ state: 'failed', reason: 'ssh_remote_login_off' });
       await red.svc.fail(a.invitationId, 'unreachable');
@@ -712,9 +748,9 @@ describe('PeerInvitations v3', () => {
       const w = await world();
       const red = w.make('red');
       red.links.redeem.mockRejectedValue(new Error('down'));
-      const stuck = await red.svc.redeem({ pluginId: PLUGIN, token: fakeToken({}, w.clock.now) });
+      const stuck = await red.svc.redeem({ pluginId: PLUGIN, token: fakeToken({}, w.clock.now), code: TEST_CODE });
       red.links.redeem.mockReset().mockResolvedValue(undefined);
-      const linked = await red.svc.redeem({ pluginId: PLUGIN, token: fakeToken({}, w.clock.now) });
+      const linked = await red.svc.redeem({ pluginId: PLUGIN, token: fakeToken({}, w.clock.now), code: TEST_CODE });
       expect(linked.state).toBe('redeeming');
       w.clock.now += INVITATION_LIMITS.ttlMs;
       expect(await w.status(red, stuck.invitationId)).toMatchObject({ state: 'expired', reason: 'expired' });
@@ -775,7 +811,7 @@ describe('PeerInvitations v3', () => {
       const r = await w.reserve(inv, red);
       const id = r.created.invitationId;
       const token = r.created.token;
-      await late.svc.redeem({ pluginId: PLUGIN, token });
+      await late.svc.redeem({ pluginId: PLUGIN, token, code: r.created.code });
       late.refs.set(id, { hostId: randomUUID(), recipientId: inv.id });
       await late.svc.nudge(id);
       expect(await w.status(late, id)).toMatchObject({ state: 'failed', reason: 'already_redeemed' });
@@ -801,7 +837,7 @@ describe('PeerInvitations v3', () => {
       for (let i = 0; i < INVITATION_LIMITS.attemptsPerInvitation; i++) expect(await code(inv.svc.acceptRedeem(junk, { redeemerId: red.id }))).toBe('invalid_invitation');
       expect(await w.status(inv, created.invitationId)).toMatchObject({ state: 'cancelled', reason: 'attempt_limit' });
       expect(await code(inv.svc.acceptRedeem(junk, { redeemerId: red.id }))).toBe('attempt_limit');
-      await red.svc.redeem({ pluginId: PLUGIN, token: created.token });
+      await red.svc.redeem({ pluginId: PLUGIN, token: created.token, code: created.code });
       red.refs.set(created.invitationId, { hostId: randomUUID(), recipientId: inv.id });
       await red.svc.nudge(created.invitationId);
       expect(await w.status(red, created.invitationId)).toMatchObject({ state: 'failed', reason: 'attempt_limit' });
@@ -811,13 +847,13 @@ describe('PeerInvitations v3', () => {
       const w = await world();
       const inv = w.make('inv'), red = w.make('red'), red2 = w.make('red2');
       const a = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
-      await red.svc.redeem({ pluginId: PLUGIN, token: a.token });
+      await red.svc.redeem({ pluginId: PLUGIN, token: a.token, code: a.code });
       await inv.svc.cancel({ pluginId: PLUGIN, invitationId: a.invitationId });
       red.refs.set(a.invitationId, { hostId: randomUUID(), recipientId: inv.id });
       await red.svc.nudge(a.invitationId);
       expect(await w.status(red, a.invitationId)).toMatchObject({ state: 'failed', reason: 'cancelled' });
       const b = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
-      await red2.svc.redeem({ pluginId: PLUGIN, token: b.token });
+      await red2.svc.redeem({ pluginId: PLUGIN, token: b.token, code: b.code });
       await red2.svc.redeemWire(b.invitationId);
       w.clock.now += INVITATION_LIMITS.ttlMs;
       red2.refs.set(b.invitationId, { hostId: randomUUID(), recipientId: inv.id });
@@ -979,7 +1015,7 @@ describe('PeerInvitations v3', () => {
       const w = await world();
       const inv = w.make('inv'), red = w.make('red');
       const created = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
-      await red.svc.redeem({ pluginId: PLUGIN, token: created.token });
+      await red.svc.redeem({ pluginId: PLUGIN, token: created.token, code: created.code });
       const id = created.invitationId;
       red.refs.set(id, { hostId: randomUUID(), recipientId: inv.id });
       red.offline = true;
@@ -1000,14 +1036,14 @@ describe('PeerInvitations v3', () => {
       const w = await world();
       const inv = w.make('inv'), red = w.make('red');
       const a = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
-      await red.svc.redeem({ pluginId: PLUGIN, token: a.token });
+      await red.svc.redeem({ pluginId: PLUGIN, token: a.token, code: a.code });
       red.refs.set(a.invitationId, { hostId: randomUUID(), recipientId: inv.id });
       red.intercept = async () => ({ status: 410, body: { error: 'expired' } });
       await red.svc.nudge(a.invitationId);
       expect(await w.status(red, a.invitationId)).toMatchObject({ state: 'expired', reason: 'expired' });
 
       const b = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
-      await red.svc.redeem({ pluginId: PLUGIN, token: b.token });
+      await red.svc.redeem({ pluginId: PLUGIN, token: b.token, code: b.code });
       red.refs.set(b.invitationId, { hostId: randomUUID(), recipientId: inv.id });
       red.intercept = async () => ({ status: 403, body: { error: 'cancelled' } });
       await red.svc.nudge(b.invitationId);
@@ -1048,7 +1084,7 @@ describe('PeerInvitations v3', () => {
       const inv = w.make('inv');
       const red = w.make('red');
       const created = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
-      await red.svc.redeem({ pluginId: PLUGIN, token: created.token });
+      await red.svc.redeem({ pluginId: PLUGIN, token: created.token, code: created.code });
       red.refs.set(created.invitationId, { hostId: randomUUID(), recipientId: inv.id });
       red.offline = true;
       await red.svc.nudge(created.invitationId);
@@ -1068,7 +1104,7 @@ describe('PeerInvitations v3', () => {
       const w = await world();
       const inv = w.make('inv'), red = w.make('red');
       const created = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE });
-      await red.svc.redeem({ pluginId: PLUGIN, token: created.token });
+      await red.svc.redeem({ pluginId: PLUGIN, token: created.token, code: created.code });
       red.refs.set(created.invitationId, { hostId: randomUUID(), recipientId: inv.id });
       const clear = vi.spyOn(globalThis, 'clearTimeout');
       red.svc.start();
@@ -1120,7 +1156,7 @@ describe('PeerInvitations v3', () => {
       expect(payload).not.toHaveProperty('scope');
       expect(parseInvitationToken(created.token)).toMatchObject({ v: 3, inviter: inv.id });
 
-      const redeemed = await red.svc.redeem({ token: created.token });
+      const redeemed = await red.svc.redeem({ token: created.token, code: created.code });
       expect(redeemed).not.toHaveProperty('pluginId');
       expect(redeemed).not.toHaveProperty('scope');
       expect(red.links.redeem.mock.calls[0]![0]).not.toHaveProperty('pluginId');
@@ -1170,9 +1206,9 @@ describe('PeerInvitations v3', () => {
       expect(await code(inv.svc.status({ pluginId: PLUGIN, invitationId: core.invitationId }))).toBe('not_found');
       expect(await code(inv.svc.status({ invitationId: scoped.invitationId }))).toBe('not_found');
       // A core caller cannot redeem a plugin invitation and a plugin cannot redeem a core one.
-      expect(await code(red.svc.redeem({ token: scoped.token }))).toBe('wrong_plugin');
-      expect(await code(red2.svc.redeem({ pluginId: PLUGIN, token: core.token }))).toBe('wrong_plugin');
-      expect(await code(red.svc.redeem({ token: core.token }))).toBe('resolved');
+      expect(await code(red.svc.redeem({ token: scoped.token, code: scoped.code }))).toBe('wrong_plugin');
+      expect(await code(red2.svc.redeem({ pluginId: PLUGIN, token: core.token, code: core.code }))).toBe('wrong_plugin');
+      expect(await code(red.svc.redeem({ token: core.token, code: core.code }))).toBe('resolved');
     });
 
     it('rejects a half-specified plugin/scope pair and tokens that carry one', async () => {
@@ -1199,7 +1235,7 @@ describe('PeerInvitations v3', () => {
       const w = await world();
       const inv = w.make('inv'), red = w.make('red');
       const created = await inv.svc.create({});
-      const redeemed = await red.svc.redeem({ token: created.token });
+      const redeemed = await red.svc.redeem({ token: created.token, code: created.code });
       expect(redeemed).not.toHaveProperty('pairingCode');
       red.refs.set(created.invitationId, { hostId: randomUUID(), recipientId: inv.id });
       await red.svc.nudge(created.invitationId);
@@ -1259,7 +1295,7 @@ describe('PeerInvitations v3', () => {
       const w = await world();
       const inv = w.make('inv'), red = w.make('red');
       const created = await inv.svc.create({});
-      await red.svc.redeem({ token: created.token });
+      await red.svc.redeem({ token: created.token, code: created.code });
       red.refs.set(created.invitationId, { hostId: randomUUID(), recipientId: inv.id });
       const wire = await red.svc.redeemWire(created.invitationId);
       // Tamper: the inviter's record is core, so any wire not built for a core offer must not pair.

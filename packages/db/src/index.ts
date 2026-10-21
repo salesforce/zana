@@ -42,6 +42,7 @@ export {
 export {
   getHost,
   listHosts,
+  listAllHosts,
   listExecutionHosts,
   listPluginLinkHosts,
   addHostLinkUse,

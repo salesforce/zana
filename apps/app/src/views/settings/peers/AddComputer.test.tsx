@@ -9,7 +9,7 @@ vi.mock('../../../lib/copy-text.js', () => ({ copyText: api.copy }));
 import { AddComputer } from './AddComputer';
 
 const ID = '11111111-1111-4111-8111-111111111111';
-const created = { invitationId: ID, token: 'tok-123', expiresAt: 1_900_000_000_000 };
+const created = { invitationId: ID, token: 'tok-123', expiresAt: 1_900_000_000_000, code: 'ABCD-EFGH' };
 const reserved = { invitationId: ID, role: 'inviter', state: 'reserved', expiresAt: 1, awaitingApproval: true, peer: { name: 'Studio laptop', fingerprint: 'aa:bb' } } as never;
 
 beforeEach(() => {
@@ -45,8 +45,11 @@ describe('AddComputer', () => {
   it('creates an invitation, shows the token, copies it and waits', async () => {
     const onChange = vi.fn();
     render(<AddComputer connections={[]} onChange={onChange} />);
-    expect(((await screen.findByLabelText('Invitation')) as HTMLTextAreaElement).value).toBe('tok-123');
-    expect(screen.getByText(/Waiting for the other computer/)).toBeTruthy();
+     expect(((await screen.findByLabelText('Invitation')) as HTMLTextAreaElement).value).toBe('tok-123');
+     // The approval code is shown for the owner to read aloud; it never travels inside the token.
+     expect((await screen.findByTestId('approval-code')).textContent).toContain('ABCD-EFGH');
+     expect(screen.getByLabelText('Approval code').textContent).toBe('ABCD-EFGH');
+     expect(screen.getByText(/Waiting for the other computer/)).toBeTruthy();
     expect(screen.getByText(/Expires/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Copy invitation' }));
     await waitFor(() => expect(api.copy).toHaveBeenCalledWith('tok-123'));

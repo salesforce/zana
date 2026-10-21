@@ -3,7 +3,7 @@ import { DesignDocSyncStore } from './sync-store.js';
 import { createTestDatabase } from './test-db.js';
 import { DesignDocStore } from './store.js';
 import { DesignDocPeerService } from './peer-service.js';
-import { MAX_PENDING_PEER_INTENTS, MAX_PEER_STORED_BYTES, MAX_PEER_STORED_VERSIONS } from '../shared/peer-limits.js';
+import { MAX_PENDING_PEER_INTENTS, MAX_PEER_STORED_BYTES, MAX_PEER_STORED_VERSIONS, MAX_PEER_STORED_OPERATIONS } from '../shared/peer-limits.js';
 import { DESIGN_DOC_MIGRATIONS } from './schema.js';
 import { canonicalPeerHash } from '../shared/peer-contract.js';
 import { transferQuery } from './peer-protocol.js';
@@ -28,6 +28,157 @@ function fixture(paired = true, maxHistoryBytes?: number) {
 }
 
 describe('immutable sync store', () => {
+  it('manual ACK accepts earlier incoming consent so bilateral peers can exchange either order', () => {
+    const a = fixture(false), b = fixture(false);
+    const left = a.store.create({ title: 'Left private', template: 'blank' }, actor);
+    const right = b.store.create({ title: 'Right private', template: 'blank' }, actor);
+    a.pair(); b.pair(); b.db.prepare("UPDATE sync_repositories SET replica_id = 'replica-b'").run();
+    a.sync.prepareManual();
+    const ac = a.sync.manualConsent('replica-b')!;
+    expect(b.sync.acceptManual('replica-a', ac.manualId, ac.heads)).toBe(false);
+    b.sync.prepareManual();
+    const bc = b.sync.manualConsent('replica-a')!;
+    expect(a.sync.acceptManual('replica-b', bc.manualId, bc.heads)).toBe(true);
+    b.sync.completeManual(bc.manualId);
+    expect(() => b.sync.apply(a.service.createOffer(a.sync.readyIntents('repo-a')[0]!))).not.toThrow();
+    expect(() => a.sync.apply(b.service.createOffer(b.sync.readyIntents('repo-a')[0]!))).not.toThrow();
+    expect(a.store.find(right.id)).not.toBeNull(); expect(b.store.find(left.id)).not.toBeNull();
+  });
+
+  it('prunes delivered unreferenced operation rows at capacity while retaining sequence frontier and tombstones', () => {
+    const { sync, db, store } = fixture();
+    const doc = store.create({ title: 'Retention', template: 'blank' }, actor);
+    const head = sync.head('repo-a', doc.id)!, operation = sync.version('repo-a', head)!.operation;
+    sync.recordPeerProtocol('replica-b', 3);
+    db.prepare(`WITH RECURSIVE n(x) AS (SELECT 2 UNION ALL SELECT x+1 FROM n WHERE x < ?)
+      INSERT INTO sync_operations SELECT 'repo-a', 'old-' || x, 'replica-a', x, 'old-doc', '[]', 'document', ?, 'local-authoring', x FROM n`)
+      .run(MAX_PEER_STORED_OPERATIONS, operation.payloadHash);
+    db.runScript("INSERT INTO sync_peer_known SELECT repo_id, 'replica-b', op_id FROM sync_operations WHERE doc_id = 'old-doc';");
+    const before = db.prepare('SELECT COUNT(*) AS n FROM sync_operations').get();
+    db.runScript("CREATE TRIGGER fail_operation BEFORE INSERT ON sync_operations BEGIN SELECT RAISE(ABORT, 'operation fault'); END;");
+    expect(() => sync.recordOperation('repo-a', { ...operation, id: 'rollback-operation', sequence: MAX_PEER_STORED_OPERATIONS + 1 })).toThrow('operation fault');
+    expect(db.prepare('SELECT COUNT(*) AS n FROM sync_operations').get()).toEqual(before);
+    db.runScript('DROP TRIGGER fail_operation;');
+    expect(() => sync.recordOperation('repo-a', { ...operation, id: 'next-operation', sequence: MAX_PEER_STORED_OPERATIONS + 1 })).not.toThrow();
+    expect((db.prepare('SELECT COUNT(*) AS n FROM sync_operations').get() as { n: number }).n).toBeLessThan(MAX_PEER_STORED_OPERATIONS);
+    expect(sync.version('repo-a', head)).not.toBeNull();
+    expect(sync.operationDoc('repo-a', `old-${MAX_PEER_STORED_OPERATIONS}`)).toBe('old-doc');
+  });
+
+  it('refuses operation pruning before delta negotiation and while retained payloads pin every row', () => {
+    const { sync, db, store } = fixture();
+    store.create({ title: 'Pinned retention', template: 'blank' }, actor);
+    const operation = sync.operations('repo-a')[0]!;
+    db.prepare(`WITH RECURSIVE n(x) AS (SELECT 2 UNION ALL SELECT x+1 FROM n WHERE x < ?)
+      INSERT INTO sync_operations SELECT 'repo-a', 'old-' || x, 'replica-a', x, 'old-doc', '[]', 'document', ?, 'local-authoring', x FROM n`)
+      .run(MAX_PEER_STORED_OPERATIONS, operation.payloadHash);
+    const next = { ...operation, id: 'no-room', sequence: MAX_PEER_STORED_OPERATIONS + 1 };
+    expect(() => sync.recordOperation('repo-a', next)).toThrow('operation capacity');
+    sync.recordPeerProtocol('replica-b', 3);
+    db.runScript("INSERT INTO sync_versions (repo_id, head_id, doc_id, payload_hash, closure_json, bytes, compacted) SELECT repo_id, op_id, doc_id, payload_hash, '{}', 0, 1 FROM sync_operations WHERE doc_id = 'old-doc';");
+    expect(() => sync.recordOperation('repo-a', next)).toThrow('operation capacity');
+    expect(db.prepare('SELECT COUNT(*) AS n FROM sync_operations').get()).toEqual({ n: MAX_PEER_STORED_OPERATIONS });
+  });
+
+  it('pages Sync Now across more than ten thousand documents without buffering whole vault', () => {
+    const { sync, db } = fixture();
+    db.prepare(`WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x < 10001)
+      INSERT INTO docs (id, slug, title, created_at, updated_at, created_by, updated_by)
+      SELECT printf('doc-%05d', x), printf('doc-%05d', x), 'Paged manual', 1, 1, ?, ? FROM n`)
+      .run(JSON.stringify(actor), JSON.stringify(actor));
+    db.prepare(`INSERT INTO doc_files (doc_id, path, content, encoding, size, revision, updated_at, updated_by, sync_id)
+      SELECT id, 'README.md', '', 'utf8', 0, 1, 1, ?, 'file-' || id FROM docs`).run(JSON.stringify(actor));
+    let cursor: string | null = '', total = 0;
+    do {
+      cursor = sync.prepareManual(cursor!);
+      const consent = sync.manualConsent('replica-b')!;
+      expect(Object.keys(consent.heads).length).toBeLessThanOrEqual(500);
+      total += Object.keys(consent.heads).length;
+      db.prepare("UPDATE sync_intents SET state = 'synced'").run();
+      sync.completeManual(consent.manualId);
+    } while (cursor);
+    expect(total).toBe(10001);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM sync_doc_heads').get()).toEqual({ n: 10001 });
+  }, 120000);
+
+  it('rejects private offers without exact bilateral consent before persisting payloads', () => {
+    const a = fixture(false), b = fixture();
+    b.db.prepare("UPDATE sync_repositories SET replica_id = 'replica-b'").run();
+    const doc = a.store.create({ title: 'Private offer', template: 'blank' }, actor);
+    a.pair();
+    a.sync.prepareManual();
+    const consent = a.sync.manualConsent('replica-b')!, intent = a.sync.readyIntents('repo-a')[0]!;
+    const offer = a.service.createOffer(intent), transfer = a.service.createTransfer(intent, 1);
+    expect(() => b.sync.apply(offer)).toThrow('bilateral manual consent');
+    expect(() => b.sync.stageTransfer(transfer)).toThrow('bilateral manual consent');
+    expect(b.sync.acceptManual('replica-a', consent.manualId, consent.heads)).toBe(false);
+    expect(() => b.sync.apply(offer)).toThrow('bilateral manual consent');
+    b.sync.prepareManual();
+    expect(b.sync.acceptManual('replica-a', consent.manualId, consent.heads)).toBe(true);
+    a.store.writeFile(doc.id, { path: 'README.md', content: 'later private' }, actor);
+    const later = a.sync.freezeManual()[0]!, changed = a.service.createOffer(later);
+    expect(() => b.sync.apply(changed)).toThrow('bilateral manual consent');
+    expect(b.db.prepare('SELECT COUNT(*) AS n FROM sync_versions').get()).toEqual({ n: 0 });
+    expect(b.sync.apply(offer).stage).toBe('synced');
+    expect(b.sync.apply(offer).stage).toBe('synced');
+    expect(b.store.find(doc.id)).not.toBeNull();
+  });
+
+  it('rejects a mismatched consent head on transfer even when operation is not bootstrap', () => {
+    const a = fixture(), b = fixture();
+    b.db.prepare("UPDATE sync_repositories SET replica_id = 'replica-b'").run();
+    const doc = a.store.create({ title: 'Tracked private', template: 'blank' }, actor);
+    a.sync.prepareManual(); b.sync.prepareManual();
+    const consent = a.sync.manualConsent('replica-b')!;
+    expect(b.sync.acceptManual('replica-a', consent.manualId, consent.heads)).toBe(true);
+    a.store.writeFile(doc.id, { path: 'README.md', content: 'later' }, actor);
+    const intent = a.sync.freezeManual()[0]!;
+    expect(() => b.sync.stageTransfer(a.service.createTransfer(intent, 1))).toThrow('bilateral manual consent');
+    expect(b.db.prepare('SELECT COUNT(*) AS n FROM sync_transfers').get()).toEqual({ n: 0 });
+  });
+
+  it('reclaims completed manual-session capacity without pruning waiting or undelivered consent', () => {
+    const { sync, db, store } = fixture();
+    db.runScript(`WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x < ${MAX_PENDING_PEER_INTENTS})
+      INSERT INTO sync_manual_sessions SELECT 'completed-' || x, 'repo-a', 'replica-b', 'out', 'accepted', '{}', x FROM n;`);
+    expect(() => sync.prepareManual()).not.toThrow();
+    expect((db.prepare('SELECT COUNT(*) AS n FROM sync_manual_sessions').get() as { n: number }).n).toBeLessThan(200);
+    const waiting = sync.manualConsent('replica-b')!;
+    store.create({ title: 'Undelivered consent', template: 'blank' }, actor);
+    sync.prepareManual();
+    sync.completeManual(waiting.manualId);
+    const undelivered = sync.manualConsents()[0]!;
+    sync.completeManual(undelivered.manualId);
+    expect(db.prepare('SELECT 1 FROM sync_manual_sessions WHERE session_id = ?').get(undelivered.manualId)).toBeTruthy();
+    expect(() => sync.acceptManual('replica-b', 'incoming-empty', {})).not.toThrow();
+    expect(() => sync.acceptManual('replica-b', 'incoming-empty', { changed: 'head' })).toThrow('identity mismatch');
+  });
+
+  it('stops permanent delivery failure after ten attempts and retains terminal error across restart', () => {
+    const { sync, db, store } = fixture();
+    store.create({ title: 'Permanent failure', status: 'approved', template: 'blank' }, actor);
+    const intent = sync.readyIntents('repo-a')[0]!;
+    for (let attempt = 0; attempt < 10; attempt++) sync.deferIntent(intent, 'permanent failure');
+    expect(new DesignDocSyncStore(db).readyIntents('repo-a', 100, true)).toEqual([]);
+    expect(db.prepare('SELECT state FROM sync_intents WHERE id = ?').get(intent.id)).toEqual({ state: 'blocked' });
+    expect(db.prepare('SELECT attempts, error FROM sync_retry WHERE intent_id = ?').get(intent.id))
+      .toEqual({ attempts: 10, error: 'permanent failure' });
+    sync.deferIntent(intent, 'late failure');
+    expect(db.prepare('SELECT attempts, error FROM sync_retry WHERE intent_id = ?').get(intent.id))
+      .toEqual({ attempts: 10, error: 'permanent failure' });
+  });
+
+  it('rolls back terminal retry state if durable error cannot be recorded', () => {
+    const { sync, db, store } = fixture();
+    store.create({ title: 'Retry rollback', status: 'approved', template: 'blank' }, actor);
+    const intent = sync.readyIntents('repo-a')[0]!;
+    for (let attempt = 0; attempt < 9; attempt++) sync.deferIntent(intent, 'offline');
+    db.runScript("CREATE TRIGGER fail_retry BEFORE UPDATE ON sync_retry BEGIN SELECT RAISE(ABORT, 'retry fault'); END;");
+    expect(() => sync.deferIntent(intent, 'terminal')).toThrow('retry fault');
+    expect(db.prepare('SELECT state FROM sync_intents WHERE id = ?').get(intent.id)).toEqual({ state: 'pending' });
+    expect(db.prepare('SELECT attempts FROM sync_retry WHERE intent_id = ?').get(intent.id)).toEqual({ attempts: 9 });
+  });
+
   it('retained local removal fences data ACKs and runners after detach and restart without blocking authoring', () => {
     const a = fixture(), b = fixture();
     b.db.prepare("UPDATE sync_repositories SET replica_id = 'replica-b'").run();

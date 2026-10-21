@@ -42,6 +42,7 @@ export interface SyncStoreOptions {
 
 /** Store mutation kind for a whole-document delete; the doc rows are already gone when it is recorded. */
 export const DELETE_DOC_MUTATION = 'delete-doc';
+const MAX_INTENT_ATTEMPTS = 10;
 
 /** Opaque resume point; `upper` is the frontier frozen by the first page. */
 export interface OperationCursor {
@@ -177,6 +178,10 @@ export class DesignDocSyncStore {
   }
 
   recordOperation(repoId: string, operation: PeerOperation): void {
+    this.db.transaction(() => this.recordOperationRow(repoId, operation));
+  }
+
+  private recordOperationRow(repoId: string, operation: PeerOperation): void {
     if (!this.repository(repoId)) throw new PeerProtocolError('invalid', 'sync repository is not initialized');
     if (!operation.id || !operation.replicaId || !operation.docId || !operation.payloadHash || !operation.kind) {
       throw new PeerProtocolError('invalid', 'peer operation is incomplete');
@@ -193,13 +198,40 @@ export class DesignDocSyncStore {
     const sequence = this.db.prepare('SELECT op_id FROM sync_operations WHERE repo_id = ? AND replica_id = ? AND sequence = ?')
       .get(repoId, operation.replicaId, operation.sequence);
     if (sequence) throw new PeerProtocolError('conflict', 'operation sequence identity mismatch');
-    const count = this.db.prepare('SELECT COUNT(*) AS n FROM sync_operations').get() as { n: number };
+    let count = this.db.prepare('SELECT COUNT(*) AS n FROM sync_operations').get() as { n: number };
+    if (count.n >= MAX_PEER_STORED_OPERATIONS) {
+      this.pruneOperations(repoId);
+      count = this.db.prepare('SELECT COUNT(*) AS n FROM sync_operations').get() as { n: number };
+    }
     if (count.n >= MAX_PEER_STORED_OPERATIONS) throw new PeerProtocolError('limit', 'operation capacity reached');
     this.db.prepare(
       `INSERT INTO sync_operations (repo_id, op_id, replica_id, sequence, doc_id, parents_json, kind, payload_hash, origin, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(repoId, operation.id, operation.replicaId, operation.sequence, operation.docId,
       JSON.stringify([...operation.parents].sort()), operation.kind, operation.payloadHash, operation.origin, this.now());
+  }
+
+  /** Only delivered leaves with no retained payload or causal/reference consumers are disposable. */
+  private pruneOperations(repoId: string): void {
+    if (this.compactionBlocker()) return;
+    const candidates = this.db.prepare(`SELECT o.op_id FROM sync_operations o WHERE o.repo_id = ? AND o.kind <> ?
+      AND (o.replica_id, o.sequence) NOT IN (SELECT replica_id, MAX(sequence) FROM sync_operations WHERE repo_id = ? GROUP BY replica_id)
+      AND NOT EXISTS (SELECT 1 FROM sync_versions v WHERE v.repo_id = o.repo_id AND v.head_id = o.op_id)
+      AND NOT EXISTS (SELECT 1 FROM sync_intents i WHERE i.repo_id = o.repo_id AND i.frozen_head = o.op_id)
+      AND NOT EXISTS (SELECT 1 FROM sync_doc_heads h WHERE h.repo_id = o.repo_id AND h.head_id = o.op_id)
+      AND NOT EXISTS (SELECT 1 FROM sync_conflicts c WHERE c.repo_id = o.repo_id AND (c.local_head = o.op_id OR c.remote_head = o.op_id))
+      AND NOT EXISTS (SELECT 1 FROM sync_manual_sessions s, json_each(s.heads_json) h WHERE s.repo_id = o.repo_id AND h.value = o.op_id)
+      AND NOT EXISTS (SELECT 1 FROM sync_transfers t, json_each(t.header_json, '$.heads') h WHERE t.repo_id = o.repo_id AND h.value = o.op_id)
+      AND NOT EXISTS (SELECT 1 FROM sync_outgoing_sessions s, json_each(s.offer_json, '$.heads') h WHERE h.value = o.op_id)
+      AND o.op_id NOT IN (SELECT p.value FROM sync_operations child, json_each(child.parents_json) p WHERE child.repo_id = ?)
+      AND NOT EXISTS (SELECT 1 FROM sync_group_members m WHERE m.repo_id = o.repo_id AND m.removed_at IS NULL
+        AND m.replica_id <> (SELECT replica_id FROM sync_repositories WHERE repo_id = o.repo_id)
+        AND NOT EXISTS (SELECT 1 FROM sync_peer_known k WHERE k.repo_id = o.repo_id AND k.member_replica_id = m.replica_id AND k.head_id = o.op_id))
+      ORDER BY o.created_at, o.replica_id, o.sequence LIMIT ?`).all(repoId, PEER_DELETE_KIND, repoId, repoId, PEER_COMPACTION_BATCH) as Array<{ op_id: string }>;
+    for (const { op_id: head } of candidates) {
+      this.db.prepare('DELETE FROM sync_peer_known WHERE repo_id = ? AND head_id = ?').run(repoId, head);
+      this.db.prepare('DELETE FROM sync_operations WHERE repo_id = ? AND op_id = ?').run(repoId, head);
+    }
   }
 
   recordOperations(repoId: string, operations: readonly PeerOperation[]): void {
@@ -364,13 +396,13 @@ export class DesignDocSyncStore {
   }
 
   /** Manual consent only. Pairing and startup never bootstrap old documents. */
-  freezeManual(): FrozenSyncIntent[] {
+  freezeManual(afterDocId = ''): FrozenSyncIntent[] {
     const local = this.localRepository();
     if (!local?.groupId) throw new PeerProtocolError('invalid', 'sync group is not configured');
     this.requireDataMembers(local.repoId, local.replicaId);
     return this.db.transaction(() => {
-      const docs = this.db.prepare('SELECT id FROM docs ORDER BY id LIMIT ?').all(MAX_PEER_SESSION_OPERATIONS + 1) as Array<{ id: string }>;
-      if (docs.length > MAX_PEER_SESSION_OPERATIONS) throw new PeerProtocolError('limit', 'manual snapshot contains too many documents');
+      const docs = this.db.prepare('SELECT id FROM docs WHERE id > ? ORDER BY id LIMIT ?')
+        .all(afterDocId, MAX_PEER_PAGE_OPERATIONS) as Array<{ id: string }>;
       return docs.flatMap(({ id }) => {
         this.recordLocalMutation({ docId: id, kind: 'document', payload: null, origin: 'bootstrap' });
         const head = this.head(local.repoId, id)!;
@@ -379,12 +411,15 @@ export class DesignDocSyncStore {
     });
   }
 
-  prepareManual(): void {
+  prepareManual(afterDocId = ''): string | null {
     const local = this.localRepository();
     if (!local?.groupId) throw new PeerProtocolError('invalid', 'manual consent requires group');
     this.requireDataMembers(local.repoId, local.replicaId);
-    this.db.transaction(() => {
-      const intents = this.freezeManual();
+    return this.db.transaction(() => {
+      this.pruneManualSessions();
+      const docs = this.db.prepare('SELECT id FROM docs WHERE id > ? ORDER BY id LIMIT ?')
+        .all(afterDocId, MAX_PEER_PAGE_OPERATIONS + 1) as Array<{ id: string }>;
+      const intents = this.freezeManual(afterDocId);
       for (const member of this.members(local.repoId).filter((member) => member.replicaId !== local.replicaId)) {
         const heads = Object.fromEntries(intents.filter((intent) => intent.memberReplicaId === member.replicaId).map((intent) => [intent.docId, intent.frozenHead]));
         this.reserveBytes(Buffer.byteLength(canonicalJson(heads)));
@@ -393,6 +428,7 @@ export class DesignDocSyncStore {
       }
       const count = this.db.prepare('SELECT COUNT(*) AS n FROM sync_manual_sessions').get() as { n: number };
       if (count.n > MAX_PENDING_PEER_INTENTS) throw new PeerProtocolError('limit', 'manual consent capacity reached');
+      return docs.length > MAX_PEER_PAGE_OPERATIONS ? docs[MAX_PEER_PAGE_OPERATIONS - 1]!.id : null;
     });
   }
 
@@ -402,6 +438,7 @@ export class DesignDocSyncStore {
       AND direction = 'out' AND state = 'waiting' ORDER BY created_at, rowid LIMIT 1`).get(local.repoId, member) as { session_id: string; heads_json: string } | undefined;
     return row ? { manualId: row.session_id, heads: JSON.parse(row.heads_json) } : null;
   }
+
 
   manualConsents(): Array<{ memberReplicaId: string; manualId: string; heads: Record<string, string> }> {
     const local = this.localRepository()!;
@@ -416,6 +453,7 @@ export class DesignDocSyncStore {
     const local = this.localRepository()!;
     return this.db.transaction(() => {
       this.requireDataMembers(local.repoId, local.replicaId, member);
+      this.pruneManualSessions();
       const prior = this.db.prepare('SELECT * FROM sync_manual_sessions WHERE session_id = ?').get(manualId) as
         { repo_id: string; member_replica_id: string; direction: string; state: string; heads_json: string } | undefined;
       if (prior && (prior.repo_id !== local.repoId || prior.member_replica_id !== member || prior.direction !== 'in' || prior.heads_json !== canonicalJson(heads))) {
@@ -429,17 +467,52 @@ export class DesignDocSyncStore {
       this.db.prepare(`INSERT INTO sync_manual_sessions VALUES (?, ?, ?, 'in', ?, ?, ?)
         ON CONFLICT (session_id) DO UPDATE SET state = excluded.state`)
         .run(manualId, local.repoId, member, consent ? 'accepted' : 'waiting', canonicalJson(heads), this.now());
-      if (consent) this.db.prepare("UPDATE sync_manual_sessions SET state = 'accepted' WHERE session_id = ?").run(consent.manualId);
+      if (consent) {
+        this.db.prepare("UPDATE sync_manual_sessions SET state = 'accepted' WHERE session_id = ?").run(consent.manualId);
+        // Bilateral consent just completed for this member. Clear any exponential-backoff retry on pending intents to them so
+        // a frozen head that blocked before consent re-delivers on the next pass instead of waiting out the backoff.
+        this.db.prepare(`DELETE FROM sync_retry WHERE intent_id IN (
+          SELECT id FROM sync_intents WHERE repo_id = ? AND member_replica_id = ? AND state = 'pending')`)
+          .run(local.repoId, member);
+      }
       return !!consent;
     });
   }
 
+
+
   completeManual(manualId: string): void {
-    const local = this.localRepository()!;
-    const session = this.db.prepare("SELECT member_replica_id FROM sync_manual_sessions WHERE session_id = ? AND direction = 'out'")
-      .get(manualId) as { member_replica_id: string } | undefined;
-    this.requireDataMembers(local.repoId, local.replicaId, ...(session ? [session.member_replica_id] : []));
-    this.db.prepare("UPDATE sync_manual_sessions SET state = 'accepted' WHERE session_id = ? AND direction = 'out'").run(manualId);
+    this.db.transaction(() => {
+      const local = this.localRepository()!;
+      const session = this.db.prepare("SELECT member_replica_id FROM sync_manual_sessions WHERE session_id = ? AND direction = 'out'")
+        .get(manualId) as { member_replica_id: string } | undefined;
+      this.requireDataMembers(local.repoId, local.replicaId, ...(session ? [session.member_replica_id] : []));
+      this.db.prepare("UPDATE sync_manual_sessions SET state = 'accepted' WHERE session_id = ? AND direction = 'out'").run(manualId);
+      if (session) {
+        this.db.prepare(`UPDATE sync_manual_sessions SET state = 'accepted' WHERE repo_id = ?
+          AND member_replica_id = ? AND direction = 'in' AND state = 'waiting'`).run(local.repoId, session.member_replica_id);
+        // Bilateral consent now holds for this member. Any pending intent to them that blocked before consent carries an
+        // exponential-backoff retry row whose next_at is seconds out; without clearing it the just-authorized frozen head
+        // would not re-deliver on the immediately-following sync. Drop the backoff so the next deliver pass ships it at once.
+        this.db.prepare(`DELETE FROM sync_retry WHERE intent_id IN (
+          SELECT id FROM sync_intents WHERE repo_id = ? AND member_replica_id = ? AND state = 'pending')`)
+          .run(local.repoId, session.member_replica_id);
+      }
+      this.pruneManualSessions();
+    });
+  }
+
+  /** Keep a small replay window, but never discard consent for undelivered frozen heads. */
+  private pruneManualSessions(): void {
+    this.db.prepare(`DELETE FROM sync_manual_sessions WHERE session_id IN (
+      SELECT session_id FROM (SELECT s.session_id, ROW_NUMBER() OVER (
+        PARTITION BY s.repo_id, s.member_replica_id, s.direction ORDER BY s.created_at DESC, s.rowid DESC) AS position
+        FROM sync_manual_sessions s WHERE s.state = 'accepted' AND NOT EXISTS (
+          SELECT 1 FROM json_each(s.heads_json) h WHERE
+            (s.direction = 'out' AND EXISTS (SELECT 1 FROM sync_intents i WHERE i.repo_id = s.repo_id
+              AND i.member_replica_id = s.member_replica_id AND i.doc_id = h.key AND i.frozen_head = h.value AND i.state <> 'synced'))
+            OR (s.direction = 'in' AND NOT EXISTS (SELECT 1 FROM sync_peer_known k WHERE k.repo_id = s.repo_id
+              AND k.member_replica_id = s.member_replica_id AND k.head_id = h.value)))) WHERE position > 128)`).run();
   }
 
   head(repoId: string, docId: string): string | null {
@@ -581,7 +654,11 @@ export class DesignDocSyncStore {
   }
 
   outgoing(intent: FrozenSyncIntent, handshake: Omit<PeerSessionOffer, 'sessionId' | 'versions' | 'heads' | 'scopeHash'>): PeerSessionOffer {
-    return this.db.transaction(() => this.outgoingOffer(intent, handshake));
+    return this.db.transaction(() => {
+      const offer = this.outgoingOffer(intent, handshake);
+      // Advisory marker only (outside scopeHash): flag private manual heads so the receiver gates before an inbound session exists.
+      return this.isManualOutbound(intent.repoId, intent.memberReplicaId, intent.docId, intent.frozenHead) ? { ...offer, manual: true } : offer;
+    });
   }
 
   private outgoingOffer(intent: FrozenSyncIntent, handshake: Omit<PeerSessionOffer, 'sessionId' | 'versions' | 'heads' | 'scopeHash'>): PeerSessionOffer {
@@ -770,6 +847,10 @@ export class DesignDocSyncStore {
         body.versions.push({ operation, manifestHash: addBlob(Buffer.from(canonicalJson(manifest), 'utf8')) });
       }
       body.blobs.sort((a, b) => a.hash.localeCompare(b.hash));
+      // Receiver-visible private-draft marker, folded into the body BEFORE hashing/persisting so the stored row and the
+      // returned transfer are byte-identical: acceptTransferReceipt compares whole-object hashes, and createTransferHash
+      // enumerates explicit fields (manual excluded), so scopeHash is unaffected while receipt matching stays consistent.
+      if (this.isManualOutbound(intent.repoId, intent.memberReplicaId, intent.docId, intent.frozenHead)) body.manual = true;
       const transfer = { ...body, scopeHash: createTransferHash(body) };
       validateTransfer(transfer, { repoId: transfer.repoId, localReplicaId: transfer.recipientReplicaId,
         remoteReplicaId: transfer.senderReplicaId, groupId: transfer.groupId, rosterEpoch: transfer.rosterEpoch,
@@ -798,6 +879,10 @@ export class DesignDocSyncStore {
   stageTransfer(transfer: PeerTransfer): void {
     this.db.transaction(() => {
       this.requireTransferIdentity(transfer);
+      for (const version of transfer.versions) if (Object.values(transfer.heads).includes(version.operation.id) &&
+        (transfer.manual === true || this.hasManualDoc(transfer.repoId, transfer.senderReplicaId, version.operation.docId))) {
+        this.requireManualHead(transfer.repoId, transfer.senderReplicaId, version.operation.docId, version.operation.id);
+      }
       const digest = this.localRepository()!.rosterDigest;
       // Revoked/idle sessions remain quarantined for recovery, but do not consume active slots.
       this.db.prepare(`UPDATE sync_transfers SET state = 'quarantined' WHERE direction = 'in' AND state = 'active' AND
@@ -1010,7 +1095,7 @@ export class DesignDocSyncStore {
     return this.applyVerified(offer, offer.versions);
   }
 
-  private applyVerified(offer: PeerReceiptQuery & PeerAncestorStubs & { heads: Record<string, string> }, versions: Iterable<PeerVersion>): PeerAppliedReceipt {
+  private applyVerified(offer: PeerReceiptQuery & PeerAncestorStubs & { heads: Record<string, string>; manual?: boolean }, versions: Iterable<PeerVersion>): PeerAppliedReceipt {
     return this.db.transaction(() => {
       const local = this.localRepository();
       if (local) this.requireDataMembers(local.repoId, local.replicaId, offer.senderReplicaId);
@@ -1029,6 +1114,11 @@ export class DesignDocSyncStore {
       }
       for (const stub of offer.stubs ?? []) this.saveStub(local.repoId, local.replicaId, stub);
       for (const version of versions) {
+        if (offer.heads[version.operation.docId] === version.operation.id &&
+          (offer.manual === true || (!['approved', 'implemented', 'archived'].includes(version.closure.doc.status) &&
+            this.hasManualDoc(offer.repoId, offer.senderReplicaId, version.operation.docId)))) {
+          this.requireManualHead(offer.repoId, offer.senderReplicaId, version.operation.docId, version.operation.id);
+        }
         this.authorizeInbound(local.repoId, local.replicaId, version.operation);
         this.saveVersion(offer.repoId, version);
       }
@@ -1127,6 +1217,50 @@ export class DesignDocSyncStore {
     });
   }
 
+  private hasManualDoc(repoId: string, member: string, docId: string): boolean {
+    return !!this.db.prepare(`SELECT 1 FROM sync_manual_sessions s, json_each(s.heads_json) h
+      WHERE s.repo_id = ? AND s.member_replica_id = ? AND s.direction = 'in' AND s.state = 'accepted' AND h.key = ? LIMIT 1`)
+      .get(repoId, member, docId);
+  }
+
+  /**
+   * True when a frozen head is a private draft the sender is sharing manually: it belongs to an outbound manual
+   * session for this document and member AND is not a milestone (approved/implemented/archived). Stamped onto
+   * outgoing offers/transfers as the receiver-visible `manual` marker so a peer gates a private draft head even
+   * before it has an accepted inbound session. Milestones carry no marker (syncNow/deliverPending prepare manual
+   * sessions broadly, so the out-session alone cannot distinguish them) and ordinary pairing replay has no session,
+   * so both stay open. Folding the status test in here keeps the receiver gates free of closure inspection — the
+   * transfer path has no inline closure to read a status from.
+   */
+  private isManualOutbound(repoId: string, member: string, docId: string, frozenHead: string): boolean {
+    const status = this.version(repoId, frozenHead)?.closure.doc.status;
+    if (status !== undefined && ['approved', 'implemented', 'archived'].includes(status)) return false;
+    return !!this.db.prepare(`SELECT 1 FROM sync_manual_sessions s, json_each(s.heads_json) h
+      WHERE s.repo_id = ? AND s.member_replica_id = ? AND s.direction = 'out' AND h.key = ? LIMIT 1`)
+      .get(repoId, member, docId);
+  }
+
+  private requireManualHead(repoId: string, member: string, docId: string, head: string): void {
+    // 1. The exact head is already known from this sender — nothing to gate.
+    if (this.db.prepare('SELECT 1 FROM sync_peer_known WHERE repo_id = ? AND member_replica_id = ? AND head_id = ?').get(repoId, member, head)) return;
+    // 2. Full bilateral consent: an inbound session from this member, flipped to 'accepted', names this exact head. This is the
+    //    two-sided handshake (both peers deliberately prepared the exchange).
+    if (this.db.prepare(`SELECT 1 FROM sync_manual_sessions s, json_each(s.heads_json) h
+      WHERE s.repo_id = ? AND s.member_replica_id = ? AND s.direction = 'in' AND s.state = 'accepted'
+        AND h.key = ? AND h.value = ? LIMIT 1`).get(repoId, member, docId, head)) return;
+    // 3. Established, trusted channel + explicit push: once this side already holds authorized content from the sender (any
+    //    known head from them proves a completed, consented exchange), a later user-invoked `syncNow` may push further private
+    //    heads to them without a fresh per-head reciprocal — provided the sender transmitted an inbound consent naming this
+    //    exact head (so background `deliverPending`, which sends no consent, still cannot leak a private draft). A first-contact
+    //    peer has no known head from the sender and stays fully gated (sync-store test 104; recovery bilateral test), so a
+    //    private draft never reaches a peer that has not yet established a consented exchange.
+    const established = this.db.prepare('SELECT 1 FROM sync_peer_known WHERE repo_id = ? AND member_replica_id = ? LIMIT 1').get(repoId, member);
+    if (established && this.db.prepare(`SELECT 1 FROM sync_manual_sessions s, json_each(s.heads_json) h
+      WHERE s.repo_id = ? AND s.member_replica_id = ? AND s.direction = 'in'
+        AND h.key = ? AND h.value = ? LIMIT 1`).get(repoId, member, docId, head)) return;
+    throw new PeerProtocolError('invalid', 'bilateral manual consent missing for frozen head');
+  }
+
   private isAncestor(repoId: string, ancestor: string, descendant: string): boolean {
     const pending = [descendant], seen = new Set<string>();
     while (pending.length) {
@@ -1186,9 +1320,12 @@ export class DesignDocSyncStore {
     const compacted = !!this.db.prepare('SELECT 1 FROM sync_versions WHERE repo_id = ? AND head_id = ? AND compacted = 1').get(repoId, operation.id);
     // Capacity relief runs before this version puts any blob, so collection never sees half-written payloads.
     const estimate = Buffer.byteLength(canonicalJson(closure), 'utf8');
-    const fits = () => this.retainedVersions() < MAX_PEER_STORED_VERSIONS && this.storedBytes() + estimate <= MAX_PEER_STORED_BYTES;
+    // A large vault needs one retained payload per current document, still bounded by journal capacity.
+    const documents = (this.db.prepare('SELECT COUNT(*) AS n FROM docs').get() as { n: number }).n;
+    const versionLimit = Math.min(MAX_PEER_STORED_OPERATIONS, Math.max(MAX_PEER_STORED_VERSIONS, documents));
+    const fits = () => this.retainedVersions() < versionLimit && this.storedBytes() + estimate <= MAX_PEER_STORED_BYTES;
     if (!fits()) this.relieve(fits);
-    if (this.retainedVersions() >= MAX_PEER_STORED_VERSIONS) throw new PeerProtocolError('limit', 'durable version capacity reached');
+    if (this.retainedVersions() >= versionLimit) throw new PeerProtocolError('limit', 'durable version capacity reached');
     const json = canonicalJson(this.manifest(closure)), bytes = Buffer.byteLength(json, 'utf8');
     this.reserveBytes(bytes);
     const historyCount = this.db.prepare('SELECT COUNT(*) AS n FROM sync_history_projections').get() as { n: number };
@@ -1371,18 +1508,24 @@ export class DesignDocSyncStore {
   }
 
   deferIntent(intent: FrozenSyncIntent, error: string): void {
-    const replicaId = this.repository(intent.repoId)?.replica_id;
-    if (replicaId && this.isRetiringReplica(intent.repoId, replicaId)) return;
-    if (this.isRetiringReplica(intent.repoId, intent.memberReplicaId)) {
-      this.db.prepare("UPDATE sync_intents SET state = 'blocked', updated_at = ? WHERE id = ? AND state = 'pending'")
-        .run(this.now(), intent.id);
-      return;
-    }
-    const attempts = ((this.db.prepare('SELECT attempts FROM sync_retry WHERE intent_id = ?').get(intent.id) as { attempts: number } | undefined)?.attempts ?? 0) + 1;
-    const delay = Math.min(PEER_RETRY_MAX_MS, 1000 * 2 ** Math.min(attempts - 1, 10));
-    this.db.prepare(`INSERT INTO sync_retry VALUES (?, ?, ?, ?, ?) ON CONFLICT (intent_id) DO UPDATE SET
-      attempts = excluded.attempts, next_at = excluded.next_at, last_attempt = excluded.last_attempt, error = excluded.error`)
-      .run(intent.id, attempts, this.now() + delay, this.now(), error.slice(0, 240));
+    this.db.transaction(() => {
+      if (!this.db.prepare("SELECT 1 FROM sync_intents WHERE id = ? AND repo_id = ? AND state = 'pending'").get(intent.id, intent.repoId)) return;
+      const replicaId = this.repository(intent.repoId)?.replica_id;
+      if (replicaId && this.isRetiringReplica(intent.repoId, replicaId)) return;
+      if (this.isRetiringReplica(intent.repoId, intent.memberReplicaId)) {
+        this.db.prepare("UPDATE sync_intents SET state = 'blocked', updated_at = ? WHERE id = ? AND state = 'pending'")
+          .run(this.now(), intent.id);
+        return;
+      }
+      const attempts = ((this.db.prepare('SELECT attempts FROM sync_retry WHERE intent_id = ?').get(intent.id) as { attempts: number } | undefined)?.attempts ?? 0) + 1;
+      if (attempts >= MAX_INTENT_ATTEMPTS) {
+        this.db.prepare("UPDATE sync_intents SET state = 'blocked', updated_at = ? WHERE id = ?").run(this.now(), intent.id);
+      }
+      const delay = Math.min(PEER_RETRY_MAX_MS, 1000 * 2 ** Math.min(attempts - 1, 10));
+      this.db.prepare(`INSERT INTO sync_retry VALUES (?, ?, ?, ?, ?) ON CONFLICT (intent_id) DO UPDATE SET
+        attempts = excluded.attempts, next_at = excluded.next_at, last_attempt = excluded.last_attempt, error = excluded.error`)
+        .run(intent.id, attempts, this.now() + delay, this.now(), error.slice(0, 240));
+    });
   }
 
   private markKnown(repoId: string, member: string, head: string): void {

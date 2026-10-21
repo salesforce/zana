@@ -9,6 +9,8 @@ import {
   destroyHost,
   findHostBySsh,
   getHost,
+  getPrimaryHost,
+  listAllHosts,
   listExecutionHosts,
   listHosts,
   listPluginLinkHosts,
@@ -104,11 +106,38 @@ describe('host purpose mapping', () => {
 });
 
 describe('listing', () => {
-  it('listExecutionHosts excludes plugin links; listHosts keeps every live host', () => {
+  it('listHosts and listExecutionHosts exclude plugin links', () => {
+    const exec = upsertHost(db, { name: 'exec', hostKeyHash: 'a' });
+    link();
+    expect(listExecutionHosts(db).map((h) => h.id)).toEqual([exec.id]);
+    expect(listHosts(db).map((h) => h.id)).toEqual([exec.id]);
+  });
+
+  it('listAllHosts returns both kinds in creation order and excludes destroyed hosts', () => {
     const exec = upsertHost(db, { name: 'exec', hostKeyHash: 'a' });
     const fwd = link();
-    expect(listExecutionHosts(db).map((h) => h.id)).toEqual([exec.id]);
-    expect(listHosts(db).map((h) => h.id).sort()).toEqual([exec.id, fwd.id].sort());
+    const removed = link('removed');
+    destroyHost(db, removed.id);
+    db.sqlite.prepare('UPDATE hosts SET created_at = 1 WHERE id = ?').run(exec.id);
+    db.sqlite.prepare('UPDATE hosts SET created_at = 2 WHERE id = ?').run(fwd.id);
+    expect(listAllHosts(db).map((h) => h.id)).toEqual([exec.id, fwd.id]);
+  });
+
+  it('execution listings exclude mismatched capability or plugin-link purpose', () => {
+    const fwd = link();
+    const mismatched = upsertHost(db, { name: 'mismatched', hostKeyHash: 'm' });
+    db.sqlite.prepare("UPDATE hosts SET purpose_kind = 'execution' WHERE id = ?").run(fwd.id);
+    db.sqlite.prepare("UPDATE hosts SET purpose_kind = 'plugin-link' WHERE id = ?").run(mismatched.id);
+    expect(listHosts(db)).toEqual([]);
+    expect(listExecutionHosts(db)).toEqual([]);
+    expect(listPluginLinkHosts(db).map((h) => h.id).sort()).toEqual([fwd.id, mismatched.id].sort());
+  });
+
+  it('returns empty listings when no hosts exist', () => {
+    expect(listHosts(db)).toEqual([]);
+    expect(listExecutionHosts(db)).toEqual([]);
+    expect(listPluginLinkHosts(db)).toEqual([]);
+    expect(listAllHosts(db)).toEqual([]);
   });
 
   it('listPluginLinkHosts filters by plugin id', () => {
@@ -127,7 +156,7 @@ describe('listing', () => {
     addHostLinkUse(db, hosts[0]!.id, use('p1'));
     addHostLinkUse(db, hosts[0]!.id, { ...use('p2'), scope: 's2' });
     addHostLinkUse(db, hosts[599]!.id, use('p3'));
-    const listed = new Map(listHosts(db).map((h) => [h.id, h]));
+    const listed = new Map(listAllHosts(db).map((h) => [h.id, h]));
     const usesOf = (id: string) => { const p = listed.get(id)!.purpose; return p.kind === 'plugin-link' ? p.uses.map((u) => u.pluginId) : null; };
     expect(usesOf(hosts[0]!.id)).toEqual(['p1', 'p2']);
     expect(usesOf(hosts[1]!.id)).toEqual([]);
@@ -144,6 +173,60 @@ describe('listing', () => {
   });
 });
 
+describe('primary host scope', () => {
+  it.each([undefined, true, false])('never makes a new plugin link primary with isPrimary=%s', (isPrimary) => {
+    const fwd = upsertHost(db, { name: 'peer', hostKeyHash: 'p', enrollmentCapability: 'peer.forward', isPrimary });
+    expect(fwd.isPrimary).toBe(false);
+    expect(getPrimaryHost(db)).toBeNull();
+    const exec = upsertHost(db, { name: 'exec', hostKeyHash: 'e' });
+    expect(exec.isPrimary).toBe(true);
+    expect(getPrimaryHost(db)?.id).toBe(exec.id);
+  });
+
+  it('does not displace an execution primary when inserting or updating a plugin link', () => {
+    const exec = upsertHost(db, { name: 'exec', hostKeyHash: 'e' });
+    const fwd = upsertHost(db, { name: 'peer', hostKeyHash: 'p', enrollmentCapability: 'peer.forward', isPrimary: true });
+    expect(fwd.isPrimary).toBe(false);
+    const updated = upsertHost(db, { id: fwd.id, name: 'peer', hostKeyHash: 'p2', isPrimary: true });
+    expect(updated.isPrimary).toBe(false);
+    expect(getPrimaryHost(db)?.id).toBe(exec.id);
+  });
+
+  it('ignores legacy primary flags on forward-only and plugin-link-purpose hosts', () => {
+    const fwd = link();
+    const mismatched = upsertHost(db, { name: 'mismatched', hostKeyHash: 'm', isPrimary: false });
+    db.sqlite.prepare("UPDATE hosts SET is_primary = 1, purpose_kind = 'execution' WHERE id = ?").run(fwd.id);
+    db.sqlite.prepare("UPDATE hosts SET is_primary = 1, purpose_kind = 'plugin-link' WHERE id = ?").run(mismatched.id);
+    expect(getPrimaryHost(db)).toBeNull();
+    const exec = upsertHost(db, { name: 'exec', hostKeyHash: 'e' });
+    expect(getPrimaryHost(db)?.id).toBe(exec.id);
+    db.sqlite.prepare('UPDATE hosts SET destroyed_at = 1 WHERE id = ?').run(exec.id);
+    expect(getPrimaryHost(db)).toBeNull();
+  });
+
+  it.each([undefined, true, false])('clears primary on execution-to-link transition with isPrimary=%s and allows destruction', (isPrimary) => {
+    const exec = upsertHost(db, { name: 'exec', hostKeyHash: 'e' });
+    const fwd = upsertHost(db, { id: exec.id, name: 'peer', hostKeyHash: 'p', enrollmentCapability: 'peer.forward', isPrimary });
+    expect(fwd.isPrimary).toBe(false);
+    expect(fwd.purpose).toEqual({ kind: 'plugin-link', uses: [] });
+    expect(listHosts(db)).toEqual([]);
+    expect(getPrimaryHost(db)).toBeNull();
+    addHostLinkUse(db, fwd.id, use());
+    expect(destroyHost(db, fwd.id)?.destroyedAt).not.toBeNull();
+    expect(db.sqlite.prepare('SELECT COUNT(*) AS c FROM host_link_uses').get()).toEqual({ c: 0 });
+  });
+
+  it('keeps execution primary selection and preservation on re-upsert', () => {
+    const first = upsertHost(db, { name: 'first', hostKeyHash: 'a', isPrimary: false });
+    expect(getPrimaryHost(db)).toBeNull();
+    const second = upsertHost(db, { name: 'second', hostKeyHash: 'b' });
+    expect(upsertHost(db, { id: second.id, name: 'second', hostKeyHash: 'b2' }).isPrimary).toBe(true);
+    expect(upsertHost(db, { id: first.id, name: 'first', hostKeyHash: 'a2', isPrimary: true }).isPrimary).toBe(true);
+    expect(getPrimaryHost(db)?.id).toBe(first.id);
+    expect(getHost(db, second.id)?.isPrimary).toBe(false);
+  });
+});
+
 describe('link uses', () => {
   it('adds idempotently, refreshing the label and keeping since', async () => {
     const fwd = link();
@@ -156,10 +239,15 @@ describe('link uses', () => {
   });
 
   it('enforces the per-host cap but still refreshes an existing use at the cap', () => {
+    expect(HOST_LINK_USES_MAX).toBe(32);
     const fwd = link();
     for (let i = 0; i < HOST_LINK_USES_MAX; i++) addHostLinkUse(db, fwd.id, use('p', `s${i}`));
     expect(() => addHostLinkUse(db, fwd.id, use('p', 'overflow'))).toThrow('host link use limit reached');
     expect(() => addHostLinkUse(db, fwd.id, use('p', 's0', 'Refreshed'))).not.toThrow();
+    const purpose = getHost(db, fwd.id)!.purpose;
+    expect(purpose.kind === 'plugin-link' && purpose.uses).toHaveLength(32);
+    expect(removeHostLinkUse(db, fwd.id, 'p', 's0')).toBe(31);
+    expect(() => addHostLinkUse(db, fwd.id, use('p', 'replacement'))).not.toThrow();
   });
 
   it('refuses execution, unknown and destroyed hosts', () => {
@@ -175,6 +263,7 @@ describe('link uses', () => {
     const fwd = link();
     expect(() => addHostLinkUse(db, fwd.id, use('', 's', 'l'))).toThrow('plugin id');
     expect(() => addHostLinkUse(db, fwd.id, use('p', '', 'l'))).toThrow('scope');
+    expect(() => addHostLinkUse(db, fwd.id, use('p', 's', ''))).toThrow('label');
     expect(() => addHostLinkUse(db, fwd.id, use('p', 's', 'x'.repeat(81)))).toThrow('label');
     expect(() => addHostLinkUse(db, fwd.id, use('p'.repeat(129), 's', 'l'))).toThrow('plugin id');
     expect(() => addHostLinkUse(db, fwd.id, use('p', 's'.repeat(257), 'l'))).toThrow('scope');
@@ -189,6 +278,8 @@ describe('link uses', () => {
     expect(removeHostLinkUse(db, fwd.id, 'p')).toBe(1);
     expect(removeHostLinkUse(db, fwd.id, 'missing')).toBe(1);
     expect(removeHostLinkUse(db, fwd.id, 'q', 's1')).toBe(0);
+    expect(removeHostLinkUse(db, fwd.id, 'q', 's1')).toBe(0);
+    expect(removeHostLinkUse(db, 'missing', 'p')).toBe(0);
   });
 
   it('cascades on hard delete and drops uses on soft destroy', () => {

@@ -142,8 +142,13 @@ export function getHost(db: ZccDatabase, id: string): HostRow | null {
   return row ? toHosts(db, [row])[0]! : null;
 }
 
-/** Every live host, including plugin links. Execution-only consumers must use `listExecutionHosts`. */
+/** Hosts that can run work: preserves the execution-only contract for existing consumers. */
 export function listHosts(db: ZccDatabase): HostRow[] {
+  return listAllHosts(db).filter((row) => row.purpose.kind === 'execution');
+}
+
+/** Every live host, including plugin links. */
+export function listAllHosts(db: ZccDatabase): HostRow[] {
   return toHosts(
     db,
     db.sqlite.prepare('SELECT * FROM hosts WHERE destroyed_at IS NULL ORDER BY created_at').all() as HostSqlRow[]
@@ -152,12 +157,12 @@ export function listHosts(db: ZccDatabase): HostRow[] {
 
 /** Hosts that can run work: what machine pickers, project targets and the Machines settings may show. */
 export function listExecutionHosts(db: ZccDatabase): HostRow[] {
-  return listHosts(db).filter((row) => row.purpose.kind === 'execution');
+  return listHosts(db);
 }
 
 /** Live plugin-link hosts, optionally only those with a use by `pluginId`. */
 export function listPluginLinkHosts(db: ZccDatabase, pluginId?: string): HostRow[] {
-  return listHosts(db).filter((row) =>
+  return listAllHosts(db).filter((row) =>
     row.purpose.kind === 'plugin-link'
     && (pluginId === undefined || row.purpose.uses.some((use) => use.pluginId === pluginId)));
 }
@@ -210,7 +215,9 @@ export function removeHostLinkUse(db: ZccDatabase, hostId: string, pluginId: str
 
 export function getPrimaryHost(db: ZccDatabase): HostRow | null {
   const row = db.sqlite.prepare(
-    'SELECT * FROM hosts WHERE destroyed_at IS NULL AND is_primary = 1 ORDER BY created_at LIMIT 1'
+    `SELECT * FROM hosts WHERE destroyed_at IS NULL AND is_primary = 1
+     AND enrollment_capability = 'execution' AND COALESCE(purpose_kind, 'execution') = 'execution'
+     ORDER BY created_at LIMIT 1`
   ).get() as HostSqlRow | undefined;
   return row ? toHosts(db, [row])[0]! : null;
 }
@@ -234,13 +241,14 @@ export function upsertHost(
   const now = Date.now();
   const existing = input.id ? getHost(db, input.id) : null;
   const id = existing?.id ?? input.id ?? createHostId();
-  const makePrimary = input.isPrimary === true || (!existing && !getPrimaryHost(db) && input.isPrimary !== false);
-  if (makePrimary) {
-    db.sqlite.prepare('UPDATE hosts SET is_primary = 0, updated_at = ? WHERE is_primary = 1').run(now);
-  }
   // Purpose follows capability: a forward-only host is always a plugin link, never an execution host.
   const capability = input.enrollmentCapability ?? existing?.enrollmentCapability ?? 'execution';
   const purposeKind: HostPurposeKind = capability === 'execution' ? 'execution' : 'plugin-link';
+  const makePrimary = capability === 'execution'
+    && (input.isPrimary === true || (!existing && !getPrimaryHost(db) && input.isPrimary !== false));
+  if (makePrimary) {
+    db.sqlite.prepare('UPDATE hosts SET is_primary = 0, updated_at = ? WHERE is_primary = 1').run(now);
+  }
   if (existing) {
     if (purposeKind === 'execution' && existing.purpose.kind === 'plugin-link') {
       db.sqlite.prepare('DELETE FROM host_link_uses WHERE host_id = ?').run(existing.id);
@@ -253,7 +261,7 @@ export function upsertHost(
       input.hostKeyHash,
       input.type ?? existing.type,
       now,
-      makePrimary || existing.isPrimary ? 1 : 0,
+      capability === 'execution' && (makePrimary || existing.isPrimary) ? 1 : 0,
       input.homeDir !== undefined ? input.homeDir : existing.homeDir,
       input.maxPermissionMode ?? existing.maxPermissionMode,
       capability,

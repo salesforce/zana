@@ -10,6 +10,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { HOST_RPC_PROTOCOL_VERSION, PEER_CONTROL_ROUTE, PEER_CONTROL_MAX_BYTES } from '@zana-ai/zcc-contracts/host-rpc';
 import { PROTOCOL_VERSION, runJoinStandalone } from './join-standalone.js';
 import { PEER_FORWARD_MAX_BYTES, registerLocalPeerApp } from './peer-forward.js';
+import { PeerControlForwarder } from './peer-control.js';
 
 const cleanup: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
@@ -145,14 +146,37 @@ describe('standalone joined-host protocol', () => {
     expect(f.enrollments).toHaveLength(1);
   });
 
-  it.each(['peer.forward', 'missing'] as const)('%s capability allows ONLY peer.forward', async capability => {
+  it.each(['peer.forward', 'missing'] as const)('%s capability allows peer.forward and peer.control but denies execution', async capability => {
     const f = await fixture({ capability });
-    for (const command of [f.control, { type: 'terminal.start' }, { type: 'host.list_loaded_environments' },
+    f.localRequests.length = 0;
+    const forward = vi.spyOn(PeerControlForwarder.prototype, 'forward');
+    const response = await f.result(f.send(f.control));
+    expect(forward).toHaveBeenCalledExactlyOnceWith(f.control);
+    expect(response).toMatchObject({ ok: false, error: { code: 'peer_control_failed' } });
+    for (const command of [{ type: 'terminal.start' }, { type: 'host.list_loaded_environments' },
       { type: 'plugin.host.call' }, { type: 'future.command' }]) {
       expect(await f.result(f.send(command))).toMatchObject({ ok: false, error: { code: 'capability_denied' } });
     }
     expect(f.localRequests).toHaveLength(0);
     expect(await f.result(f.send(f.command))).toMatchObject({ ok: true });
+  });
+
+  it('validates allowed peer commands before dispatch under peer.forward capability', async () => {
+    const f = await fixture({ capability: 'peer.forward' }); f.localRequests.length = 0;
+    const forward = vi.spyOn(PeerControlForwarder.prototype, 'forward');
+    for (const command of [
+      { ...f.command, scope: undefined },
+      { ...f.control, packet: { ...f.control.packet, route: '/secret' } },
+      { ...f.control, extra: true }
+    ]) expect(await f.result(f.send(command))).toMatchObject({ ok: false, error: { code: 'invalid_request' } });
+    expect(await f.result(f.send(f.control, { extra: true })))
+      .toMatchObject({ ok: false, error: { code: 'invalid_request' } });
+    expect(await f.result(f.send(f.control, { protocolVersion: HOST_RPC_PROTOCOL_VERSION - 1 })))
+      .toMatchObject({ ok: false, error: { code: 'protocol_mismatch' } });
+    expect(forward).not.toHaveBeenCalled();
+    expect(await f.result(f.send({ ...f.control, packet: { ...f.control.packet, recipientId: randomUUID() } })))
+      .toMatchObject({ ok: false, error: { code: 'peer_control_failed' } });
+    expect(f.localRequests).toHaveLength(0);
   });
 
   it('fails closed for unknown, unsupported, malformed, extra-field and obsolete RPC', async () => {
@@ -217,13 +241,19 @@ describe('standalone joined-host protocol', () => {
     f.reconnect('peer.forward');
     await vi.waitFor(() => expect(f.hellos).toHaveLength(2), { timeout: 5000 });
     await vi.waitFor(async () => expect((await fetch(`http://127.0.0.1:${f.statusPort}/status`).then(res => res.json())).connected).toBe(true));
-    expect(await f.result(f.send(f.control))).toMatchObject({ ok: false, error: { code: 'capability_denied' } });
+    expect(await f.result(f.send({ ...f.control, timeoutMs: 20 })))
+      .toMatchObject({ ok: false, error: { code: 'peer_control_failed' } });
+    expect(await f.result(f.send({ type: 'provider.status' })))
+      .toMatchObject({ ok: false, error: { code: 'capability_denied' } });
     expect(await f.result(f.send({ ...f.command, timeoutMs: 20 }))).toMatchObject({ ok: false, error: { code: 'peer_forward_timeout' } });
     for (const id of pending) expect(f.responses.has(id)).toBe(false);
     f.reconnect('execution');
     await vi.waitFor(() => expect(f.hellos).toHaveLength(3), { timeout: 5000 });
     await vi.waitFor(async () => expect((await fetch(`http://127.0.0.1:${f.statusPort}/status`).then(res => res.json())).connected).toBe(true));
-    expect(await f.result(f.send(f.control))).toMatchObject({ ok: false, error: { code: 'capability_denied' } });
+    expect(await f.result(f.send({ ...f.control, timeoutMs: 20 })))
+      .toMatchObject({ ok: false, error: { code: 'peer_control_failed' } });
+    expect(await f.result(f.send({ type: 'provider.status' })))
+      .toMatchObject({ ok: false, error: { code: 'capability_denied' } });
   });
 
   it('rejects mismatched saved enrollment, missing auth and invalid arguments without leaving status listener', async () => {
@@ -239,7 +269,8 @@ describe('standalone joined-host protocol', () => {
   });
 });
 
-describe('generated standalone bundle', () => {
+// Source-only verification can opt out of rebuilding generated bundles.
+describe.skipIf(process.env.ZCC_SKIP_JOIN_BUNDLE_TESTS === '1')('generated standalone bundle', () => {
   let run: typeof runJoinStandalone;
   beforeAll(async () => {
     const out = await mkdtemp(join(tmpdir(), 'zcc-standalone-build-'));
@@ -291,7 +322,9 @@ describe('generated standalone bundle', () => {
     expect(await full.result(full.send({ type: 'host.list_loaded_environments' }))).toMatchObject({ ok: false });
     const scoped = await fixture({ run, capability: 'peer.forward' });
     expect(await scoped.result(scoped.send(scoped.command))).toMatchObject({ ok: true });
-    expect(await scoped.result(scoped.send(scoped.control))).toMatchObject({ ok: false, error: { code: 'capability_denied' } });
+    expect(await scoped.result(scoped.send(scoped.control))).toMatchObject({ ok: false, error: { code: 'peer_control_failed' } });
+    expect(await scoped.result(scoped.send({ type: 'host.list_loaded_environments' })))
+      .toMatchObject({ ok: false, error: { code: 'capability_denied' } });
     expect(scoped.localRequests.map(request => request.path)).toEqual([scoped.command.route]);
   });
 });

@@ -4,7 +4,7 @@ import { canonicalPeerHash, PeerProtocolError } from '../shared/peer-contract.js
 import { ownerText, syncedWith, UNREADABLE_REPLY, type GroupRoster, type GroupStatus, type PeerLifecycleReason, type RepairResult } from '../shared/peer-group.js';
 import { PEER_CALL_TIMEOUT_MS, PEER_PENDING_TICK_MS } from '../shared/peer-limits.js';
 import { admissionSchema, capacityRequestId, capacitySchema, DesignDocPeerGroup, parseRoster, retirementJobSchema, rosterCovers, type Admission } from './peer-group.js';
-import { historicalMembers, isRetiring, ownedSeats, retirementEvidence } from './peer-slots.js';
+import { currentMemberCount, historicalMembers, isRetiring, ownedSeats, retirementEvidence } from './peer-slots.js';
 
 const id = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/);
 const helloSchema = z.object({ repoId: id, replicaId: id, peerId: id, scope: id, roster: z.unknown().nullable() }).strict();
@@ -1053,7 +1053,7 @@ export class DesignDocPairing {
   }
   private async acquireCapacity(input: Admission, request: PluginPeerRequest): Promise<void> {
     const roster = this.group.roster()!, local = this.group.sync.localRepository()!;
-    if (historicalMembers(roster).length >= 8) throw new PeerProtocolError('limit', 'group full (8)');
+    if (currentMemberCount(roster) >= 8) throw new PeerProtocolError('limit', 'group full (8)');
     const prior = this.group.consent()?.capacity;
     const grants = await this.peers.list({ signal: this.abort.signal });
     const donor = prior ? roster.members.find((member) => member.replicaId === prior.donorReplicaId) :

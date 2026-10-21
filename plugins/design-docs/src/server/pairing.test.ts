@@ -87,6 +87,26 @@ function network(options: { race?: boolean } = {}) {
 }
 
 describe('DD lifecycle setup', () => {
+  it('capacity negotiation counts current members after sealed reclaim, not historical identities', async () => {
+    const net = network(), a = net.app('a'), b = net.app('b'); await net.found(a, b);
+    const local = a.group.sync.localRepository()!, remote = b.group.sync.localRepository()!;
+    let roster = a.group.roster()!;
+    for (let index = 0; index < 6; index++) {
+      const sponsor = index < 3 ? local.replicaId : remote.replicaId;
+      roster = appendSeat(roster, { kind: 'admit', seat: ownedSeats(roster, sponsor)[0]!, requestId: `seed-${index}`,
+        ownerReplicaId: sponsor, member: { replicaId: `r-${index}`, machineId: `p-${index}`, joinedAt: 0, sponsorReplicaId: sponsor } });
+    }
+    roster = completeRetirements(closeRetirement(requestRetirement(roster, local.replicaId, 'r-0'), 'r-0'));
+    expect(historicalMembers(roster)).toHaveLength(8);
+    a.group.apply(roster, 'b'); b.group.apply(roster, 'a');
+    const c = net.app('c'); net.link(a, c); await a.pairing.enable('c');
+    vi.spyOn(a.group, 'hasCapacity').mockReturnValue(false);
+    const handler = a.handlers.get('group-join')!;
+    const input = { requestId: 'replacement', repoId: roster.repoId, groupId: roster.groupId, sponsorReplicaId: local.replicaId,
+      member: { replicaId: c.group.sync.localRepository()!.replicaId, machineId: 'c', joinedAt: 0, sponsorReplicaId: local.replicaId } };
+    await expect(handler({ peerId: 'c', scope: roster.repoId, grantEpoch: 1, body: input, signal: new AbortController().signal,
+      commitSync: async (commit: () => unknown) => commit() } as PluginPeerRequest)).rejects.toThrow('waiting for reserved capacity');
+  });
   it('stale introduction snapshot cannot send after earlier roster ACK removes local member', async () => {
     const net = network(), a = net.app('a'), b = net.app('b'), c = net.app('c'); await net.found(a, b);
     net.link(a, c); await a.pairing.enable('c'); await c.pairing.enable('a'); await a.pairing.retry(true);

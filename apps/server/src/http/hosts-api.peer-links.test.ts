@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { addHostLinkUse, destroyHost, getHost, listHosts, upsertHost } from '@zana-ai/zcc-db';
+import { addHostLinkUse, destroyHost, getHost, listAllHosts, upsertHost } from '@zana-ai/zcc-db';
 import { startProductServer, type ProductServer } from './product-server.js';
 import type { PeerLinkDirectory } from '../services/hosts/peer-link-view.js';
 
@@ -158,7 +158,7 @@ describe('DELETE peer-link uses', () => {
     const last = await fetch(url(`/peer-links/${link.id}/uses/plug-b`), { method: 'DELETE', headers: JSON_HEADERS });
     expect(await last.json()).toEqual({ ok: true, linkRemoved: false });
     expect(getHost(s.ctx.db, link.id)?.destroyedAt).toBeFalsy();
-    expect(listHosts(s.ctx.db).map(h => h.id)).toContain(link.id);
+    expect(listAllHosts(s.ctx.db).map(h => h.id)).toContain(link.id);
   });
 
   it('404s an unknown host, an execution host, an unknown plugin and a wrong scope', async () => {

@@ -1,6 +1,6 @@
 import {
   createHash, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync, randomBytes, randomUUID,
-  sign, timingSafeEqual, verify
+  scryptSync, sign, timingSafeEqual, verify
 } from 'node:crypto';
 import { z } from 'zod';
 import { CORE_APPROVAL_PRINCIPAL } from '../../http/plugin-approval-proof.js';
@@ -10,7 +10,7 @@ import {
   type PeerKeyProvider
 } from './peer-auth.js';
 import { SSH_REASONS, type InvitationLinkMint, type InvitationSshOffer } from './peer-ssh-contract.js';
-import { PAIRING_CODE_MISMATCH_LIMIT, pairingCodeMatches, pairingCodeOf } from './pairing-code.js';
+import { PAIRING_CODE_MISMATCH_LIMIT, mintApprovalCode, normalizeCode, pairingCodeMatches, pairingCodeOf } from './pairing-code.js';
 
 export type { InvitationLinkMint, InvitationSshOffer } from './peer-ssh-contract.js';
 
@@ -215,6 +215,18 @@ const sshOfferSchema = z.object({
   bootstrapSeed: z.string().regex(/^[A-Za-z0-9_-]{43}$/), listenPort: port, targetPort: port, hostId: uuid,
   joinCode: z.string().regex(/^zcde_[A-Za-z0-9_-]{24}$/)
 }).strict();
+/**
+ * What the pasted token carries in place of the plaintext SSH offer: everything the redeemer needs to reach the inviter
+ * EXCEPT the bootstrap private seed, which is sealed (`sealedSeed`) under a key derived from the approval code the
+ * inviter's owner reads aloud. An intercepted token alone cannot recover the authorized bootstrap identity.
+ */
+const tokenOfferSchema = sshOfferSchema.omit({ bootstrapSeed: true }).extend({
+  /** base64url ZCP2 AES-256-GCM blob of the 43-char seed, AAD-bound to the invitation id. */
+  sealedSeed: z.string().regex(/^[A-Za-z0-9_-]{1,512}$/),
+  /** base64url 16-byte scrypt salt for the approval-code key. */
+  seedSalt: z.string().regex(/^[A-Za-z0-9_-]{22}$/)
+}).strict();
+type TokenOffer = z.infer<typeof tokenOfferSchema>;
 const endpointSchema = z.object({ instanceId: id, name: displayName, fingerprint: b32, ed: b32, x: b32, sshKey: z.string().regex(SSH_PUB).optional() }).strict();
 type Endpoint = z.infer<typeof endpointSchema>;
 const keyPair = z.object({ x: b32, d: b32 }).strict();
@@ -247,7 +259,7 @@ type Keys = NonNullable<State['keys']>;
 
 const tokenSchema = z.object({
   v: z.literal(3), id, inviter: id, name: displayName, fp: b32, ed: b32, x: b32,
-  plugin: z.string().regex(PEER_TOKEN).optional(), scope: scope.optional(), exp: int, s: b32, link: sshOfferSchema
+  plugin: z.string().regex(PEER_TOKEN).optional(), scope: scope.optional(), exp: int, s: b32, link: tokenOfferSchema
 }).strict().refine(token => (token.plugin === undefined) === (token.scope === undefined));
 export type InvitationTokenPayload = z.infer<typeof tokenSchema>;
 
@@ -309,6 +321,38 @@ function openJson(sealed: string, key: Buffer, aad: string): unknown {
   let plain: Buffer | undefined;
   try { plain = unsealPeerBytes(Buffer.from(sealed, 'base64url'), key, aad); return JSON.parse(plain.toString('utf8')); }
   catch { return undefined; } finally { plain?.fill(0); key.fill(0); }
+}
+/** scrypt key from the normalized approval code and the token's per-invitation salt. Returns null for an unparseable code. */
+function codeKey(code: string, saltB64: string): Buffer | null {
+  const normalized = normalizeCode(code);
+  if (!normalized) return null;
+  return scryptSync(Buffer.from(normalized), Buffer.from(saltB64, 'base64url'), 32, { N: 16384, r: 8, p: 1 });
+}
+/** Seal the bootstrap seed under the approval code. The token carries `sealedSeed`+`seedSalt`, never the raw seed. */
+function sealSeed(seed: string, code: string, invitationId: string): { sealedSeed: string; seedSalt: string } {
+  const seedSalt = randomBytes(16).toString('base64url');
+  const key = codeKey(code, seedSalt);
+  if (!key) throw new InvitationError('unavailable');
+  const plain = Buffer.from(seed, 'base64url');
+  try { return { sealedSeed: sealPeerBytes(plain, key, `zccinv1:seed:${invitationId}`).toString('base64url'), seedSalt }; }
+  finally { plain.fill(0); key.fill(0); }
+}
+/** Unseal the bootstrap seed with the typed approval code; null on a wrong code or tampered blob. */
+function openSeed(offer: TokenOffer, code: string, invitationId: string): string | null {
+  const key = codeKey(code, offer.seedSalt);
+  if (!key) return null;
+  let plain: Buffer | undefined;
+  try { plain = unsealPeerBytes(Buffer.from(offer.sealedSeed, 'base64url'), key, `zccinv1:seed:${invitationId}`); return plain.toString('base64url'); }
+  catch { return null; }
+  finally { plain?.fill(0); key.fill(0); }
+}
+/**
+ * Exported for tests: build a token's sealed SSH offer from a plaintext one and an approval code, exactly as `create`
+ * does. Keeps test fixtures from re-implementing the seed-sealing crypto.
+ */
+export function sealTokenOffer(offer: z.infer<typeof sshOfferSchema>, code: string, invitationId: string): TokenOffer {
+  const { bootstrapSeed, ...rest } = sshOfferSchema.parse(offer);
+  return tokenOfferSchema.parse({ ...rest, ...sealSeed(bootstrapSeed, code, invitationId) });
 }
 function equalText(a: string, b: string): boolean {
   const left = Buffer.from(a), right = Buffer.from(b);
@@ -544,7 +588,7 @@ export class PeerInvitations {
 
   // ---------- Owner-local operations (never routed over /api/v1) ----------
 
-  async create(args: { pluginId?: string; scope?: string }): Promise<{ invitationId: string; token: string; expiresAt: number }> {
+  async create(args: { pluginId?: string; scope?: string }): Promise<{ invitationId: string; token: string; expiresAt: number; code: string }> {
     const core = typeof args === 'object' && args !== null && args.pluginId === undefined && args.scope === undefined;
     if (!core && (typeof args?.pluginId !== 'string' || !PEER_TOKEN.test(args.pluginId) || !validScope(args.scope))) throw new InvitationError('invalid_invitation');
     const links = this.options.links;
@@ -560,19 +604,23 @@ export class PeerInvitations {
     try {
       const link = sshOfferSchema.parse(minted?.offer);
       if (!Number.isSafeInteger(minted.expiresAt) || minted.expiresAt <= this.now()) throw new InvitationError('unavailable');
+      // The approval code the inviter's owner reads aloud. Its only copy that ever leaves this process is spoken
+      // human-to-human; the token carries only the seed sealed under it, so an intercepted token stays inert.
+      const code = mintApprovalCode();
+      const tokenLink = sealTokenOffer(link, code, invitationId);
       return await this.mutate(args.pluginId, async (state, save) => {
         if (this.full(state)) throw new InvitationError('capacity');
         const keys = this.keys(state), now = this.now(), secret = randomBytes(32).toString('base64url');
         const inviter = this.self(keys), expiresAt = Math.min(now + INVITATION_LIMITS.ttlMs, minted.expiresAt);
         const payload: InvitationTokenPayload = { v: 3, id: invitationId, inviter: inviter.instanceId, name: inviter.name, fp: inviter.fingerprint,
-          ed: inviter.ed, x: inviter.x, ...(core ? {} : { plugin: args.pluginId, scope: args.scope }), exp: expiresAt, s: secret, link };
+          ed: inviter.ed, x: inviter.x, ...(core ? {} : { plugin: args.pluginId, scope: args.scope }), exp: expiresAt, s: secret, link: tokenLink };
         const token = INVITATION_TOKEN_PREFIX + Buffer.from(JSON.stringify(payload)).toString('base64url');
         if (Buffer.byteLength(token) > INVITATION_LIMITS.tokenBytes) throw new InvitationError('invalid_invitation');
         state.records.push({ id: invitationId, role: 'inviter', ...(core ? {} : { pluginId: args.pluginId, scope: args.scope }), createdAt: now, updatedAt: now, expiresAt,
           inviter, tokenHash: secretHash(secret), attempts: 0, generation: 1, inviterDecision: 'pending', redeemerDecision: 'pending',
           state: 'open', seenNonces: [] });
         await save();
-        return { invitationId, token, expiresAt };
+        return { invitationId, token, expiresAt, code };
       });
     } catch (error) {
       // The link store minted a host for a record that never landed: let it tear that down.
@@ -585,12 +633,19 @@ export class PeerInvitations {
    * Redeemer side: record the attempt, then let the link store open the SSH tunnel and connect. Re-pasting the
    * same token resumes the same attempt; after an `ssh_unreachable`/`unreachable` failure it starts over (until expiry).
    */
-  async redeem(args: { pluginId?: string; token: string }): Promise<PublicInvitationStatus> {
+  async redeem(args: { pluginId?: string; token: string; code: string }): Promise<PublicInvitationStatus> {
     const token = parseInvitationToken(args?.token);
     if (token.inviter === this.options.instanceId) throw new InvitationError('own_invitation');
     if (token.plugin !== args?.pluginId) throw new InvitationError('wrong_plugin');
     if (this.now() >= token.exp || token.exp > this.now() + INVITATION_LIMITS.ttlMs + INVITATION_LIMITS.clockSkewMs) throw new InvitationError('expired');
     if (!this.options.links) throw new InvitationError('unavailable');
+    if (typeof args?.code !== 'string' || !normalizeCode(args.code)) throw new InvitationError('identity_mismatch');
+    // Unseal the bootstrap seed with the typed approval code into the plaintext offer the link store expects. A wrong
+    // code never reaches SSH: it fails here as `identity_mismatch`, exactly like a mistyped pairing code.
+    const seed = openSeed(token.link, args.code, token.id);
+    if (!seed) throw new InvitationError('identity_mismatch');
+    const { sealedSeed: _sealed, seedSalt: _salt, ...rest } = token.link;
+    const plainLink: z.infer<typeof sshOfferSchema> = sshOfferSchema.parse({ ...rest, bootstrapSeed: seed });
     const status = await this.mutate(args.pluginId, async (state, save) => {
       const keys = this.keys(state), now = this.now();
       if (invitationFingerprint(keys.ed.x) === token.fp) throw new InvitationError('own_invitation');
@@ -616,7 +671,7 @@ export class PeerInvitations {
       }
       const rec: Rec = { id: token.id, role: 'redeemer', ...(token.plugin !== undefined ? { pluginId: token.plugin, scope: token.scope } : {}), createdAt: now, updatedAt: now, expiresAt: token.exp,
         inviter: { instanceId: token.inviter, name: token.name, fingerprint: token.fp, ed: token.ed, x: token.x },
-        redeemer: { ...this.self(keys), ...(sshKey ? { sshKey } : {}) }, secret: token.s, attempts: 0, nonce: randomBytes(24).toString('base64url'), link: token.link,
+        redeemer: { ...this.self(keys), ...(sshKey ? { sshKey } : {}) }, secret: token.s, attempts: 0, nonce: randomBytes(24).toString('base64url'), link: plainLink,
         generation: 1, inviterDecision: 'pending', redeemerDecision: 'pending', state: 'redeeming', seenNonces: [],
         outbox: { op: 'redeem', attempts: 0, nextAt: now } };
       state.records.push(rec);

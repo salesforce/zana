@@ -346,7 +346,8 @@ describe('sender', () => {
     if (mode === 'missing') hostId = randomUUID();
     if (mode === 'destroyed') destroyHost(f.db, f.H);
     if (mode === 'execution') upsertHost(f.db, { id: f.H, name: 'Peer', hostKeyHash: f.hostKeyHash, enrollmentCapability: 'execution' });
-    if (mode === 'primary') hostId = upsertHost(f.db, { name: 'Primary', hostKeyHash: 'b'.repeat(64), isPrimary: true, enrollmentCapability: 'peer.forward' }).id;
+    // A primary host is always an execution host (a forward-only link can never be primary), so it is rejected by the capability clause.
+    if (mode === 'primary') hostId = upsertHost(f.db, { name: 'Primary', hostKeyHash: 'b'.repeat(64), isPrimary: true, enrollmentCapability: 'execution' }).id;
     await expectReject(f.send(hostId, f.R, { ...abortInput }, f.sig()), 403, 'peer link unavailable');
     expect(f.call).not.toHaveBeenCalled();
   });

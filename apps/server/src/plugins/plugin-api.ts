@@ -33,7 +33,7 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { applyPluginSqliteMigrations } from './plugin-database-migrations.js';
 import { backupCopyHandle, createPluginDatabaseBackup } from './plugin-database-backup.js';
 import { createRequire } from 'node:module';
-import { createSqliteDatabase, listHosts, listExecutionHosts, getPrimaryHost, getConversationThread, type HostRow } from '@zana-ai/zcc-db';
+import { createSqliteDatabase, listAllHosts, listExecutionHosts, getPrimaryHost, getConversationThread, type HostRow } from '@zana-ai/zcc-db';
 import type { ProductHttpContext } from '../http/product-context.js';
 import type {
   PluginAgentConfigureContext,
@@ -514,7 +514,7 @@ export function createPluginApi(
     const channel = await ctx.peerChannels.remote(peerId);
     signal.throwIfAborted();
     if (!channel || !linkCapable(channel.capability)) throw new Error('mutual enrollment unavailable');
-    const hostIds = (hosts ?? listHosts(ctx.db)).filter(host => host.enrollmentCapability === channel.capability && ctx.hostHub.getSession(host.id)).map(host => host.id);
+    const hostIds = (hosts ?? listAllHosts(ctx.db)).filter(host => host.enrollmentCapability === channel.capability && ctx.hostHub.getSession(host.id)).map(host => host.id);
     const hostId = await ctx.peerAuthority.resolveHost(peerId, hostIds, signal);
     assertLive();
     signal.throwIfAborted();
@@ -890,7 +890,7 @@ export function createPluginApi(
           const channels = await ctx.peerChannels.list();
           const peers = [];
           // One host snapshot for the whole listing instead of two full host scans per channel.
-          const hosts = listHosts(ctx.db);
+          const hosts = listAllHosts(ctx.db);
           for (const channel of channels) {
             if (!linkCapable(channel.capability)) continue;
             try {
@@ -958,7 +958,7 @@ export function createPluginApi(
               minted = value;
               return value;
             });
-            return { invitationId: created.invitationId, token: created.token, expiresAt: created.expiresAt };
+            return { invitationId: created.invitationId, token: created.token, expiresAt: created.expiresAt, code: created.code };
           } catch (error) {
             // A stale or aborted caller must not leave a live invitation whose token it never received; this covers
             // every post-create rejection inside inviteGuard, not only aborts observed before create resolved.
@@ -967,10 +967,11 @@ export function createPluginApi(
           }
         },
         redeemInvitation: async (args) => {
-          const a = inviteArgs(args, ['token', 'signal']);
+          const a = inviteArgs(args, ['token', 'code', 'signal']);
           if (typeof a.token !== 'string' || a.token.length === 0 || a.token.length > 4096) throw new InvitationError('invalid_invitation');
+          if (typeof a.code !== 'string' || a.code.length === 0 || a.code.length > 32) throw new InvitationError('identity_mismatch');
           const signal = peerSignal(a.signal as AbortSignal | undefined), invitations = invitationsOf();
-          return publicInvitation(await inviteGuard(signal, () => invitations.redeem({ pluginId, token: a.token as string })));
+          return publicInvitation(await inviteGuard(signal, () => invitations.redeem({ pluginId, token: a.token as string, code: a.code as string })));
         },
         invitationStatus: async (args) => {
           const a = inviteArgs(args, ['invitationId', 'refresh', 'signal']);
@@ -1064,7 +1065,7 @@ export function createPluginApi(
           }
           const ctx = options.productContext;
           const connected = new Set(ctx.hostHub?.connectedHostIds() ?? []);
-          const hosts = new Map(listHosts(ctx.db).map(host => [host.id, peerHostName(ctx, host)]));
+          const hosts = new Map(listAllHosts(ctx.db).map(host => [host.id, peerHostName(ctx, host)]));
           const grants = await ctx.peerPairs.list(pluginId);
           assertLive();
           args?.signal?.throwIfAborted();

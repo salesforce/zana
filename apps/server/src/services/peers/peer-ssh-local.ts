@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { connect, createServer, type Socket } from 'node:net';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
@@ -24,6 +24,7 @@ const OVERRIDE_USER_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/;
 
 const SSH_REASON_SET: ReadonlySet<string> = new Set(['ssh_remote_login_off', 'ssh_unreachable', 'ssh_auth_refused', 'ssh_forwarding_refused', 'ssh_host_key_mismatch'] satisfies SshReason[]);
 const fail = (reason: SshReason): Error => new Error(reason);
+const streamLocalRefused = (): Error => new Error('ssh_forwarding_refused: serving sshd must disable stream-local forwarding (AllowStreamLocalForwarding no)');
 
 export type BannerResult = 'ok' | 'refused' | 'no-banner';
 
@@ -34,7 +35,7 @@ export interface SshProcess {
 }
 
 export interface PeerSshLocalDeps {
-  /** A's authorized_keys manager; the self-test installs a short-lived throwaway line. Without it the self-test is skipped. */
+  /** A's authorized_keys manager; required to prove forwarding policy with a short-lived throwaway line. */
   authorizedKeys?: AuthorizedKeys;
   env?: NodeJS.ProcessEnv;
   /** Resolves `scutil --get LocalHostName` output. */
@@ -88,7 +89,7 @@ export function probeSshBanner(host: string, port: number, signal: AbortSignal):
 
 function defaultSpawnSsh(env: NodeJS.ProcessEnv): (args: string[]) => SshProcess {
   return args => {
-    const childEnv = { ...env };
+    const childEnv: NodeJS.ProcessEnv = { ...env, LC_ALL: 'C' };
     delete childEnv.SSH_AUTH_SOCK;
     // Detached = own process group, so cleanup can SIGKILL ssh and anything it forked (matches PeerTunnels).
     const child = spawn(SSH_BIN, args, { shell: false, env: childEnv, stdio: ['ignore', 'ignore', 'pipe'], detached: true });
@@ -135,13 +136,38 @@ function probeForward(port: number): Promise<'ok' | 'closed' | 'retry'> {
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
+/** Absence alone is not proof: require ssh's explicit refusal of this exact remote listen path after TCP worked. */
+async function proveStreamLocalRefused(args: string[], socketPath: string, signal: AbortSignal,
+  spawnSsh: (args: string[]) => SshProcess): Promise<void> {
+  const ssh = spawnSsh(args);
+  let exit: { code: number | null; stderr: string } | undefined;
+  void ssh.exited.then(result => { exit = result; });
+  const deadline = Date.now() + SELF_TEST_TIMEOUT_MS;
+  try {
+    while (Date.now() < deadline) {
+      if (signal.aborted) throw streamLocalRefused();
+      const socket = await lstat(socketPath).catch(error => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+        throw streamLocalRefused();
+      });
+      if (socket) throw streamLocalRefused();
+      if (exit) {
+        if (exit.code === 255 && exit.stderr.split(/\r?\n/).includes(`Error: remote port forwarding failed for listen path ${socketPath}`)) return;
+        throw streamLocalRefused();
+      }
+      await sleep(100);
+    }
+    throw streamLocalRefused();
+  } finally { ssh.kill(); }
+}
+
 /**
  * Drives the real sshd on this machine with a throwaway key and a `-L` to a scratch listener, so Remote Login, the
- * authorized_keys line and the `permitopen` / `permitlisten` options are proven before an invitation is minted.
+ * TCP key restrictions and sshd's refusal of stream-local remote forwarding are proven before an invitation is minted.
  */
 async function defaultSelfTest(endpoint: PeerSshEndpoint, signal: AbortSignal, deps: PeerSshLocalDeps): Promise<void> {
   const authorizedKeys = deps.authorizedKeys;
-  if (!authorizedKeys) return;
+  if (!authorizedKeys) throw streamLocalRefused();
   const spawnSsh = deps.spawnSsh ?? defaultSpawnSsh(deps.env ?? process.env);
   const seed = generateSeed();
   const linkId = `selftest-${randomBytes(6).toString('hex')}`;
@@ -160,8 +186,9 @@ async function defaultSelfTest(endpoint: PeerSshEndpoint, signal: AbortSignal, d
     const hostLabel = endpoint.port === SSHD_PORT ? 'localhost' : `[localhost]:${endpoint.port}`;
     await writeFile(knownHosts, `${hostLabel} ${endpoint.hostKey}\n`, { mode: 0o600 });
     await authorizedKeys.upsert({ linkId, kind: 'bootstrap', pub: publicKeyLine(seed), listenPort, targetPort, expiresAt: Date.now() + SELF_TEST_TTL_MS });
-    ssh = spawnSsh(peerLinkSshArgs({ endpoint: { ...endpoint, host: 'localhost' }, seed, listenPort, targetPort, reversePort, localPort },
-      identityFile, knownHosts));
+    const args = peerLinkSshArgs({ endpoint: { ...endpoint, host: 'localhost' }, seed, listenPort, targetPort, reversePort, localPort },
+      identityFile, knownHosts);
+    ssh = spawnSsh(args);
     const state: { exit?: { code: number | null; stderr: string } } = {};
     // Read through a function: TS would otherwise keep the earlier `state.exit` narrowing across the awaits.
     const exitOf = (): { code: number | null; stderr: string } | undefined => state.exit;
@@ -172,7 +199,18 @@ async function defaultSelfTest(endpoint: PeerSshEndpoint, signal: AbortSignal, d
       const early = exitOf();
       if (early) throw fail(classifyPeerSshFailure(early.stderr));
       const result = await probeForward(localPort);
-      if (result === 'ok') return;
+      if (result === 'ok') {
+        const socketPath = join(dir, 's');
+        // A separate connection makes ExitOnForwardFailure identify only the stream-local request, not a TCP bind race.
+        const streamArgs: string[] = [];
+        for (let i = 0; i < args.length; i++) {
+          if (args[i] === '-L') { i++; continue; }
+          streamArgs.push(args[i]!);
+          if (args[i] === '-R') { streamArgs.push(`${socketPath}:127.0.0.1:${targetPort}`); i++; }
+        }
+        await proveStreamLocalRefused(streamArgs, socketPath, signal, spawnSsh);
+        return;
+      }
       if (result === 'closed') {
         // Either ssh just died (auth) or sshd refused the forward; the exit status disambiguates.
         await sleep(150);
@@ -209,7 +247,10 @@ export function createLocalEndpoint(deps: PeerSshLocalDeps = {}): (signal: Abort
   const warn = deps.warn ?? ((message: string) => console.warn(message));
   return async signal => {
     const override = e2eOverride(env);
-    if (override) return override;
+    if (override) {
+      await (deps.selfTest ?? ((e, s) => defaultSelfTest(e, s, deps)))(override, signal);
+      return override;
+    }
 
     const info = (deps.user ?? userInfo)();
     if (info.homedir !== (deps.home ?? homedir)()) {

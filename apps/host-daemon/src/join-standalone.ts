@@ -83,7 +83,8 @@ export async function runJoinStandalone(argv = process.argv.slice(2), env: NodeJ
           fail('protocol_mismatch', 'incompatible host-rpc protocol version');
           return;
         }
-        if (capability !== 'execution' && (raw as { command?: { type?: string } }).command?.type !== 'peer.forward') {
+        if (capability !== 'execution' && (raw as { command?: { type?: string } }).command?.type !== 'peer.forward'
+          && (raw as { command?: { type?: string } }).command?.type !== 'peer.control') {
           fail('capability_denied', 'host enrollment does not authorize command');
           return;
         }

@@ -18,7 +18,7 @@ export interface AddComputerProps {
   onClose?(): void;
 }
 
-type Phase = { kind: 'checking' } | { kind: 'blocked'; reason: string } | { kind: 'ready'; invitationId: string; token: string; expiresAt: number } | { kind: 'error'; message: string };
+type Phase = { kind: 'checking' } | { kind: 'blocked'; reason: string } | { kind: 'ready'; invitationId: string; token: string; expiresAt: number; approvalCode: string } | { kind: 'error'; message: string };
 
 /** Add computer: this computer waits and the other one connects in, so Remote Login must be on here. */
 export function AddComputer({ connections, onChange, onClose }: AddComputerProps) {
@@ -39,7 +39,7 @@ export function AddComputer({ connections, onChange, onClose }: AddComputerProps
       if (!check.ok) { setPhase({ kind: 'blocked', reason: check.reason }); return; }
       const created = await peerConnections.create();
       if (disposed.current) return;
-      setPhase({ kind: 'ready', invitationId: created.invitationId, token: created.token, expiresAt: created.expiresAt });
+      setPhase({ kind: 'ready', invitationId: created.invitationId, token: created.token, expiresAt: created.expiresAt, approvalCode: created.code });
       onChange?.();
     } catch (failure) {
       if (!disposed.current) setPhase({ kind: 'error', message: errorText(failure) });
@@ -105,6 +105,10 @@ export function AddComputer({ connections, onChange, onClose }: AddComputerProps
             <textarea className="peers-token" readOnly rows={2} aria-label="Invitation" value={phase.token} onFocus={(event) => event.currentTarget.select()} />
           </label>
           <div className="peers-actions"><button type="button" className="btn" aria-label="Copy invitation" onClick={() => void copy()}><Copy size={14} aria-hidden="true" /> {copied ? 'Copied' : 'Copy'}</button></div>
+          <div className="peers-approval-code" data-testid="approval-code">
+            <p>Read this approval code aloud to the person on the other computer. They type it to connect.</p>
+            <strong className="peers-code" aria-label="Approval code">{phase.approvalCode}</strong>
+          </div>
           <p className="peers-empty">Works once. Expires at {new Date(phase.expiresAt).toLocaleTimeString()}.</p>
           <p className="peers-remote-login">Remote Login is on for this computer.</p>
           {actionError && <p className="peers-error" role="alert">{actionError}</p>}

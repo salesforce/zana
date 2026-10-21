@@ -35,8 +35,10 @@ function setup() {
   });
   mocks.decrypt.mockImplementation(() => plainKeys[0]);
   mocks.fork.mockImplementation((entry: string) => {
-    const child = Object.assign(new EventEmitter(), { kill: vi.fn(), postMessage: vi.fn() });
-    child.postMessage.mockImplementation((message: { type: string }) => {
+    const child = Object.assign(new EventEmitter(), { kill: vi.fn(), postMessage: vi.fn(), bootKeys: [] as (Uint8Array | undefined)[] });
+    child.postMessage.mockImplementation((message: { type: string; peerBootKey?: Uint8Array }) => {
+      // The supplier zeroes the buffer right after postMessage returns, so snapshot the bytes now.
+      if (message.type === 'start') child.bootKeys.push(message.peerBootKey ? Uint8Array.from(message.peerBootKey) : undefined);
       if (message.type === 'start') queueMicrotask(() => child.emit('message', {
         type: 'ready', protocolVersion, url: entry.includes('host-runtime') ? 'http://127.0.0.1:40100' : 'http://127.0.0.1:40101/',
         hostId: randomUUID(), instanceId: randomUUID()
@@ -59,16 +61,21 @@ it('passes protected key only to product utility; daemon excludes inherited key;
   const { dir, plainKeys } = setup();
   await start(dir);
   const [daemon, server] = mocks.fork.mock.calls;
+  const [daemonChild, serverChild] = mocks.fork.mock.results.map(r => r.value as { bootKeys: (Uint8Array | undefined)[] });
+  // Boot key never travels through env (process listings) — the daemon never receives it, and the server gets it only over the structured-clone start message.
   expect(daemon[2].env[PEER_BOOT_KEY_ENV]).toBeUndefined();
-  expect(server[2].env[PEER_BOOT_KEY_ENV]).toBe(plainKeys[0]);
-  expect(Buffer.from(server[2].env[PEER_BOOT_KEY_ENV], 'base64url')).toHaveLength(32);
+  expect(server[2].env[PEER_BOOT_KEY_ENV]).toBeUndefined();
+  expect(daemonChild.bootKeys[0]).toBeUndefined();
+  expect(serverChild.bootKeys[0]).toEqual(new Uint8Array(Buffer.from(plainKeys[0], 'base64url')));
+  expect(serverChild.bootKeys[0]).toHaveLength(32);
   expect(server[2].env.ZCC_PRODUCT_SERVER_CREDENTIAL).toBe('ui-secret');
   expect(process.env[PEER_BOOT_KEY_ENV]).toBe('must-not-reach-daemon');
   const ciphertext = readFileSync(join(dir, 'peer-key', 'key.bin'));
   expect(ciphertext.includes(Buffer.from(plainKeys[0]))).toBe(false);
   await start(dir);
   expect(mocks.encrypt).toHaveBeenCalledOnce();
-  expect(mocks.fork.mock.calls[3][2].env[PEER_BOOT_KEY_ENV]).toBe(plainKeys[0]);
+  const restartServer = mocks.fork.mock.results[3].value as { bootKeys: (Uint8Array | undefined)[] };
+  expect(restartServer.bootKeys[0]).toEqual(new Uint8Array(Buffer.from(plainKeys[0], 'base64url')));
   expect(readFileSync(join(dir, 'peer-key', 'key.bin'))).toEqual(ciphertext);
   if (process.platform !== 'linux') expect(mocks.backend).not.toHaveBeenCalled();
 });
@@ -80,8 +87,12 @@ it.each(['unavailable', 'e2e', 'backend-error', ...(process.platform === 'linux'
   if (mode === 'backend-error') mocks.available.mockImplementation(() => { throw new Error('private Keychain detail'); });
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   await start(dir);
+  const [daemonChild, serverChild] = mocks.fork.mock.results.map(r => r.value as { bootKeys: (Uint8Array | undefined)[] });
+  // No protected key: neither child is handed boot-key bytes, and env stays clear of it.
   expect(mocks.fork.mock.calls[0][2].env[PEER_BOOT_KEY_ENV]).toBeUndefined();
-  expect(mocks.fork.mock.calls[1][2].env[PEER_BOOT_KEY_ENV]).toBe('');
+  expect(mocks.fork.mock.calls[1][2].env[PEER_BOOT_KEY_ENV]).toBeUndefined();
+  expect(daemonChild.bootKeys[0]).toBeUndefined();
+  expect(serverChild.bootKeys[0]).toBeUndefined();
   const reason = mocks.fork.mock.calls[1][2].env[PEER_KEY_REASON_ENV];
   if (mode === 'e2e') { expect(reason).toBe(''); expect(warn).not.toHaveBeenCalled(); }
   else {

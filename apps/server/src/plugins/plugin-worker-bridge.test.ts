@@ -1,4 +1,6 @@
-import { MessageChannel } from 'node:worker_threads';
+import { MessageChannel, Worker } from 'node:worker_threads';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import { PLUGIN_INTERACTION_MAX_TIMEOUT_MS } from '@zana-ai/zcc-domain/thread-runtime';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPluginPeerCommit, createPluginWorkerBridge, PEER_WORKER_COMMIT_TIMEOUT_MS } from './plugin-worker-bridge';
@@ -190,6 +192,70 @@ it.each(['cancelled', 'expired', 'async'] as const)('rejects %s worker callback 
   expect(called).not.toHaveBeenCalled();
 });
 
+it.each(['promise', 'thenable', 'callable thenable'])('rolls back a plain callback returning %s before stopping its async continuation', async kind => {
+  const state = new SharedArrayBuffer(16);
+  const worker = new Worker(`
+    const { workerData } = require('node:worker_threads');
+    require(workerData.tsx);
+    const { createPluginWorkerBridge } = require(workerData.bridge);
+    const state = new Int32Array(workerData.state);
+    let listener;
+    const port = {
+      on(_name, fn) { listener = fn; }, off() {},
+      postMessage(message) {
+        if (message.shared) {
+          Atomics.store(new Int32Array(message.gate || word), 0, 1);
+          const bytes = Buffer.from(JSON.stringify({ value: undefined }));
+          new Uint8Array(message.shared, 8, bytes.length).set(bytes);
+          const header = new Int32Array(message.shared);
+          Atomics.store(header, 1, bytes.length); Atomics.store(header, 0, 1);
+        }
+      }
+    };
+    const bridge = createPluginWorkerBridge(port, 'plugin', { commitSync(callback) {
+      Atomics.store(state, 0, 1);
+      try { const value = callback(); Atomics.store(state, 1, 1); return value; }
+      catch (error) { Atomics.store(state, 0, 0); Atomics.store(state, 2, 1); throw error; }
+    } });
+    const callback = function () {
+      Promise.resolve().then(() => Atomics.store(state, 3, 1));
+      if (workerData.kind === 'promise') return Promise.resolve(42);
+      if (workerData.kind === 'thenable') return { then(resolve) { resolve(42); } };
+      return Object.assign(function () {}, { then(resolve) { resolve(42); } });
+    };
+    if (callback.constructor.name !== 'Function') throw Error('wrong callback kind');
+    const wire = bridge.encode(callback);
+    const word = new SharedArrayBuffer(16);
+    Atomics.store(new BigInt64Array(word, 8), 0, BigInt(Date.now() + 1000));
+    listener({ kind: 'call', id: 1, fn: wire.id, args: [], gate: word,
+      preflight: { __zcc_plugin_wire: 'function', side: 'server', id: 2, async: false } });
+    setTimeout(() => process.exit(0), 50);
+  `, { eval: true, workerData: {
+    tsx: createRequire(import.meta.url).resolve('tsx/cjs'),
+    bridge: fileURLToPath(new URL('./plugin-worker-bridge.ts', import.meta.url)), state, kind
+  } });
+  closes.push(() => { void worker.terminate(); });
+  const exit = await new Promise<number>((resolve, reject) => { worker.once('exit', resolve); worker.once('error', reject); });
+  expect(Array.from(new Int32Array(state))).toEqual([0, 0, 1, 0]);
+  expect(exit).toBe(1);
+});
+
+it('rejects thenable results inside an injected transaction', async () => {
+  const { a, b, execute } = fencedPair();
+  let rolledBack = false;
+  execute.mockImplementation(callback => {
+    try { return callback(); }
+    catch (error) { rolledBack = true; throw error; }
+  });
+  const remote = a.decode(b.encode(() => ({ then() {} })));
+  const commit = createPluginPeerCommit({ commitWorkerSync: async observe => {
+    const word = gate(); return (await observe(word, preflight(word))).value;
+  } } as never, new AbortController().signal);
+  await expect(commit(remote)).rejects.toThrow('synchronous callback');
+  expect(rolledBack).toBe(true);
+  expect(a.activeCommits).toBe(0);
+});
+
 it('waits for worker termination before releasing a timed-out running fence', async () => {
   let listener!: (message: any) => void, finish!: () => void;
   const terminated = new Promise<void>(resolve => { finish = resolve; });
@@ -222,18 +288,34 @@ it('cancels queued fenced calls on disposal without terminating worker', async (
   expect(Atomics.load(new Int32Array(word), 0)).toBe(2); expect(terminate).not.toHaveBeenCalled();
 });
 
-it('does not release running lease when worker termination fails', async () => {
-  const terminate = vi.fn(async () => { throw Error('cannot prove stopped'); });
+it.each(['reject', 'throw'])('faults fail-closed and settles running commits when termination fails by %s', async mode => {
+  const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+  closes.push(() => logged.mockRestore());
+  const terminate = vi.fn(() => { if (mode === 'throw') throw Error('cannot prove stopped'); return Promise.reject(Error('cannot prove stopped')); });
+  let commitCall: any;
   const port: any = { on() {}, off() {}, postMessage(message: any) {
-    if (message.gate) Atomics.compareExchange(new Int32Array(message.gate), 0, 0, 1);
+    if (message.gate) { commitCall = message; Atomics.compareExchange(new Int32Array(message.gate), 0, 0, 1); }
   } };
   const a = createPluginWorkerBridge(port, 'server', { terminate });
+  closes.push(() => a.dispose());
+  a.encode({ pluginId: 'fixture-plugin' });
   const remote = a.decode({ __zcc_plugin_wire: 'function', side: 'plugin', id: 1 });
-  let settled = false;
   const commit = createPluginPeerCommit({ commitWorkerSync: async observe => (await observe(gate(), () => {})).value } as never, new AbortController().signal);
-  void commit(remote).then(() => { settled = true; }, () => { settled = true; });
+  const unrelated = remote().catch((error: Error) => error);
+  let failure: any;
+  void commit(remote).catch(error => { failure = error; });
+  expect(a.activeCommits).toBe(1);
   a.dispose(); await new Promise(resolve => setImmediate(resolve));
-  expect(terminate).toHaveBeenCalledOnce(); expect(settled).toBe(false);
+  expect(failure).toMatchObject({ code: 'PLUGIN_TERMINATION_FAILED', message: expect.stringContaining('cannot prove stopped') });
+  expect(a.activeCommits).toBe(0);
+  expect(a.fault).toBe(failure);
+  await expect(unrelated).resolves.toMatchObject({ message: 'Plugin runtime stopped' });
+  expect(Atomics.load(new Int32Array(commitCall.gate), 0)).toBe(2);
+  expect(logged).toHaveBeenCalledWith('[plugin-worker-bridge] Worker termination failed', {
+    pluginId: 'fixture-plugin', callId: commitCall.id, functionId: 1, cause: expect.any(Error)
+  });
+  await expect(remote()).rejects.toBe(failure);
+  expect(terminate).toHaveBeenCalledOnce();
 });
 
 it.each(['success', 'error', 'cancel'])('releases request method and one-shot callback slots after %s', async outcome => {
@@ -293,6 +375,8 @@ describe('caller abort during a running peer commit', () => {
   afterEach(() => { vi.useRealTimers(); });
 
   it.each(['reply', 'timeout', 'dispose', 'termination failure'] as const)('preserves the lease and watchdog fence after caller abort with %s', async outcome => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    closes.push(() => logged.mockRestore());
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     let listener!: (message: any) => void, commitCall: any;
     let finish!: () => void, fail!: (error: Error) => void;
@@ -333,7 +417,7 @@ describe('caller abort during a running peer commit', () => {
       expect(released).toBe(true); expect(a.activeCommits).toBe(0);
       expect(terminate).not.toHaveBeenCalled();
     } else {
-      const rejected = outcome === 'termination failure' ? undefined : expect(operation).rejects.toThrow(outcome === 'dispose' ? 'stopped' : 'timed out');
+      const rejected = expect(operation).rejects.toThrow(outcome === 'termination failure' ? 'cannot prove stopped' : outcome === 'dispose' ? 'stopped' : 'timed out');
       if (outcome === 'dispose') a.dispose();
       else vi.advanceTimersByTime(PEER_WORKER_COMMIT_TIMEOUT_MS);
       expect(terminate).toHaveBeenCalledOnce();
@@ -346,9 +430,11 @@ describe('caller abort during a running peer commit', () => {
         finish(); await rejected;
         expect(released).toBe(true); expect(a.activeCommits).toBe(0);
       } else {
-        fail(new Error('cannot prove stopped')); await Promise.resolve();
+        fail(new Error('cannot prove stopped')); await rejected;
         a.dispose();
-        expect(released).toBe(false); expect(a.activeCommits).toBe(1);
+        expect(a.fault).toMatchObject({ code: 'PLUGIN_TERMINATION_FAILED' });
+        expect(Atomics.load(new Int32Array(word), 0)).toBe(2);
+        expect(released).toBe(true); expect(a.activeCommits).toBe(0);
         expect(terminate).toHaveBeenCalledOnce();
       }
     }

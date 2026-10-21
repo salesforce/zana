@@ -18,6 +18,7 @@ function connectionStatusText(current: PeerConnection): string {
 /** Join computer: this computer connects out to the other one. No Remote Login check belongs here. */
 export function JoinComputer({ connections, onChange, onClose }: JoinComputerProps) {
   const [token, setToken] = useState('');
+  const [approvalCode, setApprovalCode] = useState('');
   const [joinedId, setJoinedId] = useState<string | null>(null);
   const [joined, setJoined] = useState<PeerConnection | null>(null);
   const [busy, setBusy] = useState(false);
@@ -25,14 +26,16 @@ export function JoinComputer({ connections, onChange, onClose }: JoinComputerPro
 
   const join = async () => {
     const trimmed = token.trim();
-    if (!trimmed || busy) return;
+    const trimmedCode = approvalCode.trim();
+    if (!trimmed || !trimmedCode || busy) return;
     setBusy(true);
     setError(null);
     try {
-      const connection = await peerConnections.join(trimmed);
+      const connection = await peerConnections.join(trimmed, trimmedCode);
       setJoined(connection);
       setJoinedId(connection.invitationId);
       setToken('');
+      setApprovalCode('');
       onChange?.();
     } catch (failure) {
       setError(failure instanceof Error && failure.message ? failure.message : 'Request failed');
@@ -58,9 +61,14 @@ export function JoinComputer({ connections, onChange, onClose }: JoinComputerPro
             Invitation
             <textarea className="peers-token" rows={3} value={token} disabled={busy} spellCheck={false} onChange={(event) => setToken(event.target.value)} />
           </label>
+          <label className="peers-approve-label">
+            Approval code
+            <input className="peers-code-input" type="text" inputMode="text" autoComplete="off" spellCheck={false} aria-label="Approval code" placeholder="XXXX-XXXX" value={approvalCode} disabled={busy} onChange={(event) => setApprovalCode(event.target.value)} />
+          </label>
+          <p className="peers-empty">Ask the person on the other computer to read you the approval code shown there.</p>
           {error && <p className="peers-error" role="alert">{error}</p>}
           <div className="peers-dialog-actions">
-            <button type="button" className="btn primary" disabled={busy || !token.trim()} onClick={() => void join()}>Join</button>
+            <button type="button" className="btn primary" disabled={busy || !token.trim() || !approvalCode.trim()} onClick={() => void join()}>Join</button>
             {onClose && <button type="button" className="btn" onClick={onClose}>Close</button>}
           </div>
         </>
