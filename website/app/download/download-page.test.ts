@@ -4,6 +4,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { pickReleaseAssets } from '../../lib/downloads';
 import { DownloadClient } from './DownloadClient';
+import DownloadPage, { metadata, revalidate } from './page';
 
 const base = 'https://github.com/salesforce/zana/releases/download/v9.9.9/';
 const release = {
@@ -23,6 +24,7 @@ function useAgent(userAgent: string) {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('DownloadClient', () => {
@@ -52,5 +54,21 @@ describe('DownloadClient', () => {
     expect(windows.getAttribute('href')).toBe('https://github.com/salesforce/zana/releases/latest');
     expect(screen.getByText(/More info → Run anyway/)).toBeTruthy();
     expect(screen.getByText('Coming soon')).toBeTruthy();
+  });
+});
+
+describe('DownloadPage', () => {
+  it('renders the cached latest release and advertises both platforms', async () => {
+    useAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5)');
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => release });
+    vi.stubGlobal('fetch', fetch);
+    render(await DownloadPage());
+
+    expect(fetch.mock.calls[0][1].next).toEqual({ revalidate });
+    expect(revalidate).toBe(600);
+    expect(screen.getByRole('link', { name: 'Download for Windows' }).getAttribute('href')).toBe(
+      base + 'Zana-Command-Center-9.9.9-win-x64-Setup.exe'
+    );
+    expect(metadata.description).toContain('Windows x64');
   });
 });
