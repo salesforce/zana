@@ -48,6 +48,24 @@ run broad changed-test selection only for runner configuration changes. Every
 source-text guard test still runs. CI remains merge authority and always runs
 full unit and affected E2E suites.
 
+The snapshot is a cached clone when one is free. Each repository keeps up to two
+per Node ABI, platform, and architecture under the user cache directory
+(`~/Library/Caches/zana-pre-push` on macOS), each held under an exclusive lock.
+A cached clone keeps only its `node_modules`, so its native builds never touch the
+main checkout. Before verifying, the hook requires the clone's `.git` to be its
+own directory with no worktree redirect, hooks, or replacement refs, rewrites
+every tracked file from the pushed commit (dropping the index first, so an edit
+that kept a file's size and mtime cannot survive), removes everything else
+untracked or ignored, and requires HEAD to match, no index entry to hide changes,
+and a clean status. Any failure discards that clone and uses a fresh one, as does
+finding that a racing push took the clone's lock. Kept `node_modules` are trusted only while the lockfile, workspace
+file, `.npmrc`, and every `package.json` match the last successful install in that
+clone; otherwise they are removed first. A failed install retries once from empty
+`node_modules`, and a second failure fails the push. Set
+`ZANA_PREPUSH_FRESH_SNAPSHOT=1` to always use a fresh clone,
+`ZANA_PREPUSH_CACHE_DIR` to move the cache, and `ZANA_PREPUSH_TIMING=1` to log
+each phase's duration.
+
 For SSH connection backstop, add this to SSH config used by
 `github.com-work-public`:
 
