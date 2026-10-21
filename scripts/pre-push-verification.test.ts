@@ -522,11 +522,11 @@ it('keeps a slot when pruning fails', () => {
 });
 
 type Run = (command: string, args: string[], options?: Record<string, unknown>) => { status: number; stdout?: string };
-type Fixture = { status?: string; head?: string; index?: string; layout?: (slot: string) => string; replaced?: string; inputs?: () => string; fail?: (command: string, args: string[], inSlot: boolean, attempt: number) => boolean };
+type Fixture = { config?: string; status?: string; head?: string; index?: string; layout?: (slot: string) => string; replaced?: string; inputs?: () => string; fail?: (command: string, args: string[], inSlot: boolean, attempt: number) => boolean };
 
 const INPUTS = ['pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc', ':(glob)**/package.json'];
 
-function reuseFixture({ status = '', head = OID, index = 'H package.json\0', layout = (slot) => `${slot}\n${slot}/.git\n`, replaced = '', inputs = () => '100644 abc 0\tpackage.json\0', fail = () => false }: Fixture = {}) {
+function reuseFixture({ config = 'core.bare\0core.worktree\0core.hooksPath\0', status = '', head = OID, index = 'H package.json\0', layout = (slot) => `${slot}\n${slot}/.git\n`, replaced = '', inputs = () => '100644 abc 0\tpackage.json\0', fail = () => false }: Fixture = {}) {
   const root = mkdtempSync(join(tmpdir(), 'zana-push-reuse-root-'));
   const cacheRoot = mkdtempSync(join(tmpdir(), 'zana-push-reuse-cache-'));
   const slot = join(cacheRoot, `${snapshotKey()}-0`);
@@ -539,6 +539,7 @@ function reuseFixture({ status = '', head = OID, index = 'H package.json\0', lay
     if (command !== 'git') return { status: 0 };
     if (args[0] === 'rev-parse') return { status: 0, stdout: args[1] === 'HEAD' ? `${head}\n` : layout(slot) };
     if (args[0] === 'for-each-ref') return { status: 0, stdout: replaced };
+    if (args[0] === 'config' && args.includes('--list')) return { status: 0, stdout: config };
     if (args[0] === 'status') return { status: 0, stdout: status };
     if (args[0] === 'ls-files') return { status: 0, stdout: args[1] === '-v' ? index : inputs() };
     return { status: 0, stdout: '' };
@@ -556,8 +557,9 @@ it('reuses a free snapshot that proves clean at the pushed object', () => {
     expect(fixture.snapshot(log)).toBe(fixture.slot);
     expect(existsSync(join(fixture.slot, '.git', 'index'))).toBe(false);
     expect(fixture.calls()).toEqual([
-      ['git', ['config', '--unset-all', 'core.worktree']],
-      ['git', ['config', '--unset-all', 'core.hooksPath']],
+      ['git', ['config', '--local', '--no-includes', '--name-only', '--list', '-z']],
+      ['git', ['config', '--local', '--unset-all', 'core.worktree']],
+      ['git', ['config', '--local', '--unset-all', 'core.hooksPath']],
       ['git', ['rev-parse', '--show-toplevel', '--absolute-git-dir']],
       ['git', ['for-each-ref', '--format=%(refname)', 'refs/replace/']],
       ['git', ['fetch', '--no-tags', '--force', '--prune', fixture.root, OID, '+refs/heads/*:refs/remotes/origin/*', '+refs/tags/*:refs/tags/*']],
@@ -569,10 +571,14 @@ it('reuses a free snapshot that proves clean at the pushed object', () => {
       ['git', ['ls-files', '-s', '-z', '--', ...INPUTS]],
       ['pnpm', ['install', '--frozen-lockfile', '--prefer-offline']],
     ]);
+    const hooks = fixture.run.mock.calls[0][2]?.env?.GIT_CONFIG_VALUE_0 as string;
+    expect(hooks).toMatch(/zana-pre-push-hooks-/);
     for (const [, , options] of fixture.run.mock.calls) {
       expect(options?.env).not.toHaveProperty('GIT_DIR');
+      expect(options?.env).toMatchObject({ GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.hooksPath', GIT_CONFIG_VALUE_0: hooks });
       expect(options?.cwd).toBe(fixture.slot);
     }
+    expect(existsSync(hooks)).toBe(false);
     expect(log).toHaveBeenCalledWith(`pre-push: snapshot ${OID.slice(0, 12)} in ${fixture.slot} (reused)`);
     expect(readFileSync(fixture.record, 'utf8')).toMatch(/^[0-9a-f]{64}$/);
     expect(existsSync(`${fixture.slot}.lock`)).toBe(false);
@@ -624,8 +630,9 @@ it.each([
   ['assume-unchanged entry', { index: 'H package.json\0h src/a.ts\0' }, 'reused snapshot index hides changes: h src/a.ts'],
   ['skip-worktree entry', { index: 'S src/a.ts\0' }, 'reused snapshot index hides changes: S src/a.ts'],
   ['wrong HEAD', { head: BASE }, `reused snapshot is not at ${OID}`],
-  ['failed worktree reset', { fail: (_command: string, args: string[], inSlot: boolean) => inSlot && args[0] === 'config' && args[2] === 'core.worktree' }, 'could not reset reused snapshot core.worktree'],
-  ['failed hooks reset', { fail: (_command: string, args: string[]) => args[0] === 'config' && args[2] === 'core.hooksPath' }, 'could not reset reused snapshot core.hooksPath'],
+  ['unreadable config', { fail: (_command: string, args: string[]) => args[0] === 'config' && args.includes('--list') }, 'could not read reused snapshot config'],
+  ['failed worktree reset', { fail: (_command: string, args: string[], inSlot: boolean) => inSlot && args[0] === 'config' && args[1] === '--local' && args.at(-1) === 'core.worktree' }, 'could not reset reused snapshot core.worktree'],
+  ['failed filter reset', { config: 'core.bare\0filter.evil.smudge\0', fail: (_command: string, args: string[]) => args[0] === 'config' && args.at(-1) === 'filter.evil.smudge' }, 'could not reset reused snapshot filter.evil.smudge'],
   ['repository outside its slot', { layout: () => `${tmpdir()}\n${tmpdir()}/.git\n` }, 'reused snapshot repository points outside its slot'],
   ['unreadable layout', { fail: (_command: string, args: string[]) => args[1] === '--show-toplevel' }, 'reused snapshot repository points outside its slot'],
   ['replacement ref', { replaced: 'refs/replace/abc\n' }, 'reused snapshot has replacement refs'],
@@ -707,7 +714,7 @@ it('falls back to a fresh clone when the slot .git is not a directory', () => {
   try {
     expect(fixture.snapshot(log)).not.toBe(fixture.slot);
     expect(log).toHaveBeenCalledWith('pre-push: reused snapshot unusable (reused snapshot .git is not a directory); using a fresh clone');
-    expect(fixture.calls().filter(([, args]) => (args as string[])[0] === 'config' && (args as string[])[2] === 'core.hooksPath')).toEqual([]);
+    expect(fixture.calls().filter(([, args]) => (args as string[])[0] === 'config' && (args as string[])[1] === '--local')).toEqual([]);
     expect(existsSync(fixture.root)).toBe(true);
   } finally { fixture.cleanup(); }
 });
@@ -784,6 +791,7 @@ it('uses a fresh clone when no slot is free or the cache is unusable', () => {
 it('restores a reused snapshot to exactly the pushed tree with real Git', () => {
   const root = mkdtempSync(join(tmpdir(), 'zana-push-real-root-'));
   const cacheRoot = mkdtempSync(join(tmpdir(), 'zana-push-real-cache-'));
+  const marker = join(root, 'hook-ran');
   const write = (path: string, content: string) => {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     writeFileSync(join(root, path), content);
@@ -834,6 +842,15 @@ it('restores a reused snapshot to exactly the pushed tree with real Git', () => 
       plainGit(join(snapshot, 'nested-repo'), ['init', '-q']);
       // An install points hooks into the snapshot; reuse must not run them.
       plainGit(snapshot, ['config', 'core.hooksPath', '.githooks']);
+      // Code under verification can also plant hooks, filters, and info files
+      // that a later checkout would otherwise obey.
+      for (const hooks of ['.git/hooks', '.githooks']) {
+        mkdirSync(join(snapshot, hooks), { recursive: true });
+        for (const hook of ['post-checkout', 'reference-transaction']) writeFileSync(join(snapshot, hooks, hook), `#!/bin/sh\necho ran >> "${marker}"\n`, { mode: 0o755 });
+      }
+      plainGit(snapshot, ['config', 'filter.evil.smudge', `sh -c 'echo ran >> "${marker}"; cat'`]);
+      plainGit(snapshot, ['config', 'include.path', '../../outside.config']);
+      writeFileSync(join(snapshot, '.git/info/attributes'), '* filter=evil\n');
       return snapshot;
     });
     // Removing a package changed the dependency inputs, so kept dependencies are reinstalled.
@@ -850,9 +867,12 @@ it('restores a reused snapshot to exactly the pushed tree with real Git', () => 
       expect(readFileSync(join(snapshot, 'src/a.txt'), 'utf8')).toBe('third\n');
       expect(existsSync(join(snapshot, 'node_modules/keep/index.js'))).toBe(true);
       expect(() => plainGit(snapshot, ['config', '--get-all', 'core.hooksPath'])).toThrow();
+      expect(() => plainGit(snapshot, ['config', '--get-regexp', '^(filter|include)\\.'])).toThrow();
+      expect(existsSync(join(snapshot, '.git/info'))).toBe(false);
       return snapshot;
     });
     expect(new Set([used, changed, reused].map((path) => realpathSync(path))).size).toBe(1);
+    expect(existsSync(marker)).toBe(false);
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining('using a fresh clone'));
   } finally {
     rmSync(root, { recursive: true, force: true });

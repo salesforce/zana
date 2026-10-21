@@ -37,6 +37,13 @@ function withoutGitRouting(env) {
   return stripped;
 }
 
+// Command-line configuration outranks every config file, so no hook in a
+// snapshot's .git/hooks, or named by its core.hooksPath, ever runs.
+function withHooksDisabled(env, hooksPath) {
+  const count = Number.parseInt(env.GIT_CONFIG_COUNT ?? '0', 10) || 0;
+  return { ...env, GIT_CONFIG_COUNT: String(count + 1), [`GIT_CONFIG_KEY_${count}`]: 'core.hooksPath', [`GIT_CONFIG_VALUE_${count}`]: hooksPath };
+}
+
 function gitOk(args, options) {
   try { return git(args, options); } catch { return null; }
 }
@@ -370,18 +377,26 @@ function removeDependencies(snapshot, kept) {
   for (const path of kept) rmSync(join(snapshot, path), { recursive: true, force: true });
 }
 
+// Settings a clone writes for itself. Anything else in a reused snapshot's
+// config came from a verification run, and could redirect its worktree or
+// rewrite what checkout writes (filters, includes, fsmonitor).
+const CLONE_CONFIG = /^(?:core\.(?:repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode|symlinks)|extensions\.objectformat|remote\.origin\.(?:url|fetch)|branch\..+\.(?:remote|merge))$/i;
+
 // A previous verification ran the pushed code inside this snapshot, so before
 // any destructive Git command prove its repository is still its own: a real
-// .git directory, no worktree redirect, and no replacement objects.
+// .git directory, only clone-written config, no info overrides, and no
+// replacement objects.
 function isolateReusedSnapshot(snapshot, run, env) {
   if (!lstatSync(join(snapshot, '.git')).isDirectory()) throw new Error('reused snapshot .git is not a directory');
   const git = snapshotGit(snapshot, run, env);
-  for (const key of ['core.worktree', 'core.hooksPath']) {
-    // The last install pointed hooks at the snapshot's .githooks; clear that so
-    // no hook runs during checkout, matching a fresh clone.
-    const unset = git(['config', '--unset-all', key]);
+  const config = git(['config', '--local', '--no-includes', '--name-only', '--list', '-z']);
+  if (config.status !== 0) throw new Error('could not read reused snapshot config');
+  for (const key of new Set(config.stdout.split('\0').filter((name) => name && !CLONE_CONFIG.test(name)))) {
+    const unset = git(['config', '--local', '--unset-all', key]);
     if (unset.status !== 0 && unset.status !== 5) throw new Error(`could not reset reused snapshot ${key}`);
   }
+  // info/attributes and info/exclude change what checkout writes and what clean keeps.
+  rmSync(join(snapshot, '.git', 'info'), { recursive: true, force: true });
   const layout = git(['rev-parse', '--show-toplevel', '--absolute-git-dir']);
   const [top, gitDir] = layout.status === 0 ? layout.stdout.trim().split('\n') : [];
   const own = realpathSync(snapshot);
@@ -440,6 +455,57 @@ function prepareSnapshot({ snapshot, oid, root, run, log, env, time, mode, reuse
   writeFileSync(record, fingerprint);
 }
 
+function claimSlot(cacheRoot, acquire, log) {
+  if (!cacheRoot) return null;
+  try {
+    const slot = acquire(cacheRoot);
+    if (!slot) log('pre-push: no free cached snapshot; using a fresh clone');
+    return slot;
+  } catch (cause) {
+    log(`pre-push: snapshot cache unavailable (${cause.message}); using a fresh clone`);
+    return null;
+  }
+}
+
+// Returns `{ result }` when the cached snapshot produced a trustworthy result,
+// or null when the caller must verify in a fresh clone instead.
+function verifyInSlot(slot, { oid, prepare, log }, verify) {
+  try {
+    log(`pre-push: snapshot ${oid.slice(0, 12)} in ${slot.path} (reused)`);
+    try {
+      prepare(slot.path, true);
+    } catch (cause) {
+      if (cause instanceof SnapshotVerificationError) throw cause;
+      log(`pre-push: reused snapshot unusable (${cause.message}); using a fresh clone`);
+      discard(slot.path);
+      return null;
+    }
+    // A lock reclaimed by a racing push means another push may have changed
+    // this tree; never report a result from it.
+    if (!slot.owns()) {
+      log(`pre-push: lost the lock on ${slot.path}; using a fresh clone`);
+      return null;
+    }
+    const result = verify(slot.path);
+    if (slot.owns()) return { result };
+    log(`pre-push: lost the lock on ${slot.path} during verification; verifying again in a fresh clone`);
+    return null;
+  } finally {
+    slot.release();
+  }
+}
+
+function verifyFresh({ oid, prepare, log }, verify) {
+  const snapshot = mkdtempSync(join(tmpdir(), 'zana-pre-push-'));
+  try {
+    log(`pre-push: snapshot ${oid.slice(0, 12)} in ${snapshot}`);
+    prepare(snapshot, false);
+    return verify(snapshot);
+  } finally {
+    rmSync(snapshot, { recursive: true, force: true });
+  }
+}
+
 export function withSnapshot({
   oid,
   mode = 'full',
@@ -452,49 +518,15 @@ export function withSnapshot({
   acquire = acquireSnapshotSlot,
 }, verify) {
   if (!oid) throw new Error('no pushed object available for snapshot verification');
-  const env = withoutGitRouting(sourceEnv);
-  const prepare = (snapshot, reused) => prepareSnapshot({ snapshot, oid, root, run, log, env, time, mode, reused });
-  let slot = null;
+  const noHooks = mkdtempSync(join(tmpdir(), 'zana-pre-push-hooks-'));
   try {
-    slot = cacheRoot ? acquire(cacheRoot) : null;
-    if (cacheRoot && !slot) log('pre-push: no free cached snapshot; using a fresh clone');
-  } catch (cause) {
-    log(`pre-push: snapshot cache unavailable (${cause.message}); using a fresh clone`);
-  }
-  if (slot) {
-    try {
-      log(`pre-push: snapshot ${oid.slice(0, 12)} in ${slot.path} (reused)`);
-      let ready = false;
-      try {
-        prepare(slot.path, true);
-        ready = true;
-      } catch (cause) {
-        if (cause instanceof SnapshotVerificationError) throw cause;
-        log(`pre-push: reused snapshot unusable (${cause.message}); using a fresh clone`);
-        discard(slot.path);
-      }
-      // A lock reclaimed by a racing push means another push may have changed
-      // this tree; never report a result from it.
-      if (ready && !slot.owns()) {
-        ready = false;
-        log(`pre-push: lost the lock on ${slot.path}; using a fresh clone`);
-      }
-      if (ready) {
-        const result = verify(slot.path);
-        if (slot.owns()) return result;
-        log(`pre-push: lost the lock on ${slot.path} during verification; verifying again in a fresh clone`);
-      }
-    } finally {
-      slot.release();
-    }
-  }
-  const snapshot = mkdtempSync(join(tmpdir(), 'zana-pre-push-'));
-  try {
-    log(`pre-push: snapshot ${oid.slice(0, 12)} in ${snapshot}`);
-    prepare(snapshot, false);
-    return verify(snapshot);
+    const env = withHooksDisabled(withoutGitRouting(sourceEnv), noHooks);
+    const context = { oid, log, prepare: (snapshot, reused) => prepareSnapshot({ snapshot, oid, root, run, log, env, time, mode, reused }) };
+    const slot = claimSlot(cacheRoot, acquire, log);
+    const cached = slot ? verifyInSlot(slot, context, verify) : null;
+    return cached ? cached.result : verifyFresh(context, verify);
   } finally {
-    rmSync(snapshot, { recursive: true, force: true });
+    rmSync(noHooks, { recursive: true, force: true });
   }
 }
 

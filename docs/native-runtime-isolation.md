@@ -52,8 +52,12 @@ The snapshot is a cached clone when one is free. Each repository keeps up to two
 per Node ABI, platform, and architecture under the user cache directory
 (`~/Library/Caches/zana-pre-push` on macOS), each held under an exclusive lock.
 A cached clone keeps only its `node_modules`, so its native builds never touch the
-main checkout. Before verifying, the hook requires the clone's `.git` to be its
-own directory with no worktree redirect, hooks, or replacement refs, rewrites
+main checkout. Git hooks never run in any snapshot: every snapshot Git command
+points `core.hooksPath` at an empty temporary directory from the command line,
+which outranks `.git/hooks` and any repository config. Before verifying, the hook
+requires the clone's `.git` to be its own directory, removes every local config
+key a clone does not write itself (worktree redirects, filters, includes,
+fsmonitor) and `.git/info`, requires no replacement refs, rewrites
 every tracked file from the pushed commit (dropping the index first, so an edit
 that kept a file's size and mtime cannot survive), removes everything else
 untracked or ignored, and requires HEAD to match, no index entry to hide changes,
