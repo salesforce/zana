@@ -46,6 +46,8 @@ const STYLES = `
 .sf-ot-org.is-production { border-color: var(--sf-warn, var(--sf-danger)); color: var(--sf-warn, var(--sf-danger)); }
 .sf-ot-search { width: 240px; max-width: 100%; font: inherit; color: var(--sf-text); background: var(--sf-sunken); border: 1px solid var(--sf-border); border-radius: 6px; padding: 3px 8px; }
 .sf-ot-search:focus { outline: none; border-color: var(--sf-accent); }
+.sf-ot-select { font: inherit; color: var(--sf-text); background: var(--sf-sunken); border: 1px solid var(--sf-border); border-radius: 6px; padding: 3px 6px; }
+.sf-ot-select:focus { outline: none; border-color: var(--sf-accent); }
 .sf-ot-toggle[aria-pressed="true"] { background: var(--sf-soft); border-color: var(--sf-accent); color: var(--sf-accent); }
 .sf-ot-icon { min-width: 26px; padding: 3px 6px; }
 .sf-ot-menu { position: relative; }

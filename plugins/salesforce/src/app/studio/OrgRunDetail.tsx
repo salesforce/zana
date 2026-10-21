@@ -89,12 +89,10 @@ export function OrgRunDetail({ run, previous, definitionCases, path, busy, onImp
         </button>)}
       </div>
       <div className="sf-tp-bar">
-        <label className="sf-ot-field">Search cases<input type="search" value={query} onChange={e => change(setQuery)(e.target.value)} placeholder="Utterance, topic, reply" /></label>
-        <label className="sf-ot-field">Sort by
-          <select value={sort} onChange={e => change(setSort)(e.target.value as CaseSort)}>
-            <option value="number">Case number</option><option value="verdict">Failures first</option><option value="latency">Latency</option><option value="score">Score</option>
-          </select>
-        </label>
+        <input className="sf-ot-search" type="search" aria-label="Search cases" value={query} onChange={e => change(setQuery)(e.target.value)} placeholder="Search utterance, topic, reply…" />
+        <select className="sf-ot-select" aria-label="Sort by" value={sort} onChange={e => change(setSort)(e.target.value as CaseSort)}>
+          <option value="number">Sort: Case number</option><option value="verdict">Sort: Failures first</option><option value="latency">Sort: Latency</option><option value="score">Sort: Score</option>
+        </select>
         <span className="sf-tp-spacer" />
         <button type="button" className="sf-tp-btn" onClick={exportCsv} disabled={!rows.length}>Export CSV</button>
         <button type="button" className="sf-tp-btn" disabled={busy || !failing.length || !path}
