@@ -91,7 +91,8 @@ import { setDesktopBrowserBroker } from '@zana-ai/zcc-server/services/threads/de
 import { registerIpcFamilies } from './ipc/register.js';
 import type { IpcCtx } from './ipc/ctx.js';
 import { sanitizeExtraArgs } from '@zana-ai/zcc-domain/launch-sanitize';
-import { titleFromObjective, MANAGED_WORKTREE_DIR_NAME, PERSONAL_WORKSPACE_DIR_NAME, type MenubarThreadAgent } from '@zana-ai/zcc-domain';
+import { teamRunNamerInput } from './team-run-title.js';
+import { MANAGED_WORKTREE_DIR_NAME, PERSONAL_WORKSPACE_DIR_NAME, type MenubarThreadAgent } from '@zana-ai/zcc-domain';
 import { providerCapabilities, isClaudeProfile, isCodexProfile, isOpenCodeProfile, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
 import { EXTENSION_PROJECT_CATEGORY, store, scratchWorkspaceRoot, worktreeRoot, worktreeTargetDir } from '@zana-ai/zcc-server/services/projects/store';
 import { electronZccDataDir } from '@zana-ai/zcc-server/electron-data-dir';
@@ -2096,11 +2097,11 @@ function fireTabNamer(sessionId: string, text: string): void {
   });
 }
 
-async function nameTeamExecution(launchId: string, objective: string, explicitTitle?: string): Promise<string> {
-  const fallback = titleFromObjective(objective) || 'Team run';
+async function nameTeamExecution(launchId: string, objective: string, explicitTitle?: string, sourceTexts: readonly string[] = []): Promise<string> {
+  const { prompt, fallbackTitle: fallback } = teamRunNamerInput(objective, sourceTexts);
   const title = await resolveNamedTitle({
     id: launchId,
-    prompt: objective,
+    prompt,
     namedIds: llmNamedSessions,
     enabled: store.getConfig().autoRenameTabs !== false,
     explicitTitle,
@@ -6553,7 +6554,10 @@ async function buildTeamJobStartRequest(args: {
     { planError: providedPlanError, unattended: !args.attended, projectId: args.projectId, projectName: args.projectName, launchRequestId }
   );
   if (planRefusal) return { ok: false, response: planRefusal };
-  const sanitizedJobTitle = await nameTeamExecution(launchRequestId, sanitizedGoal, sanitizedExplicitTitle);
+  const sanitizedJobTitle = await nameTeamExecution(
+    launchRequestId, sanitizedGoal, sanitizedExplicitTitle,
+    (sourceBundle?.sources ?? []).map((source) => redactCapturedExecutionSourcePaths(source.extractedText, capturedPathDescriptors) ?? '')
+  );
   const sharedTask = [
     `Shared job goal: ${sanitizedGoal}`,
     sanitizedSummary ? `Context: ${sanitizedSummary}` : '',
