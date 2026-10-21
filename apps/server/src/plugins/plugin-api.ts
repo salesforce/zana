@@ -447,21 +447,21 @@ export function createPluginApi(
    * a plugin/renderer can pick WHICH thread to ask about but cannot make a
    * capability answer `available: true` that main's wiring doesn't back.
    */
-  function capabilityDescriptors(providerId: string | null): CapabilityDescriptor[] {
+  function capabilityDescriptors(providerId: string | null, modernSquad = false): CapabilityDescriptor[] {
     const family = providerId ? threadProviderFamily(providerId) : null;
-    const nativeToolCapable = family === 'claude' || family === 'codex';
+    const nativeToolCapable = !modernSquad && (family === 'claude' || family === 'codex');
     return [
       { id: 'message-admission', available: Boolean(options?.productContext) },
       { id: 'lifecycle-delivery', available: Boolean(options?.productContext) },
       {
         id: 'tool-before-native',
         available: nativeToolCapable,
-        ...(nativeToolCapable ? {} : { reason: providerId ? `provider "${providerId}" has no native tool hook adapter` : 'no thread resolved' })
+        ...(nativeToolCapable ? {} : { reason: modernSquad ? 'Modern squad provider-native tool policy is not wired' : providerId ? `provider "${providerId}" has no native tool hook adapter` : 'no thread resolved' })
       },
       {
         id: 'tool-after-native',
         available: nativeToolCapable,
-        ...(nativeToolCapable ? {} : { reason: providerId ? `provider "${providerId}" has no native tool hook adapter` : 'no thread resolved' })
+        ...(nativeToolCapable ? {} : { reason: modernSquad ? 'Modern squad provider-native tool policy is not wired' : providerId ? `provider "${providerId}" has no native tool hook adapter` : 'no thread resolved' })
       },
       { id: 'project-rpc', available: Boolean(options?.hostCall) },
       { id: 'interactions', available: Boolean(options?.upsertInteraction) }
@@ -1198,7 +1198,7 @@ export function createPluginApi(
           const id = typeof threadId === 'string' ? threadId.trim() : '';
           if (!id) throw new Error('threadId is required');
           const thread = options?.productContext ? getConversationThread(options.productContext.db, id) : null;
-          return { capabilities: capabilityDescriptors(thread?.providerId ?? null) };
+          return { capabilities: capabilityDescriptors(thread?.providerId ?? null, thread?.originPluginId === 'host-modern-squad') };
         },
         forExecution: async ({ executionId }) => {
           assertLive();

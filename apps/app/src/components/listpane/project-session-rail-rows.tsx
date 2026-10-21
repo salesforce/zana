@@ -16,6 +16,7 @@ import {
 } from '../fleet-item.js';
 import type { ThreadListItem } from '../../thread-store.js';
 import { AgentRowDetail } from './AgentRowDetail.js';
+import { isModernSquadThread } from '../../lib/squad-transport.js';
 
 export function ProjectAgentRailRow({
   session,
@@ -108,6 +109,7 @@ export function ProjectThreadRailRow({
 }) {
   const title = threadTitle(thread);
   const status = threadRailStatus(thread);
+  const modernSquad = isModernSquadThread(thread);
   const { onPointerDown, openInSplit, consumeClick } = useThreadRowSplitDrag({
     projectId: routeProjectId,
     threadId: thread.id,
@@ -122,8 +124,9 @@ export function ProjectThreadRailRow({
     <div role="listitem" className="project-thread-row-wrap">
       <button
         type="button"
-        className={`project-terminal-row is-thread${active ? ' active' : ''}`}
+        className={`project-terminal-row is-thread${active ? ' active' : ''}${modernSquad ? ' is-modern' : ''}`}
         data-kind="thread"
+        data-squad-transport={modernSquad ? 'MODERN' : undefined}
         data-testid="project-thread-row"
         onPointerDown={(e) => {
           e.stopPropagation();

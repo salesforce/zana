@@ -15,6 +15,7 @@ vi.mock('@/store', () => ({
   ),
   useAgentStatus: (selector: (state: object) => unknown) => selector({ byId: {} }),
   useIdleTriage: (selector: (state: object) => unknown) => selector({ byId: {} }),
+  usePersonas: (selector: (state: { personas: unknown[] }) => unknown) => selector({ personas: [] }),
   openWhatsNewAll: vi.fn()
 }));
 vi.mock('@/thread-store', () => ({
@@ -26,7 +27,7 @@ vi.mock('@/hooks/useEnsureThreads', () => ({ useEnsureThreads: () => undefined }
 vi.mock('@/lib/windowScope', () => ({ getScopedProjectId: () => null }));
 vi.mock('@/lib/profileIcon', () => ({ profileIcon: () => null }));
 vi.mock('@/lib/sessionBuckets', () => ({ isRecentlyFinished: () => false }));
-vi.mock('@/components/AgentBoard', () => ({ idleSurfacesToNeedsYou: () => false, partitionSquadMembers: (rows: unknown[]) => ({ top: rows, workersByHost: new Map() }) }));
+vi.mock('@/components/AgentBoard', () => ({ idleSurfacesToNeedsYou: () => false, partitionSquadMembers: (rows: unknown[]) => ({ top: rows, workersByHost: new Map() }), modernMemberCards: () => ({ cards: [], folded: new Set() }) }));
 vi.mock('@/components/AgentLauncher', () => ({ AgentLauncher: () => null }));
 vi.mock('@/components/agentCardActions', () => ({ useAgentCardActions: () => ({ menu: null, setMenu: vi.fn(), actions: {}, rename: null, closeRename: vi.fn(), submitRename: vi.fn() }), AgentCardMenu: () => null, clampMenuAnchor: vi.fn() }));
 vi.mock('@/components/PromptModal', () => ({ PromptModal: () => null }));
@@ -68,7 +69,7 @@ describe('AgentsListPane', () => {
     const source = readFileSync(new URL('./AgentsList.tsx', import.meta.url), 'utf8');
     expect(source).not.toContain('data-testid="thread-list"');
     expect(source).toContain("entry.kind === 'thread'");
-    expect(source).toContain('<FleetKindChip kind="agent" />');
+    expect(source).toContain("<FleetKindChip kind={row.modernThreadId ? 'thread' : 'agent'} />");
     expect(source).toContain('openLauncher');
     expect(source).toContain('setLauncherOpen(true)');
     expect(source).not.toContain('getNewThreadRoutePath');

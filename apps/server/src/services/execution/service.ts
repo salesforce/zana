@@ -183,6 +183,17 @@ export interface ExecutionRequestV1 {
 /** @deprecated Use ExecutionRequestV1. Retained for Team backend callers. */
 export type SquadExecutionRequestV1 = ExecutionRequestV1;
 
+export interface ExecutionAssignmentCorrelation {
+  executionId: string;
+  assignmentId: string;
+  idempotencyKey: string;
+}
+
+function assignmentCorrelation(executionId: string, claim: { claimId?: string; claimGeneration?: number }): ExecutionAssignmentCorrelation | undefined {
+  if (!claim.claimId || claim.claimGeneration === undefined) return;
+  return { executionId, assignmentId: claim.claimId, idempotencyKey: `${executionId}:${claim.claimId}:${claim.claimGeneration}` };
+}
+
 export interface ExecutionServiceDeps {
   store: ReturnType<typeof createExecutionStore>;
   artifacts: ReturnType<typeof createExecutionArtifactStore>;
@@ -207,7 +218,7 @@ export interface ExecutionServiceDeps {
     value?: { canceledSessionIds: string[]; pendingSessionIds: string[] };
   }>;
   revokeTeamAuthorizations?: (authorizationIds: readonly string[]) => void | Promise<void>;
-  replyToSession: (sessionId: string, text: string) => boolean;
+  replyToSession: (sessionId: string, text: string) => boolean | Promise<boolean>;
   /**
    * Idle-gated variant of {@link replyToSession} used ONLY for engine-cascade
    * assignment pushes. The cascade dispatches a newly-ready unit the instant a
@@ -218,7 +229,12 @@ export interface ExecutionServiceDeps {
    * (delivering immediately when the worker is already idle). Falls back to
    * {@link replyToSession} when the host doesn't wire it (tests / mesh-less).
    */
-  deliverToWorker?: (sessionId: string, text: string) => boolean;
+  deliverToWorker?: (sessionId: string, text: string) => boolean | Promise<boolean>;
+  /** Receipt-aware transport. Only rejection proves an assignment was not accepted. */
+  deliverAssignment?: (workerSessionId: string, text: string, correlation: ExecutionAssignmentCorrelation) =>
+    Promise<{ state: 'accepted' | 'completed' | 'uncertain' | 'rejected' }>;
+  /** Project a runtime receipt only after authenticated work completion is durable. */
+  onWorkSettled?: (correlation: ExecutionAssignmentCorrelation & { workerSessionId: string }) => void | Promise<void>;
   triggerDeliveryDrain?: (sessionId: string) => void;
   logError?: (message: string, error: unknown) => void;
   inbox?: { append: (input: InboxInput) => Promise<InboxEntry>; appendOnce?: (input: InboxInput) => Promise<InboxEntry> };
@@ -364,7 +380,7 @@ function extractLifecycleInfo(lifecycle: any): ExtractedLifecycle | undefined {
   return {
     orchestratorSessionId,
     orchestratorAuthorizationId,
-    workers: lifecycle.workers,
+    workers,
     launchResult: lifecycle.launchResult,
     outcome: lifecycle.outcome
   };
@@ -780,7 +796,7 @@ export class ExecutionService {
         }
         return { ok: false, code: 'DEADLINE_EXCEEDED', message: 'execution deadline elapsed during Team launch' };
       }
-      record = await this.transitionOrCurrent(record, 'RUNNING', 'info', 'Team launch started');
+      record = await this.promoteStartingToRunning(record, 'Team launch started');
       return { ok: true, value: { ...record, ...(resumeGrant ? { resumeToken: resumeGrant.token, resumeTokenExpiresAt: resumeGrant.expiresAt } : {}) } };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1508,7 +1524,14 @@ export class ExecutionService {
         try {
           const repair = await this.deps.store.recordOutputRepair(before!.id, before!.stateVersion, workUnitId, claim, digest);
           if (repair.outcome === 'accepted' && binding.principalId) {
-            try { (this.deps.deliverToWorker ?? this.deps.replyToSession)(binding.principalId, `TYPED_OUTPUT_REPAIR: work unit ${workUnitId}: ${validation.reason}`); } catch {}
+            const text = `TYPED_OUTPUT_REPAIR: work unit ${workUnitId}: ${validation.reason}`;
+            try {
+              if (this.deps.deliverAssignment) {
+                const assignmentId = `repair:${claim.claimId}:${claim.claimGeneration}:${digest}`;
+                await this.deps.deliverAssignment(binding.principalId, text, { executionId: before!.id,
+                  assignmentId, idempotencyKey: `${before!.id}:${assignmentId}` });
+              } else await (this.deps.deliverToWorker ?? this.deps.replyToSession)(binding.principalId, text);
+            } catch (error) { this.deps.logError?.(`execution output repair delivery failed for ${before!.id}/${workUnitId}`, error); }
           }
           if (repair.outcome === 'exhausted') {
             await this.cascadeDispatch(repair.record.id, binding.slotId);
@@ -1519,14 +1542,23 @@ export class ExecutionService {
         } catch (error) { return invalidBound(error); }
       }
     }
-    const outcome = await this.mutateBound(binding, (record) => claim
-      ? this.deps.store.completeWork(record.id, record.stateVersion, binding, workUnitId, result, claim, requireClaim, structuredResult)
-      : this.deps.store.completeWork(record.id, record.stateVersion, binding, workUnitId, result, undefined, requireClaim, structuredResult));
+    let settled: ExecutionAssignmentCorrelation | undefined;
+    const outcome = await this.mutateBound(binding, async (record) => {
+      const current = record.workUnits?.find((candidate) => candidate.id === workUnitId);
+      const fence = current?.state === 'CLAIMED' ? current : current?.reclaimedClaim;
+      const updated = await this.deps.store.completeWork(record.id, record.stateVersion, binding, workUnitId, result, claim, requireClaim, structuredResult);
+      if (current?.state !== 'COMPLETED' && fence) settled = assignmentCorrelation(record.id, fence);
+      return updated;
+    });
     // Deprioritize the just-completed slot: it's still mid-turn winding down, and
     // idle peers should take the next unit before it. It stays eligible (falls
     // back to it when it's the only free worker), and the idle-gated push keeps a
     // fallback-to-self delivery safe.
     if (outcome.ok) {
+      if (settled && binding.principalId && this.deps.onWorkSettled) {
+        try { await this.deps.onWorkSettled({ ...settled, workerSessionId: binding.principalId }); }
+        catch (error) { this.deps.logError?.(`execution work receipt settlement failed for ${outcome.value.id}/${workUnitId}`, error); }
+      }
       await this.cascadeDispatch(outcome.value.id, binding.slotId);
       await this.maybeAutoFinalize(outcome.value.id);
     }
@@ -1743,12 +1775,38 @@ export class ExecutionService {
         ? `\nClaim fence: claimId=${assignment.claimId}; claimGeneration=${assignment.claimGeneration}. Include both in execution.work.heartbeat and every structured work outcome.`
         : '';
       const text = `You are assigned work unit \`${assignment.workUnitId}\`${assignment.title ? ` — ${assignment.title}` : ''}.\nTask: ${assignment.task}${assignment.files?.length ? `\nFile scope: ${assignment.files.join(', ')}` : ''}${upstream}${claim}\n\nClose the unit through exactly one structured outcome: execution.work.complete, execution.work.block, execution.work.fail, or execution.work.release. Do not send routine progress or results to the coordinator.`;
+      if (this.deps.deliverAssignment) {
+        const correlation = assignmentCorrelation(record.id, assignment);
+        if (!correlation) {
+          await this.releaseUndeliveredAssignments(record.id, [assignment]);
+          continue;
+        }
+        // `uncertain`/throw keeps the claim and deliberately does NOT redeliver here: the member
+        // may already hold the assignment, and a blind resend would duplicate work. Recovery is
+        // owned by the claim-lease sweep instead (reconcileActive → classifyExpiredClaim): a
+        // member that never received it emits no output, so its lease is never output-renewed.
+        // At lease expiry an idle member is reclaimed (SILENT_WORKER); a member reporting
+        // 'working' is renewed until the durable stall/wall-clock ceilings. The no-progress
+        // reclaim then escalates (escalateKickoffFailures): re-home to an untried slot, which
+        // redelivers under a FRESH claimGeneration/idempotency key, else a HUMAN_BLOCKER —
+        // never a resend to the same member that may hold it. Requires claim recovery
+        // observe+enforce (config default on).
+        try {
+          const receipt = await this.deps.deliverAssignment(worker.sessionId, text, correlation);
+          // Runtime completion is delivery evidence, never an authenticated work outcome.
+          if (receipt.state === 'rejected') await this.releaseUndeliveredAssignments(record.id, [assignment]);
+        } catch (error) {
+          // A lost receipt may follow acceptance. Preserve the claim; never retry blindly.
+          this.deps.logError?.(`execution assignment delivery uncertain for ${record.id}/${assignment.workUnitId}`, error);
+        }
+        continue;
+      }
       try {
         // Idle-gated: never inject an assignment into a mid-turn worker (the
         // cascade fires from the worker's own completion, so it is busy). Falls
         // back to the raw reply when the host doesn't wire the idle-gated dep.
         const deliver = this.deps.deliverToWorker ?? this.deps.replyToSession;
-        const delivered = deliver(worker.sessionId, text);
+        const delivered = await deliver(worker.sessionId, text);
         if (delivered) {
           try { this.deps.triggerDeliveryDrain?.(worker.sessionId); } catch { /* nudge best-effort */ }
         } else {
@@ -2143,7 +2201,7 @@ export class ExecutionService {
       if (!await this.launchMayProceed(current)) {
         return { ok: false as const, code: 'DEADLINE_EXCEEDED', message: 'execution deadline elapsed during Team retry launch', value: await this.deps.store.get(current.id) };
       }
-      return { ok: true as const, value: await this.transitionOrCurrent(current, 'RUNNING', 'info', 'Team retry launch started') };
+      return { ok: true as const, value: await this.promoteStartingToRunning(current, 'Team retry launch started') };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
@@ -2366,7 +2424,7 @@ export class ExecutionService {
           if (state !== 'unknown') return;
           if ((this.deps.now ?? Date.now)() - wake.createdAt < COORDINATOR_WAKE_UNKNOWN_STALE_MS) return;
         }
-        const delivered_ = this.deps.replyToSession(sessionId, wake.message);
+        const delivered_ = await this.deps.replyToSession(sessionId, wake.message);
         if (!delivered_) return;
         await this.deps.store.acknowledgeCoordinatorWake(record.id, wake.id);
       }
@@ -2501,7 +2559,19 @@ export class ExecutionService {
     const record = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);
     if (!record) return { ok: false as const, code: 'NOT_FOUND', message: 'execution not found for caller' };
     try {
-      return { ok: true as const, value: await this.deps.store.retryBlockerDelivery(record.id, expectedStateVersion, blockerId, deliveryId) };
+      const value = await this.deps.store.retryBlockerDelivery(record.id, expectedStateVersion, blockerId, deliveryId);
+      // A worker already idle will not emit another edge after a manual retry.
+      try {
+        const lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId));
+        const slotId = value.deliveries?.find(delivery => delivery.id === deliveryId)?.slotId;
+        const sessionId = slotId === 'orchestrator' || slotId?.startsWith('orchestrator:')
+          ? lifecycle?.orchestratorSessionId
+          : lifecycle?.workers?.find(worker => worker.slotId === slotId && worker.projectId === record.projectId)?.sessionId;
+        if (sessionId) this.deps.triggerDeliveryDrain?.(sessionId);
+      } catch (error) {
+        this.deps.logError?.(`execution delivery retry nudge failed for ${record.id}/${deliveryId}`, error);
+      }
+      return { ok: true as const, value };
     } catch (error) {
       if (error instanceof Error && error.message === 'stale execution state') {
         return { ok: false as const, code: 'CONFLICT', message: error.message, current: await this.deps.store.get(record.id) };
@@ -2871,7 +2941,7 @@ export class ExecutionService {
     }
     let notified = false;
     try {
-      notified = !!targetSessionId && this.deps.replyToSession(targetSessionId, `Execution response pending. Pull with execution.delivery.pull for execution ${record.id}.`);
+      notified = !!targetSessionId && await this.deps.replyToSession(targetSessionId, `Execution response pending. Pull with execution.delivery.pull for execution ${record.id}.`);
     } catch {
       notified = false;
     }
@@ -2886,7 +2956,7 @@ export class ExecutionService {
     const lifecycle = extractLifecycleInfo(rawLifecycle);
     const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === slotId && candidate.projectId === record.projectId);
     if (!worker?.sessionId) return { ok: false as const, code: 'NOT_FOUND', message: 'execution slot not found for caller' };
-    if (!this.deps.replyToSession(worker.sessionId, text)) return { ok: false as const, code: 'SESSION_GONE', message: 'execution slot is no longer live' };
+    if (!await this.deps.replyToSession(worker.sessionId, text)) return { ok: false as const, code: 'SESSION_GONE', message: 'execution slot is no longer live' };
     const fenced = await this.fenceCommand(record, expectedStateVersion, resume ? 'Execution resume requested' : 'Execution response requested', slotId);
     if (!fenced.ok) return fenced;
     const current = resume && fenced.value.state === 'BLOCKED'
@@ -3033,6 +3103,20 @@ export class ExecutionService {
       if (!current) throw error;
       return current;
     }
+  }
+
+  /**
+   * Members can record progress (claims, events) while launchTeam is still in
+   * flight, bumping stateVersion. Promote the current STARTING version rather
+   * than losing the transition to a stale one; any other state wins as-is.
+   */
+  private async promoteStartingToRunning(record: ExecutionRecord, summary: string): Promise<ExecutionRecord> {
+    let current = record;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      current = await this.transitionOrCurrent(current, 'RUNNING', 'info', summary);
+      if (current.state !== 'STARTING') return current;
+    }
+    return current;
   }
 
   private beginStarting(executionId: string): void {

@@ -128,6 +128,7 @@ export interface IpcCtx {
   stopAutonomousRun: any;
   suggestionsStore: any;
   teams: any;
+  teamLifecycle: any;
   templates: any;
   terminateSession: any;
   tray: any;

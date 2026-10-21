@@ -25,7 +25,9 @@ describe('ExecutionDeliveryDrainService', () => {
     service.observe('worker', 'working');
     service.observe('worker', 'idle');
     await vi.waitFor(() => expect(reply).toHaveBeenCalledTimes(1));
-    expect(reply.mock.calls[0]).toEqual(['worker', expect.stringContaining('execution.delivery.pull')]);
+    expect(reply.mock.calls[0]).toEqual(['worker', expect.stringContaining('execution.delivery.pull'), {
+      assignmentId: expect.stringMatching(/^execution-nudge:/), idempotencyKey: expect.stringMatching(/:0$/)
+    }]);
     expect(reply.mock.calls[0][1]).toContain('execution.delivery.ack');
   });
 
@@ -98,7 +100,7 @@ describe('ExecutionDeliveryDrainService', () => {
     service.observe('worker', 'working');
     service.observe('worker', 'waiting');
     await vi.waitFor(() => expect(reply).toHaveBeenCalledTimes(1));
-    expect(reply.mock.calls[0]).toEqual(['worker', expect.stringContaining('execution.delivery.pull')]);
+    expect(reply.mock.calls[0]).toEqual(['worker', expect.stringContaining('execution.delivery.pull'), expect.any(Object)]);
     expect(reply.mock.calls[0][1]).toContain('execution.delivery.ack');
   });
 
@@ -122,6 +124,191 @@ describe('ExecutionDeliveryDrainService', () => {
     await vi.waitFor(() => expect(reply).toHaveBeenCalledTimes(1));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(reply).toHaveBeenCalledTimes(1);
+  });
+
+  it('wakes an unchanged idle worker for a manual retry with a fresh correlation', async () => {
+    const pending: Array<{ id: string; executionId: string; attempt: number; manualRetryCount?: number }> = [
+      { id: 'delivery-1', executionId: 'execution-1', attempt: 0 }
+    ];
+    const svc = new ExecutionDeliveryDrainService({ pending: async () => pending, isRestful: () => true, reply });
+    svc.observe('worker', 'idle');
+    await vi.waitFor(() => expect(reply).toHaveBeenCalledTimes(1));
+    pending[0].manualRetryCount = 1;
+    svc.forceCheck('worker');
+    await vi.waitFor(() => expect(reply).toHaveBeenCalledTimes(2));
+    expect(reply.mock.calls[1][2].idempotencyKey).not.toBe(reply.mock.calls[0][2].idempotencyKey);
+    svc.observe('worker', 'idle');
+    svc.forceCheck('worker');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(reply).toHaveBeenCalledTimes(2);
+  });
+
+  it('force-checks an idle session before its first observed edge but not a busy session', async () => {
+    queue.worker = [{ id: 'delivery-1', executionId: 'execution-1', attempt: 0 }];
+    service.forceCheck('worker');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(reply).not.toHaveBeenCalled();
+    restful.worker = true;
+    service.forceCheck('worker');
+    await vi.waitFor(() => expect(reply).toHaveBeenCalledOnce());
+  });
+
+  it.each(['false', 'throw'] as const)('bounds %s send retries while the worker stays idle', async failure => {
+    const timers: Array<() => void> = [];
+    const logError = vi.fn();
+    const send = vi.fn(async () => {
+      if (failure === 'throw') throw new Error('receipt unavailable');
+      return false;
+    });
+    const svc = new ExecutionDeliveryDrainService({
+      pending: async () => [{ id: 'delivery-1', executionId: 'execution-1', attempt: 0 }],
+      isRestful: () => true, reply: send, isReplyIdempotent: () => true, logError,
+      setTimer: fn => { timers.push(fn); return timers.length; }, clearTimer: () => {}
+    });
+    svc.observe('worker', 'idle');
+    for (let i = 0; i < 3; i += 1) {
+      await vi.waitFor(() => expect(timers).toHaveLength(i + 1));
+      timers[i]();
+    }
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(4));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(timers).toHaveLength(3);
+    if (failure === 'throw') expect(logError).toHaveBeenCalledTimes(4);
+  });
+
+  it.each(['false', 'throw'] as const)('recovers from %s without an idle edge and uses safe retry correlation', async failure => {
+    const timers: Array<() => void> = [];
+    const correlations: Array<{ assignmentId: string; idempotencyKey: string }> = [];
+    const send = vi.fn(async (_sessionId, _text, correlation) => {
+      correlations.push(correlation);
+      if (correlations.length === 1) {
+        if (failure === 'throw') throw new Error('receipt unavailable');
+        return false;
+      }
+      return true;
+    });
+    const svc = new ExecutionDeliveryDrainService({
+      pending: async () => [{ id: 'delivery-1', executionId: 'execution-1', attempt: 0 }],
+      isRestful: () => true, reply: send, isReplyIdempotent: () => true, logError: () => {},
+      setTimer: fn => { timers.push(fn); return timers.length; }, clearTimer: () => {}
+    });
+    svc.observe('worker', 'idle');
+    await vi.waitFor(() => expect(timers).toHaveLength(1));
+    timers[0]();
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    expect(correlations[1].assignmentId).toBe(correlations[0].assignmentId);
+    if (failure === 'throw') expect(correlations[1]).toEqual(correlations[0]);
+    else expect(correlations[1].idempotencyKey).not.toBe(correlations[0].idempotencyKey);
+    svc.forceCheck('worker');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('freezes uncertain payload and correlation when a second delivery arrives before retry', async () => {
+    const pending = [{ id: 'delivery-1', executionId: 'execution-1', attempt: 0 }];
+    const calls: Array<[string, unknown]> = [];
+    const timers: Array<() => void> = [];
+    const svc = new ExecutionDeliveryDrainService({
+      pending: async () => pending, isRestful: () => true, isReplyIdempotent: () => true,
+      reply: async (_sessionId, text, correlation) => {
+        calls.push([text, correlation]);
+        if (calls.length === 1) throw new Error('uncertain send');
+        return true;
+      },
+      logError: () => {}, setTimer: fn => { timers.push(fn); return timers.length; }, clearTimer: () => {}
+    });
+    svc.observe('worker', 'idle');
+    await vi.waitFor(() => expect(timers).toHaveLength(1));
+    pending.push({ id: 'delivery-2', executionId: 'execution-2', attempt: 0 });
+    timers[0]();
+    await vi.waitFor(() => expect(calls).toHaveLength(3));
+    expect(calls[1]).toEqual(calls[0]);
+    expect(calls[2][0]).toContain('execution-2');
+    expect(calls[2][1]).not.toEqual(calls[0][1]);
+  });
+
+  it('does not blindly retry a possibly successful non-idempotent CLI write', async () => {
+    const setTimer = vi.fn();
+    const send = vi.fn(async () => { throw new Error('write outcome uncertain'); });
+    const logError = vi.fn();
+    const svc = new ExecutionDeliveryDrainService({
+      pending: async () => [{ id: 'delivery-1', executionId: 'execution-1', attempt: 0 }],
+      isRestful: () => true, reply: send, logError, setTimer
+    });
+    svc.observe('worker', 'idle');
+    await vi.waitFor(() => expect(logError).toHaveBeenCalledOnce());
+    svc.forceCheck('worker');
+    svc.observe('worker', 'working');
+    svc.observe('worker', 'idle');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(send).toHaveBeenCalledOnce();
+    expect(setTimer).not.toHaveBeenCalled();
+  });
+
+  it('stops send retries when the session becomes busy or is removed', async () => {
+    const timers: Array<() => void> = [];
+    const clearTimer = vi.fn();
+    const send = vi.fn(async () => false);
+    let idle = true;
+    const svc = new ExecutionDeliveryDrainService({
+      pending: async () => [{ id: 'delivery-1', executionId: 'execution-1', attempt: 0 }],
+      isRestful: () => idle, reply: send,
+      setTimer: fn => { timers.push(fn); return timers.length; }, clearTimer
+    });
+    svc.observe('worker', 'idle');
+    await vi.waitFor(() => expect(timers).toHaveLength(1));
+    idle = false;
+    timers[0]();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(send).toHaveBeenCalledOnce();
+    idle = true;
+    svc.forceCheck('worker');
+    await vi.waitFor(() => expect(timers).toHaveLength(2));
+    svc.remove('worker');
+    expect(clearTimer).toHaveBeenCalledWith(2);
+    timers[1]();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses default bounded timer and cancels it when a force-check succeeds', async () => {
+    vi.useFakeTimers();
+    try {
+      const send = vi.fn(async () => false).mockResolvedValueOnce(false).mockResolvedValue(true);
+      const svc = new ExecutionDeliveryDrainService({
+        pending: async () => [{ id: 'delivery-1', executionId: 'execution-1', attempt: 0 }],
+        isRestful: () => true, reply: send
+      });
+      svc.observe('worker', 'idle');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(send).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(1);
+      svc.forceCheck('worker');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(send).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(send).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it.each(['true', 'false', 'throw'] as const)('does not resurrect a removed session after pending reply returns %s', async result => {
+    let finish!: (value: boolean) => void;
+    let fail!: (error: Error) => void;
+    const pending = new Promise<boolean>((resolve, reject) => { finish = resolve; fail = reject; });
+    const send = vi.fn(() => pending);
+    const setTimer = vi.fn();
+    const svc = new ExecutionDeliveryDrainService({
+      pending: async () => [{ id: 'delivery-1', executionId: 'execution-1', attempt: 0 }],
+      isRestful: () => true, reply: send, isReplyIdempotent: () => true, logError: () => {}, setTimer
+    });
+    svc.observe('worker', 'idle');
+    await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+    svc.remove('worker');
+    if (result === 'throw') fail(new Error('disconnected'));
+    else finish(result === 'true');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(setTimer).not.toHaveBeenCalled();
   });
 
   it('logs and schedules a bounded retry when the pending lookup fails', async () => {

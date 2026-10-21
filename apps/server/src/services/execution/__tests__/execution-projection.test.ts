@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { projectExecutionProjection } from '../projection.js';
+import { modernExecutionMembers, projectExecutionProjection } from '../projection.js';
 import type { ExecutionRecord } from '../store.js';
 import type { TerminalSession } from '@zana-ai/zcc-domain/product';
 
@@ -391,5 +391,42 @@ describe('projectExecutionProjection', () => {
     expect(error).toBe('Cannot apply answer: file locked');
     expect(error).not.toContain('\n');
     expect(error).not.toContain('worker.js');
+  });
+});
+
+describe('modernExecutionMembers', () => {
+  const worker = (patch: Record<string, unknown> = {}) => ({
+    transport: 'MODERN', threadId: 't1', slotId: 's1', personaId: 'p1', projectId: 'project-1', bindingState: 'BOUND',
+    process: 'running', capacityReleased: false, modernContext: { role: 'worker', executionId: 'e1' }, ...patch
+  });
+  const records = (workers: unknown[]) => [{ workers }] as never;
+
+  it('groups Modern members by execution and derives liveness', () => {
+    const members = modernExecutionMembers(records([
+      worker(),
+      worker({ threadId: 't2', modernContext: { role: 'orchestrator', executionId: 'e1' }, process: 'exited' }),
+      worker({ threadId: 't3', capacityReleased: true }),
+      worker({ threadId: 't4', bindingState: 'RESERVED' }),
+      worker({ threadId: 't5', modernContext: { role: 'worker', executionId: 'e2' } })
+    ]), 'project-1');
+    expect(members.get('e1')?.map(({ threadId, live, role }) => ({ threadId, live, role }))).toEqual([
+      { threadId: 't1', live: true, role: 'worker' },
+      { threadId: 't2', live: false, role: 'orchestrator' },
+      { threadId: 't3', live: false, role: 'worker' },
+      { threadId: 't4', live: false, role: 'worker' }
+    ]);
+    expect(members.get('e2')).toHaveLength(1);
+  });
+
+  it('skips non-Modern, unbound, foreign-project and duplicate workers and caps each execution', () => {
+    const members = modernExecutionMembers(records([
+      worker({ transport: 'CLI' }), worker({ threadId: undefined }), worker({ modernContext: undefined }),
+      worker({ projectId: 'other' }), worker({ threadId: 'dup' }), worker({ threadId: 'dup' }),
+      ...Array.from({ length: 40 }, (_, index) => worker({ threadId: `bulk-${index}` }))
+    ]), 'project-1');
+    const e1 = members.get('e1')!;
+    expect(e1).toHaveLength(32);
+    expect(e1.filter((member) => member.threadId === 'dup')).toHaveLength(1);
+    expect(e1.some((member) => member.threadId === 't1')).toBe(false);
   });
 });

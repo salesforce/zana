@@ -150,24 +150,46 @@ const resumeBindingSchema = { ...executionIdSchema, token: z.string().min(1).max
 const mintResumeGrantSchema = executionIdSchema;
 const revokeResumeGrantSchema = { ...executionIdSchema, effectiveOwnerPrincipalId: z.string().min(1).max(2048).optional() };
 
+export interface ExecutionMemberFence {
+  bindingId: string;
+  generation: number;
+}
+
+export type ExecutionRouteBinding = ExecutionCohortBinding & { memberFence?: ExecutionMemberFence };
+
+export const EXECUTION_MEMBER_TOOL_NAMES = {
+  worker: [
+    'execution.snapshot', 'execution.event', 'execution.work.claim', 'execution.work.heartbeat',
+    'execution.work.complete', 'execution.work.fail', 'execution.work.block', 'execution.work.release',
+    'execution.delivery.pull', 'execution.delivery.ack'
+  ],
+  orchestrator: [
+    'execution.snapshot', 'execution.event', 'execution.plan.register', 'execution.work.assign',
+    'execution.work.dispatch_ready', 'execution.work.retry', 'execution.work.answer',
+    'execution.source.list', 'execution.source.read', 'execution.complete'
+  ]
+} as const;
+
 export interface RegisterExecutionToolOptions {
   sessionId?: string;
   projectId: string;
   /** Host-resolved display name only; never accepted from an MCP caller. */
   projectName?: string;
   service: ExecutionService;
-  /** SYNC pty-only gate. Cohort / worker plane (`plan.register`, `work.*`, …). */
-  validateRouteIdentity?: (sessionId: string, projectId: string) => boolean;
+  /** Live cohort route gate; owner launch authority stays separate. */
+  validateRouteIdentity?: (sessionId: string, projectId: string) => boolean | Promise<boolean>;
   /**
    * ASYNC owner-session gate for start / snapshot / resume_binding.
    * Accepts a live pty session OR a live Modern thread. Falls back to the
    * pty-only gate when unset so existing callers stay byte-identical.
    */
   validateOwnerRouteIdentity?: (sessionId: string, projectId: string) => boolean | Promise<boolean>;
-  resolveCohortBinding?: (sessionId: string, projectId: string) => ExecutionCohortBinding | undefined;
+  /** Expected generation from the trusted Modern forwarder route, never tool args. */
+  memberFence?: ExecutionMemberFence;
+  resolveCohortBinding?: (sessionId: string, projectId: string, memberFence?: ExecutionMemberFence) => ExecutionRouteBinding | undefined | Promise<ExecutionRouteBinding | undefined>;
   validateRecoveryBinding?: (sessionId: string, binding: ExecutionCohortBinding) => Promise<boolean>;
   handoffs?: ReturnType<typeof createExecutionHandoffStore>;
-  validateHandoffTarget?: (sourceSessionId: string, targetSessionId: string, projectId: string) => boolean;
+  validateHandoffTarget?: (sourceSessionId: string, targetSessionId: string, projectId: string) => boolean | Promise<boolean>;
   approveHandoff?: (sourceSessionId: string, targetSessionId: string, projectId: string, executionId: string, operation: typeof EXECUTION_HANDOFF_OPERATION | typeof EXECUTION_RESUME_MONITOR_OPERATION) => Promise<boolean>;
 }
 
@@ -294,16 +316,22 @@ export async function readStartRequestFile(
 }
 
 export function registerExecutionTools(server: McpServer, options: RegisterExecutionToolOptions): void {
-  const authorized = (): boolean => !!options.sessionId
-    && (options.validateRouteIdentity?.(options.sessionId, options.projectId) ?? false);
+  const authorized = async (): Promise<boolean> => {
+    if (!options.sessionId || (await options.validateRouteIdentity?.(options.sessionId, options.projectId)) !== true) return false;
+    return !!options.memberFence || !(await options.resolveCohortBinding?.(options.sessionId, options.projectId))?.memberFence;
+  };
   const ownerAuthorized = async (): Promise<boolean> => {
-    if (!options.sessionId) return false;
+    if (!options.sessionId || options.memberFence) return false;
     const gate = options.validateOwnerRouteIdentity ?? options.validateRouteIdentity;
-    return (await gate?.(options.sessionId, options.projectId)) ?? false;
+    if ((await gate?.(options.sessionId, options.projectId)) !== true) return false;
+    return !(await options.resolveCohortBinding?.(options.sessionId, options.projectId))?.memberFence;
   };
   const binding = async (correlationExecutionId?: string): Promise<ExecutionCohortBinding | undefined> => {
-    const resolved = options.sessionId ? options.resolveCohortBinding?.(options.sessionId, options.projectId) : undefined;
-    if (!resolved || correlationExecutionId && resolved.executionId !== correlationExecutionId) return undefined;
+    const resolved = options.sessionId ? await options.resolveCohortBinding?.(options.sessionId, options.projectId, options.memberFence) : undefined;
+    if (!resolved || resolved.projectId !== options.projectId
+      || correlationExecutionId && resolved.executionId !== correlationExecutionId) return undefined;
+    if (options.memberFence && (resolved.memberFence?.bindingId !== options.memberFence.bindingId
+      || resolved.memberFence?.generation !== options.memberFence.generation)) return undefined;
     if (resolved.slotId === 'orchestrator:recovery'
       && (!options.sessionId || !await options.validateRecoveryBinding?.(options.sessionId, resolved))) return undefined;
     return resolved;
@@ -324,21 +352,31 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   // Shared registration wrapper: any handler that throws is logged with tool +
   // project context and returned to the caller as a SANITIZED MCP error, so an
   // internal failure never leaks a stack/message across the MCP boundary.
-  const register: McpServer['registerTool'] = ((name: string, config: unknown, handler: (args: unknown) => unknown) =>
-    server.registerTool(name as never, config as never, (async (args: unknown) => {
+  const memberNames = new Set<string>(Object.values(EXECUTION_MEMBER_TOOL_NAMES).flat());
+  const register: McpServer['registerTool'] = ((name: string, config: unknown, handler: (args: unknown) => unknown) => {
+    if (options.memberFence && !memberNames.has(name)) return;
+    return server.registerTool(name as never, config as never, (async (args: unknown) => {
       try {
+        if (options.memberFence) {
+          if (!await authorized()) return denied(name);
+          if (name === 'execution.event' && args && typeof args === 'object' && ('slotId' in args || 'producerRole' in args)) return denied(name);
+          const bound = await binding((args as { executionId?: string }).executionId);
+          if (!bound) return boundDenied(name);
+          if (!EXECUTION_MEMBER_TOOL_NAMES[bound.role]?.some((tool) => tool === name)) return denied(name);
+        }
         return await (handler(args) as Promise<unknown>);
       } catch (error) {
         console.error(`[execution-mcp] tool ${name} failed for project ${options.projectId}`, error);
         return { isError: true, content: [{ type: 'text' as const, text: `${name} failed: internal error.` }] };
       }
-    }) as never)) as McpServer['registerTool'];
+    }) as never);
+  }) as McpServer['registerTool'];
 
   register('execution.whoami', {
     description: 'Read this live session MCP route identity. Execution starts in this session project unless a host feature explicitly selects another project.',
     inputSchema: {}
   }, async () => {
-    if (!authorized()) return denied('execution.whoami');
+    if (!await authorized()) return denied('execution.whoami');
     return {
       content: [{
         type: 'text' as const,
@@ -352,67 +390,67 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   });
 
   register('execution.plan.register', { description: 'Coordinator registers one bounded durable work DAG.', inputSchema: executionPlanSchema }, async ({ executionId, workUnits }) => {
-    if (!authorized()) return denied('execution.plan.register'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.plan.register');
+    if (!await authorized()) return denied('execution.plan.register'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.plan.register');
     if (Buffer.byteLength(JSON.stringify(workUnits), 'utf8') > MAX_EXECUTION_PLAN_BYTES) return boundResult('execution.plan.register', { ok: false, message: `execution plan exceeds ${MAX_EXECUTION_PLAN_BYTES} bytes` });
     return boundResult('execution.plan.register', await options.service.registerPlan(bound, workUnits));
   });
   register('execution.work.claim', { description: 'Worker claims one ready work unit using its host-bound slot.', inputSchema: executionWorkSchema }, async ({ executionId, workUnitId, assignedSlotId }) => {
-    if (!authorized()) return denied('execution.work.claim'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.claim');
+    if (!await authorized()) return denied('execution.work.claim'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.claim');
     return boundResult('execution.work.claim', await options.service.claimWork(bound, workUnitId, assignedSlotId));
   });
   register('execution.work.assign', { description: 'Coordinator assigns one ready work unit to a worker slot.', inputSchema: executionWorkAssignSchema }, async ({ executionId, workUnitId, assignedSlotId }) => {
-    if (!authorized()) return denied('execution.work.assign'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.assign');
+    if (!await authorized()) return denied('execution.work.assign'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.assign');
     return boundResult('execution.work.assign', await options.service.assignWork(bound, workUnitId, assignedSlotId));
   });
   register('execution.work.heartbeat', { description: 'Worker renews its current main-minted work claim lease.', inputSchema: executionWorkHeartbeatSchema }, async ({ executionId, workUnitId, claimId, claimGeneration, turnCount }) => {
-    if (!authorized()) return denied('execution.work.heartbeat'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.heartbeat');
+    if (!await authorized()) return denied('execution.work.heartbeat'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.heartbeat');
     return boundResult('execution.work.heartbeat', await options.service.heartbeatWork(bound, workUnitId, claimId, claimGeneration, turnCount));
   });
   register('execution.work.dispatch_ready', { description: 'Coordinator hands scheduling to the engine: auto-assign EVERY ready work unit to a free worker slot and notify each worker. Call once after the plan is structured (units have tasks + dependencies); the engine then re-dispatches newly-ready units automatically as work completes, so no per-unit assign is needed.', inputSchema: executionIdSchema }, async ({ executionId }) => {
-    if (!authorized()) return denied('execution.work.dispatch_ready'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.dispatch_ready');
+    if (!await authorized()) return denied('execution.work.dispatch_ready'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.dispatch_ready');
     return boundResult('execution.work.dispatch_ready', await options.service.dispatchReady(bound));
   });
   register('execution.work.complete', { description: 'Complete one assigned work unit. Preserve required prose result and include structuredResult when plan declares bounded output schema.', inputSchema: executionWorkResultSchema }, async ({ executionId, workUnitId, result, structuredResult, claimId, claimGeneration }) => {
-    if (!authorized()) return denied('execution.work.complete'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.complete');
+    if (!await authorized()) return denied('execution.work.complete'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.complete');
     return boundResult('execution.work.complete', await options.service.completeWork(bound, workUnitId, result, claimId && claimGeneration ? { claimId, claimGeneration } : undefined, true, structuredResult));
   });
   register('execution.work.fail', { description: 'Fail one assigned work unit durably.', inputSchema: executionWorkFailureSchema }, async ({ executionId, workUnitId, failure, failureCode, claimId, claimGeneration }) => {
-    if (!authorized()) return denied('execution.work.fail'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.fail');
+    if (!await authorized()) return denied('execution.work.fail'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.fail');
     const claim = claimId && claimGeneration ? { claimId, claimGeneration } : undefined;
     return boundResult('execution.work.fail', await (claim
       ? options.service.failWork(bound, workUnitId, failure, failureCode, claim, true)
       : options.service.failWork(bound, workUnitId, failure, failureCode, undefined, true)));
   });
   register('execution.work.block', { description: 'Block one assigned work unit with a durable question. audience "human" (default) routes to a human via the inbox; audience "coordinator" is a self-heal ask — it wakes the coordinator (no human) to decide a plan/spec detail and answer with execution.work.answer. options must be complete answers the recipient can submit verbatim. Omit options when the answer requires free-form data such as an absolute path, identifier, or explanation.', inputSchema: executionWorkBlockSchema }, async ({ executionId, workUnitId, blockerId, question, options: choices, audience, claimId, claimGeneration }) => {
-    if (!authorized()) return denied('execution.work.block'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.block');
+    if (!await authorized()) return denied('execution.work.block'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.block');
     return boundResult('execution.work.block', await options.service.blockWork(bound, workUnitId, { id: blockerId, question, options: choices, ...(audience ? { audience } : {}) }, claimId && claimGeneration ? { claimId, claimGeneration } : undefined, true));
   });
   register('execution.work.answer', { description: 'Coordinator answers a coordinator-directed blocker (one raised with audience "coordinator"). The answer is delivered to the blocked worker, which resumes automatically. Not for human-audience blockers.', inputSchema: executionWorkAnswerSchema }, async ({ executionId, blockerId, answer }) => {
-    if (!authorized()) return denied('execution.work.answer'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.answer');
+    if (!await authorized()) return denied('execution.work.answer'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.answer');
     return boundResult('execution.work.answer', await options.service.answerBlockerByCoordinator(bound, blockerId, answer));
   });
   register('execution.work.release', { description: 'Release one assigned work unit.', inputSchema: executionWorkSchema }, async ({ executionId, workUnitId, claimId, claimGeneration }) => {
-    if (!authorized()) return denied('execution.work.release'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.release');
+    if (!await authorized()) return denied('execution.work.release'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.release');
     return boundResult('execution.work.release', await options.service.releaseWork(bound, workUnitId, claimId && claimGeneration ? { claimId, claimGeneration } : undefined, true));
   });
   register('execution.work.retry', { description: 'Coordinator retries and optionally reassigns failed or blocked work.', inputSchema: executionWorkSchema }, async ({ executionId, workUnitId, assignedSlotId }) => {
-    if (!authorized()) return denied('execution.work.retry'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.retry');
+    if (!await authorized()) return denied('execution.work.retry'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.retry');
     return boundResult('execution.work.retry', await options.service.retryWork(bound, workUnitId, assignedSlotId));
   });
   register('execution.delivery.pull', { description: 'Pull one pending blocker response bound to this worker route.', inputSchema: {} }, async () => {
-    if (!authorized()) return denied('execution.delivery.pull'); const bound = await binding(); if (!bound) return boundDenied('execution.delivery.pull');
+    if (!await authorized()) return denied('execution.delivery.pull'); const bound = await binding(); if (!bound) return boundDenied('execution.delivery.pull');
     return boundResult('execution.delivery.pull', await options.service.pullDelivery(bound));
   });
   register('execution.delivery.ack', { description: 'Acknowledge one leased blocker response from this exact worker route.', inputSchema: executionDeliveryAckSchema }, async ({ deliveryId, leaseId, delivered, error }) => {
-    if (!authorized()) return denied('execution.delivery.ack'); const bound = await binding(); if (!bound) return boundDenied('execution.delivery.ack');
+    if (!await authorized()) return denied('execution.delivery.ack'); const bound = await binding(); if (!bound) return boundDenied('execution.delivery.ack');
     return boundResult('execution.delivery.ack', await options.service.ackDelivery(bound, deliveryId, leaseId, { delivered, error }));
   });
   register('execution.source.list', { description: 'Coordinator lists bounded source snapshot metadata.', inputSchema: executionSourceListSchema }, async ({ executionId, offset, limit }) => {
-    if (!authorized()) return denied('execution.source.list'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.source.list');
+    if (!await authorized()) return denied('execution.source.list'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.source.list');
     return boundResult('execution.source.list', await options.service.listSources(bound, { offset, limit }));
   });
   register('execution.source.read', { description: 'Coordinator reads one bounded source snapshot chunk.', inputSchema: executionSourceReadSchema }, async ({ executionId, sourceId, offset, maxBytes }) => {
-    if (!authorized()) return denied('execution.source.read'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.source.read');
+    if (!await authorized()) return denied('execution.source.read'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.source.read');
     return boundResult('execution.source.read', await options.service.readSource(bound, sourceId, { offset, maxBytes }));
   });
 
@@ -451,7 +489,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.status', {
     description: 'Read one project-scoped execution.', inputSchema: executionIdSchema
   }, async ({ executionId }) => {
-    if (!authorized()) return denied('execution.status');
+    if (!await authorized()) return denied('execution.status');
     const cohort = await binding(executionId);
     if (cohort) return wrongAuthority('execution.status');
     const record = await options.service.status(options.sessionId!, options.projectId, executionId);
@@ -473,7 +511,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.mint_resume_grant', {
     description: 'Mint a replacement resume grant for an active execution owned by this session when its start token was lost.', inputSchema: mintResumeGrantSchema
   }, async ({ executionId }) => {
-    if (!authorized()) return denied('execution.mint_resume_grant');
+    if (!await authorized()) return denied('execution.mint_resume_grant');
     const result = await options.service.mintResumeGrant(options.sessionId!, options.projectId, executionId);
     return result.ok
       ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
@@ -483,7 +521,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.revoke_resume_grant', {
     description: 'Revoke pending durable resume grants for one owner-scoped execution.', inputSchema: revokeResumeGrantSchema
   }, async ({ executionId, effectiveOwnerPrincipalId }) => {
-    if (!authorized()) return denied('execution.revoke_resume_grant');
+    if (!await authorized()) return denied('execution.revoke_resume_grant');
     const result = await options.service.revokeResumeGrant(options.sessionId!, options.projectId, executionId, effectiveOwnerPrincipalId);
     return result.ok
       ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
@@ -493,7 +531,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.list', {
     description: 'List recent project-scoped executions started by this session identity.', inputSchema: {}
   }, async () => {
-    if (!authorized()) return denied('execution.list');
+    if (!await authorized()) return denied('execution.list');
     const cohort = await binding();
     if (cohort) return wrongAuthority('execution.list');
     const records = await options.service.list(options.sessionId!, options.projectId);
@@ -503,7 +541,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.events', {
     description: 'Read ordered execution events after an optional sequence cursor.', inputSchema: executionEventsSchema
   }, async ({ executionId, after, limit }) => {
-    if (!authorized()) return denied('execution.events');
+    if (!await authorized()) return denied('execution.events');
     const events = await options.service.events(options.sessionId!, options.projectId, executionId, after ?? 0, limit ?? 100);
     return { content: [{ type: 'text' as const, text: JSON.stringify(events) }] };
   });
@@ -511,11 +549,11 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.snapshot', {
     description: 'Read one bounded durable execution snapshot. Does not reconcile or poll Team workers.', inputSchema: executionSnapshotSchema
   }, async ({ executionId, after }) => {
-    if (!await ownerAuthorized()) return denied('execution.snapshot');
+    if (!await (options.memberFence ? authorized() : ownerAuthorized())) return denied('execution.snapshot');
     try {
-      const hostBinding = options.sessionId ? options.resolveCohortBinding?.(options.sessionId, options.projectId) : undefined;
+      const hostBinding = options.sessionId ? await options.resolveCohortBinding?.(options.sessionId, options.projectId, options.memberFence) : undefined;
       const bound = await binding(executionId);
-      if (hostBinding && !bound) return wrongAuthority('execution.snapshot');
+      if ((hostBinding || options.memberFence) && !bound) return wrongAuthority('execution.snapshot');
       const snapshot = bound
         ? await options.service.snapshotBound(bound, after ?? 0)
         : await options.service.snapshot(options.sessionId!, options.projectId, executionId, after ?? 0);
@@ -543,8 +581,9 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.event', {
     description: 'Record one idempotent, owner-scoped lifecycle, blocker, failure, or outcome event.', inputSchema: executionProducerEventSchema
   }, async ({ executionId, eventId, slotId, producerRole, type, severity, summary, detail, blocker, attention, progress, references }) => {
-    if (!authorized()) return denied('execution.event');
+    if (!await authorized()) return denied('execution.event');
     const bound = await binding(executionId);
+    if (options.memberFence && !bound) return boundDenied('execution.event');
     if (bound) {
       const result = await options.service.reportBoundEvent(bound, { id: eventId, type, severity, summary, detail, blocker, attention, progress, references });
       return result.ok ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
@@ -561,7 +600,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.stop', {
     description: 'Request a stop for one project-scoped Squad execution at an expected state version.', inputSchema: executionControlSchema
   }, async ({ executionId, expectedStateVersion }) => {
-    if (!authorized()) return denied('execution.stop');
+    if (!await authorized()) return denied('execution.stop');
     const result = await options.service.stop(options.sessionId!, options.projectId, executionId, expectedStateVersion);
     return result.ok
       ? { content: [{ type: 'text' as const, text: JSON.stringify(result) }] }
@@ -571,8 +610,9 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.complete', {
     description: 'Coordinator-only durable completion for one Team job, with a final summary.', inputSchema: executionCompleteSchema
   }, async ({ executionId, summary }) => {
-    if (!authorized()) return denied('execution.complete');
+    if (!await authorized()) return denied('execution.complete');
     const bound = await binding(executionId);
+    if (options.memberFence && !bound) return boundDenied('execution.complete');
     if (bound) {
       const result = await options.service.completeByCoordinatorBinding(bound, executionId, summary);
       return result.ok ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
@@ -587,7 +627,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.retry', {
     description: 'Retry a pre-dispatch blocked execution using a fresh Team launch identity.', inputSchema: executionControlSchema
   }, async ({ executionId, expectedStateVersion }) => {
-    if (!authorized()) return denied('execution.retry');
+    if (!await authorized()) return denied('execution.retry');
     const result = await options.service.retry(options.sessionId!, options.projectId, executionId, expectedStateVersion);
     return result.ok
       ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
@@ -597,7 +637,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.recover_retained', {
     description: 'Recover retained failed or stopped Squad work by exact native restoration or by relaunching its retained plan.', inputSchema: executionRetainedRecoverySchema
   }, async ({ executionId, expectedStateVersion, mode }) => {
-    if (!authorized()) return denied('execution.recover_retained');
+    if (!await authorized()) return denied('execution.recover_retained');
     const result = await options.service.recoverRetained(options.sessionId!, options.projectId, executionId, expectedStateVersion, mode);
     return result.ok
       ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
@@ -607,7 +647,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.relaunch_retained_plan', {
     description: 'Relaunch retained failed or stopped Squad plan. Completed work stays retained; all other units are reprompted.', inputSchema: executionControlSchema
   }, async ({ executionId, expectedStateVersion }) => {
-    if (!authorized()) return denied('execution.relaunch_retained_plan');
+    if (!await authorized()) return denied('execution.relaunch_retained_plan');
     const result = await options.service.recoverRetained(options.sessionId!, options.projectId, executionId, expectedStateVersion, 'fresh-plan');
     return result.ok
       ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
@@ -617,7 +657,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.resume_run', {
     description: 'Deprecated alias for execution.relaunch_retained_plan.', inputSchema: executionResumeRunSchema
   }, async ({ executionId, expectedStateVersion, replay }) => {
-    if (!authorized()) return denied('execution.resume_run');
+    if (!await authorized()) return denied('execution.resume_run');
     const result = await options.service.resumeRun(options.sessionId!, options.projectId, executionId, expectedStateVersion, replay === true);
     return result.ok
       ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
@@ -627,7 +667,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.respond', {
     description: 'Deliver a response to one authorized execution slot.', inputSchema: executionMessageSchema
   }, async ({ executionId, expectedStateVersion, slotId, message }) => {
-    if (!authorized()) return denied('execution.respond');
+    if (!await authorized()) return denied('execution.respond');
     const result = await options.service.respond(options.sessionId!, options.projectId, executionId, expectedStateVersion, slotId, message);
     return result.ok
       ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
@@ -637,7 +677,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.resume', {
     description: 'Resume a blocked execution by delivering a message to one authorized live slot. Does not relaunch stopped work.', inputSchema: executionMessageSchema
   }, async ({ executionId, expectedStateVersion, slotId, message }) => {
-    if (!authorized()) return denied('execution.resume');
+    if (!await authorized()) return denied('execution.resume');
     const result = await options.service.resume(options.sessionId!, options.projectId, executionId, expectedStateVersion, slotId, message);
     return result.ok
       ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
@@ -647,7 +687,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.artifact.put', {
     description: 'Store one write-once, content-addressed execution artifact.', inputSchema: executionArtifactSchema
   }, async ({ executionId, name, mediaType, content }) => {
-    if (!authorized()) return denied('execution.artifact.put');
+    if (!await authorized()) return denied('execution.artifact.put');
     const bound = await binding(executionId);
     if (bound) {
       const result = await options.service.putBoundArtifact(bound, name, mediaType, content);
@@ -663,7 +703,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.artifact.list', {
     description: 'List execution artifacts scoped to this authenticated project and caller.', inputSchema: executionIdSchema
   }, async ({ executionId }) => {
-    if (!authorized()) return denied('execution.artifact.list');
+    if (!await authorized()) return denied('execution.artifact.list');
     const bound = await binding(executionId);
     if (bound) {
       const result = await options.service.listBoundArtifacts(bound);
@@ -686,7 +726,7 @@ function withoutArtifactContent(value: unknown): unknown {
 
   if (options.handoffs && options.validateHandoffTarget && options.approveHandoff) {
     const requestHandoff = async (targetSessionId: string, executionId: string, operation: typeof EXECUTION_HANDOFF_OPERATION | typeof EXECUTION_RESUME_MONITOR_OPERATION) => {
-      if (!options.validateHandoffTarget!(options.sessionId!, targetSessionId, options.projectId)) {
+      if (!await options.validateHandoffTarget!(options.sessionId!, targetSessionId, options.projectId)) {
         return { isError: true as const, content: [{ type: 'text' as const, text: 'execution handoff failed: target session is not live in this project.' }] };
       }
       const record = await options.service.status(options.sessionId!, options.projectId, executionId);
@@ -711,21 +751,21 @@ function withoutArtifactContent(value: unknown): unknown {
       description: 'Request one short-lived, single-use execution.control capability for a live session in this project.',
       inputSchema: handoffRequestSchema
     }, async ({ targetSessionId, executionId, operations }) => {
-      if (!authorized()) return denied('request_execution_handoff');
+      if (!await authorized()) return denied('request_execution_handoff');
       return requestHandoff(targetSessionId, executionId, operations[0]);
     });
 
     register('request_execution_resume_monitor_handoff', {
       description: 'Request one approved resume plus ten-minute read-only monitoring capability for one live session and bound execution.', inputSchema: resumeMonitorRequestSchema
     }, async ({ targetSessionId, executionId }) => {
-      if (!authorized()) return denied('request_execution_resume_monitor_handoff');
+      if (!await authorized()) return denied('request_execution_resume_monitor_handoff');
       return requestHandoff(targetSessionId, executionId, EXECUTION_RESUME_MONITOR_OPERATION);
     });
 
     register('request_execution_monitor_handoff', {
       description: 'Request fresh human approval for another ten-minute read-only monitor window on one live execution.', inputSchema: monitorRequestSchema
     }, async ({ targetSessionId, executionId }) => {
-      if (!authorized()) return denied('request_execution_monitor_handoff');
+      if (!await authorized()) return denied('request_execution_monitor_handoff');
       const requested = await requestHandoff(targetSessionId, executionId, EXECUTION_RESUME_MONITOR_OPERATION);
       if ('isError' in requested && requested.isError) return requested;
       try {
@@ -745,7 +785,7 @@ function withoutArtifactContent(value: unknown): unknown {
       description: 'Use one handoff capability from its exact target session to stop, respond to, or resume its bound execution.',
       inputSchema: handoffExecuteSchema
     }, async ({ token, executionId, expectedStateVersion, action, slotId, message }) => {
-      if (!authorized()) return denied('execute_execution_handoff');
+      if (!await authorized()) return denied('execute_execution_handoff');
       if ((action === 'respond' || action === 'resume') && (!slotId || !message)) {
         return { isError: true, content: [{ type: 'text' as const, text: 'execute_execution_handoff failed: slotId and message are required.' }] };
       }
@@ -763,7 +803,7 @@ function withoutArtifactContent(value: unknown): unknown {
     register('execute_execution_resume_monitor_handoff', {
       description: 'Consume an approved one-time resume handoff, then receive a ten-minute read-only monitor token.', inputSchema: resumeMonitorExecuteSchema
     }, async ({ token, executionId, expectedStateVersion, slotId, message }) => {
-      if (!authorized()) return denied('execute_execution_resume_monitor_handoff');
+      if (!await authorized()) return denied('execute_execution_resume_monitor_handoff');
       try {
         const grant = await options.handoffs!.consume({ token, targetSessionId: options.sessionId!, projectId: options.projectId, executionId, operation: EXECUTION_RESUME_MONITOR_OPERATION });
         const result = await options.service.controlWithHandoff(grant, 'resume', expectedStateVersion, slotId, message);
@@ -780,7 +820,7 @@ function withoutArtifactContent(value: unknown): unknown {
 
     const readMonitor = async (token: string, executionId: string) => options.handoffs!.inspect({ token, targetSessionId: options.sessionId!, projectId: options.projectId, executionId, operation: EXECUTION_RESUME_MONITOR_OPERATION });
     register('execution_handoff_status', { description: 'Read status using one valid ten-minute resume-monitor capability.', inputSchema: monitorStatusSchema }, async ({ token, executionId }) => {
-      if (!authorized()) return denied('execution_handoff_status');
+      if (!await authorized()) return denied('execution_handoff_status');
       try {
         const grant = await readMonitor(token, executionId);
         const record = await options.service.status(grant.sourceOwnerSessionId, grant.projectId, grant.executionId);
@@ -788,7 +828,7 @@ function withoutArtifactContent(value: unknown): unknown {
       } catch { return { isError: true, content: [{ type: 'text' as const, text: 'execution_handoff_status failed: monitor capability is not current.' }] }; }
     });
     register('execution_handoff_events', { description: 'Read events using one valid ten-minute resume-monitor capability.', inputSchema: monitorEventsSchema }, async ({ token, executionId, after, limit }) => {
-      if (!authorized()) return denied('execution_handoff_events');
+      if (!await authorized()) return denied('execution_handoff_events');
       try {
         const grant = await readMonitor(token, executionId);
         const events = await options.service.events(grant.sourceOwnerSessionId, grant.projectId, grant.executionId, after ?? 0, limit ?? 100);
@@ -797,4 +837,27 @@ function withoutArtifactContent(value: unknown): unknown {
     });
   }
 
+}
+
+export interface ExecutionToolDescriptor {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  schema: z.ZodType;
+}
+
+let executionToolDescriptors: readonly ExecutionToolDescriptor[] | undefined;
+
+/** Capture the canonical registrations without constructing a transport or running handlers. */
+export function getExecutionToolDescriptors(): readonly ExecutionToolDescriptor[] {
+  if (executionToolDescriptors) return executionToolDescriptors;
+  const descriptors: ExecutionToolDescriptor[] = [];
+  registerExecutionTools({
+    registerTool(name: string, config: { description: string; inputSchema: z.ZodType | z.ZodRawShape }) {
+      const schema = config.inputSchema instanceof z.ZodType ? config.inputSchema : z.strictObject(config.inputSchema);
+      descriptors.push({ name, description: config.description, schema, inputSchema: z.toJSONSchema(schema, { unrepresentable: 'any' }) });
+    }
+  } as unknown as McpServer, { projectId: '', service: {} as ExecutionService });
+  executionToolDescriptors = descriptors;
+  return descriptors;
 }

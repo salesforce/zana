@@ -16,6 +16,7 @@ import { isValidCron, nextCronRuns } from '@zana-ai/zcc-domain/parse-cron';
 import { useData, useUi, useScheduleGroups, upsertSchedulerTask } from '../../store.js';
 import { ImprovePromptButton } from '../ImprovePromptButton.js';
 import { PopoverPicklist } from '../ui/PopoverPicklist.js';
+import { squadPicklistOption } from '../SquadTransportChip.js';
 import { PROFILE_LABEL, INBOX_LEVELS, RETRY_CHOICES, missedRunChoices, scopeLabel, sourceLabel, type MissedRunChoiceValue } from './schedulerUtils.js';
 import type { ScheduleSeed } from './schedule-seed.js';
 import './schedule-runs.css';
@@ -372,7 +373,7 @@ export function ScheduleEditor({
             onChange={setTeamId}
             placeholder="Choose squad"
             searchPlaceholder="Search squads"
-            options={teams.map((team) => ({ value: team.id, label: team.name }))}
+            options={teams.map((team) => squadPicklistOption(team))}
           />
           <p className="modal-hint">Runs this schedule as a durable squad job.</p>
           {teamsError ? (

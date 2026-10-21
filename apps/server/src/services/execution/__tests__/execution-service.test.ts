@@ -7,6 +7,7 @@ import { createExecutionStore, KICKOFF_FAILURE_BLOCK_THRESHOLD, type ExecutionRe
 import { createExecutionArtifactStore } from '../artifact-store.js';
 import { createResumeGrantStore } from '../resume-grant-store.js';
 import { executionBoardProjection } from '../projection.js';
+import { ExecutionDeliveryDrainService } from '../execution-delivery-drain.js';
 
 async function fixture(run: (filePath: string) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), 'zcc-execution-service-'));
@@ -34,6 +35,360 @@ function deps(filePath: string, over: Partial<ConstructorParameters<typeof Squad
     ...over
   };
 }
+
+describe('execution assignment transports', () => {
+  const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+  const worker = { ...coordinator, slotId: 'slot-1', role: 'worker' as const, principalId: 'worker-1' };
+  const work = { id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] };
+
+  async function setup(filePath: string, over: Parameters<typeof deps>[1] = {}, dependent = false) {
+    const input = deps(filePath, {
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: coordinator.slotId, personaId: 'lead', authorizationIdDigest: 'lead-d' },
+          { slotId: worker.slotId, personaId: 'worker', authorizationIdDigest: 'w1-d' }
+        ]
+      } } }),
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator', workers: [{ slotId: worker.slotId, sessionId: worker.principalId, projectId: worker.projectId, process: 'running' }] }),
+      ...over
+    });
+    const service = new ExecutionService(input);
+    const started = await service.start('owner', 'project-1', {
+      ...request, coordinationMode: 'job-team', workUnits: [work, ...(dependent ? [{ ...work, id: 'b', dependencies: ['a'] }] : [])]
+    });
+    if (!started.ok) throw new Error(started.message);
+    return { service, store: input.store };
+  }
+
+  it.each(['replyToSession', 'deliverToWorker'] as const)('awaits async false from %s before releasing an assignment', async (transport) => fixture(async (filePath) => {
+    const deliver = vi.fn(async () => false);
+    const triggerDeliveryDrain = vi.fn();
+    const { service, store } = await setup(filePath, { [transport]: deliver, triggerDeliveryDrain });
+    await service.dispatchReady(coordinator);
+    expect((await store.get(coordinator.executionId))?.workUnits?.[0].state).toBe('READY');
+    expect(triggerDeliveryDrain).not.toHaveBeenCalledWith(worker.principalId);
+    expect(deliver).toHaveBeenCalledWith(worker.principalId, expect.stringContaining('assigned work unit `a`'));
+  }));
+
+  it('awaits async acceptance before nudging legacy delivery', async () => fixture(async (filePath) => {
+    const deliverToWorker = vi.fn(async () => true);
+    const triggerDeliveryDrain = vi.fn();
+    const { service, store } = await setup(filePath, { deliverToWorker, triggerDeliveryDrain });
+    await service.dispatchReady(coordinator);
+    expect((await store.get(coordinator.executionId))?.workUnits?.[0].state).toBe('CLAIMED');
+    expect(triggerDeliveryDrain).toHaveBeenCalledWith(worker.principalId);
+  }));
+
+  it('releases legacy assignment after rejected delivery promise', async () => fixture(async (filePath) => {
+    const { service, store } = await setup(filePath, { deliverToWorker: async () => { throw new Error('queue unavailable'); } });
+    await service.dispatchReady(coordinator);
+    expect((await store.get(coordinator.executionId))?.workUnits?.[0].state).toBe('READY');
+  }));
+
+  it.each(['accepted', 'completed', 'uncertain'] as const)('retains %s receipts without completing or redispatching work', async (state) => fixture(async (filePath) => {
+    const deliverAssignment = vi.fn(async () => ({ state }));
+    const replyToSession = vi.fn(() => false);
+    const deliverToWorker = vi.fn(() => false);
+    const onWorkSettled = vi.fn();
+    const { service, store } = await setup(filePath, { deliverAssignment, replyToSession, deliverToWorker, onWorkSettled });
+    await service.dispatchReady(coordinator);
+    const unit = (await store.get(coordinator.executionId))!.workUnits![0];
+    expect(unit).toMatchObject({ state: 'CLAIMED', assignedSlotId: worker.slotId });
+    expect(deliverAssignment).toHaveBeenCalledWith(worker.principalId, expect.stringContaining('assigned work unit `a`'), {
+      executionId: coordinator.executionId, assignmentId: unit.claimId,
+      idempotencyKey: `${coordinator.executionId}:${unit.claimId}:${unit.claimGeneration}`
+    });
+    await service.dispatchReady(coordinator);
+    await service.redispatchStalled();
+    expect(deliverAssignment).toHaveBeenCalledOnce();
+    expect(replyToSession).not.toHaveBeenCalled();
+    expect(deliverToWorker).not.toHaveBeenCalled();
+    expect(onWorkSettled).not.toHaveBeenCalled();
+    expect((await store.get(coordinator.executionId))?.state).toBe('RUNNING');
+  }));
+
+  it('treats a lost runtime receipt as uncertain without falling back or retrying', async () => fixture(async (filePath) => {
+    const error = new Error('receipt connection lost');
+    const deliverAssignment = vi.fn(async () => { throw error; });
+    const replyToSession = vi.fn(() => true);
+    const logError = vi.fn();
+    const { service, store } = await setup(filePath, { deliverAssignment, replyToSession, logError });
+    await service.dispatchReady(coordinator);
+    await service.redispatchStalled();
+    expect((await store.get(coordinator.executionId))?.workUnits?.[0].state).toBe('CLAIMED');
+    expect(deliverAssignment).toHaveBeenCalledOnce();
+    expect(replyToSession).not.toHaveBeenCalled();
+    expect(logError).toHaveBeenCalledWith('execution assignment delivery uncertain for execution-1/a', error);
+  }));
+
+  // Uncertain/lost receipts keep the claim and are never retried inline. These prove the
+  // lease sweep — not a blind resend — recovers a member that never got the assignment:
+  // re-homed to an untried slot under a fresh fence, or surfaced as a HUMAN_BLOCKER.
+  function recoverySetup(filePath: string, clock: { now: number }, over: Parameters<typeof deps>[1] = {}) {
+    return setup(filePath, {
+      store: createExecutionStore({ filePath, id: () => 'execution-1', now: () => clock.now }), now: () => clock.now,
+      logError: vi.fn(), inbox: { append: vi.fn(async () => ({}) as never) },
+      claimRecoveryObserveEnabled: () => true, claimRecoveryEnforceEnabled: () => true,
+      ...over
+    });
+  }
+
+  it.each([
+    ['uncertain receipt', async () => ({ state: 'uncertain' as const })],
+    ['lost receipt', async () => { throw new Error('receipt connection lost'); }]
+  ] as const)('re-homes an idle member after a %s to a fresh slot under a fresh fence', async (_label, firstReceipt) => fixture(async (filePath) => {
+    const clock = { now: 1_000 };
+    const calls: Array<{ sessionId: string; idempotencyKey: string }> = [];
+    const deliverAssignment = vi.fn(async (sessionId: string, _text: string, correlation: { assignmentId: string; idempotencyKey: string }) => {
+      calls.push({ sessionId, idempotencyKey: correlation.idempotencyKey });
+      return calls.length === 1 ? firstReceipt() : { state: 'accepted' as const };
+    });
+    const { service, store } = await recoverySetup(filePath, clock, {
+      deliverAssignment, getAgentState: () => 'idle',
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: coordinator.slotId, personaId: 'lead', authorizationIdDigest: 'lead-d' },
+          { slotId: worker.slotId, personaId: 'worker', authorizationIdDigest: 'w1-d' },
+          { slotId: 'slot-2', personaId: 'worker', authorizationIdDigest: 'w2-d' }
+        ]
+      } } }),
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator', workers: [
+        { slotId: worker.slotId, sessionId: worker.principalId, projectId: worker.projectId, process: 'running' },
+        { slotId: 'slot-2', sessionId: 'worker-2', projectId: worker.projectId, process: 'running' }
+      ] })
+    });
+    await service.dispatchReady(coordinator);
+    const first = (await store.get(coordinator.executionId))!.workUnits![0];
+    expect(first).toMatchObject({ state: 'CLAIMED', claimGeneration: 1 });
+    await service.reconcileActive(); // lease still fresh: no reclaim, no resend
+    expect(deliverAssignment).toHaveBeenCalledOnce();
+    clock.now = first.leaseExpiresAt! + 1;
+    await service.reconcileActive();
+    const second = (await store.get(coordinator.executionId))!.workUnits![0];
+    expect(second).toMatchObject({ state: 'CLAIMED', claimGeneration: 2, assignedSlotId: 'slot-2' });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toEqual({ sessionId: 'worker-2', idempotencyKey: `${coordinator.executionId}:${second.claimId}:2` });
+    expect(calls[1].idempotencyKey).not.toBe(calls[0].idempotencyKey);
+  }));
+
+  it('surfaces a single-member uncertain assignment as a human blocker instead of resending', async () => fixture(async (filePath) => {
+    const clock = { now: 1_000 };
+    const deliverAssignment = vi.fn(async () => ({ state: 'uncertain' as const }));
+    const { service, store } = await recoverySetup(filePath, clock, { deliverAssignment, getAgentState: () => 'idle' });
+    await service.dispatchReady(coordinator);
+    clock.now = (await store.get(coordinator.executionId))!.workUnits![0].leaseExpiresAt! + 1;
+    await service.reconcileActive();
+    const record = (await store.get(coordinator.executionId))!;
+    expect(record.workUnits![0].state).toBe('BLOCKED');
+    expect(record.blockers).toEqual([expect.objectContaining({ workUnitId: 'a', audience: 'human', resolved: false })]);
+    expect(deliverAssignment).toHaveBeenCalledOnce();
+  }));
+
+  it('does not reclaim an uncertain assignment from a working member until the stall ceiling', async () => fixture(async (filePath) => {
+    const clock = { now: 1_000 };
+    const deliverAssignment = vi.fn(async () => ({ state: 'uncertain' as const }));
+    const { service, store } = await recoverySetup(filePath, clock, { deliverAssignment, getAgentState: () => 'working' });
+    await service.dispatchReady(coordinator);
+    const first = (await store.get(coordinator.executionId))!;
+    clock.now = first.workUnits![0].leaseExpiresAt! + 1;
+    await service.reconcileActive(); // member may hold it: renew, never duplicate
+    expect((await store.get(coordinator.executionId))!.workUnits![0]).toMatchObject({ state: 'CLAIMED', claimGeneration: 1 });
+    clock.now = first.workUnits![0].claimedAt! + first.request.policy!.maxClaimStallMs! + 1;
+    await service.reconcileActive();
+    expect((await store.get(coordinator.executionId))!.workUnits![0].state).toBe('BLOCKED');
+    expect(deliverAssignment).toHaveBeenCalledOnce();
+  }));
+
+  it('deduplicates concurrent dispatch while awaiting a runtime receipt', async () => fixture(async (filePath) => {
+    let accept!: (receipt: { state: 'accepted' }) => void;
+    const receipt = new Promise<{ state: 'accepted' }>((resolve) => { accept = resolve; });
+    const deliverAssignment = vi.fn(() => receipt);
+    const { service, store } = await setup(filePath, { deliverAssignment });
+    const first = service.dispatchReady(coordinator);
+    await vi.waitFor(() => expect(deliverAssignment).toHaveBeenCalledOnce());
+    await expect(service.dispatchReady(coordinator)).resolves.toMatchObject({ ok: true });
+    expect(deliverAssignment).toHaveBeenCalledOnce();
+    accept({ state: 'accepted' });
+    await expect(first).resolves.toMatchObject({ ok: true });
+    expect((await store.get(coordinator.executionId))?.workUnits?.[0].claimGeneration).toBe(1);
+  }));
+
+  it('releases rejected delivery and gives redispatch a fresh idempotency fence', async () => fixture(async (filePath) => {
+    const correlations: Array<{ assignmentId: string; idempotencyKey: string }> = [];
+    const deliverAssignment = vi.fn(async (_sessionId: string, _text: string, correlation: { assignmentId: string; idempotencyKey: string }) => {
+      correlations.push(correlation);
+      return { state: correlations.length === 1 ? 'rejected' as const : 'accepted' as const };
+    });
+    const { service, store } = await setup(filePath, { deliverAssignment });
+    await service.dispatchReady(coordinator);
+    expect((await store.get(coordinator.executionId))?.workUnits?.[0].state).toBe('READY');
+    await service.redispatchStalled();
+    const unit = (await store.get(coordinator.executionId))!.workUnits![0];
+    expect(unit).toMatchObject({ state: 'CLAIMED', claimGeneration: 2 });
+    expect(deliverAssignment).toHaveBeenCalledTimes(2);
+    expect(correlations[1]).toMatchObject({ assignmentId: unit.claimId, idempotencyKey: `${coordinator.executionId}:${unit.claimId}:2` });
+    expect(correlations[1].idempotencyKey).not.toBe(correlations[0].idempotencyKey);
+  }));
+
+  it('rejects unfenced runtime assignments without invoking either transport', async () => fixture(async (filePath) => {
+    const deliverAssignment = vi.fn(async () => ({ state: 'accepted' as const }));
+    const replyToSession = vi.fn(() => true);
+    const { service, store } = await setup(filePath, { deliverAssignment, replyToSession });
+    const dispatch = store.dispatchReady;
+    vi.spyOn(store, 'dispatchReady').mockImplementation(async (...args) => {
+      const batch = await dispatch(...args);
+      return { ...batch, assignments: batch.assignments.map(({ claimId: _claimId, claimGeneration: _generation, ...assignment }) => assignment) };
+    });
+    await service.dispatchReady(coordinator);
+    expect(deliverAssignment).not.toHaveBeenCalled();
+    expect(replyToSession).not.toHaveBeenCalledWith(worker.principalId, expect.anything());
+    expect((await store.get(coordinator.executionId))?.workUnits?.[0].state).toBe('READY');
+  }));
+
+  it('awaits receipt settlement after durable completion and before dependent dispatch', async () => fixture(async (filePath) => {
+    let settle!: () => void;
+    const pendingSettlement = new Promise<void>((resolve) => { settle = resolve; });
+    const deliverAssignment = vi.fn(async () => ({ state: 'accepted' as const }));
+    const onWorkSettled = vi.fn(() => pendingSettlement);
+    const { service, store } = await setup(filePath, { deliverAssignment, onWorkSettled }, true);
+    await service.dispatchReady(coordinator);
+    const unit = (await store.get(coordinator.executionId))!.workUnits![0];
+    const completing = service.completeWork(worker, 'a', 'done', { claimId: unit.claimId!, claimGeneration: unit.claimGeneration! }, true);
+    await vi.waitFor(() => expect(onWorkSettled).toHaveBeenCalledOnce());
+    expect((await store.get(coordinator.executionId))?.workUnits).toMatchObject([{ state: 'COMPLETED' }, { state: 'READY' }]);
+    expect(onWorkSettled).toHaveBeenCalledWith({
+      workerSessionId: worker.principalId, executionId: coordinator.executionId,
+      assignmentId: unit.claimId, idempotencyKey: `${coordinator.executionId}:${unit.claimId}:${unit.claimGeneration}`
+    });
+    expect(deliverAssignment).toHaveBeenCalledOnce();
+    settle();
+    await expect(completing).resolves.toMatchObject({ ok: true });
+    expect(deliverAssignment).toHaveBeenCalledTimes(2);
+    await service.completeWork(worker, 'a', 'replay');
+    expect(onWorkSettled).toHaveBeenCalledOnce();
+  }));
+
+  it('does not settle receipts for denied or stale outcomes', async () => fixture(async (filePath) => {
+    const onWorkSettled = vi.fn();
+    const { service, store } = await setup(filePath, { onWorkSettled });
+    await service.dispatchReady(coordinator);
+    const unit = (await store.get(coordinator.executionId))!.workUnits![0];
+    await expect(service.completeWork(coordinator, 'a', 'forged')).resolves.toMatchObject({ ok: false, code: 'DENIED' });
+    await expect(service.completeWork({ ...worker, slotId: 'wrong' }, 'a', 'forged')).resolves.toMatchObject({ ok: false, code: 'DENIED' });
+    await expect(service.completeWork(worker, 'a', 'stale', { claimId: unit.claimId!, claimGeneration: unit.claimGeneration! + 1 }, true)).resolves.toMatchObject({ ok: false });
+    expect(onWorkSettled).not.toHaveBeenCalled();
+    expect((await store.get(coordinator.executionId))?.workUnits?.[0].state).toBe('CLAIMED');
+  }));
+
+  it('logs settlement callback failure without undoing completion or blocking finalization', async () => fixture(async (filePath) => {
+    const error = new Error('runtime receipt unavailable');
+    const onWorkSettled = vi.fn(async () => { throw error; });
+    const logError = vi.fn();
+    const { service, store } = await setup(filePath, { onWorkSettled, logError });
+    await service.dispatchReady(coordinator);
+    await expect(service.completeWork(worker, 'a', 'done')).resolves.toMatchObject({ ok: true });
+    expect((await store.get(coordinator.executionId))?.state).toBe('COMPLETED');
+    expect(onWorkSettled).toHaveBeenCalledOnce();
+    expect(logError).toHaveBeenCalledWith('execution work receipt settlement failed for execution-1/a', error);
+  }));
+
+  it('settles exact reclaimed claim after authenticated late completion', async () => fixture(async (filePath) => {
+    const onWorkSettled = vi.fn();
+    const { service, store } = await setup(filePath, { onWorkSettled });
+    await service.dispatchReady(coordinator);
+    const unit = (await store.get(coordinator.executionId))!.workUnits![0];
+    const claim = { claimId: unit.claimId!, claimGeneration: unit.claimGeneration! };
+    await store.reclaimExpiredClaims(coordinator.executionId, [{ workUnitId: 'a', ...claim, reason: 'test expired claim', force: true }]);
+    await expect(service.completeWork(worker, 'a', 'late done', claim, true)).resolves.toMatchObject({ ok: true });
+    expect(onWorkSettled).toHaveBeenCalledWith({
+      workerSessionId: worker.principalId, executionId: coordinator.executionId,
+      assignmentId: claim.claimId, idempotencyKey: `${coordinator.executionId}:${claim.claimId}:${claim.claimGeneration}`
+    });
+  }));
+
+  it('awaits typed repair delivery rejection without settling work receipt', async () => fixture(async (filePath) => {
+    const onWorkSettled = vi.fn();
+    const deliverToWorker = vi.fn(async () => { throw new Error('repair unavailable'); });
+    const input = deps(filePath, { onWorkSettled, deliverToWorker });
+    const service = new ExecutionService(input);
+    const store = input.store;
+    await service.start('owner', coordinator.projectId, request);
+    let record = (await store.get(coordinator.executionId))!;
+    record = await store.registerPlan(record.id, record.stateVersion, [{
+      ...work, output: { version: 1, schema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] } }
+    }]);
+    record = await store.claimWork(record.id, record.stateVersion, coordinator, 'a', worker.slotId);
+    const unit = record.workUnits![0];
+    await expect(service.completeWork(worker, 'a', 'invalid', { claimId: unit.claimId!, claimGeneration: unit.claimGeneration! }, true, { ok: 'wrong' }))
+      .resolves.toMatchObject({ ok: false, code: 'TYPED_OUTPUT_REPAIR' });
+    expect(deliverToWorker).toHaveBeenCalledWith(worker.principalId, expect.stringContaining('TYPED_OUTPUT_REPAIR'));
+    expect(onWorkSettled).not.toHaveBeenCalled();
+    expect((await store.get(coordinator.executionId))?.workUnits?.[0].state).toBe('CLAIMED');
+  }));
+
+  it('dispatches workers retained only in launchResult', async () => fixture(async (filePath) => {
+    const deliverAssignment = vi.fn(async () => ({ state: 'accepted' as const }));
+    const { service, store } = await setup(filePath, {
+      deliverAssignment,
+      getTeamLaunch: async () => ({ launchResult: { workers: [{ slotId: worker.slotId, sessionId: worker.principalId, projectId: worker.projectId }] } })
+    });
+    await service.dispatchReady(coordinator);
+    expect(deliverAssignment).toHaveBeenCalledOnce();
+    expect((await store.get(coordinator.executionId))?.workUnits?.[0].state).toBe('CLAIMED');
+  }));
+
+  it('routes typed output repair through receipt-aware transport with a separate claim-fenced key', async () => fixture(async filePath => {
+    const deliverAssignment = vi.fn(async () => ({ state: 'uncertain' as const }));
+    const deliverToWorker = vi.fn(() => true);
+    const input = deps(filePath, { deliverAssignment, deliverToWorker });
+    const service = new ExecutionService(input);
+    await service.start('owner', coordinator.projectId, request);
+    let record = (await input.store.get(coordinator.executionId))!;
+    record = await input.store.registerPlan(record.id, record.stateVersion, [{ ...work,
+      output: { version: 1, schema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] } } }]);
+    record = await input.store.claimWork(record.id, record.stateVersion, coordinator, 'a', worker.slotId);
+    const unit = record.workUnits![0];
+    const claim = { claimId: unit.claimId!, claimGeneration: unit.claimGeneration! };
+    await expect(service.completeWork(worker, 'a', 'invalid', claim, true, { ok: 'wrong' }))
+      .resolves.toMatchObject({ ok: false, code: 'TYPED_OUTPUT_REPAIR' });
+    expect(deliverAssignment).toHaveBeenCalledWith(worker.principalId, expect.stringContaining('TYPED_OUTPUT_REPAIR'), {
+      executionId: record.id, assignmentId: expect.stringMatching(`^repair:${claim.claimId}:${claim.claimGeneration}:sha256:`),
+      idempotencyKey: expect.stringMatching(`^${record.id}:repair:`)
+    });
+    await service.completeWork(worker, 'a', 'invalid', claim, true, { ok: 'wrong' });
+    expect(deliverAssignment).toHaveBeenCalledOnce();
+    expect(deliverToWorker).not.toHaveBeenCalled();
+    expect((await input.store.get(record.id))?.workUnits?.[0].state).toBe('CLAIMED');
+  }));
+
+  it('retains coordinator wakes after async false and acknowledges async true', async () => fixture(async (filePath) => {
+    const replyToSession = vi.fn(async () => false);
+    const { service, store } = await setup(filePath, { replyToSession });
+    await service.wakeCoordinatorForPlanCorrection(coordinator.executionId, 'correct the plan');
+    expect((await store.get(coordinator.executionId))?.coordinatorWakes).toHaveLength(1);
+    replyToSession.mockResolvedValue(true);
+    await service.drainCoordinatorWake(coordinator.projectId, coordinator.executionId, 'coordinator');
+    expect((await store.get(coordinator.executionId))?.coordinatorWakes).toEqual([]);
+  }));
+
+  it('reports async false blocker notification without resolving pending work', async () => fixture(async (filePath) => {
+    const { service, store } = await setup(filePath, { replyToSession: async () => false, deliverToWorker: () => true });
+    await service.dispatchReady(coordinator);
+    await service.blockWork(worker, 'a', { id: 'help', question: 'Help?' });
+    const blocked = (await store.get(coordinator.executionId))!;
+    await expect(service.resume('owner', coordinator.projectId, coordinator.executionId, blocked.stateVersion, worker.slotId, 'Answer'))
+      .resolves.toMatchObject({ ok: true, notified: false, pending: true });
+    expect((await store.get(coordinator.executionId))?.workUnits?.[0].state).toBe('BLOCKED');
+  }));
+
+  it('rejects async false legacy responses without advancing store state', async () => fixture(async (filePath) => {
+    const { service, store } = await setup(filePath, { replyToSession: async () => false });
+    const before = (await store.get(coordinator.executionId))!;
+    await expect(service.respond('owner', coordinator.projectId, coordinator.executionId, before.stateVersion, worker.slotId, 'Answer'))
+      .resolves.toMatchObject({ ok: false, code: 'SESSION_GONE' });
+    expect((await store.get(coordinator.executionId))?.stateVersion).toBe(before.stateVersion);
+  }));
+});
 
 describe('dependencyResultsSection', () => {
   const rec = (units: ExecutionRecord['workUnits']): ExecutionRecord =>
@@ -212,6 +567,43 @@ describe('execution admission', () => {
 
     expect(started).toMatchObject({ ok: true, value: { request: { onComplete: 'merge' } } });
     expect(launchTeam).toHaveBeenCalledWith('team-1', 'project-1', expect.objectContaining({ onComplete: 'merge' }));
+  }));
+
+  it('promotes to RUNNING when members bump stateVersion during launchTeam', async () => fixture(async (filePath) => {
+    const serviceDeps = deps(filePath, {
+      launchTeam: async () => {
+        const current = (await serviceDeps.store.get('execution-1'))!;
+        await serviceDeps.store.setSquadWorktree(current.id, current.stateVersion, { path: '/repo/.worktrees/x', branch: 'zcc/x' });
+        return { ok: true };
+      }
+    });
+    const service = new ExecutionService(serviceDeps);
+
+    const started = await service.start('owner', 'project-1', request);
+
+    expect(started).toMatchObject({ ok: true, value: { state: 'RUNNING' } });
+    expect((await serviceDeps.store.get('execution-1'))?.state).toBe('RUNNING');
+  }));
+
+  it('bounds promotion retries while concurrent writers keep the version stale', async () => fixture(async (filePath) => {
+    const serviceDeps = deps(filePath);
+    const transition = serviceDeps.store.transition.bind(serviceDeps.store);
+    const attempts = vi.fn();
+    serviceDeps.store.transition = async (id, version, state, severity, summary) => {
+      if (state === 'RUNNING') {
+        attempts();
+        const current = (await serviceDeps.store.get(id))!;
+        const n = attempts.mock.calls.length;
+        await serviceDeps.store.setSquadWorktree(id, current.stateVersion, { path: `/repo/.worktrees/x${n}`, branch: 'zcc/x' });
+      }
+      return transition(id, version, state, severity, summary);
+    };
+    const service = new ExecutionService(serviceDeps);
+
+    const started = await service.start('owner', 'project-1', request);
+
+    expect(attempts).toHaveBeenCalledTimes(5);
+    expect(started).toMatchObject({ ok: true, value: { state: 'STARTING' } });
   }));
 
   it('notifies host lifecycle for failed executions with a squad worktree', async () => fixture(async (filePath) => {
@@ -4318,7 +4710,8 @@ describe('SquadExecutionService', () => {
 
   it('authorizes delivery retry by owner, project, blocker, delivery, and state version', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: (() => { let n = 0; return () => n++ === 0 ? 'execution-1' : `id-${n}`; })() });
-    const service = new SquadExecutionService(deps(filePath, { store }));
+    const triggerDeliveryDrain = vi.fn();
+    const service = new SquadExecutionService(deps(filePath, { store, triggerDeliveryDrain }));
     await service.start('session-1', 'project-1', request);
     let record = (await store.get('execution-1'))!;
     record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'a', title: 'A', task: 'A', dependencies: [] }]);
@@ -4332,7 +4725,84 @@ describe('SquadExecutionService', () => {
     const deliveryId = record.deliveries![0].id;
     await expect(service.retryBlockerDelivery('other', 'project-1', record.id, record.stateVersion, 'blocker-1', deliveryId)).resolves.toMatchObject({ ok: false, code: 'NOT_FOUND' });
     await expect(service.retryBlockerDelivery('session-1', 'project-1', record.id, record.stateVersion, 'blocker-1', 'wrong')).resolves.toMatchObject({ ok: false, code: 'INVALID' });
+    expect(triggerDeliveryDrain).not.toHaveBeenCalled();
     await expect(service.retryBlockerDelivery('session-1', 'project-1', record.id, record.stateVersion, 'blocker-1', deliveryId)).resolves.toMatchObject({ ok: true, value: { deliveries: [{ id: deliveryId, clientRequestId: 'client-1', state: 'PENDING' }] } });
+    expect(triggerDeliveryDrain).toHaveBeenCalledExactlyOnceWith('worker-1');
+    await expect(service.retryBlockerDelivery('session-1', 'project-1', record.id, record.stateVersion, 'blocker-1', deliveryId)).resolves.toMatchObject({ ok: false, code: 'CONFLICT' });
+    expect(triggerDeliveryDrain).toHaveBeenCalledOnce();
+  }));
+
+  it.each(['worker', 'coordinator', 'foreign-project', 'missing', 'lookup-failure', 'drain-failure'] as const)(
+    'keeps manual retry durable and wakes only the current authorized %s route', async route => fixture(async filePath => {
+      const store = createExecutionStore({ filePath, id: (() => { let n = 0; return () => n++ === 0 ? 'execution-1' : `id-${n}`; })() });
+      const logError = vi.fn();
+      const triggerDeliveryDrain = vi.fn(() => { if (route === 'drain-failure') throw new Error('drain unavailable'); });
+      const getTeamLaunch = vi.fn(async () => {
+        if (route === 'lookup-failure') throw new Error('lifecycle unavailable');
+        return {
+          orchestratorSessionId: 'modern-lead', workers: route === 'missing' ? [] : [{
+            slotId: 'slot-1', sessionId: 'modern-worker', projectId: route === 'foreign-project' ? 'other' : 'project-1'
+          }]
+        };
+      });
+      const service = new SquadExecutionService(deps(filePath, { store, getTeamLaunch, triggerDeliveryDrain, logError }));
+      await service.start('owner', 'project-1', request);
+      let record = (await store.get('execution-1'))!;
+      record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'a', title: 'A', task: 'A', dependencies: [] }]);
+      record = await store.claimWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'a', 'slot-1');
+      record = await store.blockWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'a', { id: 'blocker-1', question: 'Q?' });
+      record = (await store.enqueueBlockerDelivery(record.id, record.stateVersion, { clientRequestId: 'client-1', blockerId: 'blocker-1', text: 'Answer' })).record;
+      const state = JSON.parse(await readFile(filePath, 'utf8')) as { records: typeof record[] };
+      const delivery = state.records[0].deliveries![0];
+      delivery.state = 'FAILED';
+      if (route === 'coordinator') {
+        delivery.slotId = 'orchestrator:lead';
+        state.records[0].blockers![0].slotId = delivery.slotId;
+      }
+      await writeFile(filePath, JSON.stringify(state));
+      getTeamLaunch.mockClear();
+      triggerDeliveryDrain.mockClear();
+      logError.mockClear();
+      await expect(service.retryBlockerDelivery('owner', 'project-1', record.id, record.stateVersion, 'blocker-1', delivery.id))
+        .resolves.toMatchObject({ ok: true, value: { deliveries: [{ state: 'PENDING', manualRetryCount: 1 }] } });
+      if (route === 'worker' || route === 'drain-failure') expect(triggerDeliveryDrain).toHaveBeenCalledExactlyOnceWith('modern-worker');
+      else if (route === 'coordinator') expect(triggerDeliveryDrain).toHaveBeenCalledExactlyOnceWith('modern-lead');
+      else expect(triggerDeliveryDrain).not.toHaveBeenCalled();
+      if (route === 'lookup-failure' || route === 'drain-failure') expect(logError).toHaveBeenCalledOnce();
+      expect((await store.get(record.id))?.deliveries?.[0].state).toBe('PENDING');
+    })
+  );
+
+  it('re-announces a manual retry through the drain while the Modern worker stays idle', async () => fixture(async filePath => {
+    const store = createExecutionStore({ filePath, id: (() => { let n = 0; return () => n++ === 0 ? 'execution-1' : `id-${n}`; })() });
+    const reply = vi.fn(async () => true);
+    const drain = new ExecutionDeliveryDrainService({
+      pending: async () => (await store.get('execution-1'))?.deliveries?.filter(delivery => delivery.state === 'PENDING')
+        .map(delivery => ({ id: delivery.id, executionId: 'execution-1', attempt: delivery.attempt, manualRetryCount: delivery.manualRetryCount })) ?? [],
+      isRestful: () => true, reply, isReplyIdempotent: () => true
+    });
+    const service = new SquadExecutionService(deps(filePath, { store,
+      triggerDeliveryDrain: sessionId => drain.forceCheck(sessionId),
+      getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'modern-worker', projectId: 'project-1' }] })
+    }));
+    await service.start('owner', 'project-1', request);
+    let record = (await store.get('execution-1'))!;
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'a', title: 'A', task: 'A', dependencies: [] }]);
+    record = await store.claimWork(record.id, record.stateVersion, { role: 'orchestrator', slotId: 'lead' }, 'a', 'slot-1');
+    record = await store.blockWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'a', { id: 'blocker-1', question: 'Q?' });
+    record = (await store.enqueueBlockerDelivery(record.id, record.stateVersion, { clientRequestId: 'client-1', blockerId: 'blocker-1', text: 'Answer' })).record;
+    drain.observe('modern-worker', 'idle');
+    await vi.waitFor(() => expect(reply).toHaveBeenCalledOnce());
+    const state = JSON.parse(await readFile(filePath, 'utf8')) as { records: typeof record[] };
+    const deliveryId = state.records[0].deliveries![0].id;
+    state.records[0].deliveries![0].state = 'FAILED';
+    await writeFile(filePath, JSON.stringify(state));
+    await expect(service.retryBlockerDelivery('owner', 'project-1', record.id, record.stateVersion, 'blocker-1', deliveryId))
+      .resolves.toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(reply).toHaveBeenCalledTimes(2));
+    expect(reply.mock.calls[1]).toEqual(['modern-worker', expect.stringContaining('execution.delivery.pull'), expect.any(Object)]);
+    expect((reply.mock.calls[1] as unknown[])[2]).not.toEqual((reply.mock.calls[0] as unknown[])[2]);
+    drain.remove('modern-worker');
   }));
 
   it('pulls and acknowledges deliveries only through exact bound worker route', async () => fixture(async (filePath) => {

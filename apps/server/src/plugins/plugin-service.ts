@@ -213,9 +213,29 @@ export interface PluginService {
   emitThreadEvent(event: PluginThreadEvent): Promise<void>;
   admitDispatch(request: PluginDispatchAdmissionRequest): Promise<import('@zana-ai/zcc-domain').DispatchAdmissionDecision>;
   decideToolPolicy(request: PluginToolPolicyRequest): Promise<PluginToolPolicyDecision>;
+  /**
+   * One consistent view of the native tool-policy inventory once startup has
+   * settled: a single strict registry read joined with this service's sealed
+   * live generations. Fail-closed; never a reason to skip policy.
+   */
+  toolPolicyReadiness(): Promise<PluginToolPolicyReadiness>;
   readLogs(id: string, tail?: number): Promise<string[]>;
   /** Rewrite injected-skill-roots.json for the current bundled-skill opt-outs. */
   syncInjectedSkillRoots(): Promise<void>;
+}
+
+export interface PluginToolPolicyReadinessEntry {
+  pluginId: string;
+  toolPolicy: ToolPolicyClassification;
+  status: InstalledPluginRow['status'];
+  sealed: boolean;
+}
+
+export interface PluginToolPolicyReadiness {
+  ready: boolean;
+  /** Enabled plugins whose classification is not known-false. */
+  required: PluginToolPolicyReadinessEntry[];
+  reason?: string;
 }
 
 export interface PluginUiSnapshot {
@@ -641,6 +661,36 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       }
     }
     return null;
+  }
+
+  async function toolPolicyReadiness(): Promise<PluginToolPolicyReadiness> {
+    // Builtin activation rewrites rows from `unknown` to sealed; reading
+    // mid-startup would mix pre- and post-activation rows.
+    if (starting) await starting.catch(() => undefined);
+    if (stopped) return { ready: false, required: [], reason: 'plugin service is stopped' };
+    const result = store.readStrict();
+    if ('error' in result) {
+      return { ready: false, required: [], reason: `${TOOL_POLICY_INVENTORY_UNAVAILABLE_REASON}: ${result.error}` };
+    }
+    const required = result.file.plugins
+      .filter((row) => row.enabled && (row.toolPolicy === 'true' || (row.toolPolicy !== 'false' && Boolean(row.serverEntry))))
+      .map((row): PluginToolPolicyReadinessEntry => {
+        const current = live.get(row.id);
+        return {
+          pluginId: row.id,
+          toolPolicy: row.toolPolicy ?? 'unknown',
+          status: row.status,
+          sealed: Boolean(current?.handle && toolPolicySealed.has(row.id) && current.handle.toolPolicyHandlers.length === 1)
+        };
+      });
+    const blocked = required.filter((entry) => entry.toolPolicy !== 'true' || entry.status !== 'running' || !entry.sealed);
+    return blocked.length === 0
+      ? { ready: true, required }
+      : {
+          ready: false,
+          required,
+          reason: `${blocked.map((entry) => `${entry.pluginId} (${entry.toolPolicy}, ${entry.status}${entry.sealed ? '' : ', unsealed'})`).join(', ')}`
+        };
   }
 
   function denyCachedAllow(reason: string): PluginToolPolicyDecision {
@@ -1090,6 +1140,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   }
 
   async function loadOne(row: InstalledPluginRow, isActive: () => boolean = () => !stopped): Promise<void> {
+    if (!isActive()) return;
     let declared: boolean | undefined;
     try {
       declared = loadManifestFromDir(row.rootDir).toolPolicy;
@@ -1588,6 +1639,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       throw error;
     }
     const ts = now();
+    const epoch = expectedEpoch ?? lifecycleEpoch(manifest.id);
     const existing = store.get(manifest.id);
     const row: InstalledPluginRow = withToolPolicy({
       id: manifest.id,
@@ -1622,7 +1674,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       refreshToolPolicyInventory();
     }
     try {
-      await loadOne(row);
+      await loadOne(row, () => isCurrent(row.id, epoch));
     } catch (error) {
       if (existing && resolve(existing.rootDir) !== resolve(row.rootDir)) {
         removeManagedGeneration(opts.dataDir, row.rootDir);
@@ -2212,6 +2264,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         return { action: 'reject', message: 'Plugin dispatch admission timed out' };
       }
     },
+    toolPolicyReadiness,
     async decideToolPolicy(request) {
       // Scoped by thread: callers on different surfaces choose their own
       // invocation ids, and one must never replay a decision into another's thread.

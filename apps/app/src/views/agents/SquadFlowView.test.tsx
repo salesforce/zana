@@ -29,7 +29,8 @@ vi.mock('@/store', () => ({
   useAgentStatus: (selector: (state: typeof stores.status) => unknown) => selector(stores.status),
   useSubagents: (selector: (state: typeof stores.subagents) => unknown) => selector(stores.subagents),
   useSubagentChildren: (selector: (state: typeof stores.children) => unknown) => selector(stores.children),
-  agentViewTerminals: (sessions: unknown[] | undefined) => sessions ?? []
+  agentViewTerminals: (sessions: unknown[] | undefined) => sessions ?? [],
+  usePersonas: (selector: (state: { personas: unknown[] }) => unknown) => selector({ personas: [] })
 }));
 vi.mock('@/thread-store', () => ({
   useThreads: (selector: (state: { threads: unknown[] }) => unknown) => selector({ threads: stores.threads })
@@ -363,6 +364,26 @@ describe('SquadFlowView modern thread integration', () => {
     expect(screen.getByText('Visible modern')).toBeTruthy();
     expect(screen.queryByText('Archived modern')).toBeNull();
     expect(screen.queryByText('Unknown project modern')).toBeNull();
+  });
+
+  it('draws Modern squad member nodes dotted while plain threads and CLI members stay solid', () => {
+    const graph: SquadFlowGraph = {
+      projectId: 'p1',
+      nodes: [
+        flowNode({ sessionId: 'thread:m-1', label: 'Modern member', inspectionTarget: { type: 'thread', id: 'm-1' }, job: { executionId: 'e1' } }),
+        flowNode({ sessionId: 'thread:solo', label: 'Solo thread', inspectionTarget: { type: 'thread', id: 'solo' } }),
+        flowNode({ sessionId: 'cli-1', label: 'CLI member', job: { executionId: 'e2' } })
+      ],
+      edges: [], summary: { total: 3, working: 0, blocked: 0, idle: 3, exited: 0 }, builtAt: Date.now()
+    };
+    render(<SquadGraph graph={graph} />);
+    const modern = (label: string) => screen.getByText(label).closest('.squad-flow-node')!.classList.contains('squad-flow-node--modern');
+    expect(modern('Modern member')).toBe(true);
+    expect(modern('Solo thread')).toBe(false);
+    expect(modern('CLI member')).toBe(false);
+    // Orchestrator gold and live-state colors are declared after the dotted rule so they still win.
+    expect(css.indexOf('.squad-flow-node--modern {')).toBeGreaterThan(-1);
+    expect(css.indexOf('.squad-flow-node--modern {')).toBeLessThan(css.indexOf('.squad-flow-node--orch {'));
   });
 
   it('routes desktop single-click and compact click to thread inspection without double-click reopening', () => {

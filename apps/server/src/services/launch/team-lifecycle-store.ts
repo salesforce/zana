@@ -38,6 +38,8 @@ export type TeamWorkerProcessState = 'authorized' | 'spawning' | 'running' | 'ex
 export type TeamWorkerAttentionState = 'active' | 'blocked';
 export type TeamWorkerTaskState = 'unknown' | 'caller-reported-complete' | 'caller-reported-failed';
 export type TeamWorkerDeliveryState = 'bound-at-spawn' | 'delivery-attempted' | 'adapter-acknowledged';
+export type TeamWorkerTransport = 'CLI' | 'MODERN';
+export type TeamWorkerBindingState = 'RESERVED' | 'CREATING' | 'BOUND' | 'UNCERTAIN' | 'TERMINAL';
 
 export interface TeamLaunchedWorker {
   sessionId: string;
@@ -70,6 +72,15 @@ export interface TeamLifecycleWorker extends TeamLaunchedWorker {
   task: TeamWorkerTaskState;
   delivery: TeamWorkerDeliveryState;
   capacityReleased: boolean;
+  /** Omitted records predate transport bindings and remain CLI workers. */
+  transport?: TeamWorkerTransport;
+  /** Modern ACP thread identity, persisted before/after creation as appropriate. */
+  threadId?: string;
+  /** Monotonic binding generation; guards late create acknowledgements. */
+  generation?: number;
+  bindingState?: TeamWorkerBindingState;
+  /** Main-resolved authority context for a Modern ACP member binding. */
+  modernContext?: TeamModernBindingContext;
   /**
    * Process exit detail captured at the PTY `exit` event when a slot dies.
    * Historically dropped (onSessionExit took only the sessionId), which made
@@ -80,6 +91,27 @@ export interface TeamLifecycleWorker extends TeamLaunchedWorker {
   exitCode?: number;
   exitSignal?: number;
   exitReason?: string;
+}
+
+export interface TeamModernBindingContext {
+  teamId: string;
+  cohortId: string;
+  role: 'worker' | 'orchestrator';
+  projectId: string;
+  hostId: string;
+  workspaceEnvironmentId?: string;
+  providerId: string;
+  personaSnapshot: {
+    id: string;
+    profile: string;
+    model?: string;
+    reasoningLevel?: string;
+    permissionMode?: string;
+    systemPrompt?: string;
+  };
+  executionId?: string;
+  /** Realpath of the execution worktree, not a renderer-supplied cwd. */
+  worktreePath: string;
 }
 
 export interface TeamLifecycleRecord {
@@ -143,6 +175,37 @@ export interface TeamWorkerUpdate {
   exitReason?: string;
 }
 
+export interface TeamModernWorkerReservation {
+  record: TeamLifecycleRecord;
+  worker: TeamLifecycleWorker;
+  generation: number;
+  threadId: string;
+  /** Only the transaction that first persists intent may start creation. */
+  mayCreate: boolean;
+}
+
+export interface TeamModernWorkerReference {
+  recordId: string;
+  slotId: string;
+  generation: number;
+  threadId: string;
+}
+
+/** Runtime must attest the exact binding and generation, never generic liveness. */
+export interface TeamModernWorkerObservation extends TeamModernWorkerReference {
+  state: 'bound' | 'terminal' | 'unknown';
+}
+
+export interface TeamModernReconcileResult extends TeamLifecycleReconcileResult {
+  releasedAuthorizationIds: string[];
+}
+
+export interface TeamModernWorkerBinding {
+  recordId: string;
+  worker: TeamLifecycleWorker;
+  generation: number;
+}
+
 export interface TeamLifecycleCancelResult extends TeamLifecycleRecord {
   releasedSlotIds: string[];
 }
@@ -167,6 +230,7 @@ const MAX_WORKERS = 100;
 const MAX_FAILED_SLOTS = 100;
 const MAX_RECORDS = 2_000;
 const terminalProcesses = new Set<TeamWorkerProcessState>(['exited', 'spawn-failed', 'canceled']);
+const modernBindingStates = new Set<TeamWorkerBindingState>(['RESERVED', 'CREATING', 'BOUND', 'UNCERTAIN', 'TERMINAL']);
 const processTransitions: Readonly<Record<TeamWorkerProcessState, ReadonlySet<TeamWorkerProcessState>>> = {
   authorized: new Set(['spawning', 'spawn-failed', 'canceled']),
   spawning: new Set(['running', 'spawn-failed', 'canceled']),
@@ -278,6 +342,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
         workers: bounded.workers.map((worker) => ({ ...worker, capacityReleased: terminalProcesses.has(worker.process) })),
         state: 'active', revision: 0, createdAt: timestamp, updatedAt: timestamp
       };
+      for (const worker of record.workers) assertUniqueModernThread({ ...snapshot.state, records: [...snapshot.state.records, record] }, worker);
       snapshot.state.records.push(record);
       persist(snapshot.state, snapshot.hash);
       inFlightLaunches.add(record.id);
@@ -299,6 +364,9 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       if (!record) throw new Error(`unknown team lifecycle record "${safeRecordId}"`);
       const worker = record.workers.find((candidate) => candidate.slotId === safeSlotId);
       if (!worker) throw new Error(`unknown team lifecycle worker "${safeSlotId}"`);
+      if (worker.transport === 'MODERN' && update.process !== undefined && update.process !== worker.process) {
+        throw new Error('modern worker process changes require generation-fenced reconciliation');
+      }
       const changed = update.process !== undefined && update.process !== worker.process
         || update.attention !== undefined && update.attention !== worker.attention
         || update.task !== undefined && update.task !== worker.task
@@ -383,6 +451,12 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
         || candidate.sessionId === bounded.sessionId || candidate.authorizationId === bounded.authorizationId)) {
         throw new Error('duplicate team lifecycle worker');
       }
+      if (bounded.transport === 'MODERN' && (record.workers.length >= MAX_WORKERS
+        || record.capacity && (record.capacity.launched >= record.capacity.principal.maxLaunchesPerRun
+          || record.workers.filter((candidate) => !candidate.capacityReleased).length >= record.capacity.principal.maxConcurrent))) {
+        throw new Error('team lifecycle modern worker capacity exhausted');
+      }
+      assertUniqueModernThread(snapshot.state, bounded);
       record.workers.push({ ...bounded, capacityReleased: terminalProcesses.has(bounded.process) });
       if (record.capacity) record.capacity.launched += 1;
       record.launchResult.workers.push(boundedIdentity(bounded));
@@ -410,15 +484,19 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       if (!record) throw new Error(`unknown team lifecycle record "${safeRecordId}"`);
       if (record.outcome.status === 'completed') throw new Error('team lifecycle launch result already finalized');
       if (launchResult) {
+        if (record.workers.some((worker) => worker.transport === 'MODERN'
+          && launchResult.workers.some((candidate) => candidate.slotId === worker.slotId && identityKey(candidate) !== identityKey(worker)))) {
+          throw new Error('modern worker launch identity mismatch');
+        }
         record.launchResult = launchResult;
         const existingByIdentity = new Map(record.workers.map((worker) => [identityKey(worker), worker]));
         const resultWorkers: TeamLifecycleWorker[] = launchResult.workers.map((worker) => existingByIdentity.get(identityKey(worker)) ?? ({
           ...worker, process: 'running', attention: 'active', task: 'unknown',
           delivery: 'bound-at-spawn', capacityReleased: false
         }));
-        record.workers = record.state === 'cancel-pending'
+        record.workers = record.state === 'cancel-pending' || record.workers.some((worker) => worker.transport === 'MODERN')
           ? [...resultWorkers, ...record.workers.filter((worker) =>
-              !terminalProcesses.has(worker.process)
+              (worker.transport === 'MODERN' || !terminalProcesses.has(worker.process))
               && !launchResult.workers.some((candidate) => identityKey(candidate) === identityKey(worker)))]
           : resultWorkers;
       }
@@ -438,11 +516,21 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       const record = snapshot.state.records.find((candidate) => candidate.id === safeRecordId);
       if (!record) throw new Error(`unknown team lifecycle record "${safeRecordId}"`);
       if (record.state !== 'active') return { ...clone(record), releasedSlotIds: [] };
+      const releasedSlotIds: string[] = [];
+      for (const worker of record.workers) {
+        if (worker.transport === 'MODERN' && worker.bindingState === 'RESERVED') {
+          worker.bindingState = 'TERMINAL';
+          worker.process = 'canceled';
+          worker.capacityReleased = true;
+          releasedSlotIds.push(worker.slotId);
+        }
+        if (worker.transport === 'MODERN' && worker.bindingState === 'CREATING') worker.bindingState = 'UNCERTAIN';
+      }
       record.state = record.workers.every((worker) => terminalProcesses.has(worker.process)) ? 'canceled' : 'cancel-pending';
       record.revision += 1;
       record.updatedAt = now();
       persist(snapshot.state, snapshot.hash);
-      return { ...clone(record), releasedSlotIds: [] };
+      return { ...clone(record), releasedSlotIds };
     });
   }
 
@@ -453,7 +541,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       const record = readState().state.records.find((candidate) => candidate.id === safeRecordId);
       const worker = record?.workers.find((candidate) => candidate.slotId === safeSlotId);
       return record?.state === 'active' && record.outcome.status === 'in-progress'
-        && worker?.process === 'spawning';
+        && worker?.process === 'spawning' && worker.transport !== 'MODERN';
     });
   }
 
@@ -465,12 +553,139 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       const record = snapshot.state.records.find((candidate) => candidate.id === safeRecordId);
       const worker = record?.workers.find((candidate) => candidate.slotId === safeSlotId);
       if (record?.state !== 'active' || record.outcome.status !== 'in-progress'
-        || worker?.process !== 'spawning') return false;
+        || worker?.process !== 'spawning' || worker.transport === 'MODERN') return false;
       worker.process = 'running';
       record.revision += 1;
       record.updatedAt = now();
       persist(snapshot.state, snapshot.hash);
       return true;
+    });
+  }
+
+  /**
+   * Persist Modern-thread intent before the ACP thread exists. This is the
+   * crash boundary: callers must reserve before asking ACP to create a thread.
+   */
+  async function reserveModernWorker(recordId: string, slotId: string): Promise<TeamModernWorkerReservation | undefined> {
+    const safeRecordId = boundedString(recordId, 'record id');
+    const safeSlotId = boundedString(slotId, 'slot id');
+    return runExclusive(async () => {
+      const snapshot = readState();
+      const record = snapshot.state.records.find((candidate) => candidate.id === safeRecordId);
+      const worker = record?.workers.find((candidate) => candidate.slotId === safeSlotId);
+      if (!record || !worker || record.state !== 'active' || record.outcome.status !== 'in-progress') return undefined;
+      if (worker.transport !== 'MODERN' || terminalProcesses.has(worker.process)) return undefined;
+      if (worker.bindingState !== 'RESERVED') {
+        return { record: clone(record), worker: clone(worker), generation: worker.generation!, threadId: worker.threadId!, mayCreate: false };
+      }
+      const generation = 1;
+      worker.threadId = isModernThreadId(worker.sessionId) ? worker.sessionId : randomUUID();
+      worker.generation = generation;
+      worker.bindingState = 'CREATING';
+      worker.process = 'spawning';
+      assertUniqueModernThread(snapshot.state, worker);
+      record.revision += 1;
+      record.updatedAt = now();
+      persist(snapshot.state, snapshot.hash);
+      return { record: clone(record), worker: clone(worker), generation, threadId: worker.threadId, mayCreate: true };
+    });
+  }
+
+  /** Bind a created Modern thread only when its reservation generation still owns the slot. */
+  async function acknowledgeModernWorker(
+    recordId: string,
+    slotId: string,
+    generation: number,
+    threadId: string
+  ): Promise<boolean> {
+    const safeRecordId = boundedString(recordId, 'record id');
+    const safeSlotId = boundedString(slotId, 'slot id');
+    const safeThreadId = boundedModernThreadId(threadId);
+    validateModernGeneration(generation);
+    return runExclusive(async () => {
+      const snapshot = readState();
+      const record = snapshot.state.records.find((candidate) => candidate.id === safeRecordId);
+      const worker = record?.workers.find((candidate) => candidate.slotId === safeSlotId);
+      if (!record || !worker || record.state !== 'active'
+        || worker.transport !== 'MODERN' || worker.generation !== generation || worker.threadId !== safeThreadId
+        || terminalProcesses.has(worker.process)) return false;
+      if (worker.bindingState === 'BOUND') return true;
+      if (worker.bindingState !== 'CREATING' && worker.bindingState !== 'UNCERTAIN') return false;
+      worker.bindingState = 'BOUND';
+      worker.process = 'running';
+      record.revision += 1;
+      record.updatedAt = now();
+      persist(snapshot.state, snapshot.hash);
+      return true;
+    });
+  }
+
+  async function markModernWorkerUncertain(recordId: string, slotId: string, generation: number, threadId: string): Promise<boolean> {
+    const reference = boundedModernReference({ recordId, slotId, generation, threadId });
+    return runExclusive(async () => {
+      const snapshot = readState();
+      const record = snapshot.state.records.find((candidate) => candidate.id === reference.recordId);
+      const worker = record?.workers.find((candidate) => candidate.slotId === reference.slotId);
+      if (!record || !matchesModernReference(worker, reference)) return false;
+      if (worker.bindingState === 'UNCERTAIN') return true;
+      if (worker.bindingState !== 'CREATING' && worker.bindingState !== 'BOUND') return false;
+      worker.bindingState = 'UNCERTAIN';
+      record.revision += 1;
+      record.updatedAt = now();
+      persist(snapshot.state, snapshot.hash);
+      return true;
+    });
+  }
+
+  /** Cancellation fences authority before external close; runtime must also check this generation. */
+  async function modernWorkerMayClose(recordId: string, slotId: string, generation: number, threadId: string): Promise<boolean> {
+    const reference = boundedModernReference({ recordId, slotId, generation, threadId });
+    return runExclusive(async () => {
+      const record = readState().state.records.find((candidate) => candidate.id === reference.recordId);
+      const worker = record?.workers.find((candidate) => candidate.slotId === reference.slotId);
+      return record?.state === 'cancel-pending' && matchesModernReference(worker, reference);
+    });
+  }
+
+  /** Bounded, explicit runtime evidence. Absence/unavailable runtime is unknown, not terminal. */
+  async function reconcileModernWorkers(observations: readonly TeamModernWorkerObservation[]): Promise<TeamModernReconcileResult> {
+    if (!Array.isArray(observations) || observations.length > MAX_WORKERS) throw new Error('invalid modern reconciliation batch');
+    const bounded = observations.map((observation) => {
+      if (!observation || !['bound', 'terminal', 'unknown'].includes(observation.state)) throw new Error('invalid modern observation');
+      return { ...boundedModernReference(observation), state: observation.state };
+    });
+    return runExclusive(async () => {
+      const snapshot = readState();
+      const changed = new Set<TeamLifecycleRecord>();
+      const releasedSlotIds: string[] = [];
+      const releasedAuthorizationIds: string[] = [];
+      for (const observation of bounded) {
+        const record = snapshot.state.records.find((candidate) => candidate.id === observation.recordId);
+        const worker = record?.workers.find((candidate) => candidate.slotId === observation.slotId);
+        if (!record || !matchesModernReference(worker, observation)) continue;
+        if (observation.state === 'terminal') {
+          worker.bindingState = 'TERMINAL';
+          worker.process = record.state !== 'active' ? 'canceled' : worker.process === 'spawning' ? 'spawn-failed' : 'exited';
+          worker.capacityReleased = true;
+          releasedSlotIds.push(worker.slotId);
+          releasedAuthorizationIds.push(worker.authorizationId);
+          if (record.state === 'cancel-pending' && record.workers.every((candidate) => terminalProcesses.has(candidate.process))) record.state = 'canceled';
+        } else if (observation.state === 'bound') {
+          if (record.state !== 'active' || worker.bindingState === 'BOUND') continue;
+          worker.bindingState = 'BOUND';
+          worker.process = 'running';
+        } else {
+          if (worker.bindingState === 'UNCERTAIN') continue;
+          worker.bindingState = 'UNCERTAIN';
+        }
+        changed.add(record);
+      }
+      for (const record of changed) {
+        record.revision += 1;
+        record.updatedAt = now();
+      }
+      if (changed.size > 0) persist(snapshot.state, snapshot.hash);
+      return { records: [...changed].map(clone), releasedSlotIds, releasedAuthorizationIds };
     });
   }
 
@@ -485,6 +700,15 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
         if (inFlightLaunches.has(record.id)) continue;
         let changed = false;
         for (const worker of record.workers) {
+          // ACP threads survive process restart independently of PTYs. Their
+          // durable intent keeps capacity until generation-attested terminal evidence.
+          if ((worker.transport ?? 'CLI') === 'MODERN') {
+            if (worker.bindingState === 'CREATING' || worker.bindingState === 'BOUND') {
+              worker.bindingState = 'UNCERTAIN';
+              changed = true;
+            }
+            continue;
+          }
           if (recoveredSessionIds.has(worker.sessionId)) continue;
           const reconciledProcess = worker.process === 'spawning' ? 'spawn-failed'
             : worker.process === 'running' ? 'exited'
@@ -497,7 +721,12 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
           }
           changed = true;
         }
-        if (record.outcome.status === 'in-progress') {
+        // A Modern reservation has no PTY recovery signal. Keep its launch
+        // claim in progress so restart cannot convert durable thread intent
+        // into an interrupted launch while ACP may still create or own it.
+        const hasNonTerminalModernWorker = record.workers.some((worker) =>
+          (worker.transport ?? 'CLI') === 'MODERN' && worker.bindingState !== 'TERMINAL');
+        if (record.outcome.status === 'in-progress' && !hasNonTerminalModernWorker) {
           record.outcome = {
             status: 'completed',
             result: { ok: false, code: 'INTERRUPTED', message: 'team launch interrupted by application restart' }
@@ -534,7 +763,38 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
     );
   }
 
-  return { claim, complete, setLaunchResult, addWorker, updateWorker, workerMaySpawn, claimWorkerRunning, cancel, reconcileStartup, list, get, findRequest };
+  /**
+   * Resolve only an acknowledged, generation-fenced Modern participant. Generic
+   * conversation liveness is intentionally insufficient for execution authority.
+   */
+  async function findModernWorkerBinding(
+    threadId: string,
+    projectId: string
+  ): Promise<TeamModernWorkerBinding | undefined> {
+    const safeThreadId = boundedString(threadId, 'modern thread id');
+    const safeProjectId = boundedString(projectId, 'modern project id');
+    return runExclusive(async () => {
+      for (const record of readState().state.records) {
+        if (record.state !== 'active') continue;
+        const worker = record.workers.find((candidate) =>
+          candidate.transport === 'MODERN'
+          && candidate.bindingState === 'BOUND'
+          && candidate.threadId === safeThreadId
+          && candidate.projectId === safeProjectId
+          && candidate.process === 'running'
+          && !candidate.capacityReleased
+          && candidate.generation !== undefined
+          && candidate.modernContext !== undefined
+        );
+        if (worker) return { recordId: record.id, worker: clone(worker), generation: worker.generation! };
+      }
+      return undefined;
+    });
+  }
+
+  return { claim, complete, setLaunchResult, addWorker, updateWorker, workerMaySpawn, claimWorkerRunning,
+    reserveModernWorker, acknowledgeModernWorker, markModernWorkerUncertain, modernWorkerMayClose, reconcileModernWorkers,
+    fenceCancel: cancel, cancel, reconcileStartup, list, get, findRequest, findModernWorkerBinding };
 }
 
 export type TeamLifecycleStore = ReturnType<typeof createTeamLifecycleStore>;
@@ -545,6 +805,10 @@ export interface TeamLifecycleIntegrationOptions {
   closeSession: (sessionId: string) => Promise<boolean>;
   releaseCapacity: (authorizationId: string) => void;
   restoreCapacity?: (capacity: TeamRunCapacity, activeAuthorizationIds: readonly string[]) => void;
+  /** False is not termination evidence. Undefined means runtime unavailable. */
+  isLiveModernThread?: (threadId: string, projectId: string, generation: number) => boolean | undefined | Promise<boolean | undefined>;
+  /** Runtime must validate binding metadata + generation before closing. True only requests close. */
+  closeModernThread?: (threadId: string, projectId: string, generation: number) => Promise<boolean | undefined>;
 }
 
 interface TrackedTeamWorker {
@@ -552,10 +816,17 @@ interface TrackedTeamWorker {
   slotId: string;
   authorizationId: string;
   process: TeamWorkerProcessState;
+  transport: TeamWorkerTransport;
+  threadId?: string;
+  generation?: number;
+  projectId?: string;
+  slotRole?: 'worker' | 'orchestrator';
+  executionId?: string;
 }
 
 export function createTeamLifecycleIntegration(opts: TeamLifecycleIntegrationOptions) {
   const bySession = new Map<string, TrackedTeamWorker>();
+  const trackedRevisions = new Map<string, number>();
   const closeRequested = new Set<string>();
   let pending = Promise.resolve();
   const serialize = <T>(task: () => Promise<T>): Promise<T> => {
@@ -564,15 +835,36 @@ export function createTeamLifecycleIntegration(opts: TeamLifecycleIntegrationOpt
     return result;
   };
   const track = (record: TeamLifecycleRecord): void => {
+    if ((trackedRevisions.get(record.id) ?? -1) > record.revision) return;
+    trackedRevisions.set(record.id, record.revision);
+    for (const [key, tracked] of bySession) {
+      if (tracked.recordId === record.id) bySession.delete(key);
+    }
     for (const worker of record.workers) {
-      if (!terminalProcesses.has(worker.process)) {
-        bySession.set(worker.sessionId, {
+      if (!terminalProcesses.has(worker.process) && (worker.transport !== 'MODERN'
+        || record.state === 'active' && worker.bindingState === 'BOUND' && worker.process === 'running' && !worker.capacityReleased)) {
+        const tracked: TrackedTeamWorker = {
           recordId: record.id,
           slotId: worker.slotId,
           authorizationId: worker.authorizationId,
-          process: worker.process
-        });
-      } else bySession.delete(worker.sessionId);
+          process: worker.process,
+          transport: worker.transport ?? 'CLI',
+           ...(worker.threadId === undefined ? {} : { threadId: worker.threadId }),
+          ...(worker.generation === undefined ? {} : { generation: worker.generation }),
+          ...(worker.modernContext ? {
+            projectId: worker.projectId,
+            slotRole: worker.modernContext.role,
+            ...(worker.modernContext.executionId ? { executionId: worker.modernContext.executionId } : {})
+          } : {})
+        };
+        bySession.set(worker.sessionId, tracked);
+        // Main routes ACP DynamicTool calls by conversation thread id. Preserve
+        // the opaque reservation key too for cancellation while creation races.
+        if (worker.transport === 'MODERN' && worker.threadId) bySession.set(worker.threadId, tracked);
+      } else {
+        bySession.delete(worker.sessionId);
+        if (worker.transport === 'MODERN' && worker.threadId) bySession.delete(worker.threadId);
+      }
     }
   };
   return {
@@ -580,10 +872,21 @@ export function createTeamLifecycleIntegration(opts: TeamLifecycleIntegrationOpt
     isTracked(sessionId: string): boolean {
       return bySession.has(sessionId);
     },
+    async resolveModernBinding(threadId: string, projectId: string): Promise<{
+      executionId: string; slotId: string; role: 'worker' | 'orchestrator'; authorizationId: string; generation: number;
+    } | undefined> {
+      const binding = await opts.store.findModernWorkerBinding(threadId, projectId);
+      const worker = binding?.worker;
+      if (!binding || !worker?.modernContext?.executionId) return undefined;
+      return {
+        executionId: worker.modernContext.executionId, slotId: worker.slotId, role: worker.modernContext.role,
+        authorizationId: worker.authorizationId, generation: binding.generation
+      };
+    },
     onSessionExit(sessionId: string, exit?: TeamWorkerExitDetail): Promise<void> {
       return serialize(async () => {
         const tracked = bySession.get(sessionId);
-        if (!tracked) return;
+        if (!tracked || tracked.transport === 'MODERN') return;
         bySession.delete(sessionId);
         closeRequested.delete(sessionId);
         if (terminalProcesses.has(tracked.process)) return;
@@ -626,17 +929,40 @@ export function createTeamLifecycleIntegration(opts: TeamLifecycleIntegrationOpt
             lifecycleState: 'canceled' as const
           };
         }
-        const canceled = await opts.store.cancel(record.id);
+        const canceled = await opts.store.fenceCancel(record.id);
+        track(canceled);
+        for (const worker of canceled.workers) {
+          if (canceled.releasedSlotIds.includes(worker.slotId)) opts.releaseCapacity(worker.authorizationId);
+        }
         const canceledSessionIds: string[] = [];
         const pendingSessionIds: string[] = [];
         for (const worker of canceled.workers) {
           if (terminalProcesses.has(worker.process)) continue;
           if (closeRequested.has(worker.sessionId)) continue;
+          const isModern = (worker.transport ?? 'CLI') === 'MODERN';
+          if (isModern) {
+            if (!worker.threadId || worker.generation === undefined
+              || !await opts.store.modernWorkerMayClose(record.id, worker.slotId, worker.generation, worker.threadId)) {
+              pendingSessionIds.push(worker.sessionId);
+              continue;
+            }
+            // Close is generation-attested in runtime. Neither false liveness nor
+            // a close acknowledgement proves a late create can no longer run.
+            let closed: boolean | undefined;
+            try { closed = await opts.closeModernThread?.(worker.threadId, worker.projectId, worker.generation); }
+            catch { closed = undefined; }
+            if (closed === true) {
+              closeRequested.add(worker.sessionId);
+              canceledSessionIds.push(worker.sessionId);
+            } else pendingSessionIds.push(worker.sessionId);
+            continue;
+          }
           const isLive = opts.isLiveSession(worker.sessionId);
-          if (isLive && await opts.closeSession(worker.sessionId)) {
+          const closed = isLive === true && await opts.closeSession(worker.sessionId);
+          if (isLive === true && closed) {
             closeRequested.add(worker.sessionId);
             canceledSessionIds.push(worker.sessionId);
-          } else if (isLive) {
+          } else if (isLive !== false) {
             pendingSessionIds.push(worker.sessionId);
           } else {
             const updated = await opts.store.updateWorker(record.id, worker.slotId, {
@@ -653,6 +979,14 @@ export function createTeamLifecycleIntegration(opts: TeamLifecycleIntegrationOpt
           pendingSessionIds,
           lifecycleState: current?.state === 'canceled' ? 'canceled' as const : 'cancel-pending' as const
         };
+      });
+    },
+    reconcileModernWorkers(observations: readonly TeamModernWorkerObservation[]): Promise<TeamModernReconcileResult> {
+      return serialize(async () => {
+        const reconciled = await opts.store.reconcileModernWorkers(observations);
+        for (const record of reconciled.records) track(record);
+        for (const authorizationId of reconciled.releasedAuthorizationIds) opts.releaseCapacity(authorizationId);
+        return reconciled;
       });
     },
     getTeamLaunch(callerPrincipalId: string, launchRequestId: string) {
@@ -699,7 +1033,7 @@ export function createTeamLifecycleIntegration(opts: TeamLifecycleIntegrationOpt
         const recovered = new Set(recoveredSessionIds);
         const before = await opts.store.list();
         const releasable = new Map(before.flatMap((record) => record.workers
-          .filter((worker) => !recovered.has(worker.sessionId)
+          .filter((worker) => (worker.transport ?? 'CLI') !== 'MODERN' && !recovered.has(worker.sessionId)
             && (worker.process === 'spawning' || worker.process === 'running')
             && !worker.capacityReleased)
           .map((worker) => [`${record.id}\u0000${worker.slotId}`, worker.authorizationId] as const)));
@@ -731,6 +1065,11 @@ function boundedClaim(input: TeamLifecycleClaimInput): TeamLifecycleClaim {
   if (launchResult.launchRequestId !== launchRequestId) throw new Error('launch result request id mismatch');
   const workers = (input.workers ?? []).map(boundedWorker);
   validateClaimWorkers(launchResult, workers);
+  if (workers.some((worker) => worker.transport === 'MODERN') && input.capacity
+    && (input.capacity.launched < workers.length
+      || workers.filter((worker) => !terminalProcesses.has(worker.process)).length > input.capacity.principal.maxConcurrent)) {
+    throw new Error('team lifecycle modern worker capacity exhausted');
+  }
   return {
     callerPrincipalId: boundedString(input.callerPrincipalId, 'caller principal id'),
     launchRequestId,
@@ -900,10 +1239,93 @@ function boundedIdentity(worker: TeamLaunchedWorker): TeamLaunchedWorker {
 function boundedWorker(worker: Omit<TeamLifecycleWorker, 'capacityReleased'>): Omit<TeamLifecycleWorker, 'capacityReleased'> {
   const identity = boundedIdentity(worker);
   if (!(worker.process in processTransitions) || (worker.attention !== 'active' && worker.attention !== 'blocked')
-    || !(worker.task in taskTransitions) || !(worker.delivery in deliveryTransitions)) {
+    || !(worker.task in taskTransitions) || !(worker.delivery in deliveryTransitions)
+    || worker.transport !== undefined && worker.transport !== 'CLI' && worker.transport !== 'MODERN'
+    || worker.threadId !== undefined && !isBoundedString(worker.threadId)
+    || worker.generation !== undefined && (!Number.isInteger(worker.generation) || worker.generation < 0)
+    || worker.bindingState !== undefined && !modernBindingStates.has(worker.bindingState)
+    || worker.modernContext !== undefined && !isModernContext(worker.modernContext)
+    || worker.transport === 'MODERN' && !isModernWorkerState(worker)
+    || worker.transport !== 'MODERN' && (worker.threadId !== undefined || worker.generation !== undefined || worker.bindingState !== undefined || worker.modernContext !== undefined)) {
     throw new Error('invalid team worker lifecycle state');
   }
-  return { ...identity, process: worker.process, attention: worker.attention, task: worker.task, delivery: worker.delivery };
+  return {
+    ...identity, process: worker.process, attention: worker.attention, task: worker.task, delivery: worker.delivery,
+    ...(worker.transport === undefined ? {} : { transport: worker.transport }),
+    ...(worker.threadId === undefined ? {} : { threadId: worker.threadId }),
+    ...(worker.generation === undefined ? {} : { generation: worker.generation }),
+    ...(worker.bindingState === undefined ? {} : { bindingState: worker.bindingState }),
+    ...(worker.modernContext === undefined ? {} : { modernContext: boundedModernContext(worker.modernContext) })
+  };
+}
+
+function boundedModernContext(context: TeamModernBindingContext): TeamModernBindingContext {
+  if (!isModernContext(context)) throw new Error('invalid modern team binding context');
+  return clone(context);
+}
+
+function isModernContext(value: unknown): value is TeamModernBindingContext {
+  if (!value || typeof value !== 'object') return false;
+  const context = value as Partial<TeamModernBindingContext>;
+  return isBoundedString(context.teamId)
+    && isBoundedString(context.cohortId)
+    && (context.role === 'worker' || context.role === 'orchestrator')
+    && isBoundedString(context.projectId) && isBoundedString(context.hostId) && isBoundedString(context.providerId)
+    && (context.workspaceEnvironmentId === undefined || isBoundedString(context.workspaceEnvironmentId))
+    && isBoundedString(context.worktreePath)
+    && !!context.personaSnapshot && isBoundedString(context.personaSnapshot.id) && isBoundedString(context.personaSnapshot.profile)
+    && [context.personaSnapshot.model, context.personaSnapshot.reasoningLevel, context.personaSnapshot.permissionMode]
+      .every((field) => field === undefined || isBoundedString(field))
+    && (context.personaSnapshot.systemPrompt === undefined || typeof context.personaSnapshot.systemPrompt === 'string'
+      && Buffer.byteLength(context.personaSnapshot.systemPrompt, 'utf8') <= MAX_TEAM_INITIAL_TASK_BYTES)
+    && (context.executionId === undefined || isBoundedString(context.executionId))
+    && Object.keys(context).every((key) => ['teamId', 'cohortId', 'role', 'projectId', 'hostId', 'providerId',
+      'workspaceEnvironmentId', 'worktreePath', 'personaSnapshot', 'executionId'].includes(key))
+    && Object.keys(context.personaSnapshot).every((key) => ['id', 'profile', 'model', 'reasoningLevel', 'permissionMode', 'systemPrompt'].includes(key));
+}
+
+function isModernWorkerState(worker: Partial<TeamLifecycleWorker>): boolean {
+  if (!isModernContext(worker.modernContext) || worker.modernContext.projectId !== worker.projectId
+    || worker.modernContext.cohortId !== worker.cohortId || worker.modernContext.personaSnapshot.id !== worker.personaId
+    || !Number.isSafeInteger(worker.generation) || !worker.bindingState) return false;
+  if (worker.bindingState === 'RESERVED') return worker.generation === 0 && worker.threadId === undefined && worker.process === 'authorized';
+  if (worker.bindingState === 'TERMINAL' && worker.generation === 0) return worker.threadId === undefined && terminalProcesses.has(worker.process!);
+  if (Number(worker.generation) < 1 || !isModernThreadId(worker.threadId)) return false;
+  return worker.bindingState === 'CREATING' ? worker.process === 'spawning'
+    : worker.bindingState === 'BOUND' ? worker.process === 'running'
+      : worker.bindingState === 'UNCERTAIN' ? worker.process === 'spawning' || worker.process === 'running'
+        : worker.bindingState === 'TERMINAL' && terminalProcesses.has(worker.process!);
+}
+
+function isModernThreadId(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function boundedModernThreadId(value: unknown): string {
+  if (!isModernThreadId(value)) throw new Error('invalid modern thread id');
+  return value;
+}
+
+function validateModernGeneration(generation: number): void {
+  if (!Number.isSafeInteger(generation) || generation < 1) throw new Error('invalid modern worker generation');
+}
+
+function boundedModernReference(reference: TeamModernWorkerReference): TeamModernWorkerReference {
+  validateModernGeneration(reference.generation);
+  return { recordId: boundedString(reference.recordId, 'record id'), slotId: boundedString(reference.slotId, 'slot id'),
+    generation: reference.generation, threadId: boundedModernThreadId(reference.threadId) };
+}
+
+function matchesModernReference(worker: TeamLifecycleWorker | undefined, reference: TeamModernWorkerReference): worker is TeamLifecycleWorker {
+  return worker?.transport === 'MODERN' && worker.generation === reference.generation && worker.threadId === reference.threadId
+    && !worker.capacityReleased && !terminalProcesses.has(worker.process);
+}
+
+function assertUniqueModernThread(state: TeamLifecycleStateFile, worker: Omit<TeamLifecycleWorker, 'capacityReleased'>): void {
+  if (worker.transport === 'MODERN' && worker.threadId && state.records.some((record) => record.workers.some((candidate) =>
+    candidate !== worker && (candidate.threadId === worker.threadId || candidate.sessionId === worker.threadId)))) {
+    throw new Error('duplicate modern thread identity');
+  }
 }
 
 function validateUpdate(update: TeamWorkerUpdate): void {
@@ -997,12 +1419,17 @@ function isIdentity(value: unknown): value is TeamLaunchedWorker {
 function isWorker(value: unknown): value is TeamLifecycleWorker {
   if (!isIdentity(value)) return false;
   const worker = value as Partial<TeamLifecycleWorker>;
+  const transport = worker.transport ?? 'CLI';
   return typeof worker.process === 'string' && worker.process in processTransitions
     && (worker.attention === 'active' || worker.attention === 'blocked')
     && typeof worker.task === 'string' && worker.task in taskTransitions
     && typeof worker.delivery === 'string' && worker.delivery in deliveryTransitions
     && typeof worker.capacityReleased === 'boolean'
-    && worker.capacityReleased === terminalProcesses.has(worker.process);
+    && worker.capacityReleased === terminalProcesses.has(worker.process)
+    && (transport === 'CLI' || transport === 'MODERN')
+    && (transport === 'MODERN'
+      ? isModernWorkerState(worker)
+      : worker.threadId === undefined && worker.generation === undefined && worker.bindingState === undefined && worker.modernContext === undefined);
 }
 
 function isBoundedString(value: unknown): value is string {

@@ -1,6 +1,7 @@
 import type { ExecutionBoardProjection, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { MAX_DELIVERY_ATTEMPTS, type ExecutionRecord } from './store.js';
 import { usageRollup } from './contracts.js';
+import type { TeamLifecycleRecord } from '../launch/team-lifecycle-store.js';
 
 /**
  * Surface a delivery error as a human-readable message, never a stack trace:
@@ -225,6 +226,39 @@ export function projectExecutionProjection(
     }
   }
   return records.map((record) => executionBoardProjection(record, liveOrchestrators.get(record.id)));
+}
+
+type ModernExecutionMember = NonNullable<ExecutionBoardProjection['modernMembers']>[number];
+const MAX_MODERN_MEMBERS_PER_EXECUTION = 32;
+
+/**
+ * Modern squad members per execution, from main's team-launch lifecycle. A
+ * Modern member is an ACP thread with no PTY cohort stamp, so this is the only
+ * way the board can group it under its squad. Live = bound, running and still
+ * holding capacity; everything else renders as an exited member.
+ */
+export function modernExecutionMembers(
+  records: readonly TeamLifecycleRecord[],
+  projectId: string
+): Map<string, ModernExecutionMember[]> {
+  const byExecution = new Map<string, ModernExecutionMember[]>();
+  const seen = new Set<string>();
+  for (const record of records) {
+    for (const worker of record.workers) {
+      const executionId = worker.modernContext?.executionId;
+      if (worker.transport !== 'MODERN' || !worker.threadId || !executionId || worker.projectId !== projectId) continue;
+      if (seen.has(worker.threadId)) continue;
+      const members = byExecution.get(executionId) ?? [];
+      if (members.length >= MAX_MODERN_MEMBERS_PER_EXECUTION) continue;
+      seen.add(worker.threadId);
+      members.push({
+        threadId: worker.threadId, slotId: worker.slotId, personaId: worker.personaId, role: worker.modernContext!.role,
+        live: worker.bindingState === 'BOUND' && worker.process === 'running' && !worker.capacityReleased
+      });
+      byExecution.set(executionId, members);
+    }
+  }
+  return byExecution;
 }
 
 export function executionBoardProjection(record: ExecutionRecord, orchestratorSessionId?: string): ExecutionBoardProjection {

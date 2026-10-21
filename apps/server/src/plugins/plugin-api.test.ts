@@ -1080,6 +1080,12 @@ describe('sdk.capabilities', () => {
       const cursorNativeTool = cursorResult.capabilities.find((c) => c.id === 'tool-before-native');
       expect(cursorNativeTool).toMatchObject({ available: false });
       expect(cursorNativeTool?.reason).toMatch(/acp-cursor/);
+      const squadThread = createConversationThread(db, { projectId: 'p1', hostId: 'h1', providerId: 'claude-code', originPluginId: 'host-modern-squad' });
+      const squadResult = await handle.api.sdk.capabilities.forThread({ threadId: squadThread.id });
+      for (const id of ['tool-before-native', 'tool-after-native']) {
+        expect(squadResult.capabilities.find(capability => capability.id === id))
+          .toMatchObject({ available: false, reason: 'Modern squad provider-native tool policy is not wired' });
+      }
 
       const executionResult = await handle.api.sdk.capabilities.forExecution({ executionId: 'exec-1' });
       expect(executionResult.capabilities.find((c) => c.id === 'tool-before-native')).toMatchObject({ available: false });

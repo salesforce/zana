@@ -4241,6 +4241,9 @@ export interface TeamSlot {
   label?: string;
 }
 
+/** Whole-squad execution transport. Mixed transports are deliberately unsupported. */
+export type SquadTransport = 'CLI' | 'MODERN';
+
 export interface TeamLaunchTaskSlot {
   slotId: string;
   initialTask: string;
@@ -4371,6 +4374,8 @@ export interface Team {
   worktreeIsolation?: boolean;
   /** Override global structured-work routing enforcement for this Team. */
   routingEnforced?: boolean;
+  /** Transport selected for every squad member. Absent persisted teams remain CLI. */
+  transport?: SquadTransport;
   /** Set by the loader/host for UI display; never read from disk / trusted from the renderer. */
   source?: PersonaSource;
 }
@@ -5982,6 +5987,12 @@ export interface ExecutionBoardProjection {
   teamName?: string;
   objective?: string;
   summary?: string;
+  /**
+   * Modern squad members (ACP conversation threads), main-resolved from the
+   * launch lifecycle. Display grouping only — never authority. Absent for CLI
+   * squads, whose members are PTY sessions carrying their own cohort stamp.
+   */
+  modernMembers?: Array<{ threadId: string; slotId: string; personaId: string; role: 'orchestrator' | 'worker'; live: boolean }>;
   /** Terminal shared checkout retained for recovery or a follow-up agent. */
   retainedWorktree?: { path: string; branch: string; baseBranch?: string; disposition?: 'left' };
   sources?: Array<{

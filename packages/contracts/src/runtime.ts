@@ -25,7 +25,7 @@ export const PRODUCT_EVENT_SNAPSHOT_CHANNELS: ReadonlySet<string> = new Set([
   'config:onChanged', 'scheduler:onChanged', 'scheduler:groups:onChanged', 'scheduler:onTemplatesChanged', 'goals:onChanged',
   'followups:onChanged', 'personas:onChanged', 'teams:onChanged', 'quickPrompts:onChanged', 'extensions:onChanged'
 ]);
-export const SERVER_RUNTIME_PROTOCOL_VERSION = 15;
+export const SERVER_RUNTIME_PROTOCOL_VERSION = 16;
 const ServerRuntimeProtocolVersionSchema = z.literal(SERVER_RUNTIME_PROTOCOL_VERSION);
 const RequestIdSchema = z.string().uuid();
 const DeadlineSchema = z.string().datetime();
@@ -184,6 +184,102 @@ export const NativeToolPolicyDecisionSchema = z.discriminatedUnion('action', [
 export type NativeToolPolicyRequest = z.infer<typeof NativeToolPolicyRequestSchema>;
 export type NativeToolPolicyDecision = z.infer<typeof NativeToolPolicyDecisionSchema>;
 
+/** Main-attested request for one Modern squad participant. Never renderer input. */
+export const SquadMemberRuntimeRequestSchema = z.object({
+  bindingId: z.string().uuid(),
+  generation: z.number().int().min(1),
+  projectId: ProjectIdSchema,
+  teamId: z.string().min(1).max(256),
+  cohortId: z.string().uuid(),
+  executionId: z.string().min(1).max(256).optional(),
+  /** Main-resolved, realpath-confined shared worktree. Never renderer input. */
+  worktreePath: z.string().min(1).max(32_768).optional(),
+  hostId: z.string().uuid().optional(),
+  nativeToolPolicyRequired: z.boolean().optional(),
+  providerId: z.string().min(1).max(128),
+  role: z.enum(['worker', 'orchestrator']),
+  prompt: z.string().min(1).max(64 * 1024),
+  title: z.string().min(1).max(120),
+  model: z.string().min(1).max(256).optional(),
+  reasoningLevel: z.enum(['none', 'low', 'medium', 'high', 'xhigh', 'ultra', 'max', 'ultracode']).optional(),
+  permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional()
+}).strict();
+export type SquadMemberRuntimeRequest = z.infer<typeof SquadMemberRuntimeRequestSchema>;
+
+export const SquadMemberControlRequestSchema = z.object({
+  bindingId: z.string().uuid(),
+  generation: z.number().int().min(1),
+  projectId: ProjectIdSchema
+}).strict();
+export type SquadMemberControlRequest = z.infer<typeof SquadMemberControlRequestSchema>;
+
+export const SquadMemberStatusSchema = SquadMemberControlRequestSchema.extend({
+  live: z.boolean(),
+  status: z.enum(['starting', 'active', 'idle', 'stopping', 'error', 'stopped', 'unknown']),
+  hostOnline: z.boolean(),
+  providerStarted: z.boolean(),
+  eventSequence: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative()
+}).strict();
+export type SquadMemberStatus = z.infer<typeof SquadMemberStatusSchema>;
+
+export const SquadRuntimePreflightRequestSchema = z.object({
+  projectId: ProjectIdSchema,
+  hostId: z.string().uuid().optional(),
+  providerIds: z.array(z.string().min(1).max(128)).min(1).max(32),
+  selections: z.array(z.object({ providerId: z.string().min(1).max(128), model: z.string().min(1).max(256).optional(),
+    permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional() }).strict()).max(32).optional(),
+  nativeToolPolicyRequired: z.boolean().optional()
+}).strict();
+export type SquadRuntimePreflightRequest = z.infer<typeof SquadRuntimePreflightRequestSchema>;
+export const SquadRuntimePreflightResultSchema = z.object({
+  ready: z.boolean(),
+  hostId: z.string().uuid(),
+  policyInventoryReady: z.boolean(),
+  nativeToolPolicyRequired: z.boolean(),
+  nativeToolPolicyWired: z.boolean(),
+  reason: z.string().max(1024).optional(),
+  providers: z.array(z.object({
+    providerId: z.string().min(1).max(128),
+    available: z.boolean(),
+    reason: z.string().max(1024).optional()
+  }).strict()).max(32)
+}).strict();
+export type SquadRuntimePreflightResult = z.infer<typeof SquadRuntimePreflightResultSchema>;
+
+/** Main-attested assignment delivery. Acceptance never implies task completion. */
+export const SquadMemberDeliveryRequestSchema = SquadMemberControlRequestSchema.extend({
+  assignmentId: z.string().min(1).max(256),
+  idempotencyKey: z.string().min(1).max(256),
+  message: z.string().min(1).max(64 * 1024)
+}).strict();
+export type SquadMemberDeliveryRequest = z.infer<typeof SquadMemberDeliveryRequestSchema>;
+export const SquadMemberDeliveryResultSchema = SquadMemberControlRequestSchema.extend({
+  assignmentId: z.string().min(1).max(256),
+  idempotencyKey: z.string().min(1).max(256),
+  state: z.enum(['accepted', 'completed', 'uncertain', 'rejected']),
+  reason: z.string().max(1024).optional()
+}).strict();
+export type SquadMemberDeliveryResult = z.infer<typeof SquadMemberDeliveryResultSchema>;
+/** Main sends this only after its authenticated work report settles the ledger. */
+export const SquadMemberDeliveryCompletionSchema = SquadMemberControlRequestSchema.extend({
+  assignmentId: z.string().min(1).max(256),
+  idempotencyKey: z.string().min(1).max(256)
+}).strict();
+export type SquadMemberDeliveryCompletion = z.infer<typeof SquadMemberDeliveryCompletionSchema>;
+
+/** Authenticated development transport uses exactly the trusted IPC payloads. */
+export const SquadRuntimeOperationSchema = z.discriminatedUnion('operation', [
+  z.object({ operation: z.literal('squad-runtime-preflight'), request: SquadRuntimePreflightRequestSchema }).strict(),
+  z.object({ operation: z.literal('squad-member-create'), request: SquadMemberRuntimeRequestSchema }).strict(),
+  z.object({ operation: z.literal('squad-member-activate'), request: SquadMemberRuntimeRequestSchema }).strict(),
+  z.object({ operation: z.literal('squad-member-deliver'), request: SquadMemberDeliveryRequestSchema }).strict(),
+  z.object({ operation: z.literal('squad-member-delivery-complete'), request: SquadMemberDeliveryCompletionSchema }).strict(),
+  z.object({ operation: z.literal('squad-member-status'), request: SquadMemberControlRequestSchema }).strict(),
+  z.object({ operation: z.literal('squad-member-stop'), request: SquadMemberControlRequestSchema }).strict()
+]);
+export const SQUAD_RUNTIME_OPERATION_PATH = '/internal/main/squad-runtime';
+
 const ServerRuntimeRequestBaseSchema = z.object({
   type: z.literal('request'),
   protocolVersion: ServerRuntimeProtocolVersionSchema,
@@ -214,6 +310,34 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
     operation: z.literal('menubar-thread-open'),
     threadId: z.string().min(1).max(256),
     projectId: ProjectIdSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('squad-runtime-preflight'),
+    request: SquadRuntimePreflightRequestSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('squad-member-create'),
+    request: SquadMemberRuntimeRequestSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('squad-member-activate'),
+    request: SquadMemberRuntimeRequestSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('squad-member-deliver'),
+    request: SquadMemberDeliveryRequestSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('squad-member-delivery-complete'),
+    request: SquadMemberDeliveryCompletionSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('squad-member-status'),
+    request: SquadMemberControlRequestSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('squad-member-stop'),
+    request: SquadMemberControlRequestSchema
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('projects-update'),

@@ -3,7 +3,7 @@ import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
 import { registerSharedProduct } from './shared-product-registry.js';
 import { store } from '@zana-ai/zcc-server/services/projects/store';
-import { projectExecutionProjection, executionBoardProjection } from '@zana-ai/zcc-server/services/execution/projection';
+import { projectExecutionProjection, executionBoardProjection, modernExecutionMembers } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
 import { relaunchExecutionMonitor } from '@zana-ai/zcc-server/services/execution/relaunch-monitor';
 import { ExecutionSourceError } from '@zana-ai/zcc-server/services/execution/source-registry';
@@ -29,7 +29,7 @@ type ExecutionCaller = { kind: 'window'; window: BrowserWindow } | { kind: 'shar
 
 export function registerExecutionBoardIpc(): void {
   const { safeHandle, safeHandleFromWindow, ptys, teams, personas, windows,
-    executionStore, executionResumeTokens, executionSources, squadExecutionService,
+    executionStore, executionResumeTokens, executionSources, squadExecutionService, teamLifecycle,
     startTeamJobFromUi, getTeamLaunch, createTerminalConfined, exactNativeRecoveryAvailability, squadWorktreeAction } = ctx;
 
   // The product-server credential identifies the authenticated instance owner.
@@ -89,10 +89,13 @@ export function registerExecutionBoardIpc(): void {
       const project = store.listProjects().find((candidate) => candidate.id === projectId);
       if (!project) return { executions: [], hasMore: false };
       const page = await squadExecutionService.listProject(project.id, before, limit);
+      const modernMembers = modernExecutionMembers(await teamLifecycle.list(), project.id);
       const executions = projectExecutionProjection(page.records, ptys.list(project.id)).map((projection, index) => {
         const execution = withDesktopExactNativeAvailability(page.records[index]!, projection);
+        const members = modernMembers.get(execution.executionId);
         return {
           ...execution,
+          ...(members ? { modernMembers: members } : {}),
           hasResumeToken: executionResumeTokens.status(project.id, execution.executionId).state === 'available',
           teamName: (teams.list() as Team[]).find((team) => team.id === execution.teamId)?.name ?? execution.teamId
         };

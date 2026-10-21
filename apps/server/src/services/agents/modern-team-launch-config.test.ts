@@ -65,4 +65,17 @@ describe('Modern team-launch config source', () => {
     expect(mcpPortFileForDataDir('/tmp/.zcc-dev')).toBe('/tmp/.zcc-dev/electron-user-data/mcp-port-dev.json');
     expect(mcpPortFileForDataDir('/tmp/.zcc', '/tmp/user-data')).toBe('/tmp/user-data/mcp-port.json');
   });
+
+  it('passes async runtime member resolution into role-scoped tools', async () => {
+    const source = createModernTeamLaunchConfigSource({
+      getMcpBaseUrl: () => 'http://127.0.0.1:43123',
+      getAppConfig: () => ({ teamLaunchEnabled: true }),
+      resolveMember: async (threadId, projectId) => threadId === session.threadId && projectId === session.projectId
+        ? { bindingId: 'binding-1', generation: 1, role: 'worker', executionId: 'execution-1' } : undefined
+    });
+    const configured = await resolvePluginSessionTools([source], session);
+    expect(configured.tools.map((tool) => tool.name)).toContain('execution_work_claim');
+    expect(configured.tools.map((tool) => tool.name)).not.toContain('execution_start');
+    expect(configured.tools.map((tool) => tool.name)).not.toContain('launch_team');
+  });
 });

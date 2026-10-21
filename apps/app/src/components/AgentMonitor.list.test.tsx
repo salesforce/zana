@@ -3,12 +3,14 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { ThreadListItem } from '../thread-store.js';
+import type { ExecutionBoardProjection } from '@zana-ai/zcc-domain/product';
 import type { AgentCard } from './AgentBoard.js';
+import { withModernSquadMembers } from '../lib/modern-squad-members.js';
 
 vi.mock('../hooks/useCompactLayout.js', () => ({ useCompactLayout: () => true }));
 vi.mock('../views/threads/ThreadDetailView.js', () => ({ ThreadDetail: () => null }));
 vi.mock('./AgentSessionView.js', () => ({ AgentSessionView: () => null }));
-vi.mock('../lib/product-client.js', () => ({ product: { config: { set: vi.fn().mockResolvedValue({}) } } }));
+vi.mock('../lib/product-client.js', () => ({ product: { config: { set: vi.fn().mockResolvedValue({}) }, threads: { notificationLevel: vi.fn(() => new Promise(() => {})) } } }));
 
 import { AgentMonitor } from './AgentMonitor.js';
 import { agentFleetItem, threadFleetItem, type FleetItem } from './fleet-item.js';
@@ -120,4 +122,28 @@ it('skips project headers in a single-project scope', () => {
   const list = screen.getByRole('navigation', { name: 'Agents' });
   expect(list.querySelectorAll('[data-project-section]')).toHaveLength(0);
   expect(list.querySelectorAll('.agent-monitor-row-project')).toHaveLength(0);
+});
+
+it('groups Modern squad members into one team run and shows the member thread, not a PTY', () => {
+  useData.setState({ agentsListOrganization: 'team-run' });
+  const cards = withModernSquadMembers([thread('t-lead', 'a'), thread('t-work', 'a'), thread('solo', 'a')], [{
+    executionId: 'e-m', projectId: 'a', teamId: 'modern', teamName: 'Modern squad', jobTitle: 'Modern job',
+    state: 'RUNNING', attempt: 1, createdAt: NOW, updatedAt: NOW,
+    modernMembers: [
+      { threadId: 't-lead', slotId: 'orchestrator', personaId: 'lead', role: 'orchestrator', live: true },
+      { threadId: 't-work', slotId: 'writer', personaId: 'writer', role: 'worker', live: true }
+    ]
+  } as ExecutionBoardProjection]);
+  const { container } = render(monitor(cards));
+  const groups = [...container.querySelectorAll('.agent-monitor-group')] as HTMLElement[];
+  const squad = groups.find((group) => rowTitles(group).includes('Thread t-lead'))!;
+  expect(rowTitles(squad).sort()).toEqual(['Thread t-lead', 'Thread t-work']);
+  expect(rowTitles(groups.find((group) => group !== squad)!)).toEqual(['Thread solo']);
+  const member = screen.getByRole('button', { name: /Thread t-work/ });
+  expect(member.querySelector('.fleet-kind-chip')?.getAttribute('data-kind')).toBe('thread');
+  fireEvent.click(member);
+  expect(screen.getByTestId('agent-monitor-thread')).toBeTruthy();
+  expect(useUi.getState().agentMonitor).toBeNull();
+  fireEvent.contextMenu(member);
+  expect(document.querySelector('[data-testid="thread-context-menu"]')).toBeTruthy();
 });

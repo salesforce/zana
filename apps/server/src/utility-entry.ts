@@ -32,6 +32,7 @@ import { createModernTeamLaunchConfigSource } from './services/agents/modern-tea
 import { createRuntimeMcpConfig } from './services/agents/runtime-mcp-config.js';
 import { isThreadLiveInProject } from './services/agents/thread-liveness.js';
 import { getConversationThread } from '@zana-ai/zcc-db';
+import { activateSquadMemberConversation, completeSquadMemberDelivery, createSquadMemberConversation, deliverSquadMemberConversation, preflightSquadRuntime, resolveSquadMember, squadMemberStatus, stopSquadMemberConversation } from './services/threads/squad-member-runtime.js';
 import type { ZccDatabase } from '@zana-ai/zcc-db';
 import type { PluginService } from './plugins/plugin-service.js';
 import { decideMainOwnedToolPolicy } from './plugins/native-tool-policy.js';
@@ -120,8 +121,9 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
         hub: product.hub,
         viewContext: product
       });
-      disposeMenubarThreadHints = product.hub.subscribe('threads:updated', () => {
-        if (menubarThreadHintTimer) clearTimeout(menubarThreadHintTimer);
+      const hintThreadsChanged = () => {
+        // Leading bounded coalescing: steady streaming must not starve lease progress.
+        if (menubarThreadHintTimer) return;
         menubarThreadHintTimer = setTimeout(() => {
           menubarThreadHintTimer = null;
           parentPort.postMessage({
@@ -129,11 +131,15 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
             protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION
           });
         }, 100);
-      });
+      };
+      const disposeStatusHints = product.hub.subscribe('threads:updated', hintThreadsChanged);
+      const disposeProgressHints = product.hub.subscribe('threads:event', hintThreadsChanged);
+      disposeMenubarThreadHints = () => { disposeStatusHints(); disposeProgressHints(); };
       plugins = createAttachedProductPluginService(product, {
         bundledRoot: bundledPluginsRootFromDataDir(message.dataDir, message.bundledPluginsRoot),
         hostAgentToolSource: createModernTeamLaunchConfigSource({
           getMcpBaseUrl: () => runtimeMcpConfig.get().mcpBaseUrl,
+          resolveMember: (threadId, projectId) => resolveSquadMember(product, threadId, projectId),
           getAppConfig: () => runtimeMcpConfig.get()
         }),
         onAgentCapabilitiesChanged: (contributors) => {
@@ -279,6 +285,42 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
         live = false;
       }
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: live });
+    }
+    if (message.operation === 'squad-runtime-preflight') {
+      if (!productContext) throw new Error('squad member runtime is unavailable');
+      const value = await preflightSquadRuntime(productContext, message.request);
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value });
+    }
+    if (message.operation === 'squad-member-create') {
+      if (!productContext) throw new Error('squad member runtime is unavailable');
+      const value = await createSquadMemberConversation(productContext, message.request);
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value });
+    }
+    if (message.operation === 'squad-member-activate') {
+      if (!productContext) throw new Error('squad member runtime is unavailable');
+      const value = await activateSquadMemberConversation(productContext, message.request);
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value });
+    }
+    if (message.operation === 'squad-member-deliver') {
+      if (!productContext) throw new Error('squad member runtime is unavailable');
+      const value = await deliverSquadMemberConversation(productContext, message.request);
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value });
+    }
+    if (message.operation === 'squad-member-delivery-complete') {
+      if (!productContext) throw new Error('squad member runtime is unavailable');
+      const value = completeSquadMemberDelivery(productContext, message.request);
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value });
+    }
+    if (message.operation === 'squad-member-status') {
+      if (!productContext) throw new Error('squad member runtime is unavailable');
+      const value = squadMemberStatus(productContext, message.request);
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value });
+    }
+    if (message.operation === 'squad-member-stop') {
+      const value = productContext
+        ? await stopSquadMemberConversation(productContext, message.request)
+        : false;
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value });
     }
     if (message.operation === 'menubar-threads-list') {
       const agents = menubarThreads?.list(message.limit) ?? [];

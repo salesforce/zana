@@ -13,6 +13,7 @@ import {
   listHosts,
   updateEnvironmentDiscovery,
   updateEnvironmentStatus,
+  updateConversationThreadStatus,
   setConversationProviderThreadId,
   type ConversationThreadRow,
   type EnvironmentRow
@@ -74,6 +75,7 @@ import {
 import { derivedProviderOptionsForCommand } from './derived-provider-options.js';
 import { recordThreadExecutionMode } from './conversation-plan.js';
 import { persistConversationPluginMetadataSeed } from './conversation-plugin-metadata.js';
+import { realpath } from 'node:fs/promises';
 
 export {
   conversationThreadView,
@@ -170,6 +172,7 @@ async function startConversationOnHost(
     input: CreateConversationInput;
     remoteToolProxy: boolean;
     dropCwd?: boolean;
+    beforeStart?: () => void;
   }
 ): Promise<{ permissionMode: string }> {
   const providerId = canonicalThreadProviderId(args.input.providerId);
@@ -214,6 +217,7 @@ async function startConversationOnHost(
     plugins: ctx.plugins
   });
   args.lease.assertCurrent();
+  args.beforeStart?.();
   const clientRequestId = appendClientTurnRequested(ctx, {
     threadId: args.thread.id,
     prompt: args.prompt,
@@ -303,10 +307,26 @@ async function startConversationOnHost(
   return { permissionMode };
 }
 
+const RESERVED_SQUAD_ORIGINS = new Set(['host-modern-squad', '.host-modern-squad']);
+function isReservedOriginPluginId(id: string | null | undefined): boolean {
+  return typeof id === 'string' && (id.startsWith('.') || RESERVED_SQUAD_ORIGINS.has(id));
+}
+
 export async function createConversationFromRequest(
   ctx: ProductHttpContext,
-  input: CreateConversationInput
+  input: CreateConversationInput,
+  authorizedContext?: { source: 'main-authorized'; projectId: string; hostId?: string; environmentPath?: string; onCreated?: (thread: ConversationThreadRow) => void; prepareOnly?: boolean }
 ): Promise<ConversationThreadRow> {
+  // This separate argument is never populated from a renderer request body.
+  if (authorizedContext && (authorizedContext.source !== 'main-authorized' || authorizedContext.projectId !== input.projectId)) {
+    throw new ThreadCreateError(403, 'invalid-authorized-context', 'authorized project mismatch');
+  }
+  // Both squad namespaces (public origin and the private dot-prefixed metadata
+  // namespace) and any dot-prefixed id are host-reserved. Do not rely solely on
+  // pluginIdSchema rejecting a leading '.'.
+  if (!authorizedContext && isReservedOriginPluginId(input.originPluginId)) {
+    throw new ThreadCreateError(403, 'invalid-authorized-context', 'squad bindings require main authorization');
+  }
   if (!input.projectId) {
     throw new ThreadCreateError(400, 'invalid-project', 'projectId is required');
   }
@@ -349,6 +369,9 @@ export async function createConversationFromRequest(
       hostId = ctx.hostHub.resolveHostId(input.hostId ?? project.hostId ?? primary?.id);
     }
     ctx.hostHub.ensureHostSessionReady(hostId);
+    if (authorizedContext?.hostId && authorizedContext.hostId !== hostId) {
+      throw new ThreadCreateError(403, 'host-workspace-mismatch', 'authorized host mismatch');
+    }
     project = projectOnHost(project, hostId, primary?.id);
     workspacePath = await resolveHarnessWorkspacePath({
       project,
@@ -367,6 +390,16 @@ export async function createConversationFromRequest(
     if (error instanceof ProjectSourceUnavailableError) throw new ThreadCreateError(400, 'host-workspace-mismatch', error.message);
     if (error instanceof ThreadCreateError) throw error;
     throw mapHostError(error);
+  }
+
+  if (authorizedContext?.environmentPath) {
+    if (project.remote || remoteToolProxy || (primary && hostId !== primary.id) || input.environment || input.checkout) {
+      throw new ThreadCreateError(403, 'host-workspace-mismatch', 'authorized worktree requires the local project host');
+    }
+    // Main confined this path. Attach it as the environment, not merely a cwd
+    // override: the host validates thread.start cwd against its environment.
+    workspacePath = await realpath(authorizedContext.environmentPath);
+    input = { ...input, cwd: workspacePath };
   }
 
   resolvedPromptInput = await normalizePortableAttachments(ctx, resolvedPromptInput, input.projectId, hostId);
@@ -441,19 +474,23 @@ export async function createConversationFromRequest(
     // re-attach unmanaged (provision is realpath + discover). Managed worktrees
     // stay skip-if-ready because re-provision is not idempotent.
     const needsHostAttach = !canReuseReady || existing.workspaceProvisionType === 'unmanaged';
-    const thread = createConversationThread(ctx.db, {
-      id: requestedId,
-      projectId: project.id,
-      hostId,
-      environmentId: existing.id,
-      providerId,
-      title: threadTitle(input, textPrompt),
-      status: 'starting',
-      parentThreadId: input.parentThreadId ?? null,
-      visibility: input.visibility,
-      originPluginId: input.originPluginId ?? null
+    const thread = ctx.db.transaction(() => {
+      const thread = createConversationThread(ctx.db, {
+        id: requestedId,
+        projectId: project.id,
+        hostId,
+        environmentId: existing.id,
+        providerId,
+        title: threadTitle(input, textPrompt),
+        status: 'starting',
+        parentThreadId: input.parentThreadId ?? null,
+        visibility: input.visibility,
+        originPluginId: input.originPluginId ?? null
+      });
+      persistConversationPluginMetadataSeed(ctx.db, thread.id, input);
+      authorizedContext?.onCreated?.(thread);
+      return thread;
     });
-    persistConversationPluginMetadataSeed(ctx.db, thread.id, input);
     emitPluginThreadEvent(ctx, {
       name: 'thread.created',
       threadId: thread.id,
@@ -484,6 +521,10 @@ export async function createConversationFromRequest(
           });
         }
         lease.assertCurrent();
+        if (authorizedContext?.prepareOnly) {
+          updateConversationThreadStatus(ctx.db, thread.id, 'idle');
+          return getConversationThread(ctx.db, thread.id)!;
+        }
         const launch = await startConversationOnHost(ctx, {
           lease, hostId, project, thread, prompt: textPrompt, hostPrompt: prompt, environmentId: existing.id, input: { ...input, promptInput: resolvedPromptInput }, remoteToolProxy, dropCwd
         });
@@ -560,6 +601,7 @@ export async function createConversationFromRequest(
         originPluginId: input.originPluginId ?? null
       });
       persistConversationPluginMetadataSeed(ctx.db, thread.id, input);
+      authorizedContext?.onCreated?.(thread);
       emitPluginThreadEvent(ctx, {
         name: 'thread.created',
         threadId: thread.id,
@@ -578,19 +620,23 @@ export async function createConversationFromRequest(
     const existing = path ? findProjectEnvironmentByHostPath(ctx.db, project.id, hostId, path) : null;
     if (!existing) throw error;
     choice = { kind: 'reuse', environmentId: existing.id };
-    const thread = createConversationThread(ctx.db, {
-      id: requestedId,
-      projectId: project.id,
-      hostId,
-      environmentId: existing.id,
-      providerId,
-      title: threadTitle(input, textPrompt),
-      status: 'starting',
-      parentThreadId: input.parentThreadId ?? null,
-      visibility: input.visibility,
-      originPluginId: input.originPluginId ?? null
+    const thread = ctx.db.transaction(() => {
+      const thread = createConversationThread(ctx.db, {
+        id: requestedId,
+        projectId: project.id,
+        hostId,
+        environmentId: existing.id,
+        providerId,
+        title: threadTitle(input, textPrompt),
+        status: 'starting',
+        parentThreadId: input.parentThreadId ?? null,
+        visibility: input.visibility,
+        originPluginId: input.originPluginId ?? null
+      });
+      persistConversationPluginMetadataSeed(ctx.db, thread.id, input);
+      authorizedContext?.onCreated?.(thread);
+      return thread;
     });
-    persistConversationPluginMetadataSeed(ctx.db, thread.id, input);
     emitPluginThreadEvent(ctx, {
       name: 'thread.created',
       threadId: thread.id,
@@ -622,6 +668,10 @@ export async function createConversationFromRequest(
         mergeBaseBranch: provisioned.defaultBranch
       });
       lease.assertCurrent();
+      if (authorizedContext?.prepareOnly) {
+        updateConversationThreadStatus(ctx.db, created.thread.id, 'idle');
+        return getConversationThread(ctx.db, created.thread.id)!;
+      }
       const launch = await startConversationOnHost(ctx, {
         lease,
         hostId,
@@ -661,6 +711,28 @@ export async function createConversationFromRequest(
     if (error instanceof ThreadCreateError) throw error;
       throw mapHostError(error);
     }
+  });
+}
+
+/** Trusted prepare/activate boundary. Public create never defers its first turn. */
+export async function activatePreparedConversation(ctx: ProductHttpContext, input: CreateConversationInput, beforeStart: () => void): Promise<void> {
+  const thread = getConversationThread(ctx.db, input.id!);
+  const project = requireProject(ctx, input.projectId);
+  if (!thread?.environmentId || thread.projectId !== input.projectId || thread.status !== 'idle' || thread.providerThreadId) {
+    throw new Error('prepared squad member cannot activate');
+  }
+  await withConversationSend(ctx.db, thread.id, async lease => {
+    beforeStart();
+    const launch = await startConversationOnHost(ctx, { lease, hostId: thread.hostId, project, thread,
+      prompt: input.input, hostPrompt: input.promptInput as PromptInput[], environmentId: thread.environmentId!, input,
+      remoteToolProxy: false, beforeStart });
+    lease.assertCurrent();
+    const outcome = applyLoggedConversationLifecycleEvent(ctx, { threadId: thread.id, event: { type: 'run.started' } });
+    if (!outcome.applied) throw new Error('prepared squad member activation transition failed');
+    const running = outcome.thread;
+    ctx.hub.emit('threads:updated', conversationThreadView(ctx, running));
+    emitPluginThreadEvent(ctx, { name: 'thread.active', threadId: thread.id, projectId: thread.projectId,
+      providerId: thread.providerId, executionState: launch.permissionMode });
   });
 }
 

@@ -22,6 +22,7 @@ import { ComposerPromptField } from './composer/ComposerPromptField.js';
 import { useComposerPromptField } from './composer/use-composer-prompt-field.js';
 import { useComposerSession, useComposerSetting } from './composer/ComposerDraft.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
+import { squadPicklistOption } from './SquadTransportChip.js';
 import { defaultAutonomousTeamId } from './autonomous-team-composer.js';
 import {
   assembleCliLaunchPrompt,
@@ -354,11 +355,7 @@ export function TeamComposer({
                     ariaLabel="Squad"
                     placeholder="Select a squad"
                     searchable={teams.length > 6}
-                    options={teams.map((team) => ({
-                      value: team.id,
-                      label: team.name,
-                      ...(team.description ? { description: team.description } : {})
-                    }))}
+                    options={teams.map((team) => squadPicklistOption(team, { withDescription: true }))}
                     onChange={setTeamId}
                     disabled={teams.length === 0}
                     emptyHint="No squads configured"

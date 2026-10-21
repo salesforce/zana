@@ -20,6 +20,8 @@ export interface ThreadListItem {
   /** Hidden threads (side-panel assistants, side-chat forks) never join the roster. */
   visibility?: 'visible' | 'hidden';
   parentThreadId?: string | null;
+  /** Creating plugin/host origin; Modern squad members carry the host-reserved squad origin. */
+  originPluginId?: string | null;
   hasPendingInteraction?: boolean;
   lastReadSeq?: number | null;
   maxSeq?: number;

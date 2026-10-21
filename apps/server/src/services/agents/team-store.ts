@@ -15,7 +15,7 @@ import {
   type FSWatcher
 } from 'node:fs';
 import { join } from 'node:path';
-import type { Project, Team, TeamSlot } from '@zana-ai/zcc-domain/product';
+import type { Project, SquadTransport, Team, TeamSlot } from '@zana-ai/zcc-domain/product';
 import type { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-team-registry.js';
 import { uniqueCopyName } from '../projects/unique-copy-name.js';
 
@@ -87,6 +87,7 @@ export function sanitizeTeam(raw: unknown): Team | null {
     });
   }
 
+  const transport: SquadTransport = r.transport === 'MODERN' ? 'MODERN' : 'CLI';
   return {
     id: r.id.trim(),
     name: r.name.trim(),
@@ -103,7 +104,8 @@ export function sanitizeTeam(raw: unknown): Team | null {
         : undefined,
     initialPrompt: typeof r.initialPrompt === 'string' ? r.initialPrompt : undefined,
     worktreeIsolation: typeof r.worktreeIsolation === 'boolean' ? r.worktreeIsolation : undefined,
-    routingEnforced: typeof r.routingEnforced === 'boolean' ? r.routingEnforced : undefined
+    routingEnforced: typeof r.routingEnforced === 'boolean' ? r.routingEnforced : undefined,
+    transport
   };
 }
 

@@ -49,6 +49,23 @@ describe('matchMcpRoute', () => {
     });
   });
 
+  it('captures an encoded Modern member binding and generation separately from args', () => {
+    expect(matchMcpRoute('/mcp/proj-1/thread-1/credential/member/binding%2F1/3?generation=9')).toEqual({
+      projectId: 'proj-1', sessionId: 'thread-1', sessionCredential: 'credential',
+      memberFence: { bindingId: 'binding/1', generation: 3 }
+    });
+  });
+
+  it.each(['0', '-1', '1.5', '01', '9007199254740992', '%FF'])('rejects invalid member generation %s', (generation) => {
+    expect(matchMcpRoute(`/mcp/p/t/c/member/b/${generation}`)).toBeNull();
+  });
+
+  it('rejects incomplete, malformed, or extra member route segments', () => {
+    for (const route of ['/mcp/p/t/member/b/1', '/mcp/p/t/c/member/b', '/mcp/p/t/c/member/%FF/1', '/mcp/p/t/c/member/b/1/extra']) {
+      expect(matchMcpRoute(route)).toBeNull();
+    }
+  });
+
   it('rejects a bare /mcp with no project', () => {
     expect(matchMcpRoute('/mcp')).toBeNull();
     expect(matchMcpRoute('/mcp/')).toBeNull();

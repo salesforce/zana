@@ -8,6 +8,7 @@ import type { ProductHttpContext } from './http/product-context.js';
 import { createProductWebSocketServer, handleProductUpgrade } from './http/product-ws.js';
 import { createHostDaemonWebSocketServer, handleHostInternalHttp, handleHostInternalUpgrade } from './http/host-internal.js';
 import { handleInstallHttp } from './http/install-http.js';
+import { handleMainSquadRuntimeHttp } from './services/threads/squad-member-runtime.js';
 import { startPairingForwarder, type PairingForwarder } from './http/pairing-forwarder.js';
 import { PLUGIN_ASSET_PATH, tryServePluginAsset } from './http/plugin-assets.js';
 import { videoByteRange } from './http/video-preview.js';
@@ -177,6 +178,9 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
       trackResponseStart(options.diagnostics, request, response);
     }
     if (options.product && await handleHostInternalHttp(request, response, options.product)) {
+      return;
+    }
+    if (options.product && await handleMainSquadRuntimeHttp(request, response, options.product)) {
       return;
     }
     if (options.product && await handleInstallHttp(request, response, options.product)) {

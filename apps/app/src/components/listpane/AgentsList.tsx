@@ -2,19 +2,21 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, typ
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Bot, Crown, PanelRight, Plus, Sparkles, Users } from 'lucide-react';
 import type { AgentState, ExecutionBoardProjection, IdleTriageResult, TerminalSession } from '@zana-ai/zcc-domain/product';
-import { useData, useUi, useAgentStatus, useIdleTriage, openWhatsNewAll } from '@/store';
+import { useData, useUi, useAgentStatus, useIdleTriage, useTeams, usePersonas, openWhatsNewAll } from '@/store';
 import { useThreads, type ThreadListItem } from '@/thread-store';
 import { useEnsureThreads } from '@/hooks/useEnsureThreads';
-import { getAgentSessionRoutePath, sessionIdFromPath, threadIdFromPath } from '@/lib/route-paths';
+import { getAgentSessionRoutePath, getThreadRoutePath, sessionIdFromPath, threadIdFromPath } from '@/lib/route-paths';
 import { getScopedProjectId } from '@/lib/windowScope';
 import { profileIcon } from '@/lib/profileIcon';
 import { isRecentlyFinished } from '@/lib/sessionBuckets';
 import { idleSurfacesToNeedsYou, partitionSquadMembers, executionNeedsAttention, type AgentCard } from '@/components/AgentBoard';
+import { modernMemberCards } from '@/lib/modern-squad-members';
 import { AgentLauncher } from '@/components/AgentLauncher';
 import { ExecutionJobDetails } from '@/components/ExecutionJobDetails';
 import { ThreadListEntry } from '@/components/ThreadListEntry';
 import { FleetKindChip } from '@/components/FleetKindChip';
-import { isVisibleThread } from '@/components/fleet-item';
+import { agentSessionTransport, squadTransportClass, squadTransportKind } from '@/lib/squad-transport';
+import { isVisibleThread, threadFleetItem } from '@/components/fleet-item';
 import { threadStatusToAgentState } from '@/components/thread/thread-timeline-model';
 import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from '@/components/agentCardActions';
 import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from '@/components/threadCardActions';
@@ -47,6 +49,10 @@ interface AgentRow {
   triage?: IdleTriageResult;
   /** Durable Job projection when this row is (or hosts) an execution-backed cohort. */
   execution?: ExecutionBoardProjection;
+  /** Modern squad member: an ACP thread carrying its squad's cohort stamp. */
+  modernThreadId?: string;
+  /** The member's thread row, when listed, for thread-native actions. */
+  modernThread?: ThreadListItem;
 }
 
 // Display priority: who needs attention first. Mirrors AGENT_STATE_RANK in the
@@ -266,7 +272,8 @@ function executionRowHost(member: AgentRow | undefined, execution: ExecutionBoar
       id: synthetic ? `execution:${execution.executionId}` : session.id,
       title: displayTitle,
       status: terminal ? 'exited' : 'running',
-      headless: synthetic || session.headless,
+      // A live Modern squad's host is synthetic (no PTY) but still foreground work.
+      headless: (synthetic && !execution.modernMembers?.some((member) => member.live)) || session.headless,
       cohort: {
         ...(session.cohort ?? { cohortId: execution.executionId, teamId: execution.teamId ?? 'execution', teamName: execution.teamName ?? 'Team', role: 'orchestrator' }),
         executionId: execution.executionId,
@@ -350,9 +357,23 @@ export function AgentsListPane() {
   // Fold each row's live execution (if its cohort names one) in, and promote its
   // host row to `blocked` when the Job needs a response — mirrors the board's
   // own `executionRowHost`/`executionNeedsAttention` promotion.
+  // Modern squad members are ACP threads with no PTY cohort stamp; main's
+  // projection names them, so they become worker rows under their Job and
+  // drop out of the plain thread list.
+  const personas = usePersonas((s) => s.personas);
+  const modern = useMemo(() => {
+    const nameById = new Map(projects.map((p) => [p.id, p.name]));
+    const items = threads.map((thread) => threadFleetItem(thread, { name: nameById.get(thread.projectId) ?? 'Unknown' }));
+    return modernMemberCards(executions, items, personas);
+  }, [executions, threads, projects, personas]);
+
   const executionRows = useMemo(() => {
     const byExecutionId = new Map(executions.map((execution) => [execution.executionId, execution]));
-    return rows.map((row) => {
+    const modernRows: AgentRow[] = modern.cards.map((card) => ({
+      session: card.session, projectId: card.projectId, projectName: card.projectName, state: card.state,
+      modernThreadId: card.modernThreadId, ...(card.modernThread ? { modernThread: card.modernThread } : {})
+    }));
+    return [...rows, ...modernRows].map((row) => {
       const executionId = row.session.cohort?.executionId;
       const execution = executionId ? byExecutionId.get(executionId) : undefined;
       if (!execution) return row;
@@ -363,7 +384,7 @@ export function AgentsListPane() {
         state: (needsAttention && row.session.cohort?.role === 'orchestrator') ? 'blocked' as const : row.state
       };
     });
-  }, [rows, executions]);
+  }, [rows, executions, modern]);
 
   // A Job-backed row opens the Job details drawer — the shared inspector Job
   // members (and needsAttention prompts) route through. Plain agent rows
@@ -387,6 +408,12 @@ export function AgentsListPane() {
 
   const onRowContextMenu = (e: MouseEvent, r: AgentRow) => {
     e.preventDefault();
+    // A Modern squad member is a thread; PTY actions would target nothing.
+    if (r.modernThreadId) {
+      setMenu(null);
+      if (r.modernThread) openThreadMenu(e, r.modernThread, setThreadMenu);
+      return;
+    }
     setThreadMenu(null);
     setMenu({ card: rowToCard(r), ...clampMenuAnchor(e) });
   };
@@ -442,9 +469,10 @@ export function AgentsListPane() {
   const visibleThreads = useMemo(
     () =>
       threads.filter(
-        (thread) => isVisibleThread(thread) && (!scopedProjectId || thread.projectId === scopedProjectId)
+        (thread) => isVisibleThread(thread) && !modern.folded.has(thread.id)
+          && (!scopedProjectId || thread.projectId === scopedProjectId)
       ),
-    [threads, scopedProjectId]
+    [threads, scopedProjectId, modern]
   );
 
   const pinnedThreads = visibleThreads.filter((thread) => thread.pinnedAt != null);
@@ -719,7 +747,7 @@ function AgentWorkerRow({
   const exited = t.status === 'exited';
   const dur = formatDuration((exited ? t.finishedAt ?? t.createdAt : now) - t.createdAt);
   const label = t.cohort?.slotLabel || t.title;
-  const isJob = !!t.cohort?.executionId;
+  const isJob = !!t.cohort?.executionId && !row.modernThreadId;
   const { onPointerDown, openInSplit, consumeClick } = usePaneContentSplitDrag({
     content: { kind: 'agent-session', projectId: scopedProjectId, sessionId: t.id },
     title: t.title
@@ -727,7 +755,7 @@ function AgentWorkerRow({
   return (
     <button
       type="button"
-      className={`agents-worker-row ${active ? 'active' : ''} ${exited ? 'exited' : ''}`}
+      className={`agents-worker-row ${active ? 'active' : ''} ${exited ? 'exited' : ''}${row.modernThreadId ? ' is-modern' : ''}`}
       data-kind="agent"
       onPointerDown={onPointerDown}
       onClick={(e) => {
@@ -742,6 +770,10 @@ function AgentWorkerRow({
           openInSplit();
           return;
         }
+        if (row.modernThreadId) {
+          navigate(getThreadRoutePath(row.modernThreadId, scopedProjectId));
+          return;
+        }
         navigate(getAgentSessionRoutePath(t.id, scopedProjectId));
       }}
       onContextMenu={(e) => onContextMenu(e, row)}
@@ -750,6 +782,7 @@ function AgentWorkerRow({
     >
       <span className={`tab-agent-dot agent-${exited ? 'done' : row.state}`} aria-hidden="true" />
       <span className="agents-worker-title">{label}</span>
+      <FleetKindChip kind={row.modernThreadId ? 'thread' : 'agent'} />
       {t.cohort?.role === 'worker' && (
         <span title="Worker">
           <Users size={10} className="agents-worker-role-icon" style={{ marginLeft: 4, opacity: 0.6 }} />
@@ -786,6 +819,10 @@ function AgentSideListRow({
   const dur = formatDuration((exited ? t.finishedAt ?? t.createdAt : now) - t.createdAt);
   const isOrch = t.cohort?.role === 'orchestrator';
   const isJob = !!t.cohort?.executionId;
+  const teams = useTeams((s) => s.teams);
+  // Live sessions are CLI agents; Modern member rows are Modern; a synthetic Job
+  // host takes its squad's transport.
+  const transport = agentSessionTransport(t, teams, undefined, Boolean(row.modernThreadId));
   const { onPointerDown, openInSplit, consumeClick } = usePaneContentSplitDrag({
     content: { kind: 'agent-session', projectId: scopedProjectId, sessionId: t.id },
     title: t.title
@@ -800,8 +837,9 @@ function AgentSideListRow({
       type="button"
       className={`agents-row ${active ? 'active' : ''} ${exited ? 'exited' : ''} ${
         isOrch && workers.length ? 'is-squad-orch' : ''
-      }`}
-      data-kind="agent"
+      } ${t.cohort ? squadTransportClass(transport) : ''}`}
+      data-kind={squadTransportKind(transport)}
+      data-squad-transport={t.cohort ? transport : undefined}
       onPointerDown={onPointerDown}
       onClick={(e) => {
         if (consumeClick()) return;
@@ -836,7 +874,7 @@ function AgentSideListRow({
               <Users size={12} className="agents-row-role-icon" style={{ marginLeft: 4, opacity: 0.6 }} />
             </span>
           )}
-          <FleetKindChip kind="agent" />
+          <FleetKindChip kind={squadTransportKind(transport)} />
           {indicator.miniMap ? (
             <SplitPaneMiniMap slots={indicator.miniMap} label="Split position" />
           ) : null}

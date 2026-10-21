@@ -12,16 +12,16 @@
  * forward each call over loopback HTTP to Electron-main's MCP route
  * `/mcp/:projectId/:sessionId/:credential`. The route already performs ALL
  * authorization (route identity, the authorize→launch handshake, per-slot
- * checks); this module adds no new trust logic of its own.
+ * checks). Members use a generation-fenced route with role-scoped execution
+ * verbs, never the owner launch surface.
  *
  * Trust boundary: identity (`projectId`, the thread id used as `sessionId`) is
  * taken from the tool `ctx`, never from agent input — the same rule the pty
  * route enforces. The session credential is minted here from the shared signing
  * key (`controlCredentialForSession`), which only proves "a trusted local
  * process is calling"; liveness/authorization of the ACP thread as a launcher
- * is decided authoritatively by Electron-main's `validateTeamRouteIdentity`
- * (extended separately). Until that extension lands, the route rejects the ACP
- * thread and these tools return a clean error — this module is inert on its own.
+ * is decided authoritatively by Electron-main's route gates and lifecycle
+ * binding resolver. No credentialed MCP URL is exposed to the ACP client.
  *
  * Visibility is gated independently: `teamLaunchEnabled` hides `launch_team`
  * siblings; `teamJobLaunchEnabled` hides owner execution verbs. Either set is
@@ -33,6 +33,7 @@ import type { PluginAgentToolContext } from '@zana-ai/zcc-plugin-sdk/server';
 import { jsonSchemaAgentToolRecord } from '@zana-ai/zcc-plugin-sdk/internal/host-policy';
 import { LAUNCH_TEAM_DESCRIPTION } from './launch-team-mcp-tool.js';
 import type { PluginAgentToolSource } from '../../plugins/plugin-agent-tools.js';
+import { EXECUTION_MEMBER_TOOL_NAMES, getExecutionToolDescriptors, type ExecutionMemberFence } from '../execution/execution-mcp-tool.js';
 
 /** Internal, colon-free id (kept out of the wire `PluginIdSchema` surface). */
 export const MODERN_TEAM_LAUNCH_PLUGIN_ID = 'host-team-launch';
@@ -76,10 +77,17 @@ export interface CallMcpToolArgs {
 export interface ModernTeamLaunchSourceDeps {
   /** Read the live config each call (mcpBaseUrl arrives post-boot). */
   getConfig: () => ModernTeamLaunchConfig;
+  /** Host-attested thread metadata. Members never inherit owner launch tools. */
+  resolveMember?: (threadId: string, projectId: string) => ModernTeamMember | undefined | Promise<ModernTeamMember | undefined>;
   /** Mint the session control credential; defaults to the shared signer. */
   credentialFor?: (sessionId: string) => string;
   /** Perform the loopback MCP `tools/call`; injectable for tests. */
   callMcpTool?: (args: CallMcpToolArgs) => Promise<{ ok: boolean; text: string }>;
+}
+
+export interface ModernTeamMember extends ExecutionMemberFence {
+  role: 'worker' | 'orchestrator';
+  executionId?: string;
 }
 
 interface ToolDef {
@@ -126,6 +134,7 @@ const TOOL_DEFS: readonly ToolDef[] = [
         deadlineMs: { type: 'number' },
         maxConcurrent: { type: 'number' },
         maxLaunches: { type: 'number' },
+        admissionDigest: { type: 'string', description: 'Admission digest returned by authorization.' },
         slots: {
           type: 'array',
           items: {
@@ -167,74 +176,26 @@ const TOOL_DEFS: readonly ToolDef[] = [
   }
 ];
 
-const OWNER_START_SCHEMA = {
-  type: 'object',
-  properties: {
-    requestPath: { type: 'string', description: 'Absolute path of a one-shot execution.start request file.' },
-    version: { type: 'number' },
-    teamId: { type: 'string' },
-    launchRequestId: { type: 'string' },
-    jobTitle: { type: 'string' },
-    summary: { type: 'string' },
-    deadlineMs: { type: 'number' },
-    maxConcurrent: { type: 'number' },
-    maxLaunches: { type: 'number' },
-    workflow: { type: 'object' },
-    workUnits: { type: 'array', items: { type: 'object' } },
-    slots: { type: 'array', items: { type: 'object' } }
-  },
-  required: ['version', 'teamId', 'launchRequestId', 'slots']
-};
-
-const OWNER_SNAPSHOT_SCHEMA = {
-  type: 'object',
-  properties: {
-    executionId: { type: 'string' },
-    after: { type: 'number' }
-  },
-  required: ['executionId']
-};
-
-const OWNER_RESUME_SCHEMA = {
-  type: 'object',
-  properties: {
-    executionId: { type: 'string' },
-    token: { type: 'string' }
-  },
-  required: ['executionId', 'token']
-};
-
-const OWNER_EXECUTION_TOOL_DEFS: readonly ToolDef[] = [
-  {
-    name: 'execution_start',
-    mcpName: 'execution.start',
-    description: 'Start one execution in this live session project. Pass either full request fields or a bounded requestPath. Main authorizes launch slots and stores launch identity before launch.',
-    inputSchema: OWNER_START_SCHEMA
-  },
-  {
-    name: 'execution_snapshot',
-    mcpName: 'execution.snapshot',
-    description: 'Read one bounded durable execution snapshot. Does not reconcile or poll Team workers.',
-    inputSchema: OWNER_SNAPSHOT_SCHEMA
-  },
-  {
-    name: 'execution_resume_binding',
-    mcpName: 'execution.resume_binding',
-    description: 'Bind this fresh session to an execution using a durable resume grant. Retry same token after a transient binding failure.',
-    inputSchema: OWNER_RESUME_SCHEMA
-  }
-];
+const OWNER_EXECUTION_TOOL_DEFS: readonly ToolDef[] = MODERN_OWNER_EXECUTION_TOOL_NAMES.map((name) => {
+  const descriptor = getExecutionToolDescriptors().find((tool) => tool.name.replaceAll('.', '_') === name)!;
+  return { name, mcpName: descriptor.name, description: descriptor.description, inputSchema: descriptor.inputSchema };
+});
 
 // Single source of truth for which verbs are owner-execution tools — derived
 // from the tool defs above so a new owner verb can't drift out of the gate.
 const OWNER_EXECUTION_MCP_NAMES: ReadonlySet<string> = new Set(
   OWNER_EXECUTION_TOOL_DEFS.map((def) => def.mcpName ?? def.name)
 );
+const MAX_CONFIGURED_MEMBERS = 1024;
 
 /** Build the credentialed loopback MCP route for one thread's tool call. */
 export function modernTeamLaunchRoute(base: string, projectId: string, threadId: string, credential: string): string {
   const trimmed = base.replace(/\/+$/, '');
   return `${trimmed}/mcp/${encodeURIComponent(projectId)}/${encodeURIComponent(threadId)}/${encodeURIComponent(credential)}`;
+}
+
+export function modernTeamMemberRoute(base: string, projectId: string, threadId: string, credential: string, member: ExecutionMemberFence): string {
+  return `${modernTeamLaunchRoute(base, projectId, threadId, credential)}/member/${encodeURIComponent(member.bindingId)}/${member.generation}`;
 }
 
 function extractText(result: unknown): string {
@@ -271,7 +232,7 @@ async function defaultCallMcpTool({ url, name, input, signal }: CallMcpToolArgs)
   return { ok: !result?.isError, text: extractText(result) };
 }
 
-function forwarder(def: ToolDef, deps: ModernTeamLaunchSourceDeps) {
+function forwarder(def: ToolDef, deps: ModernTeamLaunchSourceDeps, configuredMembers: Map<string, ModernTeamMember>) {
   const credentialFor = deps.credentialFor ?? controlCredentialForSession;
   const callMcpTool = deps.callMcpTool ?? defaultCallMcpTool;
   return jsonSchemaAgentToolRecord({
@@ -282,7 +243,26 @@ function forwarder(def: ToolDef, deps: ModernTeamLaunchSourceDeps) {
       const { mcpBaseUrl, teamLaunchEnabled, teamJobLaunchEnabled } = deps.getConfig();
       const mcpName = def.mcpName ?? def.name;
       const ownerVerb = OWNER_EXECUTION_MCP_NAMES.has(mcpName);
-      const enabled = ownerVerb ? teamJobLaunchEnabled === true : teamLaunchEnabled;
+      const memberVerb = mcpName.startsWith('execution.') && !ownerVerb;
+      const member = await deps.resolveMember?.(ctx.threadId, ctx.projectId);
+      const configuredMember = configuredMembers.get(JSON.stringify([ctx.projectId, ctx.threadId]));
+      if (member || configuredMember || memberVerb) {
+        if (!member || !configuredMember || member.bindingId !== configuredMember.bindingId
+          || member.generation !== configuredMember.generation || member.role !== configuredMember.role
+          || member.executionId !== configuredMember.executionId
+          || !EXECUTION_MEMBER_TOOL_NAMES[member.role]?.some((name) => name === mcpName)) {
+          return { ok: false, message: `${def.name} unavailable: thread is not configured for this member role and generation.` };
+        }
+        if (input && typeof input === 'object' && 'executionId' in input && member.executionId
+          && input.executionId !== member.executionId) {
+          return { ok: false, message: `${def.name} unavailable: thread is not bound to this execution.` };
+        }
+        if (mcpName === 'execution.event' && input && typeof input === 'object'
+          && ('slotId' in input || 'producerRole' in input)) {
+          return { ok: false, message: `${def.name} failed: member identity is host-bound.` };
+        }
+      }
+      const enabled = member ? true : ownerVerb ? teamJobLaunchEnabled === true : teamLaunchEnabled;
       if (!enabled) {
         return {
           ok: false,
@@ -293,8 +273,15 @@ function forwarder(def: ToolDef, deps: ModernTeamLaunchSourceDeps) {
       }
       if (!mcpBaseUrl) return { ok: false, message: `${def.name} unavailable: team launch endpoint is not ready yet.` };
       const credential = credentialFor(ctx.threadId);
-      const url = modernTeamLaunchRoute(mcpBaseUrl, ctx.projectId, ctx.threadId, credential);
+      const url = member
+        ? modernTeamMemberRoute(mcpBaseUrl, ctx.projectId, ctx.threadId, credential, configuredMember!)
+        : modernTeamLaunchRoute(mcpBaseUrl, ctx.projectId, ctx.threadId, credential);
       try {
+        if (mcpName.startsWith('execution.')) {
+          const parsed = getExecutionToolDescriptors().find((descriptor) => descriptor.name === mcpName)!.schema.safeParse(input);
+          if (!parsed.success) return { ok: false, message: `${def.name} failed: invalid arguments.` };
+          input = parsed.data;
+        }
         const { ok, text } = await callMcpTool({ url, name: mcpName, input, signal: ctx.signal });
         return ok ? text || '{}' : { ok: false, message: text || `${def.name} failed.` };
       } catch (error) {
@@ -310,13 +297,40 @@ function forwarder(def: ToolDef, deps: ModernTeamLaunchSourceDeps) {
  * the same `sessionTools`/`invokeAgentTool` path as plugin-contributed tools.
  */
 export function createModernTeamLaunchSource(deps: ModernTeamLaunchSourceDeps): PluginAgentToolSource {
+  // First configured generation stays pinned even if the same thread is reconfigured.
+  const configuredMembers = new Map<string, ModernTeamMember>();
+  const memberNames = new Set<string>(Object.values(EXECUTION_MEMBER_TOOL_NAMES).flat());
+  const memberDefs = getExecutionToolDescriptors().filter((descriptor) => memberNames.has(descriptor.name)
+    && !OWNER_EXECUTION_MCP_NAMES.has(descriptor.name)).map((descriptor) => {
+    const inputSchema = descriptor.name === 'execution.event'
+      ? { ...descriptor.inputSchema, properties: Object.fromEntries(Object.entries(descriptor.inputSchema.properties as Record<string, unknown>)
+        .filter(([key]) => key !== 'slotId' && key !== 'producerRole')) }
+      : descriptor.inputSchema;
+    return { name: descriptor.name.replaceAll('.', '_'), mcpName: descriptor.name, description: descriptor.description, inputSchema };
+  });
   return {
     pluginId: MODERN_TEAM_LAUNCH_PLUGIN_ID,
-    tools: [...TOOL_DEFS, ...OWNER_EXECUTION_TOOL_DEFS].map((def) => forwarder(def, deps)),
+    tools: [...TOOL_DEFS, ...OWNER_EXECUTION_TOOL_DEFS, ...memberDefs].map((def) => forwarder(def, deps, configuredMembers)),
     configurers: [
-      () => {
+      async (ctx) => {
         const { mcpBaseUrl, teamLaunchEnabled, teamJobLaunchEnabled } = deps.getConfig();
         if (!mcpBaseUrl) return { tools: [] };
+        const key = JSON.stringify([ctx.projectId, ctx.threadId]);
+        const member = await deps.resolveMember?.(ctx.threadId ?? '', ctx.projectId ?? '');
+        if (member) {
+          if (!member.bindingId || !Number.isSafeInteger(member.generation) || member.generation < 1
+            || !EXECUTION_MEMBER_TOOL_NAMES[member.role]) return { tools: [] };
+          if (!configuredMembers.has(key)) {
+            // Never evict a fence: old configured clients must stay stale.
+            if (configuredMembers.size >= MAX_CONFIGURED_MEMBERS) return { tools: [] };
+            configuredMembers.set(key, { ...member });
+          }
+          const configured = configuredMembers.get(key)!;
+          if (configured.bindingId !== member.bindingId || configured.generation !== member.generation
+            || configured.role !== member.role || configured.executionId !== member.executionId) return { tools: [] };
+          return { tools: EXECUTION_MEMBER_TOOL_NAMES[member.role].map((name) => name.replaceAll('.', '_')) };
+        }
+        if (configuredMembers.has(key)) return { tools: [] };
         const tools: string[] = [];
         if (teamLaunchEnabled) tools.push(...MODERN_TEAM_LAUNCH_TOOL_NAMES);
         if (teamJobLaunchEnabled) tools.push(...MODERN_OWNER_EXECUTION_TOOL_NAMES);

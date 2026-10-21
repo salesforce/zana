@@ -49,6 +49,7 @@ import { FleetKindChip } from './FleetKindChip.js';
 import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
 import { fleetMatchesLane, resolveMonitorSelection, type FleetItem } from './fleet-item.js';
 import { ThreadDetail } from '../views/threads/ThreadDetailView.js';
+import { isModernSquadThread } from '../lib/squad-transport.js';
 import { openScheduleFromAgents } from './scheduler/openScheduledLive.js';
 import { groupSessionsByTeamRun } from '../lib/teamRunOrganization.js';
 import { PaneEmptyState } from './PaneEmptyState.js';
@@ -231,7 +232,8 @@ export function AgentMonitor({ cards, executions = [], showProject = false, onIn
       if (selection) clearMonitorAgent();
       return;
     }
-    if (selected.kind === 'agent') {
+    // A Modern squad member is a thread: no PTY to select.
+    if (selected.kind === 'agent' && !selected.card.modernThreadId) {
       if (selection?.sessionId !== selected.card.session.id) {
         selectMonitorAgent(selected.card.session.id, selected.projectId);
       }
@@ -254,7 +256,8 @@ export function AgentMonitor({ cards, executions = [], showProject = false, onIn
   return (
     <div
       className={`agent-monitor ${
-        selected?.kind === 'thread' ? 'is-thread' : selected?.kind === 'agent' ? 'is-agent-session' : ''
+        selected?.kind === 'thread' || (selected?.kind === 'agent' && selected.card.modernThreadId)
+          ? 'is-thread' : selected?.kind === 'agent' ? 'is-agent-session' : ''
       }`}
     >
       <nav className="agent-monitor-list" aria-label="Agents" hidden={compact && !!selected}>
@@ -321,6 +324,12 @@ export function AgentMonitor({ cards, executions = [], showProject = false, onIn
                 if (item.kind === 'thread') {
                   setMenu(null);
                   openThreadMenu(e, item.thread, setThreadMenu);
+                  return;
+                }
+                if (item.card.modernThreadId) {
+                  setMenu(null);
+                  if (item.card.modernThread) openThreadMenu(e, item.card.modernThread, setThreadMenu);
+                  else e.preventDefault();
                   return;
                 }
                 e.preventDefault();
@@ -462,7 +471,7 @@ function AgentMonitorRow({ item, laneKey, active, showProject, onSelect, onConte
     return (
       <button
         type="button"
-        className={`agent-monitor-row is-thread lane-${laneKey} ${active ? 'active' : ''} ${unread ? 'is-unread' : ''}`}
+        className={`agent-monitor-row is-thread lane-${laneKey} ${active ? 'active' : ''} ${unread ? 'is-unread' : ''}${isModernSquadThread(item.thread) ? ' is-modern' : ''}`}
         data-kind="thread"
         onClick={onSelect}
         onContextMenu={onContextMenu}
@@ -505,7 +514,7 @@ function AgentMonitorRow({ item, laneKey, active, showProject, onSelect, onConte
   return (
     <button
       type="button"
-      className={`agent-monitor-row lane-${laneKey} ${active ? 'active' : ''} ${exited ? 'exited' : ''}`}
+      className={`agent-monitor-row lane-${laneKey} ${active ? 'active' : ''} ${exited ? 'exited' : ''}${item.card.modernThreadId ? ' is-modern' : ''}`}
       onClick={onSelect}
       onContextMenu={onContextMenu}
       aria-current={active ? 'true' : undefined}
@@ -522,7 +531,7 @@ function AgentMonitorRow({ item, laneKey, active, showProject, onSelect, onConte
             {persona ? personaIcon(persona, 11) : profileIcon(t.profile, 11)}
           </span>
           {project}
-          <FleetKindChip kind="agent" />
+          <FleetKindChip kind={item.card.modernThreadId ? 'thread' : 'agent'} />
           <span className="agent-monitor-row-dur">{exited ? `ran ${dur}` : dur}</span>
         </span>
       </span>
@@ -545,8 +554,10 @@ function AgentMonitorTerminal({
   onInspectExecution?: (projectId: string, executionId: string) => void;
   onBack?: () => void;
 }) {
-  const agent = selected?.kind === 'agent' ? selected : null;
-  const thread = selected?.kind === 'thread' ? selected : null;
+  // A Modern squad member groups like an agent but renders as its thread.
+  const memberThreadId = selected?.kind === 'agent' ? selected.card.modernThreadId : undefined;
+  const agent = selected?.kind === 'agent' && !memberThreadId ? selected : null;
+  const thread = selected?.kind === 'thread' ? selected : memberThreadId ? { id: memberThreadId } : null;
   const backTarget = useMobileThreadControlsTarget(Boolean(onBack));
   const back = onBack ? <button type="button" className="agent-monitor-back" onClick={onBack} autoFocus aria-label="Back to agents" title="Back to agents">
     <ArrowLeft size={18} aria-hidden="true" /><span>Back to agents</span>

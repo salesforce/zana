@@ -29,6 +29,19 @@ describe('squadLaunchGroups', () => {
     expect(squadLaunchGroups([], [])).toEqual([]);
   });
 
+  it('puts cohort-stamped Modern squad threads in their squad launch, other threads in Solo', () => {
+    const cohort = { cohortId: 'e-m', executionId: 'e-m', teamId: 'modern', role: 'worker' as const };
+    const groups = squadLaunchGroups([], [], [
+      { id: 't-a', label: 'A', state: 'idle', createdAt: 5, cohort },
+      { id: 't-b', label: 'B', state: 'idle', createdAt: 6, cohort },
+      { id: 't-solo', label: 'Solo', state: 'idle', createdAt: 7 }
+    ]);
+    expect(groups.map(({ launchId, nodeCount }) => ({ launchId, nodeCount }))).toEqual([
+      { launchId: 'e-m', nodeCount: 2 },
+      { launchId: SOLO_LAUNCH_ID, nodeCount: 1 }
+    ]);
+  });
+
   it('groups agents by teamLaunchId and counts nodes per squad', () => {
     const groups = squadLaunchGroups(
       [

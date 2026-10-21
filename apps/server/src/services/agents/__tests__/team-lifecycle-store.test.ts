@@ -12,6 +12,15 @@ import {
 } from '../../launch/team-lifecycle-store.js';
 import { atomicDurableWrite } from '../../harness-routing/storage.js';
 import type { LaunchPrincipal } from '../../launch/types.js';
+import type { TeamLifecycleClaim, TeamModernBindingContext } from '../../launch/team-lifecycle-store.js';
+
+const threadId = '11111111-1111-4111-8111-111111111111';
+const otherThreadId = '22222222-2222-4222-8222-222222222222';
+const modernContext: TeamModernBindingContext = {
+  teamId: 'team-1', cohortId: 'cohort-1', role: 'worker', executionId: 'execution-1',
+  projectId: 'project-1', hostId: 'host-1', workspaceEnvironmentId: 'env-1', providerId: 'provider-1',
+  worktreePath: '/tmp/worktree', personaSnapshot: { id: 'persona-1', profile: 'codex', model: 'model-1', systemPrompt: 'implement safely' }
+};
 
 const runCapacity: Extract<LaunchPrincipal, { kind: 'team' }> = {
   kind: 'team', id: 'team:squad:caller:request-1', allowedProjectIds: ['project-1'], allowedTeamIds: ['squad'],
@@ -23,7 +32,7 @@ async function fixture(run: (filePath: string) => Promise<void>): Promise<void> 
   try { await run(join(dir, 'lifecycle.json')); } finally { await rm(dir, { recursive: true, force: true }); }
 }
 
-function claimInput(callerPrincipalId: string, payloadDigest = 'digest') {
+function claimInput(callerPrincipalId: string, payloadDigest = 'digest'): TeamLifecycleClaim {
   return {
     callerPrincipalId,
     launchRequestId: 'request-1',
@@ -36,6 +45,13 @@ function claimInput(callerPrincipalId: string, payloadDigest = 'digest') {
       attention: 'active' as const, task: 'unknown' as const, delivery: 'bound-at-spawn' as const
     }]
   };
+}
+
+function modernClaimInput() {
+  const input = claimInput('principal-modern');
+  input.capacity!.launched = 1;
+  input.workers[0] = { ...input.workers[0], transport: 'MODERN', generation: 0, bindingState: 'RESERVED', modernContext };
+  return input;
 }
 
 function pendingClaimInput(callerPrincipalId: string, payloadDigest = 'digest') {
@@ -334,6 +350,227 @@ describe('team lifecycle store', () => {
       workers: [{ process: 'spawning', attention: 'blocked', task: 'caller-reported-complete', delivery: 'delivery-attempted' }]
     });
   }));
+
+  it('durably reserves a Modern worker before thread creation and acknowledges only matching generation', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
+    const input = claimInput('principal-modern');
+    input.workers[0] = {
+      ...input.workers[0], transport: 'MODERN', generation: 0, bindingState: 'RESERVED',
+      modernContext
+    };
+    input.capacity!.launched = 1;
+    const claimed = await store.claim(input);
+
+    const reservation = await store.reserveModernWorker(claimed.record.id, 'slot-1');
+    expect(reservation).toMatchObject({ generation: 1, worker: { transport: 'MODERN', bindingState: 'CREATING', generation: 1 } });
+    expect(await store.acknowledgeModernWorker(claimed.record.id, 'slot-1', 2, otherThreadId)).toBe(false);
+    expect(await store.acknowledgeModernWorker(claimed.record.id, 'slot-1', 1, reservation!.threadId)).toBe(true);
+    expect(await store.get(claimed.record.id)).toMatchObject({
+      workers: [{ transport: 'MODERN', threadId: reservation!.threadId, generation: 1, bindingState: 'BOUND', capacityReleased: false }]
+    });
+  }));
+
+  it('does not reap or release capacity for Modern reservations during startup reconciliation', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
+    const input = claimInput('principal-modern');
+    input.workers[0] = {
+      ...input.workers[0], transport: 'MODERN', generation: 1, threadId, bindingState: 'UNCERTAIN', process: 'spawning',
+      modernContext
+    };
+    input.capacity!.launched = 1;
+    const claimed = await store.claim(input);
+
+    const restarted = createTeamLifecycleStore({ filePath });
+    const reconciled = await restarted.reconcileStartup(new Set());
+    expect(reconciled).toEqual({ records: [], releasedSlotIds: [] });
+    expect(await restarted.get(claimed.record.id)).toMatchObject({
+      outcome: { status: 'in-progress' }, workers: [{ process: 'spawning', transport: 'MODERN', bindingState: 'UNCERTAIN', capacityReleased: false }]
+    });
+  }));
+
+  it('resolves only acknowledged running Modern bindings in their project', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
+    const input = claimInput('principal-modern');
+    input.workers[0] = {
+      ...input.workers[0], transport: 'MODERN', threadId, generation: 2, bindingState: 'BOUND', process: 'running',
+      modernContext
+    };
+    input.capacity!.launched = 1;
+    const claimed = await store.claim(input);
+    await expect(store.findModernWorkerBinding(threadId, 'project-1')).resolves.toMatchObject({
+      recordId: claimed.record.id, generation: 2, worker: { slotId: 'slot-1', modernContext: { executionId: 'execution-1' } }
+    });
+    await expect(store.findModernWorkerBinding(threadId, 'project-2')).resolves.toBeUndefined();
+    await store.fenceCancel(claimed.record.id);
+    await expect(store.findModernWorkerBinding(threadId, 'project-1')).resolves.toBeUndefined();
+  }));
+
+  it('reserves one UUID across concurrent duplicates, uncertainty and restart without reissuing create', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath });
+    const claimed = await store.claim(modernClaimInput());
+    const reservations = await Promise.all([
+      store.reserveModernWorker(claimed.record.id, 'slot-1'),
+      createTeamLifecycleStore({ filePath }).reserveModernWorker(claimed.record.id, 'slot-1')
+    ]);
+    const first = reservations.find((reservation) => reservation?.mayCreate)!;
+    expect(first.threadId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(reservations.filter((reservation) => reservation?.mayCreate)).toHaveLength(1);
+    expect(reservations.map((reservation) => reservation?.threadId)).toEqual([first.threadId, first.threadId]);
+    expect(first.worker.modernContext).toEqual(modernContext);
+    const restarted = createTeamLifecycleStore({ filePath });
+    const reconciled = await restarted.reconcileStartup(new Set());
+    expect(reconciled.releasedSlotIds).toEqual([]);
+    expect(reconciled.records[0].workers[0].bindingState).toBe('UNCERTAIN');
+    expect(await restarted.reserveModernWorker(claimed.record.id, 'slot-1')).toMatchObject({
+      threadId: first.threadId, generation: 1, mayCreate: false, worker: { bindingState: 'UNCERTAIN', capacityReleased: false }
+    });
+    expect(await restarted.acknowledgeModernWorker(claimed.record.id, 'slot-1', 1, otherThreadId)).toBe(false);
+    expect(await restarted.acknowledgeModernWorker(claimed.record.id, 'slot-1', 1, first.threadId)).toBe(true);
+    const before = await restarted.get(claimed.record.id);
+    expect(await restarted.acknowledgeModernWorker(claimed.record.id, 'slot-1', 1, first.threadId)).toBe(true);
+    expect(await restarted.get(claimed.record.id)).toEqual(before);
+    expect(await restarted.reserveModernWorker(claimed.record.id, 'slot-1')).toMatchObject({ mayCreate: false, generation: 1 });
+  }));
+
+  it('does not expose creation intent until durable write succeeds, including uncertain committed writes', async () => fixture(async (filePath) => {
+    let failure: 'none' | 'before' | 'after' = 'none';
+    const store = createTeamLifecycleStore({ filePath, durableWrite: (...args) => {
+      if (failure === 'before') throw new Error('disk unavailable');
+      atomicDurableWrite(...args);
+      if (failure === 'after') throw new Error('ack lost');
+    } });
+    const claimed = await store.claim(modernClaimInput());
+    failure = 'before';
+    await expect(store.reserveModernWorker(claimed.record.id, 'slot-1')).rejects.toThrow('disk unavailable');
+    expect((await store.get(claimed.record.id))?.workers[0]).toMatchObject({ generation: 0, bindingState: 'RESERVED' });
+    failure = 'after';
+    await expect(store.reserveModernWorker(claimed.record.id, 'slot-1')).rejects.toThrow('ack lost');
+    failure = 'none';
+    expect(await store.reserveModernWorker(claimed.record.id, 'slot-1')).toMatchObject({ mayCreate: false, generation: 1 });
+  }));
+
+  it('fences cancel before late ack and releases only exact terminal evidence once', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath });
+    const claimed = await store.claim(modernClaimInput());
+    const reservation = (await store.reserveModernWorker(claimed.record.id, 'slot-1'))!;
+    const reference = { recordId: claimed.record.id, slotId: 'slot-1', generation: 1, threadId: reservation.threadId };
+    expect(await store.modernWorkerMayClose(reference.recordId, reference.slotId, 1, reference.threadId)).toBe(false);
+    await store.fenceCancel(claimed.record.id);
+    const canceled = await store.get(claimed.record.id);
+    await store.fenceCancel(claimed.record.id);
+    expect(await store.get(claimed.record.id)).toEqual(canceled);
+    expect(await store.acknowledgeModernWorker(reference.recordId, reference.slotId, 1, reference.threadId)).toBe(false);
+    expect(await store.reserveModernWorker(reference.recordId, reference.slotId)).toBeUndefined();
+    expect(await store.modernWorkerMayClose(reference.recordId, reference.slotId, 2, reference.threadId)).toBe(false);
+    expect(await store.modernWorkerMayClose(reference.recordId, reference.slotId, 1, otherThreadId)).toBe(false);
+    expect(await store.modernWorkerMayClose(reference.recordId, reference.slotId, 1, reference.threadId)).toBe(true);
+    expect((await store.reconcileModernWorkers([{ ...reference, state: 'bound' }])).records).toEqual([]);
+    expect((await store.reconcileModernWorkers([{ ...reference, generation: 2, state: 'terminal' }])).releasedSlotIds).toEqual([]);
+    expect((await store.reconcileModernWorkers([{ ...reference, state: 'unknown' }])).releasedSlotIds).toEqual([]);
+    expect((await store.reconcileModernWorkers([{ ...reference, state: 'terminal' }])).releasedAuthorizationIds).toEqual(['authorization-1']);
+    expect((await store.reconcileModernWorkers([{ ...reference, state: 'terminal' }])).releasedAuthorizationIds).toEqual([]);
+    expect(await store.get(claimed.record.id)).toMatchObject({ state: 'canceled', workers: [{ process: 'canceled', bindingState: 'TERMINAL', capacityReleased: true }] });
+  }));
+
+  it('recovers thread-created/ack-write-failed crash without creating replacement', async () => fixture(async (filePath) => {
+    let failWrite = false;
+    const store = createTeamLifecycleStore({ filePath, durableWrite: (...args) => {
+      if (failWrite) throw new Error('ack persistence failed');
+      atomicDurableWrite(...args);
+    } });
+    const claimed = await store.claim(modernClaimInput());
+    const reservation = (await store.reserveModernWorker(claimed.record.id, 'slot-1'))!;
+    failWrite = true;
+    await expect(store.acknowledgeModernWorker(claimed.record.id, 'slot-1', 1, reservation.threadId)).rejects.toThrow('ack persistence failed');
+    expect((await store.get(claimed.record.id))?.workers[0]).toMatchObject({ bindingState: 'CREATING', capacityReleased: false });
+    const restarted = createTeamLifecycleStore({ filePath });
+    await restarted.reconcileStartup(new Set());
+    expect(await restarted.reserveModernWorker(claimed.record.id, 'slot-1')).toMatchObject({ threadId: reservation.threadId, mayCreate: false });
+    await restarted.reconcileModernWorkers([{ recordId: claimed.record.id, slotId: 'slot-1', threadId: reservation.threadId, generation: 1, state: 'bound' }]);
+    expect(await restarted.findModernWorkerBinding(reservation.threadId, 'project-1')).toMatchObject({ generation: 1 });
+  }));
+
+  it('recovers bound evidence, marks uncertainty, and forbids generic Modern process reaping', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath });
+    const claimed = await store.claim(modernClaimInput());
+    const reservation = (await store.reserveModernWorker(claimed.record.id, 'slot-1'))!;
+    const reference = { recordId: claimed.record.id, slotId: 'slot-1', generation: 1, threadId: reservation.threadId };
+    expect(await store.workerMaySpawn(reference.recordId, reference.slotId)).toBe(false);
+    expect(await store.claimWorkerRunning(reference.recordId, reference.slotId)).toBe(false);
+    await expect(store.updateWorker(reference.recordId, reference.slotId, { process: 'spawn-failed' })).rejects.toThrow('generation-fenced');
+    expect(await store.markModernWorkerUncertain(reference.recordId, reference.slotId, 2, reference.threadId)).toBe(false);
+    expect(await store.markModernWorkerUncertain(reference.recordId, reference.slotId, 1, reference.threadId)).toBe(true);
+    const uncertain = await store.get(reference.recordId);
+    expect(await store.markModernWorkerUncertain(reference.recordId, reference.slotId, 1, reference.threadId)).toBe(true);
+    expect(await store.get(reference.recordId)).toEqual(uncertain);
+    await store.reconcileModernWorkers([{ ...reference, state: 'bound' }]);
+    expect(await store.findModernWorkerBinding(reference.threadId, 'project-1')).toMatchObject({ generation: 1 });
+    const restarted = createTeamLifecycleStore({ filePath });
+    await restarted.reconcileStartup(new Set());
+    expect(await restarted.findModernWorkerBinding(reference.threadId, 'project-1')).toBeUndefined();
+    await restarted.reconcileModernWorkers([{ ...reference, state: 'bound' }]);
+    await restarted.reconcileModernWorkers([{ ...reference, state: 'unknown' }]);
+    expect(await restarted.findModernWorkerBinding(reference.threadId, 'project-1')).toBeUndefined();
+    await restarted.reconcileModernWorkers([{ ...reference, state: 'terminal' }]);
+    expect(await restarted.markModernWorkerUncertain(reference.recordId, reference.slotId, 1, reference.threadId)).toBe(false);
+    expect(await restarted.acknowledgeModernWorker(reference.recordId, reference.slotId, 1, reference.threadId)).toBe(false);
+    expect(await restarted.reserveModernWorker(reference.recordId, reference.slotId)).toBeUndefined();
+  }));
+
+  it('preserves Modern capacity through failed completion and restores it after crash', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath });
+    const claimed = await store.claim(pendingClaimInput('principal-modern'));
+    await store.addWorker(claimed.record.id, modernClaimInput().workers[0]);
+    const reservation = (await store.reserveModernWorker(claimed.record.id, 'slot-1'))!;
+    await store.complete(claimed.record.id, { ok: false, code: 'TIMEOUT', message: 'create outcome unknown' },
+      { ...completedResult().value, launched: 0, workers: [] });
+    const restored: string[][] = [];
+    const integration = createTeamLifecycleIntegration({
+      store: createTeamLifecycleStore({ filePath }), isLiveSession: () => false, closeSession: async () => false,
+      releaseCapacity: () => { throw new Error('must retain uncertain capacity'); },
+      restoreCapacity: (_capacity, active) => restored.push([...active])
+    });
+    await integration.reconcileStartup([]);
+    expect(restored).toEqual([['authorization-1']]);
+    expect(await store.get(claimed.record.id)).toMatchObject({ capacity: { launched: 1 }, workers: [{ threadId: reservation.threadId, capacityReleased: false }] });
+  }));
+
+  it('bounds reconciliation and rejects invalid generation, thread, context and duplicate identities', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath });
+    const input = modernClaimInput();
+    input.workers[0].modernContext = { ...modernContext, projectId: 'wrong-project' };
+    await expect(store.claim(input)).rejects.toThrow('invalid team worker lifecycle state');
+    const claimed = await store.claim(modernClaimInput());
+    await expect(store.acknowledgeModernWorker(claimed.record.id, 'slot-1', 1, 'not-uuid')).rejects.toThrow('invalid modern thread id');
+    await expect(store.acknowledgeModernWorker(claimed.record.id, 'slot-1', 0, threadId)).rejects.toThrow('invalid modern worker generation');
+    const reference = { recordId: claimed.record.id, slotId: 'slot-1', generation: 1, threadId, state: 'unknown' as const };
+    await expect(store.reconcileModernWorkers(Array(101).fill(reference))).rejects.toThrow('invalid modern reconciliation batch');
+    await expect(store.reconcileModernWorkers([{ ...reference, state: 'bad' as 'unknown' }])).rejects.toThrow('invalid modern observation');
+    const reservation = (await store.reserveModernWorker(claimed.record.id, 'slot-1'))!;
+    const other = modernClaimInput();
+    other.launchRequestId = 'request-other';
+    other.launchResult.launchRequestId = 'request-other';
+    other.workers[0] = { ...other.workers[0], process: 'running', bindingState: 'BOUND', generation: 1, threadId: reservation.threadId };
+    await expect(store.claim(other)).rejects.toThrow('duplicate modern thread identity');
+  }));
+
+  it('bounds Modern slot capacity and releases never-issued intent safely', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath });
+    const uncounted = modernClaimInput();
+    uncounted.capacity!.launched = 0;
+    await expect(store.claim(uncounted)).rejects.toThrow('capacity exhausted');
+    const claimed = await store.claim({ ...pendingClaimInput('principal-modern'), capacity: {
+      principal: { ...runCapacity, maxConcurrent: 1, maxLaunchesPerRun: 1 }, launched: 0
+    } });
+    await store.addWorker(claimed.record.id, modernClaimInput().workers[0]);
+    const worker = modernClaimInput().workers[0];
+    await expect(store.addWorker(claimed.record.id, { ...worker, slotId: 'slot-2', sessionId: 'session-2', authorizationId: 'authorization-2' }))
+      .rejects.toThrow('capacity exhausted');
+    const canceled = await store.fenceCancel(claimed.record.id);
+    expect(canceled).toMatchObject({ state: 'canceled', releasedSlotIds: ['slot-1'], workers: [{ generation: 0, bindingState: 'TERMINAL' }] });
+    expect((await store.fenceCancel(claimed.record.id)).releasedSlotIds).toEqual([]);
+    expect(await store.reserveModernWorker(claimed.record.id, 'slot-1')).toBeUndefined();
+  }));
 });
 
 describe('team lifecycle integration', () => {
@@ -568,6 +805,111 @@ describe('team lifecycle integration', () => {
     await restarted.reconcileStartup(['session-live']);
 
     expect(restored).toEqual([{ principalId: runCapacity.id, launched: 1, active: ['authorization-live'] }]);
+  }));
+
+  it('uses Modern thread liveness and termination callbacks for Modern workers', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
+    const input = claimInput('principal-modern');
+    input.workers[0] = {
+      ...input.workers[0], transport: 'MODERN', threadId, generation: 4, bindingState: 'BOUND', process: 'running',
+      modernContext
+    };
+    input.capacity!.launched = 1;
+    const claimed = await store.claim(input);
+    await store.complete(claimed.record.id, { ok: true, value: claimed.record.launchResult });
+    const checked: string[] = [];
+    const closed: string[] = [];
+    const integration = createTeamLifecycleIntegration({
+      store, isLiveSession: () => { throw new Error('CLI liveness must not run'); }, closeSession: async () => true,
+      isLiveModernThread: (threadId, _projectId, generation) => { checked.push(`${threadId}:${generation}`); return true; },
+      closeModernThread: async (threadId, _projectId, generation) => { closed.push(`${threadId}:${generation}`); return true; },
+      releaseCapacity: () => undefined
+    });
+    integration.track((await store.get(claimed.record.id))!);
+
+    expect(await integration.cancelTeamLaunch('principal-modern', 'request-1')).toMatchObject({ ok: true, canceledSessionIds: ['session-1'] });
+    expect(checked).toEqual([]);
+    expect(closed).toEqual([`${threadId}:4`]);
+  }));
+
+  it('indexes acknowledged Modern workers by ACP thread identity for execution routing', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
+    const input = claimInput('principal-modern');
+    input.workers[0] = {
+      ...input.workers[0], transport: 'MODERN', threadId, generation: 4,
+      bindingState: 'BOUND', process: 'running',
+      modernContext
+    };
+    input.capacity!.launched = 1;
+    const claimed = await store.claim(input);
+    const integration = createTeamLifecycleIntegration({ store, isLiveSession: () => false, closeSession: async () => false, releaseCapacity: () => undefined });
+    integration.track(claimed.record);
+    await expect(integration.resolveModernBinding(threadId, 'project-1')).resolves.toMatchObject({ executionId: 'execution-1', slotId: 'slot-1', role: 'worker', generation: 4 });
+    await expect(integration.resolveModernBinding('session-1', 'project-1')).resolves.toBeUndefined();
+  }));
+
+  it('rejects stale cache authority after uncertainty and cancel, including out-of-order tracking', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath });
+    const claimed = await store.claim(modernClaimInput());
+    const reservation = (await store.reserveModernWorker(claimed.record.id, 'slot-1'))!;
+    const integration = createTeamLifecycleIntegration({ store, isLiveSession: () => false, closeSession: async () => false, releaseCapacity: () => undefined });
+    integration.track(reservation.record);
+    expect(integration.isTracked(reservation.threadId)).toBe(false);
+    await store.acknowledgeModernWorker(claimed.record.id, 'slot-1', 1, reservation.threadId);
+    const bound = (await store.get(claimed.record.id))!;
+    integration.track(bound);
+    expect(integration.isTracked(reservation.threadId)).toBe(true);
+    expect(integration.isTracked('session-1')).toBe(true);
+    await store.markModernWorkerUncertain(claimed.record.id, 'slot-1', 1, reservation.threadId);
+    await expect(integration.resolveModernBinding(reservation.threadId, 'project-1')).resolves.toBeUndefined();
+    integration.track((await store.get(claimed.record.id))!);
+    integration.track(bound);
+    expect(integration.isTracked(reservation.threadId)).toBe(false);
+    expect(integration.isTracked('session-1')).toBe(false);
+    await store.acknowledgeModernWorker(claimed.record.id, 'slot-1', 1, reservation.threadId);
+    await store.fenceCancel(claimed.record.id);
+    await expect(integration.resolveModernBinding(reservation.threadId, 'project-1')).resolves.toBeUndefined();
+  }));
+
+  it.each(['absent', 'false', 'throw', 'closed'] as const)('keeps Modern capacity when runtime is %s until attested terminal', async (runtime) => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath });
+    const claimed = await store.claim(modernClaimInput());
+    const reservation = (await store.reserveModernWorker(claimed.record.id, 'slot-1'))!;
+    await store.acknowledgeModernWorker(claimed.record.id, 'slot-1', 1, reservation.threadId);
+    const released: string[] = [];
+    const integration = createTeamLifecycleIntegration({
+      store, isLiveSession: () => { throw new Error('CLI must not run'); }, closeSession: async () => false,
+      isLiveModernThread: () => false,
+      ...(runtime === 'absent' ? {} : { closeModernThread: async () => {
+        if (runtime === 'throw') throw new Error('runtime stopped');
+        return runtime === 'closed';
+      } }),
+      releaseCapacity: (authorizationId) => released.push(authorizationId)
+    });
+    integration.track((await store.get(claimed.record.id))!);
+    const result = await integration.cancelTeamLaunch('principal-modern', 'request-1');
+    expect(result).toMatchObject({ lifecycleState: 'cancel-pending', pendingSessionIds: runtime === 'closed' ? [] : ['session-1'] });
+    expect(integration.isTracked(reservation.threadId)).toBe(false);
+    await integration.onSessionExit(reservation.threadId);
+    await integration.onSessionExit('session-1');
+    expect(released).toEqual([]);
+    expect((await store.get(claimed.record.id))?.workers[0].capacityReleased).toBe(false);
+    const observation = { recordId: claimed.record.id, slotId: 'slot-1', generation: 1, threadId: reservation.threadId, state: 'terminal' as const };
+    await integration.reconcileModernWorkers([observation]);
+    await integration.reconcileModernWorkers([observation]);
+    expect(released).toEqual(['authorization-1']);
+    expect(await store.modernWorkerMayClose(claimed.record.id, 'slot-1', 1, reservation.threadId)).toBe(false);
+  }));
+
+  it('releases Modern pre-create cancellation once without calling runtime', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath });
+    await store.claim(modernClaimInput());
+    const released: string[] = [];
+    const integration = createTeamLifecycleIntegration({ store, isLiveSession: () => false, closeSession: async () => false,
+      closeModernThread: async () => { throw new Error('no create was issued'); }, releaseCapacity: (authorizationId) => released.push(authorizationId) });
+    await integration.cancelTeamLaunch('principal-modern', 'request-1');
+    await integration.cancelTeamLaunch('principal-modern', 'request-1');
+    expect(released).toEqual(['authorization-1']);
   }));
 
   it('returns caller-scoped lifecycle state and records task outcome once', async () => fixture(async (filePath) => {
