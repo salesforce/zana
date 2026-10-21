@@ -23,6 +23,12 @@ const TABS: Array<{ id: CaseFilter; label: string }> = [
 ];
 const VERDICT_LABEL = { pass: '✓ Pass', fail: '✗ Fail', error: '! Error', pending: '… Pending' } as const;
 
+/** Human label for a run: its start time, falling back to the id; the full id stays in the title. */
+export function runLabel(run: { runId: string; startedAt?: number }): string {
+  if (!run.startedAt || !Number.isFinite(run.startedAt)) return `Run ${run.runId}`;
+  return `Run · ${new Date(run.startedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
+}
+
 /** Browser download of a text file; a no-op where object URLs are missing (jsdom). */
 export function downloadText(name: string, text: string, type = 'text/csv'): boolean {
   if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function' || typeof document === 'undefined') return false;
@@ -60,7 +66,7 @@ export function OrgRunDetail({ run, previous, definitionCases, path, busy, onImp
   return (
     <div className="sf-ot-run" data-testid="org-run-detail">
       <div className="sf-tp-head">
-        <strong>Run {run.runId}</strong>
+        <strong title={`Run ${run.runId}`}>{runLabel(run)}</strong>
         <span className={`sf-tp-chip is-status-${run.status}`}>{run.status.replace('_', ' ')}</span>
         {counts && <span className="sf-tp-sub" data-testid="org-run-counts">
           {counts.pass} pass · {counts.fail} fail · {counts.error} error{counts.pending ? ` · ${counts.pending} pending` : ''} of {counts.total} · {percent(passRate(counts))}
@@ -79,26 +85,26 @@ export function OrgRunDetail({ run, previous, definitionCases, path, busy, onImp
       </ul>}
 
       {previous && <p className="sf-tp-foot" data-testid="org-run-diff">
-        Against run {previous.runId}: {diff.newlyFailing.length} newly failing, {diff.fixed.length} fixed.
+        Against {runLabel(previous)}: {diff.newlyFailing.length} newly failing, {diff.fixed.length} fixed.
       </p>}
 
-      <div className="sf-tp-bar" role="tablist" aria-label="Case filter">
+      <div className="sf-tp-bar sf-ot-toolbar">
+        <div className="sf-ot-tabs" role="tablist" aria-label="Case filter">
         {TABS.map(t => <button key={t.id} type="button" role="tab" id={`org-tab-${t.id}`} aria-selected={filter === t.id}
           className={`sf-tp-btn${filter === t.id ? ' is-primary' : ''}`} disabled={t.id === 'changed' && !previous} onClick={() => change(setFilter)(t.id)}>
           {t.label} {tabCount[t.id]}
         </button>)}
-      </div>
-      <div className="sf-tp-bar">
+        </div>
         <input className="sf-ot-search" type="search" aria-label="Search cases" value={query} onChange={e => change(setQuery)(e.target.value)} placeholder="Search utterance, topic, reply…" />
         <select className="sf-ot-select" aria-label="Sort by" value={sort} onChange={e => change(setSort)(e.target.value as CaseSort)}>
           <option value="number">Sort: Case number</option><option value="verdict">Sort: Failures first</option><option value="latency">Sort: Latency</option><option value="score">Sort: Score</option>
         </select>
         <span className="sf-tp-spacer" />
         <button type="button" className="sf-tp-btn" onClick={exportCsv} disabled={!rows.length}>Export CSV</button>
-        <button type="button" className="sf-tp-btn" disabled={busy || !failing.length || !path}
+        <button type="button" className="sf-tp-btn is-primary" disabled={busy || !failing.length || !path}
           title={!path ? 'Open an agent file to import into its suite.' : undefined}
           onClick={() => onImport(casesForImport(failing, definitionCases))}>Import failing to suite</button>
-        {onAskAgent && <button type="button" className="sf-tp-btn" disabled={!failing.length}
+        {onAskAgent && <button type="button" className="sf-tp-btn is-primary" disabled={!failing.length}
           onClick={() => onAskAgent(fixPrompt(run, failing, path))}>Fix with agent</button>}
       </div>
       {exported && <div className="sf-tp-sub" role="status">{exported}</div>}

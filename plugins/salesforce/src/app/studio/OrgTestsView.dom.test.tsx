@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { OrgTestsView, type OrgTestsViewProps } from './OrgTestsView.js';
-import { OrgRunDetail, downloadText } from './OrgRunDetail.js';
+import { OrgRunDetail, downloadText, runLabel } from './OrgRunDetail.js';
 import type { OrgCaseResult, OrgRunRecord, OrgRunResults, OrgTestDefinition } from '../../../lib/org-tests-contract.js';
 
 const PATH = 'force-app/main/default/aiAuthoringBundles/MyBot/MyBot.agent';
@@ -712,4 +712,10 @@ it('focuses a run that is not in the history yet, keeping the loaded history whe
   });
   await waitFor(() => expect(screen.getByTestId('org-run-counts').textContent).toContain('1 pass · 0 fail · 0 error of 1'));
   expect(calls(call, 'studio.orgTests.definition')).toHaveLength(0);
+});
+
+it('labels a run by its start time and falls back to the id', () => {
+  expect(runLabel({ runId: 'R1' })).toBe('Run R1');
+  expect(runLabel({ runId: 'R1', startedAt: Number.NaN })).toBe('Run R1');
+  expect(runLabel({ runId: 'R1', startedAt: Date.UTC(2026, 0, 5, 12, 0) })).toMatch(/^Run · /);
 });
