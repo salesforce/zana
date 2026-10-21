@@ -406,6 +406,8 @@ body.is-resizing-split iframe {
 .monaco-editor .sf-comment-glyph.is-resolved { background: var(--ide-text-subtle); opacity: 0.6; }
 .monaco-editor .sf-hit-glyph { margin-left: 6px; width: 8px !important; height: 8px !important; margin-top: 5px; border-radius: 50%; background: var(--ide-warning); }
 .sf-comment-zone { background: var(--ide-accent-soft); border-left: 3px solid var(--ide-accent); box-sizing: border-box; padding: 2px 8px; overflow: auto; color: var(--ide-text-primary); font: 12px/1.45 ui-sans-serif, system-ui, sans-serif; }
+/* Monaco's transparent view-lines layer follows view-zones and otherwise intercepts their pointer events. */
+.sf-comment-zone, .sf-comment-compose-zone { z-index: 1; }
 .sf-comment-compose-zone { box-sizing: border-box; padding: 2px 0; }
 .sf-comment-compose { display: flex; flex-direction: column; gap: 4px; box-sizing: border-box; height: 100%; max-width: 640px; padding: 6px 8px; background: var(--ide-surface-elevated); border-left: 3px solid var(--ide-accent); color: var(--ide-text-primary); font: 12px/1.4 ui-sans-serif, system-ui, sans-serif; }
 .sf-comment-compose-label { color: var(--ide-text-muted); }
