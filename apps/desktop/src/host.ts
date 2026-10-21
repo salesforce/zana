@@ -113,7 +113,7 @@ import { launchExecutionScope, usesCliRemoteToolProxy } from './cli-remote-tool-
 import { createRestoreCapabilityStore, type RestoreCapability } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
 import { createTeamLifecycleIntegration, createTeamLifecycleStore, type TeamLifecycleRecord, type TeamModernWorkerObservation } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
 import { createRemoteReapLedger, remoteReapOrphans, type RemoteReapEntry } from '@zana-ai/zcc-server/services/launch/remote-reap-ledger';
-import { createExecutionStore, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
+import { createExecutionStore, isTerminalExecutionState, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
 import { KeyedColdStartSemaphore, SquadExecutionService, type ExecutionRequestV1 } from '@zana-ai/zcc-server/services/execution/service';
@@ -6176,10 +6176,14 @@ export async function lookupProposer(sessionId: string, projectId: string) {
   return null;
 }
 
-/** Non-terminal runs a session owns in a project, from its newest (bounded) execution list. */
+/**
+ * Non-terminal runs a session owns in a project, from its newest (bounded) execution list.
+ * The launch-now cap counts every owned non-terminal run, however it was started,
+ * not only runs started through squad_launch.
+ */
 async function activeOwnedSquadRuns(sessionId: string, projectId: string): Promise<number> {
   const records = await executionStore.list(sessionId, projectId, 100);
-  return records.filter((record) => record.state !== 'COMPLETED' && record.state !== 'STOPPED' && record.state !== 'FAILED').length;
+  return records.filter((record) => !isTerminalExecutionState(record.state)).length;
 }
 
 export function findExecutionForProposal(projectId: string, proposalId: string): Promise<string | undefined> {
@@ -6236,6 +6240,7 @@ const squadProposalServiceDeps: SquadProposalServiceDeps = {
   launchNow: {
     enabled: () => store.getConfig().squadLaunchNowEnabled === true,
     projectLaunchApproval: async (projectId) => (await getAuthoritativeProjectSettings(projectId)).launchApproval,
+    squadLaunchReviewRequired: (teamId) => teams.launchReviewRequired(teamId),
     activeOwnedRuns: activeOwnedSquadRuns,
     launch: async ({ team, project, goal, coordinationMode, title, summary, sourcePaths }, ctx) => {
       const sourceBases = squadSourceBases();
@@ -8988,7 +8993,7 @@ async function bootstrapNormal() {
     executionService: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? squadExecutionService : undefined,
     executionHandoffs: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? executionHandoffs : undefined,
     resolveExecutionLaunchApproval: async (teamId, projectId) => resolveLaunchApproval({
-      squad: teams.list().find((team) => team.id === teamId),
+      squad: teams.launchReviewRequired(teamId) ? { launchApproval: 'review' } : teams.list().find((team) => team.id === teamId),
       project: await getAuthoritativeProjectSettings(projectId)
     }),
     resolveExecutionCohortBinding: async (sessionId, projectId, fence) => {

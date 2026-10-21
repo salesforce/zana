@@ -848,6 +848,30 @@ describe('Inbox fallback when the report target is gone', () => {
     expect(deps.markReported).not.toHaveBeenCalled();
   });
 
+  it('retries a gone owner report on a later report once a failed Inbox push released it', async () => {
+    const appendInbox = vi.fn().mockRejectedValueOnce(new Error('inbox down')).mockResolvedValue(undefined);
+    const { deps, notifier } = setup({ ptyLive: vi.fn(() => false), appendInbox }, ownerPty);
+    await notifier.onTerminal(ownerPty());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.markReported).not.toHaveBeenCalled();
+    await notifier.onTerminal(ownerPty());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(appendInbox).toHaveBeenCalledTimes(2);
+    expect(deps.markReported).toHaveBeenCalledWith('e1', 1);
+  });
+
+  it('retries a gone proposer blocker on a later offer once a failed Inbox push released it', async () => {
+    const appendInbox = vi.fn().mockRejectedValueOnce(new Error('inbox down')).mockResolvedValue(undefined);
+    const { deps, notifier } = setup({ ptyLive: vi.fn(() => false), appendInbox }, proposerPty);
+    await notifier.onHumanBlocker(proposerPty(), blocker as never);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.markBlockerReported).not.toHaveBeenCalled();
+    await notifier.onHumanBlocker(proposerPty(), blocker as never);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(appendInbox).toHaveBeenCalledTimes(2);
+    expect(deps.markBlockerReported).toHaveBeenCalledWith('e1', 'b1');
+  });
+
   it('does not double-post a proposer report when its session is gone', async () => {
     const { deps, notifier } = setup({ ptyLive: vi.fn(() => false) }, proposerPty);
     await notifier.onTerminal(proposerPty());

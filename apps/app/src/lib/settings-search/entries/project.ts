@@ -353,7 +353,7 @@ export const entries: readonly SettingsSearchEntry[] = [
     section: 'project',
     anchor: 'project-launch-approval',
     label: 'Squad launch approval',
-    help: "Choose whether agents can start Squad runs in this project on their own. A Squad's own setting overrides this.",
+    help: 'Choose whether agents can start Squad runs in this project on their own. Review here applies to every Squad; a Squad can also require review on its own.',
     keywords: ['squad', 'launch', 'approval', 'review', 'inbox', 'agent launch'],
     kind: 'subsection',
     scope: 'local'

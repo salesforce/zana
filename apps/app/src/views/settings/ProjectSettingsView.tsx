@@ -535,7 +535,7 @@ export function ProjectLaunchApprovalSettings({
       anchorId="project-launch-approval"
       searchId="project.launch-approval"
       title="Squad launch approval"
-      help="Choose whether agents can start Squad runs in this project on their own. A Squad's own setting overrides this."
+      help="Choose whether agents can start Squad runs in this project on their own. Review here applies to every Squad; a Squad can also require review on its own."
     >
       {loaded ? (
         <Field

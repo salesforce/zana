@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createExecutionStore, EXECUTION_RECOVERY_TTL_MS, KICKOFF_FAILURE_BLOCK_THRESHOLD } from '../store.js';
+import { createExecutionStore, EXECUTION_RECOVERY_TTL_MS, isTerminalExecutionState, KICKOFF_FAILURE_BLOCK_THRESHOLD } from '../store.js';
 import { usageRollup } from '../contracts.js';
 import { MAX_TEAM_INITIAL_TASK_BYTES } from '../../launch/team-lifecycle-store.js';
 
@@ -36,6 +36,13 @@ async function accumulateKickoffFailures(store: ReturnType<typeof createExecutio
   }
   return record;
 }
+
+describe('isTerminalExecutionState', () => {
+  it('treats only completed, stopped and failed as terminal', () => {
+    expect((['COMPLETED', 'STOPPED', 'FAILED'] as const).every(isTerminalExecutionState)).toBe(true);
+    expect((['READY', 'STARTING', 'RUNNING', 'BLOCKED'] as const).some(isTerminalExecutionState)).toBe(false);
+  });
+});
 
 describe('execution store', () => {
   it('grants one fixed blocker deadline grace then stops with a durable reason', async () => fixture(async (filePath) => {

@@ -44,6 +44,7 @@ let enabledFlag: boolean;
 let nowEnabled: boolean;
 const projectLaunchApproval = vi.fn<SquadLaunchNowDeps['projectLaunchApproval']>();
 const activeOwnedRuns = vi.fn<SquadLaunchNowDeps['activeOwnedRuns']>();
+const squadLaunchReviewRequired = vi.fn<NonNullable<SquadLaunchNowDeps['squadLaunchReviewRequired']>>();
 const launchNow = vi.fn<SquadLaunchNowDeps['launch']>();
 
 function build() {
@@ -73,6 +74,7 @@ function build() {
     launchNow: {
       enabled: () => nowEnabled,
       projectLaunchApproval: (...a) => projectLaunchApproval(...a),
+      squadLaunchReviewRequired: (...a) => squadLaunchReviewRequired(...a),
       activeOwnedRuns: (...a) => activeOwnedRuns(...a),
       launch: (...a) => launchNow(...a)
     }
@@ -97,6 +99,7 @@ beforeEach(() => {
   enabledFlag = true;
   nowEnabled = true;
   projectLaunchApproval.mockReset().mockResolvedValue(undefined);
+  squadLaunchReviewRequired.mockReset().mockReturnValue(false);
   activeOwnedRuns.mockReset().mockResolvedValue(0);
   let executions = 0;
   launchNow.mockReset().mockImplementation(async () => ({ ok: true, value: { executionId: `exec-${++executions}`, state: 'RUNNING' } }) as never);
@@ -596,14 +599,21 @@ describe('launchSquadNow', () => {
     };
     expect(await now()).toEqual(required);
     expect(projectLaunchApproval).toHaveBeenCalledWith('p1');
-    // The Squad's own setting wins over the Project's.
+    // Review is a floor: a Squad set to direct cannot lift its Project's review.
     teamRecord.launchApproval = 'direct';
-    expect(code(await now())).toBe('ok');
-    launchNow.mockClear();
+    expect(await now()).toEqual(required);
     projectLaunchApproval.mockResolvedValue('direct');
     teamRecord.launchApproval = 'review';
     expect(await now({ goal: 'another goal' })).toEqual(required);
-    expect(activeOwnedRuns).toHaveBeenCalledTimes(1);
+    expect(activeOwnedRuns).not.toHaveBeenCalled();
+    nothingStarted();
+  });
+
+  it('refuses when another stored record of the Squad id requires review', async () => {
+    teamRecord.launchApproval = 'direct';
+    squadLaunchReviewRequired.mockReturnValue(true);
+    expect(code(await now())).toBe('LAUNCH_REVIEW_REQUIRED');
+    expect(squadLaunchReviewRequired).toHaveBeenCalledWith('team1');
     nothingStarted();
   });
 
@@ -635,6 +645,12 @@ describe('launchSquadNow', () => {
     expect(await now({}, { projectId: 'p1', sessionId: 's2' })).toMatchObject({ ok: true, value: { executionId: 'exec-2' } });
     expect(await now({ goal: 'Build the other thing' }, { projectId: 'p1', sessionId: 's2' })).toMatchObject({ value: { executionId: 'exec-3' } });
     expect(await now({ planning: 'infer', goal: 'Build the other thing' }, { projectId: 'p1', sessionId: 's2' })).toMatchObject({ value: { executionId: 'exec-4' } });
+  });
+
+  it('treats a goal differing only in surrounding whitespace as identical', async () => {
+    const first = await now();
+    expect(await now({ goal: `  ${input.goal}\n` })).toEqual({ ok: true, value: { ...(first.ok ? first.value : {}), deduped: true } });
+    expect(launchNow).toHaveBeenCalledTimes(1);
   });
 
   it('treats the same sources in another order as identical', async () => {

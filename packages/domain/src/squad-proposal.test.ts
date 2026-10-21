@@ -80,9 +80,17 @@ describe('resolveLaunchApproval', () => {
     expect(resolveLaunchApproval({ squad: {}, project: { launchApproval: 'review' } })).toBe('review');
   });
 
-  it('lets the squad override the project either way', () => {
-    expect(resolveLaunchApproval({ squad: { launchApproval: 'direct' }, project: { launchApproval: 'review' } })).toBe('direct');
+  it('treats review as a floor: a squad cannot lift project review', () => {
+    expect(resolveLaunchApproval({ squad: { launchApproval: 'direct' }, project: { launchApproval: 'review' } })).toBe('review');
+  });
+
+  it('lets a squad require review when the project is direct or unset', () => {
     expect(resolveLaunchApproval({ squad: { launchApproval: 'review' }, project: { launchApproval: 'direct' } })).toBe('review');
+    expect(resolveLaunchApproval({ squad: { launchApproval: 'review' }, project: {} })).toBe('review');
+  });
+
+  it('is direct when both sides say direct', () => {
+    expect(resolveLaunchApproval({ squad: { launchApproval: 'direct' }, project: { launchApproval: 'direct' } })).toBe('direct');
   });
 });
 

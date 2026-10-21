@@ -21,6 +21,7 @@
 
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { LAUNCH_REVIEW_REQUIRED_MESSAGE, type LaunchApproval } from '@zana-ai/zcc-domain/squad-proposal';
 import type { CancelTeamLaunchResult, LaunchTeamResult, Result, TeamLaunchAuthorizationInputSlot, TeamLaunchAuthorizationResult, TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
 import { MAX_TEAM_INITIAL_TASK_BYTES, MAX_TEAM_LAUNCH_DEADLINE_MS, MAX_TEAM_LAUNCH_REQUEST_ID_LENGTH } from '../launch/team-lifecycle-store.js';
 
@@ -143,6 +144,12 @@ export interface RegisterLaunchTeamToolOpts {
   // Async: main may need a cross-process liveness probe (a Modern/ACP thread,
   // not just a local pty session). Undefined ⇒ no gate (open, as before).
   validateRouteIdentity?: (sessionId: string, projectId: string) => boolean | Promise<boolean>;
+  /**
+   * The launch-approval policy for a Squad in this project. `review` refuses an
+   * agent launch so the user launches it instead. Unwired, a failing lookup or
+   * `review` all refuse: this tool is only ever called by an agent.
+   */
+  resolveLaunchApproval?: (teamId: string, projectId: string) => LaunchApproval | Promise<LaunchApproval>;
 }
 
 /**
@@ -154,7 +161,21 @@ export function registerLaunchTeamTool(
   server: McpServer,
   opts: RegisterLaunchTeamToolOpts
 ): void {
-  const { sessionId, projectId, launchTeam, authorizeTeamLaunch, cancelTeamLaunch, getTeamLaunch, reportTeamTask, validateRouteIdentity, evaluateAdmission, revokeTeamAuthorizations } = opts;
+  const { sessionId, projectId, launchTeam, authorizeTeamLaunch, cancelTeamLaunch, getTeamLaunch, reportTeamTask, validateRouteIdentity, evaluateAdmission, revokeTeamAuthorizations, resolveLaunchApproval } = opts;
+
+  // The refusal text for a Squad whose launch approval keeps agents from
+  // launching it, or undefined when the launch may go ahead.
+  const launchApprovalRefusal = async (tool: string, teamId: string): Promise<string | undefined> => {
+    let approval: LaunchApproval;
+    try {
+      if (!resolveLaunchApproval) throw new Error('launch approval resolver is not wired');
+      approval = await resolveLaunchApproval(teamId, projectId);
+    } catch (error) {
+      console.error(`[launch-team-mcp] launch approval lookup failed for project ${projectId}`, error);
+      return `${tool} failed: LAUNCH_APPROVAL_UNAVAILABLE: the Squad launch approval setting could not be read, so the team was not launched.`;
+    }
+    return approval === 'review' ? `${tool} failed: LAUNCH_REVIEW_REQUIRED: ${LAUNCH_REVIEW_REQUIRED_MESSAGE}` : undefined;
+  };
 
   // validateRouteIdentity may hit an async probe (HTTP /live fallback). A
   // rejecting probe must DENY, not throw out of the tool handler — treat any
@@ -179,6 +200,8 @@ export function registerLaunchTeamTool(
       if (typeof target === 'string' && target && target !== projectId) {
         return { isError: true, content: [{ type: 'text' as const, text: 'authorize_team_launch failed: cross-project launches are not allowed.' }] };
       }
+      const refusal = await launchApprovalRefusal('authorize_team_launch', teamId);
+      if (refusal) return { isError: true, content: [{ type: 'text' as const, text: refusal }] };
       const policy = {
         ...(deadlineMs === undefined ? {} : { deadlineMs }),
         ...(maxConcurrent === undefined ? {} : { maxConcurrent }),
@@ -248,6 +271,12 @@ export function registerLaunchTeamTool(
       const revokeAuthorizedSlots = () => revokeTeamAuthorizations?.({
         callerPrincipalId: sessionId, projectId, teamId, launchRequestId, slots
       });
+      // Re-checked here: the setting may have changed since authorize_team_launch.
+      const refusal = await launchApprovalRefusal('launch_team', teamId);
+      if (refusal) {
+        await revokeAuthorizedSlots();
+        return { isError: true, content: [{ type: 'text' as const, text: refusal }] };
+      }
       if (evaluateAdmission && !admissionDigest) {
         await revokeAuthorizedSlots();
         return { isError: true, content: [{ type: 'text' as const, text: 'launch_team failed: admissionDigest from authorize_team_launch is required.' }] };

@@ -85,8 +85,10 @@ export interface SquadLaunchNowRequest {
 export interface SquadLaunchNowDeps {
   /** The instance opt-in; only true lets an agent start a Squad without review. */
   enabled(): boolean;
-  /** The Project's launch-approval setting; the Squad's own setting overrides it. */
+  /** The Project's launch-approval setting; review here applies whatever the Squad says. */
   projectLaunchApproval(projectId: string): Promise<LaunchApproval | undefined>;
+  /** True when any stored record of this Squad id asks for review, so a shadowing file cannot lift it. */
+  squadLaunchReviewRequired?(teamId: string): boolean;
   /** Non-terminal runs this session owns in the project. */
   activeOwnedRuns(sessionId: string, projectId: string): Promise<number>;
   launch(request: SquadLaunchNowRequest, ctx: SquadLaunchContext): Promise<TeamJobLaunchResponse>;
@@ -333,7 +335,7 @@ function proposalResult(record: SquadProposalRecord, prepared: Prepared, entry: 
 /** One key per conversation and launch content, so a retried call can be recognised without keeping the goal. */
 function nowDedupeKey(sessionId: string, input: SquadProposalInput, prepared: Prepared): string {
   return createHash('sha256').update(JSON.stringify([
-    sessionId, prepared.team.id, input.goal, prepared.planning, prepared.sources.map((s) => s.path).sort()
+    sessionId, prepared.team.id, input.goal.trim(), prepared.planning, prepared.sources.map((s) => s.path).sort()
   ])).digest('hex');
 }
 
@@ -528,7 +530,8 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         if (!prepared.ok) return prepared;
         let approval: LaunchApproval;
         try {
-          approval = resolveLaunchApproval({ squad: prepared.value.team, project: { launchApproval: await launchNow.projectLaunchApproval(route.projectId) } });
+          const squad = launchNow.squadLaunchReviewRequired?.(prepared.value.team.id) ? { launchApproval: 'review' as const } : prepared.value.team;
+          approval = resolveLaunchApproval({ squad, project: { launchApproval: await launchNow.projectLaunchApproval(route.projectId) } });
         } catch (error) {
           return unexpected('launch now approval', error,
             'The Squad launch approval setting could not be read, so the run was not started.', 'LAUNCH_APPROVAL_UNAVAILABLE');

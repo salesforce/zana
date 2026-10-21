@@ -54,7 +54,10 @@ describe('SquadEditor launch approval', () => {
   it('treats a non-policy value as inherit', async () => {
     expect(Object.keys(await clickAndSave(base, 2))).not.toContain('launchApproval');
   });
-  it('keeps a stored direct override when saved unchanged', async () => {
+  it('drops a saved review when switched back to inherit', async () => {
+    expect(Object.keys(await clickAndSave({ ...base, launchApproval: 'review' }, 1))).not.toContain('launchApproval');
+  });
+  it('keeps a stored direct setting when saved unchanged', async () => {
     expect((await clickAndSave({ ...base, launchApproval: 'direct' }, 0)).launchApproval).toBe('direct');
   });
 });

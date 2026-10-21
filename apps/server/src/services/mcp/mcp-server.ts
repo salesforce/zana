@@ -441,6 +441,11 @@ export interface McpServerOptions {
   validateLaunchRouteIdentity?: RegisterLaunchTeamToolOpts['validateRouteIdentity'];
   resolveExecutionCohortBinding?: RegisterExecutionToolOptions['resolveCohortBinding'];
   validateExecutionRecoveryBinding?: RegisterExecutionToolOptions['validateRecoveryBinding'];
+  /**
+   * Launch-approval policy for a Squad in a project, checked by agent
+   * `execution.start`, `authorize_team_launch` and `launch_team`. Those tools
+   * refuse when it is not wired.
+   */
   resolveExecutionLaunchApproval?: RegisterExecutionToolOptions['resolveLaunchApproval'];
   executionService?: ExecutionService;
   executionHandoffs?: ReturnType<typeof createExecutionHandoffStore>;
@@ -847,6 +852,7 @@ function buildProjectMcpServer(opts: {
       cancelTeamLaunch: opts.cancelTeamLaunch,
       getTeamLaunch: opts.getTeamLaunch,
       reportTeamTask: opts.reportTeamTask,
+      resolveLaunchApproval: opts.resolveExecutionLaunchApproval,
       // Launch identity accepts a live pty session OR a live Modern/ACP thread
       // (async probe). Falls back to the sync pty-only gate when the async one
       // isn't wired. Distinct from the execution plane's sync gate below.
@@ -901,7 +907,9 @@ function buildProjectMcpServer(opts: {
       validateRouteIdentity: async (s, p) => routeAuthenticated
         && !!opts.validateLaunchRouteIdentity
         && (await opts.validateLaunchRouteIdentity(s, p)),
-      // Same owner gate execution.start uses: a live PTY or Modern thread, never a cohort worker.
+      // Same owner gate execution.start uses: a live PTY or Modern thread. It does not
+      // exclude cohort workers; the Squad proposal service refuses them through
+      // lookupProposer's squadMember flag.
       validateOwnerRouteIdentity: async (s, p) => {
         if (!routeAuthenticated) return false;
         const gate = opts.validateLaunchRouteIdentity ?? opts.validateTeamRouteIdentity;

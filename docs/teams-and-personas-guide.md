@@ -330,9 +330,18 @@ agent use.
 in the instance settings to allow it, otherwise an agent asking for `now` gets
 `LAUNCH_NOW_DISABLED` and falls back to review. Each Squad (Squad editor) and each
 Project (Project settings) also has a **Launch approval** setting. **Review before
-launch** makes agents propose the run so you press Launch from the Inbox: `now`
-and agent `execution.start` are refused with `LAUNCH_REVIEW_REQUIRED`. Launching
-from the composer, schedules and triggers is not affected. Bounds: a repeat launch
+launch** makes agents propose the run so you press Launch from the Inbox: `now`,
+agent `execution.start` and agent `launch_team` are refused with
+`LAUNCH_REVIEW_REQUIRED`. Review is a floor: if either the Squad or its Project
+says Review before launch, the run needs review; a Squad set to launch directly
+cannot lift its Project's review. Launching from the composer, schedules and
+triggers is not affected.
+
+These settings constrain the agent launch tools (`squad_launch`,
+`execution.start`, `launch_team`). They are not a sandbox: an agent with shell
+or local network access to the app can still reach the product HTTP API that
+the desktop UI uses. Treat them as guardrails for cooperative agents, not as a
+security boundary against a hostile one. Bounds: a repeat launch
 within 10 minutes returns the same run, one launch is in flight per conversation,
 and an agent owns at most 3 active runs.
 

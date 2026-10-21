@@ -364,8 +364,9 @@ when the user explicitly asks to start now; otherwise hand it to a Squad the
 takes `mode: 'review'` (Inbox card, the user presses Launch) or `mode: 'now'`
 (you own the run and get the `[Squad report]`; answer blockers with
 `execution.respond`). `now` is off by default (`LAUNCH_NOW_DISABLED`), and a
-Squad or Project with Launch approval "Review before launch" refuses `now` and
-agent `execution.start` (`LAUNCH_REVIEW_REQUIRED`): use `mode: 'review'`. Bounds:
+Squad or Project with Launch approval "Review before launch" refuses `now`,
+agent `execution.start` and `launch_team` (`LAUNCH_REVIEW_REQUIRED`): use
+`mode: 'review'`. Bounds:
 a repeat call within 10 minutes returns the same `executionId` with
 `deduped: true`; one launch in flight per conversation (`LAUNCH_IN_PROGRESS`);
 at most 3 active owned runs (`TOO_MANY_LAUNCHES`). If your conversation is gone,

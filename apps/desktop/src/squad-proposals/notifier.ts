@@ -164,8 +164,9 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
       // only gets one once its conversation is confirmed gone; a transient failure never posts.
       const owner = target.role === 'owner';
       const settle = settler(fresh, key, owner ? true : await postResult(fresh, text));
+      // A failed Inbox post releases the claim, so a later report of this run tries again.
       const gone = owner
-        ? () => { void postResult(fresh, text).then((posted) => { if (posted) settle(); }); }
+        ? () => { void postResult(fresh, text).then((posted) => { if (posted) settle(); else claimed.delete(key); }); }
         : settle;
       handedOff = true;
       if (targetLive === false) { gone(); return; }
@@ -216,9 +217,13 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
     const text = buildSquadBlockerReport(record, blocker, target.role);
     // A confirmed-gone conversation still leaves the question in the Inbox (one entry per blocker).
     // Only a proposer's blocker is then marked: an owner may come back and still gets it.
+    // A failed Inbox post forgets the sighting, so a later offer of this blocker tries again.
     const onGone = () => {
       if (owner) seenBlockers.get(record.id)?.delete(blocker.id);
-      void postBlocker(record, blocker, text).then((posted) => { if (posted && !owner) settle(); });
+      void postBlocker(record, blocker, text).then((posted) => {
+        if (!posted) seenBlockers.get(record.id)?.delete(blocker.id);
+        else if (!owner) settle();
+      });
     };
     const stillWanted = async () => {
       const fresh = await deps.getRecord(record.id);

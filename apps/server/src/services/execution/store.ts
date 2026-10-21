@@ -39,6 +39,11 @@ import {
 } from './contracts.js';
 
 export type ExecutionState = 'READY' | 'STARTING' | 'RUNNING' | 'COMPLETED' | 'BLOCKED' | 'STOPPED' | 'FAILED';
+/** States an execution never leaves. BLOCKED is not terminal: it can resume. */
+export const TERMINAL_EXECUTION_STATES: ReadonlySet<ExecutionState> = new Set(['COMPLETED', 'STOPPED', 'FAILED']);
+export function isTerminalExecutionState(state: ExecutionState): boolean {
+  return TERMINAL_EXECUTION_STATES.has(state);
+}
 export type ExecutionWorkUnitState = 'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'SKIPPED';
 export type ExecutionCohortAuthority = { role: 'worker' | 'orchestrator'; slotId: string };
 export type ExecutionLaunchKind = 'team';

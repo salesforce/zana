@@ -668,13 +668,14 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
             onChange={(next) => setLaunchApproval(isLaunchApproval(next) ? next : '')}
             options={[
               { value: '', label: 'Use the Project setting' },
-              { value: 'direct', label: 'Agents can launch directly' },
+              { value: 'direct', label: 'Agents can launch directly if the Project allows' },
               { value: 'review', label: 'Review before launch' }
             ]}
           />
           <p className="settings-help">
             Review before launch stops an agent from starting this Squad on its own. It proposes the run
-            and you press Launch from the Inbox. Launching from the composer, schedules and triggers is not affected.
+            and you press Launch from the Inbox. A Project set to Review before launch applies to this Squad
+            whatever is chosen here. Launching from the composer, schedules and triggers is not affected.
           </p>
         </div>
 

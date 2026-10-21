@@ -17,13 +17,15 @@ export function isLaunchApproval(value: unknown): value is LaunchApproval {
 }
 
 /**
- * The launch-approval policy for a Squad run. The Squad's own setting wins over
- * its Project's; with neither set the run launches directly.
+ * The launch-approval policy for a Squad run. `review` is a floor: if either the
+ * Squad or its Project asks for review, the run needs review. A Squad cannot lift
+ * its Project's review requirement, because Squad files under the project's
+ * `.zcc/teams` are writable by agents working in that checkout.
  */
 export function resolveLaunchApproval(
   { squad, project }: { squad?: { launchApproval?: LaunchApproval } | null; project?: { launchApproval?: LaunchApproval } | null }
 ): LaunchApproval {
-  return squad?.launchApproval ?? project?.launchApproval ?? 'direct';
+  return squad?.launchApproval === 'review' || project?.launchApproval === 'review' ? 'review' : 'direct';
 }
 
 export const SQUAD_PROPOSAL_LIMITS = {
