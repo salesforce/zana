@@ -114,12 +114,18 @@ export interface RefusedGoalPath {
 
 /**
  * The absolute paths a goal names, cleaned of quotes and trailing punctuation, in order. Same
- * token rules as the host's goal-source discovery (`goalExecutionSourcePaths`).
+ * token rules as the host's goal-source discovery (`goalExecutionSourcePaths`): an `@path`
+ * mention counts too, resolved against `projectRoot` when relative (and skipped without one).
  */
-export function goalPathTokens(goal: string): string[] {
+export function goalPathTokens(goal: string, projectRoot?: string): string[] {
   const raw: string[] = [];
   for (const m of goal.matchAll(/["'`]((?:[A-Za-z]:[/\\]|\/)[^"'`]+)["'`]/g)) if (m[1]) raw.push(m[1]);
   for (const m of goal.matchAll(/(?:^|[\s(])((?:[A-Za-z]:[/\\]|\/)[^\s`'"),;:]+)/g)) if (m[1]) raw.push(m[1]);
+  for (const m of goal.matchAll(/(?:^|[\s(])@([^\s`'"),;:@]+)/g)) {
+    if (!m[1]) continue;
+    if (isAbsolute(m[1])) raw.push(m[1]);
+    else if (projectRoot) raw.push(resolve(projectRoot, m[1]));
+  }
   return raw.map((token) => token.trim().replace(/^[`'"(]+|[`'"),;:]+$/g, ''));
 }
 
@@ -135,7 +141,7 @@ export function goalPathTokens(goal: string): string[] {
 export async function goalPathNotAllowed(
   fs: SquadProposalFs, scope: SquadSourceScope, goal: string, listedOutside: ReadonlySet<string> = new Set()
 ): Promise<RefusedGoalPath | undefined> {
-  for (const cleaned of goalPathTokens(goal)) {
+  for (const cleaned of goalPathTokens(goal, scope.projectRoot)) {
     for (const candidate of cleaned.endsWith('.') ? [cleaned, cleaned.slice(0, -1)] : [cleaned]) {
       let real: string;
       try { real = await fs.realpath(candidate); } catch { continue; }

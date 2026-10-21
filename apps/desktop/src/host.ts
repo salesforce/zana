@@ -4866,6 +4866,11 @@ export async function goalExecutionSourcePaths(
   for (const m of goal.matchAll(/(?:^|[\s(])((?:[A-Za-z]:[/\\]|\/)[^\s`'"),;:]+)/g)) {
     if (m[1]) rawCandidates.push(m[1]);
   }
+  // 3. `@path` mentions, as the composer writes a dropped, picked or typeahead file:
+  // project-relative inside the project, absolute outside it. Same policy checks below.
+  for (const m of goal.matchAll(/(?:^|[\s(])@([^\s`'"),;:@]+)/g)) {
+    if (m[1]) rawCandidates.push(isAbsolute(m[1]) ? m[1] : resolve(home, m[1]));
+  }
   for (const match of rawCandidates) {
     const raw = match.trim().replace(/^[`'"(]+|[`'"),;:]+$/g, '');
     const candidates = [raw];

@@ -862,4 +862,17 @@ describe('goal paths and the reviewed card', () => {
     expect(goalPathTokens('See "/a b/c.md", /d/e.md; and (/f/g.md). Not a/path.')).toEqual(['/a b/c.md', '/d/e.md', '/f/g.md']);
     expect(goalPathTokens('nothing here')).toEqual([]);
   });
+
+  it('reads @mentions like the host: absolute always, relative only against a project root', () => {
+    expect(goalPathTokens('Run @/v/plan.md and (@docs/a.md).')).toEqual(['/v/plan.md']);
+    expect(goalPathTokens('Run @/v/plan.md and (@docs/a.md).', '/p')).toEqual(['/v/plan.md', '/p/docs/a.md']);
+  });
+
+  it('judges a relative @mention against the Project: inside passes, an escape is refused', async () => {
+    const scope = (await sourceScope(realFs, join(root, 'proj'), { home: homeDir }))!;
+    writeFileSync(join(root, 'proj', 'a-recoverable.md'), '# plan');
+    expect(await goalPathNotAllowed(realFs, scope, '@a-recoverable.md')).toBeUndefined();
+    const outside = relative(join(root, 'proj'), design);
+    expect(await goalPathNotAllowed(realFs, scope, `@${outside}`)).toEqual({ path: design, reason: 'outside-project' });
+  });
 });
