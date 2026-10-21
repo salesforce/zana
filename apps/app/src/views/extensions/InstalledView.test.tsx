@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { PluginAppEntry } from '@zana-ai/zcc-domain/product';
@@ -14,6 +14,8 @@ vi.mock('@/plugins/plugin-app-loader', () => ({ reconcilePluginApps: vi.fn() }))
 vi.mock('@/plugins/PluginDefinedSettings', () => ({ PluginDefinedSettings: () => null }));
 vi.mock('@/plugins/PluginSettingsSections', () => ({ PluginSettingsSections: () => null }));
 vi.mock('./PluginHubIncludes.js', () => ({ PluginHubIncludes: () => null }));
+vi.mock('./PluginBrowseSplit.js', () => ({ PluginBrowseSplit: ({ toolbarExtra }: { toolbarExtra?: import('react').ReactNode }) =>
+  <div data-testid="browse-plugins">{toolbarExtra}</div> }));
 vi.mock('@/components/InstallFromGitDialog', () => ({ InstallFromGitDialog: ({ mode, onClose }: { mode?: string; onClose: () => void }) =>
   <button onClick={onClose}>{mode === 'open' ? 'Close existing plugin' : 'Close repository install'}</button> }));
 vi.mock('../../lib/product-client.js', () => ({ product: {
@@ -21,7 +23,7 @@ vi.mock('../../lib/product-client.js', () => ({ product: {
   pluginApps: { list: async () => state.entries, onChanged: (changed: (entries: PluginAppEntry[]) => void) => { state.changed = changed; return state.offApps; } }
 } }));
 import { useUi } from '@/store';
-import { InstalledView } from './ExtensionsHub.js';
+import { ExtensionsHub, InstalledView } from './ExtensionsHub.js';
 function Location() { const location = useLocation(); return <output data-testid="destination">{JSON.stringify(location)}</output>; }
 const toast = vi.fn(), select = vi.fn(), setTab = vi.fn();
 const setup = (onBrowse?: () => void) => render(<MemoryRouter><InstalledView onBrowse={onBrowse} toolbarExtra={<button>More actions</button>} mobileActions={<button>Maintenance</button>} /><Location /></MemoryRouter>);
@@ -80,4 +82,35 @@ it('loads installed cards, opens their details, and releases subscriptions on un
   fireEvent.click(await screen.findByRole('button', { name: 'Demo plugin details' }));
   expect(select).toHaveBeenCalledWith('demo');
   view.unmount(); expect(state.offExt).toHaveBeenCalledOnce(); expect(state.offApps).toHaveBeenCalledOnce();
+});
+
+it('navigates between the installed collection and Browse while retaining maintenance access', () => {
+  setupHub();
+  expect(document.querySelector('.ext-hub-shell--installed')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Browse', exact: true }));
+  expect(screen.getByTestId('browse-plugins')).toBeTruthy();
+  expect(document.querySelector('.ext-hub-shell--installed')).toBeNull();
+  fireEvent.click(screen.getByRole('tab', { name: 'Installed' }));
+  fireEvent.click(screen.getByRole('button', { name: 'More', exact: true }));
+  expect(screen.getByRole('menuitem', { name: 'Check for updates' })).toBeTruthy();
+  fireEvent.keyDown(document, { key: 'Escape' });
+  expect(screen.queryByRole('menu')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'More', exact: true }));
+  fireEvent.mouseDown(document.body);
+  expect(screen.queryByRole('menu')).toBeNull();
+});
+
+function setupHub() { return render(<MemoryRouter><ExtensionsHub /></MemoryRouter>); }
+
+it('respects controlled hub navigation with the outer tabs hidden', () => {
+  const onTabChange = vi.fn();
+  const view = render(<MemoryRouter><ExtensionsHub tab="marketplace" showTabs={false} onTabChange={onTabChange} /></MemoryRouter>);
+  expect(screen.queryByRole('tablist')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'More', exact: true }));
+  expect(screen.getByRole('menu', { name: 'Extension maintenance' })).toBeTruthy();
+  state.compact = true;
+  view.rerender(<MemoryRouter><ExtensionsHub tab="installed" showTabs={false} onTabChange={onTabChange} /></MemoryRouter>);
+  fireEvent.click(within(screen.getByRole('navigation', { name: 'Plugin collections' })).getByRole('button', { name: 'Browse', exact: true }));
+  expect(onTabChange).toHaveBeenCalledWith('marketplace');
+  expect(document.querySelector('.ext-hub-shell--installed')).toBeTruthy();
 });
