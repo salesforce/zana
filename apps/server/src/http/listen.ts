@@ -6,7 +6,7 @@ import { attachProductPluginService } from './product-plugins.js';
 import { DEFAULT_DEV_APP_PORT, serverPortFromEnv } from './ports.js';
 import { resolveZccDataDir } from '@zana-ai/zcc-host-daemon/host-config';
 import { standaloneModernTeamLaunchSource } from '../services/agents/modern-team-launch-config.js';
-import { resolveSquadMember } from '../services/threads/squad-member-runtime.js';
+import { isSquadMemberThread, resolveSquadMember } from '../services/threads/squad-member-runtime.js';
 import { createTeamOpsViaControl } from './team-ops-via-control.js';
 import { createCliAgentOpsViaControl, retainProductServerCredential } from './cli-agent-ops.js';
 import { holdThreadProviderStartup } from '../services/threads/thread-provider-catalog.js';
@@ -50,7 +50,8 @@ await attachProductPluginService(host.ctx, {
     dataDir,
     () => host.ctx.config.getConfig(),
     process.env.ZCC_E2E_HOME ? join(process.env.ZCC_E2E_HOME, 'electron-user-data') : undefined,
-    (threadId, projectId) => resolveSquadMember(host.ctx, threadId, projectId)
+    (threadId, projectId) => resolveSquadMember(host.ctx, threadId, projectId),
+    (threadId) => isSquadMemberThread(host.ctx, threadId)
   )
 }).finally(releaseProviderStartup);
 

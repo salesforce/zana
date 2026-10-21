@@ -97,4 +97,14 @@ describe('Modern team-launch config source', () => {
     expect(configured.tools.map((tool) => tool.name)).not.toContain('execution_start');
     expect(configured.tools.map((tool) => tool.name)).not.toContain('launch_team');
   });
+
+  it('passes durable former-member state into owner-tool denial', async () => {
+    const source = createModernTeamLaunchConfigSource({
+      getMcpBaseUrl: () => 'http://127.0.0.1:43123',
+      getAppConfig: () => ({ teamLaunchEnabled: true }),
+      resolveMember: async () => undefined,
+      isMemberThread: (threadId) => threadId === session.threadId
+    });
+    await expect(resolvePluginSessionTools([source], session)).resolves.toMatchObject({ tools: [] });
+  });
 });

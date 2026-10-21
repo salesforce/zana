@@ -26,6 +26,7 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { applyPluginSqliteMigrations } from './plugin-database-migrations.js';
 import { createRequire } from 'node:module';
 import { createSqliteDatabase, listHosts, getPrimaryHost, getConversationThread } from '@zana-ai/zcc-db';
+import { MODERN_SQUAD_THREAD_ORIGIN } from '@zana-ai/zcc-domain/squad-origin';
 import type {
   PluginAgentConfigureContext,
   PluginProviderDeclaration,
@@ -1198,7 +1199,7 @@ export function createPluginApi(
           const id = typeof threadId === 'string' ? threadId.trim() : '';
           if (!id) throw new Error('threadId is required');
           const thread = options?.productContext ? getConversationThread(options.productContext.db, id) : null;
-          return { capabilities: capabilityDescriptors(thread?.providerId ?? null, thread?.originPluginId === 'host-modern-squad') };
+          return { capabilities: capabilityDescriptors(thread?.providerId ?? null, thread?.originPluginId === MODERN_SQUAD_THREAD_ORIGIN) };
         },
         forExecution: async ({ executionId }) => {
           assertLive();

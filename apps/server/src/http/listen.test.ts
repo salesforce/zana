@@ -8,7 +8,8 @@ const deps = vi.hoisted(() => ({
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
   standaloneModernTeamLaunchSource: vi.fn(() => 'tools'),
-  resolveSquadMember: vi.fn(() => 'member')
+  resolveSquadMember: vi.fn(() => 'member'),
+  isSquadMemberThread: vi.fn(() => true)
 }));
 
 vi.mock('node:fs', () => ({ mkdirSync: deps.mkdirSync, writeFileSync: deps.writeFileSync }));
@@ -17,7 +18,7 @@ vi.mock('./product-plugins.js', () => ({ attachProductPluginService: deps.attach
 vi.mock('./ports.js', () => ({ DEFAULT_DEV_APP_PORT: 5173, serverPortFromEnv: () => 8780 }));
 vi.mock('@zana-ai/zcc-host-daemon/host-config', () => ({ resolveZccDataDir: () => '/test/data' }));
 vi.mock('../services/agents/modern-team-launch-config.js', () => ({ standaloneModernTeamLaunchSource: deps.standaloneModernTeamLaunchSource }));
-vi.mock('../services/threads/squad-member-runtime.js', () => ({ resolveSquadMember: deps.resolveSquadMember }));
+vi.mock('../services/threads/squad-member-runtime.js', () => ({ resolveSquadMember: deps.resolveSquadMember, isSquadMemberThread: deps.isSquadMemberThread }));
 vi.mock('./team-ops-via-control.js', () => ({ createTeamOpsViaControl: () => 'teams' }));
 vi.mock('./cli-agent-ops.js', () => ({
   retainProductServerCredential: deps.retainProductServerCredential,
@@ -61,4 +62,7 @@ it('retains credential for authorized send but removes it before server and plug
   const resolver = deps.standaloneModernTeamLaunchSource.mock.calls[0]![3] as (t: string, p: string) => unknown;
   expect(resolver('thread-1', 'project-1')).toBe('member');
   expect(deps.resolveSquadMember).toHaveBeenCalledExactlyOnceWith(ctx, 'thread-1', 'project-1');
+  const formerMember = deps.standaloneModernTeamLaunchSource.mock.calls[0]![4] as (t: string) => unknown;
+  expect(formerMember('thread-1')).toBe(true);
+  expect(deps.isSquadMemberThread).toHaveBeenCalledExactlyOnceWith(ctx, 'thread-1');
 });

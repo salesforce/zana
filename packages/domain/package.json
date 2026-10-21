@@ -75,6 +75,11 @@
       "source": "./src/schedule-health.ts",
       "default": "./src/schedule-health.ts"
     },
+    "./squad-origin": {
+      "types": "./src/squad-origin.ts",
+      "source": "./src/squad-origin.ts",
+      "default": "./src/squad-origin.ts"
+    },
     "./squad-proposal": {
       "types": "./src/squad-proposal.ts",
       "source": "./src/squad-proposal.ts",

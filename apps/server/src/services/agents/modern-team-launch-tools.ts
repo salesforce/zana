@@ -89,6 +89,8 @@ export interface ModernTeamLaunchSourceDeps {
   getConfig: () => ModernTeamLaunchConfig;
   /** Host-attested thread metadata. Members never inherit owner launch tools. */
   resolveMember?: (threadId: string, projectId: string) => ModernTeamMember | undefined | Promise<ModernTeamMember | undefined>;
+  /** Durable "was ever a member" check; such threads never receive owner surface tools. */
+  isMemberThread?: (threadId: string) => boolean | Promise<boolean>;
   /** Mint the session control credential; defaults to the shared signer. */
   credentialFor?: (sessionId: string) => string;
   /** Perform the loopback MCP `tools/call`; injectable for tests. */
@@ -221,6 +223,43 @@ const OWNER_EXECUTION_MCP_NAMES: ReadonlySet<string> = new Set(
   OWNER_EXECUTION_TOOL_DEFS.map((def) => def.mcpName ?? def.name)
 );
 const MAX_CONFIGURED_MEMBERS = 1024;
+const MAX_RETIRED_MEMBERS = 4096;
+
+const sameFence = (a: ModernTeamMember, b: ModernTeamMember) => a.bindingId === b.bindingId
+  && a.generation === b.generation && a.role === b.role && a.executionId === b.executionId;
+
+/**
+ * Live member fences plus a bounded FIFO of retired keys. A retired key is never
+ * re-admitted (old clients stay stale) and never receives owner tools; the durable
+ * `isMemberThread` check keeps that denial after a tombstone ages out.
+ */
+class MemberFences {
+  private readonly live = new Map<string, ModernTeamMember>();
+  private readonly retired = new Set<string>();
+
+  /** Retire a live fence whose binding no longer resolves or whose fence changed. */
+  reconcile(key: string, member: ModernTeamMember | undefined): ModernTeamMember | undefined {
+    const configured = this.live.get(key);
+    if (configured && (!member || !sameFence(configured, member))) {
+      this.live.delete(key);
+      this.retired.add(key);
+      if (this.retired.size > MAX_RETIRED_MEMBERS) this.retired.delete(this.retired.values().next().value!);
+      return undefined;
+    }
+    return configured;
+  }
+
+  admit(key: string, member: ModernTeamMember): boolean {
+    if (this.retired.has(key)) return false;
+    if (!this.live.has(key)) {
+      if (this.live.size >= MAX_CONFIGURED_MEMBERS) return false;
+      this.live.set(key, { ...member });
+    }
+    return true;
+  }
+
+  isRetired(key: string): boolean { return this.retired.has(key); }
+}
 
 /**
  * Build the credentialed loopback MCP route for one thread's tool call. `?route=thread` tells
@@ -274,7 +313,7 @@ async function defaultCallMcpTool({ url, name, input, signal }: CallMcpToolArgs)
   return { ok: !result?.isError, text: extractText(result) };
 }
 
-function forwarder(def: ToolDef, deps: ModernTeamLaunchSourceDeps, configuredMembers: Map<string, ModernTeamMember>) {
+function forwarder(def: ToolDef, deps: ModernTeamLaunchSourceDeps, fences: MemberFences) {
   const credentialFor = deps.credentialFor ?? controlCredentialForSession;
   const callMcpTool = deps.callMcpTool ?? defaultCallMcpTool;
   return jsonSchemaAgentToolRecord({
@@ -287,11 +326,11 @@ function forwarder(def: ToolDef, deps: ModernTeamLaunchSourceDeps, configuredMem
       const ownerVerb = OWNER_EXECUTION_MCP_NAMES.has(mcpName);
       const memberVerb = mcpName.startsWith('execution.') && !ownerVerb;
       const member = await deps.resolveMember?.(ctx.threadId, ctx.projectId);
-      const configuredMember = configuredMembers.get(JSON.stringify([ctx.projectId, ctx.threadId]));
-      if (member || configuredMember || memberVerb) {
-        if (!member || !configuredMember || member.bindingId !== configuredMember.bindingId
-          || member.generation !== configuredMember.generation || member.role !== configuredMember.role
-          || member.executionId !== configuredMember.executionId
+      const key = JSON.stringify([ctx.projectId, ctx.threadId]);
+      const configuredMember = fences.reconcile(key, member);
+      const formerMember = fences.isRetired(key) || await deps.isMemberThread?.(ctx.threadId) === true;
+      if (member || configuredMember || memberVerb || formerMember) {
+        if (!member || !configuredMember || !sameFence(member, configuredMember)
           || !EXECUTION_MEMBER_TOOL_NAMES[member.role]?.some((name) => name === mcpName)) {
           return { ok: false, message: `${def.name} unavailable: thread is not configured for this member role and generation.` };
         }
@@ -340,7 +379,7 @@ function forwarder(def: ToolDef, deps: ModernTeamLaunchSourceDeps, configuredMem
  */
 export function createModernTeamLaunchSource(deps: ModernTeamLaunchSourceDeps): PluginAgentToolSource {
   // First configured generation stays pinned even if the same thread is reconfigured.
-  const configuredMembers = new Map<string, ModernTeamMember>();
+  const fences = new MemberFences();
   const memberNames = new Set<string>(Object.values(EXECUTION_MEMBER_TOOL_NAMES).flat());
   const memberDefs = getExecutionToolDescriptors().filter((descriptor) => memberNames.has(descriptor.name)
     && !OWNER_EXECUTION_MCP_NAMES.has(descriptor.name)).map((descriptor) => {
@@ -352,27 +391,23 @@ export function createModernTeamLaunchSource(deps: ModernTeamLaunchSourceDeps): 
   });
   return {
     pluginId: MODERN_TEAM_LAUNCH_PLUGIN_ID,
-    tools: [...TOOL_DEFS, ...OWNER_EXECUTION_TOOL_DEFS, ...memberDefs].map((def) => forwarder(def, deps, configuredMembers)),
+    tools: [...TOOL_DEFS, ...OWNER_EXECUTION_TOOL_DEFS, ...memberDefs].map((def) => forwarder(def, deps, fences)),
     configurers: [
       async (ctx) => {
         const { mcpBaseUrl, teamLaunchEnabled, teamJobLaunchEnabled } = deps.getConfig();
         if (!mcpBaseUrl) return { tools: [] };
         const key = JSON.stringify([ctx.projectId, ctx.threadId]);
         const member = await deps.resolveMember?.(ctx.threadId ?? '', ctx.projectId ?? '');
+        fences.reconcile(key, member);
         if (member) {
           if (!member.bindingId || !Number.isSafeInteger(member.generation) || member.generation < 1
             || !EXECUTION_MEMBER_TOOL_NAMES[member.role]) return { tools: [] };
-          if (!configuredMembers.has(key)) {
-            // Never evict a fence: old configured clients must stay stale.
-            if (configuredMembers.size >= MAX_CONFIGURED_MEMBERS) return { tools: [] };
-            configuredMembers.set(key, { ...member });
-          }
-          const configured = configuredMembers.get(key)!;
-          if (configured.bindingId !== member.bindingId || configured.generation !== member.generation
-            || configured.role !== member.role || configured.executionId !== member.executionId) return { tools: [] };
+          // A changed fence was retired above and is never re-admitted: old clients stay stale.
+          if (!fences.admit(key, member)) return { tools: [] };
           return { tools: EXECUTION_MEMBER_TOOL_NAMES[member.role].map((name) => name.replaceAll('.', '_')) };
         }
-        if (configuredMembers.has(key)) return { tools: [] };
+        // Member-fenced routes never get owner surface tools, even after retirement.
+        if (fences.isRetired(key) || await deps.isMemberThread?.(ctx.threadId ?? '') === true) return { tools: [] };
         const tools: string[] = [];
         if (teamLaunchEnabled) tools.push(...MODERN_TEAM_LAUNCH_TOOL_NAMES);
         if (teamJobLaunchEnabled) tools.push(...MODERN_OWNER_EXECUTION_TOOL_NAMES);

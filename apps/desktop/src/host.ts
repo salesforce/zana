@@ -3098,6 +3098,8 @@ function squadRuntime() {
   return runtimeSupervisor ?? productRouteSquadRuntime;
 }
 const modernMemberStatus = new Map<string, SquadMemberStatus>();
+/** Threads whose status failure was already logged; cleared on the next success so a flapping runtime logs once per outage. */
+const modernStatusFailureLogged = new Set<string>();
 let modernReconcilePending: Promise<void> | undefined;
 let modernReconcileCursor = 0;
 
@@ -3119,6 +3121,7 @@ async function reconcileModernMembers(records?: readonly TeamLifecycleRecord[]):
             generation: reference.generation, projectId: worker.projectId });
           const previous = modernMemberStatus.get(reference.threadId);
           modernMemberStatus.set(reference.threadId, status);
+          modernStatusFailureLogged.delete(reference.threadId);
            // Prepared threads are not proof that main authorized a first turn.
            if (status.status === 'stopped' || status.live || worker.bindingState !== 'CREATING') {
              observations.push({ ...reference, state: status.status === 'stopped' ? 'terminal' : status.live ? 'bound' : 'unknown' });
@@ -3129,8 +3132,12 @@ async function reconcileModernMembers(records?: readonly TeamLifecycleRecord[]):
               await squadExecutionService.renewWorkerLease(worker.modernContext.executionId, worker.slotId);
             }
           } else executionDeliveryDrain.remove(worker.sessionId);
-          if (status.status === 'stopped') modernMemberStatus.delete(reference.threadId);
-        } catch {
+          if (status.status === 'stopped') { modernMemberStatus.delete(reference.threadId); modernStatusFailureLogged.delete(reference.threadId); }
+        } catch (error) {
+          if (!modernStatusFailureLogged.has(reference.threadId)) {
+            modernStatusFailureLogged.add(reference.threadId);
+            logMainError(`modern squad member status ${reference.threadId}`, error);
+          }
           modernMemberStatus.delete(reference.threadId);
           observations.push({ ...reference, state: 'unknown' });
         }

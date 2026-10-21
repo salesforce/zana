@@ -34,7 +34,7 @@ import { sendConversationTurn } from './services/threads/conversation-lifecycle.
 import { ThreadCreateError } from './http/thread-create.js';
 import { isThreadLiveInProject } from './services/agents/thread-liveness.js';
 import { getConversationThread } from '@zana-ai/zcc-db';
-import { activateSquadMemberConversation, completeSquadMemberDelivery, createSquadMemberConversation, deliverSquadMemberConversation, preflightSquadRuntime, resolveSquadMember, squadMemberStatus, stopSquadMemberConversation } from './services/threads/squad-member-runtime.js';
+import { activateSquadMemberConversation, completeSquadMemberDelivery, createSquadMemberConversation, deliverSquadMemberConversation, isSquadMemberThread, preflightSquadRuntime, resolveSquadMember, squadMemberStatus, stopSquadMemberConversation } from './services/threads/squad-member-runtime.js';
 import type { ZccDatabase } from '@zana-ai/zcc-db';
 import type { PluginService } from './plugins/plugin-service.js';
 import { decideMainOwnedToolPolicy } from './plugins/native-tool-policy.js';
@@ -144,6 +144,7 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
         hostAgentToolSource: createModernTeamLaunchConfigSource({
           getMcpBaseUrl: () => runtimeMcpConfig.get().mcpBaseUrl,
           resolveMember: (threadId, projectId) => resolveSquadMember(product, threadId, projectId),
+          isMemberThread: (threadId) => isSquadMemberThread(product, threadId),
           getAppConfig: () => pushedRuntimeAppConfig(runtimeMcpConfig.get())
         }),
         onAgentCapabilitiesChanged: (contributors) => {

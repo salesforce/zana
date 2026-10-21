@@ -13,7 +13,7 @@ const h = vi.hoisted(() => ({
   squad: {
     preflightSquadRuntime: vi.fn(), createSquadMemberConversation: vi.fn(), activateSquadMemberConversation: vi.fn(),
     deliverSquadMemberConversation: vi.fn(), completeSquadMemberDelivery: vi.fn(), squadMemberStatus: vi.fn(),
-    stopSquadMemberConversation: vi.fn(), resolveSquadMember: vi.fn()
+    stopSquadMemberConversation: vi.fn(), resolveSquadMember: vi.fn(), isSquadMemberThread: vi.fn()
   }
 }));
 vi.mock('./services/threads/squad-member-runtime.js', () => h.squad);
@@ -137,6 +137,9 @@ describe('squad member runtime operations over the runtime channel', () => {
     expect(h.squad.resolveSquadMember).toHaveBeenCalledWith(h.context, 'thread-1', projectId);
     h.squad.resolveSquadMember.mockReturnValueOnce(null);
     expect(h.launchOptions.resolveMember('thread-x', projectId)).toBeNull();
+    h.squad.isSquadMemberThread.mockReturnValueOnce(true);
+    expect(h.launchOptions.isMemberThread('thread-1')).toBe(true);
+    expect(h.squad.isSquadMemberThread).toHaveBeenCalledWith(h.context, 'thread-1');
   });
 
   it('coalesces thread status and progress events into one leading menubar hint', async () => {

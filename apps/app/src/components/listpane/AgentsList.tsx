@@ -14,6 +14,7 @@ import { modernMemberCards } from '@/lib/modern-squad-members';
 import { AgentLauncher } from '@/components/AgentLauncher';
 import { ExecutionJobDetails } from '@/components/ExecutionJobDetails';
 import { ThreadListEntry } from '@/components/ThreadListEntry';
+import { ProviderIcon } from '@/components/thread/pickers/ProviderIcon';
 import { FleetKindChip } from '@/components/FleetKindChip';
 import { agentSessionTransport, squadTransportClass, squadTransportKind } from '@/lib/squad-transport';
 import { isVisibleThread, threadFleetItem } from '@/components/fleet-item';
@@ -27,6 +28,7 @@ import { PluginExclusiveThreadList, useActiveThreadList } from '@/plugins/Plugin
 import { usePaneContentSplitDrag } from '@/components/sidebar/useThreadRowSplitDrag';
 import { usePaneContentSplitIndicator } from '@/components/sidebar/paneContentSplitIndicator';
 import { SplitPaneMiniMap } from '@/components/sidebar/SplitPaneMiniMap';
+import type { PaneContent } from '@/lib/split-layout';
 import { groupSessionsByTeamRun } from '@/lib/teamRunOrganization';
 
 /**
@@ -589,7 +591,7 @@ export function AgentsListPane() {
           activeThreadId={activeThreadId ?? null}
           activeProjectId={scopedProjectId}
         >{null}</PluginExclusiveThreadList>
-        {rows.length === 0 && visibleThreads.length === 0 ? (
+        {executionRows.length === 0 && visibleThreads.length === 0 ? (
           <div className="agents-list-empty">
             <Bot size={20} aria-hidden="true" />
             <p>No agents yet</p>
@@ -726,6 +728,13 @@ export function AgentsListPane() {
   );
 }
 
+/** Modern member rows are threads: split panes must open the thread, not a PTY. */
+function rowPaneContent(row: AgentRow, projectId: string | null): PaneContent {
+  return row.modernThreadId
+    ? { kind: 'thread', projectId, threadId: row.modernThreadId }
+    : { kind: 'agent-session', projectId, sessionId: row.session.id };
+}
+
 function AgentWorkerRow({
   row,
   now,
@@ -749,14 +758,14 @@ function AgentWorkerRow({
   const label = t.cohort?.slotLabel || t.title;
   const isJob = !!t.cohort?.executionId && !row.modernThreadId;
   const { onPointerDown, openInSplit, consumeClick } = usePaneContentSplitDrag({
-    content: { kind: 'agent-session', projectId: scopedProjectId, sessionId: t.id },
+    content: rowPaneContent(row, scopedProjectId),
     title: t.title
   });
   return (
     <button
       type="button"
       className={`agents-worker-row ${active ? 'active' : ''} ${exited ? 'exited' : ''}${row.modernThreadId ? ' is-modern' : ''}`}
-      data-kind="agent"
+      data-kind={row.modernThreadId ? 'thread' : 'agent'}
       onPointerDown={onPointerDown}
       onClick={(e) => {
         if (consumeClick()) return;
@@ -824,14 +833,10 @@ function AgentSideListRow({
   // host takes its squad's transport.
   const transport = agentSessionTransport(t, teams, undefined, Boolean(row.modernThreadId));
   const { onPointerDown, openInSplit, consumeClick } = usePaneContentSplitDrag({
-    content: { kind: 'agent-session', projectId: scopedProjectId, sessionId: t.id },
+    content: rowPaneContent(row, scopedProjectId),
     title: t.title
   });
-  const indicator = usePaneContentSplitIndicator({
-    kind: 'agent-session',
-    projectId: scopedProjectId,
-    sessionId: t.id
-  });
+  const indicator = usePaneContentSplitIndicator(rowPaneContent(row, scopedProjectId));
   const button = (
     <button
       type="button"
@@ -859,7 +864,9 @@ function AgentSideListRow({
       aria-current={active ? 'true' : undefined}
       title={`${t.title} — ${row.projectName} · ${STATE_LABEL[row.state]}`}
     >
-      <span className="agents-row-icon">{profileIcon(t.profile, 13)}</span>
+      <span className="agents-row-icon">
+        {row.modernThread ? <ProviderIcon providerId={row.modernThread.providerId} size={13} /> : profileIcon(t.profile, 13)}
+      </span>
       <span className="agents-row-text">
         <span className="agents-row-title-line">
           {!exited && <span className={`tab-agent-dot agent-${row.state}`} aria-hidden="true" />}

@@ -21,6 +21,7 @@ export function modernMemberCards(
   personas: readonly Pick<Persona, 'id' | 'name'>[] = []
 ): { cards: AgentCard[]; folded: Set<string> } {
   const threadById = new Map(threads.map((item) => [item.id, item]));
+  const personaById = new Map(personas.map((persona) => [persona.id, persona]));
   const cards: AgentCard[] = [];
   const folded = new Set<string>();
   for (const execution of executions) {
@@ -28,7 +29,7 @@ export function modernMemberCards(
       if (folded.has(member.threadId)) continue;
       folded.add(member.threadId);
       const item = threadById.get(member.threadId);
-      const label = member.role === 'orchestrator' ? 'Orchestrator' : personas.find((p) => p.id === member.personaId)?.name;
+      const label = member.role === 'orchestrator' ? 'Orchestrator' : personaById.get(member.personaId)?.name;
       cards.push({
         session: {
           id: member.threadId,

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExecutionBoardProjection, TerminalSession } from '@zana-ai/zcc-domain/product';
 
 vi.mock('../hooks/useCompactLayout.js', () => ({ useCompactLayout: () => false }));
-vi.mock('../lib/product-client.js', () => ({ product: { terminals: {}, threads: {} } }));
+vi.mock('../lib/product-client.js', () => ({ product: { terminals: {}, threads: { notificationLevel: () => Promise.reject(new Error('unavailable')) } } }));
 vi.mock('../lib/gitInfo.js', () => ({ useSessionGit: () => null }));
 
 import { AgentBoardLanes, type AgentCard } from './AgentBoard.js';
@@ -124,5 +124,30 @@ describe('AgentBoard squad transport', () => {
     expect(document.querySelectorAll('.agent-card.is-thread')).toHaveLength(1);
     fireEvent.click(workers[0]!);
     expect(onInspect).toHaveBeenLastCalledWith(expect.objectContaining({ card: expect.objectContaining({ modernThreadId: 't-work' }) }));
+    // Right-click opens the thread menu for the member, never the lane's Close-all menu.
+    fireEvent.contextMenu(workers[0]!);
+    expect(document.querySelector('[data-testid="thread-context-menu"]')).toBeTruthy();
+    expect(document.querySelectorAll('.tab-context-menu')).toHaveLength(1);
+    expect(screen.queryByText(/Close all/)).toBeNull();
+  });
+
+  it('opens the agent card menu, not the lane menu, for a nested CLI squad worker', () => {
+    const session = (id: string, role: 'orchestrator' | 'worker', title: string) => ({
+      id, title, status: 'running', profile: 'claude', createdAt: 1,
+      cohort: { cohortId: 'c1', teamId: 'cli', teamName: 'CLI squad', role, slotLabel: title }
+    }) as TerminalSession;
+    const card = (s: TerminalSession): AgentCard => ({ session: s, projectId: 'p', projectName: 'P', state: 'working', liveSubagents: 0 });
+    render(
+      <MemoryRouter>
+        <AgentBoardLanes
+          cards={[agentFleetItem(card(session('o1', 'orchestrator', 'Lead'))), agentFleetItem(card(session('w1', 'worker', 'Helper')))]}
+          onInspect={vi.fn()}
+        />
+      </MemoryRouter>
+    );
+    fireEvent.contextMenu(cardButton('Helper'));
+    expect(document.querySelector('[data-testid="thread-context-menu"]')).toBeNull();
+    expect(document.querySelectorAll('.tab-context-menu')).toHaveLength(1);
+    expect(screen.queryByText(/Close all/)).toBeNull();
   });
 });

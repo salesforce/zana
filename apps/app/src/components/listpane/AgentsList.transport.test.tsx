@@ -30,6 +30,14 @@ vi.mock('@/store', () => ({
   usePersonas: (selector: (state: { personas: unknown[] }) => unknown) => selector({ personas: [{ id: 'researcher', name: 'Researcher' }] }),
   openWhatsNewAll: vi.fn()
 }));
+const splitDrag = vi.hoisted(() => ({ contents: [] as unknown[], openInSplit: vi.fn() }));
+vi.mock('@/components/sidebar/useThreadRowSplitDrag', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/components/sidebar/useThreadRowSplitDrag')>()),
+  usePaneContentSplitDrag: ({ content }: { content: unknown }) => {
+    splitDrag.contents.push(content);
+    return { onPointerDown: undefined, openInSplit: splitDrag.openInSplit, consumeClick: () => false };
+  }
+}));
 vi.mock('@/thread-store', () => ({
   useThreads: (selector: (state: { threads: unknown[]; load: () => void }) => unknown) =>
     selector({ threads: h.threads, load: () => undefined })
@@ -57,6 +65,8 @@ describe('AgentsListPane squad transport', () => {
   beforeEach(() => {
     h.terminals = {};
     h.threads = [];
+    splitDrag.contents = [];
+    splitDrag.openInSplit.mockClear();
     (window as unknown as { cc: unknown }).cc = {
       executionBoard: { listProject: vi.fn().mockResolvedValue({ executions: [] }) }
     };
@@ -135,5 +145,30 @@ describe('AgentsListPane squad transport', () => {
     expect(document.querySelectorAll('.tab-context-menu')).toHaveLength(1);
     fireEvent.click(worker);
     expect(path).toContain('t-work');
+  });
+
+  it('renders a project whose only agents are Modern members, without the empty state, and opens them as threads in a split', async () => {
+    (window as unknown as { cc: { executionBoard: { listProject: ReturnType<typeof vi.fn> } } }).cc.executionBoard.listProject
+      .mockResolvedValue({ executions: [{
+        ...execution('e-m', 'modern', 'Modern job'),
+        modernMembers: [
+          { threadId: 't-orch', slotId: 'orchestrator', personaId: 'lead', role: 'orchestrator', live: true },
+          { threadId: 't-work', slotId: 'researcher', personaId: 'researcher', role: 'worker', live: true }
+        ]
+      }] });
+    h.threads = ['t-orch', 't-work'].map((id, i) => (
+      { id, projectId: 'p', hostId: 'h', environmentId: null, providerId: 'codex', status: 'idle', title: id, createdAt: i + 1, cwd: null, branchName: null, isWorktree: false }
+    ));
+    h.terminals = {};
+    render(<MemoryRouter><AgentsListPane /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByText('Modern job')).toBeTruthy());
+    expect(screen.queryByText('No agents yet')).toBeNull();
+    const worker = screen.getByText('Researcher').closest('button')!;
+    expect(worker.getAttribute('data-kind')).toBe('thread');
+    expect(splitDrag.contents).toContainEqual({ kind: 'thread', projectId: null, threadId: 't-work' });
+    expect(splitDrag.contents).toContainEqual({ kind: 'thread', projectId: null, threadId: 't-orch' });
+    expect(splitDrag.contents.some((c) => (c as { kind: string }).kind === 'agent-session')).toBe(false);
+    fireEvent.click(worker, { metaKey: true });
+    expect(splitDrag.openInSplit).toHaveBeenCalled();
   });
 });

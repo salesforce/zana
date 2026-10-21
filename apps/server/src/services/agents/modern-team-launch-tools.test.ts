@@ -287,6 +287,74 @@ describe('Modern member execution catalog', () => {
     expect(callMcpTool).not.toHaveBeenCalled();
   });
 
+  it('admits new members after more than 1024 cumulative retirements', async () => {
+    const live = new Map<string, ModernTeamMember>();
+    const resolveMember = vi.fn(async (threadId: string) => live.get(threadId));
+    const { src, callMcpTool } = memberSource(resolveMember);
+    const workerTools = EXECUTION_MEMBER_TOOL_NAMES.worker.map((name) => name.replaceAll('.', '_'));
+    for (let index = 0; index < 1100; index += 1) {
+      const threadId = `member-${index}`;
+      live.set(threadId, { ...member, bindingId: threadId });
+      expect(await src.configurers![0]({ threadId, projectId: 'project-1' })).toEqual({ tools: workerTools });
+      live.delete(threadId);
+      // Binding retired: the next configure frees the live slot without granting owner tools.
+      expect(await src.configurers![0]({ threadId, projectId: 'project-1' })).toEqual({ tools: [] });
+    }
+    live.set('member-new', { ...member, bindingId: 'member-new' });
+    expect(await src.configurers![0]({ threadId: 'member-new', projectId: 'project-1' })).toEqual({ tools: workerTools });
+    await expect(tool(src, 'execution_work_claim').execute({ executionId: 'execution-1', workUnitId: 'u' },
+      ctx({ threadId: 'member-new' }))).resolves.toBe('{}');
+    expect(callMcpTool).toHaveBeenCalledTimes(1);
+  });
+
+  it('still caps concurrently live member fences', async () => {
+    const resolveMember = vi.fn(async (threadId: string) => ({ ...member, bindingId: threadId }));
+    const { src } = memberSource(resolveMember);
+    for (let index = 0; index < 1024; index += 1) {
+      expect((await src.configurers![0]({ threadId: `live-${index}`, projectId: 'project-1' })).tools).not.toHaveLength(0);
+    }
+    expect(await src.configurers![0]({ threadId: 'live-overflow', projectId: 'project-1' })).toEqual({ tools: [] });
+  });
+
+  it('never gives a retired member key owner tools or re-admits it at a new fence', async () => {
+    const { src, resolveMember, callMcpTool } = memberSource();
+    await src.configurers![0](configureContext);
+    resolveMember.mockResolvedValue(undefined);
+    // Forwarder observes the retirement first; configure must still deny owner tools.
+    await expect(tool(src, 'execution_start').execute({ requestPath: '/tmp/req' }, ctx())).resolves.toMatchObject({ ok: false });
+    expect(await src.configurers![0](configureContext)).toEqual({ tools: [] });
+    await expect(tool(src, 'launch_team').execute({}, ctx())).resolves.toMatchObject({ ok: false });
+    resolveMember.mockResolvedValue({ ...member, generation: 2 });
+    expect(await src.configurers![0](configureContext)).toEqual({ tools: [] });
+    expect(callMcpTool).not.toHaveBeenCalled();
+  });
+
+  it('bounds tombstones FIFO and falls back to durable member state for owner-tool denial', async () => {
+    const live = new Map<string, ModernTeamMember>();
+    const durable = new Set<string>();
+    const resolveMember = vi.fn(async (threadId: string) => live.get(threadId));
+    const isMemberThread = vi.fn((threadId: string) => durable.has(threadId));
+    const callMcpTool = vi.fn(async (_args: CallMcpToolArgs) => ({ ok: true, text: '{}' }));
+    const src = createModernTeamLaunchSource({ getConfig: () => config, resolveMember, isMemberThread, credentialFor: () => 'credential', callMcpTool });
+    const retire = async (threadId: string, persisted: boolean) => {
+      live.set(threadId, { ...member, bindingId: threadId });
+      if (persisted) durable.add(threadId);
+      await src.configurers![0]({ threadId, projectId: 'project-1' });
+      live.delete(threadId);
+      await src.configurers![0]({ threadId, projectId: 'project-1' });
+    };
+    await retire('first-durable', true);
+    await retire('first-memory', false);
+    for (let index = 0; index < 4096; index += 1) await retire(`filler-${index}`, false);
+    const ownerTools = [...MODERN_TEAM_LAUNCH_TOOL_NAMES, ...MODERN_OWNER_EXECUTION_TOOL_NAMES];
+    // The oldest tombstones aged out of the 4096 FIFO; durable state still denies owner tools.
+    expect(await src.configurers![0]({ threadId: 'first-durable', projectId: 'project-1' })).toEqual({ tools: [] });
+    await expect(tool(src, 'launch_team').execute({}, ctx({ threadId: 'first-durable' }))).resolves.toMatchObject({ ok: false });
+    expect(await src.configurers![0]({ threadId: 'first-memory', projectId: 'project-1' })).toEqual({ tools: ownerTools });
+    expect(await src.configurers![0]({ threadId: 'filler-4095', projectId: 'project-1' })).toEqual({ tools: [] });
+    expect(callMcpTool).not.toHaveBeenCalled();
+  });
+
   it('denies unconfigured members, wrong execution, and input identity overrides', async () => {
     const { src, callMcpTool } = memberSource();
     await expect(tool(src, 'execution_work_claim').execute({ executionId: 'execution-1', workUnitId: 'u' }, ctx())).resolves.toMatchObject({ ok: false });

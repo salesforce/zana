@@ -17,7 +17,8 @@ import { readConversationPluginMetadata, updateConversationPluginMetadata } from
 import { registerThreadProvider } from './thread-provider-catalog.js';
 import {
   activateSquadMemberConversation, completeSquadMemberDelivery, createSquadMemberConversation, deliverSquadMemberConversation, MODERN_SQUAD_BINDING_ORIGIN,
-  preflightSquadRuntime, squadMemberStatus, stopSquadMemberConversation, handleMainSquadRuntimeHttp
+  preflightSquadRuntime, squadMemberStatus, stopSquadMemberConversation, handleMainSquadRuntimeHttp,
+  isSquadMemberThread, resolveSquadMember
 } from './squad-member-runtime.js';
 import { createNativeToolPolicyVerifier, signNativeToolPolicyRequest } from '../../http/native-tool-policy-proof.js';
 import { SQUAD_RUNTIME_OPERATION_PATH } from '@zana-ai/zcc-contracts/runtime';
@@ -137,7 +138,7 @@ describe('trusted Modern member runtime', () => {
     expect(commands.filter(command => command.type === 'thread.start')).toHaveLength(1);
   });
 
-  it('fences concurrent activation before async preflight without duplicate starts', async () => {
+  it('single-flights concurrent activation before async preflight without duplicate starts', async () => {
     await createSquadMemberConversation(ctx, member);
     const preflight = Promise.withResolvers<void>();
     const rpc = vi.mocked(ctx.hostHub.callHostOnlineRpc).getMockImplementation()!;
@@ -146,35 +147,44 @@ describe('trusted Modern member runtime', () => {
       return rpc(input);
     });
     const activating = activateSquadMemberConversation(ctx, member);
+    const joined = activateSquadMemberConversation(ctx, member);
     try {
-      expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata.squadActivationStarted).toBe(true);
-      expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata.squadActivationAccepted).toBeUndefined();
+      // Nothing durable is written until the send boundary.
+      expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata.squadActivationStarted).toBeUndefined();
       expect(squadMemberStatus(ctx, control)).toMatchObject({ live: false, providerStarted: false });
-      await expect(activateSquadMemberConversation(ctx, member)).rejects.toThrow('squad member activation outcome is uncertain');
+      await expect(activateSquadMemberConversation(ctx, { ...member, prompt: 'Changed' })).rejects.toThrow('prepared squad member binding changed or stopped');
       expect(ctx.hostHub.callHostOnlineRpc).toHaveBeenCalledTimes(1);
       expect(commands.filter(command => command.type === 'thread.start')).toHaveLength(0);
     } finally { preflight.resolve(); }
     await expect(activating).resolves.toEqual({ threadId: bindingId });
+    await expect(joined).resolves.toEqual({ threadId: bindingId });
     await vi.waitFor(() => expect(getConversationThread(db, bindingId)?.providerThreadId).toBe('native-thread'));
     expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({
       squadActivationStarted: true, squadActivationAccepted: true
     });
     await expect(activateSquadMemberConversation(ctx, member)).resolves.toEqual({ threadId: bindingId });
     expect(commands.filter(command => command.type === 'thread.start')).toHaveLength(1);
+    expect(vi.mocked(ctx.hostHub.callHostOnlineRpc).mock.calls.filter(([input]) => input.command.type === 'provider.status')).toHaveLength(1);
     expect(ctx.plugins!.sessionTools).toHaveBeenCalledTimes(1);
   });
 
   it.each([
     ['provider unavailable', 'one or more Modern providers are unavailable'],
     ['corrupt policy inventory', 'plugin tool policy inventory is not ready'],
-    ['missing plugins', 'plugin tool policy inventory is not ready']
-  ])('revalidates activation preflight after prepare: %s', async (change, message) => {
+    ['missing plugins', 'plugin tool policy inventory is not ready'],
+    ['preflight throws', 'host offline']
+  ])('pre-send activation failure leaves binding retryable: %s', async (change, message) => {
     await createSquadMemberConversation(ctx, member);
     const plugins = ctx.plugins;
     const rpc = vi.mocked(ctx.hostHub.callHostOnlineRpc).getMockImplementation()!;
     if (change === 'provider unavailable') {
       vi.mocked(ctx.hostHub.callHostOnlineRpc).mockImplementation(async input =>
         input.command.type === 'provider.status' ? { providers: [] } : rpc(input));
+    } else if (change === 'preflight throws') {
+      vi.mocked(ctx.hostHub.callHostOnlineRpc).mockImplementation(async input => {
+        if (input.command.type === 'provider.status') throw new Error('host offline');
+        return rpc(input);
+      });
     } else if (change === 'corrupt policy inventory') {
       vi.mocked(ctx.plugins!.toolPolicyReadiness).mockResolvedValueOnce({
         ready: false, required: [], reason: 'plugin tool policy inventory unavailable: corrupt' });
@@ -184,14 +194,36 @@ describe('trusted Modern member runtime', () => {
     await expect(activateSquadMemberConversation(ctx, member)).rejects.toThrow(message);
     expect(commands.filter(command => command.type === 'thread.start')).toHaveLength(0);
     expect(plugins!.sessionTools).not.toHaveBeenCalled();
-    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata.squadActivationStarted).toBe(true);
-    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata.squadActivationAccepted).toBeUndefined();
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata.squadActivationStarted).toBeUndefined();
     expect(squadMemberStatus(ctx, control)).toMatchObject({ status: 'idle', live: false, providerStarted: false });
     ctx.plugins = plugins;
+    vi.mocked(ctx.hostHub.callHostOnlineRpc).mockImplementation(rpc);
+    await expect(activateSquadMemberConversation(ctx, member)).resolves.toEqual({ threadId: bindingId });
+    await vi.waitFor(() => expect(getConversationThread(db, bindingId)?.providerThreadId).toBe('native-thread'));
+    expect(commands.filter(command => command.type === 'thread.start')).toHaveLength(1);
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({
+      squadActivationStarted: true, squadActivationAccepted: true
+    });
+  });
+
+  it('activation failing after the send boundary stays uncertain and never re-sends', async () => {
+    await createSquadMemberConversation(ctx, member);
+    const rpc = vi.mocked(ctx.hostHub.callHostOnlineRpc).getMockImplementation()!;
+    // Synchronous dispatch failure surfaces only after the durable fence is written.
+    vi.mocked(ctx.hostHub.callHostOnlineRpc).mockImplementation(((input: Parameters<typeof rpc>[0]) => {
+      if (input.command.type === 'thread.start') throw new Error('dispatch transport failed');
+      return rpc(input);
+    }) as typeof rpc);
+    await expect(activateSquadMemberConversation(ctx, member)).rejects.toThrow('dispatch transport failed');
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata.squadActivationStarted).toBe(true);
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata.squadActivationAccepted).toBeUndefined();
     vi.mocked(ctx.hostHub.callHostOnlineRpc).mockImplementation(rpc).mockClear();
+    vi.mocked(ctx.plugins!.sessionTools).mockClear();
+    await expect(activateSquadMemberConversation(ctx, member)).rejects.toThrow('squad member activation outcome is uncertain');
+    db.close(); db = openDatabase(join(dir, 'db.sqlite')); ctx.db = db;
     await expect(activateSquadMemberConversation(ctx, member)).rejects.toThrow('squad member activation outcome is uncertain');
     expect(ctx.hostHub.callHostOnlineRpc).not.toHaveBeenCalled();
-    expect(plugins!.sessionTools).not.toHaveBeenCalled();
+    expect(ctx.plugins!.sessionTools).not.toHaveBeenCalled();
   });
 
   it('persists accepted activation replay across DB reopen without preflight or restart', async () => {
@@ -247,7 +279,7 @@ describe('trusted Modern member runtime', () => {
     expect(ctx.plugins!.sessionTools).not.toHaveBeenCalled();
   });
 
-  it('persists uncertain activation after async tooling fails binding revalidation without blind restart', async () => {
+  it('binding revalidation failure after async tooling never reaches the provider and stays retryable', async () => {
     await createSquadMemberConversation(ctx, member);
     const tooling = Promise.withResolvers<void>();
     ctx.plugins!.sessionTools = vi.fn(async () => { await tooling.promise; return {}; });
@@ -255,21 +287,19 @@ describe('trusted Modern member runtime', () => {
     const rejected = expect(activating).rejects.toThrow('stale squad member binding generation');
     try {
       await vi.waitFor(() => expect(ctx.plugins!.sessionTools).toHaveBeenCalledTimes(1));
-      await expect(activateSquadMemberConversation(ctx, member)).rejects.toThrow('squad member activation outcome is uncertain');
       patchThreadPluginMetadata(db, { threadId: bindingId, pluginId: privateNamespace, set: { squadGeneration: 3 }, remove: [] });
     } finally { tooling.resolve(); }
     await rejected;
     expect(commands.filter(command => command.type === 'thread.start')).toHaveLength(0);
     expect(getConversationThread(db, bindingId)).toMatchObject({ status: 'idle', providerThreadId: null });
-    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata.squadActivationStarted).toBe(true);
-    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata.squadActivationAccepted).toBeUndefined();
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata.squadActivationStarted).toBeUndefined();
     patchThreadPluginMetadata(db, { threadId: bindingId, pluginId: privateNamespace, set: { squadGeneration: 2 }, remove: [] });
     db.close(); db = openDatabase(join(dir, 'db.sqlite')); ctx.db = db;
-    vi.mocked(ctx.hostHub.callHostOnlineRpc).mockClear();
-    await expect(activateSquadMemberConversation(ctx, member)).rejects.toThrow('squad member activation outcome is uncertain');
-    expect(ctx.hostHub.callHostOnlineRpc).not.toHaveBeenCalled();
-    expect(ctx.plugins!.sessionTools).toHaveBeenCalledTimes(1);
-    expect(squadMemberStatus(ctx, control)).toMatchObject({ live: false, providerStarted: false });
+    ctx.plugins!.sessionTools = vi.fn(async () => ({}));
+    await expect(activateSquadMemberConversation(ctx, member)).resolves.toEqual({ threadId: bindingId });
+    await vi.waitFor(() => expect(getConversationThread(db, bindingId)?.providerThreadId).toBe('native-thread'));
+    expect(commands.filter(command => command.type === 'thread.start')).toHaveLength(1);
+    expect(squadMemberStatus(ctx, control)).toMatchObject({ live: true, providerStarted: true });
   });
 
   it.each([false, true])('stop racing async activation tooling prevents provider start (confirmed=%s)', async confirmed => {
@@ -298,6 +328,22 @@ describe('trusted Modern member runtime', () => {
     expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata.squadStopRequested).toBe(true);
     expect(squadMemberStatus(ctx, control)).toMatchObject({ live: false, providerStarted: false, status: confirmed ? 'stopped' : 'stopping' });
     await expect(activateSquadMemberConversation(ctx, member)).rejects.toThrow('prepared squad member binding changed or stopped');
+  });
+
+  it('retires member resolution on confirmed stop while durable member state persists', async () => {
+    const plain = createConversationThread(db, { projectId: 'p', hostId, providerId: 'test-provider' });
+    expect(isSquadMemberThread(ctx, plain.id)).toBe(false);
+    expect(isSquadMemberThread(ctx, 'missing-thread')).toBe(false);
+    await createSquadMemberConversation(ctx, member);
+    await activateSquadMemberConversation(ctx, member);
+    expect(resolveSquadMember(ctx, bindingId, 'p')).toEqual({ bindingId, generation: 2, role: 'worker' });
+    expect(resolveSquadMember(ctx, bindingId, 'other')).toBeUndefined();
+    await expect(stopSquadMemberConversation(ctx, control)).resolves.toBe(true);
+    expect(resolveSquadMember(ctx, bindingId, 'p')).toBeUndefined();
+    expect(isSquadMemberThread(ctx, bindingId)).toBe(true);
+    // Private metadata alone (or corrupt metadata) still counts as a former member.
+    patchThreadPluginMetadata(db, { threadId: plain.id, pluginId: privateNamespace, set: { squadBinding: plain.id }, remove: [] });
+    expect(isSquadMemberThread(ctx, plain.id)).toBe(true);
   });
 
   it('never adopts unrelated same-project thread', async () => {
@@ -538,7 +584,7 @@ describe('trusted Modern member runtime', () => {
     expect(completeSquadMemberDelivery(ctx, completion)).toMatchObject({ state: 'rejected' });
   });
 
-  it('private namespace cannot be read, patched or seeded through public schemas', () => {
+  it('private namespace cannot be read, patched or pre-populated through public schemas', () => {
     expect(threadPluginMetadataQuerySchema.safeParse({ pluginId: privateNamespace }).success).toBe(false);
     expect(updateThreadPluginMetadataRequestSchema.safeParse({ pluginId: privateNamespace, set: { squadGeneration: 3 } }).success).toBe(false);
   });

@@ -32,12 +32,19 @@ describe('squad transport helpers', () => {
     expect(isModernSquadThread({})).toBe(false);
   });
 
-  it('mirrors the server binding origin constant', () => {
-    const server = readFileSync(
-      new URL('../../../server/src/services/threads/squad-member-runtime.ts', import.meta.url),
-      'utf8'
-    );
-    expect(server).toContain(`MODERN_SQUAD_BINDING_ORIGIN = '${MODERN_SQUAD_THREAD_ORIGIN}'`);
+  it('shares one origin constant with the server instead of mirrored literals', () => {
+    expect(MODERN_SQUAD_THREAD_ORIGIN).toBe('host-modern-squad');
+    for (const path of [
+      '../../../server/src/services/threads/squad-member-runtime.ts',
+      '../../../server/src/services/threads/conversation-create.ts',
+      '../../../server/src/plugins/plugin-api.ts',
+      './squad-transport.ts'
+    ]) {
+      const source = readFileSync(new URL(path, import.meta.url), 'utf8');
+      expect(source, path).toContain("from '@zana-ai/zcc-domain/squad-origin'");
+      expect(source, path).not.toContain(`'${MODERN_SQUAD_THREAD_ORIGIN}'`);
+      expect(source, path).not.toContain(`'.${MODERN_SQUAD_THREAD_ORIGIN}'`);
+    }
   });
 
   it('keeps every live session CLI and lets only a synthetic Job host borrow its squad transport', () => {

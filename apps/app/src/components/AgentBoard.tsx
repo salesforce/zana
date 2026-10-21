@@ -664,12 +664,15 @@ function SquadWorkers({
   workers,
   now,
   onInspect,
+  onContextMenu,
   personas,
   execution
 }: {
   workers: AgentCard[];
   now: number;
   onInspect: (c: AgentCard) => void;
+  /** Own menu per worker so right-click never falls through to the lane menu. */
+  onContextMenu: (e: MouseEvent<HTMLElement>, c: AgentCard) => void;
   personas: Persona[];
   execution?: ExecutionBoardProjection;
 }) {
@@ -694,6 +697,7 @@ function SquadWorkers({
             type="button"
             className={`agent-squad-worker ${exited ? 'exited' : ''}${w.modernThreadId ? ' is-modern' : ''}`}
             onClick={() => onInspect(w)}
+            onContextMenu={(e) => onContextMenu(e, w)}
             title={`${slotLabel} · ${activity} · ${exited ? `ran ${dur}` : dur}`}
           >
             <span className={`tab-agent-dot agent-${exited ? 'done' : w.state}`} aria-hidden="true" />
@@ -1176,7 +1180,18 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
     return (
       <div key={t.id} className="agent-squad">
         {cardButton}
-        <SquadWorkers workers={nestedWorkers} now={now} onInspect={(card) => onInspect(agentFleetItem(card))} personas={personas} execution={execution} />
+        <SquadWorkers workers={nestedWorkers} now={now} onInspect={(card) => onInspect(agentFleetItem(card))} onContextMenu={(e, card) => {
+          setLaneMenu(null);
+          if (card.modernThread) {
+            setMenu(null);
+            openThreadMenu(e, card.modernThread, setThreadMenu);
+            return;
+          }
+          e.preventDefault();
+          e.stopPropagation();
+          setThreadMenu(null);
+          setMenu({ card, ...clampMenuAnchor(e) });
+        }} personas={personas} execution={execution} />
       </div>
     );
   };

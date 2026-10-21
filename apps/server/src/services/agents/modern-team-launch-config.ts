@@ -7,6 +7,7 @@ export interface ModernTeamLaunchConfigSourceOptions {
   getAppConfig: () => Pick<AppConfig, 'teamLaunchEnabled' | 'teamJobLaunchEnabled' | 'composerShowAutonomousTeam'>;
   getMcpBaseUrl: () => string | undefined;
   resolveMember?: ModernTeamLaunchSourceDeps['resolveMember'];
+  isMemberThread?: ModernTeamLaunchSourceDeps['isMemberThread'];
 }
 
 export function mcpPortFileForDataDir(dataDir: string, userDataDir?: string): string {
@@ -32,6 +33,7 @@ export function pushedRuntimeAppConfig(pushed: Pick<ModernTeamLaunchConfig, 'tea
 export function createModernTeamLaunchConfigSource(options: ModernTeamLaunchConfigSourceOptions) {
   return createModernTeamLaunchSource({
     resolveMember: options.resolveMember,
+    isMemberThread: options.isMemberThread,
     getConfig: (): ModernTeamLaunchConfig => {
       const config = options.getAppConfig();
       return {
@@ -47,11 +49,13 @@ export function standaloneModernTeamLaunchSource(
   dataDir: string,
   getAppConfig: ModernTeamLaunchConfigSourceOptions['getAppConfig'],
   userDataDir?: string,
-  resolveMember?: ModernTeamLaunchSourceDeps['resolveMember']
+  resolveMember?: ModernTeamLaunchSourceDeps['resolveMember'],
+  isMemberThread?: ModernTeamLaunchSourceDeps['isMemberThread']
 ) {
   return createModernTeamLaunchConfigSource({
     getAppConfig,
     resolveMember,
+    isMemberThread,
     getMcpBaseUrl: () => {
       const port = readMcpPort(mcpPortFileForDataDir(dataDir, userDataDir));
       return port ? `http://127.0.0.1:${port}` : undefined;

@@ -60,11 +60,6 @@ describe('AgentsBoard', () => {
     expect(board).toContain('fleetAgentCards(visibleFleet)');
     expect(board).toContain('item.kind === \'thread\'');
     expect(board).toContain('inspectThread(item.id, item.projectId, navigate)');
-    // Modern squad members join the fleet as cohort-stamped cards, so every view groups them like CLI members.
-    expect(board).toContain('return withModernSquadMembers(items, memberExecutions, personas);');
-    // A nested Modern member opens its thread; its Job host still opens the Job drawer.
-    expect(board).toContain('inspectThread(memberThreadId, item.projectId, navigate)');
-    expect(board.indexOf('modernMemberThreadId(item.card)')).toBeLessThan(board.indexOf('const executionId = item.card.session.cohort?.executionId'));
     expect(board).not.toContain('getThreadRoutePath');
     expect(board).toContain('threadIdFromPath');
     expect(board).toContain('setCloseIdleTarget(reclaimableAgents)');

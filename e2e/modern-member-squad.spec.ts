@@ -3,7 +3,7 @@
  * ACP conversations through the supervised runtime and never fall back to PTYs.
  * The shipped OpenCode bridge runs the existing fake ACP binary. The test plays
  * its model by calling the session's real DynamicTool MCP bridge, without
- * inventing member credentials, seeding records, or replacing runtime services.
+ * inventing member credentials, fabricating records, or replacing runtime services.
  * Setup requires the opencode -> acp-opencode member mapping, successful trusted
  * Modern preflight, and the normal bound-member tool catalog. No
  * ZCC_FAKE_PROVIDER override is used: native-policy failures must stay failures.
@@ -228,7 +228,7 @@ async function setup(app: AppHandle) {
   const git = (...args: string[]) => execFileSync('git', args, { cwd: root, env: { ...process.env, HOME: home } });
   git('init', '-b', 'main');
   git('add', 'README.md', 'plan.md');
-  git('-c', 'user.name=Modern Squad E2E', '-c', 'user.email=modern-squad@example.test', 'commit', '-m', 'Seed fixture');
+  git('-c', 'user.name=Modern Squad E2E', '-c', 'user.email=modern-squad@example.test', 'commit', '-m', 'Fixture setup');
   const projectId = await page.evaluate(async path => {
     const result = await window.cc.projects.add(path);
     if (!result.ok) throw new Error(result.message);
@@ -343,19 +343,28 @@ async function setup(app: AppHandle) {
     return { worker, coordinator, record };
   };
   const cleanup = async () => {
-    await page.evaluate(async projectId => {
-      for (const execution of (await window.cc.executionBoard.listProject(projectId)).executions) {
-        if (['STARTING', 'RUNNING', 'BLOCKED'].includes(execution.state)) {
-          await window.cc.executionBoard.stop(projectId, execution.executionId, execution.stateVersion ?? 0);
-        }
+    const stopIds = await page.evaluate(async projectId => (await window.cc.executionBoard.listProject(projectId)).executions
+      .filter(execution => ['STARTING', 'RUNNING', 'BLOCKED'].includes(execution.state))
+      .map(execution => ({ executionId: execution.executionId, stateVersion: execution.stateVersion ?? 0 })), projectId)
+      .catch((error: unknown) => { console.warn('cleanup: list executions failed', error); return []; });
+    for (const { executionId, stateVersion } of stopIds) {
+      try {
+        await page.evaluate(({ projectId, executionId, stateVersion }) => window.cc.executionBoard.stop(projectId, executionId, stateVersion),
+          { projectId, executionId, stateVersion });
+      } catch (error) {
+        console.warn(`cleanup: stop ${executionId} failed`, error);
       }
-      await window.cc.projects.remove(projectId);
-    }, projectId).catch(() => undefined);
+    }
+    try {
+      await page.evaluate(id => window.cc.projects.remove(id), projectId);
+    } catch (error) {
+      console.warn('cleanup: project remove failed', error);
+    }
   };
   return { page, projectId, launch, snapshot, lifecycle, members, cleanup };
 }
 
-test('Modern member Job Team delivers seeded work through ACP, fences role and claims, and completes without PTYs', async ({ app }) => {
+test('Modern member Job Team delivers assigned work through ACP, fences role and claims, and completes without PTYs', async ({ app }) => {
   const probe = await setup(app);
   try {
     const executionId = await probe.launch('Modern member completion');

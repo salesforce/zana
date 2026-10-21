@@ -1,13 +1,9 @@
 import type { SquadTransport, Team, TerminalSession } from '@zana-ai/zcc-domain/product';
+import { MODERN_SQUAD_THREAD_ORIGIN } from '@zana-ai/zcc-domain/squad-origin';
 import type { FleetKind } from '../components/fleet-item.js';
 
-/**
- * Host-reserved origin stamped on every Modern squad member's conversation
- * thread (mirrors `MODERN_SQUAD_BINDING_ORIGIN` in the server's
- * squad-member-runtime). Read-only display hint: the renderer never writes it
- * and never treats it as authority.
- */
-export const MODERN_SQUAD_THREAD_ORIGIN = 'host-modern-squad';
+/** Shared with the server; read-only display hint, never authority. */
+export { MODERN_SQUAD_THREAD_ORIGIN };
 
 /** Absent persisted teams remain CLI. */
 export function squadTransport(team: Pick<Team, 'transport'> | null | undefined): SquadTransport {

@@ -241,22 +241,33 @@ export function modernExecutionMembers(
   records: readonly TeamLifecycleRecord[],
   projectId: string
 ): Map<string, ModernExecutionMember[]> {
-  const byExecution = new Map<string, ModernExecutionMember[]>();
-  const seen = new Set<string>();
-  for (const record of records) {
+  const latest = new Map<string, ModernExecutionMember>();
+  const executionOf = new Map<string, string>();
+  const seenThreads = new Set<string>();
+  // Newest record first: a relaunch supersedes the stale entry for the same slot.
+  const newestFirst = [...records].sort((a, b) => (b.updatedAt - a.updatedAt) || (b.createdAt - a.createdAt));
+  for (const record of newestFirst) {
     for (const worker of record.workers) {
       const executionId = worker.modernContext?.executionId;
       if (worker.transport !== 'MODERN' || !worker.threadId || !executionId || worker.projectId !== projectId) continue;
-      if (seen.has(worker.threadId)) continue;
-      const members = byExecution.get(executionId) ?? [];
-      if (members.length >= MAX_MODERN_MEMBERS_PER_EXECUTION) continue;
-      seen.add(worker.threadId);
-      members.push({
+      if (seenThreads.has(worker.threadId)) continue;
+      const key = `${executionId}\u0000${worker.slotId}`;
+      if (latest.has(key)) continue;
+      seenThreads.add(worker.threadId);
+      executionOf.set(key, executionId);
+      latest.set(key, {
         threadId: worker.threadId, slotId: worker.slotId, personaId: worker.personaId, role: worker.modernContext!.role,
         live: worker.bindingState === 'BOUND' && worker.process === 'running' && !worker.capacityReleased
       });
-      byExecution.set(executionId, members);
     }
+  }
+  const byExecution = new Map<string, ModernExecutionMember[]>();
+  for (const [key, member] of latest) {
+    const executionId = executionOf.get(key)!;
+    byExecution.set(executionId, [...(byExecution.get(executionId) ?? []), member]);
+  }
+  for (const [executionId, members] of byExecution) {
+    byExecution.set(executionId, members.sort((a, b) => Number(b.live) - Number(a.live)).slice(0, MAX_MODERN_MEMBERS_PER_EXECUTION));
   }
   return byExecution;
 }

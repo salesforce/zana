@@ -90,7 +90,14 @@ export function registerExecutionBoardIpc(): void {
       const project = store.listProjects().find((candidate) => candidate.id === projectId);
       if (!project) return { executions: [], hasMore: false };
       const page = await squadExecutionService.listProject(project.id, before, limit);
-      const modernMembers = modernExecutionMembers(await teamLifecycle.list(), project.id);
+      // A corrupt lifecycle store must not blank the whole Jobs page (CLI squads included).
+      let modernMembers: ReturnType<typeof modernExecutionMembers>;
+      try {
+        modernMembers = modernExecutionMembers(await teamLifecycle.list(), project.id);
+      } catch (error) {
+        console.error(`[main] execution board modern members: ${error instanceof Error ? error.message : String(error)}`);
+        modernMembers = new Map();
+      }
       const executions = projectExecutionProjection(page.records, ptys.list(project.id)).map((projection, index) => {
         const execution = withDesktopExactNativeAvailability(page.records[index]!, projection);
         const members = modernMembers.get(execution.executionId);

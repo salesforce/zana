@@ -396,7 +396,7 @@ describe('projectExecutionProjection', () => {
 
 describe('modernExecutionMembers', () => {
   const worker = (patch: Record<string, unknown> = {}) => ({
-    transport: 'MODERN', threadId: 't1', slotId: 's1', personaId: 'p1', projectId: 'project-1', bindingState: 'BOUND',
+    transport: 'MODERN', threadId: 't1', slotId: `slot-${String(patch.threadId ?? 't1')}`, personaId: 'p1', projectId: 'project-1', bindingState: 'BOUND',
     process: 'running', capacityReleased: false, modernContext: { role: 'worker', executionId: 'e1' }, ...patch
   });
   const records = (workers: unknown[]) => [{ workers }] as never;
@@ -428,5 +428,20 @@ describe('modernExecutionMembers', () => {
     expect(e1).toHaveLength(32);
     expect(e1.filter((member) => member.threadId === 'dup')).toHaveLength(1);
     expect(e1.some((member) => member.threadId === 't1')).toBe(false);
+  });
+
+  it('keeps live members under the cap and only the newest entry per slot after a relaunch', () => {
+    const stamped = (updatedAt: number, workers: unknown[]) => ({ createdAt: updatedAt, updatedAt, workers });
+    const members = modernExecutionMembers([
+      stamped(1, [
+        worker({ threadId: 'old-a', slotId: 'a', process: 'exited', capacityReleased: true }),
+        ...Array.from({ length: 40 }, (_, index) => worker({ threadId: `dead-${index}`, process: 'exited', capacityReleased: true }))
+      ]),
+      stamped(5, [worker({ threadId: 'new-a', slotId: 'a' })])
+    ] as never, 'project-1').get('e1')!;
+    expect(members).toHaveLength(32);
+    expect(members[0]).toMatchObject({ threadId: 'new-a', live: true });
+    expect(members.some((member) => member.threadId === 'old-a')).toBe(false);
+    expect(members.filter((member) => member.slotId === 'a')).toHaveLength(1);
   });
 });

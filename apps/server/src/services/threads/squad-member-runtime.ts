@@ -18,6 +18,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { NATIVE_TOOL_POLICY_PROOF_HEADER } from '../../http/native-tool-policy-proof.js';
 import { sendJson } from '../../http/json.js';
 import { projectOnHost } from '@zana-ai/zcc-domain/project';
+import { MODERN_SQUAD_PRIVATE_NAMESPACE, MODERN_SQUAD_THREAD_ORIGIN } from '@zana-ai/zcc-domain/squad-origin';
 import type { JsonObject } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { activatePreparedConversation, createConversationFromRequest } from './conversation-create.js';
@@ -27,28 +28,36 @@ import { validateProviderModelSelection } from './provider-model-validation.js';
 import type { ModernTeamMember } from '../agents/modern-team-launch-tools.js';
 
 /** Host-owned namespace. Only trusted IPC (or an authenticated main seam) may write it. */
-export const MODERN_SQUAD_BINDING_ORIGIN = 'host-modern-squad';
+export const MODERN_SQUAD_BINDING_ORIGIN = MODERN_SQUAD_THREAD_ORIGIN;
 const pendingCreates = new WeakMap<object, Map<string, { fingerprint: string; promise: Promise<{ threadId: string }> }>>();
+const pendingActivations = new WeakMap<object, Map<string, Promise<{ threadId: string }>>>();
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 // Public pluginIdSchema rejects '.', so renderer/plugin metadata APIs cannot
 // address this row. Same DB metadata store, independent of transcript rewind.
-const PRIVATE_BINDING_NAMESPACE = '.host-modern-squad';
+const PRIVATE_BINDING_NAMESPACE = MODERN_SQUAD_PRIVATE_NAMESPACE;
 
 function persistBindingMetadata(ctx: ProductHttpContext, threadId: string, set: JsonObject): void {
   const result = patchThreadPluginMetadata(ctx.db, { threadId, pluginId: PRIVATE_BINDING_NAMESPACE, set, remove: [] });
   if (!result.ok) throw new Error('squad runtime metadata exceeds limit');
 }
 
-/** Resolve only main-attested private metadata. Public plugin metadata is never authority. */
+/** Resolve only main-attested private metadata. Public plugin metadata is never authority. A confirmed stop retires the member. */
 export function resolveSquadMember(ctx: ProductHttpContext, threadId: string, projectId: string): ModernTeamMember | undefined {
   const stored = getThreadPluginMetadata(ctx.db, threadId, PRIVATE_BINDING_NAMESPACE);
   const metadata = stored.metadata;
   if (stored.corrupt || metadata.squadBinding !== threadId || typeof metadata.squadGeneration !== 'number'
-    || !['worker', 'orchestrator'].includes(String(metadata.squadRole))) return undefined;
+    || metadata.squadStopped === true || !['worker', 'orchestrator'].includes(String(metadata.squadRole))) return undefined;
   try { boundMember(ctx, { bindingId: threadId, generation: metadata.squadGeneration, projectId }); }
   catch { return undefined; }
   return { bindingId: threadId, generation: metadata.squadGeneration, role: metadata.squadRole as ModernTeamMember['role'],
     ...(typeof metadata.squadExecution === 'string' ? { executionId: metadata.squadExecution } : {}) };
+}
+
+/** Durable "ever a member": squad origin is host-reserved and immutable, so retired members never regain owner tools. */
+export function isSquadMemberThread(ctx: ProductHttpContext, threadId: string): boolean {
+  if (getConversationThread(ctx.db, threadId)?.originPluginId === MODERN_SQUAD_BINDING_ORIGIN) return true;
+  const stored = getThreadPluginMetadata(ctx.db, threadId, PRIVATE_BINDING_NAMESPACE);
+  return stored.corrupt || Object.keys(stored.metadata).length > 0;
 }
 
 /** Register before generic host routes. Secret proof is single-use and binds this exact operation body. */
@@ -236,25 +245,40 @@ export async function activateSquadMemberConversation(ctx: ProductHttpContext, i
     if (metadata.squadCreateFingerprint !== hash(request) || metadata.squadStopRequested === true || metadata.squadStopped === true) {
       throw new Error('prepared squad member binding changed or stopped');
     }
+    return metadata;
   };
-  assertBinding();
-  // Durable intent fences concurrent/restarted activation retries before any await.
-  const { metadata } = boundMember(ctx, request);
+  // assertBinding pins the request to the prepared fingerprint, so an in-flight
+  // activation for this binding is always for an identical request: join it.
+  const metadata = assertBinding();
+  let pending = pendingActivations.get(ctx.db);
+  if (!pending) { pending = new Map(); pendingActivations.set(ctx.db, pending); }
+  const inFlight = pending.get(request.bindingId);
+  if (inFlight) return inFlight;
+  // Durable intent is written only at the send boundary; once set, a crash or
+  // failure leaves the outcome uncertain and is never blindly re-sent.
   if (metadata.squadActivationStarted === true) {
     if (metadata.squadActivationAccepted === true) return { threadId: request.bindingId };
     throw new Error('squad member activation outcome is uncertain');
   }
-  persistBindingMetadata(ctx, request.bindingId, { squadActivationStarted: true });
-  const preflight = await preflightSquadRuntime(ctx, { projectId: request.projectId, hostId: request.hostId,
-    providerIds: [request.providerId], nativeToolPolicyRequired: request.nativeToolPolicyRequired,
-    selections: [{ providerId: request.providerId, model: request.model, permissionMode: request.permissionMode }] });
-  if (!preflight.ready) throw new Error(preflight.reason);
-  assertBinding();
-  await activatePreparedConversation(ctx, { id: request.bindingId, projectId: request.projectId, providerId: request.providerId,
-    input: [request.prompt], promptInput: [{ type: 'text', text: request.prompt, mentions: [] }], title: request.title,
-    model: request.model, reasoningLevel: request.reasoningLevel, permissionMode: request.permissionMode }, assertBinding);
-  persistBindingMetadata(ctx, request.bindingId, { squadActivationAccepted: true });
-  return { threadId: request.bindingId };
+  // Reserve before the first await so concurrent retries cannot issue two starts.
+  const promise = (async () => {
+    const preflight = await preflightSquadRuntime(ctx, { projectId: request.projectId, hostId: request.hostId,
+      providerIds: [request.providerId], nativeToolPolicyRequired: request.nativeToolPolicyRequired,
+      selections: [{ providerId: request.providerId, model: request.model, permissionMode: request.permissionMode }] });
+    if (!preflight.ready) throw new Error(preflight.reason);
+    assertBinding();
+    await activatePreparedConversation(ctx, { id: request.bindingId, projectId: request.projectId, providerId: request.providerId,
+      input: [request.prompt], promptInput: [{ type: 'text', text: request.prompt, mentions: [] }], title: request.title,
+      model: request.model, reasoningLevel: request.reasoningLevel, permissionMode: request.permissionMode }, () => {
+      // Runs synchronously after every pre-send await; failures before here never reached the provider.
+      assertBinding();
+      persistBindingMetadata(ctx, request.bindingId, { squadActivationStarted: true });
+    });
+    persistBindingMetadata(ctx, request.bindingId, { squadActivationAccepted: true });
+    return { threadId: request.bindingId };
+  })();
+  pending.set(request.bindingId, promise);
+  try { return await promise; } finally { pending.delete(request.bindingId); }
 }
 
 /** Indexed event tip is a bounded progress signal, never task-completion authority. */

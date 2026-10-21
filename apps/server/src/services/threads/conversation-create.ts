@@ -25,6 +25,7 @@ import {
   type SpawnEnvironmentChoice
 } from '@zana-ai/zcc-domain';
 import type { Project } from '@zana-ai/zcc-domain/product';
+import { MODERN_SQUAD_PRIVATE_NAMESPACE, MODERN_SQUAD_THREAD_ORIGIN } from '@zana-ai/zcc-domain/squad-origin';
 import type { ReasoningLevel, PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import { clampPermissionModeToHost } from '../hosts/permission-ceiling.js';
 import type { EnvironmentProvisionResult } from '@zana-ai/zcc-contracts/host-rpc';
@@ -312,7 +313,7 @@ async function startConversationOnHost(
   return { permissionMode };
 }
 
-const RESERVED_SQUAD_ORIGINS = new Set(['host-modern-squad', '.host-modern-squad']);
+const RESERVED_SQUAD_ORIGINS = new Set([MODERN_SQUAD_THREAD_ORIGIN, MODERN_SQUAD_PRIVATE_NAMESPACE]);
 function isReservedOriginPluginId(id: string | null | undefined): boolean {
   return typeof id === 'string' && (id.startsWith('.') || RESERVED_SQUAD_ORIGINS.has(id));
 }
@@ -730,7 +731,7 @@ export async function activatePreparedConversation(ctx: ProductHttpContext, inpu
     throw new Error('prepared squad member cannot activate');
   }
   await withConversationSend(ctx.db, thread.id, async lease => {
-    beforeStart();
+    // beforeStart runs inside startConversationOnHost after its awaits, immediately before send.
     const launch = await startConversationOnHost(ctx, { lease, hostId: thread.hostId, project, thread,
       prompt: input.input, hostPrompt: input.promptInput as PromptInput[], environmentId: thread.environmentId!, input,
       remoteToolProxy: false, beforeStart });
