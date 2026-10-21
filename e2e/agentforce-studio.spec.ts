@@ -837,11 +837,13 @@ test('Preview context: Context tab, setup, typed snapshots and restart work in b
   await orgSetup.getByLabel('Context preset', { exact: true }).selectOption('');
 
   // The "Set verified" toggle is a visually-hidden checkbox (opacity:0; 1px) inside the context
-  // dialog's own scroll container. check() scrolls it in but still fails viewport actionability on a
-  // short CI window, so scroll it in, then force the check — the native checkbox state still toggles.
+  // dialog's own position:fixed scroll container. On a short CI window the dialog overflows and the
+  // toggle row sits below the fold where neither page scroll nor check()'s viewport rule can reach it
+  // (force still requires an in-viewport click point). Drive it with a native DOM click instead:
+  // React binds the checkbox onChange to the click event, so this fires the same handler a user would,
+  // with no viewport dependency.
   const setVerified = orgSetup.getByRole('checkbox', { name: 'Set verified', exact: true });
-  await setVerified.scrollIntoViewIfNeeded();
-  await setVerified.check({ force: true });
+  await setVerified.evaluate((el: HTMLInputElement) => { if (!el.checked) el.click(); });
   await expect(setVerified).toBeChecked();
   await orgSetup.getByRole('button', { name: 'Start preview', exact: true }).click();
   await expect(orgPreview.getByRole('log')).toContainText('support concierge');
