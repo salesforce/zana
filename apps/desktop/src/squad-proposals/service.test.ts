@@ -44,6 +44,7 @@ let enabledFlag: boolean;
 const projectLaunchApproval = vi.fn<SquadLaunchNowDeps['projectLaunchApproval']>();
 const activeOwnedRuns = vi.fn<SquadLaunchNowDeps['activeOwnedRuns']>();
 const squadLaunchReviewRequired = vi.fn<NonNullable<SquadLaunchNowDeps['squadLaunchReviewRequired']>>();
+const executionState = vi.fn<NonNullable<SquadLaunchNowDeps['executionState']>>();
 const launchNow = vi.fn<SquadLaunchNowDeps['launch']>();
 
 function build() {
@@ -74,6 +75,7 @@ function build() {
       projectLaunchApproval: (...a) => projectLaunchApproval(...a),
       squadLaunchReviewRequired: (...a) => squadLaunchReviewRequired(...a),
       activeOwnedRuns: (...a) => activeOwnedRuns(...a),
+      executionState: (...a) => executionState(...a),
       launch: (...a) => launchNow(...a)
     }
   });
@@ -99,6 +101,7 @@ beforeEach(() => {
   squadLaunchReviewRequired.mockReset().mockReturnValue(false);
   activeOwnedRuns.mockReset().mockResolvedValue(0);
   let executions = 0;
+  executionState.mockReset().mockResolvedValue('RUNNING');
   launchNow.mockReset().mockImplementation(async () => ({ ok: true, value: { executionId: `exec-${++executions}`, state: 'RUNNING' } }) as never);
   appendOnce.mockReset().mockImplementation(async (i) => ({ id: `entry-${i.dedupeKey}`, ...i }));
   bind.mockReset();
@@ -638,6 +641,38 @@ describe('launchSquadNow', () => {
     expect(await now({}, { projectId: 'p1', sessionId: 's2' })).toMatchObject({ ok: true, value: { executionId: 'exec-2' } });
     expect(await now({ goal: 'Build the other thing' }, { projectId: 'p1', sessionId: 's2' })).toMatchObject({ value: { executionId: 'exec-3' } });
     expect(await now({ planning: 'infer', goal: 'Build the other thing' }, { projectId: 'p1', sessionId: 's2' })).toMatchObject({ value: { executionId: 'exec-4' } });
+  });
+
+  it('reports the current state of the run a repeat is deduped against', async () => {
+    await now();
+    executionState.mockResolvedValue('BLOCKED');
+    expect(await now()).toMatchObject({ ok: true, value: { executionId: 'exec-1', state: 'BLOCKED', deduped: true } });
+    expect(executionState).toHaveBeenCalledWith('exec-1');
+    expect(launchNow).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['COMPLETED', 'FAILED', 'STOPPED'] as const)('starts a new run when the repeated run is %s', async (state) => {
+    await now();
+    executionState.mockResolvedValue(state);
+    const again = await now();
+    expect(again).toMatchObject({ ok: true, value: { executionId: 'exec-2', state: 'RUNNING' } });
+    expect((again as { value: { deduped?: true } }).value.deduped).toBeUndefined();
+    expect(launchNow).toHaveBeenCalledTimes(2);
+  });
+
+  it('starts a new run when the repeated run cannot be found', async () => {
+    await now();
+    executionState.mockResolvedValue(undefined);
+    expect(await now()).toMatchObject({ ok: true, value: { executionId: 'exec-2' } });
+    expect(launchNow).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps deduping, and logs, when the repeated run lookup throws', async () => {
+    await now();
+    executionState.mockRejectedValue(new Error('db locked'));
+    expect(await now()).toMatchObject({ ok: true, value: { executionId: 'exec-1', deduped: true } });
+    expect(logError).toHaveBeenCalledWith('squad proposal launch now state', expect.any(Error));
+    expect(launchNow).toHaveBeenCalledTimes(1);
   });
 
   it('treats a goal differing only in surrounding whitespace as identical', async () => {

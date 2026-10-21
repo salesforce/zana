@@ -1600,6 +1600,24 @@ export interface TerminalSession {
    */
   lastInputAt?: number;
   /**
+   * Like {@link lastInputAt}, but stamped only when the write carried real key
+   * input or a paste. Terminal-generated reports that xterm forwards on the same
+   * channel (mouse motion/clicks, focus in/out, cursor-position, device-attribute
+   * and OSC color-query replies) stamp `lastInputAt` but not this. Use it to
+   * wait for a person to stop typing. In-memory only; absent ⇒ never typed.
+   */
+  lastKeyInputAt?: number;
+  /**
+   * HEURISTIC: the user has probably left a half-typed line in the prompt.
+   * True while an approximate per-session character count is above zero:
+   * printable keys (Shift+Enter newlines included) and paste content add,
+   * BS/DEL subtracts, Enter, Ctrl-C and a `reply()` submit reset it, and
+   * Up/Down history recall on an empty prompt holds it. Ctrl-W, Ctrl-U,
+   * Alt-Backspace and Esc leave it unchanged. In-memory only; absent ⇒ never
+   * typed.
+   */
+  draftPending?: boolean;
+  /**
    * Set when this session was opened as part of a {@link Team} launch. Groups
    * the launch's tabs into one manageable unit on the Agents board ("By team")
    * and marks the orchestrator. Absent on every non-team session.

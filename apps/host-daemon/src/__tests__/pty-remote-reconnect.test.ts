@@ -321,6 +321,8 @@ describe('PtyManager remote auto-reconnect', () => {
       expect(sendKeys[0].at(-1)).toContain(`cc-${session.id}`);
       expect(sendKeys[1].at(-1)).toContain('Enter');
       expect(sendKeys[1].at(-1)).not.toContain('-l');
+      // The send-keys Enter submits any user draft along with the reply.
+      expect(mgr.getSession(session.id)?.draftPending).toBe(false);
     } finally {
       vi.useRealTimers();
     }

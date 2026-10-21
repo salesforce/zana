@@ -21,6 +21,7 @@ import {
   type SquadProposer
 } from '@zana-ai/zcc-domain/squad-proposal';
 import { ExecutionSourceError } from '@zana-ai/zcc-server/services/execution/source-registry';
+import { isTerminalExecutionState, type ExecutionState } from '@zana-ai/zcc-server/services/execution/store';
 import { sourcePolicyText, type SourcePolicy } from '@zana-ai/zcc-server/services/execution/source-policy';
 import type { InboxInput } from '@zana-ai/zcc-server/services/inbox/inbox-store';
 import { InboxActionOperatorError } from '../inbox-actions/registry.js';
@@ -88,6 +89,11 @@ export interface SquadLaunchNowDeps {
   squadLaunchReviewRequired?(teamId: string): boolean;
   /** Non-terminal runs this session owns in the project. */
   activeOwnedRuns(sessionId: string, projectId: string): Promise<number>;
+  /**
+   * Current state of a run this session started, undefined when it no longer exists. A repeat of a
+   * launch is deduped only while its run is not terminal; absent ⇒ the cached launch is returned as is.
+   */
+  executionState?(executionId: string): Promise<ExecutionState | undefined>;
   launch(request: SquadLaunchNowRequest, ctx: SquadLaunchContext): Promise<TeamJobLaunchResponse>;
 }
 
@@ -348,6 +354,9 @@ function createNowDedupe(now: () => number) {
       prune();
       return entries.get(key)?.result;
     },
+    delete(key: string): void {
+      entries.delete(key);
+    },
     set(key: string, result: SquadLaunchNowResult): void {
       prune();
       entries.delete(key);
@@ -399,6 +408,28 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
   // One `now` launch in flight per conversation; the lease timeout only frees a hung launch.
   const nowLeases = createLaunchLeases(() => deps.now());
   const nowDedupe = createNowDedupe(() => deps.now());
+
+  /**
+   * The cached result for a repeat launch, with the run's current state. A run that has finished
+   * or cannot be found is evicted so the repeat starts a new one; a state lookup that throws keeps
+   * the cached result, so a transient failure never starts a duplicate run.
+   */
+  async function liveDedupe(launchNow: SquadLaunchNowDeps, key: string): Promise<SquadLaunchNowResult | undefined> {
+    const cached = nowDedupe.get(key);
+    if (!cached || !launchNow.executionState) return cached;
+    let state: ExecutionState | undefined;
+    try {
+      state = await launchNow.executionState(cached.executionId);
+    } catch (error) {
+      log('launch now state', error);
+      return cached;
+    }
+    if (!state || isTerminalExecutionState(state)) {
+      nowDedupe.delete(key);
+      return undefined;
+    }
+    return { ...cached, state };
+  }
 
   function log(context: string, error: unknown): void {
     try { deps.logError(`squad proposal ${context}`, error); } catch { /* logging must not throw */ }
@@ -537,7 +568,7 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         }
         if (approval === 'review') return fail('LAUNCH_REVIEW_REQUIRED', LAUNCH_REVIEW_REQUIRED_MESSAGE);
         const key = nowDedupeKey(route.sessionId, input, prepared.value);
-        const prior = nowDedupe.get(key);
+        const prior = await liveDedupe(launchNow, key);
         if (prior) return ok({ ...prior, deduped: true });
         if (nowLeases.active(route.sessionId)) {
           return fail('LAUNCH_IN_PROGRESS', 'A Squad launch from this conversation is already starting. Wait for it to finish.');
@@ -545,7 +576,7 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         nowLeases.take(route.sessionId);
         leased = true;
         // A launch that finished while this call was preparing is found here, not started twice.
-        const finished = nowDedupe.get(key);
+        const finished = await liveDedupe(launchNow, key);
         if (finished) return ok({ ...finished, deduped: true });
         if (await launchNow.activeOwnedRuns(route.sessionId, route.projectId) >= MAX_ACTIVE_NOW_RUNS_PER_SESSION) {
           return fail('TOO_MANY_LAUNCHES',

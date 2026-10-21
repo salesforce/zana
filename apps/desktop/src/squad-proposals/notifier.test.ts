@@ -25,6 +25,7 @@ function setup(over: Partial<SquadProposalNotifierDeps> = {}, current: () => Exe
     ptyLive: vi.fn(() => true),
     ptyState: vi.fn(() => state),
     lastInputAt: vi.fn(() => lastInput),
+    draftPending: vi.fn(() => false),
     deliverableWhenWaiting: vi.fn(() => false),
     threadLive: vi.fn(async () => true),
     queueThreadTurn: vi.fn(async () => ({ ok: true })),

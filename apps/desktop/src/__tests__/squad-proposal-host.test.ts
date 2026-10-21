@@ -230,7 +230,7 @@ describe('report-back wiring', () => {
   beforeAll(async () => { await host.squadProposalNotifier.replayUnreported(); });
 
   it('delivers a blocker report to an idle PTY proposer, arms the quiet-gate timer and forgets the session', async () => {
-    h.sessions.set('s1', pty({ lastInputAt: 0 }));
+    h.sessions.set('s1', pty({ lastKeyInputAt: 0 }));
     await host.squadProposalNotifier.onHumanBlocker(record('pty'), blocker);
     host.squadProposalNotifier.onState('s1', 'idle');
     // Delivery re-checks that the blocker is still open before typing, so it lands a tick later.
@@ -239,20 +239,86 @@ describe('report-back wiring', () => {
 
     // A recent keystroke holds delivery behind the quiet gate; forget drops the held report.
     const delivered = h.replies.length;
-    h.sessions.set('s1', pty({ lastInputAt: Date.now() }));
+    h.sessions.set('s1', pty({ lastKeyInputAt: Date.now() }));
     await host.squadProposalNotifier.onHumanBlocker(record('pty'), { ...blocker, id: 'b2' });
     host.squadProposalNotifier.onState('s1', 'idle');
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(h.replies).toHaveLength(delivered);
     host.squadProposalNotifier.forget('s1');
-    h.sessions.set('s1', pty({ lastInputAt: 0 }));
+    h.sessions.set('s1', pty({ lastKeyInputAt: 0 }));
     host.squadProposalNotifier.onState('s1', 'idle');
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(h.replies).toHaveLength(delivered);
   });
 
+  it('quiets on keystrokes only, holds behind a pending draft, and treats waiting as rest only for non-OSC harnesses', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const RECHECK = 5_000;
+    let n = 0;
+    // Blocker -> state edge -> delivered (or, after a re-check window, still not delivered).
+    const offer = async (session: Record<string, unknown>, state: 'idle' | 'waiting') => {
+      h.sessions.set('s1', pty(session));
+      await host.squadProposalNotifier.onHumanBlocker(record('pty'), { ...blocker, id: `k${n += 1}` });
+      host.squadProposalNotifier.onState('s1', state);
+    };
+    const expectHeld = async (count: number) => {
+      await vi.advanceTimersByTimeAsync(RECHECK * 2);
+      expect(h.replies).toHaveLength(count);
+    };
+    try {
+      // A user who never typed (no keystroke clock) with fresh non-key input: delivers.
+      let delivered = h.replies.length;
+      await offer({ lastKeyInputAt: undefined, lastInputAt: Date.now() }, 'idle');
+      await vi.waitFor(() => expect(h.replies).toHaveLength(delivered + 1));
+      host.squadProposalNotifier.forget('s1');
+
+      // Old keystroke with fresh non-key input: delivers.
+      delivered = h.replies.length;
+      await offer({ lastInputAt: Date.now(), lastKeyInputAt: 0 }, 'idle');
+      await vi.waitFor(() => expect(h.replies).toHaveLength(delivered + 1));
+      host.squadProposalNotifier.forget('s1');
+
+      // A recent keystroke holds delivery behind the quiet gate.
+      delivered = h.replies.length;
+      await offer({ lastKeyInputAt: Date.now() }, 'idle');
+      await expectHeld(delivered);
+      host.squadProposalNotifier.forget('s1');
+
+      // A fresh pending draft holds delivery.
+      await offer({ lastKeyInputAt: Date.now() - 60_000, draftPending: true }, 'idle');
+      await expectHeld(delivered);
+      host.squadProposalNotifier.forget('s1');
+
+      // `waiting` is not rest for an OSC harness...
+      await offer({ lastKeyInputAt: 0, profile: 'claude' }, 'waiting');
+      await expectHeld(delivered);
+      host.squadProposalNotifier.forget('s1');
+
+      // ...but is for output-activity and screen-scan harnesses, and for a headless cohort worker.
+      for (const session of [
+        { lastKeyInputAt: 0, profile: 'codex' },
+        { lastKeyInputAt: 0, profile: 'opencode' },
+        { lastKeyInputAt: 0, profile: 'claude', headless: true, cohort: { role: 'worker' } }
+      ]) {
+        delivered = h.replies.length;
+        await offer(session, 'waiting');
+        await vi.waitFor(() => expect(h.replies).toHaveLength(delivered + 1));
+        host.squadProposalNotifier.forget('s1');
+      }
+
+      // A session that vanished after the report was queued never receives it.
+      delivered = h.replies.length;
+      await offer({ lastKeyInputAt: 0, profile: 'claude' }, 'waiting');
+      h.sessions.delete('s1');
+      host.squadProposalNotifier.onState('s1', 'waiting');
+      await expectHeld(delivered);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('logs a failed PTY delivery instead of throwing', async () => {
-    h.sessions.set('s1', pty({ lastInputAt: 0 }));
+    h.sessions.set('s1', pty({ lastKeyInputAt: 0 }));
     h.replyThrows = true;
     await host.squadProposalNotifier.onHumanBlocker(record('pty'), { ...blocker, id: 'b3' });
     expect(() => host.squadProposalNotifier.onState('s1', 'idle')).not.toThrow();

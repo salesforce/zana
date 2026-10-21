@@ -1528,6 +1528,18 @@ function sessionHasUnreliableStatusChannel(session: TerminalSession): boolean {
 }
 
 /**
+ * Harnesses whose status comes from output-activity / screen-scan heuristics (Codex, Cursor, Pi,
+ * OpenCode) have no OSC glyph and rest in `waiting`, so `waiting` is a deliverable rest state for
+ * them. Headless cohort workers rest deliverable too (see {@link suppressesInteractiveBlocked}).
+ */
+function sessionRestsInWaiting(session: TerminalSession | null | undefined): boolean {
+  if (!session) return false;
+  if (suppressesInteractiveBlocked(session)) return true;
+  const mode = providerFor(session.profile as LaunchProfileId).adapter.status?.mode;
+  return mode === 'output-activity' || mode === 'screen-scan';
+}
+
+/**
  * Map a RAW resolved agent state to the value SHOWN in the renderer for a
  * session. For a session with no reliable done-channel
  * ({@link sessionHasUnreliableStatusChannel}) the can't-confirm resting states
@@ -6241,6 +6253,7 @@ const squadProposalServiceDeps: SquadProposalServiceDeps = {
     projectLaunchApproval: async (projectId) => (await getAuthoritativeProjectSettings(projectId)).launchApproval,
     squadLaunchReviewRequired: (teamId) => teams.launchReviewRequired(teamId),
     activeOwnedRuns: activeOwnedSquadRuns,
+    executionState: async (executionId) => (await executionStore.get(executionId))?.state,
     launch: async ({ team, project, goal, coordinationMode, title, summary, sourcePaths }, ctx) => {
       const sourceBases = squadSourceBases();
       return launchSquad(squadNowLaunchDeps, {
@@ -6268,8 +6281,9 @@ export const squadProposalNotifier = createSquadProposalNotifier({
   reply: (sessionId, text) => ptys.reply(sessionId, text),
   ptyLive: (id) => { const session = ptys.getSession(id); return !!session && session.status !== 'exited'; },
   ptyState: (id) => agentStatus.get(id),
-  lastInputAt: (id) => ptys.getSession(id)?.lastInputAt,
-  deliverableWhenWaiting: (id) => suppressesInteractiveBlocked(ptys.getSession(id)),
+  lastInputAt: (id) => ptys.getSession(id)?.lastKeyInputAt,
+  draftPending: (id) => ptys.getSession(id)?.draftPending === true,
+  deliverableWhenWaiting: (id) => sessionRestsInWaiting(ptys.getSession(id)),
   threadLive: isConversationThreadLive,
   queueThreadTurn: queueThreadTurnForProposal,
   // appendOnce: a replayed report must not re-surface the result entry as a new occurrence.
