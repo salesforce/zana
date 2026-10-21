@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { InboxEntry } from '@zana-ai/zcc-domain/product';
+import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { SquadExecutionService } from '@zana-ai/zcc-server/services/execution/service';
 import { createExecutionStore } from '@zana-ai/zcc-server/services/execution/store';
 import { createExecutionArtifactStore } from '@zana-ai/zcc-server/services/execution/artifact-store';
@@ -49,7 +50,7 @@ const VALID_PLAN = [
   ''
 ].join('\n');
 
-type Script = 'valid' | 'nothing' | 'invalid';
+type Script = 'valid' | 'nothing' | 'invalid' | 'recoverable';
 
 function setup(script: Script) {
   // Infer mode: coordinator-authored plan, no provided plan, so no launch binding.
@@ -73,6 +74,7 @@ function setup(script: Script) {
     coordinatorTexts.push(text);
     if (!text.includes('The supplied execution plan was rejected')) return;
     if (script === 'valid') writeArtifact(correctedPlanRelPath(EXECUTION_ID), VALID_PLAN);
+    if (script === 'recoverable') writeArtifact(correctedPlanRelPath(EXECUTION_ID), VALID_PLAN.replace('### write:', '### U1:'));
     if (script === 'invalid') writeArtifact(correctedPlanRelPath(EXECUTION_ID), '### broken <!-- executable-step -->\n- Work: nope\n');
   };
 
@@ -143,7 +145,7 @@ function setup(script: Script) {
   });
 
   const inferred = createInferredPlanCorrection({
-    reviewInvalid: (ctx, reason) => correction.reviewInvalid(ctx, reason),
+    reviewInvalid: (ctx) => correction.reviewInvalid(ctx),
     begin: (executionId, reason, unattended) => correction.begin(executionId, reason, unattended)
   });
   const handoff: TeamPlanHandoff = new TeamPlanHandoff({
@@ -239,7 +241,9 @@ describe('Squad plan-correction flow (real service, wake queue, handoff and exec
       await ctx.idleEdge();
       expect(ctx.inbox).toHaveLength(1);
       expect(ctx.optionIds(0)).toEqual(['changes', 'cancel']);
-      expect(ctx.inbox[0]!.comments).toContain('No valid revised plan is ready to review');
+      expect(ctx.inbox[0]!.comments).toContain('Plan requires revisions to proceed');
+      expect(ctx.inbox[0]!.comments).toContain('Problem with the supplied plan: mutating work unit requires file scope');
+      expect(ctx.inbox[0]!.comments).not.toContain('no plan file found');
       expect(JSON.parse(ctx.bound.get('inbox-1')!.ref)).toMatchObject({ executionId: EXECUTION_ID, digest: '' });
       expect(await ctx.workUnits()).toHaveLength(0);
 
@@ -255,7 +259,7 @@ describe('Squad plan-correction flow (real service, wake queue, handoff and exec
       await ctx.idleEdge();
       expect(ctx.inbox).toHaveLength(2);
       expect(ctx.optionIds(1)).toEqual(['approve', 'changes', 'cancel']);
-      expect(ctx.inbox[1]!.comments).toContain('Proposed plan: 1 step');
+      expect(ctx.inbox[1]!.comments).toContain('Proposed corrected plan: 1 step');
       expect(await ctx.workUnits()).toHaveLength(0);
 
       // Approve -> schedule persisted, resume re-enters the handoff, plan registered.
@@ -327,6 +331,72 @@ describe('Squad plan-correction flow (real service, wake queue, handoff and exec
       expect(ctx.optionIds(0)).toEqual(['changes', 'cancel']);
       expect(ctx.inbox[0]!.decisionGuidance).toMatchObject({ kind: 'plan-correction', diagnostic: 'no executable steps found' });
       expectNoFallbackLaunch();
+    });
+  });
+
+  describe('substantive vs recoverable provided plans', () => {
+    beforeEach(() => { ctx = setup('valid'); });
+
+    it('a provided plan missing Work still yields a planError and the unchanged gate card', async () => {
+      const missingWork = '### write: Write output <!-- executable-step -->\n- Mode: Mutating\n- Verification: Read output.\n';
+      const resolved = resolveSquadPlan('provided', [missingWork]);
+      expect(resolved.coordinationMode).toBe('freeform');
+      expect(resolved.workUnits).toBeUndefined();
+      expect(resolved.planError).toContain('missing Work');
+      expect(resolved).not.toHaveProperty('normalizations');
+
+      await ctx.launchParked(resolved.planError, missingWork);
+      await ctx.idleEdge();
+      expect(ctx.inbox).toHaveLength(1);
+      expect(ctx.optionIds(0)).toEqual(['changes', 'cancel']);
+      expect(ctx.inbox[0]!.decisionGuidance).toMatchObject({ kind: 'plan-correction', diagnostic: resolved.planError });
+      expect(await ctx.workUnits()).toHaveLength(0);
+    });
+
+    it('a recoverable-only provided plan yields structured units, no planError, and no correction card', async () => {
+      const recoverable = VALID_PLAN.replace('### write:', '### U1:');
+      const resolved = resolveSquadPlan('provided', [recoverable]);
+      expect(resolved.planError).toBeUndefined();
+      expect(resolved.coordinationMode).toBe('structured');
+      expect(resolved.workUnits?.map((unit) => unit.id)).toEqual(['u1']);
+      expect(resolved.normalizations).toEqual(['step "U1" id normalized to "u1"']);
+
+      // Host does not begin the launch binding without a planError; start with the registered units.
+      const started = await ctx.squad.start('owner', PROJECT_ID, {
+        version: 1, teamId: 'team-1', launchRequestId: 'launch-request-1', summary: 'recoverable', objective: recoverable,
+        coordinationMode: 'structured', slots: [{ initialTask: 'go' }], workUnits: resolved.workUnits
+      } as never);
+      expect(started.ok).toBe(true);
+      expect((await ctx.workUnits()).map((unit) => unit.id)).toEqual(['u1']);
+      await ctx.idleEdge();
+      expect(ctx.inbox).toHaveLength(0);
+    });
+  });
+
+  describe('corrected plan that needs automatic normalization', () => {
+    beforeEach(() => { ctx = setup('recoverable'); });
+
+    it('stays gated, lists the repair on the offer, and approves the exact normalized digest', async () => {
+      await ctx.launchParked();
+      await ctx.idleEdge();
+      await ctx.respond(0, 'changes');
+      await ctx.idleEdge();
+
+      expect(ctx.inbox).toHaveLength(2);
+      expect(ctx.inbox[1]!.hostActionRequired).toBe(true);
+      expect(ctx.optionIds(1)).toEqual(['approve', 'changes', 'cancel']);
+      expect(ctx.inbox[1]!.comments).toContain('Automatically normalized');
+      expect(ctx.inbox[1]!.comments).toContain('step "U1" id normalized to "u1"');
+      expect(await ctx.workUnits()).toHaveLength(0);
+
+      const parsed = await readCorrectedPlan(ctx.root, EXECUTION_ID);
+      if (parsed.status !== 'ok') throw new Error('expected an ok corrected plan');
+      const offer = JSON.parse(ctx.bound.get('inbox-2')!.ref) as { digest: string };
+      expect(offer.digest).toBe(launchDigest(parsed.units));
+      expect(ctx.records.get(EXECUTION_ID)?.offeredDigest).toBe(launchDigest(parsed.units));
+
+      await ctx.respond(1, 'approve');
+      expect((await ctx.workUnits()).map((unit) => unit.id)).toEqual(['u1']);
     });
   });
 

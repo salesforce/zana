@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { NO_PLAN_STEPS_REASON, invalidProvidedPlanHold, resolveSquadPlan, resolveTriggeredSquadPlan } from './team-trigger-semantics.js';
+import { NO_PLAN_STEPS_REASON, invalidProvidedPlanHold, planNormalizationNote, resolveSquadPlan, resolveTriggeredSquadPlan } from './team-trigger-semantics.js';
 
 const validPlan = [
   '### write: Write output <!-- executable-step -->',
@@ -96,5 +96,82 @@ describe('resolveSquadPlan', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe('plan normalization pass-through', () => {
+  const recoverable = validPlan.replace('### write:', '### Write:');
+
+  it('accepts a recoverable-only provided plan as structured and exposes the repair notes', () => {
+    const resolved = resolveSquadPlan('provided', [recoverable]);
+    expect(resolved.coordinationMode).toBe('structured');
+    expect(resolved.workUnits?.[0].id).toBe('write');
+    expect(resolved.normalizations).toEqual(['step "Write" id normalized to "write"']);
+    expect(resolved.idRenames).toEqual([{ from: 'Write', to: 'write' }]);
+    expect(resolved).not.toHaveProperty('planError');
+  });
+
+  it('carries notes through the triggered-squad resolver', () => {
+    expect(resolveTriggeredSquadPlan('provided', recoverable).normalizations).toHaveLength(1);
+  });
+
+  it('omits the normalizations key for a clean plan', () => {
+    expect(resolveSquadPlan('provided', [validPlan])).not.toHaveProperty('normalizations');
+    expect(resolveSquadPlan('provided', [validPlan])).not.toHaveProperty('idRenames');
+  });
+
+  it('still reports a substantive failure for a plan that is missing Work', () => {
+    const resolved = resolveSquadPlan('provided', ['### write: Write <!-- executable-step -->\n\n- **Mode:** Mutating']);
+    expect(resolved.coordinationMode).toBe('freeform');
+    expect(resolved.planError).toContain('missing Work');
+    expect(resolved).not.toHaveProperty('normalizations');
+  });
+});
+
+describe('planNormalizationNote', () => {
+  it('is empty for undefined or empty notes', () => {
+    expect(planNormalizationNote(undefined)).toBe('');
+    expect(planNormalizationNote([])).toBe('');
+  });
+
+  it('lists each id rename as a bullet under a header line', () => {
+    const note = planNormalizationNote([{ from: 'U1', to: 'u1' }, { from: 'Home Step', to: 'home-step' }]);
+    expect(note.split('\n')).toEqual([
+      'The supplied plan was accepted after automatic normalization; use the normalized ids:',
+      '- step "U1" id normalized to "u1"',
+      '- step "Home Step" id normalized to "home-step"'
+    ]);
+  });
+
+  it('omits label-fold and dependency repairs from the agent-facing note', () => {
+    const plan = validPlan.replace('### write:', '### Write:').replace('**Depends on:**', '**Depend on:**');
+    const resolved = resolveSquadPlan('provided', [plan]);
+    expect(resolved.normalizations).toEqual([
+      'step "Write" id normalized to "write"',
+      'step write label "depend on" treated as "depends on"'
+    ]);
+    const note = planNormalizationNote(resolved.idRenames);
+    expect(note).toContain('step "Write" id normalized to "write"');
+    expect(note).not.toContain('depend on');
+  });
+
+  it('caps the list at 20 renames and summarizes the rest', () => {
+    const renames = Array.from({ length: 25 }, (_, index) => ({ from: `U${index}`, to: `u${index}` }));
+    const lines = planNormalizationNote(renames).split('\n');
+    expect(lines).toHaveLength(22);
+    expect(lines[20]).toBe('- step "U19" id normalized to "u19"');
+    expect(lines[21]).toBe('- …and 5 more');
+    expect(planNormalizationNote(renames.slice(0, 20))).not.toContain('more');
+  });
+
+  it('truncates each id to 80 characters and the whole note to 2000', () => {
+    const long = 'X'.repeat(500);
+    const single = planNormalizationNote([{ from: long, to: 'x'.repeat(500) }]);
+    expect(single).toContain(`"${'X'.repeat(80)}…"`);
+    expect(single).toContain(`"${'x'.repeat(80)}…"`);
+    expect(single).not.toContain('X'.repeat(81));
+    const many = planNormalizationNote(Array.from({ length: 30 }, () => ({ from: long, to: 'x'.repeat(500) })));
+    expect(many.length).toBe(2_000);
+    expect(many.startsWith('The supplied plan was accepted after automatic normalization')).toBe(true);
   });
 });

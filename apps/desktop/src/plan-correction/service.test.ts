@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { PLAN_CORRECTION_MAX_RETRIES, PLAN_CORRECTION_STALL_IDLE_EDGES, PlanCorrectionService, runPlanCorrectionHostAction } from './service.js';
 
 const ctx = { sessionId: 's-1', projectId: 'p-1', projectRoot: '/root', executionId: 'e-1', slotId: 'lead' };
@@ -243,8 +244,8 @@ describe('PlanCorrectionService', () => {
     await service.review(ctx, source);
 
     const entry = appendInbox.mock.calls[0]![0];
-    expect(entry.comments).toContain('Correction needed: parser expected a dependency');
-    expect(entry.comments).toContain('Proposed plan: 1 step.');
+    expect(entry.comments).toContain('Problem with the supplied plan: parser expected a dependency');
+    expect(entry.comments).toContain('Proposed corrected plan: 1 step.');
     expect(entry.comments).toContain('1. **Source** (`source`). No declared file writes.');
     expect(entry.comments).toContain('Review the proposed corrected plan below');
     expect(entry.decisionGuidance).toEqual({
@@ -258,6 +259,70 @@ describe('PlanCorrectionService', () => {
       { id: 'changes', label: 'Request changes' },
       { id: 'cancel', label: 'Cancel' }
     ]);
+  });
+
+  describe('automatic normalization notes', () => {
+    const normalized = {
+      ...source,
+      units: [{ id: 'u1', title: 'First', task: 'do it', dependencies: [] }],
+      normalizations: ['step "U1" id normalized to "u1"', 'step u2 dependency "U1" normalized to "u1"']
+    };
+
+    it('lists repairs on the gated offer without changing options, gating, or digest', async () => {
+      const { service, appendInbox, bindInboxAction, readCorrectedPlan } = create();
+      readCorrectedPlan.mockResolvedValue(normalized);
+      await service.begin(ctx.executionId, 'parser expected a dependency', false);
+
+      await expect(service.review(ctx, normalized)).resolves.toBe('wait');
+
+      const entry = appendInbox.mock.calls[0]![0];
+      expect(entry.hostActionRequired).toBe(true);
+      expect(entry.comments).toContain('Automatically normalized in the proposed plan:');
+      expect(entry.comments).toContain('- step "U1" id normalized to "u1"');
+      expect(entry.comments).toContain('- step u2 dependency "U1" normalized to "u1"');
+      expect(entry.questions[0]?.options).toEqual([
+        { id: 'approve', label: 'Approve' },
+        { id: 'changes', label: 'Request changes' },
+        { id: 'cancel', label: 'Cancel' }
+      ]);
+      expect(latestOffer(bindInboxAction).digest).toBe(launchDigest(normalized.units));
+    });
+
+    it('approves the normalized offer and returns the normalized units', async () => {
+      const { service, bindInboxAction, readCorrectedPlan } = create();
+      readCorrectedPlan.mockResolvedValue(normalized);
+      await service.begin(ctx.executionId, 'bad plan', false);
+      await service.review(ctx, normalized);
+
+      await expect(service.respond(ctx.executionId, 'approve', latestOffer(bindInboxAction))).resolves.toBe('approve');
+      expect(await service.review(ctx, normalized)).toMatchObject({ status: 'ok', units: normalized.units });
+    });
+
+    it('omits the section when the corrected plan needed no repair', async () => {
+      const { service, appendInbox } = create();
+      await service.begin(ctx.executionId, 'bad plan', false);
+      await service.review(ctx, source);
+      expect(appendInbox.mock.calls[0]![0].comments).not.toContain('Automatically normalized');
+    });
+
+    it('omits the section for an empty notes array', async () => {
+      const { service, appendInbox, readCorrectedPlan } = create();
+      readCorrectedPlan.mockResolvedValue({ ...source, normalizations: [] });
+      await service.begin(ctx.executionId, 'bad plan', false);
+      await service.review(ctx, source);
+      expect(appendInbox.mock.calls[0]![0].comments).not.toContain('Automatically normalized');
+    });
+
+    it('republishes a persisted pending offer with the notes from the fresh read', async () => {
+      const { service, appendInbox, readCorrectedPlan } = create();
+      readCorrectedPlan.mockResolvedValue(normalized);
+      appendInbox.mockRejectedValueOnce(new Error('inbox unavailable'));
+      await service.begin(ctx.executionId, 'bad plan', false);
+      await expect(service.review(ctx, normalized)).rejects.toThrow('inbox unavailable');
+
+      await expect(service.review(ctx, normalized)).resolves.toBe('wait');
+      expect(appendInbox.mock.calls.at(-1)![0].comments).toContain('step "U1" id normalized to "u1"');
+    });
   });
 
   it('requests revision without changing the source plan', async () => {
@@ -319,10 +384,10 @@ describe('PlanCorrectionService', () => {
     expect(appendInbox).toHaveBeenCalledOnce();
 
     for (let edge = 1; edge < PLAN_CORRECTION_STALL_IDLE_EDGES; edge += 1) {
-      await expect(service.reviewInvalid(ctx, 'mutating work unit requires file scope')).resolves.toBe('wait');
+      await expect(service.reviewInvalid(ctx)).resolves.toBe('wait');
       expect(appendInbox).toHaveBeenCalledOnce();
     }
-    await expect(service.reviewInvalid(ctx, 'mutating work unit requires file scope')).resolves.toBe('wait');
+    await expect(service.reviewInvalid(ctx)).resolves.toBe('wait');
 
     expect(appendInbox).toHaveBeenCalledTimes(2);
     expect(appendInbox.mock.calls[1]![0].comments).toContain('without writing a corrected plan');
@@ -335,10 +400,10 @@ describe('PlanCorrectionService', () => {
     await service.begin(ctx.executionId, 'bad plan', false);
     await service.review(ctx, { status: 'invalid', reason: 'bad' });
     await service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction));
-    await service.reviewInvalid(ctx, 'bad plan');
+    await service.reviewInvalid(ctx);
 
     readCorrectedPlan.mockResolvedValue(source);
-    await service.reviewInvalid(ctx, 'bad plan');
+    await service.reviewInvalid(ctx);
     expect(appendInbox).toHaveBeenCalledTimes(2);
     expect(appendInbox.mock.calls[1]![0].comments).not.toContain('without writing');
     expect(latestOffer(bindInboxAction).digest).not.toBe('');
@@ -350,14 +415,14 @@ describe('PlanCorrectionService', () => {
     await service.begin(ctx.executionId, 'bad plan', false);
     await service.review(ctx, { status: 'invalid', reason: 'bad' });
     await service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction));
-    await service.reviewInvalid(ctx, 'bad plan');
+    await service.reviewInvalid(ctx);
     readCorrectedPlan.mockResolvedValue(source);
-    await service.reviewInvalid(ctx, 'bad plan');
+    await service.reviewInvalid(ctx);
     await service.respond(ctx.executionId, 'changes', latestOffer(bindInboxAction));
     readCorrectedPlan.mockResolvedValue({ status: 'missing' });
     const before = appendInbox.mock.calls.length;
 
-    await service.reviewInvalid(ctx, 'bad plan');
+    await service.reviewInvalid(ctx);
     expect(appendInbox).toHaveBeenCalledTimes(before);
   });
 
@@ -395,7 +460,7 @@ describe('PlanCorrectionService', () => {
     readCorrectedPlan.mockResolvedValue({ status: 'missing' });
     await service.begin(ctx.executionId, 'bad plan', false);
 
-    await expect(service.reviewInvalid(ctx, 'bad plan')).resolves.toBe('wait');
+    await expect(service.reviewInvalid(ctx)).resolves.toBe('wait');
     expect(nudge).not.toHaveBeenCalled();
     expect(appendInbox).toHaveBeenCalledOnce();
   });
@@ -405,7 +470,7 @@ describe('PlanCorrectionService', () => {
     readCorrectedPlan.mockResolvedValue({ status: 'invalid', reason: 'missing Write scope' });
     await service.begin(ctx.executionId, 'bad plan', false);
 
-    await expect(service.reviewInvalid(ctx, 'bad plan')).resolves.toBe('wait');
+    await expect(service.reviewInvalid(ctx)).resolves.toBe('wait');
 
     expect(nudge).not.toHaveBeenCalled();
     expect(appendInbox).toHaveBeenCalledOnce();
@@ -600,18 +665,23 @@ describe('PlanCorrectionService', () => {
 
   it('leaves non-correction invalid plans to normal handoff nudges', async () => {
     const { service } = create();
-    await expect(service.reviewInvalid(ctx, 'missing verification')).resolves.toBeUndefined();
+    await expect(service.reviewInvalid(ctx)).resolves.toBeUndefined();
   });
 
   it('reads corrected plan for invalid authored handoff and retains its pending offer', async () => {
     const { service, appendInbox, records } = create();
     await service.begin(ctx.executionId, 'bad plan', false);
-    expect(await service.reviewInvalid(ctx, 'authored plan is invalid')).toBe('wait');
+    expect(await service.reviewInvalid(ctx)).toBe('wait');
     const pending = records.get(ctx.executionId);
     expect(appendInbox).toHaveBeenCalledOnce();
     expect(pending).toMatchObject({ status: 'pending', offeredUnits: source.units });
+    // The card names the launch defect recorded by begin().
+    expect(pending.reason).toBe('bad plan');
+    expect(appendInbox.mock.calls[0]![0].comments).toContain('Problem with the supplied plan: bad plan');
+    expect(appendInbox.mock.calls[0]![0].comments).not.toContain('authored plan is invalid');
+    expect(appendInbox.mock.calls[0]![0].decisionGuidance).toMatchObject({ diagnostic: 'bad plan' });
 
-    expect(await service.reviewInvalid(ctx, 'still invalid')).toBe('wait');
+    expect(await service.reviewInvalid(ctx)).toBe('wait');
     expect(appendInbox).toHaveBeenCalledOnce();
     expect(records.get(ctx.executionId)).toMatchObject({
       status: 'pending', offeredDigest: pending.offeredDigest, offeredActionId: pending.offeredActionId

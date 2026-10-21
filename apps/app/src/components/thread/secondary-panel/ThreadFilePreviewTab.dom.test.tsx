@@ -318,8 +318,16 @@ describe('HTML file preview', () => {
 
   it('gives a readable size error for non-HTML source files', () => {
     const view = render(<ThreadFilePreviewView path="large.txt" content={null} error="file exceeds the read cap" />);
-    expect(view.getByRole('status').textContent).toContain('Try opening a smaller file');
+    expect(view.getByRole('status').textContent).toContain('This file is too large to preview.');
     expect(view.queryByRole('button', { name: 'Try again' })).toBeNull();
+  });
+
+  it('shows an installer card without reading binary contents', () => {
+    const view = render(<ThreadFilePreviewTab path="dist/build.dmg" threadId="t1" />);
+    expect(view.getByText('macOS disk image')).toBeTruthy();
+    expect(view.getByText('This file opens outside the preview.')).toBeTruthy();
+    expect(mocks.readFile).not.toHaveBeenCalled();
+    expect(mocks.hostFileContent).not.toHaveBeenCalled();
   });
 
   it('opens on the source when a line is targeted and forgets the choice for another file', async () => {

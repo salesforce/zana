@@ -15,10 +15,32 @@ import type { ExecutionWorkUnitInput } from './store.js';
  * onto `ExecutionWorkUnitInput` and leaves DAG/cycle/completeness validation to
  * `normalizeExecutionPlan`. A plan that is absent, unmarked, or malformed yields
  * `{ ok: false }` so the caller can fall back to coordinator-derived planning.
+ *
+ * Defects are either recoverable or substantive. A recoverable defect has one
+ * deterministic repair (a non-kebab step id, a near-miss label spelling), so it
+ * is normalized in place and described in `normalizations`. Re-parsing the same
+ * text always yields the same units, so the launch digest stays stable between
+ * offer and approval. Every `{ ok: false }` result is substantive: the plan
+ * cannot be repaired without guessing the author's intent.
  */
 
+/** A step id the parser rewrote to its canonical kebab form. */
+export interface PortablePlanIdRename {
+  from: string;
+  to: string;
+}
+
+/**
+ * `normalizations` describes every repair (for logs and correction prose);
+ * `idRenames` is the structured subset agents need to address units by their
+ * registered ids. Both are omitted when empty.
+ */
 export type PortablePlanParse =
-  | { ok: true; units: ExecutionWorkUnitInput[] }
+  | { ok: true; units: ExecutionWorkUnitInput[]; normalizations?: string[]; idRenames?: PortablePlanIdRename[] }
+  | { ok: false; reason: string };
+
+type StepParse =
+  | { ok: true; unit: ExecutionWorkUnitInput; rawId: string; normalizations: string[] }
   | { ok: false; reason: string };
 
 const STEP_MARKER = /<!--\s*executable-step\s*-->/i;
@@ -48,7 +70,7 @@ function indentOf(raw: string): number {
 /**
  * Match a field-label line from Markdown or composer-normalized plain text.
  * A plain (non-bold) bullet is a label only when its key is a known label (or a
- * near-miss spelling, so typos still reject) AND it sits at the label indent
+ * near-miss spelling, so typos still fold onto their label) AND it sits at the label indent
  * (`labelIndent`, the indent of the first label in the block). Anything else
  * (`  - Run tests: x` under `**Work:**`, a nested `  - Works: x`) is
  * continuation text of the current label.
@@ -99,6 +121,24 @@ const EXECUTION_CLASS_LEVEL: Record<string, 'low' | 'medium' | 'high'> = {
   standard: 'medium',
   expert: 'high'
 };
+
+const STEP_ID = /^[a-z0-9][a-z0-9-]*$/;
+
+/**
+ * Canonical kebab form of a step id or dependency reference (`U1` → `u1`,
+ * `Home Step` → `home-step`). Idempotent and the identity on ids that already
+ * match STEP_ID, so plans that were valid before keep their exact ids. Ids and
+ * `Depends on` entries must share this function or the DAG check would see
+ * dangling dependencies.
+ */
+export function normalizeStepId(raw: string): string {
+  if (STEP_ID.test(raw)) return raw;
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
 
 function stripInlineComment(text: string): string {
   return text.replace(/<!--[\s\S]*?-->/g, '').trim();
@@ -202,6 +242,12 @@ function isPortablePlanStepLine(line: string): boolean {
   return HEADING.test(line) && STEP_MARKER.test(line);
 }
 
+interface StepLabel {
+  value: string;
+  /** False when the label line sat deeper than the step's label indent (a nested bullet). */
+  atLabelIndent: boolean;
+}
+
 /**
  * Accumulate MULTI-LINE label values from a step body. A label line opens a
  * value; every following non-label line (continuation prose, indented sub-bold,
@@ -211,14 +257,15 @@ function isPortablePlanStepLine(line: string): boolean {
  * as "missing Work", collapsing the whole plan to the coordinator-derive path).
  * Label detection is frozen inside fenced code (mixed-delimiter safe).
  */
-function parseStepLabels(body: string[]): Map<string, string> {
-  const labels = new Map<string, string>();
+function parseStepLabels(body: string[]): Map<string, StepLabel> {
+  const labels = new Map<string, StepLabel>();
   const fence = new FenceTracker();
   let current: string | null = null;
+  let currentAtLabelIndent = true;
   let buffer: string[] = [];
   let labelIndent = Number.POSITIVE_INFINITY;
   const flush = (): void => {
-    if (current !== null) labels.set(current, buffer.join('\n').trim());
+    if (current !== null) labels.set(current, { value: buffer.join('\n').trim(), atLabelIndent: currentAtLabelIndent });
     current = null;
     buffer = [];
   };
@@ -229,6 +276,7 @@ function parseStepLabels(body: string[]): Map<string, string> {
       if (labelIndent === Number.POSITIVE_INFINITY) labelIndent = label.indent;
       flush();
       current = label.key;
+      currentAtLabelIndent = label.indent <= labelIndent;
       buffer = [label.rest];
     } else if (current !== null) {
       buffer.push(raw);
@@ -238,51 +286,127 @@ function parseStepLabels(body: string[]): Map<string, string> {
   return labels;
 }
 
-/** Map one executable-step block onto a work unit, or explain why it is invalid. */
-function parseStep(block: PlanStepBlock): { ok: true; unit: ExecutionWorkUnitInput } | { ok: false; reason: string } {
-  const headingText = stripInlineComment(block.heading);
+/**
+ * Fold near-miss label spellings onto their canonical label so the value they
+ * carry (a dependency, a scope, a requirement) is kept rather than dropped. A
+ * step that supplies the same canonical label twice is ambiguous and fails.
+ * Only a near-miss at the step's label indent folds: a nested bold bullet
+ * (`  - **Completion criterion:** x` under `- **Work:**`) has already ended the
+ * enclosing label's value, so folding it would silently truncate that value.
+ */
+function canonicalizeLabels(
+  rawLabels: Map<string, StepLabel>,
+  id: string,
+  normalizations: string[]
+): { ok: true; labels: Map<string, string> } | { ok: false; reason: string } {
+  const labels = new Map<string, string>();
+  const sources = new Map<string, string>();
+  for (const [key, { value, atLabelIndent }] of rawLabels) {
+    const intended = nearMissLabel(key);
+    if (intended && !atLabelIndent) {
+      return { ok: false, reason: `step ${id} has unrecognised label "${key}" (did you mean "${intended}"?)` };
+    }
+    const canonical = intended ?? key;
+    const prior = sources.get(canonical);
+    if (prior !== undefined) {
+      return { ok: false, reason: `step ${id} has conflicting labels "${prior}" and "${key}" (both read as "${canonical}")` };
+    }
+    sources.set(canonical, key);
+    labels.set(canonical, value);
+    if (intended) normalizations.push(`step ${id} label "${key}" treated as "${intended}"`);
+  }
+  return { ok: true, labels };
+}
+
+type Failure = { ok: false; reason: string };
+
+/** `id: title` from a step heading, with the id normalized (a rename is noted). */
+function parseStepHeading(
+  heading: string,
+  normalizations: string[]
+): { ok: true; rawId: string; id: string; title: string } | Failure {
+  const headingText = stripInlineComment(heading);
   const colon = headingText.indexOf(':');
   if (colon <= 0) return { ok: false, reason: `step heading missing "id: title": ${headingText}` };
-  const id = headingText.slice(0, colon).trim();
+  const rawId = headingText.slice(0, colon).trim();
   const title = headingText.slice(colon + 1).trim();
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) return { ok: false, reason: `invalid step id: ${id}` };
+  const id = normalizeStepId(rawId);
+  if (!STEP_ID.test(id)) return { ok: false, reason: `invalid step id: ${rawId}` };
+  if (id !== rawId) normalizations.push(`step "${rawId}" id normalized to "${id}"`);
   if (!title) return { ok: false, reason: `step ${id} missing title` };
+  return { ok: true, rawId, id, title };
+}
 
-  const labels = parseStepLabels(block.body);
-  for (const key of labels.keys()) {
-    const intended = nearMissLabel(key);
-    if (intended) return { ok: false, reason: `step ${id} has unrecognised label "${key}" (did you mean "${intended}"?)` };
+/** `Depends on` references, each normalized like a step id when that makes it valid. */
+function parseDependencies(value: string | undefined, id: string, normalizations: string[]): string[] {
+  return parseList(value ?? 'None').map((reference) => {
+    const normalized = normalizeStepId(reference);
+    // An unrepairable reference stays as written; the DAG check names it missing.
+    if (normalized === reference || !STEP_ID.test(normalized)) return reference;
+    normalizations.push(`step ${id} dependency "${reference}" normalized to "${normalized}"`);
+    return normalized;
+  });
+}
+
+/** The routing level an `Execution class` pins; an unknown class fails rather than silently routing at any level. */
+function parseExecutionClass(value: string | undefined, id: string): { ok: true; minimumLevel?: 'low' | 'medium' | 'high' } | Failure {
+  // Coordinators write sentence-style values (`Routine.`); only the first line
+  // names the class, so continuation prose beneath it cannot fail the lookup.
+  const raw = stripSentencePeriod((value ?? '').split('\n')[0]);
+  const executionClass = raw.toLowerCase();
+  if (!executionClass) return { ok: true };
+  if (!Object.hasOwn(EXECUTION_CLASS_LEVEL, executionClass)) {
+    return { ok: false, reason: `step ${id}: could not pin minimumLevel for execution class "${raw}" (expected Routine, Standard, or Expert)` };
   }
+  return { ok: true, minimumLevel: EXECUTION_CLASS_LEVEL[executionClass] };
+}
+
+/** Map one executable-step block onto a work unit, or explain why it is invalid. */
+function parseStep(block: PlanStepBlock): StepParse {
+  const normalizations: string[] = [];
+  const heading = parseStepHeading(block.heading, normalizations);
+  if (!heading.ok) return heading;
+  const { rawId, id, title } = heading;
+
+  const canonical = canonicalizeLabels(parseStepLabels(block.body), id, normalizations);
+  if (!canonical.ok) return canonical;
+  const labels = canonical.labels;
 
   const task = labels.get('work');
   if (!task) return { ok: false, reason: `step ${id} missing Work` };
+  const dependencies = parseDependencies(labels.get('depends on'), id, normalizations);
+  const executionClass = parseExecutionClass(labels.get('execution class'), id);
+  if (!executionClass.ok) return executionClass;
+  const parsedRequires = parseRequires(labels.get('requires') ?? '', id);
+  if (!parsedRequires.ok) return parsedRequires;
+  return { ok: true, rawId, normalizations, unit: buildWorkUnit(id, title, task, dependencies, labels, executionClass.minimumLevel, parsedRequires.requires) };
+}
 
-  const dependencies = parseList(labels.get('depends on') ?? 'None');
+function buildWorkUnit(
+  id: string,
+  title: string,
+  task: string,
+  dependencies: string[],
+  labels: Map<string, string>,
+  minimumLevel: 'low' | 'medium' | 'high' | undefined,
+  requires: ExecutionWorkUnitInput['requires'] | undefined
+): ExecutionWorkUnitInput {
   const files = parseList(labels.get('write scope') ?? 'None');
   const verificationText = labels.get('verification');
   const readOnly = /read[-\s]?only/i.test(labels.get('mode') ?? '');
-  const executionClass = stripBackticks(labels.get('execution class') ?? '').toLowerCase();
-  const minimumLevel = EXECUTION_CLASS_LEVEL[executionClass];
   const requiredRole = stripBackticks(labels.get('required role') ?? '');
-  const parsedRequires = parseRequires(labels.get('requires') ?? '', id);
-  if (!parsedRequires.ok) return parsedRequires;
-  const requires = parsedRequires.requires;
-
   return {
-    ok: true,
-    unit: {
-      id,
-      title,
-      task,
-      dependencies,
-      ...(files.length ? { files } : {}),
-      ...(verificationText ? { verification: [verificationText] } : {}),
-      ...(readOnly ? { readOnly: true } : {}),
-      ...(minimumLevel || requiredRole
-        ? { routing: { version: 1, ...(minimumLevel ? { minimumLevel } : {}), ...(requiredRole ? { requiredRole } : {}) } }
-        : {}),
-      ...(requires ? { requires } : {})
-    }
+    id,
+    title,
+    task,
+    dependencies,
+    ...(files.length ? { files } : {}),
+    ...(verificationText ? { verification: [verificationText] } : {}),
+    ...(readOnly ? { readOnly: true } : {}),
+    ...(minimumLevel || requiredRole
+      ? { routing: { version: 1, ...(minimumLevel ? { minimumLevel } : {}), ...(requiredRole ? { requiredRole } : {}) } }
+      : {}),
+    ...(requires ? { requires } : {})
   };
 }
 
@@ -317,11 +441,29 @@ export function parsePortablePlan(text: string): PortablePlanParse {
   if (!blocks.length) return { ok: false, reason: 'no executable steps found' };
 
   const units: ExecutionWorkUnitInput[] = [];
+  const normalizations: string[] = [];
+  const idRenames: PortablePlanIdRename[] = [];
+  const rawIdById = new Map<string, string>();
   for (const block of blocks) {
     const parsed = parseStep(block);
     if (!parsed.ok) return parsed;
+    const { id } = parsed.unit;
+    const priorRawId = rawIdById.get(id);
+    // Normalization must never merge two steps into one id. Repeating an
+    // already-valid id verbatim is left to the DAG check, which rejects it.
+    if (priorRawId !== undefined && (priorRawId !== parsed.rawId || parsed.rawId !== id)) {
+      return { ok: false, reason: `step ids "${priorRawId}" and "${parsed.rawId}" both normalize to "${id}"` };
+    }
+    rawIdById.set(id, parsed.rawId);
     units.push(parsed.unit);
+    normalizations.push(...parsed.normalizations);
+    if (parsed.rawId !== id) idRenames.push({ from: parsed.rawId, to: id });
   }
 
-  return { ok: true, units };
+  return {
+    ok: true,
+    units,
+    ...(normalizations.length ? { normalizations } : {}),
+    ...(idRenames.length ? { idRenames } : {})
+  };
 }

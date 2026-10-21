@@ -112,14 +112,35 @@ export interface RefusedGoalPath {
   reason: 'policy' | 'outside-project' | 'hard-linked';
 }
 
+const MENTION = /(?:^|[\s(])@((?:[A-Za-z]:[/\\])?[^\s`'"),;:@]+)/g;
+const WINDOWS_DRIVE = /^[A-Za-z]:[/\\]/;
+
+/**
+ * The `@path` mentions in a goal, as the composer writes a dropped, picked or typeahead file:
+ * relative inside the project, absolute (POSIX or a Windows drive) outside it. A relative one is
+ * resolved against `projectRoot`, and skipped without one. One tokenizer for Launch's goal-source
+ * discovery and the proposal check, so both see the same files.
+ */
+export function goalMentionPaths(goal: string, projectRoot?: string): string[] {
+  const paths: string[] = [];
+  for (const m of goal.matchAll(MENTION)) {
+    const path = m[1]!;
+    if (isAbsolute(path) || WINDOWS_DRIVE.test(path)) paths.push(path);
+    else if (projectRoot) paths.push(resolve(projectRoot, path));
+  }
+  return paths;
+}
+
 /**
  * The absolute paths a goal names, cleaned of quotes and trailing punctuation, in order. Same
- * token rules as the host's goal-source discovery (`goalExecutionSourcePaths`).
+ * token rules as the host's goal-source discovery (`goalExecutionSourcePaths`): an `@path`
+ * mention counts too, resolved against `projectRoot` when relative (and skipped without one).
  */
-export function goalPathTokens(goal: string): string[] {
+export function goalPathTokens(goal: string, projectRoot?: string): string[] {
   const raw: string[] = [];
   for (const m of goal.matchAll(/["'`]((?:[A-Za-z]:[/\\]|\/)[^"'`]+)["'`]/g)) if (m[1]) raw.push(m[1]);
   for (const m of goal.matchAll(/(?:^|[\s(])((?:[A-Za-z]:[/\\]|\/)[^\s`'"),;:]+)/g)) if (m[1]) raw.push(m[1]);
+  raw.push(...goalMentionPaths(goal, projectRoot));
   return raw.map((token) => token.trim().replace(/^[`'"(]+|[`'"),;:]+$/g, ''));
 }
 
@@ -135,7 +156,7 @@ export function goalPathTokens(goal: string): string[] {
 export async function goalPathNotAllowed(
   fs: SquadProposalFs, scope: SquadSourceScope, goal: string, listedOutside: ReadonlySet<string> = new Set()
 ): Promise<RefusedGoalPath | undefined> {
-  for (const cleaned of goalPathTokens(goal)) {
+  for (const cleaned of goalPathTokens(goal, scope.projectRoot)) {
     for (const candidate of cleaned.endsWith('.') ? [cleaned, cleaned.slice(0, -1)] : [cleaned]) {
       let real: string;
       try { real = await fs.realpath(candidate); } catch { continue; }

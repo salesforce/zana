@@ -205,4 +205,39 @@ describe('goalExecutionSourcePaths', () => {
     const descriptors = await goalExecutionSourcePaths(`consider ${stray}`, project, userHome);
     expect(descriptors).toEqual([]);
   });
+
+  it('discovers a project-relative @mention, as the composer writes a dropped or picked file', async () => {
+    const project = realpathSync(mkdtempSync(join(tmpdir(), 'zcc-project-')));
+    const userHome = realpathSync(mkdtempSync(join(tmpdir(), 'zcc-userhome-')));
+    mkdirSync(join(project, 'plans'));
+    const plan = join(project, 'plans', 'a-recoverable.md');
+    writeFileSync(plan, '# plan');
+
+    const descriptors = await goalExecutionSourcePaths('@plans/a-recoverable.md', project, userHome);
+    expect(descriptors).toMatchObject([{ exactPath: plan, canonicalPath: plan, representations: expect.arrayContaining([plan]) }]);
+    // Mid-sentence and in parentheses, with trailing punctuation, too.
+    expect((await goalExecutionSourcePaths('Run (@plans/a-recoverable.md), then report.', project, userHome)).map((d) => d.canonicalPath)).toEqual([plan]);
+  });
+
+  it('discovers an absolute @mention, as the composer writes a file outside the project', async () => {
+    const project = realpathSync(mkdtempSync(join(tmpdir(), 'zcc-project-')));
+    const userHome = realpathSync(mkdtempSync(join(tmpdir(), 'zcc-userhome-')));
+    const plan = join(userHome, 'plan.md');
+    writeFileSync(plan, '# plan');
+
+    expect((await goalExecutionSourcePaths(`Implement @${plan}`, project, userHome)).map((d) => d.canonicalPath)).toEqual([plan]);
+  });
+
+  it('applies the source policy to @mentions: secrets, escapes, folders and missing files are skipped', async () => {
+    const userHome = realpathSync(mkdtempSync(join(tmpdir(), 'zcc-userhome-')));
+    const project = join(userHome, 'proj');
+    mkdirSync(join(project, 'docs'), { recursive: true });
+    mkdirSync(join(userHome, '.ssh'));
+    writeFileSync(join(userHome, '.ssh', 'id_rsa'), 'PRIVATE');
+    const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), 'zcc-elsewhere-')));
+    writeFileSync(join(elsewhere, 'notes.md'), '# stray');
+
+    const goal = `@../.ssh/id_rsa @docs @missing.md @alice @${join(elsewhere, 'notes.md')}`;
+    expect(await goalExecutionSourcePaths(goal, project, userHome)).toEqual([]);
+  });
 });

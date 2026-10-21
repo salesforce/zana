@@ -30,6 +30,7 @@ import {
   planDocumentBadge
 } from './thread-plan-document.js';
 import './file-preview-error.css';
+import { binaryPreviewKind, FilePreviewFallback, FilePreviewRevealButton, useFilePreviewReveal, type FilePreviewRevealState } from './FilePreviewReveal.js';
 
 const HostPreviewContext = createContext<ReactNode>(null);
 
@@ -47,7 +48,8 @@ export function ThreadFilePreviewView({
   projectId,
   storage = false,
   lineNumber = null,
-  onRetry
+  onRetry,
+  reveal
 }: {
   path: string;
   content: string | null;
@@ -57,10 +59,12 @@ export function ThreadFilePreviewView({
   storage?: boolean;
   lineNumber?: number | null;
   onRetry?: () => void;
+  reveal?: FilePreviewRevealState;
 }) {
   const retainScroll = useRetainedFilePreviewScroll();
   if (error && content === null) {
     const tooLarge = /exceeds the read cap|too.large/i.test(error);
+    if (tooLarge && !isHtmlPreviewPath(path)) return <FilePreviewFallback path={path} tooLarge reveal={reveal} />;
     return (
       <div className="thread-file-preview-error" role="status">
         <FileText size={28} strokeWidth={1.5} aria-hidden />
@@ -74,6 +78,7 @@ export function ThreadFilePreviewView({
       </div>
     );
   }
+  if (binaryPreviewKind(path)) return <FilePreviewFallback path={path} reveal={reveal} />;
   if (content === null) {
     return (
       <StencilLines
@@ -205,7 +210,8 @@ export function ThreadFilePreviewChrome({
   documentContent = null,
   statusBadge = null,
   htmlMode = null,
-  onHtmlModeChange
+  onHtmlModeChange,
+  reveal
 }: {
   path: string;
   matches: readonly PluginFileOpenerRegistration[];
@@ -215,6 +221,7 @@ export function ThreadFilePreviewChrome({
   statusBadge?: ReturnType<typeof planDocumentBadge>;
   htmlMode?: HtmlPreviewMode | null;
   onHtmlModeChange?: (mode: HtmlPreviewMode) => void;
+  reveal?: FilePreviewRevealState;
 }) {
   const { name, dir } = previewPathParts(path);
   const [copied, setCopied] = useState(false);
@@ -262,6 +269,7 @@ export function ThreadFilePreviewChrome({
         >
           <Copy size={12} />
         </button>
+        {reveal ? <FilePreviewRevealButton state={reveal} /> : null}
         {matches.length > 0 ? (
           <label className="thread-file-open-with">
             <span className="thread-file-open-with-label">Open with</span>
@@ -314,8 +322,11 @@ export function ThreadFilePreviewTab({
   // override its explicit opener or the saved preference for its extension.
   const override = selection.scope === openerScope ? selection.key : openerKey ?? null;
   const contentScope = JSON.stringify([path, threadId, projectId, storage]);
-  const [loaded, setLoaded] = useState<{ scope: string; content: string | null; error: string | null }>({ scope: contentScope, content: null, error: null });
   const [retryRevision, setRetryRevision] = useState(0);
+  const reveal = useFilePreviewReveal({ path, threadId, projectId: projectId ?? undefined,
+    source: storage ? 'thread-storage' : 'workspace' }, previewRevision + retryRevision);
+  const binary = binaryPreviewKind(path) !== null;
+  const [loaded, setLoaded] = useState<{ scope: string; content: string | null; error: string | null }>({ scope: contentScope, content: null, error: null });
   const content = loaded.scope === contentScope ? loaded.content : null;
   const error = loaded.scope === contentScope ? loaded.error : null;
   const openers = useSyncExternalStore(subscribePluginSlots, listFileOpeners, listFileOpeners);
@@ -350,7 +361,7 @@ export function ThreadFilePreviewTab({
   useEffect(() => {
     // Render HTML directly through the bounded HTML endpoint. Reading its source
     // first applies the smaller text cap and can prevent a valid page opening.
-    if (livePlan || videoSrc || htmlMode === 'preview') return;
+    if (livePlan || videoSrc || htmlMode === 'preview' || binary) return;
     setLoaded(previous => previous.scope === contentScope
       ? { ...previous, error: null }
       : { scope: contentScope, content: null, error: null });
@@ -377,23 +388,27 @@ export function ThreadFilePreviewTab({
         error: 'error' in result ? result.error : null }));
     });
     return () => { cancelled = true; };
-  }, [path, storage, threadId, projectId, livePlan, videoSrc, htmlMode, previewRevision, retryRevision, contentScope]);
+  }, [path, storage, threadId, projectId, livePlan, videoSrc, htmlMode, previewRevision, retryRevision, contentScope, binary]);
 
   const chrome = (
-    <ThreadFilePreviewChrome
-      path={path}
-      matches={matches}
-      selectedKey={opener ? fileOpenerKey(opener) : 'host'}
-      statusBadge={liveBadge}
-      documentContent={error ? null : liveDocument?.markdown ?? content}
-      htmlMode={htmlMode}
-      onHtmlModeChange={(mode) => setHtmlChoice({ scope: contentScope, mode })}
-      onSelect={(next) => {
-        setSelection({ scope: openerScope, key: next });
-        const extension = fileExtensionOf(path);
-        if (extension) writeFileOpenerPin(extension, next);
-      }}
-    />
+    <>
+      <ThreadFilePreviewChrome
+        path={path}
+        matches={matches}
+        selectedKey={opener ? fileOpenerKey(opener) : 'host'}
+        statusBadge={liveBadge}
+        documentContent={error ? null : liveDocument?.markdown ?? content}
+        reveal={reveal}
+        htmlMode={htmlMode}
+        onHtmlModeChange={(mode) => setHtmlChoice({ scope: contentScope, mode })}
+        onSelect={(next) => {
+          setSelection({ scope: openerScope, key: next });
+          const extension = fileExtensionOf(path);
+          if (extension) writeFileOpenerPin(extension, next);
+        }}
+      />
+      {reveal.error ? <p className="thread-file-preview-reveal-error" role="alert">{reveal.error}</p> : null}
+    </>
   );
   if (livePlan && liveDocument) {
     return (
@@ -425,6 +440,7 @@ export function ThreadFilePreviewTab({
       storage={storage}
       lineNumber={lineNumber}
       onRetry={() => setRetryRevision(revision => revision + 1)}
+      reveal={reveal}
     />
   );
   const preview = !opener || !OpenerComponent ? (

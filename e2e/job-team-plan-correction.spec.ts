@@ -163,7 +163,7 @@ test('defective provided plan parks, is corrected by the coordinator, approved, 
     const executionId = await launchProvidedPlan(window, s);
 
     // Card 1: parked, nothing registered or dispatched.
-    await openCorrectionCard(window, 'No valid revised plan is ready to review');
+    await openCorrectionCard(window, 'Plan requires revisions to proceed');
     expect(await readExecution(window, s.projectId, executionId)).toMatchObject({ workTotal: 0 });
     expect(coordinatorLog(s.projectDir)).not.toContain('assigned');
 
@@ -198,7 +198,7 @@ test('coordinator that never writes the corrected plan stalls, and Cancel stops 
     s = await setup(window, 'plan-correction-silent');
     const executionId = await launchProvidedPlan(window, s);
 
-    await openCorrectionCard(window, 'No valid revised plan is ready to review');
+    await openCorrectionCard(window, 'Plan requires revisions to proceed');
     await choose(window, 'Request changes');
 
     // Two idle edges with no artifact -> stalled card.
@@ -225,7 +225,7 @@ test('provided goal that is prose with no plan steps parks for correction, is co
     const executionId = await launchProvidedPlan(window, s, 'Write the output file for this project.');
 
     // Parked: no coordinator-driven repair, nothing registered or dispatched.
-    await openCorrectionCard(window, 'No valid revised plan is ready to review');
+    await openCorrectionCard(window, 'Plan requires revisions to proceed');
     expect(await readExecution(window, s.projectId, executionId)).toMatchObject({ workTotal: 0 });
     expect(coordinatorLog(s.projectDir)).not.toContain('assigned');
     expect(coordinatorLog(s.projectDir)).not.toContain('wrote corrected plan');
