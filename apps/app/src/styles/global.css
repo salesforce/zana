@@ -9218,7 +9218,7 @@ body.resizing-col .ext-hub-resizer::before {
 .ext-browse-grid,
 .ext-browse-more-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
   gap: 10px;
 }
 .ext-browse-card {
@@ -31981,10 +31981,14 @@ body.resizing-col .library-split-resizer::after {
   height: 100%;
 }
 
-/* Plugin catalogue is a centered reading surface. */
+/* Plugin collections use the available width; detail pages keep a reading cap. */
 .extensions-panel .ext-hub-shell,
 .extensions-panel .ext-installed,
-.extensions-panel .ext-market,
+.extensions-panel .ext-market {
+  width: 100%;
+  max-width: none;
+}
+
 .extensions-panel .ext-browse-detail-page,
 .extensions-panel .ext-catalog-detail {
   width: 100%;

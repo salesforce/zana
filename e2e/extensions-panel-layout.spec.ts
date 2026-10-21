@@ -97,3 +97,54 @@ test('Browse Create a plugin stays on the hub with the shared prefix', async ({ 
     { timeout: 15_000 }
   );
 });
+
+test('Browse fills wide screens with readable cards and adapts to smaller windows', async ({ app }, testInfo) => {
+  const win = app.window;
+  const browserWindow = await app.electron.browserWindow(win);
+  await browserWindow.evaluate((window) => {
+    window.webContents.setZoomFactor(1);
+    window.setMinimumSize(600, 600);
+    window.setContentSize(1920, 1000);
+  });
+  await win.locator('.nav-item').filter({ hasText: 'Plugins' }).first().click();
+  await win.getByTestId('extensions-nav-marketplace').click();
+  const marketplace = win.locator('.ext-market');
+  const grid = win.locator('[data-plugin-shelf-grid]').first();
+  await expect(grid.locator('.ext-browse-card').first()).toBeVisible();
+  const columnCounts: number[] = [];
+
+  for (const width of [1920, 1440, 1000, 700]) {
+    await browserWindow.evaluate((window, size) => window.setContentSize(size, 1000), width);
+    await expect.poll(() => win.evaluate(() => window.innerWidth)).toBe(width);
+
+    const panelBox = (await win.locator('.extensions-panel').boundingBox())!;
+    const marketBox = (await marketplace.boundingBox())!;
+    // Catalogue gutters stay small even when there is room beyond the old 1024px cap.
+    expect(marketBox.width).toBeGreaterThan(panelBox.width - 100);
+
+    const layout = await grid.evaluate((el) => {
+      const style = getComputedStyle(el);
+      const columns = style.gridTemplateColumns.split(' ').map(Number.parseFloat);
+      return {
+        columns,
+        width: el.clientWidth,
+        fits: el.scrollWidth <= el.clientWidth,
+      };
+    });
+    expect(layout.fits).toBe(true);
+    expect(Math.min(...layout.columns)).toBeGreaterThanOrEqual(Math.min(layout.width, 350));
+    columnCounts.push(layout.columns.length);
+    expect(await marketplace.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+
+    if (width === 1920) {
+      expect(marketBox.width).toBeGreaterThan(1400);
+      const heroBox = (await win.locator('.ext-browse-hero-hook').boundingBox())!;
+      expect(heroBox.width).toBeLessThan(650);
+      expect(Math.abs((heroBox.x + heroBox.width / 2) - (marketBox.x + marketBox.width / 2))).toBeLessThan(2);
+      await win.screenshot({ path: testInfo.outputPath('plugins-browse-wide.png') });
+    }
+  }
+  expect(columnCounts[0]).toBeGreaterThan(2);
+  expect(columnCounts.at(-1)).toBe(1);
+  expect(columnCounts).toEqual([...columnCounts].sort((a, b) => b - a));
+});
