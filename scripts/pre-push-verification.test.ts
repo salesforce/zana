@@ -1,8 +1,15 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { dirname, join } from 'node:path';
 import { expect, it, vi } from 'vitest';
-import { changedPaths, configuredAliases, githubRepository, parseTuples, runFastVerification, runFullVerification, runPrePush, selectPush, selectedTestFiles } from './pre-push-verification.mjs';
+import { changedPaths, configuredAliases, githubRepository, parseTuples, runFastVerification, runFullVerification, runPrePush, selectPush, selectedTestFiles, spawnCommand, windowsPnpm } from './pre-push-verification.mjs';
+
+// Spy on spawnSync while keeping real spawning, so tests can check what the hook starts.
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return { ...actual, spawnSync: vi.fn(actual.spawnSync) };
+});
 
 const OID = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
@@ -282,21 +289,58 @@ it('creates a private detached snapshot, runs named full union, and cleans it up
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-it.each(['win32', 'darwin'])('starts pnpm through a shell only on %s', (platform) => {
-  const original = Object.getOwnPropertyDescriptor(process, 'platform')!;
-  Object.defineProperty(process, 'platform', { value: platform });
-  const root = mkdtempSync(join(tmpdir(), 'zana-push-shell-'));
-  const run = vi.fn(() => ({ status: 0 }));
+const NPM_SHIM = '@ECHO off\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\pnpm\\bin\\pnpm.mjs" %*\r\n';
+
+function pnpmDirectory(root: string, name: string, files: Record<string, string>) {
+  const directory = join(root, name);
+  for (const [file, content] of Object.entries(files)) {
+    mkdirSync(dirname(join(directory, file)), { recursive: true });
+    writeFileSync(join(directory, file), content);
+  }
+  return directory;
+}
+
+it('resolves Windows pnpm to its exe or to the script its cmd shim runs, in PATH order', () => {
+  const root = mkdtempSync(join(tmpdir(), 'zana-push-pnpm-'));
   try {
-    runFullVerification({ oid: OID, root, run, log: vi.fn() });
-    for (const [command, , options] of run.mock.calls as unknown as [string, string[], { shell?: boolean }][]) {
-      expect(options.shell === true).toBe(command === 'pnpm' && platform === 'win32');
-    }
-    expect(run).toHaveBeenCalledWith('pnpm', ['verify:full'], expect.objectContaining({ cwd: expect.any(String), stdio: 'inherit' }));
+    const empty = pnpmDirectory(root, 'empty', {});
+    const npm = pnpmDirectory(root, 'npm', { 'pnpm.cmd': NPM_SHIM });
+    const exe = pnpmDirectory(root, 'exe', { 'pnpm.exe': '' });
+    const legacy = pnpmDirectory(root, 'legacy', { 'pnpm.cmd': '@"%~dp0\\node_modules\\pnpm\\bin\\pnpm.cjs" %*\r\n' });
+    const unknown = pnpmDirectory(root, 'unknown', { 'pnpm.cmd': '@pnpm-launcher.exe %*\r\n' });
+    expect(windowsPnpm(`${empty};"${npm}";${exe}`)).toEqual([process.execPath, join(npm, 'node_modules', 'pnpm', 'bin', 'pnpm.mjs')]);
+    expect(windowsPnpm(`${exe};${npm}`)).toEqual([join(exe, 'pnpm.exe')]);
+    expect(windowsPnpm(`;${legacy}`)).toEqual([process.execPath, join(legacy, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')]);
+    expect(windowsPnpm(unknown)).toEqual(['pnpm']);
+    expect(windowsPnpm('')).toEqual(['pnpm']);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+it('passes Windows pnpm arguments verbatim, without a shell', () => {
+  const root = mkdtempSync(join(tmpdir(), 'zana-push-pnpm-'));
+  const shim = pnpmDirectory(root, 'npm', {
+    'pnpm.cmd': NPM_SHIM,
+    'node_modules/pnpm/bin/pnpm.mjs': 'process.stdout.write(JSON.stringify(process.argv.slice(2)));\n',
+  });
+  vi.stubEnv('PATH', shim);
+  const args = ['exec', 'vitest', 'run', 'src dir/a&b|c>d.test.ts', '%PATH%'];
+  try {
+    const result = spawnCommand('pnpm', args, { encoding: 'utf8' }, 'win32');
+    expect(JSON.parse(String(result.stdout))).toEqual(args);
+    expect(vi.mocked(spawnSync).mock.lastCall?.[0]).toBe(process.execPath);
+    expect(vi.mocked(spawnSync).mock.lastCall?.[2]).not.toHaveProperty('shell');
   } finally {
-    Object.defineProperty(process, 'platform', original);
+    vi.unstubAllEnvs();
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+it('leaves other commands and other platforms to spawnSync unchanged', () => {
+  vi.mocked(spawnSync).mockReturnValueOnce({ status: 0 } as never).mockReturnValueOnce({ status: 0 } as never);
+  spawnCommand('pnpm', ['verify:full'], { stdio: 'inherit' }, 'linux');
+  expect(spawnSync).toHaveBeenLastCalledWith('pnpm', ['verify:full'], { stdio: 'inherit' });
+  spawnCommand('git', ['status'], { stdio: 'inherit' }, 'win32');
+  expect(spawnSync).toHaveBeenLastCalledWith('git', ['status'], { stdio: 'inherit' });
 });
 
 it('cleans snapshots and rejects missing oid or failed commands', () => {
