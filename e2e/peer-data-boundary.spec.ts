@@ -118,16 +118,15 @@ test(`independent built apps ${fenced ? 'commit-fenced' : 'read-only'} pair auth
     const version = JSON.parse(readFileSync(join(root!, 'package.json'), 'utf8')).version;
     writeFileSync(join(launcher, 'package.json'), JSON.stringify({ name: 'zana-command-center', version, type: 'module', main: 'main.mjs' }));
     // Only the OS-key composition seam is replaced. Built server/daemon/IPC code stays untouched.
+    // E2E skips the Keychain (ZCC_E2E_HOME); the supervisor feeds this main-process hex key through the
+    // production peerBootKey 'start'-message path. The legacy env key is ignored by the server runtime.
     writeFileSync(join(launcher, 'main.mjs'), `import { utilityProcess } from 'electron';
       import { randomBytes } from 'node:crypto';
-      const key = randomBytes(32).toString('base64url');
+      process.env.ZCC_E2E_PEER_BOOT_KEY_HEX = randomBytes(32).toString('hex');
       const fork = utilityProcess.fork.bind(utilityProcess);
       globalThis.__peerKeyProbe = { server: 0, host: 0, hostKeyPresent: false };
       utilityProcess.fork = (entry, args, options) => {
-        if (entry.endsWith('server-runtime.js')) {
-          globalThis.__peerKeyProbe.server++;
-          options = { ...options, env: { ...options.env, ZCC_PEER_STORAGE_BOOT_KEY: key } };
-        }
+        if (entry.endsWith('server-runtime.js')) globalThis.__peerKeyProbe.server++;
         if (entry.endsWith('host-runtime.js')) {
           globalThis.__peerKeyProbe.host++;
           globalThis.__peerKeyProbe.hostKeyPresent ||= Boolean(options.env?.ZCC_PEER_STORAGE_BOOT_KEY);
@@ -346,10 +345,9 @@ test('core-connected apps carry more than 8192 bytes of UTF-8 both ways through 
     }
     // Remove ends the traffic: the probe is told once, and the peer is no longer addressable.
     const { window } = await reopenCorePeers(a);
-    await window.getByTestId('peer-link').getByRole('button', { name: 'Remove link', exact: true }).click();
-    const active = window.getByRole('alertdialog', { name: /^Active transfer with / });
-    await active.waitFor({ timeout: 5_000 }).then(() => active.getByRole('button', { name: 'Stop anyway', exact: true }).click(), () => {});
-    await window.getByRole('alertdialog', { name: 'Confirm removing computer link' }).getByRole('button', { name: 'Confirm remove', exact: true }).click();
+    // The active-transfer gate lives on the per-use row; computer-level Remove confirms once and runs plugin cleanup.
+    await window.getByTestId('peer-computer').getByRole('button', { name: 'Remove computer', exact: true }).click();
+    await window.getByRole('alertdialog', { name: 'Confirm removing computer link' }).getByRole('button', { name: 'Remove', exact: true }).click();
     await expect(window.getByTestId('peer-link')).toHaveCount(0, { timeout: 30_000 });
     expect(await probeRpc<string[]>(a, 'removing')).toEqual([target.computerId]);
     await expect(probeRpc(a, 'echo', { computerId: target.computerId, text })).rejects.toThrow();
