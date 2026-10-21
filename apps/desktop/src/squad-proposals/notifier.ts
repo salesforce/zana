@@ -97,25 +97,33 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
     return deps.pathExists(record.squadWorktree.path) ? 'kept' : 'missing';
   }
 
-  /** The durable result entry; false when it could not be written. */
-  async function postResult(record: ExecutionRecord, text: string): Promise<boolean> {
+  /** An Inbox entry carrying a report's text for the run's project; false when it could not be written. */
+  async function postEntry(kind: 'result' | 'blocker', record: ExecutionRecord, subject: string, text: string, dedupeKey: string): Promise<boolean> {
     try {
       await deps.appendInbox({
         projectId: record.projectId,
-        subject: `Squad ${squadOutcomeLabel(record.state)}: ${record.jobTitle}`,
+        subject,
         comments: text,
         executionId: record.id,
         // Routes Open to Squad details and hides the reply box: the run, not an agent, is the subject.
         squadNotice: 'proposal-result',
-        dedupeKey: `squad-proposal-result:${record.id}:${record.attempt}`,
+        dedupeKey,
         report: true
       });
       return true;
     } catch (error) {
-      safeLog(`squad proposal result entry failed for ${record.id}`, error);
+      safeLog(`squad proposal ${kind} entry failed for ${record.id}`, error);
       return false;
     }
   }
+
+  /** The durable result entry; false when it could not be written. */
+  const postResult = (record: ExecutionRecord, text: string): Promise<boolean> =>
+    postEntry('result', record, `Squad ${squadOutcomeLabel(record.state)}: ${record.jobTitle}`, text, `squad-proposal-result:${record.id}:${record.attempt}`);
+
+  /** The Inbox copy of a human blocker whose conversation is gone, so the question still reaches the user. */
+  const postBlocker = (record: ExecutionRecord, blocker: Blocker, text: string): Promise<boolean> =>
+    postEntry('blocker', record, `Squad needs an answer: ${record.jobTitle}`, text, `squad-proposal-blocker:${record.id}:${blocker.id}`);
 
   /**
    * Runs once the report is delivered or dropped for good. The run is marked reported only
@@ -152,11 +160,16 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
       const outcome = worktreeOutcome(fresh, given);
       if (outcome === undefined) return;
       const text = buildSquadReport(fresh, { ...(outcome === 'none' ? {} : { worktree: outcome }), role: target.role });
-      // A proposer also gets the Inbox result entry; an owner already has the run on its board.
-      const settle = settler(fresh, key, target.role === 'owner' ? true : await postResult(fresh, text));
+      // A proposer always gets the Inbox result entry. An owner has the run on its board, so it
+      // only gets one once its conversation is confirmed gone; a transient failure never posts.
+      const owner = target.role === 'owner';
+      const settle = settler(fresh, key, owner ? true : await postResult(fresh, text));
+      const gone = owner
+        ? () => { void postResult(fresh, text).then((posted) => { if (posted) settle(); }); }
+        : settle;
       handedOff = true;
-      if (targetLive === false) { settle(); return; }
-      try { await deliver(target, fresh.projectId, text, settle); } catch (error) { safeLog(`squad proposal delivery failed for ${fresh.id}`, error); }
+      if (targetLive === false) { gone(); return; }
+      try { await deliver(target, fresh.projectId, text, settle, { onGone: gone }); } catch (error) { safeLog(`squad proposal delivery failed for ${fresh.id}`, error); }
     } catch (error) {
       safeLog(`squad proposal report failed for ${record.id}`, error);
     } finally {
@@ -200,7 +213,13 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
     // An owner that is gone may come back through resume_binding, which moves the target and
     // re-offers the blocker: it stays unreported (and forgotten here) until some session gets it.
     const owner = target.role === 'owner';
-    const onGone = owner ? () => { seenBlockers.get(record.id)?.delete(blocker.id); } : undefined;
+    const text = buildSquadBlockerReport(record, blocker, target.role);
+    // A confirmed-gone conversation still leaves the question in the Inbox (one entry per blocker).
+    // Only a proposer's blocker is then marked: an owner may come back and still gets it.
+    const onGone = () => {
+      if (owner) seenBlockers.get(record.id)?.delete(blocker.id);
+      void postBlocker(record, blocker, text).then((posted) => { if (posted && !owner) settle(); });
+    };
     const stillWanted = async () => {
       const fresh = await deps.getRecord(record.id);
       const current = fresh?.blockers?.find((candidate) => candidate.id === blocker.id);
@@ -218,7 +237,7 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
       return true;
     };
     try {
-      await deliver(target, record.projectId, buildSquadBlockerReport(record, blocker, target.role), settle, { stillWanted, ...(onGone ? { onGone } : {}) });
+      await deliver(target, record.projectId, text, settle, { stillWanted, onGone });
     } catch (error) {
       safeLog(`squad proposal blocker report failed for ${record.id}`, error);
     }

@@ -50,6 +50,15 @@ describe('sanitizeTeam', () => {
     }
   });
 
+  it('keeps only the review and direct launch approval modes', () => {
+    for (const mode of ['review', 'direct'] as const) {
+      expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], launchApproval: mode })).toMatchObject({ launchApproval: mode });
+    }
+    for (const bad of ['always', true, '']) {
+      expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], launchApproval: bad })?.launchApproval).toBeUndefined();
+    }
+  });
+
   it('emits no defaultPlanning key after a JSON round-trip when absent', () => {
     const team = sanitizeTeam({ id: 'x', name: 'X', slots: [] });
     expect(Object.keys(JSON.parse(JSON.stringify(team)))).not.toContain('defaultPlanning');
@@ -234,6 +243,11 @@ describe('TeamStore', () => {
   it('saveUser round-trips defaultPlanning', () => {
     const saved = store.saveUser({ name: 'Planner', slots: [], defaultPlanning: 'provided' });
     expect(store.list().find((team) => team.id === saved.id)?.defaultPlanning).toBe('provided');
+  });
+
+  it('saveUser round-trips launchApproval', () => {
+    const saved = store.saveUser({ name: 'Gated', slots: [], launchApproval: 'review' });
+    expect(store.list().find((team) => team.id === saved.id)?.launchApproval).toBe('review');
   });
 
   it('saveUser writes atomically and refresh picks it up', () => {

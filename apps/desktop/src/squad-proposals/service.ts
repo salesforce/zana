@@ -1,8 +1,15 @@
-import type { InboxEntry, Persona, Team } from '@zana-ai/zcc-domain/product';
+import { createHash } from 'node:crypto';
+import type { InboxEntry, Persona, Team, TeamJobLaunchResponse } from '@zana-ai/zcc-domain/product';
 import {
+  LAUNCH_NOW_DISABLED_MESSAGE,
+  LAUNCH_REVIEW_REQUIRED_MESSAGE,
   SQUAD_PROPOSAL_LIMITS,
   personaCanWriteFiles,
   planningToCoordinationMode,
+  resolveLaunchApproval,
+  type LaunchApproval,
+  type SquadLaunchNowErrorCode,
+  type SquadLaunchNowResult,
   type SquadLaunchPrefill,
   type SquadPlanCheckResult,
   type SquadPlanStep,
@@ -18,6 +25,7 @@ import { ExecutionSourceError } from '@zana-ai/zcc-server/services/execution/sou
 import { sourcePolicyText, type SourcePolicy } from '@zana-ai/zcc-server/services/execution/source-policy';
 import type { InboxInput } from '@zana-ai/zcc-server/services/inbox/inbox-store';
 import { InboxActionOperatorError } from '../inbox-actions/registry.js';
+import type { SquadLaunchContext } from '../squad-launch-core.js';
 import {
   FILE_MAX_BYTES,
   TOTAL_MAX_BYTES,
@@ -45,15 +53,44 @@ const TITLE_FALLBACK_CHARS = 80;
  * timeout only frees a lease whose launch hung; it is far above any real start time.
  */
 const LAUNCH_LEASE_MS = 10 * 60_000;
+/** Non-terminal Squads one conversation may own through squad_launch `now` before it must wait. */
+export const MAX_ACTIVE_NOW_RUNS_PER_SESSION = 3;
+/** An identical `now` call from the same conversation within this window returns the run it already started. */
+const NOW_DEDUPE_MS = 10 * 60_000;
+const NOW_DEDUPE_MAX_ENTRIES = 256;
 const PLANNING_LABEL: Record<SquadPlanning, string> = { infer: 'Infer plan from goal', provided: 'Plan provided in goal' };
 
 export type SquadProposalOutcome<T> = { ok: true; value: T } | { ok: false; code: SquadProposalErrorCode; message: string };
 
 export interface SquadProposalRoute { projectId: string; sessionId: string }
+/** A failed start passes the launch core's own code through, so it is not limited to the proposal codes. */
+export type SquadLaunchNowOutcome = { ok: true; value: SquadLaunchNowResult } | { ok: false; code: SquadLaunchNowErrorCode | (string & {}); message: string };
 export type SquadProposerLookup = SquadProposer & { squadMember: boolean; origin?: InboxEntry['origin'] };
 export type { SquadProposalFs } from './sources.js';
 
 type ProjectRef = { id: string; name: string; path: string };
+
+/** A Squad an agent starts without review, after the same checks as a proposal. */
+export interface SquadLaunchNowRequest {
+  team: Team;
+  project: ProjectRef;
+  goal: string;
+  coordinationMode: 'structured' | 'freeform';
+  title?: string;
+  summary?: string;
+  /** Realpaths of the confined sources the agent listed. */
+  sourcePaths: string[];
+}
+
+export interface SquadLaunchNowDeps {
+  /** The instance opt-in; only true lets an agent start a Squad without review. */
+  enabled(): boolean;
+  /** The Project's launch-approval setting; the Squad's own setting overrides it. */
+  projectLaunchApproval(projectId: string): Promise<LaunchApproval | undefined>;
+  /** Non-terminal runs this session owns in the project. */
+  activeOwnedRuns(sessionId: string, projectId: string): Promise<number>;
+  launch(request: SquadLaunchNowRequest, ctx: SquadLaunchContext): Promise<TeamJobLaunchResponse>;
+}
 
 export interface SquadProposalServiceDeps {
   store: SquadProposalStore;
@@ -88,9 +125,11 @@ export interface SquadProposalServiceDeps {
   findLaunchedExecution?(projectId: string, proposalId: string): Promise<string | undefined>;
   /** Unexpected failures are logged here with their context; callers only see a stable message. */
   logError(context: string, error: unknown): void;
+  /** Absent ⇒ an agent cannot start a Squad without review. */
+  launchNow?: SquadLaunchNowDeps;
 }
 
-const fail = (code: SquadProposalErrorCode, message: string): { ok: false; code: SquadProposalErrorCode; message: string } => ({ ok: false, code, message });
+const fail = <C extends SquadLaunchNowErrorCode = SquadProposalErrorCode>(code: C, message: string): { ok: false; code: C; message: string } => ({ ok: false, code, message });
 const ok = <T>(value: T): { ok: true; value: T } => ({ ok: true, value });
 const tooManyProposals = () => fail('TOO_MANY_PROPOSALS',
   `This project already has ${SQUAD_PROPOSAL_LIMITS.maxPendingPerProject} pending Squad launch proposals. Dismiss some in the Inbox first.`);
@@ -276,16 +315,47 @@ function proposalCard(record: SquadProposalRecord, prepared: Prepared, proposer:
   };
 }
 
-function proposalResult(record: SquadProposalRecord, prepared: Prepared, entry: InboxEntry): SquadProposalResult {
+/** What the agent is told about the Squad, its plan and its files, proposed or started. */
+function preparedSummary(prepared: Prepared): Pick<SquadProposalResult, 'team' | 'planning' | 'plan' | 'sources'> {
   const { team, orchestrator, workers, planning, sources, planSteps } = prepared;
   return {
-    proposalId: record.id,
-    inboxEntryId: entry.id,
     team: { id: team.id, name: team.name, workers, orchestrator: orchestrator.name },
     planning,
     plan: planSteps ? { steps: planSteps.map((s) => ({ id: s.id, title: s.title })) } : null,
-    sources: sources.map((s) => ({ path: s.relPath, bytes: s.bytes, ...(s.outsideProject ? { outsideProject: true } : {}) })),
-    expiresAt: record.expiresAt
+    sources: sources.map((s) => ({ path: s.relPath, bytes: s.bytes, ...(s.outsideProject ? { outsideProject: true } : {}) }))
+  };
+}
+
+function proposalResult(record: SquadProposalRecord, prepared: Prepared, entry: InboxEntry): SquadProposalResult {
+  return { proposalId: record.id, inboxEntryId: entry.id, ...preparedSummary(prepared), expiresAt: record.expiresAt };
+}
+
+/** One key per conversation and launch content, so a retried call can be recognised without keeping the goal. */
+function nowDedupeKey(sessionId: string, input: SquadProposalInput, prepared: Prepared): string {
+  return createHash('sha256').update(JSON.stringify([
+    sessionId, prepared.team.id, input.goal, prepared.planning, prepared.sources.map((s) => s.path).sort()
+  ])).digest('hex');
+}
+
+/** Recently started `now` runs by dedupe key, expiring after the window and capped in size. */
+function createNowDedupe(now: () => number) {
+  const entries = new Map<string, { at: number; result: SquadLaunchNowResult }>();
+  const prune = () => {
+    const cutoff = now() - NOW_DEDUPE_MS;
+    for (const [key, entry] of entries) if (entry.at <= cutoff) entries.delete(key);
+  };
+  return {
+    get(key: string): SquadLaunchNowResult | undefined {
+      prune();
+      return entries.get(key)?.result;
+    },
+    set(key: string, result: SquadLaunchNowResult): void {
+      prune();
+      entries.delete(key);
+      entries.set(key, { at: now(), result });
+      // Oldest first: Map keeps insertion order.
+      while (entries.size > NOW_DEDUPE_MAX_ENTRIES) entries.delete(entries.keys().next().value!);
+    }
   };
 }
 
@@ -327,12 +397,15 @@ function createLaunchLeases(now: () => number) {
 export function createSquadProposalService(deps: SquadProposalServiceDeps) {
   const { store } = deps;
   const leases = createLaunchLeases(() => deps.now());
+  // One `now` launch in flight per conversation; the lease timeout only frees a hung launch.
+  const nowLeases = createLaunchLeases(() => deps.now());
+  const nowDedupe = createNowDedupe(() => deps.now());
 
   function log(context: string, error: unknown): void {
     try { deps.logError(`squad proposal ${context}`, error); } catch { /* logging must not throw */ }
   }
   /** An unexpected failure: the cause goes to the log, the caller gets a stable message without internals. */
-  function unexpected(context: string, error: unknown, message: string, code: SquadProposalErrorCode = 'INVALID') {
+  function unexpected<C extends SquadLaunchNowErrorCode = SquadProposalErrorCode>(context: string, error: unknown, message: string, code: C = 'INVALID' as C) {
     log(context, error);
     return fail(code, message);
   }
@@ -433,6 +506,68 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         return entry.ok ? ok(proposalResult(record, prepared.value, entry.value)) : entry;
       } catch (error) {
         return unexpected('propose', error, 'The Squad launch proposal failed unexpectedly. Try again.');
+      }
+    },
+
+    /**
+     * Start the Squad straight away, owned by the calling conversation, after the same checks
+     * as propose. No proposal or Inbox card: the agent gets the run and its [Squad report]s.
+     */
+    async launchSquadNow(route: SquadProposalRoute, input: SquadProposalInput): Promise<SquadLaunchNowOutcome> {
+      let leased = false;
+      try {
+        if (!deps.enabled()) return fail('DISABLED', 'Squad launches are turned off in Settings.');
+        const launchNow = deps.launchNow;
+        if (!launchNow?.enabled()) return fail('LAUNCH_NOW_DISABLED', LAUNCH_NOW_DISABLED_MESSAGE);
+        const proposer = await deps.lookupProposer(route.sessionId, route.projectId);
+        if (!proposer) return fail('NOT_LIVE', 'This conversation is not live in the project.');
+        if (proposer.squadMember) return fail('PROPOSER_IN_SQUAD', 'Members of a running Squad cannot launch a Squad.');
+        const invalid = validateInput(input);
+        if (invalid) return fail('INVALID', invalid);
+        const prepared = await prepare(deps, route.projectId, input.teamId, input.goal, input.planning, input.sources ?? []);
+        if (!prepared.ok) return prepared;
+        let approval: LaunchApproval;
+        try {
+          approval = resolveLaunchApproval({ squad: prepared.value.team, project: { launchApproval: await launchNow.projectLaunchApproval(route.projectId) } });
+        } catch (error) {
+          return unexpected('launch now approval', error,
+            'The Squad launch approval setting could not be read, so the run was not started.', 'LAUNCH_APPROVAL_UNAVAILABLE');
+        }
+        if (approval === 'review') return fail('LAUNCH_REVIEW_REQUIRED', LAUNCH_REVIEW_REQUIRED_MESSAGE);
+        const key = nowDedupeKey(route.sessionId, input, prepared.value);
+        const prior = nowDedupe.get(key);
+        if (prior) return ok({ ...prior, deduped: true });
+        if (nowLeases.active(route.sessionId)) {
+          return fail('LAUNCH_IN_PROGRESS', 'A Squad launch from this conversation is already starting. Wait for it to finish.');
+        }
+        nowLeases.take(route.sessionId);
+        leased = true;
+        // A launch that finished while this call was preparing is found here, not started twice.
+        const finished = nowDedupe.get(key);
+        if (finished) return ok({ ...finished, deduped: true });
+        if (await launchNow.activeOwnedRuns(route.sessionId, route.projectId) >= MAX_ACTIVE_NOW_RUNS_PER_SESSION) {
+          return fail('TOO_MANY_LAUNCHES',
+            `This conversation already owns ${MAX_ACTIVE_NOW_RUNS_PER_SESSION} running Squads. Wait for one to finish, or stop one, before starting another.`);
+        }
+        const { project, team, planning } = prepared.value;
+        const started = await launchNow.launch({
+          team, project, goal: input.goal.trim(), coordinationMode: planningToCoordinationMode(planning),
+          ...(input.title?.trim() ? { title: input.title.trim() } : {}),
+          ...(input.summary?.trim() ? { summary: input.summary.trim() } : {}),
+          sourcePaths: prepared.value.sources.map((s) => s.path)
+        }, {
+          sources: { kind: 'session', sessionId: route.sessionId },
+          // The conversation owns the run: it can answer blockers and read snapshots, and gets owner reports.
+          owner: { principalId: route.sessionId, reportTo: { kind: proposer.kind, id: route.sessionId, role: 'owner' } }
+        });
+        if (!started.ok) return { ok: false, code: started.code, message: started.message };
+        const result: SquadLaunchNowResult = { executionId: started.value.executionId, state: started.value.state, ...preparedSummary(prepared.value) };
+        nowDedupe.set(key, result);
+        return ok(result);
+      } catch (error) {
+        return unexpected('launch now', error, 'Starting the Squad failed unexpectedly. Try again.');
+      } finally {
+        if (leased) nowLeases.release(route.sessionId);
       }
     },
 

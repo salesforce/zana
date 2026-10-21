@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { toTeamSummary, type Team } from './product.js';
 import {
   SQUAD_PROPOSAL_LIMITS,
+  isLaunchApproval,
   personaCanWriteFiles,
-  planningToCoordinationMode
+  planningToCoordinationMode,
+  resolveLaunchApproval
 } from './squad-proposal.js';
 
 describe('personaCanWriteFiles', () => {
@@ -59,5 +61,36 @@ describe('toTeamSummary defaultPlanning', () => {
   it('copies defaultPlanning only when set', () => {
     expect(toTeamSummary({ ...team, defaultPlanning: 'provided' })).toMatchObject({ defaultPlanning: 'provided' });
     expect('defaultPlanning' in toTeamSummary(team)).toBe(false);
+  });
+
+  it('copies launchApproval only when set', () => {
+    expect(toTeamSummary({ ...team, launchApproval: 'review' })).toMatchObject({ launchApproval: 'review' });
+    expect('launchApproval' in toTeamSummary(team)).toBe(false);
+  });
+});
+
+describe('resolveLaunchApproval', () => {
+  it('defaults to direct when neither side sets it', () => {
+    expect(resolveLaunchApproval({})).toBe('direct');
+    expect(resolveLaunchApproval({ squad: null, project: undefined })).toBe('direct');
+    expect(resolveLaunchApproval({ squad: {}, project: {} })).toBe('direct');
+  });
+
+  it('uses the project setting when the squad has none', () => {
+    expect(resolveLaunchApproval({ squad: {}, project: { launchApproval: 'review' } })).toBe('review');
+  });
+
+  it('lets the squad override the project either way', () => {
+    expect(resolveLaunchApproval({ squad: { launchApproval: 'direct' }, project: { launchApproval: 'review' } })).toBe('direct');
+    expect(resolveLaunchApproval({ squad: { launchApproval: 'review' }, project: { launchApproval: 'direct' } })).toBe('review');
+  });
+});
+
+describe('isLaunchApproval', () => {
+  it('accepts only review and direct', () => {
+    expect(isLaunchApproval('review')).toBe(true);
+    expect(isLaunchApproval('direct')).toBe(true);
+    expect(isLaunchApproval('now')).toBe(false);
+    expect(isLaunchApproval(undefined)).toBe(false);
   });
 });

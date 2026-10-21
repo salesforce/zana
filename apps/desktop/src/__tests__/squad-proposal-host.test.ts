@@ -129,8 +129,8 @@ describe('lookupProposer', () => {
 });
 
 describe('squadProposalMcpDeps', () => {
-  it('provides both deps while Team jobs are on', () => {
-    expect(Object.keys(host.squadProposalMcpDeps()).sort()).toEqual(['checkSquadPlan', 'proposeSquad']);
+  it('provides the squad deps while Team jobs are on', () => {
+    expect(Object.keys(host.squadProposalMcpDeps()).sort()).toEqual(['checkSquadPlan', 'launchSquadNow', 'proposeSquad']);
   });
 
   it('provides nothing when Team jobs are off', () => {

@@ -73,13 +73,17 @@ launch and the user presses Launch, so nothing starts without that click.
 
 | User says (examples) | Path | Tools |
 |---|---|---|
-| "build it with X", "prepare a launch for X", "propose X for this plan", "set up X to build this" | Review first | `squad_plan_check` → `list_teams` → `squad_propose`; tell the user to open the "Squad launch ready" Inbox card |
-| "run this with X now", "start X on this now", "launch X immediately, no review", "skip the Inbox and run it with X" | Start now | `execution.start` (you own the run; a `[Squad report]` tells you when it ends or needs an answer) |
+| "build it with X", "prepare a launch for X", "propose X for this plan", "set up X to build this" | Review first | `squad_plan_check` → `list_teams` → `squad_launch` with `mode: 'review'`; tell the user to open the "Squad launch ready" Inbox card |
+| "run this with X now", "start X on this now", "launch X immediately, no review", "skip the Inbox and run it with X" | Start now | `squad_launch` with `mode: 'now'` (you own the run; a `[Squad report]` tells you when it ends or needs an answer) |
 | Anything else, or unclear | Review first | Same as row 1 |
 
 Start now only when the user's message explicitly asks to start immediately. Do not
 infer it from urgency or from "go ahead". If unsure, propose and tell the user they
 can say "run it now with X" next time to skip the Inbox.
+
+Start now is off by default (`LAUNCH_NOW_DISABLED`), and a Squad or Project whose
+Launch approval is "Review before launch" refuses it (`LAUNCH_REVIEW_REQUIRED`).
+On either refusal, retry with `mode: 'review'` and tell the user why.
 
 Say which path you took, in one line: "Prepared a Squad launch for your review in
 the Inbox" or "Started X now; I own the run". The user can then catch a misroute.
@@ -90,7 +94,7 @@ The steps below are the review-first path.
 |---|---|---|
 | Check a plan | `mcp__zcc-inbox__squad_plan_check` | `zcc_squad_plan_check` |
 | List Squads | `mcp__zcc-inbox__list_teams` | `zcc_list_teams` |
-| Propose the launch | `mcp__zcc-inbox__squad_propose` | `zcc_squad_propose` |
+| Launch (review by default) | `mcp__zcc-inbox__squad_launch` | `zcc_squad_launch` |
 
 1. Use the design and plan files you already wrote or read in this conversation,
    wherever they are: this project, your home folder (a doc vault, `~/.zcc/library`)
@@ -99,15 +103,15 @@ The steps below are the review-first path.
    until it passes.
 3. Call `list_teams` and pick the Squad the user names. When its `canInferPlan`
    is false, propose with `planning: 'provided'`.
-4. Call `squad_propose` with the `teamId`, a short `goal`, and the exact absolute
-   paths of those files as `sources`. If a path is refused (`SOURCE_NOT_ALLOWED`),
+4. Call `squad_launch` with `mode: 'review'`, the `teamId`, a short `goal`, and the exact absolute
+   paths of those files as `sources`. (`squad_propose` is the older name for the same review launch.) If a path is refused (`SOURCE_NOT_ALLOWED`),
    tell the user why. Never move a file out of a protected location (`~/.ssh`,
    `~/.aws`, Zana's own state) to get around it.
 5. Tell the user to open the "Squad launch ready" Inbox card.
 
 On the review-first path, never use `execution.start`, `launch_team` or
 `zana_start_team`: they start a Squad without the user's Launch. The start-now
-path is `execution.start`, as the `zcc-inbox` skill describes, and only when the
+path is `squad_launch` with `mode: 'now'`, as the `zcc-inbox` skill describes, and only when the
 user asked for it. Members of a running Squad cannot propose.
 
 When a `[Squad report]` about a Squad you proposed arrives, summarise it for the

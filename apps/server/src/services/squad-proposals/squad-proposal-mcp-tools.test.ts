@@ -2,9 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
+  SQUAD_LAUNCH_DESCRIPTION,
+  SQUAD_LAUNCH_JSON_SCHEMA,
   SQUAD_PLAN_CHECK_JSON_SCHEMA,
   SQUAD_PROPOSE_JSON_SCHEMA,
   registerSquadProposalTools,
+  squadLaunchInputSchema,
   squadPlanCheckInputSchema,
   squadProposeInputSchema,
   type RegisterSquadProposalToolsOpts
@@ -26,14 +29,20 @@ const okValue = {
   planning: 'infer' as const, plan: null, sources: [], expiresAt: 5
 };
 
+const nowValue = {
+  executionId: 'e1', state: 'RUNNING',
+  team: okValue.team, planning: 'infer' as const, plan: null, sources: []
+};
+
 function setup(over: Partial<RegisterSquadProposalToolsOpts> = {}) {
   const { server, tools } = fakeServer();
   const propose = vi.fn(async () => ({ ok: true as const, value: okValue }));
   const checkPlan = vi.fn(async () => ({ ok: true as const, value: { ok: true as const, steps: [] } }));
+  const launchSquadNow = vi.fn(async () => ({ ok: true as const, value: nowValue }));
   registerSquadProposalTools(server, {
-    sessionId: 's1', projectId: 'p', propose, checkPlan, validateRouteIdentity: () => true, ...over
+    sessionId: 's1', projectId: 'p', propose, checkPlan, launchSquadNow, validateRouteIdentity: () => true, ...over
   });
-  return { tools, propose, checkPlan };
+  return { tools, propose, checkPlan, launchSquadNow };
 }
 
 const NOT_LIVE = 'originating session is not live in this project.';
@@ -45,8 +54,8 @@ describe('registerSquadProposalTools', () => {
   });
 
   it('registers squad_plan_check only with checkPlan', () => {
-    expect([...setup({ checkPlan: undefined }).tools.keys()]).toEqual(['squad_propose']);
-    expect([...setup().tools.keys()]).toEqual(['squad_propose', 'squad_plan_check']);
+    expect([...setup({ checkPlan: undefined }).tools.keys()]).toEqual(['squad_propose', 'squad_launch']);
+    expect([...setup().tools.keys()]).toEqual(['squad_propose', 'squad_launch', 'squad_plan_check']);
   });
 
   it.each([
@@ -107,6 +116,115 @@ describe('registerSquadProposalTools', () => {
     for (const [key, prop] of Object.entries(SQUAD_PLAN_CHECK_JSON_SCHEMA.properties)) expect(prop, key).toMatchObject(zodCheck.properties[key]!);
   });
 
+  it('squad_launch schema and JSON schema are the propose ones plus a required mode', () => {
+    const zodLaunch = z.toJSONSchema(z.object(squadLaunchInputSchema)) as { properties: Record<string, Record<string, unknown>>; required: string[] };
+    for (const [key, prop] of Object.entries(SQUAD_LAUNCH_JSON_SCHEMA.properties)) {
+      expect(prop, key).toMatchObject(zodLaunch.properties[key]!);
+    }
+    expect(SQUAD_LAUNCH_JSON_SCHEMA.required).toEqual(['teamId', 'goal', 'mode']);
+    expect(zodLaunch.required).toEqual(expect.arrayContaining(['mode']));
+    expect(Object.keys(SQUAD_LAUNCH_JSON_SCHEMA.properties)).toEqual([...Object.keys(SQUAD_PROPOSE_JSON_SCHEMA.properties), 'mode']);
+    expect(SQUAD_LAUNCH_DESCRIPTION).toContain("mode 'now'");
+    expect(SQUAD_LAUNCH_DESCRIPTION).toContain("mode 'review'");
+  });
+
+  it('squad_launch review returns the same result as squad_propose and never starts', async () => {
+    const { tools, propose, launchSquadNow } = setup();
+    const viaPropose = await tools.get('squad_propose')!({ teamId: 't', goal: 'g' });
+    const viaLaunch = await tools.get('squad_launch')!({ mode: 'review', teamId: 't', goal: 'g' });
+    expect(viaLaunch).toEqual(viaPropose);
+    expect(propose).toHaveBeenLastCalledWith({ projectId: 'p', sessionId: 's1' }, { teamId: 't', goal: 'g' });
+    expect(launchSquadNow).not.toHaveBeenCalled();
+  });
+
+  it('squad_launch review formats dep errors', async () => {
+    const { tools } = setup({ propose: async () => ({ ok: false, code: 'TEAM_NOT_FOUND', message: 'no such team' }) });
+    const res = await tools.get('squad_launch')!({ mode: 'review', teamId: 't', goal: 'g' });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toBe('squad_launch failed: TEAM_NOT_FOUND: no such team');
+  });
+
+  it('squad_launch now returns the launch JSON and passes the route without mode', async () => {
+    const { tools, propose, launchSquadNow } = setup();
+    const res = await tools.get('squad_launch')!({ mode: 'now', teamId: 't', goal: 'g', sources: ['a.md'] });
+    expect(res.isError).toBeUndefined();
+    expect(JSON.parse(res.content[0].text)).toEqual(nowValue);
+    expect(launchSquadNow).toHaveBeenCalledWith({ projectId: 'p', sessionId: 's1' }, { teamId: 't', goal: 'g', sources: ['a.md'] });
+    expect(propose).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['LAUNCH_NOW_DISABLED', 'turned off'],
+    ['LAUNCH_REVIEW_REQUIRED', 'requires review'],
+    ['LAUNCH_APPROVAL_UNAVAILABLE', 'could not be read'],
+    ['LAUNCH_IN_PROGRESS', 'already starting'],
+    ['TOO_MANY_LAUNCHES', 'running Squads']
+  ])('squad_launch now maps %s to error text', async (code, message) => {
+    const { tools } = setup({ launchSquadNow: async () => ({ ok: false, code, message }) });
+    const res = await tools.get('squad_launch')!({ mode: 'now', teamId: 't', goal: 'g' });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toBe(`squad_launch failed: ${code}: ${message}`);
+  });
+
+  it.each([
+    ['missing gates', undefined, undefined],
+    ['owner gate false', () => true, () => false],
+    ['owner gate throws', () => true, () => { throw new Error('x'); }],
+    ['fallback gate false', () => false, undefined]
+  ])('squad_launch now is denied without the owner gate (%s)', async (_n, validateRouteIdentity, validateOwnerRouteIdentity) => {
+    const { tools, launchSquadNow } = setup({
+      validateRouteIdentity: validateRouteIdentity === undefined ? () => true : validateRouteIdentity,
+      validateOwnerRouteIdentity
+    });
+    if (_n === 'missing gates') {
+      const bare = setup({ validateOwnerRouteIdentity: undefined, validateRouteIdentity: undefined });
+      expect((await bare.tools.get('squad_launch')!({ mode: 'now', teamId: 't', goal: 'g' })).content[0].text).toContain('NOT_LIVE');
+      return;
+    }
+    const res = await tools.get('squad_launch')!({ mode: 'now', teamId: 't', goal: 'g' });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain('squad_launch failed: ');
+    expect(launchSquadNow).not.toHaveBeenCalled();
+  });
+
+  it('squad_launch now with an owner gate uses it, and review does not need it', async () => {
+    const owner = vi.fn(() => true);
+    const { tools, launchSquadNow } = setup({ validateOwnerRouteIdentity: owner });
+    await tools.get('squad_launch')!({ mode: 'review', teamId: 't', goal: 'g' });
+    expect(owner).not.toHaveBeenCalled();
+    await tools.get('squad_launch')!({ mode: 'now', teamId: 't', goal: 'g' });
+    expect(owner).toHaveBeenCalledWith('s1', 'p');
+    expect(launchSquadNow).toHaveBeenCalledTimes(1);
+  });
+
+  it('squad_launch now with a failing-but-live owner gate says DENIED', async () => {
+    const { tools } = setup({ validateOwnerRouteIdentity: () => false });
+    const res = await tools.get('squad_launch')!({ mode: 'now', teamId: 't', goal: 'g' });
+    expect(res.content[0].text).toMatch(/^squad_launch failed: DENIED:/);
+  });
+
+  it('squad_launch now without the launchSquadNow dep returns a clear error', async () => {
+    const { tools } = setup({ launchSquadNow: undefined });
+    const res = await tools.get('squad_launch')!({ mode: 'now', teamId: 't', goal: 'g' });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toMatch(/^squad_launch failed: UNAVAILABLE:.*mode 'review'/);
+  });
+
+  it('squad_launch fails closed with NOT_LIVE and hides a throw', async () => {
+    const dead = setup({ validateRouteIdentity: () => false });
+    for (const mode of ['review', 'now']) {
+      const res = await dead.tools.get('squad_launch')!({ mode, teamId: 't', goal: 'g' });
+      expect(res.content[0].text).toBe(`squad_launch failed: NOT_LIVE: ${NOT_LIVE}`);
+    }
+    expect(dead.propose).not.toHaveBeenCalled();
+    expect(dead.launchSquadNow).not.toHaveBeenCalled();
+    const logError = vi.fn();
+    const thrown = setup({ launchSquadNow: async () => { throw new Error('SQLITE_IOERR'); }, logError });
+    const res = await thrown.tools.get('squad_launch')!({ mode: 'now', teamId: 't', goal: 'g' });
+    expect(res.content[0].text).toBe('squad_launch failed: INVALID: unexpected error. Try again; if it keeps failing, tell the user.');
+    expect(logError).toHaveBeenCalledWith('squad_launch failed unexpectedly (project p, session s1)', expect.any(Error));
+  });
+
   it('squad_plan_check renders a valid plan and an invalid plan as success', async () => {
     const steps = [{ id: 'a', title: 'A', dependencies: [], writeScope: [] }];
     const good = setup({ checkPlan: async () => ({ ok: true, value: { ok: true, steps } }) });
@@ -146,6 +264,16 @@ describe('registerSquadProposalTools', () => {
     expect(big.isError).toBe(true);
     expect(big.content[0].text).toContain('INVALID');
     expect(checkPlan).not.toHaveBeenCalled();
+  });
+});
+
+describe('squad_launch input schema', () => {
+  const launch = z.object(squadLaunchInputSchema);
+  it('requires a known mode', () => {
+    expect(launch.safeParse({ teamId: 't', goal: 'g' }).success).toBe(false);
+    expect(launch.safeParse({ teamId: 't', goal: 'g', mode: 'later' }).success).toBe(false);
+    expect(launch.safeParse({ teamId: 't', goal: 'g', mode: 'review' }).success).toBe(true);
+    expect(launch.safeParse({ teamId: 't', goal: 'g', mode: 'now', sources: ['a.md'] }).success).toBe(true);
   });
 });
 

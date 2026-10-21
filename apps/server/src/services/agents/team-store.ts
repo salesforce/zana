@@ -16,6 +16,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import type { Project, SquadTransport, Team, TeamSlot } from '@zana-ai/zcc-domain/product';
+import { isLaunchApproval } from '@zana-ai/zcc-domain/squad-proposal';
 import type { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-team-registry.js';
 import { uniqueCopyName } from '../projects/unique-copy-name.js';
 
@@ -106,7 +107,8 @@ export function sanitizeTeam(raw: unknown): Team | null {
     worktreeIsolation: typeof r.worktreeIsolation === 'boolean' ? r.worktreeIsolation : undefined,
     routingEnforced: typeof r.routingEnforced === 'boolean' ? r.routingEnforced : undefined,
     transport,
-    defaultPlanning: r.defaultPlanning === 'infer' || r.defaultPlanning === 'provided' ? r.defaultPlanning : undefined
+    defaultPlanning: r.defaultPlanning === 'infer' || r.defaultPlanning === 'provided' ? r.defaultPlanning : undefined,
+    launchApproval: isLaunchApproval(r.launchApproval) ? r.launchApproval : undefined
   };
 }
 

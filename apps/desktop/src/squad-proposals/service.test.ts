@@ -9,8 +9,10 @@ import { InboxActionOperatorError } from '../inbox-actions/registry.js';
 import { createSquadProposalStore } from './store.js';
 import { confineSource, goalMentionPaths, goalPathNotAllowed, goalPathTokens, sourceScope, type SquadProposalFs, type SquadSourceScope } from './sources.js';
 import {
+  MAX_ACTIVE_NOW_RUNS_PER_SESSION,
   SQUAD_LAUNCH_PROPOSAL_ACTION,
   createSquadProposalService,
+  type SquadLaunchNowDeps,
   type SquadProposalServiceDeps
 } from './service.js';
 
@@ -39,6 +41,10 @@ let slotCount: number;
 let projectOk: boolean;
 let readFails: boolean;
 let enabledFlag: boolean;
+let nowEnabled: boolean;
+const projectLaunchApproval = vi.fn<SquadLaunchNowDeps['projectLaunchApproval']>();
+const activeOwnedRuns = vi.fn<SquadLaunchNowDeps['activeOwnedRuns']>();
+const launchNow = vi.fn<SquadLaunchNowDeps['launch']>();
 
 function build() {
   const store = createSquadProposalStore({ filePath: join(root, 'state', 'squad-proposals.json'), now: () => clock });
@@ -63,7 +69,13 @@ function build() {
     now: () => clock,
     newId: () => `prop-${++ids}`,
     sourceBases: () => ({ home: homeDir, cloneRoot: cloneDir }),
-    logError
+    logError,
+    launchNow: {
+      enabled: () => nowEnabled,
+      projectLaunchApproval: (...a) => projectLaunchApproval(...a),
+      activeOwnedRuns: (...a) => activeOwnedRuns(...a),
+      launch: (...a) => launchNow(...a)
+    }
   });
   return { store, service, deps: undefined };
 }
@@ -83,6 +95,11 @@ beforeEach(() => {
   clock = 1000;
   ids = 0;
   enabledFlag = true;
+  nowEnabled = true;
+  projectLaunchApproval.mockReset().mockResolvedValue(undefined);
+  activeOwnedRuns.mockReset().mockResolvedValue(0);
+  let executions = 0;
+  launchNow.mockReset().mockImplementation(async () => ({ ok: true, value: { executionId: `exec-${++executions}`, state: 'RUNNING' } }) as never);
   appendOnce.mockReset().mockImplementation(async (i) => ({ id: `entry-${i.dedupeKey}`, ...i }));
   bind.mockReset();
   markUnavailable.mockReset();
@@ -470,6 +487,248 @@ describe('propose', () => {
   it('truncates a long first line to 80 chars', async () => {
     await svc.service.propose(route, { teamId: 'team1', goal: 'y'.repeat(200), planning: 'infer' });
     expect((await svc.store.get('prop-1'))?.title).toHaveLength(80);
+  });
+});
+
+describe('launchSquadNow', () => {
+  const now = (over: Record<string, unknown> = {}, at = route) => svc.service.launchSquadNow(at, { ...input, ...over } as never);
+  const nothingStarted = () => {
+    expect(launchNow).not.toHaveBeenCalled();
+    expect(issueSources).not.toHaveBeenCalled();
+    expect(appendOnce).not.toHaveBeenCalled();
+  };
+
+  it('is off unless the instance setting is on, and checks nothing else first', async () => {
+    nowEnabled = false;
+    lookup = vi.fn(lookup);
+    expect(await now()).toEqual({
+      ok: false, code: 'LAUNCH_NOW_DISABLED',
+      message: "Starting a Squad immediately is turned off. Use squad_launch with mode 'review' so the user can Launch it from the Inbox."
+    });
+    expect(lookup).not.toHaveBeenCalled();
+    expect(resolveSquadPlan).not.toHaveBeenCalled();
+    nothingStarted();
+    const unwired = createSquadProposalService({ ...({} as SquadProposalServiceDeps), enabled: () => true });
+    expect(code(await unwired.launchSquadNow(route, input))).toBe('LAUNCH_NOW_DISABLED');
+  });
+
+  it('refuses when Team jobs are off, before the setting', async () => {
+    enabledFlag = false;
+    expect(code(await now())).toBe('DISABLED');
+    nothingStarted();
+  });
+
+  it('starts the Squad owned by the calling conversation, with its sources issued to that session', async () => {
+    const r = await now({ title: '  Mine ', summary: ' S ' });
+    expect(r).toEqual({ ok: true, value: {
+      executionId: 'exec-1', state: 'RUNNING', planning: 'provided',
+      team: { id: 'team1', name: 'Crew', workers: 3, orchestrator: 'Lead' },
+      plan: { steps: [{ id: 'u1', title: 'One' }, { id: 'u2', title: 'Two' }] },
+      sources: [{ path: 'plan.md', bytes: 6 }]
+    } });
+    expect(launchNow).toHaveBeenCalledTimes(1);
+    const [request, ctx] = launchNow.mock.calls[0]!;
+    expect(request).toEqual({
+      team: teamRecord, project: { id: 'p1', name: 'Proj', path: join(root, 'proj') }, goal: 'Build the thing\nwith details',
+      coordinationMode: 'structured', title: 'Mine', summary: 'S', sourcePaths: [join(root, 'proj', 'plan.md')]
+    });
+    expect(ctx).toEqual({
+      sources: { kind: 'session', sessionId: 's1' },
+      owner: { principalId: 's1', reportTo: { kind: 'pty', id: 's1', role: 'owner' } }
+    });
+    expect(activeOwnedRuns).toHaveBeenCalledWith('s1', 'p1');
+    // No proposal record, no Inbox card, no window capability.
+    expect(await svc.store.listPending('p1')).toHaveLength(0);
+    expect(appendOnce).not.toHaveBeenCalled();
+    expect(issueSources).not.toHaveBeenCalled();
+  });
+
+  it('reports to a Modern thread as a thread, and leaves out an empty title and summary', async () => {
+    lookup = async () => ({ kind: 'thread', id: 'th1', squadMember: false });
+    await now({ planning: 'infer', sources: [], title: ' ', summary: '' }, { projectId: 'p1', sessionId: 'th1' });
+    const [request, ctx] = launchNow.mock.calls[0]!;
+    expect(request).toEqual(expect.not.objectContaining({ title: expect.anything() }));
+    expect(request).not.toHaveProperty('summary');
+    expect(request).toMatchObject({ coordinationMode: 'freeform', sourcePaths: [] });
+    expect(ctx.owner).toEqual({ principalId: 'th1', reportTo: { kind: 'thread', id: 'th1', role: 'owner' } });
+  });
+
+  it('refuses a conversation that is not live or is a Squad member', async () => {
+    lookup = async () => null;
+    expect(code(await now())).toBe('NOT_LIVE');
+    lookup = async () => ({ kind: 'pty', id: 's1', squadMember: true });
+    expect(await now()).toEqual({ ok: false, code: 'PROPOSER_IN_SQUAD', message: 'Members of a running Squad cannot launch a Squad.' });
+    nothingStarted();
+  });
+
+  it('refuses exactly what propose refuses, for the same input', async () => {
+    writeFileSync(join(root, 'proj', 'twin.md'), 'x');
+    linkSync(join(root, 'proj', 'twin.md'), join(root, 'proj', 'twin2.md'));
+    const cases: Array<Record<string, unknown>> = [
+      { teamId: '' }, { goal: ' ' }, { planning: 'wat' }, { sources: 'plan.md' }, { teamId: 'zzz' },
+      { sources: Array.from({ length: 17 }, (_, i) => `f${i}`) },
+      { sources: [relative(join(root, 'proj'), join(outside, 'secret.md'))] },
+      { sources: ['docs'] },
+      { goal: `Read ${join(outside, 'secret.md')} and build it` },
+      { goal: `Read ${join(root, 'proj', 'twin2.md')}` }
+    ];
+    for (const over of cases) {
+      const viaPropose = await svc.service.propose(route, { ...input, ...over } as never);
+      expect(viaPropose.ok, JSON.stringify(over)).toBe(false);
+      expect(await now(over)).toEqual(viaPropose);
+    }
+    teamRecord.orchestratorPersonaId = 'ro';
+    expect(await now({ planning: 'infer' })).toEqual(await svc.service.propose(route, { ...input, planning: 'infer' }));
+    expect(code(await now({ planning: 'infer' }))).toBe('ORCHESTRATOR_CANNOT_PLAN');
+    teamRecord.orchestratorPersonaId = 'orch';
+    resolveSquadPlan.mockReturnValue({ planError: 'unit u2 depends on missing u9' });
+    expect(await now()).toEqual({ ok: false, code: 'INVALID_PLAN', message: 'unit u2 depends on missing u9' });
+    expect(await svc.service.propose(route, input)).toEqual(await now());
+    expect(launchNow).not.toHaveBeenCalled();
+    expect(issueSources).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the Squad or its Project requires review, before any launch', async () => {
+    projectLaunchApproval.mockResolvedValue('review');
+    const required = {
+      ok: false, code: 'LAUNCH_REVIEW_REQUIRED',
+      message: "This Squad requires review before launch. Use squad_launch with mode 'review' so the user can Launch it from the Inbox."
+    };
+    expect(await now()).toEqual(required);
+    expect(projectLaunchApproval).toHaveBeenCalledWith('p1');
+    // The Squad's own setting wins over the Project's.
+    teamRecord.launchApproval = 'direct';
+    expect(code(await now())).toBe('ok');
+    launchNow.mockClear();
+    projectLaunchApproval.mockResolvedValue('direct');
+    teamRecord.launchApproval = 'review';
+    expect(await now({ goal: 'another goal' })).toEqual(required);
+    expect(activeOwnedRuns).toHaveBeenCalledTimes(1);
+    nothingStarted();
+  });
+
+  it('launches when approval is direct or unset', async () => {
+    projectLaunchApproval.mockResolvedValue('direct');
+    expect(code(await now())).toBe('ok');
+    projectLaunchApproval.mockResolvedValue(undefined);
+    expect(code(await now({ goal: 'other' }))).toBe('ok');
+    expect(launchNow).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses when the approval setting cannot be read, and logs why', async () => {
+    projectLaunchApproval.mockRejectedValue(new Error('runtime down'));
+    expect(await now()).toEqual({
+      ok: false, code: 'LAUNCH_APPROVAL_UNAVAILABLE', message: 'The Squad launch approval setting could not be read, so the run was not started.'
+    });
+    expect(logError).toHaveBeenCalledWith('squad proposal launch now approval', expect.any(Error));
+    nothingStarted();
+  });
+
+  it('returns the run it already started for an identical repeat, and starts one for a different call', async () => {
+    const first = await now();
+    const again = await now({ title: 'retitled', sources: ['./plan.md'] });
+    expect(again).toEqual({ ok: true, value: { ...(first.ok ? first.value : {}), deduped: true } });
+    expect(launchNow).toHaveBeenCalledTimes(1);
+    expect(activeOwnedRuns).toHaveBeenCalledTimes(1);
+    // Another conversation, goal, Squad or planning is a new launch.
+    lookup = async () => ({ kind: 'pty', id: 's2', squadMember: false });
+    expect(await now({}, { projectId: 'p1', sessionId: 's2' })).toMatchObject({ ok: true, value: { executionId: 'exec-2' } });
+    expect(await now({ goal: 'Build the other thing' }, { projectId: 'p1', sessionId: 's2' })).toMatchObject({ value: { executionId: 'exec-3' } });
+    expect(await now({ planning: 'infer', goal: 'Build the other thing' }, { projectId: 'p1', sessionId: 's2' })).toMatchObject({ value: { executionId: 'exec-4' } });
+  });
+
+  it('treats the same sources in another order as identical', async () => {
+    writeFileSync(join(root, 'proj', 'more.md'), '# more');
+    await now({ sources: ['plan.md', 'more.md'] });
+    expect(await now({ sources: ['more.md', 'plan.md'] })).toMatchObject({ ok: true, value: { executionId: 'exec-1', deduped: true } });
+  });
+
+  it('forgets a launch after the dedupe window', async () => {
+    await now();
+    clock += 10 * 60_000 - 1;
+    expect(await now()).toMatchObject({ value: { deduped: true } });
+    clock += 1;
+    expect(await now()).toMatchObject({ ok: true, value: { executionId: 'exec-2' } });
+    expect((await now()) as { value: { deduped?: true } }).toMatchObject({ value: { executionId: 'exec-2', deduped: true } });
+  });
+
+  it('keeps only a bounded number of recent launches', async () => {
+    for (let i = 0; i < 257; i++) expect(code(await now({ goal: `g${i}`, planning: 'infer', sources: [] }))).toBe('ok');
+    // The oldest was dropped; the newest is still recognised.
+    expect(await now({ goal: 'g256', planning: 'infer', sources: [] })).toMatchObject({ value: { deduped: true } });
+    expect(await now({ goal: 'g0', planning: 'infer', sources: [] })).toMatchObject({ value: { executionId: 'exec-258' } });
+  });
+
+  it('records nothing for a failed start, so a retry launches', async () => {
+    launchNow.mockResolvedValueOnce({ ok: false, code: 'SOURCE_CHANGED', message: 'plan.md changed' });
+    expect(await now()).toEqual({ ok: false, code: 'SOURCE_CHANGED', message: 'plan.md changed' });
+    expect(await now()).toMatchObject({ ok: true, value: { executionId: 'exec-1' } });
+    expect(await now()).toMatchObject({ value: { deduped: true } });
+  });
+
+  it('lets one launch per conversation run at a time, and releases it after success', async () => {
+    let finish!: () => void;
+    launchNow.mockImplementationOnce(() => new Promise((done) => { finish = () => done({ ok: true, value: { executionId: 'slow', state: 'RUNNING' } } as never); }));
+    const slow = now();
+    await vi.waitFor(() => expect(launchNow).toHaveBeenCalledTimes(1));
+    expect(await now({ goal: 'second' })).toEqual({
+      ok: false, code: 'LAUNCH_IN_PROGRESS', message: 'A Squad launch from this conversation is already starting. Wait for it to finish.'
+    });
+    // Another conversation is not held up.
+    lookup = async () => ({ kind: 'pty', id: 's2', squadMember: false });
+    expect(code(await now({ goal: 'second' }, { projectId: 'p1', sessionId: 's2' }))).toBe('ok');
+    lookup = async () => ({ kind: 'pty', id: 's1', squadMember: false });
+    finish();
+    expect(await slow).toMatchObject({ ok: true, value: { executionId: 'slow' } });
+    expect(code(await now({ goal: 'third' }))).toBe('ok');
+  });
+
+  it('returns the finished launch to an identical call that was preparing meanwhile', async () => {
+    let finish!: () => void;
+    launchNow.mockImplementationOnce(() => new Promise((done) => { finish = () => done({ ok: true, value: { executionId: 'slow', state: 'RUNNING' } } as never); }));
+    let releasePrepare!: () => void;
+    const slow = now();
+    await vi.waitFor(() => expect(launchNow).toHaveBeenCalledTimes(1));
+    const gate = new Promise<void>((done) => { releasePrepare = done; });
+    const realLookup = lookup;
+    lookup = async (...a) => { await gate; return realLookup(...a); };
+    const repeat = now();
+    finish();
+    await slow;
+    releasePrepare();
+    expect(await repeat).toMatchObject({ ok: true, value: { executionId: 'slow', deduped: true } });
+    expect(launchNow).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases the in-flight hold after a refusal or a throw', async () => {
+    activeOwnedRuns.mockResolvedValueOnce(MAX_ACTIVE_NOW_RUNS_PER_SESSION);
+    expect(await now()).toEqual({
+      ok: false, code: 'TOO_MANY_LAUNCHES',
+      message: 'This conversation already owns 3 running Squads. Wait for one to finish, or stop one, before starting another.'
+    });
+    expect(launchNow).not.toHaveBeenCalled();
+    launchNow.mockRejectedValueOnce(new Error('spawn failed at /Users/me/.zcc'));
+    expect(await now()).toEqual({ ok: false, code: 'INVALID', message: 'Starting the Squad failed unexpectedly. Try again.' });
+    expect(logError).toHaveBeenCalledWith('squad proposal launch now', expect.any(Error));
+    activeOwnedRuns.mockRejectedValueOnce(new Error('store locked'));
+    expect(code(await now())).toBe('INVALID');
+    expect(code(await now())).toBe('ok');
+  });
+
+  it('allows starts while the conversation owns fewer than the cap', async () => {
+    activeOwnedRuns.mockResolvedValue(MAX_ACTIVE_NOW_RUNS_PER_SESSION - 1);
+    expect(code(await now())).toBe('ok');
+    activeOwnedRuns.mockResolvedValue(MAX_ACTIVE_NOW_RUNS_PER_SESSION + 1);
+    expect(code(await now({ goal: 'more' }))).toBe('TOO_MANY_LAUNCHES');
+  });
+
+  it('frees a hung launch only after the lease timeout', async () => {
+    launchNow.mockImplementationOnce(() => new Promise(() => undefined));
+    void now();
+    await vi.waitFor(() => expect(launchNow).toHaveBeenCalledTimes(1));
+    expect(code(await now({ goal: 'next' }))).toBe('LAUNCH_IN_PROGRESS');
+    clock += 10 * 60_000;
+    expect(code(await now({ goal: 'next' }))).toBe('ok');
   });
 });
 

@@ -10,7 +10,7 @@ import type { TerminalThemeId } from './terminal-themes.js';
 import type { WorkflowArgument } from './workflow-args.js';
 import type { MenubarAgent } from './menubar-agent.js';
 import type { NotificationLevel, OwnNotificationLevel } from './notification-levels.js';
-import type { SquadPlanning } from './squad-proposal.js';
+import type { LaunchApproval, SquadPlanning } from './squad-proposal.js';
 
 export type { WorkflowArgument } from './workflow-args.js';
 export type { TerminalThemeId } from './terminal-themes.js';
@@ -2541,6 +2541,11 @@ export interface AppConfig {
    * Default on; explicit false provides an operator opt-out.
    */
   teamJobLaunchEnabled?: boolean;
+  /**
+   * Opt-in: lets an agent start a Squad straight away (`squad_launch` with mode
+   * `now`) instead of proposing it for the user to Launch. Only `true` enables.
+   */
+  squadLaunchNowEnabled?: boolean;
   /** Opt-in: route structured work only to cheapest qualified existing Team slot. */
   teamRoutingEnforcementEnabled?: boolean;
   /** Observe expired execution claims and recovery classifications without mutation. */
@@ -3033,6 +3038,11 @@ export interface ProjectSettings {
    * even when the global default is off. Absent ⇒ inherit the global default.
    */
   worktreeIsolation?: boolean;
+  /**
+   * Whether Squad runs an agent starts in this project need the user's Launch
+   * first. A Squad's own setting wins. Absent ⇒ direct.
+   */
+  launchApproval?: LaunchApproval;
   /**
    * SSH remotes only. When true, new threads run the harness on this machine
    * and execute file/shell tools on the remote over the existing SSH
@@ -4391,6 +4401,8 @@ export interface Team {
   transport?: SquadTransport;
   /** Planning mode preselected when this Squad is picked or proposed. Absent ⇒ the global default. */
   defaultPlanning?: SquadPlanning;
+  /** Whether agent-started runs of this Squad need the user's Launch first. Absent ⇒ the Project's setting, else direct. */
+  launchApproval?: LaunchApproval;
   /** Set by the loader/host for UI display; never read from disk / trusted from the renderer. */
   source?: PersonaSource;
 }
@@ -4454,6 +4466,8 @@ export interface TeamSummary {
   source?: PersonaSource;
   /** Planning mode preselected for this Squad. Absent ⇒ the global default. */
   defaultPlanning?: SquadPlanning;
+  /** Whether agent-started runs need the user's Launch first. Absent ⇒ the Project's setting, else direct. */
+  launchApproval?: LaunchApproval;
   /** Whether the orchestrator can write files, so it can infer a plan. Computed by main, not by `toTeamSummary`. */
   canInferPlan?: boolean;
 }
@@ -4661,7 +4675,8 @@ export function toTeamSummary(t: Team): TeamSummary {
     description: t.description,
     slotCount: Array.isArray(t.slots) ? t.slots.length : 0,
     source: t.source,
-    ...(t.defaultPlanning ? { defaultPlanning: t.defaultPlanning } : {})
+    ...(t.defaultPlanning ? { defaultPlanning: t.defaultPlanning } : {}),
+    ...(t.launchApproval ? { launchApproval: t.launchApproval } : {})
   };
 }
 

@@ -70,6 +70,7 @@ describe('config — boolean feature flags round-trip through setConfig', () => 
     'closeIdlePeersEnabled',
     'teamLaunchEnabled',
     'teamJobLaunchEnabled',
+    'squadLaunchNowEnabled',
     'composerShowAutonomousTeam',
     'goalsEnabled',
     'followUpsEnabled',

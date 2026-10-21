@@ -1123,6 +1123,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.teamJobLaunchEnabled === 'boolean') {
     normalized.teamJobLaunchEnabled = input.teamJobLaunchEnabled;
   }
+  if (typeof input.squadLaunchNowEnabled === 'boolean') {
+    normalized.squadLaunchNowEnabled = input.squadLaunchNowEnabled;
+  }
   if (typeof input.teamRoutingEnforcementEnabled === 'boolean') {
     normalized.teamRoutingEnforcementEnabled = input.teamRoutingEnforcementEnabled;
   }
