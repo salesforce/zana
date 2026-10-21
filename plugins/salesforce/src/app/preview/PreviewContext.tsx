@@ -20,7 +20,7 @@ function ContextPresetPicker({ context }: { context: PreviewContextState }) {
       <label className="sf-context-preset-select"><span>Preset</span><select aria-label="Context preset" disabled={context.presetLoading || context.saving || context.loading || !context.presetScope}
         value={context.selected?.id ?? (context.count ? '__custom' : '')} onChange={event => { context.loadPreset(context.presets.find(p => p.id === event.target.value) ?? null); setNaming(false); }}>
         <option value="">Runtime defaults</option>{context.count > 0 && !context.selected && <option value="__custom" disabled>Custom context</option>}
-        {context.presets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+        {context.presets.map(p => <option key={p.id} value={p.id}>{p.name}{p.savedBy === 'agent' ? ' · by agent' : ''}</option>)}</select></label>
       {context.selected && (context.needsReview || context.edited) && <span className="sf-context-preset-badge" data-review={context.needsReview}>{context.needsReview ? 'Needs review' : 'Edited'}</span>}
       <button type="button" className="sf-context-save-as" disabled={context.saving || context.presetLoading || context.loading || Boolean(context.error) || !context.presetScope} onClick={() => setNaming(true)}>Save as…</button>
       {context.selected && <details className="sf-context-options sf-context-preset-options"><summary aria-label="Preset options"><Ellipsis size={16} aria-hidden="true" /></summary><div className="sf-context-options-menu">
@@ -67,10 +67,24 @@ export function PreviewContextEditor({ context, running = false, onRestart, dial
   const [addError, setAddError] = useState('');
   const id = useId();
   const editor = useRef<HTMLDivElement>(null);
-  const setEntry = (field: PreviewContextField, text: string | undefined) => context.setEntries(prev => {
+  // One options menu at a time; a press anywhere outside it closes it.
+  useEffect(() => {
+    const root = editor.current;
+    if (!root) return;
+    const close = (event: Event) => {
+      for (const menu of root.querySelectorAll<HTMLDetailsElement>('details.sf-context-options[open]')) {
+        if (!menu.contains(event.target as Node)) menu.open = false;
+      }
+    };
+    const doc = root.ownerDocument;
+    doc.addEventListener('pointerdown', close, true);
+    doc.addEventListener('focusin', close, true);
+    return () => { doc.removeEventListener('pointerdown', close, true); doc.removeEventListener('focusin', close, true); };
+  }, []);
+  const setEntry = (field: PreviewContextField, text: string | undefined) => { context.clearAgent(field.name); context.setEntries(prev => {
     if (text !== undefined) return { ...prev, [field.name]: { type: field.type, text } };
     const next = { ...prev }; delete next[field.name]; return next;
-  });
+  }); };
   const initialText = (field: PreviewContextField) => field.defaultValue !== undefined
     ? typeof field.defaultValue === 'string' ? field.defaultValue : JSON.stringify(field.defaultValue)
     : field.type === 'Boolean' ? 'false' : '';
@@ -112,12 +126,12 @@ export function PreviewContextEditor({ context, running = false, onRestart, dial
       const accessibility = { 'aria-invalid': showIssue || undefined, 'aria-describedby': `${helperId}${showIssue ? ` ${fieldId}-error` : ''}`, onBlur: () => context.touch(field.name), 'data-context-name': field.name };
       const defaultText = field.defaultValue === undefined ? 'Enter a value…' : typeof field.defaultValue === 'string' ? field.defaultValue || 'Empty text' : JSON.stringify(field.defaultValue);
       return <div className="sf-context-field" key={field.name} data-custom={Boolean(entry)} data-invalid={showIssue}>
-        <div className="sf-context-field-head"><label htmlFor={fieldId}>{displayLabel(field)}</label><span className="sf-context-type">{field.type}</span>
+        <div className="sf-context-field-head"><label htmlFor={fieldId}>{displayLabel(field)}</label><span className="sf-context-type">{field.type}{context.agentSet[field.name] && <span className="sf-context-agent" title="Set by an agent. Edit it to make it yours.">Agent</span>}</span>
           <label className="sf-context-mode" title={entry ? 'Use the runtime default' : 'Set a custom value'}><input type="checkbox" aria-label={`Set ${field.label}`} checked={Boolean(entry)} onChange={event => setEntry(field, event.target.checked ? initialText(field) : undefined)} /><span>{entry?.isNull ? 'Null' : entry ? 'Custom' : field.defaultValue === undefined ? 'Unset' : 'Default'}</span></label>
           <details className="sf-context-options" onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); event.stopPropagation(); } }}>
             <summary aria-label={`Options for ${field.label}`}><Ellipsis size={16} aria-hidden="true" /></summary>
             <div className="sf-context-options-menu"><code>{field.name}</code>
-              <button type="button" aria-label={`Set ${field.label} to null`} aria-pressed={Boolean(entry?.isNull)} onClick={event => { context.setEntries(prev => ({ ...prev, [field.name]: { type: field.type, text: prev[field.name]?.text ?? initialText(field), isNull: !entry?.isNull } })); event.currentTarget.closest('details')?.removeAttribute('open'); }}>{entry?.isNull ? 'Use a value' : 'Set to null'}</button>
+              <button type="button" aria-label={`Set ${field.label} to null`} aria-pressed={Boolean(entry?.isNull)} onClick={event => { context.clearAgent(field.name); context.setEntries(prev => ({ ...prev, [field.name]: { type: field.type, text: prev[field.name]?.text ?? initialText(field), isNull: !entry?.isNull } })); event.currentTarget.closest('details')?.removeAttribute('open'); }}>{entry?.isNull ? 'Use a value' : 'Set to null'}</button>
               <button type="button" onClick={event => { setEntry(field, undefined); event.currentTarget.closest('details')?.removeAttribute('open'); }}>Use runtime default</button>
               {context.manual.some(f => f.name === field.name) && <button type="button" className="is-danger" aria-label={`Remove ${field.label}`} onClick={() => { setEntry(field, undefined); context.setManual(prev => prev.filter(f => f.name !== field.name)); }}>Remove variable</button>}
             </div>
@@ -198,6 +212,7 @@ export const PREVIEW_CONTEXT_STYLES = `
 .sf-context-field-head{display:grid;grid-template-columns:minmax(0,1fr) auto 22px;gap:3px 7px;align-items:center;min-width:0}
 .sf-context-field-head>label:first-child{grid-column:1;grid-row:1;font-size:12px;font-weight:550;overflow-wrap:anywhere}
 .sf-context-type{grid-column:1;grid-row:2;font-size:10px;color:var(--sf-muted)}
+.sf-context-agent{margin-left:6px;padding:0 5px;border-radius:4px;font-size:9px;line-height:14px;font-weight:600;background:color-mix(in srgb,var(--sf-accent) 12%,transparent);color:var(--sf-accent)}
 .sf-context-mode{grid-column:2;grid-row:1 / span 2;position:relative;cursor:pointer;user-select:none}
 .sf-context-mode input{position:absolute;opacity:0;width:1px;height:1px}
 .sf-context-mode span{display:inline-block;padding:3px 6px;border-radius:4px;font-size:10px;line-height:14px;background:var(--sf-sunken);color:var(--sf-muted)}

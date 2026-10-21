@@ -1,3 +1,4 @@
+import type { ContextPreset, ContextPresetList } from '../../lib/preview-context-preset-contract.js';
 import { useSalesforceControl } from './useSalesforceControl.js';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -738,6 +739,16 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const [driver, setDriver] = useState<string | undefined>(undefined);
   const lastEditAt = useRef(0);
   const ownMoveUntil = useRef(0);
+  /** An agent names a preset by id; it is read for the open agent and org so a wrong id fails the command, not the view. */
+  const savedPreset = async (id: string): Promise<ContextPreset> => {
+    const path = activePathRef.current;
+    if (!path) throw Error('Open an agent before using a context preset.');
+    const result = await callPluginRpc(pluginId, 'agentPreview.presets.list', rpcArgs({ path, ...(org?.alias ? { orgAlias: org.alias } : {}) })) as ContextPresetList;
+    if (!result?.ok) throw Error(result?.error || 'Presets could not be loaded.');
+    const preset = result.presets?.find(p => p.id === id);
+    if (!preset) throw Error(`No context preset ${id} for ${path}. List them with contextPresets.list.`);
+    return preset;
+  };
   const executeCommand = createStudioCommandExecutor({
     getSource: () => source,
     isBusyOrDirty: () => dirty || busy,
@@ -759,16 +770,24 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       })
     },
     preview: {
-      start: ({ engine, contextVariables }) => {
+      start: async ({ engine, contextVariables, presetId }) => {
+        const preset = presetId ? await savedPreset(presetId) : undefined;
         if (engine) setPreviewEngine(engine);
         openTool('preview');
-        setPreviewCommand({ seq: ++previewSeq.current, type: 'start', engine, contextVariables });
+        setPreviewCommand({ seq: ++previewSeq.current, type: 'start', engine, contextVariables, ...(preset ? { preset } : {}) });
+        return preset ? { presetId: preset.id, preset: preset.name } : undefined;
       },
       send: ({ text, engine }) => {
         if (engine) setPreviewEngine(engine);
         openTool('preview');
         setPreviewCommand({ seq: ++previewSeq.current, type: 'send', text, engine });
       }
+    },
+    contextSet: async ({ values, presetId, merge }) => {
+      const preset = presetId ? await savedPreset(presetId) : undefined;
+      openTool('preview');
+      setPreviewCommand({ seq: ++previewSeq.current, type: 'context', ...(preset ? { preset } : { contextVariables: values ?? [] }), ...(merge ? { merge: true } : {}) });
+      return preset ? { context: 'preset', presetId: preset.id, preset: preset.name, variables: preset.values.length } : { context: merge ? 'merged' : 'replaced', variables: values?.length ?? 0 };
     },
     traceFocus: () => {
       if (wide) patch({ bottomOpen: true, bottomTab: 'trace' }); else openTool('preview');
@@ -796,7 +815,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   };
 
   useSalesforceControl({ pluginId, projectId, orgAlias: org?.alias, threadId, surface: 'agentforce', enabled: playgroundReady,
-    commands: ['state', 'file.open', 'file.filter', 'panel.open', 'panel.close', 'panel.show', 'panel.hide', 'editor.reveal', 'editor.proposeEdit', 'preview.start', 'preview.send', 'trace.focus', 'graph.focus', 'layout.set', 'orgTests.open'],
+    commands: ['state', 'file.open', 'file.filter', 'panel.open', 'panel.close', 'panel.show', 'panel.hide', 'editor.reveal', 'editor.proposeEdit', 'preview.start', 'preview.send', 'trace.focus', 'graph.focus', 'layout.set', 'orgTests.open', 'context.set'],
     state: () => ({ path: activePath, dirty, issues, ready: playgroundReady, sha256, panels: hostPanel ? { host: true, tabs: hostSlots.filter(slot => slot.attached).map(slot => slot.tool), kept: hostSlots.filter(slot => !slot.attached).map(slot => slot.tool), active: requestedHostTool.current ?? hostTool, open: (requestedHostTool.current ?? hostTool) !== null } : tools.state, filter: fileQuery, layout, tool: currentTool, tabs: studio.tabs.map(tab => tab.id), follow: followPaused ? 'paused' : 'on', ...(heldReveal ? { heldReveal: heldReveal.command.command } : {}) }),
     execute: followCommand,
   });

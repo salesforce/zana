@@ -26,7 +26,11 @@ export const WORKBENCH_ACTIONS = {
   'source.parse': ['agentScript.parse', 'local', 'Diagnostics, graph and actions: source'],
   'source.query': ['agentScript.query', 'local', 'Language service: source, query, line, column'],
   'actions.source': ['agentActions.source', 'conditional', 'Inspect Apex/Flow implementation: target, origin, candidate'],
-  'studio.start': ['agentLab.start', 'org', 'Preview/rehearsal of a source snapshot: source, engine, model, scenario; optional contextVariables [{name,type,value}] (linked names $Context.Name, external state names bare). Initial values are pinned to the run'],
+  'studio.start': ['agentLab.start', 'org', 'Preview/rehearsal of a source snapshot: source, engine, model, scenario; optional contextVariables [{name,type,value}] (linked names $Context.Name, external state names bare), or presetId with path to start from a saved context preset. Initial values are pinned to the run'],
+  'context.fields': ['agentPreview.context', 'local', 'Preview context a local agent accepts: path (or source). Returns fields: name, label, type, defaultValue, description, source (linked $Context.* names read a session field such as @MessagingSession.Id)'],
+  'contextPresets.list': ['agentPreview.presets.list', 'local', 'Saved preview context presets of one agent and the selected org: path. Returns presets (id, name, revision, values, savedBy)'],
+  'contextPresets.save': ['agentPreview.presets.save', 'local', 'Create or update a preview context preset the user sees in Preview: path, name (1-60), values [{name, value, type?}] (type defaults to the declared one; undeclared names become manual variables). Update with id and expectedRevision. 20 per agent and org. To show it, ui.command context.set {presetId}'],
+  'contextPresets.remove': ['agentPreview.presets.remove', 'local', 'Delete a preview context preset: path, id, optional expectedRevision'],
   'studio.send': ['agentLab.send', 'org', 'Talk to Studio session: id, text'],
   'studio.next': ['agentLab.next', 'org', 'Generate next scenario turn: id'],
   'studio.evaluate': ['agentLab.evaluate', 'org', 'Evaluate Studio scenario: id'],
@@ -63,7 +67,7 @@ export const WORKBENCH_ACTIONS = {
   'loop.status': ['studio.loop.get', 'local', 'Read a fix loop the user started in Tests: loopId (or agentPath for the newest)'],
   'preview.trace': ['agentLab.trace', 'org', 'Read the planner trace of a Studio turn: id, planId'],
   'ui.views': ['control.views', 'local', 'List active workbench surfaces and their view IDs, the focused window first; each view names its window (main, project-window, plugin-view for the Studio window) and whether it is visible and focused'],
-  'ui.command': ['control.command', 'local', 'Control a specific view: viewId, command, input; poll ui.result for acknowledgement. preview.start accepts engine and optional contextVariables [{name,type,value}], and shows the applied context in Preview. A reveal (file.open, editor.reveal, trace.focus, graph.focus) can complete with viewState.held "typing" or "paused": the Studio holds it for the user, so do not repeat it. orgTests.open {name?, runId?} opens the Org tests tab on a definition or run, which then follows the run live'],
+  'ui.command': ['control.command', 'local', 'Control a specific view: viewId, command, input; poll ui.result for acknowledgement. preview.start accepts engine and optional contextVariables [{name,type,value}] or presetId, and shows the applied context in Preview. context.set {values} or {presetId} fills the Preview Context tab for the user to review without starting a run (merge: true keeps the other overrides). A reveal (file.open, editor.reveal, trace.focus, graph.focus) can complete with viewState.held "typing" or "paused": the Studio holds it for the user, so do not repeat it. orgTests.open {name?, runId?} opens the Org tests tab on a definition or run, which then follows the run live'],
   'ui.result': ['control.result', 'local', 'Check UI acknowledgement: commandId'],
 } as const;
 export type WorkbenchAction = keyof typeof WORKBENCH_ACTIONS;

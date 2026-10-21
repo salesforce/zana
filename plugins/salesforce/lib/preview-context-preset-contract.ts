@@ -10,6 +10,8 @@ export interface ContextPreset {
   updatedAt: number;
   values: PreviewContextVariable[];
   fields: PresetField[];
+  /** 'agent' when a thread saved this revision through sf_workbench contextPresets.save. */
+  savedBy?: 'agent';
 }
 export interface ContextPresetList {
   ok: boolean;

@@ -49,6 +49,24 @@ describe('Preview context editor and setup', () => {
     fireEvent.change(screen.getByLabelText('Verified value'), { target: { value: 'false' } });
     expect(current.values[0]!.value).toBe(false);
   });
+  it('keeps one options menu open at a time and closes it on a press outside', async () => {
+    render(<Harness />); await screen.findByRole('checkbox', { name: 'Set Session' });
+    const menu = (label: string) => screen.getByLabelText(`Options for ${label}`).parentElement as HTMLDetailsElement;
+    menu('Session').open = true;
+    // Inside the open menu: it stays open.
+    fireEvent.pointerDown(within(menu('Session')).getByRole('button', { name: 'Use runtime default' }));
+    expect(menu('Session').open).toBe(true);
+    // Opening another closes the first.
+    fireEvent.pointerDown(screen.getByLabelText('Options for Verified'));
+    menu('Verified').open = true;
+    expect(menu('Session').open).toBe(false);
+    // Focus moving elsewhere, or a press outside, closes it.
+    fireEvent.focusIn(screen.getByLabelText('Count value'));
+    expect(menu('Verified').open).toBe(false);
+    menu('Verified').open = true;
+    fireEvent.pointerDown(document.body);
+    expect(menu('Verified').open).toBe(false);
+  });
   it('keeps the manual variable form compact, cancellable and keyboard operable', async () => {
     render(<Harness />); await screen.findByRole('checkbox', { name: 'Set Session' });
     fireEvent.click(screen.getByRole('button', { name: '+ Add variable' }));

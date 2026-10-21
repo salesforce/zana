@@ -14,7 +14,12 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const toolbarFile = 'force-app/main/default/aiAuthoringBundles/Customer_Service_Agent_With_A_Long_Name/Customer_Service_Agent_With_A_Long_Name.agent';
 const ORG_TEST_CASES = [
   { n: 1, utterance: 'Where is my order?', topic: 'Orders', actions: "[&apos;Lookup&apos;]", reply: 'Asks for the order number' },
-  { n: 2, utterance: 'I want a refund', topic: 'Returns', actions: '[]', reply: 'Explains the refund policy' },
+  // A form submission after an earlier turn, written with the CSV-doubled quotes Testing Center exports keep.
+  { n: 2, utterance: '{&quot;&quot;orderNumber&quot;&quot;: &quot;&quot;00012345&quot;&quot;, &quot;&quot;reason&quot;&quot;: &quot;&quot;Damaged&quot;&quot;, &quot;&quot;refundTo&quot;&quot;: &quot;&quot;Card&quot;&quot;}', topic: 'Returns', actions: '[]', reply: 'Explains the refund policy',
+    inputs: `<conversationHistory><index>0</index><message>I want a refund</message><role>user</role></conversationHistory>
+      <conversationHistory><index>1</index><message>Which order should I refund?</message><role>agent</role></conversationHistory>
+      <contextVariable><variableName>currentObjectApiName</variableName><variableValue>Order</variableValue></contextVariable>
+      <contextVariable><variableName>channel</variableName><variableValue>Web</variableValue></contextVariable>` },
   { n: 3, utterance: 'Cancel my subscription', topic: 'Billing', actions: '[]', reply: 'Confirms the cancellation' },
 ];
 const ORG_TEST_XML = `<?xml version="1.0" encoding="UTF-8"?>
@@ -28,7 +33,8 @@ ${ORG_TEST_CASES.map(c => `  <testCase>
     <expectation><name>action_sequence_match</name><expectedValue>${c.actions}</expectedValue></expectation>
     <expectation><name>bot_response_rating</name><expectedValue>${c.reply}</expectedValue></expectation>
     <expectation><name>completeness</name></expectation>
-    <inputs><utterance>${c.utterance}</utterance></inputs>
+    <expectation><name>coherence</name></expectation>
+    <inputs>${'inputs' in c ? c.inputs : ''}<utterance>${c.utterance}</utterance></inputs>
     <number>${c.n}</number>
   </testCase>`).join('\n')}
 </AiEvaluationDefinition>`;
@@ -39,13 +45,14 @@ const ORG_TEST_RESULTS = {
     const topic = failing ? 'General_FAQ' : c.topic;
     return {
       status: 'COMPLETED', testNumber: c.n, startTime: '2026-10-20T10:00:00.000Z', endTime: '2026-10-20T10:00:30.000Z',
-      inputs: { utterance: c.utterance },
+      inputs: { utterance: c.utterance.replace(/&quot;/g, '"') },
       generatedData: { topic, actionsSequence: c.n === 1 ? ['Lookup'] : [], outcome: c.reply + '.', sessionId: 'sess-' + c.n, invokedActions: '[]' },
       testResults: [
         { name: 'topic_sequence_match', expectedValue: c.topic, actualValue: topic, score: failing ? 0 : 1, result: failing ? 'FAILURE' : 'PASS', status: 'COMPLETED',
           metricExplainability: failing ? 'The agent routed to General_FAQ instead of Billing.' : 'Topic matched.' },
         { name: 'bot_response_rating', expectedValue: c.reply, actualValue: c.reply + '.', score: 0.9, result: 'PASS', status: 'COMPLETED', metricExplainability: 'The reply covers the expectation.' },
         { name: 'completeness', score: 0.8, result: null, status: 'COMPLETED' },
+        { name: 'coherence', score: 0.9, result: null, status: 'COMPLETED' },
       ],
     };
   }),
@@ -1653,7 +1660,8 @@ test('Agentforce Studio: Org tests list Testing Center definitions, run one in t
   const view = tests.getByTestId('org-tests-view');
   const table = view.getByTestId('org-tests-table');
   // One retrieve reads each definition's agent and label: Support.agent is open, so the list shows its test only.
-  await expect(table.getByTestId('org-tests-scope')).toContainText('Support· 1 test · 0 with runs');
+  // No run yet, so no "0 with runs": the org cannot list runs, and the detail says so.
+  await expect(table.getByTestId('org-tests-scope')).toHaveText('Support· 1 test');
   await expect(table.getByRole('button', { name: 'Support regression', exact: true })).toBeVisible();
   await expect(view.getByTestId('org-def-Support_Regression')).toContainText('3 cases');
   await expect(table.getByTestId('org-def-Billing_Smoke')).toHaveCount(0);
@@ -1673,10 +1681,11 @@ test('Agentforce Studio: Org tests list Testing Center definitions, run one in t
   // The definition's cases, read from the retrieved AiEvaluationDefinition.
   await table.getByRole('button', { name: 'Support regression', exact: true }).click();
   const detail = view.getByTestId('org-def-detail');
-  const cases = detail.getByRole('list', { name: 'Test cases' });
-  await expect(cases.getByRole('listitem')).toHaveCount(3);
+  const cases = detail.getByRole('table', { name: 'Test cases' });
+  await expect(cases.locator('tr.sf-oc-row')).toHaveCount(3);
   await expect(cases).toContainText('Where is my order?');
-  await expect(cases).toContainText("action_sequence_match: ['Lookup']");
+  await expect(cases.locator('.sf-oc-tag.is-action', { hasText: 'Lookup' }).first()).toBeVisible();
+  await expect(detail.getByTestId('org-runs-note')).toContainText("Runs started in Testing Center aren't visible here.");
   await expect(detail.getByRole('heading', { name: 'Support regression' })).toBeVisible();
   await beat();
 
@@ -1709,6 +1718,32 @@ test('Agentforce Studio: Org tests list Testing Center definitions, run one in t
   await expect(metrics).toContainText('The agent routed to General_FAQ instead of Billing.');
   await beat();
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-org-tests-dark.png'));
+
+  // The definition's cases next to the run: a verdict per row, the form read back as fields, and the last run per case.
+  await expect(cases.getByRole('button', { name: 'Case 3 · fail' })).toBeVisible();
+  await expect(cases).toContainText('{ } Form · orderNumber, reason +1');
+  await expect(detail.getByText('Scored on every case: Completeness · Coherence')).toBeVisible();
+  await cases.getByRole('button', { name: 'Case 2 · pass' }).click();
+  const conversation = cases.getByLabel('Conversation');
+  await expect(conversation).toContainText('Which order should I refund?');
+  await expect(conversation).toContainText('Form submission');
+  await expect(conversation).toContainText('00012345');
+  await expect(cases.getByLabel('Context variables')).toContainText('currentObjectApiName');
+  await expect(cases.getByLabel('Last run')).toContainText('Last run · pass');
+  await cases.getByLabel('Context variables').scrollIntoViewIfNeeded();
+  await beat();
+  await conversation.getByRole('button', { name: 'Show raw utterance' }).click();
+  await expect(conversation).toContainText('""orderNumber""');
+  await cases.getByLabel('Context variables').scrollIntoViewIfNeeded();
+  await beat();
+  await cases.getByRole('button', { name: 'Case 2 · pass' }).click();
+  await detail.getByRole('button', { name: 'Failed 1' }).click();
+  await expect(cases.locator('tr.sf-oc-row')).toHaveCount(1);
+  await cases.getByRole('button', { name: 'Case 3 · fail' }).click();
+  await expect(cases.getByLabel('Last run')).toContainText('expected Billing');
+  await cases.getByLabel('Last run').scrollIntoViewIfNeeded();
+  await beat();
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-org-tests-cases.png'));
 
   // The failing case becomes a local scenario case.
   await run.getByRole('button', { name: 'Import failing to suite' }).click();

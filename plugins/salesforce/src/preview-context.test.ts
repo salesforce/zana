@@ -43,6 +43,23 @@ describe('preview context contract', () => {
     expect(parseAgentInput({ action: 'preview.start', path: 'a.agent', contextVariables: [variable('Number', '0')] }).ok).toBe(false);
     expect(validateUiCommandInput('preview.start', { engine: 'simulate', contextVariables })).toBeUndefined();
     expect(validateUiCommandInput('preview.start', { contextVariables: {} })).toContain('array');
+    expect(validateUiCommandInput('preview.start', { presetId: 'p-1' })).toBeUndefined();
+    expect(validateUiCommandInput('preview.start', { presetId: 'p-1', contextVariables })).toContain('not both');
+    expect(validateUiCommandInput('preview.start', { presetId: 'bad id!' })).toContain('not both');
+    expect(validateUiCommandInput('preview.start', { scenario: 'x' })).toContain('accepts only');
+  });
+  it('validates context.set: values or a preset, merge only with values', () => {
+    const values = [variable('Boolean', true)];
+    expect(validateUiCommandInput('context.set', { values })).toBeUndefined();
+    expect(validateUiCommandInput('context.set', { values, merge: true })).toBeUndefined();
+    expect(validateUiCommandInput('context.set', { presetId: 'p-1' })).toBeUndefined();
+    expect(validateUiCommandInput('context.set', {})).toBeDefined();
+    expect(validateUiCommandInput('context.set', { values, presetId: 'p-1' })).toBeDefined();
+    expect(validateUiCommandInput('context.set', { presetId: 'p-1', merge: true })).toBeDefined();
+    expect(validateUiCommandInput('context.set', { values, merge: 'yes' })).toBeDefined();
+    expect(validateUiCommandInput('context.set', { presetId: 'bad id!' })).toBeDefined();
+    expect(validateUiCommandInput('context.set', { values, extra: 1 })).toBeDefined();
+    expect(validateUiCommandInput('context.set', { values: [variable('Number', '0')] })).toBeDefined();
   });
   it('preserves the applied snapshot in saved scenarios and JSON exports', () => {
     const contextVariables = [variable('Boolean', false)];

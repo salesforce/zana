@@ -79,6 +79,56 @@ describe('context presets storage', () => {
     expect(changed).toHaveBeenCalledTimes(1);
   });
 });
+describe('agent-authored presets', () => {
+  const declared = [
+    { name: 'verified', label: 'Verified', type: 'Boolean' as const },
+    { name: '$Context.sessionId', label: 'Session', type: 'Text' as const, source: '@MessagingSession.Id' }
+  ];
+  it('types values from the declarations, keeps undeclared names manual and marks the author', async () => {
+    const { store } = setup();
+    const saved = await store.save(scope, { name: 'Gold', values: [{ name: 'verified', value: true }, { name: '$Context.sessionId', value: '0Mw1' }, { name: 'tier', type: 'Text', value: 'gold' }] }, { declared, agent: true });
+    expect(saved).toMatchObject({ savedBy: 'agent', values: [{ name: 'verified', type: 'Boolean', value: true }, { name: '$Context.sessionId', type: 'Text', value: '0Mw1' }, { name: 'tier', type: 'Text', value: 'gold' }] });
+    expect(saved.fields).toEqual([
+      { name: 'verified', type: 'Boolean', label: 'Verified', declared: true },
+      { name: '$Context.sessionId', type: 'Text', label: 'Session', declared: true, source: '@MessagingSession.Id' },
+      { name: 'tier', type: 'Text', label: 'tier', declared: false }
+    ]);
+    // A wrong declared type, a stale scope or an untyped undeclared name are refused.
+    await expect(store.save(scope, { name: 'Bad', values: [{ name: 'verified', type: 'Text', value: 'yes' }] }, { declared, agent: true })).rejects.toThrow('declared as Boolean');
+    await expect(store.save(scope, { name: 'Bad', expectedScope: 'old', values: [] }, { declared, agent: true })).rejects.toMatchObject({ code: 'scope_changed' });
+    await expect(store.save(scope, { name: 'Bad', values: [{ name: 'untyped', value: 1 }] }, { declared, agent: true })).rejects.toThrow();
+    // The Studio still has to send its scope, and a person's update drops the agent mark.
+    await expect(store.save(scope, { ...payload('No scope'), expectedScope: undefined })).rejects.toMatchObject({ code: 'scope_changed' });
+    expect(await store.save(scope, { ...payload('Gold'), id: saved.id, expectedRevision: 1 })).not.toHaveProperty('savedBy');
+  });
+  it('removes a preset of its scope only, guarded by revision', async () => {
+    const { store } = setup();
+    const a = await store.save(scope, payload());
+    await expect(store.remove(scope, {})).rejects.toThrow('Choose a preset id');
+    await expect(store.remove({ ...scope, key: 'another-agent' }, { id: a.id })).rejects.toMatchObject({ code: 'not_found' });
+    await expect(store.remove(scope, { id: a.id, expectedRevision: 2 })).rejects.toMatchObject({ code: 'revision_mismatch' });
+    expect(await store.remove(scope, { id: a.id, expectedRevision: 1 })).toEqual({ id: a.id });
+    expect(await store.list(scope)).toEqual([]);
+  });
+  it('registers remove, discovers fields for an agent save and looks presets up by id', async () => {
+    const { store } = setup();
+    const handlers = new Map<string, (args: unknown) => unknown>();
+    const changed = vi.fn();
+    const discover = vi.fn(async () => declared);
+    const lookup = registerContextPresets({ registerRpc: (n, h) => handlers.set(n, h), store, resolveScope: async () => scope, discover, changed });
+    const saved = await handlers.get('agentPreview.presets.save')!({ threadId: 't1', path: 'A.agent', name: 'Agent', values: [{ name: 'verified', value: true }] }) as { ok: boolean; preset: ContextPreset };
+    expect(saved).toMatchObject({ ok: true, preset: { savedBy: 'agent', fields: [{ name: 'verified', declared: true }] } });
+    expect(discover).toHaveBeenCalledTimes(1);
+    // The Studio's own save sends fields, so nothing is discovered and no agent mark is set.
+    expect(await handlers.get('agentPreview.presets.save')!(payload('Mine'))).toMatchObject({ ok: true, preset: { name: 'Mine' } });
+    expect(discover).toHaveBeenCalledTimes(1);
+    expect((await lookup.values({}, saved.preset.id)).name).toBe('Agent');
+    await expect(lookup.values({}, 'missing')).rejects.toMatchObject({ code: 'not_found' });
+    expect(await handlers.get('agentPreview.presets.remove')!({ id: saved.preset.id })).toEqual({ ok: true, id: saved.preset.id });
+    expect(await handlers.get('agentPreview.presets.remove')!({ id: saved.preset.id })).toMatchObject({ ok: false, code: 'not_found' });
+    expect(changed).toHaveBeenCalledTimes(3);
+  });
+});
 describe('context validation and preset compatibility', () => {
   it('collects errors per field and never returns a partial context payload', () => {
     const entries = { count: { type: 'Number' as const, text: '-' }, details: { type: 'Json' as const, text: '{' }, valid: { type: 'Text' as const, text: 'kept' } };

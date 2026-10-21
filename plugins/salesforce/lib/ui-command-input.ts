@@ -2,9 +2,10 @@ import { AGENT_SOURCE_MAX_LABEL, isProposeEditInput, PREVIEW_ENGINES, type Studi
 import { parsePreviewContext } from './preview-context.js';
 
 /** Isomorphic input validation for the Studio UI verbs (server request() and the renderer executor share it). */
-export const STUDIO_UI_COMMANDS = ['editor.proposeEdit', 'preview.start', 'preview.send', 'trace.focus', 'graph.focus', 'layout.set', 'orgTests.open'] as const;
+export const STUDIO_UI_COMMANDS = ['editor.proposeEdit', 'preview.start', 'preview.send', 'trace.focus', 'graph.focus', 'layout.set', 'orgTests.open', 'context.set'] as const;
 export type StudioUiCommandName = typeof STUDIO_UI_COMMANDS[number];
 export const PREVIEW_TEXT_MAX = 4000;
+const presetId = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(value);
 const posInt = (value: unknown) => Number.isInteger(value) && Number(value) >= 0;
 const unknownKeys = (input: Record<string, unknown>, allowed: string[]) => Object.keys(input).find(key => !allowed.includes(key));
 
@@ -14,7 +15,8 @@ export function validateUiCommandInput(command: string, input: Record<string, un
     case 'editor.proposeEdit':
       return isProposeEditInput(input) ? undefined : `Provide path, a 64-hex expectedSha256, a summary, and exactly one of content (at most ${AGENT_SOURCE_MAX_LABEL}) or 1-50 edits.`;
     case 'preview.start':
-      if (unknownKeys(input, ['engine', 'contextVariables'])) return 'preview.start accepts only engine and contextVariables.';
+      if (unknownKeys(input, ['engine', 'contextVariables', 'presetId'])) return 'preview.start accepts only engine, contextVariables and presetId.';
+      if (input.presetId !== undefined && (!presetId(input.presetId) || input.contextVariables !== undefined)) return 'Provide presetId (a preset id) or contextVariables, not both.';
       try { parsePreviewContext(input.contextVariables); } catch (error) { return (error as Error).message; }
       return input.engine === undefined || PREVIEW_ENGINES.includes(input.engine as StudioEngine) ? undefined : 'engine must be simulate or live.';
     case 'preview.send':
@@ -33,6 +35,13 @@ export function validateUiCommandInput(command: string, input: Record<string, un
       if (unknownKeys(input, ['name', 'runId'])) return 'orgTests.open accepts only name and runId.';
       if (input.name !== undefined && (typeof input.name !== 'string' || !/^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(input.name))) return 'name must be an AiEvaluationDefinition API name.';
       return input.runId === undefined || (typeof input.runId === 'string' && /^[A-Za-z0-9]{15,18}$/.test(input.runId)) ? undefined : 'runId must be 15 to 18 letters and digits.';
+    case 'context.set':
+      if (unknownKeys(input, ['values', 'presetId', 'merge'])) return 'context.set accepts only values, presetId and merge.';
+      if ((input.values === undefined) === (input.presetId === undefined)) return 'Provide values or presetId.';
+      if (input.presetId !== undefined) return presetId(input.presetId) && input.merge === undefined ? undefined : 'presetId must be a preset id, and a preset replaces the context (no merge).';
+      if (input.merge !== undefined && typeof input.merge !== 'boolean') return 'merge must be a boolean.';
+      try { parsePreviewContext(input.values); } catch (error) { return (error as Error).message; }
+      return undefined;
     default:
       return undefined;
   }

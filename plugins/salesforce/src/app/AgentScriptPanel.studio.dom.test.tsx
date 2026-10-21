@@ -211,6 +211,37 @@ describe('AgentScriptPanel studio layout', () => {
     expect(stub().getAttribute('data-dirty')).toBe('false');
   });
 
+  it('resolves context presets for preview.start and context.set, and fills the Context tab', async () => {
+    const preset = { id: 'p1', name: 'Gold', revision: 2, updatedAt: 1, values: [{ name: 'tier', type: 'Text', value: 'gold' }], fields: [] };
+    rpc.mockImplementation(async (p, method, args) => method === 'agentPreview.presets.list' ? { ok: true, scopeKey: 's', presets: [preset] } : baseRpc(p, method, args));
+    const el = await mount('force-app/bots/QC.agent');
+    await ready(el);
+    const command = () => JSON.parse(el.querySelector('[data-testid="stub-preview"]')!.getAttribute('data-command')!);
+    let result: unknown;
+    await act(async () => { result = await exec('preview.start', { presetId: 'p1' }); });
+    expect(result).toEqual({ presetId: 'p1', preset: 'Gold' });
+    expect(command()).toMatchObject({ type: 'start', preset: { id: 'p1' } });
+    expect(rpc.mock.calls.find(c => c[1] === 'agentPreview.presets.list')![2]).toMatchObject({ path: 'force-app/bots/QC.agent', orgAlias: 'dev' });
+    await act(async () => { result = await exec('context.set', { presetId: 'p1' }); });
+    expect(result).toEqual({ context: 'preset', presetId: 'p1', preset: 'Gold', variables: 1 });
+    expect(command()).toMatchObject({ type: 'context', preset: { id: 'p1' } });
+    const values = [{ name: 'tier', type: 'Text', value: 'silver' }];
+    await act(async () => { result = await exec('context.set', { values, merge: true }); });
+    expect(result).toEqual({ context: 'merged', variables: 1 });
+    expect(command()).toMatchObject({ type: 'context', contextVariables: values, merge: true });
+    await act(async () => { result = await exec('context.set', { values }); });
+    expect(result).toEqual({ context: 'replaced', variables: 1 });
+    await expect(exec('context.set', { presetId: 'nope' })).rejects.toThrow(/No context preset nope .*contextPresets\.list/);
+    rpc.mockImplementation(async (p, method, args) => method === 'agentPreview.presets.list' ? { ok: false, error: 'Store down' } : baseRpc(p, method, args));
+    await expect(exec('preview.start', { presetId: 'p1' })).rejects.toThrow('Store down');
+    rpc.mockImplementation(baseRpc);
+  });
+
+  it('refuses a context preset before an agent is open', async () => {
+    await mount();
+    await expect(exec('context.set', { presetId: 'p1' })).rejects.toThrow('Open an agent before using a context preset.');
+  });
+
   it('wires preview, trace, graph and layout command targets', async () => {
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);

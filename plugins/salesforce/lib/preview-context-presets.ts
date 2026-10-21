@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { CONTEXT_PRESET_LIMITS, type ContextPreset, type PresetField } from './preview-context-preset-contract.js';
-import { parsePreviewContext } from './preview-context.js';
+import { parsePreviewContext, type PreviewContextField } from './preview-context.js';
 
 interface Kv { get<T>(key: string): Promise<T | null | undefined>; set(key: string, value: unknown): Promise<void> }
 interface PresetDatabase {
@@ -57,13 +57,27 @@ export class ContextPresets {
   async list(scope: PresetScope): Promise<ContextPreset[]> {
     return (await this.rows(scope)).filter(p => p.scope === scope.key).map(({ scope: _scope, ...p }) => structuredClone(p));
   }
-  async save(scope: PresetScope, input: unknown): Promise<ContextPreset> {
+  /**
+   * The Studio sends its field definitions and the scope it listed. An agent may omit both: `declared` (the agent's
+   * discovered fields) then types its values and defines the fields, and anything undeclared is kept as a manual variable.
+   */
+  async save(scope: PresetScope, input: unknown, opts: { declared?: PreviewContextField[]; agent?: boolean } = {}): Promise<ContextPreset> {
     const raw = record(input);
     const name = typeof raw.name === 'string' ? raw.name.trim() : '';
     if (!name || name.length > 60 || /[\u0000-\u001f]/.test(name)) throw new ContextPresetError('Enter a preset name between 1 and 60 characters.');
-    if (raw.expectedScope !== scope.key) throw new ContextPresetError('The selected agent or org changed. Reload presets before saving.', 'scope_changed');
-    const values = parsePreviewContext(raw.values);
-    const fields = parseFields(raw.fields);
+    if ((raw.expectedScope !== undefined || !opts.agent) && raw.expectedScope !== scope.key) throw new ContextPresetError('The selected agent or org changed. Reload presets before saving.', 'scope_changed');
+    const declared = opts.declared;
+    const typed = declared && Array.isArray(raw.values)
+      ? raw.values.map(v => { const row = record(v); const field = declared.find(f => f.name === row.name); return row.type === undefined && field ? { ...row, type: field.type } : v; })
+      : raw.values;
+    const values = parsePreviewContext(typed);
+    if (declared) for (const value of values) {
+      const field = declared.find(f => f.name === value.name);
+      if (field && field.type !== value.type) throw new ContextPresetError(`${value.name} is declared as ${field.type}, not ${value.type}.`);
+    }
+    const fields = raw.fields === undefined && declared
+      ? values.map(v => { const field = declared.find(f => f.name === v.name); return { name: v.name, type: v.type, label: (field?.label ?? v.name).slice(0, 160), declared: Boolean(field), ...(field?.source ? { source: field.source.slice(0, 256) } : {}) }; })
+      : parseFields(raw.fields);
     for (const value of values) if (!fields.some(f => f.name === value.name && f.type === value.type)) throw new ContextPresetError(`Missing field definition for ${value.name}.`);
     const key = this.storageKey(scope);
     const work = async () => {
@@ -75,13 +89,31 @@ export class ContextPresets {
       if (existing && raw.expectedRevision !== existing.revision) throw new ContextPresetError('This preset changed in another window. Reload presets or save a copy.', 'revision_mismatch');
       if (scoped.some(p => p.id !== id && p.name.toLocaleLowerCase() === name.toLocaleLowerCase())) throw new ContextPresetError('A preset with this name already exists. Choose another name.');
       if (!existing && (scoped.length >= CONTEXT_PRESET_LIMITS.perAgent || rows.length >= CONTEXT_PRESET_LIMITS.perProject)) throw new ContextPresetError('Preset storage is full (20 per agent and org, 100 per project). Update an existing preset instead.', 'limit');
-      const saved: StoredPreset = { scope: scope.key, id: existing?.id ?? this.uuid(), name, revision: (existing?.revision ?? 0) + 1, updatedAt: this.now(), values, fields };
+      const saved: StoredPreset = { scope: scope.key, id: existing?.id ?? this.uuid(), name, revision: (existing?.revision ?? 0) + 1, updatedAt: this.now(), values, fields, ...(opts.agent ? { savedBy: 'agent' as const } : {}) };
       const next = [...rows.filter(p => p !== existing), saved];
       if (new TextEncoder().encode(JSON.stringify(next)).length > CONTEXT_PRESET_LIMITS.bytes) throw new ContextPresetError('Presets for this project must fit within 4 MB. Reduce large values before saving.', 'limit');
       await this.kv.set(key, next);
       const { scope: _scope, ...result } = saved;
       return structuredClone(result);
     };
+    return this.serialized(key, work);
+  }
+  /** Deletes one preset of this scope; expectedRevision, when given, guards against removing a newer revision. */
+  async remove(scope: PresetScope, input: unknown): Promise<{ id: string }> {
+    const raw = record(input);
+    const id = typeof raw.id === 'string' ? raw.id : '';
+    if (!id) throw new ContextPresetError('Choose a preset id to remove.');
+    const key = this.storageKey(scope);
+    return this.serialized(key, async () => {
+      const rows = await this.rows(scope);
+      const existing = rows.find(p => p.scope === scope.key && p.id === id);
+      if (!existing) throw new ContextPresetError('This preset is no longer available. Reload presets.', 'not_found');
+      if (raw.expectedRevision !== undefined && raw.expectedRevision !== existing.revision) throw new ContextPresetError('This preset changed since it was read. Reload presets before removing it.', 'revision_mismatch');
+      await this.kv.set(key, rows.filter(p => p !== existing));
+      return { id };
+    });
+  }
+  private async serialized<T>(key: string, work: () => Promise<T>): Promise<T> {
     const next = (this.chains.get(key) ?? Promise.resolve()).catch(() => undefined).then(work);
     this.chains.set(key, next);
     try { return await next; }
@@ -93,15 +125,34 @@ export function registerContextPresets(o: {
   registerRpc(name: string, handler: (args: unknown) => unknown): void;
   store: ContextPresets;
   resolveScope(args: unknown): Promise<PresetScope>;
+  /** The agent's settable fields, for a save that omits field definitions. */
+  discover?(args: unknown): Promise<PreviewContextField[]>;
   changed(projectId: string): void;
 }) {
-  for (const method of ['list', 'save'] as const) o.registerRpc(`agentPreview.presets.${method}`, async args => {
+  // A thread's call (sf_workbench) carries its threadId; the Studio's own calls do not.
+  const byAgent = (args: unknown) => typeof record(args).threadId === 'string' && Boolean(record(args).threadId);
+  for (const method of ['list', 'save', 'remove'] as const) o.registerRpc(`agentPreview.presets.${method}`, async args => {
     try {
       const scope = await o.resolveScope(args);
       if (method === 'list') return { ok: true, presets: await o.store.list(scope), scopeKey: scope.key, orgLabel: scope.orgLabel };
-      const preset = await o.store.save(scope, args);
+      if (method === 'remove') {
+        const removed = await o.store.remove(scope, args);
+        o.changed(scope.projectId);
+        return { ok: true, ...removed };
+      }
+      const agent = byAgent(args);
+      const declared = record(args).fields === undefined && o.discover ? await o.discover(args) : undefined;
+      const preset = await o.store.save(scope, args, { agent, ...(declared ? { declared } : {}) });
       o.changed(scope.projectId);
       return { ok: true, preset };
     } catch (error) { return { ok: false, code: error instanceof ContextPresetError ? error.code : 'failed', error: (error as Error).message }; }
   });
+  /** A saved preset's values, for starting a run by presetId. */
+  return {
+    async values(args: unknown, id: string) {
+      const preset = (await o.store.list(await o.resolveScope(args))).find(p => p.id === id);
+      if (!preset) throw new ContextPresetError('No preset with that id for this agent and org. List them with contextPresets.list.', 'not_found');
+      return preset;
+    }
+  };
 }

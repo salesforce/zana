@@ -8,6 +8,7 @@ import { STUDIO_CHANGED_CHANNEL, STUDIO_RPC } from '../../../lib/studio-contract
 import { RELEASE_RPC, type ReleasePrepared } from '../../../lib/release-contract.js';
 import { declined, type Message } from './ReleasePane.js';
 import { OrgRunDetail } from './OrgRunDetail.js';
+import { ORG_CASE_TABLE_STYLES, OrgCaseTable } from './OrgCaseTable.js';
 import { agentNameFromPath, filterDefinitions, groupDefinitions, passRate, percent, relativeTime, sameAgent, sparkSeries } from './org-tests-model.js';
 
 /** The Org tests view: the org's Testing Center definitions, their runs, and one run's results. */
@@ -104,11 +105,6 @@ const STYLES = `
 .sf-ot-runcard:hover, .sf-ot-runcard[aria-pressed="true"] { border-color: var(--sf-accent); }
 .sf-ot-runcard strong { font-size: 13px; }
 .sf-ot-runcard small { color: var(--sf-muted); }
-.sf-ot-cases { list-style: none; margin: 0; padding: 0; border: 1px solid var(--sf-border); border-radius: 8px; overflow: hidden; }
-.sf-ot-cases li { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 2px 8px; padding: 7px 12px; border-top: 1px solid var(--sf-border); }
-.sf-ot-cases li:first-child { border-top: 0; }
-.sf-ot-num { color: var(--sf-muted); font-size: 11px; text-align: right; }
-.sf-ot-exp { grid-column: 2; display: flex; gap: 4px; flex-wrap: wrap; font-size: 11px; color: var(--sf-muted); }
 .sf-ot-empty { height: 100%; display: grid; place-items: center; color: var(--sf-muted); text-align: center; }
 .sf-ot-run { display: flex; flex-direction: column; gap: 10px; }
 .sf-ot-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
@@ -130,7 +126,7 @@ const STYLES = `
   .sf-ot-detail { overflow: visible; padding: 12px; }
   .sf-ot-search { width: 100%; order: 10; }
 }
-`;
+${ORG_CASE_TABLE_STYLES}`;
 export const ORG_TESTS_STYLES = STYLES;
 
 /** A pass rate of at least this reads as healthy. */
@@ -203,7 +199,7 @@ export function OrgTestsView(props: OrgTestsViewProps) {
   }, [rpc]);
 
   /**
-   * Reads the agent, label and case count of every definition the list does not know yet, a batch per retrieve and two
+   * Reads the agent, label and case count of every definition the list does not know yet, a batch per retrieve and three
    * retrieves at a time. A newer list load abandons it.
    */
   const loadDetails = useCallback(async (rows: readonly OrgTestDefinitionSummary[], seq: number) => {
@@ -236,7 +232,7 @@ export function OrgTestsView(props: OrgTestsViewProps) {
         setProgress({ done, total: names.length, unread });
       }
     };
-    await Promise.all([worker(), worker()]);
+    await Promise.all([worker(), worker(), worker()]);
     if (!current()) return;
     // Batches skipped after a refusal count as unread.
     setPending(new Set());
@@ -477,6 +473,8 @@ export function OrgTestsView(props: OrgTestsViewProps) {
   const shown = scoped ? mine : matching;
   const loadingAgents = pending.size > 0;
   const withRuns = (rows: readonly OrgTestDefinitionSummary[]) => rows.filter(def => runsFor(def.name).length > 0).length;
+  /** "N tests", plus "· M with runs" only when some have runs: the org cannot list runs, so a zero says little. */
+  const withRunsText = (rows: readonly OrgTestDefinitionSummary[], count: string) => { const n = withRuns(rows); return n > 0 ? `${count} · ${n} with runs` : count; };
   const others = agent ? all.filter(def => def.subjectName && !sameAgent(def, agent)).length : 0;
   const groups = scoped ? [] : groupDefinitions(matching, pending, agent);
   // A search shows every match; otherwise groups the user toggled keep their state, and only the pinned or first one opens.
@@ -550,7 +548,7 @@ export function OrgTestsView(props: OrgTestsViewProps) {
           <div className="sf-ot-list" data-testid="org-tests-table">
             {!defs && <div className="sf-ot-blank"><p>Loading org tests…</p></div>}
             {scoped && <div className="sf-ot-scope" data-testid="org-tests-scope">
-              <strong>{agent}</strong><span className="sf-tp-sub">· {plural(mine.length, 'test')} · {withRuns(mine)} with runs</span>
+              <strong>{agent}</strong><span className="sf-tp-sub">· {withRunsText(mine, plural(mine.length, 'test'))}</span>
             </div>}
             {blank}
             {scoped && mine.length > 0 && <ul className="sf-ot-rows sf-ot-flat" aria-label={`Org tests for ${agent}`}>{mine.map(row)}</ul>}
@@ -564,7 +562,7 @@ export function OrgTestsView(props: OrgTestsViewProps) {
                   <span className="sf-ot-chev" aria-hidden="true">▼</span>
                   <span>{group.label}</span>
                   {agent && group.key === agent.toLowerCase() && <span className="sf-ot-badge">open in Studio</span>}
-                  <span className="sf-ot-count">{group.state === 'agent' ? `${plural(group.defs.length, 'test')} · ${withRuns(group.defs)} with runs` : plural(group.defs.length, 'test')}</span>
+                  <span className="sf-ot-count">{group.state === 'agent' ? withRunsText(group.defs, plural(group.defs.length, 'test')) : plural(group.defs.length, 'test')}</span>
                 </button>
                 {open && <ul className="sf-ot-rows" aria-label={group.label}>{group.defs.map(row)}</ul>}
               </section>;
@@ -608,6 +606,9 @@ export function OrgTestsView(props: OrgTestsViewProps) {
               <div><dt>Last run</dt><dd>{lastRun ? `${percent(passRate(lastRun.counts))} · ${relativeTime(lastRun.startedAt)}` : 'Never'}</dd></div>
               <div><dt>Trend</dt><dd>{sparkSeries(history).length > 1 ? <Spark rates={sparkSeries(history)} /> : '—'}</dd></div>
             </dl>
+            {!history.length && <div className="sf-tp-sub" data-testid="org-runs-note">
+              Runs started in Testing Center aren't visible here. <button type="button" className="sf-ot-textbtn" onClick={() => setMenuOpen(true)}>Add one by run ID.</button>
+            </div>}
             {history.length > 0 && <>
               <div className="sf-ot-sec">Recent runs</div>
               <div className="sf-ot-runs" role="group" aria-label="Run history">
@@ -629,15 +630,7 @@ export function OrgTestsView(props: OrgTestsViewProps) {
             </div>
             {!definition && <div className="sf-tp-empty">Reading the definition…</div>}
             {definition && !definition.testCases.length && <div className="sf-tp-empty">This definition has no cases.</div>}
-            {definition && definition.testCases.length > 0 && <ul className="sf-ot-cases" aria-label="Test cases">{definition.testCases.slice(0, 50).map(c => <li key={c.number}>
-              <span className="sf-ot-num">{c.number}</span>
-              <span>{c.utterance}</span>
-              {(c.expectations.length > 0 || c.contextVariables.length > 0) && <span className="sf-ot-exp">
-                {c.expectations.map((e, i) => <span key={i} className="sf-tp-chip" title={e.expectedValue}>{e.name}{e.expectedValue ? `: ${e.expectedValue.slice(0, 40)}` : ''}</span>)}
-                {c.contextVariables.length > 0 && <span>context {c.contextVariables.map(v => v.name).join(', ')}</span>}
-              </span>}
-            </li>)}</ul>}
-            {definition && definition.testCases.length > 50 && <div className="sf-tp-sub">Showing 50 of {definition.testCases.length} cases.</div>}
+            {definition && definition.testCases.length > 0 && <OrgCaseTable key={definition.name} cases={definition.testCases} run={run?.definition === definition.name ? run : null} />}
           </section>}
         </div>
       </div>

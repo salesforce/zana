@@ -11,6 +11,7 @@ type Handler = (args: Record<string, unknown>) => unknown;
 let handlers: Record<string, Handler>;
 const calls: Array<{ method: string; args: Record<string, unknown> }> = [];
 let realtime: ((p: unknown) => void) | null = null;
+let presetsRealtime: ((p: unknown) => void) | null = null;
 let root: Root | null = null;
 let host: HTMLElement | null = null;
 
@@ -22,7 +23,7 @@ const suiteRow = (extra: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
-  calls.length = 0; realtime = null;
+  calls.length = 0; realtime = null; presetsRealtime = null;
   handlers = {
     'agentPreview.context': () => ({ ok: true, fields: [] }),
     'agentLab.start': () => snap([{ role: 'agent', text: 'Welcome' }]),
@@ -46,7 +47,7 @@ beforeEach(() => {
   };
   (globalThis as Record<string, unknown>).__ZCC_PLUGIN_RUNTIME__ = {
     useZccContext: () => ({ projectId: 'proj-1' }),
-    useRealtime: (_c: string, h: (p: unknown) => void) => { realtime = h; },
+    useRealtime: (c: string, h: (p: unknown) => void) => { if (c === 'salesforce.context-presets.changed') presetsRealtime = h; else realtime = h; },
     useRealtimeConnectionState: () => 'connected'
   };
   (URL as unknown as Record<string, unknown>).createObjectURL = vi.fn(() => 'blob:x');
@@ -133,6 +134,40 @@ describe('PreviewWorkbench', () => {
     await click(btn(el, 'Context'));
     expect(el.querySelector('.sf-context-preset-provenance')).toBeNull();
     expect((el.querySelector('[aria-label="Count value"]') as HTMLInputElement).value).toBe('3');
+  });
+  it('fills the Context tab from an agent, tags its values until edited, and starts from its preset', async () => {
+    const preset = { id: 'p', name: 'Agent preset', revision: 1, updatedAt: 1, savedBy: 'agent' as const, values: [{ name: 'count', type: 'Number' as const, value: 4 }], fields: [{ name: 'count', label: 'Count', type: 'Number' as const, declared: true }] };
+    handlers['agentPreview.presets.list'] = () => ({ ok: true, scopeKey: 'scope', presets: [] });
+    handlers['agentPreview.context'] = () => ({ ok: true, fields: [{ name: 'count', label: 'Count', type: 'Number' }, { name: 'verified', label: 'Verified', type: 'Boolean' }] });
+    const props = { pluginId: 'salesforce', projectId: 'proj-1', source: 'agent_label: x', fileLabel: 'A.agent', path: 'force-app/A.agent' };
+    const el = await mount();
+    const render = async (command: PreviewWorkbenchProps['command']) => { await act(async () => root!.render(createElement(PreviewWorkbench, { ...props, command }))); await flush(); };
+    await render({ seq: 1, type: 'context', contextVariables: [{ name: 'count', type: 'Number', value: 2 }, { name: 'extra', type: 'Text', value: 'x' }] });
+    expect(methods()).not.toContain('agentLab.start');
+    expect((el.querySelector('[aria-label="Count value"]') as HTMLInputElement).value).toBe('2');
+    expect(el.querySelectorAll('.sf-context-agent')).toHaveLength(2);
+    await render({ seq: 2, type: 'context', contextVariables: [{ name: 'verified', type: 'Boolean', value: true }], merge: true });
+    expect((el.querySelector('[aria-label="Count value"]') as HTMLInputElement).value).toBe('2');
+    expect(el.querySelectorAll('.sf-context-agent')).toHaveLength(3);
+    await act(async () => fireEvent.change(el.querySelector('[aria-label="Count value"]')!, { target: { value: '5' } }));
+    expect(el.querySelectorAll('.sf-context-agent')).toHaveLength(2);
+    await render({ seq: 3, type: 'context', contextVariables: [{ name: 'verified', type: 'Boolean', value: false }] });
+    expect((el.querySelector('[aria-label="Count value"]') as HTMLInputElement).value).toBe('');
+    expect(el.querySelectorAll('.sf-context-agent')).toHaveLength(1);
+    await render({ seq: 4, type: 'context', preset });
+    expect((el.querySelector('[aria-label="Count value"]') as HTMLInputElement).value).toBe('4');
+    // An agent's preset save reaches the picker through realtime, tagged as the agent's.
+    handlers['agentPreview.presets.list'] = () => ({ ok: true, scopeKey: 'scope', presets: [preset] });
+    const lists = calls.filter(c => c.method === 'agentPreview.presets.list').length;
+    await act(async () => { presetsRealtime?.({ projectId: 'other' }); }); await flush();
+    expect(calls.filter(c => c.method === 'agentPreview.presets.list').length).toBe(lists);
+    await act(async () => { presetsRealtime?.({ projectId: 'proj-1' }); }); await flush();
+    expect(calls.filter(c => c.method === 'agentPreview.presets.list').length).toBe(lists + 1);
+    expect(el.querySelector('[aria-label="Context preset"]')?.textContent).toContain('Agent preset · by agent');
+    await render({ seq: 5, type: 'start', preset });
+    expect(calls.find(c => c.method === 'agentLab.start')!.args.contextVariables).toEqual(preset.values);
+    await click(btn(el, 'Context'));
+    expect(el.querySelector('.sf-context-preset-provenance')?.textContent).toContain('Agent preset');
   });
   it('keeps the existing session and context when a reviewed restart cannot end it', async () => {
     const contextVariables = [{ name: 'count', type: 'Number' as const, value: 0 }];

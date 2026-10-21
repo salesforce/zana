@@ -34,8 +34,8 @@ function org(kind = 'sandbox') {
   return { alias: 'dev', username: 'u', orgId: '00D1', instanceUrl: 'https://x', apiVersion: '63.0', kind, isDefault: true };
 }
 
-function setup(opts: { kind?: string; approved?: boolean; xml?: string | null; xmlFor?: (name: string) => string | null | undefined; wrap?: (sdk: any) => any; cli?: Partial<{ code: number; stdout: string }>; ttl?: number } = {}) {
-  const kvMap = new Map<string, unknown>();
+function setup(opts: { kind?: string; approved?: boolean; xml?: string | null; xmlFor?: (name: string) => string | null | undefined; wrap?: (sdk: any) => any; cli?: Partial<{ code: number; stdout: string }>; ttl?: number; kv?: Map<string, unknown> } = {}) {
+  const kvMap = opts.kv ?? new Map<string, unknown>();
   const handlers = new Map<string, (args: unknown) => Promise<any>>();
   const publish = vi.fn();
   let now = 1000;
@@ -269,9 +269,9 @@ describe('org tests RPCs', () => {
 
   it('bounds the definition cache', async () => {
     const t = setup();
-    for (let i = 0; i < 32; i++) await t.call(ORG_TESTS_RPC.definition, { name: `D${i}` });
+    for (let i = 0; i < 62; i++) await t.call(ORG_TESTS_RPC.definition, { name: `D${i}` });
     await t.call(ORG_TESTS_RPC.definition, { name: 'D0' });
-    expect(t.sdk.execSf).toHaveBeenCalledTimes(33);
+    expect(t.sdk.execSf).toHaveBeenCalledTimes(63);
   });
 
   it('validates names and fails definitions cleanly, always cleaning up', async () => {
@@ -360,6 +360,60 @@ describe('org tests RPCs', () => {
       const refused = setup({ kind: 'production', approved: false });
       expect(await refused.call(ORG_TESTS_RPC.details, { names: ['A'] })).toMatchObject({ ok: false, code: 'refused' });
       expect(refused.cliCalls).toHaveLength(0);
+    });
+
+    it('opens a test read by a batch without retrieving it again', async () => {
+      const t = setup();
+      await t.call(ORG_TESTS_RPC.details, { names: ['A_Test'] });
+      expect((await t.call(ORG_TESTS_RPC.definition, { name: 'A_Test' })).definition.testCases).toHaveLength(2);
+      expect(t.cliCalls.filter(c => c.args[0] === 'project')).toHaveLength(1);
+    });
+
+    it('stores summaries per org, so a restart lists agents without retrieving, and reads a changed test again', async () => {
+      const kv = new Map<string, unknown>();
+      const first = setup({ kv });
+      await first.call(ORG_TESTS_RPC.list);
+      await first.call(ORG_TESTS_RPC.details, { names: ['Old_Test', 'New_Test'] });
+      expect(kv.get('orgTests:summaries:00D1')).toEqual({ rows: {
+        Old_Test: { label: 'Billing & Refunds', subjectName: 'Billing_Agent', subjectType: 'AGENT', subjectVersion: 'v18', caseCount: 2, lastModified: '2026-01-01T00:00:00.000Z' },
+        New_Test: { label: 'Billing & Refunds', subjectName: 'Billing_Agent', subjectType: 'AGENT', subjectVersion: 'v18', caseCount: 2, lastModified: '2026-09-01T00:00:00.000Z' },
+      } });
+      const second = setup({ kv });
+      const listed = await second.call(ORG_TESTS_RPC.list);
+      expect(listed.definitions.map((d: any) => [d.name, d.subjectName, d.lastModified])).toEqual([['New_Test', 'Billing_Agent', '2026-09-01T00:00:00.000Z'], ['Old_Test', 'Billing_Agent', '2026-01-01T00:00:00.000Z']]);
+      expect(await second.call(ORG_TESTS_RPC.details, { names: ['Old_Test', 'New_Test'] })).toMatchObject({ missing: [], definitions: [{ name: 'Old_Test' }, { name: 'New_Test' }] });
+      expect(second.cliCalls.filter(c => c.args[0] === 'project')).toHaveLength(0);
+
+      const rows = (kv.get('orgTests:summaries:00D1') as any).rows;
+      rows.Old_Test.lastModified = '2025-12-01T00:00:00.000Z';
+      const third = setup({ kv });
+      expect((await third.call(ORG_TESTS_RPC.list)).definitions.find((d: any) => d.name === 'Old_Test').subjectName).toBeUndefined();
+      expect(Object.keys((kv.get('orgTests:summaries:00D1') as any).rows)).toEqual(['New_Test']);
+      await third.call(ORG_TESTS_RPC.details, { names: ['Old_Test', 'New_Test'] });
+      const manifests = third.cliCalls.filter(c => c.args[0] === 'project');
+      expect(manifests).toHaveLength(1);
+      expect((kv.get('orgTests:summaries:00D1') as any).rows.Old_Test.lastModified).toBe('2026-01-01T00:00:00.000Z');
+    });
+
+    it('takes the listed version for a summary read before any list, and ignores unreadable stored rows', async () => {
+      const kv = new Map<string, unknown>([['orgTests:summaries:00D1', { rows: { 'bad name': { subjectName: 'X' }, Junk: 'x', NoAgent: { label: 'L' }, Odd: { subjectName: 'Odd_Agent', caseCount: -1, label: 7 } } }]]);
+      const t = setup({ kv });
+      await t.call(ORG_TESTS_RPC.definition, { name: 'New_Test' });
+      expect((kv.get('orgTests:summaries:00D1') as any).rows.New_Test.lastModified).toBeUndefined();
+      await t.call(ORG_TESTS_RPC.list);
+      expect((kv.get('orgTests:summaries:00D1') as any).rows.New_Test.lastModified).toBe('2026-09-01T00:00:00.000Z');
+      expect(await t.call(ORG_TESTS_RPC.details, { names: ['Odd', 'NoAgent'] })).toMatchObject({ definitions: [{ name: 'Odd', subjectName: 'Odd_Agent' }, { name: 'NoAgent', subjectName: 'Billing_Agent' }] });
+      expect((await t.call(ORG_TESTS_RPC.details, { names: ['Odd'] })).definitions[0].caseCount).toBeUndefined();
+    });
+
+    it('still lists and reads when storage cannot be read or written', async () => {
+      const kv = new (class extends Map<string, unknown> {
+        override get(): never { throw new Error('read failed'); }
+        override set(): never { throw new Error('write failed'); }
+      })();
+      const t = setup({ kv });
+      expect((await t.call(ORG_TESTS_RPC.list)).ok).toBe(true);
+      expect(await t.call(ORG_TESTS_RPC.details, { names: ['New_Test'] })).toMatchObject({ ok: true, definitions: [{ subjectName: 'Billing_Agent' }] });
     });
 
     it('bounds the summary cache', async () => {

@@ -570,18 +570,19 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       return agentFilesFailure(error);
     }
   });
+  const previewContextFields = async (args: unknown) => {
+    const raw = args && typeof args === 'object' ? args as Record<string, unknown> : {};
+    let source = typeof raw.source === 'string' ? raw.source : '';
+    if (raw.path !== undefined && raw.source === undefined) {
+      const resolved = await resolveAgentFilesRoot(args);
+      source = readAgentFile(resolved.root, rpcString(args, 'path'), deps, resolved.options).content;
+    }
+    return discoverPreviewContext(source);
+  };
   registerRpc('agentPreview.context', async (args) => {
-    try {
-      const raw = args && typeof args === 'object' ? args as Record<string, unknown> : {};
-      let source = typeof raw.source === 'string' ? raw.source : '';
-      if (raw.path !== undefined && raw.source === undefined) {
-        const resolved = await resolveAgentFilesRoot(args);
-        source = readAgentFile(resolved.root, rpcString(args, 'path'), deps, resolved.options).content;
-      }
-      return { ok: true, fields: discoverPreviewContext(source) };
-    } catch (error) { return agentFilesFailure(error); }
+    try { return { ok: true, fields: await previewContextFields(args) }; } catch (error) { return agentFilesFailure(error); }
   });
-  registerContextPresets({
+  const contextPresets = registerContextPresets({
     registerRpc,
     store: new ContextPresets(contextPresetStorage(() => zcc.storage.database()), deps.now),
     resolveScope: async args => {
@@ -602,8 +603,19 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       const org = settings.defaultOrg ? await connections.connect() : null;
       return { projectId, key: createHash('sha256').update(JSON.stringify([projectId, agent, org?.orgId ?? 'local'])).digest('hex'), orgLabel: org?.alias ?? 'Local drafts' };
     },
+    discover: args => rpcString(args, 'path') ? previewContextFields({ path: rpcString(args, 'path'), projectId: rpcString(args, 'projectId') }) : Promise.resolve([]),
     changed: projectId => zcc.realtime.publish(CONTEXT_PRESETS_CHANGED, { projectId })
   });
+  /** studio.start and sf_agent preview.start take presetId in place of contextVariables: the saved preset of that agent's path. */
+  const presetContext = async (data: Record<string, unknown>, projectId = data.projectId) => {
+    if (data.presetId === undefined) return;
+    if (typeof data.presetId !== 'string' || !data.presetId) throw Error('presetId must be a preset id from contextPresets.list.');
+    if (data.contextVariables !== undefined) throw Error('Provide presetId or contextVariables, not both.');
+    if (!rpcString(data, 'path')) throw Error('presetId needs the agent path its preset was saved for.');
+    const preset = await contextPresets.values({ path: data.path, projectId }, data.presetId);
+    delete data.presetId;
+    data.contextVariables = preset.values;
+  };
   registerRpc('agentFiles.create', async (args) => {
     const path = rpcString(args, 'path');
     const content = args && typeof args === 'object' ? (args as { content?: unknown }).content : undefined;
@@ -775,6 +787,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       }
       // A full check of a large org exceeds the result cap; agents page with states and limit.
       if (action === 'sync.check' && data.limit === undefined) data.limit = 1000;
+      if (action === 'studio.start') await presetContext(data, ctx.projectId);
       if (action === 'ui.command') control.assertTarget(ctx.projectId, String(data.viewId), (await readSettings()).defaultOrg);
       const uiReadsOrg = action === 'ui.command' && uiCommandReadsOrg(data.command, data.input as Record<string, unknown> | undefined);
       const [method, policy] = WORKBENCH_ACTIONS[action];
@@ -799,6 +812,11 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     if (['sf_soql', 'sf_apex', 'sf_lwc', 'sf_agent'].includes(name) && await selectedProvider() === 'toolkit') return { ok: false, code: 'provider_disabled', error: 'Built-in family tools are disabled. Use sf_tools describe/call for the toolkit contract, or select Both in plugin settings.' };
     const action = rpcString(input, 'action');
     if (isWorkbenchAction(action)) return invokeAction(action, (input as { input?: unknown }).input ?? input, ctx);
+    if (name === 'sf_agent' && rpcString(input, 'action') === 'preview.start' && input && typeof input === 'object' && 'presetId' in input) {
+      const data: Record<string, unknown> = { ...(input as Record<string, unknown>) };
+      await presetContext(data, ctx.projectId);
+      input = data;
+    }
     if (name === 'sf_agent') return runAgent(input, ctx, sdk, artifacts, deps, readSettings, evalEvidence, previewLab);
     if (name === 'sf_soql') return runSoql(input, ctx, sdk, artifacts);
     if (name === 'sf_apex') return runApex(input, { threadId: ctx.threadId }, sdk, artifacts, deps, readSettings);
@@ -1037,6 +1055,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
         sessionId: { type: 'string' },
         utterance: { type: 'string' },
         contextVariables: { type: 'array', maxItems: 100, description: 'Initial typed preview variables. Linked names use $Context.Name; external agent variables use their developer name. Only preview.start.', items: { type: 'object', required: ['name', 'type', 'value'], properties: { name: { type: 'string' }, type: { type: 'string', enum: ['Text', 'Boolean', 'Number', 'Date', 'DateTime', 'Json', 'List', 'Object', 'Money', 'Ref'] }, value: {} } } },
+        presetId: { type: 'string', description: 'A saved context preset of this path (sf_workbench contextPresets.list), in place of contextVariables. Only preview.start.' },
         specPath: { type: 'string' },
         aiEvaluationDefinitionName: { type: 'string' },
         botVersionId: { type: 'string' },

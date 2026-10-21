@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { callPluginRpc } from '@zana-ai/zcc-plugin-sdk/app';
+import { callPluginRpc, useRealtime } from '@zana-ai/zcc-plugin-sdk/app';
 import { parsePreviewContext, validateContextEntries, type ContextEntry, type PreviewContextField, type PreviewContextVariable } from '../../../lib/preview-context.js';
-import { presetCompatibility, sameContext, type AppliedContextPreset, type ContextPreset, type ContextPresetList } from '../../../lib/preview-context-preset-contract.js';
+import { CONTEXT_PRESETS_CHANGED, presetCompatibility, sameContext, type AppliedContextPreset, type ContextPreset, type ContextPresetList } from '../../../lib/preview-context-preset-contract.js';
 
 const valueText = (row: PreviewContextVariable) => typeof row.value === 'string' ? row.value : JSON.stringify(row.value);
 const toEntries = (rows: PreviewContextVariable[]) => Object.fromEntries(rows.map(r => [r.name, { type: r.type, text: r.value === null ? '' : valueText(r), ...(r.value === null ? { isNull: true } : {}) }]));
@@ -27,6 +27,8 @@ export function usePreviewContext(input: { pluginId: string; projectId?: string;
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [reviewErrors, setReviewErrors] = useState(false);
   const [undo, setUndo] = useState<{ entries: typeof entries; manual: typeof manual; selected: typeof selected; touched: typeof touched; reviewErrors: boolean } | null>(null);
+  /** Names an agent set through context.set, until the person edits them. */
+  const [agentSet, setAgentSet] = useState<Record<string, true>>({});
   const discoveryScope = useRef<string | null>(null);
   const generation = useRef(0);
   const activeScope = useRef(input.scope); activeScope.current = input.scope;
@@ -35,9 +37,14 @@ export function usePreviewContext(input: { pluginId: string; projectId?: string;
   useEffect(() => {
     setEntries({}); setManual([]); setFields([]); setApplied(null); setAppliedPreset(null); setSetup(false); setTab('conversation');
     generation.current++;
-    setPresets([]); setSelected(null); setPresetScope(''); setOrgLabel(''); setPresetError(''); setSaving(false); setTouched({}); setReviewErrors(false); setUndo(null);
+    setPresets([]); setSelected(null); setPresetScope(''); setOrgLabel(''); setPresetError(''); setSaving(false); setTouched({}); setReviewErrors(false); setUndo(null); setAgentSet({});
     return () => { generation.current++; };
   }, [input.scope]);
+  // An agent's contextPresets.save or remove shows up in the picker without a reload.
+  useRealtime(CONTEXT_PRESETS_CHANGED, payload => {
+    const projectId = payload && typeof payload === 'object' ? (payload as { projectId?: unknown }).projectId : undefined;
+    if (presetsEnabled && (!projectId || projectId === input.projectId)) setReload(n => n + 1);
+  });
   useEffect(() => {
     let cancelled = false;
     if (!presetsEnabled) return;
@@ -90,13 +97,13 @@ export function usePreviewContext(input: { pluginId: string; projectId?: string;
   const presetIdentity: AppliedContextPreset | null = selected ? { id: selected.id, name: selected.name, revision: selected.revision, edited } : null;
   const adopt = (values: PreviewContextVariable[]) => {
     const rows = parsePreviewContext(values);
-    setSelected(null); setUndo(null); setTouched({}); setReviewErrors(false);
+    setSelected(null); setUndo(null); setTouched({}); setReviewErrors(false); setAgentSet({});
     setManual(rows.filter(r => !fields.some(f => f.name === r.name)).map(r => ({ name: r.name, label: r.name, type: r.type })));
     setEntries(toEntries(rows));
   };
   const checkpoint = () => setUndo(structuredClone({ entries, manual, selected, touched, reviewErrors }));
   const loadPreset = (preset: ContextPreset | null) => {
-    checkpoint(); setSelected(preset ? structuredClone(preset) : null); setPresetError(''); setTouched({}); setReviewErrors(false);
+    checkpoint(); setSelected(preset ? structuredClone(preset) : null); setPresetError(''); setTouched({}); setReviewErrors(false); setAgentSet({});
     setManual(preset?.fields.filter(f => !f.declared) ?? []);
     setEntries(toEntries(preset?.values ?? []));
   };
@@ -119,14 +126,28 @@ export function usePreviewContext(input: { pluginId: string; projectId?: string;
     } catch (e) { if (scope === activeScope.current && owner === generation.current) setPresetError((e as Error).message); return false; }
     finally { if (scope === activeScope.current && owner === generation.current) setSaving(false); }
   };
-  return { id, scope: input.scope, fields: allFields, entries, setEntries, manual, setManual, applied, appliedPreset, presetIdentity,
+  /** context.set from an agent: a preset, or values that replace (or, with merge, join) the current overrides. The person reviews them before a run. */
+  const applyAgent = (input: { preset?: ContextPreset; values?: PreviewContextVariable[]; merge?: boolean }) => {
+    if (input.preset) {
+      loadPreset(input.preset);
+      setAgentSet(Object.fromEntries(input.preset.values.map(v => [v.name, true as const])));
+    } else {
+      const rows = parsePreviewContext(input.values ?? []);
+      checkpoint(); setSelected(null); setTouched({}); setReviewErrors(false);
+      setManual(prev => [...(input.merge ? prev : []), ...rows.filter(r => !fields.some(f => f.name === r.name) && !(input.merge && prev.some(m => m.name === r.name))).map(r => ({ name: r.name, label: r.name, type: r.type }))]);
+      setEntries(prev => ({ ...(input.merge ? prev : {}), ...toEntries(rows) }));
+      setAgentSet(prev => ({ ...(input.merge ? prev : {}), ...Object.fromEntries(rows.map(r => [r.name, true as const])) }));
+    }
+    setTab('context');
+  };
+  return { id, scope: input.scope, agentSet, applyAgent, clearAgent: (name: string) => setAgentSet(prev => { if (!prev[name]) return prev; const next = { ...prev }; delete next[name]; return next; }), fields: allFields, entries, setEntries, manual, setManual, applied, appliedPreset, presetIdentity,
     markApplied: (v: PreviewContextVariable[], preset = presetIdentity) => { setApplied(parsePreviewContext(v)); setAppliedPreset(preset ? structuredClone(preset) : null); },
     loading, discoveryError, setup, setSetup, tab, setTab, values, error, fieldErrors, compatibilityErrors: compatibility, aggregateErrors: parsed.errors, adopt,
     touched, touch: (name: string) => setTouched(prev => ({ ...prev, [name]: true })), revealErrors: () => setReviewErrors(true), reviewErrors,
     changed: applied !== null && (Boolean(error) || !sameContext(applied, values)), count: Object.keys(entries).length,
     presetsEnabled, presets, selected, edited, presetScope, orgLabel, presetError, presetLoading, saving, savePreset,
     needsReview: Object.keys(compatibility).length > 0, reloadPresets: () => setReload(n => n + 1), loadPreset,
-    reset: () => { checkpoint(); setEntries({}); },
+    reset: () => { checkpoint(); setEntries({}); setAgentSet({}); },
     canUndo: undo !== null, undo: () => { if (!undo) return; setEntries(undo.entries); setManual(undo.manual); setSelected(undo.selected); setTouched(undo.touched); setReviewErrors(undo.reviewErrors); setUndo(null); }
   };
 }

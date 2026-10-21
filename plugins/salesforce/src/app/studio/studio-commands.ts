@@ -25,12 +25,14 @@ export interface StudioCommandTargets {
   };
   /** preview.start / preview.send. */
   preview?: {
-    start(input: { engine?: StudioEngine; contextVariables?: PreviewContextVariable[] }): Promise<void | ControlState> | void | ControlState;
+    start(input: { engine?: StudioEngine; contextVariables?: PreviewContextVariable[]; presetId?: string }): Promise<void | ControlState> | void | ControlState;
     send(input: { text: string; engine?: StudioEngine }): Promise<void | ControlState> | void | ControlState;
   };
   traceFocus?(input: { runId?: string; turn?: number; step?: number }): Promise<void | ControlState> | void | ControlState;
   graphFocus?(node: string): Promise<void | ControlState> | void | ControlState;
   layoutSet?(compact: boolean): void;
+  /** context.set: fills the Preview Context tab with values or a saved preset, for the person to review. */
+  contextSet?(input: { values?: PreviewContextVariable[]; presetId?: string; merge?: boolean }): Promise<void | ControlState> | void | ControlState;
   /** orgTests.open: shows the Org tests tab, on a definition or run when named. */
   orgTestsOpen?(input: { name?: string; runId?: string }): void;
 }
@@ -66,7 +68,7 @@ export function createStudioCommandExecutor(targets: StudioCommandTargets): Stud
     }
     if (command === 'preview.start' || command === 'preview.send') {
       if (!targets.preview) throw unsupported(command);
-      return command === 'preview.start' ? targets.preview.start({ engine: input.engine as StudioEngine | undefined, ...(input.contextVariables !== undefined ? { contextVariables: parsePreviewContext(input.contextVariables) } : {}) }) : targets.preview.send({ text: String(input.text), engine: input.engine as StudioEngine | undefined });
+      return command === 'preview.start' ? targets.preview.start({ engine: input.engine as StudioEngine | undefined, ...(input.contextVariables !== undefined ? { contextVariables: parsePreviewContext(input.contextVariables) } : {}), ...(typeof input.presetId === 'string' ? { presetId: input.presetId } : {}) }) : targets.preview.send({ text: String(input.text), engine: input.engine as StudioEngine | undefined });
     }
     if (command === 'trace.focus') {
       if (!targets.traceFocus) throw unsupported(command);
@@ -79,6 +81,10 @@ export function createStudioCommandExecutor(targets: StudioCommandTargets): Stud
     if (command === 'layout.set') {
       if (!targets.layoutSet) throw unsupported(command);
       targets.layoutSet(input.compact === true); return { compact: input.compact === true };
+    }
+    if (command === 'context.set') {
+      if (!targets.contextSet) throw unsupported(command);
+      return targets.contextSet(typeof input.presetId === 'string' ? { presetId: input.presetId } : { values: parsePreviewContext(input.values), ...(input.merge === true ? { merge: true } : {}) });
     }
     if (command === 'orgTests.open') {
       if (!targets.orgTestsOpen) throw unsupported(command);

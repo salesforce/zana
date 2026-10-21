@@ -9,7 +9,7 @@ import {
 import { STUDIO_TOKENS } from '../studio/studio-tokens.js';
 import { TRACE_PANEL_STYLES, TracePanel } from './TracePanel.js';
 import { PREVIEW_CONTEXT_STYLES, PreviewContextEditor, PreviewContextSetup, PreviewContextTabs, usePreviewContext } from './PreviewContext.js';
-import type { AppliedContextPreset } from '../../../lib/preview-context-preset-contract.js';
+import type { AppliedContextPreset, ContextPreset } from '../../../lib/preview-context-preset-contract.js';
 import { parsePreviewContext, type PreviewContextVariable } from '../../../lib/preview-context.js';
 
 export interface PreviewWorkbenchProps {
@@ -36,7 +36,8 @@ export interface PreviewWorkbenchProps {
   dirty?: boolean;
 }
 
-export interface PreviewCommand { seq: number; type: 'start' | 'send'; text?: string; engine?: StudioEngine; contextVariables?: PreviewContextVariable[] }
+/** start/send drive a run; context (context.set) only fills the Context tab. preset is resolved by the host before it reaches the view. */
+export interface PreviewCommand { seq: number; type: 'start' | 'send' | 'context'; text?: string; engine?: StudioEngine; contextVariables?: PreviewContextVariable[]; preset?: ContextPreset; merge?: boolean }
 
 type SuiteEntry = ScenarioSuite & { sha256?: string };
 /** A started run and the context it was started in, so it is ended against the same project, file and thread. */
@@ -273,15 +274,25 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
   const { command } = props;
   useEffect(() => {
     if (!command || command.seq === handledSeq.current) return;
+    if (command.type === 'context') {
+      handledSeq.current = command.seq;
+      props.onCommandHandled?.(command.seq);
+      context.applyAgent({ ...(command.preset ? { preset: command.preset } : { values: command.contextVariables ?? [] }), ...(command.merge ? { merge: true } : {}) });
+      return;
+    }
     if (command.engine && command.engine !== engine) return;
     if (locked.current) return;
     handledSeq.current = command.seq;
     props.onCommandHandled?.(command.seq);
     void perform(async () => {
       if (liveBlocked) throw new Error('Live preview needs a saved .agent file.');
-      if (!command.contextVariables && context.error) throw Error(context.error);
-      if (command.contextVariables) context.adopt(command.contextVariables);
-      if (command.type === 'start' || !active.current || active.current.engine !== engine) await start(false, command.contextVariables ?? context.values, command.contextVariables ? null : context.presetIdentity);
+      const preset = command.type === 'start' ? command.preset : undefined;
+      if (!command.contextVariables && !preset && context.error) throw Error(context.error);
+      if (preset) context.loadPreset(preset);
+      else if (command.contextVariables) context.adopt(command.contextVariables);
+      const initial = preset?.values ?? command.contextVariables ?? context.values;
+      const identity = preset ? { id: preset.id, name: preset.name, revision: preset.revision, edited: false } : command.contextVariables ? null : context.presetIdentity;
+      if (command.type === 'start' || !active.current || active.current.engine !== engine) await start(false, initial, identity);
       if (command.type === 'send') {
         const text = command.text?.trim();
         if (!text) throw new Error('preview.send needs text.');

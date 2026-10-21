@@ -24,9 +24,14 @@ export interface OrgTestsDeps {
 const NAME = /^[A-Za-z][A-Za-z0-9_]{0,79}$/;
 const RUN_ID = /^[A-Za-z0-9]{15,18}$/;
 const LIST_TTL_MS = 5 * 60_000;
-const DEFINITION_CACHE = 30;
+/** Parsed definitions kept in memory; a details batch fills it, so opening a just-listed test needs no second retrieve. */
+const DEFINITION_CACHE = 60;
 /** Summaries kept across orgs: a few large orgs' worth of definitions. */
 const SUMMARY_CACHE = 5_000;
+/** Summaries stored per org, so a reload lists agents without retrieving every definition again. */
+const STORED_SUMMARIES = 2_000;
+/** Org-wide, not per project: one org's definitions are the same whichever project lists them. */
+const keySummaries = (org: string) => `orgTests:summaries:${org}`;
 const RETRIEVE_TIMEOUT_MS = 120_000;
 const KEY_RUNS = 'orgTests:runs';
 const keyResult = (runId: string) => `orgTests:result:${runId}`;
@@ -208,6 +213,20 @@ export function boundResults<T extends { cases: OrgCaseResult[] }>(run: T, maxBy
 
 const historyOrder = (row: OrgRunRecord) => row.addedAt ?? row.startedAt;
 
+type StoredSummary = Pick<OrgTestDefinitionSummary, 'label' | 'subjectName' | 'subjectType' | 'subjectVersion' | 'caseCount' | 'lastModified'>;
+const summaryFields = ({ lastModified: _version, ...fields }: StoredSummary) => fields;
+/** A stored summary as read back from storage, or null when it is not one. */
+function storedSummary(value: unknown): StoredSummary | null {
+  const row = rec(value);
+  const str = (key: string, max: number) => typeof row[key] === 'string' && row[key] ? { [key]: (row[key] as string).slice(0, max) } : {};
+  if (typeof row.subjectName !== 'string' || !row.subjectName) return null;
+  const caseCount = Number(row.caseCount);
+  return {
+    ...str('label', 300), ...str('subjectName', 300), ...str('subjectType', 100), ...str('subjectVersion', 100), ...str('lastModified', 40),
+    ...(Number.isInteger(caseCount) && caseCount >= 0 ? { caseCount } : {}),
+  };
+}
+
 export function registerOrgTests(studio: StudioServerContext, deps: OrgTestsDeps): void {
   const { zcc } = studio;
   const kv = zcc.storage.kv;
@@ -215,11 +234,49 @@ export function registerOrgTests(studio: StudioServerContext, deps: OrgTestsDeps
   const listCache = new Map<string, { at: number; definitions: OrgTestDefinitionSummary[] }>();
   const definitions = new Map<string, OrgTestDefinition>();
   /** What a retrieve told us about each definition, keyed `${org}\n${name}`; the list rows are enriched from it. */
-  const summaries = new Map<string, Pick<OrgTestDefinitionSummary, 'label' | 'subjectName' | 'subjectType' | 'subjectVersion' | 'caseCount'>>();
+  const summaries = new Map<string, StoredSummary>();
+  /** The lastModifiedDate the latest list reported per `${org}\n${name}`; a summary read from an older version is dropped. */
+  const versions = new Map<string, string>();
   const remember = (key: string, definition: OrgTestDefinition) => {
     summaries.delete(key);
-    summaries.set(key, { label: definition.label, subjectName: definition.subjectName, subjectType: definition.subjectType, subjectVersion: definition.subjectVersion, caseCount: definition.caseCount ?? definition.testCases.length });
+    const lastModified = versions.get(key);
+    summaries.set(key, { label: definition.label, subjectName: definition.subjectName, subjectType: definition.subjectType, subjectVersion: definition.subjectVersion, caseCount: definition.caseCount ?? definition.testCases.length, ...(lastModified ? { lastModified } : {}) });
     while (summaries.size > SUMMARY_CACHE) summaries.delete(summaries.keys().next().value!);
+  };
+  const keep = (key: string, definition: OrgTestDefinition) => {
+    definitions.delete(key);
+    definitions.set(key, definition);
+    while (definitions.size > DEFINITION_CACHE) definitions.delete(definitions.keys().next().value!);
+    remember(key, definition);
+  };
+  /** Orgs whose stored summaries are loaded into memory (once per org and plugin start). */
+  const hydrated = new Map<string, Promise<void>>();
+  const hydrate = (org: string) => {
+    let loading = hydrated.get(org);
+    if (!loading) {
+      loading = (async () => {
+        const stored = rec(await kv.get<unknown>(keySummaries(org)).catch(() => undefined));
+        for (const [name, row] of Object.entries(rec(stored.rows))) {
+          const summary = storedSummary(row);
+          const key = `${org}\n${name}`;
+          if (summary && NAME.test(name) && !summaries.has(key)) summaries.set(key, summary);
+        }
+      })();
+      hydrated.set(org, loading);
+    }
+    return loading;
+  };
+  let persisting: Promise<unknown> = Promise.resolve();
+  /** Stores this org's summaries, newest last and bounded; writes queue so an older snapshot never lands after a newer one. */
+  const persist = (org: string) => {
+    const write = async () => {
+      const prefix = `${org}\n`;
+      const rows = [...summaries].filter(([key]) => key.startsWith(prefix)).slice(-STORED_SUMMARIES);
+      await kv.set(keySummaries(org), { rows: Object.fromEntries(rows.map(([key, row]) => [key.slice(prefix.length), row])) });
+    };
+    const next = persisting.then(write, write);
+    persisting = next.catch(() => undefined);
+    return next.catch(() => undefined);
   };
   let chain: Promise<unknown> = Promise.resolve();
   /** Serializes read-modify-write of the stored history (one in-process queue). */
@@ -355,6 +412,7 @@ export function registerOrgTests(studio: StudioServerContext, deps: OrgTestsDeps
   studio.registerRpc(ORG_TESTS_RPC.list, guard(async args => {
     const { sdk, org } = await access(args, 'orgTests.list');
     const key = cacheKey(org);
+    await hydrate(key);
     const refresh = Boolean(rec(args).refresh);
     let entry = listCache.get(key);
     if (!entry || refresh || studio.deps.now() - entry.at > ttl) {
@@ -377,10 +435,21 @@ export function registerOrgTests(studio: StudioServerContext, deps: OrgTestsDeps
       found.sort((a, b) => (b.lastModified ?? '').localeCompare(a.lastModified ?? '') || a.name.localeCompare(b.name));
       entry = { at: studio.deps.now(), definitions: found };
       listCache.set(key, entry);
+      // A definition edited since its summary was read is read again; one never compared takes the listed version.
+      let stale = false;
+      for (const row of found) {
+        const at = `${key}\n${row.name}`;
+        if (row.lastModified) versions.set(at, row.lastModified);
+        const known = summaries.get(at);
+        if (!known || !row.lastModified || known.lastModified === row.lastModified) continue;
+        if (known.lastModified) { summaries.delete(at); definitions.delete(at); } else summaries.set(at, { ...known, lastModified: row.lastModified });
+        stale = true;
+      }
+      if (stale) await persist(key);
     }
     const enriched = entry.definitions.map(summary => {
       const known = summaries.get(`${key}\n${summary.name}`);
-      return known ? { ...summary, ...known } : summary;
+      return known ? { ...summary, ...summaryFields(known) } : summary;
     });
     return { ok: true, org: orgView(org), definitions: enriched, at: entry.at };
   }));
@@ -388,16 +457,15 @@ export function registerOrgTests(studio: StudioServerContext, deps: OrgTestsDeps
   studio.registerRpc(ORG_TESTS_RPC.definition, guard(async args => {
     const name = parseName(args);
     const { sdk, org } = await access(args, 'orgTests.definition');
+    await hydrate(cacheKey(org));
     const key = `${cacheKey(org)}\n${name}`;
     const cached = definitions.get(key);
     if (cached && !rec(args).refresh) return { ok: true, definition: cached };
     const read = (await retrieveDefinitions(sdk, org, [name])).get(name);
     if (!read) throw new OrgTestsError('not_found', `${name} was not found in ${org.alias}.`);
     if (read instanceof OrgTestsError) throw read;
-    definitions.delete(key);
-    definitions.set(key, read);
-    while (definitions.size > DEFINITION_CACHE) definitions.delete(definitions.keys().next().value!);
-    remember(key, read);
+    keep(key, read);
+    await persist(cacheKey(org));
     return { ok: true, definition: read };
   }));
 
@@ -409,15 +477,17 @@ export function registerOrgTests(studio: StudioServerContext, deps: OrgTestsDeps
     }
     const { sdk, org } = await access(args, 'orgTests.details');
     const prefix = cacheKey(org);
+    await hydrate(prefix);
     const wanted = (names as string[]).filter(name => rec(args).refresh || !summaries.has(`${prefix}\n${name}`));
     if (wanted.length) {
-      for (const [name, read] of await retrieveDefinitions(sdk, org, wanted)) if (!(read instanceof OrgTestsError)) remember(`${prefix}\n${name}`, read);
+      for (const [name, read] of await retrieveDefinitions(sdk, org, wanted)) if (!(read instanceof OrgTestsError)) keep(`${prefix}\n${name}`, read);
+      await persist(prefix);
     }
     const found: OrgTestDefinitionSummary[] = [];
     const missing: string[] = [];
     for (const name of names as string[]) {
       const known = summaries.get(`${prefix}\n${name}`);
-      if (known) found.push({ name, ...known }); else missing.push(name);
+      if (known) found.push({ name, ...summaryFields(known) }); else missing.push(name);
     }
     return { ok: true, definitions: found, missing };
   }));
