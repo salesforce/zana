@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, Copy, X } from 'lucide-react';
-import { copyText } from '../lib/copy-text.js';
+import { copyTextOrFail } from '../lib/copy-text.js';
 
 /** How long the copied / failed icon stays before the button resets. */
 export const CODE_COPY_FEEDBACK_MS = 1500;
 
 type CopyState = 'idle' | 'copied' | 'failed';
 
-const LABELS: Record<CopyState, string> = {
-  idle: 'Copy code',
+/** Announced through the live region; the button's own name stays "Copy code". */
+const STATUS: Record<CopyState, string> = {
+  idle: '',
   copied: 'Copied',
   failed: 'Copy failed'
 };
@@ -23,10 +24,17 @@ const LABELS: Record<CopyState, string> = {
 export function CodeBlockCopyButton({ code }: { code: string }) {
   const [state, setState] = useState<CopyState>('idle');
   const timer = useRef<number | null>(null);
-  useEffect(() => () => {
-    if (timer.current !== null) window.clearTimeout(timer.current);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (timer.current !== null) window.clearTimeout(timer.current);
+    };
   }, []);
   const settle = (next: CopyState) => {
+    // A copy can finish after the block is gone (message re-rendered away).
+    if (!mounted.current) return;
     setState(next);
     if (timer.current !== null) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
@@ -34,7 +42,6 @@ export function CodeBlockCopyButton({ code }: { code: string }) {
       setState('idle');
     }, CODE_COPY_FEEDBACK_MS);
   };
-  const label = LABELS[state];
   return (
     <>
       <button
@@ -42,12 +49,12 @@ export function CodeBlockCopyButton({ code }: { code: string }) {
         className="inbox-md-code-copy"
         data-testid="code-block-copy"
         data-state={state}
-        aria-label={label}
-        title={label}
+        aria-label="Copy code"
+        title="Copy code"
         onClick={(event) => {
           // Copying shouldn't also select or open a surrounding card/row.
           event.stopPropagation();
-          copyText(code).then(
+          copyTextOrFail(code).then(
             () => settle('copied'),
             (error: unknown) => {
               console.warn('[code-block-copy] clipboard write failed', error);
@@ -58,9 +65,10 @@ export function CodeBlockCopyButton({ code }: { code: string }) {
       >
         {state === 'copied' ? <Check size={14} aria-hidden /> : state === 'failed' ? <X size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
       </button>
-      {/* A focused button's label change isn't announced; this is. Empty while
-          idle so the block's text (and thread search) is unchanged. */}
-      <span className="sr-only" role="status" aria-live="polite">{state === 'idle' ? '' : label}</span>
+      {/* The one announcement of the result: the button's name doesn't change,
+          so screen readers don't hear it twice. Empty while idle so the
+          block's text (and thread search) is unchanged. */}
+      <span className="sr-only" role="status" aria-live="polite">{STATUS[state]}</span>
     </>
   );
 }

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DocContent, fencedCodeText, MarkdownContent } from './MarkdownContent';
 
 const copy = vi.hoisted(() => vi.fn(async () => undefined));
-vi.mock('../lib/copy-text.js', () => ({ copyText: copy }));
+vi.mock('../lib/copy-text.js', () => ({ copyTextOrFail: copy }));
 
 afterEach(() => {
   cleanup();

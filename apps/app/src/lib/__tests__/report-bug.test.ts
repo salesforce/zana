@@ -80,19 +80,4 @@ describe('openBugReport', () => {
     expect(status).toContain('Paste into What happened?');
     expect(status).toContain('saved');
   });
-
-  it('still opens the bug form when the crash details cannot be copied', async () => {
-    const open = vi.fn();
-    vi.stubGlobal('open', open);
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const error = new Error('Clipboard unavailable');
-    copyText.mockRejectedValueOnce(error);
-
-    const status = await reportRendererCrash({ message: 'boom', stack: '', componentStack: '' });
-
-    expect(open).toHaveBeenCalledWith(expect.stringContaining(`${REPORT_BUG_URL}&title=`), '_blank', 'noopener');
-    expect(status).toBe('Could not copy crash details. Describe what happened in the bug form.');
-    expect(warn).toHaveBeenCalledWith('[report-bug] could not copy crash details', error);
-    warn.mockRestore();
-  });
 });

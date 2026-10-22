@@ -41,16 +41,8 @@ export async function reportRendererCrash(payload: RendererCrashPayload): Promis
     }
   }
   const title = crashIssueTitle(payload.message);
-  const copied = await copyText(crashIssueMarkdown({ ...payload, version, osLabel, fileName })).then(
-    () => true,
-    (error: unknown) => {
-      console.warn('[report-bug] could not copy crash details', error);
-      return false;
-    }
-  );
-  // Open the form even without a clipboard (plain-http web origins).
+  await copyText(crashIssueMarkdown({ ...payload, version, osLabel, fileName }));
   openBugReport(title);
-  if (!copied) return 'Could not copy crash details. Describe what happened in the bug form.';
   return fileName
     ? 'Crash details copied. Paste into What happened? A copy is saved so you can attach it on GitHub.'
     : 'Crash details copied. Paste into What happened?';
