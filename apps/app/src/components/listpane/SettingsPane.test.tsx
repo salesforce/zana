@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   dismiss: null as (() => void) | null,
+  pluginList: vi.fn(async () => []),
   ui: {
     settingsTab: 'global',
     setSettingsAnchor: vi.fn(),
@@ -36,8 +37,12 @@ vi.mock('../../lib/settings-search/snapshot.js', () => ({
   }
 }));
 vi.mock('../mobile-nav-context.js', () => ({ useMobileNavDismiss: () => h.dismiss }));
+vi.mock('../../lib/product-client.js', () => ({
+  product: { pluginApps: { list: h.pluginList, getSettings: async () => ({ descriptors: {}, values: {} }) } }
+}));
 
 import { SettingsPane, groupHitsByPage, shouldAutofocusSettingsSearch } from './SettingsPane.js';
+import { ensureSettingsSearchProviders } from '../../lib/settings-search/runtime.js';
 import type { SettingsSearchHit } from '../../lib/settings-search/index.js';
 
 function Location() {
@@ -61,7 +66,12 @@ beforeEach(() => {
   h.ui.settingsAnchor = null;
   vi.clearAllMocks();
 });
-afterEach(cleanup);
+afterEach(async () => {
+  cleanup();
+  const runtime = ensureSettingsSearchProviders();
+  await act(async () => { await runtime.prefetchPluginSettings(); });
+  runtime.dispose();
+});
 
 describe('groupHitsByPage', () => {
   const hit = (id: string, section: string, tier: 1 | 2 | 3): SettingsSearchHit =>
@@ -98,6 +108,7 @@ describe('search focus on entering Settings', () => {
   it('focuses the search box when Settings opens, so typing goes straight into it', () => {
     mount();
     expect(document.activeElement).toBe(search());
+    expect(h.pluginList).toHaveBeenCalledTimes(1);
     // Moving between sections keeps the rail mounted and never re-takes focus.
     fireEvent.click(screen.getByRole('link', { name: 'Terminal' }));
     const other = document.createElement('button');
