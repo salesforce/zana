@@ -9,9 +9,11 @@ test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
 // clipboard from Electron main to prove the exact text arrived.
 test('code block copy button writes the exact fence body to the system clipboard', async ({ app }) => {
   const { window } = app;
+  // No trailing spaces: thread messages drop them before rendering
+  // (extractInlineThreadImages), so the block never shows them.
   const code = [
     'function greet(name) {',
-    '\tconst msg = `Hi ${name} & <friends>`;  ',
+    '\tconst msg = `Hi ${name} & <friends>`;',
     '    return msg; // it’s fine',
     '}',
     ''
