@@ -131,6 +131,51 @@ describe('PeerSshd', () => {
     await expect(sshd.ensure()).rejects.toThrow('ssh_remote_login_off');
   });
 
+  it('tightens a loose directory, re-mints a corrupt host key, and tolerates a stale sshd that already exited', async () => {
+    const dir = await fresh();
+    const first = await make(dir).sshd.ensure();
+    daemons.splice(0).forEach((d) => d.dispose());
+    const { chmod } = await import('node:fs/promises');
+    await chmod(dir, 0o755);
+    await writeFile(join(dir, 'host_key.pub'), 'not a key\n');
+    await writeFile(join(dir, 'sshd.pid'), '779\n');
+    const kill = vi.fn(() => { throw new Error('ESRCH'); });
+    const again = make(dir, { commandOf: async () => `/usr/sbin/sshd -D -e -f ${join(dir, 'sshd_config')}`, kill });
+    const second = await again.sshd.ensure();
+    expect(kill).toHaveBeenCalledWith(779);
+    expect((await stat(dir)).mode & 0o777).toBe(0o700);
+    expect(second.hostKey).not.toBe(first.hostKey);
+    expect(second.port).toBe(first.port);
+  });
+
+  it('cleans up its temp file and fails when a write cannot be published', async () => {
+    const dir = await fresh();
+    const { mkdir, readdir } = await import('node:fs/promises');
+    await mkdir(join(dir, 'port'), { recursive: true });
+    await writeFile(join(dir, 'port', 'keep'), '');
+    await expect(make(dir).sshd.ensure()).rejects.toThrow();
+    expect((await readdir(dir)).filter((name) => name.includes('.zana-'))).toEqual([]);
+  });
+
+  it('stops probing once aborted', async () => {
+    const abort = new AbortController();
+    const probeBanner = vi.fn(async () => { abort.abort(); return 'refused' as const; });
+    const { sshd, procs } = make(await fresh(), { probeBanner });
+    await expect(sshd.ensure(abort.signal)).rejects.toThrow('ssh_remote_login_off');
+    expect(probeBanner).toHaveBeenCalledTimes(1);
+    expect(procs[0]!.killed).toBe(true);
+  });
+
+  it('a disposed daemon does not restart after its sshd exits', async () => {
+    const { sshd, procs, spawnSshd } = make(await fresh());
+    await sshd.ensure();
+    const proc = procs[0]!;
+    sshd.dispose();
+    proc.exit(1);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(spawnSshd).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects an unsafe user name', () => {
     expect(() => new PeerSshd({ directory: '/tmp/x', user: 'bad user' })).toThrow('invalid sshd user');
   });
