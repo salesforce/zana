@@ -20,6 +20,7 @@ import {
   fullRuntimeOptions,
   waitForRuntimeState,
   waitForThreadAgentMessageText,
+  waitForThreadTurnCompleted,
 } from "./test/runtime-test-harness.js";
 import { promptTextInput } from "./test/prompt-input.js";
 import type {
@@ -1576,6 +1577,15 @@ rl.on("line", (line) => {
         providerId: "codex",
         runtime,
         text: "before reap",
+        threadId: "t1",
+      });
+      // The reaper keys idleness off turn/completed, which the provider writes
+      // as a separate stdout line after the agent message; under load the two
+      // arrive in different reads.
+      await waitForThreadTurnCompleted({
+        events,
+        providerId: "codex",
+        runtime,
         threadId: "t1",
       });
 
