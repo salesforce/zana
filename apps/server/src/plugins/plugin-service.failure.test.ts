@@ -139,10 +139,15 @@ describe('plugin service responsiveness failures', () => {
     const starting = service.start();
     await vi.waitFor(() => expect(service.get('custom-instructions')?.toolPolicy).toBe('unknown'));
     await vi.waitFor(() => expect(state.scanStarted).toHaveBeenCalled());
-    await service.disable('custom-instructions');
-    expect(service.get('custom-instructions')).toMatchObject({ enabled: false, status: 'disabled' });
-    deferred.resolve();
-    await starting;
+    const disabled = vi.fn();
+    const disabling = service.disable('custom-instructions').then(disabled);
+    try {
+      // Disable invalidates the pending load immediately, then waits behind
+      // the installation's lifecycle lock before persisting the final state.
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(disabled).not.toHaveBeenCalled();
+    } finally { deferred.resolve(); }
+    await Promise.all([starting, disabling]);
     expect(service.get('custom-instructions')).toMatchObject({ enabled: false, status: 'disabled' });
     expect(state.runtimes).toHaveLength(0);
   });
