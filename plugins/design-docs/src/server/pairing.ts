@@ -313,6 +313,7 @@ export class DesignDocPairing {
     const present = new Set(connections.map((connection) => connection.computerId));
     for (const peerId of [...this.disabledPeers]) if (!present.has(peerId)) this.disabledPeers.delete(peerId);
     for (const computerId of [...this.lastUse.keys()]) if (!present.has(computerId)) this.lastUse.delete(computerId);
+    await this.releaseUnused(connections);
     // A new approved use wakes reconciliation immediately. Set aside an obsolete two-member group before auto-enable so the
     // new connection does not wait for the 30-second retry tick while both computers hold stale removal state.
     this.setAsideStaleSetup();
@@ -324,6 +325,26 @@ export class DesignDocPairing {
     this.setupError = failure ? this.message(failure) : null;
     if (failure) this.logOnce('setup', `peer setup step failed: ${this.setupError}`);
     await this.reportStatusNotes(connections).catch((error) => { if (!signal.aborted) this.logOnce('link-notes', `reporting connection status failed: ${this.message(error)}`); });
+  }
+
+  /**
+   * A use ended (Stop using on either computer) is final for that use: every local stop always releases core's use too, so
+   * once core reports the connection unused, the local stop has done its job. Cleared here, the next approved use (whichever
+   * computer asked for it) sets sync up again. The other computer's Stop using only revokes this side's core use and grants,
+   * so a sync group that still lists that computer is left here too; otherwise the re-used computer counts as enrolled and
+   * this side never negotiates while the other waits on it.
+   */
+  private async releaseUnused(connections: PeerConnection[]): Promise<void> {
+    const unused = new Set(connections.filter((connection) => !connection.usedByThisPlugin).map((connection) => connection.computerId));
+    for (const peerId of [...this.disabledPeers]) if (unused.has(peerId)) this.disabledPeers.delete(peerId);
+    if (this.enabling || this.revoking) return;
+    const roster = this.group.liveRoster(), self = this.group.localPeerId();
+    const stale = roster?.members.filter((member) => member.machineId !== self && unused.has(member.machineId) && !isRetiring(roster, member.replicaId)) ?? [];
+    for (const member of stale) {
+      this.logOnce(`unused:${member.machineId}`, 'leaving the sync group with a computer this plugin no longer uses');
+      await this.detachConnection(member.machineId);
+      this.disabledPeers.delete(member.machineId);
+    }
   }
 
   /**

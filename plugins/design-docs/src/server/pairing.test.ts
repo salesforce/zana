@@ -6,7 +6,7 @@ import { bootstrapScope, DesignDocPairing, lifecycleReasonOf, readableError } fr
 import { capacityRequestId, DesignDocPeerGroup, MAX_PERMANENT_JOB_ATTEMPTS } from './peer-group.js';
 import { DesignDocStore } from './store.js';
 import { createTestDatabase } from './test-db.js';
-import { admissionReference, appendSeat, ownedSeats, mergeRosters, transferSeat, requestRetirement, closeRetirement, completeRetirements, historicalMembers } from './peer-slots.js';
+import { admissionReference, appendSeat, ownedSeats, mergeRosters, transferSeat, requestRetirement, closeRetirement, completeRetirements, historicalMembers, isRetiring } from './peer-slots.js';
 
 const disposals: Array<() => void> = [];
 afterEach(() => { disposals.splice(0).forEach((dispose) => dispose()); });
@@ -976,6 +976,39 @@ describe('DD core connection pairing', () => {
     state.list = [conn('b')];
     await a.pairing.reconcile();
     await vi.waitFor(() => expect(a.peers.enable).toHaveBeenCalled());
+  });
+
+  it('a local stop ends with the use: a use the other computer asks for, approved here in core, pairs again', async () => {
+    const net = network(), a = net.app('a'), b = net.app('b'); net.link(a, b);
+    const state = { list: [conn('b')] };
+    withConnections(a, state);
+    await a.pairing.revoke('b');
+    a.peers.enable.mockClear();
+    // Core reports the use released; the new use is approved through core, never through this plugin's useConnection.
+    state.list = [conn('b', { usedByThisPlugin: false })];
+    await a.pairing.reconcile();
+    state.list = [conn('b')];
+    await a.pairing.reconcile();
+    await vi.waitFor(() => expect(a.peers.enable).toHaveBeenCalled());
+  });
+
+  it('Stop using on the other computer leaves the group here, so using it again pairs instead of counting it enrolled', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const net = network(), a = net.app('a'), b = net.app('b'); await net.found(a, b);
+      const state = { list: [conn('b')] };
+      withConnections(a, state);
+      // Still used and enrolled: nothing is left.
+      await a.pairing.reconcile();
+      expect(a.group.sync.localRepository()!.groupId).not.toBeNull();
+      state.list = [conn('b', { usedByThisPlugin: false })];
+      await a.pairing.reconcile();
+      expect(a.group.liveRoster()?.members.some((member) => member.machineId === 'b' && !isRetiring(a.group.roster()!, member.replicaId)) ?? false).toBe(false);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('no longer uses'));
+      a.peers.enable.mockClear();
+      state.list = [conn('b')];
+      await vi.waitFor(async () => { await a.pairing.reconcile(); expect(a.peers.enable).toHaveBeenCalledWith('b', expect.anything()); });
+    } finally { warn.mockRestore(); }
   });
 
   it('revoke survives core refusing to release the use, and still disables sync', async () => {
