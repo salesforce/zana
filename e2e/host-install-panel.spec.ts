@@ -1,7 +1,7 @@
 import type { Route } from '@playwright/test';
 import { test, expect } from './fixtures/app.js';
 
-test.use({ isolateBundledCatalog: true });
+test.use({ isolateBundledCatalog: true, launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
 
 test('remote daemon installation uses the notification panel styling with bounded logs and readable errors', async ({ app }, testInfo) => {
   const win = app.window;
@@ -47,7 +47,7 @@ test('remote daemon installation uses the notification panel styling with bounde
   for (const theme of ['light', 'dark'] as const) {
     await win.evaluate(value => window.cc.config.set({ theme: value }), theme);
     await expect(win.locator('html')).toHaveAttribute('data-theme', theme);
-    expect(await panel.evaluate(element => element.getBoundingClientRect().height < 500)).toBe(true);
+    expect(await panel.evaluate(element => element.getBoundingClientRect().height < 700)).toBe(true);
     expect(await panel.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
     await win.screenshot({ path: testInfo.outputPath(`host-install-${theme}.png`), animations: 'disabled' });
   }
@@ -82,4 +82,46 @@ test('remote daemon installation uses the notification panel styling with bounde
   await reply!.fulfill({ contentType: 'application/x-ndjson', body: JSON.stringify({ type: 'done', hostId: 'install-fixture' }) + '\n' });
   await expect(panel.getByRole('status')).toHaveText('Reconnected');
   await expect(panel).toHaveCount(0);
+});
+
+test('Fix with agent opens a normal local conversation with redacted connection diagnostics', async ({ app }) => {
+  const win = app.window;
+  const remote = { id: 'repair-fixture', name: 'educational-roadrunner', type: 'persistent', status: 'disconnected',
+    maxPermissionMode: 'full', isPrimary: false, canRepairViaSsh: true, lastSeenAt: null, lastRejectedProtocolVersion: null, createdAt: 1, updatedAt: 1 };
+  let primaryId = '';
+  await win.route('**/api/v1/hosts', async route => {
+    const response = await route.fetch();
+    const hosts = await response.json();
+    primaryId = hosts.find((host: { isPrimary: boolean }) => host.isPrimary)?.id ?? '';
+    await route.fulfill({ json: [...hosts, remote] });
+  });
+  await win.route('**/api/v1/relay/renew-join', route => route.fulfill({ json: {} }));
+  await win.route('**/api/v1/hosts/repair-fixture/repair', route => route.fulfill({ contentType: 'application/x-ndjson', body: [
+    { type: 'log', text: 'SSH connected\n--join-code zcde_private-code\nhostKey=private-key-value' },
+    { type: 'stage', stage: 'install', status: 'failed', reason: 'Existing machine enrollment belongs to another server' },
+    { type: 'error', code: 'install_failed', message: 'Existing machine enrollment belongs to another server', pairingCommand: 'private-pairing-command' }
+  ].map(event => JSON.stringify(event)).join('\n') + '\n' }));
+  await win.goto(`${new URL(win.url()).origin}/settings/machines`);
+  await win.getByTestId('machine-reconnect-repair-fixture').click();
+  const panel = win.getByTestId('host-install-drawer');
+  await expect(panel.getByRole('button', { name: 'Fix with agent' })).toBeVisible();
+  await expect(panel).toContainText('Runs on this computer');
+  const created = win.waitForResponse(response => response.url().endsWith('/api/v1/threads') && response.request().method() === 'POST');
+  await panel.getByRole('button', { name: 'Fix with agent' }).click();
+  const response = await created;
+  const input = response.request().postDataJSON();
+  expect(input.hostId).toBe(primaryId);
+  expect(input.hostId).not.toBe(remote.id);
+  expect(input.environment).toEqual({ kind: 'unmanaged' });
+  expect(input.input).toContain('zcc machine repair');
+  expect(input.input).toContain('repair-fixture');
+  expect(input.input).toContain('Existing machine enrollment belongs to another server');
+  for (const secret of ['zcde_private-code', 'private-key-value', 'private-pairing-command']) expect(input.input).not.toContain(secret);
+  const body = await response.json();
+  expect(body.ok, JSON.stringify(body)).toBe(true);
+  expect(body.value.hostId).toBe(primaryId);
+  expect(body.value.projectId).toBe(input.projectId);
+  await expect(panel).toHaveCount(0);
+  await expect(win.getByTestId('thread-modal')).toBeVisible();
+  await expect(win.getByTestId('thread-modal')).toContainText('Repair educational-roadrunner');
 });

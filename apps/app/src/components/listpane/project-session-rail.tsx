@@ -156,7 +156,7 @@ export function ProjectSessionRail({
         className="sidebar-projects-body"
         hidden={collapsed}
       >
-        {projectRow ? <div className="project-item" onContextMenu={(event) => {
+        {projectRow ? <div className="project-item" data-session-move-project={project.id} onContextMenu={(event) => {
           event.preventDefault();
           event.stopPropagation();
           showProjectMenu(event.clientX, event.clientY);

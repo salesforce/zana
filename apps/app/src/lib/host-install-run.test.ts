@@ -21,6 +21,17 @@ async function load() {
 describe('host install run', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it('retains the exact repair target through retries and never reuses it for a different drawer', async () => {
+    const { runHostInstallWithDrawer, retryLastHostInstall, lastHostInstallRepairTarget } = await load();
+    expect(lastHostInstallRepairTarget(null)).toBeNull();
+    await runHostInstallWithDrawer({ kind: 'fix', target: 'box', repairTarget: { hostId: 'host-1' }, run: async () => [{ ok: false }] as never });
+    await retryLastHostInstall();
+    expect(lastHostInstallRepairTarget('box')).toEqual({ hostId: 'host-1' });
+    expect(lastHostInstallRepairTarget('other')).toBeNull();
+    await runHostInstallWithDrawer({ kind: 'install', target: 'box', run: async () => [{ ok: false }] as never });
+    expect(lastHostInstallRepairTarget('box')).toBeNull();
+  });
+
   it('retryLastHostInstall returns null before any run', async () => {
     const { retryLastHostInstall } = await load();
     await expect(retryLastHostInstall()).resolves.toBeNull();

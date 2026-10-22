@@ -66,6 +66,36 @@ afterEach(async () => {
 });
 
 describe('product HTTP', () => {
+  it('validates project moves and preserves status codes at the HTTP boundary', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-move-'));
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [
+      { id: 'p1', name: 'Source', path: dataDir, createdAt: 1, lastActiveAt: 1 },
+      { id: 'p2', name: 'Destination', path: dataDir, createdAt: 1, lastActiveAt: 1 }
+    ] }));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    const host = upsertHost(server.ctx.db, { name: 'Move host', hostKeyHash: 'm'.repeat(64), isPrimary: true });
+    const thread = createConversationThread(server.ctx.db, { projectId: 'p1', hostId: host.id, providerId: 'test', status: 'idle' });
+    const move = (body: unknown, id = thread.id) => fetch(`${server!.url}api/v1/threads/${id}/move`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body)
+    });
+    const input = { projectId: 'p2', expectedProjectId: 'p1' };
+    for (const invalid of [{ projectId: 'p2' }, { ...input, stop: 'yes' }, { ...input, cwd: '/arbitrary' }, { ...input, projectId: '' }]) {
+      expect((await move(invalid)).status).toBe(400);
+    }
+    const absent = await move(input, 'missing');
+    expect(absent.status).toBe(404);expect(await absent.json()).toMatchObject({ code: 'unknown-thread' });
+    const stale = await move({ ...input, expectedProjectId: 'old-project' });
+    expect(stale.status).toBe(409);expect(await stale.json()).toMatchObject({ code: 'project-changed' });
+    const unknown = await move({ ...input, projectId: 'unregistered' });
+    expect(unknown.status).toBe(404);expect(await unknown.json()).toMatchObject({ code: 'unknown-project' });
+    updateConversationThreadStatus(server.ctx.db, thread.id, 'active');
+    const running = await move(input);
+    expect(running.status).toBe(409);expect(await running.json()).toMatchObject({ code: 'session-running' });
+    updateConversationThreadStatus(server.ctx.db, thread.id, 'idle');
+    const noop = await move({ ...input, projectId: 'p1' });
+    expect(noop.status).toBe(200);expect(await noop.json()).toMatchObject({ thread: { id: thread.id, projectId: 'p1' } });
+  });
+
   it('routes GET and HEAD /file-preview/html to the HTML preview sender and reports its failures', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-html-preview-'));
     writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [] }));

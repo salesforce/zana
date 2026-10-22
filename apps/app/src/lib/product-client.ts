@@ -963,6 +963,9 @@ function httpProduct(): Pick<
         });
         return body;
       },
+      move: (threadId, input) => apiJson(`/threads/${encodeURIComponent(threadId)}/move`, {
+        method: 'POST', body: JSON.stringify(input)
+      }),
       closeFollowup: async (threadId) => {
         const body = await apiJson<{ ok: boolean; summarized: number; followedUp: number }>(
           `/threads/${encodeURIComponent(threadId)}/close-followup`,

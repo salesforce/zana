@@ -699,6 +699,7 @@ export function ProjectsList({
         <>
           <div
             className="project-item"
+            data-session-move-project={p.id}
             style={projectDropId === p.id ? { outline: '1px solid var(--accent)', borderRadius: 6 } : undefined}
             onDragOver={(event) => {
               const source = projects.find((project) => project.id === draggedProjectId);

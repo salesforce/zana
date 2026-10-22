@@ -338,7 +338,7 @@ PRODUCT API (app must be running — ZCC_SERVER_URL, default http://127.0.0.1:87
   thread open <id> [--file PATH] [--source workspace|thread-storage] [--line N]
   thread notifications <id> [inherit|all|input-only|muted]
   connect shares|expose|unexpose  Manage private dev-server previews
-  machine list|show|join-code|rename|remove|provider-cli
+  machine list|show|connect|install|repair|join-code|rename|remove|provider-cli
   project list|show|create|files|content|skills|processes
   projects ls              Alias of project list
   skill list|show|files|cli-skills-status|install-cli-skills

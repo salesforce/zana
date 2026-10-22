@@ -134,6 +134,7 @@ export {
   type ApplyConversationThreadLifecycleEventOutcome,
   type ApplyConversationThreadLifecycleEventArgs
 } from './data/conversation-threads.js';
+export { relocateConversationThread } from './data/conversation-threads.js';
 export {
   appendThreadEvent,
   listThreadEvents,

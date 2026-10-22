@@ -1,4 +1,5 @@
 import type { MouseEvent } from 'react';
+import { MoreHorizontal } from 'lucide-react';
 import { ThreadProcessBadge } from '../ThreadProcessBadge.js';
 import type { TerminalSession } from '@zana-ai/zcc-domain/product';
 import { profileIcon } from '../../lib/profileIcon.js';
@@ -169,6 +170,10 @@ export function ProjectThreadRailRow({
         ) : null}
       </button>
       <ThreadArchiveQuickAction thread={thread} />
+      <button type="button" className="project-terminal-more" aria-label={`Actions for ${title}`}
+        onPointerDown={event => event.stopPropagation()} onClick={onContextMenu}>
+        <MoreHorizontal size={13} aria-hidden="true" />
+      </button>
     </div>
   );
 }

@@ -9,6 +9,23 @@ import {
   sshPairingArgv,
   sshPairingCommand
 } from './machine-pairing.js';
+import { redactMachineDiagnostic } from './machine-pairing.js';
+
+it.each([
+  ['--join-code ABCD-ABCD --host-id host', 'ABCD-ABCD'],
+  ['--connect-credential="credential-value"', 'credential-value'],
+  ['hostKey: "key-value"', 'key-value'],
+  ['api_key=api-value', 'api-value'],
+  ['Authorization: Bearer bearer-value', 'bearer-value'],
+  ['https://user:pass@example.test/', 'user:pass'],
+  ['zcde_enrollment zcrs_session', 'zcde_enrollment'],
+  ['-----BEGIN OPENSSH PRIVATE KEY-----\nprivate-value\n-----END OPENSSH PRIVATE KEY-----', 'private-value'],
+  ['-----BEGIN RSA PRIVATE KEY-----\nprivate-value', 'private-value']
+])('redacts enrollment and authentication data: %s', (text, secret) => {
+  const output = redactMachineDiagnostic(text);
+  expect(output).not.toContain(secret);
+  expect(output).toContain('[redacted');
+});
 
 const GOLDEN =
   "ssh -o ExitOnForwardFailure=yes -R 18782:127.0.0.1:8780 limited-pony 'curl -fL --progress-meter --connect-timeout 10 --max-time 60 --retry 2 http://127.0.0.1:18782/install.sh | ZCC_HOST_ENROLLMENT_PROVENANCE=tunnel sh -s -- --join-code zcde_abc --host-id 028c8627-a6d8-4c62-964e-8f6b35cb2335 --server http://127.0.0.1:18782 && echo Host daemon installed. Leave this SSH session open to keep the tunnel. && sleep infinity'";

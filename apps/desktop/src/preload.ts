@@ -463,6 +463,7 @@ const api: CcApi = {
     list: async () => [],
     get: async () => ({ thread: {} }),
     send: async () => ({ ok: false }),
+    move: async () => { throw new Error('threads require the product server'); },
     stop: async () => ({ ok: false }),
     stopBackground: async () => ({ ok: false }),
     implementPlan: async () => ({ ok: false }),

@@ -16,6 +16,7 @@ import { SHOW_THREAD_FORK } from './thread/ThreadDetailOverflow.js';
 import { shouldShowThreadStop } from './thread/thread-timeline-model.js';
 import { clampMenuAnchor } from './agentCardActions.js';
 import { PromptModal } from './PromptModal.js';
+import { useSessionMove } from '../lib/session-move.js';
 import { ThreadNotificationLevelControl } from './thread/ThreadNotificationLevel.js';
 import { isUnreadThread } from '../lib/unread-threads.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
@@ -315,6 +316,10 @@ export function ThreadCardMenu({ menu, setMenu }: ThreadCardMenuProps) {
         </button>
       )}
       <div className="tab-context-sep" />
+      {!thread.archivedAt && <button type="button" disabled={busy} onClick={() => {
+        setMenu(null);
+        useSessionMove.getState().open(thread.id);
+      }}>Move to project…</button>}
       <button type="button" disabled={busy} onClick={() => void run(thread.pinnedAt ? 'unpin' : 'pin')}>
         {thread.pinnedAt ? 'Unpin' : 'Pin'}
       </button>

@@ -37,6 +37,31 @@ afterEach(() => {
 });
 
 describe('split drag lifecycle', () => {
+  it('highlights a project drop, calls its action, and clears its hover and styles', () => {
+    const drop = vi.fn(); const hover = vi.fn();
+    const project = document.createElement('div');document.body.append(project);
+    const config = start({ externalDrop: { resolve: () => ({ id: 'p2', element: project, label: 'Move to Two', allowed: true }), onDrop: drop, onHover: hover } });
+    move();
+    expect(project.classList.contains('session-move-drop-allowed')).toBe(true);
+    expect(document.querySelector('.split-drag-ghost')?.textContent).toBe('Move to Two');
+    up();
+    expect(drop).toHaveBeenCalledExactlyOnceWith('p2');expect(config.onDrop).not.toHaveBeenCalled();
+    expect(project.className).toBe('');expect(hover).toHaveBeenLastCalledWith(null);
+    expect(config.onEnd).toHaveBeenCalledWith({ dropped: true });
+  });
+
+  it('revalidates blocked project drops and still supports split panes after leaving the project', () => {
+    const project = document.createElement('div');document.body.append(project);
+    const drop = vi.fn();let allowed = true;let external = true;
+    const config = start({ externalDrop: { resolve: () => external ? ({ id: 'p2', element: project, label: 'Move', allowed }) : null, onDrop: drop } });
+    move();allowed = false;up();
+    expect(drop).not.toHaveBeenCalled();expect(config.onDrop).not.toHaveBeenCalled();
+    expect(project.className).toBe('');
+    const second = start({ externalDrop: { resolve: () => external ? ({ id: 'p2', element: project, label: 'Move', allowed: true }) : null, onDrop: drop } });
+    move();external = false;move();up();
+    expect(second.onDrop).toHaveBeenCalled();expect(drop).not.toHaveBeenCalled();expect(project.className).toBe('');
+  });
+
   it('preserves clicks below threshold and ignores other pointers', () => {
     const config = start();
     move(100);

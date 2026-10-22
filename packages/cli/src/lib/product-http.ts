@@ -29,6 +29,7 @@ export async function productRequest<T>(
     body?: unknown;
     query?: Record<string, string | undefined>;
     deps?: ProductHttpDeps;
+    signal?: AbortSignal;
   }
 ): Promise<{ ok: true; status: number; data: T } | { ok: false; result: CliResult }> {
   const base = resolveServerUrl(opts?.deps);
@@ -45,6 +46,7 @@ export async function productRequest<T>(
   try {
     response = await fetchImpl(url, {
       method,
+      ...(opts?.signal ? { signal: opts.signal } : {}),
       headers: Object.keys(headers).length > 0 ? headers : undefined,
       body: opts?.body === undefined ? undefined : JSON.stringify(opts.body)
     });

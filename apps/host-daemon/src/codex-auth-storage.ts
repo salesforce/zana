@@ -1,58 +1,32 @@
-import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { open, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parse } from 'smol-toml';
 import { HostCommandError } from './host-command-error.js';
+import { readCodexNativeAuth, type CodexNativeAuthOptions } from './codex-auth-native.js';
 
 const AUTH_MAX_BYTES = 256 * 1024;
-const KEYCHAIN_TIMEOUT_MS = 8_000;
 const pendingKeychainReads = new Map<string, Promise<string | null>>();
 
 export type CodexKeyringReader = (codexHome: string) => Promise<string | null>;
 
-// Only the trusted host calls this. Neither the executable nor the Keychain
-// service/account is supplied by the renderer. Never log the child error: it
-// can include credential-bearing stdout, even when the command failed.
+// Coalesce concurrent reads, without retaining completed credentials or failures.
+// Codex owns access to its configured OS store on every supported platform.
 export async function readCodexKeyring(
   codexHome: string,
-  deps: { platform?: NodeJS.Platform; execFileImpl?: typeof execFile } = {}
+  options: CodexNativeAuthOptions = {}
 ): Promise<string | null> {
-  if ((deps.platform ?? process.platform) !== 'darwin') {
-    throw new HostCommandError('codex_keyring_unavailable',
-      'This host cannot read Codex’s credential store. Configure OPENAI_API_KEY on the host for voice input.');
-  }
   const canonicalHome = await realpath(codexHome).catch(() => codexHome);
-  // Matches Codex's direct keyring backend (login/src/auth/storage.rs).
-  const account = `cli|${createHash('sha256').update(canonicalHome).digest('hex').slice(0, 16)}`;
-  const pending = pendingKeychainReads.get(account);
+  const pending = pendingKeychainReads.get(canonicalHome);
   if (pending) return pending;
   if (pendingKeychainReads.size >= 4) {
     throw new HostCommandError('codex_keyring_unavailable', 'Credential access is busy. Try voice input again shortly.');
   }
-  const read = new Promise<string | null>((resolve, reject) => {
-    (deps.execFileImpl ?? execFile)('/usr/bin/security', [
-      'find-generic-password', '-s', 'Codex Auth', '-a', account, '-w'
-    ], {
-      cwd: canonicalHome,
-      encoding: 'utf8',
-      timeout: KEYCHAIN_TIMEOUT_MS,
-      killSignal: 'SIGKILL',
-      maxBuffer: AUTH_MAX_BYTES,
-      windowsHide: true
-    }, (error, stdout) => {
-      if (!error) return resolve(stdout.trim() || null);
-      // errSecItemNotFound (-25300) is returned by security as exit status 44.
-      if (error.code === 44) return resolve(null);
-      reject(new HostCommandError('codex_keyring_unavailable',
-        'Cannot access your Codex login in Keychain. On your Mac, unlock Keychain and allow access if prompted, then try again.'));
-    });
-  });
-  pendingKeychainReads.set(account, read);
+  const read = readCodexNativeAuth(canonicalHome, options);
+  pendingKeychainReads.set(canonicalHome, read);
   try {
     return await read;
   } finally {
-    pendingKeychainReads.delete(account);
+    pendingKeychainReads.delete(canonicalHome);
   }
 }
 
@@ -115,15 +89,11 @@ export async function readStoredCodexAuth(
   codexHome: string,
   readKeyring: CodexKeyringReader = readCodexKeyring
 ): Promise<Record<string, unknown>> {
-  const { config, mode } = await readCodexStoreConfig(codexHome);
+  const { mode } = await readCodexStoreConfig(codexHome);
   let auth: Record<string, unknown> | null = null;
   let keyringError: unknown;
   if (mode === 'keyring' || mode === 'auto') {
     try {
-      if (config.auth_keyring_backend !== undefined && config.auth_keyring_backend !== 'direct') {
-        throw new HostCommandError('codex_keyring_unavailable',
-          'This Codex credential store is not supported yet. Configure OPENAI_API_KEY on the host for voice input.');
-      }
       auth = parseAuth(await readKeyring(codexHome));
     } catch (error) {
       if (mode === 'keyring') throw error;

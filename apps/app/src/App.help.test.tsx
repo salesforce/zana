@@ -60,6 +60,7 @@ vi.mock('./components/Sidebar.js', () => ({ Sidebar: () => {
 // Keep the shell and its HelpProvider real while unrelated panels and modal
 // hosts are absent. Their effects and full IPC behavior have Electron coverage.
 const emptyComponents: Record<string, string[]> = {
+  './components/SessionMoveDialog.js': ['SessionMoveDialog'],
   './components/history/ConversationHistoryDialog.js': ['ConversationHistoryDialog'],
   './components/MobileAgentNavigation.js': ['MobileAgentNavigation'],
   './components/SidebarTriggerOverlay.js': ['SidebarTriggerOverlay'],

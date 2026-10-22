@@ -213,6 +213,7 @@ export interface Toast {
   id: string;
   message: string;
   kind?: 'info' | 'error';
+  action?: { label: string; onClick: () => void };
 }
 
 /**
@@ -699,7 +700,7 @@ interface UiState {
   pushToast: (
     message: string,
     kind?: 'info' | 'error',
-    opts?: { persist?: boolean }
+    opts?: { persist?: boolean; action?: Toast['action'] }
   ) => string;
   dismissToast: (id: string) => void;
   markUnread: (sessionId: string) => void;
@@ -1266,11 +1267,11 @@ export const useUi = create<UiState>((set, get) => ({
   clearRevealFollowUp: () => set({ revealFollowUpId: null }),
   pushToast: (message, kind = 'info', opts) => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    set((s) => ({ toasts: [...s.toasts, { id, message, kind }] }));
+    set((s) => ({ toasts: [...s.toasts, { id, message, kind, ...(opts?.action ? { action: opts.action } : {}) }] }));
     if (!opts?.persist) {
       setTimeout(() => {
         set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
-      }, 4000);
+      }, opts?.action ? 12000 : 4000);
     }
     return id;
   },

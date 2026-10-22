@@ -113,6 +113,7 @@ export function MachinesSettingsView({
         repair: (id) => runHostInstallWithDrawer({
           kind: 'fix',
           target: host.name,
+          repairTarget: { hostId: id },
           startLogs: ['Reconnecting…'],
           run: (onEvent) => product.hosts.repair(id, onEvent),
           // Replayed by the drawer's Retry, which bypasses this function's result handling.

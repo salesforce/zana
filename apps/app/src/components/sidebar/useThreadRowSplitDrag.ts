@@ -28,6 +28,10 @@ import {
 } from '../../lib/split-layout/splitThreadNavigation.js';
 import { POST_DRAG_CLICK_SUPPRESS_MS } from '../../lib/suppress-post-drag-click.js';
 import { useSplitWorkspace } from '../../lib/split-layout/store.js';
+import { useData, useUi } from '../../store.js';
+import { useThreads } from '../../thread-store.js';
+import { sessionMoveReason, useSessionMove } from '../../lib/session-move.js';
+import { composerProjectLabel } from '../composer-project-default.js';
 
 const SIDEBAR_SELECTOR = '.sidebar, .project-scoped-nav, [data-sidebar="sidebar"]';
 /** The live workspace box — never the shell landmark (display:contents, empty rect). */
@@ -53,6 +57,7 @@ export function usePaneContentSplitDrag({
   const suppressClickRef = useRef(false);
   const suppressClickUntil = useRef(0);
   const cancelDrag = useRef<(() => void) | null>(null);
+  const expandTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => cancelDrag.current?.(), [pathname, isCompact]);
   const consumeClick = useCallback(() => {
     if (!suppressClickRef.current) return false;
@@ -77,6 +82,7 @@ export function usePaneContentSplitDrag({
       const startLayout = useSplitWorkspace.getState().layout;
       const fallback = singlePaneFallback(startLayout);
       const paneContent = contentRef.current;
+      const movable = paneContent.kind === 'thread';
 
       cancelDrag.current = beginSplitDrag({
         pointerId: event.pointerId,
@@ -84,8 +90,28 @@ export function usePaneContentSplitDrag({
         sourceEl: rowEl,
         fallback,
         cancelSidebarReorderOnEngage: true,
+        ...(movable ? {
+          externalDrop: {
+            resolve: (x: number, y: number) => {
+              const element = document.elementsFromPoint(x, y)
+                .map(el => el.closest<HTMLElement>('[data-session-move-project]')).find(Boolean);
+              if (!element) return null;
+              const project = useData.getState().projects.find(row => row.id === element.dataset.sessionMoveProject);
+              const thread = useThreads.getState().threads.find(row => row.id === paneContent.threadId);
+              if (!project || !thread) return null;
+              const reason = sessionMoveReason(thread, project, useSessionMove.getState().primaryHostId);
+              return { id: project.id, element, allowed: !reason,
+                label: reason ?? `Move to ${composerProjectLabel(project)}` };
+            },
+            onDrop: (id: string) => useSessionMove.getState().open(paneContent.threadId, id),
+            onHover: (id: string | null) => {
+              clearTimeout(expandTimer.current);
+              if (id) expandTimer.current = setTimeout(() => useUi.getState().setProjectExpanded(id, true), 650);
+            }
+          }
+        } : {}),
         shouldEngage: (x, y) =>
-          shouldEngageSidebarSplitDrag({
+          (movable && Math.hypot(x - startX, y - startY) > 12) || shouldEngageSidebarSplitDrag({
             startX,
             startY,
             x,

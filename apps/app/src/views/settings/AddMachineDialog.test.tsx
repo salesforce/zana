@@ -1,11 +1,14 @@
 // @vitest-environment happy-dom
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render as renderReact, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HostBootstrapEvent } from '@zana-ai/zcc-desktop-contract';
 import { AddMachineDialog, AddMachineDialogView } from './AddMachineDialog.js';
+
+const render = (ui: React.ReactNode) => renderReact(<MemoryRouter>{ui}</MemoryRouter>);
 
 const api = vi.hoisted(() => ({
   bridge: true,
@@ -315,6 +318,7 @@ describe('AddMachineDialog Connect', () => {
     fireEvent.click(screen.getByTestId('add-machine-connect'));
     expect((await screen.findByTestId('host-install-stage-reason-install')).textContent).toBe('curl: (7) refused');
     expect(screen.getByTestId('add-machine-connect-error').textContent).toBe('Install failed');
+    expect(screen.getByRole('button', { name: 'Fix with agent' })).toBeTruthy();
     expect(screen.queryByTestId('add-machine-connect-retry')).toBeNull();
     fireEvent.click(screen.getByTestId('host-install-retry'));
     expect(await screen.findByText('limited-pony connected')).toBeTruthy();

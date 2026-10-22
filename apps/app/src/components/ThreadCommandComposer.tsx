@@ -536,6 +536,7 @@ function ThreadComposerContent({
       await runHostInstallWithDrawer({
         kind,
         target,
+        repairTarget: targetHostId ? { hostId: targetHostId } : project ? { projectId: project.id } : undefined,
         startLogs: [kind === 'install' ? 'Installing…' : 'Reconnecting…'],
         run: async (onEvent) => {
           if (kind === 'install') return product.hosts.bootstrap(project!.id, onEvent);

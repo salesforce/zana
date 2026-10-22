@@ -28,6 +28,7 @@ export function RemoteComposerConnection({ project, hosts, onConnected, onError 
       await runHostInstallWithDrawer({
         kind: hostId ? 'fix' : 'install',
         target: project.remote!.host,
+        repairTarget: hostId ? { hostId } : { projectId: project.id },
         startLogs: [hostId ? 'Reconnecting…' : 'Installing…'],
         run: (onEvent) => hostId ? product.hosts.repair(hostId, onEvent) : product.hosts.bootstrap(project.id, onEvent),
         // Replayed by the drawer's Retry too.
