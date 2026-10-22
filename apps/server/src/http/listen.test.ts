@@ -6,7 +6,10 @@ const deps = vi.hoisted(() => ({
   startProductServer: vi.fn(),
   attachProductPluginService: vi.fn(async () => {}),
   mkdirSync: vi.fn(),
-  writeFileSync: vi.fn()
+  writeFileSync: vi.fn(),
+  standaloneModernTeamLaunchSource: vi.fn(() => 'tools'),
+  resolveSquadMember: vi.fn(() => 'member'),
+  isSquadMemberThread: vi.fn(() => true)
 }));
 
 vi.mock('node:fs', () => ({ mkdirSync: deps.mkdirSync, writeFileSync: deps.writeFileSync }));
@@ -14,7 +17,8 @@ vi.mock('./product-server.js', () => ({ startProductServer: deps.startProductSer
 vi.mock('./product-plugins.js', () => ({ attachProductPluginService: deps.attachProductPluginService }));
 vi.mock('./ports.js', () => ({ DEFAULT_DEV_APP_PORT: 5173, serverPortFromEnv: () => 8780 }));
 vi.mock('@zana-ai/zcc-host-daemon/host-config', () => ({ resolveZccDataDir: () => '/test/data' }));
-vi.mock('../services/agents/modern-team-launch-config.js', () => ({ standaloneModernTeamLaunchSource: () => 'tools' }));
+vi.mock('../services/agents/modern-team-launch-config.js', () => ({ standaloneModernTeamLaunchSource: deps.standaloneModernTeamLaunchSource }));
+vi.mock('../services/threads/squad-member-runtime.js', () => ({ resolveSquadMember: deps.resolveSquadMember, isSquadMemberThread: deps.isSquadMemberThread }));
 vi.mock('./team-ops-via-control.js', () => ({ createTeamOpsViaControl: () => 'teams' }));
 vi.mock('./cli-agent-ops.js', () => ({
   retainProductServerCredential: deps.retainProductServerCredential,
@@ -54,4 +58,26 @@ it('retains credential for authorized send but removes it before server and plug
     host: '127.0.0.1', port: 8780, dataDir: '/test/data', uiSendSecret: 'desktop-only-secret'
   }));
   expect(deps.attachProductPluginService).toHaveBeenCalledExactlyOnceWith(ctx, { hostAgentToolSource: 'tools' });
+
+  const resolver = deps.standaloneModernTeamLaunchSource.mock.calls[0]![3] as (t: string, p: string) => unknown;
+  expect(resolver('thread-1', 'project-1')).toBe('member');
+  expect(deps.resolveSquadMember).toHaveBeenCalledExactlyOnceWith(ctx, 'thread-1', 'project-1');
+  const formerMember = deps.standaloneModernTeamLaunchSource.mock.calls[0]![4] as (t: string) => unknown;
+  expect(formerMember('thread-1')).toBe(true);
+  expect(deps.isSquadMemberThread).toHaveBeenCalledExactlyOnceWith(ctx, 'thread-1');
+});
+
+it('passes the E2E electron user-data dir to the modern team launch source when ZCC_E2E_HOME is set', async () => {
+  const previousHome = process.env.ZCC_E2E_HOME;
+  process.env.ZCC_E2E_HOME = '/tmp/e2e-home';
+  vi.resetModules();
+  deps.standaloneModernTeamLaunchSource.mockClear();
+  deps.startProductServer.mockResolvedValueOnce({ url: 'http://127.0.0.1:8780/', ctx: { config: { getConfig: vi.fn() } }, close: vi.fn(async () => {}) });
+  try {
+    await import('./listen.js');
+    expect(deps.standaloneModernTeamLaunchSource.mock.calls[0]![2]).toBe('/tmp/e2e-home/electron-user-data');
+  } finally {
+    if (previousHome === undefined) delete process.env.ZCC_E2E_HOME;
+    else process.env.ZCC_E2E_HOME = previousHome;
+  }
 });

@@ -4,7 +4,7 @@ import { ctx } from './ctx.js';
 import { createSourcePickerFolders, sourcePickerDialogOptions } from './execution-source-picker.js';
 import { registerSharedProduct } from './shared-product-registry.js';
 import { store } from '@zana-ai/zcc-server/services/projects/store';
-import { projectExecutionProjection, executionBoardProjection } from '@zana-ai/zcc-server/services/execution/projection';
+import { projectExecutionProjection, executionBoardProjection, modernExecutionMembers } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
 import { relaunchExecutionMonitor } from '@zana-ai/zcc-server/services/execution/relaunch-monitor';
 import { ExecutionSourceError } from '@zana-ai/zcc-server/services/execution/source-registry';
@@ -30,7 +30,7 @@ type ExecutionCaller = { kind: 'window'; window: BrowserWindow } | { kind: 'shar
 
 export function registerExecutionBoardIpc(): void {
   const { safeHandle, safeHandleFromWindow, ptys, teams, personas, windows,
-    executionStore, executionResumeTokens, executionSources, squadProposals, squadExecutionService,
+    executionStore, executionResumeTokens, executionSources, squadProposals, squadExecutionService, teamLifecycle,
     startTeamJobFromUi, getTeamLaunch, createTerminalConfined, exactNativeRecoveryAvailability, squadWorktreeAction } = ctx;
 
   // The product-server credential identifies the authenticated instance owner.
@@ -90,10 +90,20 @@ export function registerExecutionBoardIpc(): void {
       const project = store.listProjects().find((candidate) => candidate.id === projectId);
       if (!project) return { executions: [], hasMore: false };
       const page = await squadExecutionService.listProject(project.id, before, limit);
+      // A corrupt lifecycle store must not blank the whole Jobs page (CLI squads included).
+      let modernMembers: ReturnType<typeof modernExecutionMembers>;
+      try {
+        modernMembers = modernExecutionMembers(await teamLifecycle.list(), project.id);
+      } catch (error) {
+        console.error(`[main] execution board modern members: ${error instanceof Error ? error.message : String(error)}`);
+        modernMembers = new Map();
+      }
       const executions = projectExecutionProjection(page.records, ptys.list(project.id)).map((projection, index) => {
         const execution = withDesktopExactNativeAvailability(page.records[index]!, projection);
+        const members = modernMembers.get(execution.executionId);
         return {
           ...execution,
+          ...(members ? { modernMembers: members } : {}),
           hasResumeToken: executionResumeTokens.status(project.id, execution.executionId).state === 'available',
           teamName: (teams.list() as Team[]).find((team) => team.id === execution.teamId)?.name ?? execution.teamId
         };
@@ -310,19 +320,6 @@ export function registerExecutionBoardIpc(): void {
       return squadWorktreeAction(projectId, executionId, expectedStateVersion, action, instruction);
     },
     () => ({ ok: false, code: 'UNAVAILABLE', message: 'squad worktree action unavailable' })
-  );
-
-  handleFromCaller<[string, string, number, boolean | undefined], Result<ExecutionBoardProjection>>(
-    IPC.executionBoard.resumeRun,
-    async (win, projectId, executionId, expectedStateVersion, replay) => {
-      if (!isExecutionProjectAllowed(win, projectId)) return { ok: false, code: 'NOT_FOUND', message: 'execution not found' };
-      if (!Number.isInteger(expectedStateVersion) || replay !== undefined && typeof replay !== 'boolean') {
-        return { ok: false, code: 'INVALID', message: 'invalid execution recovery request' };
-      }
-      const result = await squadExecutionService.resumeRun('interactive:local', projectId, executionId, expectedStateVersion, replay === true);
-      return result.ok ? { ok: true, value: executionProjection(result.value) } : { ok: false, code: result.code, message: result.message };
-    },
-    () => ({ ok: false, code: 'UNAVAILABLE', message: 'execution recovery unavailable' })
   );
 
   const executionWorkControl = async (

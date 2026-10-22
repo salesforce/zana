@@ -99,6 +99,15 @@ describe('SquadEditor orchestrator toggle (edit form)', () => {
     expect(html).toContain('Use default follows the global setting; On tier-routes work when supported; Off falls back.');
     expect(html).toContain('Manual assignments are not checked.');
   });
+
+  it('exposes a whole-squad transport selector with CLI as the default', () => {
+    const html = renderToStaticMarkup(
+      <SquadEditor team={team} mode="edit" onClose={vi.fn()} />
+    );
+    expect(html).toContain('aria-label="Squad transport"');
+    expect(html).toContain('value="CLI" selected=""');
+    expect(html).toContain('>Modern<');
+  });
 });
 
 describe('SquadEditor builtin routing detail', () => {

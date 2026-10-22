@@ -1,6 +1,7 @@
 import type { ExecutionBoardProjection, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { MAX_DELIVERY_ATTEMPTS, type ExecutionRecord } from './store.js';
 import { usageRollup } from './contracts.js';
+import type { TeamLifecycleRecord } from '../launch/team-lifecycle-store.js';
 
 /**
  * Surface a delivery error as a human-readable message, never a stack trace:
@@ -225,6 +226,50 @@ export function projectExecutionProjection(
     }
   }
   return records.map((record) => executionBoardProjection(record, liveOrchestrators.get(record.id)));
+}
+
+type ModernExecutionMember = NonNullable<ExecutionBoardProjection['modernMembers']>[number];
+const MAX_MODERN_MEMBERS_PER_EXECUTION = 32;
+
+/**
+ * Modern squad members per execution, from main's team-launch lifecycle. A
+ * Modern member is an ACP thread with no PTY cohort stamp, so this is the only
+ * way the board can group it under its squad. Live = bound, running and still
+ * holding capacity; everything else renders as an exited member.
+ */
+export function modernExecutionMembers(
+  records: readonly TeamLifecycleRecord[],
+  projectId: string
+): Map<string, ModernExecutionMember[]> {
+  const latest = new Map<string, ModernExecutionMember>();
+  const executionOf = new Map<string, string>();
+  const seenThreads = new Set<string>();
+  // Newest record first: a relaunch supersedes the stale entry for the same slot.
+  const newestFirst = [...records].sort((a, b) => (b.updatedAt - a.updatedAt) || (b.createdAt - a.createdAt));
+  for (const record of newestFirst) {
+    for (const worker of record.workers) {
+      const executionId = worker.modernContext?.executionId;
+      if (worker.transport !== 'MODERN' || !worker.threadId || !executionId || worker.projectId !== projectId) continue;
+      if (seenThreads.has(worker.threadId)) continue;
+      const key = `${executionId}\u0000${worker.slotId}`;
+      if (latest.has(key)) continue;
+      seenThreads.add(worker.threadId);
+      executionOf.set(key, executionId);
+      latest.set(key, {
+        threadId: worker.threadId, slotId: worker.slotId, personaId: worker.personaId, role: worker.modernContext!.role,
+        live: worker.bindingState === 'BOUND' && worker.process === 'running' && !worker.capacityReleased
+      });
+    }
+  }
+  const byExecution = new Map<string, ModernExecutionMember[]>();
+  for (const [key, member] of latest) {
+    const executionId = executionOf.get(key)!;
+    byExecution.set(executionId, [...(byExecution.get(executionId) ?? []), member]);
+  }
+  for (const [executionId, members] of byExecution) {
+    byExecution.set(executionId, members.sort((a, b) => Number(b.live) - Number(a.live)).slice(0, MAX_MODERN_MEMBERS_PER_EXECUTION));
+  }
+  return byExecution;
 }
 
 export function executionBoardProjection(record: ExecutionRecord, orchestratorSessionId?: string): ExecutionBoardProjection {

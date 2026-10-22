@@ -10,7 +10,7 @@ import type { TerminalThemeId } from './terminal-themes.js';
 import type { WorkflowArgument } from './workflow-args.js';
 import type { MenubarAgent } from './menubar-agent.js';
 import type { NotificationLevel, OwnNotificationLevel } from './notification-levels.js';
-import type { SquadPlanning } from './squad-proposal.js';
+import type { LaunchApproval, SquadPlanning } from './squad-proposal.js';
 
 export type { WorkflowArgument } from './workflow-args.js';
 export type { TerminalThemeId } from './terminal-themes.js';
@@ -1600,6 +1600,24 @@ export interface TerminalSession {
    */
   lastInputAt?: number;
   /**
+   * Like {@link lastInputAt}, but stamped only when the write carried real key
+   * input or a paste. Terminal-generated reports that xterm forwards on the same
+   * channel (mouse motion/clicks, focus in/out, cursor-position, device-attribute
+   * and OSC color-query replies) stamp `lastInputAt` but not this. Use it to
+   * wait for a person to stop typing. In-memory only; absent ⇒ never typed.
+   */
+  lastKeyInputAt?: number;
+  /**
+   * HEURISTIC: the user has probably left a half-typed line in the prompt.
+   * True while an approximate per-session character count is above zero:
+   * printable keys (Shift+Enter newlines included) and paste content add,
+   * BS/DEL subtracts, Enter, Ctrl-C and a `reply()` submit reset it, and
+   * Up/Down history recall on an empty prompt holds it. Ctrl-W, Ctrl-U,
+   * Alt-Backspace and Esc leave it unchanged. In-memory only; absent ⇒ never
+   * typed.
+   */
+  draftPending?: boolean;
+  /**
    * Set when this session was opened as part of a {@link Team} launch. Groups
    * the launch's tabs into one manageable unit on the Agents board ("By team")
    * and marks the orchestrator. Absent on every non-team session.
@@ -3034,6 +3052,13 @@ export interface ProjectSettings {
    */
   worktreeIsolation?: boolean;
   /**
+   * Whether Squad runs an agent starts in this project need the user's Launch
+   * first. Review is a floor: when either this Project or the Squad asks for
+   * review the run needs the user's Launch, and a Squad cannot lift a Project's
+   * review. Absent ⇒ direct.
+   */
+  launchApproval?: LaunchApproval;
+  /**
    * SSH remotes only. When true, new threads run the harness on this machine
    * and execute file/shell tools on the remote over the existing SSH
    * ControlMaster path. Off (default) keeps SSH PTY (`ssh -t`) for the CLI.
@@ -4254,6 +4279,9 @@ export interface TeamSlot {
   label?: string;
 }
 
+/** Whole-squad execution transport. Mixed transports are deliberately unsupported. */
+export type SquadTransport = 'CLI' | 'MODERN';
+
 export interface TeamLaunchTaskSlot {
   slotId: string;
   initialTask: string;
@@ -4384,8 +4412,12 @@ export interface Team {
   worktreeIsolation?: boolean;
   /** Override global structured-work routing enforcement for this Team. */
   routingEnforced?: boolean;
+  /** Transport selected for every squad member. Absent persisted teams remain CLI. */
+  transport?: SquadTransport;
   /** Planning mode preselected when this Squad is picked or proposed. Absent ⇒ the global default. */
   defaultPlanning?: SquadPlanning;
+  /** Whether agent-started runs of this Squad need the user's Launch first. Review is a floor: the Project's review applies even when this is absent or direct. Absent ⇒ direct unless the Project asks for review. */
+  launchApproval?: LaunchApproval;
   /** Set by the loader/host for UI display; never read from disk / trusted from the renderer. */
   source?: PersonaSource;
 }
@@ -4449,6 +4481,8 @@ export interface TeamSummary {
   source?: PersonaSource;
   /** Planning mode preselected for this Squad. Absent ⇒ the global default. */
   defaultPlanning?: SquadPlanning;
+  /** Whether agent-started runs need the user's Launch first. Review is a floor: the Project's review applies even when this is absent or direct. Absent ⇒ direct unless the Project asks for review. */
+  launchApproval?: LaunchApproval;
   /** Whether the orchestrator can write files, so it can infer a plan. Computed by main, not by `toTeamSummary`. */
   canInferPlan?: boolean;
 }
@@ -4656,7 +4690,8 @@ export function toTeamSummary(t: Team): TeamSummary {
     description: t.description,
     slotCount: Array.isArray(t.slots) ? t.slots.length : 0,
     source: t.source,
-    ...(t.defaultPlanning ? { defaultPlanning: t.defaultPlanning } : {})
+    ...(t.defaultPlanning ? { defaultPlanning: t.defaultPlanning } : {}),
+    ...(t.launchApproval ? { launchApproval: t.launchApproval } : {})
   };
 }
 
@@ -6031,6 +6066,12 @@ export interface ExecutionBoardProjection {
   teamName?: string;
   objective?: string;
   summary?: string;
+  /**
+   * Modern squad members (ACP conversation threads), main-resolved from the
+   * launch lifecycle. Display grouping only — never authority. Absent for CLI
+   * squads, whose members are PTY sessions carrying their own cohort stamp.
+   */
+  modernMembers?: Array<{ threadId: string; slotId: string; personaId: string; role: 'orchestrator' | 'worker'; live: boolean }>;
   /** Terminal shared checkout retained for recovery or a follow-up agent. */
   retainedWorktree?: { path: string; branch: string; baseBranch?: string; disposition?: 'left' };
   sources?: Array<{

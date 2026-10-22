@@ -18,17 +18,27 @@ export interface PtyReportQueueDeps {
   reply(sessionId: string, text: string): boolean;
   ptyLive(id: string): boolean;
   ptyState(id: string): AgentState | undefined;
+  /** Time of the user's last real keystroke (not mouse, focus or terminal replies). */
   lastInputAt(id: string): number | undefined;
-  /** True for non-OSC harnesses (Codex, Cursor, Pi, OpenCode), which sit in `waiting` at rest. */
+  /** True while the user has typed something into the prompt that is not yet submitted; nothing is typed over it. */
+  draftPending(id: string): boolean;
+  /** True for harnesses whose status is not OSC-driven (Codex, Cursor, Pi, OpenCode), which sit in `waiting` at rest. */
   deliverableWhenWaiting(id: string): boolean;
   now(): number;
   setTimer(fn: () => void, ms: number): unknown;
   clearTimer(handle: unknown): void;
 }
 
+/** How often a busy session, or one holding an unsent draft, is looked at again when no status edge wakes the queue. */
+const PTY_RECHECK_MS = 5_000;
+
+/** A draft flag older than this since the last keystroke is treated as stale (the heuristic can stick) and no longer holds delivery. */
+const DRAFT_STALE_MS = 10 * 60_000;
+
 /**
  * Per-session queue of one-line reports for CLI Agent PTYs: one item is typed at a time, only
- * while the session is live, at rest and quiet for `ptyQuietMs`, at most `ptyQueueMax` waiting.
+ * while the session is live, at rest, free of an unsent draft and quiet for `ptyQuietMs`, at most
+ * `ptyQueueMax` waiting. A session that is not ready is re-checked on a single bounded timer.
  */
 export function createPtyReportQueue(deps: PtyReportQueueDeps, log: (message: string, error?: unknown) => void) {
   const queues = new Map<string, QueuedReport[]>();
@@ -67,6 +77,20 @@ export function createPtyReportQueue(deps: PtyReportQueueDeps, log: (message: st
     return lastInput === undefined ? 0 : Math.max(0, lastInput + SQUAD_PROPOSAL_LIMITS.ptyQuietMs - deps.now());
   }
 
+  /** A pending draft holds delivery only while it is fresh; a stale flag is logged and ignored so polling ends. */
+  function draftHolds(sessionId: string): boolean {
+    if (!deps.draftPending(sessionId)) return false;
+    if (deps.now() - (deps.lastInputAt(sessionId) ?? 0) < DRAFT_STALE_MS) return true;
+    log(`squad proposal delivering over a stale draft flag for ${sessionId}`);
+    return false;
+  }
+
+  /** At most one timer per session: an armed timer is kept, and re-evaluates everything when it fires. */
+  function armTimer(sessionId: string, ms: number): void {
+    if (timers.has(sessionId)) return;
+    timers.set(sessionId, deps.setTimer(() => { timers.delete(sessionId); flush(sessionId); }, ms));
+  }
+
   function type(sessionId: string, item: QueuedReport): void {
     const accepted = deps.reply(sessionId, item.text);
     if (!accepted) log(`squad proposal report not accepted by session ${sessionId}`);
@@ -99,14 +123,12 @@ export function createPtyReportQueue(deps: PtyReportQueueDeps, log: (message: st
     if (disposed || !queue?.length || checking.has(sessionId)) return;
     try {
       if (!deps.ptyLive(sessionId)) { clear(sessionId, true); return; }
-      if (!atRest(sessionId, stateHint ?? deps.ptyState(sessionId))) return;
-      const wait = quietWait(sessionId);
-      if (wait > 0) {
-        if (!timers.has(sessionId)) {
-          timers.set(sessionId, deps.setTimer(() => { timers.delete(sessionId); flush(sessionId); }, wait));
-        }
+      if (!atRest(sessionId, stateHint ?? deps.ptyState(sessionId)) || draftHolds(sessionId)) {
+        armTimer(sessionId, PTY_RECHECK_MS);
         return;
       }
+      const wait = quietWait(sessionId);
+      if (wait > 0) { armTimer(sessionId, wait); return; }
       const item = queue.shift() as QueuedReport;
       if (!queue.length) clear(sessionId, false);
       if (item.stillWanted) { recheck(sessionId, item); return; }

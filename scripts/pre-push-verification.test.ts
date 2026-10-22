@@ -1,9 +1,9 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
-import { expect, it, vi } from 'vitest';
-import { changedPaths, configuredAliases, githubRepository, parseTuples, runFastVerification, runFullVerification, runPrePush, selectPush, selectedTestFiles, spawnCommand, windowsPnpm } from './pre-push-verification.mjs';
+import { beforeEach, expect, it, vi } from 'vitest';
+import { acquireSnapshotSlot, changedPaths, configuredAliases, createPhaseTimer, githubRepository, parseTuples, runFastVerification, runFullVerification, runPrePush, selectPush, selectedTestFiles, snapshotCacheRoot, snapshotKey, spawnCommand, windowsPnpm, withSnapshot } from './pre-push-verification.mjs';
 
 // Spy on spawnSync while keeping real spawning, so tests can check what the hook starts.
 vi.mock('node:child_process', async (importOriginal) => {
@@ -19,6 +19,12 @@ const services = (paths: string[] = ['apps/server/src/index.ts']) => ({
   mergeBase: () => BASE,
   isAncestor: () => true,
   changed: () => paths,
+});
+
+// Tests that do not exercise snapshot reuse must never touch the real user cache.
+beforeEach(() => {
+  vi.stubEnv('ZANA_PREPUSH_FRESH_SNAPSHOT', '1');
+  vi.stubEnv('ZANA_PREPUSH_TIMING', '');
 });
 
 it('accepts only canonical GitHub remote spellings and configured aliases', () => {
@@ -281,7 +287,7 @@ it('creates a private detached snapshot, runs named full union, and cleans it up
       ['git', ['config', '--unset-all', 'core.worktree']],
       ['git', ['fetch', '--no-tags', root, OID]],
       ['git', ['checkout', '--detach', OID]],
-      ['pnpm', ['install', '--frozen-lockfile']],
+      ['pnpm', ['install', '--frozen-lockfile', '--prefer-offline']],
       ['pnpm', ['--filter', 'zcc-plugin-slack-bridge-2ff2', 'package']],
       ['pnpm', ['verify:full']],
     ]);
@@ -349,4 +355,527 @@ it('cleans snapshots and rejects missing oid or failed commands', () => {
   try {
     expect(() => runFullVerification({ oid: OID, root, run: () => ({ status: 1 }), log: vi.fn() })).toThrow('could not create isolated push snapshot');
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+it('times phases only when ZANA_PREPUSH_TIMING is on, and still logs a phase that throws', () => {
+  const log = vi.fn();
+  expect(createPhaseTimer({ env: {}, log })('install', () => 7)).toBe(7);
+  expect(log).not.toHaveBeenCalled();
+  let clock = 0;
+  const time = createPhaseTimer({ env: { ZANA_PREPUSH_TIMING: '1' }, log, now: () => (clock += 1500) });
+  expect(time('install', () => 8)).toBe(8);
+  expect(log).toHaveBeenLastCalledWith('pre-push: timing install 1500ms');
+  expect(() => time('typecheck', () => { throw new Error('boom'); })).toThrow('boom');
+  expect(log).toHaveBeenLastCalledWith('pre-push: timing typecheck 1500ms');
+});
+
+it('logs a timing line for each verification phase and the total', () => {
+  const root = mkdtempSync(join(tmpdir(), 'zana-push-timing-'));
+  const run = vi.fn((command) => (command === 'fd' ? { status: 0, stdout: 'scripts/a.guard.test.ts\n' } : { status: 0 }));
+  const env = { ZANA_PREPUSH_TIMING: '1', ZANA_PREPUSH_FRESH_SNAPSHOT: '1' };
+  const phases = (log: ReturnType<typeof vi.fn>) => log.mock.calls.map(([line]) => /^pre-push: timing (\S+) \d+ms$/.exec(line)?.[1]).filter(Boolean);
+  try {
+    const fastLog = vi.fn();
+    runFastVerification({ oid: OID, base: BASE, paths: ['plugins/slack-bridge-2ff2/src/index.test.ts'], root, run, log: fastLog, env });
+    expect(phases(fastLog)).toEqual(['clone', 'fetch', 'checkout', 'install', 'typecheck', 'slack-assets', 'tests', 'guards']);
+    const broadLog = vi.fn();
+    runFastVerification({ oid: OID, base: BASE, paths: ['vitest.config.ts'], root, run, log: broadLog, env });
+    expect(phases(broadLog)).toEqual(['clone', 'fetch', 'checkout', 'install', 'typecheck', 'slack-assets', 'tests', 'guards']);
+    const fullLog = vi.fn();
+    runFullVerification({ oid: OID, root, run, log: fullLog, env });
+    expect(phases(fullLog)).toEqual(['clone', 'fetch', 'checkout', 'install', 'slack-assets', 'verify:full']);
+    vi.stubEnv('ZANA_PREPUSH_TIMING', '1');
+    const pushLog = vi.fn();
+    const input = `${feature.localRef} ${OID} ${feature.remoteRef} ${BASE}\n`;
+    expect(runPrePush({ input, remoteUrl: 'https://github.com/salesforce/zana', log: pushLog, error: vi.fn(), select: () => ({ action: 'fast', reason: 'feature', oid: OID, base: BASE, paths: [] }), fastVerify: vi.fn(), run: () => ({ status: 1 }) })).toBe(0);
+    expect(runPrePush({ input, remoteUrl: 'https://github.com/salesforce/zana', log: pushLog, error: vi.fn(), select: () => ({ action: 'full', reason: 'protected', oid: OID }), verify: vi.fn(), run: () => ({ status: 1 }) })).toBe(0);
+    expect(phases(pushLog)).toEqual(['total', 'total']);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+function plainGit(cwd: string, args: string[]) {
+  const env = { ...process.env };
+  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_PREFIX']) delete env[key];
+  return execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, env, encoding: 'utf8' }).trim();
+}
+
+it('keys snapshot caches by repository and keeps them in the user cache directory', () => {
+  const root = mkdtempSync(join(tmpdir(), 'zana-push-cache-root-'));
+  // Only PATH, so Git resolves without inheriting the hook's routing variables.
+  const bare = (extra: Record<string, string> = {}) => ({ PATH: process.env.PATH ?? '', ...extra });
+  try {
+    expect(snapshotCacheRoot(root, { env: bare() })).toBeNull();
+    plainGit(root, ['init', '-q']);
+    expect(snapshotCacheRoot(root, { env: bare({ ZANA_PREPUSH_FRESH_SNAPSHOT: '1' }) })).toBeNull();
+    const custom = snapshotCacheRoot(root, { env: bare({ ZANA_PREPUSH_CACHE_DIR: '/cache' }) })!;
+    expect(custom).toMatch(/^\/cache\/[0-9a-f]{16}$/);
+    const repository = custom.slice('/cache/'.length);
+    mkdirSync(join(root, 'nested'));
+    expect(snapshotCacheRoot(join(root, 'nested'), { env: bare({ ZANA_PREPUSH_CACHE_DIR: '/cache' }) })).toBe(custom);
+    expect(snapshotCacheRoot(root, { env: bare({ GIT_DIR: '/elsewhere' }), platform: 'darwin' })).toBe(join(homedir(), 'Library', 'Caches', 'zana-pre-push', repository));
+    expect(snapshotCacheRoot(root, { env: bare({ LOCALAPPDATA: 'C:/Local' }), platform: 'win32' })).toBe(join('C:/Local', 'zana-pre-push', repository));
+    expect(snapshotCacheRoot(root, { env: bare(), platform: 'win32' })).toBe(join(homedir(), 'AppData', 'Local', 'zana-pre-push', repository));
+    expect(snapshotCacheRoot(root, { env: bare({ XDG_CACHE_HOME: '/xdg' }), platform: 'linux' })).toBe(join('/xdg', 'zana-pre-push', repository));
+    expect(snapshotCacheRoot(root, { env: bare(), platform: 'linux' })).toBe(join(homedir(), '.cache', 'zana-pre-push', repository));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+  expect(snapshotKey({ abi: '127', platform: 'darwin', arch: 'arm64' })).toBe('darwin-arm64-node127');
+  expect(snapshotKey()).toBe(`${process.platform}-${process.arch}-node${process.versions.modules}`);
+});
+
+const HOST = 'this-host';
+const owner = (lock: string) => JSON.parse(readFileSync(join(lock, 'owner.json'), 'utf8'));
+function writeLock(lock: string, record?: Record<string, unknown>) {
+  mkdirSync(lock, { recursive: true });
+  if (record) writeFileSync(join(lock, 'owner.json'), JSON.stringify(record));
+}
+
+it('hands out bounded snapshot slots under exclusive, token-owned locks', () => {
+  const cache = mkdtempSync(join(tmpdir(), 'zana-push-slots-'));
+  try {
+    const first = acquireSnapshotSlot(cache, { key: 'k', host: HOST })!;
+    const second = acquireSnapshotSlot(cache, { key: 'k', host: HOST })!;
+    expect([first.path, second.path]).toEqual([join(cache, 'k-0'), join(cache, 'k-1')]);
+    expect(owner(join(cache, 'k-0.lock'))).toEqual({ pid: process.pid, host: HOST, token: expect.any(String) });
+    expect(owner(join(cache, 'k-0.lock')).token).not.toBe(owner(join(cache, 'k-1.lock')).token);
+    expect(acquireSnapshotSlot(cache, { key: 'k', host: HOST })).toBeNull();
+    first.release();
+    expect(existsSync(join(cache, 'k-0.lock'))).toBe(false);
+    expect(acquireSnapshotSlot(cache, { key: 'k', host: HOST })!.path).toBe(join(cache, 'k-0'));
+
+    // A holder releases only its own lock, never one another push has since taken.
+    writeLock(join(cache, 'k-1.lock'), { pid: 4242, host: HOST, token: 'someone-else' });
+    second.release();
+    expect(owner(join(cache, 'k-1.lock')).token).toBe('someone-else');
+    expect(readdirSync(cache).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+  } finally { rmSync(cache, { recursive: true, force: true }); }
+});
+
+it('reclaims locks of dead or never-recorded owners but not live, foreign, or just-created ones', () => {
+  const cache = mkdtempSync(join(tmpdir(), 'zana-push-stale-'));
+  const lock = join(cache, 'k-0.lock');
+  const options = (extra: Record<string, unknown> = {}) => ({ key: 'k', host: HOST, slots: 1, ...extra });
+  try {
+    writeLock(lock, { pid: 999999, host: HOST, token: 'dead' });
+    expect(acquireSnapshotSlot(cache, options({ alive: () => true }))).toBeNull();
+    expect(acquireSnapshotSlot(cache, options({ alive: () => false }))!.path).toBe(join(cache, 'k-0'));
+    expect(owner(lock)).toMatchObject({ pid: process.pid, host: HOST });
+    rmSync(lock, { recursive: true });
+
+    // An owner record that cannot be read, such as an older pid-only lock.
+    writeLock(lock);
+    writeFileSync(join(lock, 'pid'), '1');
+    expect(acquireSnapshotSlot(cache, options())).toBeNull();
+    expect(acquireSnapshotSlot(cache, options({ now: () => Date.now() + 120_000 }))!.path).toBe(join(cache, 'k-0'));
+    rmSync(lock, { recursive: true });
+
+    // Another host's pid cannot be probed, so only age expires its lock.
+    writeLock(lock, { pid: 1, host: 'other-host', token: 'remote' });
+    const alive = vi.fn(() => false);
+    expect(acquireSnapshotSlot(cache, options({ alive, now: () => Date.now() + 120_000 }))).toBeNull();
+    expect(alive).not.toHaveBeenCalled();
+    expect(acquireSnapshotSlot(cache, options({ alive, now: () => Date.now() + 25 * 60 * 60_000 }))!.path).toBe(join(cache, 'k-0'));
+  } finally { rmSync(cache, { recursive: true, force: true }); }
+});
+
+it('leaves a lock alone when a concurrent push reclaimed it first', () => {
+  const cache = mkdtempSync(join(tmpdir(), 'zana-push-race-'));
+  const lock = join(cache, 'k-0.lock');
+  try {
+    writeLock(lock, { pid: 999999, host: HOST, token: 'dead' });
+    const alive = vi.fn(() => {
+      // Another push replaces the dead owner's lock between our check and rename.
+      rmSync(lock, { recursive: true });
+      writeLock(lock, { pid: 4242, host: HOST, token: 'winner' });
+      return false;
+    });
+    expect(acquireSnapshotSlot(cache, { key: 'k', host: HOST, alive, slots: 1 })).toBeNull();
+    expect(owner(lock).token).toBe('winner');
+    expect(readdirSync(cache).sort()).toEqual(['k-0.lock']);
+  } finally { rmSync(cache, { recursive: true, force: true }); }
+});
+
+it('prunes unlocked slots built for another runtime, keeps locked ones, and sweeps old debris', () => {
+  const cache = mkdtempSync(join(tmpdir(), 'zana-push-prune-'));
+  const old = new Date(Date.now() - 120_000);
+  try {
+    mkdirSync(join(cache, 'old-0', 'node_modules'), { recursive: true });
+    mkdirSync(join(cache, 'old-1'));
+    writeLock(join(cache, 'old-1.lock'), { pid: 4242, host: HOST, token: 'live' });
+    writeFileSync(join(cache, 'stray-file'), '');
+    for (const debris of ['k-0.lock.a.tmp', 'old-2.b.discard', 'old-3.lock.c.stale', 'k-1.lock.d.tmp']) mkdirSync(join(cache, debris));
+    for (const debris of ['k-0.lock.a.tmp', 'old-2.b.discard', 'old-3.lock.c.stale']) utimesSync(join(cache, debris), old, old);
+    acquireSnapshotSlot(cache, { key: 'k', host: HOST, alive: (pid: number) => pid === 4242 });
+    expect(readdirSync(cache).sort()).toEqual(['k-0.lock', 'k-1.lock.d.tmp', 'old-1', 'old-1.lock', 'stray-file']);
+  } finally { rmSync(cache, { recursive: true, force: true }); }
+});
+
+it('keeps a slot when pruning fails', () => {
+  const cache = mkdtempSync(join(tmpdir(), 'zana-push-prune-fail-'));
+  try {
+    mkdirSync(join(cache, 'old-0'));
+    writeLock(join(cache, 'old-0.lock'), { pid: 4242, host: HOST, token: 'held' });
+    // The slot's own lock is free; probing the other runtime's lock owner then throws.
+    const alive = () => { throw new Error('probe failed'); };
+    expect(acquireSnapshotSlot(cache, { key: 'k', host: HOST, alive })!.path).toBe(join(cache, 'k-0'));
+    expect(existsSync(join(cache, 'old-0'))).toBe(true);
+  } finally { rmSync(cache, { recursive: true, force: true }); }
+});
+
+type Run = (command: string, args: string[], options?: Record<string, unknown>) => { status: number; stdout?: string };
+type Fixture = { config?: string; status?: string; head?: string; index?: string; layout?: (slot: string) => string; replaced?: string; inputs?: () => string; fail?: (command: string, args: string[], inSlot: boolean, attempt: number) => boolean };
+
+const INPUTS = ['pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc', ':(glob)**/package.json'];
+
+function reuseFixture({ config = 'core.bare\0core.worktree\0core.hooksPath\0', status = '', head = OID, index = 'H package.json\0', layout = (slot) => `${slot}\n${slot}/.git\n`, replaced = '', inputs = () => '100644 abc 0\tpackage.json\0', fail = () => false }: Fixture = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'zana-push-reuse-root-'));
+  const cacheRoot = mkdtempSync(join(tmpdir(), 'zana-push-reuse-cache-'));
+  const slot = join(cacheRoot, `${snapshotKey()}-0`);
+  mkdirSync(join(slot, '.git'), { recursive: true });
+  const attempts = new Map<string, number>();
+  const run = vi.fn<Run>((command, args, options) => {
+    const name = `${command} ${args[0]}`;
+    attempts.set(name, (attempts.get(name) ?? 0) + 1);
+    if (fail(command, args, String(options?.cwd ?? '').startsWith(slot), attempts.get(name)!)) return { status: 1, stdout: '' };
+    if (command !== 'git') return { status: 0 };
+    if (args[0] === 'rev-parse') return { status: 0, stdout: args[1] === 'HEAD' ? `${head}\n` : layout(slot) };
+    if (args[0] === 'for-each-ref') return { status: 0, stdout: replaced };
+    if (args[0] === 'config' && args.includes('--list')) return { status: 0, stdout: config };
+    if (args[0] === 'status') return { status: 0, stdout: status };
+    if (args[0] === 'ls-files') return { status: 0, stdout: args[1] === '-v' ? index : inputs() };
+    return { status: 0, stdout: '' };
+  });
+  const cleanup = () => { rmSync(root, { recursive: true, force: true }); rmSync(cacheRoot, { recursive: true, force: true }); };
+  const snapshot = (log = vi.fn(), verify: (snapshot: string) => unknown = (path) => path) => withSnapshot({ oid: OID, root, run, log, cacheRoot }, verify);
+  return { root, cacheRoot, slot, run, cleanup, snapshot, record: join(slot, '.git', 'zana-pre-push-dependencies'), calls: () => run.mock.calls.map(([command, args]) => [command, args]) };
+}
+
+it('reuses a free snapshot that proves clean at the pushed object', () => {
+  const fixture = reuseFixture();
+  writeFileSync(join(fixture.slot, '.git', 'index'), '');
+  const log = vi.fn();
+  try {
+    expect(fixture.snapshot(log)).toBe(fixture.slot);
+    expect(existsSync(join(fixture.slot, '.git', 'index'))).toBe(false);
+    expect(fixture.calls()).toEqual([
+      ['git', ['config', '--local', '--no-includes', '--name-only', '--list', '-z']],
+      ['git', ['config', '--local', '--unset-all', 'core.worktree']],
+      ['git', ['config', '--local', '--unset-all', 'core.hooksPath']],
+      ['git', ['rev-parse', '--show-toplevel', '--absolute-git-dir']],
+      ['git', ['for-each-ref', '--format=%(refname)', 'refs/replace/']],
+      ['git', ['fetch', '--no-tags', '--force', '--prune', fixture.root, OID, '+refs/heads/*:refs/remotes/origin/*', '+refs/tags/*:refs/tags/*']],
+      ['git', ['checkout', '--detach', '--force', OID]],
+      ['git', ['clean', '-ffdx', '-e', 'node_modules']],
+      ['git', ['rev-parse', 'HEAD']],
+      ['git', ['ls-files', '-v', '-z']],
+      ['git', ['status', '--porcelain=v1', '-z', '--ignored=matching', '--untracked-files=all']],
+      ['git', ['ls-files', '-s', '-z', '--', ...INPUTS]],
+      ['pnpm', ['install', '--frozen-lockfile', '--prefer-offline']],
+    ]);
+    const hooks = fixture.run.mock.calls[0][2]?.env?.GIT_CONFIG_VALUE_0 as string;
+    expect(hooks).toMatch(/zana-pre-push-hooks-/);
+    for (const [, , options] of fixture.run.mock.calls) {
+      expect(options?.env).not.toHaveProperty('GIT_DIR');
+      expect(options?.env).toMatchObject({ GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.hooksPath', GIT_CONFIG_VALUE_0: hooks });
+      expect(options?.cwd).toBe(fixture.slot);
+    }
+    expect(existsSync(hooks)).toBe(false);
+    expect(log).toHaveBeenCalledWith(`pre-push: snapshot ${OID.slice(0, 12)} in ${fixture.slot} (reused)`);
+    expect(readFileSync(fixture.record, 'utf8')).toMatch(/^[0-9a-f]{64}$/);
+    expect(existsSync(`${fixture.slot}.lock`)).toBe(false);
+  } finally { fixture.cleanup(); }
+});
+
+it('clones into an empty slot before reusing it', () => {
+  const fixture = reuseFixture();
+  rmSync(join(fixture.slot, '.git'), { recursive: true });
+  try {
+    fixture.snapshot();
+    expect(fixture.calls().slice(0, 3)).toEqual([
+      ['git', ['clone', '--no-local', '--no-checkout', fixture.root, fixture.slot]],
+      ['git', ['config', '--unset-all', 'core.worktree']],
+      ['git', ['fetch', '--no-tags', '--force', '--prune', fixture.root, OID, '+refs/heads/*:refs/remotes/origin/*', '+refs/tags/*:refs/tags/*']],
+    ]);
+  } finally { fixture.cleanup(); }
+});
+
+it('keeps dependencies only while their inputs match the install that produced them', () => {
+  let inputs = '100644 abc 0\tpackage.json\0';
+  const fixture = reuseFixture({ status: '!! node_modules/\0', inputs: () => inputs });
+  writeFileSync(join(fixture.slot, 'package.json'), '{}');
+  const log = vi.fn();
+  try {
+    // No record yet: whatever is there was never proven, so it goes.
+    mkdirSync(join(fixture.slot, 'node_modules/stale'), { recursive: true });
+    fixture.snapshot(log);
+    expect(existsSync(join(fixture.slot, 'node_modules/stale'))).toBe(false);
+    const recorded = readFileSync(fixture.record, 'utf8');
+
+    mkdirSync(join(fixture.slot, 'node_modules/kept'), { recursive: true });
+    fixture.snapshot(log);
+    expect(existsSync(join(fixture.slot, 'node_modules/kept'))).toBe(true);
+    expect(readFileSync(fixture.record, 'utf8')).toBe(recorded);
+
+    inputs = '100644 def 0\tpackage.json\0';
+    fixture.snapshot(log);
+    expect(existsSync(join(fixture.slot, 'node_modules/kept'))).toBe(false);
+    expect(readFileSync(fixture.record, 'utf8')).not.toBe(recorded);
+    expect(log.mock.calls.filter(([line]) => line === 'pre-push: dependency inputs changed since the last install; reinstalling from scratch')).toHaveLength(2);
+  } finally { fixture.cleanup(); }
+});
+
+it.each([
+  ['untracked file', { status: '?? junk.txt\0' }, 'reused snapshot is not clean: ?? junk.txt'],
+  ['modified tracked file', { status: ' M src/a.ts\0' }, 'reused snapshot is not clean:  M src/a.ts'],
+  ['ignored build output', { status: '!! dist/\0' }, 'reused snapshot is not clean: !! dist/'],
+  ['assume-unchanged entry', { index: 'H package.json\0h src/a.ts\0' }, 'reused snapshot index hides changes: h src/a.ts'],
+  ['skip-worktree entry', { index: 'S src/a.ts\0' }, 'reused snapshot index hides changes: S src/a.ts'],
+  ['wrong HEAD', { head: BASE }, `reused snapshot is not at ${OID}`],
+  ['unreadable config', { fail: (_command: string, args: string[]) => args[0] === 'config' && args.includes('--list') }, 'could not read reused snapshot config'],
+  ['failed worktree reset', { fail: (_command: string, args: string[], inSlot: boolean) => inSlot && args[0] === 'config' && args[1] === '--local' && args.at(-1) === 'core.worktree' }, 'could not reset reused snapshot core.worktree'],
+  ['failed filter reset', { config: 'core.bare\0filter.evil.smudge\0', fail: (_command: string, args: string[]) => args[0] === 'config' && args.at(-1) === 'filter.evil.smudge' }, 'could not reset reused snapshot filter.evil.smudge'],
+  ['repository outside its slot', { layout: () => `${tmpdir()}\n${tmpdir()}/.git\n` }, 'reused snapshot repository points outside its slot'],
+  ['unreadable layout', { fail: (_command: string, args: string[]) => args[1] === '--show-toplevel' }, 'reused snapshot repository points outside its slot'],
+  ['replacement ref', { replaced: 'refs/replace/abc\n' }, 'reused snapshot has replacement refs'],
+  ['failed retry clean', { fail: (command: string, args: string[], inSlot: boolean, attempt: number) => (command === 'pnpm' && inSlot && attempt === 1) || (args[0] === 'clean' && args.length === 2) }, 'could not clean reused snapshot'],
+  ['failed fetch', { fail: (_command: string, args: string[], inSlot: boolean) => inSlot && args[0] === 'fetch' }, `could not fetch pushed object ${OID}`],
+  ['failed checkout', { fail: (_command: string, args: string[], inSlot: boolean) => inSlot && args[0] === 'checkout' }, `could not check out pushed object ${OID}`],
+  ['failed clean', { fail: (_command: string, args: string[]) => args[0] === 'clean' }, 'could not clean reused snapshot'],
+  ['unreadable index', { fail: (_command: string, args: string[]) => args[0] === 'ls-files' && args[1] === '-v' }, 'could not read reused snapshot index'],
+  ['failed status', { fail: (_command: string, args: string[]) => args[0] === 'status' }, 'could not read reused snapshot status'],
+  ['unreadable dependency inputs', { fail: (_command: string, args: string[]) => args[0] === 'ls-files' && args[1] === '-s' }, 'could not read reused snapshot dependency inputs'],
+])('falls back to a fresh clone when the reused snapshot has a %s', (_case, options, reason) => {
+  const fixture = reuseFixture(options);
+  const log = vi.fn();
+  const verified: string[] = [];
+  try {
+    fixture.snapshot(log, (snapshot) => { verified.push(snapshot); });
+    expect(log).toHaveBeenCalledWith(`pre-push: reused snapshot unusable (${reason}); using a fresh clone`);
+    expect(existsSync(fixture.slot)).toBe(false);
+    expect(existsSync(`${fixture.slot}.lock`)).toBe(false);
+    expect(verified).toHaveLength(1);
+    expect(verified[0]).not.toBe(fixture.slot);
+    expect(fixture.calls()).toContainEqual(['git', ['clone', '--no-local', '--no-checkout', fixture.root, verified[0]]]);
+  } finally { fixture.cleanup(); }
+});
+
+it('retries a failed install from scratch in the reused snapshot', () => {
+  const fixture = reuseFixture({ status: '!! node_modules/\0', fail: (command, _args, _inSlot, attempt) => command === 'pnpm' && attempt === 1 });
+  writeFileSync(join(fixture.slot, 'package.json'), '{}');
+  mkdirSync(join(fixture.slot, 'node_modules/x'), { recursive: true });
+  const log = vi.fn();
+  try {
+    expect(fixture.snapshot(log)).toBe(fixture.slot);
+    expect(log).toHaveBeenCalledWith('pre-push: install failed in reused snapshot; retrying from scratch');
+    expect(fixture.calls().slice(-3)).toEqual([
+      ['pnpm', ['install', '--frozen-lockfile', '--prefer-offline']],
+      ['git', ['clean', '-ffdx']],
+      ['pnpm', ['install', '--frozen-lockfile', '--prefer-offline']],
+    ]);
+    expect(existsSync(fixture.record)).toBe(true);
+  } finally { fixture.cleanup(); }
+});
+
+it('fails the push without a fresh clone when install fails twice in the reused snapshot', () => {
+  const fixture = reuseFixture({ fail: (command) => command === 'pnpm' });
+  const verify = vi.fn();
+  try {
+    expect(() => fixture.snapshot(vi.fn(), verify)).toThrow('snapshot dependency install failed');
+    expect(verify).not.toHaveBeenCalled();
+    expect(fixture.calls()).not.toContainEqual(expect.arrayContaining(['git', expect.arrayContaining(['clone'])]));
+    expect(fixture.run.mock.calls.filter(([command]) => command === 'pnpm')).toHaveLength(2);
+    expect(existsSync(fixture.slot)).toBe(true);
+    expect(existsSync(fixture.record)).toBe(false);
+    expect(existsSync(`${fixture.slot}.lock`)).toBe(false);
+  } finally { fixture.cleanup(); }
+});
+
+it('removes node_modules left by deleted packages and keeps live ones', () => {
+  const fixture = reuseFixture({ status: '!! node_modules/\0!! packages/gone/node_modules/\0!! packages/live/node_modules/\0' });
+  for (const directory of ['node_modules', 'packages/gone/node_modules', 'packages/live/node_modules']) mkdirSync(join(fixture.slot, directory), { recursive: true });
+  writeFileSync(join(fixture.slot, 'package.json'), '{}');
+  writeFileSync(join(fixture.slot, 'packages/live/package.json'), '{}');
+  try {
+    fixture.snapshot();
+    // First reuse has no record, so live dependencies are reinstalled too; a matching record keeps them.
+    for (const directory of ['node_modules', 'packages/live/node_modules']) mkdirSync(join(fixture.slot, directory), { recursive: true });
+    mkdirSync(join(fixture.slot, 'packages/gone/node_modules'), { recursive: true });
+    fixture.snapshot();
+    expect(existsSync(join(fixture.slot, 'node_modules'))).toBe(true);
+    expect(existsSync(join(fixture.slot, 'packages/live/node_modules'))).toBe(true);
+    expect(existsSync(join(fixture.slot, 'packages/gone/node_modules'))).toBe(false);
+  } finally { fixture.cleanup(); }
+});
+
+it('falls back to a fresh clone when the slot .git is not a directory', () => {
+  const fixture = reuseFixture();
+  rmSync(join(fixture.slot, '.git'), { recursive: true });
+  writeFileSync(join(fixture.slot, '.git'), `gitdir: ${fixture.root}\n`);
+  const log = vi.fn();
+  try {
+    expect(fixture.snapshot(log)).not.toBe(fixture.slot);
+    expect(log).toHaveBeenCalledWith('pre-push: reused snapshot unusable (reused snapshot .git is not a directory); using a fresh clone');
+    expect(fixture.calls().filter(([, args]) => (args as string[])[0] === 'config' && (args as string[])[1] === '--local')).toEqual([]);
+    expect(existsSync(fixture.root)).toBe(true);
+  } finally { fixture.cleanup(); }
+});
+
+it('never reports a result from a slot whose lock a racing push took', () => {
+  const fixture = reuseFixture();
+  const slotWith = (owns: () => boolean) => () => ({ path: fixture.slot, owns, release: vi.fn() });
+  try {
+    const before = vi.fn((snapshot: string) => snapshot);
+    const log = vi.fn();
+    const result = withSnapshot({ oid: OID, root: fixture.root, run: fixture.run, log, cacheRoot: fixture.cacheRoot, acquire: slotWith(() => false) }, before);
+    expect(result).not.toBe(fixture.slot);
+    expect(before).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith(`pre-push: lost the lock on ${fixture.slot}; using a fresh clone`);
+    expect(existsSync(fixture.slot)).toBe(true);
+
+    const owned = [true, false];
+    const during = vi.fn((snapshot: string) => snapshot);
+    const again = withSnapshot({ oid: OID, root: fixture.root, run: fixture.run, log, cacheRoot: fixture.cacheRoot, acquire: slotWith(() => owned.shift() ?? false) }, during);
+    expect(during.mock.calls.map(([path]) => path)).toEqual([fixture.slot, again]);
+    expect(again).not.toBe(fixture.slot);
+    expect(log).toHaveBeenCalledWith(`pre-push: lost the lock on ${fixture.slot} during verification; verifying again in a fresh clone`);
+  } finally { fixture.cleanup(); }
+});
+
+it.skipIf(process.platform === 'win32')('keeps a push green when its lock cannot be removed, and distrusts a slot it cannot move aside', () => {
+  const cache = mkdtempSync(join(tmpdir(), 'zana-push-stuck-'));
+  try {
+    const slot = acquireSnapshotSlot(cache, { key: 'k', host: HOST })!;
+    chmodSync(cache, 0o555);
+    expect(() => slot.release()).not.toThrow();
+  } finally { chmodSync(cache, 0o755); rmSync(cache, { recursive: true, force: true }); }
+
+  const fixture = reuseFixture({ status: '?? junk\0' });
+  writeFileSync(fixture.record, 'recorded');
+  const run = fixture.run.getMockImplementation()!;
+  fixture.run.mockImplementation((command, args, options) => {
+    // The slot cannot be renamed aside once its parent is read-only.
+    if (args[0] === 'status') chmodSync(fixture.cacheRoot, 0o555);
+    return run(command, args, options);
+  });
+  try {
+    expect(fixture.snapshot()).not.toBe(fixture.slot);
+    expect(existsSync(fixture.slot)).toBe(true);
+    expect(existsSync(fixture.record)).toBe(false);
+  } finally { chmodSync(fixture.cacheRoot, 0o755); fixture.cleanup(); }
+});
+
+it('surfaces verification failures from a reused snapshot without retrying, and keeps it', () => {
+  const fixture = reuseFixture();
+  try {
+    expect(() => fixture.snapshot(vi.fn(), () => { throw new Error('verification failed: tests'); })).toThrow('verification failed: tests');
+    expect(fixture.calls()).not.toContainEqual(expect.arrayContaining(['git', expect.arrayContaining(['clone'])]));
+    expect(existsSync(fixture.slot)).toBe(true);
+    expect(existsSync(`${fixture.slot}.lock`)).toBe(false);
+  } finally { fixture.cleanup(); }
+});
+
+it('uses a fresh clone when no slot is free or the cache is unusable', () => {
+  const fixture = reuseFixture();
+  const blocked = join(fixture.cacheRoot, 'not-a-directory');
+  writeFileSync(blocked, '');
+  const log = vi.fn();
+  try {
+    const busy = withSnapshot({ oid: OID, root: fixture.root, run: fixture.run, log, cacheRoot: fixture.cacheRoot, acquire: () => null }, (snapshot: string) => snapshot);
+    expect(busy).not.toBe(fixture.slot);
+    expect(log).toHaveBeenCalledWith('pre-push: no free cached snapshot; using a fresh clone');
+    const unusable = withSnapshot({ oid: OID, root: fixture.root, run: fixture.run, log, cacheRoot: join(blocked, 'cache') }, (snapshot: string) => snapshot);
+    expect(unusable).not.toBe(fixture.slot);
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^pre-push: snapshot cache unavailable \(.+\); using a fresh clone$/));
+  } finally { fixture.cleanup(); }
+});
+
+it('restores a reused snapshot to exactly the pushed tree with real Git', () => {
+  const root = mkdtempSync(join(tmpdir(), 'zana-push-real-root-'));
+  const cacheRoot = mkdtempSync(join(tmpdir(), 'zana-push-real-cache-'));
+  const marker = join(root, 'hook-ran');
+  const write = (path: string, content: string) => {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), content);
+  };
+  const commit = (message: string) => {
+    plainGit(root, ['add', '-A']);
+    plainGit(root, ['commit', '-qm', message]);
+    return plainGit(root, ['rev-parse', 'HEAD']);
+  };
+  // Real Git, stubbed pnpm: the cleanliness contract is Git's job, not the install's.
+  const run = (command: string, args: string[], options: Record<string, unknown>) => (command === 'pnpm' ? { status: 0 } : spawnSync(command, args, { ...options, stdio: options.stdio === 'inherit' ? 'ignore' : options.stdio }));
+  const keep = (snapshot: string) => {
+    mkdirSync(join(snapshot, 'node_modules/keep'), { recursive: true });
+    writeFileSync(join(snapshot, 'node_modules/keep/index.js'), '');
+  };
+  const log = vi.fn();
+  try {
+    plainGit(root, ['init', '-q']);
+    write('.gitignore', 'node_modules\ndist\n');
+    write('package.json', '{}');
+    write('packages/gone/package.json', '{}');
+    write('src/a.txt', 'first\n');
+    write('src/b.txt', 'stable\n');
+    const first = commit('first');
+    rmSync(join(root, 'packages/gone'), { recursive: true });
+    write('src/a.txt', 'second\n');
+    const second = commit('second');
+    write('src/a.txt', 'third\n');
+    const third = commit('third');
+
+    const used = withSnapshot({ oid: first, root, run, log, cacheRoot }, (snapshot: string) => {
+      expect(readFileSync(join(snapshot, 'src/a.txt'), 'utf8')).toBe('first\n');
+      // An edit that keeps size and mtime, against an index that already trusts that stat.
+      const stable = join(snapshot, 'src/b.txt');
+      const old = new Date(Date.now() - 3_600_000);
+      utimesSync(stable, old, old);
+      plainGit(snapshot, ['update-index', '--refresh']);
+      writeFileSync(stable, 'sneaky\n');
+      utimesSync(stable, old, old);
+      // Leave every kind of residue a verification run could produce.
+      writeFileSync(join(snapshot, 'src/a.txt'), 'dirty\n');
+      writeFileSync(join(snapshot, 'junk.txt'), '');
+      mkdirSync(join(snapshot, 'dist'));
+      writeFileSync(join(snapshot, 'dist/out.js'), '');
+      keep(snapshot);
+      mkdirSync(join(snapshot, 'packages/gone/node_modules/x'), { recursive: true });
+      mkdirSync(join(snapshot, 'nested-repo'));
+      plainGit(join(snapshot, 'nested-repo'), ['init', '-q']);
+      // An install points hooks into the snapshot; reuse must not run them.
+      plainGit(snapshot, ['config', 'core.hooksPath', '.githooks']);
+      // Code under verification can also plant hooks, filters, and info files
+      // that a later checkout would otherwise obey.
+      for (const hooks of ['.git/hooks', '.githooks']) {
+        mkdirSync(join(snapshot, hooks), { recursive: true });
+        for (const hook of ['post-checkout', 'reference-transaction']) writeFileSync(join(snapshot, hooks, hook), `#!/bin/sh\necho ran >> "${marker}"\n`, { mode: 0o755 });
+      }
+      plainGit(snapshot, ['config', 'filter.evil.smudge', `sh -c 'echo ran >> "${marker}"; cat'`]);
+      plainGit(snapshot, ['config', 'include.path', '../../outside.config']);
+      writeFileSync(join(snapshot, '.git/info/attributes'), '* filter=evil\n');
+      return snapshot;
+    });
+    // Removing a package changed the dependency inputs, so kept dependencies are reinstalled.
+    const changed = withSnapshot({ oid: second, root, run, log, cacheRoot }, (snapshot: string) => {
+      expect(plainGit(snapshot, ['rev-parse', 'HEAD'])).toBe(second);
+      expect(plainGit(snapshot, ['status', '--porcelain', '--untracked-files=all'])).toBe('');
+      expect(readFileSync(join(snapshot, 'src/a.txt'), 'utf8')).toBe('second\n');
+      expect(readFileSync(join(snapshot, 'src/b.txt'), 'utf8')).toBe('stable\n');
+      for (const gone of ['junk.txt', 'dist', 'nested-repo', 'packages/gone/node_modules', 'node_modules/keep']) expect(existsSync(join(snapshot, gone))).toBe(false);
+      keep(snapshot);
+      return snapshot;
+    });
+    const reused = withSnapshot({ oid: third, root, run, log, cacheRoot }, (snapshot: string) => {
+      expect(readFileSync(join(snapshot, 'src/a.txt'), 'utf8')).toBe('third\n');
+      expect(existsSync(join(snapshot, 'node_modules/keep/index.js'))).toBe(true);
+      expect(() => plainGit(snapshot, ['config', '--local', '--get-all', 'core.hooksPath'])).toThrow();
+      expect(() => plainGit(snapshot, ['config', '--local', '--get-regexp', '^(filter|include)\\.'])).toThrow();
+      expect(existsSync(join(snapshot, '.git/info'))).toBe(false);
+      return snapshot;
+    });
+    expect(new Set([used, changed, reused].map((path) => realpathSync(path))).size).toBe(1);
+    expect(existsSync(marker)).toBe(false);
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('using a fresh clone'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(cacheRoot, { recursive: true, force: true });
+  }
 });

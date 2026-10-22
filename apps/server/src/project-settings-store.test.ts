@@ -55,6 +55,20 @@ describe('project settings store', () => {
     expect(store.get('p3')).toMatchObject({ remoteToolProxy: true });
   });
 
+  it('round-trips launchApproval and rejects values outside the policy', async () => {
+    const root = makeDir();
+    const file = join(root, '.zcc', 'project-settings.json');
+    const store = createProjectSettingsStore({ projectSettingsFile: file });
+
+    await store.set('p1', { launchApproval: 'review' });
+    expect(store.get('p1')).toMatchObject({ launchApproval: 'review' });
+    expect(JSON.parse(readFileSync(file, 'utf8')).p1).toEqual({ launchApproval: 'review' });
+    await store.set('p1', { worktreeIsolation: true });
+    expect(store.get('p1')).toMatchObject({ launchApproval: 'review', worktreeIsolation: true });
+    await expect(store.set('p1', { launchApproval: 'always' } as never)).rejects.toThrow();
+    expect(store.get('p1').launchApproval).toBe('review');
+  });
+
   it('removes only the requested project settings entry', async () => {
     const root = makeDir();
     const file = join(root, '.zcc', 'project-settings.json');

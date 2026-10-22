@@ -15,7 +15,8 @@ import {
   type FSWatcher
 } from 'node:fs';
 import { join } from 'node:path';
-import type { Project, Team, TeamSlot } from '@zana-ai/zcc-domain/product';
+import type { Project, SquadTransport, Team, TeamSlot } from '@zana-ai/zcc-domain/product';
+import { isLaunchApproval } from '@zana-ai/zcc-domain/squad-proposal';
 import type { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-team-registry.js';
 import { uniqueCopyName } from '../projects/unique-copy-name.js';
 
@@ -87,6 +88,7 @@ export function sanitizeTeam(raw: unknown): Team | null {
     });
   }
 
+  const transport: SquadTransport = r.transport === 'MODERN' ? 'MODERN' : 'CLI';
   return {
     id: r.id.trim(),
     name: r.name.trim(),
@@ -104,7 +106,9 @@ export function sanitizeTeam(raw: unknown): Team | null {
     initialPrompt: typeof r.initialPrompt === 'string' ? r.initialPrompt : undefined,
     worktreeIsolation: typeof r.worktreeIsolation === 'boolean' ? r.worktreeIsolation : undefined,
     routingEnforced: typeof r.routingEnforced === 'boolean' ? r.routingEnforced : undefined,
-    defaultPlanning: r.defaultPlanning === 'infer' || r.defaultPlanning === 'provided' ? r.defaultPlanning : undefined
+    transport,
+    defaultPlanning: r.defaultPlanning === 'infer' || r.defaultPlanning === 'provided' ? r.defaultPlanning : undefined,
+    launchApproval: isLaunchApproval(r.launchApproval) ? r.launchApproval : undefined
   };
 }
 
@@ -267,6 +271,7 @@ function listInDir(dir: string, source: Team['source']): Team[] {
  */
 export class TeamStore extends EventEmitter {
   private cache: Team[] = [];
+  private reviewRequiredIds = new Set<string>();
   private projectsRef: () => Project[];
   private registry?: PersonaTeamRegistry;
   private registryUnsub: (() => void) | null = null;
@@ -315,6 +320,14 @@ export class TeamStore extends EventEmitter {
     return this.cache;
   }
 
+  /**
+   * Whether any user or project record with this id asks for review before launch.
+   * A project file that shadows a Squad by id must not lift review set elsewhere.
+   */
+  launchReviewRequired(id: string): boolean {
+    return this.reviewRequiredIds.has(id) || this.cache.find((team) => team.id === id)?.launchApproval === 'review';
+  }
+
   /** Subscribe to changes. Returns an unsubscribe function. */
   onChanged(cb: () => void): () => void {
     this.on('changed', cb);
@@ -324,6 +337,7 @@ export class TeamStore extends EventEmitter {
   /** Re-discover all sources. Cheap; called on watch events, registry emits, and project changes. */
   refresh() {
     const merged = new Map<string, Team>();
+    const reviewRequired = new Set<string>();
     // Extension teams first (ext:* ids can't collide with the rest); a same-id
     // file later would still win, matching PersonaStore's defensive ordering.
     if (this.registry) {
@@ -331,7 +345,10 @@ export class TeamStore extends EventEmitter {
     }
     for (const t of BUILTIN) merged.set(t.id, { ...t, source: 'builtin' });
     const userDir = userTeamsDir();
-    for (const t of listInDir(userDir, 'user')) merged.set(t.id, t);
+    for (const t of listInDir(userDir, 'user')) {
+      merged.set(t.id, t);
+      if (t.launchApproval === 'review') reviewRequired.add(t.id);
+    }
     const canonicalUserDir = canonicalDir(userDir);
     for (const entry of orderedCatalogSources(this.projectsRef(), this.remoteSources(), this.projectOrder?.())) {
       if (entry.kind === 'remote') {
@@ -339,6 +356,7 @@ export class TeamStore extends EventEmitter {
         for (const record of source.records) {
           const value = parseTeam(record);
           if (value) merged.set(value.id, { ...value, source: { projectId: source.projectId, projectName: source.projectName } });
+          if (value?.launchApproval === 'review') reviewRequired.add(value.id);
         }
         continue;
       }
@@ -346,9 +364,13 @@ export class TeamStore extends EventEmitter {
       const projectDir = projectTeamsDir(project);
       if (canonicalDir(projectDir) === canonicalUserDir) continue;
       const projectSource: Team['source'] = { projectId: project.id, projectName: project.name };
-      for (const t of listInDir(projectDir, projectSource)) merged.set(t.id, t);
+      for (const t of listInDir(projectDir, projectSource)) {
+        merged.set(t.id, t);
+        if (t.launchApproval === 'review') reviewRequired.add(t.id);
+      }
     }
     this.cache = [...merged.values()];
+    this.reviewRequiredIds = reviewRequired;
     this.emit('changed');
   }
 

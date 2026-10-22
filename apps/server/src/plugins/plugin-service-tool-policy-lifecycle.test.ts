@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createPluginService } from './plugin-service.js';
+import { createPluginStore, pluginStorePath } from './plugin-store.js';
 import {
   TOOL_POLICY_INVENTORY_UNAVAILABLE_REASON,
   TOOL_POLICY_NOT_READY_REASON
@@ -56,6 +57,23 @@ function request(over: Record<string, string> = {}) {
 }
 
 describe('plugin tool policy lifecycle', () => {
+  it('persists unknown only during activation and seals a no-handler plugin as false for independent readers', async () => {
+    const dataDir = root();
+    const pluginDir = writePlugin(join(root(), 'no-policy'), 'no-policy',
+      `export default async function plugin() { await new Promise(resolve => setTimeout(resolve, 100)); }\n`);
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    services.push(service);
+    const observer = createPluginStore({ file: pluginStorePath(dataDir) });
+    const installing = service.install(pluginDir);
+    await expect.poll(() => observer.get('no-policy')?.toolPolicy).toBe('unknown');
+    await expect(service.decideToolPolicy(request())).resolves.toMatchObject({ action: 'deny' });
+    await installing;
+    expect(observer.get('no-policy')).toMatchObject({ enabled: true, status: 'running', toolPolicy: 'false' });
+    await expect(service.decideToolPolicy(request({ invocationId: 'sealed' }))).resolves.toEqual({ action: 'allow' });
+    await service.disable('no-policy');
+    expect(observer.get('no-policy')).toMatchObject({ enabled: false, status: 'disabled', toolPolicy: 'false' });
+  });
+
   it('denies while an enabled unknown server plugin is still starting', async () => {
     const dataDir = root();
     const pluginDir = writePlugin(
@@ -316,6 +334,151 @@ describe('plugin tool policy lifecycle', () => {
     await expect(service.decideToolPolicy(request())).resolves.toMatchObject({
       action: 'deny',
       reason: expect.stringContaining(TOOL_POLICY_NOT_READY_REASON)
+    });
+  });
+
+  describe('toolPolicyReadiness', () => {
+    const policyServer = (delayMs = 0) => `export default async function plugin(zcc) {
+      ${delayMs ? `await new Promise((resolve) => setTimeout(resolve, ${delayMs}));` : ''}
+      zcc.hooks.onToolPolicy(() => ({ action: 'allow' }));
+    }\n`;
+
+    it('is ready with no server plugins', async () => {
+      const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+      services.push(service);
+      await service.start();
+      await expect(service.toolPolicyReadiness()).resolves.toEqual({ ready: true, required: [] });
+    });
+
+    it('waits for an in-flight start and never reports a torn pre-activation row', async () => {
+      const dataDir = root();
+      const pluginDir = writePlugin(join(root(), 'slow-ready'), 'slow-ready', policyServer(150), { toolPolicy: true });
+      const first = createPluginService({ dataDir, bundledRoot: root() });
+      await first.install(pluginDir);
+      first.stop();
+      const service = createPluginService({ dataDir, bundledRoot: root() });
+      services.push(service);
+      const starting = service.start();
+      let settled = false;
+      void starting.then(() => { settled = true; });
+      const readiness = service.toolPolicyReadiness();
+      let resolvedEarly = false;
+      void readiness.then(() => { resolvedEarly = !settled; });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(settled).toBe(false);
+      expect(resolvedEarly).toBe(false);
+      const result = await readiness;
+      expect(settled).toBe(true);
+      expect(result).toEqual({
+        ready: true,
+        required: [{ pluginId: 'slow-ready', toolPolicy: 'true', status: 'running', sealed: true }]
+      });
+    });
+
+    it('reports not ready with the blocked entry while a plugin is mid-install (no start in flight)', async () => {
+      const dataDir = root();
+      const pluginDir = writePlugin(join(root(), 'mid-install'), 'mid-install', policyServer(150), { toolPolicy: true });
+      const service = createPluginService({ dataDir, bundledRoot: root() });
+      services.push(service);
+      const installing = service.install(pluginDir);
+      await expect.poll(() => service.get('mid-install')?.toolPolicy).toBe('true');
+      const result = await service.toolPolicyReadiness();
+      expect(result.ready).toBe(false);
+      expect(result.required).toHaveLength(1);
+      expect(result.required[0]).toMatchObject({ pluginId: 'mid-install', sealed: false });
+      expect(result.reason).toContain('mid-install (true, ');
+      expect(result.reason).toContain('unsealed');
+      await installing;
+      await expect(service.toolPolicyReadiness()).resolves.toMatchObject({ ready: true });
+    });
+
+    it('requires an enabled server plugin whose policy is unknown and reports it as blocked', async () => {
+      const dataDir = root();
+      const pluginDir = writePlugin(join(root(), 'undeclared'), 'undeclared',
+        `export default async function plugin() { await new Promise((resolve) => setTimeout(resolve, 150)); }\n`);
+      const service = createPluginService({ dataDir, bundledRoot: root() });
+      services.push(service);
+      const installing = service.install(pluginDir);
+      await expect.poll(() => service.get('undeclared')?.toolPolicy).toBe('unknown');
+      const result = await service.toolPolicyReadiness();
+      expect(result).toMatchObject({ ready: false, required: [{ pluginId: 'undeclared', toolPolicy: 'unknown', sealed: false }] });
+      expect(result.reason).toMatch(/^undeclared \(unknown, \w+, unsealed\)$/);
+      await installing;
+    });
+
+    it('does not require a plugin sealed as declared-false', async () => {
+      const dataDir = root();
+      const pluginDir = writePlugin(join(root(), 'no-policy-ready'), 'no-policy-ready',
+        `export default function plugin() {}\n`, { toolPolicy: false });
+      const service = createPluginService({ dataDir, bundledRoot: root() });
+      services.push(service);
+      await service.install(pluginDir);
+      await expect(service.toolPolicyReadiness()).resolves.toEqual({ ready: true, required: [] });
+    });
+
+    it('excludes disabled plugins', async () => {
+      const dataDir = root();
+      const pluginDir = writePlugin(join(root(), 'to-disable'), 'to-disable', policyServer(), { toolPolicy: true });
+      const service = createPluginService({ dataDir, bundledRoot: root() });
+      services.push(service);
+      await service.install(pluginDir);
+      await expect(service.toolPolicyReadiness()).resolves.toMatchObject({ ready: true, required: [{ pluginId: 'to-disable' }] });
+      await service.disable('to-disable');
+      await expect(service.toolPolicyReadiness()).resolves.toEqual({ ready: true, required: [] });
+    });
+
+    it('is not ready when a declared-true plugin never registers a handler', async () => {
+      const dataDir = root();
+      const pluginDir = writePlugin(join(root(), 'no-handler'), 'no-handler', `export default function plugin() {}\n`, { toolPolicy: true });
+      const service = createPluginService({ dataDir, bundledRoot: root() });
+      services.push(service);
+      await service.install(pluginDir);
+      const result = await service.toolPolicyReadiness();
+      expect(result.ready).toBe(false);
+      expect(result.required).toMatchObject([{ pluginId: 'no-handler', toolPolicy: 'true', status: 'degraded', sealed: false }]);
+      expect(result.reason).toContain('no-handler (true, degraded, unsealed)');
+    });
+
+    it('reports an unavailable inventory for a corrupt registry', async () => {
+      const dataDir = root();
+      mkdirSync(join(dataDir, 'plugins'), { recursive: true });
+      writeFileSync(join(dataDir, 'plugins', 'installed.json'), '{not-json');
+      const service = createPluginService({ dataDir, bundledRoot: root() });
+      services.push(service);
+      const result = await service.toolPolicyReadiness();
+      expect(result).toMatchObject({ ready: false, required: [] });
+      expect(result.reason).toContain(TOOL_POLICY_INVENTORY_UNAVAILABLE_REASON);
+    });
+
+    it('reports an unavailable inventory when the registry goes missing after it existed', async () => {
+      const dataDir = root();
+      const pluginDir = writePlugin(join(root(), 'vanish'), 'vanish', policyServer(), { toolPolicy: true });
+      const service = createPluginService({ dataDir, bundledRoot: root() });
+      services.push(service);
+      await service.install(pluginDir);
+      rmSync(pluginStorePath(dataDir));
+      const result = await service.toolPolicyReadiness();
+      expect(result).toMatchObject({ ready: false, required: [] });
+      expect(result.reason).toContain(TOOL_POLICY_INVENTORY_UNAVAILABLE_REASON);
+      expect(result.reason).toContain('missing after it existed');
+    });
+
+    it('is not ready once the service is stopped', async () => {
+      const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+      services.push(service);
+      await service.start();
+      service.stop();
+      await expect(service.toolPolicyReadiness()).resolves.toEqual({ ready: false, required: [], reason: 'plugin service is stopped' });
+    });
+
+    it('tolerates a failed start and still answers from the registry', async () => {
+      const dataDir = root();
+      mkdirSync(join(dataDir, 'plugins'), { recursive: true });
+      writeFileSync(join(dataDir, 'plugins', 'installed.json'), '{not-json');
+      const service = createPluginService({ dataDir, bundledRoot: root() });
+      services.push(service);
+      void service.start().catch(() => undefined);
+      await expect(service.toolPolicyReadiness()).resolves.toMatchObject({ ready: false, required: [] });
     });
   });
 });

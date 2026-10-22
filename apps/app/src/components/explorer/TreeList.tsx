@@ -63,6 +63,8 @@ export const TreeList = React.memo(function TreeList({
             <div
               className={`tree-row ${isDir ? 'dir' : 'file'} ${isActive ? 'active' : ''} ${gitClass}`}
               style={{ paddingLeft: 6 + depth * 12 }}
+              data-path={entry.path}
+              aria-current={isActive ? 'true' : undefined}
               onClick={() => {
                 if (consumeFsEntryDragClick()) return;
                 if (isDir) onToggleDir(entry);

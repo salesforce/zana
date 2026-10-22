@@ -1,21 +1,21 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { SHARED_PRODUCT_METHODS } from '@zana-ai/zcc-contracts/shared-product';
-const state = vi.hoisted(() => ({ shared: new Map<string, Function>(), windows: new Map<string, Function>(), projects: [{ id: 'registered', path: '/registered' }], teams: [] as Array<{ id: string; name: string }> }));
+const state = vi.hoisted(() => ({ shared: new Map<string, Function>(), windows: new Map<string, Function>(), projects: [{ id: 'registered', path: '/registered' }], teams: [] as Array<{ id: string; name: string }>, lifecycle: [] as unknown[], lifecycleFail: false, lifecycleFailRaw: undefined as unknown }));
 vi.mock('electron', () => ({ dialog: {} }));
 vi.mock('@zana-ai/zcc-server/services/projects/store', () => ({ store: { listProjects: () => state.projects } }));
 vi.mock('../shared-product-registry.js', () => ({ registerSharedProduct: (channel: string, fn: Function) => { state.shared.set(channel, fn); } }));
 import { bindIpcCtx } from '../ctx.js';
 import { registerExecutionBoardIpc } from '../execution-board.js';
-const get = vi.fn(), stop = vi.fn(), start = vi.fn(), list = vi.fn(), clear = vi.fn(), recoverTimedOut = vi.fn(), recoverRetained = vi.fn(), resumeRun = vi.fn(), exactNativeRecoveryAvailability = vi.fn(), squadWorktreeAction = vi.fn();
+const get = vi.fn(), stop = vi.fn(), start = vi.fn(), list = vi.fn(), clear = vi.fn(), recoverTimedOut = vi.fn(), recoverRetained = vi.fn(), exactNativeRecoveryAvailability = vi.fn(), squadWorktreeAction = vi.fn();
 const execution = { id: 'execution', projectId: 'registered', teamId: 'team-1', request: {}, jobTitle: 'Job', state: 'RUNNING', attempt: 1, stateVersion: 4, createdAt: 1, updatedAt: 2, workUnits: [] };
 beforeEach(() => {
-  state.shared.clear(); state.windows.clear(); state.teams = []; vi.clearAllMocks();
+  state.shared.clear(); state.windows.clear(); state.teams = []; state.lifecycle = []; state.lifecycleFail = false; state.lifecycleFailRaw = undefined; vi.clearAllMocks();
    get.mockImplementation(async (projectId: string, id: string) => projectId === 'registered' && id === 'execution' ? { id, projectId, callerPrincipalId: 'stored-owner' } : undefined);
    stop.mockResolvedValue({ ok: false, code: 'CONFLICT', message: 'Version changed' });
-   recoverTimedOut.mockResolvedValue({ ok: false, code: 'CONFLICT', message: 'Already recovered' }); recoverRetained.mockResolvedValue({ ok: false, code: 'CONFLICT', message: 'Already recovered' }); resumeRun.mockResolvedValue({ ok: false, code: 'CONFLICT', message: 'Already resumed' });
+   recoverTimedOut.mockResolvedValue({ ok: false, code: 'CONFLICT', message: 'Already recovered' }); recoverRetained.mockResolvedValue({ ok: false, code: 'CONFLICT', message: 'Already recovered' });
    start.mockResolvedValue({ ok: true }); list.mockResolvedValue({ records: [], hasMore: false }); exactNativeRecoveryAvailability.mockReturnValue({ available: false, restorableSlots: 0 });
-     bindIpcCtx({ safeHandle: vi.fn(), safeHandleFromWindow: (channel: string, fn: Function) => state.windows.set(channel, fn), ptys: { list: () => [] }, teams: { list: () => state.teams }, personas: { list: () => [] }, windows: new Map([[7, { projectId: 'different' }]]), executionStore: { getInProject: get }, executionResumeTokens: { clear, status: () => ({ state: 'missing' }) }, executionSources: {}, squadExecutionService: { stop, listProject: list, recoverTimedOut, recoverRetained, resumeRun }, startTeamJobFromUi: start, exactNativeRecoveryAvailability, squadWorktreeAction } as any);
+     bindIpcCtx({ safeHandle: vi.fn(), safeHandleFromWindow: (channel: string, fn: Function) => state.windows.set(channel, fn), ptys: { list: () => [] }, teams: { list: () => state.teams }, teamLifecycle: { list: async () => { if (state.lifecycleFailRaw !== undefined) throw state.lifecycleFailRaw; if (state.lifecycleFail) throw new Error('corrupt lifecycle store'); return state.lifecycle; } }, personas: { list: () => [] }, windows: new Map([[7, { projectId: 'different' }]]), executionStore: { getInProject: get }, executionResumeTokens: { clear, status: () => ({ state: 'missing' }) }, executionSources: {}, squadExecutionService: { stop, listProject: list, recoverTimedOut, recoverRetained }, startTeamJobFromUi: start, exactNativeRecoveryAvailability, squadWorktreeAction } as any);
   registerExecutionBoardIpc();
    });
   it('authorizes typed retained recovery and forwards only valid recovery inputs', async () => {
@@ -40,6 +40,25 @@ it('denies every shared execution operation for an unregistered project before r
   expect(await state.shared.get(IPC.executionBoard.stop)!('registered', 'execution', '3')).toMatchObject({ code: 'INVALID' });
   expect(stop).toHaveBeenCalledOnce();
     expect(await state.shared.get(IPC.executionBoard.listProject)!('registered')).toEqual({ executions: [], hasMore: false });
+  });
+  it('logs a non-Error lifecycle failure as a string and still lists executions', async () => {
+    state.lifecycleFailRaw = 'lifecycle store offline';
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    list.mockResolvedValueOnce({ records: [{ ...execution, id: 'execution', projectId: 'registered', callerPrincipalId: 'stored-owner' }], hasMore: false });
+    const result = await state.shared.get(IPC.executionBoard.listProject)!('registered') as { executions: unknown[] };
+    expect(result.executions).toHaveLength(1);
+    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('lifecycle store offline'));
+    errorLog.mockRestore();
+  });
+  it('still lists executions when the team lifecycle store is unreadable', async () => {
+    state.lifecycleFail = true;
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    list.mockResolvedValueOnce({ records: [{ ...execution, id: 'execution', projectId: 'registered', callerPrincipalId: 'stored-owner' }], hasMore: false });
+    const result = await state.shared.get(IPC.executionBoard.listProject)!('registered') as { executions: Array<{ executionId: string; modernMembers?: unknown }> };
+    expect(result.executions).toHaveLength(1);
+    expect(result.executions[0]!.modernMembers).toBeUndefined();
+    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('corrupt lifecycle store'));
+    errorLog.mockRestore();
   });
   it('authorizes local timeout recovery and forwards only validated recovery inputs', async () => {
     const recover = state.windows.get(IPC.executionBoard.recoverTimedOut)!;
@@ -144,12 +163,12 @@ it('keeps native recovery available after a replacement launch fails without pro
   expect(JSON.stringify(result)).not.toContain('native-secret');
 });
 
-it('rejects retained recovery, worktree action and resume outside the window project scope', async () => {
+it('rejects retained recovery and worktree action outside the window project scope', async () => {
   const scoped = { id: 7 };
-  for (const channel of [IPC.executionBoard.recoverRetained, IPC.executionBoard.worktreeAction, IPC.executionBoard.resumeRun]) {
+  for (const channel of [IPC.executionBoard.recoverRetained, IPC.executionBoard.worktreeAction]) {
     expect(await state.windows.get(channel)!(scoped, 'registered', 'execution', 3, 'fresh-plan')).toMatchObject({ ok: false, code: 'NOT_FOUND' });
   }
-  expect(recoverRetained).not.toHaveBeenCalled(); expect(squadWorktreeAction).not.toHaveBeenCalled(); expect(resumeRun).not.toHaveBeenCalled();
+  expect(recoverRetained).not.toHaveBeenCalled(); expect(squadWorktreeAction).not.toHaveBeenCalled();
 });
 
 it('maps retained recovery success and service failure', async () => {
@@ -175,19 +194,6 @@ it('validates and forwards squad worktree actions', async () => {
     .resolves.toEqual({ ok: false, code: 'UNAVAILABLE', message: 'squad worktree action unavailable' });
 });
 
-it('validates resume, coerces replay, maps success and failure', async () => {
-  const resume = state.windows.get(IPC.executionBoard.resumeRun)!;
-  await expect(resume({ id: 8 }, 'registered', 'execution', 3.5)).resolves.toMatchObject({ code: 'INVALID' });
-  await expect(resume({ id: 8 }, 'registered', 'execution', 3, 'yes')).resolves.toMatchObject({ code: 'INVALID' });
-  await expect(resume({ id: 8 }, 'registered', 'execution', 3)).resolves.toMatchObject({ code: 'CONFLICT' });
-  expect(resumeRun).toHaveBeenLastCalledWith('interactive:local', 'registered', 'execution', 3, false);
-  resumeRun.mockResolvedValueOnce({ ok: true, value: execution });
-  await expect(resume({ id: 8 }, 'registered', 'execution', 3, true)).resolves.toMatchObject({ ok: true, value: { executionId: 'execution' } });
-  expect(resumeRun).toHaveBeenLastCalledWith('interactive:local', 'registered', 'execution', 3, true);
-  resumeRun.mockRejectedValueOnce(new Error('x'));
-  await expect(state.shared.get(IPC.executionBoard.resumeRun)!('registered', 'execution', 3))
-    .resolves.toEqual({ ok: false, code: 'UNAVAILABLE', message: 'execution recovery unavailable' });
-});
 
 it('falls back to an empty page when the project listing throws', async () => {
   list.mockRejectedValueOnce(new Error('x'));
@@ -199,4 +205,18 @@ it('labels listed executions with the team name when the team exists', async () 
   list.mockResolvedValueOnce({ records: [execution], hasMore: false });
   const page = await state.shared.get(IPC.executionBoard.listProject)!('registered');
   expect(page.executions[0].teamName).toBe('Alpha Squad');
+});
+
+it('projects Modern squad members from the team lifecycle onto their execution only', async () => {
+  const worker = (threadId: string, executionId: string, projectId = 'registered') => ({
+    transport: 'MODERN', threadId, slotId: 'slot', personaId: 'persona', projectId, bindingState: 'BOUND', process: 'running',
+    capacityReleased: false, modernContext: { role: 'worker', executionId }
+  });
+  state.lifecycle = [{ workers: [worker('t1', 'execution'), worker('t2', 'other-execution'), worker('t3', 'execution', 'foreign')] }];
+  list.mockResolvedValueOnce({ records: [execution], hasMore: false });
+  const page = await state.shared.get(IPC.executionBoard.listProject)!('registered');
+  expect(page.executions[0].modernMembers).toEqual([{ threadId: 't1', slotId: 'slot', personaId: 'persona', role: 'worker', live: true }]);
+  state.lifecycle = [];
+  list.mockResolvedValueOnce({ records: [execution], hasMore: false });
+  expect((await state.shared.get(IPC.executionBoard.listProject)!('registered')).executions[0]).not.toHaveProperty('modernMembers');
 });

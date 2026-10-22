@@ -14323,6 +14323,7 @@ body.resizing-col .explorer-resizer::after {
 .execution-details-close { flex: none; }
 .execution-details-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .execution-details-primary-actions { margin: 12px 0 16px; }
+.execution-details-recovery-reason { margin: 0; align-self: center; color: var(--text-muted); font-size: 12px; }
 .execution-worktree { margin: 16px 0; }
 .execution-worktree textarea { margin-top: 10px; }
 .execution-worktree .execution-details-actions { margin-top: 10px; }
@@ -14999,6 +15000,51 @@ body.resizing-col .explorer-resizer::after {
 .fleet-kind-chip.fleet-kind-schedule {
   color: var(--accent-blue, #4d8dff);
   background: color-mix(in srgb, var(--accent-blue, #4d8dff) 16%, transparent);
+}
+
+/* Modern-transport squad members (ACP threads) read apart from CLI squads by a
+   dotted edge in the Thread pill's blue. Bordered surfaces switch their border
+   to dotted (keeping any cohort accent color); borderless rows get an inset
+   dotted outline so layout never shifts. CLI squads are untouched. */
+.agent-card.is-modern,
+.agent-card.has-cohort.is-modern,
+.skills-row.team-row.is-modern {
+  border-style: dotted;
+  border-color: color-mix(in srgb, var(--accent-blue, #4d8dff) 55%, transparent);
+}
+.agent-card.cohort-orch.is-modern {
+  border-left-color: var(--accent-blue, #4d8dff);
+}
+.agents-row.is-modern,
+.project-terminal-row.is-modern,
+.agent-tray-row.is-modern,
+.teams-agent-item.is-modern,
+.agent-squad-worker.is-modern,
+.agents-worker-row.is-modern,
+.agent-monitor-row.is-modern {
+  outline: 1px dotted color-mix(in srgb, var(--accent-blue, #4d8dff) 55%, transparent);
+  outline-offset: -1px;
+  border-radius: 5px;
+}
+.agents-row.is-modern {
+  border-left-style: dotted;
+}
+.teams-agent-item.is-modern {
+  padding: 4px 6px;
+}
+
+/* Squad picker option row: name + transport pill. */
+.squad-picklist-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.squad-picklist-option-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-card.is-schedule-off {
@@ -16312,6 +16358,67 @@ body.resizing-col .explorer-resizer::after {
   background: transparent;
   font-size: 12px;
   color: #e6edf3;
+}
+
+/* Fenced code block + its copy button. The button is absolutely positioned on
+   this wrapper (not inside the scrolling <pre>), so it neither shifts layout
+   nor scrolls away on wide blocks. Hidden until hover/focus on pointer
+   devices; always shown on touch, which has no hover. Not `.inbox-md-code`:
+   that class styles the mermaid source fallback. */
+.inbox-md-codeblock {
+  position: relative;
+}
+
+.inbox-md-code-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid rgba(240, 246, 252, 0.15);
+  border-radius: 6px;
+  /* Same dark surface as the block, so code under the button stays legible
+     around it in both themes. */
+  background: rgba(22, 27, 34, 0.92);
+  color: #c9d1d9;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.inbox-md-codeblock:hover .inbox-md-code-copy,
+.inbox-md-code-copy:focus-visible,
+.inbox-md-code-copy[data-state='copied'],
+.inbox-md-code-copy[data-state='failed'] {
+  opacity: 1;
+}
+
+.inbox-md-code-copy:hover {
+  background: #30363d;
+  color: #f0f6fc;
+}
+
+.inbox-md-code-copy:focus-visible {
+  outline: 2px solid var(--accent-blue, #4c8dff);
+  outline-offset: 1px;
+}
+
+.inbox-md-code-copy[data-state='copied'] {
+  color: #3fb950;
+}
+
+.inbox-md-code-copy[data-state='failed'] {
+  color: #f85149;
+}
+
+@media (hover: none) {
+  .inbox-md-code-copy {
+    opacity: 1;
+  }
 }
 
 /* Rendered mermaid diagrams. Centered, with the SVG scaled to fit the
@@ -40745,6 +40852,12 @@ body.split-frame-guard webview {
 .squad-flow-node:focus-visible {
   outline: 2px solid var(--accent-blue);
   outline-offset: 2px;
+}
+/* Modern squad member nodes read dotted, like Modern cards elsewhere. Declared
+   before the orchestrator/state modifiers so their edge colors still win. */
+.squad-flow-node--modern {
+  border-style: dotted;
+  border-color: color-mix(in srgb, var(--accent-blue, #4d8dff) 55%, transparent);
 }
 .squad-flow-node--orch {
   border-color: color-mix(in srgb, var(--accent-gold) 55%, var(--border-strong));

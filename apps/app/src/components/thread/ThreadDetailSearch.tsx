@@ -1,5 +1,6 @@
 import { useEffect, useRef, type FormEvent, type KeyboardEvent } from 'react';
 import { Search, X } from 'lucide-react';
+import { titleWithShortcut } from '../../lib/keyboard-shortcut-settings.js';
 
 export function threadDetailSearchClassName(draft: string): string {
   return draft.trim().length > 0 ? 'thread-detail-search has-query' : 'thread-detail-search';
@@ -11,17 +12,25 @@ export function ThreadDetailSearch({
   onSubmit,
   mobileHeader = false,
   autoFocus = false,
+  focusRequest = 0,
   onClose
 }: {
   value: string;
   mobileHeader?: boolean;
   autoFocus?: boolean;
+  /** Bumped by the thread.find shortcut: focus the field and select its text. */
+  focusRequest?: number;
   onClose?: () => void;
   onChange: (value: string) => void;
   onSubmit: (needle: string) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => { if (autoFocus) inputRef.current?.focus(); }, [autoFocus]);
+  useEffect(() => {
+    if (focusRequest === 0) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [focusRequest]);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -46,6 +55,7 @@ export function ThreadDetailSearch({
         type="button"
         className="icon-btn thread-detail-search-toggle"
         aria-label="Search in thread"
+        title={titleWithShortcut('Search in thread', 'thread.find')}
         onPointerDown={(event) => {
           // Focusing the toggle would move it as the mobile header expands,
           // before the tap can click it and focus the input.

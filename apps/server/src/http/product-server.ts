@@ -13,6 +13,7 @@ import { startPairingForwarder, type PairingForwarder } from './pairing-forwarde
 import type { LocalAppOriginArgs } from './local-app-origins.js';
 import { tryServePluginAsset } from './plugin-assets.js';
 import { pluginAssetRootFromService } from './product-plugins.js';
+import { handleMainSquadRuntimeHttp } from '../services/threads/squad-member-runtime.js';
 
 export interface ProductServer {
   readonly url: string;
@@ -54,6 +55,7 @@ export async function startProductServer(options: StartProductServerOptions): Pr
 
   const server = createServer(async (request, response) => {
     if (await handleHostInternalHttp(request, response, ctx)) return;
+    if (await handleMainSquadRuntimeHttp(request, response, ctx)) return;
     if (await handleInstallHttp(request, response, ctx)) return;
     if (await handleProductHttp(request, response, ctx)) return;
     if (await tryServePluginAsset(request, response, (pluginId) => pluginAssetRootFromService(ctx.plugins, pluginId))) {

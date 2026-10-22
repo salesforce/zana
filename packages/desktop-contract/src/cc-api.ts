@@ -264,8 +264,6 @@ export interface CcApi {
     recoverTimedOut(projectId: string, executionId: string, expectedStateVersion: number, clientRequestId: string): Promise<Result<ExecutionBoardProjection>>;
     recoverRetainedSquad(projectId: string, executionId: string, expectedStateVersion: number, mode: 'exact-native' | 'fresh-plan'): Promise<Result<ExecutionBoardProjection>>;
     worktreeAction(projectId: string, executionId: string, expectedStateVersion: number, action: 'leave' | 'instruct' | 'delete' | 'force-delete', instruction?: string): Promise<Result<true>>;
-    /** @deprecated Compatibility alias for `recoverRetainedSquad(..., 'fresh-plan')`. */
-    resumeRun(projectId: string, executionId: string, expectedStateVersion: number, replay?: boolean): Promise<Result<ExecutionBoardProjection>>;
     clearResumeToken(projectId: string, executionId: string): Promise<Result<true>>;
     relaunchMonitor(projectId: string, executionId: string): Promise<Result<{ sessionId: string }>>;
   };

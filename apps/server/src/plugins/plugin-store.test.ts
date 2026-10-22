@@ -64,6 +64,32 @@ describe('plugin store strict inventory', () => {
     });
   });
 
+  it('rereads policy classification and enablement written through another handle', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-plugin-store-'));
+    roots.push(dataDir);
+    const file = pluginStorePath(dataDir);
+    const writer = createPluginStore({ file });
+    const reader = createPluginStore({ file });
+    await writer.upsert(row({ toolPolicy: 'unknown' }));
+    expect(reader.get('policy-plugin')).toMatchObject({ enabled: true, toolPolicy: 'unknown' });
+    await writer.upsert(row({ status: 'running', toolPolicy: 'false' }));
+    expect(reader.readStrict()).toMatchObject({ file: { plugins: [expect.objectContaining({ toolPolicy: 'false' })] } });
+    await writer.upsert(row({ enabled: false, toolPolicy: 'false' }));
+    expect(reader.get('policy-plugin')).toMatchObject({ enabled: false, toolPolicy: 'false' });
+  });
+
+  it('preserves concurrent updates to different rows through independent handles', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-plugin-store-'));
+    roots.push(dataDir);
+    const file = pluginStorePath(dataDir);
+    const first = createPluginStore({ file });
+    const second = createPluginStore({ file });
+    await Promise.all([first.upsert(row({ id: 'first' })), second.upsert(row({ id: 'second' }))]);
+    expect(first.list().map(row => row.id)).toEqual(['first', 'second']);
+    await Promise.all([first.remove('first'), second.upsert(row({ id: 'second', toolPolicy: 'false' }))]);
+    expect(second.list()).toMatchObject([{ id: 'second', toolPolicy: 'false' }]);
+  });
+
   it('reports a known existing registry that later disappears', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-plugin-store-'));
     roots.push(dataDir);

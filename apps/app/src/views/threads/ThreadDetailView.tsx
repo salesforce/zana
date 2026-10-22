@@ -35,6 +35,7 @@ import { useRouteState } from '../../hooks/useRouteState.js';
 import { useCompactLayout } from '../../hooks/useCompactLayout.js';
 import { pendingChildThreads, useThreads, type ThreadListItem } from '../../thread-store.js';
 import { useData } from '../../store.js';
+import { useThreadFindTarget } from '../../lib/use-thread-find-target.js';
 import { ThreadPendingInteractionBanner } from '../../components/thread/pending-interactions/ThreadPendingInteractionBanner.js';
 import { ChildThreadPendingBanners } from '../../components/thread/pending-interactions/ChildThreadPendingBanners.js';
 import {
@@ -160,6 +161,7 @@ function ThreadDetailBody({
   const compact = useCompactLayout();
   const hostedSecondary = pane?.secondaryPanelHost != null;
   const viewRef = useRef<HTMLElement>(null);
+  const mainRef = useRef<HTMLDivElement>(null);
   const panel = useThreadSecondaryPanel(threadId, {
     modal,
     getContainerWidthPx: () => viewRef.current?.clientWidth ?? 0
@@ -219,6 +221,14 @@ function ThreadDetailBody({
   const [stoppingAnchorAt, setStoppingAnchorAt] = useState(0);
   const [searchDraft, setSearchDraft] = useState('');
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const searchFocusRequest = useThreadFindTarget({
+    viewRef,
+    mainRef,
+    embedded,
+    modal,
+    paneFocused: pane?.isFocused !== false,
+    onOpenCollapsed: mobileControlsTarget ? () => setMobileSearchOpen(true) : undefined
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [linkParams] = useSearchParams();
   const linkSequence = Number(linkParams.get('message'));
@@ -866,7 +876,7 @@ function ThreadDetailBody({
       style={panelOpen ? { ['--thread-secondary-width' as string]: `${panel.state.widthPx}px` } : undefined}
     >
       <div className="thread-detail-split">
-      <div className="thread-detail-main">
+      <div ref={mainRef} className="thread-detail-main">
         <header className="thread-detail-header" data-title-in-shell={Boolean(mobileTitleTarget) || undefined} data-controls-in-shell={Boolean(mobileControlsTarget) || undefined}>
           <ThreadDetailHeading
             title={title}
@@ -890,6 +900,7 @@ function ThreadDetailBody({
             {(!mobileControlsTarget || mobileSearchOpen) && <ThreadDetailSearch
               mobileHeader={Boolean(mobileControlsTarget)}
               autoFocus={Boolean(mobileControlsTarget)}
+              focusRequest={searchFocusRequest}
               onClose={() => setMobileSearchOpen(false)}
               value={searchDraft}
               onChange={setSearchDraft}

@@ -48,6 +48,7 @@ function makeOpts(over: Partial<RegisterLaunchTeamToolOpts> = {}): RegisterLaunc
     getTeamLaunch: vi.fn((): Result<unknown> => ({ ok: true, value: { launchRequestId: 'req', workers: [] } })),
     reportTeamTask: vi.fn((): Result<unknown> => ({ ok: true, value: { launchRequestId: 'req' } })),
     validateRouteIdentity: vi.fn(() => true),
+    resolveLaunchApproval: vi.fn(() => 'direct' as const),
     ...over
   };
 }
@@ -390,5 +391,55 @@ describe('registerLaunchTeamTool', () => {
     expect(text(res)).toContain('worker-1');
     expect(text(res)).toContain('slot-2');
     expect(text(res)).toContain('unknown persona');
+  });
+
+  describe('launch approval', () => {
+    const authorizeArgs = { teamId: 'squad', launchRequestId: 'request-1', slots: [{ initialTask: 'Review exact bytes' }] };
+
+    it('refuses authorize and launch for a Squad that requires review, revoking the authorized slots', async () => {
+      const resolveLaunchApproval = vi.fn(async () => 'review' as const);
+      const authorizeTeamLaunch = vi.fn(() => ({ ok: true as const, value: { teamId: 'squad', projectId: 'p1', slots: [] } }));
+      const launchTeam = vi.fn();
+      const revokeTeamAuthorizations = vi.fn();
+      const { server, tools } = fakeServer();
+      registerLaunchTeamTool(server as never, makeOpts({ resolveLaunchApproval, authorizeTeamLaunch, launchTeam, revokeTeamAuthorizations }));
+
+      const authorized = await tools.get('authorize_team_launch')!(authorizeArgs);
+      expect(authorized.isError).toBe(true);
+      expect(text(authorized)).toContain('authorize_team_launch failed: LAUNCH_REVIEW_REQUIRED');
+      expect(authorizeTeamLaunch).not.toHaveBeenCalled();
+
+      const launched = await tools.get('launch_team')!(structuredLaunchArgs);
+      expect(launched.isError).toBe(true);
+      expect(text(launched)).toContain('launch_team failed: LAUNCH_REVIEW_REQUIRED');
+      expect(launchTeam).not.toHaveBeenCalled();
+      expect(revokeTeamAuthorizations).toHaveBeenCalledWith(expect.objectContaining({ teamId: 'squad', launchRequestId: 'request-structured' }));
+      expect(resolveLaunchApproval).toHaveBeenCalledWith('squad', 'p1');
+    });
+
+    it('fails closed when the lookup throws or the resolver is not wired', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      for (const resolveLaunchApproval of [vi.fn(async () => { throw new Error('settings down'); }), undefined]) {
+        const launchTeam = vi.fn();
+        const authorizeTeamLaunch = vi.fn();
+        const { server, tools } = fakeServer();
+        registerLaunchTeamTool(server as never, makeOpts({ resolveLaunchApproval, launchTeam, authorizeTeamLaunch }));
+        expect(text(await tools.get('authorize_team_launch')!(authorizeArgs))).toContain('LAUNCH_APPROVAL_UNAVAILABLE');
+        const launched = await tools.get('launch_team')!(structuredLaunchArgs);
+        expect(text(launched)).toBe('launch_team failed: LAUNCH_APPROVAL_UNAVAILABLE: the Squad launch approval setting could not be read, so the team was not launched.');
+        expect(launchTeam).not.toHaveBeenCalled();
+        expect(authorizeTeamLaunch).not.toHaveBeenCalled();
+      }
+      expect(errors).toHaveBeenCalled();
+      errors.mockRestore();
+    });
+
+    it('launches when the Squad is direct', async () => {
+      const launchTeam = vi.fn((): Result<any> => ({ ok: true, value: { launched: 1, cohortId: 'c' } }));
+      const { server, tools } = fakeServer();
+      registerLaunchTeamTool(server as never, makeOpts({ launchTeam }));
+      expect((await tools.get('launch_team')!(structuredLaunchArgs)).isError).toBeUndefined();
+      expect(launchTeam).toHaveBeenCalledTimes(1);
+    });
   });
 });

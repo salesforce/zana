@@ -4,11 +4,27 @@
  */
 import type { AgentState } from '@zana-ai/zcc-domain/product';
 import { isRestfulAgentState } from '@zana-ai/zcc-domain/product';
+import { createHash } from 'node:crypto';
+
+export interface ExecutionDeliveryNudgeCorrelation {
+  assignmentId: string;
+  idempotencyKey: string;
+}
+
+interface PendingDelivery {
+  id: string;
+  executionId: string;
+  attempt: number;
+  manualRetryCount?: number;
+}
 
 export interface ExecutionDeliveryDrainDeps {
-  pending: (sessionId: string) => Promise<Array<{ id: string; executionId: string; attempt: number }>>;
+  pending: (sessionId: string) => Promise<PendingDelivery[]>;
   isRestful: (sessionId: string) => boolean;
-  reply: (sessionId: string, text: string) => boolean;
+  /** False proves rejection; true includes accepted or uncertain runtime receipts. */
+  reply: (sessionId: string, text: string, correlation?: ExecutionDeliveryNudgeCorrelation) => boolean | Promise<boolean>;
+  /** Opt in only when the transport deduplicates the supplied correlation. */
+  isReplyIdempotent?: (sessionId: string) => boolean;
   logError?: (message: string, error: unknown) => void;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
@@ -19,6 +35,7 @@ interface Entry {
   announced: Set<string>;
   retries: number;
   retryTimer?: unknown;
+  nudge?: { keys: string[]; text: string; correlation: ExecutionDeliveryNudgeCorrelation; rejections: number };
 }
 
 const restful = isRestfulAgentState;
@@ -53,10 +70,13 @@ export class ExecutionDeliveryDrainService {
   }
 
   forceCheck(sessionId: string): void {
-    const entry = this.entries.get(sessionId);
-    if (entry && restful(entry.lastState)) {
-      this.schedule(sessionId, entry);
+    if (!this.deps.isRestful(sessionId)) return;
+    let entry = this.entries.get(sessionId);
+    if (!entry) {
+      entry = { lastState: 'idle', announced: new Set(), retries: 0 };
+      this.entries.set(sessionId, entry);
     }
+    this.schedule(sessionId, entry);
   }
 
   remove(sessionId: string): void {
@@ -90,7 +110,7 @@ export class ExecutionDeliveryDrainService {
     // The entry may have been removed (session exit) between scheduling and now.
     if (this.entries.get(sessionId) !== entry || !this.deps.isRestful(sessionId)) return;
 
-    let queued: Array<{ id: string; executionId: string; attempt: number }>;
+    let queued: PendingDelivery[];
     try {
       queued = await this.deps.pending(sessionId);
     } catch (error) {
@@ -100,8 +120,8 @@ export class ExecutionDeliveryDrainService {
     }
     // Re-validate after the await: state/liveness can drift during the lookup.
     if (this.entries.get(sessionId) !== entry || !this.deps.isRestful(sessionId)) return;
-    entry.retries = 0;
 
+    // Include manual retry generation: it resets attempt to zero in the store.
     // Key the announced-suppression by delivery id AND attempt. A delivery whose
     // worker acked delivered:false reverts to PENDING with its attempt bumped by
     // the failed pull, so its key changes — the drain then RE-announces it on the
@@ -111,21 +131,57 @@ export class ExecutionDeliveryDrainService {
     // id stays in `announced`, no further nudge is sent, and the re-PENDING
     // delivery never gets re-pulled. An UNCHANGED delivery (same attempt) still
     // suppresses on an idle flicker — that invariant is preserved.
-    const keyOf = (delivery: { id: string; attempt: number }): string => `${delivery.id}:${delivery.attempt}`;
+    const keyOf = (delivery: PendingDelivery): string => JSON.stringify([
+      delivery.executionId, delivery.id, delivery.manualRetryCount ?? 0, delivery.attempt
+    ]);
     const queuedKeys = new Set(queued.map(keyOf));
     for (const key of entry.announced) {
       if (!queuedKeys.has(key)) entry.announced.delete(key);
     }
     const fresh = queued.filter((delivery) => !entry.announced.has(keyOf(delivery)));
-    if (fresh.length === 0) return;
-    const executions = [...new Set(queued.map((delivery) => delivery.executionId))];
-    const count = queued.length;
-    const sent = this.deps.reply(
-      sessionId,
-      `[execution] You have ${count} pending blocker ${count === 1 ? 'response' : 'responses'} ` +
+    if (entry.nudge && !entry.nudge.keys.some(key => queuedKeys.has(key))) entry.nudge = undefined;
+    if (fresh.length === 0) {
+      entry.retries = 0;
+      return;
+    }
+    if (!entry.nudge) {
+      const keys = fresh.map(keyOf).sort();
+      const assignmentId = `execution-nudge:${createHash('sha256').update(JSON.stringify([sessionId, keys])).digest('hex')}`;
+      const executions = [...new Set(fresh.map((delivery) => delivery.executionId))].sort();
+      const count = fresh.length;
+      entry.retries = 0;
+      entry.nudge = { keys, rejections: 0, correlation: { assignmentId, idempotencyKey: `${assignmentId}:0` }, text:
+        `[execution] You have ${count} pending blocker ${count === 1 ? 'response' : 'responses'} ` +
         `for ${executions.join(', ')}. Call execution.delivery.pull, apply the response, then call execution.delivery.ack with delivered:true. ` +
         `Do NOT call execution.resume or execution.respond to accept it — those are owner-only and will fail for you; pull+ack is the whole flow.`
-    );
-    if (sent) for (const delivery of queued) entry.announced.add(keyOf(delivery));
+      };
+    }
+    // Keep payload and key immutable across uncertain sends, even if the queue grows.
+    const nudge = entry.nudge;
+    try {
+      const sent = await this.deps.reply(sessionId, nudge.text, nudge.correlation);
+      if (this.entries.get(sessionId) !== entry) return;
+      if (!sent) {
+        nudge.rejections += 1;
+        nudge.correlation = { assignmentId: nudge.correlation.assignmentId,
+          idempotencyKey: `${nudge.correlation.assignmentId}:${nudge.rejections}` };
+        this.scheduleRetry(sessionId, entry);
+        return;
+      }
+    } catch (error) {
+      this.logError(`execution-delivery-drain: reply failed for session ${sessionId}`, error);
+      if (this.deps.isReplyIdempotent?.(sessionId)) {
+        this.scheduleRetry(sessionId, entry);
+        return;
+      }
+      // A non-idempotent throw may follow a successful PTY write. Never resend blindly.
+    }
+    if (this.entries.get(sessionId) !== entry) return;
+    for (const key of nudge.keys) entry.announced.add(key);
+    entry.nudge = undefined;
+    entry.retries = 0;
+    if (entry.retryTimer !== undefined) this.clearTimer(entry.retryTimer);
+    entry.retryTimer = undefined;
+    if (fresh.some(delivery => !entry.announced.has(keyOf(delivery)))) this.schedule(sessionId, entry);
   }
 }

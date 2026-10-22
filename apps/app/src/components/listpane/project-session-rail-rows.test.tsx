@@ -45,4 +45,12 @@ describe('ProjectThreadRailRow', () => {
   it('omits the badge when nothing is running', () => {
     expect(render(thread)).not.toContain('thread-process-badge');
   });
+
+  it('gives a Modern squad member thread the dotted modifier and Thread label', () => {
+    const html = render({ ...thread, originPluginId: 'host-modern-squad' });
+    expect(html).toContain('class="project-terminal-row is-thread is-modern"');
+    expect(html).toContain('data-squad-transport="MODERN"');
+    expect(html).toContain(' · Thread');
+    expect(render(thread)).not.toContain('is-modern');
+  });
 });

@@ -33,6 +33,25 @@ describe('ThreadListEntry', () => {
     expect(html).not.toContain('lucide-message-square');
   });
 
+  it('marks a Modern squad member thread with the Thread pill and dotted modifier', () => {
+    const modern = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadListEntry thread={{ ...thread, status: 'idle', originPluginId: 'host-modern-squad' }} />
+      </MemoryRouter>
+    );
+    expect(modern).toContain('data-squad-transport="MODERN"');
+    expect(modern).toMatch(/class="agents-row is-thread [^"]*is-modern"/);
+    expect(modern).toContain('fleet-kind-thread');
+    expect(modern).not.toContain('CLI Agent');
+    const plain = renderToStaticMarkup(
+      <MemoryRouter>
+        <ThreadListEntry thread={{ ...thread, status: 'idle', originPluginId: 'side-chat' }} />
+      </MemoryRouter>
+    );
+    expect(plain).not.toContain('is-modern');
+    expect(plain).not.toContain('data-squad-transport');
+  });
+
   it('shows Needs you instead of Working when a question is pending', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>

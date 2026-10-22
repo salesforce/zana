@@ -35,6 +35,7 @@ import type {
 import { useData, useGoals, useUi } from '@/store';
 import { ImprovePromptButton } from '@/components/ImprovePromptButton';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
+import { squadPicklistOption } from '@/components/SquadTransportChip';
 import { useNowTick } from '@/hooks/useNowTick';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
 import { platformShortcut } from '../../lib/platformShortcut.js';
@@ -746,7 +747,7 @@ function GoalModal({
                 onChange={setTeamId}
                 placeholder="Choose squad"
                 searchPlaceholder="Search squads"
-                options={teams.map((team) => ({ value: team.id, label: team.name }))}
+                options={teams.map((team) => squadPicklistOption(team))}
               />
               <p className="modal-hint">Each iteration runs as a durable squad job.</p>
               {teamsError ? (

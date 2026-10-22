@@ -75,8 +75,8 @@ import {
   registerLaunchTeamTool,
   type RegisterLaunchTeamToolOpts
 } from '../agents/launch-team-mcp-tool.js';
-import { registerSquadProposalTools, type SquadPlanCheckDep, type SquadProposeDep } from '../squad-proposals/squad-proposal-mcp-tools.js';
-import { registerExecutionTools, type RegisterExecutionToolOptions } from '../execution/execution-mcp-tool.js';
+import { registerSquadProposalTools, type SquadLaunchNowDep, type SquadPlanCheckDep, type SquadProposeDep } from '../squad-proposals/squad-proposal-mcp-tools.js';
+import { registerExecutionTools, type RegisterExecutionToolOptions, type ExecutionMemberFence } from '../execution/execution-mcp-tool.js';
 import type { ExecutionService } from '../execution/service.js';
 import type { createExecutionHandoffStore } from '../execution/handoff-store.js';
 import { registerListProjectsTool } from '../projects/list-projects-mcp-tool.js';
@@ -415,6 +415,7 @@ export interface McpServerOptions {
   launchTeam?: RegisterLaunchTeamToolOpts['launchTeam'];
   /** squad_propose / squad_plan_check deps; absent ⇒ the tools aren't registered. */
   proposeSquad?: SquadProposeDep;
+  launchSquadNow?: SquadLaunchNowDep;
   checkSquadPlan?: SquadPlanCheckDep;
   authorizeTeamLaunch?: RegisterLaunchTeamToolOpts['authorizeTeamLaunch'];
   evaluateTeamAdmission?: RegisterLaunchTeamToolOpts['evaluateAdmission'];
@@ -423,27 +424,32 @@ export interface McpServerOptions {
   getTeamLaunch?: RegisterLaunchTeamToolOpts['getTeamLaunch'];
   reportTeamTask?: RegisterLaunchTeamToolOpts['reportTeamTask'];
   /**
-   * SYNC pty-only liveness gate. Feeds the cohort / worker `execution.*` plane
-   * (`plan.register`, `work.*`, `delivery.*`, …) AND is the fallback base for
-   * launch identity. Deliberately sync and pty-only — a Modern thread is a
-   * launcher, never a cohort member. Keep it distinct from
+   * Legacy pty liveness gate and fallback for execution/launch identity.
+   * Keep member execution authority distinct from
    * {@link validateLaunchRouteIdentity}.
    */
   validateTeamRouteIdentity?: (sessionId: string, projectId: string) => boolean;
+  validateExecutionRouteIdentity?: RegisterExecutionToolOptions['validateRouteIdentity'];
   /**
    * ASYNC owner-session identity gate for `launch_team` siblings AND the
    * owner execution verbs (`execution.start`, `execution.snapshot`,
    * `execution.resume_binding`). Wider than {@link validateTeamRouteIdentity}:
    * main accepts either a live pty session OR a live Modern/ACP conversation
    * thread (the latter needs an async cross-process liveness probe). Falls back
-   * to the sync pty gate when unset. Cohort verbs stay on the pty-only gate.
+   * to the sync pty gate when unset. Never grants Modern members owner authority.
    */
   validateLaunchRouteIdentity?: RegisterLaunchTeamToolOpts['validateRouteIdentity'];
   resolveExecutionCohortBinding?: RegisterExecutionToolOptions['resolveCohortBinding'];
   validateExecutionRecoveryBinding?: RegisterExecutionToolOptions['validateRecoveryBinding'];
+  /**
+   * Launch-approval policy for a Squad in a project, checked by agent
+   * `execution.start`, `authorize_team_launch` and `launch_team`. Those tools
+   * refuse when it is not wired.
+   */
+  resolveExecutionLaunchApproval?: RegisterExecutionToolOptions['resolveLaunchApproval'];
   executionService?: ExecutionService;
   executionHandoffs?: ReturnType<typeof createExecutionHandoffStore>;
-  validateExecutionHandoffTarget?: (sourceSessionId: string, targetSessionId: string, projectId: string) => boolean;
+  validateExecutionHandoffTarget?: RegisterExecutionToolOptions['validateHandoffTarget'];
   approveExecutionHandoff?: (sourceSessionId: string, targetSessionId: string, projectId: string, executionId: string, operation: 'execution.control' | 'execution.resume-monitor') => Promise<boolean>;
   /**
    * Resolve the project list as non-sensitive {@link ProjectSummary} metadata
@@ -572,6 +578,7 @@ function buildProjectMcpServer(opts: {
   projectRoot?: string;
   sessionId?: string;
   sessionCredential?: string;
+  memberFence?: ExecutionMemberFence;
   /** The route serves a Modern thread (the agent-tool bridge marks it); otherwise a PTY session. */
   routeKind?: 'thread';
   inboxStore: IInboxStore;
@@ -598,6 +605,7 @@ function buildProjectMcpServer(opts: {
   listTeams?: McpServerOptions['listTeams'];
   launchTeam?: McpServerOptions['launchTeam'];
   proposeSquad?: McpServerOptions['proposeSquad'];
+  launchSquadNow?: McpServerOptions['launchSquadNow'];
   checkSquadPlan?: McpServerOptions['checkSquadPlan'];
   authorizeTeamLaunch?: McpServerOptions['authorizeTeamLaunch'];
   evaluateTeamAdmission?: McpServerOptions['evaluateTeamAdmission'];
@@ -606,9 +614,11 @@ function buildProjectMcpServer(opts: {
   getTeamLaunch?: McpServerOptions['getTeamLaunch'];
   reportTeamTask?: McpServerOptions['reportTeamTask'];
   validateTeamRouteIdentity?: McpServerOptions['validateTeamRouteIdentity'];
+  validateExecutionRouteIdentity?: McpServerOptions['validateExecutionRouteIdentity'];
   validateLaunchRouteIdentity?: McpServerOptions['validateLaunchRouteIdentity'];
   resolveExecutionCohortBinding?: McpServerOptions['resolveExecutionCohortBinding'];
   validateExecutionRecoveryBinding?: McpServerOptions['validateExecutionRecoveryBinding'];
+  resolveExecutionLaunchApproval?: McpServerOptions['resolveExecutionLaunchApproval'];
   executionService?: McpServerOptions['executionService'];
   executionHandoffs?: McpServerOptions['executionHandoffs'];
   validateExecutionHandoffTarget?: McpServerOptions['validateExecutionHandoffTarget'];
@@ -829,7 +839,7 @@ function buildProjectMcpServer(opts: {
   // URL fills the default project (the agent launches "here" unless it names
   // another). Gated on `launchTeam` being wired, which index.ts does only when
   // the `teamLaunchEnabled` config flag is on.
-  if (opts.sessionId && opts.launchTeam) {
+  if (opts.sessionId && opts.launchTeam && !opts.memberFence) {
     const routeAuthenticated = !!opts.sessionCredential
       && verifySessionControlCredential(opts.sessionId, opts.sessionCredential);
     registerLaunchTeamTool(mcp, {
@@ -842,11 +852,13 @@ function buildProjectMcpServer(opts: {
       cancelTeamLaunch: opts.cancelTeamLaunch,
       getTeamLaunch: opts.getTeamLaunch,
       reportTeamTask: opts.reportTeamTask,
+      resolveLaunchApproval: opts.resolveExecutionLaunchApproval,
       // Launch identity accepts a live pty session OR a live Modern/ACP thread
       // (async probe). Falls back to the sync pty-only gate when the async one
       // isn't wired. Distinct from the execution plane's sync gate below.
       validateRouteIdentity: async (sessionId, projectId) => {
         if (!routeAuthenticated) return false;
+        if ((await opts.resolveExecutionCohortBinding?.(sessionId, projectId))?.memberFence) return false;
         const gate = opts.validateLaunchRouteIdentity ?? opts.validateTeamRouteIdentity;
         return (await gate?.(sessionId, projectId)) ?? false;
       }
@@ -860,34 +872,49 @@ function buildProjectMcpServer(opts: {
       projectId: opts.projectId,
       projectName: opts.projectLabel,
       service: opts.executionService,
+      memberFence: opts.memberFence,
       resolveCohortBinding: opts.resolveExecutionCohortBinding,
       validateRecoveryBinding: opts.validateExecutionRecoveryBinding,
+      resolveLaunchApproval: opts.resolveExecutionLaunchApproval,
       handoffs: opts.executionHandoffs,
       validateHandoffTarget: opts.validateExecutionHandoffTarget,
       approveHandoff: opts.approveExecutionHandoff,
       reportKind: opts.routeKind === 'thread' ? 'thread' : 'pty',
-      validateRouteIdentity: (sessionId, projectId) => routeAuthenticated
-        && (opts.validateTeamRouteIdentity?.(sessionId, projectId) ?? false),
-      validateOwnerRouteIdentity: async (sessionId, projectId) => {
+      validateRouteIdentity: async (sessionId, projectId) => {
         if (!routeAuthenticated) return false;
+        const gate = opts.validateExecutionRouteIdentity ?? opts.validateTeamRouteIdentity;
+        return (await gate?.(sessionId, projectId)) === true;
+      },
+      validateOwnerRouteIdentity: async (sessionId, projectId) => {
+        if (!routeAuthenticated || opts.memberFence) return false;
         const gate = opts.validateLaunchRouteIdentity ?? opts.validateTeamRouteIdentity;
         return (await gate?.(sessionId, projectId)) ?? false;
       }
     });
   }
   // squad_propose / squad_plan_check: prepare a Squad launch for the user to
-  // review. Liveness accepts a PTY or a Modern thread and fails closed.
-  if (opts.sessionId && opts.proposeSquad) {
+  // review. Liveness accepts a PTY or a Modern thread and fails closed. A
+  // member-fenced route never gets this owner surface.
+  if (opts.sessionId && opts.proposeSquad && !opts.memberFence) {
     const routeAuthenticated = !!opts.sessionCredential
       && verifySessionControlCredential(opts.sessionId, opts.sessionCredential);
     registerSquadProposalTools(mcp, {
       sessionId: opts.sessionId,
       projectId: opts.projectId,
       propose: opts.proposeSquad,
+      launchSquadNow: opts.launchSquadNow,
       checkPlan: opts.checkSquadPlan,
       validateRouteIdentity: async (s, p) => routeAuthenticated
         && !!opts.validateLaunchRouteIdentity
-        && (await opts.validateLaunchRouteIdentity(s, p))
+        && (await opts.validateLaunchRouteIdentity(s, p)),
+      // Same owner gate execution.start uses: a live PTY or Modern thread. It does not
+      // exclude cohort workers; the Squad proposal service refuses them through
+      // lookupProposer's squadMember flag.
+      validateOwnerRouteIdentity: async (s, p) => {
+        if (!routeAuthenticated) return false;
+        const gate = opts.validateLaunchRouteIdentity ?? opts.validateTeamRouteIdentity;
+        return (await gate?.(s, p)) ?? false;
+      }
     });
   }
   // list_projects: read-only project discovery. Identity-free (no sessionId
@@ -972,14 +999,15 @@ function safeDecode(seg: string): string | null {
 }
 
 /**
- * Match `/mcp/:projectId` or `/mcp/:projectId/:sessionId`. Strict: any
- * other shape 404s. Returns null when no match. Exported for unit tests.
+ * Match `/mcp/:projectId` or `/mcp/:projectId/:sessionId`, optionally credentialed and
+ * member-fenced (`/:credential/member/:bindingId/:generation`). Strict: any other shape 404s.
+ * Generation is route context, never tool input. Returns null when no match. Exported for unit tests.
  * `?route=thread` marks a Modern thread's route (it only picks how that
  * session receives reports; the credential still proves the session).
  */
 export function matchMcpRoute(
   rawUrl: string | undefined
-): { projectId: string; sessionId?: string; sessionCredential?: string; routeKind?: 'thread' } | null {
+): { projectId: string; sessionId?: string; sessionCredential?: string; memberFence?: ExecutionMemberFence; routeKind?: 'thread' } | null {
   if (!rawUrl) return null;
   let pathname: string;
   let routeKind: 'thread' | undefined;
@@ -990,16 +1018,20 @@ export function matchMcpRoute(
   } catch {
     return null;
   }
-  const m = /^\/mcp\/([^/]+)(?:\/([^/]+)(?:\/([^/]+))?)?$/.exec(pathname);
+  const m = /^\/mcp\/([^/]+)(?:\/([^/]+)(?:\/([^/]+)(?:\/member\/([^/]+)\/([1-9][0-9]*))?)?)?$/.exec(pathname);
   if (!m) return null;
   const projectId = safeDecode(m[1]);
   const sessionId = m[2] ? safeDecode(m[2]) : undefined;
   const sessionCredential = m[3] ? safeDecode(m[3]) : undefined;
-  if (projectId === null || sessionId === null || sessionCredential === null) return null;
+  const bindingId = m[4] ? safeDecode(m[4]) : undefined;
+  const generation = m[5] ? Number(m[5]) : undefined;
+  if (projectId === null || sessionId === null || sessionCredential === null || bindingId === null
+    || generation !== undefined && !Number.isSafeInteger(generation)) return null;
   return {
     projectId,
     ...(sessionId ? { sessionId } : {}),
     ...(sessionCredential ? { sessionCredential } : {}),
+    ...(bindingId && generation ? { memberFence: { bindingId, generation } } : {}),
     ...(sessionId && routeKind ? { routeKind } : {})
   };
 }
@@ -1948,6 +1980,7 @@ async function handleRequest(
     projectRoot: project?.path,
     sessionId,
     sessionCredential: route.sessionCredential,
+    memberFence: route.memberFence,
     ...(route.routeKind ? { routeKind: route.routeKind } : {}),
     inboxStore: opts.inboxStore,
     heldQuestions: opts.heldQuestions,
@@ -1973,6 +2006,7 @@ async function handleRequest(
     listTeams: opts.listTeams,
     launchTeam: opts.launchTeam,
     proposeSquad: opts.proposeSquad,
+    launchSquadNow: opts.launchSquadNow,
     checkSquadPlan: opts.checkSquadPlan,
     authorizeTeamLaunch: opts.authorizeTeamLaunch,
     evaluateTeamAdmission: opts.evaluateTeamAdmission,
@@ -1981,9 +2015,11 @@ async function handleRequest(
     getTeamLaunch: opts.getTeamLaunch,
     reportTeamTask: opts.reportTeamTask,
     validateTeamRouteIdentity: opts.validateTeamRouteIdentity,
+    validateExecutionRouteIdentity: opts.validateExecutionRouteIdentity,
     validateLaunchRouteIdentity: opts.validateLaunchRouteIdentity,
     resolveExecutionCohortBinding: opts.resolveExecutionCohortBinding,
     validateExecutionRecoveryBinding: opts.validateExecutionRecoveryBinding,
+    resolveExecutionLaunchApproval: opts.resolveExecutionLaunchApproval,
     executionService: opts.executionService,
     executionHandoffs: opts.executionHandoffs,
     validateExecutionHandoffTarget: opts.validateExecutionHandoffTarget,

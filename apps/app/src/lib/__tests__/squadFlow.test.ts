@@ -139,6 +139,37 @@ describe('buildSquadFlow — node membership', () => {
     expect(buildSquadFlow(inputs({ threadParticipants: [participant], launchFilter: SOLO_LAUNCH_ID }))!.nodes)
       .toEqual([expect.objectContaining({ sessionId: 'thread:modern' })]);
   });
+
+  it('groups cohort-stamped Modern squad members into their squad like CLI members', () => {
+    const cohort = (role: 'orchestrator' | 'worker', slotId: string, slotLabel: string) => ({
+      cohortId: 'e-m', executionId: 'e-m', teamId: 'modern', teamName: 'Modern squad',
+      executionJobTitle: 'Modern job', role, slotId, slotLabel
+    });
+    const execution = {
+      executionId: 'e-m', projectId: 'p1', teamId: 'modern', jobTitle: 'Modern job', state: 'RUNNING', attempt: 1, createdAt: 1, updatedAt: 2,
+      work: { total: 1, completed: 0, counts: {}, rosterSlotIds: ['writer'], assignments: [
+        { workUnitId: 'u1', title: 'Write', dependencies: [], slotId: 'writer', state: 'CLAIMED' }
+      ] }
+    } as unknown as ExecutionBoardProjection;
+    const threadParticipants = [
+      { id: 't-lead', label: 'Lead thread', state: 'working' as const, createdAt: 1, cohort: cohort('orchestrator', 'orchestrator', 'Orchestrator') },
+      { id: 't-work', label: 'Writer thread', state: 'idle' as const, createdAt: 2, cohort: cohort('worker', 'writer', 'Writer') },
+      { id: 't-old', label: 'Old thread', state: 'done' as const, createdAt: 2, cohort: cohort('worker', 'reviewer', 'Reviewer'), exited: true },
+      { id: 't-solo', label: 'Solo', state: 'idle' as const, createdAt: 3 }
+    ];
+    const g = buildSquadFlow(inputs({ threadParticipants, executions: [execution], launchFilter: 'e-m' }))!;
+    const nodes = nodeMap(g);
+    // A live member covers its CLAIMED slot, so no detached node is synthesized.
+    expect([...nodes.keys()].sort()).toEqual(['thread:t-lead', 'thread:t-old', 'thread:t-work']);
+    expect(nodes.get('thread:t-lead')).toMatchObject({
+      label: 'Orchestrator', role: 'orchestrator', isOrchestrator: true, state: 'working',
+      inspectionTarget: { type: 'thread', id: 't-lead' }, job: { executionId: 'e-m' }
+    });
+    expect(nodes.get('thread:t-work')).toMatchObject({ label: 'Writer', isOrchestrator: false, exited: false, job: { executionId: 'e-m' } });
+    expect(nodes.get('thread:t-old')).toMatchObject({ label: 'Reviewer', exited: true });
+    expect(g).toMatchObject({ teamName: 'Modern squad', executionId: 'e-m', executionJobTitle: 'Modern job' });
+    expect(buildSquadFlow(inputs({ threadParticipants, launchFilter: SOLO_LAUNCH_ID }))!.nodes.map((n) => n.sessionId)).toEqual(['thread:t-solo']);
+  });
 });
 
 // ---- identity & fused fields ------------------------------------------------

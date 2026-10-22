@@ -37,9 +37,46 @@ export class ExecutionSourceError extends Error {
   }
 }
 
+/**
+ * Who may resolve a capability: the trusted window that issued it, or the agent session whose
+ * launch issued it. A capability never crosses bindings, whatever ids the caller presents.
+ */
+export type ExecutionSourceBinding = { kind: 'window'; windowId: number } | { kind: 'session'; sessionId: string };
+/** `{ windowId }` is the original window form and stays accepted; `{ binding }` also covers sessions. */
+export type ExecutionSourceBindingInput = { windowId: number; binding?: never } | { binding: ExecutionSourceBinding; windowId?: never };
+
+const MAX_SESSION_ID_LENGTH = 256;
+
+/** The binding a caller presented, or undefined when it is malformed or ambiguous. */
+function bindingOf(input: { windowId?: unknown; binding?: unknown }): ExecutionSourceBinding | undefined {
+  const hasWindow = input.windowId !== undefined;
+  if (input.binding === undefined) {
+    return hasWindow && Number.isSafeInteger(input.windowId) ? { kind: 'window', windowId: input.windowId as number } : undefined;
+  }
+  if (hasWindow || !input.binding || typeof input.binding !== 'object') return undefined;
+  const binding = input.binding as Record<string, unknown>;
+  if (binding.kind === 'window' && Number.isSafeInteger(binding.windowId)) return { kind: 'window', windowId: binding.windowId as number };
+  if (binding.kind === 'session' && typeof binding.sessionId === 'string'
+    && binding.sessionId.length > 0 && binding.sessionId.length <= MAX_SESSION_ID_LENGTH) {
+    return { kind: 'session', sessionId: binding.sessionId };
+  }
+  return undefined;
+}
+
+function requireBinding(input: { windowId?: unknown; binding?: unknown }): ExecutionSourceBinding {
+  const binding = bindingOf(input);
+  if (!binding) throw new ExecutionSourceError('INVALID_CAPABILITY', 'Execution source binding is invalid');
+  return binding;
+}
+
+function sameBinding(a: ExecutionSourceBinding, b: ExecutionSourceBinding | undefined): boolean {
+  if (!b || a.kind !== b.kind) return false;
+  return a.kind === 'window' ? a.windowId === (b as typeof a).windowId : a.sessionId === (b as typeof a).sessionId;
+}
+
 interface Capability {
   id: string;
-  windowId: number;
+  binding: ExecutionSourceBinding;
   projectId: string;
   path: string;
   exactPath: string;
@@ -56,7 +93,7 @@ interface Capability {
 
 interface RetiredCapability {
   id: string;
-  windowId: number;
+  binding: ExecutionSourceBinding;
   projectId: string;
   path: string;
   exactPath: string;
@@ -296,7 +333,7 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
   function retire(capability: Capability): void {
     retired.delete(capability.id);
     retired.set(capability.id, {
-      id: capability.id, windowId: capability.windowId, projectId: capability.projectId, path: capability.path,
+      id: capability.id, binding: capability.binding, projectId: capability.projectId, path: capability.path,
       exactPath: capability.exactPath, representations: [...capability.representations], name: capability.name,
       digest: capability.digest, policy: capability.policy, retiredAt: now()
     });
@@ -417,9 +454,14 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
    * `policy` (optional) confines every source to its allowed folders and refuses its protected
    * ones, checked against the realpath taken here. `resolve` later requires the same realpath,
    * so a symlink swapped in after this check cannot redirect the capability elsewhere. Picker
-   * selections pass no policy: the user chose the file.
+   * selections pass no policy: the user chose the file. A session binding has no user choice
+   * behind it, so it must carry a policy.
    */
-  async function issue(input: { windowId: number; projectId: string; paths: string[]; policy?: SourcePolicy }): Promise<ExecutionSourceCapabilityView[]> {
+  async function issue(input: ExecutionSourceBindingInput & { projectId: string; paths: string[]; policy?: SourcePolicy }): Promise<ExecutionSourceCapabilityView[]> {
+    const binding = requireBinding(input);
+    if (binding.kind === 'session' && !input.policy) {
+      throw new ExecutionSourceError('INVALID_CAPABILITY', 'Session execution sources require a source policy');
+    }
     pruneCapabilities();
     if (input.paths.length > limits.maxFiles) throw new ExecutionSourceError('TOO_MANY_SOURCES', `Select at most ${limits.maxFiles} execution sources`);
     const canonical: Array<{ exactPath: string; canonicalPath: string; representations: string[] }> = [];
@@ -440,7 +482,7 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
     try { for (const { exactPath, canonicalPath: path, representations } of canonical) {
       const existing = [...capabilities.values()].find((capability) =>
         !capability.used
-        && capability.windowId === input.windowId
+        && sameBinding(capability.binding, binding)
         && capability.projectId === input.projectId
         && capability.path === path
       );
@@ -463,7 +505,7 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
       });
       const issuedAt = now();
       const capability: Capability = {
-        id: id(), windowId: input.windowId, projectId: input.projectId, path, exactPath, representations, name: basename(path),
+        id: id(), binding, projectId: input.projectId, path, exactPath, representations, name: basename(path),
         byteSize: bytes.byteLength, digest: digest(bytes), issuedAt, expiresAt: issuedAt + ttlMs, used: false, policy: !!input.policy
       };
       capabilities.set(capability.id, capability);
@@ -484,21 +526,23 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
    * still the one that was selected. An old id is never put back: the composer swaps it for
    * the new one. A failure for one id never stops the others.
    */
-  async function reissue(input: { windowId: number; projectId: string; capabilityIds: string[] }): Promise<ExecutionSourceReissueResult> {
+  async function reissue(input: ExecutionSourceBindingInput & { projectId: string; capabilityIds: string[] }): Promise<ExecutionSourceReissueResult> {
     if (input.capabilityIds.length > limits.maxFiles) throw new ExecutionSourceError('TOO_MANY_SOURCES', `Use at most ${limits.maxFiles} execution sources`);
+    // A malformed binding matches nothing, so every id drops as unknown.
+    const binding = bindingOf(input);
     pruneCapabilities();
     trimRetired();
     const result: ExecutionSourceReissueResult = { renewed: [], dropped: [] };
     const findLive = (path: string) => [...capabilities.values()].find((capability) =>
-      !capability.used && capability.windowId === input.windowId && capability.projectId === input.projectId && capability.path === path);
+      !capability.used && sameBinding(capability.binding, binding) && capability.projectId === input.projectId && capability.path === path);
     for (const previousId of new Set(input.capabilityIds)) {
       const live = capabilities.get(previousId);
-      if (live && !live.used && live.windowId === input.windowId && live.projectId === input.projectId) {
+      if (live && !live.used && sameBinding(live.binding, binding) && live.projectId === input.projectId) {
         result.renewed.push({ previousId, source: viewOf(live), changed: false });
         continue;
       }
       const record = retired.get(previousId);
-      if (!record || record.windowId !== input.windowId || record.projectId !== input.projectId) {
+      if (!binding || !record || !sameBinding(record.binding, binding) || record.projectId !== input.projectId) {
         result.dropped.push({ previousId, reason: 'unknown' });
         continue;
       }
@@ -526,7 +570,7 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
         if (capabilities.size >= limits.maxOutstandingCapabilities) { drop('unreadable'); continue; }
         const issuedAt = now();
         const capability: Capability = {
-          id: id(), windowId: input.windowId, projectId: input.projectId, path: record.path, exactPath: record.exactPath,
+          id: id(), binding, projectId: input.projectId, path: record.path, exactPath: record.exactPath,
           representations: [...record.representations], name: record.name, byteSize: bytes.byteLength, digest: digest(bytes),
           issuedAt, expiresAt: issuedAt + ttlMs, used: false, policy: record.policy
         };
@@ -545,24 +589,26 @@ export function createExecutionSourceRegistry(options: RegistryOptions) {
    * Forget the retired records of ids a successful launch consumed, so a replayed id cannot
    * be exchanged for a fresh capability.
    */
-  function discardRetired(input: { windowId: number; projectId: string; capabilityIds: string[] }): void {
+  function discardRetired(input: ExecutionSourceBindingInput & { projectId: string; capabilityIds: string[] }): void {
+    const binding = bindingOf(input);
     for (const capabilityId of input.capabilityIds) {
       const record = retired.get(capabilityId);
-      if (record && record.windowId === input.windowId && record.projectId === input.projectId) retired.delete(capabilityId);
+      if (record && sameBinding(record.binding, binding) && record.projectId === input.projectId) retired.delete(capabilityId);
     }
   }
 
-  async function resolve(input: { windowId: number; projectId: string; capabilityIds: string[]; snapshotKey: string }): Promise<{
+  async function resolve(input: ExecutionSourceBindingInput & { projectId: string; capabilityIds: string[]; snapshotKey: string }): Promise<{
     sources: readonly ExecutionSourceSnapshot[];
     contentRef: string;
     pathDescriptors: readonly ExecutionSourcePathDescriptor[];
   }> {
+    const binding = requireBinding(input);
     if (input.capabilityIds.length > limits.maxFiles) throw new ExecutionSourceError('TOO_MANY_SOURCES', `Use at most ${limits.maxFiles} execution sources`);
     if (new Set(input.capabilityIds).size !== input.capabilityIds.length) throw new ExecutionSourceError('DUPLICATE_SOURCE', 'Duplicate execution source capability');
     const selected = input.capabilityIds.map((capabilityId) => {
       const capability = capabilities.get(capabilityId);
       if (!capability) throw new ExecutionSourceError(consumedCapabilities.has(capabilityId) ? 'REPLAYED_CAPABILITY' : 'INVALID_CAPABILITY', 'Execution source capability is invalid');
-      if (capability.windowId !== input.windowId || capability.projectId !== input.projectId) throw new ExecutionSourceError('FOREIGN_CAPABILITY', 'Execution source capability belongs to another window or project');
+      if (!sameBinding(capability.binding, binding) || capability.projectId !== input.projectId) throw new ExecutionSourceError('FOREIGN_CAPABILITY', 'Execution source capability belongs to another window, session, or project');
       if (capability.used) throw new ExecutionSourceError('REPLAYED_CAPABILITY', 'Execution source capability was already used');
       if (now() > capability.expiresAt) throw new ExecutionSourceError('EXPIRED_CAPABILITY', 'Execution source capability expired');
       return capability;

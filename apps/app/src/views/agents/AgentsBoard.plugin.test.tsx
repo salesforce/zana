@@ -2,13 +2,13 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-const fixtures = vi.hoisted(() => ({ slots: [] as any[], view: 'plugin:test/world', last: null as any, executions: [] as any[], inspect: vi.fn() }));
+const fixtures = vi.hoisted(() => ({ slots: [] as any[], view: 'plugin:test/world', last: null as any, executions: [] as any[], inspect: vi.fn(), inspectThread: vi.fn() }));
 vi.mock('@/components/AgentViewToggle', () => ({
   AgentViewToggle: () => null, ScheduledColumnToggle: () => null,
   useAgentsBoardView: () => ({ view: fixtures.view, compact: false, pluginViews: fixtures.slots })
 }));
 vi.mock('@/hooks/useEnsureThreads', () => ({ useEnsureThreads: () => {} }));
-vi.mock('@/lib/inspect-session', () => ({ inspectAgentSession: fixtures.inspect, inspectThread: vi.fn() }));
+vi.mock('@/lib/inspect-session', () => ({ inspectAgentSession: fixtures.inspect, inspectThread: fixtures.inspectThread }));
 vi.mock('@/components/ExecutionJobDetails', () => ({ ExecutionJobDetails: ({ projectId, executionId }: any) => <output data-testid="execution">{projectId}:{executionId}</output> }));
 vi.mock('@/views/agents/SquadFlowView', () => ({ SquadFlowView: () => null }));
 vi.mock('@/components/AgentMonitor', () => ({ AgentMonitor: () => null }));
@@ -28,7 +28,7 @@ function View(props: any) {
 const projects = [{ id: 'p1', name: 'One', path: '/one', color: 'blue' }, { id: 'p2', name: 'Two', path: '/two' }] as any[];
 beforeEach(() => {
   fixtures.slots = [{ pluginId: 'test', id: 'world', generation: 2, title: 'World', component: View }];
-  fixtures.view = 'plugin:test/world'; fixtures.inspect.mockClear();
+  fixtures.view = 'plugin:test/world'; fixtures.inspect.mockClear(); fixtures.inspectThread.mockClear();
   fixtures.executions = [{ projectId: 'p1', executionId: 'j1', jobTitle: 'Review', state: 'RUNNING' }, { projectId: 'unknown', executionId: 'j2', jobTitle: 'Missing project', state: 'COMPLETED' }];
   window.cc = { executionBoard: { listProject: async (id: string) => ({ executions: id === 'p1' ? fixtures.executions : [], hasMore: false }) } } as any;
   useData.setState({ projects, terminals: { p1: [{ id: 'a1', profile: 'codex', title: 'Coder', status: 'running', projectId: 'p1' }] as any[] }, includeScheduledAgentsInAgentView: true, idleAttentionSensitivity: 'medium' });
@@ -48,6 +48,26 @@ it('projects the scoped fleet, preserves runtime provenance and routes inspect c
   expect(screen.queryByTestId('execution')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Review' }));
   expect(screen.getByTestId('execution').textContent).toBe('p1:j1');
+});
+it('routes a Modern squad worker to its thread and the Modern host to Job details', async () => {
+  fixtures.executions = [{
+    projectId: 'p1', executionId: 'jm', jobTitle: 'Modern job', state: 'RUNNING', teamId: 'modern',
+    modernMembers: [
+      { threadId: 't-lead', slotId: 'orchestrator', personaId: 'lead', role: 'orchestrator', live: true },
+      { threadId: 't-work', slotId: 'writer', personaId: 'writer', role: 'worker', live: true }
+    ]
+  }];
+  const thread = (id: string, title: string) => ({ id, projectId: 'p1', hostId: 'h', environmentId: null, providerId: 'codex', status: 'idle', title, createdAt: 1, cwd: null, branchName: null, isWorktree: false });
+  useThreads.setState({ threads: [thread('t-lead', 'Lead thread'), thread('t-work', 'Writer thread')] as any[] });
+  render(<MemoryRouter><AgentsBoard scope={{ kind: 'project', project: projects[0] }} /></MemoryRouter>);
+  await screen.findByRole('button', { name: 'Writer thread' });
+  fireEvent.click(screen.getByRole('button', { name: 'Writer thread' }));
+  expect(fixtures.inspectThread).toHaveBeenCalledWith('t-work', 'p1', expect.any(Function));
+  expect(screen.queryByTestId('execution')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Lead thread' }));
+  expect(screen.getByTestId('execution').textContent).toBe('p1:jm');
+  expect(fixtures.inspectThread).toHaveBeenCalledTimes(1);
+  expect(fixtures.inspect).not.toHaveBeenCalled();
 });
 it('filters global executions by title and project, and ignores missing projects', async () => {
   render(<MemoryRouter><AgentsBoard scope={{ kind: 'global' }} /></MemoryRouter>);

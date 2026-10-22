@@ -37,6 +37,15 @@ describe('split pane default bindings', () => {
   });
 });
 
+describe('thread search default binding', () => {
+  it('binds ⌘F with no when clause; thread-find routes by focus instead', () => {
+    const binding = DEFAULT_APP_KEYBINDINGS.find((row) => row.command === 'thread.find');
+    expect(binding?.shortcut).toMatchObject({ key: 'f', mod: true, shift: false });
+    expect(binding?.when).toEqual({ all: [], none: [] });
+    expect(REMAPPABLE_COMMANDS.map((row) => row.command)).toContain('thread.find');
+  });
+});
+
 describe('commandForShortcutEvent', () => {
   const commands = ['pane.focus.left', 'pane.focus.next', 'pane.close', 'pane.focus.2'] as const;
 

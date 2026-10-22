@@ -33,7 +33,9 @@ describe('Modern team-launch config source', () => {
     const configured = await resolvePluginSessionTools([source], session);
     expect(configured.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
       'execution_start',
-      'execution_snapshot'
+      'execution_snapshot',
+      'execution_status',
+      'squad_launch'
     ]));
   });
 
@@ -49,7 +51,7 @@ describe('Modern team-launch config source', () => {
     expect(off.tools.map((tool) => tool.name)).not.toEqual(expect.arrayContaining(['execution_start']));
     pushed = { teamLaunchEnabled: false, teamJobLaunchEnabled: true };
     const on = await resolvePluginSessionTools([source], session);
-    expect(on.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(['squad_propose', 'squad_plan_check', 'list_teams', 'execution_start']));
+    expect(on.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(['squad_propose', 'squad_launch', 'squad_plan_check', 'list_teams', 'execution_start', 'execution_status']));
     expect(pushedRuntimeAppConfig({ teamLaunchEnabled: true, teamJobLaunchEnabled: false })).toEqual({
       teamLaunchEnabled: true, teamJobLaunchEnabled: false, composerShowAutonomousTeam: false
     });
@@ -83,5 +85,28 @@ describe('Modern team-launch config source', () => {
     expect(mcpPortFileForDataDir('/tmp/.zcc')).toBe('/tmp/.zcc/electron-user-data/mcp-port.json');
     expect(mcpPortFileForDataDir('/tmp/.zcc-dev')).toBe('/tmp/.zcc-dev/electron-user-data/mcp-port-dev.json');
     expect(mcpPortFileForDataDir('/tmp/.zcc', '/tmp/user-data')).toBe('/tmp/user-data/mcp-port.json');
+  });
+
+  it('passes async runtime member resolution into role-scoped tools', async () => {
+    const source = createModernTeamLaunchConfigSource({
+      getMcpBaseUrl: () => 'http://127.0.0.1:43123',
+      getAppConfig: () => ({ teamLaunchEnabled: true }),
+      resolveMember: async (threadId, projectId) => threadId === session.threadId && projectId === session.projectId
+        ? { bindingId: 'binding-1', generation: 1, role: 'worker', executionId: 'execution-1' } : undefined
+    });
+    const configured = await resolvePluginSessionTools([source], session);
+    expect(configured.tools.map((tool) => tool.name)).toContain('execution_work_claim');
+    expect(configured.tools.map((tool) => tool.name)).not.toContain('execution_start');
+    expect(configured.tools.map((tool) => tool.name)).not.toContain('launch_team');
+  });
+
+  it('passes durable former-member state into owner-tool denial', async () => {
+    const source = createModernTeamLaunchConfigSource({
+      getMcpBaseUrl: () => 'http://127.0.0.1:43123',
+      getAppConfig: () => ({ teamLaunchEnabled: true }),
+      resolveMember: async () => undefined,
+      isMemberThread: (threadId) => threadId === session.threadId
+    });
+    await expect(resolvePluginSessionTools([source], session)).resolves.toMatchObject({ tools: [] });
   });
 });

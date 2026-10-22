@@ -9,6 +9,8 @@ import { getScopedProjectId } from '@/lib/windowScope';
 import { personaIcon } from '@/lib/profileIcon';
 import { squadSearchId } from '@/lib/settings-search/providers/catalogues';
 import { SquadEditor } from '@/components/SquadEditor';
+import { SquadTransportChip } from '@/components/SquadTransportChip';
+import { squadTransport, squadTransportClass } from '@/lib/squad-transport';
 
 /**
  * Teams management panel — a catalogue of launchable Teams (builtin ⊕
@@ -506,9 +508,15 @@ function TeamRow({
   };
 
   const ChevronIcon = isExpanded ? ChevronDown : ChevronRight;
+  const transport = squadTransport(team);
 
   return (
-    <li className="skills-row skills-row--clickable team-row" onContextMenu={onContextMenu} data-settings-target={squadSearchId(team.id)}>
+    <li
+      className={`skills-row skills-row--clickable team-row ${squadTransportClass(transport)}`.trimEnd()}
+      onContextMenu={onContextMenu}
+      data-settings-target={squadSearchId(team.id)}
+      data-squad-transport={transport}
+    >
       <div className="team-row-header">
         <button
           type="button"
@@ -532,6 +540,7 @@ function TeamRow({
           <div className="skills-row-body">
             <div className="skills-row-head">
               <span className="skills-row-name">{team.name}</span>
+              <SquadTransportChip team={team} />
               <span className="scheduler-pill scheduler-pill--source">{sourceLabel(team.source)}</span>
               <span className="scheduler-pill">
                 {tabs} tab{tabs === 1 ? '' : 's'}
@@ -629,7 +638,7 @@ function TeamRow({
                 const isOrchestrator = slot.personaId === team.orchestratorPersonaId;
 
                 return (
-                  <li key={`${slot.personaId}-${idx}`} className="teams-agent-item">
+                  <li key={`${slot.personaId}-${idx}`} className={`teams-agent-item ${squadTransportClass(transport)}`.trimEnd()}>
                     <span className="teams-agent-icon" aria-hidden="true">
                       {persona ? personaIcon(persona) : <Users size={14} />}
                     </span>
