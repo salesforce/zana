@@ -15,6 +15,18 @@ it('asks the settings route to omit secrets only when requested', async () => {
   expect(http.apiJson).toHaveBeenLastCalledWith('/plugin-apps/p%2F1/settings');
 });
 
+it('applies every plugin update through the product route and preserves its result', async () => {
+  const result = { ok: true, value: { updated: ['plugin-1'], failed: [] } };
+  http.apiJson.mockResolvedValueOnce(result as never);
+  await expect(product.pluginApps.applyAllUpdates()).resolves.toEqual(result);
+  expect(http.apiJson).toHaveBeenLastCalledWith('/plugin-apps/update-all', { method: 'POST', body: '{}' });
+});
+
+it.each([new Error('server unavailable'), 'network unavailable'])('reports bulk update transport failures: %s', async error => {
+  http.apiJson.mockRejectedValueOnce(error);
+  await expect(product.pluginApps.applyAllUpdates()).resolves.toEqual({ ok: false, code: 'WRITE_FAILED', message: error instanceof Error ? error.message : error });
+});
+
 it('stops a thread\'s background tasks, targeting item ids only when given', async () => {
   await product.threads.stopBackground('t/1', ['a', 'b']);
   expect(http.apiJson).toHaveBeenLastCalledWith('/threads/t%2F1/background/stop', { method: 'POST', body: '{"itemIds":["a","b"]}' });

@@ -355,16 +355,19 @@ describe('dispatchOp', () => {
   it('retains process-local CLI fallback when no SDK host is attached', async () => {
     const cliContributions = vi.fn(async () => [{ pluginId: 'fixture', name: 'fixture' }]);
     const runCliCommand = vi.fn(async () => ({ exitCode: 0, stdout: 'fallback works' }));
+    const applyAllUpdates = vi.fn(async () => ({ updated: ['fixture'], failed: [] }));
     vi.doMock('@zana-ai/zcc-server/plugins/plugin-service', () => ({
       defaultPluginDataDir: () => '/isolated-plugin-fixture',
       defaultBundledRoot: () => '/isolated-bundled-fixture',
-      createPluginService: () => ({ cliContributions, runCliCommand })
+      createPluginService: () => ({ cliContributions, runCliCommand, applyAllUpdates })
     }));
     try {
       const deps = makeDeps();
       expect(await dispatchOp('plugin.contributions', {}, deps)).toEqual({ ok: true, value: [{ pluginId: 'fixture', name: 'fixture' }] });
       expect(await dispatchOp('plugin.cli', { id: 'fixture', argv: ['run'], threadId: 't' }, deps)).toEqual({ ok: true, value: { exitCode: 0, stdout: 'fallback works' } });
       expect(runCliCommand).toHaveBeenCalledWith('fixture', ['run'], { threadId: 't' });
+      expect(await dispatchOp('plugin.update', { all: true }, deps)).toEqual({ ok: true, value: { updated: ['fixture'], failed: [] } });
+      expect(applyAllUpdates).toHaveBeenCalledOnce();
     } finally { vi.doUnmock('@zana-ai/zcc-server/plugins/plugin-service'); }
   });
 
@@ -860,6 +863,11 @@ describe('startControlPlane (real socket)', () => {
     expect(updateAll).toHaveBeenCalledTimes(1);
     expect(await request({ id: 'sample', all: true })).toMatchObject({ ok: false, code: 'BAD_ARGS' });
     expect(await request({})).toMatchObject({ ok: false, code: 'BAD_ARGS' });
+  });
+
+  it('reports unsupported bulk updates on an attached host without using another runtime', async () => {
+    const result = await dispatchOp('plugin.update', { all: true }, makeDeps({ pluginHost: {} as any }));
+    expect(result).toMatchObject({ ok: false, message: 'Bulk update is unavailable' });
   });
 
   it('runs plugin CLI contribution ops over the socket without native confirmation', async () => {

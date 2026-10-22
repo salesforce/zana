@@ -19,3 +19,13 @@ it('forwards the opener target, path and project root to main', async () => {
   await api.openers.revealFile(input);
   expect(electron.invoke.mock.calls).toEqual([[IPC.openers.fileLocation, input], [IPC.openers.revealFile, input]]);
 });
+
+it('forwards bulk plugin updates to main and returns the result', async () => {
+  await import('./preload.js');
+  const api = electron.expose.mock.calls.find(([name]) => name === 'cc')![1];
+  const result = { ok: true, value: { updated: ['plugin-1'], failed: [] } };
+  electron.invoke.mockClear();
+  electron.invoke.mockResolvedValueOnce(result);
+  await expect(api.pluginApps.applyAllUpdates()).resolves.toEqual(result);
+  expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.pluginApps.applyAllUpdates);
+});
