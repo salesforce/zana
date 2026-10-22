@@ -8,17 +8,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PLAYGROUND_BRIDGE_SOURCE } from './playground-bridge.js';
 
 const control: { options?: any } = {};
-vi.mock('./useSalesforceControl.js', () => ({ useSalesforceControl: (options: unknown) => { control.options = options; } }));
+vi.mock('./useSalesforceControl.js', async importOriginal => ({ ...(await importOriginal<object>()), useSalesforceControl: (options: unknown) => { control.options = options; } }));
 vi.mock('./preview/PreviewWorkbench.js', () => ({ PreviewWorkbench: (p: any) => <div data-testid="stub-preview" data-engine={p.engine} data-dirty={String(Boolean(p.dirty))} data-command={p.command ? JSON.stringify(p.command) : ""}><button data-testid="stub-run" onClick={() => p.onRunChange({ runId: 'r1', engine: 'live', turn: 1 })}>run</button><button data-testid="stub-handled" onClick={() => p.onCommandHandled(p.command?.seq ?? -1)}>handled</button><button data-testid="stub-stale" onClick={() => p.onCommandHandled(0)}>stale</button></div> }));
 vi.mock('./studio/AskAgentButton.js', () => ({ AskAgentButton: () => <div data-testid="stub-ask-agent" /> }));
-vi.mock('./AgentScriptGraphPanel.js', () => ({ AgentScriptGraphPanel: (p: any) => <div data-testid="stub-graph" data-focus={`${p.focusNode}:${p.focusSeq}`} data-compact={String(p.compact)} /> }));
-vi.mock('./OrgAgentsPanel.js', () => ({ OrgAgentsPanel: (p: any) => <div data-testid="stub-agents"><button data-testid="stub-agents-publish" onClick={() => p.onPublish?.('force-app/bots/Help.agent')}>publish</button></div> }));
+vi.mock('./AgentScriptGraphPanel.js', () => ({ AgentScriptGraphPanel: (p: any) => <div data-testid="stub-graph" data-focus={`${p.focusNode}:${p.focusSeq}`} data-compact={String(p.compact)}><button data-testid="stub-graph-inspect" onClick={() => p.onOpenAction((globalThis as any).__graphInspect)}>inspect</button></div> }));
+vi.mock('./OrgAgentsPanel.js', () => ({ OrgAgentsPanel: (p: any) => <div data-testid="stub-agents"><button data-testid="stub-agents-open" onClick={() => p.onLocalOpen?.('force-app/bots/Help.agent')}>open</button></div> }));
 vi.mock('./AgentforceLabPanel.js', () => ({ AgentforceLabPanel: () => <div data-testid="stub-lab" /> }));
 vi.mock('./panels/OperationsPanel.js', () => ({ OperationsPanel: () => <div data-testid="stub-ops" /> }));
 const { AgentScriptPanel } = await import('./AgentScriptPanel.js');
 const { StudioPanelTool } = await import('./studio/StudioPanelTool.js');
 const { resetStudioToolBridge } = await import('./studio/studio-tool-bridge.js');
 const { readStudioLayout } = await import('./studio/studio-layout.js');
+const { parseAgentScriptSource } = await import('../../lib/agent-script-parse.js');
+const { ACTION_AGENT } = await import('../action-fixtures.js');
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 const flush = () => act(async () => { for (let i = 0; i < 3; i++) await new Promise(r => setTimeout(r, 0)); });
@@ -86,7 +88,7 @@ beforeEach(() => {
 afterEach(() => { nodes.splice(0).forEach(fn => fn()); vi.restoreAllMocks(); delete (globalThis as any).__ZCC_PLUGIN_HOST__; delete (globalThis as any).__ZCC_PLUGIN_RUNTIME__; });
 
 /** Plays the host side panel: mounts the tab for `tool` the way PluginPanelHostLayout would. */
-async function hostTab(tool: 'preview' | 'graph' | 'test', projectId = 'proj-1', tabId?: string) {
+async function hostTab(tool: 'actions' | 'comments', projectId = 'proj-1', tabId?: string) {
   const el = document.createElement('div'); document.body.appendChild(el);
   const root = createRoot(el);
   const unmount = () => { root.unmount(); el.remove(); };
@@ -102,66 +104,66 @@ describe('AgentScriptPanel beside the host side panel', () => {
     await ready(el);
     expect(el.querySelector('.af-tools')).toBeNull();
     expect(el.querySelector('[data-testid="stub-ask-agent"]')).toBeTruthy();
-    // With nothing shown yet, "Show side panel" opens Preview in the host panel.
-    await act(async () => { fireEvent.click(el.querySelector('[aria-label="Show side panel"]')!); });
-    expect(navigate.openPanelTool).toHaveBeenLastCalledWith({ actionId: 'studio-preview' });
+    // The host panel has its own toggle, so Studio shows none; with nothing shown yet, opening the panel shows Preview.
+    expect(el.querySelector('[aria-label="Show side panel"]')).toBeNull();
+    await act(async () => { await exec('panel.show'); });
+    expect(navigate.openPanelTool).toHaveBeenLastCalledWith({ actionId: 'studio-actions' });
     navigate.openPanelTool.mockClear();
+    // Preview is an editor view tab: it never goes to the host panel.
     await act(async () => { fireEvent.click(el.querySelector('[data-testid="salesforce-agent-script-preview"]')!); });
-    expect(navigate.openPanelTool).toHaveBeenCalledWith({ actionId: 'studio-preview' });
-    const tab = await hostTab('preview');
-    const preview = tab.el.querySelector('[data-testid="stub-preview"]')!;
-    expect(preview).toBeTruthy();
-    expect(el.querySelector('[data-testid="stub-preview"]')).toBeNull();
-    expect(control.options.state()).toMatchObject({ tool: 'preview', panels: { host: true, tabs: ['preview'], kept: [], active: 'preview', open: true } });
-    // Commands reach the tool in the host panel.
+    expect(navigate.openPanelTool).not.toHaveBeenCalled();
+    expect(el.querySelector('[data-testid="studio-view-preview"] [data-testid="stub-preview"]')).toBeTruthy();
+    const tab = await hostTab('actions');
+    const list = tab.el.querySelector('.af-actions-list')!;
+    expect(list).toBeTruthy();
+    expect(el.querySelector('.af-actions-list')).toBeNull();
+    expect(control.options.state()).toMatchObject({ tool: 'actions', panels: { host: true, tabs: ['actions'], kept: [], active: 'actions', open: true } });
+    // Commands reach the view tab in the editor.
     await act(async () => { await exec('preview.send', { text: 'hi', engine: 'live' }); });
     await flush();
-    expect(JSON.parse(tab.el.querySelector('[data-testid="stub-preview"]')!.getAttribute('data-command')!)).toMatchObject({ type: 'send', text: 'hi' });
+    expect(JSON.parse(el.querySelector('[data-testid="stub-preview"]')!.getAttribute('data-command')!)).toMatchObject({ type: 'send', text: 'hi' });
     await tab.unmount();
     // A tab switched away or closed is not reported as shown; Studio keeps the tool running.
-    expect(control.options.state()).toMatchObject({ tool: 'code', panels: { host: true, tabs: [], kept: ['preview'], active: null, open: false } });
-    const again = await hostTab('preview');
-    expect(again.el.querySelector('[data-testid="stub-preview"]')).toBe(preview);
+    expect(control.options.state()).toMatchObject({ panels: { host: true, tabs: [], kept: ['actions'], active: null, open: false } });
+    const again = await hostTab('actions');
+    expect(again.el.querySelector('.af-actions-list')).toBe(list);
     expect(el.querySelector('[aria-label="Show side panel"]')).toBeNull();
     await again.unmount();
   });
 
-  it('hides "Show side panel" while the host panel is open on another tab, and shows it once the panel hides', async () => {
-    sidePanelOpen = true;
-    const el = await mount('force-app/bots/QC.agent');
-    await ready(el);
-    // No Studio tool is shown (a thread tab is), yet the panel is open: no toggle.
-    expect(el.querySelector('[aria-label="Show side panel"]')).toBeNull();
-    await act(async () => { nodes.splice(0).forEach(fn => fn()); });
-    sidePanelOpen = false;
-    const closed = await mount('force-app/bots/QC.agent');
-    await ready(closed);
-    await act(async () => { fireEvent.click(closed.querySelector('[aria-label="Show side panel"]')!); });
-    expect(navigate.openPanelTool).toHaveBeenLastCalledWith({ actionId: 'studio-preview' });
+  it('leaves the panel toggle to the host, whether its panel is open or hidden', async () => {
+    for (const open of [true, false]) {
+      sidePanelOpen = open;
+      const el = await mount('force-app/bots/QC.agent');
+      await ready(el);
+      expect(el.querySelector('[aria-label="Show side panel"]')).toBeNull();
+      await act(async () => { nodes.splice(0).forEach(fn => fn()); });
+    }
   });
 
   it('reopens the tool last shown in the host panel', async () => {
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);
-    const graph = await hostTab('graph');
+    const comments = await hostTab('comments');
     expect(el.querySelector('[aria-label="Show side panel"]')).toBeNull();
-    await graph.unmount();
-    await act(async () => { fireEvent.click(el.querySelector('[aria-label="Show side panel"]')!); });
-    expect(navigate.openPanelTool).toHaveBeenLastCalledWith({ actionId: 'studio-graph' });
+    await comments.unmount();
+    expect(el.querySelector('[aria-label="Show side panel"]')).toBeNull();
+    await act(async () => { await exec('panel.show'); });
+    expect(navigate.openPanelTool).toHaveBeenLastCalledWith({ actionId: 'studio-comments' });
   });
 
   it('reports a tool the host agreed to show before its tab attaches', async () => {
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);
-    const preview = await hostTab('preview');
-    await act(async () => { await exec('panel.open', { tool: 'graph' }); });
-    expect(navigate.openPanelTool).toHaveBeenLastCalledWith({ actionId: 'studio-graph' });
-    expect(control.options.state()).toMatchObject({ panels: { host: true, active: 'graph', open: true } });
+    const actions = await hostTab('actions');
+    await act(async () => { await exec('panel.open', { tool: 'comments' }); });
+    expect(navigate.openPanelTool).toHaveBeenLastCalledWith({ actionId: 'studio-comments' });
+    expect(control.options.state()).toMatchObject({ panels: { host: true, active: 'comments', open: true } });
     // Once the host switches tabs, the attached tool is the one reported.
-    await preview.unmount();
-    const graph = await hostTab('graph');
-    expect(control.options.state()).toMatchObject({ panels: { active: 'graph', open: true } });
-    await graph.unmount();
+    await actions.unmount();
+    const comments = await hostTab('comments');
+    expect(control.options.state()).toMatchObject({ panels: { active: 'comments', open: true } });
+    await comments.unmount();
     expect(control.options.state()).toMatchObject({ panels: { active: null, open: false } });
   });
 
@@ -179,13 +181,7 @@ describe('AgentScriptPanel beside the host side panel', () => {
     expect(view.querySelector('[data-testid="stub-agents"]')).toBeTruthy();
     expect(view.style.display).toBe('');
     expect(el.querySelector('[data-testid="studio-target-view"]')).toBeNull();
-    // Publishing from the list lands on that agent's editor tab; the list stays mounted behind it.
-    const panel = view.querySelector('[data-testid="stub-agents"]');
-    await act(async () => { fireEvent.click(el.querySelector('[data-testid="stub-agents-publish"]')!); });
-    await flush();
-    expect(view.style.display).toBe('none');
-    expect(view.querySelector('[data-testid="stub-agents"]')).toBe(panel);
-    expect(navigate.openPanelTool).toHaveBeenLastCalledWith({ actionId: 'studio-release' });
+    expect(navigate.openPanelTool).not.toHaveBeenCalled();
     // The tab is kept with the layout.
     const layoutKey = Object.keys(localStorage).find(key => key.startsWith('salesforce:studio:') && !key.includes(':split:'))!;
     expect(readStudioLayout(layoutKey).tabs).toEqual(expect.arrayContaining([{ id: 'org-agents', kind: 'org', label: 'Org agents', target: 'agents' }]));
@@ -198,35 +194,36 @@ describe('AgentScriptPanel beside the host side panel', () => {
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);
     await act(async () => { await exec('panel.show'); });
-    expect(navigate.openPanelTool).toHaveBeenLastCalledWith({ actionId: 'studio-preview' });
+    expect(navigate.openPanelTool).toHaveBeenLastCalledWith({ actionId: 'studio-actions' });
     await expect(exec('panel.hide')).rejects.toThrow('ZCC side panel');
-    await expect(exec('panel.close', { tool: 'graph' })).rejects.toThrow('ZCC side panel');
+    await expect(exec('panel.close', { tool: 'actions' })).rejects.toThrow('ZCC side panel');
   });
 
   it('starts a tool fresh in a reopened tab and keeps it within the same tab', async () => {
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);
-    const first = await hostTab('preview', 'proj-1', 'tab-1');
-    const preview = first.el.querySelector('[data-testid="stub-preview"]');
+    const first = await hostTab('actions', 'proj-1', 'tab-1');
+    const list = first.el.querySelector('.af-actions-list');
+    expect(list).toBeTruthy();
     await first.unmount();
-    const same = await hostTab('preview', 'proj-1', 'tab-1');
-    expect(same.el.querySelector('[data-testid="stub-preview"]')).toBe(preview);
+    const same = await hostTab('actions', 'proj-1', 'tab-1');
+    expect(same.el.querySelector('.af-actions-list')).toBe(list);
     await same.unmount();
-    const reopened = await hostTab('preview', 'proj-1', 'tab-2');
-    const fresh = reopened.el.querySelector('[data-testid="stub-preview"]');
+    const reopened = await hostTab('actions', 'proj-1', 'tab-2');
+    const fresh = reopened.el.querySelector('.af-actions-list');
     expect(fresh).toBeTruthy();
-    expect(fresh).not.toBe(preview);
+    expect(fresh).not.toBe(list);
   });
 
   it('shows the tool beside the right project only', async () => {
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);
-    const other = await hostTab('graph', 'proj-2');
-    expect(other.el.querySelector('[data-testid="stub-graph"]')).toBeNull();
+    const other = await hostTab('actions', 'proj-2');
+    expect(other.el.querySelector('.af-actions-list')).toBeNull();
     expect(other.el.textContent).toContain('needs Agent Script Studio');
-    const own = await hostTab('graph');
-    expect(own.el.querySelector('[data-testid="stub-graph"]')).toBeTruthy();
-    expect(el.querySelector('[data-testid="stub-graph"]')).toBeNull();
+    const own = await hostTab('actions');
+    expect(own.el.querySelector('.af-actions-list')).toBeTruthy();
+    expect(el.querySelector('.af-actions-list')).toBeNull();
   });
 
   it('turns the compact strip into a launcher instead of swapping the editor', async () => {
@@ -235,8 +232,8 @@ describe('AgentScriptPanel beside the host side panel', () => {
     await ready(el);
     const strip = el.querySelector('[aria-label="Studio tools"]')!;
     const tab = (name: RegExp) => [...strip.querySelectorAll('[role="tab"]')].find(t => name.test(t.getAttribute('aria-label') ?? t.textContent ?? ''))!;
-    await act(async () => { fireEvent.click(tab(/graph/i)); });
-    expect(navigate.openPanelTool).toHaveBeenCalledWith({ actionId: 'studio-graph' });
+    await act(async () => { fireEvent.click(tab(/actions/i)); });
+    expect(navigate.openPanelTool).toHaveBeenCalledWith({ actionId: 'studio-actions' });
     expect(el.querySelector('.af-workspace')!.getAttribute('data-mode')).toBe('editor');
     await act(async () => { fireEvent.click(tab(/code/i)); });
     expect(navigate.openPanelTool).toHaveBeenCalledTimes(1);
@@ -246,8 +243,8 @@ describe('AgentScriptPanel beside the host side panel', () => {
     width = 0;
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);
-    const tab = await hostTab('graph');
-    expect(tab.el.querySelector('[data-testid="stub-graph"]')).toBeTruthy();
+    const tab = await hostTab('actions');
+    expect(tab.el.querySelector('.af-actions-list')).toBeTruthy();
     expect(tab.el.textContent).not.toContain('needs Agent Script Studio');
     expect(el.querySelector('.af-tools')).toBeNull();
     await tab.unmount();
@@ -257,30 +254,29 @@ describe('AgentScriptPanel beside the host side panel', () => {
     navigate.openPanelTool = vi.fn(() => false);
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);
-    await act(async () => { fireEvent.click(el.querySelector('[data-testid="salesforce-agent-script-preview"]')!); });
+    await act(async () => { await exec('panel.open', { tool: 'actions' }); });
     await flush();
     expect(navigate.openPanelTool).toHaveBeenCalled();
-    expect(el.querySelector('[data-testid="stub-preview"]')).toBeTruthy();
+    expect(el.querySelector('.af-actions-list')).toBeTruthy();
   });
 
   it('goes back to the host panel once the host takes a later tool', async () => {
     navigate.openPanelTool = vi.fn(() => false);
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);
-    await act(async () => { await exec('panel.open', { tool: 'preview' }); });
+    await act(async () => { await exec('panel.open', { tool: 'actions' }); });
     await flush();
     expect(el.querySelector('.af-tools')).toBeTruthy();
     expect(control.options.state().panels).not.toHaveProperty('host');
     // The host is ready now (its listener subscribed late): the next open asks it again.
     navigate.openPanelTool.mockReturnValue(true);
-    await act(async () => { await exec('panel.open', { tool: 'graph' }); });
+    await act(async () => { await exec('panel.open', { tool: 'comments' }); });
     await flush();
-    expect(navigate.openPanelTool).toHaveBeenLastCalledWith({ actionId: 'studio-graph' });
+    expect(navigate.openPanelTool).toHaveBeenLastCalledWith({ actionId: 'studio-comments' });
     expect(el.querySelector('.af-tools')).toBeNull();
-    const graph = await hostTab('graph');
-    expect(graph.el.querySelector('[data-testid="stub-graph"]')).toBeTruthy();
-    expect(control.options.state()).toMatchObject({ panels: { host: true, tabs: ['graph'], active: 'graph' } });
-    await graph.unmount();
+    const comments = await hostTab('comments');
+    expect(control.options.state()).toMatchObject({ panels: { host: true, tabs: ['comments'], active: 'comments' } });
+    await comments.unmount();
   });
 
   it('keeps its own panel without a host side panel', async () => {
@@ -312,5 +308,103 @@ describe('AgentScriptPanel beside the host side panel', () => {
     rpc.mockImplementation(async (p: string, method: string, args?: any) => method === 'studio.draftAgent' ? { ok: false } : baseRpc(p, method, args));
     await post(el, { type: 'askSelection', action: 'explain-selection', startLine: 1, endLine: 2, text: 'a' });
     expect(el.querySelector('[role="alert"]')!.textContent).toContain('Could not prepare the request.');
+  });
+
+  it('B: Inspect <action> from the Graph view opens it over an open dependency tab', async () => {
+    const el = await mount({ subPath: 'force-app/bots/QC.agent', params: { path: 'force-app/bots/QC.agent', apiName: 'OrderLookup', readOnly: '1' } });
+    const tab = await hostTab('actions');
+    await ready(el);
+    const actions = parseAgentScriptSource(ACTION_AGENT, 'agentforce').actions;
+    const refund = actions.find(action => action.name === 'refund')!;
+    await post(el, { type: 'snapshot', content: ACTION_AGENT, issues: 0, actions });
+    await post(el, { type: 'openAction', id: refund.id });
+    const pressed = () => [...tab.el.querySelectorAll('.af-related-tabs [aria-pressed="true"]')].map(b => b.textContent);
+    expect(pressed()).toEqual(['refund']);
+    await act(async () => { [...tab.el.querySelectorAll<HTMLButtonElement>('.af-related-tabs button')].find(b => b.textContent === 'OrderLookup')!.click(); });
+    expect(pressed()).toEqual(['OrderLookup']);
+    (globalThis as any).__graphInspect = refund.id;
+    await act(async () => { await exec('graph.focus', { node: 'refund' }); });
+    const inspect = el.querySelector<HTMLButtonElement>('[data-testid="studio-view-graph"] [data-testid="stub-graph-inspect"]')!;
+    await act(async () => { inspect.click(); });
+    await flush();
+    expect(pressed()).toEqual(['refund']);
+    await tab.unmount();
+  });
+
+  it('B: Inspect in the Graph view of an agent that is not loaded opens that agent, then the action', async () => {
+    const el = await mount('force-app/bots/QC.agent');
+    const tab = await hostTab('actions');
+    await ready(el);
+    const actions = parseAgentScriptSource(ACTION_AGENT, 'agentforce').actions;
+    const refund = actions.find(action => action.name === 'refund')!;
+    await post(el, { type: 'snapshot', content: ACTION_AGENT, issues: 0, actions });
+    await act(async () => { await exec('graph.focus', { node: 'refund' }); });
+    await act(async () => { await exec('file.open', { path: 'force-app/bots/Help.agent' }); });
+    await flush();
+    expect(sent(el).filter((m: any) => m.type === 'setFile').at(-1)).toMatchObject({ path: 'force-app/bots/Help.agent' });
+    await post(el, { type: 'snapshot', content: SOURCE, issues: 0, actions: [] });
+    // QC's graph pane stays mounted behind Help: inspecting there loads QC first.
+    (globalThis as any).__graphInspect = refund.id;
+    const inspect = el.querySelector<HTMLButtonElement>('[data-testid="studio-view-graph"][data-agent="force-app/bots/QC.agent"] [data-testid="stub-graph-inspect"]')!;
+    await act(async () => { inspect.click(); });
+    await flush();
+    expect(sent(el).filter((m: any) => m.type === 'setFile').at(-1)).toMatchObject({ path: 'force-app/bots/QC.agent' });
+    expect(tab.el.querySelector('.af-related-tabs')).toBeNull();
+    // A snapshot without the action (or of another agent) opens nothing; QC's snapshot opens it once.
+    await post(el, { type: 'snapshot', content: ACTION_AGENT, issues: 0, actions });
+    expect([...tab.el.querySelectorAll('.af-related-tabs [aria-pressed="true"]')].map(b => b.textContent)).toEqual(['refund']);
+    await act(async () => { tab.el.querySelector<HTMLButtonElement>('[aria-label="Close refund"]')!.click(); });
+    await post(el, { type: 'snapshot', content: ACTION_AGENT, issues: 0, actions });
+    expect(tab.el.querySelector('.af-related-tabs')).toBeNull();
+    await tab.unmount();
+  });
+
+  it('B: a failed or superseded agent load drops the pending Inspect', async () => {
+    const el = await mount('force-app/bots/QC.agent');
+    const tab = await hostTab('actions');
+    await ready(el);
+    const actions = parseAgentScriptSource(ACTION_AGENT, 'agentforce').actions;
+    const refund = actions.find(action => action.name === 'refund')!;
+    await post(el, { type: 'snapshot', content: ACTION_AGENT, issues: 0, actions });
+    await act(async () => { await exec('graph.focus', { node: 'refund' }); });
+    await act(async () => { await exec('file.open', { path: 'force-app/bots/Help.agent' }); });
+    await flush();
+    await post(el, { type: 'snapshot', content: SOURCE, issues: 0, actions: [] });
+    (globalThis as any).__graphInspect = refund.id;
+    const inspect = () => el.querySelector<HTMLButtonElement>('[data-testid="studio-view-graph"][data-agent="force-app/bots/QC.agent"] [data-testid="stub-graph-inspect"]')!;
+    // The read fails: nothing waits for QC's snapshot.
+    rpc.mockImplementation(async (p: string, method: string, args?: any) => method === 'agentFiles.read' ? { ok: false, error: 'gone' } : baseRpc(p, method, args));
+    await act(async () => { inspect().click(); });
+    await flush();
+    rpc.mockImplementation(baseRpc);
+    await act(async () => { await exec('file.open', { path: 'force-app/bots/QC.agent' }); });
+    await flush();
+    await post(el, { type: 'snapshot', content: ACTION_AGENT, issues: 0, actions });
+    expect(tab.el.querySelector('.af-related-tabs')).toBeNull();
+    // A thrown read drops it too.
+    await act(async () => { await exec('file.open', { path: 'force-app/bots/Help.agent' }); });
+    await flush();
+    await post(el, { type: 'snapshot', content: SOURCE, issues: 0, actions: [] });
+    rpc.mockImplementation(async (p: string, method: string, args?: any) => { if (method === 'agentFiles.read') throw Error('offline'); return baseRpc(p, method, args); });
+    await act(async () => { inspect().click(); });
+    await flush();
+    rpc.mockImplementation(baseRpc);
+    await act(async () => { await exec('file.open', { path: 'force-app/bots/QC.agent' }); });
+    await flush();
+    await post(el, { type: 'snapshot', content: ACTION_AGENT, issues: 0, actions });
+    expect(tab.el.querySelector('.af-related-tabs')).toBeNull();
+    // Another agent opened before QC's snapshot supersedes the request.
+    await act(async () => { await exec('file.open', { path: 'force-app/bots/Help.agent' }); });
+    await flush();
+    await post(el, { type: 'snapshot', content: SOURCE, issues: 0, actions: [] });
+    await act(async () => { inspect().click(); });
+    await flush();
+    await act(async () => { await exec('file.open', { path: 'force-app/bots/Help.agent' }); });
+    await flush();
+    await act(async () => { await exec('file.open', { path: 'force-app/bots/QC.agent' }); });
+    await flush();
+    await post(el, { type: 'snapshot', content: ACTION_AGENT, issues: 0, actions });
+    expect(tab.el.querySelector('.af-related-tabs')).toBeNull();
+    await tab.unmount();
   });
 });

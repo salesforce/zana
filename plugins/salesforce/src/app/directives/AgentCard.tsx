@@ -2,7 +2,7 @@ import { useRealtime, useZccNavigate, type PluginMessageDirectiveProps } from '@
 import type { StudioComment, StudioViewState } from '../../../lib/studio-contract.js';
 import { STUDIO_CHANGED_CHANNEL, STUDIO_RPC, countProblems } from '../../../lib/studio-contract.js';
 import { queueAgentScriptOpen } from '../agent-script-open.js';
-import { AGENTFORCE_PLAYGROUND_ACTION } from '../agentforce-panel-params.js';
+import { routeStudioIntent } from '../studio/studio-intents.js';
 import { openInStudioWindow, STUDIO_TAB_ID } from '../studio-window-route.js';
 import { CARD_STYLES, ErrorCard, Pill, cleanAttr, parseLine, rpc, rpcFailure, useLoaded } from './card-kit.js';
 
@@ -58,16 +58,11 @@ export function AgentCard({ pluginId, attributes, source, message }: PluginMessa
 
   // With the Studio in its own window, both buttons open the agent there instead of a second editor here.
   const studioWindow = () => projectId ? openInStudioWindow({ pluginId, projectId, path, ...(line ? { line } : {}), navigate }) : Promise.resolve(false);
-  const open = async () => {
-    if (await studioWindow()) return;
-    if (projectId) queueAgentScriptOpen(projectId, path);
-    navigate.openThreadPanel({
-      actionId: AGENTFORCE_PLAYGROUND_ACTION,
-      title: 'Playground',
-      params: { path, ...(line ? { line: String(line) } : {}) },
-      ...(message.threadId ? { threadId: message.threadId } : {})
-    });
-  };
+  // A click beside a Studio opens its tab; in a thread, the Agent side panel; else the Studio.
+  const open = (from: Element | null) => routeStudioIntent({
+    pluginId, projectId: projectId ?? null, threadId: message.threadId ?? null, from, navigate,
+    intent: { kind: 'agent', path, ...(line ? { line } : {}) }
+  });
   const openStudio = async () => {
     if (await studioWindow()) return;
     if (projectId) queueAgentScriptOpen(projectId, path);
@@ -76,7 +71,7 @@ export function AgentCard({ pluginId, attributes, source, message }: PluginMessa
   return (
     <div className="plugin-directive-card sf-dcard" data-testid="sf-card-agent">
       <style>{CARD_STYLES}</style>
-      <button type="button" className="plugin-directive-card-main" disabled={!data} onClick={() => void open()} title={data ? `Open ${data.apiName} in the playground${line ? ` at line ${line}` : ''}` : undefined}>
+      <button type="button" className="plugin-directive-card-main" disabled={!data} onClick={event => void open(event.currentTarget)} title={data ? `Open ${data.apiName}${line ? ` at line ${line}` : ''}` : undefined}>
         <span className="sf-dcard-icon" aria-hidden>AG</span>
         <span className="sf-dcard-body">
           <span className="sf-dcard-line">

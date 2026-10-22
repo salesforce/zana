@@ -1,10 +1,14 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { callPluginRpc, experimental_requestApproval, useRealtime } from '@zana-ai/zcc-plugin-sdk/app';
-import { STUDIO_CHANGED_CHANNEL, STUDIO_RPC, type CaseOutcome, type ScenarioCase, type ScenarioSuite } from '../../../lib/studio-contract.js';
+import { STUDIO_CHANGED_CHANNEL, STUDIO_RPC, type CaseObserved, type CaseOutcome, type CaseResult, type ScenarioCase, type ScenarioSuite } from '../../../lib/studio-contract.js';
+import { caseChecks, failureReason, type CheckState } from '../../../lib/case-checks.js';
 import { RELEASE_RPC, type ReleasePrepared } from '../../../lib/release-contract.js';
 import { FIX_LOOP_LIMITS, type FixLoop } from '../../../lib/fix-loop.js';
-import { declined, type Message } from './ReleasePane.js';
+import { declined, type Message } from './approval-notice.js';
 import { OrgTestsView } from './OrgTestsView.js';
+import { LocalSuiteDetail } from './LocalSuiteDetail.js';
+import { SuiteRunProgress } from './SuiteRunProgress.js';
+import { SimulationsView, type SimulationsFocus } from './SimulationsView.js';
 
 /**
  * The Tests tool: the agent's scenario suite as one table. Simulate runs the
@@ -27,13 +31,22 @@ export interface TestsPaneProps {
   /** The AI role-play lab, the second view. */
   roleplay: ReactNode;
   onAskAgent?(prompt: string): void;
+  /** "Show path on graph": open the conversation map with this case pinned. */
+  onShowPath?(caseId: string): void;
   /** Injected in tests. */
   call?: typeof callPluginRpc;
   requestApproval?: typeof experimental_requestApproval;
+  /** Embed the local case table in the combined tests workbench. */
+  casesOnly?: boolean;
+  /** simulations.open: show the Simulations view, on this batch when named. */
+  simulationsFocus?: SimulationsFocus | null;
+  onSimulationsFocusHandled?(seq: number): void;
 }
 
 type Suite = ScenarioSuite & { sha256?: string };
-interface Detail { caseId: string; outcome: CaseOutcome; notes: string[]; turns: Array<{ role: 'user' | 'agent'; text: string }> }
+interface Detail { caseId: string; outcome: CaseOutcome; notes: string[]; turns: Array<{ role: 'user' | 'agent'; text: string }>; observed?: CaseObserved; judge?: CaseOutcome }
+type Filter = 'all' | 'fail' | 'pass';
+type TestsView = 'cases' | 'org' | 'simulations' | 'roleplay';
 type Notice = Message & { allowReads?: boolean };
 type Reply = { ok?: boolean; code?: string; error?: string; summary?: string } & Record<string, unknown>;
 
@@ -78,6 +91,35 @@ const STYLES = `
 .sf-tp-form input, .sf-tp-form textarea { font: inherit; color: var(--sf-text); background: var(--sf-sunken); border: 1px solid var(--sf-border); border-radius: 6px; padding: 3px 6px; }
 .sf-tp-foot { color: var(--sf-muted); margin: 0; }
 .sf-tp-empty { color: var(--sf-muted); padding: 4px 2px; }
+.sf-tp-summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--sf-border); border-radius: 8px; }
+.sf-tp-score { font-size: 18px; font-weight: 700; }
+.sf-tp-passbar { width: 140px; height: 7px; border-radius: 4px; background: var(--sf-soft); overflow: hidden; display: flex; }
+.sf-tp-passbar i { display: block; height: 100%; }
+.sf-tp-passbar .is-pass { background: var(--sf-success); }
+.sf-tp-passbar .is-fail { background: var(--sf-danger); }
+.sf-tp-checks { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.sf-tp-check { border-radius: 999px; padding: 0 6px; border: 1px solid var(--sf-border); font-size: 11px; white-space: nowrap; font-family: var(--sf-mono, ui-monospace, monospace); }
+.sf-tp-check.is-ok { border-color: var(--sf-success); color: var(--sf-success); }
+.sf-tp-check.is-ko { border-color: var(--sf-danger); color: var(--sf-danger); }
+.sf-tp-rubric { color: var(--sf-text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.sf-tp-rubric.is-open { -webkit-line-clamp: unset; }
+.sf-tp-more { border: 0; background: none; padding: 0; color: var(--sf-accent); font: inherit; font-size: 11px; cursor: pointer; }
+.sf-tp-na { color: var(--sf-muted); font-size: 11px; }
+.sf-tp-list { display: flex; flex-direction: column; }
+.sf-tp-line { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; border-bottom: 1px dashed var(--sf-border); overflow-wrap: anywhere; }
+.sf-tp-line:last-child { border-bottom: 0; }
+.sf-tp-mark { flex: none; width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; color: #fff; background: var(--sf-muted); }
+.sf-tp-mark.is-ok { background: var(--sf-success); }
+.sf-tp-mark.is-ko { background: var(--sf-danger); }
+.sf-tp-mark.is-expect { background: transparent; color: var(--sf-muted); border: 1px solid var(--sf-border); }
+.sf-tp-why { margin-top: 8px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--sf-danger); background: color-mix(in srgb, var(--sf-danger) 10%, transparent); overflow-wrap: anywhere; }
+.sf-tp-why strong { color: var(--sf-danger); }
+.sf-tp-reply { margin: 6px 0 0; color: var(--sf-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+.sf-tp-detail .sf-tp-bar { margin-top: 8px; }
+.sf-tp-run { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--sf-accent); border-radius: 8px; }
+.sf-tp-run progress { flex: 1; min-width: 80px; accent-color: var(--sf-accent); }
+.sf-tp-run-case { font-weight: 600; overflow-wrap: anywhere; }
+.sf-tp-chip.is-running { color: var(--sf-accent); border-color: var(--sf-accent); }
 `;
 /** Shared by the Org tests editor tab, which reuses the pane's tables, chips and buttons. */
 export const TESTS_PANE_STYLES = STYLES;
@@ -85,6 +127,46 @@ export const TESTS_PANE_STYLES = STYLES;
 const OUTCOME_LABEL: Record<CaseOutcome, string> = { pass: 'Pass', fail: 'Fail', inconclusive: 'Unclear' };
 function Chip({ outcome, title }: { outcome?: CaseOutcome; title?: string }) {
   return <span className={`sf-tp-chip${outcome ? ` is-${outcome}` : ''}`} title={title}>{outcome ? OUTCOME_LABEL[outcome] : '—'}</span>;
+}
+
+const MARK: Record<CheckState, string> = { ok: '✓', ko: '✗', na: '–' };
+const RUBRIC_CLAMP = 140;
+
+/** "just now", "5 min ago", "3 h ago", else a short date. */
+export function relativeTime(at: number, now = Date.now()): string {
+  const minutes = Math.round((now - at) / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  if (minutes < 24 * 60) return `${Math.round(minutes / 60)} h ago`;
+  return shortDate(at);
+}
+
+/** Pass and fail counts of the cases that have a Simulate result, and when the newest ran. */
+export function runSummary(cases: readonly ScenarioCase[], results: ScenarioSuite['lastResults']): { pass: number; fail: number; ran: number; at: number } {
+  let pass = 0, fail = 0, ran = 0, at = 0;
+  for (const c of cases) {
+    const result = results?.[c.id];
+    if (!result) continue;
+    ran++; at = Math.max(at, result.at);
+    if (result.outcome === 'pass') pass++; else if (result.outcome === 'fail') fail++;
+  }
+  return { pass, fail, ran, at };
+}
+
+/** The evidence to show for a case: this session's run when there is one, else the saved result. */
+function evidenceOf(detail: Detail | undefined, saved: CaseResult | undefined): CaseResult | undefined {
+  if (!detail) return saved;
+  const reply = [...detail.turns].reverse().find(turn => turn.role === 'agent')?.text;
+  return { outcome: detail.outcome, runId: saved?.runId ?? '', at: saved?.at ?? Date.now(), notes: detail.notes, ...(detail.observed ? { observed: detail.observed } : {}), ...(detail.judge ? { judge: detail.judge } : {}), ...(reply ? { reply } : {}) };
+}
+
+function Rubric({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  if (!text) return null;
+  return <>
+    <div className={`sf-tp-rubric${open ? ' is-open' : ''}`}>{text}</div>
+    {text.length > RUBRIC_CLAMP && <button type="button" className="sf-tp-more" onClick={event => { event.stopPropagation(); setOpen(value => !value); }}>{open ? 'less' : 'more'}</button>}
+  </>;
 }
 
 const shortDate = (at: number) => new Date(at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -120,10 +202,10 @@ export function fixLoopPrompt(loop: Pick<FixLoop, 'id' | 'budget' | 'caseIds'>, 
 }
 
 export function TestsPane(props: TestsPaneProps) {
-  const { pluginId, projectId, threadId, path, source, visible, dirty, proposalSource, roleplay, onAskAgent } = props;
+  const { pluginId, projectId, threadId, path, source, visible, dirty, proposalSource, roleplay, onAskAgent, onShowPath } = props;
   const call = props.call ?? callPluginRpc;
   const requestApproval = props.requestApproval ?? experimental_requestApproval;
-  const [view, setView] = useState<'cases' | 'org' | 'roleplay'>('cases');
+  const [view, setView] = useState<TestsView>('cases');
   const [roleplayShown, setRoleplayShown] = useState(false);
   const [suite, setSuite] = useState<Suite | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -131,9 +213,11 @@ export function TestsPane(props: TestsPaneProps) {
   const [proposal, setProposal] = useState<Record<string, CaseOutcome>>({});
   const [loop, setLoop] = useState<FixLoop | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [startedAt, setStartedAt] = useState(0);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [filter, setFilter] = useState<Filter>('all');
   const fileInput = useRef<HTMLInputElement>(null);
   const sequence = useRef(0);
   const alive = useRef(true);
@@ -160,23 +244,31 @@ export function TestsPane(props: TestsPaneProps) {
     }
   }, [path, rpc]);
 
-  useEffect(() => { setSuite(null); setLoop(null); setDetails({}); setProposal({}); setNotice(null); setExpanded(null); setAdding(false); setLoaded(false); }, [path]);
+  useEffect(() => { setSuite(null); setLoop(null); setDetails({}); setProposal({}); setNotice(null); setExpanded(null); setAdding(false); setFilter('all'); setLoaded(false); }, [path, projectId]);
   useEffect(() => { setProposal({}); }, [proposalSource]);
   useEffect(() => { if (visible) void load(); }, [visible, load]);
   useRealtime(STUDIO_CHANGED_CHANNEL, payload => {
     const row = payload as { kind?: string; projectId?: string; path?: string; loopId?: string } | null;
     if (!row || (row.projectId && row.projectId !== projectId)) return;
-    if (row.kind === 'suites' && visible) void load();
+    if ((row.kind === 'suites' || (row.kind === 'suite-progress' && row.path === suite?.path)) && visible) void load();
     if (row.kind === 'loop' && row.path === path && row.loopId) {
       void rpc(STUDIO_RPC.loopGet, { loopId: row.loopId }).then(reply => {
         if (alive.current && reply.ok !== false && reply.loop) setLoop(reply.loop as FixLoop);
       }).catch(() => undefined);
     }
   });
+  // Reconcile after missed realtime messages, and recover a run when reopening Tests.
+  const hasRun = Boolean(suite?.progress || busy === 'simulate' || busy === 'proposal' || busy === 'eval' || busy === 'reads' || busy?.startsWith('case:'));
+  useEffect(() => {
+    if (!visible || !hasRun) return;
+    const timer = setInterval(() => void load(), 2000);
+    return () => clearInterval(timer);
+  }, [visible, hasRun, load]);
 
   /** Runs one step with the busy flag and an error notice; the step returns the notice to show, if any. */
   const perform = useCallback(async (key: string, work: () => Promise<Notice | null>) => {
     setBusy(key);
+    setStartedAt(Date.now());
     setNotice(null);
     try {
       const next = await work();
@@ -189,6 +281,7 @@ export function TestsPane(props: TestsPaneProps) {
   }, []);
 
   const simulate = (caseIds?: string[]) => perform(caseIds ? `case:${caseIds[0]}` : 'simulate', async () => {
+    setDetails({});
     const reply = await rpc(STUDIO_RPC.suiteRun, { path: suite?.path, source, engine: 'preview', startedByUser: true, ...(threadId ? { threadId } : {}), ...(caseIds ? { caseIds } : {}) });
     if (reply.ok === false || !reply.suite) return { tone: 'error', text: reply.error || 'The suite could not run.' };
     if (!alive.current) return null;
@@ -295,21 +388,27 @@ export function TestsPane(props: TestsPaneProps) {
     return null;
   });
 
-  const showView = (next: 'cases' | 'org' | 'roleplay') => { setView(next); if (next === 'roleplay') setRoleplayShown(true); };
-  const switcher = (
+  const showView = (next: TestsView) => { setView(next); if (next === 'roleplay') setRoleplayShown(true); };
+  useEffect(() => { if (props.simulationsFocus && !props.casesOnly) setView('simulations'); }, [props.simulationsFocus, props.casesOnly]);
+  const switcher = props.casesOnly ? null : (
     <div className="sf-tp-seg" role="group" aria-label="Tests view">
       <button type="button" aria-pressed={view === 'cases'} onClick={() => showView('cases')}>Cases</button>
-      <button type="button" aria-pressed={view === 'org'} onClick={() => showView('org')}>Org tests</button>
+      <button type="button" aria-pressed={view === 'org'} onClick={() => showView('org')}>All tests</button>
+      <button type="button" aria-pressed={view === 'simulations'} onClick={() => showView('simulations')}>Simulations</button>
       <button type="button" aria-pressed={view === 'roleplay'} onClick={() => showView('roleplay')}>Role-play</button>
     </div>
   );
   const roleplayView = roleplayShown && <div hidden={view !== 'roleplay'} style={{ display: view === 'roleplay' ? 'flex' : 'none', flex: 1, minHeight: 0 }}>{roleplay}</div>;
+  const simulationsView = view === 'simulations' && <SimulationsView pluginId={pluginId} projectId={projectId} threadId={threadId} path={path} source={source} dirty={dirty}
+    visible={visible} onAskAgent={onAskAgent} focus={props.simulationsFocus ?? null} onFocusHandled={props.onSimulationsFocusHandled} call={props.call} />;
+  const renderLocalSuite = (suite: ScenarioSuite) => <LocalSuiteDetail key={`${projectId}:${suite.path}`} suite={suite} editor={props} Cases={TestsPane} />;
 
   if (!path) {
     return <section className="sf-tp" aria-label="Tests" data-testid="studio-tests-pane"><style>{STYLES}</style>
       <div className="sf-tp-head"><h2>Tests</h2><span className="sf-tp-spacer" />{switcher}</div>
       {view === 'cases' && <div className="sf-tp-empty">Open an agent file to test it.</div>}
-      {view === 'org' && <OrgTestsView pluginId={pluginId} projectId={projectId} threadId={threadId} path={path} visible={visible} onAskAgent={onAskAgent} call={props.call} requestApproval={props.requestApproval} />}
+      {view === 'org' && <OrgTestsView pluginId={pluginId} projectId={projectId} threadId={threadId} path={path} visible={visible} onAskAgent={onAskAgent} call={props.call} requestApproval={props.requestApproval} renderLocalSuite={renderLocalSuite} />}
+      {simulationsView}
       {roleplayView}
     </section>;
   }
@@ -317,15 +416,20 @@ export function TestsPane(props: TestsPaneProps) {
   const lastEval = suite?.lastEval;
   const cases = suite?.cases ?? [];
   const showProposal = Boolean(proposalSource);
-  const running = busy !== null;
+  const progress = suite?.progress;
+  const running = busy !== null || Boolean(progress);
   const loopLive = loop?.status === 'running';
-  const askWhy = (c: ScenarioCase) => {
-    const detail = details[c.id];
+  const summary = runSummary(cases, suite?.lastResults);
+  const liveResults = progress && progress.mode === 'simulate' ? progress.results : undefined;
+  const outcomeOf = (id: string) => liveResults?.[id]?.outcome ?? suite?.lastResults?.[id]?.outcome;
+  const shown = cases.filter(c => filter === 'all' || progress?.caseIds.includes(c.id) || outcomeOf(c.id) === filter);
+  const fixCase = (c: ScenarioCase) => {
+    const notes = evidenceOf(details[c.id], suite?.lastResults?.[c.id])?.notes ?? [];
     onAskAgent?.([
-      `Explain why the Agentforce test case "${c.name}" (${c.id}) fails in Simulate for ${path}, and suggest a fix.`,
+      `Explain why the Agentforce test case "${c.name}" (${c.id}) fails in Simulate for ${path}, and fix it.`,
       `Utterances: ${c.utterances.join(' / ')}`,
       `Expected: ${expectLines(c.expect).join('; ') || 'nothing specific'}`,
-      ...(detail?.notes.length ? [`Observed: ${detail.notes.join('; ')}`] : []),
+      ...(notes.length ? [`Observed: ${notes.join('; ')}`] : []),
       'Propose changes with ui.command editor.proposeEdit. Do not save or publish.'
     ].join('\n'));
   };
@@ -340,6 +444,18 @@ export function TestsPane(props: TestsPaneProps) {
         {switcher}
       </div>
       {view === 'cases' && <>
+        {summary.ran > 0 && <div className="sf-tp-summary" data-testid="tests-summary">
+          <span className="sf-tp-score" aria-label={`${summary.pass} of ${summary.ran} pass`}>{summary.pass}/{summary.ran}</span>
+          <span className="sf-tp-passbar" aria-hidden="true"><i className="is-pass" style={{ width: `${(summary.pass / summary.ran) * 100}%` }} /><i className="is-fail" style={{ width: `${(summary.fail / summary.ran) * 100}%` }} /></span>
+          <span className="sf-tp-chip">{hasRun ? 'Previous Simulate results' : 'Simulate'}</span>
+          <span className="sf-tp-sub">ran {relativeTime(summary.at)}{summary.ran < cases.length ? ` · ${cases.length - summary.ran} not run` : ''}</span>
+          <span className="sf-tp-spacer" />
+          <div className="sf-tp-seg" role="group" aria-label="Filter cases">
+            <button type="button" aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>All {cases.length}</button>
+            <button type="button" aria-pressed={filter === 'fail'} onClick={() => setFilter('fail')}>Failing {summary.fail}</button>
+            <button type="button" aria-pressed={filter === 'pass'} onClick={() => setFilter('pass')}>Passing {summary.pass}</button>
+          </div>
+        </div>}
         <div className="sf-tp-bar" role="toolbar" aria-label="Test actions">
           <button type="button" className="sf-tp-btn is-primary" disabled={running || !cases.length || !source.trim()} onClick={() => void simulate()}>{busy === 'simulate' ? 'Running…' : 'Run all in Simulate'}</button>
           <button type="button" className="sf-tp-btn" disabled={running || !cases.length} onClick={() => void perform('eval', evaluate)}>{busy === 'eval' || busy === 'reads' ? 'Running org eval…' : 'Run org eval'}</button>
@@ -353,6 +469,7 @@ export function TestsPane(props: TestsPaneProps) {
             title={dirty ? 'Save first: the agent starts from the file on disk.' : !failing.length ? 'Run in Simulate first; the fix loop takes the failing cases.' : undefined}
             onClick={() => void startLoop()}>{failing.length ? `Make ${failing.length === 1 ? 'this' : 'these'} pass` : 'Make these pass'}</button>}
         </div>
+        {hasRun && <SuiteRunProgress progress={progress} cases={busy?.startsWith('case:') ? cases.filter(c => busy === `case:${c.id}`) : cases} startedAt={startedAt} orgEval={busy === 'eval' || busy === 'reads'} />}
         {notice && <div className={`sf-tp-message is-${notice.tone}`} role={notice.tone === 'error' ? 'alert' : 'status'}>
           <span>{notice.text}</span>
           {notice.allowReads && <button type="button" className="sf-tp-btn" disabled={running} onClick={() => void allowReads()}>Allow reads…</button>}
@@ -382,36 +499,59 @@ export function TestsPane(props: TestsPaneProps) {
         {loaded && !cases.length && <div className="sf-tp-empty">No cases yet. Add one, import a spec, or pin a conversation from Preview with Save as scenario.</div>}
         {cases.length > 0 && <table className="sf-tp-table" data-testid="tests-table">
           <thead><tr>
-            <th>Case</th><th>Expects</th><th>Simulate</th>
+            <th style={{ width: '26%' }}>Case</th><th>Expects</th><th>Simulate</th>
             <th title={lastEval ? `${lastEval.org}, ${shortDate(lastEval.at)}${lastEval.perCase ? '' : '. The CLI reported totals only.'}` : 'Not run yet'}>Org eval{lastEval && !lastEval.perCase ? ' (totals)' : ''}</th>
             {showProposal && <th>Proposal</th>}
           </tr></thead>
-          <tbody>{cases.map(c => {
+          <tbody>{shown.map(c => {
             const open = expanded === c.id;
-            const detail = details[c.id];
-            const simulated = suite?.lastResults?.[c.id]?.outcome;
+            const pending = progress?.mode === 'simulate' && progress.caseIds.includes(c.id) && !progress.results[c.id];
+            const saved = pending ? undefined : liveResults?.[c.id] ?? suite?.lastResults?.[c.id];
+            const evidence = pending ? undefined : liveResults?.[c.id] ?? evidenceOf(details[c.id], saved);
+            const checks = caseChecks(c.expect, evidence);
+            const assertions = checks.filter(check => check.kind === 'topic' || check.kind === 'action');
+            const rubric = [...(c.expect.contains?.length ? [`Mentions ${c.expect.contains.map(text => `"${text}"`).join(', ')}`] : []), ...(c.expect.criteria ? [c.expect.criteria] : [])].join(' · ');
+            const simulated = saved?.outcome;
             const multiTurn = c.utterances.length > 1;
+            const reason = failureReason(evidence);
+            const orgOutcome = lastEval?.results[c.id]?.outcome;
+            const active = pending && progress.currentCaseId === c.id;
             return <Fragment key={c.id}>
               <tr className="sf-tp-row" data-testid={`tests-row-${c.id}`} aria-expanded={open} onClick={() => setExpanded(open ? null : c.id)}>
                 <td><span className="sf-tp-name">{c.name}</span>
+                  {multiTurn && <span className="sf-tp-chip is-pinned">{c.utterances.length} turns</span>}
                   {c.pinned && <span className="sf-tp-chip is-pinned" title={`Pinned from run ${c.pinned.runId}, ${shortDate(c.pinned.at)}`}>Pinned</span>}
-                  <div className="sf-tp-sub">{c.utterances[0]}{multiTurn ? ` (+${c.utterances.length - 1} turn${c.utterances.length === 2 ? '' : 's'})` : ''}</div></td>
-                <td className="sf-tp-sub">{expectLines(c.expect).join(' · ') || 'No checks'}</td>
-                <td><Chip outcome={busy === `case:${c.id}` ? undefined : simulated} /></td>
-                <td><Chip outcome={lastEval?.results[c.id]?.outcome} title={multiTurn ? 'The org eval runs the first turn only.' : undefined} /></td>
-                {showProposal && <td><Chip outcome={proposal[c.id]} /></td>}
+                  <div className="sf-tp-sub">“{c.utterances[0]}”</div></td>
+                <td>
+                  {assertions.length > 0 && <div className="sf-tp-checks">{assertions.map(check => <span key={`${check.kind}:${check.target}`} className={`sf-tp-check is-${check.state}`} title={check.actual}>
+                    {check.state === 'na' ? '' : `${MARK[check.state]} `}{check.kind === 'topic' ? `topic ${check.target}` : check.target}</span>)}</div>}
+                  <Rubric text={rubric} />
+                  {!checks.length && <span className="sf-tp-sub">No checks</span>}
+                </td>
+                <td>{pending ? <span className={`sf-tp-chip${active ? ' is-running' : ''}`}>{active ? 'Running…' : 'Queued'}</span> : <Chip outcome={busy === `case:${c.id}` ? undefined : simulated} />}</td>
+                <td>{orgOutcome ? <Chip outcome={orgOutcome} title={multiTurn ? 'The org eval runs the first turn only.' : undefined} />
+                  : <span className="sf-tp-na" title={multiTurn ? 'The org eval runs the first turn only.' : 'Run org eval against the published agent.'}>Not run</span>}</td>
+                {showProposal && <td><Chip outcome={progress?.mode === 'proposal' ? progress.results[c.id]?.outcome : proposal[c.id]} /></td>}
               </tr>
               {open && <tr className="sf-tp-detail"><td colSpan={showProposal ? 5 : 4}>
                 <div className="sf-tp-compare">
-                  <div><h4>Expected</h4><ul>{(expectLines(c.expect).length ? expectLines(c.expect) : ['No checks']).map(line => <li key={line}>{line}</li>)}</ul></div>
-                  <div><h4>Actual{detail ? '' : ' (run it to see)'}</h4>
-                    {detail?.notes.length ? <ul>{detail.notes.map((note, index) => <li key={index}>{note}</li>)}</ul> : null}
-                    {detail?.turns.filter(turn => turn.role === 'agent').map((turn, index) => <p key={index} className="sf-tp-turn">{turn.text}</p>)}
+                  <div><h4>Expected</h4><div className="sf-tp-list">
+                    {checks.length ? checks.map(check => <div key={`${check.kind}:${check.target}`} className="sf-tp-line"><span className="sf-tp-mark is-expect">•</span><span>{check.expected}</span></div>)
+                      : <div className="sf-tp-line">No checks</div>}
+                  </div></div>
+                  <div><h4>{evidence ? `Actual · Simulate ${saved ? relativeTime(saved.at) : 'this session'}` : 'Actual · not run yet'}</h4><div className="sf-tp-list">
+                    {checks.map(check => <div key={`${check.kind}:${check.target}`} className="sf-tp-line"><span className={`sf-tp-mark is-${check.state}`}>{MARK[check.state]}</span><span>{check.actual}</span></div>)}
+                  </div>
+                    {evidence?.reply && <p className="sf-tp-reply">Reply: <i>{evidence.reply}</i></p>}
                   </div>
                 </div>
+                {evidence?.outcome === 'fail' && reason && <div className="sf-tp-why" role="note"><strong>Why it failed:</strong> {reason}</div>}
+                {evidence?.outcome === 'inconclusive' && reason && <div className="sf-tp-message is-muted" role="note">{reason}</div>}
                 <div className="sf-tp-bar">
-                  <button type="button" className="sf-tp-btn" disabled={running || !source.trim()} onClick={() => void simulate([c.id])}>{busy === `case:${c.id}` ? 'Running…' : 'Run in Simulate'}</button>
-                  {onAskAgent && simulated === 'fail' && <button type="button" className="sf-tp-btn" onClick={() => askWhy(c)}>Ask why</button>}
+                  {onAskAgent && simulated === 'fail' && <button type="button" className="sf-tp-btn is-primary" onClick={() => fixCase(c)}>Fix this case</button>}
+                  {onShowPath && <button type="button" className="sf-tp-btn" onClick={() => onShowPath(c.id)}>Show path on graph</button>}
+                  <button type="button" className="sf-tp-btn" disabled={running || !source.trim()} onClick={() => void simulate([c.id])}>{busy === `case:${c.id}` ? 'Running…' : simulated ? 'Re-run' : 'Run in Simulate'}</button>
+                  <span className="sf-tp-spacer" />
                   <button type="button" className="sf-tp-btn" disabled={running || cases.length < 2} title={cases.length < 2 ? 'A suite keeps at least one case.' : undefined}
                     onClick={() => void perform('remove', () => save(cases.filter(row => row.id !== c.id)))}>Remove</button>
                 </div>
@@ -419,9 +559,11 @@ export function TestsPane(props: TestsPaneProps) {
             </Fragment>;
           })}</tbody>
         </table>}
+        {cases.length > 0 && !shown.length && <div className="sf-tp-empty">No {filter === 'fail' ? 'failing' : 'passing'} cases.</div>}
         <p className="sf-tp-foot">Simulate runs the editor source{dirty ? ', including unsaved changes' : ''}. Org eval runs <code>sf agent test run-eval</code> against the agent published on the org; a pass counts as Release eval evidence.</p>
       </>}
-      {view === 'org' && <OrgTestsView pluginId={pluginId} projectId={projectId} threadId={threadId} path={path} visible={visible} onAskAgent={onAskAgent} call={props.call} requestApproval={props.requestApproval} />}
+      {view === 'org' && <OrgTestsView pluginId={pluginId} projectId={projectId} threadId={threadId} path={path} visible={visible} onAskAgent={onAskAgent} call={props.call} requestApproval={props.requestApproval} renderLocalSuite={renderLocalSuite} />}
+      {simulationsView}
       {roleplayView}
     </section>
   );

@@ -35,6 +35,8 @@ export interface StudioCommandTargets {
   contextSet?(input: { values?: PreviewContextVariable[]; presetId?: string; merge?: boolean }): Promise<void | ControlState> | void | ControlState;
   /** orgTests.open: shows the Org tests tab, on a definition or run when named. */
   orgTestsOpen?(input: { name?: string; runId?: string }): void;
+  /** simulations.open: shows the Simulations view, on a batch when named. */
+  simulationsOpen?(input: { batchId?: string }): void;
 }
 
 const unsupported = (command: string) => Error(`${command} is not supported in this view.`);
@@ -90,6 +92,11 @@ export function createStudioCommandExecutor(targets: StudioCommandTargets): Stud
       if (!targets.orgTestsOpen) throw unsupported(command);
       const focus = { ...(typeof input.name === 'string' ? { name: input.name } : {}), ...(typeof input.runId === 'string' ? { runId: input.runId } : {}) };
       targets.orgTestsOpen(focus); return focus;
+    }
+    if (command === 'simulations.open') {
+      if (!targets.simulationsOpen) throw unsupported(command);
+      const focus = typeof input.batchId === 'string' ? { batchId: input.batchId } : {};
+      targets.simulationsOpen(focus); return focus;
     }
     if (command === 'file.open') {
       if (targets.isBusyOrDirty()) throw Error('Save the current draft before switching files.');

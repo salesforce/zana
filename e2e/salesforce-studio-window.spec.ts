@@ -132,7 +132,8 @@ test('Salesforce hub: project tools, recent agents, themes, narrow layout and St
   await hub.getByRole('button', { name: 'Open in own window' }).click();
   const studio = await waitForStudio(electron);
   await expect(studio.getByTestId('salesforce-workbench')).toHaveAttribute('data-surface', 'studio-window');
-  await expect(studio.getByRole('tab', { name: 'Agents', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(studio.getByTestId('salesforce-agent-script-panel')).toBeVisible();
+  await expect(studio.getByTestId('salesforce-workbench').getByRole('tablist', { name: 'Salesforce tools' })).toHaveCount(0);
   await studio.getByTestId('plugin-view-bring-back').click();
   await expect.poll(() => liveStudioWindows(electron)).toBe(0);
   expect(errors).toEqual([]);
@@ -156,7 +157,7 @@ test('Salesforce Studio window: one owner, status card, cross-window org sync an
   const tab = main.getByTestId('salesforce-workbench');
   await expect(tab.getByRole('tab', { name: 'Overview', exact: true })).toHaveAttribute('aria-selected', 'true');
 
-  // Open: the Studio window draws an activity bar and opens on Agentforce.
+  // Open: the Studio window shows Agentforce only, with no Data, Apex or Deploy activity bar.
   await tab.getByTestId('plugin-tab-open-in-window').click();
   const studio = await waitForStudio(electron);
   await studio.setViewportSize({ width: 1440, height: 900 });
@@ -168,24 +169,28 @@ test('Salesforce Studio window: one owner, status card, cross-window org sync an
   await expect(studio.getByTestId('plugin-view-title-badge')).toHaveCount(0);
   const workbench = studio.getByTestId('salesforce-workbench');
   await expect(workbench).toHaveAttribute('data-surface', 'studio-window');
-  const bar = workbench.getByRole('tablist', { name: 'Salesforce tools' });
-  await expect(bar).toHaveAttribute('aria-orientation', 'vertical');
-  await expect(bar.getByRole('tab')).toHaveText(['Agents', 'Data', 'Apex', 'Deploy', 'Home']);
-  await expect(bar.getByRole('tab', { name: 'Agents' })).toHaveAttribute('aria-selected', 'true');
   await expect(studio.getByTestId('salesforce-agent-script-panel')).toBeVisible();
+  await expect(workbench.getByRole('tablist', { name: 'Salesforce tools' })).toHaveCount(0);
+  for (const name of ['Data', 'Apex', 'Deploy', 'Home', 'Overview']) await expect(workbench.getByRole('tab', { name, exact: true })).toHaveCount(0);
+  // General Salesforce tools live in the main window, one link away.
+  await expect(workbench.getByRole('button', { name: /^Salesforce/ }).first()).toBeVisible();
   // The Studio window has no thread beside it, and no second window button.
   await expect(studio.getByRole('button', { name: 'Open beside agent' })).toHaveCount(0);
   await expect(studio.getByTestId('plugin-tab-open-in-window')).toHaveCount(0);
 
-  // One live owner: the main tab unmounts the workbench and shows the status card.
+  // One live owner: the main tab keeps the general tools, without Agentforce, and a notice for the Studio window.
   const card = main.getByTestId('salesforce-studio-detached');
   await expect(card).toBeVisible();
-  await expect(main.getByTestId('salesforce-workbench')).toHaveCount(0);
-  const orgRow = card.locator('.sf-detached-row').filter({ hasText: 'Org' });
-  await expect(orgRow).toContainText('studio');
+  const mainTools = main.getByTestId('salesforce-workbench');
+  await expect(mainTools).toBeVisible();
+  await expect(main.getByTestId('salesforce-agent-script-panel')).toHaveCount(0);
+  await expect(mainTools.getByRole('tab', { name: 'Agentforce', exact: true })).toHaveCount(0);
+  await expect(mainTools.getByRole('tab', { name: 'Overview', exact: true })).toBeVisible();
+  const mainOrg = mainTools.getByTestId('salesforce-org-picker');
+  await expect(mainOrg).toHaveValue('studio');
 
   // Focus and a second open reuse the same window.
-  await card.getByRole('button', { name: 'Focus Studio window' }).click();
+  await card.getByRole('button', { name: 'Show window' }).click();
   expect(await main.evaluate((id) => window.cc.windows.openPluginView({ pluginId: 'salesforce', tabId: 'salesforce', projectId: id }), projectId)).toBe(true);
   await expect.poll(() => liveStudioWindows(electron)).toBe(1);
   expect(await main.evaluate(() => window.cc.windows.listPluginViews())).toEqual([{ pluginId: 'salesforce', tabId: 'salesforce', projectId }]);
@@ -200,24 +205,31 @@ test('Salesforce Studio window: one owner, status card, cross-window org sync an
     projectId: id, viewId, command: 'view.open', input: { view: 'agentforce', path: 'force-app/Help.agent', line: 2 },
   }), { id: projectId, viewId: lease!.id });
   expect(sent).toMatchObject({ ok: true, commandId: expect.any(String) });
+  const delivered = await main.evaluate(({ id, commandId }) => window.cc.pluginApps.callRpc('salesforce', 'control.result', {
+    projectId: id, commandId, waitMs: 3000,
+  }), { id: projectId, commandId: (sent as { commandId: string }).commandId });
+  expect(delivered).toMatchObject({ ok: true, state: 'completed' });
   await expect(studio.getByTestId('salesforce-agent-script-panel').locator('.af-document-name')).toHaveText('Help.agent');
   await expect(title).toHaveText('Agentforce · Help — dx · studio');
   await expect(studio).toHaveTitle(/^Agentforce · Help — dx · studio — /);
 
-  // The window keeps the host side panel beside the tab, so Studio's tools open there too.
+  // The window keeps the host side panel beside the tab for Actions, Comments and the Assistant; views are Studio tabs.
   const studioPanel = studio.getByTestId('salesforce-agent-script-panel');
   const sidePanel = studio.getByTestId('plugin-panel-host-layout').getByTestId('thread-secondary-panel');
   await expect(studio.getByTestId('plugin-panel-agent-show')).toBeVisible();
   await expect(studio.getByTestId('plugin-panel-secondary-show')).toBeVisible();
   await expect(studioPanel.locator('.af-tools')).toHaveCount(0);
   await captureElectronScreenshot(electron, studio, testInfo.outputPath('salesforce-detached-rail.png'));
+  // Preview opens as an editor view tab of the agent, not as a side-panel tool.
   await studioPanel.locator('.af-document-bar').getByRole('button', { name: 'Preview', exact: true }).click();
-  await expect(sidePanel).toBeVisible();
-  await expect(sidePanel.locator('.thread-secondary-tab.is-active')).toContainText('Preview');
-  await expect(sidePanel.locator('.sf-panel-tool[data-studio-tool="preview"]').getByTestId('preview-workbench')).toBeVisible();
+  await expect(studioPanel.getByRole('tablist', { name: 'Open files' }).getByRole('tab', { name: 'Preview', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(studioPanel.locator('[data-testid="studio-view-preview"]:visible').getByTestId('preview-workbench')).toBeVisible();
   await captureElectronScreenshot(electron, studio, testInfo.outputPath('salesforce-detached-preview.png'));
+  if (!await sidePanel.isVisible()) await studio.getByTestId('plugin-panel-secondary-show').click();
+  await expect(sidePanel).toBeVisible();
   await sidePanel.getByTestId('thread-secondary-new-tab').click();
-  await expect(sidePanel.getByTestId('thread-new-tab-plugin-salesforce-studio-graph')).toBeVisible();
+  await expect(sidePanel.getByTestId('thread-new-tab-plugin-salesforce-studio-actions')).toBeVisible();
+  await expect(sidePanel.getByTestId('thread-new-tab-plugin-salesforce-studio-graph')).toHaveCount(0);
   // The window has no app shell, yet its Agent composer keeps the desktop toolbar.
   await sidePanel.getByTestId('thread-new-tab-agent').click();
   const panelComposer = sidePanel.getByTestId('panel-agent-tab-composer');
@@ -243,8 +255,7 @@ test('Salesforce Studio window: one owner, status card, cross-window org sync an
   const picker = workbench.getByTestId('salesforce-org-picker');
   await expect(picker).toBeEnabled();
   await picker.selectOption('second');
-  await expect(orgRow).toContainText('second');
-  await expect(orgRow).not.toContainText('studio');
+  await expect(mainOrg).toHaveValue('second');
   await expect(title).toHaveText('Agentforce · Help — dx · second');
 
   // Bring back from the card: the window closes and the tab mounts here again.

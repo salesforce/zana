@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { OrgTestsView, type OrgTestsViewProps } from './OrgTestsView.js';
 import { OrgRunDetail, downloadText, runLabel } from './OrgRunDetail.js';
 import type { OrgCaseResult, OrgRunRecord, OrgRunResults, OrgTestDefinition } from '../../../lib/org-tests-contract.js';
+import type { ScenarioSuite } from '../../../lib/studio-contract.js';
 
 const PATH = 'force-app/main/default/aiAuthoringBundles/MyBot/MyBot.agent';
 let realtime: ((payload: unknown) => void) | null = null;
@@ -59,6 +60,130 @@ const calls = (call: ReturnType<typeof setup>['call'], method: string) => call.m
 const openMenu = () => { if (!screen.queryByLabelText('Attach run by id')) fireEvent.click(button('More actions')); };
 /** With MyBot open the list shows its tests; this shows every agent's, with OtherBot's group open. */
 const everyAgent = () => { fireEvent.click(button('All agents')); fireEvent.click(button(/^OtherBot/)); };
+
+const LOCAL: ScenarioSuite[] = [
+  { id: 'MyBot', path: 'tests/MyBot.scenario.json', cases: [{ id: 'refund', name: 'Refund locally', utterances: ['Refund please'], expect: {} }] },
+  { id: 'OtherBot', path: 'tests/OtherBot.scenario.json', cases: [{ id: 'other', name: 'Other case', utterances: ['Hello'], expect: {} }], lastResults: { other: { outcome: 'pass', at: 1, runId: 'preview-1' } } }
+];
+const renderLocalSuite = (suite: ScenarioSuite) => <div data-testid="local-editor">{suite.path}</div>;
+
+it('includes local cases when no org definition tests the current agent, and switches between both sources', async () => {
+  const { call } = setup({ renderLocalSuite }, { 'studio.suites.list': () => ({ ok: true, suites: LOCAL }), 'studio.orgTests.list': () => ({ ok: true, definitions: [DEFS[1]] }) });
+  const local = await screen.findByTestId('local-suite-MyBot');
+  expect(within(local).getByText('1 case')).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Tests' })).toBeTruthy();
+  expect(screen.getByTestId('org-tests-none-for-agent')).toBeTruthy();
+  expect(screen.queryByTestId('local-suite-OtherBot')).toBeNull();
+  fireEvent.click(within(local).getByRole('button'));
+  expect(screen.getByTestId('local-editor').textContent).toBe('tests/MyBot.scenario.json');
+  expect(calls(call, 'studio.suites.list')[0]).toEqual({ projectId: 'p1' });
+  expect(calls(call, 'studio.orgTests.run.start')).toHaveLength(0);
+  fireEvent.click(button('All agents'));
+  fireEvent.click(button(/^OtherBot.*test/));
+  fireEvent.click(button('OtherTests'));
+  await screen.findByTestId('org-def-detail');
+  expect(screen.queryByTestId('local-editor')).toBeNull();
+});
+
+it('filters local suites and org definitions with the same agent, search and run filters', async () => {
+  setup({ renderLocalSuite }, { 'studio.suites.list': () => ({ ok: true, suites: LOCAL }) });
+  await screen.findByTestId('local-suite-MyBot');
+  fireEvent.click(button('All agents'));
+  expect(screen.getByTestId('local-suite-OtherBot')).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('Filter tests'), { target: { value: 'refund please' } });
+  expect(screen.getByTestId('local-suite-MyBot')).toBeTruthy();
+  expect(screen.queryByTestId('local-suite-OtherBot')).toBeNull();
+  expect(screen.getByText('No org tests match.')).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('Filter tests'), { target: { value: '' } });
+  fireEvent.click(button('Has runs'));
+  expect(screen.queryByTestId('local-suite-MyBot')).toBeNull();
+  expect(screen.getByTestId('local-suite-OtherBot')).toBeTruthy();
+  fireEvent.click(button('This agent'));
+  expect(screen.getByText('No local cases match.')).toBeTruthy();
+});
+
+it.each([
+  { ok: false, error: 'Org unavailable' },
+  { ok: false, code: 'refused' }
+])('keeps local suites usable when org reads fail: %j', async orgReply => {
+  setup({ renderLocalSuite }, { 'studio.suites.list': () => ({ ok: true, suites: LOCAL }), 'studio.orgTests.list': () => orgReply });
+  fireEvent.click(within(await screen.findByTestId('local-suite-MyBot')).getByRole('button'));
+  expect(screen.getByTestId('local-editor')).toBeTruthy();
+  expect(screen.getByRole('alert').textContent).toContain(orgReply.error ?? 'Allow reads');
+});
+
+it.each([false, true])('reports local list failures independently and recovers on refresh (throws=%j)', async throws => {
+  let failed = true;
+  const { call } = setup({ renderLocalSuite }, { 'studio.suites.list': () => { if (!failed) return { ok: true, suites: LOCAL }; if (throws) throw Error('Local read failed'); return { ok: false, error: 'Local read failed' }; } });
+  expect(await screen.findByText('Local read failed')).toBeTruthy();
+  expect(screen.getByTestId('org-def-RefundTests')).toBeTruthy();
+  failed = false;
+  fireEvent.click(button('Refresh'));
+  await screen.findByTestId('local-suite-MyBot');
+  expect(screen.queryByText('Local read failed')).toBeNull();
+  expect(calls(call, 'studio.orgTests.list').at(-1)).toEqual({ projectId: 'p1', refresh: true });
+});
+
+it('updates local cases on project events, isolates other projects and clears a removed selection', async () => {
+  let suites = LOCAL;
+  const { call } = setup({ renderLocalSuite }, { 'studio.suites.list': () => ({ ok: true, suites }) });
+  fireEvent.click(within(await screen.findByTestId('local-suite-MyBot')).getByRole('button'));
+  const count = calls(call, 'studio.suites.list').length;
+  await act(async () => realtime?.({ kind: 'suites', projectId: 'other' }));
+  expect(calls(call, 'studio.suites.list')).toHaveLength(count);
+  suites = [];
+  await act(async () => realtime?.({ kind: 'suite-progress', projectId: 'p1' }));
+  await waitFor(() => expect(screen.queryByTestId('local-suite-MyBot')).toBeNull());
+  expect(screen.queryByTestId('local-editor')).toBeNull();
+  expect(screen.getByText('No local cases for MyBot yet.')).toBeTruthy();
+  expect(screen.getByText('Pick local cases or an org test to see its cases and runs.')).toBeTruthy();
+});
+
+it('abandons a pending org selection when local cases are selected', async () => {
+  let resolve!: (value: unknown) => void;
+  setup({ renderLocalSuite }, { 'studio.suites.list': () => ({ ok: true, suites: LOCAL }), 'studio.orgTests.definition': () => new Promise(r => { resolve = r; }) });
+  await screen.findByTestId('local-suite-MyBot');
+  fireEvent.click(button('Refund tests'));
+  fireEvent.click(within(screen.getByTestId('local-suite-MyBot')).getByRole('button'));
+  await act(async () => resolve({ ok: true, definition: definition() }));
+  expect(screen.getByTestId('local-editor')).toBeTruthy();
+  expect(screen.queryByTestId('org-def-detail')).toBeNull();
+});
+
+it('honors an org focus request after viewing local cases', async () => {
+  const { view, props } = setup({ renderLocalSuite }, { 'studio.suites.list': () => ({ ok: true, suites: LOCAL }) });
+  fireEvent.click(within(await screen.findByTestId('local-suite-MyBot')).getByRole('button'));
+  view.rerender(<OrgTestsView {...props} focus={{ name: 'RefundTests', seq: 1 }} />);
+  await screen.findByTestId('org-def-detail');
+  expect(screen.queryByTestId('local-editor')).toBeNull();
+});
+
+it('discards stale local listings when changing projects and when unmounted', async () => {
+  let oldReply!: (value: unknown) => void;
+  const { props, view } = setup({ renderLocalSuite }, { 'studio.suites.list': args => args.projectId === 'p1'
+    ? new Promise(resolve => { oldReply = resolve; })
+    : { ok: true, suites: [] } });
+  await waitFor(() => expect(oldReply).toBeTruthy());
+  view.rerender(<OrgTestsView {...props} projectId="p2" />);
+  await screen.findByText('No local cases for MyBot yet.');
+  await act(async () => oldReply({ ok: true, suites: LOCAL }));
+  expect(screen.queryByTestId('local-suite-MyBot')).toBeNull();
+  view.rerender(<OrgTestsView {...props} projectId="p1" />);
+  view.unmount();
+  await act(async () => oldReply({ ok: true, suites: LOCAL }));
+});
+
+it('lists local suites with running progress or org eval evidence under Has runs, without an open agent', async () => {
+  setup({ renderLocalSuite, path: null }, { 'studio.suites.list': () => ({ ok: true, suites: [
+    { ...LOCAL[0], progress: { mode: 'simulate' } },
+    { ...LOCAL[1], lastResults: {}, lastEval: { passed: true } }
+  ] }) });
+  await screen.findByTestId('local-suite-MyBot');
+  fireEvent.click(button('Has runs'));
+  expect(within(screen.getByTestId('local-suite-MyBot')).getByText('Running…')).toBeTruthy();
+  expect(within(screen.getByTestId('local-suite-OtherBot')).getByText('Has runs')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'This agent' })).toBeNull();
+});
 
 it('scopes the list to the open agent, then groups every agent with this one pinned and open', async () => {
   const { call } = setup({}, { 'studio.orgTests.runs': () => ({ ok: true, runs: [

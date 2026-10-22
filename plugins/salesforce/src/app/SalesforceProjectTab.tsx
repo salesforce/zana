@@ -8,7 +8,6 @@ import {
   Bot,
   ArrowUpRight,
   CircleCheck,
-  Home,
 } from "./components/icons.js";
 import { useWindowTitle, useZccContext, useZccNavigate, type ZccWindowTitle } from "@zana-ai/zcc-plugin-sdk/app";
 import type {
@@ -52,34 +51,36 @@ const VIEWS: Array<[WorkbenchView, string]> = [
   ["agentforce", "Agentforce"],
 ];
 
-/** The Studio window's activity bar: Agentforce first, short labels under icons. */
-const STUDIO_VIEWS: Array<[WorkbenchView, string]> = [
-  ["agentforce", "Agents"],
-  ["data", "Data"],
-  ["apex", "Apex"],
-  ["deployments", "Deploy"],
-  ["overview", "Home"],
-];
-const STUDIO_ICONS = { agentforce: Bot, data: Database, apex: FlaskConical, deployments: Package, overview: Home };
+/** The Studio window is Agentforce only: general Salesforce tools live in the main window's tab. */
+const STUDIO_ONLY: WorkbenchView = "agentforce";
+const STUDIO_REFUSAL = "The Studio window shows Agentforce only; use the Salesforce tab in the main window.";
+const DETACHED_REFUSAL = "Agentforce Studio is open in its own window; use view.open there, or bring it back to this tab.";
 
 /**
- * The Studio window's title: the open agent or the view, the org, and a badge when the org is
+ * The Studio window's title: the open agent and the org, and a badge when the org is
  * production or of unknown kind, so a risky window reads as one in the OS window list too.
  */
-export function studioWindowTitle(input: { view: WorkbenchView; agentPath: string | null; alias: string; orgKind?: string }): ZccWindowTitle {
-  const agent = input.view === "agentforce" && input.agentPath ? input.agentPath.split("/").pop()?.replace(/\.agent$/i, "") : "";
-  const title = input.view === "agentforce"
-    ? agent ? `Agentforce · ${agent}` : "Agentforce"
-    : `Salesforce · ${STUDIO_VIEWS.find(([id]) => id === input.view)?.[1] ?? "Home"}`;
+export function studioWindowTitle(input: { agentPath: string | null; alias: string; orgKind?: string }): ZccWindowTitle {
+  const agent = input.agentPath ? input.agentPath.split("/").pop()?.replace(/\.agent$/i, "") : "";
+  const title = agent ? `Agentforce · ${agent}` : "Agentforce";
   const risk: Pick<ZccWindowTitle, "badge" | "tone"> | null = input.orgKind === "production" ? { badge: "Production", tone: "danger" }
     : input.orgKind === "unknown" ? { badge: "Unknown org", tone: "warning" } : null;
   return { title, ...(input.alias ? { detail: input.alias } : {}), ...(input.alias && risk ? risk : {}) };
+}
+
+/** Set by the detached card: the Studio runs in its own window, so this tab keeps only the general tools. */
+export interface DetachedStudioHost {
+  /** Notice shown above the tools (what is open, Show window, Bring back). */
+  notice: ReactNode;
+  /** Brings the Studio window forward. */
+  focusWindow(): void;
 }
 
 export function SalesforceProjectTab(props: {
   pluginId: string;
   projectId: string;
   headerActions?: ReactNode;
+  detached?: DetachedStudioHost;
 }) {
   useContextChangeRelay();
   const panelId = useId();
@@ -92,14 +93,19 @@ export function SalesforceProjectTab(props: {
     context.threadId ?? undefined,
   );
   const status = useResource<WorkbenchStatus>(call, "status");
-  const [view, setViewState] = useState<WorkbenchView>(() => readProjectView(props.projectId, studio));
+  const detached = props.detached;
+  // The Studio window shows Agentforce only; a detached tab hides it (the Studio window has it).
+  const views = studio ? VIEWS.filter(([id]) => id === STUDIO_ONLY) : detached ? VIEWS.filter(([id]) => id !== STUDIO_ONLY) : VIEWS;
+  const fit = (stored: WorkbenchView): WorkbenchView => views.some(([id]) => id === stored) ? stored : views[0][0];
+  const [viewState, setViewState] = useState<WorkbenchView>(() => readProjectView(props.projectId, studio));
+  const view = fit(viewState);
   // An agent opened from a card in another window; cleared on leaving Agents so a later visit restores the last file.
   const [agentFocus, setAgentFocus] = useState<StudioFocus | null>(null);
   const focusSeq = useRef(0);
   const setView = (next: WorkbenchView) => {
     setViewState(next);
     if (next !== "agentforce") setAgentFocus(null);
-    rememberProjectView(props.projectId, next, studio);
+    if (!studio) rememberProjectView(props.projectId, next, studio);
   };
   const [orgsOpen, setOrgsOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
@@ -126,6 +132,8 @@ export function SalesforceProjectTab(props: {
       if (command === 'state') return;
       const next = VIEWS.find(([id]) => id === input.view);
       if (!next) throw Error('Choose overview, data, apex, deployments or agentforce.');
+      if (studio && next[0] !== STUDIO_ONLY) throw Error(STUDIO_REFUSAL);
+      if (detached && next[0] === STUDIO_ONLY) throw Error(DETACHED_REFUSAL);
       if (input.path === undefined && input.line === undefined) { setView(next[0]); return; }
       // Only the person's own card may open a file here; a thread uses file.open, which the Studio holds while they type.
       if (!user) throw Error('Open the file with file.open on the agentforce view.');
@@ -155,7 +163,7 @@ export function SalesforceProjectTab(props: {
     if (path) recordRecentAgent(props.projectId, path);
   }, [props.projectId]);
   // An org the CLI no longer lists is of unknown kind, so it gets the warning too.
-  useWindowTitle(studio ? studioWindowTitle({ view, agentPath, alias, orgKind: org?.kind ?? (status.data ? "unknown" : undefined) }) : null);
+  useWindowTitle(studio ? studioWindowTitle({ agentPath, alias, orgKind: org?.kind ?? (status.data ? "unknown" : undefined) }) : null);
   useEffect(() => {
     const changed = (event: Event) => {
       const projectId = (event as CustomEvent<{ projectId?: string }>).detail?.projectId;
@@ -210,9 +218,7 @@ export function SalesforceProjectTab(props: {
   const tabs = (
     <SalesforceTabs<WorkbenchView>
       label="Salesforce tools"
-      items={studio ? STUDIO_VIEWS : VIEWS}
-      icons={studio ? STUDIO_ICONS : undefined}
-      orientation={studio ? "vertical" : "horizontal"}
+      items={views}
       value={view}
       onChange={setView}
       panelId={panelId}
@@ -223,7 +229,7 @@ export function SalesforceProjectTab(props: {
       <header className="sf-workbench-toolbar">
         {studio ? (
           <span className="sf-studio-heading">
-            {STUDIO_VIEWS.find(([id]) => id === view)?.[1]}
+            Agentforce
             {status.data?.projectName && <span className="sf-muted"> · {status.data.projectName}</span>}
           </span>
         ) : tabs}
@@ -387,7 +393,7 @@ export function SalesforceProjectTab(props: {
                       className="sf-task"
                       type="button"
                       key={id}
-                      onClick={() => setView(id)}
+                      onClick={() => (id === "agentforce" && detached ? detached.focusWindow() : setView(id))}
                     >
                       <Icon />
                       <span>
@@ -446,21 +452,17 @@ export function SalesforceProjectTab(props: {
           />
         )}
         {view === "agentforce" && (
-          <AgentforcePlaygroundPanel pluginId={props.pluginId} projectId={props.projectId} params={agentFocus ?? undefined} orgPicker={false} onActivePath={setAgentPath} headerActions={context.threadId && <button className="sf-as-save" type="button" onClick={() => navigate.openThreadPanel({ actionId: 'playground', params: { projectId: props.projectId, orgAlias: alias } })}>Open beside agent</button>} />
+          <AgentforcePlaygroundPanel pluginId={props.pluginId} projectId={props.projectId} params={agentFocus ?? undefined} orgPicker={false} onActivePath={setAgentPath} />
         )}
       </div>
     </>
   );
-  // The Studio window trades the tab strip for an activity bar beside the work.
+  // The Studio window is the Agentforce Studio alone; the main window tab carries the tools.
   return (
     <section className={studio ? "sf-surface sf-workbench sf-studio-window" : "sf-surface sf-workbench"} data-testid="salesforce-workbench" data-surface={studio ? "studio-window" : undefined}>
       <style>{SALESFORCE_STYLES}</style>
-      {studio ? (
-        <>
-          {tabs}
-          <div className="sf-studio-main">{workbench}</div>
-        </>
-      ) : workbench}
+      {detached?.notice}
+      {studio ? <div className="sf-studio-main">{workbench}</div> : workbench}
     </section>
   );
 }

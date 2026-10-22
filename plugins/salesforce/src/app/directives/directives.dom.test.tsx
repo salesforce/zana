@@ -9,6 +9,7 @@ import { registerStudioDirectives } from './index.js';
 import { AgentCard } from './AgentCard.js';
 import { PreviewCard } from './PreviewCard.js';
 import { OperationCard, OPERATION_POLL_MS } from './OperationCard.js';
+import { SimulationCard, SIMULATION_POLL_MS } from './SimulationCard.js';
 import { cleanAttr, parseLine, rpcFailure, isNotImplemented } from './card-kit.js';
 import { takeQueuedAgentScriptOpen } from '../agent-script-open.js';
 import { CONSTITUTION_INSTRUCTIONS } from '../../../lib/constitution.js';
@@ -49,10 +50,10 @@ afterEach(() => {
 });
 
 describe('registration and helpers', () => {
-  it('registers the three directive slots with matching ids', () => {
+  it('registers the four directive slots with matching ids', () => {
     const messageDirective = vi.fn();
     registerStudioDirectives({ slots: { messageDirective } } as never);
-    expect(messageDirective.mock.calls.map(call => call[0].id)).toEqual(['sf-agent', 'sf-preview', 'sf-operation']);
+    expect(messageDirective.mock.calls.map(call => call[0].id)).toEqual(['sf-agent', 'sf-preview', 'sf-operation', 'sf-simulation']);
   });
   it('parses attributes defensively', () => {
     expect(cleanAttr('  a ')).toBe('a');
@@ -69,14 +70,14 @@ describe('registration and helpers', () => {
     expect(isNotImplemented({ ok: false, code: 'not_implemented' })).toBe(true);
   });
   it('documents every card in the constitution', () => {
-    for (const name of ['::sf-agent{', '::sf-preview{', '::sf-operation{']) expect(CONSTITUTION_INSTRUCTIONS).toContain(name);
+    for (const name of ['::sf-agent{', '::sf-preview{', '::sf-operation{', '::sf-simulation{']) expect(CONSTITUTION_INSTRUCTIONS).toContain(name);
     expect(CONSTITUTION_INSTRUCTIONS).toMatch(/own line/);
   });
 });
 
 describe('AgentCard', () => {
   const file = { ok: true, file: { path: 'force-app/Bot.agent', apiName: 'Bot', content: 'a\n  topic main:\nc', sha256: 's' } };
-  it('shows file, excerpt and badges, and opens the playground at the line', async () => {
+  it('shows file, excerpt and badges, and opens the Agent panel at the line', async () => {
     rpc.mockImplementation(async (_p, method) => method === 'agentFiles.read' ? file
       : method === 'studio.comments.list' ? { ok: true, comments: [{ resolved: undefined }, { resolved: { at: 1 } }] }
         : { ok: true, state: { path: 'force-app/Bot.agent', diagnostics: [{ severity: 'error' }, { severity: 'hint' }] } });
@@ -87,13 +88,14 @@ describe('AgentCard', () => {
     expect(el.textContent).toContain('1 comment');
     expect(el.textContent).toContain('1 problem');
     await act(async () => (el.querySelector('.plugin-directive-card-main') as HTMLButtonElement).click());
-    expect(navigate.openThreadPanel).toHaveBeenCalledWith({ actionId: 'playground', title: 'Playground', params: { path: 'force-app/Bot.agent', line: '2' }, threadId: 't1' });
-    expect(takeQueuedAgentScriptOpen('p1')).toBe('force-app/Bot.agent');
+    expect(navigate.openThreadPanel).toHaveBeenCalledWith({ actionId: 'agent', title: 'Bot', params: { path: 'force-app/Bot.agent', view: 'file', line: '2', projectId: 'p1' }, threadId: 't1' });
+    expect(takeQueuedAgentScriptOpen('p1')).toBeNull();
     await act(async () => (el.querySelector('.plugin-directive-card-open') as HTMLButtonElement).click());
     expect(navigate.toProject).toHaveBeenCalledWith('p1', { tabId: 'salesforce' });
     takeQueuedAgentScriptOpen('p1');
   });
-  it('opens the agent in the Studio window when it is open, instead of a second editor here', async () => {
+  it('opens the agent in the Studio window when no thread panel can take it', async () => {
+    navigate.openThreadPanel.mockReturnValueOnce(false);
     const studio = { id: 'studio', surface: 'workbench', window: 'plugin-view', commands: ['view.open'] };
     const openInWindow = vi.fn(async () => true);
     Object.assign(navigate, { openInWindow });
@@ -104,7 +106,7 @@ describe('AgentCard', () => {
     expect(rpc).toHaveBeenCalledWith('salesforce', 'control.command', expect.objectContaining({ viewId: 'studio', command: 'view.open', input: { view: 'agentforce', path: 'force-app/Bot.agent', line: 2 } }));
     await act(async () => (el.querySelector('.plugin-directive-card-open') as HTMLButtonElement).click());
     expect(openInWindow).toHaveBeenCalledTimes(2);
-    expect(navigate.openThreadPanel).not.toHaveBeenCalled();
+    expect(navigate.openThreadPanel).toHaveBeenCalledTimes(1);
     expect(navigate.toProject).not.toHaveBeenCalled();
     expect(takeQueuedAgentScriptOpen('p1')).toBeNull();
     delete (navigate as Record<string, unknown>).openInWindow;
@@ -115,8 +117,7 @@ describe('AgentCard', () => {
     expect(el.textContent).toContain('Bot');
     expect(el.textContent).not.toContain('comment');
     await act(async () => (el.querySelector('.plugin-directive-card-main') as HTMLButtonElement).click());
-    expect(navigate.openThreadPanel.mock.calls[0]![0]).toMatchObject({ params: { path: 'force-app/Bot.agent' } });
-    takeQueuedAgentScriptOpen('p1');
+    expect(navigate.openThreadPanel.mock.calls[0]![0]).toMatchObject({ actionId: 'agent', params: { path: 'force-app/Bot.agent', view: 'file' } });
   });
   it('tolerates rejected side RPCs and derives names without apiName', async () => {
     rpc.mockImplementation(async (_p, method) => {
@@ -230,5 +231,56 @@ describe('OperationCard', () => {
     rpc.mockResolvedValue({ ok: false, error: 'Offline' });
     expect((await mount(OperationCard, { id: 'op1' })).el.querySelector('[role=alert]')?.textContent).toContain('Offline');
     expect((await mount(OperationCard, {})).el.querySelector('[role=alert]')?.textContent).toContain('id is required');
+  });
+});
+
+describe('SimulationCard', () => {
+  const lane = (id: string, status: string) => ({ id, name: `L${id}`, repeat: id === '3' ? 2 : 1, scenario: {}, status, turns: [] });
+  const reply = (status: string, lanes: Array<ReturnType<typeof lane>>, extra: Record<string, unknown> = {}) => {
+    const counts = { total: lanes.length, pass: 0, fail: 0, inconclusive: 0, error: 0, stopped: 0, running: 0, queued: 0 } as Record<string, number>;
+    for (const row of lanes) counts[row.status]! += 1;
+    return { ok: true, batch: { id: 'b1', agentPath: 'force-app/x/MyBot/MyBot.agent', engine: 'preview', candidate: false, status, counts, lanes, ...extra } };
+  };
+  it('shows live lanes, follows realtime and polling, and opens the batch in Tests', async () => {
+    rpc.mockResolvedValue(reply('running', [lane('1', 'pass'), lane('2', 'running'), lane('3', 'queued')]));
+    const { el } = await mount(SimulationCard, { batchId: 'b1' });
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'studio.simulations.get', { batchId: 'b1', transcripts: false, projectId: 'p1', threadId: 't1' });
+    expect(el.textContent).toContain('MyBot');
+    expect(el.textContent).toContain('Running 1/3');
+    expect(el.textContent).toContain('1/3 pass');
+    expect(el.textContent).toContain('Simulate');
+    expect(el.querySelectorAll('.sf-dcard-lanes i')).toHaveLength(3);
+    expect(el.querySelector('.sf-dcard-lanes i[data-status=queued]')?.getAttribute('title')).toBe('L3 #2: queued');
+    await act(async () => realtime!({ projectId: 'p1', kind: 'simulations', batchId: 'other' }));
+    await act(async () => realtime!({ projectId: 'p1', kind: 'suites', batchId: 'b1' }));
+    expect(rpc).toHaveBeenCalledTimes(1);
+    await act(async () => realtime!({ projectId: 'p1', kind: 'simulations', batchId: 'b1' }));
+    await flush();
+    expect(rpc).toHaveBeenCalledTimes(2);
+    await act(async () => { vi.advanceTimersByTime(SIMULATION_POLL_MS); });
+    await flush();
+    expect(rpc).toHaveBeenCalledTimes(3);
+    rpc.mockResolvedValue(reply('done', [lane('1', 'pass'), lane('2', 'fail'), lane('3', 'pass')], { engine: 'rehearsal', candidate: true }));
+    await act(async () => { vi.advanceTimersByTime(SIMULATION_POLL_MS); });
+    await flush();
+    expect(el.textContent).toContain('Done');
+    expect(el.textContent).toContain('2/3 pass');
+    expect(el.textContent).toContain('Rehearse');
+    expect(el.textContent).toContain('draft');
+    const calls = rpc.mock.calls.length;
+    await act(async () => { vi.advanceTimersByTime(SIMULATION_POLL_MS * 3); });
+    expect(rpc).toHaveBeenCalledTimes(calls);
+    await act(async () => (el.querySelector('button') as HTMLButtonElement).click());
+    expect(navigate.openThreadPanel).toHaveBeenCalledWith({ actionId: 'agent', title: 'MyBot', params: { path: 'force-app/x/MyBot/MyBot.agent', view: 'tests', projectId: 'p1', sub: 'simulations', batchId: 'b1' }, threadId: 't1' });
+    navigate.openThreadPanel.mockReturnValueOnce(false);
+    await act(async () => (el.querySelector('button') as HTMLButtonElement).click());
+    expect(navigate.toProject).toHaveBeenCalledWith('p1', { tabId: 'salesforce' });
+    expect(takeQueuedAgentScriptOpen('p1')).toBe('force-app/x/MyBot/MyBot.agent');
+  });
+  it('rejects a bad id and reports an unavailable batch', async () => {
+    expect((await mount(SimulationCard, { batchId: '../x' })).el.querySelector('[role=alert]')?.textContent).toContain('batchId is required');
+    expect(rpc).not.toHaveBeenCalled();
+    rpc.mockResolvedValue({ ok: false, error: 'This simulation batch does not exist in this project.' });
+    expect((await mount(SimulationCard, { batchId: 'b9' })).el.querySelector('[role=alert]')?.textContent).toContain('does not exist');
   });
 });

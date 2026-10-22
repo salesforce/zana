@@ -9,7 +9,7 @@ describe('uiCommandReadsOrg', () => {
     expect(uiCommandReadsOrg('view.open', undefined)).toBe(true);
     expect(uiCommandReadsOrg('panel.open', { tool: 'agents' })).toBe(true);
     expect(uiCommandReadsOrg('panel.open', { tool: 'org-preview' })).toBe(true);
-    expect(uiCommandReadsOrg('panel.open', { tool: 'release' })).toBe(true);
+    expect(uiCommandReadsOrg('panel.open', { tool: 'release' })).toBe(false); // Release is no longer a Studio tool
   });
   it('treats preview.start/send as org reads for every engine', () => {
     for (const command of ['preview.start', 'preview.send']) {

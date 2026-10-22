@@ -13,6 +13,7 @@ vi.mock('./studio/AskAgentButton.js', () => ({ AskAgentButton: () => <div data-t
 vi.mock('./AgentScriptGraphPanel.js', () => ({ AgentScriptGraphPanel: () => <div data-testid="stub-graph" /> }));
 vi.mock('./OrgAgentsPanel.js', () => ({ OrgAgentsPanel: () => <div data-testid="stub-agents" /> }));
 vi.mock('./AgentforceLabPanel.js', () => ({ AgentforceLabPanel: () => <div data-testid="stub-lab" /> }));
+vi.mock('./studio/SimulationsView.js', () => ({ SimulationsView: (p: { focus?: { batchId?: string } | null }) => <div data-testid="stub-simulations">{p.focus?.batchId}</div> }));
 vi.mock('./panels/OperationsPanel.js', () => ({ OperationsPanel: () => <div data-testid="stub-ops" /> }));
 const { AgentScriptPanel } = await import('./AgentScriptPanel.js');
 
@@ -153,8 +154,9 @@ describe('AgentScriptPanel failure paths', () => {
     expect(alert(el)).toContain('Could not read Agentforce file.');
     await post(el, { type: 'askSelection', action: 'explain', startLine: 1, endLine: 2, text: 'a' });
     expect(alert(el)).toContain('No agent thread available.');
+    // No agent is open (every read failed), so Preview has nothing to show.
     await post(el, { type: 'askSelection', action: 'preview-topic', startLine: 1, endLine: 2, text: 'a' });
-    expect(el.querySelector('[data-testid="stub-preview"]')).toBeTruthy();
+    expect(alert(el)).toContain('Open an agent to see its preview.');
   });
 
   it('reports status and file-list RPC failures', async () => {
@@ -171,6 +173,9 @@ describe('AgentScriptPanel failure paths', () => {
     await rerender({ path: PATH, line: 3 });
     await rerender({ path: PATH, tool: 'graph' });
     expect(el.querySelector('[data-testid="stub-graph"]')).toBeTruthy();
+    // A ::sf-simulation card opens Tests on its batch.
+    await rerender({ path: PATH, tool: 'test', simulation: 'b7' });
+    expect(el.querySelector('[data-testid="stub-simulations"]')?.textContent).toBe('b7');
     await rerender({ path: PATH, apiName: 'Foo', readOnly: 'true' });
     await rerender({ path: PATH, apiName: 'Create_Return' });
     await rerender({});

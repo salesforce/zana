@@ -137,13 +137,13 @@ describe('salesforce plugin contract', () => {
     expect(set.projectTabs.map((tab) => tab.id)).toEqual(['salesforce']);
     expect(set.projectTabs[0]).toMatchObject({ label: 'Salesforce', icon: 'Cloud', global: false, detachable: true });
     expect(typeof set.projectTabs[0]?.detachedPlaceholder).toBe('function');
-    expect(set.threadPanelActions.map((row) => row.id)).toEqual(['sf-org', 'sf-soql', 'sf-object', 'sf-record', 'sf-logs', 'sf-deployments', 'sf-operations', 'playground', 'preview',
-      'studio-graph', 'studio-preview', 'studio-test', 'studio-release', 'studio-actions', 'studio-org-preview', 'studio-comments']);
+    expect(set.threadPanelActions.map((row) => row.id)).toEqual(['sf-org', 'sf-soql', 'sf-object', 'sf-record', 'sf-logs', 'sf-deployments', 'sf-operations', 'agent', 'preview',
+      'studio-actions', 'studio-comments']);
     // Studio's tools are listed only beside the Salesforce tab, never in a thread or agent session.
     for (const row of set.threadPanelActions.filter(row => row.id.startsWith('studio-'))) {
       expect(row).toMatchObject({ scopes: ['plugin-page'], pages: ['salesforce'], layout: 'flush', category: 'Agent Script Studio' });
     }
-    expect(set.threadPanelActions.find(row => row.id === 'playground')).toMatchObject({ title: 'Playground', layout: 'flush' });
+    expect(set.threadPanelActions.find(row => row.id === 'agent')).toMatchObject({ title: 'Agent', layout: 'flush', scopes: ['thread', 'agent-session'] });
     expect(set.threadPanelActions.find(row => row.id === 'preview')).toMatchObject({ title: 'Preview', layout: 'flush' });
     expect(set.newThreadPanelActions).toEqual([]);
     expect(set.navPanels).toMatchObject([
@@ -167,12 +167,18 @@ describe('salesforce plugin contract', () => {
     expect(set.pendingInteractions[0]?.id).toBe('salesforce-guardrail');
     expect(set.composerCustomizations[0]?.id).toBe('salesforce-banner');
     expect(set.fileOpeners[0]?.extensions).toEqual(['agent', 'afscript']);
-    expect(set.fileOpeners[0]?.title).toBe('Agentforce Playground');
+    expect(set.fileOpeners[0]?.title).toBe('Agentforce');
     expect(set.commandPaletteActions.filter(row => !row.id.startsWith('sf-')).map((row) => row.id)).toEqual([
       'open-orgs',
       'open-playground',
       'open-preview'
     ]);
+    const openStudio = set.commandPaletteActions.find((row) => row.id === 'open-playground');
+    expect(openStudio?.title).toBe('Open Agentforce Studio');
+    expect(openStudio?.isAvailable?.({ ...paletteCtx, projectId: null })).toBe(false);
+    expect(openStudio?.isAvailable?.(paletteCtx)).toBe(true);
+    openStudio?.run(paletteCtx);
+    expect(paletteCtx.toProject).toHaveBeenCalledWith('proj-1', { tabId: 'salesforce' });
     expect(set.createProjectActions[0]).toMatchObject({
       id: 'dx-project',
       title: 'Salesforce project',

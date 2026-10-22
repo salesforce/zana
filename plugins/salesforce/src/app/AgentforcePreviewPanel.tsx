@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import { callPluginRpc, useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { PopoverPicklist } from '@zana-ai/zcc-ui/popover-picklist';
-import { AGENTFORCE_PLAYGROUND_ACTION, agentforcePanelParams, parseAgentforcePanelApiName, parseAgentforcePanelPath, parseAgentforcePanelRun } from './agentforce-panel-params.js';
-import { queueAgentScriptOpen } from './agent-script-open.js';
-import { openInStudioWindow } from './studio-window-route.js';
+import { parseAgentforcePanelRun } from './agentforce-panel-params.js';
+import { routeStudioIntent } from './studio/studio-intents.js';
+import { useAgentforceTarget } from './use-agentforce-target.js';
 import { PreviewRunReplay } from './preview/PreviewRunReplay.js';
 import type { PlaygroundFileRef } from './playground-bridge.js';
 import {
@@ -35,22 +35,36 @@ function rpcProject(projectId: string | null | undefined, extra?: Record<string,
   return projectId ? { projectId, ...extra } : extra ?? {};
 }
 
-export function AgentforcePreviewPanel(props: {
+interface AgentforcePreviewPanelProps {
   pluginId: string;
   threadId?: string;
+  tabId?: string;
   projectId?: string;
   orgAlias?: string;
   params?: unknown;
-}) {
-  const pluginId = props.pluginId || PLUGIN_ID;
+  /** Binds the panel to one agent file: the shared per-thread target and the agent picker are ignored. */
+  pinnedPath?: string;
+}
+
+export function AgentforcePreviewPanel(props: AgentforcePreviewPanelProps) {
   const ctx = useZccContext();
+  const resource = props.params && typeof props.params === 'object' ? props.params as Record<string, unknown> : {};
+  const projectId = props.projectId ?? (typeof resource.projectId === 'string' ? resource.projectId : undefined) ?? ctx.projectId ?? undefined;
+  const threadId = props.threadId ?? ctx.threadId ?? '';
+  return <AgentforcePreviewWorkspace key={JSON.stringify([props.pluginId, projectId, threadId, props.pinnedPath ?? ''])} {...props} projectId={projectId} threadId={threadId} />;
+}
+
+function AgentforcePreviewWorkspace(props: AgentforcePreviewPanelProps) {
+  const pluginId = props.pluginId || PLUGIN_ID;
   const navigate = useZccNavigate();
   const resource = props.params && typeof props.params === 'object' ? props.params as Record<string, unknown> : {};
   const pinnedOrg = props.orgAlias ?? (typeof resource.orgAlias === 'string' ? resource.orgAlias : undefined);
-  const projectId = props.projectId ?? (typeof resource.projectId === 'string' ? resource.projectId : undefined) ?? ctx.projectId ?? undefined;
-  const threadId = props.threadId ?? ctx.threadId ?? '';
+  const projectId = props.projectId;
+  const threadId = props.threadId ?? '';
   const [files, setFiles] = useState<PlaygroundFileRef[]>([]);
-  const [path, setPath] = useState<string | null>(parseAgentforcePanelPath(props.params) ?? null);
+  const pinned = props.pinnedPath || undefined;
+  // Pinned: the panel's params must not rewrite the thread's shared target either.
+  const { target, select } = useAgentforceTarget({ pluginId, projectId, threadId, tabId: props.tabId, surface: 'preview', params: pinned ? undefined : props.params });
   const [mode, setMode] = useState<PreviewMode>('simulate');
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [utterance, setUtterance] = useState('');
@@ -63,8 +77,9 @@ export function AgentforcePreviewPanel(props: {
   const [run, setRun] = useState(linkedRun);
   // Another card can retarget an open panel; follow it.
   useEffect(() => { setRun(parseAgentforcePanelRun(props.params)); }, [runKey]); // eslint-disable-line react-hooks/exhaustive-deps
-  const apiName = parseAgentforcePanelApiName(props.params);
-  const targetPath = path || files.find(file => file.apiName === apiName)?.path || (apiName ? null : files[0]?.path ?? null);
+  const apiName = pinned ? undefined : target?.apiName;
+  const targetPath = pinned ?? (target?.path || files.find(file => file.apiName === apiName)?.path || (apiName ? null : files[0]?.path ?? null));
+  useEffect(() => { if (!pinned && targetPath && target?.path !== targetPath) select({ path: targetPath }); }, [pinned, target?.path, targetPath, select]);
   const hasTarget = Boolean(targetPath || apiName);
   const context = usePreviewContext({ pluginId, projectId, path: targetPath ?? undefined, apiName: apiName ?? undefined, orgAlias: pinnedOrg ?? org?.alias, scope: `${projectId ?? ''}:${targetPath ?? apiName ?? ''}:${pinnedOrg ?? org?.alias ?? ''}` });
   const lifecycle = useRef<{ generation: number; simulated?: boolean; owner?: Record<string, unknown>; release?: () => void }>({ generation: 0 });
@@ -75,7 +90,7 @@ export function AgentforcePreviewPanel(props: {
       lifecycle.current.release?.();
       lifecycle.current.release = undefined; lifecycle.current.owner = undefined;
     };
-  }, [pluginId, projectId, threadId, pinnedOrg, org?.alias]);
+  }, [pluginId, projectId, threadId, pinnedOrg, org?.alias, targetPath, apiName]);
 
   const refreshOrg = useCallback(async () => {
     const payload = await fetchConnectedOrg(pluginId, projectId, pinnedOrg);
@@ -213,7 +228,7 @@ export function AgentforcePreviewPanel(props: {
       <header className="sf-as-header">
         <div className="sf-org-preview-identity">
           <span className="af-brand-mark"><Bot /></span><span className="sf-as-brand">Org preview</span>
-          <PopoverPicklist
+          {pinned ? <span className="sf-org-preview-picker" data-testid="salesforce-preview-pinned" title={pinned}>{fileLabel}</span> : <PopoverPicklist
             ariaLabel="Agentforce preview file"
             className="sf-org-preview-picker"
             value={targetPath ?? ''}
@@ -224,8 +239,8 @@ export function AgentforcePreviewPanel(props: {
             emptyHint="No matching agents"
             minWidth={300}
             options={files.map(file => ({ value: file.path, label: file.apiName, description: file.path }))}
-            onChange={setPath}
-          />
+            onChange={path => select({ path })}
+          />}
         </div>
         <div className="sf-org-preview-controls">
           <div className="sf-org-preview-org" data-testid="salesforce-preview-org">
@@ -287,9 +302,7 @@ export function AgentforcePreviewPanel(props: {
           turn={run.turn}
           onClose={() => setRun(null)}
           onRevealSource={async (file, line) => {
-            if (projectId && await openInStudioWindow({ pluginId, projectId, path: file, line, navigate })) return;
-            if (projectId) queueAgentScriptOpen(projectId, file);
-            navigate.openThreadPanel({ actionId: AGENTFORCE_PLAYGROUND_ACTION, title: 'Playground', params: agentforcePanelParams(file, undefined, { line }), ...(threadId ? { threadId } : {}) });
+            await routeStudioIntent({ pluginId, projectId: projectId ?? null, threadId: threadId || null, from: document.activeElement, navigate, intent: { kind: 'agent', path: file, line } });
           }}
         />
       ) : <div className="sf-as-body" style={{ flexDirection: 'column' }}>

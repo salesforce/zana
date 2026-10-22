@@ -1,8 +1,7 @@
 # Salesforce plugin
 
 Official ZCC plugin (`zcc plugin install salesforce`). It is both the Salesforce
-DX inner loop (org picker, doctor, SOQL Explorer, Agentforce playground /
-preview) and the **platform SDK** other plugins consume.
+DX inner loop (org picker, doctor, SOQL Explorer, Agentforce Studio) and the **platform SDK** other plugins consume.
 
 Install once and reuse the Salesforce CLI connection. Each project can select its
 own target org; native side panels can pin a separate target without changing that
@@ -118,22 +117,17 @@ and Java are discovered at runtime; consult each action's prerequisites.
 
 ## Agentforce Studio
 
-The Salesforce AgentScript editor stays in the center. The Studio tools open in
-the standard ZCC side panel beside the Salesforce page, the same one Design Docs
-and other plugins use. **Show side panel** in the document bar reopens the last
-tool (Preview the first time), and the panel's **+** New Tab page lists **Agents**,
-**Graph view**, **Preview**, **Tests**, **Release**, **Actions**, **Org preview**
-and **Comments** next to agent conversations. Only this page's tools are listed
-there; they never appear beside a thread or another plugin's page. Close, hide
-and resize the panel with its own controls. A tool keeps its state (preview
-conversation, test results) while you switch to another tab; closing its tab and
-opening it again starts it fresh. The detached Studio window has its own side
-panel, with its own saved tabs, so it never takes over the main window's. When the panel leaves Studio narrow, its tool strip opens tools in the
-panel and the editor stays put; in a narrow window the panel covers the page
-until you close it. Through the CLI, `panel.open` and `panel.show` open tools in
-the side panel, while `panel.close` and `panel.hide` report that the side panel
-owns closing them. `view.state` lists the shown tools under `panels.tabs` and
-switched-away tools that keep their state under `panels.kept`.
+The Studio is agent-centric. Agent tabs run along the top, one per open agent; clicking an agent in the explorer opens or focuses its tab (● unsaved, ▶ preview running). Each agent keeps its own workspace (tabs, bottom panel, rail tab, Assistant thread) and restores it when you switch back. Closing an agent tab moves to the next open agent.
+
+- **View tabs** of the active agent: **Script**, **Preview**, **Tests** (Local, Org tests, Simulations, Rehearse), **Graph** and **Org preview**. Referenced Apex, Flow, Lightning Type and LWC open as read-only tabs of that agent.
+- **Side rail** (the standard ZCC side panel beside the Studio): **Assistant** (one thread per agent), **Actions** and **Comments**. Cards and commands in the Assistant open Studio tabs instead of a thread panel. Close, hide and resize the panel with its own controls; the detached Studio window has its own panel with its own saved tabs. In a narrow window the panel covers the page until you close it.
+- **Bottom panel** of the active agent: **Problems**, **Comments**, **Trace**, **Output**.
+- **Studio window.** The Studio window shows Agentforce only; its header has a **Salesforce ↗** link to the general tools (Overview, Data, Apex & logs, Deployments) in the main window. While the Studio is detached, the main-window Salesforce tab keeps those tools and a card with **Show window** / **Bring back**.
+- **No Release tool.** The Studio has no Release tab or Publish button. Agents publish, activate and deactivate through `sf_agent lifecycle.*`, which confirms in their thread.
+- **Zana threads.** A thread's **Agent** side panel is bound to one agent: **File** (read-only, diff against disk, proposals to accept or reject, problems), **Preview**, **Tests**, **Graph**, **Actions**, **Comments** and **Open in Studio**. It has no editor and no Playground. There is also a standalone **Preview** thread panel.
+- **One shared document per agent file.** The Studio editor holds an edit lease; every other surface reads the same live text, and agent edits (`editor.proposeEdit`) arrive as proposals any surface can accept. See [AGENTFORCE_STUDIO.md](./AGENTFORCE_STUDIO.md).
+
+Through the CLI, `panel.open` / `panel.close` take a Studio tool id (`agents`, `files`, `graph`, `preview`, `test`, `actions`, `org-preview`, `comments`); `panel.show` / `panel.hide` toggle the side panel. `view.state` lists the shown tools under `panels.tabs` and switched-away tools under `panels.kept`.
 
 **Agents** browses Agent Script authoring bundles in the selected org. The bot
 button beside the filename opens it directly. Search for an agent, choose its
@@ -145,10 +139,9 @@ and draft recovery are preserved; retrieval never overwrites local edits or
 publishes changes to the org. Legacy agents without an authoring bundle are not
 listed. Org changes refresh the catalog and cancel pending retrievals.
 
-**Graph view** follows the current draft. **Preview** tries that draft in a
+**Graph** follows the current draft. **Preview** tries that draft in a
 conversation; **Tests** runs scenarios and AI customer role-play. Switching tabs
-or hiding the panel keeps conversations and test setup in place. Closing a tool
-ends its session. **Org preview** selects a saved authoring bundle separately.
+keeps conversations and test setup in place. Closing a view tab ends its session. **Org preview** selects a saved authoring bundle separately.
 
 **Actions** groups declarations by subagent and opens Apex source or Flow maps
 beside the editor. The Project/Org switch distinguishes local source from
@@ -164,7 +157,7 @@ shows the selected project source or named-org version. The viewer is read-only
 and runs locally. If it cannot render a Flow, the basic map and **Source** remain
 available.
 
-Open **Salesforce → Agentforce**, or the Agentforce playground beside
+Open **Salesforce → Agentforce**, or the **Agent** side panel beside
 a thread. **Build** provides the editor, live diagnostics and a conversation map.
 The divider between the editor and Rehearse/Test is draggable. Arrow keys resize
 it when focused, and double-click resets it. The width stays set across workflow
@@ -204,9 +197,9 @@ and stopped conversations cannot produce a passing assessment. **Export run**
 downloads the tested source, scenario, transcript and assessment as JSON.
 
 Switching Build/Rehearse/Test preserves the editor and each conversation while
-the playground stays open. Editing after a run shows a stale-snapshot notice.
+the Studio stays open. Editing after a run shows a stale-snapshot notice.
 **Stop** cancels in-flight requests and prevents additional turns; closing the
-playground also closes its local handles. Draft Preview has no documented remote
+agent tab also closes its local handles. Draft Preview has no documented remote
 DELETE contract: Salesforce owns remote expiry. Server handles expire after
 30 minutes of inactivity and do not survive a plugin restart. Export evidence
 before leaving; cross-run comparison is future work.
@@ -218,10 +211,10 @@ omits the live flag. The Studio does not share that live-action path.
 
 ### Studio layout, side-panel mode and Ask agent
 
-The Studio adapts to the width of its container, so the same component serves the full tab and the thread side panel:
+The Studio adapts to the width of its container, so the same component serves the project tab and its own window:
 
-- **Wide (>= 620 px):** activity strip, explorer, editor tabs (agents and read-only Apex/Flow) and a bottom panel (**Problems**, **Comments**, **Trace**); the tools are in the host side panel (above). Cmd/Ctrl+P opens quick open. Where the host gives no side panel (a thread's Playground tab, the browser surface), Studio falls back to its own tool rail.
-- **Compact / side panel (< 620 px):** one tool at a time. A tool strip switches between **Code, Preview, Tests, Graph, Actions, Data, Deploy, Comments** and **Agents**; the explorer becomes a file switcher and the bottom panel a sheet. The editor iframe stays mounted across tier changes, so drafts and cursor survive resizing. Data results become cards and Deploy a vertical stepper below about 520 px.
+- **Wide (>= 620 px):** agent tabs on top, explorer, the active agent's view tabs (Script, Preview, Tests, Graph, Org preview, read-only Apex/Flow) and a bottom panel (**Problems**, **Comments**, **Trace**); Actions, Comments and the Assistant are in the host side panel. Cmd/Ctrl+P opens quick open. Where the host gives no side panel (the browser surface), Studio falls back to its own tool rail.
+- **Compact (< 620 px):** one tool at a time. A tool strip switches between **Code, Agents, Graph, Preview, Tests, Actions, Comments** and **Org preview**; the explorer becomes a file switcher and the bottom panel a sheet. The editor iframe stays mounted across tier changes, so drafts and cursor survive resizing.
 - A context strip shows the active file, selection, problems and last preview run.
 
 **Ask agent** is a menu in the top bar. It offers *Review, Fix problems, Address comments, Write scenarios, Explain selection, Generate action* and *Harden guardrails*, or a free request, plus what the agent sees (file, selection, problems, the `share` switch) and the five most recent agents on this file, which you can reopen or unlink. A request opens in the side panel's composer prefilled with the brief, so you pick the harness and send it; existing conversations open in the side panel too. Without a host side panel, the action starts or reuses a linked thread with a role (author, editor, reviewer, tester, assistant) and goes to it. Sharing the view (`share`) lets agents read the editor context through `sf_workbench view.state`. Edits an agent makes arrive as **proposals**: a diff in the editor that you accept, reject or partly accept per hunk; a newer proposal or closing the editor settles an older one as rejected.
@@ -250,19 +243,23 @@ Open a step to reveal its line. **Save as scenario** appends the run to the agen
 
 A suite holds 1-50 cases with unique ids and 1-8 utterances each. `expect` is optional: `contains` is deterministic, `topic` and `actions` need a Simulate trace, and `criteria` adds an advisory AI verdict. Results are stored per case (`pass`, `fail`, `inconclusive`) outside the repo and shown as chips in Preview and the explorer.
 
+The activity rail's **Tests** workbench lists **Local cases · Project** above **Org tests**, with shared **This agent / All agents**, search and **Has runs** filters. The side panel opens the same catalogue with **All tests**. Selecting a local suite reuses the case editor and its Simulate, org eval, import, export and fix actions. Simulate uses the current editor source for the open agent, including unsaved changes; for another agent it reads the saved project source. Suites without a matching agent file remain readable. Local suites load independently, so an org connection or read failure does not hide them. Saving local cases does not publish a Testing Center definition.
+
 **Tests** opens on the agent's case table; **Role-play** switches to the AI role-play lab. Each row shows what the case expects and its last result per column:
 
 | Column | Runs | Notes |
 | --- | --- | --- |
 | Simulate | The editor source, unsaved changes included, through Salesforce Preview | Stored per case; expand a row for expected vs actual and the agent's turns |
-| Org eval | `sf agent test run-eval` against the agent published on the org | Per case when the CLI reports cases, else totals. Multi-turn cases run their first turn only. A pass counts as Release eval evidence. Production and unknown orgs need **Allow reads…** (one `org.read` approval) first |
+| Org eval | `sf agent test run-eval` against the agent published on the org | Per case when the CLI reports cases, else totals. Multi-turn cases run their first turn only. A pass is eval evidence for `sf_agent` Activate. Production and unknown orgs need **Allow reads…** (one `org.read` approval) first |
 | Proposal | An agent's pending proposal, in Simulate | Shown while a proposal is open. Results are not stored |
+
+While a suite runs, Tests shows the current case, conversation turn, stage, completed-case count and elapsed time. Rows move from Queued to Running to their result as each case finishes. Reopening Tests recovers an active run. Org eval shows elapsed time while waiting for Salesforce; its case results arrive at the end.
 
 **Import YAML / JSON** reads an `sf agent test` spec (`testCases`, `tests` or `utterances`, up to 256 KB) into the suite; ids that already exist get a `-2` suffix. **Write eval spec** writes `tests/<AgentName>.eval.yaml` from the suite.
 
 **Make this pass** starts a bounded fix loop on the failing Simulate cases and hands them to a linked thread. The agent proposes edits with `ui.command editor.proposeEdit` and checks each candidate with `sf_workbench suites.run` and the `loopId`. Each run spends one attempt (3 by default, at most 5), covers only the loop's cases, runs in Simulate and is not stored. The loop ends when they pass, the budget is spent, you press Stop, it idles for 30 minutes or a new loop starts on the same file. A loop never saves, publishes or runs an org eval. Save first: the agent starts from the file on disk.
 
-**Chat cards.** Agents can emit directives that render as live cards: `::sf-agent{path="..." line="42"}` (open the file at a line; optional `tool`, `apiName` and `readOnly` open a tool or a dependency), `::sf-preview{runId="..." turn="2"}` (open a run) and `::sf-operation{id="..."}` (live deploy/test status). Guardrail rows deep link into the same panel params.
+**Chat cards.** Agents can emit directives that render as live cards: `::sf-agent{path="..." line="42"}` (open the file at a line), `::sf-preview{runId="..." turn="2"}` (open a run; optional `path` names the agent whose Preview opens it), `::sf-operation{id="..."}` (live deploy/test status), and `::sf-simulation{batchId="..."}` (live Simulation lab lanes; opens Tests › Simulations on the batch). Cards and guardrail rows route through Studio intents (`src/app/studio/studio-intents.ts`): a click inside a Studio or its Assistant rail opens that Studio's tab, in a Zana thread it opens the thread's **Agent** panel, anywhere else the Studio window (if open) or project tab.
 
 See [the design and verification notes](./AGENTFORCE_STUDIO.md) for API boundaries,
 research sources and test commands.
@@ -360,7 +357,7 @@ This plugin is the first consumer of its own SDK:
 - **SOQL Explorer** (`SoqlExplorer`) calls `sdk.query` / `sdk.queryMore` /
   `sdk.describeGlobal` / `sdk.describeSObject` / `sdk.limits` (and `sdk.request`
   for explain).
-- **Agentforce playground / preview** resolve the selected org with `sdk.connect`
+- **Agentforce Studio / Preview** resolve the selected org with `sdk.connect`
   (`org` RPC) and run live Test / publish / activate through `sdk.request`,
   `sdk.execSf`, and `sdk.confirm`.
 

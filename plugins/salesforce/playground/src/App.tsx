@@ -182,6 +182,32 @@ export default function App() {
         setCompact(message.compact);
         return;
       }
+      if (message.type === 'setReadOnly') {
+        const instance = editorRef.current;
+        const model = modelRef.current;
+        instance?.updateOptions({ readOnly: message.readOnly, domReadOnly: message.readOnly });
+        if (message.baseline !== undefined && message.baseSha) {
+          // The shared document's saved version: a disk version offered against the old baseline no longer applies.
+          const draft = draftRef.current;
+          if (draft.disk) layerRef.current?.clearProposal(draft.disk.proposalId);
+          draft.baseline = message.baseline;
+          draft.baseSha = message.baseSha;
+          draft.disk = undefined;
+          if (!message.readOnly && (message.content === undefined || model?.getValue() === message.content)) publishDraft(model?.getValue() ?? '');
+        }
+        if (message.content === undefined || !model || model.getValue() === message.content) return;
+        if (message.readOnly) {
+          // A follower shows the holder's text; it is not this window's draft, so nothing is published.
+          draftRef.current.applying = true;
+          model.setValue(message.content);
+          draftRef.current.applying = false;
+          refreshAnalysis(message.content, dialectRef.current);
+        } else {
+          // One undoable edit; the content listener republishes the draft and the analysis.
+          model.pushEditOperations([], [{ range: model.getFullModelRange(), text: message.content }], () => null);
+        }
+        return;
+      }
       if (message.type === 'setDialect') {
         setDialect(message.dialect);
         setAgentScriptLspDialect(message.dialect);

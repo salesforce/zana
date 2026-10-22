@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ScenarioSuites, SUITE_LIMITS, confineSuitePath, judgeCase, loopNext, parseScenarioCases, registerStudioPreview, specPathForSuite, suitePathForAgent, type StudioPreviewOptions } from '../lib/scenario-suites.js';
+import { EVIDENCE_LIMITS, ScenarioSuites, SUITE_LIMITS, caseResult, confineSuitePath, judgeCase, loopNext, parseScenarioCases, registerStudioPreview, specPathForSuite, suitePathForAgent, type StudioPreviewOptions } from '../lib/scenario-suites.js';
 import { sha256Hex } from '../lib/agent-files.js';
 import { GENERATED_SPEC_MARKER } from '../lib/eval-spec.js';
 import type { FixLoop } from '../lib/fix-loop.js';
@@ -20,7 +20,7 @@ function fsFake(initial: Record<string, string> = {}, links: Record<string, stri
 }
 const caseA = { id: 'refund', name: 'Refund', utterances: ['I want a refund'], expect: { contains: ['refund'] } };
 
-function store(opts: { files?: Record<string, string>; links?: Record<string, string>; lab?: Record<string, unknown> } = {}) {
+function store(opts: { files?: Record<string, string>; links?: Record<string, string>; lab?: Record<string, unknown>; project?: () => string } = {}) {
   const fake = fsFake(opts.files, opts.links);
   const kv = new Map<string, unknown>();
   const changed = vi.fn();
@@ -34,7 +34,7 @@ function store(opts: { files?: Record<string, string>; links?: Record<string, st
     ...opts.lab
   };
   const suites = new ScenarioSuites({
-    deps: fake.deps, lab: lab as never, root: () => ROOT, project: () => 'p1', now: () => ++time, changed,
+    deps: fake.deps, lab: lab as never, root: () => ROOT, project: opts.project ?? (() => 'p1'), now: () => ++time, changed,
     kv: { get: async <T,>(k: string) => kv.get(k) as T | undefined, set: async (k, v) => { kv.set(k, v); } }
   });
   return { ...fake, kv, changed, lab, suites };
@@ -182,6 +182,91 @@ describe('ScenarioSuites.run', () => {
     expect(listed[0]!.lastResults!.other!.outcome).toBe('fail');
     expect(s.changed).toHaveBeenCalledWith({ path: 'tests/Bot.scenario.json', kind: 'suites' });
   });
+  it('saves bounded evidence with each result so a Fail still says why after a reload', async () => {
+    const s = store({ files });
+    s.lab.evaluate.mockResolvedValue({ verdict: { outcome: 'pass', reason: 'polite' } } as never);
+    await s.suites.run(input);
+    const saved = (await s.suites.list())[0]!.lastResults!;
+    expect(saved.other).toMatchObject({ outcome: 'fail', notes: ['Missing text: "missing text"'], observed: { traced: false } });
+    expect(saved.refund).toMatchObject({ outcome: 'pass', observed: { traced: true }, judge: 'pass' });
+  });
+  it('exposes live stages, turns and completed evidence through list without persisting progress', async () => {
+    const s = store({ files });
+    const snapshots: Array<NonNullable<Awaited<ReturnType<typeof s.suites.list>>[number]['progress']>> = [];
+    const capture = async () => { snapshots.push((await s.suites.list())[0]!.progress!); };
+    s.lab.start.mockImplementation((async () => { await capture(); return { id: 'r', turns: [] }; }) as never);
+    s.lab.send.mockImplementation((async () => { await capture(); return { turns: [{ role: 'agent', text: 'refund', planId: 'p' }] }; }) as never);
+    s.lab.trace.mockImplementation(async () => { await capture(); return { runId: 'r', turn: 1, available: true, steps: [] }; });
+    s.lab.evaluate.mockImplementation((async () => { await capture(); return { verdict: { outcome: 'pass', reason: 'ok' } }; }) as never);
+    await s.suites.run(input);
+    expect(snapshots.map(p => [p.currentCaseId, p.stage, p.turn])).toEqual([
+      ['refund', 'starting', 0], ['refund', 'conversation', 1], ['refund', 'trace', 1], ['refund', 'judging', 1],
+      ['other', 'starting', 0], ['other', 'conversation', 1], ['other', 'conversation', 2]
+    ]);
+    expect(snapshots[0]).toMatchObject({ mode: 'simulate', completed: 0, caseIds: ['refund', 'other'], totalTurns: 1 });
+    expect(snapshots[4]).toMatchObject({ completed: 1, totalTurns: 2, results: { refund: { outcome: 'fail', reply: 'refund' } } });
+    expect((await s.suites.list())[0]).not.toHaveProperty('progress');
+    expect(JSON.stringify(s.kv.get('studio:suites:p1'))).not.toContain('stage');
+    expect(s.changed.mock.calls.at(-1)).toEqual([{ path: input.path, kind: 'suite-progress' }]);
+  });
+  it('cleans progress and releases the lock after a storage failure', async () => {
+    const s = store({ files });
+    const original = s.kv.set.bind(s.kv);
+    const fail = vi.spyOn(s.kv, 'set').mockImplementationOnce(() => { throw new Error('Storage failed'); });
+    await expect(s.suites.run(input)).rejects.toThrow('Storage failed');
+    expect((await s.suites.list())[0]).not.toHaveProperty('progress');
+    fail.mockImplementation(original);
+    await expect(s.suites.run(input)).resolves.toHaveProperty('results');
+  });
+  it('never exposes another project or suite progress', async () => {
+    let project = 'p1';
+    const s = store({ files: { ...files, [`${ROOT}/tests/Other.scenario.json`]: JSON.stringify({ cases: [caseA] }) }, project: () => project });
+    let release!: () => void;
+    s.lab.start.mockImplementationOnce((() => new Promise(resolve => { release = () => resolve({ id: 'r', turns: [] }); })) as never);
+    const run = s.suites.run(input);
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    expect((await s.suites.list()).find(suite => suite.id === 'Other')).not.toHaveProperty('progress');
+    project = 'p2';
+    expect((await s.suites.list()).every(suite => !suite.progress)).toBe(true);
+    project = 'p1';
+    expect((await s.suites.list()).find(suite => suite.id === 'Bot')).toHaveProperty('progress');
+    release();
+    await run;
+  });
+  it('limits selected progress to the actual cases and keeps proposal evidence ephemeral', async () => {
+    const s = store({ files });
+    let observed: unknown;
+    s.lab.start.mockImplementation((async () => {
+      observed = (await s.suites.list())[0]!.progress;
+      return { id: 'r', turns: [] };
+    }) as never);
+    await s.suites.run({ ...input, caseIds: ['other'], store: false });
+    expect(observed).toMatchObject({ mode: 'proposal', caseIds: ['other'], completed: 0 });
+    expect((await s.suites.list())[0]).not.toHaveProperty('progress');
+    expect(s.kv.size).toBe(0);
+  });
+  it('shows an indeterminate org eval and clears it on refusal and thrown failures', async () => {
+    const s = store({ files });
+    const agent = { agentPath: 'Bot.agent', apiName: 'Bot' };
+    const refused = await s.suites.evaluate(agent, async () => {
+      expect((await s.suites.list())[0]!.progress).toMatchObject({ mode: 'org-eval', stage: 'org-eval', caseIds: ['refund', 'other'], completed: 0 });
+      return { ok: false, code: 'refused', error: 'No access' };
+    });
+    expect(refused).toMatchObject({ ok: false, code: 'refused' });
+    expect((await s.suites.list())[0]).not.toHaveProperty('progress');
+    await expect(s.suites.evaluate(agent, async () => { throw new Error('offline'); })).rejects.toThrow('offline');
+    expect((await s.suites.list())[0]).not.toHaveProperty('progress');
+  });
+  it('caps stored evidence', () => {
+    const long = 'x'.repeat(1000);
+    const row = caseResult({ caseId: 'c', outcome: 'fail', runId: 'r', at: 1, notes: Array(9).fill(long), turns: [{ role: 'agent', text: long }, { role: 'user', text: 'u' }], observed: { topics: Array(20).fill(long), actions: [], traced: true } });
+    expect(row.notes).toHaveLength(EVIDENCE_LIMITS.notes);
+    expect(row.notes![0]).toHaveLength(EVIDENCE_LIMITS.note);
+    expect(row.reply).toHaveLength(EVIDENCE_LIMITS.reply);
+    expect(row.observed!.topics).toHaveLength(EVIDENCE_LIMITS.names);
+    expect(row.observed!.topics[0]).toHaveLength(EVIDENCE_LIMITS.name);
+    expect(caseResult({ caseId: 'c', outcome: 'pass', runId: 'r', at: 1, notes: [], turns: [] })).toEqual({ outcome: 'pass', runId: 'r', at: 1 });
+  });
   it('rerunning selected cases keeps other results; rehearse cannot check topics', async () => {
     const s = store({ files });
     await s.suites.run(input);
@@ -221,7 +306,7 @@ describe('ScenarioSuites.run', () => {
     expect(Object.keys(candidate.results)).toEqual(['refund']);
     expect(candidate.suite.lastResults).toEqual({ other: expect.objectContaining({ outcome: 'fail' }) });
     expect(s.kv.get('studio:suites:p1')).toEqual({ Bot: { other: expect.objectContaining({ outcome: 'fail' }) } });
-    expect(s.changed).not.toHaveBeenCalled();
+    expect(s.changed.mock.calls.every(([payload]) => payload.kind === 'suite-progress')).toBe(true);
   });
   it('bounds stored suite results', async () => {
     const s = store({ files });

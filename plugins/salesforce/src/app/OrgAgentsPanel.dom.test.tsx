@@ -218,9 +218,9 @@ it('reports a missing agent beside an empty inventory, and a later browse select
 });
 
 it('lists project agents first, opens them in place and keeps them out of the org list', async () => {
-  const onLocalOpen = vi.fn(); const onPublish = vi.fn();
-  const localFiles = [{ apiName: 'Support_Agent', path: 'force-app/main/default/aiAuthoringBundles/Support_Agent/Support_Agent.agent', publishable: true }, { apiName: 'Draft', path: 'agentforce/Draft.agent' }];
-  const view = render(panel({ localFiles, onLocalOpen, onPublish }));
+  const onLocalOpen = vi.fn();
+  const localFiles = [{ apiName: 'Support_Agent', path: 'force-app/main/default/aiAuthoringBundles/Support_Agent/Support_Agent.agent' }, { apiName: 'Draft', path: 'agentforce/Draft.agent' }];
+  const view = render(panel({ localFiles, onLocalOpen }));
   await screen.findByText('Concierge');
   const project = screen.getByRole('region', { name: 'Agents in this project' });
   const org = screen.getByRole('region', { name: 'Agents in the org' });
@@ -232,10 +232,6 @@ it('lists project agents first, opens them in place and keeps them out of the or
   expect(screen.getByLabelText('Search org agents').getAttribute('placeholder')).toBe('Search 3 agents…');
   fireEvent.click(screen.getByText('Draft').closest('button')!);
   expect(onLocalOpen).toHaveBeenCalledWith('agentforce/Draft.agent');
-  // Only publishable bundles offer a publish review.
-  expect(screen.queryByLabelText('Review publish for Draft')).toBeNull();
-  fireEvent.click(screen.getByLabelText('Review publish for Support_Agent'));
-  expect(onPublish).toHaveBeenCalledWith(localFiles[0]!.path);
   // A filter applies to both groups; with every org agent on disk there is no org group and no empty state.
   fireEvent.change(screen.getByLabelText('Search org agents'), { target: { value: 'draft' } });
   expect(screen.queryByRole('region', { name: 'Agents in the org' })).toBeNull();
