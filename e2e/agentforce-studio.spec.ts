@@ -1325,12 +1325,29 @@ test('Agentforce graph: hovering keeps nodes visible and the viewport still', as
   const graph = viewPane(page, 'graph').frameLocator('iframe[title="AgentScript graph"]');
   const nodes = graph.locator('.react-flow__node');
   await expect(nodes).toHaveCount(5);
+  const settleGraph = () => graph.locator('.react-flow').evaluate(root => new Promise<void>((resolve, reject) => {
+    let previous = ''; let stableFrames = 0; let frames = 0;
+    const sample = () => {
+      const bounds = root.getBoundingClientRect();
+      const current = `${bounds.width}:${bounds.height}:${root.querySelector('.react-flow__viewport')?.getAttribute('style')}`;
+      stableFrames = current === previous ? stableFrames + 1 : 0;
+      previous = current;
+      if (stableFrames === 20) resolve();
+      else if (++frames === 180) reject(new Error('Graph layout did not settle before the hover check'));
+      else requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  }));
   for (const theme of ['dark', 'light']) {
     await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
     await expect(graph.getByTestId('agent-script-graph')).toHaveClass(new RegExp(theme));
     for (const width of [1800, 760]) {
       await page.setViewportSize({ width, height: 1000 });
+      // ResizeObserver and the initial fit run asynchronously. Establish the hover
+      // baseline only after resizing and the explicit fit have both completed.
+      await settleGraph();
       await graph.getByRole('button', { name: 'Fit View', exact: true }).click();
+      await settleGraph();
       // Observe every style mutation, including flashes too brief for toBeVisible() polling to catch.
       await nodes.first().evaluate(() => {
         const state = window as typeof window & { hiddenNodes: string[]; removedEdges: number; hoverObserver?: MutationObserver };
