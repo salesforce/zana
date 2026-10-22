@@ -179,6 +179,9 @@ describe('salesforce plugin contract', () => {
     expect(openStudio?.isAvailable?.(paletteCtx)).toBe(true);
     openStudio?.run(paletteCtx);
     expect(paletteCtx.toProject).toHaveBeenCalledWith('proj-1', { tabId: 'salesforce' });
+    paletteCtx.toProject.mockClear();
+    openStudio?.run({ ...paletteCtx, projectId: null });
+    expect(paletteCtx.toProject).not.toHaveBeenCalled();
     expect(set.createProjectActions[0]).toMatchObject({
       id: 'dx-project',
       title: 'Salesforce project',

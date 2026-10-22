@@ -21,12 +21,12 @@ const message = { id: 'm1', threadId: 't1', turnId: null, projectId: 'p1' };
 const props = (attributes: Record<string, string>): PluginMessageDirectiveProps => ({ pluginId: 'salesforce', attributes, source: '::x', message, openWorkspaceFile: null });
 const nodes: Array<() => void> = [];
 
-async function mount(component: (p: PluginMessageDirectiveProps) => unknown, attributes: Record<string, string>) {
+async function mount(component: (p: PluginMessageDirectiveProps) => unknown, attributes: Record<string, string>, context: Partial<PluginMessageDirectiveProps['message']> = {}) {
   const el = document.createElement('div');
   document.body.appendChild(el);
   const root = createRoot(el);
   nodes.push(() => { root.unmount(); el.remove(); });
-  await act(async () => { root.render(createElement(component as never, props(attributes))); });
+  await act(async () => { root.render(createElement(component as never, { ...props(attributes), message: { ...message, ...context } })); });
   return { el, unmount: () => act(() => root.unmount()) };
 }
 const flush = () => act(async () => { await Promise.resolve(); });
@@ -179,6 +179,22 @@ describe('PreviewCard', () => {
     expect((await mount(PreviewCard, { runId: 'r' })).el.textContent).toContain('Run summary unavailable');
     rpc.mockRejectedValue(new Error('x'));
     expect((await mount(PreviewCard, { runId: 'r' })).el.textContent).toContain('Run summary unavailable');
+  });
+  it('opens the named agent Preview without a turn filter', async () => {
+    rpc.mockResolvedValue({ ok: true, data: { available: true, steps: [] } });
+    const { el } = await mount(PreviewCard, { runId: 'run-2', path: 'force-app/Bot.agent' });
+    await act(async () => (el.querySelector('button') as HTMLButtonElement).click());
+    expect(navigate.openThreadPanel).toHaveBeenCalledWith({
+      actionId: 'agent', title: 'Bot', threadId: 't1',
+      params: { path: 'force-app/Bot.agent', view: 'preview', projectId: 'p1', runId: 'run-2' }
+    });
+  });
+  it('opens a run from a message without project or thread context', async () => {
+    rpc.mockResolvedValue({ ok: true, data: { available: true, steps: [] } });
+    const { el } = await mount(PreviewCard, { runId: 'run-3' }, { projectId: null, threadId: null });
+    await act(async () => (el.querySelector('button') as HTMLButtonElement).click());
+    expect(navigate.openThreadPanel).toHaveBeenCalledWith({ actionId: 'preview', title: 'Preview', params: { runId: 'run-3' } });
+    expect(navigate.toProject).not.toHaveBeenCalled();
   });
   it('subscribes to studio changes and rejects a missing runId', async () => {
     rpc.mockResolvedValue({ ok: true, data: { available: true, steps: [] } });
