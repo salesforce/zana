@@ -16363,8 +16363,9 @@ body.resizing-col .explorer-resizer::after {
 /* Fenced code block + its copy button. The button is absolutely positioned on
    this wrapper (not inside the scrolling <pre>), so it neither shifts layout
    nor scrolls away on wide blocks. Hidden until hover/focus on pointer
-   devices; always shown on touch, which has no hover. */
-.inbox-md-code {
+   devices; always shown on touch, which has no hover. Not `.inbox-md-code`:
+   that class styles the mermaid source fallback. */
+.inbox-md-codeblock {
   position: relative;
 }
 
@@ -16389,7 +16390,7 @@ body.resizing-col .explorer-resizer::after {
   transition: opacity 0.12s ease;
 }
 
-.inbox-md-code:hover .inbox-md-code-copy,
+.inbox-md-codeblock:hover .inbox-md-code-copy,
 .inbox-md-code-copy:focus-visible,
 .inbox-md-code-copy[data-state='copied'],
 .inbox-md-code-copy[data-state='failed'] {

@@ -36,26 +36,31 @@ export function CodeBlockCopyButton({ code }: { code: string }) {
   };
   const label = LABELS[state];
   return (
-    <button
-      type="button"
-      className="inbox-md-code-copy"
-      data-testid="code-block-copy"
-      data-state={state}
-      aria-label={label}
-      title={label}
-      onClick={(event) => {
-        // Copying shouldn't also select or open a surrounding card/row.
-        event.stopPropagation();
-        copyText(code).then(
-          () => settle('copied'),
-          (error: unknown) => {
-            console.warn('[code-block-copy] clipboard write failed', error);
-            settle('failed');
-          }
-        );
-      }}
-    >
-      {state === 'copied' ? <Check size={14} aria-hidden /> : state === 'failed' ? <X size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
-    </button>
+    <>
+      <button
+        type="button"
+        className="inbox-md-code-copy"
+        data-testid="code-block-copy"
+        data-state={state}
+        aria-label={label}
+        title={label}
+        onClick={(event) => {
+          // Copying shouldn't also select or open a surrounding card/row.
+          event.stopPropagation();
+          copyText(code).then(
+            () => settle('copied'),
+            (error: unknown) => {
+              console.warn('[code-block-copy] clipboard write failed', error);
+              settle('failed');
+            }
+          );
+        }}
+      >
+        {state === 'copied' ? <Check size={14} aria-hidden /> : state === 'failed' ? <X size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
+      </button>
+      {/* A focused button's label change isn't announced; this is. Empty while
+          idle so the block's text (and thread search) is unchanged. */}
+      <span className="sr-only" role="status" aria-live="polite">{state === 'idle' ? '' : label}</span>
+    </>
   );
 }

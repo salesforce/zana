@@ -378,7 +378,7 @@ function inlineCodeText(children: ReactNode): string {
 function withCodeCopy(copyable: boolean, children: ReactNode, pre: ReactNode): ReactNode {
   if (!copyable) return pre;
   return (
-    <div className="inbox-md-code">
+    <div className="inbox-md-codeblock">
       {pre}
       <CodeBlockCopyButton code={fencedCodeText(children)} />
     </div>

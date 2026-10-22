@@ -26,6 +26,7 @@ describe('CodeBlockCopyButton', () => {
     expect(button.getAttribute('type')).toBe('button');
     expect(button.getAttribute('title')).toBe('Copy code');
     expect(button.getAttribute('data-state')).toBe('idle');
+    expect(screen.getByRole('status').textContent).toBe('');
     button.focus();
     expect(document.activeElement).toBe(button);
   });
@@ -40,6 +41,7 @@ describe('CodeBlockCopyButton', () => {
     const button = screen.getByRole('button', { name: 'Copied' });
     expect(button.getAttribute('title')).toBe('Copied');
     expect(button.getAttribute('data-state')).toBe('copied');
+    expect(screen.getByRole('status').textContent).toBe('Copied');
     act(() => { vi.advanceTimersByTime(CODE_COPY_FEEDBACK_MS); });
     expect(screen.getByRole('button', { name: 'Copy code' }).getAttribute('data-state')).toBe('idle');
   });
@@ -53,6 +55,7 @@ describe('CodeBlockCopyButton', () => {
     await flush();
     expect(screen.getByRole('button', { name: 'Copy failed' }).getAttribute('data-state')).toBe('failed');
     expect(warn).toHaveBeenCalledWith('[code-block-copy] clipboard write failed', error);
+    expect(screen.getByRole('status').textContent).toBe('Copy failed');
     act(() => { vi.advanceTimersByTime(CODE_COPY_FEEDBACK_MS); });
     expect(screen.getByRole('button', { name: 'Copy code' })).toBeTruthy();
   });

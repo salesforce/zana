@@ -36,11 +36,16 @@ test('code block copy button writes the exact fence body to the system clipboard
   }, threadId);
 
   const assistant = window.getByTestId('thread-assistant-text').filter({ hasText: 'Response to: Here:' });
-  const block = assistant.locator('.inbox-md-code');
+  const block = assistant.locator('.inbox-md-codeblock');
   await expect(block).toHaveCount(1);
   const button = block.getByRole('button', { name: 'Copy code' });
   const pre = block.locator('pre');
-  const before = await pre.boundingBox();
+  // Size, not viewport position: the timeline may still scroll meanwhile.
+  const size = async () => {
+    const box = await pre.boundingBox();
+    return box && { width: box.width, height: box.height };
+  };
+  const before = await size();
 
   const clipboard = () => app.electron.evaluate(({ clipboard }) => clipboard.readText());
   await app.electron.evaluate(({ clipboard }) => clipboard.writeText(''));
@@ -58,6 +63,6 @@ test('code block copy button writes the exact fence body to the system clipboard
   await block.hover();
   await button.click();
   await expect.poll(clipboard).toBe(code);
-  expect(await pre.boundingBox()).toEqual(before);
+  expect(await size()).toEqual(before);
   await expect(block.getByRole('button', { name: 'Copy failed' })).toHaveCount(0);
 });

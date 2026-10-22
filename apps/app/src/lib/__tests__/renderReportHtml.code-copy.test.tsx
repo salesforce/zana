@@ -11,7 +11,7 @@ describe('renderReportHtml code blocks', () => {
     });
     expect(html).toContain('docBlock');
     expect(html).toContain('commentBlock');
-    expect(html).not.toContain('inbox-md-code');
+    expect(html).not.toContain('inbox-md-codeblock');
     expect(html).not.toContain('Copy code');
   });
 });

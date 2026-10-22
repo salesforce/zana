@@ -23,7 +23,7 @@ describe('MarkdownContent code block copy', () => {
   it('copies a highlighted fence verbatim, without the language label or closing newline', async () => {
     const code = '\tconst a = 1;\n    if (a) {\n      b();  \n    }';
     const { container } = render(<MarkdownContent text={'Intro\n\n```ts\n' + code + '\n```\n'} />);
-    const wrapper = container.querySelector('.inbox-md-code')!;
+    const wrapper = container.querySelector('.inbox-md-codeblock')!;
     expect(wrapper.querySelector('pre code.hljs')).toBeTruthy();
     await clickCopy();
     expect(copy).toHaveBeenCalledWith(code);
@@ -63,7 +63,7 @@ describe('MarkdownContent code block copy', () => {
     const code = Array.from({ length: 150 }, (_, i) => `${i} ${line}`).join('\n');
     const { container } = render(<MarkdownContent text={'```\n' + code + '\n```'} />);
     const button = screen.getByRole('button', { name: 'Copy code' });
-    expect(button.parentElement?.className).toBe('inbox-md-code');
+    expect(button.parentElement?.className).toBe('inbox-md-codeblock');
     expect(container.querySelector('pre')!.contains(button)).toBe(false);
     await clickCopy();
     expect(copy).toHaveBeenCalledWith(code);
@@ -78,8 +78,8 @@ describe('MarkdownContent code block copy', () => {
 
   it('leaves the button out when copyableCode is off, for both entry points', () => {
     const md = '```\ncode\n```';
-    expect(renderToStaticMarkup(<MarkdownContent text={md} copyableCode={false} />)).not.toContain('inbox-md-code');
-    expect(renderToStaticMarkup(<DocContent path="a.md" content={md} copyableCode={false} />)).not.toContain('inbox-md-code');
+    expect(renderToStaticMarkup(<MarkdownContent text={md} copyableCode={false} />)).not.toContain('inbox-md-codeblock');
+    expect(renderToStaticMarkup(<DocContent path="a.md" content={md} copyableCode={false} />)).not.toContain('inbox-md-codeblock');
     expect(renderToStaticMarkup(<DocContent path="a.md" content={md} />)).toContain('aria-label="Copy code"');
   });
 });
