@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  getRememberedAppRoutePath,
   resetAppSettingsRouteMemory,
   useAppSettingsRouteMemory
 } from '../useAppSettingsRouteMemory.js';
@@ -54,5 +55,22 @@ describe('useAppSettingsRouteMemory', () => {
       </MemoryRouter>
     );
     expect(path).toBe('/agents');
+  });
+
+  it('gives callers outside React the Settings "Back to app" path', () => {
+    const visit = (path: string) =>
+      renderToStaticMarkup(
+        <MemoryRouter initialEntries={[path]}>
+          <Probe onPath={() => {}} />
+        </MemoryRouter>
+      );
+    expect(getRememberedAppRoutePath()).toBe('/');
+    visit('/inbox');
+    visit('/settings/terminal');
+    expect(getRememberedAppRoutePath()).toBe('/inbox');
+    // A project route never comes back from global Settings: Agents instead.
+    visit('/projects/p1/settings');
+    visit('/settings');
+    expect(getRememberedAppRoutePath()).toBe('/agents');
   });
 });

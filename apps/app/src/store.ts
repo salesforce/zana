@@ -76,6 +76,7 @@ import {
   getSettingsTabRoutePath
 } from './lib/route-paths.js';
 import { resolveProjectBackPath } from './lib/route-memory.js';
+import { getRememberedAppRoutePath } from './hooks/useAppSettingsRouteMemory.js';
 import {
   EMPTY_HOST_INSTALL_DRAWER,
   reduceHostInstallAppend,
@@ -609,6 +610,13 @@ interface UiState {
   setSettingsTab: (tab: SettingsTab) => void;
   /** Open `/projects/:id/settings` for a specific project (sidebar + palette). */
   openProjectSettings: (projectId: string) => void;
+  /**
+   * ⌘, / the Settings… menu item. Drilled into a project, opens that project's
+   * Settings (as its rail's Settings button does); otherwise global Settings.
+   * From Settings, returns to the focused project's view, or else to the route
+   * the rail's "Back to app" link uses.
+   */
+  toggleSettings: () => void;
   /** Page selected in the focused top-level Extensions workspace. */
   extensionsTab: ExtensionsTab;
   setExtensionsTab: (tab: ExtensionsTab) => void;
@@ -1227,6 +1235,25 @@ export const useUi = create<UiState>((set, get) => ({
   openProjectSettings: (projectId) => {
     get().selectProject(projectId);
     applyDestination(set, getProjectSettingsRoutePath(projectId));
+  },
+  toggleSettings: () => {
+    const s = get();
+    // A focus left behind by a removed project is cleared by App; don't route
+    // to its Settings in the meantime.
+    const projectId =
+      s.focusedProjectId && useData.getState().projects.some((p) => p.id === s.focusedProjectId)
+        ? s.focusedProjectId
+        : null;
+    if (s.nav !== 'settings') {
+      if (projectId) s.openProjectSettings(projectId);
+      else s.setNav('settings');
+      return;
+    }
+    if (projectId) {
+      s.setProjectView(projectId, s.projectView[projectId] ?? 'agents');
+      return;
+    }
+    applyDestination(set, getRememberedAppRoutePath());
   },
   setExtensionsTab: (extensionsTab) =>
     applyDestination(set, getExtensionsTabRoutePath(extensionsTab)),

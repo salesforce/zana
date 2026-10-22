@@ -19,6 +19,7 @@ const { uiState, dataState } = vi.hoisted(() => ({
     closeAgentModal: vi.fn(),
     closeThreadModal: vi.fn(),
     setNav: vi.fn(),
+    toggleSettings: vi.fn(),
     exitProjectFocus: vi.fn(),
     selectedProjectId: 'p1' as string | undefined,
     selectedTabId: {} as Record<string, string>,
@@ -145,6 +146,14 @@ describe('shortcuts: round-trip and dashboard chords', () => {
     uiState.nav = 'scheduler';
     kb.press('j', { meta: true });
     expect(uiState.setNav).toHaveBeenCalledWith('home');
+  });
+
+  it('⌘, toggles Settings through the store (which picks project or global)', () => {
+    uiState.toggleSettings.mockClear();
+    const { preventDefault } = kb.press(',', { meta: true });
+    expect(uiState.toggleSettings).toHaveBeenCalledTimes(1);
+    expect(uiState.setNav).not.toHaveBeenCalled();
+    expect(preventDefault).toHaveBeenCalledTimes(1);
   });
 
   it('⌘N opens New Chat', () => {

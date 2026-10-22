@@ -2,6 +2,7 @@ import { useLocation } from 'react-router-dom';
 import {
   INITIAL_STORED_ROUTE_MEMORY,
   nextStoredRouteMemory,
+  resolveProjectBackPath,
   visibleRouteMemory,
   type AppSettingsRouteMemory,
   type StoredRouteMemory
@@ -30,6 +31,11 @@ function rememberLocation(location: { pathname: string; search: string; hash: st
 export function resetAppSettingsRouteMemory(): void {
   storedMemory = { ...INITIAL_STORED_ROUTE_MEMORY };
   recordedLocationKey = '';
+}
+
+/** The "Back to app" destination from Settings, for callers outside React. */
+export function getRememberedAppRoutePath(): string {
+  return resolveProjectBackPath(storedMemory.lastAppRoutePath);
 }
 
 /**

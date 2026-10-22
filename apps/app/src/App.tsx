@@ -494,7 +494,7 @@ function AppShell() {
       const projectId = ui.selectedProjectId;
       switch (event) {
         case 'app:openSettings':
-          ui.setNav(ui.nav === 'settings' ? 'home' : 'settings');
+          ui.toggleSettings();
           return;
         case 'app:toggleInbox':
           ui.setNav(ui.nav === 'inbox' ? 'home' : 'inbox');
