@@ -23,11 +23,11 @@ vi.mock('../../components/ThreadCommandComposer.js',() => ({ThreadCommandCompose
 vi.mock('../../components/thread/ThreadTimeline.js',() => ({ThreadTimeline:({rows,searchHitRowId,forceExpandedRowIds,search}:any) => <div>{rows.length} rows<div data-testid="selected-message">{searchHitRowId}</div><div data-testid="expanded-messages">{[...(forceExpandedRowIds ?? [])].join(',')}</div><div data-testid="timeline-search">{search ? `${search.query}#${search.occurrence}@${search.navigation}` : 'none'}</div></div>}));
 vi.mock('../../components/thread/ThreadWorkspaceBanner.js',() => ({ThreadWorkspaceBanner:() => null}));
 vi.mock('../../components/thread/ThreadDetailOverflow.js',() => ({ThreadDetailOverflow:() => null}));
-vi.mock('../../components/thread/ThreadDetailSearch.js',() => ({ThreadDetailSearch:({value,onChange,onSubmit,matchIndex,matchCount}:any) => <form>
+vi.mock('../../components/thread/ThreadDetailSearch.js',() => ({ThreadDetailSearch:({value,onChange,onSubmit,matchIndex,matchCount,partial}:any) => <form>
   <input aria-label="Search in thread" value={value} onChange={(event) => onChange(event.target.value)}/>
   <button type="button" onClick={() => onSubmit(value.trim(),'next')}>Next</button>
   <button type="button" onClick={() => onSubmit(value.trim(),'previous')}>Previous</button>
-  <output data-testid="counter">{matchCount === undefined ? 'hidden' : `${matchIndex + 1}/${matchCount}`}</output>
+  <output data-testid="counter">{matchCount === undefined ? 'hidden' : `${matchIndex + 1}/${matchCount}${partial ? '+' : ''}`}</output>
 </form>}));
 vi.mock('../../components/thread/timeline/ThreadBanners.js',() => ({ThreadDetailHeading:({title}:any) => <h1>{title}</h1>,ThreadDetailActions:({children}:any) => children,ThreadPromptModeCard:() => null,ThreadStatusBadge:() => null,ThreadTodoCard:() => null}));
 vi.mock('../../components/thread/timeline/ComposerStackCards.js',() => ({BackgroundCommandsCard:() => null,ModelFallbackCard:() => null,PromptContextBanner:() => null,QueuedMessagesCard:() => null}));
@@ -43,11 +43,11 @@ const message = (id: string, text: string, sequence: number) => ({
   sourceSeqStart: sequence, sourceSeqEnd: sequence, startedAt: 0, createdAt: 0
 });
 
-async function openThread() {
+async function openThread(path = '/') {
   h.get.mockResolvedValue({ thread: { id: 'a', title: 'Search thread', status: 'idle', createdAt: 1 } });
   h.timeline.mockResolvedValue({ rows: [message('m1', 'cat cat', 1), message('m2', 'dog', 2), message('m3', 'Cat', 3)], maxSeq: 3, status: 'idle' });
   h.outline.mockResolvedValue({ items: [], maxSeq: 3, matches: [] });
-  render(<MemoryRouter><ThreadDetail threadId="a" embedded/></MemoryRouter>);
+  render(<MemoryRouter initialEntries={[path]}><ThreadDetail threadId="a" embedded/></MemoryRouter>);
   await waitFor(() => expect(screen.getByText('3 rows')).toBeTruthy());
 }
 
@@ -92,5 +92,28 @@ describe('find in thread', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     expect(screen.getByTestId('counter').textContent).toBe('hidden');
     expect(screen.getByTestId('timeline-search').textContent).toBe('none');
+  });
+
+  it('ends a message link highlight once a search runs, so clearing it does not jump back', async () => {
+    await openThread('/?message=2');
+    await waitFor(() => expect(screen.getByTestId('selected-message').textContent).toBe('m2'));
+    type('cat');
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await waitFor(() => expect(screen.getByTestId('selected-message').textContent).toBe('m1'));
+    type('');
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByTestId('selected-message').textContent).toBe('');
+    expect(screen.getByTestId('expanded-messages').textContent).toBe('');
+  });
+
+  it('marks the counter partial when the outline search fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await openThread();
+    h.outline.mockRejectedValueOnce(new Error('offline'));
+    type('cat');
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await waitFor(() => expect(screen.getByTestId('counter').textContent).toBe('1/3+'));
+    warn.mockRestore();
   });
 });

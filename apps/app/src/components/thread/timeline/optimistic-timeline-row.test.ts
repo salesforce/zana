@@ -73,7 +73,7 @@ describe('thread search', () => {
       sourceSeqEnd: 20,
       children: [
         { kind: 'conversation', id: 'u1', role: 'user', text: 'please ship the latch, Latch!', sourceSeqStart: 11, sourceSeqEnd: 11 },
-        { kind: 'work', id: 'w1', workKind: 'command', title: 'grep latch', output: 'no latch here', sourceSeqStart: 12, sourceSeqEnd: 12 }
+        { kind: 'work', id: 'w1', workKind: 'command', command: 'grep latch', output: 'no latch, \u001b[31mlatch\u001b[0m here', sourceSeqStart: 12, sourceSeqEnd: 12 }
       ]
     },
     { kind: 'turn', id: 'turn-2', sourceSeqStart: 30, sourceSeqEnd: 40, children: null },
@@ -93,8 +93,20 @@ describe('thread search', () => {
 
   it('does not match the row kind', () => {
     expect(timelineRowSearchText(rows[2]!)).toBe('done');
+    expect(timelineRowSearchText(rows[0]!.kind === 'turn' ? rows[0]!.children![1]! : rows[0]!)).toBe('no latch, latch here');
     expect(collectTimelineSearchMatches(rows, 'conversation')).toEqual([]);
     expect(collectTimelineSearchMatches(rows, 'command')).toEqual([]);
+  });
+
+  it('searches what a row shows: message text without markdown syntax, system title and detail', () => {
+    const shown = [
+      { kind: 'conversation', id: 'm', role: 'assistant', text: 'See [the docs](https://docs.example) and **docs**' },
+      { kind: 'system', id: 's', title: 'Reconnected', detail: 'after docs' }
+    ] as unknown as ThreadTimelineViewRow[];
+    expect(timelineRowSearchText(shown[0]!)).toBe('See the docs and docs');
+    expect(timelineRowSearchText(shown[1]!)).toBe('Reconnected\nafter docs');
+    expect(collectTimelineSearchMatches(shown, 'docs').map(match => match.id)).toEqual(['m', 'm', 's']);
+    expect(collectTimelineSearchMatches(shown, 'example')).toEqual([]);
   });
 
   it('places outline matches in older pages first and in unloaded turns under the turn', () => {

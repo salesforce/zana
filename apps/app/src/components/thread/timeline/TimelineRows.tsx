@@ -280,10 +280,10 @@ function TimelineRowView({
           autoExpanded={row.systemKind === 'reconnect'}
           forceExpanded={forceExpandedRowIds?.has(row.id) === true}
           summary={
-            <span className="thread-timeline-system-title">{row.title}</span>
+            <span className="thread-timeline-system-title" data-thread-search-content="">{row.title}</span>
           }
         >
-          <pre className="thread-timeline-system-detail">{row.detail}</pre>
+          <pre className="thread-timeline-system-detail" data-thread-search-content="">{row.detail}</pre>
         </ExpandableTimelineRow>
       );
     }
@@ -293,6 +293,7 @@ function TimelineRowView({
         data-testid="thread-system-row"
         data-row-id={row.id}
         data-status={row.status ?? undefined}
+        data-thread-search-content=""
       >
         {isRunning ? <ThreadActivityLabel label={label} /> : label}
       </p>

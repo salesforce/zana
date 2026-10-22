@@ -146,7 +146,7 @@ import { provisionProjectEnvironment } from '../services/threads/spawn-environme
 import { isZccManagedWorkspacePath } from '../services/threads/worktree-paths.js';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
 import { jsonValueSchema, pendingInteractionResolutionSchema, reasoningLevelSchema, validatePluginMetadata, type ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
-import { systemInstallCliSkillsRequestSchema, threadOpenRequestSchema, editMessageRequestSchema, hostFileWriteRequestSchema, hostMkdirRequestSchema, hostMovePathRequestSchema, hostRemovePathRequestSchema, hostFileReadRequestSchema, hostFileListRequestSchema, hostPathListRequestSchema, threadPluginMetadataQuerySchema, updateThreadPluginMetadataRequestSchema, stopBackgroundTasksRequestSchema } from '@zana-ai/zcc-server-contract';
+import { systemInstallCliSkillsRequestSchema, threadOpenRequestSchema, editMessageRequestSchema, hostFileWriteRequestSchema, hostMkdirRequestSchema, hostMovePathRequestSchema, hostRemovePathRequestSchema, hostFileReadRequestSchema, hostFileListRequestSchema, hostPathListRequestSchema, threadPluginMetadataQuerySchema, updateThreadPluginMetadataRequestSchema, stopBackgroundTasksRequestSchema, threadConversationOutlineQuerySchema, THREAD_CONVERSATION_SEARCH_QUERY_MAX } from '@zana-ai/zcc-server-contract';
 import { normalizeRepoUrl } from '../services/projects/git-clone.js';
 import { harnessAgentDescriptors, harnessDescriptors, harnessEffectiveDefault, harnessVerify, harnessVerifyBundle } from './harness-via-rpc.js';
 import { mergeHealthIntoExtraInstalled, probeInstalledProviderHealth } from '../services/threads/provider-health-probe.js';
@@ -1520,8 +1520,18 @@ export async function handleProductHttp(
 
     const threadOutline = routeParams(path, '/api/v1/threads/:id/conversation-outline');
     if (threadOutline && method === 'GET') {
+      const parsed = threadConversationOutlineQuerySchema.safeParse({
+        q: requestUrl.searchParams.get('q') ?? undefined
+      });
+      if (!parsed.success) {
+        sendJson(response, 400, {
+          error: 'invalid-input',
+          message: `q must be at most ${THREAD_CONVERSATION_SEARCH_QUERY_MAX} characters`
+        });
+        return true;
+      }
       try {
-        sendJson(response, 200, conversationOutline(ctx, threadOutline.id, requestUrl.searchParams.get('q') ?? undefined));
+        sendJson(response, 200, conversationOutline(ctx, threadOutline.id, parsed.data.q));
       } catch (error) {
         if (error instanceof ThreadCreateError) {
           sendJson(response, error.status, { error: error.code, message: error.message });

@@ -6,15 +6,21 @@ export function threadDetailSearchClassName(draft: string): string {
   return draft.trim().length > 0 ? 'thread-detail-search has-query' : 'thread-detail-search';
 }
 
-/** The visible counter: `3/7`, or `0/0` when nothing matches. */
-export function threadSearchCounterText(index: number, count: number): string {
-  return count === 0 ? '0/0' : `${index + 1}/${count}`;
+/** Why a partial count may be low: the server could not count unloaded or collapsed messages. */
+export const THREAD_SEARCH_PARTIAL_NOTE = 'Some messages weren’t searched';
+
+/** The visible counter: `3/7`, or `0/0` when nothing matches; `+` marks a partial count. */
+export function threadSearchCounterText(index: number, count: number, partial = false): string {
+  const text = count === 0 ? '0/0' : `${index + 1}/${count}`;
+  return partial ? `${text}+` : text;
 }
 
 /** What screen readers hear when the counter changes. */
-export function threadSearchAnnouncement(index: number, count: number): string {
-  if (count === 0) return 'No matches';
-  return index < 0 ? `${count} ${count === 1 ? 'match' : 'matches'}` : `Match ${index + 1} of ${count}`;
+export function threadSearchAnnouncement(index: number, count: number, partial = false): string {
+  const text = count === 0
+    ? 'No matches'
+    : index < 0 ? `${count} ${count === 1 ? 'match' : 'matches'}` : `Match ${index + 1} of ${count}`;
+  return partial ? `${text}. ${THREAD_SEARCH_PARTIAL_NOTE}` : text;
 }
 
 export function ThreadDetailSearch({
@@ -25,6 +31,7 @@ export function ThreadDetailSearch({
   autoFocus = false,
   matchIndex,
   matchCount,
+  partial = false,
   onClose
 }: {
   value: string;
@@ -37,10 +44,12 @@ export function ThreadDetailSearch({
   /** Current match (0-based, -1 for none yet); omit both to hide the counter. */
   matchIndex?: number;
   matchCount?: number;
+  /** Only loaded messages were counted (the outline search failed). */
+  partial?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const showCounter = matchCount !== undefined;
-  const announcement = showCounter ? threadSearchAnnouncement(matchIndex ?? -1, matchCount) : '';
+  const announcement = showCounter ? threadSearchAnnouncement(matchIndex ?? -1, matchCount, partial) : '';
   useEffect(() => { if (autoFocus) inputRef.current?.focus(); }, [autoFocus]);
 
   const submit = (event: FormEvent) => {
@@ -92,11 +101,11 @@ export function ThreadDetailSearch({
         onKeyDown={onKeyDown}
       />
       {showCounter && <span
-        className={`thread-detail-search-count${matchCount === 0 ? ' is-empty' : ''}`}
+        className={`thread-detail-search-count${matchCount === 0 ? ' is-empty' : ''}${partial ? ' is-partial' : ''}`}
         data-testid="thread-detail-search-count"
         title={announcement}
         aria-hidden="true"
-      >{threadSearchCounterText(matchIndex ?? -1, matchCount)}</span>}
+      >{threadSearchCounterText(matchIndex ?? -1, matchCount, partial)}</span>}
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</span>
       {mobileHeader && <button
         type="button"

@@ -88,6 +88,7 @@ export type { ThreadEventWithMeta } from "./group-event-projection-turns.js";
 export {
   THREAD_SEARCH_QUERY_MAX,
   countThreadSearchMatches,
+  threadSearchMarkdownText,
   threadSearchPattern,
   threadSearchRanges,
 } from "./text-search.js";

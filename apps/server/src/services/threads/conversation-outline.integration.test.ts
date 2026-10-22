@@ -49,9 +49,26 @@ it('matches the full nested projection, reuses SQL results and invalidates inter
     expect(conversationOutline(ctx, thread.id, 'question').matches).toEqual([{ id: first.items[0]!.id, seq: events[0]!.seq, count: 1 }]);
     expect(searchPrepare.mock.calls.some(([sql]) => /FROM thread_events/i.test(sql))).toBe(false);
     searchPrepare.mockRestore();
+    const eventReads = (run: () => unknown) => {
+      const spy = vi.spyOn(db.sqlite, 'prepare');
+      const value = run();
+      const reads = spy.mock.calls.filter(([sql]) => /FROM thread_events/i.test(sql)).length;
+      spy.mockRestore();
+      return { value, reads };
+    };
     db.sqlite.prepare("UPDATE thread_events SET payload=json_set(payload,'$.item.text',?) WHERE id=?").run('Revised root answer', events[8]!.id);
-    expect(conversationOutline(ctx, thread.id).items[1]?.preview).toBe('Revised root answer');
-    expect(conversationOutline(ctx, thread.id, 'revised').matches).toEqual([{ id: first.items[1]!.id, seq: expect.any(Number), count: 1 }]);
+    // A search that misses both caches projects the thread once, like a plain outline.
+    const searched = eventReads(() => conversationOutline(ctx, thread.id, 'revised'));
+    expect(searched.value).toEqual({ items: [first.items[0], { ...first.items[1], preview: 'Revised root answer' }], maxSeq: first.maxSeq, matches: [{ id: first.items[1]!.id, seq: expect.any(Number), count: 1 }] });
+    db.sqlite.prepare("UPDATE thread_events SET payload=json_set(payload,'$.item.text',?) WHERE id=?").run('Revised root answer', events[8]!.id);
+    const plain = eventReads(() => conversationOutline(ctx, thread.id));
+    expect(plain.reads).toBeGreaterThan(0);
+    expect(searched.reads).toBe(plain.reads);
+    // Counts follow the visible text: link targets and markdown syntax are not matched.
+    db.sqlite.prepare("UPDATE thread_events SET payload=json_set(payload,'$.item.text',?) WHERE id=?").run('See [the docs](https://example.com/docs) and **docs**', events[8]!.id);
+    expect(conversationOutline(ctx, thread.id, 'example').matches).toEqual([]);
+    expect(conversationOutline(ctx, thread.id, 'docs').matches).toEqual([{ id: first.items[1]!.id, seq: expect.any(Number), count: 2 }]);
+    expect(conversationOutline(ctx, thread.id, '**').matches).toEqual([]);
     // Matches past the 80-character preview still count.
     db.sqlite.prepare("UPDATE thread_events SET payload=json_set(payload,'$.item.text',?) WHERE id=?").run(`${'filler '.repeat(20)}needle and NEEDLE`, events[8]!.id);
     const long = conversationOutline(ctx, thread.id, 'needle');

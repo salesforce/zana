@@ -19,6 +19,7 @@ const message = (id: string, text: string, seq: number) =>
   ({ kind: 'conversation', id, role: 'assistant', text, sourceSeqStart: seq, sourceSeqEnd: seq });
 
 interface Props {
+  threadId?: string;
   rows: unknown[];
   hasOlder?: boolean;
   olderCursorKey?: string | null;
@@ -27,7 +28,7 @@ interface Props {
 
 function renderSearch(initialProps: Props, loadOlder = vi.fn()) {
   const hook = renderHook((props: Props) => useThreadSearch({
-    threadId: 't1',
+    threadId: props.threadId ?? 't1',
     rows: props.rows as TimelineRow[],
     hasOlder: props.hasOlder ?? false,
     olderCursorKey: props.olderCursorKey ?? null,
@@ -130,10 +131,35 @@ describe('useThreadSearch', () => {
     expect(hook.result.current.pending).toBe(true);
     await submit(hook, 'dog');
     expect(warn).toHaveBeenCalledWith('[thread-search] outline search failed', expect.objectContaining({ threadId: 't1' }));
+    // The counter says it may be short: only loaded rows were counted.
+    expect(hook.result.current.partial).toBe(true);
     await act(async () => { resolveFirst({ items: [], maxSeq: 1, matches: [{ id: 'old', seq: 1, count: 3 }] }); });
     expect(hook.result.current.query).toBe('dog');
     expect(hook.result.current.matches).toHaveLength(1);
+    conversationOutline.mockResolvedValue({ items: [], maxSeq: 12, matches: [] });
+    await submit(hook, 'cat');
+    expect(hook.result.current.partial).toBe(false);
     warn.mockRestore();
+  });
+
+  it('starts clean on another thread and drops the previous thread’s reply', async () => {
+    let resolveFirst!: (value: unknown) => void;
+    conversationOutline.mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve; }));
+    const hook = renderSearch({ rows, hasOlder: true });
+    act(() => hook.result.current.submit('cat'));
+    hook.rerender({ threadId: 't2', rows, hasOlder: true });
+    expect(hook.result.current).toMatchObject({ query: '', pending: false, partial: false, matches: [], index: -1, current: null });
+    await act(async () => { resolveFirst({ items: [], maxSeq: 1, matches: [{ id: 'old', seq: 1, count: 3 }] }); });
+    expect(hook.result.current).toMatchObject({ query: '', matches: [] });
+    expect(hook.loadOlder).not.toHaveBeenCalled();
+
+    conversationOutline.mockResolvedValue({ items: [], maxSeq: 12, matches: [] });
+    await submit(hook, 'cat');
+    expect(conversationOutline).toHaveBeenLastCalledWith('t2', 'cat');
+    expect(hook.result.current.current).toMatchObject({ id: 'a', occurrence: 0 });
+    // Back on the first thread, its old search does not resurface.
+    hook.rerender({ threadId: 't1', rows, hasOlder: true });
+    expect(hook.result.current).toMatchObject({ query: '', current: null });
   });
 
   it('loads older pages, once per cursor, until an older match is present', async () => {

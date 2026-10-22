@@ -221,6 +221,7 @@ export const ConversationRow = memo(function ConversationRow({
       className={`thread-timeline-row is-${row.role}${editing ? ' is-editing' : ''}`}
       data-testid={testId}
       data-row-id={row.id}
+      data-thread-search-markdown=""
       data-streaming={streaming ? 'true' : undefined}
     >
       {requestLabel ? (

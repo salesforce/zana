@@ -57,23 +57,25 @@ afterEach(() => {
 });
 
 describe('findThreadSearchRanges', () => {
-  it('finds matches in rendered text and picks the n-th in the target row, not its child rows', () => {
+  it('finds matches in searchable text and picks the n-th in the target row, not its child rows', () => {
     const pane = staticPane(<>
       <div data-row-id="a">
-        <p>Cat and <b>cat</b></p>
-        <div data-row-id="child"><p>cat</p></div>
-        <p>last cat</p>
+        <button type="button">Copy cat</button>
+        <div data-thread-search-content=""><p>Cat and <b>cat</b></p></div>
+        <div data-row-id="child"><p data-thread-search-content="">cat</p></div>
+        <p data-thread-search-content="">last cat<span aria-hidden="true">cat</span></p>
       </div>
-      <div data-row-id="b" aria-hidden="true">cat</div>
-      <style>{'.cat {}'}</style>
+      <div data-row-id="b" data-thread-search-content="" aria-hidden="true">cat</div>
+      <div data-thread-search-content=""><style>{'.cat {}'}</style></div>
     </>);
     const first = findThreadSearchRanges(pane, target('a', 0));
     expect(first.all.map(String)).toEqual(['Cat', 'cat', 'cat', 'cat']);
     expect(first.row?.getAttribute('data-row-id')).toBe('a');
     expect(first.current?.toString()).toBe('Cat');
     expect(findThreadSearchRanges(pane, target('a', 2)).current?.startContainer.textContent).toBe('last cat');
-    // Past the rendered matches (text split or hidden): the last one stands in.
-    expect(findThreadSearchRanges(pane, target('a', 9)).current?.startContainer.textContent).toBe('last cat');
+    // Past the rendered matches (a collapsed message, hidden output): no
+    // current range, so the caller marks the row.
+    expect(findThreadSearchRanges(pane, target('a', 3)).current).toBeNull();
     expect(findThreadSearchRanges(pane, target('a', -1)).current).toBeNull();
     const missing = findThreadSearchRanges(pane, target('missing', 0));
     expect(missing.row).toBeNull();
@@ -81,8 +83,34 @@ describe('findThreadSearchRanges', () => {
     expect(findThreadSearchRanges(pane, target(null, 0, 1, '  ')).all).toEqual([]);
   });
 
+  it('searches only message markdown and marked content, as the counter does', () => {
+    const pane = staticPane(<>
+      <article data-row-id="m" data-thread-search-markdown="">
+        <span>cat label</span>
+        <div className="inbox-md"><p>a cat</p></div>
+      </article>
+      <div data-row-id="w"><div className="inbox-md"><p>cat in a work row</p></div></div>
+    </>);
+    const found = findThreadSearchRanges(pane, target('m', 0));
+    expect(found.all.map(String)).toEqual(['cat']);
+    expect(found.current?.startContainer.textContent).toBe('a cat');
+  });
+
+  it('matches across inline markup but not across blocks', () => {
+    const pane = staticPane(<div data-row-id="a" data-thread-search-content="">
+      <p>the c<b>a</b><i>t</i> sat</p>
+      <p>bobca</p><p>t</p>
+      <p>line ca<br />t</p>
+    </div>);
+    const found = findThreadSearchRanges(pane, target('a', 0));
+    expect(found.all.map(String)).toEqual(['cat']);
+    expect(found.current?.startContainer.textContent).toBe('the c');
+    expect(found.current?.endContainer.textContent).toBe('t');
+    expect(findThreadSearchRanges(pane, target('a', 0, 1, 'cat sat')).current?.toString()).toBe('cat sat');
+  });
+
   it('caps the ranges it collects', () => {
-    const pane = staticPane(<><p>{'x '.repeat(THREAD_SEARCH_MAX_RANGES + 10)}</p><p>x</p></>);
+    const pane = staticPane(<><p data-thread-search-content="">{'x '.repeat(THREAD_SEARCH_MAX_RANGES + 10)}</p><p data-thread-search-content="">x</p></>);
     expect(findThreadSearchRanges(pane, target(null, -1, 1, 'x')).all).toHaveLength(THREAD_SEARCH_MAX_RANGES);
   });
 });
@@ -90,8 +118,8 @@ describe('findThreadSearchRanges', () => {
 describe('useThreadSearchHighlights', () => {
   it('highlights every match, marks the current one and scrolls to it once per navigation', () => {
     const rows = <>
-      <div data-row-id="a"><p>cat</p></div>
-      <div data-row-id="b"><p>cat</p><p>two cats</p></div>
+      <div data-row-id="a"><p data-thread-search-content="">cat</p></div>
+      <div data-row-id="b"><p data-thread-search-content="">cat</p><p data-thread-search-content="">two cats</p></div>
     </>;
     const view = render(<Pane target={target('b', 1)}>{rows}</Pane>);
     expect(texts(THREAD_SEARCH_MATCH_HIGHLIGHT)).toEqual(['cat', 'cat', 'cat']);
@@ -110,14 +138,14 @@ describe('useThreadSearchHighlights', () => {
   it('marks the row when the match is not in rendered text, and waits for a row that is not rendered yet', async () => {
     vi.useFakeTimers();
     const view = render(<Pane target={target('late', 0)}>
-      <div data-row-id="a"><p>cat</p></div>
+      <div data-row-id="a"><p data-thread-search-content="">cat</p></div>
     </Pane>);
     expect(scrolled).toEqual([]);
     expect(texts(THREAD_SEARCH_CURRENT_HIGHLIGHT)).toEqual([]);
 
     // The row renders collapsed: its matching output is not in the DOM.
     view.rerender(<Pane target={target('late', 0)}>
-      <div data-row-id="a"><p>cat</p></div>
+      <div data-row-id="a"><p data-thread-search-content="">cat</p></div>
       <div data-row-id="late"><p>Run command</p></div>
     </Pane>);
     await act(async () => { await vi.advanceTimersByTimeAsync(THREAD_SEARCH_REPAINT_MS); });
@@ -127,8 +155,8 @@ describe('useThreadSearchHighlights', () => {
 
     // It expands: the real match takes over, without scrolling again.
     view.rerender(<Pane target={target('late', 0)}>
-      <div data-row-id="a"><p>cat</p></div>
-      <div data-row-id="late"><p>Run command</p><pre>cat file</pre></div>
+      <div data-row-id="a"><p data-thread-search-content="">cat</p></div>
+      <div data-row-id="late"><p>Run command</p><pre data-thread-search-content="">cat file</pre></div>
     </Pane>);
     await act(async () => { await vi.advanceTimersByTimeAsync(THREAD_SEARCH_REPAINT_MS); });
     expect(late.classList.contains(THREAD_SEARCH_CURRENT_ROW_CLASS)).toBe(false);
@@ -141,8 +169,8 @@ describe('useThreadSearchHighlights', () => {
 
   it('combines the highlights of several panes', () => {
     render(<>
-      <Pane target={target('a', 0)}><div data-row-id="a">cat</div></Pane>
-      <Pane target={target('b', 0)}><div data-row-id="b">cat cat</div></Pane>
+      <Pane target={target('a', 0)}><div data-row-id="a" data-thread-search-content="">cat</div></Pane>
+      <Pane target={target('b', 0)}><div data-row-id="b" data-thread-search-content="">cat cat</div></Pane>
     </>);
     expect(texts(THREAD_SEARCH_MATCH_HIGHLIGHT)).toHaveLength(3);
     expect(texts(THREAD_SEARCH_CURRENT_HIGHLIGHT)).toHaveLength(2);

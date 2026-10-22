@@ -18,6 +18,7 @@ import {
   buildThreadTimelineTurnDetailsFromEvents,
   countThreadSearchMatches,
   EMPTY_ACCEPTED_CLIENT_REQUEST_CONTEXT,
+  threadSearchMarkdownText,
   threadSearchPattern,
   type ThreadEventWithMeta
 } from '@zana-ai/zcc-thread-view';
@@ -381,9 +382,13 @@ function conversationRowsIn(rows: readonly OutlineSourceRow[]): OutlineSourceRow
   });
 }
 
-/** Full message text per outline item, for counting find-in-thread matches. */
+/** Each outline item's text as rendered, for counting find-in-thread matches. */
 export function conversationSearchTextsFromRows(rows: readonly OutlineSourceRow[]): Array<{ id: string; seq: number; text: string }> {
-  return conversationRowsIn(rows).map((row) => ({ id: row.id, seq: row.sourceSeqStart ?? 0, text: row.text ?? '' }));
+  return conversationRowsIn(rows).map((row) => ({
+    id: row.id,
+    seq: row.sourceSeqStart ?? 0,
+    text: threadSearchMarkdownText(row.text ?? '')
+  }));
 }
 
 export function conversationTimelineTurnSummaryDetails(
@@ -473,16 +478,18 @@ export function conversationOutline(ctx: ProductHttpContext, threadId: string, q
   const context = JSON.stringify([
     thread.providerId, thread.status, thread.title, environment?.path, includeProviderUnhandledOperations(ctx), planCommandForProvider(thread.providerId)
   ]);
+  // One projection serves both caches when a search misses them together.
+  let projected: ReturnType<typeof projectRows> | undefined;
+  const rows = () => (projected ??= projectRows());
   // The main-owned database and authorized thread are resolved before reuse.
-  const outline = cachedConversationOutline(ctx.db, threadId, context, () => {
-    const projected = projectRows();
-    return { items: conversationItemsFromRows(projected.rows), maxSeq: projected.maxSeq };
-  });
+  const outline = cachedConversationOutline(ctx.db, threadId, context, () => (
+    { items: conversationItemsFromRows(rows().rows), maxSeq: rows().maxSeq }
+  ));
   const pattern = query === undefined ? null : threadSearchPattern(query);
   if (!pattern) return outline;
-  // The texts are cached apart from the outline so the plain outline stays small.
-  const texts = cachedConversationOutline(ctx.db, `${threadId}:search`, context,
-    () => conversationSearchTextsFromRows(projectRows().rows));
+  // Full texts are cached in their own bucket so they never evict outlines.
+  const texts = cachedConversationOutline(ctx.db, threadId, context,
+    () => conversationSearchTextsFromRows(rows().rows), 'search-text');
   return {
     ...outline,
     matches: texts.flatMap(({ id, seq, text }) => {

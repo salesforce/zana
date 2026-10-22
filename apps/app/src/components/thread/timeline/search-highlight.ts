@@ -62,9 +62,54 @@ function rowElement(pane: HTMLElement, rowId: string | null): HTMLElement | null
 }
 
 /**
- * Finds every match in the pane's rendered text, as ranges. The current match
- * is the `occurrence`-th range whose nearest row is the target row (ranges in
- * nested child rows belong to those rows).
+ * Rendered parts the match model counts: a message's markdown and row content
+ * marked `data-thread-search-content`. Other text (titles, buttons, file
+ * names) is neither counted nor highlighted.
+ */
+export const THREAD_SEARCH_CONTENT_SELECTOR = '[data-thread-search-content], [data-thread-search-markdown] .inbox-md';
+
+const SKIPPED = 'script, style, [aria-hidden="true"]';
+const BLOCK_TAGS = /^(?:BLOCKQUOTE|BR|DD|DIV|DL|DT|FIGURE|H[1-6]|HR|IMG|LI|OL|P|PRE|TABLE|TD|TH|TR|UL)$/;
+
+/**
+ * A content root's text as one string, so a match may span inline markup
+ * (`a **b**` reads as `a b`), with each text node's start offset. A block
+ * boundary reads as a newline, as it does in the model's text.
+ */
+function contentText(root: Element): { text: string; nodes: Text[]; starts: number[] } {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) => node.nodeType === Node.ELEMENT_NODE && (node as Element).matches(SKIPPED)
+      ? NodeFilter.FILTER_REJECT
+      : NodeFilter.FILTER_ACCEPT
+  });
+  let text = '';
+  const nodes: Text[] = [];
+  const starts: number[] = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      nodes.push(node as Text);
+      starts.push(text.length);
+      text += (node as Text).data;
+    } else if (BLOCK_TAGS.test((node as Element).tagName) && text && !text.endsWith('\n')) {
+      text += '\n';
+    }
+  }
+  return { text, nodes, starts };
+}
+
+/** Index of the last text node starting at or before `offset` (`before` excludes `offset` itself). */
+function nodeAt(starts: number[], offset: number, from: number, before = false): number {
+  let index = from;
+  while (index + 1 < starts.length && (before ? starts[index + 1]! < offset : starts[index + 1]! <= offset)) index += 1;
+  return index;
+}
+
+/**
+ * Finds every match in the pane's searchable text, as ranges. The current
+ * match is the `occurrence`-th range whose nearest row is the target row
+ * (ranges in nested child rows belong to those rows). When the row renders
+ * fewer matches than the model counted (a collapsed message, output not shown
+ * yet), there is no current range and the caller marks the row.
  */
 export function findThreadSearchRanges(
   pane: HTMLElement,
@@ -75,24 +120,24 @@ export function findThreadSearchRanges(
   const all: Range[] = [];
   const inRow: Range[] = [];
   if (!pattern) return { all, current: null, row };
-  const walker = document.createTreeWalker(pane, NodeFilter.SHOW_TEXT);
-  for (let node = walker.nextNode(); node && all.length < THREAD_SEARCH_MAX_RANGES; node = walker.nextNode()) {
-    const text = node.nodeValue ?? '';
-    const parent = node.parentElement;
-    if (!text.trim() || !parent || parent.closest('script, style, [aria-hidden="true"]')) continue;
-    const owner = row && row.contains(parent) ? parent.closest('[data-row-id]') : null;
+  for (const root of pane.querySelectorAll(THREAD_SEARCH_CONTENT_SELECTOR)) {
+    if (all.length >= THREAD_SEARCH_MAX_RANGES) break;
+    if (root.parentElement?.closest(THREAD_SEARCH_CONTENT_SELECTOR) || root.closest(SKIPPED)) continue;
+    const { text, nodes, starts } = contentText(root);
+    const owned = row !== null && root.closest('[data-row-id]') === row;
+    let index = 0;
     for (const [start, end] of threadSearchRanges(text, pattern)) {
+      index = nodeAt(starts, start, index);
+      const last = nodeAt(starts, end, index, true);
       const range = document.createRange();
-      range.setStart(node, start);
-      range.setEnd(node, end);
+      range.setStart(nodes[index]!, start - starts[index]!);
+      range.setEnd(nodes[last]!, end - starts[last]!);
       all.push(range);
-      if (row && owner === row) inRow.push(range);
+      if (owned) inRow.push(range);
       if (all.length >= THREAD_SEARCH_MAX_RANGES) break;
     }
   }
-  const current = target.occurrence < 0 || inRow.length === 0
-    ? null
-    : inRow[Math.min(target.occurrence, inRow.length - 1)] ?? null;
+  const current = target.occurrence < 0 ? null : inRow[target.occurrence] ?? null;
   return { all, current, row };
 }
 
@@ -115,42 +160,61 @@ export function useThreadSearchHighlights(
   useLayoutEffect(() => {
     const pane = paneRef.current;
     if (!pane || !target) return;
-    const id = key.current;
-    let markedRow: HTMLElement | null = null;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    const painter = createSearchPainter(pane, key.current, scrolledFor);
+    const stop = observeRepaints(pane, () => {
+      if (targetRef.current) painter.paint(targetRef.current);
+    });
+    return () => {
+      stop();
+      painter.dispose();
+    };
+  }, [paneRef, target?.query, target?.rowId, target?.occurrence, target?.navigation]);
+}
 
-    const paint = () => {
-      timer = null;
-      const current = targetRef.current;
-      if (!current) return;
-      const found = findThreadSearchRanges(pane, current);
+/** Runs `paint` now and again, coalesced, whenever the pane's DOM changes; returns the stop function. */
+function observeRepaints(pane: HTMLElement, paint: () => void): () => void {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const run = () => {
+    timer = null;
+    paint();
+  };
+  run();
+  const observer = new MutationObserver(() => {
+    if (timer === null) timer = setTimeout(run, THREAD_SEARCH_REPAINT_MS);
+  });
+  observer.observe(pane, { childList: true, subtree: true, characterData: true });
+  return () => {
+    observer.disconnect();
+    if (timer !== null) clearTimeout(timer);
+  };
+}
+
+/** One timeline's painter: publishes its ranges, marks the fallback row and scrolls once per navigation. */
+function createSearchPainter(pane: HTMLElement, id: symbol, scrolledFor: { current: number | null }) {
+  let markedRow: HTMLElement | null = null;
+  const markRow = (row: HTMLElement | null) => {
+    if (markedRow === row) return;
+    markedRow?.classList.remove(THREAD_SEARCH_CURRENT_ROW_CLASS);
+    row?.classList.add(THREAD_SEARCH_CURRENT_ROW_CLASS);
+    markedRow = row;
+  };
+  return {
+    paint(target: ThreadSearchHighlightTarget) {
+      const found = findThreadSearchRanges(pane, target);
       painted.set(id, { all: found.all, current: found.current });
       publish();
       // Without the Highlight API, or when the match is not in rendered text
-      // (collapsed tool output, a title), mark the whole row instead.
-      const fallback = !highlightApi() || !found.current ? found.row : null;
-      if (markedRow !== fallback) {
-        markedRow?.classList.remove(THREAD_SEARCH_CURRENT_ROW_CLASS);
-        fallback?.classList.add(THREAD_SEARCH_CURRENT_ROW_CLASS);
-        markedRow = fallback;
-      }
-      if (scrolledFor.current === current.navigation || current.occurrence < 0 || !found.row) return;
-      scrolledFor.current = current.navigation;
+      // (a collapsed message or output), mark the whole row instead.
+      markRow(!highlightApi() || !found.current ? found.row : null);
+      if (scrolledFor.current === target.navigation || target.occurrence < 0 || !found.row) return;
+      scrolledFor.current = target.navigation;
       const anchor = found.current?.startContainer.parentElement ?? found.row;
       anchor.scrollIntoView({ block: 'center' });
-    };
-
-    paint();
-    const observer = new MutationObserver(() => {
-      if (timer === null) timer = setTimeout(paint, THREAD_SEARCH_REPAINT_MS);
-    });
-    observer.observe(pane, { childList: true, subtree: true, characterData: true });
-    return () => {
-      observer.disconnect();
-      if (timer !== null) clearTimeout(timer);
-      markedRow?.classList.remove(THREAD_SEARCH_CURRENT_ROW_CLASS);
+    },
+    dispose() {
+      markRow(null);
       painted.delete(id);
       publish();
-    };
-  }, [paneRef, target?.query, target?.rowId, target?.occurrence, target?.navigation]);
+    }
+  };
 }

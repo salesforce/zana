@@ -1,4 +1,5 @@
-import { countThreadSearchMatches, threadSearchPattern, type ThreadTimelineViewRow } from '@zana-ai/zcc-thread-view';
+import { countThreadSearchMatches, threadSearchMarkdownText, threadSearchPattern, type ThreadTimelineViewRow } from '@zana-ai/zcc-thread-view';
+import { stripAnsi } from './ansi-output.js';
 
 export interface TimelineSearchHit {
   id: string;
@@ -19,13 +20,19 @@ export interface TimelineSearchMatch extends TimelineSearchHit {
   unloaded?: true;
 }
 
-/** The text a row contributes to find-in-thread, in the order it is shown. */
+/**
+ * The text a row contributes to find-in-thread, in the order it is shown:
+ * a message's visible markdown text (as the server counts it), a system
+ * row's title and detail, and tool output without ANSI codes. Row chrome
+ * (work titles, buttons, file names) is not searched; the renderer marks the
+ * same parts with `data-thread-search-content` so highlights agree.
+ */
 export function timelineRowSearchText(row: ThreadTimelineViewRow): string {
+  if (row.kind === 'conversation') return threadSearchMarkdownText(row.text);
   const bits: string[] = [];
   if ('title' in row && typeof row.title === 'string') bits.push(row.title);
-  if ('text' in row && typeof row.text === 'string') bits.push(row.text);
   if ('detail' in row && typeof row.detail === 'string') bits.push(row.detail);
-  if ('output' in row && typeof row.output === 'string') bits.push(row.output);
+  if ('output' in row && typeof row.output === 'string') bits.push(stripAnsi(row.output));
   return bits.join('\n');
 }
 

@@ -224,7 +224,9 @@ function ThreadDetailBody({
   const linkLoads = useRef(0);
   const lastLinkCursor = useRef<string | null>(null);
   const [searchHit, setSearchHit] = useState<TimelineSearchHit | null>(null);
-  useEffect(() => { linkLoads.current = 0; lastLinkCursor.current = null; setSearchHit(null); }, [threadId, linkSequence]);
+  // A find-in-thread search ends the message link's highlight until the link changes.
+  const linkDismissed = useRef(false);
+  useEffect(() => { linkLoads.current = 0; lastLinkCursor.current = null; linkDismissed.current = false; setSearchHit(null); }, [threadId, linkSequence]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const rowsRef = useRef<TimelineRow[]>([]);
   const maxSeqRef = useRef(0);
@@ -803,6 +805,11 @@ function ThreadDetailBody({
     loadOlder: () => { void loadOlderHistory(); }
   });
   const searchQuery = search.query;
+  const submitSearch = useCallback((needle: string, direction?: 'next' | 'previous') => {
+    linkDismissed.current = true;
+    setSearchHit(null);
+    search.submit(needle, direction);
+  }, [search.submit]);
   // The box shows the counter and highlights only for the query it reflects.
   const searchActive = searchQuery !== '' && searchDraft.trim() === searchQuery;
   const timelineTarget = searchQuery ? (searchActive ? search.current : null) : searchHit;
@@ -813,7 +820,7 @@ function ThreadDetailBody({
 
   useEffect(() => {
     if (!timelineEnabled) return;
-    if (!Number.isSafeInteger(linkSequence) || linkSequence <= 0 || searchQuery) return;
+    if (!Number.isSafeInteger(linkSequence) || linkSequence <= 0 || searchQuery || linkDismissed.current) return;
     const hit = findTimelineMessageAtSequence(displayRows, linkSequence);
     if (hit) { setSearchHit(previous => previous?.id === hit.id ? previous : hit); return; }
     if (olderCursor && !loadingOlder && linkLoads.current < 100 && olderCursor.anchorId !== lastLinkCursor.current) {
@@ -882,9 +889,10 @@ function ThreadDetailBody({
               onClose={() => setMobileSearchOpen(false)}
               value={searchDraft}
               onChange={setSearchDraft}
-              onSubmit={search.submit}
+              onSubmit={submitSearch}
               matchIndex={searchActive && !search.pending ? search.index : undefined}
               matchCount={searchActive && !search.pending ? search.matches.length : undefined}
+              partial={searchActive && search.partial}
             />}
             <ThreadStatusBadge status={status} waitingOnUser={awaitingUser} thinking={thinking} />
             {!mobileControlsTarget && <PluginThreadHeaderActions threadId={threadId} projectId={projectId} />}

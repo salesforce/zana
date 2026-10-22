@@ -3,7 +3,7 @@
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ThreadDetailSearch, threadSearchAnnouncement, threadSearchCounterText } from './ThreadDetailSearch.js';
+import { THREAD_SEARCH_PARTIAL_NOTE, ThreadDetailSearch, threadSearchAnnouncement, threadSearchCounterText } from './ThreadDetailSearch.js';
 
 afterEach(cleanup);
 
@@ -34,6 +34,18 @@ describe('find-in-thread counter', () => {
     expect(screen.getByTestId('thread-detail-search-count').textContent).toBe('0/0');
     expect(screen.getByTestId('thread-detail-search-count').className).toContain('is-empty');
     expect(screen.getByRole('status').textContent).toBe('No matches');
+  });
+
+  it('marks a partial count when only loaded messages were counted', () => {
+    expect(threadSearchCounterText(2, 7, true)).toBe('3/7+');
+    expect(threadSearchCounterText(-1, 0, true)).toBe('0/0+');
+    expect(threadSearchAnnouncement(-1, 0, true)).toBe(`No matches. ${THREAD_SEARCH_PARTIAL_NOTE}`);
+    render(<ThreadDetailSearch value="cat" onChange={() => undefined} onSubmit={() => undefined} matchIndex={0} matchCount={2} partial />);
+    const count = screen.getByTestId('thread-detail-search-count');
+    expect(count.textContent).toBe('1/2+');
+    expect(count.className).toContain('is-partial');
+    expect(count.getAttribute('title')).toBe(`Match 1 of 2. ${THREAD_SEARCH_PARTIAL_NOTE}`);
+    expect(screen.getByRole('status').textContent).toBe(`Match 1 of 2. ${THREAD_SEARCH_PARTIAL_NOTE}`);
   });
 });
 
