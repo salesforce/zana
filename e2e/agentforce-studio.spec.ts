@@ -1326,17 +1326,25 @@ test('Agentforce graph: hovering keeps nodes visible and the viewport still', as
   const nodes = graph.locator('.react-flow__node');
   await expect(nodes).toHaveCount(5);
   const settleGraph = () => graph.locator('.react-flow').evaluate(root => new Promise<void>((resolve, reject) => {
-    let previous = ''; let stableFrames = 0; let frames = 0;
+    let previous = ''; let stableFrames = 0; let stableSince = performance.now(); let frame = 0;
+    const finish = (error?: Error) => {
+      cancelAnimationFrame(frame);
+      clearTimeout(deadline);
+      if (error) reject(error); else resolve();
+    };
+    const deadline = window.setTimeout(() => finish(new Error('Graph layout did not settle before the hover check')), 10_000);
     const sample = () => {
       const bounds = root.getBoundingClientRect();
       const current = `${bounds.width}:${bounds.height}:${root.querySelector('.react-flow__viewport')?.getAttribute('style')}`;
       stableFrames = current === previous ? stableFrames + 1 : 0;
+      if (current !== previous) stableSince = performance.now();
       previous = current;
-      if (stableFrames === 20) resolve();
-      else if (++frames === 180) reject(new Error('Graph layout did not settle before the hover check'));
-      else requestAnimationFrame(sample);
+      // Xvfb renders at about 1 Hz. Require two rendered frames and a stable
+      // observation window, rather than turning 20 frames into a 20-second wait.
+      if (stableFrames >= 1 && performance.now() - stableSince >= 350) finish();
+      else frame = requestAnimationFrame(sample);
     };
-    requestAnimationFrame(sample);
+    frame = requestAnimationFrame(sample);
   }));
   for (const theme of ['dark', 'light']) {
     await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
@@ -1367,12 +1375,9 @@ test('Agentforce graph: hovering keeps nodes visible and the viewport still', as
       const transform = await viewport.getAttribute('style');
       for (const index of [0, 2, 4]) {
         await nodes.nth(index).hover();
-        // Keep a stationary pointer through multiple animation frames, then leave the node.
-        await nodes.nth(index).evaluate(() => new Promise<void>(resolve => {
-          let frames = 0;
-          const sample = () => ++frames === 20 ? resolve() : requestAnimationFrame(sample);
-          requestAnimationFrame(sample);
-        }));
+        // Keep a stationary pointer through rendered frames and the observation
+        // window; the observer captures every visibility mutation between them.
+        await settleGraph();
         await expect(nodes.nth(index).locator('.as-node')).toHaveClass(/is-hot/);
         expect(await nodes.first().evaluate(() => (window as typeof window & { hiddenNodes: string[] }).hiddenNodes)).toEqual([]);
         expect(await nodes.first().evaluate(() => (window as typeof window & { removedEdges: number }).removedEdges)).toBe(0);
