@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { useRef, useState } from 'react';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Project, WalkedFile } from '@zana-ai/zcc-domain/product';
@@ -19,6 +20,7 @@ vi.mock('../store.js', () => {
 });
 
 import { QuickOpen } from './QuickOpen.js';
+import { PaletteFrame, paletteOptionProps } from './palette/PaletteFrame.js';
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); document.body.replaceChildren(); });
 
@@ -122,9 +124,68 @@ describe('QuickOpen Escape', () => {
     mocks.walkFiles.mockResolvedValue([]);
     const back = opener();
     const view = render(<QuickOpen project={p} onClose={vi.fn()} />);
+    fireEvent.mouseDown(view.container.querySelector('.palette-backdrop')!);
     back.remove();
+    const focus = vi.spyOn(back, 'focus');
     view.unmount();
+    expect(focus).not.toHaveBeenCalled();
+  });
+
+  it('does not restore focus when it unmounts without a dismissal', () => {
+    // For example the active project changes while Quick Open is open.
+    const p = project();
+    mocks.walkFiles.mockResolvedValue([]);
+    const back = opener();
+    const focus = vi.spyOn(back, 'focus');
+    const view = render(<QuickOpen project={p} onClose={vi.fn()} />);
+    view.unmount();
+    expect(focus).not.toHaveBeenCalled();
     expect(document.activeElement).not.toBe(back);
+  });
+});
+
+describe('QuickOpen from the command palette', () => {
+  // `action:quick-open` closes the palette and opens Quick Open in one update,
+  // so the palette's focus restore runs in the same commit as Quick Open's mount.
+  function Host({ p }: { p: Project }) {
+    const [quickOpen, setQuickOpen] = useState(false);
+    const [palette, setPalette] = useState(true);
+    const inputRef = useRef<HTMLInputElement>(null);
+    const listRef = useRef<HTMLDivElement>(null);
+    const findFile = () => { setPalette(false); setQuickOpen(true); };
+    return (
+      <>
+        {palette && (
+          <PaletteFrame query="" onQuery={vi.fn()} placeholder="Search" scope="all" onScope={vi.fn()}
+            activeIndex={0} rowCount={1} total={1} inputRef={inputRef} listRef={listRef}
+            onInputKeyDown={(e) => { if (e.key === 'Enter') findFile(); }} onClose={() => setPalette(false)}>
+            <button {...paletteOptionProps(0, 0)}>Find file</button>
+          </PaletteFrame>
+        )}
+        {quickOpen && <QuickOpen project={p} onClose={() => setQuickOpen(false)} />}
+      </>
+    );
+  }
+
+  it('focuses the input after the palette closes, and Esc returns focus to the element before the palette', async () => {
+    const p = project();
+    mocks.walkFiles.mockResolvedValue([file('a.ts', p.path)]);
+    const back = opener();
+    render(<Host p={p} />);
+    const paletteInput = screen.getByRole('combobox', { name: 'Search commands and destinations' });
+    expect(document.activeElement).toBe(paletteInput);
+
+    fireEvent.keyDown(paletteInput, { key: 'Enter' });
+    const input = screen.getByRole('textbox', { name: 'Find file in My App' }) as HTMLInputElement;
+    expect(screen.queryByRole('dialog', { name: 'Command palette' })).toBeNull();
+    expect(document.activeElement).toBe(input);
+    fireEvent.change(input, { target: { value: 'a' } });
+    expect(input.value).toBe('a');
+
+    fireEvent.keyDown(input, { key: 'Escape' });
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.queryByRole('textbox', { name: 'Find file in My App' })).toBeNull();
+    expect(document.activeElement).toBe(back);
   });
 });
 

@@ -40,6 +40,23 @@ test('Quick Open focuses its input on the first open and Esc clears, then closes
   await expect(input).toHaveCount(0);
   await expect(explorerNav).toBeFocused();
 
+  // From the command palette: the palette closes and Quick Open opens in one
+  // update, and Esc hands focus back to what had it before the palette.
+  await window.keyboard.press('ControlOrMeta+p');
+  const paletteInput = window.getByRole('combobox', { name: 'Search commands and destinations' });
+  await expect(paletteInput).toBeFocused();
+  await paletteInput.fill('Find file in quick-open-focus');
+  await expect(window.getByRole('option', { selected: true })).toContainText('Find file in quick-open-focus');
+  await window.keyboard.press('Enter');
+  await expect(window.getByRole('dialog', { name: 'Command palette' })).toHaveCount(0);
+  await expect(input).toBeFocused();
+  await window.keyboard.type('index');
+  await expect(window.locator('.palette-item')).toHaveText(['src/index.ts']);
+  await window.keyboard.press('Escape');
+  await window.keyboard.press('Escape');
+  await expect(input).toHaveCount(0);
+  await expect(explorerNav).toBeFocused();
+
   // Choosing a file opens it in the Explorer.
   await window.keyboard.press(quickOpenChord);
   await expect(input).toBeFocused();

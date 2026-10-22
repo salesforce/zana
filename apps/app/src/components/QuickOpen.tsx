@@ -34,13 +34,14 @@ export function QuickOpen({ project, onClose }: Props) {
   const [activeIdx, setActiveIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  // Cleared when a file is chosen: the explorer takes over, so focus must not
-  // jump back to whatever opened Quick Open.
-  const restoreFocusRef = useRef(true);
+  // Set only by a user dismissal (Esc, backdrop click). Choosing a file hands
+  // focus to the explorer, and an unmount for any other reason (project
+  // switched or deselected) must not pull focus back to an element left behind.
+  const restoreFocusRef = useRef(false);
 
-  // Focus the input on open and hand focus back to the opener on dismiss
-  // (Esc, backdrop click). The input stays enabled while indexing so the
-  // first open in a session focuses too, and typing ahead isn't lost.
+  // Focus the input on open and hand focus back to the opener on dismiss.
+  // The input stays enabled while indexing so the first open in a session
+  // focuses too, and typing ahead isn't lost.
   useEffect(() => {
     const opener = document.activeElement;
     inputRef.current?.focus();
@@ -113,16 +114,20 @@ export function QuickOpen({ project, onClose }: Props) {
     if (activeIdx >= results.length) setActiveIdx(0);
   }, [results, activeIdx]);
 
+  const dismiss = () => {
+    restoreFocusRef.current = true;
+    onClose();
+  };
+
   const choose = (entry: ScoredEntry) => {
-    restoreFocusRef.current = false;
     setProjectView(project.id, 'explorer');
     setExplorerFile(project.id, entry.file.path);
     onClose();
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    // Esc clears a typed query first, then closes. Stop it here so window
-    // listeners (menus, dialogs) don't also act on it.
+    // Esc clears a typed query first, then closes. stopPropagation keeps it
+    // from bubbling to window listeners; capture-phase listeners still see it.
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
@@ -131,7 +136,7 @@ export function QuickOpen({ project, onClose }: Props) {
         setActiveIdx(0);
         return;
       }
-      onClose();
+      dismiss();
       return;
     }
     if (e.key === 'ArrowDown') {
@@ -172,7 +177,7 @@ export function QuickOpen({ project, onClose }: Props) {
   };
 
   return (
-    <div className="palette-backdrop" onMouseDown={onClose}>
+    <div className="palette-backdrop" onMouseDown={dismiss}>
       <div className="palette" onMouseDown={(e) => e.stopPropagation()}>
         <input
           ref={inputRef}
