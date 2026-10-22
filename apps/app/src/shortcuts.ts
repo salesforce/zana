@@ -3,6 +3,7 @@ import { getActiveTerminalId, getTerminal } from './lib/findRegistry.js';
 import { projectDefaultLaunch, type ProjectDefaultLaunch } from './lib/launchProfile.js';
 import { cliAgentDeleteConfirm, cliAgentRestartConfirm } from './components/agentCardActions.js';
 import { shortcutForCommand } from './lib/keyboard-shortcut-settings.js';
+import { openThreadFind } from './lib/thread-find.js';
 
 /** The project's one-click "+" default: a pinned persona (on its baseProfile)
  *  or the profile default. Shared with TabBar / the menu so ⌘T agrees. */
@@ -83,6 +84,10 @@ export function installShortcuts(): () => void {
       ui.setNav('home');
       return;
     }
+    // cmd+f — search in the thread the user is in. Remappable in Settings →
+    // Shortcuts. Checked before terminal find below, which keeps cmd+f
+    // whenever focus is in a terminal (or no thread view takes the key).
+    if (openThreadFind(e)) return;
     // cmd+. — close the agent or thread inspector modal. Escape is reserved
     // for the embedded terminal's interrupt (the only way to cancel Claude
     // mid-task), so the inspector gets its own dismiss chord. No-op when no

@@ -32,6 +32,7 @@ import {
 } from '@zana-ai/zcc-desktop-contract';
 import { BrowserFindBar, type BrowserFindMatches } from './BrowserFindBar.js';
 import { formatAppShortcut, shortcutForCommand } from '../../../lib/keyboard-shortcut-settings.js';
+import { threadFindClaims } from '../../../lib/thread-find.js';
 import { getDesktopBrowserApi } from '../../../lib/desktop-browser.js';
 import { getBrowserUrlHost, getBrowserUrlSecurity, resolveBrowserAddressInput } from '../../../lib/browser-url.js';
 import { useBrowserHistory } from '../../../lib/browser-history.js';
@@ -479,7 +480,8 @@ export function BrowserTabContent({
   useEffect(() => {
     if (!isViewVisible) return;
     const onKey = (event: KeyboardEvent) => {
-      if (shortcutForCommand('browser.find', event)) {
+      // Focus in the thread's conversation keeps the same chord for thread search.
+      if (shortcutForCommand('browser.find', event) && !threadFindClaims(event)) {
         event.preventDefault();
         handleOpenFind();
         return;

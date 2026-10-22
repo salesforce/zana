@@ -13,6 +13,7 @@ import {
 } from '@zana-ai/zcc-desktop-contract';
 import { BrowserTabContent } from './BrowserTabContent.js';
 import { createBrowserViewVisibilityCoordinator } from './browserViewVisibilityCoordinator.js';
+import { registerThreadFindTarget } from '../../../lib/thread-find.js';
 
 beforeEach(() => {
   class ResizeObserverStub {
@@ -217,6 +218,33 @@ describe('BrowserTabContent chrome', () => {
       });
     });
     expect(screen.getByTestId('browser-find-match-count').textContent).toBe('2/5');
+  });
+});
+
+describe('BrowserTabContent find shortcut beside thread search', () => {
+  it('leaves Ctrl+F to thread search while focus is in the conversation', async () => {
+    const harness = createHarness();
+    vi.stubGlobal('cc', { browser: harness.api });
+    const main = document.createElement('div');
+    const composer = document.createElement('textarea');
+    main.append(composer);
+    document.body.append(main);
+    const open = vi.fn();
+    const unregister = registerThreadFindTarget({ root: () => main, main: () => main, isPrimary: () => false, open });
+    try {
+      render(
+        <BrowserTabContent tabId="browser:test" initialUrl="https://example.com"
+          canShowNativeBrowserView visibilityCoordinator={null} threadId="thread-1" onUpdate={() => undefined} />
+      );
+      await act(async () => harness.emitState(browserState()));
+      fireEvent.keyDown(composer, { key: 'f', ctrlKey: true });
+      expect(screen.queryByPlaceholderText('Find in page')).toBeNull();
+      fireEvent.keyDown(screen.getByTestId('thread-browser-address'), { key: 'f', ctrlKey: true });
+      expect(screen.getByPlaceholderText('Find in page')).toBeTruthy();
+    } finally {
+      unregister();
+      main.remove();
+    }
   });
 });
 

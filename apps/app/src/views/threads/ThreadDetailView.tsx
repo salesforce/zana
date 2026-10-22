@@ -34,7 +34,8 @@ import { getThreadRoutePath } from '../../lib/route-paths.js';
 import { useRouteState } from '../../hooks/useRouteState.js';
 import { useCompactLayout } from '../../hooks/useCompactLayout.js';
 import { pendingChildThreads, useThreads, type ThreadListItem } from '../../thread-store.js';
-import { useData } from '../../store.js';
+import { useData, useUi } from '../../store.js';
+import { registerThreadFindTarget } from '../../lib/thread-find.js';
 import { ThreadPendingInteractionBanner } from '../../components/thread/pending-interactions/ThreadPendingInteractionBanner.js';
 import { ChildThreadPendingBanners } from '../../components/thread/pending-interactions/ChildThreadPendingBanners.js';
 import {
@@ -160,6 +161,7 @@ function ThreadDetailBody({
   const compact = useCompactLayout();
   const hostedSecondary = pane?.secondaryPanelHost != null;
   const viewRef = useRef<HTMLElement>(null);
+  const mainRef = useRef<HTMLDivElement>(null);
   const panel = useThreadSecondaryPanel(threadId, {
     modal,
     getContainerWidthPx: () => viewRef.current?.clientWidth ?? 0
@@ -219,6 +221,7 @@ function ThreadDetailBody({
   const [stoppingAnchorAt, setStoppingAnchorAt] = useState(0);
   const [searchDraft, setSearchDraft] = useState('');
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const [searchFocusRequest, setSearchFocusRequest] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [linkParams] = useSearchParams();
   const linkSequence = Number(linkParams.get('message'));
@@ -842,6 +845,24 @@ function ThreadDetailBody({
     });
   }, [displayRows, threadId]);
 
+  const findState = useRef({ embedded, modal, paneFocused: pane?.isFocused !== false, mobileControls: Boolean(mobileControlsTarget) });
+  findState.current = { embedded, modal, paneFocused: pane?.isFocused !== false, mobileControls: Boolean(mobileControlsTarget) };
+  useEffect(() => registerThreadFindTarget({
+    root: () => viewRef.current,
+    main: () => mainRef.current,
+    isPrimary: () => {
+      const view = viewRef.current;
+      const { embedded: isEmbedded, modal: isModal, paneFocused } = findState.current;
+      if (!view || view.getClientRects().length === 0 || isEmbedded || !paneFocused) return false;
+      const ui = useUi.getState();
+      return isModal || (!ui.threadModal && !ui.agentModal);
+    },
+    open: () => {
+      if (findState.current.mobileControls) setMobileSearchOpen(true);
+      setSearchFocusRequest((value) => value + 1);
+    }
+  }), []);
+
   const overflow = (
     <ThreadDetailOverflow
       threadId={threadId}
@@ -866,7 +887,7 @@ function ThreadDetailBody({
       style={panelOpen ? { ['--thread-secondary-width' as string]: `${panel.state.widthPx}px` } : undefined}
     >
       <div className="thread-detail-split">
-      <div className="thread-detail-main">
+      <div ref={mainRef} className="thread-detail-main">
         <header className="thread-detail-header" data-title-in-shell={Boolean(mobileTitleTarget) || undefined} data-controls-in-shell={Boolean(mobileControlsTarget) || undefined}>
           <ThreadDetailHeading
             title={title}
@@ -890,6 +911,7 @@ function ThreadDetailBody({
             {(!mobileControlsTarget || mobileSearchOpen) && <ThreadDetailSearch
               mobileHeader={Boolean(mobileControlsTarget)}
               autoFocus={Boolean(mobileControlsTarget)}
+              focusRequest={searchFocusRequest}
               onClose={() => setMobileSearchOpen(false)}
               value={searchDraft}
               onChange={setSearchDraft}

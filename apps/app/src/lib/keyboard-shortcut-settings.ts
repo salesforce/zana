@@ -23,6 +23,7 @@ export const REMAPPABLE_COMMANDS: Array<{
 }> = [
   { command: 'thread.new', label: 'New Chat', help: 'Open New Chat with your default launch mode.' },
   { command: 'thread.search', label: 'Command palette', help: 'Open the command palette.' },
+  { command: 'thread.find', label: 'Search in thread', help: 'Search the conversation in the open thread.' },
   { command: 'file.quickOpen', label: 'Quick Open', help: 'Open a file in the selected project.' },
   { command: 'sidebar.toggle', label: 'Toggle explorer', help: 'Switch between terminals and the file explorer.' },
   { command: 'settings.open', label: 'Settings', help: 'Open or close Settings.' },
@@ -59,6 +60,12 @@ export const DEFAULT_APP_KEYBINDINGS: AppDefaultKeybindings = [
     desktopOnly: false,
     shortcut: { key: 'p', mod: true, meta: false, control: false, alt: false, shift: false },
     when: { all: [], none: [] }
+  },
+  {
+    command: 'thread.find',
+    desktopOnly: false,
+    shortcut: { key: 'f', mod: true, meta: false, control: false, alt: false, shift: false },
+    when: { all: [], none: ['terminalFocus', 'browserFocus'] }
   },
   {
     command: 'file.quickOpen',
