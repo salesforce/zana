@@ -30,7 +30,7 @@ function abortError(signal: AbortSignal): Error {
 }
 
 /** Function ids belong to this authenticated runtime only; no method/path comes from a renderer. */
-export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin') {
+export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin', admitCall?: () => void) {
   let nextId = 0;
   let stopped = false;
   const functions = new Map<number, (...args: any[]) => any>();
@@ -45,6 +45,9 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin') 
   const signalRefs = new Map<number, number>();
   let collectedSignals: number[] | null = null;
   const pending = new Map<number, { resolve(value: any): void; reject(error: Error): void }>();
+  // Observed async service results cross the bridge in two calls. Keep their
+  // one-shot continuation admitted across the gap between those calls.
+  const remoteResults = new Set<number>();
   const shared = side === 'plugin' ? new SharedArrayBuffer(SYNC_BYTES) : undefined;
 
   function encode(value: any, path = '', depth = 0, seen = new Set<object>()): Wire {
@@ -104,8 +107,16 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin') 
     if (!value || typeof value !== 'object') return value;
     if (value[TAG] === 'function') {
       if (value.side === side) return functions.get(value.id);
-      const remote = (...args: any[]) => side === 'plugin' && !value.async ? invokeSync(value.id, args) : invoke(value.id, args);
-      Object.defineProperty(remote, '__zccPluginInvokeObserved', { value: (...args: any[]) => invoke(value.id, args, true) });
+      if (value.once) {
+        if (remoteResults.size >= MAX_FUNCTIONS && !remoteResults.has(value.id)) throw new Error('Plugin pending service result limit exceeded');
+        remoteResults.add(value.id);
+      }
+      const invokeResult = (args: any[], observe = false) => {
+        const result = invoke(value.id, args, observe);
+        return value.once ? result.finally(() => remoteResults.delete(value.id)) : result;
+      };
+      const remote = (...args: any[]) => side === 'plugin' && !value.async ? invokeSync(value.id, args) : invokeResult(args);
+      Object.defineProperty(remote, '__zccPluginInvokeObserved', { value: (...args: any[]) => invokeResult(args, true) });
       Object.defineProperty(remote, '__zccPluginOnce', { value: value.once });
       return remote;
     }
@@ -140,6 +151,7 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin') 
   }
 
   function invoke(fn: number, args: any[], observe = false): Promise<any> {
+    try { admitCall?.(); } catch (error) { return Promise.reject(error); }
     if (stopped) return Promise.reject(new Error('Plugin runtime stopped'));
     if (pending.size >= MAX_PENDING) return Promise.reject(new Error('Plugin runtime is busy'));
     const id = ++nextId;
@@ -229,8 +241,10 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin') 
   port.on('message', onMessage);
   return {
     encode, decode,
+    isBusy: () => pending.size > 0 || remoteResults.size > 0,
     dispose(error = new Error('Plugin runtime stopped')) {
       stopped = true; port.off('message', onMessage);
+      remoteResults.clear();
       for (const call of [...pending.values()]) call.reject(error);
       pending.clear(); functions.clear();
       for (const remove of removeSignalListeners.values()) remove();

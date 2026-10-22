@@ -18,6 +18,21 @@ import {
   validatePluginRequestInput
 } from './plugin-api.js';
 
+it('strict disposal awaits host teardown, isolates plugin cleanup errors, and rejects stale settings writes', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'plugin-quiesce-'));
+  const handle = createPluginApi('sample', dir); const order: string[] = [];
+  try {
+    handle.api.onDispose(() => { order.push('plugin'); throw Error('plugin cleanup'); });
+    handle.onQuiesce(async () => { await Promise.resolve(); order.push('host'); });
+    await handle.api.storage.kv.set('saved', 'value'); await handle.dispose({ strict: true });
+    expect(order).toEqual(['plugin', 'host']); await handle.dispose({ strict: true }); expect(order).toHaveLength(2);
+    await expect(handle.setSettings({ stale: 'write' })).rejects.toThrow('stale');
+  } finally { await handle.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  const failed = createPluginApi('failed', dir); failed.onQuiesce(() => { throw Error('writer failed'); });
+  await failed.dispose(); await expect(failed.dispose({ strict: true })).rejects.toThrow('could not be quiesced');
+  rmSync(dir, { recursive: true, force: true });
+});
+
 describe('plugin requestInput validation', () => {
   it('accepts a well-formed request and trims the title', () => {
     expect(validatePluginRequestInput({

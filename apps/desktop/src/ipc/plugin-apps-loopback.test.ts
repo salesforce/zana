@@ -5,6 +5,7 @@ import {
   setPluginAppEnabledOnProductServer,
   checkPluginUpdatesFromProductServer,
   applyPluginUpdateOnProductServer,
+  applyAllPluginUpdatesOnProductServer,
   removePluginAppOnProductServer,
   callPluginRpcOnProductServer,
   getPluginSettingsFromProductServer,
@@ -113,6 +114,19 @@ describe('plugin-apps product-server fallback', () => {
     ).resolves.toMatchObject({ ok: false, code: 'NOT_FOUND' });
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/api/v1/plugin-apps/updates');
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain('/api/v1/plugin-apps/docs/update');
+  });
+
+  it('routes update-all and reports unavailable or failed hosts', async () => {
+    const value = { updated: ['sample'], failed: [{ id: 'other', message: 'source unavailable' }] };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, value }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await applyAllPluginUpdatesOnProductServer('http://127.0.0.1:8780/')).toEqual({ ok: true, value });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/api/v1/plugin-apps/update-all');
+    expect(await applyAllPluginUpdatesOnProductServer(null)).toMatchObject({ ok: false, code: 'UNAVAILABLE' });
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ error: 'failed' }), { status: 503 }));
+    expect(await applyAllPluginUpdatesOnProductServer('http://127.0.0.1:8780/')).toMatchObject({ ok: false, message: 'failed' });
+    await expect(checkPluginUpdatesFromProductServer(null)).rejects.toThrow(/unavailable/);
+    await expect(checkPluginUpdatesFromProductServer('http://127.0.0.1:8780/')).rejects.toThrow(/check failed/);
   });
 
   it('POSTs plugin remove and maps failures', async () => {

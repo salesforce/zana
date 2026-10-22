@@ -318,6 +318,9 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
     query: z.string().max(256).optional()
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugins-update-all')
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('plugins-outdated')
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
@@ -482,6 +485,13 @@ export const PluginAppSnapshotSchema = z.object({
   statusDetail: z.string().max(4096).nullable().optional(),
   appUrl: z.string().max(4096).nullable(),
   availableVersion: z.string().min(1).max(256).optional(),
+  updatePolicy: z.enum(['bundled', 'local', 'independent', 'migration-required']).optional(),
+  updateCheck: z.object({
+    checkedAt: z.number().finite(),
+    outcome: z.enum(['current', 'available', 'pinned', 'incompatible', 'unavailable']),
+    detail: z.string().max(1024).optional(),
+    blocked: z.object({ version: z.string().max(256), reasons: z.array(z.string().max(1024)).max(8) }).optional()
+  }).strict().optional(),
   projectTab: PluginAppProjectTabSchema.optional(),
   skillNames: z.array(z.string().min(1).max(256)).max(64).optional(),
   mcpServers: z.array(z.object({

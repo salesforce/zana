@@ -850,6 +850,18 @@ describe('startControlPlane (real socket)', () => {
     expect(reload).toHaveBeenCalledWith('demo');
   });
 
+  it('routes plugin update-all and rejects conflicting id selectors', async () => {
+    const value = { updated: ['sample'], failed: [] };
+    const updateAll = vi.fn(async () => value);
+    const { socketPath, tokenPath } = await boot({ pluginHost: { updateAll } as any });
+    const tok = JSON.parse(readFileSync(tokenPath, 'utf8'));
+    const request = (args: unknown) => rawRequest(socketPath, [JSON.stringify({ token: tok.token, nonce: tok.nonce, op: 'plugin.update', args }) + '\n']);
+    expect(await request({ all: true })).toMatchObject({ ok: true, value });
+    expect(updateAll).toHaveBeenCalledTimes(1);
+    expect(await request({ id: 'sample', all: true })).toMatchObject({ ok: false, code: 'BAD_ARGS' });
+    expect(await request({})).toMatchObject({ ok: false, code: 'BAD_ARGS' });
+  });
+
   it('runs plugin CLI contribution ops over the socket without native confirmation', async () => {
     const cliContributions = vi.fn(async () => [
       { pluginId: 'tasks', name: 'tasks', summary: 'Plan and track work' }

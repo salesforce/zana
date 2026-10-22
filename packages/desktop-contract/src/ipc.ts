@@ -396,6 +396,7 @@ export const IPC = {
     setSettings: 'pluginApps:setSettings',
     checkUpdates: 'pluginApps:checkUpdates',
     applyUpdate: 'pluginApps:applyUpdate',
+    applyAllUpdates: 'pluginApps:applyAllUpdates',
     remove: 'pluginApps:remove',
     reload: 'pluginApps:reload'
   },

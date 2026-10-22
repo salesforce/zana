@@ -259,6 +259,14 @@ describe('plugin commands', () => {
     expect((await runPluginCommand(dataDir, 'update', ['docs'], false)).exitCode).toBe(1);
   });
 
+  it('validates the mutually exclusive id and all update selectors', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-plugin-bulk-')); dirs.push(dataDir);
+    for (const args of [[], ['sample', '--all'], ['--all', 'sample'], ['--bad'], ['a', 'b']]) {
+      expect((await runPluginCommand(dataDir, 'update', args, false)).exitCode).toBe(2);
+    }
+    expect((await runPluginCommand(dataDir, 'update', ['--all'], false)).stderr).toMatch(/APP_NOT_RUNNING/);
+  });
+
   it('lists zero plugins from an empty data dir', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-plugin-ls-'));
     dirs.push(dataDir);

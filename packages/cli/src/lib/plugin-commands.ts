@@ -105,10 +105,12 @@ async function live(
   if (!isAppRunning(dataDir)) {
     return err('APP_NOT_RUNNING: start Zana Command Center to mutate plugins', 1);
   }
-  const result = await callControlPlane({ dataDir, op, args });
+  const result = await callControlPlane({ dataDir, op, args,
+    ...(['plugin.install', 'plugin.update', 'plugin.outdated'].includes(op) ? { timeoutMs: 300_000 } : {}) });
   if (!result.ok) return err(result.message ?? result.code ?? 'control plane error', 1);
-  if (jsonOutput) return { exitCode: 0, stdout: `${JSON.stringify(result.value, null, 2)}\n` };
-  return { exitCode: 0, stdout: `${typeof result.value === 'string' ? result.value : JSON.stringify(result.value, null, 2)}\n` };
+  const exitCode = op === 'plugin.update' && Array.isArray((result.value as { failed?: unknown })?.failed) && (result.value as { failed: unknown[] }).failed.length > 0 ? 1 : 0;
+  if (jsonOutput) return { exitCode, stdout: `${JSON.stringify(result.value, null, 2)}\n` };
+  return { exitCode, stdout: `${typeof result.value === 'string' ? result.value : JSON.stringify(result.value, null, 2)}\n` };
 }
 
 /** Product HTTP — same route the renderer uses. Does not need control.sock. */
@@ -380,8 +382,12 @@ export async function runPluginCommand(
     return live(dataDir, 'plugin.outdated', {}, jsonOutput);
   }
   if (subcommand === 'update') {
+    if (rest.includes('--all')) {
+      if (rest.length !== 1) return err('Use plugin update <pluginId> or plugin update --all', 2);
+      return live(dataDir, 'plugin.update', { all: true }, jsonOutput);
+    }
     const id = rest[0];
-    if (!id) return err('plugin update requires a <pluginId>', 2);
+    if (!id || rest.length !== 1 || id.startsWith('-')) return err('plugin update requires <pluginId> or --all', 2);
     return live(dataDir, 'plugin.update', { id }, jsonOutput);
   }
   if (subcommand === 'run') {

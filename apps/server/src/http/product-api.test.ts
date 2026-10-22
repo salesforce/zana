@@ -2641,6 +2641,17 @@ describe('product HTTP plugins', () => {
     expect(missing.status).toBe(404);
   });
 
+  it('runs update-all through the authoritative plugin service', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-bulk-'));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    const request = () => fetch(`${server.url}api/v1/plugin-apps/update-all`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    server.ctx.plugins = undefined;
+    expect((await request()).status).toBe(503);
+    const value = { updated: ['sample'], failed: [{ id: 'other', message: 'source unavailable' }] };
+    server.ctx.plugins = { applyAllUpdates: async () => value } as never;
+    await expect((await request()).json()).resolves.toEqual({ ok: true, value });
+  });
+
   it('adds, lists, refreshes, and removes marketplace catalogs', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-mp-'));
     server = await startTestProductServer({

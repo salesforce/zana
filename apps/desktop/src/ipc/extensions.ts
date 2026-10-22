@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { relative } from 'node:path';
 import { ipcMain } from 'electron';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
@@ -9,8 +10,10 @@ import {
   defaultBundledRoot,
   defaultPluginDataDir,
   installBundledPlugin,
-  listBundledPluginCatalog
+  listBundledPluginCatalog,
+  loadManifestFromDir
 } from '@zana-ai/zcc-server/plugins/plugin-service';
+import { assertBundledPluginInstall } from '@zana-ai/zcc-server/plugins/bundled-plugin-policy';
 import { createPluginStore, pluginStorePath } from '@zana-ai/zcc-server/plugins/plugin-store';
 import { createMarketplaceStore, listPublicMarketplaceCatalogs, marketplaceStorePath } from '@zana-ai/zcc-server/plugins/marketplace-store';
 import {
@@ -365,33 +368,21 @@ export function registerExtensionsIpc(): void {
           staged = stagedRes.value;
 
           if (isZccPluginWorkingDir(staged)) {
+            // Retain the remote trust boundary before adapting staged code to
+            // a path install, including on a managed development host.
+            assertBundledPluginInstall({
+              id: loadManifestFromDir(staged).id,
+              sourceKind: 'git', source: source.url, development: false
+            });
             if (!ctx.runtimeSupervisor) {
               return { ok: false, code: 'UNAVAILABLE', message: 'plugin host is unavailable' };
             }
-            const dest = join(
-              defaultPluginDataDir(),
-              'plugins',
-              'git',
-              Buffer.from(source.url).toString('hex').slice(0, 24)
-            );
-            await rm(dest, { recursive: true, force: true }).catch(() => {});
-            await mkdir(dirname(dest), { recursive: true });
-            await cp(staged, dest, { recursive: true });
-            try {
-              const row = await ctx.runtimeSupervisor.installPlugin(dest);
-              const id =
-                row && typeof row === 'object' && 'id' in row
-                  ? String((row as { id: unknown }).id)
-                  : '';
-              if (!id) {
-                await rm(dest, { recursive: true, force: true }).catch(() => {});
-                return { ok: false, code: 'INSTALL_FAILED', message: 'plugin install did not return an id' };
-              }
-              return { ok: true, value: { id } };
-            } catch (err) {
-              await rm(dest, { recursive: true, force: true }).catch(() => {});
-              throw err;
-            }
+            const subdir = source.subdir || relative(cloned.path, located.value);
+            const suffix = subdir ? `#subdir=${encodeURIComponent(subdir)}` : '';
+            const row = await ctx.runtimeSupervisor.installPlugin(`git:${source.url}@${source.ref ?? 'HEAD'}${suffix}`);
+            const id = row && typeof row === 'object' && 'id' in row ? String((row as { id: unknown }).id) : '';
+            if (!id) return { ok: false, code: 'INSTALL_FAILED', message: 'plugin install did not return an id' };
+            return { ok: true, value: { id } };
           }
 
           const gitRes = await installFromDir(staged, installOpts);

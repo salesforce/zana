@@ -5409,6 +5409,20 @@ export interface PluginEntry {
  * Redacted server-owned plugin app state. `appUrl` is same-origin and contains
  * no install path or credentials; the renderer uses it only to import a bundle.
  */
+export interface PluginUpdateAllResult {
+  updated: string[];
+  failed: Array<{ id: string; message: string }>;
+}
+
+export interface PluginUpdateStatus {
+  checkedAt: number;
+  outcome: 'current' | 'available' | 'pinned' | 'incompatible' | 'unavailable';
+  detail?: string;
+  blocked?: { version: string; reasons: string[] };
+}
+
+export type PluginUpdatePolicy = 'bundled' | 'local' | 'independent' | 'migration-required';
+
 export interface PluginAppEntry {
   id: string;
   name: string;
@@ -5423,8 +5437,10 @@ export interface PluginAppEntry {
   status: 'running' | 'disabled' | 'degraded' | 'needs-configuration';
   statusDetail?: string | null;
   appUrl: string | null;
-  /** Newer catalog version from the last `checkUpdates()` sweep, when any. */
+  /** Compatible remote release from the last persisted source check, when any. */
   availableVersion?: string;
+  updateCheck?: PluginUpdateStatus;
+  updatePolicy?: PluginUpdatePolicy;
   projectTab?: {
     label?: string;
     icon?: string;

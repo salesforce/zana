@@ -3020,6 +3020,12 @@ export async function handleProductHttp(
       return true;
     }
 
+    if (path === '/api/v1/plugin-apps/update-all' && method === 'POST') {
+      if (!ctx.plugins) { sendJson(response, 503, { error: 'plugin host is unavailable' }); return true; }
+      sendJson(response, 200, { ok: true, value: await ctx.plugins.applyAllUpdates() });
+      return true;
+    }
+
     const pluginAppEnable = routeParams(path, '/api/v1/plugin-apps/:id/enable');
     if (pluginAppEnable && method === 'POST') {
       await handlePluginAppEnabled(response, ctx, pluginAppEnable.id, true);

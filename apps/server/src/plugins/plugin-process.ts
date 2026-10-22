@@ -1,34 +1,53 @@
-import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { runPluginSourceCommand as run } from './plugin-source-command.js';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { resolveBundledNpmCli } from '@zana-ai/zcc-plugin-build';
+import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 const MARKETPLACE_MAX_BYTES = 1_048_576;
 export const MARKETPLACE_FETCH_TIMEOUT_MS = 15_000;
 
 export async function defaultSpawnNpm(
   args: string[],
-  cwd: string
+  cwd: string,
+  signal?: AbortSignal
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   mkdirSync(cwd, { recursive: true });
-  return run('npm', args, cwd);
+  // A failed online check must not silently fall back to stale npm metadata.
+  const cache = args[0] === 'view' ? mkdtempSync(join(tmpdir(), 'zcc-plugin-npm-check-')) : undefined;
+  try {
+    return await run(process.execPath, [resolveBundledNpmCli(), ...args,
+      '--fetch-retries=0', '--fetch-timeout=15000', ...(cache ? ['--cache', cache] : [])
+    ], cwd, { env: { ELECTRON_RUN_AS_NODE: '1' }, timeoutMs: 120_000, signal });
+  } finally { if (cache) rmSync(cache, { recursive: true, force: true }); }
 }
 
 export async function defaultCloneGit(
   url: string,
   dest: string,
-  spec: string
-): Promise<{ commit: string }> {
+  spec: string,
+  signal?: AbortSignal
+): Promise<{ commit: string; refKind: 'branch' | 'tag' | 'commit' }> {
   mkdirSync(dirname(dest), { recursive: true });
-  const cloneArgs = ['clone', '--depth', '1'];
-  if (spec && spec !== 'HEAD' && !spec.startsWith('semver:')) {
-    cloneArgs.push('--branch', spec.replace(/^ref:/, ''));
+  if (spec.startsWith('commit:') || /^[a-f0-9]{7,40}$/i.test(spec)) {
+    const commit = spec.replace(/^commit:/, '');
+    if (!/^[a-f0-9]{7,40}$/i.test(commit)) throw new Error('Invalid Git commit');
+    for (const args of [['init', dest], ['-C', dest, 'fetch', '--depth', '1', '--', url, commit], ['-C', dest, 'checkout', '--detach', 'FETCH_HEAD']]) {
+      const result = await run('git', args, dirname(dest), { signal });
+      if (result.code !== 0) throw new Error('Git could not materialize the selected commit');
+    }
+  } else {
+    if (spec.startsWith('semver:')) throw new Error('Git ranges must be resolved before cloning');
+    const cloneArgs = ['clone', '--depth', '1'];
+    if (spec && spec !== 'HEAD') cloneArgs.push('--branch', spec.replace(/^ref:/, ''));
+    cloneArgs.push('--', url, dest);
+    const cloned = await run('git', cloneArgs, dirname(dest), { signal });
+    if (cloned.code !== 0) throw new Error('Git clone failed');
   }
-  cloneArgs.push(url, dest);
-  const cloned = await run('git', cloneArgs, dirname(dest));
-  if (cloned.code !== 0) throw new Error(cloned.stderr || `git clone failed for ${url}`);
-  const head = await run('git', ['-C', dest, 'rev-parse', 'HEAD'], dest);
-  if (head.code !== 0) throw new Error(head.stderr || 'git rev-parse failed');
-  return { commit: head.stdout.trim() };
+  const head = await run('git', ['-C', dest, 'rev-parse', 'HEAD'], dest, { signal });
+  if (head.code !== 0) throw new Error('Git rev-parse failed');
+  const branch = await run('git', ['-C', dest, 'symbolic-ref', '--quiet', 'HEAD'], dest, { signal });
+  return { commit: head.stdout.trim(), refKind: spec.startsWith('commit:') || /^[a-f0-9]{7,40}$/i.test(spec) ? 'commit' : branch.code === 0 ? 'branch' : 'tag' };
 }
 
 export async function defaultFetchJson(url: string): Promise<unknown> {
@@ -69,28 +88,4 @@ export async function defaultFetchJson(url: string): Promise<unknown> {
 
 export function ensureDir(path: string): void {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
-}
-
-function run(
-  command: string,
-  args: string[],
-  cwd: string
-): Promise<{ code: number; stdout: string; stderr: string }> {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, { cwd, shell: false });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
-    child.on('error', (error) => {
-      resolve({ code: 1, stdout: '', stderr: error.message });
-    });
-    child.on('close', (code) => {
-      resolve({
-        code: code ?? 1,
-        stdout: Buffer.concat(stdout).toString('utf8'),
-        stderr: Buffer.concat(stderr).toString('utf8')
-      });
-    });
-  });
 }

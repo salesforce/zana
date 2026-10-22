@@ -32,7 +32,7 @@ describe('plugin path install', () => {
     try {
       expect((await runPluginCommand('/data', 'install', [source], false)).exitCode).toBe(0);
       expect(callControlPlane).toHaveBeenCalledWith({
-        dataDir: '/data', op: 'plugin.install', args: { source: `path:${realpathSync(root)}` }
+        dataDir: '/data', op: 'plugin.install', args: { source: `path:${realpathSync(root)}` }, timeoutMs: 300_000
       });
     } finally { process.chdir(previous); }
   });
@@ -70,7 +70,7 @@ describe('plugin path install', () => {
   it.each(['builtin:tasks', 'tasks', 'npm:example', 'git:https://example.com/plugin', 'example@store'])(
     'preserves non-path source %s', async (source) => {
       expect((await runPluginCommand('/data', 'install', [source], false)).exitCode).toBe(0);
-      expect(callControlPlane).toHaveBeenCalledWith({ dataDir: '/data', op: 'plugin.install', args: { source } });
+      expect(callControlPlane).toHaveBeenCalledWith({ dataDir: '/data', op: 'plugin.install', args: { source }, timeoutMs: 300_000 });
     }
   );
 });

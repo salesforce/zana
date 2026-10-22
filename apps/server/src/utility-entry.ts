@@ -486,6 +486,10 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
       }
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: await plugins.checkUpdates() });
     }
+    if (message.operation === 'plugins-update-all') {
+      if (!plugins) throw new Error('plugin host is unavailable');
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: await plugins.applyAllUpdates() });
+    }
     if (message.operation === 'plugins-update') {
       if (!plugins) {
         parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, message: 'plugin host is unavailable' });
