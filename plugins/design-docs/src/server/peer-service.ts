@@ -345,11 +345,14 @@ export class DesignDocPeerService {
       this.requireCurrentRequest(query, peerId, fence);
       return result;
     }
+    // Assemble and verify the staged closures before the fence: the fenced commit has a fixed worker execution budget
+    // and only needs to re-check authorization, the unchanged staged header, and write the atomic projection/receipt.
+    const prepared = this.sync.prepareTransfer(query);
     const receipt = await fence.commitSync(() => {
       this.requireFence(fence);
       this.requireRosterPeer(expected.repoId, expected.remoteReplicaId, peerId);
       validateHandshake(query, this.expectation(expected.remoteReplicaId, fence.grantEpoch));
-      return this.sync.applyTransfer(query);
+      return this.sync.applyTransfer(query, prepared);
     });
     for (const docId of Object.keys(receipt.appliedHeads)) this.changed(docId);
     if (receipt.stage === 'synced') this.compactAfterSync();

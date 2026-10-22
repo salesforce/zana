@@ -44,6 +44,28 @@ export interface SyncStoreOptions {
 export const DELETE_DOC_MUTATION = 'delete-doc';
 const MAX_INTENT_ATTEMPTS = 10;
 
+/**
+ * Closures this module produced through validateDocumentClosure. A peer apply runs inside one worker commit fence
+ * with a fixed CPU budget, so an already-validated (immutable, never mutated) closure is not validated again.
+ */
+const validatedClosures = new WeakSet<PeerDocumentClosure>();
+function validatedClosure(input: unknown): PeerDocumentClosure {
+  const closure = validateDocumentClosure(input);
+  validatedClosures.add(closure);
+  return closure;
+}
+/** canonicalPeerHash of a validated closure, computed once per (immutable) closure object. */
+const closureHashes = new WeakMap<PeerDocumentClosure, string>();
+function closurePayloadHash(closure: PeerDocumentClosure): string {
+  let hash = closureHashes.get(closure);
+  if (hash === undefined) { hash = canonicalPeerHash(closure); if (validatedClosures.has(closure)) closureHashes.set(closure, hash); }
+  return hash;
+}
+
+/** Opaque result of DesignDocSyncStore.prepareTransfer; only store-minted preparations are honoured. */
+export interface PreparedTransfer { readonly header: string; readonly versions: readonly PeerVersion[]; readonly used: number }
+const preparedTransfers = new WeakSet<PreparedTransfer>();
+
 /** Opaque resume point; `upper` is the frontier frozen by the first page. */
 export interface OperationCursor {
   afterReplicaId: string;
@@ -83,6 +105,13 @@ export class DesignDocSyncStore {
   private readonly now: () => number;
   private readonly randomId: () => string;
   private readonly maxTombstones: number;
+  /**
+   * Hash-verified versions, scoped to one apply transaction (null outside one). A version is immutable per
+   * operation id, so a peer apply re-reading the same head reuses the verification instead of re-hydrating and
+   * re-hashing a multi-megabyte closure inside the fenced commit. Keyed entries also pin the stored manifest, so
+   * a compaction or rewrite within the same transaction falls back to the full read.
+   */
+  private verifiedVersions: Map<string, { manifest: string; version: PeerVersion }> | null = null;
 
   constructor(private readonly db: PluginDatabase, options: SyncStoreOptions = {}) {
     this.now = options.now ?? Date.now;
@@ -640,17 +669,29 @@ export class DesignDocSyncStore {
     const operation = this.operation(repoId, head);
     // A compacted version keeps its operation row (ancestry) but no longer has a payload.
     if (!row || !operation || row.compacted) return null;
+    const key = `${repoId}\u0000${head}`, stored = `${row.format}:${row.closure_json}`;
+    const cached = this.verifiedVersions?.get(key);
+    if (cached && cached.manifest === stored && canonicalPeerHash(cached.version.operation) === canonicalPeerHash(operation)) return cached.version;
     const manifest = JSON.parse(row.closure_json);
     const hydrate = (rows: Array<Record<string, unknown>>) => rows.map(({ blob_hash, ...metadata }) => {
       const blob = this.db.prepare('SELECT content FROM sync_blobs WHERE hash = ?').get(blob_hash) as { content: Buffer } | undefined;
       if (!blob) throw new PeerProtocolError('invalid', 'immutable blob missing');
       return { ...metadata, content: blob.content.toString(metadata.encoding === 'base64' ? 'base64' : 'utf8') };
     });
-    const closure = validateDocumentClosure(row.format === 1 ? { ...manifest, files: hydrate(manifest.files), history: hydrate(manifest.history) } : manifest);
-    if (closure.doc.id !== operation.docId || canonicalPeerHash(closure) !== operation.payloadHash) {
+    const closure = validatedClosure(row.format === 1 ? { ...manifest, files: hydrate(manifest.files), history: hydrate(manifest.history) } : manifest);
+    if (closure.doc.id !== operation.docId || closurePayloadHash(closure) !== operation.payloadHash) {
       throw new PeerProtocolError('conflict', 'immutable version payload hash mismatch');
     }
-    return { operation, closure };
+    const version = { operation, closure };
+    this.verifiedVersions?.set(key, { manifest: stored, version });
+    return version;
+  }
+
+  /** Runs one apply with a transaction-scoped verified-version cache; nested applies share the outer scope. */
+  private withVerifiedVersions<T>(fn: () => T): T {
+    if (this.verifiedVersions) return fn();
+    this.verifiedVersions = new Map();
+    try { return fn(); } finally { this.verifiedVersions = null; }
   }
 
   outgoing(intent: FrozenSyncIntent, handshake: Omit<PeerSessionOffer, 'sessionId' | 'versions' | 'heads' | 'scopeHash'>): PeerSessionOffer {
@@ -987,67 +1028,96 @@ export class DesignDocSyncStore {
     });
   }
 
-  applyTransfer(query: PeerReceiptQuery): PeerAppliedReceipt {
+  /**
+   * Read-only pre-verification of a staged transfer, run before the peer commit fence. Hydration is a pure function
+   * of the immutable staged header and sha256-verified blob bytes, so the fenced applyTransfer only re-checks the
+   * authorization and that the header is unchanged instead of re-assembling and re-validating every closure inside
+   * the fixed worker execution budget. Returns null when nothing is staged or the session is already applied.
+   */
+  prepareTransfer(query: PeerReceiptQuery): PreparedTransfer | null {
     return this.db.transaction(() => {
+      this.requireTransferIdentity(query);
+      if (this.checkpoint(query.repoId, query.senderReplicaId, query.sessionId, query.scopeHash, query.rosterDigest)) return null;
+      const transfer = this.stagedTransfer(query);
+      const prepared: PreparedTransfer = { header: canonicalPeerHash(transfer), ...this.hydrateTransfer(transfer, query) };
+      preparedTransfers.add(prepared);
+      return prepared;
+    });
+  }
+
+  applyTransfer(query: PeerReceiptQuery, prepared?: PreparedTransfer | null): PeerAppliedReceipt {
+    return this.withVerifiedVersions(() => this.db.transaction(() => {
       this.requireTransferIdentity(query);
       const previous = this.checkpoint(query.repoId, query.senderReplicaId, query.sessionId, query.scopeHash, query.rosterDigest);
       if (previous) return previous;
-      const transfer = this.transfer('in', query);
-      if (!transfer || transfer.scopeHash !== query.scopeHash || transfer.grantEpoch !== query.grantEpoch ||
-        transfer.rosterEpoch !== query.rosterEpoch || transfer.rosterDigest !== query.rosterDigest) throw new PeerProtocolError('invalid', 'staged transfer missing or unauthorized');
-      this.requireActiveStage(query);
-      this.requireTransferIdentity(transfer);
-      if (canonicalPeerHash(transferQuery(transfer)) !== canonicalPeerHash(query)) throw new PeerProtocolError('invalid', 'staged transfer fence mismatch');
-      const used = new Set<string>(), verified = new Set<string>();
-      const blob = (hash: string): Buffer => {
-        const descriptor = transfer.blobs.find((blob) => blob.hash === hash);
-        if (!descriptor) throw new PeerProtocolError('invalid', 'manifest references unoffered blob');
-        used.add(hash);
-        const cached = this.db.prepare('SELECT content FROM sync_blobs WHERE hash = ?').get(hash) as { content: Buffer } | undefined;
-        if (cached && cached.content.length === descriptor.bytes && peerBlobHash(cached.content) === hash) return cached.content;
-        const parts = this.db.prepare(`SELECT chunk_index, content FROM sync_transfer_chunks WHERE direction = 'in' AND repo_id = ? AND sender_replica_id = ?
-          AND session_id = ? AND blob_hash = ? ORDER BY chunk_index LIMIT ?`).all(query.repoId, query.senderReplicaId, query.sessionId, hash,
-             Math.ceil(MAX_PEER_CLOSURE_BYTES / MAX_PEER_CHUNK_BYTES) + 1) as Array<{ chunk_index: number; content: Buffer }>;
-        if (parts.length !== Math.ceil(descriptor.bytes / MAX_PEER_CHUNK_BYTES) || parts.some((part, index) => part.chunk_index !== index) ||
-          parts.reduce((sum, part) => sum + part.content.length, 0) !== descriptor.bytes) throw new PeerProtocolError('invalid', 'staged blob incomplete');
-        const bytes = Buffer.concat(parts.map((part) => part.content), descriptor.bytes);
-        if (!verified.has(hash) && peerBlobHash(bytes) !== hash) throw new PeerProtocolError('conflict', 'assembled blob hash mismatch');
-        verified.add(hash);
-        return bytes;
-      };
-      const versions = function* (): Generator<PeerVersion> {
-        for (const version of transfer.versions) {
-          const bytes = blob(version.manifestHash);
-          const manifest = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as Record<string, unknown>;
-          if (canonicalJson(manifest) !== bytes.toString('utf8')) throw new PeerProtocolError('invalid', 'noncanonical staged manifest');
-          let hydratedBytes = bytes.length;
-          const hydrate = (rows: unknown): unknown[] => {
-            if (!Array.isArray(rows) || rows.length > MAX_PEER_HISTORY_ROWS) throw new PeerProtocolError('invalid', 'invalid manifest rows');
-            return rows.map((row) => {
-              if (!row || typeof row !== 'object' || Array.isArray(row)) throw new PeerProtocolError('invalid', 'invalid manifest row');
-              const { blob_hash: hash, ...metadata } = row as Record<string, unknown>;
-              if (typeof hash !== 'string') throw new PeerProtocolError('invalid', 'missing manifest blob hash');
-              const descriptor = transfer.blobs.find((blob) => blob.hash === hash);
-              if (!descriptor || descriptor.bytes > MAX_TEXT_FILE_BYTES || metadata.size !== descriptor.bytes ||
-                !['utf8', 'base64'].includes(String(metadata.encoding))) throw new PeerProtocolError('invalid', 'manifest file blob size or encoding mismatch');
-              hydratedBytes += descriptor.bytes * (metadata.encoding === 'base64' ? 4 / 3 : 1);
-              if (hydratedBytes > MAX_PEER_CLOSURE_BYTES) throw new PeerProtocolError('limit', 'hydrated closure exceeds frozen cap');
-              const content = blob(hash);
-              return { ...metadata, content: metadata.encoding === 'base64' ? content.toString('base64') : new TextDecoder('utf-8', { fatal: true }).decode(content) };
-            });
-          };
-          const closure = validateDocumentClosure({ ...manifest, files: hydrate(manifest.files), history: hydrate(manifest.history) });
-          yield { operation: version.operation, closure };
-        }
-      };
-      const receipt = this.applyVerified(transfer, versions());
-      if (used.size !== transfer.blobs.length) throw new PeerProtocolError('invalid', 'staged blobs outside frozen closure');
+      const transfer = this.stagedTransfer(query);
+      // A preparation only counts for the byte-identical header it hydrated; anything else is re-hydrated here.
+      const hydrated = prepared && preparedTransfers.has(prepared) && prepared.header === canonicalPeerHash(transfer)
+        ? prepared : this.hydrateTransfer(transfer, query);
+      const receipt = this.applyVerified(transfer, hydrated.versions);
+      if (hydrated.used !== transfer.blobs.length) throw new PeerProtocolError('invalid', 'staged blobs outside frozen closure');
       this.db.prepare("DELETE FROM sync_transfer_chunks WHERE direction = 'in' AND repo_id = ? AND sender_replica_id = ? AND session_id = ?")
         .run(query.repoId, query.senderReplicaId, query.sessionId);
       this.db.prepare("DELETE FROM sync_transfers WHERE direction = 'in' AND repo_id = ? AND sender_replica_id = ? AND session_id = ?")
         .run(query.repoId, query.senderReplicaId, query.sessionId);
       return receipt;
+    }));
+  }
+
+  private stagedTransfer(query: PeerReceiptQuery): PeerTransfer {
+    const transfer = this.transfer('in', query);
+    if (!transfer || transfer.scopeHash !== query.scopeHash || transfer.grantEpoch !== query.grantEpoch ||
+      transfer.rosterEpoch !== query.rosterEpoch || transfer.rosterDigest !== query.rosterDigest) throw new PeerProtocolError('invalid', 'staged transfer missing or unauthorized');
+    this.requireActiveStage(query);
+    this.requireTransferIdentity(transfer);
+    if (canonicalPeerHash(transferQuery(transfer)) !== canonicalPeerHash(query)) throw new PeerProtocolError('invalid', 'staged transfer fence mismatch');
+    return transfer;
+  }
+
+  /** Assembles, hash-verifies and validates every staged closure; reads only. */
+  private hydrateTransfer(transfer: PeerTransfer, query: PeerReceiptQuery): { versions: PeerVersion[]; used: number } {
+    const used = new Set<string>(), verified = new Set<string>();
+    const blob = (hash: string): Buffer => {
+      const descriptor = transfer.blobs.find((blob) => blob.hash === hash);
+      if (!descriptor) throw new PeerProtocolError('invalid', 'manifest references unoffered blob');
+      used.add(hash);
+      const cached = this.db.prepare('SELECT content FROM sync_blobs WHERE hash = ?').get(hash) as { content: Buffer } | undefined;
+      if (cached && cached.content.length === descriptor.bytes && peerBlobHash(cached.content) === hash) return cached.content;
+      const parts = this.db.prepare(`SELECT chunk_index, content FROM sync_transfer_chunks WHERE direction = 'in' AND repo_id = ? AND sender_replica_id = ?
+        AND session_id = ? AND blob_hash = ? ORDER BY chunk_index LIMIT ?`).all(query.repoId, query.senderReplicaId, query.sessionId, hash,
+           Math.ceil(MAX_PEER_CLOSURE_BYTES / MAX_PEER_CHUNK_BYTES) + 1) as Array<{ chunk_index: number; content: Buffer }>;
+      if (parts.length !== Math.ceil(descriptor.bytes / MAX_PEER_CHUNK_BYTES) || parts.some((part, index) => part.chunk_index !== index) ||
+        parts.reduce((sum, part) => sum + part.content.length, 0) !== descriptor.bytes) throw new PeerProtocolError('invalid', 'staged blob incomplete');
+      const bytes = Buffer.concat(parts.map((part) => part.content), descriptor.bytes);
+      if (!verified.has(hash) && peerBlobHash(bytes) !== hash) throw new PeerProtocolError('conflict', 'assembled blob hash mismatch');
+      verified.add(hash);
+      return bytes;
+    };
+    const versions = transfer.versions.map((version): PeerVersion => {
+      const bytes = blob(version.manifestHash);
+      const manifest = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as Record<string, unknown>;
+      if (canonicalJson(manifest) !== bytes.toString('utf8')) throw new PeerProtocolError('invalid', 'noncanonical staged manifest');
+      let hydratedBytes = bytes.length;
+      const hydrate = (rows: unknown): unknown[] => {
+        if (!Array.isArray(rows) || rows.length > MAX_PEER_HISTORY_ROWS) throw new PeerProtocolError('invalid', 'invalid manifest rows');
+        return rows.map((row) => {
+          if (!row || typeof row !== 'object' || Array.isArray(row)) throw new PeerProtocolError('invalid', 'invalid manifest row');
+          const { blob_hash: hash, ...metadata } = row as Record<string, unknown>;
+          if (typeof hash !== 'string') throw new PeerProtocolError('invalid', 'missing manifest blob hash');
+          const descriptor = transfer.blobs.find((blob) => blob.hash === hash);
+          if (!descriptor || descriptor.bytes > MAX_TEXT_FILE_BYTES || metadata.size !== descriptor.bytes ||
+            !['utf8', 'base64'].includes(String(metadata.encoding))) throw new PeerProtocolError('invalid', 'manifest file blob size or encoding mismatch');
+          hydratedBytes += descriptor.bytes * (metadata.encoding === 'base64' ? 4 / 3 : 1);
+          if (hydratedBytes > MAX_PEER_CLOSURE_BYTES) throw new PeerProtocolError('limit', 'hydrated closure exceeds frozen cap');
+          const content = blob(hash);
+          return { ...metadata, content: metadata.encoding === 'base64' ? content.toString('base64') : new TextDecoder('utf-8', { fatal: true }).decode(content) };
+        });
+      };
+      const closure = validatedClosure({ ...manifest, files: hydrate(manifest.files), history: hydrate(manifest.history) });
+      closurePayloadHash(closure); // Warm the payload hash outside the fence; saveVersion re-uses it.
+      return { operation: version.operation, closure };
     });
+    return { versions, used: used.size };
   }
 
   private transfer(direction: 'in' | 'out', query: PeerReceiptQuery): PeerTransfer | null {
@@ -1097,7 +1167,7 @@ export class DesignDocSyncStore {
   }
 
   private applyVerified(offer: PeerReceiptQuery & PeerAncestorStubs & { heads: Record<string, string>; manual?: boolean }, versions: Iterable<PeerVersion>): PeerAppliedReceipt {
-    return this.db.transaction(() => {
+    return this.withVerifiedVersions(() => this.db.transaction(() => {
       const local = this.localRepository();
       if (local) this.requireDataMembers(local.repoId, local.replicaId, offer.senderReplicaId);
       if (!local || local.repoId !== offer.repoId || local.replicaId !== offer.recipientReplicaId ||
@@ -1215,7 +1285,7 @@ export class DesignDocSyncStore {
       this.db.prepare('INSERT INTO sync_checkpoints (repo_id, sender_replica_id, session_id, scope_hash, receipt_json) VALUES (?, ?, ?, ?, ?)')
         .run(offer.repoId, offer.senderReplicaId, offer.sessionId, offer.scopeHash, canonicalJson(stored));
       return receipt;
-    });
+    }));
   }
 
   private hasManualDoc(repoId: string, member: string, docId: string): boolean {
@@ -1310,12 +1380,13 @@ export class DesignDocSyncStore {
 
   private saveVersion(repoId: string, version: PeerVersion): void {
     const operation = validateOperation(version.operation);
-    const closure = validateDocumentClosure(version.closure);
-    if (operation.docId !== closure.doc.id || operation.payloadHash !== canonicalPeerHash(closure)) throw new PeerProtocolError('conflict', 'payload identity or hash mismatch');
+    const closure = validatedClosures.has(version.closure) ? version.closure : validatedClosure(version.closure);
+    if (operation.docId !== closure.doc.id || operation.payloadHash !== closurePayloadHash(closure)) throw new PeerProtocolError('conflict', 'payload identity or hash mismatch');
     if ((operation.kind === PEER_DELETE_KIND) !== isDeletionClosure(closure)) throw new PeerProtocolError('conflict', 'operation kind does not match payload');
     const prior = this.version(repoId, operation.id);
     if (prior) {
-      if (canonicalPeerHash(prior) !== canonicalPeerHash(version)) throw new PeerProtocolError('conflict', 'operation id payload mismatch');
+      // Both closures are proven to hash to their operation's payloadHash, so equal operations mean equal versions.
+      if (canonicalPeerHash(prior.operation) !== canonicalPeerHash(version.operation)) throw new PeerProtocolError('conflict', 'operation id payload mismatch');
       return;
     }
     const compacted = !!this.db.prepare('SELECT 1 FROM sync_versions WHERE repo_id = ? AND head_id = ? AND compacted = 1').get(repoId, operation.id);
@@ -1327,7 +1398,8 @@ export class DesignDocSyncStore {
     const fits = () => this.retainedVersions() < versionLimit && this.storedBytes() + estimate <= MAX_PEER_STORED_BYTES;
     if (!fits()) this.relieve(fits);
     if (this.retainedVersions() >= versionLimit) throw new PeerProtocolError('limit', 'durable version capacity reached');
-    const json = canonicalJson(this.manifest(closure)), bytes = Buffer.byteLength(json, 'utf8');
+    const manifest = this.manifest(closure) as { files: Array<{ blob_hash: string }>; history: Array<{ blob_hash: string }> };
+    const json = canonicalJson(manifest), bytes = Buffer.byteLength(json, 'utf8');
     this.reserveBytes(bytes);
     const historyCount = this.db.prepare('SELECT COUNT(*) AS n FROM sync_history_projections').get() as { n: number };
     let addedHistory = 0;
@@ -1351,10 +1423,11 @@ export class DesignDocSyncStore {
     else this.db.prepare('INSERT INTO sync_versions (repo_id, head_id, doc_id, payload_hash, closure_json, bytes) VALUES (?, ?, ?, ?, ?, ?)')
         .run(repoId, operation.id, operation.docId, operation.payloadHash, json, bytes);
     this.db.prepare('INSERT OR REPLACE INTO sync_version_formats VALUES (?, ?, 1)').run(repoId, operation.id);
-    for (const row of [...closure.files, ...closure.history]) {
-      this.db.prepare('INSERT OR IGNORE INTO sync_version_blobs VALUES (?, ?, ?)')
-        .run(repoId, operation.id, peerBlobHash(Buffer.from(row.content, row.encoding === 'base64' ? 'base64' : 'utf8')));
+    // manifest() already hashed (and stored) every row's bytes; reuse those content addresses.
+    for (const row of [...manifest.files, ...manifest.history]) {
+      this.db.prepare('INSERT OR IGNORE INTO sync_version_blobs VALUES (?, ?, ?)').run(repoId, operation.id, row.blob_hash);
     }
+    this.verifiedVersions?.set(`${repoId}\u0000${operation.id}`, { manifest: `1:${json}`, version: { operation: this.operation(repoId, operation.id)!, closure } });
   }
 
   private putBlob(content: Buffer): string {
