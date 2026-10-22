@@ -291,4 +291,14 @@ describe('checkRemoteLogin', () => {
     expect(await checkRemoteLogin(async () => { throw new Error('/etc/secret path'); }, signal)).toEqual({ ok: false, reason: 'ssh_unreachable' });
     expect(await checkRemoteLogin(async () => { throw 'str'; }, signal)).toEqual({ ok: false, reason: 'ssh_unreachable' });
   });
+
+  it('reports stream-local forwarding separately and keys detailed messages on their reason', async () => {
+    const { checkRemoteLogin } = await import('./peer-ssh-local.js');
+    const signal = new AbortController().signal;
+    expect(await checkRemoteLogin(async () => {
+      throw new Error('ssh_forwarding_refused: serving sshd must disable stream-local forwarding (AllowStreamLocalForwarding no)');
+    }, signal)).toEqual({ ok: false, reason: 'ssh_stream_local_allowed' });
+    expect(await checkRemoteLogin(async () => { throw new Error('ssh_auth_refused: detail'); }, signal)).toEqual({ ok: false, reason: 'ssh_auth_refused' });
+    expect(await checkRemoteLogin(async () => { throw new Error('mystery: detail'); }, signal)).toEqual({ ok: false, reason: 'ssh_unreachable' });
+  });
 });

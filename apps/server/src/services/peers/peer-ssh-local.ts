@@ -24,7 +24,8 @@ const OVERRIDE_USER_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/;
 
 const SSH_REASON_SET: ReadonlySet<string> = new Set(['ssh_remote_login_off', 'ssh_unreachable', 'ssh_auth_refused', 'ssh_forwarding_refused', 'ssh_host_key_mismatch'] satisfies SshReason[]);
 const fail = (reason: SshReason): Error => new Error(reason);
-const streamLocalRefused = (): Error => new Error('ssh_forwarding_refused: serving sshd must disable stream-local forwarding (AllowStreamLocalForwarding no)');
+const STREAM_LOCAL_MESSAGE = 'ssh_forwarding_refused: serving sshd must disable stream-local forwarding (AllowStreamLocalForwarding no)';
+const streamLocalRefused = (): Error => new Error(STREAM_LOCAL_MESSAGE);
 
 export type BannerResult = 'ok' | 'refused' | 'no-banner';
 
@@ -310,15 +311,20 @@ export async function preflightPeerSsh(host: string, port: number, signal: Abort
   }
 }
 
-export type RemoteLoginCheck = { ok: true } | { ok: false; reason: SshReason };
+/** Check-only reason: sshd on this computer still allows stream-local forwarding, which the link refuses to rely on. */
+export type RemoteLoginReason = SshReason | 'ssh_stream_local_allowed';
+export type RemoteLoginCheck = { ok: true } | { ok: false; reason: RemoteLoginReason };
 
 /**
  * Owner-facing Remote Login check for Add computer: the same probe and throwaway-key self-test that mints an invitation,
- * reported as a fixed reason the UI keys its directions on. Anything else (including an abort) reads as unreachable.
+ * reported as a fixed reason the UI keys its directions on. A detailed `reason: detail` message keys on its reason;
+ * anything else (including an abort) reads as unreachable.
  */
 export async function checkRemoteLogin(localEndpoint: (signal: AbortSignal) => Promise<unknown>, signal: AbortSignal): Promise<RemoteLoginCheck> {
   try { await localEndpoint(signal); return { ok: true }; } catch (error) {
-    const reason = error instanceof Error ? error.message : '';
+    const message = error instanceof Error ? error.message : '';
+    if (message === STREAM_LOCAL_MESSAGE) return { ok: false, reason: 'ssh_stream_local_allowed' };
+    const reason = message.split(':', 1)[0]!;
     return { ok: false, reason: (SSH_REASON_SET.has(reason) ? reason : 'ssh_unreachable') as SshReason };
   }
 }

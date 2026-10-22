@@ -36,6 +36,16 @@ describe('AddComputer', () => {
     expect(api.create).toHaveBeenCalledOnce();
   });
 
+  it('shows the stream-local setting directions without mentioning another computer', async () => {
+    api.checkRemoteLogin.mockResolvedValueOnce({ ok: false, reason: 'ssh_stream_local_allowed' });
+    render(<AddComputer connections={[]} />);
+    const text = (await screen.findByRole('alert')).textContent ?? '';
+    expect(text).toMatch(/needs one more setting/);
+    expect(text).toContain('AllowStreamLocalForwarding no');
+    expect(text).not.toMatch(/other computer/);
+    expect(api.create).not.toHaveBeenCalled();
+  });
+
   it('shows a generic title for an unknown reason', async () => {
     api.checkRemoteLogin.mockResolvedValueOnce({ ok: false, reason: 'mystery' });
     render(<AddComputer connections={[]} />);

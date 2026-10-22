@@ -8,6 +8,16 @@ describe('sshGuideFor', () => {
     expect(guide?.steps.length).toBeGreaterThan(0);
     expect(JSON.stringify(guide)).not.toMatch(/Add peer/);
   });
+  it('keeps every guide about this computer, never another one', () => {
+    for (const reason of ['ssh_remote_login_off', 'ssh_unreachable', 'ssh_auth_refused', 'ssh_forwarding_refused', 'ssh_stream_local_allowed', 'ssh_host_key_mismatch']) {
+      const guide = sshGuideFor(reason);
+      expect(guide?.steps.at(-1)).toMatch(/Check again/);
+      expect(JSON.stringify(guide)).not.toMatch(/other computer|both computers|new invitation/);
+    }
+  });
+  it('tells the owner how to refuse stream-local forwarding', () => {
+    expect(sshGuideFor('ssh_stream_local_allowed')?.steps.join(' ')).toContain('AllowStreamLocalForwarding no');
+  });
   it('returns null for unknown, inherited or empty reasons', () => {
     expect(sshGuideFor('nope')).toBeNull();
     expect(sshGuideFor('toString')).toBeNull();

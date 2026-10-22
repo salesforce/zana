@@ -203,7 +203,7 @@ export const peerConnectionListResponseSchema = z.object({ connections: z.array(
 export type PeerConnectionListResponse = z.infer<typeof peerConnectionListResponseSchema>;
 export const peerRemoteLoginCheckResponseSchema = z.union([
   z.object({ ok: z.literal(true) }).strict(),
-  z.object({ ok: z.literal(false), reason: z.enum(["ssh_remote_login_off", "ssh_unreachable", "ssh_auth_refused", "ssh_forwarding_refused", "ssh_host_key_mismatch"]) }).strict(),
+  z.object({ ok: z.literal(false), reason: z.enum(["ssh_remote_login_off", "ssh_unreachable", "ssh_auth_refused", "ssh_forwarding_refused", "ssh_stream_local_allowed", "ssh_host_key_mismatch"]) }).strict(),
 ]);
 export type PeerRemoteLoginCheckResponse = z.infer<typeof peerRemoteLoginCheckResponseSchema>;
 export const createPeerConnectionResponseSchema = z.object({
