@@ -1,7 +1,7 @@
 /** @vitest-environment happy-dom */
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { DEFAULT_LAYOUT, MAX_EDITOR_TABS, parseTab, readStudioLayout, useStudioLayout, withoutTabs } from './studio-layout.js';
+import { DEFAULT_LAYOUT, MAX_AGENTS, MAX_EDITOR_TABS, parseTab, readStudioLayout, useStudioLayout, viewTab, withoutTabs } from './studio-layout.js';
 
 beforeEach(() => localStorage.clear());
 afterEach(cleanup);
@@ -110,4 +110,180 @@ it('closes several tabs and picks the next active tab', () => {
   act(() => { for (const id of ['a', 'b', 'c']) result.current.openTab(tab(id)); });
   act(() => result.current.closeTabs(['a', 'c'], 'b'));
   expect(result.current.state).toMatchObject({ tabs: [tab('b')], activeTab: 'b' });
+});
+
+const ref = (name: string) => ({ path: `${name}.agent`, label: name });
+const manyAgents = (count: number) => Array.from({ length: count }, (_, index) => ref(`a${index}`));
+
+it('parses view tabs only for the four view kinds', () => {
+  for (const target of ['preview', 'tests', 'graph', 'org-preview']) expect(parseTab({ id: `view:${target}`, kind: 'view', label: target, target })).toMatchObject({ kind: 'view', target });
+  expect(parseTab({ id: 'view:x', kind: 'view', label: 'x', target: 'release' })).toBeNull();
+  expect(parseTab({ id: 'view:x', kind: 'view', label: 'x' })).toBeNull();
+});
+
+it('opens agents with a Script tab, keeps a workspace per agent and switches between them', () => {
+  const { result } = renderHook(() => useStudioLayout('p-agents'));
+  act(() => { result.current.openAgent('a.agent', 'a'); result.current.openAgent('b.agent', 'b'); });
+  expect(result.current.state).toMatchObject({ activeAgent: 'b.agent', activeTab: 'agent:b.agent' });
+  expect(result.current.state.agents.map(agent => agent.path)).toEqual(['a.agent', 'b.agent']);
+  act(() => result.current.openTab(viewTab('preview')));
+  act(() => result.current.patch({ bottomOpen: true, bottomTab: 'trace', rail: 'comments' }));
+  act(() => result.current.patchWorkspace('b.agent', { threadId: 't-1' }));
+  expect(result.current.state).toMatchObject({ bottomOpen: true, rail: 'comments', threadId: 't-1', activeTab: 'view:preview' });
+  act(() => result.current.selectAgent('a.agent'));
+  expect(result.current.state).toMatchObject({ activeAgent: 'a.agent', activeTab: 'agent:a.agent', bottomOpen: false, rail: null });
+  expect(result.current.state.tabs.map(tab => tab.id)).toEqual(['agent:a.agent']);
+  expect(result.current.state.threadId).toBeUndefined();
+  act(() => result.current.selectAgent('nope'));
+  expect(result.current.state.activeAgent).toBe('a.agent');
+  act(() => result.current.selectAgent('b.agent'));
+  expect(result.current.state.tabs.map(tab => tab.id)).toEqual(['agent:b.agent', 'view:preview']);
+  act(() => result.current.openAgent('a.agent', 'renamed'));
+  expect(result.current.state.agents[0]).toEqual({ path: 'a.agent', label: 'renamed' });
+  expect(result.current.state.tabs[0]).toMatchObject({ label: 'renamed' });
+  act(() => result.current.patchWorkspace('missing.agent', { threadId: 'x' }));
+  expect(result.current.state.workspaces['missing.agent']).toBeUndefined();
+});
+
+it('closing an agent selects the right neighbour, else the left, and drops its workspace', () => {
+  const { result } = renderHook(() => useStudioLayout('p-close'));
+  act(() => { for (const name of ['a', 'b', 'c']) result.current.openAgent(`${name}.agent`, name); });
+  act(() => result.current.selectAgent('b.agent'));
+  act(() => result.current.closeAgent('b.agent'));
+  expect(result.current.state.activeAgent).toBe('c.agent');
+  expect(result.current.state.workspaces['b.agent']).toBeUndefined();
+  act(() => result.current.closeAgent('c.agent'));
+  expect(result.current.state.activeAgent).toBe('a.agent');
+  act(() => result.current.closeAgent('missing.agent'));
+  act(() => result.current.closeAgent('a.agent'));
+  expect(result.current.state).toMatchObject({ activeAgent: null, agents: [], tabs: [] });
+  expect(result.current.state.workspaces).toEqual({});
+});
+
+it('closing an inactive agent keeps the active one', () => {
+  const { result } = renderHook(() => useStudioLayout('p-inactive'));
+  act(() => { result.current.openAgent('a.agent', 'a'); result.current.openAgent('b.agent', 'b'); });
+  act(() => result.current.closeAgent('a.agent'));
+  expect(result.current.state.activeAgent).toBe('b.agent');
+});
+
+it('caps open agents, dropping the oldest inactive workspace and keeping the new one', () => {
+  const { result } = renderHook(() => useStudioLayout('p-cap'));
+  act(() => { for (const agent of manyAgents(MAX_AGENTS + 3)) result.current.openAgent(agent.path, agent.label); });
+  expect(result.current.state.agents).toHaveLength(MAX_AGENTS);
+  expect(result.current.state.agents.at(-1)!.path).toBe(`a${MAX_AGENTS + 2}.agent`);
+  expect(Object.keys(result.current.state.workspaces)).toHaveLength(MAX_AGENTS);
+  expect(result.current.state.workspaces['a0.agent']).toBeUndefined();
+  expect(result.current.state.activeAgent).toBe(`a${MAX_AGENTS + 2}.agent`);
+});
+
+it('round-trips workspaces and validates what it reads', () => {
+  const stored = {
+    tool: 'files', activeAgent: 'b.agent', explorerOpen: true,
+    agents: [ref('a'), ref('b'), ref('a'), { path: '', label: 'x' }, 'junk', ...manyAgents(20)],
+    workspaces: {
+      'a.agent': { tabs: [{ id: 'agent:a.agent', kind: 'agent', label: 'a', path: 'a.agent' }, { id: 'view:graph', kind: 'view', label: 'Graph', target: 'graph' }, { id: 'view:bad', kind: 'view', label: 'bad', target: 'release' }], activeTab: 'view:graph', bottomOpen: true, bottomTab: 'trace', rail: 'assistant', threadId: 'th-1' },
+      'b.agent': { tabs: 'nope', activeTab: 5, rail: 'evil', threadId: 4 },
+      'stranger.agent': { tabs: [] }, 'a3.agent': 'junk'
+    }
+  };
+  localStorage.setItem('k', JSON.stringify(stored));
+  const state = readStudioLayout('k');
+  expect(state.agents).toHaveLength(MAX_AGENTS);
+  expect(state.activeAgent).toBe('b.agent');
+  expect(state.workspaces['stranger.agent']).toBeUndefined();
+  expect(state.workspaces['a.agent']).toMatchObject({ activeTab: 'view:graph', bottomOpen: true, bottomTab: 'trace', rail: 'assistant', threadId: 'th-1' });
+  expect(state.workspaces['a.agent'].tabs.map(tab => tab.id)).toEqual(['agent:a.agent', 'view:graph']);
+  // A workspace that lost its Script tab (or never had one) gets it back; junk fields fall back.
+  expect(state.workspaces['b.agent']).toMatchObject({ tabs: [{ id: 'agent:b.agent', kind: 'agent' }], activeTab: 'agent:b.agent', rail: null });
+  expect(state.workspaces['b.agent'].threadId).toBeUndefined();
+  expect(state.workspaces['a3.agent'].tabs.map(tab => tab.id)).toEqual(['agent:a3.agent']);
+  expect(state).toMatchObject({ tool: 'files', activeTab: 'agent:b.agent' });
+  localStorage.setItem('k', JSON.stringify({ agents: [ref('a')], activeAgent: 'ghost.agent' }));
+  expect(readStudioLayout('k').activeAgent).toBe('a.agent');
+  localStorage.setItem('k', JSON.stringify({ agents: [], workspaces: { '': { tabs: [{ id: 'org-agents', kind: 'org', label: 'Org agents', target: 'agents' }] } } }));
+  expect(readStudioLayout('k')).toMatchObject({ activeAgent: null, activeTab: 'org-agents' });
+});
+
+it('migrates the old flat layout into per-agent workspaces', () => {
+  const agent = (name: string) => ({ id: `agent:${name}.agent`, kind: 'agent', label: name, path: `${name}.agent` });
+  const apex = { id: 'apex:X', kind: 'apex', label: 'X', target: 'apex://X' };
+  localStorage.setItem('k', JSON.stringify({ tool: 'release', tabs: [agent('a'), agent('b'), apex, { id: 'view:graph', kind: 'view', label: 'g', target: 'graph' }], activeTab: 'apex:X', bottomOpen: true, bottomTab: 'tests' }));
+  const state = readStudioLayout('k');
+  expect(state.agents.map(row => row.path)).toEqual(['a.agent', 'b.agent']);
+  expect(state.activeAgent).toBe('a.agent');
+  expect(state.tool).toBe('code'); // 'release' no longer exists
+  expect(state).toMatchObject({ activeTab: 'apex:X', bottomOpen: true, bottomTab: 'tests' });
+  expect(state.tabs.map(tab => tab.id)).toEqual(['agent:a.agent', 'apex:X']);
+  expect(state.workspaces['b.agent'].tabs.map(tab => tab.id)).toEqual(['agent:b.agent']);
+  localStorage.setItem('k', JSON.stringify({ tabs: [agent('a'), agent('b')], activeTab: 'agent:b.agent' }));
+  expect(readStudioLayout('k').activeAgent).toBe('b.agent');
+  localStorage.setItem('k', JSON.stringify({ tabs: [apex], activeTab: 'apex:X' }));
+  expect(readStudioLayout('k')).toMatchObject({ activeAgent: null, tabs: [apex], activeTab: 'apex:X' });
+});
+
+const ORG_AGENTS = { id: 'org-agents', kind: 'org' as const, label: 'Org agents', target: 'agents' };
+const ORG_TESTS = { id: 'org-tests', kind: 'org' as const, label: 'Tests', target: 'tests' };
+
+it('keeps org tabs project-level: they follow every agent switch and close for all of them', () => {
+  const { result } = renderHook(() => useStudioLayout('org'));
+  act(() => { result.current.openAgent('a.agent', 'a'); result.current.openAgent('b.agent', 'b'); });
+  act(() => result.current.openTab(ORG_AGENTS));
+  act(() => result.current.openTab(ORG_TESTS));
+  expect(result.current.state.tabs.map(tab => tab.id)).toEqual(['agent:b.agent', 'org-agents', 'org-tests']);
+  expect(result.current.state.workspaces['b.agent'].tabs.map(tab => tab.id)).toEqual(['agent:b.agent']); // not stored per agent
+  act(() => result.current.selectAgent('a.agent'));
+  expect(result.current.state.tabs.map(tab => tab.id)).toEqual(['agent:a.agent', 'org-agents', 'org-tests']);
+  expect(result.current.state.activeTab).toBe('agent:a.agent');
+  // The active org tab is per agent, and falls back to a Script tab where it is not remembered.
+  act(() => result.current.selectTab('org-tests'));
+  act(() => result.current.selectAgent('b.agent'));
+  expect(result.current.state.activeTab).toBe('org-tests');
+  act(() => result.current.selectAgent('a.agent'));
+  expect(result.current.state.activeTab).toBe('org-tests');
+  act(() => result.current.closeTab('org-tests'));
+  expect(result.current.state.tabs.map(tab => tab.id)).toEqual(['agent:a.agent', 'org-agents']);
+  act(() => result.current.selectAgent('b.agent'));
+  expect(result.current.state.tabs.map(tab => tab.id)).toEqual(['agent:b.agent', 'org-agents']);
+  expect(result.current.state.activeTab).toBe('agent:b.agent'); // org-tests was closed
+  act(() => result.current.closeAgent('b.agent'));
+  expect(result.current.state.tabs.map(tab => tab.id)).toEqual(['agent:a.agent', 'org-agents']);
+  // They also survive a reload.
+  expect(readStudioLayout('salesforce:studio:org').orgTabs).toEqual([ORG_AGENTS]);
+});
+
+it('hoists org tabs stored per workspace by earlier layouts', () => {
+  const script = (n: string) => ({ id: `agent:${n}.agent`, kind: 'agent', label: n, path: `${n}.agent` });
+  localStorage.setItem('k', JSON.stringify({
+    agents: [{ path: 'a.agent', label: 'a' }, { path: 'b.agent', label: 'b' }], activeAgent: 'b.agent',
+    workspaces: { 'a.agent': { tabs: [script('a'), ORG_AGENTS], activeTab: 'org-agents' }, 'b.agent': { tabs: [script('b'), ORG_AGENTS, ORG_TESTS] } }
+  }));
+  const state = readStudioLayout('k');
+  expect(state.orgTabs.map(tab => tab.id)).toEqual(['org-agents', 'org-tests']);
+  expect(state.workspaces['a.agent'].tabs.map(tab => tab.id)).toEqual(['agent:a.agent']);
+  expect(state.tabs.map(tab => tab.id)).toEqual(['agent:b.agent', 'org-agents', 'org-tests']);
+  expect(state.workspaces['a.agent'].activeTab).toBe('org-agents');
+  // A flat layout's org tab moves to the project level too; a stored `orgTabs` list only keeps org tabs.
+  localStorage.setItem('k', JSON.stringify({ tabs: [script('a'), ORG_TESTS], activeTab: 'org-tests', orgTabs: [ORG_AGENTS, { id: 'apex:X', kind: 'apex', label: 'X', target: 'apex://X' }] }));
+  const flat = readStudioLayout('k');
+  expect(flat.orgTabs.map(tab => tab.id)).toEqual(['org-agents', 'org-tests']);
+  expect(flat).toMatchObject({ activeTab: 'org-tests' });
+});
+
+it('seeds an unseen scope from the fallback scope, then keeps its own key', () => {
+  const { result: tab } = renderHook(() => useStudioLayout('proj'));
+  act(() => tab.current.openAgent('a.agent', 'a'));
+  const { result: win } = renderHook(() => useStudioLayout('proj|window', 'proj'));
+  expect(win.current.state.agents.map(agent => agent.path)).toEqual(['a.agent']);
+  act(() => win.current.openAgent('b.agent', 'b'));
+  expect(JSON.parse(localStorage.getItem('salesforce:studio:proj|window')!).agents).toHaveLength(2);
+  expect(JSON.parse(localStorage.getItem('salesforce:studio:proj')!).agents).toHaveLength(1); // the tab's layout is untouched
+  // once the window has its own layout the fallback is no longer read
+  const { result: again } = renderHook(() => useStudioLayout('proj|window', 'proj'));
+  expect(again.current.state.agents).toHaveLength(2);
+  // a fallback equal to the scope, or without a stored layout, adds nothing
+  const { result: same } = renderHook(() => useStudioLayout('fresh', 'fresh'));
+  expect(same.current.state.agents).toEqual([]);
+  const { result: none } = renderHook(() => useStudioLayout('fresh2', 'missing'));
+  expect(none.current.state.agents).toEqual([]);
 });

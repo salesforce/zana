@@ -2,7 +2,7 @@ import { AGENT_SOURCE_MAX_LABEL, isProposeEditInput, PREVIEW_ENGINES, type Studi
 import { parsePreviewContext } from './preview-context.js';
 
 /** Isomorphic input validation for the Studio UI verbs (server request() and the renderer executor share it). */
-export const STUDIO_UI_COMMANDS = ['editor.proposeEdit', 'preview.start', 'preview.send', 'trace.focus', 'graph.focus', 'layout.set', 'orgTests.open', 'context.set'] as const;
+export const STUDIO_UI_COMMANDS = ['editor.proposeEdit', 'preview.start', 'preview.send', 'trace.focus', 'graph.focus', 'layout.set', 'orgTests.open', 'simulations.open', 'context.set'] as const;
 export type StudioUiCommandName = typeof STUDIO_UI_COMMANDS[number];
 export const PREVIEW_TEXT_MAX = 4000;
 const presetId = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(value);
@@ -35,6 +35,9 @@ export function validateUiCommandInput(command: string, input: Record<string, un
       if (unknownKeys(input, ['name', 'runId'])) return 'orgTests.open accepts only name and runId.';
       if (input.name !== undefined && (typeof input.name !== 'string' || !/^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(input.name))) return 'name must be an AiEvaluationDefinition API name.';
       return input.runId === undefined || (typeof input.runId === 'string' && /^[A-Za-z0-9]{15,18}$/.test(input.runId)) ? undefined : 'runId must be 15 to 18 letters and digits.';
+    case 'simulations.open':
+      if (unknownKeys(input, ['batchId'])) return 'simulations.open accepts only batchId.';
+      return input.batchId === undefined || (typeof input.batchId === 'string' && /^[A-Za-z0-9-]{1,64}$/.test(input.batchId)) ? undefined : 'batchId must be the id simulations.start returned.';
     case 'context.set':
       if (unknownKeys(input, ['values', 'presetId', 'merge'])) return 'context.set accepts only values, presetId and merge.';
       if ((input.values === undefined) === (input.presetId === undefined)) return 'Provide values or presetId.';

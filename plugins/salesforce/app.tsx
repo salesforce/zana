@@ -2,7 +2,7 @@ import { registerSalesforcePanels } from './panels.js';
 import { registerStudioDirectives } from './src/app/directives/index.js';
 import { definePluginApp, useComposerView } from '@zana-ai/zcc-plugin-sdk/app';
 import { AgentFileOpener } from './src/app/AgentFileOpener.js';
-import { AgentforcePlaygroundPanel } from './src/app/AgentScriptPanel.js';
+import { AgentThreadPanel } from './src/app/AgentThreadPanel.js';
 import { AgentforcePreviewPanel } from './src/app/AgentforcePreviewPanel.js';
 import { CreateSalesforceProjectDialog } from './src/app/CreateSalesforceProjectDialog.js';
 import { GuardrailReview } from './src/app/GuardrailReview.js';
@@ -10,15 +10,13 @@ import { OrgPicker } from './src/app/OrgPicker.js';
 import { SalesforceOrgsPanel } from './src/app/SalesforceOrgsPanel.js';
 import { SalesforceProjectTab } from './src/app/SalesforceProjectTab.js';
 import { SalesforceStudioDetachedCard } from './src/app/SalesforceStudioDetachedCard.js';
-import { openAgentforcePlayground, openAgentforcePreview } from './src/app/agentforce-panel-params.js';
+import { openAgentforcePreview } from './src/app/agentforce-panel-params.js';
 import { AGENT_SCRIPT_TOOLS } from './src/app/AgentScriptTools.js';
 import { studioPanelTool } from './src/app/studio/StudioPanelTool.js';
+import { STUDIO_TAB_ID } from './src/app/studio-window-route.js';
 import { isPanelTool, panelToolActionId } from './src/app/studio/studio-tool-bridge.js';
 
-const STUDIO_TOOL_ICONS: Record<string, string> = {
-  agents: 'Bot', graph: 'Network', preview: 'Play', test: 'FlaskConical', release: 'Rocket',
-  actions: 'Zap', comments: 'MessageSquare', 'org-preview': 'Cloud'
-};
+const STUDIO_TOOL_ICONS: Record<string, string> = { actions: 'Zap', comments: 'MessageSquare' };
 
 function hostReact() {
   return (globalThis as { __ZCC_HOST_REACT__?: typeof import('react') }).__ZCC_HOST_REACT__;
@@ -113,7 +111,7 @@ export default definePluginApp((app) => {
   });
   app.slots.fileOpener({
     id: 'agent',
-    title: 'Agentforce Playground',
+    title: 'Agentforce',
     extensions: ['agent', 'afscript'],
     component: AgentFileOpener
   });
@@ -130,12 +128,12 @@ export default definePluginApp((app) => {
     detachedPlaceholder: SalesforceStudioDetachedCard
   });
   app.slots.threadPanelAction({
-    id: 'playground',
-    title: 'Playground',
-    icon: 'FileCode',
+    id: 'agent',
+    title: 'Agent',
+    icon: 'Bot',
     layout: 'flush',
     scopes: ['thread', 'agent-session'],
-    component: AgentforcePlaygroundPanel
+    component: AgentThreadPanel
   });
   app.slots.threadPanelAction({
     id: 'preview',
@@ -145,7 +143,8 @@ export default definePluginApp((app) => {
     scopes: ['thread', 'agent-session'],
     component: AgentforcePreviewPanel
   });
-  // Studio's tools in the side panel beside the Salesforce tab; Studio renders them (studio-tool-bridge).
+  // The Assistant rail's Actions and Comments tabs beside the Studio; Studio renders them (studio-tool-bridge).
+  // Graph, Preview, Tests and Org preview are Studio view tabs, not host panels.
   for (const tool of AGENT_SCRIPT_TOOLS) {
     if (!isPanelTool(tool.id)) continue;
     app.slots.threadPanelAction({
@@ -186,13 +185,10 @@ export default definePluginApp((app) => {
   });
   app.slots.commandPaletteAction({
     id: 'open-playground',
-    title: 'Open Agentforce Playground',
-    isAvailable: (ctx) => Boolean(ctx.threadId),
+    title: 'Open Agentforce Studio',
+    isAvailable: (ctx) => Boolean(ctx.projectId),
     run: (ctx) => {
-      openAgentforcePlayground({
-        openThreadPanel: (options) => ctx.openPanel({ actionId: options.actionId, title: options.title, params: options.params }),
-        projectId: ctx.projectId,
-      });
+      if (ctx.projectId) ctx.toProject(ctx.projectId, { tabId: STUDIO_TAB_ID });
     }
   });
   app.slots.commandPaletteAction({

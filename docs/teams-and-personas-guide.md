@@ -318,8 +318,31 @@ in the same Project.
 **Review first or start now.** How you phrase it picks the path. "Build it with
 X", "prepare a launch for X" or anything unclear gets the review-first card above.
 Only an explicit "run it now with X", "start X immediately" or "skip the Inbox"
-makes the agent start the Squad straight away with `execution.start`, as the run's
+makes the agent start the Squad straight away (`squad_launch` with `mode: 'now'`), as the run's
 owner. Either way the agent says in one line which path it took.
+
+Agents launch Squads with the `squad_launch` tool (`mode: 'review'` or `'now'`);
+`squad_propose` still works and equals review mode. `execution.start` remains
+the low-level path (explicit slots, work units, policy) and is deprecated for
+agent use.
+
+**Launch approval.** The agent picks the mode from what you asked: `now` only
+when you explicitly said to run it now, `review` otherwise. Each Squad (Squad
+editor) and each Project (Project settings) also has a **Launch approval** setting. **Review before
+launch** makes agents propose the run so you press Launch from the Inbox: `now`,
+agent `execution.start` and agent `launch_team` are refused with
+`LAUNCH_REVIEW_REQUIRED`. Review is a floor: if either the Squad or its Project
+says Review before launch, the run needs review; a Squad set to launch directly
+cannot lift its Project's review. Launching from the composer, schedules and
+triggers is not affected.
+
+These settings constrain the agent launch tools (`squad_launch`,
+`execution.start`, `launch_team`). They are not a sandbox: an agent with shell
+or local network access to the app can still reach the product HTTP API that
+the desktop UI uses. Treat them as guardrails for cooperative agents, not as a
+security boundary against a hostile one. Bounds: a repeat launch
+within 10 minutes returns the same run, one launch is in flight per conversation,
+and an agent owns at most 3 active runs.
 
 An owner that starts the run with `notify: true` (the bundled skills do) gets the
 same `[Squad report]` when its run finishes or needs a human answer, so it doesn't
@@ -328,7 +351,7 @@ with `execution.resume_binding` (Recover orchestrator relaunches the run's coord
 and leaves the reports with the owner's session). It may answer
 such a question itself with `execution.respond` when what you told it decides it;
 otherwise it asks you, and the question is in your Inbox too. An owner gets no
-"Squad completed" Inbox entry: the run is on its board, and if the owner's session is gone when the run ends, the report is dropped with no Inbox fallback. Without `notify: true`,
+"Squad completed" Inbox entry: the run is on its board, and if the owner's conversation is gone when the run ends, the report falls back to the Project Inbox. Without `notify: true`,
 `execution.start` behaves as before.
 
 Rules: the Squad always runs in the proposing session's Project. Its files can be

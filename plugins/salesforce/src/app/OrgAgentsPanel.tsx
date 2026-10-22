@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bot, Download, Plus, RefreshCw, Rocket, Search } from 'lucide-react';
+import { Bot, Download, Plus, RefreshCw, Search } from 'lucide-react';
 import { callPluginRpc } from '@zana-ai/zcc-plugin-sdk/app';
 import type { OrgAgent, OrgAgentCatalog, OrgAgentRetrieval, RetrievedOrgAgent } from '../../lib/org-agent-contract.js';
 import { EmptyState, LoadingState, SalesforceState } from './components/SalesforceState.js';
@@ -16,13 +16,12 @@ export function lastChanged(agent: OrgAgent, now = new Date()): { label: string;
   return { label: date.toLocaleDateString(undefined, options), iso: date.toISOString() };
 }
 
-export function OrgAgentsPanel({ pluginId, projectId, visible, editorReady, onOpen, onNew, localFiles = [], onLocalOpen, onPublish, focus, onFocusHandled }: {
+export function OrgAgentsPanel({ pluginId, projectId, visible, editorReady, onOpen, onNew, localFiles = [], onLocalOpen, focus, onFocusHandled }: {
   pluginId: string; projectId?: string; visible: boolean; editorReady: boolean;
   onNew?(): void;
   /** The project's agents: listed first, opened in place, and left out of the org list so they are not retrieved again. */
-  localFiles?: Array<{ path: string; apiName: string; publishable?: boolean }>;
+  localFiles?: Array<{ path: string; apiName: string }>;
   onLocalOpen?(path: string): void;
-  onPublish?(path: string): void;
   onOpen(file: RetrievedOrgAgent, isCurrent: () => boolean): Promise<void>;
   /** A new `seq` focuses the search; with `name`, it also filters to that agent and retrieves & opens it. */
   focus?: { name?: string; seq: number } | null;
@@ -182,7 +181,6 @@ export function OrgAgentsPanel({ pluginId, projectId, visible, editorReady, onOp
         <button type="button" className="af-agent-row-main" disabled={!editorReady} title={file.path} onClick={() => onLocalOpen?.(file.path)}>
           <Bot size={14} aria-hidden="true" /><span className="af-agent-row-name">{label(file.apiName)}</span><span className="af-agent-open-pill">Open</span>
         </button>
-        {file.publishable && onPublish && <button type="button" className="icon-btn af-agent-row-action" aria-label={`Review publish for ${file.apiName}`} title="Review publish…" onClick={() => onPublish(file.path)}><Rocket size={13} aria-hidden="true" /></button>}
       </div>)}
     </section>}
     {!loading && !error && loaded && agents.length === 0 && locals.length === 0 && <EmptyState compact art={query ? 'search' : 'agents'} title={query ? 'No matching agents' : 'No Agent Script sources found'}

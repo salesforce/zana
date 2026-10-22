@@ -1,5 +1,6 @@
 /**
- * Studio tools shown in the host side panel beside the Salesforce page.
+ * Studio tools shown in the host side panel beside the Salesforce page (the Assistant rail's
+ * Actions and Comments; the other tools are Studio view tabs).
  *
  * Each tool keeps one DOM node per project. Studio renders the tool into that
  * node through a portal, so its state (preview conversation, test results,
@@ -11,7 +12,7 @@
  */
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 
-export const PANEL_TOOLS = ['graph', 'preview', 'test', 'release', 'actions', 'comments', 'org-preview'] as const;
+export const PANEL_TOOLS = ['actions', 'comments'] as const;
 export type PanelTool = typeof PANEL_TOOLS[number];
 export const isPanelTool = (value: unknown): value is PanelTool => PANEL_TOOLS.includes(value as PanelTool);
 export const panelToolActionId = (tool: PanelTool) => `studio-${tool}`;

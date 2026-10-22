@@ -10,7 +10,7 @@ import type { TerminalThemeId } from './terminal-themes.js';
 import type { WorkflowArgument } from './workflow-args.js';
 import type { MenubarAgent } from './menubar-agent.js';
 import type { NotificationLevel, OwnNotificationLevel } from './notification-levels.js';
-import type { SquadPlanning } from './squad-proposal.js';
+import type { LaunchApproval, SquadPlanning } from './squad-proposal.js';
 
 export type { WorkflowArgument } from './workflow-args.js';
 export type { TerminalThemeId } from './terminal-themes.js';
@@ -1600,6 +1600,24 @@ export interface TerminalSession {
    */
   lastInputAt?: number;
   /**
+   * Like {@link lastInputAt}, but stamped only when the write carried real key
+   * input or a paste. Terminal-generated reports that xterm forwards on the same
+   * channel (mouse motion/clicks, focus in/out, cursor-position, device-attribute
+   * and OSC color-query replies) stamp `lastInputAt` but not this. Use it to
+   * wait for a person to stop typing. In-memory only; absent ⇒ never typed.
+   */
+  lastKeyInputAt?: number;
+  /**
+   * HEURISTIC: the user has probably left a half-typed line in the prompt.
+   * True while an approximate per-session character count is above zero:
+   * printable keys (Shift+Enter newlines included) and paste content add,
+   * BS/DEL subtracts, Enter, Ctrl-C and a `reply()` submit reset it, and
+   * Up/Down history recall on an empty prompt holds it. Ctrl-W, Ctrl-U,
+   * Alt-Backspace and Esc leave it unchanged. In-memory only; absent ⇒ never
+   * typed.
+   */
+  draftPending?: boolean;
+  /**
    * Set when this session was opened as part of a {@link Team} launch. Groups
    * the launch's tabs into one manageable unit on the Agents board ("By team")
    * and marks the orchestrator. Absent on every non-team session.
@@ -3034,6 +3052,13 @@ export interface ProjectSettings {
    */
   worktreeIsolation?: boolean;
   /**
+   * Whether Squad runs an agent starts in this project need the user's Launch
+   * first. Review is a floor: when either this Project or the Squad asks for
+   * review the run needs the user's Launch, and a Squad cannot lift a Project's
+   * review. Absent ⇒ direct.
+   */
+  launchApproval?: LaunchApproval;
+  /**
    * SSH remotes only. When true, new threads run the harness on this machine
    * and execute file/shell tools on the remote over the existing SSH
    * ControlMaster path. Off (default) keeps SSH PTY (`ssh -t`) for the CLI.
@@ -4391,6 +4416,8 @@ export interface Team {
   transport?: SquadTransport;
   /** Planning mode preselected when this Squad is picked or proposed. Absent ⇒ the global default. */
   defaultPlanning?: SquadPlanning;
+  /** Whether agent-started runs of this Squad need the user's Launch first. Review is a floor: the Project's review applies even when this is absent or direct. Absent ⇒ direct unless the Project asks for review. */
+  launchApproval?: LaunchApproval;
   /** Set by the loader/host for UI display; never read from disk / trusted from the renderer. */
   source?: PersonaSource;
 }
@@ -4454,6 +4481,8 @@ export interface TeamSummary {
   source?: PersonaSource;
   /** Planning mode preselected for this Squad. Absent ⇒ the global default. */
   defaultPlanning?: SquadPlanning;
+  /** Whether agent-started runs need the user's Launch first. Review is a floor: the Project's review applies even when this is absent or direct. Absent ⇒ direct unless the Project asks for review. */
+  launchApproval?: LaunchApproval;
   /** Whether the orchestrator can write files, so it can infer a plan. Computed by main, not by `toTeamSummary`. */
   canInferPlan?: boolean;
 }
@@ -4661,7 +4690,8 @@ export function toTeamSummary(t: Team): TeamSummary {
     description: t.description,
     slotCount: Array.isArray(t.slots) ? t.slots.length : 0,
     source: t.source,
-    ...(t.defaultPlanning ? { defaultPlanning: t.defaultPlanning } : {})
+    ...(t.defaultPlanning ? { defaultPlanning: t.defaultPlanning } : {}),
+    ...(t.launchApproval ? { launchApproval: t.launchApproval } : {})
   };
 }
 
@@ -5414,6 +5444,20 @@ export interface PluginEntry {
  * Redacted server-owned plugin app state. `appUrl` is same-origin and contains
  * no install path or credentials; the renderer uses it only to import a bundle.
  */
+export interface PluginUpdateAllResult {
+  updated: string[];
+  failed: Array<{ id: string; message: string }>;
+}
+
+export interface PluginUpdateStatus {
+  checkedAt: number;
+  outcome: 'current' | 'available' | 'pinned' | 'incompatible' | 'unavailable';
+  detail?: string;
+  blocked?: { version: string; reasons: string[] };
+}
+
+export type PluginUpdatePolicy = 'bundled' | 'local' | 'independent' | 'migration-required';
+
 export interface PluginAppEntry {
   id: string;
   name: string;
@@ -5428,8 +5472,10 @@ export interface PluginAppEntry {
   status: 'running' | 'disabled' | 'degraded' | 'needs-configuration';
   statusDetail?: string | null;
   appUrl: string | null;
-  /** Newer catalog version from the last `checkUpdates()` sweep, when any. */
+  /** Compatible remote release from the last persisted source check, when any. */
   availableVersion?: string;
+  updateCheck?: PluginUpdateStatus;
+  updatePolicy?: PluginUpdatePolicy;
   projectTab?: {
     label?: string;
     icon?: string;

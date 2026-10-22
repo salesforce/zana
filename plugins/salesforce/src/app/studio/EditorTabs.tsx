@@ -2,9 +2,10 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { X } from 'lucide-react';
 import type { EditorTab } from './studio-layout.js';
 
-const KIND_MARK: Record<EditorTab['kind'], string> = { agent: 'AGENT', apex: 'APEX', flow: 'FLOW', type: 'TYPE', lwc: 'LWC', org: 'ORG' };
+/** Script and the view tabs (Preview, Tests, Graph, Org preview) are named by their label alone. */
+const KIND_MARK: Record<EditorTab['kind'], string> = { agent: '', view: '', apex: 'APEX', flow: 'FLOW', type: 'TYPE', lwc: 'LWC', org: 'ORG' };
 
-/** Open editor tabs: agent (editable), Apex (read-only), Flow (read-only map) and Lightning Type (read-only schema). */
+/** Open editor tabs of the active agent: Script (editable, fixed), views, Apex (read-only), Flow (read-only map) and Lightning Type (read-only schema). */
 /** Tab ids each context-menu command closes, in strip order. */
 export function tabsToClose(tabs: EditorTab[], id: string, command: 'close' | 'others' | 'right' | 'all'): string[] {
   const index = tabs.findIndex(tab => tab.id === id);
@@ -123,13 +124,13 @@ export function EditorTabs({ tabs, active, dirtyId, problems, problemsId, traili
             event.preventDefault(); onSelect(tabs[next].id);
             event.currentTarget.closest('.sf-etabs')?.querySelectorAll<HTMLButtonElement>('.sf-etab-label')[next]?.focus();
           }}>
-          <span className="sf-etab-kind">{KIND_MARK[tab.kind]}</span>
-          <span className="sf-etab-name">{tab.label}</span>
-          {tab.kind !== 'agent' && tab.kind !== 'org' && <span className="sf-etab-ro">read-only</span>}
+          {KIND_MARK[tab.kind] && <span className="sf-etab-kind">{tab.kind === 'org' && tab.target === 'tests' ? 'TESTS' : KIND_MARK[tab.kind]}</span>}
+          <span className="sf-etab-name">{tab.kind === 'agent' ? 'Script' : tab.label}</span>
+          {tab.kind !== 'agent' && tab.kind !== 'org' && tab.kind !== 'view' && <span className="sf-etab-ro">read-only</span>}
           {dirtyId === tab.id && <span className="sf-etab-dirty" role="img" aria-label="Unsaved changes">●</span>}
           {tab.id === badged && tab.kind === 'agent' && problems ? <span className="sf-etab-problems" aria-label={`${problems} problems`}>{problems}</span> : null}
         </button>
-        <button type="button" className="sf-etab-close" aria-label={`Close ${tab.label}`} onClick={() => onClose(tab.id)}><X size={11} aria-hidden="true" /></button>
+        {tab.kind !== 'agent' && <button type="button" className="sf-etab-close" aria-label={`Close ${tab.label}`} onClick={() => onClose(tab.id)}><X size={11} aria-hidden="true" /></button>}
       </span>;
     })}
     {menu && <TabMenu tabs={tabs} id={menu.id} x={menu.x} y={menu.y} onRun={run} onDismiss={dismiss} />}

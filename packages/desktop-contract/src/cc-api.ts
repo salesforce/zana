@@ -582,6 +582,7 @@ export interface CcApi {
         acpMode?: string;
       }
     ): Promise<{ ok: boolean }>;
+    move(threadId: string, input: { projectId: string; expectedProjectId: string; stop?: boolean }): Promise<{ thread: Awaited<ReturnType<CcApi['threads']['list']>>[number] }>;
     stop(threadId: string): Promise<{ ok: boolean }>;
     /** Stops the given background task items, or all of them when omitted. */
     stopBackground(threadId: string, itemIds?: string[]): Promise<{ ok: boolean; stopped?: string[]; requested?: string[]; fallbackError?: string }>;
@@ -1667,6 +1668,7 @@ export interface CcApi {
       marketplace: string;
     }>>;
     applyUpdate(id: string): Promise<Result<true>>;
+    applyAllUpdates(): Promise<Result<import('@zana-ai/zcc-domain/product').PluginUpdateAllResult>>;
     remove(id: string): Promise<Result<true>>;
     reload(id: string): Promise<Result<true>>;
   };

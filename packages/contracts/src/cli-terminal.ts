@@ -67,7 +67,7 @@ export const CliTerminalStartCommandSchema = z.object({
   rows: z.number().int().min(8).max(100),
   profile: CliProfileSchema,
   config: CliSharedConfigSchema,
-  projectSettings: ProjectSettingsPatchSchema.omit({ worktreeIsolation: true, remoteToolProxy: true, microVmImage: true }).optional(),
+  projectSettings: ProjectSettingsPatchSchema.omit({ worktreeIsolation: true, launchApproval: true, remoteToolProxy: true, microVmImage: true }).optional(),
   persona: CliPersonaSchema.optional(),
   harnessRouting: settings.harnessRouting,
   extraArgs: strings.optional(),

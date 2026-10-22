@@ -2,6 +2,7 @@ import type { PlaygroundView } from '../../lib/agent-script-chrome.js';
 import type { AgentScriptDialect, PublicOrgView } from '../../lib/types.js';
 import type { AgentScriptExample } from '../../lib/agent-script-model.js';
 import type { AgentAction } from '../../lib/agent-action-model.js';
+import { COVERAGE_LIMITS, readGraphCoverage, type GraphCoverage } from '../../lib/graph-coverage.js';
 import {
   isProposalOutcome,
   isStudioComment,
@@ -30,6 +31,8 @@ export type PlaygroundToHost =
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'dirty'; dirty: boolean; draftKey?: string; baseSha?: string; persisted?: boolean }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'snapshot'; draftKey?: string; content: string; issues: number; actions?: AgentAction[]; diagnostics?: StudioDiagnostic[] }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'openAction'; id: string }
+  /** "Draft cases for gaps" on the map: node labels no case reaches. */
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'draftCases'; labels: string[] }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'requestOpen'; path: string }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'persist'; path: string; content: string; draftKey?: string; create?: boolean }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'cursor'; line: number; column: number; selection?: { startLine: number; endLine: number; text: string } }
@@ -39,7 +42,7 @@ export type PlaygroundToHost =
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'saveRequest' };
 
 export type HostToPlayground =
-  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'graph'; content: string; visible: boolean; theme: 'light' | 'dark'; compact?: boolean; focus?: string; focusSeq?: number }
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'graph'; content: string; visible: boolean; theme: 'light' | 'dark'; compact?: boolean; focus?: string; focusSeq?: number; coverage?: GraphCoverage | null; focusCase?: string }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'revealLine'; line: number }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'reference'; content: string; language: ReferenceLanguage; line?: number; theme: 'light' | 'dark' }
   | {
@@ -76,7 +79,16 @@ export type HostToPlayground =
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'clearProposal'; proposalId: string }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'setComments'; comments: StudioComment[] }
   | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'setHits'; lines: number[] }
-  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'setLayout'; compact: boolean };
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'setLayout'; compact: boolean }
+  /**
+   * Read-only follower mode (another Studio holds the edit lease). `content` is the holder's live text: shown without
+   * touching this window's draft. Leaving read-only with `content` replaces the buffer as one undoable edit.
+   */
+  /**
+   * Locks (a follower) or unlocks the editor. `content` replaces the text; `baseline` + `baseSha` re-baseline the draft on the shared
+   * document's saved version (on unlock or take-over), so a later save is checked against the version that text is based on.
+   */
+  | { source: typeof PLAYGROUND_BRIDGE_SOURCE; type: 'setReadOnly'; readOnly: boolean; content?: string; baseline?: string; baseSha?: string };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object';
@@ -92,6 +104,7 @@ export function isPlaygroundToHost(value: unknown): value is PlaygroundToHost {
   if (value.persisted !== undefined && typeof value.persisted !== 'boolean') return false;
   if (value.type === 'ready') return true;
   if (value.type === 'openAction') return typeof value.id === 'string';
+  if (value.type === 'draftCases') return Array.isArray(value.labels) && value.labels.length > 0 && value.labels.length <= COVERAGE_LIMITS.names && value.labels.every(label => typeof label === 'string' && label.length > 0 && label.length <= COVERAGE_LIMITS.text);
   if (value.type === 'dirty') return typeof value.dirty === 'boolean';
   if (value.type === 'snapshot') return typeof value.content === 'string' && value.content.length <= AGENT_SOURCE_MAX && typeof value.issues === 'number' && Number.isFinite(value.issues) && (value.actions === undefined || (Array.isArray(value.actions) && value.actions.length <= 250 && value.actions.every(isAction))) && (value.diagnostics === undefined || isStudioDiagnostics(value.diagnostics, 200));
   if (value.type === 'cursor') return isPositive(value.line) && isPositive(value.column) && (value.selection === undefined || isSelection(value.selection));
@@ -129,7 +142,7 @@ export function isHostToPlayground(value: unknown): value is HostToPlayground {
     return false;
   }
   return (
-    (value.type === 'graph' && typeof value.content === 'string' && value.content.length <= AGENT_SOURCE_MAX && typeof value.visible === 'boolean' && ['light', 'dark'].includes(String(value.theme)) && (value.compact === undefined || typeof value.compact === 'boolean') && (value.focus === undefined || (typeof value.focus === 'string' && value.focus.length <= 200)) && (value.focusSeq === undefined || (Number.isInteger(value.focusSeq) && Number(value.focusSeq) >= 0 && Number(value.focusSeq) <= 1_000_000_000))) ||
+    (value.type === 'graph' && typeof value.content === 'string' && value.content.length <= AGENT_SOURCE_MAX && typeof value.visible === 'boolean' && ['light', 'dark'].includes(String(value.theme)) && (value.compact === undefined || typeof value.compact === 'boolean') && (value.focus === undefined || (typeof value.focus === 'string' && value.focus.length <= 200)) && (value.focusSeq === undefined || (Number.isInteger(value.focusSeq) && Number(value.focusSeq) >= 0 && Number(value.focusSeq) <= 1_000_000_000)) && (value.coverage === undefined || value.coverage === null || readGraphCoverage(value.coverage) !== null) && (value.focusCase === undefined || (typeof value.focusCase === 'string' && value.focusCase.length <= COVERAGE_LIMITS.text))) ||
     value.type === 'init' ||
     (value.type === 'revealLine' && Number.isInteger(value.line) && Number(value.line) > 0) ||
     (value.type === 'reference' && typeof value.content === 'string' && value.content.length <= 750_000 && REFERENCE_LANGUAGES.includes(value.language as ReferenceLanguage)) ||
@@ -146,7 +159,9 @@ export function isHostToPlayground(value: unknown): value is HostToPlayground {
     (value.type === 'clearProposal' && isProposalId(value.proposalId)) ||
     (value.type === 'setComments' && Array.isArray(value.comments) && value.comments.length <= 500 && value.comments.every(isStudioComment)) ||
     (value.type === 'setHits' && Array.isArray(value.lines) && value.lines.length <= 1000 && value.lines.every(isPositive)) ||
-    (value.type === 'setLayout' && typeof value.compact === 'boolean')
+    (value.type === 'setLayout' && typeof value.compact === 'boolean') ||
+    (value.type === 'setReadOnly' && typeof value.readOnly === 'boolean' && (value.content === undefined || (typeof value.content === 'string' && value.content.length <= AGENT_SOURCE_MAX)) &&
+      (value.baseline === undefined ? value.baseSha === undefined : typeof value.baseline === 'string' && value.baseline.length <= AGENT_SOURCE_MAX && typeof value.baseSha === 'string' && /^[0-9a-f]{64}$/.test(value.baseSha)))
   );
 }
 

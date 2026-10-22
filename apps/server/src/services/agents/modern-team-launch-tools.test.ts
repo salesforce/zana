@@ -127,7 +127,7 @@ describe('createModernTeamLaunchSource', () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it.each(['squad_propose', 'squad_plan_check', 'list_teams'])('%s is gated on job launch and forwards when enabled', async (name) => {
+  it.each(['squad_propose', 'squad_launch', 'squad_plan_check', 'list_teams'])('%s is gated on job launch and forwards when enabled', async (name) => {
     const calls: CallMcpToolArgs[] = [];
     const spy = async (args: CallMcpToolArgs) => { calls.push(args); return { ok: true, text: '{"ok":true}' }; };
     const off = source({ mcpBaseUrl: 'http://127.0.0.1:9', teamLaunchEnabled: true }, spy);
@@ -140,6 +140,20 @@ describe('createModernTeamLaunchSource', () => {
     expect(await tool(on, name).execute(input, ctx())).toBe('{"ok":true}');
     expect(calls[0].name).toBe(name);
     expect(calls[0].input).toEqual(input);
+  });
+
+  it('execution_status routes to execution.status and is gated on job launch', async () => {
+    const calls: CallMcpToolArgs[] = [];
+    const spy = async (args: CallMcpToolArgs) => { calls.push(args); return { ok: true, text: '{"ok":true}' }; };
+    const off = source({ mcpBaseUrl: 'http://127.0.0.1:9', teamLaunchEnabled: true }, spy);
+    expect(await tool(off, 'execution_status').execute({ executionId: 'e1' }, ctx())).toEqual({
+      ok: false, message: 'execution_status unavailable: team job launch is disabled.'
+    });
+    const on = source({ mcpBaseUrl: 'http://127.0.0.1:9', teamLaunchEnabled: false, teamJobLaunchEnabled: true }, spy);
+    expect(await tool(on, 'execution_status').execute({ executionId: 'e1' }, ctx())).toBe('{"ok":true}');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ name: 'execution.status', input: { executionId: 'e1' } });
+    expect(calls[0].url).toContain('?route=thread');
   });
 
   it('surfaces a route failure as a failed tool result', async () => {
@@ -384,6 +398,17 @@ describe('Modern member execution catalog', () => {
 });
 
 describe('Modern owner execution catalog', () => {
+  it('describes execution_start with the shared generic wording', async () => {
+    const { resolvePluginSessionTools } = await import('../../plugins/plugin-agent-tools.js');
+    const { EXECUTION_START_DESCRIPTION } = await import('../execution/execution-mcp-tool.js');
+    const src = source({ mcpBaseUrl: 'http://127.0.0.1:9', teamLaunchEnabled: false, teamJobLaunchEnabled: true }, async () => ({ ok: true, text: '{}' }));
+    const session = await resolvePluginSessionTools([src], { threadId: 'thread-1', projectId: 'project-1' });
+    const description = session.tools.find((row) => row.name === 'execution_start')?.description;
+    expect(description).toBe(EXECUTION_START_DESCRIPTION);
+    expect(description).not.toMatch(/Squad|Team/);
+    expect(description).toContain('squad_launch');
+  });
+
   it('keeps raw MCP names for client-side server prefixing', async () => {
     const { resolvePluginSessionTools } = await import('../../plugins/plugin-agent-tools.js');
     const src = source(
@@ -394,9 +419,11 @@ describe('Modern owner execution catalog', () => {
     expect(session.tools.map((row) => row.name)).toEqual([
       'execution_start',
       'execution_snapshot',
+      'execution_status',
       'execution_respond',
       'execution_resume_binding',
       'squad_propose',
+      'squad_launch',
       'squad_plan_check',
       'list_teams'
     ]);

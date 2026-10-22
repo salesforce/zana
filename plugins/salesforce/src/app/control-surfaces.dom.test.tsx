@@ -1,5 +1,6 @@
 /** @vitest-environment happy-dom */
 import { act, cleanup, render, waitFor } from '@testing-library/react';
+import { useLayoutEffect } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { useSalesforceControl } from './useSalesforceControl.js';
 import { AgentScriptPanel, AgentforcePlaygroundPanel } from './AgentScriptPanel.js';
@@ -46,9 +47,9 @@ it('controls the real editor tool state and refuses invalid, missing and dirty o
   const mounted = render(<AgentScriptPanel {...props} />);
   await waitFor(() => expect(controls.has('agentforce')).toBe(true));
   await execute('agentforce', 'file.open', { path: 'Help.agent' }); expect(controls.get('agentforce')!.state().path).toBe('Help.agent');
-  await execute('agentforce', 'panel.open', { tool: 'graph' }); expect(controls.get('agentforce')!.state().panels).toMatchObject({ active: 'graph', open: true });
+  await execute('agentforce', 'panel.open', { tool: 'agents' }); expect(controls.get('agentforce')!.state().panels).toMatchObject({ active: 'agents', open: true });
   await execute('agentforce', 'panel.hide'); expect(controls.get('agentforce')!.state().panels).toMatchObject({ open: false });
-  await execute('agentforce', 'panel.show'); await execute('agentforce', 'panel.close', { tool: 'graph' });
+  await execute('agentforce', 'panel.show'); await execute('agentforce', 'panel.close', { tool: 'agents' });
   await execute('agentforce', 'file.filter', { query: 'Help' }); expect(controls.get('agentforce')!.state().filter).toBe('Help');
   expect(await execute('agentforce', 'editor.reveal', { line: 3 })).toMatchObject({ revealedLine: 3 });
   expect(await execute('agentforce', 'state', { includeSource: true })).toHaveProperty('source');
@@ -83,12 +84,40 @@ it('opens an agent sent from a card in another window, and only for the person\'
   await execute('workbench', 'view.open', { view: 'agentforce', path: 'Help.agent', line: 2 }, { user: true });
   expect(controls.get('workbench')!.state().view).toBe('agentforce');
   await waitFor(() => expect(controls.get('agentforce')?.state().path).toBe('Help.agent'));
-  // Leaving Agents drops the routed file, so the next visit restores the person's own selection.
+  // The person's explicit card selection is shared with Preview and survives leaving the editor.
   await execute('workbench', 'view.open', { view: 'data' });
   controls.delete('agentforce');
   await execute('workbench', 'view.open', { view: 'agentforce' });
   await waitFor(() => expect(controls.has('agentforce')).toBe(true));
-  expect(controls.get('agentforce')!.state().path).toBeNull();
+  expect(controls.get('agentforce')!.state().path).toBe('Help.agent');
+});
+it.each([false, true])('opens a cross-window card in an already mounted empty Studio (editor ready: %s)', async ready => {
+  (globalThis as any).__ZCC_PLUGIN_RUNTIME__.useZccContext = () => ({ projectId: 'p', surface: 'plugin-view' });
+  const mounted = render(<SalesforceProjectTab {...props} />);
+  const frame = mounted.container.querySelector('iframe')!;
+  const readyFrame = () => act(async () => window.dispatchEvent(new MessageEvent('message', {
+    source: frame.contentWindow, origin: location.origin, data: { source: PLAYGROUND_BRIDGE_SOURCE, type: 'ready' },
+  })));
+  if (ready) await readyFrame();
+  await execute('workbench', 'view.open', { view: 'agentforce', path: 'Help.agent', line: 2 }, { user: true });
+  if (!ready) await readyFrame();
+  await waitFor(() => expect(controls.get('agentforce')?.state().path).toBe('Help.agent'));
+  expect(mounted.container.querySelector('.af-document-name')?.textContent).toBe('Help.agent');
+});
+it('keeps a new card request when the editor becomes ready in the same commit', async () => {
+  function ReadyWithFocus({ focused }: { focused: boolean }) {
+    useLayoutEffect(() => {
+      if (!focused) return;
+      const frame = document.querySelector('iframe')!;
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow, origin: location.origin, data: { source: PLAYGROUND_BRIDGE_SOURCE, type: 'ready' },
+      }));
+    }, [focused]);
+    return <AgentScriptPanel {...props} params={focused ? { path: 'Help.agent', line: 2, nonce: 1 } : undefined} />;
+  }
+  const mounted = render(<ReadyWithFocus focused={false} />);
+  mounted.rerender(<ReadyWithFocus focused />);
+  await waitFor(() => expect(mounted.container.querySelector('.af-document-name')?.textContent).toBe('Help.agent'));
 });
 it('controls query, schema, filters and trusted results without overwriting changed text', async () => {
   render(<SoqlExplorerPanel {...props} />);

@@ -45,6 +45,7 @@ import { useProjectRailDisclosure } from './useProjectRailDisclosure.js';
 import { useMobileNavDismiss } from '../mobile-nav-context.js';
 import { ProjectAgentRailRow, ProjectThreadRailRow } from './project-session-rail-rows.js';
 import { projectNavigationSessions } from '../../lib/teamRunOrganization.js';
+import { sessionRailTitle } from '../../lib/sessionRailTitle.js';
 import { useAgentCardActions, AgentCardMenu, clampMenuAnchor } from '../agentCardActions.js';
 import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from '../threadCardActions.js';
 import { PromptModal } from '../PromptModal.js';
@@ -499,7 +500,7 @@ export function ProjectsList({
         projectNavigationOrganization
       );
       for (const session of sessions) {
-        const title = session.cohort?.executionJobTitle?.trim() || session.title;
+        const title = sessionRailTitle(session);
         if (!projectMatches && !title.toLowerCase().includes(q)) continue;
         items.push({ kind: 'agent', project, session, at: session.createdAt });
       }
@@ -698,6 +699,7 @@ export function ProjectsList({
         <>
           <div
             className="project-item"
+            data-session-move-project={p.id}
             style={projectDropId === p.id ? { outline: '1px solid var(--accent)', borderRadius: 6 } : undefined}
             onDragOver={(event) => {
               const source = projects.find((project) => project.id === draggedProjectId);

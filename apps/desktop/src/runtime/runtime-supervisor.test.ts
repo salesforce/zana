@@ -33,6 +33,7 @@ describe('runtime supervisor', () => {
       message: 'This session does not run a packaged host daemon'
     });
     await expect(runtime.listProjects()).resolves.toEqual([]);
+    await expect(runtime.updateAllPlugins()).rejects.toThrow('plugin host is unavailable');
     await expect(runtime.projectMetadata({ action: 'list', kind: 'followups', projectId: 'p' })).rejects.toThrow('requires the product runtime');
     await expect(runtime.libraryAgent({ action: 'list', projectId: 'p' })).rejects.toThrow('requires the product runtime');
     await expect(runtime.libraryDocument({ action: 'list' })).rejects.toThrow('requires the product runtime');

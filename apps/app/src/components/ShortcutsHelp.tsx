@@ -61,6 +61,13 @@ const SECTIONS: Section[] = [
     ]
   },
   {
+    title: 'Thread',
+    rows: [
+      { keys: ['⌘', 'F'], label: 'Search in the open thread (remappable in Settings → Shortcuts)' },
+      { keys: ['Esc'], label: 'Close thread search' }
+    ]
+  },
+  {
     title: 'Terminal',
     rows: [
       { keys: ['⌘', 'F'], label: 'Find in active terminal' },

@@ -45,6 +45,7 @@ export const PANE_FOCUS_APP_COMMAND_IDS = [
 export const APP_COMMAND_IDS = [
   "thread.new",
   "thread.search",
+  "thread.find",
   "thread.rename",
   "thread.archive",
   "thread.previous",

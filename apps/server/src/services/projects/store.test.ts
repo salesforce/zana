@@ -374,6 +374,13 @@ describe('harness compatibility projection persistence', () => {
     store.setProjectSettings('p1', { worktreeIsolation: true });
     expect(readJson(projectSettingsFile).p1).toEqual({ worktreeIsolation: true });
   });
+
+  it('round-trips launchApproval through set and get', () => {
+    store.setProjectSettings('p1', { launchApproval: 'review' });
+    store.setProjectSettings('p1', { worktreeIsolation: true });
+    expect(store.getProjectSettings('p1').launchApproval).toBe('review');
+    expect(readJson(projectSettingsFile).p1).toEqual({ launchApproval: 'review', worktreeIsolation: true });
+  });
 });
 
 describe('config — idle-triage dwell + sensitivity normalization', () => {

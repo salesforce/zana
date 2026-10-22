@@ -1,4 +1,5 @@
 import type { MouseEvent } from 'react';
+import { MoreHorizontal } from 'lucide-react';
 import { ThreadProcessBadge } from '../ThreadProcessBadge.js';
 import type { TerminalSession } from '@zana-ai/zcc-domain/product';
 import { profileIcon } from '../../lib/profileIcon.js';
@@ -17,6 +18,7 @@ import {
 import type { ThreadListItem } from '../../thread-store.js';
 import { AgentRowDetail } from './AgentRowDetail.js';
 import { isModernSquadThread } from '../../lib/squad-transport.js';
+import { sessionRailTitle } from '../../lib/sessionRailTitle.js';
 
 export function ProjectAgentRailRow({
   session,
@@ -40,7 +42,7 @@ export function ProjectAgentRailRow({
   onOpen: () => void;
   onContextMenu: (e: MouseEvent) => void;
 }) {
-  const title = session.cohort?.executionJobTitle?.trim() || session.title;
+  const title = sessionRailTitle(session);
   const { onPointerDown, openInSplit, consumeClick } = usePaneContentSplitDrag({
     content: { kind: 'agent-session', projectId: routeProjectId, sessionId: session.id },
     title
@@ -168,6 +170,10 @@ export function ProjectThreadRailRow({
         ) : null}
       </button>
       <ThreadArchiveQuickAction thread={thread} />
+      <button type="button" className="project-terminal-more" aria-label={`Actions for ${title}`}
+        onPointerDown={event => event.stopPropagation()} onClick={onContextMenu}>
+        <MoreHorizontal size={13} aria-hidden="true" />
+      </button>
     </div>
   );
 }

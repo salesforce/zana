@@ -111,7 +111,7 @@ beforeEach(() => {
 afterEach(() => { nodes.splice(0).forEach(fn => fn()); agentRequests.length = 0; agentsPanel.onOpen = undefined; vi.restoreAllMocks(); delete (globalThis as any).__ZCC_PLUGIN_HOST__; delete (globalThis as any).__ZCC_PLUGIN_RUNTIME__; });
 
 describe('AgentScriptPanel wide activity bar, explorer and quick open', () => {
-  it('toggles the explorer, opens agents and quick-opens from the activity bar', async () => {
+  it('toggles the explorer and quick-opens from the activity bar, and browses agents from the document bar', async () => {
     const el = await mount();
     await ready(el);
     const activity = el.querySelector('[aria-label="Studio activity"]')!;
@@ -121,7 +121,7 @@ describe('AgentScriptPanel wide activity bar, explorer and quick open', () => {
     expect(explorer()).toBeNull();
     await click(activity.querySelectorAll('button')[0]);
     expect(explorer()).toBeTruthy();
-    await click(activity.querySelectorAll('button')[1]);
+    await click(el.querySelector('[aria-label="Browse org agents"]')!);
     // Browsing focuses the panel's search without naming an agent, and the request is handed over once.
     expect(agentRequests).toEqual([{ seq: 1 }]);
     expect(el.querySelector<HTMLElement>('[data-testid="stub-agents"]')!.dataset.focus).toBe('none');
@@ -185,7 +185,7 @@ describe('AgentScriptPanel org agents', () => {
   it('opens a retrieved agent, but never over a draft that has no local recovery', async () => {
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);
-    await click(el.querySelector('[aria-label="Studio activity"]')!.querySelectorAll('button')[1]);
+    await click(el.querySelector('[aria-label="Browse org agents"]')!);
     // The retrieval resolves seconds later through the callback it was handed at click time.
     const clickTime = agentsPanel.onOpen!;
     await post(el, { type: 'dirty', dirty: true, draftKey: 'proj-1:file:force-app/bots/QC.agent', persisted: false, baseSha: SHA });

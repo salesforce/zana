@@ -50,6 +50,15 @@ describe('sanitizeTeam', () => {
     }
   });
 
+  it('keeps only the review and direct launch approval modes', () => {
+    for (const mode of ['review', 'direct'] as const) {
+      expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], launchApproval: mode })).toMatchObject({ launchApproval: mode });
+    }
+    for (const bad of ['always', true, '']) {
+      expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], launchApproval: bad })?.launchApproval).toBeUndefined();
+    }
+  });
+
   it('emits no defaultPlanning key after a JSON round-trip when absent', () => {
     const team = sanitizeTeam({ id: 'x', name: 'X', slots: [] });
     expect(Object.keys(JSON.parse(JSON.stringify(team)))).not.toContain('defaultPlanning');
@@ -219,6 +228,25 @@ describe('TeamStore', () => {
     expect(matches[0].source).toEqual({ projectId: 'proj-1', projectName: 'Proj' });
   });
 
+  it('keeps review required when a project file shadows a user Squad by id', () => {
+    const projectPath = join(testHome, 'proj');
+    const projectTeamsDir = join(projectPath, '.zcc', 'teams');
+    mkdirSync(projectTeamsDir, { recursive: true });
+    projects.push({ id: 'proj-1', name: 'Proj', path: projectPath, createdAt: Date.now(), lastActiveAt: Date.now() });
+    mkdirSync(userDir, { recursive: true });
+    writeFileSync(join(userDir, 'shared.json'), JSON.stringify({ id: 'shared', name: 'User Team', slots: [], launchApproval: 'review' }));
+    writeFileSync(join(projectTeamsDir, 'shared.json'), JSON.stringify({ id: 'shared', name: 'Project Team', slots: [], launchApproval: 'direct' }));
+    writeFileSync(join(projectTeamsDir, 'open.json'), JSON.stringify({ id: 'open', name: 'Open', slots: [], launchApproval: 'direct' }));
+    writeFileSync(join(projectTeamsDir, 'gated.json'), JSON.stringify({ id: 'gated', name: 'Gated', slots: [], launchApproval: 'review' }));
+
+    store.refresh();
+    expect(store.list().find((t) => t.id === 'shared')?.launchApproval).toBe('direct');
+    expect(store.launchReviewRequired('shared')).toBe(true);
+    expect(store.launchReviewRequired('gated')).toBe(true);
+    expect(store.launchReviewRequired('open')).toBe(false);
+    expect(store.launchReviewRequired('missing')).toBe(false);
+  });
+
   it('does not re-stamp user teams when a project shares the user teams directory', () => {
     projects.push({
       id: 'home',
@@ -234,6 +262,19 @@ describe('TeamStore', () => {
   it('saveUser round-trips defaultPlanning', () => {
     const saved = store.saveUser({ name: 'Planner', slots: [], defaultPlanning: 'provided' });
     expect(store.list().find((team) => team.id === saved.id)?.defaultPlanning).toBe('provided');
+  });
+
+  it('saveUser round-trips launchApproval', () => {
+    const saved = store.saveUser({ name: 'Gated', slots: [], launchApproval: 'review' });
+    expect(store.list().find((team) => team.id === saved.id)?.launchApproval).toBe('review');
+  });
+
+  it('saveUser replaces the file, so saving without launchApproval clears it', () => {
+    const saved = store.saveUser({ name: 'Gated', slots: [], launchApproval: 'review', defaultPlanning: 'provided' });
+    store.saveUser({ id: saved.id, name: 'Gated', slots: [] });
+    const reloaded = store.list().find((team) => team.id === saved.id);
+    expect(reloaded?.launchApproval).toBeUndefined();
+    expect(reloaded?.defaultPlanning).toBeUndefined();
   });
 
   it('saveUser writes atomically and refresh picks it up', () => {

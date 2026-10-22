@@ -2,7 +2,7 @@ import { useEffect, useState, type ComponentType } from 'react';
 import { AppWindow, MessageSquare, Play } from 'lucide-react';
 import { callPluginRpc, useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { ActionCodePreview } from './ActionCodePreview.js';
-import { openAgentforcePlayground, openAgentforcePreview } from './agentforce-panel-params.js';
+import { routeStudioIntent, type StudioIntent } from './studio/studio-intents.js';
 import { openAgentInStudioWindow } from './studio-window-route.js';
 
 export const AGENT_FILE_OPENER_STYLES = `
@@ -22,7 +22,7 @@ export const AGENT_FILE_OPENER_STYLES = `
 .sf-agent-opener-code { flex:1; width:100%; min-height:0; border:0; background:transparent; }
 `;
 
-const PANEL_REFUSED = 'Open a thread to use the Agentforce Playground or Preview side panel.';
+const PANEL_REFUSED = 'Open this agent from a project to use the Agentforce side panel or Studio.';
 const WINDOW_FAILED = 'The Studio window did not open this agent. Try again, or open it from the window\'s explorer.';
 
 export interface AgentFileOpenerProps {
@@ -52,11 +52,11 @@ function useAgentSource(pluginId: string, projectId: string | null, path: string
 }
 
 /**
- * "Open with Agentforce Playground": the file preview with a toolbar that opens the agent in the
- * thread's Playground or Preview side panel. The host resolves the panel owner (thread or agent
- * session), so the buttons always try and only report when no conversation can hold the panel.
+ * "Open with Agentforce": the file preview with a toolbar that opens the agent in the thread's
+ * Agent side panel (File or Preview view). The host resolves the panel owner (thread or agent
+ * session); without one the Studio opens instead.
  * The window button opens the agent in the project's Studio window, starting one when none runs.
- * The file itself shows in the Playground's read-only Agent Script editor.
+ * The file itself shows in a read-only Agent Script editor.
  */
 export function AgentFileOpener(props: AgentFileOpenerProps) {
   const navigate = useZccNavigate();
@@ -65,11 +65,13 @@ export function AgentFileOpener(props: AgentFileOpenerProps) {
   const [opening, setOpening] = useState(false);
   const Original = props.experimental_Original;
   const threadId = context.threadId ?? props.source?.threadId ?? undefined;
-  const openThreadPanel = (options: { actionId: string; title?: string; params?: Record<string, string> }) =>
-    navigate.openThreadPanel({ ...options, ...(threadId ? { threadId } : {}) });
   const name = props.path.split('/').pop() || props.path;
-  const open = (opened: boolean) => setNotice(opened ? null : PANEL_REFUSED);
   const projectId = context.projectId ?? props.source?.projectId ?? null;
+  // The thread's Agent side panel; without a thread (or in a window) the Studio.
+  const open = async (intent: StudioIntent, from: Element) => {
+    const route = await routeStudioIntent({ pluginId: props.pluginId, projectId, threadId: threadId ?? null, intent, from, navigate });
+    setNotice(route ? null : PANEL_REFUSED);
+  };
   const loaded = useAgentSource(props.pluginId, projectId, props.path, props.source?.kind !== 'thread-storage');
   // A plugin view window is the Studio window already; hosts without windows get no button.
   const canDetach = Boolean(projectId && navigate.openInWindow && context.surface !== 'plugin-view');
@@ -90,14 +92,10 @@ export function AgentFileOpener(props: AgentFileOpenerProps) {
             ? <span className="sf-agent-opener-hint" data-tone="warn" role="status">{notice}</span>
             : <span className="sf-agent-opener-hint">{props.path}</span>}
         </div>
-        <button type="button" className="sf-agent-opener-btn is-primary" onClick={() => open(openAgentforcePlayground({
-          openThreadPanel,
-          projectId,
-          path: props.path
-        }))}>
-          <Play size={13} aria-hidden="true" />Open in Playground
+        <button type="button" className="sf-agent-opener-btn is-primary" onClick={event => void open({ kind: 'agent', path: props.path, ...(props.lineNumber ? { line: props.lineNumber } : {}) }, event.currentTarget)}>
+          <Play size={13} aria-hidden="true" />Open agent view
         </button>
-        <button type="button" className="sf-agent-opener-btn" onClick={() => open(openAgentforcePreview({ openThreadPanel, path: props.path }))}>
+        <button type="button" className="sf-agent-opener-btn" onClick={event => void open({ kind: 'preview', path: props.path }, event.currentTarget)}>
           <MessageSquare size={13} aria-hidden="true" />Preview
         </button>
         {canDetach && <button type="button" className="sf-agent-opener-btn is-icon" title="Open in Studio window" aria-label="Open in Studio window" disabled={opening} onClick={() => void openWindow()}>

@@ -1,11 +1,12 @@
-import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { spawnPortableProcess } from '@zana-ai/zcc-agent-process-utils';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readCodexKeyring, readStoredCodexAuth } from './codex-auth-storage.js';
 import { resolveVoiceAuth } from './codex-auth.js';
+import { HostCommandError } from './host-command-error.js';
 
 const dirs: string[] = [];
 const auth = { auth_mode: 'apikey', OPENAI_API_KEY: 'synthetic-key' };
@@ -60,12 +61,14 @@ describe('Codex credential storage', () => {
     await expect(readStoredCodexAuth(dir)).rejects.toMatchObject({ code: 'codex_auth_invalid' });
   });
 
-  it('rejects unsupported backends and allows an explicit environment fallback', async () => {
+  it('delegates the configured backend to Codex and allows an explicit environment fallback', async () => {
     const dir = await home('cli_auth_credentials_store = "keyring"\nauth_keyring_backend = "secrets"');
-    const read = vi.fn();
-    await expect(readStoredCodexAuth(dir, read)).rejects.toMatchObject({ code: 'codex_keyring_unavailable' });
-    expect(read).not.toHaveBeenCalled();
-    expect(await resolveVoiceAuth({ env: { CODEX_HOME: dir, OPENAI_API_KEY: 'synthetic-env' } })).toEqual({ type: 'apiKey', apiKey: 'synthetic-env' });
+    const read = vi.fn(async () => JSON.stringify(auth));
+    expect(await readStoredCodexAuth(dir, read)).toEqual(auth);
+    expect(read).toHaveBeenCalledWith(dir);
+    expect(await resolveVoiceAuth({ env: { CODEX_HOME: dir, OPENAI_API_KEY: 'synthetic-env' },
+      readKeyring: async () => { throw new HostCommandError('codex_keyring_unavailable', 'native failed'); }
+    })).toEqual({ type: 'apiKey', apiKey: 'synthetic-env' });
   });
 
   it('bounds files and rejects unreadable credentials', async () => {
@@ -78,45 +81,34 @@ describe('Codex credential storage', () => {
   });
 });
 
-describe('macOS Codex Keychain access', () => {
-  function runner(error: Record<string, unknown> | null = null, stdout = JSON.stringify(auth)) {
-    return vi.fn((_file, _args, _options, cb) => {
-      queueMicrotask(() => cb(error, stdout, 'synthetic-secret-stderr'));
-    }) as unknown as ReturnType<typeof vi.fn<typeof execFile>>;
-  }
+describe('native Codex credential reads', () => {
+  const fixture = fileURLToPath(new URL('../../../e2e/fixtures/codex-auth.cjs', import.meta.url));
+  const spawnImpl: typeof spawnPortableProcess = (request) => spawnPortableProcess({
+    ...request, command: process.execPath, args: [fixture, ...request.args]
+  });
 
-  it('targets only Codex’s entry for the canonical home with bounded capture', async () => {
+  it('coalesces canonical homes, then rereads credentials so account changes take effect', async () => {
     const dir = await home();
+    await writeFile(join(dir, 'mode'), 'success');
     const alias = join(dir, 'alias');
     await symlink(dir, alias);
-    const run = runner();
-    const [first, second] = await Promise.all([
-      readCodexKeyring(alias, { platform: 'darwin', execFileImpl: run }),
-      readCodexKeyring(alias, { platform: 'darwin', execFileImpl: run })
-    ]);
-    expect(first).toBe(JSON.stringify(auth));
-    expect(second).toBe(first);
-    expect(run).toHaveBeenCalledWith('/usr/bin/security', [
-      'find-generic-password', '-s', 'Codex Auth', '-a',
-      `cli|${createHash('sha256').update(await realpath(dir)).digest('hex').slice(0, 16)}`, '-w'
-    ], expect.objectContaining({ timeout: 8000, maxBuffer: 256 * 1024, killSignal: 'SIGKILL', cwd: await realpath(dir) }), expect.any(Function));
+    const results = await Promise.all([readCodexKeyring(alias, { spawnImpl }), readCodexKeyring(dir, { spawnImpl })]);
+    expect(results[0]).toBe(results[1]);
+    expect(JSON.parse(results[0]!)).toEqual({ auth_mode: 'apikey', OPENAI_API_KEY: 'synthetic-e2e-key' });
+    expect((await readFile(join(dir, 'calls.ndjson'), 'utf8')).trim().split('\n')).toHaveLength(1);
+    await writeFile(join(dir, 'mode'), 'missing');
+    expect(await readCodexKeyring(dir, { spawnImpl })).toBeNull();
   });
 
-  it.each([null, { code: 44 }])('treats empty/missing entries as missing: %j', async (error) => {
-    expect(await readCodexKeyring(await home(), { platform: 'darwin', execFileImpl: runner(error, ' \n') })).toBeNull();
-  });
-
-  it.each([{ code: 1 }, { killed: true }, { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' }, { code: 'ENOENT' }])('sanitizes process failure %j and releases its slot', async (error) => {
-    const dir = await home();
-    await expect(readCodexKeyring(dir, { platform: 'darwin', execFileImpl: runner({ ...error, message: 'synthetic-secret' }) })).rejects.toMatchObject({
-      code: 'codex_keyring_unavailable', message: expect.not.stringContaining('synthetic-secret')
-    });
-    expect(await readCodexKeyring(dir, { platform: 'darwin', execFileImpl: runner() })).toBe(JSON.stringify(auth));
-  });
-
-  it('does not run macOS tools on other platforms', async () => {
-    const run = runner();
-    await expect(readCodexKeyring(await home(), { platform: 'linux', execFileImpl: run })).rejects.toMatchObject({ code: 'codex_keyring_unavailable' });
-    expect(run).not.toHaveBeenCalled();
+  it('bounds concurrent helpers and releases every slot after failure', async () => {
+    const homes = await Promise.all(Array.from({ length: 5 }, () => home()));
+    await Promise.all(homes.map((dir) => writeFile(join(dir, 'mode'), 'timeout')));
+    const spawn = vi.fn(spawnImpl);
+    const reads = homes.slice(0, 4).map((dir) => readCodexKeyring(dir, { spawnImpl: spawn, timeoutMs: 1_000 }).catch(() => null));
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(4));
+    await expect(readCodexKeyring(homes[4]!, { spawnImpl })).rejects.toThrow('busy');
+    await Promise.all(reads);
+    await writeFile(join(homes[4]!, 'mode'), 'success');
+    expect(await readCodexKeyring(homes[4]!, { spawnImpl })).toContain('synthetic-e2e-key');
   });
 });

@@ -14,6 +14,7 @@ export type ParsedPluginSource =
       kind: 'git';
       url: string;
       spec: string;
+      subdir?: string;
       selector: ParsedGitSelector;
     }
   | {
@@ -43,7 +44,7 @@ export function isCommitSha(ref: string): boolean {
 
 function looksLikeSemverRange(spec: string): boolean {
   if (BARE_VERSION_SPEC_PATTERN.test(spec)) return false;
-  return /^[\^~><=*xX0-9.| -]+$/.test(spec) && /[\^~><=*xX|]/.test(spec);
+  return /^[\^~><=*]/.test(spec) || /(?:\bx\b|\bX\b| \|\| | - )/.test(spec);
 }
 
 export function parsePluginSource(raw: string): ParsedPluginSource {
@@ -71,12 +72,23 @@ export function parsePluginSource(raw: string): ParsedPluginSource {
     return { kind: 'npm', name, spec: requested, specKind };
   }
   if (spec.startsWith('git:')) {
-    const rest = spec.slice('git:'.length);
+    const raw = spec.slice('git:'.length);
+    const hash = raw.indexOf('#');
+    const rest = hash < 0 ? raw : raw.slice(0, hash);
+    const options = new URLSearchParams(hash < 0 ? '' : raw.slice(hash + 1));
+    for (const key of options.keys()) if (key !== 'subdir' && key !== 'tagPrefix') throw new Error(`unknown git source option "${key}"`);
     const at = rest.lastIndexOf('@');
-    const url = at === -1 ? rest : rest.slice(0, at);
-    const selectorSpec = at === -1 ? DEFAULT_GIT_REF : rest.slice(at + 1);
+    const authorityEnd = rest.includes('://') ? rest.indexOf('/', rest.indexOf('://') + 3) : rest.indexOf(':');
+    const hasSelector = at >= 0 && authorityEnd >= 0 && at > authorityEnd;
+    const url = hasSelector ? rest.slice(0, at) : rest;
+    const selectorSpec = hasSelector ? rest.slice(at + 1) : DEFAULT_GIT_REF;
     if (!url) throw new Error('git source requires a url');
-    return { kind: 'git', url, spec: selectorSpec, selector: parseGitSelector(selectorSpec) };
+    const selector = parseGitSelector(selectorSpec);
+    if (options.has('tagPrefix')) {
+      if (selector.kind !== 'range') throw new Error('tagPrefix requires a Git version range');
+      selector.tagPrefix = options.get('tagPrefix')!;
+    }
+    return { kind: 'git', url, spec: selectorSpec, selector, ...(options.has('subdir') ? { subdir: options.get('subdir')! } : {}) };
   }
   if (spec.startsWith('path:')) {
     const path = spec.slice('path:'.length);

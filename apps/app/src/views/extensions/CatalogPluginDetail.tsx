@@ -89,7 +89,7 @@ export function PluginDetailsSection({ entry }: { entry: MarketplaceEntry }) {
 
 export function PluginReleaseSection({
   version,
-  delivery = 'Updates with ZCC'
+  delivery = 'Automatic checks; manual updates'
 }: {
   version?: string;
   delivery?: string;
@@ -229,7 +229,7 @@ export function CatalogPluginDetail({
         ) : null}
         <PluginDetailsSection entry={entry} />
         <PluginMoreFromAuthor entry={entry} catalog={catalog} onOpen={onOpenPlugin} />
-        <PluginReleaseSection version={entry.version} />
+        <PluginReleaseSection version={entry.version} delivery={entry.source === 'bundled' ? 'Updates with Zana releases' : 'Automatic checks; manual updates'} />
         <PluginCapabilitiesSection rows={capabilities} />
       </div>
     </div>

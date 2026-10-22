@@ -43,7 +43,18 @@ export interface SuiteEval {
   /** Cases with more than one utterance; the spec runs their opening turn. */
   multiTurn: string[];
 }
-export interface ScenarioSuite { id: string; path: string; cases: ScenarioCase[]; lastResults?: Record<string, { outcome: CaseOutcome; runId: string; at: number }>; lastEval?: SuiteEval }
+/** What a Simulate run of one case saw. `traced` is false when no runtime trace was available, so topic/action checks could not run. */
+export interface CaseObserved { topics: string[]; actions: string[]; traced: boolean }
+/** A saved Simulate result. `notes`, `observed` and `reply` are the run's evidence, kept small so a Fail always says why. */
+export interface CaseResult { outcome: CaseOutcome; runId: string; at: number; notes?: string[]; observed?: CaseObserved; reply?: string; /** The AI judge's verdict on `criteria`, when it ran. */ judge?: CaseOutcome }
+/** Ephemeral progress, scoped to the project and suite; never persisted as a test result. */
+export interface SuiteProgress {
+  id: string; mode: 'simulate' | 'proposal' | 'org-eval'; startedAt: number;
+  caseIds: string[]; completed: number; currentCaseId?: string;
+  stage: 'starting' | 'conversation' | 'trace' | 'judging' | 'saving' | 'org-eval';
+  turn?: number; totalTurns?: number; results: Record<string, CaseResult>;
+}
+export interface ScenarioSuite { id: string; path: string; cases: ScenarioCase[]; lastResults?: Record<string, CaseResult>; lastEval?: SuiteEval; progress?: SuiteProgress }
 /** One reference an agent makes (`apex://X`, `flow://Y`, a Lightning Type, or an LWC one of its types renders with), as listed on its explorer node. */
 export interface ExplorerUse { kind: 'apex' | 'flow' | 'prompt' | 'lightning-type' | 'lwc'; apiName: string }
 /**
@@ -75,7 +86,7 @@ export const STUDIO_RPC = {
   outcome: 'control.outcome',
 } as const;
 export const UI_WAKE_CHANNEL = 'sf.ui.wake'; // payload {viewId} only - never command data
-export const STUDIO_CHANGED_CHANNEL = 'sf.studio.changed'; // {projectId, path?, kind:'threads'|'comments'|'suites'|'loop'}
+export const STUDIO_CHANGED_CHANNEL = 'sf.studio.changed'; // {projectId, path?, kind:'threads'|'comments'|'suites'|'suite-progress'|'loop'}
 export const CONTEXT_CHANGED_CHANNEL = 'context.changed'; // {projectId, changeId, origin?} - origin names the window that made the change
 
 /** The `origin` a window tags its context RPCs with, or null when absent or malformed. */

@@ -129,7 +129,8 @@ handful of shortcuts that matter most day to day.
 - **⌘1…9**, **⌘]/[** — switch tabs.
 - **⌘W** — hide the active tab (process keeps running); **⌘⇧W** — actually
   terminate it.
-- **⌘F** — find in the active terminal; **⌘K** — clear scrollback.
+- **⌘F** — search the open thread, or find in the active terminal when it
+  has focus; **⌘K** — clear scrollback.
 
 ## Full list
 

@@ -120,7 +120,7 @@ test('packaged CLI creates, exercises, reloads, and diagnoses a plugin in built 
     expect(row).not.toHaveProperty('rootDir');
     await app.window.locator('.nav-item').filter({ hasText: /^Plugins$/ }).click();
     await app.window.getByTestId('extensions-nav-installed').click();
-    await app.window.getByRole('button', { name: 'Local', exact: true }).click();
+    await app.window.getByLabel('Search installed plugins').fill(id);
     await expect(app.window.getByTestId(`plugin-row-${id}`)).toBeVisible();
     delete manifest.zcc.app;
     writeFileSync(packagePath, JSON.stringify(manifest));

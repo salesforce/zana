@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type Ref, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { AppWindow, Archive, GitFork, Mail, MailCheck, MoreHorizontal, Pencil, Search, Square } from 'lucide-react';
+import { AppWindow, Archive, FolderInput, GitFork, Mail, MailCheck, MoreHorizontal, Pencil, Search, Square } from 'lucide-react';
 import { product } from '../../lib/product-client.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { isThreadViewSurface } from '../../lib/threadViewSurface.js';
@@ -17,6 +17,7 @@ import { PromptModal } from '../PromptModal.js';
 import { shouldShowThreadStop } from './thread-timeline-model.js';
 import { dispatchThreadStopRequested } from './timeline/thread-optimistic-events.js';
 import { ThreadNotificationLevelControl } from './ThreadNotificationLevel.js';
+import { useSessionMove } from '../../lib/session-move.js';
 
 const MENU_GAP = 4;
 const VIEWPORT_GUTTER = 8;
@@ -223,7 +224,10 @@ export function ThreadDetailOverflow({
       menuRef={menuRef}
       style={compact ? undefined : menuPos}
       onSearch={onSearch ? () => { close(); onSearch(); } : undefined}
-      extraActions={extraActions}
+      extraActions={<>{extraActions}<button type="button" role="menuitem" onClick={() => {
+        close();
+        useSessionMove.getState().open(threadId);
+      }}><FolderInput size={14} /> Move to project…</button></>}
       notificationsThreadId={threadId}
       canStop={canStop}
       onOpenInWindow={threadOpenInWindowAction(threadId, projectId, close)}

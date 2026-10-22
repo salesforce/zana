@@ -122,6 +122,19 @@ export function getConversationThread(db: ZccDatabase, id: string): Conversation
   return row ? toThread(row) : null;
 }
 
+/** Compare-and-swap the location without replacing history, read state or provider identity. */
+export function relocateConversationThread(
+  db: ZccDatabase,
+  input: { threadId: string; expectedProjectId: string; projectId: string; environmentId: string }
+): ConversationThreadRow | null {
+  const result = db.sqlite.prepare(`UPDATE threads SET project_id = ?, environment_id = ?, updated_at = ?
+    WHERE id = ? AND project_id = ? AND archived_at IS NULL AND status IN ('idle', 'error')
+    AND EXISTS (SELECT 1 FROM environments WHERE id = ? AND project_id = ? AND host_id = threads.host_id AND status = 'ready')`
+  ).run(input.projectId, input.environmentId, Date.now(), input.threadId, input.expectedProjectId,
+    input.environmentId, input.projectId);
+  return result.changes === 1 ? getConversationThread(db, input.threadId) : null;
+}
+
 export function listConversationThreadsByProject(
   db: ZccDatabase,
   projectId: string,

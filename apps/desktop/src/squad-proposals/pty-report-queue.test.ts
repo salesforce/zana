@@ -7,11 +7,13 @@ function setup(over: Record<string, unknown> = {}) {
   let state: AgentState | undefined = 'idle';
   let live = true;
   let lastInput: number | undefined;
+  let draft = false;
   const deps = {
     reply: vi.fn(() => true),
     ptyLive: vi.fn(() => live),
     ptyState: vi.fn(() => state),
     lastInputAt: vi.fn(() => lastInput),
+    draftPending: vi.fn(() => draft),
     deliverableWhenWaiting: vi.fn(() => false),
     now: () => Date.now(),
     setTimer: vi.fn((fn: () => void, ms: number) => setTimeout(fn, ms)),
@@ -24,7 +26,8 @@ function setup(over: Record<string, unknown> = {}) {
     deps, log, queue,
     setState: (s: AgentState | undefined) => { state = s; },
     setLive: (v: boolean) => { live = v; },
-    setLastInput: (t: number | undefined) => { lastInput = t; }
+    setLastInput: (t: number | undefined) => { lastInput = t; },
+    setDraft: (v: boolean) => { draft = v; }
   };
 }
 
@@ -225,6 +228,112 @@ describe('createPtyReportQueue', () => {
       queue.enqueue('s1', item({ stillWanted: async () => true }));
       await tick();
       expect(log).toHaveBeenCalledWith('squad proposal flush failed for s1', expect.any(Error));
+    });
+  });
+
+  describe('re-check timer', () => {
+    const RECHECK = 5_000;
+
+    it('holds while a fresh draft is pending, never typing over it, and delivers once it clears', () => {
+      const { deps, queue, setDraft, setLastInput } = setup();
+      setDraft(true);
+      setLastInput(Date.now());
+      queue.enqueue('s1', item());
+      expect(deps.reply).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(RECHECK * 3);
+      expect(deps.reply).not.toHaveBeenCalled();
+      expect(deps.setTimer).toHaveBeenCalledTimes(4);
+      setDraft(false);
+      vi.advanceTimersByTime(SQUAD_PROPOSAL_LIMITS.ptyQuietMs);
+      expect(deps.reply).toHaveBeenCalledOnce();
+      expect(deps.reply).toHaveBeenCalledWith('s1', 'report');
+    });
+
+    it('delivers over a stale draft flag, logs it, and stops polling', () => {
+      const { deps, queue, log, setDraft, setLastInput } = setup();
+      setDraft(true);
+      setLastInput(Date.now() - 10 * 60_000 - 1);
+      queue.enqueue('s1', item());
+      expect(deps.reply).toHaveBeenCalledOnce();
+      expect(log).toHaveBeenCalledWith('squad proposal delivering over a stale draft flag for s1');
+      vi.advanceTimersByTime(RECHECK * 10);
+      expect(deps.setTimer).not.toHaveBeenCalled();
+    });
+
+    it('stops re-checking a held draft once it goes stale', () => {
+      const { deps, queue, log, setDraft, setLastInput } = setup();
+      setDraft(true);
+      setLastInput(Date.now() - 10 * 60_000 + RECHECK);
+      queue.enqueue('s1', item());
+      expect(deps.reply).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(RECHECK);
+      expect(deps.reply).toHaveBeenCalledOnce();
+      expect(log).toHaveBeenCalledWith('squad proposal delivering over a stale draft flag for s1');
+      const timers = deps.setTimer.mock.calls.length;
+      vi.advanceTimersByTime(RECHECK * 10);
+      expect(deps.setTimer).toHaveBeenCalledTimes(timers);
+    });
+
+    it('delivers a busy session without a status edge once it is idle, via the timer', () => {
+      const { deps, queue, setState } = setup();
+      setState('busy' as AgentState);
+      queue.enqueue('s1', item());
+      expect(deps.setTimer).toHaveBeenCalledOnce();
+      vi.advanceTimersByTime(RECHECK);
+      expect(deps.reply).not.toHaveBeenCalled();
+      setState('idle');
+      vi.advanceTimersByTime(RECHECK);
+      expect(deps.reply).toHaveBeenCalledOnce();
+    });
+
+    it('keeps a single timer per session across repeated flushes', () => {
+      const { deps, queue, setState } = setup();
+      setState('busy' as AgentState);
+      queue.enqueue('s1', item());
+      queue.flush('s1');
+      queue.flush('s1');
+      expect(deps.setTimer).toHaveBeenCalledOnce();
+    });
+
+    it('delivers when only non-key input is recent (the keystroke clock is old)', () => {
+      const { deps, queue, setLastInput } = setup();
+      setLastInput(Date.now() - SQUAD_PROPOSAL_LIMITS.ptyQuietMs - 1);
+      queue.enqueue('s1', item());
+      expect(deps.reply).toHaveBeenCalledOnce();
+    });
+
+    it('stops re-checking when the session exits', () => {
+      const { deps, queue, setState, setLive } = setup();
+      setState('busy' as AgentState);
+      const a = item();
+      queue.enqueue('s1', a);
+      setLive(false);
+      vi.advanceTimersByTime(RECHECK);
+      expect(a.settle).toHaveBeenCalledOnce();
+      expect(deps.setTimer).toHaveBeenCalledOnce();
+      vi.advanceTimersByTime(RECHECK * 3);
+      expect(deps.setTimer).toHaveBeenCalledOnce();
+    });
+
+    it('clears the timer on forget and on dispose', () => {
+      const first = setup();
+      first.setDraft(true);
+      first.setLastInput(Date.now());
+      first.queue.enqueue('s1', item());
+      first.queue.forget('s1');
+      expect(first.deps.clearTimer).toHaveBeenCalledOnce();
+      first.setDraft(false);
+      vi.advanceTimersByTime(RECHECK);
+      expect(first.deps.reply).not.toHaveBeenCalled();
+
+      const second = setup();
+      second.setState('busy' as AgentState);
+      second.queue.enqueue('s1', item());
+      second.queue.dispose();
+      expect(second.deps.clearTimer).toHaveBeenCalledOnce();
+      second.setState('idle');
+      vi.advanceTimersByTime(RECHECK);
+      expect(second.deps.reply).not.toHaveBeenCalled();
     });
   });
 

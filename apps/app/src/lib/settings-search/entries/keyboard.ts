@@ -12,7 +12,7 @@ export const entries: readonly SettingsSearchEntry[] = [
     section: 'keyboard',
     anchor: 'keyboard',
     label: 'Shortcuts',
-    help: platformShortcut('Remap New Chat, the palette, Quick Open, the explorer, Settings, and split-pane navigation. Press ⌘/ to see every shortcut.'),
+    help: platformShortcut('Remap New Chat, the palette, thread search, Quick Open, the explorer, Settings, and split-pane navigation. Press ⌘/ to see every shortcut.'),
     keywords: ['keybindings', 'hotkeys', 'keyboard', 'remap', 'chords'],
     kind: 'subsection'
   },

@@ -33,6 +33,8 @@ import type { PluginAgentToolContext } from '@zana-ai/zcc-plugin-sdk/server';
 import { jsonSchemaAgentToolRecord } from '@zana-ai/zcc-plugin-sdk/internal/host-policy';
 import { LAUNCH_TEAM_DESCRIPTION } from './launch-team-mcp-tool.js';
 import {
+  SQUAD_LAUNCH_DESCRIPTION,
+  SQUAD_LAUNCH_JSON_SCHEMA,
   SQUAD_PLAN_CHECK_DESCRIPTION,
   SQUAD_PLAN_CHECK_JSON_SCHEMA,
   SQUAD_PROPOSE_DESCRIPTION,
@@ -57,9 +59,11 @@ export const MODERN_TEAM_LAUNCH_TOOL_NAMES = [
 export const MODERN_OWNER_EXECUTION_TOOL_NAMES = [
   'execution_start',
   'execution_snapshot',
+  'execution_status',
   'execution_respond',
   'execution_resume_binding',
   'squad_propose',
+  'squad_launch',
   'squad_plan_check',
   'list_teams'
 ] as const;
@@ -195,6 +199,12 @@ const OWNER_SQUAD_TOOL_DEFS: readonly ToolDef[] = [
     mcpName: 'squad_propose',
     description: SQUAD_PROPOSE_DESCRIPTION,
     inputSchema: SQUAD_PROPOSE_JSON_SCHEMA
+  },
+  {
+    name: 'squad_launch',
+    mcpName: 'squad_launch',
+    description: SQUAD_LAUNCH_DESCRIPTION,
+    inputSchema: SQUAD_LAUNCH_JSON_SCHEMA
   },
   {
     name: 'squad_plan_check',

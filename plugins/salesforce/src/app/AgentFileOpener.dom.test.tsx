@@ -2,10 +2,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AgentFileOpener } from './AgentFileOpener.js';
-import { AGENTFORCE_PLAYGROUND_ACTION, AGENTFORCE_PREVIEW_ACTION } from './agentforce-panel-params.js';
 import { openAgentInStudioWindow } from './studio-window-route.js';
 
-vi.mock('./studio-window-route.js', () => ({ openAgentInStudioWindow: vi.fn(async () => true) }));
+vi.mock('./studio-window-route.js', () => ({ STUDIO_TAB_ID: 'salesforce', openAgentInStudioWindow: vi.fn(async () => true), openInStudioWindow: vi.fn(async () => false) }));
 vi.mock('./ActionCodePreview.js', () => ({ ActionCodePreview: (p: any) => <div data-testid="editor" data-language={p.language} data-line={String(p.line)}>{p.content}</div> }));
 
 const PATH = 'force-app/main/default/aiAuthoringBundles/GuiAgentReview/GuiAgentReview.agent';
@@ -16,14 +15,15 @@ let read: (args: unknown) => Promise<unknown>;
 
 function mount(options: { threadId?: string | null; source?: Source; opened?: boolean; projectId?: string | null; surface?: string; windows?: boolean; lineNumber?: number }) {
   const openThreadPanel = vi.fn(() => options.opened ?? true);
-  const navigate = { openThreadPanel, ...(options.windows === false ? {} : { openInWindow: vi.fn(async () => true) }) };
+  const toProject = vi.fn();
+  const navigate = { openThreadPanel, toProject, ...(options.windows === false ? {} : { openInWindow: vi.fn(async () => true) }) };
   (globalThis as any).__ZCC_PLUGIN_RUNTIME__ = {
     useZccNavigate: () => navigate,
     useZccContext: () => ({ projectId: options.projectId === undefined ? 'proj-1' : options.projectId, threadId: options.threadId ?? null, surface: options.surface ?? 'main' })
   };
   (globalThis as any).__ZCC_PLUGIN_HOST__ = { callRpc: vi.fn((_plugin: string, _method: string, args: unknown) => read(args)) };
   render(<AgentFileOpener pluginId="salesforce" path={PATH} source={options.source} lineNumber={options.lineNumber} experimental_Original={Original} />);
-  return openThreadPanel;
+  return Object.assign(openThreadPanel, { toProject });
 }
 
 beforeEach(() => { read = async () => ({ ok: false }); });
@@ -40,34 +40,41 @@ describe('AgentFileOpener', () => {
     mount({});
     expect(screen.getByText('GuiAgentReview.agent')).toBeTruthy();
     expect(await screen.findByTestId('original')).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Open in Playground' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('button', { name: 'Open agent view' }) as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByRole('button', { name: 'Preview' }) as HTMLButtonElement).disabled).toBe(false);
     expect(screen.queryByRole('status')).toBeNull();
   });
 
-  it('opens the Playground for an agent session, letting the host resolve the owner', () => {
+  it('opens the Agent panel file view for an agent session, letting the host resolve the owner', () => {
     const openThreadPanel = mount({ source: { threadId: null, projectId: 'proj-1' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Open in Playground' }));
-    expect(openThreadPanel).toHaveBeenCalledWith(expect.objectContaining({ actionId: AGENTFORCE_PLAYGROUND_ACTION, title: 'Playground' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open agent view' }));
+    expect(openThreadPanel).toHaveBeenCalledWith(expect.objectContaining({ actionId: 'agent', title: 'GuiAgentReview', params: expect.objectContaining({ path: PATH, view: 'file' }) }));
     expect(openThreadPanel.mock.calls[0]?.[0]).not.toHaveProperty('threadId');
   });
 
   it('passes the preview tab thread as the owner hint for Preview', () => {
     const openThreadPanel = mount({ source: { threadId: 'thread-9', projectId: null } });
     fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
-    expect(openThreadPanel).toHaveBeenCalledWith(expect.objectContaining({ actionId: AGENTFORCE_PREVIEW_ACTION, threadId: 'thread-9' }));
+    expect(openThreadPanel).toHaveBeenCalledWith(expect.objectContaining({ actionId: 'agent', params: expect.objectContaining({ view: 'preview' }), threadId: 'thread-9' }));
   });
 
   it('prefers the route thread over the preview source', () => {
     const openThreadPanel = mount({ threadId: 'route-thread', source: { threadId: 'thread-9', projectId: null } });
-    fireEvent.click(screen.getByRole('button', { name: 'Open in Playground' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open agent view' }));
     expect(openThreadPanel).toHaveBeenCalledWith(expect.objectContaining({ threadId: 'route-thread' }));
   });
 
-  it('explains only when the host has no conversation to hold the panel', () => {
-    mount({ opened: false });
+  it('opens the Studio when the host has no conversation to hold the panel', async () => {
+    const openThreadPanel = mount({ opened: false });
     fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
-    expect(screen.getByRole('status').textContent).toContain('Open a thread');
+    await waitFor(() => expect(openThreadPanel.toProject).toHaveBeenCalledWith('proj-1', { tabId: 'salesforce' }));
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('explains only when there is neither a conversation nor a project', async () => {
+    mount({ opened: false, projectId: null });
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    expect((await screen.findByRole('status')).textContent).toContain('from a project');
   });
 
   it('opens the agent in the Studio window and reports a window that never takes it', async () => {

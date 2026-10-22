@@ -12,6 +12,7 @@ import { isWithin } from '@zana-ai/zcc-path-confine';
 import type { LaunchProfileId, TerminalSession, AppConfig, ProjectSettings, ProjectRemote, InboxNotifyLevel, Persona, SessionCohort, SessionWorktree, HarnessModelRoutingV1 } from '@zana-ai/zcc-domain/product';
 import { SESSION_MEMORY_DEFAULTS, isDurableCoordination } from '@zana-ai/zcc-domain/product';
 import { computeMaxLiveSessions, resolveMaxLiveSessions } from './capacity.js';
+import { classifyTerminalInput } from './pty-input-activity.js';
 export { computeMaxLiveSessions, resolveMaxLiveSessions } from './capacity.js';
 import { harnessFamilyOf, isClaudeProfile } from '@zana-ai/zcc-domain/launch-provider';
 import { cliPlanIntentForLaunch } from './harness/cli-plan-files.js';
@@ -153,6 +154,12 @@ interface Live {
    * text as one paste so the following synthetic Return is a discrete submit.
    */
   bracketedPasteEnabled?: boolean;
+  /**
+   * Approximate length of the user's in-progress prompt line, derived from
+   * renderer writes by {@link classifyTerminalInput}. Backs
+   * `session.draftPending`; never exact (the line editor is not modeled).
+   */
+  draftChars?: number;
   /** Local tmux owns the inner process; app shutdown should drop only our client. */
   localTmuxBacked?: boolean;
   /**
@@ -3004,7 +3011,17 @@ export class PtyManager extends EventEmitter {
     // through `reply()`, which writes to `proc` directly and never lands here —
     // so this timestamp stays a true "a person was typing" signal that
     // AutoCloseIdleService uses to spare an actively-used tab.
-    live.session.lastInputAt = Date.now();
+    const now = Date.now();
+    live.session.lastInputAt = now;
+    // xterm also forwards terminal-generated reports (mouse motion, focus,
+    // cursor/device/color replies) through this channel. Only real keys and
+    // pastes move the key clock and the draft heuristic.
+    const input = classifyTerminalInput(data, live.draftChars ?? 0);
+    if (input.keyInput) {
+      live.session.lastKeyInputAt = now;
+      live.draftChars = input.draftChars;
+      live.session.draftPending = input.draftChars > 0;
+    }
     live.proc.write(data);
   }
 
@@ -3045,13 +3062,19 @@ export class PtyManager extends EventEmitter {
     // `tmux send-keys` over one-shot ssh so inbox replies still reach the agent.
     if (live.reattach && !live.session.pid) {
       this.sendKeysRemote(live.reattach, body);
+      live.draftChars = 0;
+      live.session.draftPending = false;
       return true;
     }
     live.proc.write(body);
     setTimeout(() => {
       // Re-resolve: the session may have exited during the delay.
       const stillLive = this.live.get(id);
-      stillLive?.proc.write('\r');
+      if (!stillLive) return;
+      stillLive.proc.write('\r');
+      // The Return submits whatever was in the prompt, a user draft included.
+      stillLive.draftChars = 0;
+      stillLive.session.draftPending = false;
     }, 200);
     return true;
   }

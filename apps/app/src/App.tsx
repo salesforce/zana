@@ -40,6 +40,7 @@ import { SearchPanel } from './components/SearchPanel.js';
 import { ShortcutsHelp } from './components/ShortcutsHelp.js';
 import { AgentTerminalModal } from './components/AgentTerminalModal.js';
 import { ThreadModal } from './components/ThreadModal.js';
+import { SessionMoveDialog } from './components/SessionMoveDialog.js';
 import { FavoriteAgentsDrawer } from './components/FavoriteAgentsDrawer.js';
 import { NotificationsDrawer } from './components/NotificationsDrawer.js';
 import { HostInstallDrawer } from './components/HostInstallDrawer.js';
@@ -882,6 +883,7 @@ function AppShell() {
       <ShortcutsHelpHost />
       <AgentModalHost />
       <ThreadModalHost />
+      <SessionMoveDialog />
       <FavoriteAgentsDrawer />
       <NotificationsDrawer />
       <HostInstallDrawer />

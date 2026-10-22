@@ -9,6 +9,25 @@ import type { Persona } from './product.js';
 /** How the Squad's plan is produced: the orchestrator infers it, or the goal/sources provide it. */
 export type SquadPlanning = 'infer' | 'provided';
 
+/** Whether an agent-started Squad run needs the user's Launch first (`review`) or may start straight away (`direct`). */
+export type LaunchApproval = 'review' | 'direct';
+
+export function isLaunchApproval(value: unknown): value is LaunchApproval {
+  return value === 'review' || value === 'direct';
+}
+
+/**
+ * The launch-approval policy for a Squad run. `review` is a floor: if either the
+ * Squad or its Project asks for review, the run needs review. A Squad cannot lift
+ * its Project's review requirement, because Squad files under the project's
+ * `.zcc/teams` are writable by agents working in that checkout.
+ */
+export function resolveLaunchApproval(
+  { squad, project }: { squad?: { launchApproval?: LaunchApproval } | null; project?: { launchApproval?: LaunchApproval } | null }
+): LaunchApproval {
+  return squad?.launchApproval === 'review' || project?.launchApproval === 'review' ? 'review' : 'direct';
+}
+
 export const SQUAD_PROPOSAL_LIMITS = {
   goalChars: 2048,
   titleChars: 256,
@@ -128,6 +147,26 @@ export interface SquadProposalResult {
   sources: Array<{ path: string; bytes: number; outsideProject?: boolean }>;
   expiresAt: number;
 }
+
+/** What a Squad started straight away by an agent (no Inbox card) looks like to that agent. */
+export interface SquadLaunchNowResult {
+  executionId: string;
+  state: string;
+  /** True when an identical recent launch from the same conversation was returned instead of starting another. */
+  deduped?: true;
+  team: SquadProposalResult['team'];
+  planning: SquadPlanning;
+  plan: SquadProposalResult['plan'];
+  sources: SquadProposalResult['sources'];
+}
+
+/** Refusals a Squad start without review adds to the proposal ones. */
+export type SquadLaunchNowErrorCode =
+  | SquadProposalErrorCode | 'LAUNCH_REVIEW_REQUIRED' | 'LAUNCH_APPROVAL_UNAVAILABLE'
+  | 'LAUNCH_IN_PROGRESS' | 'TOO_MANY_LAUNCHES';
+
+export const LAUNCH_REVIEW_REQUIRED_MESSAGE =
+  "This Squad requires review before launch. Use squad_launch with mode 'review' so the user can Launch it from the Inbox.";
 
 export type SquadPlanCheckResult =
   | { ok: true; steps: SquadPlanStep[] }

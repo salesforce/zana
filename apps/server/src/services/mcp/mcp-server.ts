@@ -75,7 +75,7 @@ import {
   registerLaunchTeamTool,
   type RegisterLaunchTeamToolOpts
 } from '../agents/launch-team-mcp-tool.js';
-import { registerSquadProposalTools, type SquadPlanCheckDep, type SquadProposeDep } from '../squad-proposals/squad-proposal-mcp-tools.js';
+import { registerSquadProposalTools, type SquadLaunchNowDep, type SquadPlanCheckDep, type SquadProposeDep } from '../squad-proposals/squad-proposal-mcp-tools.js';
 import { registerExecutionTools, type RegisterExecutionToolOptions, type ExecutionMemberFence } from '../execution/execution-mcp-tool.js';
 import type { ExecutionService } from '../execution/service.js';
 import type { createExecutionHandoffStore } from '../execution/handoff-store.js';
@@ -415,6 +415,7 @@ export interface McpServerOptions {
   launchTeam?: RegisterLaunchTeamToolOpts['launchTeam'];
   /** squad_propose / squad_plan_check deps; absent ⇒ the tools aren't registered. */
   proposeSquad?: SquadProposeDep;
+  launchSquadNow?: SquadLaunchNowDep;
   checkSquadPlan?: SquadPlanCheckDep;
   authorizeTeamLaunch?: RegisterLaunchTeamToolOpts['authorizeTeamLaunch'];
   evaluateTeamAdmission?: RegisterLaunchTeamToolOpts['evaluateAdmission'];
@@ -440,6 +441,12 @@ export interface McpServerOptions {
   validateLaunchRouteIdentity?: RegisterLaunchTeamToolOpts['validateRouteIdentity'];
   resolveExecutionCohortBinding?: RegisterExecutionToolOptions['resolveCohortBinding'];
   validateExecutionRecoveryBinding?: RegisterExecutionToolOptions['validateRecoveryBinding'];
+  /**
+   * Launch-approval policy for a Squad in a project, checked by agent
+   * `execution.start`, `authorize_team_launch` and `launch_team`. Those tools
+   * refuse when it is not wired.
+   */
+  resolveExecutionLaunchApproval?: RegisterExecutionToolOptions['resolveLaunchApproval'];
   executionService?: ExecutionService;
   executionHandoffs?: ReturnType<typeof createExecutionHandoffStore>;
   validateExecutionHandoffTarget?: RegisterExecutionToolOptions['validateHandoffTarget'];
@@ -598,6 +605,7 @@ function buildProjectMcpServer(opts: {
   listTeams?: McpServerOptions['listTeams'];
   launchTeam?: McpServerOptions['launchTeam'];
   proposeSquad?: McpServerOptions['proposeSquad'];
+  launchSquadNow?: McpServerOptions['launchSquadNow'];
   checkSquadPlan?: McpServerOptions['checkSquadPlan'];
   authorizeTeamLaunch?: McpServerOptions['authorizeTeamLaunch'];
   evaluateTeamAdmission?: McpServerOptions['evaluateTeamAdmission'];
@@ -610,6 +618,7 @@ function buildProjectMcpServer(opts: {
   validateLaunchRouteIdentity?: McpServerOptions['validateLaunchRouteIdentity'];
   resolveExecutionCohortBinding?: McpServerOptions['resolveExecutionCohortBinding'];
   validateExecutionRecoveryBinding?: McpServerOptions['validateExecutionRecoveryBinding'];
+  resolveExecutionLaunchApproval?: McpServerOptions['resolveExecutionLaunchApproval'];
   executionService?: McpServerOptions['executionService'];
   executionHandoffs?: McpServerOptions['executionHandoffs'];
   validateExecutionHandoffTarget?: McpServerOptions['validateExecutionHandoffTarget'];
@@ -843,6 +852,7 @@ function buildProjectMcpServer(opts: {
       cancelTeamLaunch: opts.cancelTeamLaunch,
       getTeamLaunch: opts.getTeamLaunch,
       reportTeamTask: opts.reportTeamTask,
+      resolveLaunchApproval: opts.resolveExecutionLaunchApproval,
       // Launch identity accepts a live pty session OR a live Modern/ACP thread
       // (async probe). Falls back to the sync pty-only gate when the async one
       // isn't wired. Distinct from the execution plane's sync gate below.
@@ -865,6 +875,7 @@ function buildProjectMcpServer(opts: {
       memberFence: opts.memberFence,
       resolveCohortBinding: opts.resolveExecutionCohortBinding,
       validateRecoveryBinding: opts.validateExecutionRecoveryBinding,
+      resolveLaunchApproval: opts.resolveExecutionLaunchApproval,
       handoffs: opts.executionHandoffs,
       validateHandoffTarget: opts.validateExecutionHandoffTarget,
       approveHandoff: opts.approveExecutionHandoff,
@@ -891,10 +902,19 @@ function buildProjectMcpServer(opts: {
       sessionId: opts.sessionId,
       projectId: opts.projectId,
       propose: opts.proposeSquad,
+      launchSquadNow: opts.launchSquadNow,
       checkPlan: opts.checkSquadPlan,
       validateRouteIdentity: async (s, p) => routeAuthenticated
         && !!opts.validateLaunchRouteIdentity
-        && (await opts.validateLaunchRouteIdentity(s, p))
+        && (await opts.validateLaunchRouteIdentity(s, p)),
+      // Same owner gate execution.start uses: a live PTY or Modern thread. It does not
+      // exclude cohort workers; the Squad proposal service refuses them through
+      // lookupProposer's squadMember flag.
+      validateOwnerRouteIdentity: async (s, p) => {
+        if (!routeAuthenticated) return false;
+        const gate = opts.validateLaunchRouteIdentity ?? opts.validateTeamRouteIdentity;
+        return (await gate?.(s, p)) ?? false;
+      }
     });
   }
   // list_projects: read-only project discovery. Identity-free (no sessionId
@@ -1986,6 +2006,7 @@ async function handleRequest(
     listTeams: opts.listTeams,
     launchTeam: opts.launchTeam,
     proposeSquad: opts.proposeSquad,
+    launchSquadNow: opts.launchSquadNow,
     checkSquadPlan: opts.checkSquadPlan,
     authorizeTeamLaunch: opts.authorizeTeamLaunch,
     evaluateTeamAdmission: opts.evaluateTeamAdmission,
@@ -1998,6 +2019,7 @@ async function handleRequest(
     validateLaunchRouteIdentity: opts.validateLaunchRouteIdentity,
     resolveExecutionCohortBinding: opts.resolveExecutionCohortBinding,
     validateExecutionRecoveryBinding: opts.validateExecutionRecoveryBinding,
+    resolveExecutionLaunchApproval: opts.resolveExecutionLaunchApproval,
     executionService: opts.executionService,
     executionHandoffs: opts.executionHandoffs,
     validateExecutionHandoffTarget: opts.validateExecutionHandoffTarget,

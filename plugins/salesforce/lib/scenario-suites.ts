@@ -9,10 +9,11 @@ import { randomUUID } from 'node:crypto';
 import { basename, join } from 'node:path';
 import { AgentFilesError, sha256Hex } from './agent-files.js';
 import { resolveUnderRoot } from './dx-project.js';
+import { agentSuitePath } from './graph-coverage.js';
 import { EvalSpecError, GENERATED_SPEC_MARKER, evalSpecCases, suiteToEvalSpec } from './eval-spec.js';
 import { parsePreviewContext } from './preview-context.js';
 import { FixLoopError, FixLoops, type FixLoop } from './fix-loop.js';
-import { STUDIO_CHANGED_CHANNEL, STUDIO_RPC, type CaseOutcome, type ScenarioCase, type ScenarioSuite, type SuiteEval, type TurnTrace } from './studio-contract.js';
+import { STUDIO_CHANGED_CHANNEL, STUDIO_RPC, type CaseObserved, type CaseOutcome, type CaseResult, type ScenarioCase, type ScenarioSuite, type SuiteEval, type SuiteProgress, type TurnTrace } from './studio-contract.js';
 import { rpcFailure, rpcString, type RpcFailure, type StudioServerContext } from './studio-server-context.js';
 import { labRecord, type LabEngine, type LabScenario } from './agentforce-lab-contract.js';
 import type { AgentforceLab } from './agentforce-lab.js';
@@ -25,12 +26,27 @@ const SUFFIX = '.scenario.json';
 type Outcome = CaseOutcome;
 export type SuiteResults = NonNullable<ScenarioSuite['lastResults']>;
 export interface SuiteEntry extends ScenarioSuite { sha256: string }
-export interface CaseRunDetail { caseId: string; outcome: Outcome; runId: string; at: number; notes: string[]; turns: Array<{ role: 'user' | 'agent'; text: string }> }
+export interface CaseRunDetail { caseId: string; outcome: Outcome; runId: string; at: number; notes: string[]; turns: Array<{ role: 'user' | 'agent'; text: string }>; observed?: CaseObserved; judge?: Outcome }
+/** Per-case evidence kept in kv: up to 40 suites × 50 cases, so each entry stays a few KB. */
+export const EVIDENCE_LIMITS = { notes: 5, note: 240, reply: 480, names: 10, name: 100 } as const;
+
+/** The stored form of a run: outcome plus bounded evidence (judge notes, what the trace saw, the agent's last reply). */
+export function caseResult(detail: CaseRunDetail): CaseResult {
+  const names = (values: string[]) => values.slice(0, EVIDENCE_LIMITS.names).map(value => value.slice(0, EVIDENCE_LIMITS.name));
+  const reply = [...detail.turns].reverse().find(turn => turn.role === 'agent')?.text.trim().slice(0, EVIDENCE_LIMITS.reply);
+  return {
+    outcome: detail.outcome, runId: detail.runId, at: detail.at,
+    ...(detail.notes.length ? { notes: detail.notes.slice(0, EVIDENCE_LIMITS.notes).map(note => note.slice(0, EVIDENCE_LIMITS.note)) } : {}),
+    ...(detail.observed ? { observed: { topics: names(detail.observed.topics), actions: names(detail.observed.actions), traced: detail.observed.traced } } : {}),
+    ...(reply ? { reply } : {}),
+    ...(detail.judge ? { judge: detail.judge } : {})
+  };
+}
 
 export function suitePathForAgent(agentPath: string): string {
-  const name = basename(agentPath).replace(/\.(agent|afscript)$/i, '').replace(/[^A-Za-z0-9_.-]/g, '_').replace(/^[^A-Za-z0-9]+/, '');
-  if (!name) throw new AgentFilesError('invalid_input', 'Cannot derive a scenario file name from this agent.');
-  return `tests/${name.slice(0, 100)}${SUFFIX}`;
+  const path = agentSuitePath(agentPath);
+  if (!path) throw new AgentFilesError('invalid_input', 'Cannot derive a scenario file name from this agent.');
+  return path;
 }
 
 /** The generated `sf agent test` spec beside a suite. */
@@ -124,6 +140,7 @@ export type SuiteEvalReply =
 export class ScenarioSuites {
   private chains = new Map<string, Promise<unknown>>();
   private running = new Set<string>();
+  private progress = new Map<string, { path: string; value: SuiteProgress }>();
   constructor(private readonly o: {
     deps: Pick<SalesforceDeps, 'realpath' | 'stat' | 'readFile' | 'readdir' | 'writeFile'>;
     kv: Kv; lab: Pick<AgentforceLab, 'start' | 'send' | 'trace' | 'evaluate' | 'end'>;
@@ -140,6 +157,11 @@ export class ScenarioSuites {
   private evalsKey() { return `studio:suite-evals:${this.o.project() || 'global'}`; }
   private async results(): Promise<Record<string, SuiteResults>> { return (await this.o.kv.get<Record<string, SuiteResults>>(this.resultsKey())) ?? {}; }
   private async evals(): Promise<Record<string, SuiteEval>> { return (await this.o.kv.get<Record<string, SuiteEval>>(this.evalsKey())) ?? {}; }
+  private updateProgress(lock: string, path: string, value: SuiteProgress | null): void {
+    if (value) this.progress.set(lock, { path, value });
+    else this.progress.delete(lock);
+    this.o.changed?.({ path, kind: 'suite-progress' });
+  }
   /** Newest last, at most SUITE_LIMITS.stored suites per project. */
   private async storeBounded<T>(key: string, read: () => Promise<Record<string, T>>, suiteId: string, value: T): Promise<void> {
     await this.serial(key, async () => {
@@ -177,7 +199,11 @@ export class ScenarioSuites {
       const abs = confineSuitePath(root, path, this.o.deps);
       const raw = this.o.deps.readFile(abs);
       const parsed = raw !== null && raw.length <= SUITE_LIMITS.fileBytes ? this.parseFile(path, raw, all, evals) : null;
-      if (parsed) out.push(parsed);
+      if (parsed) {
+        const project = this.o.project() || 'global';
+        const active = [this.progress.get(project), this.progress.get(`eval:${project}`)].find(run => run?.path === path);
+        out.push(active ? { ...parsed, progress: active.value } : parsed);
+      }
     }
     return out;
   }
@@ -245,6 +271,7 @@ export class ScenarioSuites {
     this.running.add(lock);
     try {
       const written = await this.writeSpec(input);
+      this.updateProgress(lock, written.suite.path, { id: randomUUID(), mode: 'org-eval', startedAt: this.o.now(), caseIds: written.suite.cases.map(c => c.id), completed: 0, stage: 'org-eval', results: {} });
       const reply = await runEval(written);
       if (!reply.ok) return rpcFailure(reply.code || 'eval_failed', reply.error || 'The org eval failed.');
       const { suite } = written;
@@ -260,7 +287,10 @@ export class ScenarioSuites {
       await this.storeBounded(this.evalsKey(), () => this.evals(), suite.id, lastEval);
       this.o.changed?.({ path: suite.path, kind: 'suites' });
       return { suite: { ...suite, lastEval }, lastEval, ...(reply.summary ? { summary: reply.summary } : {}) };
-    } finally { this.running.delete(lock); }
+    } finally {
+      this.running.delete(lock);
+      this.updateProgress(lock, suitePathForAgent(input.agentPath), null);
+    }
   }
 
   /**
@@ -270,27 +300,38 @@ export class ScenarioSuites {
   async run(input: { path: string; source: string; engine: LabEngine; model?: string; caseIds?: string[]; agentPath?: string; threadId?: string; store?: boolean; startedByUser?: boolean }): Promise<{ suite: SuiteEntry; results: SuiteResults; details: CaseRunDetail[] }> {
     const lock = this.o.project() || 'global';
     if (this.running.has(lock)) throw new AgentFilesError('invalid_input', 'A suite is already running for this project.');
-    const suite = (await this.list()).find(s => s.path === input.path);
-    if (!suite) throw new AgentFilesError('not_found', `Scenario suite not found: ${input.path}`);
-    const cases = suite.cases.filter(c => !input.caseIds?.length || input.caseIds.includes(c.id)).slice(0, SUITE_LIMITS.runCases);
-    if (!cases.length) throw new AgentFilesError('invalid_input', 'No matching cases to run.');
     this.running.add(lock);
-    const results: SuiteResults = input.store === false ? {} : { ...(suite.lastResults ?? {}) };
-    const details: CaseRunDetail[] = [];
     try {
+      const suite = (await this.list()).find(s => s.path === input.path);
+      if (!suite) throw new AgentFilesError('not_found', `Scenario suite not found: ${input.path}`);
+      const cases = suite.cases.filter(c => !input.caseIds?.length || input.caseIds.includes(c.id)).slice(0, SUITE_LIMITS.runCases);
+      if (!cases.length) throw new AgentFilesError('invalid_input', 'No matching cases to run.');
+      const results: SuiteResults = input.store === false ? {} : { ...(suite.lastResults ?? {}) };
+      const details: CaseRunDetail[] = [];
+      let progress: SuiteProgress = { id: randomUUID(), mode: input.store === false ? 'proposal' : 'simulate', startedAt: this.o.now(), caseIds: cases.map(c => c.id), completed: 0, stage: 'starting', results: {} };
+      const update = (patch: Partial<SuiteProgress>) => {
+        progress = { ...progress, ...patch };
+        this.updateProgress(lock, suite.path, progress);
+      };
       for (const c of cases) {
-        const detail = await this.runCase(c, input);
+        update({ currentCaseId: c.id, stage: 'starting', turn: 0, totalTurns: c.utterances.length });
+        const detail = await this.runCase(c, input, update);
         details.push(detail);
-        results[c.id] = { outcome: detail.outcome, runId: detail.runId, at: detail.at };
+        results[c.id] = caseResult(detail);
+        update({ completed: details.length, results: { ...progress.results, [c.id]: results[c.id]! } });
       }
-    } finally { this.running.delete(lock); }
-    if (input.store === false) return { suite, results, details };
-    await this.storeResults(suite.id, results);
-    this.o.changed?.({ path: suite.path, kind: 'suites' });
-    return { suite: { ...suite, lastResults: results }, results, details };
+      update({ stage: 'saving', currentCaseId: undefined });
+      if (input.store === false) return { suite, results, details };
+      await this.storeResults(suite.id, results);
+      this.o.changed?.({ path: suite.path, kind: 'suites' });
+      return { suite: { ...suite, lastResults: results }, results, details };
+    } finally {
+      this.running.delete(lock);
+      this.updateProgress(lock, input.path, null);
+    }
   }
 
-  private async runCase(c: ScenarioCase, input: { source: string; engine: LabEngine; model?: string; agentPath?: string; threadId?: string; startedByUser?: boolean }): Promise<CaseRunDetail> {
+  private async runCase(c: ScenarioCase, input: { source: string; engine: LabEngine; model?: string; agentPath?: string; threadId?: string; startedByUser?: boolean }, update: (patch: Partial<SuiteProgress>) => void): Promise<CaseRunDetail> {
     const { lab } = this.o;
     const scenario: LabScenario = {
       persona: 'A scripted test customer.', goal: c.name, opening: c.utterances[0]!,
@@ -302,11 +343,15 @@ export class ScenarioSuites {
       const started = await lab.start({ engine: input.engine, source: input.source, scenario, ...(c.contextVariables ? { contextVariables: c.contextVariables } : {}), ...(input.model ? { model: input.model } : {}), ...(input.threadId ? { threadId: input.threadId } : {}), ...(input.agentPath ? { path: input.agentPath } : {}), ...(input.startedByUser ? { startedByUser: true } : {}) });
       id = detail.runId = started.id;
       let last = started;
-      for (const utterance of c.utterances.slice(0, scenario.maxTurns)) last = await lab.send({ id, text: utterance });
+      for (const [index, utterance] of c.utterances.slice(0, scenario.maxTurns).entries()) {
+        update({ stage: 'conversation', turn: index + 1 });
+        last = await lab.send({ id, text: utterance });
+      }
       detail.turns = last.turns.map(t => ({ role: t.role, text: t.text }));
       const topics = new Set<string>(); const actions = new Set<string>();
       let traced = false;
       if (input.engine === 'preview' && (c.expect.topic || c.expect.actions?.length)) {
+        update({ stage: 'trace' });
         const plans = last.turns.filter(t => t.role === 'agent' && t.planId).map(t => t.planId!);
         for (const planId of plans) {
           const trace: TurnTrace = await lab.trace({ id, planId, ...(input.agentPath ? { path: input.agentPath } : {}) });
@@ -317,8 +362,11 @@ export class ScenarioSuites {
       }
       let ai: { outcome: Outcome; reason: string } | undefined;
       if (c.expect.criteria) {
+        update({ stage: 'judging' });
         try { const v = (await lab.evaluate({ id })).verdict; ai = { outcome: v.outcome, reason: v.reason }; } catch { /* leaves criteria inconclusive */ }
       }
+      detail.observed = { topics: [...topics], actions: [...actions], traced };
+      if (ai) detail.judge = ai.outcome;
       Object.assign(detail, judgeCase(c.expect, { agentText: last.turns.filter(t => t.role === 'agent').map(t => t.text).join('\n'), topics: [...topics], actions: [...actions], traced }, ai));
     } catch (error) {
       detail.notes.push(error instanceof Error ? error.message : String(error));

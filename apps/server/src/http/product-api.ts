@@ -75,6 +75,8 @@ import {
   type ThreadSendMode
 } from '../services/threads/conversation-lifecycle.js';
 import { compactConversation } from '../services/threads/conversation-compact.js';
+import { moveConversationToProject } from '../services/threads/conversation-move.js';
+import { moveThreadRequestSchema } from '@zana-ai/zcc-server-contract';
 import { stopConversationBackgroundTasks } from '../services/threads/conversation-background-stop.js';
 import { closeConversationWithFollowup } from '../services/threads/thread-close-followup.js';
 import { conversationPromptHistory, pagedConversationPromptHistory } from '../services/threads/conversation-prompt-history.js';
@@ -1743,6 +1745,22 @@ export async function handleProductHttp(
       return true;
     }
 
+    const threadMove = routeParams(path, '/api/v1/threads/:id/move');
+    if (threadMove && method === 'POST') {
+      const parsed = moveThreadRequestSchema.safeParse(await readJsonBody(request));
+      if (!parsed.success) {
+        sendJson(response, 400, { error: 'invalid-request', message: 'A destination and expected source project are required.' });
+        return true;
+      }
+      try {
+        const moved = await moveConversationToProject(ctx, threadMove.id, parsed.data);
+        sendJson(response, 200, { thread: conversationThreadView(ctx, moved) });
+      } catch (error) {
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
     const threadStop = routeParams(path, '/api/v1/threads/:id/stop');
     if (threadStop && method === 'POST') {
       try {
@@ -3027,6 +3045,12 @@ export async function handleProductHttp(
         return true;
       }
       sendJson(response, 200, { updates: await ctx.plugins.checkUpdates() });
+      return true;
+    }
+
+    if (path === '/api/v1/plugin-apps/update-all' && method === 'POST') {
+      if (!ctx.plugins) { sendJson(response, 503, { error: 'plugin host is unavailable' }); return true; }
+      sendJson(response, 200, { ok: true, value: await ctx.plugins.applyAllUpdates() });
       return true;
     }
 

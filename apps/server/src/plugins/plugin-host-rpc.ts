@@ -16,6 +16,7 @@ export async function callPluginHostRpc(ctx: ProductHttpContext, args: {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) throw new Error('Invalid plugin host deadline');
   const identity = { pluginId: args.pluginId, generation: args.artifact.generation, callId };
   const cancel = () => { void ctx.hostHub.callHostOnlineRpc({ hostId, timeoutMs: 6_000, command: { type: 'plugin.host.cancel', ...identity } }).catch(() => undefined); };
+  const release = ctx.pluginHostArtifacts?.acquire(args.pluginId);
   args.signal?.addEventListener('abort', cancel, { once: true });
   try {
     const result = await ctx.hostHub.callHostOnlineRpc<{ output: unknown }>({ hostId, timeoutMs: timeoutMs + 6_000,
@@ -25,7 +26,7 @@ export async function callPluginHostRpc(ctx: ProductHttpContext, args: {
     });
     if (args.signal?.aborted) throw Object.assign(new Error('Host plugin call was cancelled'), { name: 'AbortError' });
     return result.output;
-  } finally { args.signal?.removeEventListener('abort', cancel); }
+  } finally { release?.(); args.signal?.removeEventListener('abort', cancel); }
 }
 
 export async function disposePluginHostWorkers(ctx: ProductHttpContext, pluginId: string, generation: string): Promise<void> {

@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
 import { chromium, type Page, type Route } from '@playwright/test';
@@ -35,20 +35,15 @@ test('desktop and mobile voice validate host commands and insert MP4 transcripts
   const codexHome = join(home, 'voice-codex');
   mkdirSync(codexHome);
   writeFileSync(join(codexHome, 'config.toml'), 'cli_auth_credentials_store = "keyring"');
-  const keychainFixture = join(codexHome, 'security-fixture.cjs');
-  writeFileSync(keychainFixture, `
-const fs = require('node:fs');
-if (process.cwd() !== fs.realpathSync(process.env.HOME)) process.exit(2);
-const mode = fs.readFileSync('mode', 'utf8');
-if (mode === 'missing') process.exit(44);
-if (mode === 'locked') { process.stderr.write('synthetic-private-error'); process.exit(1); }
-if (mode === 'timeout') { setInterval(() => {}, 1000); }
-else {
-  const padding = 'x'.repeat(mode === 'overflow' ? 300 * 1024 : 32 * 1024);
-  // The usable credential follows >8192 bytes, catching truncated child stdout.
-  process.stdout.write(JSON.stringify({ padding, auth_mode: 'apikey', OPENAI_API_KEY: 'synthetic-e2e-key' }));
-}
-`);
+  const cliBin = join(codexHome, 'bin');
+  mkdirSync(cliBin);
+  const codexFixture = fileURLToPath(new URL('./fixtures/codex-auth.cjs', import.meta.url));
+  const node = await app.electron.evaluate(() => process.execPath);
+  const launcher = join(cliBin, process.platform === 'win32' ? 'codex.cmd' : 'codex');
+  const quote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
+  writeFileSync(launcher, process.platform === 'win32'
+    ? `@echo off\r\n"${node}" "${codexFixture}" %*\r\n`
+    : `#!/bin/sh\nexec ${quote(node)} ${quote(codexFixture)} "$@"\n`, { mode: 0o700 });
   const fixtureBundle = join(home, 'voice-host.cjs');
   await build({ entryPoints: [fileURLToPath(new URL('./fixtures/voice-host.ts', import.meta.url))], outfile: fixtureBundle,
     bundle: true, platform: 'node', format: 'cjs', target: 'node22',
@@ -56,7 +51,7 @@ else {
   const invoke = async (audioBase64: string, mimeType: string, filename: string) => app.electron.evaluate(async (_electron, args) => {
     const fixture = process.getBuiltinModule('module').createRequire(args.fixtureBundle)(args.fixtureBundle);
     return fixture.transcribe(args);
-  }, { fixtureBundle, codexHome, keychainFixture, node: process.execPath, audioBase64, mimeType, filename });
+  }, { fixtureBundle, codexHome, cliBin, audioBase64, mimeType, filename });
 
   const project = join(home, 'voice-project');
   mkdirSync(project);
@@ -139,12 +134,13 @@ else {
     await expect(window.locator('.toast.error')).toHaveCount(0);
     await window.screenshot({ path: testInfo.outputPath('mobile-voice-transcript.png') });
 
-    writeFileSync(join(codexHome, 'mode'), 'locked');
+    writeFileSync(join(codexHome, 'mode'), 'error');
     await record(window);
-    await expect(window.locator('.toast.error')).toContainText('Keychain');
+    await expect(window.locator('.toast.error')).toContainText('Codex');
+    await expect(window.locator('.toast.error')).not.toContainText('unlock Keychain');
     await expect(window.locator('.toast.error')).not.toContainText('synthetic-private-error');
     await expect(input).toContainText('Draft:');
-    await window.screenshot({ path: testInfo.outputPath('mobile-voice-keychain-guidance.png') });
+    await window.screenshot({ path: testInfo.outputPath('mobile-voice-codex-auth-guidance.png') });
 
     writeFileSync(join(codexHome, 'mode'), 'success');
     await window.getByRole('button', { name: 'Retry voice transcription', exact: true }).click();
@@ -158,12 +154,27 @@ else {
     await expect(window.getByTestId('thread-timeline')).toContainText('Voice works on my phone.');
     await expect(input).toBeEmpty();
 
-    for (const mode of ['missing', 'timeout', 'overflow', 'success']) {
+    for (const mode of ['missing', 'timeout', 'overflow', 'exit', 'success']) {
       writeFileSync(join(codexHome, 'mode'), mode);
       const result = await invoke(Buffer.from('synthetic-microphone-audio').toString('base64'), 'audio/mp4', 'recording.mp4');
       expect(result.status, mode).toBe(mode === 'success' ? 200 : mode === 'missing' ? 501 : 503);
       expect(JSON.stringify(result.body)).not.toContain('synthetic-private');
+      if (mode === 'timeout') expect(result.body.message).toContain('Timed out');
     }
+    const calls = readFileSync(join(codexHome, 'calls.ndjson'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    expect(calls.length).toBeGreaterThan(5);
+    for (const call of calls) {
+      expect(call.home).toBe(codexHome);
+      expect(call.codexHome).toBe(realpathSync(codexHome));
+      expect(call.cwd).toBe(realpathSync(codexHome));
+      expect(call.outputMode).toBe(0o600);
+      expect(() => process.kill(call.pid, 0)).toThrow();
+    }
+    // A stale npm shim must fail cleanly without falling through to a real CLI.
+    writeFileSync(launcher, process.platform === 'win32'
+      ? '@echo off\r\n"C:\\missing\\codex.exe" %*\r\n'
+      : '#!/bin/sh\nexec /missing/codex-executable "$@"\n', { mode: 0o700 });
+    expect((await invoke(Buffer.from('synthetic-microphone-audio').toString('base64'), 'audio/mp4', 'recording.mp4')).status).toBe(503);
   } finally {
     await browser.close();
     await gateway.close();

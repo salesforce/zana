@@ -13,6 +13,7 @@ vi.mock('../lib/split-layout/openThreadInSplit.js', async (importOriginal) => ({
 }));
 
 import { ThreadCardMenu } from './threadCardActions.js';
+import { useSessionMove } from '../lib/session-move.js';
 
 const thread: ThreadListItem = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -34,6 +35,14 @@ afterEach(() => {
 });
 
 describe('ThreadCardMenu split items', () => {
+  it('opens the shared project picker from the context menu', () => {
+    const setMenu = vi.fn();
+    render(<MemoryRouter><ThreadCardMenu menu={{ thread, x: 8, y: 12 }} setMenu={setMenu} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'Move to project…' }));
+    expect(setMenu).toHaveBeenCalledWith(null);
+    expect(useSessionMove.getState().request).toEqual({ threadId: thread.id });
+    useSessionMove.getState().close();
+  });
   it.each([
     ['Open in split', 'right'],
     ['Open in split below', 'bottom']

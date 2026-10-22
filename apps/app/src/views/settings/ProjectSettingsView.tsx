@@ -19,6 +19,7 @@ import type {
 } from '@zana-ai/zcc-domain/product';
 import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapter';
 import { providerUiSchema } from '@zana-ai/zcc-domain/launch-provider';
+import { isLaunchApproval, type LaunchApproval } from '@zana-ai/zcc-domain/squad-proposal';
 import { useData, useUi } from '@/store';
 import { Section, Field, ChipField, TextArgsField } from '@/components/settings/FormFields';
 import { HarnessOptionSelect } from '@/components/HarnessOptionSelect';
@@ -69,6 +70,8 @@ export function ProjectSettingsView({
       <ProjectHarnessSettings project={project} onOpen={onOpen} onSaved={onSaved} />
 
       <ProjectWorktreeSettings project={project} onSaved={onSaved} />
+
+      <ProjectLaunchApprovalSettings project={project} onSaved={onSaved} />
 
       <ProjectProcessesSection project={project} />
 
@@ -464,6 +467,96 @@ export function ProjectWorktreeSettings({
         />
       ) : (
         <StencilForm label="Loading worktree settings" />
+      )}
+      {error && <ProjectSettingsError message={error} />}
+    </Section>
+  );
+}
+
+export function ProjectLaunchApprovalSettings({
+  project,
+  onSaved
+}: {
+  project: Project;
+  onSaved: () => void;
+}) {
+  const pushToast = useUi((s) => s.pushToast);
+  const [value, setValue] = useState<LaunchApproval | undefined>(undefined);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoaded(false);
+    setError(null);
+    product.projectSettings.get(project.id)
+      .then((settings) => {
+        if (!cancelled) {
+          setValue(settings.launchApproval);
+          setLoaded(true);
+        }
+      })
+      .catch((cause) => {
+        if (!cancelled) {
+          setError(projectSettingsErrorMessage(cause));
+          setLoaded(true);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [project.id]);
+
+  const save = async (next: LaunchApproval) => {
+    if (saving) return;
+    const previous = value;
+    setValue(next);
+    setSaving(true);
+    setError(null);
+    try {
+      const canonical = await persistProjectSettings(
+        project.id,
+        { launchApproval: next },
+        (id, patch) => product.projectSettings.set(id, patch)
+      );
+      setValue(canonical.launchApproval);
+      onSaved();
+    } catch (cause) {
+      setValue(previous);
+      const message = projectSettingsErrorMessage(cause);
+      setError(message);
+      pushToast(message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section
+      anchorId="project-launch-approval"
+      searchId="project.launch-approval"
+      title="Squad launch approval"
+      help="Choose whether agents can start Squad runs in this project on their own. Review here applies to every Squad; a Squad can also require review on its own."
+    >
+      {loaded ? (
+        <Field
+          searchId="project.launch-approval-policy"
+          label="Launch approval"
+          help="Review before launch makes an agent propose the run so you press Launch from the Inbox. Launching from the composer, schedules and triggers is not affected."
+        >
+          <PopoverPicklist
+            value={value ?? 'direct'}
+            disabled={saving}
+            ariaLabel="Launch approval"
+            searchable={false}
+            onChange={(next) => { if (isLaunchApproval(next)) void save(next); }}
+            options={[
+              { value: 'direct', label: 'Agents can launch directly' },
+              { value: 'review', label: 'Review before launch' }
+            ]}
+          />
+        </Field>
+      ) : (
+        <StencilForm label="Loading launch approval" />
       )}
       {error && <ProjectSettingsError message={error} />}
     </Section>

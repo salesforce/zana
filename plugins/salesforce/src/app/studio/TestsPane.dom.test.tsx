@@ -1,7 +1,7 @@
 /** @vitest-environment happy-dom */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { TestsPane, expectLines, fixLoopPrompt, type TestsPaneProps } from './TestsPane.js';
+import { TestsPane, expectLines, fixLoopPrompt, relativeTime, runSummary, type TestsPaneProps } from './TestsPane.js';
 import type { ScenarioSuite } from '../../../lib/studio-contract.js';
 import type { FixLoop } from '../../../lib/fix-loop.js';
 
@@ -77,8 +77,14 @@ it('lists the cases with pinned, multi-turn and expectation hints', async () => 
   expect(calls(call, 'studio.suites.list')[0]).toEqual({ projectId: 'p1', agentPath: PATH });
   const refund = screen.getByTestId('tests-row-refund');
   expect(within(refund).getByText('Pinned').getAttribute('title')).toContain('run-7');
-  expect(within(refund).getByText('Topic Billing · Mentions "refund"')).toBeTruthy();
-  expect(within(screen.getByTestId('tests-row-late')).getByText('Where is it? (+1 turn)')).toBeTruthy();
+  expect(within(refund).getByText('topic Billing').className).toContain('is-na');
+  expect(within(refund).getByText('Mentions "refund"')).toBeTruthy();
+  const late = screen.getByTestId('tests-row-late');
+  expect(within(late).getByText('“Where is it?”')).toBeTruthy();
+  expect(within(late).getByText('2 turns')).toBeTruthy();
+  expect(within(late).getByText('Not run').getAttribute('title')).toBe('The org eval runs the first turn only.');
+  expect(within(refund).getByText('Not run').getAttribute('title')).toContain('published agent');
+  expect(screen.queryByTestId('tests-summary')).toBeNull();
   expect(screen.getByText('tests/MyBot.scenario.json · 2 cases')).toBeTruthy();
   expect(screen.queryByText('Proposal')).toBeNull();
   expect(button(/Make these pass/).disabled).toBe(true);
@@ -104,17 +110,20 @@ it('runs all cases in Simulate, then one, and explains a failing row', async () 
   fireEvent.click(button('Run all in Simulate'));
   await waitFor(() => expect(within(screen.getByTestId('tests-row-late')).getByText('Fail')).toBeTruthy());
   expect(calls(call, 'studio.suites.run')[0]).toEqual({ projectId: 'p1', agentPath: PATH, path: 'tests/MyBot.scenario.json', source: 'config: editor', engine: 'preview', startedByUser: true, threadId: 't1' });
+  expect(within(screen.getByTestId('tests-row-late')).getByText('✗ Lookup')).toBeTruthy();
+  expect(screen.getByTestId('tests-summary').textContent).toContain('1/2');
   fireEvent.click(screen.getByTestId('tests-row-late'));
-  expect(screen.getByText('Action "Lookup" not called.')).toBeTruthy();
+  expect(screen.getByRole('note').textContent).toBe('Why it failed: Action "Lookup" not called.');
+  expect(screen.getByText('Not called')).toBeTruthy();
   expect(screen.getByText('I cannot tell.')).toBeTruthy();
-  expect(screen.getByText('Gives a date.')).toBeTruthy();
-  fireEvent.click(button('Ask why'));
+  expect(screen.getAllByText('Gives a date.')).toHaveLength(2);
+  fireEvent.click(button('Fix this case'));
   expect(props.onAskAgent).toHaveBeenCalledWith(expect.stringContaining('Observed: Action "Lookup" not called.'));
-  fireEvent.click(button('Run in Simulate'));
+  fireEvent.click(button('Re-run'));
   await waitFor(() => expect(calls(call, 'studio.suites.run')).toHaveLength(2));
   expect(calls(call, 'studio.suites.run')[1]).toMatchObject({ caseIds: ['late'] });
   fireEvent.click(screen.getByTestId('tests-row-late'));
-  expect(screen.queryByText('Ask why')).toBeNull();
+  expect(screen.queryByText('Fix this case')).toBeNull();
 });
 
 it('reports a failed run', async () => {
@@ -122,6 +131,63 @@ it('reports a failed run', async () => {
   await screen.findByTestId('tests-table');
   fireEvent.click(button('Run all in Simulate'));
   expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'A suite is already running for this project.');
+});
+
+it('recovers a running suite, updates rows live and filters progress events by project and suite', async () => {
+  let active = suite({ lastResults: { refund: { outcome: 'fail', runId: 'old', at: 1 } }, progress: {
+    id: 'run', mode: 'simulate', startedAt: Date.now(), caseIds: ['refund', 'late'], completed: 0,
+    currentCaseId: 'refund', stage: 'conversation', turn: 1, totalTurns: 1, results: {}
+  } });
+  const { call, table } = setup({}, { 'studio.suites.list': () => ({ ok: true, suites: [active] }) });
+  await screen.findByTestId('tests-run-progress');
+  expect(screen.getByRole('status').textContent).toContain('Refund');
+  expect(within(screen.getByTestId('tests-row-refund')).getByText('Running…')).toBeTruthy();
+  expect(within(screen.getByTestId('tests-row-late')).getByText('Queued')).toBeTruthy();
+  expect(button('Run all in Simulate').disabled).toBe(true);
+  expect(screen.getByText('Previous Simulate results')).toBeTruthy();
+  fireEvent.click(button('Failing 1'));
+  expect(screen.getByTestId('tests-row-late')).toBeTruthy();
+  const count = calls(call, 'studio.suites.list').length;
+  await act(async () => {
+    realtime?.({ kind: 'suite-progress', projectId: 'other', path: active.path });
+    realtime?.({ kind: 'suite-progress', projectId: 'p1', path: 'tests/Other.scenario.json' });
+  });
+  expect(calls(call, 'studio.suites.list')).toHaveLength(count);
+  active = { ...active, progress: { ...active.progress!, currentCaseId: 'late', stage: 'judging', completed: 1, results: { refund: { outcome: 'pass', runId: 'new', at: 2, reply: 'Live reply' } } } };
+  await act(async () => { realtime?.({ kind: 'suite-progress', projectId: 'p1', path: active.path }); });
+  expect(screen.getByRole('status').textContent).toContain('1 of 2 cases complete');
+  expect(within(screen.getByTestId('tests-row-refund')).getByText('Pass')).toBeTruthy();
+  fireEvent.click(screen.getByTestId('tests-row-refund'));
+  expect(screen.getByText('Live reply')).toBeTruthy();
+  active = suite({ lastResults: { refund: { outcome: 'pass', runId: 'new', at: 2 } } });
+  table['studio.suites.list'] = () => ({ ok: true, suites: [active] });
+  await act(async () => { realtime?.({ kind: 'suite-progress', projectId: 'p1', path: active.path }); });
+  expect(screen.queryByTestId('tests-run-progress')).toBeNull();
+  expect(button('Run all in Simulate').disabled).toBe(false);
+});
+
+it('polls active progress after missed realtime messages and stops polling when hidden', async () => {
+  const active = suite({ progress: { id: 'r', mode: 'proposal', startedAt: Date.now(), caseIds: ['late'], completed: 1, stage: 'saving', results: { late: { outcome: 'pass', runId: 'r', at: 2 } } } });
+  const { call, props, view } = setup({ proposalSource: 'candidate' }, { 'studio.suites.list': () => ({ ok: true, suites: [active] }) });
+  await screen.findByTestId('tests-run-progress');
+  expect(within(screen.getByTestId('tests-row-late')).getByText('Pass')).toBeTruthy();
+  vi.useFakeTimers();
+  try {
+    const count = calls(call, 'studio.suites.list').length;
+    await act(async () => { vi.advanceTimersByTime(2000); });
+    // The interval was installed before fake timers; re-render hidden then visible to install it under the fake clock.
+    view.rerender(<TestsPane {...props} visible={false} />);
+    view.rerender(<TestsPane {...props} visible />);
+    await act(async () => {});
+    const before = calls(call, 'studio.suites.list').length;
+    await act(async () => { vi.advanceTimersByTime(2000); });
+    expect(calls(call, 'studio.suites.list').length).toBeGreaterThan(before);
+    expect(before).toBeGreaterThanOrEqual(count);
+    view.rerender(<TestsPane {...props} visible={false} />);
+    const hidden = calls(call, 'studio.suites.list').length;
+    await act(async () => { vi.advanceTimersByTime(4000); });
+    expect(calls(call, 'studio.suites.list')).toHaveLength(hidden);
+  } finally { vi.useRealTimers(); }
 });
 
 it('runs the org eval and shows per-case and totals-only results', async () => {
@@ -364,8 +430,74 @@ it('switches to the Org tests view', async () => {
     'studio.orgTests.runs': () => ({ ok: true, runs: [] })
   });
   await screen.findByTestId('tests-table');
-  fireEvent.click(button('Org tests'));
+  fireEvent.click(button('All tests'));
   expect(await screen.findByTestId('org-def-RefundTests')).toBeTruthy();
   expect(screen.queryByTestId('tests-table')).toBeNull();
   expect(calls(call, 'studio.orgTests.list')).toHaveLength(1);
+});
+
+it('explains a saved Fail after a reload, filters by outcome and opens the case path on the graph', async () => {
+  const long = 'Gives a delivery date for the order and apologises for the delay, without promising a refund, a discount or any other compensation that the agent cannot give.';
+  const saved = suite({
+    cases: [...suite().cases.map(c => c.id === 'late' ? { ...c, expect: { ...c.expect, criteria: long } } : c), { id: 'odd', name: 'Odd', utterances: ['?'], expect: { topic: 'Billing' } }],
+    lastResults: {
+      refund: { outcome: 'pass', runId: 'r', at: Date.now() - 5 * 60_000, observed: { topics: ['Billing'], actions: [], traced: true } },
+      late: { outcome: 'fail', runId: 'r', at: Date.now() - 60_000, notes: ['Action "Lookup" not called.', 'AI: no date given'], observed: { topics: [], actions: [], traced: true }, judge: 'fail', reply: 'Let me check.' },
+      odd: { outcome: 'inconclusive', runId: 'r', at: 1, notes: ['Topic/action checks need a Simulate runtime trace.'], observed: { topics: [], actions: [], traced: false } }
+    }
+  });
+  const onShowPath = vi.fn();
+  const { props } = setup({ onShowPath }, { 'studio.suites.list': () => ({ ok: true, suites: [saved] }) });
+  await screen.findByTestId('tests-table');
+  expect(screen.getByTestId('tests-summary').textContent).toContain('1/3');
+  expect(within(screen.getByTestId('tests-row-refund')).getByText('✓ topic Billing')).toBeTruthy();
+  const late = screen.getByTestId('tests-row-late');
+  const more = within(late).getByRole('button', { name: 'more' });
+  fireEvent.click(more);
+  expect(within(late).getByText(long).className).toContain('is-open');
+  expect(screen.queryByRole('note')).toBeNull();
+  fireEvent.click(within(late).getByRole('button', { name: 'less' }));
+  fireEvent.click(late);
+  expect(screen.getByRole('note').textContent).toBe('Why it failed: Action "Lookup" not called. Judge: no date given');
+  expect(screen.getByText('Actual · Simulate 1 min ago')).toBeTruthy();
+  expect(screen.getByText('Let me check.')).toBeTruthy();
+  fireEvent.click(button('Fix this case'));
+  expect(props.onAskAgent).toHaveBeenCalledWith(expect.stringContaining('Observed: Action "Lookup" not called.; AI: no date given'));
+  fireEvent.click(button('Show path on graph'));
+  expect(onShowPath).toHaveBeenCalledWith('late');
+  fireEvent.click(screen.getByTestId('tests-row-odd'));
+  expect(screen.getByRole('note').textContent).toBe('Topic/action checks need a Simulate runtime trace.');
+  expect(screen.getByText('No runtime trace')).toBeTruthy();
+  fireEvent.click(button('Failing 1'));
+  expect(screen.queryByTestId('tests-row-refund')).toBeNull();
+  expect(screen.getByTestId('tests-row-late')).toBeTruthy();
+  fireEvent.click(button('Passing 1'));
+  expect(screen.getByTestId('tests-row-refund')).toBeTruthy();
+  expect(screen.queryByTestId('tests-row-late')).toBeNull();
+  fireEvent.click(button('All 3'));
+  expect(screen.getByTestId('tests-row-odd')).toBeTruthy();
+});
+
+it('says when a filter matches nothing and shows a case that was never run', async () => {
+  setup({}, { 'studio.suites.list': () => ({ ok: true, suites: [suite({ lastResults: { refund: { outcome: 'pass', runId: 'r', at: 1 } } })] }) });
+  await screen.findByTestId('tests-table');
+  expect(screen.getByTestId('tests-summary').textContent).toContain('1 not run');
+  fireEvent.click(screen.getByTestId('tests-row-late'));
+  expect(screen.getByText('Actual · not run yet')).toBeTruthy();
+  expect(screen.getAllByText('Not run').length).toBeGreaterThan(1);
+  fireEvent.click(button('Failing 0'));
+  expect(screen.getByText('No failing cases.')).toBeTruthy();
+  fireEvent.click(button('Passing 1'));
+  expect(screen.queryByText('No passing cases.')).toBeNull();
+});
+
+it('summarises runs and formats relative times', () => {
+  const cases = suite().cases;
+  expect(runSummary(cases, undefined)).toEqual({ pass: 0, fail: 0, ran: 0, at: 0 });
+  expect(runSummary(cases, { refund: { outcome: 'pass', runId: 'r', at: 5 }, late: { outcome: 'inconclusive', runId: 'r', at: 9 }, gone: { outcome: 'fail', runId: 'r', at: 99 } })).toEqual({ pass: 1, fail: 0, ran: 2, at: 9 });
+  const now = Date.UTC(2026, 9, 21, 12);
+  expect(relativeTime(now - 10_000, now)).toBe('just now');
+  expect(relativeTime(now - 5 * 60_000, now)).toBe('5 min ago');
+  expect(relativeTime(now - 3 * 3_600_000, now)).toBe('3 h ago');
+  expect(relativeTime(now - 3 * 86_400_000, now)).toMatch(/Oct/);
 });

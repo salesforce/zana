@@ -1,5 +1,6 @@
 import { errResult, type CliResult } from '../cli-result.js';
 import { productRequest, renderOrJson, type ProductHttpDeps } from '../product-http.js';
+import { runMachineConnection } from './machine-connection.js';
 
 interface HostRow {
   id?: string;
@@ -28,6 +29,9 @@ export async function runMachineCommand(
   json: boolean,
   deps?: ProductHttpDeps
 ): Promise<CliResult> {
+  if (subcommand === 'connect' || subcommand === 'install' || subcommand === 'repair') {
+    return runMachineConnection(subcommand, rest, json, deps);
+  }
   if (!subcommand || subcommand === 'list' || subcommand === 'ls') {
     const listed = await productRequest<unknown>('GET', '/api/v1/hosts', { deps });
     if (!listed.ok) return listed.result;
@@ -102,7 +106,7 @@ export async function runMachineCommand(
   }
 
   return errResult(
-    `unknown machine command '${subcommand}'. Try list, show, join-code, rename, remove, provider-cli.`,
+    `unknown machine command '${subcommand}'. Try list, show, connect, install, repair, join-code, rename, remove, provider-cli.`,
     2
   );
 }

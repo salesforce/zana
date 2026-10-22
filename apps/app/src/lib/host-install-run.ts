@@ -3,9 +3,13 @@ import { bootstrapOutcome, composerBootstrapErrorMessage } from '../components/c
 import { useUi } from '../store.js';
 import type { HostInstallKind } from './host-install-drawer.js';
 
+export type HostRepairTarget = { hostId: string } | { projectId: string } | { ssh: { host: string; user?: string } };
+
 export interface HostInstallRunInput {
   kind: HostInstallKind;
   target: string;
+  /** Fixed target of the failed attempt, reused by the local repair agent. */
+  repairTarget?: HostRepairTarget;
   startLogs?: string[];
   run: (onEvent: (event: HostBootstrapEvent) => void) => Promise<HostBootstrapEvent[]>;
   /**
@@ -18,6 +22,10 @@ export interface HostInstallRunInput {
 }
 
 let lastRun: HostInstallRunInput | null = null;
+
+export function lastHostInstallRepairTarget(target: string | null): HostRepairTarget | null {
+  return lastRun?.target === target ? lastRun.repairTarget ?? null : null;
+}
 
 /** Re-run the most recent install/fix through the drawer (the drawer's Retry). */
 export async function retryLastHostInstall(): Promise<HostBootstrapEvent[] | null> {

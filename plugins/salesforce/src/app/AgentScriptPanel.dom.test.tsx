@@ -3,7 +3,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
-import { fireEvent, waitFor, within } from '@testing-library/react';
+import { fireEvent, renderHook, waitFor, within } from '@testing-library/react';
+import { useAgentforceTarget } from './use-agentforce-target.js';
 import { readAgentDraft, writeAgentDraft } from './agent-script-drafts.js';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -117,8 +118,8 @@ describe('AgentScriptPanel', () => {
     // No file is open yet, so the bar offers Save as… alone; Save and its menu need a file.
     expect([...el.querySelectorAll('button')].some(b => b.textContent === 'Save as…')).toBe(true);
     expect(el.querySelector('[data-testid="salesforce-agent-script-save"]')).toBeNull();
-    // The document bar uses the toolbar org switcher (alias + kind label over the native select).
-    expect(el.querySelector('.af-document-org .sf-org-switcher [data-testid="salesforce-org-picker"]')).toBeTruthy();
+    // The agent tabs bar carries the toolbar org switcher (alias + kind label over the native select).
+    expect(el.querySelector('.sf-atabs-bar .sf-org-switcher [data-testid="salesforce-org-picker"]')).toBeTruthy();
     expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.list', { projectId: 'proj-1' });
     expect(rpc.mock.calls.some((call) => call[0] === 'salesforce' && call[1] === 'org')).toBe(true);
     expect(el.querySelector('[data-testid="salesforce-playground-org"]')?.textContent).toBe('dev (sandbox)');
@@ -225,6 +226,44 @@ describe('AgentScriptPanel', () => {
     );
   });
 
+  it('follows Preview even while the previous agent file is still loading', async () => {
+    let finish!: (value: unknown) => void;
+    rpc.mockImplementation((id, method, args) => method === 'agentFiles.read' && args?.path === 'force-app/bots/QC.agent'
+      ? new Promise(resolve => { finish = resolve; }) as ReturnType<typeof baseRpc>
+      : baseRpc(id, method, args));
+    const selection = renderHook(() => useAgentforceTarget({ pluginId: 'salesforce', projectId: 'proj-1', surface: 'preview' }));
+    const el = await mount('force-app/bots/QC.agent');
+    await message(el, { type: 'ready' });
+    await act(async () => { selection.result.current.select({ path: 'force-app/Orders.agent' }); });
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.read', expect.objectContaining({ path: 'force-app/Orders.agent' }));
+    await act(async () => { finish({ ok: true, file: { path: 'force-app/bots/QC.agent', content: 'old', sha256: 'old' } }); });
+    expect(el.querySelector('[aria-label="Agentforce file"]')?.textContent).toContain('Orders.agent');
+    expect(selection.result.current.target?.path).toBe('force-app/Orders.agent');
+    selection.unmount();
+  });
+
+  it('restores Preview ahead of the editor tab, including hiding before the file loads', async () => {
+    const first = await mount('force-app/Support.agent');
+    await message(first, { type: 'ready' });
+    await act(async () => nodes.pop()!.unmount());
+    const selection = renderHook(() => useAgentforceTarget({ pluginId: 'salesforce', projectId: 'proj-1', surface: 'preview' }));
+    await act(async () => selection.result.current.select({ path: 'force-app/Orders.agent' }));
+    let finish!: (value: unknown) => void;
+    rpc.mockImplementation((id, method, args) => method === 'agentFiles.read' && args?.path === 'force-app/Orders.agent'
+      ? new Promise(resolve => { finish = resolve; }) as ReturnType<typeof baseRpc>
+      : baseRpc(id, method, args));
+    const second = await mount();
+    await message(second, { type: 'ready' });
+    await act(async () => nodes.pop()!.unmount());
+    await act(async () => { finish({ ok: true, file: { path: 'force-app/Orders.agent', content: 'late', sha256: 'late' } }); });
+    rpc.mockImplementation(baseRpc);
+    const restored = await mount();
+    await message(restored, { type: 'ready' });
+    expect(selection.result.current.target?.path).toBe('force-app/Orders.agent');
+    expect(restored.querySelector('[aria-label="Agentforce file"]')?.textContent).toContain('Orders.agent');
+    selection.unmount();
+  });
+
   async function openTool(el: HTMLElement, name: string) {
     const tab = within(el).queryByRole('tab', { name, exact: true });
     if (tab) { await act(async () => { tab.click(); }); return; }
@@ -232,22 +271,31 @@ describe('AgentScriptPanel', () => {
     await act(async () => { within(el.querySelector('.af-tool-picker')!).getByRole('button', { name: new RegExp(`^${name}`) }).click(); });
   }
 
+  async function openAgentFile(el: HTMLElement) {
+    await act(async () => { el.querySelector<HTMLButtonElement>('[data-testid="salesforce-agent-script-file:force-app/bots/QC.agent"]')!.click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  }
+  async function openView(el: HTMLElement, name: string) {
+    await act(async () => { within(el).getByRole('button', { name: `Open ${name} view` }).click(); });
+  }
+
   it('opens a graph beside the same editor and can hide and restore the panel', async () => {
     const el = await mount('', 'proj-1', false);
     expect(within(el).queryByRole('combobox', { name: 'Salesforce org' })).toBeNull();
     expect(el.querySelector('.sf-as-header')).toBeNull();
     expect(el.querySelector('.sf-as-stage .af-document-bar')).toBeTruthy();
-    const editor = el.querySelector('iframe')!;
-    await openTool(el, 'Graph view');
-    expect(within(el).getByRole('tab', { name: 'Graph view' }).getAttribute('aria-selected')).toBe('true');
-    expect(el.querySelector('iframe')).toBe(editor);
+    const editor = el.querySelector('iframe[title="Agentforce playground"]')!;
+    await openAgentFile(el);
+    await openView(el, 'Graph');
+    expect(within(el).getByRole('tab', { name: 'Graph' }).getAttribute('aria-selected')).toBe('true');
+    expect(el.querySelector('iframe[title="Agentforce playground"]')).toBe(editor);
     expect(editor.style.display).not.toBe('none');
     expect(el.querySelector('iframe[title="AgentScript graph"]')).toBeTruthy();
     await act(async () => within(el).getAllByRole('button', { name: 'Hide side panel' })[0].click());
     expect(el.querySelector<HTMLElement>('.af-tools')!.hidden).toBe(true);
     await act(async () => within(el).getByRole('button', { name: 'Show side panel' }).click());
     expect(el.querySelector<HTMLElement>('.af-tools')!.hidden).toBe(false);
-    expect(el.querySelector('iframe')).toBe(editor);
+    expect(el.querySelector('iframe[title="Agentforce playground"]')).toBe(editor);
   });
 
   it('shows a load error when the playground iframe fails', async () => {
@@ -287,7 +335,8 @@ describe('AgentScriptPanel', () => {
 
   it('accepts draft snapshots only from its iframe and preserves labs between workflow views', async () => {
     const el = await mount();
-    await openTool(el, 'Preview');
+    await openAgentFile(el);
+    await openView(el, 'Preview');
     // Preview is the PreviewWorkbench (WS-6); its Start button replaced the lab's .af-primary.
     const start = el.querySelector<HTMLButtonElement>('[data-testid="pw-start"]')!;
     expect(start.disabled).toBe(true);
@@ -296,17 +345,17 @@ describe('AgentScriptPanel', () => {
     expect(start.disabled).toBe(true);
     await act(async () => { window.dispatchEvent(new MessageEvent('message', { origin: window.location.origin, source: el.querySelector('iframe')!.contentWindow, data })); });
     await waitFor(() => expect(start.disabled).toBe(false));
-    await openTool(el, 'Tests');
-    const tests = within(el).getByRole('tabpanel', { name: 'Tests' });
+    await openView(el, 'Tests');
+    const tests = el.querySelector<HTMLElement>('[data-testid="studio-view-tests"]')!;
     await act(async () => { within(tests).getByRole('button', { name: 'Role-play' }).click(); });
     const lab = tests.querySelector<HTMLElement>('[data-testid="agentforce-lab"]')!;
     await act(async () => { [...lab.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Missing details')!.click(); });
     const persona = lab.querySelector<HTMLTextAreaElement>('textarea')!.value;
     expect(persona).toContain('distracted');
-    await openTool(el, 'File explorer');
-    expect(lab.closest<HTMLElement>('[role=tabpanel]')!.hidden).toBe(true);
-    await openTool(el, 'Tests');
-    expect(lab.closest<HTMLElement>('[role=tabpanel]')!.hidden).toBe(false);
+    await openView(el, 'Preview');
+    expect(tests.style.display).toBe('none');
+    await openView(el, 'Tests');
+    expect(tests.style.display).toBe('');
     expect(lab.querySelector<HTMLTextAreaElement>('textarea')!.value).toBe(persona);
     expect(el.querySelectorAll('iframe')).toHaveLength(1);
   });
@@ -334,6 +383,87 @@ describe('AgentScriptPanel', () => {
     expect(el.querySelector('[data-testid="agent-action-panel"]')).toBeNull();
     expect(el.querySelector('iframe')).toBe(frame);
     expect(el.querySelector('.af-related-tabs')).toBeNull();
+  });
+
+  it('B: Inspect <action> in the Graph view opens it over an open dependency tab', async () => {
+    const el = await mount('', 'proj-1', false);
+    await openAgentFile(el);
+    const frame = el.querySelector<HTMLIFrameElement>('iframe[title="Agentforce playground"]')!;
+    const actions = parseAgentScriptSource(ACTION_AGENT, 'agentforce').actions;
+    const refund = actions.find(action => action.name === 'refund')!;
+    const dispatch = async (source: Window | null, data: Record<string, unknown>) => act(async () => { window.dispatchEvent(new MessageEvent('message', { origin: location.origin, source, data: { source: PLAYGROUND_BRIDGE_SOURCE, ...data } })); });
+    await dispatch(frame.contentWindow, { type: 'snapshot', content: ACTION_AGENT, issues: 0, actions });
+    await openTool(el, 'Actions');
+    await dispatch(frame.contentWindow, { type: 'openAction', id: refund.id });
+    await dispatch(frame.contentWindow, { type: 'openAction', id: actions.find(action => action.name === 'lookup')!.id });
+    const pressed = () => [...el.querySelectorAll('.af-related-tabs [aria-pressed="true"]')].map(b => b.textContent);
+    expect(pressed()).toEqual(['lookup']);
+    await openView(el, 'Graph');
+    const graph = el.querySelector<HTMLIFrameElement>('iframe[title="AgentScript graph"]')!;
+    vi.spyOn(graph.contentWindow!, 'postMessage').mockImplementation(() => undefined);
+    await dispatch(graph.contentWindow, { type: 'ready' });
+    await dispatch(graph.contentWindow, { type: 'openAction', id: refund.id });
+    expect(pressed()).toEqual(['refund']);
+  });
+
+  it('A: opens an agent requested before the editor frame is ready, over the initial and restored agent', async () => {
+    let release: (() => void) | undefined;
+    rpc.mockImplementation(async (pluginId: string, method: string, args?: { path?: string; projectId?: string }) => {
+      if (method === 'agentFiles.list') return { ok: true, files: [{ apiName: 'QC', path: 'force-app/bots/QC.agent', lines: 4 }, { apiName: 'Help', path: 'force-app/bots/Help.agent', lines: 4 }] };
+      if (method === 'agentFiles.read' && args?.path === 'force-app/bots/Help.agent' && !release) await new Promise<void>(resolve => { release = resolve; });
+      return baseRpc(pluginId, method, args);
+    });
+    const el = await mount('force-app/bots/QC.agent');
+    const post = vi.spyOn(el.querySelector('iframe')!.contentWindow!, 'postMessage');
+    await act(async () => { el.querySelector<HTMLButtonElement>('[data-testid="sf-explorer-all-agents"]')?.click(); });
+    await act(async () => { el.querySelector<HTMLButtonElement>('[data-testid="salesforce-agent-script-file:force-app/bots/Help.agent"]')!.click(); });
+    await message(el, { type: 'ready' });
+    await act(async () => { release!(); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const files = post.mock.calls.map(call => call[0] as { type: string; path?: string | null }).filter(row => row.type === 'setFile');
+    expect(files.map(row => row.path)).toEqual(['force-app/bots/Help.agent']);
+    expect(within(el).getByRole('tab', { name: /^Help\.agent/ })).toBeTruthy();
+  });
+
+  it('A: a click made while the frame loads wins over a queued open', async () => {
+    rpc.mockImplementation(async (pluginId: string, method: string, args?: { path?: string; projectId?: string }) => {
+      if (method === 'agentFiles.list') return { ok: true, files: [{ apiName: 'QC', path: 'force-app/bots/QC.agent', lines: 4 }, { apiName: 'Help', path: 'force-app/bots/Help.agent', lines: 4 }] };
+      return baseRpc(pluginId, method, args);
+    });
+    const el = await mount('', 'proj-1', false);
+    const post = vi.spyOn(el.querySelector('iframe')!.contentWindow!, 'postMessage');
+    queueAgentScriptOpen('proj-1', 'force-app/bots/QC.agent');
+    await act(async () => { el.querySelector<HTMLButtonElement>('[data-testid="salesforce-agent-script-file:force-app/bots/Help.agent"]')!.click(); });
+    await message(el, { type: 'ready' });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(post.mock.calls.map(call => call[0] as { type: string; path?: string | null }).filter(row => row.type === 'setFile').map(row => row.path).at(-1)).toBe('force-app/bots/Help.agent');
+    expect(within(el).queryByRole('tab', { name: /^QC\.agent/ })).toBeNull();
+  });
+
+  it('A: a view tab picked while the frame loads stays selected when the agent is sent to the frame', async () => {
+    rpc.mockImplementation(async (pluginId: string, method: string, args?: { path?: string; projectId?: string }) => {
+      if (method === 'agentFiles.list') return { ok: true, files: [{ apiName: 'Help', path: 'force-app/bots/Help.agent', lines: 4 }] };
+      return baseRpc(pluginId, method, args);
+    });
+    const el = await mount('', 'proj-1', false);
+    const post = vi.spyOn(el.querySelector('iframe')!.contentWindow!, 'postMessage');
+    await act(async () => { el.querySelector<HTMLButtonElement>('[data-testid="salesforce-agent-script-file:force-app/bots/Help.agent"]')!.click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await openView(el, 'Tests');
+    const selected = () => within(el).getByRole('tablist', { name: 'Open files' }).querySelector('[role="tab"][aria-selected="true"]')?.textContent;
+    expect(selected()).toMatch(/^Tests/);
+    await message(el, { type: 'ready' });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(post.mock.calls.map(call => call[0] as { type: string; path?: string | null }).filter(row => row.type === 'setFile').map(row => row.path).at(-1)).toBe('force-app/bots/Help.agent');
+    expect(selected()).toMatch(/^Tests/);
+  });
+
+  it('A: with no request before ready, the initial agent opens', async () => {
+    const el = await mount('force-app/bots/QC.agent');
+    const post = vi.spyOn(el.querySelector('iframe')!.contentWindow!, 'postMessage');
+    await message(el, { type: 'ready' });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(post.mock.calls.map(call => call[0] as { type: string; path?: string | null }).filter(row => row.type === 'setFile').map(row => row.path)).toEqual(['force-app/bots/QC.agent']);
   });
 
   it('ignores playground messages from other origins', async () => {

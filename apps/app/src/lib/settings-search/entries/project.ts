@@ -349,6 +349,28 @@ export const entries: readonly SettingsSearchEntry[] = [
     }
   },
   {
+    id: 'project.launch-approval',
+    section: 'project',
+    anchor: 'project-launch-approval',
+    label: 'Squad launch approval',
+    help: 'Choose whether agents can start Squad runs in this project on their own. Review here applies to every Squad; a Squad can also require review on its own.',
+    keywords: ['squad', 'launch', 'approval', 'review', 'inbox', 'agent launch'],
+    kind: 'subsection',
+    scope: 'local'
+  },
+  {
+    id: 'project.launch-approval-policy',
+    section: 'project',
+    anchor: 'project-launch-approval',
+    label: 'Launch approval',
+    help: 'Review before launch makes an agent propose the run so you press Launch from the Inbox. Launching from the composer, schedules and triggers is not affected.',
+    options: ['Agents can launch directly', 'Review before launch'],
+    keywords: ['squad', 'launch', 'approval', 'review', 'inbox', 'agent launch'],
+    kind: 'setting',
+    scope: 'local',
+    value: (s) => setting(s)?.launchApproval === 'review' ? 'Review before launch' : 'Agents can launch directly'
+  },
+  {
     id: 'project.processes',
     section: 'project',
     anchor: 'project-processes',

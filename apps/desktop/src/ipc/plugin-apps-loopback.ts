@@ -65,9 +65,9 @@ export async function setPluginAppEnabledOnProductServer(
 export async function checkPluginUpdatesFromProductServer(
   baseUrl = loopbackProductServerUrl()
 ): Promise<Array<{ id: string; current: string; available: string; marketplace: string }>> {
-  if (!baseUrl) return [];
+  if (!baseUrl) throw new Error('plugin host is unavailable');
   const response = await fetch(new URL('api/v1/plugin-apps/updates', baseUrl));
-  if (!response.ok) return [];
+  if (!response.ok) throw new Error('Plugin update check failed');
   const body = (await response.json()) as { updates?: unknown };
   return Array.isArray(body.updates)
     ? body.updates.filter((row): row is { id: string; current: string; available: string; marketplace: string } =>
@@ -105,6 +105,17 @@ export async function reloadPluginAppOnProductServer(
     code: response.status === 404 ? 'NOT_FOUND' : 'WRITE_FAILED',
     message
   };
+}
+
+export async function applyAllPluginUpdatesOnProductServer(
+  baseUrl = loopbackProductServerUrl()
+): Promise<Result<import('@zana-ai/zcc-domain/product').PluginUpdateAllResult>> {
+  if (!baseUrl) return { ok: false, code: 'UNAVAILABLE', message: 'plugin host is unavailable' };
+  const response = await fetch(new URL('api/v1/plugin-apps/update-all', baseUrl), {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}'
+  });
+  if (!response.ok) return { ok: false, code: 'WRITE_FAILED', message: await productServerError(response, 'Plugin updates failed') };
+  return await response.json();
 }
 
 export async function applyPluginUpdateOnProductServer(

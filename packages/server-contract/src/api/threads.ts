@@ -232,6 +232,14 @@ export const sendMessageRequestSchema = z.object({
 });
 export type SendMessageRequest = z.infer<typeof sendMessageRequestSchema>;
 
+/** Project identity is supplied by the UI; paths and hosts are resolved by the server. */
+export const moveThreadRequestSchema = z.object({
+  projectId: z.string().min(1).max(200),
+  expectedProjectId: z.string().min(1).max(200),
+  stop: z.boolean().default(false)
+}).strict();
+export type MoveThreadRequest = z.infer<typeof moveThreadRequestSchema>;
+
 export const providerRateLimitRecoveryReasonSchema = z.enum([
   "eligible",
   "thread-not-failed",

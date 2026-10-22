@@ -18,7 +18,7 @@ function setup(over: Partial<StudioCommandTargets> = {}) {
 describe('Studio verbs report unsupported when the target is absent', () => {
   it.each([
     ['editor.proposeEdit', proposal], ['preview.start', {}], ['preview.send', { text: 'hi' }],
-    ['trace.focus', {}], ['graph.focus', { node: 'n' }], ['layout.set', { compact: true }], ['orgTests.open', {}], ['context.set', { presetId: 'p' }]
+    ['trace.focus', {}], ['graph.focus', { node: 'n' }], ['layout.set', { compact: true }], ['orgTests.open', {}], ['simulations.open', {}], ['context.set', { presetId: 'p' }]
   ])('%s', async (command, input) => {
     await expect(setup().exec(command, input)).rejects.toThrow(`${command} is not supported in this view.`);
   });
@@ -144,5 +144,26 @@ describe('orgTests.open', () => {
     const orgTestsOpen = vi.fn();
     await expect(setup({ orgTestsOpen }).exec('orgTests.open', input)).rejects.toThrow(message);
     expect(orgTestsOpen).not.toHaveBeenCalled();
+  });
+});
+
+describe('simulations.open', () => {
+  it.each([{}, { batchId: 'batch-123' }, { batchId: 'a'.repeat(64) }])('opens Tests with optional batch focus %o', async input => {
+    const simulationsOpen = vi.fn();
+    const { exec } = setup({ simulationsOpen });
+    await expect(exec('simulations.open', input)).resolves.toEqual(input);
+    expect(simulationsOpen).toHaveBeenCalledExactlyOnceWith(input);
+  });
+
+  it.each([
+    [{ batchId: '' }, 'batchId must be'],
+    [{ batchId: '../other' }, 'batchId must be'],
+    [{ batchId: 'a'.repeat(65) }, 'batchId must be'],
+    [{ batchId: 7 }, 'batchId must be'],
+    [{ batchId: 'batch-123', other: true }, 'accepts only batchId']
+  ])('rejects invalid focus %o before opening Tests', async (input, error) => {
+    const simulationsOpen = vi.fn();
+    await expect(setup({ simulationsOpen }).exec('simulations.open', input)).rejects.toThrow(error);
+    expect(simulationsOpen).not.toHaveBeenCalled();
   });
 });

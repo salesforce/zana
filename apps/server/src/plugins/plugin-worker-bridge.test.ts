@@ -14,7 +14,8 @@ it('roundtrips callbacks, bound methods, types, undefined and exceptions', async
 it('forwards live cancellation and rejects pending calls on disposal', async () => {
   const { a, b } = pair(); const controller = new AbortController(); const signal = b.decode(a.encode(controller.signal)); controller.abort();
   await new Promise(resolve => setTimeout(resolve, 10)); expect(signal.aborted).toBe(true);
-  const remote = a.decode(b.encode(() => new Promise(() => {}))); const pending = remote(); a.dispose(); await expect(pending).rejects.toThrow('stopped');
+  const remote = a.decode(b.encode(() => new Promise(() => {}))); expect(a.isBusy()).toBe(false);
+  const pending = remote(); expect(a.isBusy()).toBe(true); a.dispose(); await expect(pending).rejects.toThrow('stopped'); expect(a.isBusy()).toBe(false);
   await expect(remote()).rejects.toThrow('stopped');
 });
 it('rejects cyclic, overly deep and oversized collections', () => {
@@ -36,6 +37,13 @@ it('releases signal slots after cancellation and rejects a raw oversized reply',
   const { a, b } = pair(); for (let i = 0; i < 1100; i++) { const controller = new AbortController(); a.encode(controller.signal); controller.abort(); }
   const fn = a.decode(b.encode(() => 'x'.repeat(4 * 1024 * 1024 + 1))); await expect(fn()).rejects.toThrow('byte limit');
 });
+it('bounds unconsumed async service continuations and releases them on teardown', () => {
+  const { a } = pair();
+  const wire = (id: number) => ({ __zcc_plugin_wire: 'function', side: 'plugin', id, async: true, once: true });
+  for (let id = 0; id < 4096; id++) a.decode(wire(id));
+  expect(a.isBusy()).toBe(true); expect(() => a.decode(wire(4096))).toThrow('result limit');
+  expect(() => a.decode(wire(0))).not.toThrow(); a.dispose(); expect(a.isBusy()).toBe(false);
+});
 
 it('observes actual Promise returns and releases their temporary callback slots', async () => {
   const { a, b } = pair();
@@ -45,7 +53,9 @@ it('observes actual Promise returns and releases their temporary callback slots'
   for (let i = 0; i < 4200; i++) {
     const result = await lazy.__zccPluginInvokeObserved();
     expect(result.asynchronous).toBe(true);
+    expect(a.isBusy()).toBe(true);
     expect(await result.value()).toBe('lazy');
+    expect(a.isBusy()).toBe(false);
   }
   const failing = a.decode(b.encode(() => Promise.reject(Error('rejected'))));
   const result = await failing.__zccPluginInvokeObserved();

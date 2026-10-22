@@ -285,7 +285,7 @@ describe('inbox MCP server (end-to-end)', () => {
       const client = await connectClient(handle.url, `proj-1/caller-session/${controlCredentialForSession('caller-session')}`);
       clients.push(client);
       const names = (await client.listTools()).tools.map((t) => t.name);
-      expect(names).toEqual(expect.arrayContaining(['squad_propose', 'squad_plan_check']));
+      expect(names).toEqual(expect.arrayContaining(['squad_propose', 'squad_launch', 'squad_plan_check']));
       const res = await client.callTool({ name: 'squad_propose', arguments: { teamId: 't1', goal: 'do it' } });
       expect((res as { isError?: boolean }).isError).toBeFalsy();
       expect(validateLaunchRouteIdentity).toHaveBeenCalledWith('caller-session', 'proj-1');
@@ -308,12 +308,40 @@ describe('inbox MCP server (end-to-end)', () => {
       expect(names).not.toContain('squad_plan_check');
     });
 
+    it('squad_launch now runs through the owner gate and forwards the call; review does not start', async () => {
+      const proposeSquad = vi.fn(async () => okResult);
+      const launchSquadNow = vi.fn(async () => ({ ok: true as const, value: { executionId: 'e1', state: 'RUNNING' } }));
+      handle = await startMcpServer({ ...baseOpts(), proposeSquad, launchSquadNow, validateLaunchRouteIdentity: async () => true });
+      const client = await connectClient(handle.url, `proj-1/caller-session/${controlCredentialForSession('caller-session')}`);
+      clients.push(client);
+      const now = await client.callTool({ name: 'squad_launch', arguments: { mode: 'now', teamId: 't1', goal: 'go' } }) as { isError?: boolean };
+      expect(now.isError).toBeFalsy();
+      expect(launchSquadNow).toHaveBeenCalledWith({ projectId: 'proj-1', sessionId: 'caller-session' }, expect.objectContaining({ teamId: 't1', goal: 'go' }));
+      const review = await client.callTool({ name: 'squad_launch', arguments: { mode: 'review', teamId: 't1', goal: 'go' } }) as { isError?: boolean };
+      expect(review.isError).toBeFalsy();
+      expect(proposeSquad).toHaveBeenCalledTimes(1);
+      expect(launchSquadNow).toHaveBeenCalledTimes(1);
+      const bad = await client.callTool({ name: 'squad_launch', arguments: { teamId: 't1', goal: 'go' } }) as { isError?: boolean };
+      expect(bad.isError).toBe(true);
+    });
+
+    it('squad_launch now is denied on an uncredentialed route', async () => {
+      const launchSquadNow = vi.fn(async () => ({ ok: true as const, value: { executionId: 'e1', state: 'RUNNING' } }));
+      handle = await startMcpServer({ ...baseOpts(), proposeSquad: vi.fn(async () => okResult), launchSquadNow, validateLaunchRouteIdentity: async () => true });
+      const client = await connectClient(handle.url, 'proj-1/caller-session/forged');
+      clients.push(client);
+      const res = await client.callTool({ name: 'squad_launch', arguments: { mode: 'now', teamId: 't1', goal: 'g' } }) as { isError?: boolean };
+      expect(res.isError).toBe(true);
+      expect(launchSquadNow).not.toHaveBeenCalled();
+    });
+
     it('hides both tools without the deps', async () => {
       handle = await startMcpServer(baseOpts());
       const client = await connectClient(handle.url, `proj-1/caller-session/${controlCredentialForSession('caller-session')}`);
       clients.push(client);
       const names = (await client.listTools()).tools.map((t) => t.name);
       expect(names).not.toContain('squad_propose');
+      expect(names).not.toContain('squad_launch');
       expect(names).not.toContain('squad_plan_check');
     });
 

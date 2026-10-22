@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { useZccNavigate, type PluginPendingInteractionProps } from '@zana-ai/zcc-plugin-sdk/app';
-import { AGENTFORCE_PLAYGROUND_ACTION } from './agentforce-panel-params.js';
+import { useZccContext, useZccNavigate, type PluginPendingInteractionProps } from '@zana-ai/zcc-plugin-sdk/app';
+import { routeStudioIntent } from './studio/studio-intents.js';
 import { componentTarget, parseGuardrailPreview, type ComponentTarget, type GuardrailField } from './guardrail-preview.js';
 
 const STYLES = `
@@ -37,17 +37,13 @@ export function GuardrailReview(props: PluginPendingInteractionProps) {
   const preview = payload.preview ? parseGuardrailPreview(String(payload.preview)) : null;
   const orgKind = payload.orgKind || 'unknown';
   const navigate = useZccNavigate();
+  const context = useZccContext();
   const [allowed, setAllowed] = useState(false);
-  const openTarget = (target: ComponentTarget) => {
-    const threadId = props.interaction.threadId;
-    navigate.openThreadPanel({
-      actionId: AGENTFORCE_PLAYGROUND_ACTION,
-      title: target.kind === 'agent' ? 'Playground' : target.kind === 'flow' ? 'Flow map' : 'Apex (read-only)',
-      params:
-        target.kind === 'agent'
-          ? { path: target.path }
-          : { apiName: target.apiName, tool: 'actions', ...(target.kind === 'apex' ? { readOnly: '1' } : {}) },
-      ...(threadId ? { threadId } : {})
+  // Flow and Apex rows have no agent of their own: they open the Studio's Actions tool.
+  const openTarget = (target: ComponentTarget, from: Element | null) => {
+    void routeStudioIntent({
+      pluginId: 'salesforce', projectId: context.projectId ?? null, threadId: props.interaction.threadId || null, from, navigate,
+      intent: target.kind === 'agent' ? { kind: 'agent', path: target.path } : { kind: 'actions' }
     });
   };
   return (
@@ -128,7 +124,7 @@ function FieldRow({ field }: { field: Exclude<GuardrailField, { kind: 'component
   );
 }
 
-function ComponentTable({ field, onOpen }: { field: Extract<GuardrailField, { kind: 'components' }>; onOpen: (target: ComponentTarget) => void }) {
+function ComponentTable({ field, onOpen }: { field: Extract<GuardrailField, { kind: 'components' }>; onOpen: (target: ComponentTarget, from: Element | null) => void }) {
   return (
     <div>
       <p className="sf-guard-muted">
@@ -143,7 +139,7 @@ function ComponentTable({ field, onOpen }: { field: Extract<GuardrailField, { ki
                 <td>{component.type}</td>
                 <td className="sf-guard-mono">
                   {target ? (
-                    <button type="button" className="sf-guard-link" onClick={() => onOpen(target)} title={target.kind === 'apex' ? 'View source (read-only)' : target.kind === 'flow' ? 'Open flow map' : 'Open in playground'}>
+                    <button type="button" className="sf-guard-link" onClick={event => onOpen(target, event.currentTarget)} title={target.kind === 'apex' ? 'View source (read-only)' : target.kind === 'flow' ? 'Open flow map' : 'Open agent'}>
                       {component.name}
                     </button>
                   ) : (

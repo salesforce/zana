@@ -10,6 +10,7 @@ import { PERSONA_ICON_NAMES, personaIconByName } from '../lib/profileIcon.js';
 import { getScopedProjectId } from '../lib/windowScope.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import { SquadTransportChip } from './SquadTransportChip.js';
+import { isLaunchApproval, type LaunchApproval } from '@zana-ai/zcc-domain/squad-proposal';
 
 /**
  * Team detail + editor modal — the Teams counterpart of {@link PersonaEditor}.
@@ -259,6 +260,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
   const [routingEnforced, setRoutingEnforced] = useState<boolean | undefined>(team?.routingEnforced);
   const [transport, setTransport] = useState<SquadTransport>(team?.transport ?? 'CLI');
   const [defaultPlanning, setDefaultPlanning] = useState<'' | 'infer' | 'provided'>(team?.defaultPlanning ?? '');
+  const [launchApproval, setLaunchApproval] = useState<'' | LaunchApproval>(team?.launchApproval ?? '');
   const [slots, setSlots] = useState<SlotDraft[]>(() => {
     const base = (team?.slots ?? []).map((s) => ({
       personaId: s.personaId,
@@ -344,7 +346,8 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
       worktreeIsolation,
       routingEnforced,
       transport,
-      ...(defaultPlanning ? { defaultPlanning } : {})
+      ...(defaultPlanning ? { defaultPlanning } : {}),
+      ...(launchApproval ? { launchApproval } : {})
     };
     if (keepsId && team) input.id = team.id;
 
@@ -652,6 +655,27 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
           />
           <p className="settings-help">
             Sets the planning mode when this Squad is picked in the composer or proposed by an agent.
+          </p>
+        </div>
+
+        <div className="scheduler-form-field">
+          <label htmlFor="team-launch-approval">Launch approval</label>
+          <PopoverPicklist
+            id="team-launch-approval"
+            ariaLabel="Squad launch approval"
+            searchable={false}
+            value={launchApproval}
+            onChange={(next) => setLaunchApproval(isLaunchApproval(next) ? next : '')}
+            options={[
+              { value: '', label: 'Use the Project setting' },
+              { value: 'direct', label: 'Agents can launch directly if the Project allows' },
+              { value: 'review', label: 'Review before launch' }
+            ]}
+          />
+          <p className="settings-help">
+            Review before launch stops an agent from starting this Squad on its own. It proposes the run
+            and you press Launch from the Inbox. A Project set to Review before launch applies to this Squad
+            whatever is chosen here. Launching from the composer, schedules and triggers is not affected.
           </p>
         </div>
 

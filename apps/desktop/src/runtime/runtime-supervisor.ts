@@ -146,6 +146,7 @@ export interface RuntimeSupervisor {
   searchPlugins(query: string): Promise<unknown>;
   outdatedPlugins(): Promise<unknown>;
   updatePlugin(id: string): Promise<unknown>;
+  updateAllPlugins(): Promise<import('@zana-ai/zcc-domain/product').PluginUpdateAllResult>;
   listMarketplaces(): Promise<unknown>;
   addMarketplace(url: string): Promise<unknown>;
   refreshMarketplace(url: string): Promise<unknown>;
@@ -409,6 +410,7 @@ export async function startRuntimeSupervisor(options: StartRuntimeSupervisorOpti
     searchPlugins: async () => [],
     outdatedPlugins: async () => [],
     updatePlugin: async () => { throw new Error('plugin host is unavailable'); },
+    updateAllPlugins: async () => { throw new Error('plugin host is unavailable'); },
     listMarketplaces: async () => [],
     addMarketplace: async () => { throw new Error('plugin host is unavailable'); },
     refreshMarketplace: async () => { throw new Error('plugin host is unavailable'); },
@@ -478,6 +480,7 @@ interface UtilityRuntime {
   request(operation: 'plugins-search', query: string): Promise<unknown>;
   request(operation: 'plugins-outdated'): Promise<unknown>;
   request(operation: 'plugins-update', pluginId: string): Promise<unknown>;
+  request(operation: 'plugins-update-all'): Promise<unknown>;
   request(operation: 'plugins-call-rpc', pluginId: string, method: string, args?: unknown): Promise<unknown>;
   request(operation: 'plugins-settings-get', pluginId: string): Promise<unknown>;
   request(operation: 'plugins-settings-set', pluginId: string, values: Record<string, string | number | boolean | null>): Promise<unknown>;
@@ -806,6 +809,7 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     searchPlugins: (query) => server.request('plugins-search', query),
     outdatedPlugins: () => server.request('plugins-outdated'),
     updatePlugin: (id) => server.request('plugins-update', id),
+    updateAllPlugins: () => server.request('plugins-update-all') as Promise<import('@zana-ai/zcc-domain/product').PluginUpdateAllResult>,
     listMarketplaces: () => server.request('marketplace-list'),
     addMarketplace: (url) => server.request('marketplace-add', url),
     refreshMarketplace: (url) => server.request('marketplace-refresh', url),
@@ -891,13 +895,13 @@ export function createUtilityRuntime(runtime: { child: UtilityChild; url: string
   return {
     ...runtime,
     request(
-      operation: 'cli-callback-grant' | 'cli-discovery' | 'library-agent' | 'library-document' | 'project-metadata' | 'project-catalogs' | 'project-history' | 'project-feed' | 'product-event' | 'app-version' | 'thread-live' | 'thread-queue-turn' | 'squad-runtime-preflight' | 'squad-member-create' | 'squad-member-activate' | 'squad-member-deliver' | 'squad-member-delivery-complete' | 'squad-member-status' | 'squad-member-stop' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'projects-touch' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-call-rpc' | 'plugins-tool-policy' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
+      operation: 'cli-callback-grant' | 'cli-discovery' | 'library-agent' | 'library-document' | 'project-metadata' | 'project-catalogs' | 'project-history' | 'project-feed' | 'product-event' | 'app-version' | 'thread-live' | 'thread-queue-turn' | 'squad-runtime-preflight' | 'squad-member-create' | 'squad-member-activate' | 'squad-member-deliver' | 'squad-member-delivery-complete' | 'squad-member-status' | 'squad-member-stop' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'projects-touch' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-update-all' | 'plugins-call-rpc' | 'plugins-tool-policy' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
         ...args: [number] | [CliCallbackControl] | [CliDiscoveryRequest] | [LibraryAgentRequest] | [LibraryDocumentRequest] | [ProjectMetadataRequest] | [ProjectCatalogRequest] | [NativeToolPolicyRequest] | [SquadMemberRuntimeRequest] | [SquadMemberDeliveryRequest] | [SquadMemberDeliveryCompletion] | [SquadMemberControlRequest] | [SquadRuntimePreflightRequest] | [string, unknown[]] | [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, string, string] | [string, Record<string, string | number | boolean | null>] | [string, string[]] | [string, string[], { projectId?: string; threadId?: string; cwd?: string }?] | []
     ) {
       if (stopped || stopping) return Promise.reject(new Error('Background service stopped. Restart Zana to reconnect.'));
       const id = randomUUID();
       // Plugin CLI runs and RPCs may wrap slow external CLIs (e.g. `sf agent preview start`, up to 120s), so they get the long budget.
-      const timeoutMs = operation === 'plugins-cli-run' || operation === 'plugins-call-rpc' ? 300_000 : 20_000;
+      const timeoutMs = operation === 'plugins-cli-run' || operation === 'plugins-call-rpc' || operation === 'plugins-install' || operation === 'plugins-update' || operation === 'plugins-update-all' || operation === 'plugins-outdated' ? 300_000 : 20_000;
       return new Promise<unknown>((resolveResult, rejectResult) => {
         const timer = setTimeout(() => {
           pending.delete(id);

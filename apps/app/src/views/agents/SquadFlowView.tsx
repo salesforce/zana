@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useNavigate } from 'react-router-dom';
 import { hasDesktopBridge } from '@/lib/app-surface';
 import { ChevronRight, GitPullRequest, Hash, Workflow } from 'lucide-react';
-import type { ExecutionBoardProjection, SquadFlowGraph, SquadFlowNode } from '@zana-ai/zcc-domain/product';
+import type { ExecutionBoardProjection, SquadFlowNode } from '@zana-ai/zcc-domain/product';
 import {
   useData,
   useAgentMesh,
@@ -17,7 +17,7 @@ import { useThreads } from '@/thread-store';
 import { useCanvasPan } from '@/hooks/useCanvasPan';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import './mobile-canvas.css';
-import { buildSquadFlow, isQuiescentSquad } from '@/lib/squadFlow';
+import { buildSquadFlow, isQuiescentSquad, SOLO_GROUP_ICON, SOLO_GROUP_LABEL, type FlowGraph } from '@/lib/squadFlow';
 import { modernFlowParticipants } from '@/lib/modern-squad-members';
 import { squadFlowBounds, type FlowPoint } from '@/lib/squadFlowBounds';
 import {
@@ -27,6 +27,7 @@ import {
 } from '@/lib/squadLaunchGroups';
 import { SquadSwitcher, type SquadSwitcherItem } from '@/components/SquadSwitcher';
 import { teamRunLabel } from '@/lib/executionIdentity';
+import { childRowCounts, edgeRoute, layout, NODE_W, nodeNotice, simplify } from './squadFlowLayout';
 
 /**
  * Sticky squad-selection reducer for the Flow view's switcher. Given the
@@ -90,15 +91,24 @@ function sinceLabel(stateSince: number | undefined, now: number): string {
  * Chip label for one squad in the second picker. Prefers the squad's
  * orchestrator card label (so the chip matches the top card on the canvas),
  * then the matched squad-template name, then a positional "Squad N" fallback.
- * The solo bucket gets a fixed "Solo agents" label.
+ * The solo bucket gets the same fixed label as its header.
  */
-function squadChipLabel(graph: SquadFlowGraph, isSolo: boolean, ordinal: number): string {
-  if (isSolo) return 'Solo agents';
+export function squadChipLabel(graph: FlowGraph, ordinal: number): string {
+  if (graph.isSolo) return SOLO_GROUP_LABEL;
   if (graph.teamName) return graph.teamName;
   const orch = graph.nodes.find((n) => n.isOrchestrator);
   if (orch) return prettyLabel(orch.label);
   if (graph.squad?.name) return graph.squad.name;
   return `Squad ${ordinal}`;
+}
+
+/** Header label for one rendered graph; the solo bucket matches its chip. */
+export function squadHeaderLabel(graph: FlowGraph): string {
+  if (graph.isSolo) return SOLO_GROUP_LABEL;
+  if (graph.executionId && graph.teamName) {
+    return teamRunLabel({ cohortId: graph.executionId, executionId: graph.executionId, executionJobTitle: graph.executionJobTitle, teamName: graph.teamName });
+  }
+  return graph.teamName ?? graph.squad?.name ?? 'Squad';
 }
 
 const STATE_VERB: Record<SquadFlowNode['state'], string> = {
@@ -149,9 +159,6 @@ export function nodeActivity(node: SquadFlowNode, now: number): { working: boole
   return { working, streaming, claimed };
 }
 
-/** Max child rows rendered in a node card before collapsing to "+N more". */
-const MAX_VISIBLE_CHILDREN = 4;
-
 /**
  * Named sub-agent child rows nested inside a parent node card. Renders nothing
  * when no identity was captured — the parent's count badge is the fallback.
@@ -161,11 +168,9 @@ const MAX_VISIBLE_CHILDREN = 4;
 function SubagentChildList({ node }: { node: SquadFlowNode }) {
   const children = node.subagentChildren;
   if (!children?.length) return null;
-  const visible = children.slice(0, MAX_VISIBLE_CHILDREN);
-  // "+N more" reconciles two things against the authoritative count: named rows
-  // we collapsed past the visible cap, AND sub-agents whose hook payload was
-  // lost (so they count but have no record). max(count, records) − visible.
-  const hidden = Math.max(node.liveSubagents, children.length) - visible.length;
+  const counts = childRowCounts(node);
+  const visible = children.slice(0, counts.visible);
+  const hidden = counts.hidden;
   const collapsedNamed = children.length - visible.length; // records we hid
   const unnamed = hidden - collapsedNamed; // count beyond any record
   const moreTitle =
@@ -200,89 +205,9 @@ function SubagentChildList({ node }: { node: SquadFlowNode }) {
   );
 }
 
-// ---- layout (hand-rolled layered graph; no graph library) -------------------
-
-const NODE_W = 244;
-const NODE_H = 88;
-const COL_GAP = 26;
-const ROW_GAP = 96;
-const PAD_X = 24;
-const EDGE_OFFSET = 22;
-const PAD_TOP = EDGE_OFFSET + 16;
-
-interface Placed {
-  node: SquadFlowNode;
-  x: number;
-  y: number;
-}
-
-/** Orchestrator centered on row 0; everyone else laid out in a wrapping row
- *  below. Deterministic (input order) so the graph doesn't jump between ticks. */
-function layout(graph: SquadFlowGraph, width: number): { placed: Placed[]; height: number } {
-  const orchestrator = graph.nodes.find((n) => n.isOrchestrator);
-  const workers = graph.nodes.filter((n) => !n.isOrchestrator);
-  const perRow = Math.max(1, Math.floor((width - PAD_X * 2 + COL_GAP) / (NODE_W + COL_GAP)));
-  const placed: Placed[] = [];
-
-  if (orchestrator) {
-    placed.push({ node: orchestrator, x: (width - NODE_W) / 2, y: PAD_TOP });
-  }
-
-  const workerTop = PAD_TOP + (orchestrator ? NODE_H + ROW_GAP : 0);
-  workers.forEach((node, i) => {
-    const row = Math.floor(i / perRow);
-    const inRow = Math.min(perRow, workers.length - row * perRow);
-    const rowWidth = inRow * NODE_W + (inRow - 1) * COL_GAP;
-    const startX = (width - rowWidth) / 2;
-    const col = i % perRow;
-    placed.push({
-      node,
-      x: startX + col * (NODE_W + COL_GAP),
-      y: workerTop + row * (NODE_H + ROW_GAP)
-    });
-  });
-
-  const rows = Math.ceil(workers.length / perRow);
-  // Base height budgets NODE_H=86 per row. Add bottom slack (140px) to ensure
-  // maximally-tall cards (4+ sub-agent children) remain reachable — the button's
-  // overflow:hidden clips content taller than NODE_H, so it won't auto-extend
-  // the scroll container. 140px accommodates the max child section overflow (~116px)
-  // plus breathing room. (A3 height-padding fix — frontend-dev-2 2026-06-22)
-  const height = workerTop + rows * NODE_H + Math.max(0, rows - 1) * ROW_GAP + PAD_TOP + 140;
-  return { placed, height: Math.max(height, NODE_H + PAD_TOP * 2) };
-}
-
-type Pt = FlowPoint;
-
-/** Drop consecutive duplicate + collinear waypoints so the rounded-corner
- *  builder never sees a zero-length segment (which would break the arc math). */
-function simplify(pts: Pt[]): Pt[] {
-  const out: Pt[] = [];
-  for (const p of pts) {
-    const last = out[out.length - 1];
-    if (last && Math.abs(last.x - p.x) < 0.5 && Math.abs(last.y - p.y) < 0.5) continue;
-    out.push(p);
-  }
-  // Remove collinear middles (a→b→c straight): keep endpoints only.
-  const kept: Pt[] = [];
-  for (let i = 0; i < out.length; i++) {
-    if (i === 0 || i === out.length - 1) {
-      kept.push(out[i]);
-      continue;
-    }
-    const a = out[i - 1];
-    const b = out[i];
-    const c = out[i + 1];
-    const cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-    if (Math.abs(cross) < 0.5) continue; // collinear → skip b
-    kept.push(b);
-  }
-  return kept;
-}
-
 /** Build an orthogonal path through `pts` with rounded (quadratic) corners —
  *  the smooth-step look from the Agentforce flow builder. */
-function roundedPath(pts: Pt[], radius: number): string {
+function roundedPath(pts: FlowPoint[], radius: number): string {
   const p = simplify(pts);
   if (p.length < 2) return '';
   let d = `M${p[0].x},${p[0].y}`;
@@ -303,46 +228,6 @@ function roundedPath(pts: Pt[], radius: number): string {
 }
 
 const EDGE_RADIUS = 14;
-
-/**
- * Orthogonal, rounded-corner route from source (exits bottom) to target
- * (enters top) — the "goes around" look of the Agentforce flow builder.
- *  - Target clearly below → S-route: down, across at mid-Y, down.
- *  - Target above / too close (a reply handoff) → route around a side lane so
- *    the edge never cuts back through the source node.
- */
-function edgeRoute(from: Placed, to: Placed): Pt[] {
-  const sx = from.x + NODE_W / 2;
-  const sy = from.y + NODE_H;
-  const tx = to.x + NODE_W / 2;
-  const ty = to.y;
-  const pts: Pt[] = [{ x: sx, y: sy }];
-
-  if (ty >= sy + EDGE_OFFSET * 2) {
-    // Standard downward handoff: horizontal channel at the vertical midpoint.
-    const midY = (sy + ty) / 2;
-    pts.push({ x: sx, y: midY }, { x: tx, y: midY });
-  } else {
-    // Back-edge (target at/above source): drop out, run along a side lane, and
-    // climb up to enter the target from the top.
-    const outY = sy + EDGE_OFFSET;
-    const inY = Math.max(ty - EDGE_OFFSET, 4);
-    // Pick a vertical lane between the nodes; if they're near-stacked, push the
-    // lane clear of both node bodies so the route doesn't overlap them.
-    const gap = Math.abs(tx - sx);
-    const laneX =
-      gap < NODE_W ? Math.max(sx, tx) + NODE_W / 2 + EDGE_OFFSET : (sx + tx) / 2;
-    pts.push(
-      { x: sx, y: outY },
-      { x: laneX, y: outY },
-      { x: laneX, y: inY },
-      { x: tx, y: inY }
-    );
-  }
-
-  pts.push({ x: tx, y: ty });
-  return simplify(pts);
-}
 
 const EDGE_BOUNDS_PAD = 16;
 
@@ -439,7 +324,7 @@ function flowNodeTitle(node: SquadFlowNode, compact: boolean): string {
 }
 
 export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
-  graph: SquadFlowGraph;
+  graph: FlowGraph;
   onInspectExecution?: (projectId: string, executionId: string) => void;
   pannable?: boolean;
 }) {
@@ -500,7 +385,7 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
     return from && to ? [{ edge, points: edgeRoute(from, to) }] : [];
   }), [graph.edges, byId]);
   const bounds = useMemo(() => squadFlowBounds(
-    resolvedPlaced.map(({ x, y }) => ({ x, y, width: NODE_W, height: NODE_H })),
+    resolvedPlaced.map(({ x, y, height }) => ({ x, y, width: NODE_W, height })),
     routedEdges.flatMap(({ points }) => points),
     width,
     layoutHeight,
@@ -592,13 +477,9 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
     <section className="squad-flow-squad">
       <header className="squad-flow-head">
         <span className="squad-flow-icon" aria-hidden="true">
-          {graph.squad?.icon ?? '🤖'}
+          {graph.isSolo ? SOLO_GROUP_ICON : graph.squad?.icon ?? '🤖'}
         </span>
-         <span className="squad-flow-name">
-           {graph.executionId && graph.teamName
-             ? teamRunLabel({ cohortId: graph.executionId, executionId: graph.executionId, executionJobTitle: graph.executionJobTitle, teamName: graph.teamName })
-             : graph.teamName ?? graph.squad?.name ?? 'Squad'}
-         </span>
+        <span className="squad-flow-name">{squadHeaderLabel(graph)}</span>
         <span className="squad-flow-rollup">
           {rollup.working > 0 && <em className="squad-flow-stat agent-working">{rollup.working} working</em>}
           {rollup.blocked > 0 && <em className="squad-flow-stat agent-blocked">{rollup.blocked} blocked</em>}
@@ -667,8 +548,10 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
               })}
           </svg>
 
-          {resolvedPlaced.map(({ node, x, y }) => {
+          {resolvedPlaced.map(({ node, x, y, height }) => {
             const { working, streaming, claimed } = nodeActivity(node, now);
+            const notice = nodeNotice(node);
+            const question = node.job?.blockerQuestion ?? '';
             // "working" = real liveness (fresh output OR the mesh reports working);
             // "claimed" = a durable claim exists but no live signal — neither is
             // fabricated into motion, so a stranded claim shows a static chip only.
@@ -686,7 +569,7 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
                 key={node.sessionId}
                 type="button"
                 className={`squad-flow-node ${node.isOrchestrator ? 'squad-flow-node--orch' : ''} ${node.inspectionTarget.type === 'thread' && node.job ? 'squad-flow-node--modern' : ''} ${node.exited ? 'squad-flow-node--exited' : ''} ${working && !quiescent ? 'squad-flow-node--working' : ''} ${streaming && !quiescent ? 'squad-flow-node--streaming' : ''} ${claimed && !quiescent ? 'squad-flow-node--claimed' : ''} ${isDragging ? 'squad-flow-node--dragging' : ''}`}
-                style={{ left: x + bounds.offsetX, top: y + bounds.offsetY, width: NODE_W }}
+                style={{ left: x + bounds.offsetX, top: y + bounds.offsetY, width: NODE_W, height }}
                 onPointerDown={compact ? undefined : (e) => handlePointerDown(e, node, x, y)}
                 onPointerMove={compact ? undefined : handlePointerMove}
                 onPointerUp={compact ? undefined : handlePointerUp}
@@ -728,20 +611,14 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
                           className="squad-flow-claimed"
                           title="Backend holds a work claim for this worker, but there is no live session and no recent output — resuming, remote, or stalled. No activity is being shown because none is confirmed."
                         >
-                          claimed · no recent output
+                          no output
                         </span>
                       )}
-                      {node.job?.needsAttention && node.job.blockerAudience !== 'coordinator' && node.job.blockerQuestion && (
-                        <span className="squad-flow-node-blocker" title={node.job.blockerQuestion}>
-                          Needs you · {truncate(node.job.blockerQuestion, 56)}
+                      {node.role && (
+                        <span className="squad-flow-node-role" title={node.role}>
+                          {node.role}
                         </span>
                       )}
-                      {node.job?.blockerAudience === 'coordinator' && node.job.blockerQuestion && (
-                        <span className="squad-flow-node-coord" title={node.job.blockerQuestion}>
-                          Coordinator deciding · {truncate(node.job.blockerQuestion, 56)}
-                        </span>
-                      )}
-                      {node.role && <span className="squad-flow-node-role">{node.role}</span>}
                       {node.liveSubagents > 0 && !node.subagentChildren?.length && (
                         <span
                           className="squad-flow-subagents"
@@ -751,6 +628,16 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
                         </span>
                       )}
                     </span>
+                    {notice === 'blocker' && (
+                      <span className="squad-flow-node-blocker" title={question}>
+                        Needs you · {truncate(question, 56)}
+                      </span>
+                    )}
+                    {notice === 'coordinator' && (
+                      <span className="squad-flow-node-coord" title={question}>
+                        Coordinator deciding · {truncate(question, 56)}
+                      </span>
+                    )}
                   </span>
                   <ChevronRight size={14} className="squad-flow-node-chevron" aria-hidden="true" />
                 </span>
@@ -828,10 +715,10 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
   // One graph per project that has live agents (or just the scoped project). Raw
   // slices only; derive behind a memo so a status tick doesn't rebuild the world
   // (render-storm guard).
-  const graphs = useMemo<SquadFlowGraph[]>(() => {
+  const graphs = useMemo<FlowGraph[]>(() => {
     const builtAt = Date.now();
     const byProjectId = new Map(projects.map((p) => [p.id, p]));
-    const out: SquadFlowGraph[] = [];
+    const out: FlowGraph[] = [];
     const projectIds = new Set([...Object.keys(terminals), ...threadParticipantsByProject.keys()]);
     for (const pid of projectIds) {
       if (projectId && pid !== projectId) continue;
@@ -895,14 +782,14 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
   const squadDerived = useMemo(() => {
     const builtAt = Date.now();
     const pid = selected;
-    if (!pid) return { groups: [] as ReturnType<typeof squadLaunchGroups>, byLaunch: new Map<string, SquadFlowGraph>() };
+    if (!pid) return { groups: [] as ReturnType<typeof squadLaunchGroups>, byLaunch: new Map<string, FlowGraph>() };
     const list = terminals[pid];
     const sessions = agentViewTerminals(list, includeScheduled);
     const projAgents = agents.filter((a) => a.projectId === pid);
     const threadParticipants = threadParticipantsByProject.get(pid) ?? [];
     const projMessages = messages.filter((m) => m.projectId === pid);
     const groups = squadLaunchGroups(projAgents, sessions, threadParticipants);
-    const byLaunch = new Map<string, SquadFlowGraph>();
+    const byLaunch = new Map<string, FlowGraph>();
     for (const grp of groups) {
       const g = buildSquadFlow({
         projectId: pid,
@@ -985,8 +872,8 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
         id: grp.launchId,
         label: g?.executionId && g.teamName
           ? teamRunLabel({ cohortId: grp.launchId, executionId: g.executionId, executionJobTitle: g.executionJobTitle, teamName: g.teamName })
-          : g ? squadChipLabel(g, grp.isSolo, realOrdinal) : grp.launchId,
-        icon: grp.isSolo ? '👤' : '🤖',
+          : g ? squadChipLabel(g, realOrdinal) : grp.launchId,
+        icon: grp.isSolo ? SOLO_GROUP_ICON : '🤖',
         working: g?.summary.working ?? 0,
         isNew: !seenLaunchSet.has(grp.launchId) && grp.launchId !== selectedSquad
       };

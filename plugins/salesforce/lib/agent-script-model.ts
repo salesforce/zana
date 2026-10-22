@@ -8,6 +8,8 @@ export interface AgentGraphNode {
   kind: AgentGraphNodeKind;
   label: string;
   actionId?: string;
+  /** Action target such as `flow://Check_Status`, shown as the node subtitle. */
+  target?: string;
 }
 
 export interface AgentGraphEdge {

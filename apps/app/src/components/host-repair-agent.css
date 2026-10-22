@@ -1,0 +1,17 @@
+.host-repair-agent {
+  margin: 0;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-base));
+  flex-shrink: 0;
+}
+.host-repair-agent h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 12px; font-weight: 600; color: var(--text-primary); }
+.host-repair-agent h3 svg { color: var(--accent); flex-shrink: 0; }
+.host-repair-agent p { margin: 8px 0 12px; font-size: 12px; line-height: 1.6; color: var(--text-muted); }
+.host-repair-agent-start { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 11px; border: 0; border-radius: 6px; background: var(--accent); color: var(--accent-contrast, #fff); font: inherit; font-size: 12px; cursor: pointer; }
+.host-repair-agent-start svg:last-child { margin-left: auto; }
+.host-repair-agent-start:disabled { opacity: .65; cursor: wait; }
+.host-repair-agent-start:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.host-repair-agent-location { display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 9px; font-size: 10px; color: var(--text-muted); }
+.host-repair-agent .host-repair-agent-error { margin-bottom: 0; color: var(--danger); overflow-wrap: anywhere; }

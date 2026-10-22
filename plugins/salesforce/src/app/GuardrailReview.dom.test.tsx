@@ -76,10 +76,11 @@ describe('componentTarget', () => {
 
 describe('GuardrailReview', () => {
   const nodes: Array<() => void> = [];
-  const navigate = { openThreadPanel: vi.fn(() => true) };
+  const navigate = { openThreadPanel: vi.fn(() => true), toProject: vi.fn() };
   beforeEach(() => {
     navigate.openThreadPanel.mockClear();
-    (globalThis as Record<string, unknown>).__ZCC_PLUGIN_RUNTIME__ = { useZccNavigate: () => navigate };
+    navigate.toProject.mockClear();
+    (globalThis as Record<string, unknown>).__ZCC_PLUGIN_RUNTIME__ = { useZccNavigate: () => navigate, useZccContext: () => ({ projectId: 'proj-9' }) };
   });
   afterEach(() => {
     for (const unmount of nodes.splice(0)) unmount();
@@ -126,15 +127,16 @@ describe('GuardrailReview', () => {
     expect(links.map(link => link.textContent)).toEqual(['Route', 'Svc']);
     await act(async () => links[0]!.click());
     await act(async () => links[1]!.click());
-    expect(navigate.openThreadPanel).toHaveBeenNthCalledWith(1, { actionId: 'playground', title: 'Flow map', params: { apiName: 'Route', tool: 'actions' }, threadId: 't9' });
-    expect(navigate.openThreadPanel).toHaveBeenNthCalledWith(2, { actionId: 'playground', title: 'Apex (read-only)', params: { apiName: 'Svc', tool: 'actions', readOnly: '1' }, threadId: 't9' });
+    // Flow and Apex rows carry no agent, so there is no thread view: they open the Studio.
+    expect(navigate.openThreadPanel).not.toHaveBeenCalled();
+    expect(navigate.toProject).toHaveBeenCalledTimes(2);
   });
 
-  it('opens .agent bundles in the playground', async () => {
+  it('opens .agent bundles in the Agent panel', async () => {
     const { el } = await mount({ ...base, preview: JSON.stringify(deployInput) });
-    const link = el.querySelector<HTMLButtonElement>('.sf-guard-link[title="Open in playground"]')!;
+    const link = el.querySelector<HTMLButtonElement>('.sf-guard-link[title="Open agent"]')!;
     await act(async () => link.click());
-    expect(navigate.openThreadPanel).toHaveBeenCalledWith({ actionId: 'playground', title: 'Playground', params: { path: 'force-app/main/default/aiAuthoringBundles/GuiAgent_1/GuiAgent_1.agent' }, threadId: 't9' });
+    expect(navigate.openThreadPanel).toHaveBeenCalledWith({ actionId: 'agent', title: 'GuiAgent_1', params: { path: 'force-app/main/default/aiAuthoringBundles/GuiAgent_1/GuiAgent_1.agent', view: 'file', projectId: 'proj-9' }, threadId: 't9' });
   });
 
   it('shows retrieve warnings and the hidden component count', async () => {

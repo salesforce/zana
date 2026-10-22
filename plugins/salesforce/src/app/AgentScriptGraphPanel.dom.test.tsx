@@ -54,3 +54,16 @@ it('retries a failed load by remounting the frame and forwards compact + focus',
   view.rerender(<AgentScriptGraphPanel source="s" visible onOpenAction={() => {}} compact focusNode="refunds" focusSeq={3} />);
   expect(post).toHaveBeenLastCalledWith(expect.objectContaining({ focus: 'refunds', focusSeq: 3 }), location.origin);
 });
+
+it('forwards test coverage and a pinned case, and relays draft-case requests', () => {
+  const draft = vi.fn();
+  const coverage = { cases: [{ id: 'a', name: 'A', path: ['start_agent'], missing: [] }] };
+  render(<AgentScriptGraphPanel source="s" visible onOpenAction={() => {}} coverage={coverage} focusCase="a" focusSeq={5} onDraftCases={draft} />);
+  const frame = screen.getByTitle('AgentScript graph') as HTMLIFrameElement;
+  const post = vi.spyOn(frame.contentWindow!, 'postMessage').mockImplementation(() => undefined);
+  const send = (data: object) => act(() => { window.dispatchEvent(new MessageEvent('message', { origin: location.origin, source: frame.contentWindow, data: { source, ...data } })); });
+  send({ type: 'ready' });
+  expect(post).toHaveBeenCalledWith(expect.objectContaining({ coverage, focusCase: 'a', focusSeq: 5 }), location.origin);
+  send({ type: 'draftCases', labels: ['Errors'] });
+  expect(draft).toHaveBeenCalledWith(['Errors']);
+});
