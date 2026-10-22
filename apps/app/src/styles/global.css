@@ -38626,6 +38626,19 @@ body.split-frame-guard webview {
   background: var(--bg-panel);
 }
 
+/* Phone/tablet: the rail floats over the page so plugin content keeps the full
+   screen width (a 36px column is a tenth of a phone). The launchers stay reachable. */
+.plugin-panel-host-layout.is-compact > .plugin-panel-host-launchers {
+  position: absolute;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 5;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.18);
+}
+
 .panel-agent-tab {
   display: flex;
   flex-direction: column;
