@@ -41,6 +41,27 @@ describe('copyText', () => {
     }
   });
 
+  it('rejects when no clipboard is available, instead of reporting a copy', async () => {
+    vi.stubGlobal('navigator', {});
+    try {
+      await expect(copyText('hello')).rejects.toThrow('Clipboard unavailable');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('rejects when the desktop write fails and there is no web clipboard', async () => {
+    const writeText = vi.fn(async () => ({ ok: false as const }));
+    vi.stubGlobal('navigator', {});
+    vi.stubGlobal('window', { cc: { clipboard: { writeText } } });
+    try {
+      await expect(copyText('hello')).rejects.toThrow('Clipboard unavailable');
+      expect(writeText).toHaveBeenCalledWith('hello');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('falls back to the web clipboard when the desktop bridge throws', async () => {
     const writeText = vi.fn(async () => {
       throw new Error('denied');

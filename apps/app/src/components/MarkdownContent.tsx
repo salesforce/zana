@@ -36,6 +36,7 @@ import {
   languageFromMarkdownClassName
 } from './markdown-code-highlight.js';
 import { boundedText, LargeTextPreview } from './LargeTextPreview.js';
+import { CodeBlockCopyButton } from './CodeBlockCopyButton.js';
 
 /**
  * Shared markdown / doc rendering for the inbox.
@@ -54,6 +55,8 @@ import { boundedText, LargeTextPreview } from './LargeTextPreview.js';
  * @param exportable  Mount the per-diagram export/copy toolbar. The live panel
  *   passes true; the PDF-export path leaves it off so the headless snapshot
  *   (which counts `data-mermaid-state` nodes) is unchanged.
+ * @param copyableCode  Pin a "Copy code" button to fenced code blocks. On by
+ *   default; the PDF export turns it off so the button isn't printed.
  */
 export function DocContent({
   path,
@@ -62,7 +65,8 @@ export function DocContent({
   exportable = false,
   threadId,
   projectId,
-  storage = false
+  storage = false,
+  copyableCode = true
 }: {
   path: string;
   content: string;
@@ -71,6 +75,7 @@ export function DocContent({
   threadId?: string;
   projectId?: string | null;
   storage?: boolean;
+  copyableCode?: boolean;
 }) {
   if (boundedText(content).length < content.length) return <LargeTextPreview text={content} />;
   const lower = path.toLowerCase();
@@ -92,6 +97,7 @@ export function DocContent({
           projectId={projectId}
           documentPath={path}
           storage={storage}
+          copyableCode={copyableCode}
         />
       </>
     );
@@ -165,7 +171,8 @@ export const MarkdownContent = memo(function MarkdownContent({
   documentPath,
   storage = false,
   filePathHints,
-  lightboxItems: providedLightboxItems
+  lightboxItems: providedLightboxItems,
+  copyableCode = true
 }: {
   text: string;
   mermaidTheme?: 'dark' | 'default';
@@ -178,6 +185,7 @@ export const MarkdownContent = memo(function MarkdownContent({
   storage?: boolean;
   filePathHints?: readonly string[];
   lightboxItems?: readonly { src: string; alt: string }[];
+  copyableCode?: boolean;
 }) {
   const preview = boundedText(text);
   const body = unwrapBareFence(preview);
@@ -212,18 +220,18 @@ export const MarkdownContent = memo(function MarkdownContent({
       }
       const highlighted = highlightFencedPre(props.children);
       if (highlighted) {
-        return (
+        return withCodeCopy(copyableCode, props.children, (
           <pre>
             <code
               className={highlighted.className}
               dangerouslySetInnerHTML={highlighted.html}
             />
           </pre>
-        );
+        ));
       }
-      return <pre {...props} />;
+      return withCodeCopy(copyableCode, props.children, <pre {...props} />);
     },
-    [exportable, mermaidTheme]
+    [copyableCode, exportable, mermaidTheme]
   );
   const renderImage = useCallback((props: { src?: string | Blob; alt?: string; title?: string }) => {
     const raw = typeof props.src === 'string' ? props.src : '';
@@ -364,6 +372,32 @@ export const MarkdownContent = memo(function MarkdownContent({
 function inlineCodeText(children: ReactNode): string {
   if (typeof children === 'string' || typeof children === 'number') return String(children);
   if (Array.isArray(children)) return children.map(inlineCodeText).join('');
+  return '';
+}
+
+function withCodeCopy(copyable: boolean, children: ReactNode, pre: ReactNode): ReactNode {
+  if (!copyable) return pre;
+  return (
+    <div className="inbox-md-code">
+      {pre}
+      <CodeBlockCopyButton code={fencedCodeText(children)} />
+    </div>
+  );
+}
+
+/**
+ * The fence body as written: hast appends a newline before the closing fence,
+ * which is not part of the code, so drop exactly one. Any other leading,
+ * trailing or inner whitespace (including deliberate blank last lines) stays.
+ */
+export function fencedCodeText(children: ReactNode): string {
+  return nodeText(children).replace(/\n$/, '');
+}
+
+function nodeText(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(nodeText).join('');
+  if (isValidElement(node)) return nodeText((node.props as { children?: ReactNode }).children);
   return '';
 }
 

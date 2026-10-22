@@ -16,5 +16,10 @@ export async function copyText(text: string): Promise<void> {
       // Fall through to the web clipboard when the desktop write fails.
     }
   }
-  await globalThis.navigator?.clipboard?.writeText(text);
+  // Insecure (plain http) browser origins have no `navigator.clipboard`.
+  // Reject rather than resolve, so callers don't report a copy that never
+  // happened.
+  const clipboard = globalThis.navigator?.clipboard;
+  if (!clipboard) throw new Error('Clipboard unavailable');
+  await clipboard.writeText(text);
 }
