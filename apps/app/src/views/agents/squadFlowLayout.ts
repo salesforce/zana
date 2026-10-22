@@ -60,8 +60,9 @@ export function nodeHeight(node: SquadFlowNode): number {
   return NODE_H + childSection + (nodeNotice(node) ? BLOCKER_H : 0);
 }
 
-/** Orchestrator centered on row 0; everyone else laid out in wrapping rows
- *  below, each row as tall as its tallest card. Deterministic (input order) so
+/** Orchestrators lead (centered, wrapping only when the canvas is too narrow
+ *  for one row); workers follow in wrapping rows below, each row as tall as
+ *  its tallest card. Deterministic (input order) so
  *  the graph doesn't jump between ticks. */
 export function layout(graph: SquadFlowGraph, width: number): { placed: Placed[]; height: number } {
   // A merged (all-launches) graph can hold one orchestrator per launch; all of

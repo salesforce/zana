@@ -37,6 +37,7 @@ export const SOLO_LAUNCH_ID = '__solo__';
 
 /** Display name of the solo bucket, shared by its picker chip and graph header. */
 export const SOLO_GROUP_LABEL = 'Solo agents';
+export const SOLO_GROUP_ICON = '👤';
 
 /** Renderer graph: the domain graph plus the solo-bucket marker. */
 export type FlowGraph = SquadFlowGraph & { isSolo?: true };

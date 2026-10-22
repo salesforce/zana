@@ -17,7 +17,7 @@ import { useThreads } from '@/thread-store';
 import { useCanvasPan } from '@/hooks/useCanvasPan';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import './mobile-canvas.css';
-import { buildSquadFlow, isQuiescentSquad, SOLO_GROUP_LABEL, type FlowGraph } from '@/lib/squadFlow';
+import { buildSquadFlow, isQuiescentSquad, SOLO_GROUP_ICON, SOLO_GROUP_LABEL, type FlowGraph } from '@/lib/squadFlow';
 import { modernFlowParticipants } from '@/lib/modern-squad-members';
 import { squadFlowBounds, type FlowPoint } from '@/lib/squadFlowBounds';
 import {
@@ -477,7 +477,7 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
     <section className="squad-flow-squad">
       <header className="squad-flow-head">
         <span className="squad-flow-icon" aria-hidden="true">
-          {graph.isSolo ? '👤' : graph.squad?.icon ?? '🤖'}
+          {graph.isSolo ? SOLO_GROUP_ICON : graph.squad?.icon ?? '🤖'}
         </span>
         <span className="squad-flow-name">{squadHeaderLabel(graph)}</span>
         <span className="squad-flow-rollup">
@@ -873,7 +873,7 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
         label: g?.executionId && g.teamName
           ? teamRunLabel({ cohortId: grp.launchId, executionId: g.executionId, executionJobTitle: g.executionJobTitle, teamName: g.teamName })
           : g ? squadChipLabel(g, realOrdinal) : grp.launchId,
-        icon: grp.isSolo ? '👤' : '🤖',
+        icon: grp.isSolo ? SOLO_GROUP_ICON : '🤖',
         working: g?.summary.working ?? 0,
         isNew: !seenLaunchSet.has(grp.launchId) && grp.launchId !== selectedSquad
       };

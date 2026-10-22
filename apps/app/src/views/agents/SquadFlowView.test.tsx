@@ -59,7 +59,7 @@ vi.mock('@/components/SquadSwitcher', () => ({ SquadSwitcher: () => null }));
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }));
 
 import { nodeActivity, squadChipLabel, SquadFlowView, SquadGraph, squadHeaderLabel, STREAMING_FRESH_MS } from './SquadFlowView';
-import { SOLO_GROUP_LABEL, type FlowGraph } from '@/lib/squadFlow';
+import { SOLO_GROUP_ICON, SOLO_GROUP_LABEL, type FlowGraph } from '@/lib/squadFlow';
 import { BLOCKER_H, NODE_H, nodeHeight } from './squadFlowLayout';
 
 // happy-dom rewrites import.meta.url to a non-file scheme, so resolve source
@@ -265,7 +265,7 @@ describe('squad group labels (chip + header)', () => {
   it('renders the solo label and solo icon in the header of a solo graph', () => {
     const { container } = render(<SquadGraph graph={labelGraph({ isSolo: true })} />);
     expect(container.querySelector('.squad-flow-name')!.textContent).toBe('Solo agents');
-    expect(container.querySelector('.squad-flow-icon')!.textContent).toBe('👤');
+    expect(container.querySelector('.squad-flow-icon')!.textContent).toBe(SOLO_GROUP_ICON);
   });
 
   it('keeps the team run label in the header of a team graph with an execution', () => {
