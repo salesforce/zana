@@ -276,6 +276,8 @@ export class PeerLinks implements PeerLinksControlPort {
       return { linkRemoved: false };
     },
     remove: async (hostId, options) => {
+      // An unloaded mirror would miss the record and leave the caller's generic teardown to orphan it (still linked, channel enrolled).
+      if (!this.loaded) await this.load();
       const rec = this.byInbound(hostId);
       if (!rec?.peer || TERMINAL.has(rec.phase)) return undefined;
       await this.remove(rec.peer, 'removed', options);
@@ -504,7 +506,13 @@ export class PeerLinks implements PeerLinksControlPort {
       if (rec && (rec.role !== 'redeemer' || TERMINAL.has(rec.phase))) throw new InvitationError('already_redeemed');
       if (rec?.outbound?.hostKey) { if (!this.live.has(rec.invitationId)) await this.open(rec); return; }
       if (!rec) {
-        const channel = await this.options.channels.remote(input.inviterId);
+        await this.dropOrphans(input.inviterId);
+        let channel = await this.options.channels.remote(input.inviterId);
+        // A channel this store minted for a link that is already gone is a leftover, not a connection.
+        if (channel && this.ownsStaleChannel(input.inviterId, channel.hostId)) {
+          await this.options.channels.unregister(input.inviterId, channel.hostId).catch(() => false);
+          channel = await this.options.channels.remote(input.inviterId);
+        }
         if (channel) throw new InvitationError('already_connected');
         await this.insert({ invitationId: input.invitationId, role: 'redeemer', ...(input.pluginId !== undefined ? { pluginId: input.pluginId, scope: input.scope } : {}),
           peer: input.inviterId, peerName: input.inviterName, phase: 'pre-consent', createdAt: this.now(), updatedAt: this.now(),
@@ -1450,7 +1458,36 @@ export class PeerLinks implements PeerLinksControlPort {
         this.kickPull(rec.invitationId, 0);
         continue;
       }
+      if (rec.phase === 'linked' && this.orphaned(rec)) { await this.dropOrphans(rec.peer!).catch(() => undefined); continue; }
       if (rec.phase === 'linked') await this.lane(rec.invitationId, () => this.supervise(rec.invitationId)).catch(() => undefined);
+    }
+  }
+
+  /** A linked record whose own inbound host is gone: the computer was removed without this store (nothing in Computers shows it). */
+  private orphaned(rec: Rec): boolean {
+    if (rec.phase !== 'linked' || !rec.peer || !rec.inbound) return false;
+    const host = getHost(this.options.db, rec.inbound.hostId);
+    return !host || !!host.destroyedAt;
+  }
+
+  /** True when no live record owns the peer's channel but a finished one of this store does. */
+  private ownsStaleChannel(peer: string, hostId: string): boolean {
+    const owners = this.records().filter(rec => rec.peer === peer && rec.outbound?.hostId === hostId);
+    return owners.length > 0 && owners.every(rec => TERMINAL.has(rec.phase));
+  }
+
+  /** Finishes the teardown of orphaned links for a peer, so a fresh join is not refused by a connection no one can see. */
+  private async dropOrphans(peer: string): Promise<void> {
+    const orphans = this.records().filter(rec => rec.peer === peer && this.orphaned(rec));
+    for (const rec of orphans) {
+      await this.lane(rec.invitationId, async () => {
+        const current = this.get(rec.invitationId);
+        if (current && this.orphaned(current)) await this.removeLinked(current, 'removed', true);
+      });
+    }
+    if (orphans.length) {
+      try { await this.options.onRemoved?.(peer); } catch { /* grants/notes cleanup is best effort */ }
+      this.changed();
     }
   }
 

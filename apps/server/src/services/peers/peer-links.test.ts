@@ -3,7 +3,7 @@ import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getHost, openDatabase, upsertHost } from '@zana-ai/zcc-db';
+import { destroyHost, getHost, openDatabase, upsertHost } from '@zana-ai/zcc-db';
 import { generateSeed, publicKeyLine } from '@zana-ai/zcc-host-daemon/ssh-keys';
 import { createJoinCodeStore } from '../hosts/join-codes.js';
 import { EnrolledPeerChannels } from './enrolled-peer-channels.js';
@@ -930,6 +930,52 @@ describe('teardown, remove, release', () => {
     expect(await links.directory.remove(ctx.inboundId)).toBeUndefined();
     expect(links.directory.describe(randomUUID())).toBeUndefined();
     expect(await links.directory.release(randomUUID(), 'p', 's')).toBeUndefined();
+  });
+
+  it('directory remove loads the store first, so a not yet loaded store still tears the link down', async () => {
+    const f = await fixture(), links = f.make();
+    const ctx = await f.redeemerLinked(links);
+    await links.whenIdle();
+    const fresh = f.make();
+    expect(await fresh.directory.remove(ctx.inboundId)).toEqual({ linkRemoved: true });
+    expect(f.recOf(fresh, ctx.id).phase).toBe('removed');
+  });
+
+  it('a computer removed without the store (host gone, link still linked) no longer refuses joining it again', async () => {
+    const onRemoved = vi.fn();
+    const f = await fixture(), links = f.make({ onRemoved });
+    const ctx = await f.redeemerLinked(links);
+    const outbound = f.recOf(links, ctx.id).outbound.hostId;
+    await f.channels.register({ remoteInstanceId: ctx.peer.id, hostId: outbound, hostKey: 'k'.repeat(40), capability: 'peer.forward' });
+    // Generic host teardown: the row is gone but the store never ran its teardown.
+    destroyHost(f.db, ctx.inboundId);
+    const next = await f.redeem(links, ctx.peer, { id: randomUUID() });
+    expect(f.recOf(links, ctx.id).phase).toBe('removed');
+    expect(f.recOf(links, next).phase).toBe('pre-consent');
+    expect(onRemoved).toHaveBeenCalledWith(ctx.peer.id);
+  });
+
+  it('drops a leftover channel owned by a finished link, but not one it does not own', async () => {
+    const f = await fixture(), links = f.make();
+    const ctx = await f.redeemerLinked(links);
+    const outbound = f.recOf(links, ctx.id).outbound.hostId;
+    await links.remove(ctx.peer.id);
+    // The teardown's own unregister failed earlier: the channel outlived its link.
+    await f.channels.register({ remoteInstanceId: ctx.peer.id, hostId: outbound, hostKey: 'k'.repeat(40), capability: 'peer.forward' });
+    const next = await f.redeem(links, ctx.peer, { id: randomUUID() });
+    expect(f.recOf(links, next).phase).toBe('pre-consent');
+    expect(await f.channels.remote(ctx.peer.id)).toBeNull();
+    const other = f.newPeer();
+    await f.channels.register({ remoteInstanceId: other.id, hostId: randomUUID(), hostKey: 'k'.repeat(40), capability: 'peer.forward' });
+    await expect(f.redeem(links, other)).rejects.toMatchObject({ code: 'already_connected' });
+  });
+
+  it('the sweep finishes tearing down a linked record whose inbound host is gone', async () => {
+    const f = await fixture(), links = f.make();
+    const ctx = await f.redeemerLinked(links);
+    destroyHost(f.db, ctx.inboundId);
+    await links.sweep();
+    expect(f.recOf(links, ctx.id).phase).toBe('removed');
   });
 });
 
