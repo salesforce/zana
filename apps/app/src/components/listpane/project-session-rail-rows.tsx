@@ -17,6 +17,7 @@ import {
 import type { ThreadListItem } from '../../thread-store.js';
 import { AgentRowDetail } from './AgentRowDetail.js';
 import { isModernSquadThread } from '../../lib/squad-transport.js';
+import { sessionRailTitle } from '../../lib/sessionRailTitle.js';
 
 export function ProjectAgentRailRow({
   session,
@@ -40,7 +41,7 @@ export function ProjectAgentRailRow({
   onOpen: () => void;
   onContextMenu: (e: MouseEvent) => void;
 }) {
-  const title = session.cohort?.executionJobTitle?.trim() || session.title;
+  const title = sessionRailTitle(session);
   const { onPointerDown, openInSplit, consumeClick } = usePaneContentSplitDrag({
     content: { kind: 'agent-session', projectId: routeProjectId, sessionId: session.id },
     title
