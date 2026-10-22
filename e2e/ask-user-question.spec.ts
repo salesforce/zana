@@ -99,8 +99,15 @@ test('Pi question cards normalize legacy input, render details, reject empty inp
 
   await ask('A');
   await expect(banner).toContainText('Which option do you prefer?');
+  const submit = banner.getByTestId('thread-pending-question-submit');
+  await expect(submit).toHaveAttribute('title', process.platform === 'darwin' ? 'Submit (⌘↵)' : 'Submit (Ctrl+Enter)');
+  await expect(submit).toHaveAttribute('aria-keyshortcuts', 'Control+Enter Meta+Enter');
+  // Ctrl+Enter / ⌘↵ submits from a focused option, like the Submit button.
   await banner.getByRole('button', { name: 'B', exact: true }).click();
-  await submitted('"selected":["B"]');
+  await window.keyboard.press('ControlOrMeta+Enter');
+  await expect(banner).toHaveCount(0);
+  await expect(timeline).toContainText('"selected":["B"]');
+  await idle();
 
   await ask('B');
   await expect(banner).toContainText('Which option should I pick?');

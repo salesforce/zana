@@ -64,7 +64,8 @@ const SECTIONS: Section[] = [
     title: 'Thread',
     rows: [
       { keys: ['⌘', 'F'], label: 'Search in the open thread (remappable in Settings → Shortcuts)' },
-      { keys: ['Esc'], label: 'Close thread search' }
+      { keys: ['Esc'], label: 'Close thread search' },
+      { keys: ['⌘', '↵'], label: 'Agent question: Next, or Submit on the last question' }
     ]
   },
   {
