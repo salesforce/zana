@@ -440,9 +440,9 @@ describe('squad_launch wiring (launchNow deps)', () => {
     return vi.spyOn(SquadExecutionService.prototype, 'start')
       .mockImplementation(async () => ({ ok: true, value: { id: `exec-${Math.random()}`, state: 'RUNNING' } }) as never);
   };
-  const spyStores = (fns: { list?: unknown[]; get?: unknown }) => {
+  const spyStores = (fns: { active?: number; get?: unknown }) => {
     for (const created of h.executionStores) {
-      if (fns.list) vi.spyOn(created, 'list').mockResolvedValue(fns.list as never);
+      if (fns.active !== undefined) vi.spyOn(created, 'countActiveOwned').mockResolvedValue(fns.active);
       if ('get' in fns) vi.spyOn(created, 'get').mockResolvedValue(fns.get as never);
     }
   };
@@ -469,21 +469,29 @@ describe('squad_launch wiring (launchNow deps)', () => {
     const start = setup();
     const repeat = { ...input, goal: 'Repeat me' };
     expect(await host.squadProposalService.launchSquadNow(route, repeat)).toMatchObject({ ok: true });
-    spyStores({ list: [], get: { state: 'RUNNING' } });
+    spyStores({ active: 0, get: { state: 'RUNNING' } });
     expect(await host.squadProposalService.launchSquadNow(route, repeat)).toMatchObject({ ok: true, value: { deduped: true } });
     expect(start).toHaveBeenCalledTimes(1);
-    spyStores({ get: undefined });
-    expect(await host.squadProposalService.launchSquadNow(route, repeat)).toMatchObject({ ok: true });
-    expect(start).toHaveBeenCalledTimes(2);
+    for (const state of [undefined, 'COMPLETED', 'FAILED'] as const) {
+      const before = start.mock.calls.length;
+      // Re-prime the cached launch, then let its run go missing or terminal.
+      spyStores({ get: { state: 'RUNNING' } });
+      expect(await host.squadProposalService.launchSquadNow(route, { ...repeat, goal: `Repeat ${state}` })).toMatchObject({ ok: true });
+      spyStores({ get: state ? { state } : undefined });
+      expect(await host.squadProposalService.launchSquadNow(route, { ...repeat, goal: `Repeat ${state}` })).toMatchObject({ ok: true });
+      expect(start).toHaveBeenCalledTimes(before + 2);
+    }
   });
 
-  it('refuses at the per-session cap counting only non-terminal owned runs', async () => {
+  it('refuses at the per-session cap using the store count of owned non-terminal runs', async () => {
     const start = setup();
-    spyStores({ list: [{ state: 'RUNNING' }, { state: 'RUNNING' }, { state: 'RUNNING' }, { state: 'COMPLETED' }], get: undefined });
+    spyStores({ active: 3, get: undefined });
     expect(await host.squadProposalService.launchSquadNow(route, { ...input, goal: 'Capped' })).toMatchObject({ ok: false, code: 'TOO_MANY_LAUNCHES' });
-    spyStores({ list: [{ state: 'RUNNING' }, { state: 'COMPLETED' }, { state: 'FAILED' }] });
+    expect(start).not.toHaveBeenCalled();
+    spyStores({ active: 2 });
     expect(await host.squadProposalService.launchSquadNow(route, { ...input, goal: 'Under cap' })).toMatchObject({ ok: true });
     expect(start).toHaveBeenCalledTimes(1);
+    for (const created of h.executionStores) expect(created.countActiveOwned).toHaveBeenCalledWith('s1', 'p1');
   });
 
   it('requires review when the Project or the Squad asks for it, without starting a run', async () => {

@@ -41,9 +41,8 @@ let slotCount: number;
 let projectOk: boolean;
 let readFails: boolean;
 let enabledFlag: boolean;
-const projectLaunchApproval = vi.fn<SquadLaunchNowDeps['projectLaunchApproval']>();
+const launchApproval = vi.fn<SquadLaunchNowDeps['launchApproval']>();
 const activeOwnedRuns = vi.fn<SquadLaunchNowDeps['activeOwnedRuns']>();
-const squadLaunchReviewRequired = vi.fn<NonNullable<SquadLaunchNowDeps['squadLaunchReviewRequired']>>();
 const executionState = vi.fn<NonNullable<SquadLaunchNowDeps['executionState']>>();
 const launchNow = vi.fn<SquadLaunchNowDeps['launch']>();
 
@@ -53,7 +52,7 @@ function build() {
     store,
     enabled: () => enabledFlag,
     lookupProposer: (...a) => lookup(...a),
-    projects: { get: (id) => (id === 'p1' && projectOk ? { id: 'p1', name: 'Proj', path: join(root, 'proj') } : undefined) },
+    projects: { get: (id) => ((id === 'p1' || id === 'p2') && projectOk ? { id, name: 'Proj', path: join(root, 'proj') } : undefined) },
     teams: { get: (id) => (id === teamRecord.id ? teamRecord : undefined) },
     personas: { get: (id) => personaMap[id] },
     teamHostProblem: () => hostProblem,
@@ -72,8 +71,7 @@ function build() {
     sourceBases: () => ({ home: homeDir, cloneRoot: cloneDir }),
     logError,
     launchNow: {
-      projectLaunchApproval: (...a) => projectLaunchApproval(...a),
-      squadLaunchReviewRequired: (...a) => squadLaunchReviewRequired(...a),
+      launchApproval: (...a) => launchApproval(...a),
       activeOwnedRuns: (...a) => activeOwnedRuns(...a),
       executionState: (...a) => executionState(...a),
       launch: (...a) => launchNow(...a)
@@ -97,8 +95,7 @@ beforeEach(() => {
   clock = 1000;
   ids = 0;
   enabledFlag = true;
-  projectLaunchApproval.mockReset().mockResolvedValue(undefined);
-  squadLaunchReviewRequired.mockReset().mockReturnValue(false);
+  launchApproval.mockReset().mockResolvedValue('direct');
   activeOwnedRuns.mockReset().mockResolvedValue(0);
   let executions = 0;
   executionState.mockReset().mockResolvedValue('RUNNING');
@@ -587,42 +584,25 @@ describe('launchSquadNow', () => {
     expect(issueSources).not.toHaveBeenCalled();
   });
 
-  it('refuses when the Squad or its Project requires review, before any launch', async () => {
-    projectLaunchApproval.mockResolvedValue('review');
-    const required = {
+  it('refuses when the effective approval is review, before any launch', async () => {
+    launchApproval.mockResolvedValue('review');
+    expect(await now()).toEqual({
       ok: false, code: 'LAUNCH_REVIEW_REQUIRED',
       message: "This Squad requires review before launch. Use squad_launch with mode 'review' so the user can Launch it from the Inbox."
-    };
-    expect(await now()).toEqual(required);
-    expect(projectLaunchApproval).toHaveBeenCalledWith('p1');
-    // Review is a floor: a Squad set to direct cannot lift its Project's review.
-    teamRecord.launchApproval = 'direct';
-    expect(await now()).toEqual(required);
-    projectLaunchApproval.mockResolvedValue('direct');
-    teamRecord.launchApproval = 'review';
-    expect(await now({ goal: 'another goal' })).toEqual(required);
+    });
+    expect(launchApproval).toHaveBeenCalledWith('team1', 'p1');
     expect(activeOwnedRuns).not.toHaveBeenCalled();
     nothingStarted();
   });
 
-  it('refuses when another stored record of the Squad id requires review', async () => {
-    teamRecord.launchApproval = 'direct';
-    squadLaunchReviewRequired.mockReturnValue(true);
-    expect(code(await now())).toBe('LAUNCH_REVIEW_REQUIRED');
-    expect(squadLaunchReviewRequired).toHaveBeenCalledWith('team1');
-    nothingStarted();
-  });
-
-  it('launches when approval is direct or unset', async () => {
-    projectLaunchApproval.mockResolvedValue('direct');
+  it('launches when the effective approval is direct', async () => {
     expect(code(await now())).toBe('ok');
-    projectLaunchApproval.mockResolvedValue(undefined);
     expect(code(await now({ goal: 'other' }))).toBe('ok');
     expect(launchNow).toHaveBeenCalledTimes(2);
   });
 
   it('refuses when the approval setting cannot be read, and logs why', async () => {
-    projectLaunchApproval.mockRejectedValue(new Error('runtime down'));
+    launchApproval.mockRejectedValue(new Error('runtime down'));
     expect(await now()).toEqual({
       ok: false, code: 'LAUNCH_APPROVAL_UNAVAILABLE', message: 'The Squad launch approval setting could not be read, so the run was not started.'
     });
@@ -641,6 +621,14 @@ describe('launchSquadNow', () => {
     expect(await now({}, { projectId: 'p1', sessionId: 's2' })).toMatchObject({ ok: true, value: { executionId: 'exec-2' } });
     expect(await now({ goal: 'Build the other thing' }, { projectId: 'p1', sessionId: 's2' })).toMatchObject({ value: { executionId: 'exec-3' } });
     expect(await now({ planning: 'infer', goal: 'Build the other thing' }, { projectId: 'p1', sessionId: 's2' })).toMatchObject({ value: { executionId: 'exec-4' } });
+  });
+
+  it('does not dedupe the same launch across projects', async () => {
+    await now();
+    const other = await now({}, { projectId: 'p2', sessionId: 's1' });
+    expect(other).toMatchObject({ ok: true, value: { executionId: 'exec-2' } });
+    expect((other as { value: { deduped?: true } }).value.deduped).toBeUndefined();
+    expect(launchNow).toHaveBeenCalledTimes(2);
   });
 
   it('reports the current state of the run a repeat is deduped against', async () => {

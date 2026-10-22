@@ -113,7 +113,7 @@ import { launchExecutionScope, usesCliRemoteToolProxy } from './cli-remote-tool-
 import { createRestoreCapabilityStore, type RestoreCapability } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
 import { createTeamLifecycleIntegration, createTeamLifecycleStore, type TeamLifecycleRecord, type TeamModernWorkerObservation } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
 import { createRemoteReapLedger, remoteReapOrphans, type RemoteReapEntry } from '@zana-ai/zcc-server/services/launch/remote-reap-ledger';
-import { createExecutionStore, isTerminalExecutionState, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
+import { createExecutionStore, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
 import { KeyedColdStartSemaphore, SquadExecutionService, type ExecutionRequestV1 } from '@zana-ai/zcc-server/services/execution/service';
@@ -6196,16 +6196,6 @@ export async function resolveTeamLaunchApproval(teamId: string, projectId: strin
   });
 }
 
-/**
- * Non-terminal runs a session owns in a project, from its newest (bounded) execution list.
- * The launch-now cap counts every owned non-terminal run, however it was started,
- * not only runs started through squad_launch.
- */
-async function activeOwnedSquadRuns(sessionId: string, projectId: string): Promise<number> {
-  const records = await executionStore.list(sessionId, projectId, 100);
-  return records.filter((record) => !isTerminalExecutionState(record.state)).length;
-}
-
 export function findExecutionForProposal(projectId: string, proposalId: string): Promise<string | undefined> {
   return findProposalExecution(executionStore, projectId, proposalId);
 }
@@ -6258,9 +6248,9 @@ const squadProposalServiceDeps: SquadProposalServiceDeps = {
   findLaunchedExecution: findExecutionForProposal,
   logError: (context, error) => logMainError(context, error),
   launchNow: {
-    projectLaunchApproval: async (projectId) => (await getAuthoritativeProjectSettings(projectId)).launchApproval,
-    squadLaunchReviewRequired: (teamId) => teams.launchReviewRequired(teamId),
-    activeOwnedRuns: activeOwnedSquadRuns,
+    launchApproval: resolveTeamLaunchApproval,
+    // Counts every owned non-terminal run, however it was started, not only runs started through squad_launch.
+    activeOwnedRuns: (sessionId, projectId) => executionStore.countActiveOwned(sessionId, projectId),
     executionState: async (executionId) => (await executionStore.get(executionId))?.state,
     launch: async ({ team, project, goal, coordinationMode, title, summary, sourcePaths }, ctx) => {
       const sourceBases = squadSourceBases();
@@ -6742,7 +6732,8 @@ const squadLaunchDeps: SquadLaunchDeps = {
   planCorrectionLaunchBinding,
   nameTeamExecution: (launchId, objective, explicitTitle, sourceTexts) => nameTeamExecution(launchId, objective, explicitTitle, sourceTexts),
   autonomousTimeoutMs: () => store.getConfig().autonomousTimeoutMs,
-  squadExecutionService
+  squadExecutionService,
+  log: (message, error) => logMainError(message, error)
 };
 // Agent-started runs get their own launch id prefix, distinct from UI launches.
 const squadNowLaunchDeps: SquadLaunchDeps = { ...squadLaunchDeps, newLaunchRequestId: () => `agent:${randomUUID()}` };

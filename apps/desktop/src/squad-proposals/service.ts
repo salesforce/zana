@@ -5,7 +5,6 @@ import {
   SQUAD_PROPOSAL_LIMITS,
   personaCanWriteFiles,
   planningToCoordinationMode,
-  resolveLaunchApproval,
   type LaunchApproval,
   type SquadLaunchNowErrorCode,
   type SquadLaunchNowResult,
@@ -83,15 +82,15 @@ export interface SquadLaunchNowRequest {
 }
 
 export interface SquadLaunchNowDeps {
-  /** The Project's launch-approval setting; review here applies whatever the Squad says. */
-  projectLaunchApproval(projectId: string): Promise<LaunchApproval | undefined>;
-  /** True when any stored record of this Squad id asks for review, so a shadowing file cannot lift it. */
-  squadLaunchReviewRequired?(teamId: string): boolean;
+  /** The effective approval for a Squad in a Project: review when either the Squad or the Project asks for it. */
+  launchApproval(teamId: string, projectId: string): Promise<LaunchApproval>;
   /** Non-terminal runs this session owns in the project. */
   activeOwnedRuns(sessionId: string, projectId: string): Promise<number>;
   /**
-   * Current state of a run this session started, undefined when it no longer exists. A repeat of a
-   * launch is deduped only while its run is not terminal; absent ⇒ the cached launch is returned as is.
+   * Current state of a run this session started, or undefined when the run no longer exists.
+   * A repeated launch is deduped only while its run is not terminal: a terminal or missing run
+   * is evicted and the repeat starts a new one; a lookup that throws keeps the cached launch.
+   * When this callback is not provided, the cached launch is returned without a state check.
    */
   executionState?(executionId: string): Promise<ExecutionState | undefined>;
   launch(request: SquadLaunchNowRequest, ctx: SquadLaunchContext): Promise<TeamJobLaunchResponse>;
@@ -335,10 +334,13 @@ function proposalResult(record: SquadProposalRecord, prepared: Prepared, entry: 
   return { proposalId: record.id, inboxEntryId: entry.id, ...preparedSummary(prepared), expiresAt: record.expiresAt };
 }
 
-/** One key per conversation and launch content, so a retried call can be recognised without keeping the goal. */
-function nowDedupeKey(sessionId: string, input: SquadProposalInput, prepared: Prepared): string {
+/**
+ * One key per conversation, project and launch content, so a retried call can be recognised without keeping the goal.
+ * Title and summary stay out: retries reword them, and catching retries is what dedupe is for.
+ */
+function nowDedupeKey(sessionId: string, projectId: string, input: SquadProposalInput, prepared: Prepared): string {
   return createHash('sha256').update(JSON.stringify([
-    sessionId, prepared.team.id, input.goal.trim(), prepared.planning, prepared.sources.map((s) => s.path).sort()
+    sessionId, projectId, prepared.team.id, input.goal.trim(), prepared.planning, prepared.sources.map((s) => s.path).sort()
   ])).digest('hex');
 }
 
@@ -560,14 +562,13 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         if (!prepared.ok) return prepared;
         let approval: LaunchApproval;
         try {
-          const squad = launchNow.squadLaunchReviewRequired?.(prepared.value.team.id) ? { launchApproval: 'review' as const } : prepared.value.team;
-          approval = resolveLaunchApproval({ squad, project: { launchApproval: await launchNow.projectLaunchApproval(route.projectId) } });
+          approval = await launchNow.launchApproval(prepared.value.team.id, route.projectId);
         } catch (error) {
           return unexpected('launch now approval', error,
             'The Squad launch approval setting could not be read, so the run was not started.', 'LAUNCH_APPROVAL_UNAVAILABLE');
         }
         if (approval === 'review') return fail('LAUNCH_REVIEW_REQUIRED', LAUNCH_REVIEW_REQUIRED_MESSAGE);
-        const key = nowDedupeKey(route.sessionId, input, prepared.value);
+        const key = nowDedupeKey(route.sessionId, route.projectId, input, prepared.value);
         const prior = await liveDedupe(launchNow, key);
         if (prior) return ok({ ...prior, deduped: true });
         if (nowLeases.active(route.sessionId)) {

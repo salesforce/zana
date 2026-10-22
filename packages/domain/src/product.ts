@@ -3053,7 +3053,9 @@ export interface ProjectSettings {
   worktreeIsolation?: boolean;
   /**
    * Whether Squad runs an agent starts in this project need the user's Launch
-   * first. A Squad's own setting wins. Absent ⇒ direct.
+   * first. Review is a floor: when either this Project or the Squad asks for
+   * review the run needs the user's Launch, and a Squad cannot lift a Project's
+   * review. Absent ⇒ direct.
    */
   launchApproval?: LaunchApproval;
   /**
@@ -4414,7 +4416,7 @@ export interface Team {
   transport?: SquadTransport;
   /** Planning mode preselected when this Squad is picked or proposed. Absent ⇒ the global default. */
   defaultPlanning?: SquadPlanning;
-  /** Whether agent-started runs of this Squad need the user's Launch first. Absent ⇒ the Project's setting, else direct. */
+  /** Whether agent-started runs of this Squad need the user's Launch first. Review is a floor: the Project's review applies even when this is absent or direct. Absent ⇒ direct unless the Project asks for review. */
   launchApproval?: LaunchApproval;
   /** Set by the loader/host for UI display; never read from disk / trusted from the renderer. */
   source?: PersonaSource;
@@ -4479,7 +4481,7 @@ export interface TeamSummary {
   source?: PersonaSource;
   /** Planning mode preselected for this Squad. Absent ⇒ the global default. */
   defaultPlanning?: SquadPlanning;
-  /** Whether agent-started runs need the user's Launch first. Absent ⇒ the Project's setting, else direct. */
+  /** Whether agent-started runs need the user's Launch first. Review is a floor: the Project's review applies even when this is absent or direct. Absent ⇒ direct unless the Project asks for review. */
   launchApproval?: LaunchApproval;
   /** Whether the orchestrator can write files, so it can infer a plan. Computed by main, not by `toTeamSummary`. */
   canInferPlan?: boolean;

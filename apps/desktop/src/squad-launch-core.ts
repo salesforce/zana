@@ -55,6 +55,8 @@ export interface SquadLaunchDeps {
   nameTeamExecution(launchId: string, objective: string, explicitTitle?: string, sourceTexts?: readonly (string | undefined)[]): Promise<string>;
   autonomousTimeoutMs(): number | undefined;
   squadExecutionService: Pick<SquadExecutionService, 'start'>;
+  /** Reports a cleanup failure that was swallowed so the launch outcome stands. */
+  log?(message: string, error: unknown): void;
 }
 
 /** A launch whose team, Project, and slots main has already looked up and authorized. */
@@ -191,24 +193,41 @@ export async function launchSquad(
   });
   if (!snapshot.ok) return snapshot;
   const { sourceBundle } = snapshot;
-  const built = await buildSquadStartRequest(deps, {
-    teamId: input.teamId, projectId: project.id, projectName: project.name, launchRequestId,
-    coordinationMode: input.coordinationMode, slots: input.slots, attended: ctx.sources?.kind === 'window',
-    goal: input.goal, title: input.title, summary: input.summary, sourceBundle, goalSourceDescriptors: redactedGoalSources
-  });
-  if (!built.ok) return built.response;
-  const result = owner.proposal || owner.reportTo
-    ? await deps.squadExecutionService.start(owner.principalId, project.id, built.request, {
-      ...(owner.proposal ? { proposal: owner.proposal } : {}),
-      ...(owner.reportTo ? { reportTo: owner.reportTo } : {})
-    })
-    : await deps.squadExecutionService.start(owner.principalId, project.id, built.request);
-  if (!result.ok && sourceBundle) await deps.removeSnapshot(sourceBundle.contentRef);
-  if (!result.ok) {
-    deps.planCorrectionLaunchBinding.forgetLaunch(launchRequestId);
-    return teamJobFailureResponse(result);
+  let started = false;
+  try {
+    const built = await buildSquadStartRequest(deps, {
+      teamId: input.teamId, projectId: project.id, projectName: project.name, launchRequestId,
+      coordinationMode: input.coordinationMode, slots: input.slots, attended: ctx.sources?.kind === 'window',
+      goal: input.goal, title: input.title, summary: input.summary, sourceBundle, goalSourceDescriptors: redactedGoalSources
+    });
+    if (!built.ok) return built.response;
+    const result = owner.proposal || owner.reportTo
+      ? await deps.squadExecutionService.start(owner.principalId, project.id, built.request, {
+        ...(owner.proposal ? { proposal: owner.proposal } : {}),
+        ...(owner.reportTo ? { reportTo: owner.reportTo } : {})
+      })
+      : await deps.squadExecutionService.start(owner.principalId, project.id, built.request);
+    if (!result.ok) return teamJobFailureResponse(result);
+    started = true;
+    return { ok: true, value: { executionId: result.value.id, state: result.value.state } };
+  } finally {
+    if (!started) await discardLaunch(deps, launchRequestId, sourceBundle);
   }
-  return { ok: true, value: { executionId: result.value.id, state: result.value.state } };
+}
+
+/** Undo what a launch that did not start left behind; a cleanup failure must not mask the launch's own outcome. */
+async function discardLaunch(deps: SquadLaunchDeps, launchRequestId: string, sourceBundle: SquadSourceBundle | undefined): Promise<void> {
+  try {
+    deps.planCorrectionLaunchBinding.forgetLaunch(launchRequestId);
+  } catch (error) {
+    deps.log?.('launch binding cleanup failed', error);
+  }
+  if (!sourceBundle) return;
+  try {
+    await deps.removeSnapshot(sourceBundle.contentRef);
+  } catch (error) {
+    deps.log?.('source snapshot cleanup failed', error);
+  }
 }
 
 export function redactCapturedExecutionSourcePaths(text: string | undefined, descriptors: readonly ExecutionSourcePathDescriptor[]): string | undefined {

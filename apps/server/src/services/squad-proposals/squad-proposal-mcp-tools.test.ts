@@ -165,24 +165,39 @@ describe('registerSquadProposalTools', () => {
     expect(res.content[0].text).toBe(`squad_launch failed: ${code}: ${message}`);
   });
 
-  it.each([
-    ['missing gates', undefined, undefined],
-    ['owner gate false', () => true, () => false],
-    ['owner gate throws', () => true, () => { throw new Error('x'); }],
-    ['fallback gate false', () => false, undefined]
-  ])('squad_launch now is denied without the owner gate (%s)', async (_n, validateRouteIdentity, validateOwnerRouteIdentity) => {
-    const { tools, launchSquadNow } = setup({
-      validateRouteIdentity: validateRouteIdentity === undefined ? () => true : validateRouteIdentity,
-      validateOwnerRouteIdentity
-    });
-    if (_n === 'missing gates') {
-      const bare = setup({ validateOwnerRouteIdentity: undefined, validateRouteIdentity: undefined });
-      expect((await bare.tools.get('squad_launch')!({ mode: 'now', teamId: 't', goal: 'g' })).content[0].text).toContain('NOT_LIVE');
-      return;
-    }
+  const launchNowText = async (over: Partial<RegisterSquadProposalToolsOpts>) => {
+    const { tools, launchSquadNow } = setup(over);
     const res = await tools.get('squad_launch')!({ mode: 'now', teamId: 't', goal: 'g' });
+    return { res, launchSquadNow };
+  };
+
+  it('squad_launch now is denied when the owner gate returns false', async () => {
+    const { res, launchSquadNow } = await launchNowText({ validateOwnerRouteIdentity: () => false });
     expect(res.isError).toBe(true);
-    expect(res.content[0].text).toContain('squad_launch failed: ');
+    expect(res.content[0].text).toMatch(/^squad_launch failed: DENIED:/);
+    expect(launchSquadNow).not.toHaveBeenCalled();
+  });
+
+  it('squad_launch now is denied when the owner gate throws', async () => {
+    const { res, launchSquadNow } = await launchNowText({ validateOwnerRouteIdentity: () => { throw new Error('x'); } });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toMatch(/^squad_launch failed: DENIED:/);
+    expect(launchSquadNow).not.toHaveBeenCalled();
+  });
+
+  it('squad_launch now is NOT_LIVE with no gates at all', async () => {
+    const { res, launchSquadNow } = await launchNowText({ validateOwnerRouteIdentity: undefined, validateRouteIdentity: undefined });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toBe(`squad_launch failed: NOT_LIVE: ${NOT_LIVE}`);
+    expect(launchSquadNow).not.toHaveBeenCalled();
+  });
+
+  it('squad_launch now is denied when, with no owner gate, the fallback passes liveness then fails the owner check', async () => {
+    const validateRouteIdentity = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const { res, launchSquadNow } = await launchNowText({ validateOwnerRouteIdentity: undefined, validateRouteIdentity });
+    expect(validateRouteIdentity).toHaveBeenCalledTimes(2);
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toMatch(/^squad_launch failed: DENIED:/);
     expect(launchSquadNow).not.toHaveBeenCalled();
   });
 

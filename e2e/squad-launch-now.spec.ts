@@ -161,7 +161,7 @@ function completionReports(log: string, title: string): number {
 
 /** First time (ms epoch) a run was seen terminal and its completion report was seen in the launcher's log. */
 function watchRun(ctx: JobTeamContext, executionId: string, title: string, completionsWanted: number) {
-  const seen: { terminalAt?: number; reportAt?: number } = {};
+  const seen: { terminalAt?: number; reportAt?: number; lastError?: string } = {};
   let busy = false;
   const timer = setInterval(() => {
     if (busy) return;
@@ -174,15 +174,17 @@ function watchRun(ctx: JobTeamContext, executionId: string, title: string, compl
         if (TERMINAL_STATES.includes(state)) seen.terminalAt = now;
       }
       if (seen.reportAt === undefined && completionReports(readCoordinatorLog(ctx), title) >= completionsWanted) seen.reportAt = now;
-    })().catch(() => undefined).finally(() => { busy = false; });
+    })().catch((error: unknown) => { seen.lastError = error instanceof Error ? error.message : String(error); }).finally(() => { busy = false; });
   }, 500);
   return { seen, stop: () => clearInterval(timer) };
 }
 
 /** Wait for the run's completion report to reach the launcher and assert it was not held back. */
 async function expectReportPromptly(watch: ReturnType<typeof watchRun>, what: string): Promise<void> {
-  await expect.poll(() => watch.seen.reportAt !== undefined, { timeout: 240_000, intervals: [1_000], message: `${what}: completion report never reached the launcher` }).toBe(true);
-  await expect.poll(() => watch.seen.terminalAt !== undefined, { timeout: 10_000, intervals: [500], message: `${what}: run never seen terminal` }).toBe(true);
+  // A failed poll reports its received value, so an unmet check carries the latest polling error.
+  const unmet = () => `unmet (last polling error: ${watch.seen.lastError ?? 'none'})`;
+  await expect.poll(() => watch.seen.reportAt !== undefined || unmet(), { timeout: 240_000, intervals: [1_000], message: `${what}: completion report never reached the launcher` }).toBe(true);
+  await expect.poll(() => watch.seen.terminalAt !== undefined || unmet(), { timeout: 10_000, intervals: [500], message: `${what}: run never seen terminal` }).toBe(true);
   const lateness = watch.seen.reportAt! - watch.seen.terminalAt!;
   expect(lateness, `${what}: report arrived ${Math.round(lateness / 1000)}s after the run was terminal`).toBeLessThanOrEqual(REPORT_BOUND_MS);
 }

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -208,6 +208,65 @@ describe('launchSquad', () => {
     expect(result).toEqual({ ok: false, code: 'REQUIREMENT_UNAVAILABLE', message: 'missing', requirementFailure: { skills: ['x'] } });
     expect(deps.removeSnapshot).toHaveBeenCalledWith('content-1');
     expect(deps.planCorrectionLaunchBinding.forgetLaunch).toHaveBeenCalledWith('ui:launch-1');
+  });
+
+  describe('discarding a launch that did not start', () => {
+    const windowCtx = { sources: { kind: 'window' as const, windowId: 7 }, owner: { principalId: 'interactive:local' } };
+    const withBundle = () => vi.fn(async () => ({ ok: true as const, sourceBundle: bundle() }));
+    const invalidPlan = { coordinationMode: 'structured' as const, goal: 'prose goal' };
+
+    it('removes the snapshot when a session launch refuses an invalid plan', async () => {
+      const { deps, start } = makeDeps({ snapshotSources: withBundle() });
+      const result = await launchSquad(deps, makeInput(invalidPlan), {
+        sources: { kind: 'session', sessionId: 'agent-session' }, owner: { principalId: 'agent-session' }
+      });
+      expect(result).toMatchObject({ ok: false, code: 'INVALID_PLAN' });
+      expect(deps.removeSnapshot).toHaveBeenCalledWith('content-1');
+      expect(deps.planCorrectionLaunchBinding.forgetLaunch).toHaveBeenCalledWith('ui:launch-1');
+      expect(start).not.toHaveBeenCalled();
+    });
+
+    it('cleans up and rethrows when start rejects', async () => {
+      const start = vi.fn(async () => { throw new Error('start exploded'); });
+      const { deps } = makeDeps({
+        snapshotSources: withBundle(),
+        squadExecutionService: { start } as unknown as SquadLaunchDeps['squadExecutionService']
+      });
+      await expect(launchSquad(deps, makeInput(), windowCtx)).rejects.toThrow('start exploded');
+      expect(deps.removeSnapshot).toHaveBeenCalledWith('content-1');
+      expect(deps.planCorrectionLaunchBinding.forgetLaunch).toHaveBeenCalledWith('ui:launch-1');
+    });
+
+    it('removes the snapshot when the refusal notice cannot be appended', async () => {
+      const { deps } = makeDeps({
+        snapshotSources: withBundle(),
+        inboxStore: { append: vi.fn(async () => { throw new Error('inbox down'); }) }
+      });
+      await expect(launchSquad(deps, makeInput(invalidPlan), { owner: { principalId: 'agent-session' } })).rejects.toThrow('inbox down');
+      expect(deps.removeSnapshot).toHaveBeenCalledWith('content-1');
+    });
+
+    it('still returns the original refusal when cleanup itself fails, and logs it', async () => {
+      const log = vi.fn();
+      const { deps } = makeDeps({
+        snapshotSources: withBundle(),
+        removeSnapshot: vi.fn(async () => { throw new Error('disk gone'); }),
+        log
+      });
+      deps.planCorrectionLaunchBinding.forgetLaunch.mockImplementation(() => { throw new Error('binding gone'); });
+      const result = await launchSquad(deps, makeInput(invalidPlan), { owner: { principalId: 'agent-session' } });
+      expect(result).toEqual({ ok: false, code: 'INVALID_PLAN', message: 'provided structured plan is invalid' });
+      expect(deps.removeSnapshot).toHaveBeenCalledWith('content-1');
+      expect(log).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps the snapshot and the binding when the start succeeds', async () => {
+      const { deps } = makeDeps({ snapshotSources: withBundle() });
+      const result = await launchSquad(deps, makeInput(), windowCtx);
+      expect(result.ok).toBe(true);
+      expect(deps.removeSnapshot).not.toHaveBeenCalled();
+      expect(deps.planCorrectionLaunchBinding.forgetLaunch).not.toHaveBeenCalled();
+    });
   });
 
   it('forgets the launch without removing anything when a source-free start fails', async () => {
@@ -428,6 +487,23 @@ describe('session sources through the real registry', () => {
     expect(result).toMatchObject({ ok: true, sourceBundle: { sources: [expect.objectContaining({ name: 'plan.md', extractedText: '# plan' })] } });
     // Consumed: a window or another session presenting the id gets nothing.
     await expect(registry.resolve({ windowId: 7, projectId: 'p1', capabilityIds: ['cap-1'], snapshotKey: 'w' })).rejects.toMatchObject({ code: 'REPLAYED_CAPABILITY' });
+  }));
+
+  it('leaves no snapshot on disk when a session launch is refused for an invalid plan', async () => withFiles(async (dir) => {
+    const registry = registryIn(dir);
+    const { deps, start } = makeDeps({
+      snapshotSources: createSquadSourceSnapshotter(registry),
+      removeSnapshot: (contentRef) => registry.removeSnapshot(contentRef),
+      realpath,
+      sourceBases: () => ({ home: join(dir, 'home'), dataDirs: [], protectedRoots: [] })
+    });
+    const result = await launchSquad(deps, makeInput({
+      project: { id: 'p1', name: 'Repo', path: join(dir, 'project') },
+      coordinationMode: 'structured', goal: 'prose goal', sourcePaths: [join(dir, 'project', 'plan.md')]
+    }), { sources: { kind: 'session', sessionId: 'agent-session' }, owner: { principalId: 'agent-session' } });
+    expect(result).toMatchObject({ ok: false, code: 'INVALID_PLAN' });
+    expect(start).not.toHaveBeenCalled();
+    expect(await readdir(join(dir, 'store'))).toEqual([]);
   }));
 
   it('refuses a protected file for the session with the registry\'s code', async () => withFiles(async (dir) => {

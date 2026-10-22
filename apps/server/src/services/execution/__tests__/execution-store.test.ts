@@ -1476,6 +1476,48 @@ describe('execution store', () => {
     expect(await store.events('other-session', 'project-1', claimed.record.id)).toEqual({ events: [] });
   }));
 
+  describe('countActiveOwned', () => {
+    function counterStore(filePath: string) {
+      let n = 0;
+      return createExecutionStore({ filePath, id: () => `execution-${++n}`, maxRecords: 500 });
+    }
+    async function claimRun(store: ReturnType<typeof createExecutionStore>, over: { callerPrincipalId?: string; projectId?: string }, key: string) {
+      const claimed = await store.claim({ ...request(), ...over, launchRequestId: key, requestDigest: key });
+      if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+      return claimed.record;
+    }
+    async function finish(store: ReturnType<typeof createExecutionStore>, id: string) {
+      const starting = await store.transition(id, 0, 'STARTING', 'info', 'Starting');
+      const running = await store.transition(id, starting.stateVersion, 'RUNNING', 'info', 'Running');
+      return store.transition(id, running.stateVersion, 'STOPPED', 'info', 'Stopped');
+    }
+
+    it('counts old active runs past 100 newer terminal ones', async () => fixture(async (filePath) => {
+      const store = counterStore(filePath);
+      for (let i = 0; i < 3; i += 1) await claimRun(store, {}, `active-${i}`);
+      for (let i = 0; i < 105; i += 1) await finish(store, (await claimRun(store, {}, `done-${i}`)).id);
+      expect(await store.countActiveOwned('session-1', 'project-1')).toBe(3);
+      expect((await store.list('session-1', 'project-1')).filter((record) => !isTerminalExecutionState(record.state))).toHaveLength(0);
+    }));
+
+    it('excludes other principals and projects', async () => fixture(async (filePath) => {
+      const store = counterStore(filePath);
+      await claimRun(store, {}, 'mine');
+      await claimRun(store, { callerPrincipalId: 'other-session' }, 'other-principal');
+      await claimRun(store, { projectId: 'other-project' }, 'other-project');
+      expect(await store.countActiveOwned('session-1', 'project-1')).toBe(1);
+      expect(await store.countActiveOwned('nobody', 'project-1')).toBe(0);
+    }));
+
+    it('counts handed-off ownership', async () => fixture(async (filePath) => {
+      const store = counterStore(filePath);
+      const record = await claimRun(store, { callerPrincipalId: 'previous-owner' }, 'handed');
+      expect(await store.countActiveOwned('new-owner', 'project-1')).toBe(0);
+      await store.addEffectiveOwner(record.id, 'new-owner');
+      expect(await store.countActiveOwned('new-owner', 'project-1')).toBe(1);
+    }));
+  });
+
   it('lists every execution in a project for main-owned projections', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     await store.claim(request());
