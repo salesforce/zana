@@ -25,24 +25,23 @@ afterEach(() => {
 });
 
 describe('AddComputer', () => {
-  it('shows directions and does not create when Remote Login is off, then rechecks', async () => {
+  it('shows directions and does not create when the connection service cannot start, then rechecks', async () => {
     api.checkRemoteLogin.mockResolvedValueOnce({ ok: false, reason: 'ssh_remote_login_off' });
     render(<AddComputer connections={[]} />);
     const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toMatch(/Remote Login is turned off/);
+    expect(alert.textContent).toMatch(/could not start its connection service/);
     expect(api.create).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
     expect(await screen.findByLabelText('Invitation')).toBeTruthy();
     expect(api.create).toHaveBeenCalledOnce();
   });
 
-  it('shows the stream-local setting directions without mentioning another computer', async () => {
+  it('never asks the owner to run a command or mention another computer', async () => {
     api.checkRemoteLogin.mockResolvedValueOnce({ ok: false, reason: 'ssh_stream_local_allowed' });
     render(<AddComputer connections={[]} />);
     const text = (await screen.findByRole('alert')).textContent ?? '';
-    expect(text).toMatch(/needs one more setting/);
-    expect(text).toContain('AllowStreamLocalForwarding no');
-    expect(text).not.toMatch(/other computer/);
+    expect(text).toMatch(/not locked down/);
+    expect(text).not.toMatch(/other computer|Terminal|sudo|Remote Login/);
     expect(api.create).not.toHaveBeenCalled();
   });
 

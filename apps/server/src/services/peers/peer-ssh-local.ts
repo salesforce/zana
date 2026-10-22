@@ -50,6 +50,8 @@ export interface PeerSshLocalDeps {
   /** Full self-test override; the default drives ssh to localhost with a throwaway key. */
   selfTest?: (endpoint: PeerSshEndpoint, signal: AbortSignal) => Promise<void>;
   spawnSsh?: (args: string[]) => SshProcess;
+  /** Zana's own sshd (`PeerSshd`): when present it serves the link instead of the system Remote Login. */
+  sshd?: { ensure(signal: AbortSignal): Promise<{ port: number; hostKey: string }> };
 }
 
 function runScutil(): Promise<string> {
@@ -229,7 +231,7 @@ async function defaultSelfTest(endpoint: PeerSshEndpoint, signal: AbortSignal, d
   }
 }
 
-function e2eOverride(env: NodeJS.ProcessEnv): PeerSshEndpoint | undefined {
+export function e2ePeerSshOverride(env: NodeJS.ProcessEnv): PeerSshEndpoint | undefined {
   // Honoured only inside an E2E-isolated home so a stray variable can never redirect a real user's invitations.
   if (!env.ZCC_E2E_HOME || !env.ZCC_E2E_PEER_SSH_ENDPOINT) return undefined;
   try {
@@ -247,7 +249,7 @@ export function createLocalEndpoint(deps: PeerSshLocalDeps = {}): (signal: Abort
   const env = deps.env ?? process.env;
   const warn = deps.warn ?? ((message: string) => console.warn(message));
   return async signal => {
-    const override = e2eOverride(env);
+    const override = e2ePeerSshOverride(env);
     if (override) {
       await (deps.selfTest ?? ((e, s) => defaultSelfTest(e, s, deps)))(override, signal);
       return override;
@@ -258,20 +260,25 @@ export function createLocalEndpoint(deps: PeerSshLocalDeps = {}): (signal: Abort
       warn('peer ssh: the account home directory differs from $HOME; sshd reads authorized_keys from the account home');
     }
 
-    const banner = await (deps.probeBanner ?? probeSshBanner)('127.0.0.1', SSHD_PORT, signal);
-    if (banner !== 'ok') throw fail('ssh_remote_login_off');
+    let port = SSHD_PORT;
+    let hostKey: string;
+    if (deps.sshd) {
+      ({ port, hostKey } = await deps.sshd.ensure(signal));
+    } else {
+      const banner = await (deps.probeBanner ?? probeSshBanner)('127.0.0.1', SSHD_PORT, signal);
+      if (banner !== 'ok') throw fail('ssh_remote_login_off');
+      try {
+        const raw = await (deps.readHostKey ?? (() => readFile(HOST_KEY_PATH, 'utf8')))();
+        hostKey = raw.trim().split(/\s+/).slice(0, 2).join(' ');
+      } catch { throw fail('ssh_remote_login_off'); }
+    }
+    if (!HOST_KEY_RE.test(hostKey)) throw fail('ssh_remote_login_off');
 
     let name: string;
     try { name = (await (deps.localHostName ?? runScutil)()).trim(); } catch { throw fail('ssh_unreachable'); }
     if (!LOCAL_HOST_RE.test(name)) throw fail('ssh_unreachable');
-    let hostKey: string;
-    try {
-      const raw = await (deps.readHostKey ?? (() => readFile(HOST_KEY_PATH, 'utf8')))();
-      hostKey = raw.trim().split(/\s+/).slice(0, 2).join(' ');
-    } catch { throw fail('ssh_remote_login_off'); }
-    if (!HOST_KEY_RE.test(hostKey)) throw fail('ssh_remote_login_off');
 
-    const endpoint: PeerSshEndpoint = { host: `${name}.local`, port: SSHD_PORT, user: info.username, hostKey };
+    const endpoint: PeerSshEndpoint = { host: `${name}.local`, port, user: info.username, hostKey };
     await (deps.selfTest ?? ((e, s) => defaultSelfTest(e, s, deps)))(endpoint, signal);
     return endpoint;
   };
@@ -316,7 +323,7 @@ export type RemoteLoginReason = SshReason | 'ssh_stream_local_allowed';
 export type RemoteLoginCheck = { ok: true } | { ok: false; reason: RemoteLoginReason };
 
 /**
- * Owner-facing Remote Login check for Add computer: the same probe and throwaway-key self-test that mints an invitation,
+ * Owner-facing readiness check for Add computer: the same probe and throwaway-key self-test that mints an invitation,
  * reported as a fixed reason the UI keys its directions on. A detailed `reason: detail` message keys on its reason;
  * anything else (including an abort) reads as unreachable.
  */

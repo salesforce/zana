@@ -14,7 +14,7 @@ describe('stuckStateOf', () => {
     ['unclaimed', {}, 'No plugin owns this connection and nothing uses it.', ['remove-anyway']],
     ['pre-consent', { connected: false }, 'Waiting for the other computer…', ['retry', 'remove-anyway']],
     ['activating', { connected: false }, 'Waiting for the other computer…', ['retry', 'remove-anyway']],
-    ['linked', { connected: false }, "Can't reach Mac. Check that both computers are on and Remote Login is on.", ['reconnect', 'remove-anyway']]
+    ['linked', { connected: false }, "Can't reach Mac. Check that both computers are on, running Zana, and on the same network.", ['reconnect', 'remove-anyway']]
   ])('%s', (state, over, text, actions) => {
     expect(stuckStateOf(mk({ state, ...over }))).toEqual({ text, actions });
   });

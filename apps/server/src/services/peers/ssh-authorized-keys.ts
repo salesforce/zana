@@ -100,7 +100,7 @@ export class SshAuthorizedKeys implements AuthorizedKeys {
   private render(input: AuthorizedKeyInput): string {
     // OpenSSH's `restrict` disables TCP and stream-local forwarding; `port-forwarding` re-enables both under sshd policy.
     // It is required for TCP: no per-key TCP-only switch exists, and permitopen/permitlisten constrain only host:port.
-    // This line cannot block Unix-socket -R listeners. peer-ssh-local's self-test must prove sshd refuses them before setup.
+    // This line cannot block Unix-socket forwarding: PeerSshd's sshd refuses it, and peer-ssh-local's self-test proves that.
     const options = ['restrict', 'port-forwarding', `permitlisten="127.0.0.1:${input.listenPort}"`,
       `permitopen="127.0.0.1:${input.targetPort}"`, 'command="/usr/bin/false"'];
     if (input.expiresAt !== undefined) options.push(`expiry-time="${formatExpiryTime(input.expiresAt)}"`);

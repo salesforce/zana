@@ -27,7 +27,7 @@ export function stuckStateOf(link: PeerLink, ctx?: { name?: string }): { text: s
       return link.connected ? null : { text: 'Waiting for the other computer…', actions: ['retry', 'remove-anyway'] };
     case 'linked':
       if (link.paused || link.connected) return null;
-      return { text: `Can't reach ${name}. Check that both computers are on and Remote Login is on.`, actions: ['reconnect', 'remove-anyway'] };
+      return { text: `Can't reach ${name}. Check that both computers are on, running Zana, and on the same network.`, actions: ['reconnect', 'remove-anyway'] };
     default:
       return null;
   }

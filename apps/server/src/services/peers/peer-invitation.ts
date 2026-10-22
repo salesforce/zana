@@ -86,7 +86,7 @@ const MESSAGES: Record<InvitationReason, string> = {
   unavailable: 'Invitations are unavailable',
   unknown_connection: 'That computer is not connected to this one',
   use_unavailable: 'Using a connection is not available yet',
-  ssh_remote_login_off: 'Remote Login is off on the computer that created the invitation',
+  ssh_remote_login_off: 'Zana on the computer that created the invitation could not start its connection service',
   ssh_unreachable: 'The other computer could not be reached over SSH. Both computers must be on the same network',
   ssh_auth_refused: 'The other computer refused the SSH connection',
   ssh_forwarding_refused: 'The other computer does not allow SSH port forwarding',

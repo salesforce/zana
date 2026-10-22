@@ -177,7 +177,7 @@ describe('PeersSettingsView', () => {
     const resume = screen.getByRole('button', { name: 'Resume' });
     const reconnect = screen.getByRole('button', { name: 'Reconnect' });
     expect(screen.getAllByRole('button', { name: 'Pause' })).toHaveLength(1);
-    expect(screen.getByText("Can't reach Other. Check that both computers are on and Remote Login is on.")).toBeTruthy();
+    expect(screen.getByText("Can't reach Other. Check that both computers are on, running Zana, and on the same network.")).toBeTruthy();
     fireEvent.click(resume);
     await waitFor(() => expect(api.reconnect).toHaveBeenCalledWith('h1'));
     fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));

@@ -41,6 +41,22 @@ describe('createLocalEndpoint', () => {
     expect(selfTest).toHaveBeenCalledWith(endpoint, expect.anything());
   });
 
+  it('serves from Zana\'s own sshd without probing or reading the system Remote Login', async () => {
+    const selfTest = vi.fn(async () => undefined);
+    const probeBanner = vi.fn(async () => 'refused' as const);
+    const readHostKey = vi.fn(async () => { throw new Error('ENOENT'); });
+    const sshd = { ensure: vi.fn(async () => ({ port: 47123, hostKey: HOST_KEY })) };
+    const endpoint = await createLocalEndpoint(base({ sshd, selfTest, probeBanner, readHostKey }))(signal());
+    expect(endpoint).toEqual({ host: 'Alices-MacBook.local', port: 47123, user: 'alice', hostKey: HOST_KEY });
+    expect(selfTest).toHaveBeenCalledWith(endpoint, expect.anything());
+    expect(probeBanner).not.toHaveBeenCalled();
+    expect(readHostKey).not.toHaveBeenCalled();
+    const broken = { ensure: async () => { throw new Error('ssh_remote_login_off'); } };
+    expect(await reason(createLocalEndpoint(base({ sshd: broken }))(signal()))).toBe('ssh_remote_login_off');
+    const badKey = { ensure: async () => ({ port: 47123, hostKey: 'ssh-rsa AAAA' }) };
+    expect(await reason(createLocalEndpoint(base({ sshd: badKey }))(signal()))).toBe('ssh_remote_login_off');
+  });
+
   it.each(['refused', 'no-banner'] as const)('maps a %s banner probe to ssh_remote_login_off', async result => {
     expect(await reason(createLocalEndpoint(base({ probeBanner: async () => result }))(signal()))).toBe('ssh_remote_login_off');
   });

@@ -85,7 +85,8 @@ import { hostUseApproved } from '../services/peers/peer-uses.js';
 import { PeerLinks } from '../services/peers/peer-links.js';
 import { PluginLinkNotes } from '../services/peers/plugin-link-notes.js';
 import { createPeerForwarderLease } from '../services/peers/peer-forwarder-lease.js';
-import { checkRemoteLogin, createLocalEndpoint, preflightPeerSsh } from '../services/peers/peer-ssh-local.js';
+import { checkRemoteLogin, createLocalEndpoint, e2ePeerSshOverride, preflightPeerSsh } from '../services/peers/peer-ssh-local.js';
+import { PeerSshd } from '../services/peers/peer-sshd.js';
 import { createPeerSshTransport } from '../services/peers/peer-ssh-transport.js';
 import { SshAuthorizedKeys } from '../services/peers/ssh-authorized-keys.js';
 import type { ConnectFetch } from '../mobile/connect-account.js';
@@ -147,7 +148,7 @@ export interface ProductHttpContext {
   peerLinks?: PeerLinks;
   /** Owner-store view of plugin links for the core Peers hub. Absent: links are listed from host rows alone. */
   peerLinkDirectory?: import('../services/hosts/peer-link-view.js').PeerLinkDirectory;
-  /** Core Add computer: runs the Remote Login self-test. Present with a peer key and SSH transport. */
+  /** Core Add computer: starts Zana's own sshd and runs its self-test. Present with a peer key and SSH transport. */
   peerRemoteLoginCheck?: (signal: AbortSignal) => Promise<import('../services/peers/peer-ssh-local.js').RemoteLoginCheck>;
   /** Signs the single-use core approval proof for a binding core itself built, after the typed pairing code matched. Absent without a UI secret. */
   mintCoreApproval?: (binding: unknown) => string;
@@ -530,12 +531,25 @@ export function createProductHttpContext(
     productPort: () => ctx.origins.serverPort ?? 0,
     // A busy remembered F is only replaced when no live link's permitopen / -L target names it (a squatter would intercept B's forward).
     canRebind: () => !peerLinks?.hasLiveServerLinks() }) : undefined;
-  const peerAuthorizedKeys = options.peerKeyProvider ? new SshAuthorizedKeys({ instanceId: productInstanceId }) : undefined;
+  // Zana's own sshd serves computer connections; an E2E-isolated home keeps its fixture sshd and ~/.ssh contract instead.
+  const peerSshd = options.peerKeyProvider && !e2ePeerSshOverride(process.env)
+    ? new PeerSshd({ directory: join(realpathSync(dataDir), 'peer-sshd') }) : undefined;
+  const peerAuthorizedKeys = options.peerKeyProvider ? new SshAuthorizedKeys({ instanceId: productInstanceId,
+    ...(peerSshd ? { authorizedKeysPath: peerSshd.authorizedKeysPath } : {}) }) : undefined;
+  if (peerSshd && peerAuthorizedKeys) {
+    void (async () => {
+      // Lines an earlier build wrote to ~/.ssh/authorized_keys would stay usable through the system sshd; drop them.
+      const legacy = new SshAuthorizedKeys({ instanceId: productInstanceId });
+      if ((await legacy.list()).length > 0) await legacy.reconcile(new Set());
+      // Established links need A's sshd listening before B reconnects. After dispose, ensure rejects.
+      if ((await peerAuthorizedKeys.list()).length > 0) await peerSshd.ensure();
+    })().catch(error => console.warn(`[zcc] peer sshd boot failed: ${error instanceof Error ? error.message : String(error)}`));
+  }
   const peerSsh = options.peerKeyProvider && peerForwarderLease && peerAuthorizedKeys ? createPeerSshTransport({
     directory: join(realpathSync(dataDir), 'peer-link-keys'), instanceId: productInstanceId, keyProvider,
     tunnels: options.peerSshTunnels ?? new PeerTunnels(), forwarder: peerForwarderLease,
     authorizedKeys: peerAuthorizedKeys,
-    localEndpoint: createLocalEndpoint({ authorizedKeys: peerAuthorizedKeys }), preflight: preflightPeerSsh
+    localEndpoint: createLocalEndpoint({ authorizedKeys: peerAuthorizedKeys, ...(peerSshd ? { sshd: peerSshd } : {}) }), preflight: preflightPeerSsh
   }) : undefined;
   const peerLinkNotes = new PluginLinkNotes();
   const peerConnections = new PeerConnectionRegistry();
@@ -643,6 +657,7 @@ export function createProductHttpContext(
       peerConnections.dispose();
       peerUseRequests?.dispose();
       peerSsh?.dispose();
+      peerSshd?.dispose();
       void peerForwarderLease?.close().catch(error => console.warn(`[zcc] peer forwarder lease close failed: ${error instanceof Error ? error.message : String(error)}`));
       ctx.peerInvitations?.dispose();
       ctx.peerSshEndpoints?.dispose();

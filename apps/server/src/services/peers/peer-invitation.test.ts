@@ -431,7 +431,7 @@ describe('PeerInvitations v3', () => {
       inv.links.create.mockRejectedValueOnce(new InvitationError('ssh_remote_login_off'));
       const error = await inv.svc.create({ pluginId: PLUGIN, scope: SCOPE }).catch(e => e as InvitationError);
       expect(error.code).toBe('ssh_remote_login_off');
-      expect(error.message).toBe('Remote Login is off on the computer that created the invitation');
+      expect(error.message).toBe('Zana on the computer that created the invitation could not start its connection service');
       expect(inv.terminated).toHaveLength(1);
       expect(inv.terminated[0]).toEqual([expect.any(String), 'inviter', 'unavailable']);
       inv.links.create.mockRejectedValueOnce(new Error('boom secret=hunter2'));

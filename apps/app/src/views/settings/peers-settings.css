@@ -36,7 +36,6 @@
 .peers-confirm { display: grid; gap: 24px; }
 .peers-confirm-text { margin: 0; color: var(--text-muted); font-size: 16px; line-height: 1.5; }
 .peers-dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 12px; }
-.peers-remote-login { color: var(--success); font-size: 13px; }
 .peers-panel-title { margin: 0; font-size: 14px; font-weight: 600; }
 .peers-token { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-input, var(--bg-base)); color: var(--text-primary); font-family: var(--font-mono, monospace); font-size: 12px; resize: vertical; overflow-wrap: anywhere; }
 .peers-guide { border: 1px solid var(--danger, #d33); border-radius: 8px; padding: 12px; font-size: 13px; }

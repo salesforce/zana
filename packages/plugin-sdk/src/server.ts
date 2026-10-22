@@ -660,7 +660,7 @@ export type PluginInvitationState = 'open' | 'redeeming' | 'reserved' | 'consent
 export type PluginInvitationDecision = 'pending' | 'approved' | 'denied';
 /**
  * Stable, secret-free failure codes. The `ssh_*` codes mean the secure shell (SSH) link between the two computers
- * cannot be set up: Remote Login is off on the inviting computer, it is unreachable, it refused the key or the
+ * cannot be set up: Zana's connection service could not start on the inviting computer, it is unreachable, it refused the key or the
  * forwarding, or its host key changed.
  */
 export type PluginInvitationReason =
@@ -772,7 +772,7 @@ export interface PluginSdkPeers {
    */
   /**
    * Open a one-time invitation for `scope`, valid for 10 minutes. Refuses with an `ssh_*` reason when this computer
-   * cannot accept the SSH link (for example Remote Login is off). A second invitation between the same two apps is refused with `already_redeemed` while a link exists.
+   * cannot accept the SSH link (for example its connection service could not start). A second invitation between the same two apps is refused with `already_redeemed` while a link exists.
    */
   createInvitation?(args: { scope: string; signal?: AbortSignal }): Promise<{ invitationId: string; token: string; expiresAt: number; code: string }>;
   /**

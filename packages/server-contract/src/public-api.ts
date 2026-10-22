@@ -701,7 +701,7 @@ export const publicApiRoutes = {
       request: noRequest<EmptyInput>(),
       response: jsonResponse<PeerConnectionListResponse>(),
     }),
-    /** Runs the Remote Login self-test on this computer; `ok:false` carries the fixed reason the directions are keyed on. */
+    /** Starts Zana's own sshd and runs its self-test on this computer; `ok:false` carries the fixed reason the directions are keyed on. */
     checkPeerRemoteLogin: defineRoute({
       path: "/peer-connections/remote-login",
       method: "post",

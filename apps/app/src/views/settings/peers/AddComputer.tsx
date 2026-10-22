@@ -20,7 +20,7 @@ export interface AddComputerProps {
 
 type Phase = { kind: 'checking' } | { kind: 'blocked'; reason: string } | { kind: 'ready'; invitationId: string; token: string; expiresAt: number; approvalCode: string } | { kind: 'error'; message: string };
 
-/** Add computer: this computer waits and the other one connects in, so Remote Login must be on here. */
+/** Add computer: this computer waits and the other one connects in through Zana's own connection service. */
 export function AddComputer({ connections, onChange, onClose }: AddComputerProps) {
   const [phase, setPhase] = useState<Phase>({ kind: 'checking' });
   const [copied, setCopied] = useState(false);
@@ -76,7 +76,7 @@ export function AddComputer({ connections, onChange, onClose }: AddComputerProps
 
   return (
     <div className="peers-panel" data-testid="add-computer">
-      {phase.kind === 'checking' && <p className="peers-loading" role="status">Checking that Remote Login is on…</p>}
+      {phase.kind === 'checking' && <p className="peers-loading" role="status">Getting this computer ready…</p>}
       {phase.kind === 'blocked' && (
         <>
           <div role="alert" className="peers-guide">
@@ -110,7 +110,6 @@ export function AddComputer({ connections, onChange, onClose }: AddComputerProps
             <strong className="peers-code" aria-label="Approval code">{phase.approvalCode}</strong>
           </div>
           <p className="peers-empty">Works once. Expires at {new Date(phase.expiresAt).toLocaleTimeString()}.</p>
-          <p className="peers-remote-login">Remote Login is on for this computer.</p>
           {actionError && <p className="peers-error" role="alert">{actionError}</p>}
           {mine?.state === 'reserved' && mine.awaitingApproval && mine.peer ? (
             <ApproveConnection

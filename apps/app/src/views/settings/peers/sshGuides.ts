@@ -1,61 +1,54 @@
 /**
- * Plain-language setup help for each way the secure link between two computers can fail. The computer that is
- * adding the other ("Add computer") hosts the link, so most fixes happen there.
+ * Plain-language help for each way Add computer's readiness check can fail. The check starts Zana's own connection
+ * service (a private sshd run as this user) and proves it end to end, so every direction is about this computer.
  */
 export interface SshGuide { title: string; steps: string[] }
 
-export const REMOTE_LOGIN_PATH = 'System Settings > General > Sharing > Remote Login';
+const CHECK_AGAIN = 'Then choose Check again.';
 
-const CHECK_AGAIN = 'Come back here and choose Check again.';
-
-/** Add computer's Remote Login check only tests this computer's own sshd, so every direction is about this computer. */
 const SSH_GUIDES: Record<string, SshGuide> = {
   ssh_remote_login_off: {
-    title: 'Remote Login is turned off on this computer',
+    title: 'Zana could not start its connection service on this computer',
     steps: [
-      `Open ${REMOTE_LOGIN_PATH} on this computer.`,
-      'Turn on Remote Login. On Windows or Linux, start the OpenSSH Server service instead.',
+      'Quit and reopen Zana.',
+      'If it still fails, macOS may be missing its built-in OpenSSH server (/usr/sbin/sshd).',
       CHECK_AGAIN
     ]
   },
   ssh_unreachable: {
-    title: 'Zana could not finish checking Remote Login on this computer',
+    title: 'Zana could not finish getting this computer ready',
     steps: [
-      `Open ${REMOTE_LOGIN_PATH} on this computer, turn Remote Login off, then on again.`,
       'Check that this computer has a local network name: System Settings > General > Sharing > Local hostname.',
       CHECK_AGAIN
     ]
   },
   ssh_auth_refused: {
-    title: 'Remote Login on this computer would not accept Zana\'s key',
+    title: 'Zana\'s connection service would not accept its own test key',
     steps: [
-      `Open ${REMOTE_LOGIN_PATH} and make sure Remote Login allows your user account.`,
-      'Zana needs to add a line to your ~/.ssh/authorized_keys file. If that folder or file is locked or owned by another user, fix its permissions.',
+      'Zana keeps its connection keys in its own data folder. If that folder is locked or owned by another user, fix its permissions.',
       CHECK_AGAIN
     ]
   },
   ssh_forwarding_refused: {
-    title: 'Remote Login is on, but it does not allow the connection Zana needs',
+    title: 'Zana\'s connection service could not open the link it needs',
     steps: [
-      'A security setting or an administrator policy on this computer is blocking TCP port forwarding.',
-      'Ask your administrator to allow TCP forwarding for your account in the Remote Login (sshd) settings.',
+      'Security software or an administrator policy on this computer may be blocking local connections.',
       CHECK_AGAIN
     ]
   },
   ssh_stream_local_allowed: {
-    title: 'Remote Login on this computer needs one more setting',
+    title: 'Zana\'s connection service is not locked down',
     steps: [
-      'For safety, Zana only links computers whose Remote Login refuses socket-file forwarding.',
-      'In Terminal, run: echo "AllowStreamLocalForwarding no" | sudo tee /etc/ssh/sshd_config.d/zana.conf',
-      `Then open ${REMOTE_LOGIN_PATH}, turn Remote Login off, then on again.`,
+      'Zana refused to continue because its connection service allowed more than it should.',
+      'Quit and reopen Zana.',
       CHECK_AGAIN
     ]
   },
   ssh_host_key_mismatch: {
-    title: 'Remote Login on this computer answered with an unexpected security key',
+    title: 'Zana\'s connection service answered with an unexpected security key',
     steps: [
-      'The key Remote Login used does not match the one saved in /etc/ssh on this computer.',
-      `Open ${REMOTE_LOGIN_PATH}, turn Remote Login off, then on again.`,
+      'Another program may be using the same network port.',
+      'Quit and reopen Zana.',
       CHECK_AGAIN
     ]
   }
