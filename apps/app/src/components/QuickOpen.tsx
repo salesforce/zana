@@ -34,9 +34,19 @@ export function QuickOpen({ project, onClose }: Props) {
   const [activeIdx, setActiveIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  // Cleared when a file is chosen: the explorer takes over, so focus must not
+  // jump back to whatever opened Quick Open.
+  const restoreFocusRef = useRef(true);
 
+  // Focus the input on open and hand focus back to the opener on dismiss
+  // (Esc, backdrop click). The input stays enabled while indexing so the
+  // first open in a session focuses too, and typing ahead isn't lost.
   useEffect(() => {
+    const opener = document.activeElement;
     inputRef.current?.focus();
+    return () => {
+      if (restoreFocusRef.current && opener instanceof HTMLElement && opener.isConnected) opener.focus();
+    };
   }, []);
 
   // Keep the highlighted row in view when arrow-keying past the visible
@@ -104,14 +114,23 @@ export function QuickOpen({ project, onClose }: Props) {
   }, [results, activeIdx]);
 
   const choose = (entry: ScoredEntry) => {
+    restoreFocusRef.current = false;
     setProjectView(project.id, 'explorer');
     setExplorerFile(project.id, entry.file.path);
     onClose();
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    // Esc clears a typed query first, then closes. Stop it here so window
+    // listeners (menus, dialogs) don't also act on it.
     if (e.key === 'Escape') {
       e.preventDefault();
+      e.stopPropagation();
+      if (query) {
+        setQuery('');
+        setActiveIdx(0);
+        return;
+      }
       onClose();
       return;
     }
@@ -158,6 +177,7 @@ export function QuickOpen({ project, onClose }: Props) {
         <input
           ref={inputRef}
           className="palette-input"
+          aria-label={`Find file in ${project.name}`}
           placeholder={
             files === null
               ? `Indexing ${project.name}…`
@@ -168,7 +188,6 @@ export function QuickOpen({ project, onClose }: Props) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}
-          disabled={files === null}
         />
         <div className="palette-list" ref={listRef}>
           {files === null ? (
