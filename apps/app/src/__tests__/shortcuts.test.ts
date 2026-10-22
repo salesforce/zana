@@ -22,7 +22,8 @@ const { uiState, dataState } = vi.hoisted(() => ({
     exitProjectFocus: vi.fn(),
     selectedProjectId: 'p1' as string | undefined,
     selectedTabId: {} as Record<string, string>,
-    setResumeOpen: vi.fn()
+    setResumeOpen: vi.fn(),
+    setFindOpen: vi.fn()
   },
   dataState: { projects: [], terminals: {} as Record<string, unknown[]> }
 }));
@@ -41,6 +42,10 @@ vi.mock('../lib/findRegistry', () => ({
   getTerminal: getTerminalMock,
   getActiveTerminalId: getActiveTerminalIdMock
 }));
+const { openThreadFindMock } = vi.hoisted(() => ({
+  openThreadFindMock: vi.fn((_event: KeyboardEvent) => false)
+}));
+vi.mock('../lib/thread-find', () => ({ openThreadFind: openThreadFindMock }));
 vi.mock('../lib/launchProfile', () => ({
   projectDefaultLaunch: () => ({ profile: 'claude' })
 }));
@@ -206,5 +211,41 @@ describe('shortcuts: ⌘K clears the active terminal', () => {
     getActiveTerminalIdMock.mockReturnValue('stale');
     expect(() => kb.press('k', { meta: true })).not.toThrow();
     expect(getTerminalMock).toHaveBeenCalledWith('stale');
+  });
+});
+
+describe('shortcuts: ⌘F picks thread search before terminal find', () => {
+  let kb: KeyboardHarness;
+  let uninstall: () => void;
+
+  beforeEach(() => {
+    kb = installKeyboardHarness();
+    uninstall = installShortcuts();
+    openThreadFindMock.mockReset().mockReturnValue(false);
+    uiState.setFindOpen.mockClear();
+    uiState.selectedProjectId = 'p1';
+    uiState.selectedTabId = { p1: 't1' };
+    dataState.terminals = { p1: [{ id: 't1' }] };
+  });
+
+  afterEach(() => {
+    uninstall();
+    kb.teardown();
+    uiState.selectedTabId = {};
+    dataState.terminals = {};
+  });
+
+  it('leaves terminal find alone when the thread view takes ⌘F', () => {
+    openThreadFindMock.mockReturnValue(true);
+    kb.press('f', { meta: true });
+    expect(openThreadFindMock).toHaveBeenCalledTimes(1);
+    expect(uiState.setFindOpen).not.toHaveBeenCalled();
+  });
+
+  it('still opens terminal find when no thread view takes it', () => {
+    const { preventDefault } = kb.press('f', { meta: true });
+    expect(openThreadFindMock).toHaveBeenCalledTimes(1);
+    expect(uiState.setFindOpen).toHaveBeenCalledWith(true);
+    expect(preventDefault).toHaveBeenCalledTimes(1);
   });
 });

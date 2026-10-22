@@ -153,7 +153,7 @@ function ReportBody({ title, docs, comments }: ReportInput) {
             <section className="pdf-report-doc" key={doc.path}>
               {showDocNames && <h2 className="pdf-report-doc-name">{doc.path}</h2>}
               {typeof doc.content === 'string' ? (
-                <DocContent path={doc.path} content={doc.content} mermaidTheme="default" />
+                <DocContent path={doc.path} content={doc.content} mermaidTheme="default" copyableCode={false} />
               ) : (
                 <div className="pdf-report-tombstone">
                   {doc.error ?? 'File could not be read.'}
@@ -166,7 +166,7 @@ function ReportBody({ title, docs, comments }: ReportInput) {
       {hasComments && (
         <div className={`pdf-report-comments ${docs.length ? 'has-divider' : ''}`}>
           <div className="pdf-report-section-label">Comments</div>
-          <MarkdownContent text={comments!} mermaidTheme="default" />
+          <MarkdownContent text={comments!} mermaidTheme="default" copyableCode={false} />
         </div>
       )}
     </div>

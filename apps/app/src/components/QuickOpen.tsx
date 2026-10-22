@@ -34,9 +34,20 @@ export function QuickOpen({ project, onClose }: Props) {
   const [activeIdx, setActiveIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  // Set only by a user dismissal (Esc, backdrop click). Choosing a file hands
+  // focus to the explorer, and an unmount for any other reason (project
+  // removed or deselected) must not pull focus back to an element left behind.
+  const restoreFocusRef = useRef(false);
 
+  // Focus the input on open and hand focus back to the opener on dismiss.
+  // The input stays enabled while indexing so the first open in a session
+  // focuses too, and typing ahead isn't lost.
   useEffect(() => {
+    const opener = document.activeElement;
     inputRef.current?.focus();
+    return () => {
+      if (restoreFocusRef.current && opener instanceof HTMLElement && opener.isConnected) opener.focus();
+    };
   }, []);
 
   // Keep the highlighted row in view when arrow-keying past the visible
@@ -103,6 +114,11 @@ export function QuickOpen({ project, onClose }: Props) {
     if (activeIdx >= results.length) setActiveIdx(0);
   }, [results, activeIdx]);
 
+  const dismiss = () => {
+    restoreFocusRef.current = true;
+    onClose();
+  };
+
   const choose = (entry: ScoredEntry) => {
     setProjectView(project.id, 'explorer');
     setExplorerFile(project.id, entry.file.path);
@@ -110,9 +126,17 @@ export function QuickOpen({ project, onClose }: Props) {
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    // Esc clears a typed query first, then closes. stopPropagation keeps it
+    // from bubbling to window listeners; capture-phase listeners still see it.
     if (e.key === 'Escape') {
       e.preventDefault();
-      onClose();
+      e.stopPropagation();
+      if (query) {
+        setQuery('');
+        setActiveIdx(0);
+        return;
+      }
+      dismiss();
       return;
     }
     if (e.key === 'ArrowDown') {
@@ -153,11 +177,12 @@ export function QuickOpen({ project, onClose }: Props) {
   };
 
   return (
-    <div className="palette-backdrop" onMouseDown={onClose}>
+    <div className="palette-backdrop" onMouseDown={dismiss}>
       <div className="palette" onMouseDown={(e) => e.stopPropagation()}>
         <input
           ref={inputRef}
           className="palette-input"
+          aria-label={`Find file in ${project.name}`}
           placeholder={
             files === null
               ? `Indexing ${project.name}…`
@@ -168,7 +193,6 @@ export function QuickOpen({ project, onClose }: Props) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}
-          disabled={files === null}
         />
         <div className="palette-list" ref={listRef}>
           {files === null ? (

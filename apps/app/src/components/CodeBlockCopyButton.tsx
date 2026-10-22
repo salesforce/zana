@@ -1,0 +1,74 @@
+import { useEffect, useRef, useState } from 'react';
+import { Check, Copy, X } from 'lucide-react';
+import { copyTextOrFail } from '../lib/copy-text.js';
+
+/** How long the copied / failed icon stays before the button resets. */
+export const CODE_COPY_FEEDBACK_MS = 1500;
+
+type CopyState = 'idle' | 'copied' | 'failed';
+
+/** Announced through the live region; the button's own name stays "Copy code". */
+const STATUS: Record<CopyState, string> = {
+  idle: '',
+  copied: 'Copied',
+  failed: 'Copy failed'
+};
+
+/**
+ * Icon button pinned to a fenced code block's top-right corner. It sits
+ * outside the scrolling `<pre>`, so it stays put on wide blocks, and it is
+ * absolutely positioned, so it never shifts the block's layout. `code` is the
+ * raw fence body from the current render, so a still-streaming message copies
+ * whatever has arrived so far.
+ */
+export function CodeBlockCopyButton({ code }: { code: string }) {
+  const [state, setState] = useState<CopyState>('idle');
+  const timer = useRef<number | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (timer.current !== null) window.clearTimeout(timer.current);
+    };
+  }, []);
+  const settle = (next: CopyState) => {
+    // A copy can finish after the block is gone (message re-rendered away).
+    if (!mounted.current) return;
+    setState(next);
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => {
+      timer.current = null;
+      setState('idle');
+    }, CODE_COPY_FEEDBACK_MS);
+  };
+  return (
+    <>
+      <button
+        type="button"
+        className="inbox-md-code-copy"
+        data-testid="code-block-copy"
+        data-state={state}
+        aria-label="Copy code"
+        title="Copy code"
+        onClick={(event) => {
+          // Copying shouldn't also select or open a surrounding card/row.
+          event.stopPropagation();
+          copyTextOrFail(code).then(
+            () => settle('copied'),
+            (error: unknown) => {
+              console.warn('[code-block-copy] clipboard write failed', error);
+              settle('failed');
+            }
+          );
+        }}
+      >
+        {state === 'copied' ? <Check size={14} aria-hidden /> : state === 'failed' ? <X size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
+      </button>
+      {/* The one announcement of the result: the button's name doesn't change,
+          so screen readers don't hear it twice. Empty while idle so the
+          block's text (and thread search) is unchanged. */}
+      <span className="sr-only" role="status" aria-live="polite">{STATUS[state]}</span>
+    </>
+  );
+}

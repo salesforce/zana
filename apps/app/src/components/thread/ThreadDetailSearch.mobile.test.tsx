@@ -58,3 +58,17 @@ it('focuses the search opened from More and returns control to its owner on dism
   fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'Escape' });
   expect(close).toHaveBeenCalledTimes(2);
 });
+
+it('focuses and selects the field on each find request and shows the shortcut', () => {
+  Object.defineProperty(navigator, 'platform', { value: 'Win32', configurable: true });
+  const { rerender } = render(<ThreadDetailSearch value="earlier" onChange={() => {}} onSubmit={() => {}} />);
+  const input = screen.getByRole('searchbox') as HTMLInputElement;
+  expect(document.activeElement).not.toBe(input);
+  expect(screen.getByRole('button', { name: 'Search in thread' }).getAttribute('title')).toBe('Search in thread (Ctrl + F)');
+  rerender(<ThreadDetailSearch value="earlier" focusRequest={1} onChange={() => {}} onSubmit={() => {}} />);
+  expect(document.activeElement).toBe(input);
+  expect([input.selectionStart, input.selectionEnd]).toEqual([0, 7]);
+  input.blur();
+  rerender(<ThreadDetailSearch value="earlier" focusRequest={2} onChange={() => {}} onSubmit={() => {}} />);
+  expect(document.activeElement).toBe(input);
+});
