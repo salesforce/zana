@@ -1,6 +1,6 @@
 import { ArrowLeft, FolderCog, Search, X } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useEffect, useMemo, useState, useId, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useId, useSyncExternalStore } from 'react';
 import { useData, useUi } from '../../store.js';
 import { SETTINGS_SECTIONS, SETTINGS_GROUPS } from '@/views/settings/settings-navigation';
 import { SidebarResizer } from '../SidebarResizer.js';
@@ -79,6 +79,22 @@ function Highlighted({ snippet }: { snippet: SettingsSnippet }) {
   return <>{parts}</>;
 }
 
+/**
+ * Whether opening Settings may move focus to the search box. It may not when a
+ * deep link is about to focus its own field (reveal.ts), on the compact drawer
+ * (it would pop the on-screen keyboard), or when focus already sits in a modal
+ * dialog or in the Settings page itself (e.g. the rail re-mounting on sidebar
+ * expand).
+ */
+export function shouldAutofocusSettingsSearch(opts: {
+  anchor: string | null | undefined;
+  compact: boolean;
+  active: Element | null;
+}): boolean {
+  if (opts.anchor || opts.compact) return false;
+  return !opts.active?.closest('[aria-modal="true"], dialog[open], .settings-panel--preferences');
+}
+
 /** The ranked results list (listbox): page groups, the "Close matches" band, rows. */
 function SettingsSearchResults({
   listId,
@@ -146,6 +162,15 @@ export function SettingsPane() {
   const [query, setQuery] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
   const [active, setActive] = useState(0);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const settingsAnchor = useUi((s) => s.settingsAnchor);
+  // Every way into Settings (shortcut, menu, tray, sidebar, palette) mounts this
+  // rail, so focus the search box once, on entry; moving between sections keeps
+  // the rail mounted and never steals focus.
+  const entry = useRef({ anchor: settingsAnchor, compact: dismissMobileNav !== null });
+  useEffect(() => {
+    if (shouldAutofocusSettingsSearch({ ...entry.current, active: document.activeElement })) searchRef.current?.focus();
+  }, []);
   // Moves when a runtime source changes (plugin settings land, harness probe resolves),
   // so an open query re-ranks with the new data.
   const sourcesVersion = useSyncExternalStore(subscribeSettingsSearchSources, getSettingsSearchSourcesVersion);
@@ -208,6 +233,7 @@ export function SettingsPane() {
       <div className="settings-search">
         <Search size={14} className="settings-search-icon" aria-hidden="true" />
         <input
+          ref={searchRef}
           type="text"
           className="settings-search-input"
           data-testid="settings-search"

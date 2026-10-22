@@ -9,7 +9,8 @@ const h = vi.hoisted(() => ({
     settingsTab: 'global',
     setSettingsAnchor: vi.fn(),
     selectedProjectId: 'selected' as string | null,
-    focusedProjectId: null as string | null
+    focusedProjectId: null as string | null,
+    settingsAnchor: null as string | null
   },
   data: { projects: [{ id: 'selected', name: 'Demo' }] },
   snapshot: { config: { theme: 'Dark' } } as never,
@@ -36,7 +37,7 @@ vi.mock('../../lib/settings-search/snapshot.js', () => ({
 }));
 vi.mock('../mobile-nav-context.js', () => ({ useMobileNavDismiss: () => h.dismiss }));
 
-import { SettingsPane, groupHitsByPage } from './SettingsPane.js';
+import { SettingsPane, groupHitsByPage, shouldAutofocusSettingsSearch } from './SettingsPane.js';
 import type { SettingsSearchHit } from '../../lib/settings-search/index.js';
 
 function Location() {
@@ -57,6 +58,7 @@ beforeEach(() => {
   h.ui.settingsTab = 'global';
   h.ui.selectedProjectId = 'selected';
   h.ui.focusedProjectId = null;
+  h.ui.settingsAnchor = null;
   vi.clearAllMocks();
 });
 afterEach(cleanup);
@@ -90,11 +92,62 @@ describe('groupHitsByPage', () => {
   });
 });
 
+describe('search focus on entering Settings', () => {
+  const search = () => screen.getByRole('combobox', { name: 'Search settings' });
+
+  it('focuses the search box when Settings opens, so typing goes straight into it', () => {
+    mount();
+    expect(document.activeElement).toBe(search());
+    // Moving between sections keeps the rail mounted and never re-takes focus.
+    fireEvent.click(screen.getByRole('link', { name: 'Terminal' }));
+    const other = document.createElement('button');
+    document.body.append(other);
+    other.focus();
+    fireEvent.click(screen.getByRole('link', { name: 'Preferences' }));
+    expect(document.activeElement).toBe(other);
+    other.remove();
+  });
+
+  it('leaves focus to a deep link, which focuses its own field', () => {
+    h.ui.settingsAnchor = 'global.appearance';
+    mount();
+    expect(document.activeElement).not.toBe(search());
+  });
+
+  it('does not pop the on-screen keyboard in the compact drawer', () => {
+    h.dismiss = vi.fn();
+    mount();
+    expect(document.activeElement).not.toBe(search());
+  });
+
+  it('keeps focus in a modal dialog or the Settings page itself', () => {
+    const at = (html: string) => {
+      const host = document.createElement('div');
+      host.innerHTML = html;
+      document.body.append(host);
+      const el = host.querySelector('[data-target]')!;
+      const result = shouldAutofocusSettingsSearch({ anchor: null, compact: false, active: el });
+      host.remove();
+      return result;
+    };
+    expect(at('<div role="dialog" aria-modal="true"><button data-target></button></div>')).toBe(false);
+    expect(at('<dialog open><button data-target></button></dialog>')).toBe(false);
+    expect(at('<div class="settings-panel settings-panel--preferences"><input data-target></div>')).toBe(false);
+    expect(at('<div role="dialog"><textarea data-target></textarea></div>')).toBe(true); // non-modal
+    expect(at('<textarea data-target></textarea>')).toBe(true); // e.g. the hidden terminal
+    expect(shouldAutofocusSettingsSearch({ anchor: null, compact: false, active: null })).toBe(true);
+    expect(shouldAutofocusSettingsSearch({ anchor: 'x', compact: false, active: null })).toBe(false);
+    expect(shouldAutofocusSettingsSearch({ anchor: null, compact: true, active: null })).toBe(false);
+  });
+});
+
 describe('focused Settings navigation', () => {
   it('reads current values only while the box is focused or has a query', () => {
     mount();
     const search = screen.getByRole('combobox', { name: 'Search settings' });
     const last = () => h.snapshotEnabled.at(-1);
+    expect(last()).toBe(true); // focused on entry
+    fireEvent.blur(search);
     expect(last()).toBe(false);
     fireEvent.focus(search);
     expect(last()).toBe(true);
