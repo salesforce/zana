@@ -40,6 +40,26 @@ test('the sidebar Settings link focuses search; moving between sections does not
   await expect(search(win)).not.toBeFocused();
 });
 
+test('re-mounting the rail while a Terminal field has focus leaves focus in that field', async ({ app }) => {
+  const win = app.window;
+  await leaveSettings(win);
+  await win.getByRole('link', { name: 'Settings', exact: true }).click();
+  await win.getByTestId('settings-nav-terminal').click();
+  await expect(win).toHaveURL(/\/settings\/terminal/);
+  const field = win.locator('[data-settings-target="terminal.font-size"] input');
+  await field.focus();
+  await expect(field).toBeFocused();
+  // Programmatic clicks keep focus in the field while collapse/expand unmounts
+  // and re-mounts the Settings rail (a pointer click would focus the button).
+  const trigger = win.getByTestId('sidebar-trigger-overlay');
+  await trigger.getByRole('button', { name: 'Collapse sidebar' }).evaluate((b: HTMLElement) => b.click());
+  await expect(search(win)).toHaveCount(0);
+  await trigger.getByRole('button', { name: 'Expand sidebar' }).evaluate((b: HTMLElement) => b.click());
+  await expect(search(win)).toBeVisible();
+  await expect(field).toBeFocused();
+  await expect(search(win)).not.toBeFocused();
+});
+
 test('the tray/menubar "Settings" entry (main-process IPC) focuses search', async ({ app }) => {
   const win = app.window;
   await leaveSettings(win);

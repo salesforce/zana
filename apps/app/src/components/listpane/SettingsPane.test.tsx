@@ -133,6 +133,9 @@ describe('search focus on entering Settings', () => {
     expect(at('<div role="dialog" aria-modal="true"><button data-target></button></div>')).toBe(false);
     expect(at('<dialog open><button data-target></button></dialog>')).toBe(false);
     expect(at('<div class="settings-panel settings-panel--preferences"><input data-target></div>')).toBe(false);
+    // Plain .settings-panel is shared with Home, Scheduler and Extensions: Ctrl+,
+    // from those pages must still focus search.
+    expect(at('<div class="settings-panel home-panel"><textarea data-target></textarea></div>')).toBe(true);
     expect(at('<div role="dialog"><textarea data-target></textarea></div>')).toBe(true); // non-modal
     expect(at('<textarea data-target></textarea>')).toBe(true); // e.g. the hidden terminal
     expect(shouldAutofocusSettingsSearch({ anchor: null, compact: false, active: null })).toBe(true);

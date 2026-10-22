@@ -84,7 +84,9 @@ function Highlighted({ snippet }: { snippet: SettingsSnippet }) {
  * deep link is about to focus its own field (reveal.ts), on the compact drawer
  * (it would pop the on-screen keyboard), or when focus already sits in a modal
  * dialog or in the Settings page itself (e.g. the rail re-mounting on sidebar
- * expand).
+ * expand). SettingsView wraps every section (Terminal, Agents, …) in
+ * `.settings-panel--preferences`; plain `.settings-panel` is also used by Home,
+ * Scheduler and Extensions, so it must not block focus.
  */
 export function shouldAutofocusSettingsSearch(opts: {
   anchor: string | null | undefined;
