@@ -132,7 +132,7 @@ describe('QuickOpen Escape', () => {
   });
 
   it('does not restore focus when it unmounts without a dismissal', () => {
-    // For example the active project changes while Quick Open is open.
+    // For example the selected project is removed while Quick Open is open.
     const p = project();
     mocks.walkFiles.mockResolvedValue([]);
     const back = opener();

@@ -36,7 +36,7 @@ export function QuickOpen({ project, onClose }: Props) {
   const listRef = useRef<HTMLDivElement>(null);
   // Set only by a user dismissal (Esc, backdrop click). Choosing a file hands
   // focus to the explorer, and an unmount for any other reason (project
-  // switched or deselected) must not pull focus back to an element left behind.
+  // removed or deselected) must not pull focus back to an element left behind.
   const restoreFocusRef = useRef(false);
 
   // Focus the input on open and hand focus back to the opener on dismiss.
