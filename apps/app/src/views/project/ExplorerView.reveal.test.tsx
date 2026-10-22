@@ -57,7 +57,6 @@ beforeEach(() => {
   mocks.list.mockImplementation(async (path: string) => fakeListDir(path));
   mocks.read.mockResolvedValue({ ok: true, content: 'x' });
   mocks.readRemote.mockResolvedValue({ ok: true, content: 'x' });
-  Element.prototype.scrollIntoView = vi.fn();
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
@@ -99,6 +98,44 @@ it('reveals Windows paths that use backslash separators', async () => {
   await open('C:\\proj\\src\\app.ts');
   await waitFor(() => expect(row('app.ts')?.getAttribute('aria-current')).toBe('true'));
   expect(listed()).toEqual(['C:\\proj', 'C:\\proj\\src']);
+});
+
+it('reveals a file deeper than 64 folders', async () => {
+  let dir = '/a';
+  mocks.tree = {};
+  for (let i = 0; i < 70; i++) {
+    mocks.tree[dir] = [{ name: `d${i}`, kind: 'dir' }];
+    dir = `${dir}/d${i}`;
+  }
+  mocks.tree[dir] = [{ name: 'bottom.ts', kind: 'file' }];
+  render(<ExplorerView project={project} />);
+  await screen.findByText('d0');
+  await open(`${dir}/bottom.ts`);
+  await waitFor(() => expect(row('bottom.ts')?.getAttribute('aria-current')).toBe('true'));
+  expect(listed()).toHaveLength(71);
+});
+
+it('drops a pending scroll when the user collapses the folder before the row renders', async () => {
+  layOutRows();
+  mocks.tree['/a/src'] = Array.from({ length: 20 }, (_, i) => ({ name: `s${String(i).padStart(2, '0')}.ts`, kind: 'file' as const }));
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  mocks.list.mockImplementation(async (path: string) => {
+    if (path === '/a/src') await gate;
+    return fakeListDir(path);
+  });
+  const view = render(<ExplorerView project={project} />);
+  await screen.findByText('README.md');
+  await open('/a/src/s19.ts');
+  await waitFor(() => expect(listed()).toContain('/a/src'));
+  // The walk already expanded src; collapse it while its listing is in flight.
+  fireEvent.click(screen.getByText('src'));
+  await act(async () => { release(); await gate; });
+  expect(row('s19.ts')).toBeNull();
+  // Expanding it later shows the highlighted row but doesn't jump to it.
+  fireEvent.click(screen.getByText('src'));
+  await waitFor(() => expect(row('s19.ts')?.getAttribute('aria-current')).toBe('true'));
+  expect(view.container.querySelector<HTMLElement>('.explorer-tree-body')!.scrollTop).toBe(0);
 });
 
 it('leaves an already visible file in place without re-listing its folder', async () => {
