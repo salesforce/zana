@@ -924,7 +924,17 @@ test('Preview context: Context tab, setup, typed snapshots and restart work in b
   await expect(orgSetup.getByLabel('retryCount value', { exact: true })).toHaveValue('0');
   await orgSetup.getByLabel('Context preset', { exact: true }).selectOption('');
 
-  await orgSetup.getByRole('checkbox', { name: 'Set verified', exact: true }).check();
+  const verified = orgSetup.getByRole('checkbox', { name: 'Set verified', exact: true });
+  // The native checkbox covers its visible label. A 1px hidden control can
+  // round below Chromium's clickable-area threshold on Linux or at zoom.
+  const hitArea = await verified.evaluate(input => {
+    const control = input.getBoundingClientRect();
+    const label = input.closest('label')!.getBoundingClientRect();
+    return { width: control.width, height: control.height, labelWidth: label.width, labelHeight: label.height };
+  });
+  expect(hitArea.width).toBeGreaterThanOrEqual(hitArea.labelWidth - 1);
+  expect(hitArea.height).toBeGreaterThanOrEqual(hitArea.labelHeight - 1);
+  await verified.check();
   await orgSetup.getByRole('button', { name: 'Start preview', exact: true }).click();
   await expect(orgPreview.getByRole('log')).toContainText('support concierge');
   await orgPreview.getByTestId('salesforce-agentforce-preview-end').click();
