@@ -474,7 +474,7 @@ export class PeerLinks implements PeerLinksControlPort {
       if (state.records.some(entry => entry.invitationId === rec.invitationId)) throw new InvitationError('already_redeemed');
       if (state.records.filter(entry => LIVE_PHASES.has(entry.phase)).length >= BOOTSTRAP_LIMITS.preConsentLinksPerApp ||
         state.records.filter(entry => entry.phase === 'linked').length >= BOOTSTRAP_LIMITS.pluginLinksPerApp) throw new InvitationError('capacity');
-      if (rec.peer && state.records.some(entry => entry.peer === rec.peer && !TERMINAL.has(entry.phase))) throw new InvitationError('already_redeemed');
+      if (rec.peer && state.records.some(entry => entry.peer === rec.peer && !TERMINAL.has(entry.phase))) throw new InvitationError('already_connected');
       if (state.records.length >= PEER_LINK_MAX_RECORDS) {
         const evictable = state.records.filter(entry => TERMINAL.has(entry.phase)).sort((a, b) => a.updatedAt - b.updatedAt)[0];
         if (!evictable) throw new InvitationError('capacity');
@@ -505,7 +505,7 @@ export class PeerLinks implements PeerLinksControlPort {
       if (rec?.outbound?.hostKey) { if (!this.live.has(rec.invitationId)) await this.open(rec); return; }
       if (!rec) {
         const channel = await this.options.channels.remote(input.inviterId);
-        if (channel) throw new InvitationError('already_redeemed');
+        if (channel) throw new InvitationError('already_connected');
         await this.insert({ invitationId: input.invitationId, role: 'redeemer', ...(input.pluginId !== undefined ? { pluginId: input.pluginId, scope: input.scope } : {}),
           peer: input.inviterId, peerName: input.inviterName, phase: 'pre-consent', createdAt: this.now(), updatedAt: this.now(),
           ssh: { side: 'client', endpoint: offer.endpoint, listenPort: offer.listenPort, targetPort: offer.targetPort, bootstrapSeed: offer.bootstrapSeed },

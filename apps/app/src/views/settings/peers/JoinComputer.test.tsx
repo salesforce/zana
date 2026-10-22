@@ -98,6 +98,20 @@ describe('JoinComputer', () => {
     expect(await screen.findByText('A previous attempt already used this invitation but did not connect. Create a new invitation on the other computer and try again.')).toBeTruthy();
   });
 
+  it('names the computer this one is already connected to', async () => {
+    api.join.mockResolvedValue({ ...base, state: 'failed', reason: 'already_connected', peer: { name: 'Studio Mac', fingerprint: 'f'.repeat(16) } });
+    render(<JoinComputer connections={[]} />);
+    fill('tok');
+    fireEvent.click(screen.getByRole('button', { name: 'Join' }));
+    expect(await screen.findByText('This computer is already connected to Studio Mac. Remove it under Computers, then join again.')).toBeTruthy();
+    cleanup();
+    api.join.mockResolvedValue({ ...base, state: 'failed', reason: 'already_connected' });
+    render(<JoinComputer connections={[]} />);
+    fill('tok');
+    fireEvent.click(screen.getByRole('button', { name: 'Join' }));
+    expect(await screen.findByText('This computer is already connected to that computer. Remove it under Computers, then join again.')).toBeTruthy();
+  });
+
   it('surfaces join errors', async () => {
     api.join.mockRejectedValueOnce(new Error('invalid invitation'));
     render(<JoinComputer connections={[]} />);

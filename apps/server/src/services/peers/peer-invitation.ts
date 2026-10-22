@@ -60,7 +60,7 @@ export const INVITATION_LIMITS = Object.freeze({
 
 export const INVITATION_REASONS = [
   'invalid_invitation', 'own_invitation', 'wrong_plugin', 'expired', 'denied', 'cancelled',
-  'already_redeemed', 'attempt_limit', 'identity_mismatch', 'unreachable', 'not_found', 'capacity', 'replay',
+  'already_redeemed', 'already_connected', 'attempt_limit', 'identity_mismatch', 'unreachable', 'not_found', 'capacity', 'replay',
   'stale_generation', 'owner_proof_required', 'not_ready', 'fenced', 'unavailable', 'unknown_connection', 'use_unavailable', ...SSH_REASONS
 ] as const;
 export type InvitationReason = typeof INVITATION_REASONS[number];
@@ -73,6 +73,7 @@ const MESSAGES: Record<InvitationReason, string> = {
   denied: 'Pairing was declined',
   cancelled: 'Pairing was cancelled',
   already_redeemed: 'This invitation was already used',
+  already_connected: 'This computer is already connected to the computer that created the invitation',
   attempt_limit: 'This invitation was locked after too many attempts',
   identity_mismatch: 'The other computer did not prove the identity in the invitation',
   unreachable: 'The other computer is not reachable yet; retrying',

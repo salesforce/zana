@@ -10,6 +10,7 @@ export interface JoinComputerProps {
 }
 
 function connectionStatusText(current: PeerConnection): string {
+  if (current.reason === 'already_connected') return `This computer is already connected to ${current.peer?.name ?? 'that computer'}. Remove it under Computers, then join again.`;
   if (current.reason === 'already_redeemed') return 'A previous attempt already used this invitation but did not connect. Create a new invitation on the other computer and try again.';
   if (current.reason === 'expired') return 'This invitation expired. Create a new invitation on the other computer.';
   return current.reason ?? `Status: ${current.state}`;

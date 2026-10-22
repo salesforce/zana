@@ -665,7 +665,7 @@ export type PluginInvitationDecision = 'pending' | 'approved' | 'denied';
  */
 export type PluginInvitationReason =
   | 'invalid_invitation' | 'own_invitation' | 'wrong_plugin' | 'expired' | 'denied' | 'cancelled'
-  | 'already_redeemed' | 'attempt_limit' | 'identity_mismatch' | 'unreachable' | 'not_found' | 'capacity' | 'replay'
+  | 'already_redeemed' | 'already_connected' | 'attempt_limit' | 'identity_mismatch' | 'unreachable' | 'not_found' | 'capacity' | 'replay'
   | 'stale_generation' | 'owner_proof_required' | 'not_ready' | 'fenced' | 'unavailable' | 'unknown_connection' | 'use_unavailable'
   | 'ssh_remote_login_off' | 'ssh_unreachable' | 'ssh_auth_refused' | 'ssh_forwarding_refused' | 'ssh_host_key_mismatch';
 
@@ -772,7 +772,7 @@ export interface PluginSdkPeers {
    */
   /**
    * Open a one-time invitation for `scope`, valid for 10 minutes. Refuses with an `ssh_*` reason when this computer
-   * cannot accept the SSH link (for example its connection service could not start). A second invitation between the same two apps is refused with `already_redeemed` while a link exists.
+   * cannot accept the SSH link (for example its connection service could not start). A second invitation between the same two apps is refused with `already_connected` while a link exists.
    */
   createInvitation?(args: { scope: string; signal?: AbortSignal }): Promise<{ invitationId: string; token: string; expiresAt: number; code: string }>;
   /**

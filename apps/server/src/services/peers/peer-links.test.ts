@@ -359,8 +359,10 @@ describe('redeemInvitationLink (redeemer)', () => {
   it('refuses an inviter that already has an enrolled channel and a reused terminal id', async () => {
     const f = await fixture(), links = f.make(), peer = f.newPeer();
     vi.spyOn(f.channels, 'remote').mockResolvedValueOnce({ hostId: randomUUID() } as never);
-    await expect(f.redeem(links, peer)).rejects.toMatchObject({ code: 'already_redeemed' });
+    await expect(f.redeem(links, peer)).rejects.toMatchObject({ code: 'already_connected' });
     const id = await f.redeem(links, peer);
+    // A live link to the same inviter refuses a second invitation from it, even without an enrolled channel.
+    await expect(f.redeem(links, peer, { id: randomUUID() })).rejects.toMatchObject({ code: 'already_connected' });
     await links.remove(peer.id);
     await expect(f.redeem(links, peer, { id })).rejects.toMatchObject({ code: 'already_redeemed' });
   });

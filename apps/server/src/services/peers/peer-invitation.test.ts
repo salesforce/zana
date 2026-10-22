@@ -557,7 +557,7 @@ describe('PeerInvitations v3', () => {
     it('treats link-store refusals as terminal reasons (ssh_host_key_mismatch, ssh_auth_refused, expired, identity_mismatch)', async () => {
       const w = await world();
       const red = w.make('red');
-      for (const reason of ['ssh_host_key_mismatch', 'identity_mismatch', 'attempt_limit'] as InvitationReason[]) {
+      for (const reason of ['ssh_host_key_mismatch', 'identity_mismatch', 'attempt_limit', 'already_connected'] as InvitationReason[]) {
         red.links.redeem.mockRejectedValueOnce(new InvitationError(reason));
         const status = await red.svc.redeem({ pluginId: PLUGIN, token: fakeToken({}, w.clock.now), code: TEST_CODE });
         expect(status).toMatchObject({ state: 'failed', reason });
@@ -572,7 +572,7 @@ describe('PeerInvitations v3', () => {
       const used = await red.svc.redeem({ pluginId: PLUGIN, token: fakeToken({}, w.clock.now), code: TEST_CODE });
       expect(used).toMatchObject({ state: 'failed', reason: 'already_redeemed' });
       expect(red.terminated.at(-1)).toEqual([used.invitationId, 'redeemer', 'already_redeemed']);
-      expect(red.terminated).toHaveLength(5);
+      expect(red.terminated).toHaveLength(6);
       expect(new InvitationError('ssh_host_key_mismatch').message).toContain('different SSH host key');
     });
 
