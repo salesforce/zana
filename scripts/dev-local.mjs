@@ -121,15 +121,16 @@ export function parseDevTarget(argv = [], env = process.env) {
   return 'isolated';
 }
 
-/** Keep in lockstep with `PEER_BOOT_KEY_ENV` in apps/server/src/services/peers/protected-key.ts. */
+/** Keep in lockstep with `PEER_BOOT_KEY_ENV` / `DEV_PEER_KEY_FILE_ENV` in apps/server/src/services/peers/protected-key.ts. */
 const PEER_BOOT_KEY_ENV = 'ZCC_PEER_STORAGE_BOOT_KEY';
+const DEV_PEER_KEY_FILE_ENV = 'ZCC_DEV_PEER_KEY_FILE';
 const DEV_PEER_KEY_FILE = 'dev-peer-key';
 
 /**
  * Dev servers run as a plain Node process, so they never see Electron's safeStorage
- * and peer links / invitations would stay off. Supply the same boot-key seam the
- * packaged desktop uses from a 0600 file in the (isolated, dev-only) data dir. The
- * file holds the key in the clear: dev only, never used for the packaged target.
+ * and peer links / invitations would stay off. Keep the key in a 0600 file in the
+ * (isolated, dev-only) data dir and hand the server only its path; the server ignores
+ * env secrets. The file holds the key in the clear: dev only, never the packaged target.
  */
 export function loadOrCreateDevPeerKey(dataDir) {
   const path = join(dataDir, DEV_PEER_KEY_FILE);
@@ -178,7 +179,11 @@ export function prepareLocalDevEnv(processEnv = process.env, options = {}) {
     ZCC_PRODUCT_SERVER_CREDENTIAL: processEnv.ZCC_PRODUCT_SERVER_CREDENTIAL ?? randomBytes(32).toString('hex'),
     ZCC_SERVER_URL: `http://127.0.0.1:${serverPort}/`
   };
-  if (!packaged && !processEnv[PEER_BOOT_KEY_ENV]) env[PEER_BOOT_KEY_ENV] = loadOrCreateDevPeerKey(dataDir);
+  if (!packaged && !processEnv[DEV_PEER_KEY_FILE_ENV]) {
+    loadOrCreateDevPeerKey(dataDir);
+    env[DEV_PEER_KEY_FILE_ENV] = join(dataDir, DEV_PEER_KEY_FILE);
+  }
+  delete env[PEER_BOOT_KEY_ENV];
   if (!processEnv.ZCC_EXTENSIONS_DIR) {
     env.ZCC_EXTENSIONS_DIR = join(dataDir, 'extensions');
   }

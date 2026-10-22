@@ -120,6 +120,26 @@ interface PeerBootPort {
 }
 const consumedBootPorts = new WeakSet<PeerBootPort>();
 
+/** Keep in lockstep with `DEV_PEER_KEY_FILE_ENV` in scripts/dev-local.mjs. A path, never the key itself. */
+export const DEV_PEER_KEY_FILE_ENV = 'ZCC_DEV_PEER_KEY_FILE';
+
+/** Trusts the dev key only from a regular, single-link file this user owns that no one else can read or write. */
+export async function readDevPeerKeyFile(path: string): Promise<Buffer | null> {
+  let handle;
+  try { handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+  catch { return null; }
+  try {
+    const info = await handle.stat();
+    if (!info.isFile() || info.nlink !== 1 || info.uid !== process.getuid?.() || (info.mode & 0o077) !== 0 || info.size > 128) return null;
+    const text = (await handle.readFile('utf8')).trim();
+    if (!/^[A-Za-z0-9_-]{43}$/.test(text)) return null;
+    const key = Buffer.from(text, 'base64url');
+    if (key.length === 32 && key.toString('base64url') === text) return key;
+    key.fill(0);
+    return null;
+  } finally { await handle.close(); }
+}
+
 /** Register before runtime dispatch so secret bytes never reach plugin composition or logs. */
 export function consumePeerBootKey(env: NodeJS.ProcessEnv = process.env): PeerKeyProvider & { dispose(): void } {
   // Legacy environment secrets are never authority, even if inherited from an older launcher.
@@ -147,9 +167,14 @@ export function consumePeerBootKey(env: NodeJS.ProcessEnv = process.env): PeerKe
     consumedBootPorts.add(port);
     port.on('message', receive);
   }
+  // `pnpm dev` runs the server as a plain Node child with no parent port: it names a 0600 dev-only key file instead.
+  const devKeyFile = port ? undefined : env[DEV_PEER_KEY_FILE_ENV];
+  delete env[DEV_PEER_KEY_FILE_ENV];
+  let devKeyRead = false;
   return {
     getKey: async () => {
       if (disposed) return null;
+      if (!key && devKeyFile && !devKeyRead) { devKeyRead = true; key = await readDevPeerKeyFile(devKeyFile); }
       if (key) return Buffer.from(key);
       // Absent key with a known cause: fail typed so the cause reaches plugins instead of a silent null.
       if (reason) throw new PeerKeyReasonError(reason);

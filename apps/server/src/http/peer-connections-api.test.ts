@@ -74,10 +74,17 @@ describe('/api/v1/peer-connections', () => {
     const off = await post('/peer-connections');
     expect(off.status).toBe(400);
     expect(await off.json()).toMatchObject({ reason: 'ssh_remote_login_off' });
-    inv.create.mockRejectedValueOnce(new Error('/Users/me/.ssh/secret leaked'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    inv.create.mockRejectedValueOnce(new TypeError('/Users/me/.ssh/secret leaked'));
     const crash = await post('/peer-connections');
     expect(crash.status).toBe(503);
     expect(JSON.stringify(await crash.json())).not.toContain('/Users');
+    // The local log names the failure without its message.
+    expect(warn).toHaveBeenCalledWith('[peer-connections] request failed: TypeError');
+    inv.create.mockRejectedValueOnce('bare');
+    expect((await post('/peer-connections')).status).toBe(503);
+    expect(warn).toHaveBeenLastCalledWith('[peer-connections] request failed: string');
+    warn.mockRestore();
   });
 
   it('joins with a trimmed token and rejects a malformed body', async () => {

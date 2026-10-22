@@ -5,7 +5,7 @@ import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import { consumePeerBootKey, PeerKeyReasonError, peerKeyReasonSuffix, createProtectedPeerKeyProvider, PEER_BOOT_KEY_ENV, PEER_KEY_REASON_ENV, type PeerCryptoProvider } from './protected-key.js';
+import { consumePeerBootKey, PeerKeyReasonError, peerKeyReasonSuffix, createProtectedPeerKeyProvider, DEV_PEER_KEY_FILE_ENV, PEER_BOOT_KEY_ENV, PEER_KEY_REASON_ENV, readDevPeerKeyFile, type PeerCryptoProvider } from './protected-key.js';
 
 const roots: string[] = [];
 const root = () => { const dir = mkdtempSync(join(tmpdir(), 'zcc-peer-key-')); roots.push(dir); return dir; };
@@ -121,6 +121,51 @@ it('ignores legacy environment key material and scrubs it', async () => {
   await expect(provider.getKey()).resolves.toBeNull();
   provider.dispose();
   await expect(provider.getKey()).resolves.toBeNull();
+});
+
+it('reads a dev key only from the named owner-only file when no parent port exists, and scrubs the path', async () => {
+  const dir = root(), path = join(dir, 'dev-peer-key'), text = randomBytes(32).toString('base64url');
+  writeFileSync(path, `${text}\n`, { mode: 0o600 });
+  const env: NodeJS.ProcessEnv = { [DEV_PEER_KEY_FILE_ENV]: path };
+  const provider = consumePeerBootKey(env);
+  expect(env).toEqual({});
+  await expect(provider.getKey()).resolves.toEqual(Buffer.from(text, 'base64url'));
+  // Read once: later file changes cannot rekey a running server.
+  writeFileSync(path, randomBytes(32).toString('base64url'));
+  await expect(provider.getKey()).resolves.toEqual(Buffer.from(text, 'base64url'));
+  provider.dispose();
+  await expect(provider.getKey()).resolves.toBeNull();
+});
+
+it.each(['missing', 'mode', 'symlink', 'hardlink', 'malformed', 'non-canonical', 'oversized', 'directory'])('rejects a %s dev key file', async mode => {
+  const dir = root(), path = join(dir, 'dev-peer-key'), text = randomBytes(32).toString('base64url');
+  if (mode !== 'missing' && mode !== 'symlink' && mode !== 'directory') writeFileSync(path, text, { mode: 0o600 });
+  if (mode === 'mode') chmodSync(path, 0o640);
+  if (mode === 'symlink') { writeFileSync(join(dir, 'real'), text, { mode: 0o600 }); symlinkSync(join(dir, 'real'), path); }
+  if (mode === 'hardlink') linkSync(path, join(dir, 'other'));
+  if (mode === 'malformed') writeFileSync(path, 'short');
+  if (mode === 'non-canonical') writeFileSync(path, `${text.slice(0, 42)}_`);
+  if (mode === 'oversized') writeFileSync(path, 'A'.repeat(200));
+  if (mode === 'directory') mkdirSync(path);
+  await expect(readDevPeerKeyFile(path)).resolves.toBeNull();
+  await expect(consumePeerBootKey({ [DEV_PEER_KEY_FILE_ENV]: path }).getKey()).resolves.toBeNull();
+});
+
+it('ignores a dev key file under an Electron parent port', async () => {
+  const dir = root(), path = join(dir, 'dev-peer-key');
+  writeFileSync(path, randomBytes(32).toString('base64url'), { mode: 0o600 });
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'parentPort');
+  Object.defineProperty(process, 'parentPort', { configurable: true, value: new EventEmitter() });
+  try {
+    const env: NodeJS.ProcessEnv = { [DEV_PEER_KEY_FILE_ENV]: path };
+    const provider = consumePeerBootKey(env);
+    expect(env).toEqual({});
+    await expect(provider.getKey()).resolves.toBeNull();
+    provider.dispose();
+  } finally {
+    if (descriptor) Object.defineProperty(process, 'parentPort', descriptor);
+    else Reflect.deleteProperty(process, 'parentPort');
+  }
 });
 
 it('consumes first start IPC payload once, scrubs bytes before dispatch and zeros provider on disposal', async () => {

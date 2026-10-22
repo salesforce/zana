@@ -24,7 +24,12 @@ export function toPeerConnection(status: PublicInvitationStatus): PeerConnection
 
 function sendInvitationError(response: ServerResponse, error: unknown): void {
   // Only fixed-message InvitationErrors reach the renderer; anything else may embed a path, token or key.
-  if (!(error instanceof InvitationError)) { sendJson(response, 503, { error: 'Pairing is unavailable right now. Try again.' }); return; }
+  if (!(error instanceof InvitationError)) {
+    // Error name only in the local log: the message may embed a path or key.
+    console.warn(`[peer-connections] request failed: ${error instanceof Error ? error.name : typeof error}`);
+    sendJson(response, 503, { error: 'Pairing is unavailable right now. Try again.' });
+    return;
+  }
   const status = error.code === 'not_found' ? 404 : error.code === 'unavailable' ? 503 : 400;
   sendJson(response, status, { error: error.message, reason: error.code });
 }
