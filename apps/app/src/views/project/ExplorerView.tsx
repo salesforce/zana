@@ -3,7 +3,7 @@ import { projectSources } from '@zana-ai/zcc-domain/project';
 import { useHosts } from '../../hooks/useHosts.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { product } from '../../lib/product-client.js';
-import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 // Side-effect: wires up MonacoEnvironment (local workers) + loader.config. See
 // util/monacoSetup.ts — shared with LibraryView and the modal's DiffViewer.
 import '@/lib/monacoSetup';
@@ -297,12 +297,8 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
     appliedGotoNonceRef.current = goto.nonce;
   }, [goto]);
 
-  const loadDir = useCallback(
-    async (path: string, force = false): Promise<FsEntry[]> => {
-      if (!force) {
-        const cached = entries.get(path);
-        if (cached) return cached;
-      }
+  const fetchDir = useCallback(
+    async (path: string): Promise<FsEntry[]> => {
       setLoading((s) => {
         const next = new Set(s);
         next.add(path);
@@ -332,41 +328,91 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
       });
       return list;
     },
-    [entries, isRemote, project.id, pushToast, scope, viewRoot]
+    [isRemote, project.id, pushToast, scope, viewRoot]
   );
 
-  // Walk down from project root, loading & expanding each ancestor folder of
-  // `filePath`, then scroll the file's row into view. Used when search or
-  // quick-open navigates to a file the user hasn't manually expanded yet.
-  const revealFile = useCallback(
-    async (filePath: string) => {
-      if (!filePath.startsWith(viewRoot + '/')) return;
-      const rest = filePath.slice(viewRoot.length).replace(/^\//, '');
-      if (!rest) return;
-      const segments = rest.split('/');
-      // Drop the file name itself; we only need to expand ancestor dirs.
-      segments.pop();
-      let dir = viewRoot;
-      for (const seg of segments) {
-        await loadDir(dir);
-        dir = dir + '/' + seg;
-        setExpanded((s) => {
-          if (s.get(dir) === true) return s;
-          const next = new Map(s);
-          next.set(dir, true);
-          return next;
-        });
+  // In-flight listings by path, so a reveal that walks a folder the mount or a
+  // click is already listing joins that request instead of listing it twice.
+  const pendingDirsRef = useRef(new Map<string, Promise<FsEntry[]>>());
+  const loadDir = useCallback(
+    (path: string, force = false): Promise<FsEntry[]> => {
+      if (!force) {
+        const cached = entries.get(path);
+        if (cached) return Promise.resolve(cached);
+        const pending = pendingDirsRef.current.get(path);
+        if (pending) return pending;
       }
-      // Wait one frame so the freshly expanded rows are in the DOM.
-      requestAnimationFrame(() => {
-        const root = treeBodyRef.current;
-        if (!root) return;
-        const rows = root.querySelectorAll<HTMLElement>('.tree-row.file.active');
-        rows[0]?.scrollIntoView({ block: 'nearest' });
+      const request = fetchDir(path);
+      pendingDirsRef.current.set(path, request);
+      void request.finally(() => {
+        if (pendingDirsRef.current.get(path) === request) pendingDirsRef.current.delete(path);
       });
+      return request;
     },
-    [viewRoot, loadDir]
+    [entries, fetchDir]
   );
+
+  // Reveal the open file in the tree, like VS Code's "reveal active file":
+  // walk down from the view root through the *listed* entries, loading and
+  // expanding each ancestor folder, then scroll the file's row into view once
+  // it renders. Matching listed entries (instead of splicing path strings)
+  // keeps Windows `\` paths working and stops at anything the listing hides
+  // (denied folders like node_modules, the per-directory entry cap, or a path
+  // outside the root), so the tree never expands a phantom folder. Each step
+  // is one capped listDir, and a newer open cancels an older walk.
+  const loadDirRef = useRef(loadDir);
+  loadDirRef.current = loadDir;
+  const revealSeqRef = useRef(0);
+  const pendingScrollRef = useRef<string | null>(null);
+  // Bumped when a walk finds its row, so the layout effect below runs even if
+  // every ancestor was already expanded and loaded (no other state changed).
+  const [, setRevealTick] = useState(0);
+  const revealFile = useCallback(async (filePath: string, root: string) => {
+    const seq = ++revealSeqRef.current;
+    pendingScrollRef.current = null;
+    const target = slashPath(filePath);
+    const base = slashPath(root).replace(/\/+$/, '');
+    if (!target.startsWith(base + '/')) return;
+    let dir = root;
+    for (let depth = 0; depth < MAX_REVEAL_DEPTH; depth++) {
+      const list = await loadDirRef.current(dir);
+      if (seq !== revealSeqRef.current || activeRoot.current !== root) return;
+      const match = list.find((entry) => {
+        const path = slashPath(entry.path);
+        return path === target || target.startsWith(path + '/');
+      });
+      if (!match) return;
+      if (match.kind === 'file') {
+        pendingScrollRef.current = match.path;
+        setRevealTick((n) => n + 1);
+        return;
+      }
+      const next = match.path;
+      setExpanded((s) => {
+        if (s.get(next) === true) return s;
+        const copy = new Map(s);
+        copy.set(next, true);
+        return copy;
+      });
+      dir = next;
+    }
+  }, []);
+
+  // Scroll the revealed row into view inside the tree pane only (not the
+  // window or outer panes), and never move keyboard focus: focus stays in the
+  // viewer / picker that opened the file. A row already in view doesn't move.
+  useLayoutEffect(() => {
+    const path = pendingScrollRef.current;
+    const body = treeBodyRef.current;
+    if (!path || !body) return;
+    const row = Array.from(body.querySelectorAll<HTMLElement>('.tree-row.file')).find((el) => el.dataset.path === path);
+    if (!row) return;
+    pendingScrollRef.current = null;
+    const view = body.getBoundingClientRect();
+    const box = row.getBoundingClientRect();
+    if (box.top >= view.top && box.bottom <= view.bottom) return;
+    body.scrollTop += box.top - view.top - (view.height - box.height) / 2;
+  });
 
   useEffect(() => {
     setExpanded(new Map());
@@ -467,7 +513,9 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
     };
   }, [diffMode, explorerFile, headResult, scope]);
 
-  useEffect(() => { if (explorerFile) void revealFile(explorerFile); }, [explorerFile, revealFile]);
+  // Reveal only when a file is opened (or the root changes), not on every tree
+  // load, so folders the user collapses afterwards stay collapsed.
+  useEffect(() => { if (explorerFile) void revealFile(explorerFile, viewRoot); }, [explorerFile, viewRoot, revealFile]);
 
   // load file contents when explorerFile changes
   useEffect(() => {
@@ -1160,6 +1208,16 @@ function sameHeadResult(a: GitShowResult | null, b: GitShowResult): boolean {
   if (a.notInHead !== b.notInHead) return false;
   if (a.content !== b.content) return false;
   return true;
+}
+
+// Ancestor folders a reveal will expand at most; deeper paths stop there.
+const MAX_REVEAL_DEPTH = 64;
+
+// Compare paths with `/` separators. Local Windows paths come back from listDir
+// with `\`, remote and POSIX ones with `/`; the tree keys rows by the exact
+// listed path, so this is only used to match, never to build a key.
+function slashPath(path: string): string {
+  return path.replace(/\\/g, '/');
 }
 
 function isMarkdownPath(path: string): boolean {
