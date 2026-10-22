@@ -8,7 +8,7 @@ const inbox = read('zcc-inbox');
 describe('squad proposal skills', () => {
   it('brainstorm teaches the propose flow and keeps its existing sections', () => {
     expect(brainstorm).toContain('## When the user wants it built');
-    for (const name of ['mcp__zcc-inbox__squad_plan_check', 'mcp__zcc-inbox__squad_propose', 'zcc_squad_plan_check', 'zcc_squad_propose', 'zcc_list_teams']) {
+    for (const name of ['mcp__zcc-inbox__squad_plan_check', 'mcp__zcc-inbox__squad_launch', 'zcc_squad_plan_check', 'zcc_squad_launch', 'zcc_list_teams']) {
       expect(brainstorm).toContain(name);
     }
     expect(brainstorm).toContain('wherever they are: this project, your home folder (a doc vault, `~/.zcc/library`)');
@@ -33,6 +33,21 @@ describe('squad proposal skills', () => {
     expect(inbox).toContain('[Squad report]');
   });
 
+  it('teaches squad_launch as the agent default and execution.start as low-level', () => {
+    for (const name of ['mcp__zcc-inbox__squad_launch', 'zcc_squad_launch']) {
+      expect(brainstorm).toContain(name);
+      expect(inbox).toContain(name);
+    }
+    expect(brainstorm).toContain("Call `squad_launch` with `mode: 'review'`");
+    expect(inbox).toContain("`squad_launch` with `mode: 'review'`; do not call `execution.start`");
+    expect(inbox).toContain('It is the\nlow-level path (explicit slots, work units, policy) and is deprecated for agent\nuse');
+    for (const code of ['LAUNCH_REVIEW_REQUIRED', 'LAUNCH_IN_PROGRESS', 'TOO_MANY_LAUNCHES']) {
+      expect(inbox).toContain(code);
+    }
+    expect(brainstorm).toContain('LAUNCH_REVIEW_REQUIRED');
+    expect(brainstorm).not.toContain('The start-now\npath is `execution.start`');
+  });
+
   describe('prompt routing between review first and start now', () => {
     /** The routing table: from its header row through its last row. */
     const routingTable = (text: string) => {
@@ -47,8 +62,8 @@ describe('squad proposal skills', () => {
     it('teaches the identical table in both skills', () => {
       const table = routingTable(brainstorm);
       expect(routingTable(inbox)).toBe(table);
-      expect(table).toContain('| Review first | `squad_plan_check` → `list_teams` → `squad_propose`');
-      expect(table).toContain('| Start now | `execution.start`');
+      expect(table).toContain("| Review first | `squad_plan_check` → `list_teams` → `squad_launch` with `mode: 'review'`");
+      expect(table).toContain("| Start now | `squad_launch` with `mode: 'now'`");
       expect(table).toContain('| Anything else, or unclear | Review first |');
     });
 
@@ -69,9 +84,9 @@ describe('squad proposal skills', () => {
     });
 
     it('scopes the execution.start ban to the review-first path', () => {
-      expect(inbox).toContain('then call `squad_propose`; do not call `execution.start`.');
+      expect(inbox).toContain('then call `squad_launch` with `mode: \'review\'`; do not call `execution.start`.');
       expect(inbox).toContain('by their exact paths (do not copy them)');
-      expect(inbox).toContain('Use it to build a design only when the user explicitly asks to start now');
+      expect(inbox).toContain("Use `mode: 'now'` to build a design only\nwhen the user explicitly asks to start now");
     });
   });
 });

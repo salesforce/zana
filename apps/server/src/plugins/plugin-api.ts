@@ -175,6 +175,8 @@ export interface PluginHostEvent {
   kind: 'plugin.host.worker-exited' | 'plugin.host.signal'; signal?: string; payload?: unknown;
 }
 export interface PluginHandle {
+  /** Host-owned teardown that must finish before plugin state can be snapshotted. */
+  onQuiesce(hook: () => void | Promise<void>): void;
   providerDeclarations: PluginProviderDeclaration[];
   emitHostEvent(event: PluginHostEvent): Promise<void>;
   api: ZccPluginApi;
@@ -201,7 +203,7 @@ export interface PluginHandle {
   };
   setSettings(values: Record<string, PluginSettingValue | undefined>): Promise<void>;
   subscribeRealtime(listener: (event: string, payload: unknown) => void): () => void;
-  dispose(): Promise<void>;
+  dispose(options?: { strict?: boolean }): Promise<void>;
 }
 
 function readJsonFile<T>(path: string, fallback: T): T {
@@ -386,6 +388,8 @@ export function createPluginApi(
   let settingDescriptors: Record<string, PluginSettingDescriptor> = {};
   let stale = false;
   let disposal: Promise<void> | undefined;
+  const disposalErrors: unknown[] = [];
+  const quiesceHooks: Array<() => void | Promise<void>> = [];
   const assistantLifecycle = new AbortController();
   const peerLifecycle = new AbortController();
   const cliRecord: { registration: PluginCliRegistration | null } = { registration: null };
@@ -537,7 +541,7 @@ export function createPluginApi(
   );
   const rpc = new Map<string, (args: unknown) => unknown | Promise<unknown>>();
   const kv = openAsyncJsonStore(kvPath);
-  disposeHooks.push(() => kv.dispose());
+  quiesceHooks.push(() => kv.dispose({ drain: true }));
   // Plugin link notes are in memory and plugin-reported: they die with this plugin generation (stop, reload, uninstall).
   disposeHooks.push(() => options?.productContext?.peerLinkNotes?.clearPlugin(pluginId));
   disposeHooks.push(() => options?.productContext?.peerConnections?.clearPlugin(pluginId));
@@ -2038,6 +2042,7 @@ export function createPluginApi(
   };
   return {
     api,
+    onQuiesce(hook: () => void | Promise<void>) { quiesceHooks.push(hook); },
     providerDeclarations,
     extraSkillRoots,
     extraInstructions,
@@ -2078,6 +2083,7 @@ export function createPluginApi(
       return { descriptors: { ...settingDescriptors }, values };
     },
     async setSettings(values) {
+      assertLive();
       const next = { ...readSettings(), ...values };
       await persistSecretSettings(kvDir, settingDescriptors, next);
       writeJsonFile(settingsPath, publicSettingsValues(settingDescriptors, next));
@@ -2093,35 +2099,33 @@ export function createPluginApi(
         realtimeListeners.delete(listener);
       };
     },
-    dispose() {
-      if (disposal) return disposal;
-      disposal = (async () => {
-      stale = true;
-      assistantLifecycle.abort();
-      peerLifecycle.abort(new Error(`plugin context is stale: ${pluginId}`));
-      hostWorkerExitHandlers.length = 0; hostSignalHandlers.clear();
-      options?.interruptPluginInteractions?.(pluginId);
-      for (const handle of sqliteHandles) {
-        try {
-          handle.close();
-        } catch {
-          /* isolated */
-        }
+    async dispose(disposeOptions) {
+      if (!disposal) {
+        disposal = (async () => {
+          stale = true;
+          assistantLifecycle.abort();
+          peerLifecycle.abort(new Error(`plugin context is stale: ${pluginId}`));
+          hostWorkerExitHandlers.length = 0; hostSignalHandlers.clear();
+          options?.interruptPluginInteractions?.(pluginId);
+          for (const handle of sqliteHandles) {
+            try { handle.close(); } catch (error) { disposalErrors.push(error); }
+          }
+          storageLifecycle.abort();
+          sqliteHandles.length = 0;
+          sharedDatabase = null;
+          sharedSqlite = null;
+          for (const hook of [...disposeHooks].reverse()) {
+            try { await hook(); } catch { /* Plugin cleanup is best effort; host teardown below proves quiescence. */ }
+          }
+          disposeHooks.length = 0;
+          for (const hook of [...quiesceHooks].reverse()) {
+            try { await hook(); } catch (error) { disposalErrors.push(error); }
+          }
+          quiesceHooks.length = 0;
+        })();
       }
-      storageLifecycle.abort();
-      sqliteHandles.length = 0;
-      sharedDatabase = null;
-      sharedSqlite = null;
-      for (const hook of [...disposeHooks].reverse()) {
-        try {
-          await hook();
-        } catch {
-          /* isolated */
-        }
-      }
-      disposeHooks.length = 0;
-      })();
-      return disposal;
+      await disposal;
+      if (disposeOptions?.strict && disposalErrors.length) throw new AggregateError(disposalErrors, 'Plugin writers could not be quiesced');
     }
   };
 }

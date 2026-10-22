@@ -186,3 +186,50 @@ it('offers the disk version over a stored draft written against an older one', (
   expect(h.layer.setProposal).not.toHaveBeenCalled();
   expect(sent('dirty').at(-1)).toEqual(expect.objectContaining({ dirty: false, baseSha: SHA_C }));
 });
+
+it('setReadOnly locks the editor, shows the holder text without a draft, and edits it back as one undoable edit', () => {
+  render(<App />);
+  send({ type: 'setFile', draftKey: 'k', path: 'a.agent', content: 'disk', dialect: 'agentforce', readOnly: false, sha256: 'a'.repeat(64) });
+  post.mockClear();
+  send({ type: 'setReadOnly', readOnly: true, content: 'live from holder' });
+  expect(h.instance.updateOptions).toHaveBeenCalledWith({ readOnly: true, domReadOnly: true });
+  expect(h.model.setValue).toHaveBeenLastCalledWith('live from holder');
+  expect(sent('dirty')).toHaveLength(0); // not published as this window's draft
+  expect(sent('snapshot').at(-1)).toEqual(expect.objectContaining({ content: 'live from holder' }));
+  send({ type: 'setReadOnly', readOnly: true, content: 'live from holder' }); // unchanged text: no churn
+  expect(h.model.setValue).toHaveBeenCalledTimes(2);
+  send({ type: 'setReadOnly', readOnly: false, content: 'holder final' });
+  expect(h.instance.updateOptions).toHaveBeenLastCalledWith({ readOnly: false, domReadOnly: false });
+  expect(h.model.pushEditOperations).toHaveBeenCalled();
+  expect(h.state.value).toBe('holder final');
+  send({ type: 'setReadOnly', readOnly: false });
+  expect(h.model.pushEditOperations).toHaveBeenCalledTimes(1);
+});
+
+it('setReadOnly with a baseline re-baselines the draft: drops an offered disk version, publishes, and saves against the new base', () => {
+  render(<App />);
+  const A = 'a'.repeat(64), B = 'b'.repeat(64), C = 'c'.repeat(64);
+  writeAgentDraft({ key: 'k', content: 'my edits', baseSha: A, dialect: 'agentforce' });
+  send({ type: 'setFile', draftKey: 'k', path: 'a.agent', content: 'disk v2', dialect: 'agentforce', readOnly: false, sha256: B });
+  expect(h.layer.setProposal).toHaveBeenCalledWith(expect.objectContaining({ proposalId: `disk:${B.slice(0, 16)}` }));
+  send({ type: 'setReadOnly', readOnly: true, content: 'holder text' });
+  post.mockClear();
+  // Unlocked on the shared document's saved version, same text: the draft is republished on that base.
+  send({ type: 'setReadOnly', readOnly: false, baseline: 'shared disk', baseSha: C });
+  expect(h.layer.clearProposal).toHaveBeenCalledWith(`disk:${B.slice(0, 16)}`);
+  expect(sent('dirty').at(-1)).toEqual(expect.objectContaining({ dirty: true, baseSha: C }));
+  // A later fileChanged at that sha is not offered again.
+  h.layer.setProposal.mockClear();
+  send({ type: 'fileChanged', draftKey: 'k', content: 'shared disk', sha256: C });
+  expect(h.layer.setProposal).not.toHaveBeenCalled();
+  // Unlock with new content: the edit goes in as one undoable change and is published on the new base.
+  post.mockClear(); h.layer.clearProposal.mockClear();
+  send({ type: 'setReadOnly', readOnly: false, content: 'shared disk', baseline: 'shared disk', baseSha: A });
+  expect(h.layer.clearProposal).not.toHaveBeenCalled(); // nothing was offered
+  expect(h.state.value).toBe('shared disk');
+  expect(sent('dirty').at(-1)).toEqual(expect.objectContaining({ dirty: false, baseSha: A }));
+  // A follower that is re-baselined publishes nothing.
+  post.mockClear();
+  send({ type: 'setReadOnly', readOnly: true, baseline: 'x', baseSha: B });
+  expect(sent('dirty')).toHaveLength(0);
+});

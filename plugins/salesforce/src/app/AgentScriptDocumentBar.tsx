@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Bot, Check, ChevronDown, Circle, CloudDownload, CopyPlus, ExternalLink, Hammer, PanelRight, Play, Rocket, Save, Search } from 'lucide-react';
+import { Bot, Check, ChevronDown, Circle, CloudDownload, CopyPlus, ExternalLink, Hammer, PanelRight, Play, Save, Search } from 'lucide-react';
 import { breadcrumbSegments } from '../../lib/agent-script-file-tree.js';
 import { modShortcut } from './shortcut-label.js';
 
@@ -21,11 +21,10 @@ type DocumentBarProps = {
   onShowPanel: () => void;
   /** Open the current agent's Preview tool, retaining any running conversation. */
   onPreview?: () => void;
-  /** Studio layout: Compile runs the compiler on the saved file, Publish (under Save's arrow) opens the Release tool; QuickOpen is the compact file switcher. */
+  /** Studio layout: Compile runs the compiler on the saved file; QuickOpen is the compact file switcher. */
   onCompile?: () => void;
   /** A compile is in flight. */
   compiling?: boolean;
-  onPublish?: () => void;
   /** Open the saved agent in the org's Agentforce Builder, in Chrome. */
   onOpenInBuilder?: () => void;
   /** The builder is being opened. */
@@ -76,7 +75,7 @@ export function AgentScriptDocumentBar(props: DocumentBarProps) {
   </div>;
 }
 
-/** Save, with Save as… and Publish… under its arrow. */
+/** Save, with Save as… under its arrow. */
 function SaveSplit(props: DocumentBarProps) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -89,10 +88,8 @@ function SaveSplit(props: DocumentBarProps) {
     document.addEventListener('pointerdown', away);
     return () => document.removeEventListener('pointerdown', away);
   }, [open]);
-  // Publish signs the file on disk, so it waits for unsaved edits to be saved.
-  const publishDisabled = props.dirty || props.busy;
-  const menuDisabled = props.saveAsDisabled && (!props.onPublish || publishDisabled);
-  // A menu left open while its items become unavailable closes instead of offering dead items.
+  // A menu left open while Save as… becomes unavailable closes instead of offering a dead item.
+  const menuDisabled = props.saveAsDisabled;
   useEffect(() => { if (menuDisabled) setOpen(false); }, [menuDisabled]);
   return <div className="sf-as-split" ref={root} onKeyDown={event => {
     if (event.key !== 'Escape' || !open) return;
@@ -102,8 +99,7 @@ function SaveSplit(props: DocumentBarProps) {
     <button type="button" className={`sf-as-save${primary}`} data-testid="salesforce-agent-script-save" aria-label="Save Agentforce file" title={`Save Agentforce file (${modShortcut('S')})`} disabled={props.saveDisabled} onClick={props.onSave}><Save size={13} aria-hidden="true" />{props.busy ? 'Saving…' : 'Save'}{props.shortcutHint && <kbd className="sf-kbd">⌘S</kbd>}</button>
     <button type="button" className={`sf-as-save sf-as-save-more${primary}`} aria-label="More save options" title="More save options" aria-haspopup="menu" aria-expanded={open} disabled={menuDisabled} onClick={() => setOpen(value => !value)}><ChevronDown size={13} aria-hidden="true" /></button>
     {open && <div className="sf-as-save-menu" role="menu" aria-label="Save options">
-      <button ref={props.saveAsDisabled ? undefined : item} type="button" role="menuitem" disabled={props.saveAsDisabled} onClick={() => { setOpen(false); props.onSaveAs(); }}><CopyPlus size={13} aria-hidden="true" />Save as…</button>
-      {props.onPublish && <button ref={props.saveAsDisabled ? item : undefined} type="button" role="menuitem" data-testid="salesforce-agent-script-publish" title={publishDisabled ? 'Save first: Publish uses the file on disk' : 'Open Release: publish, activate and roll back versions'} disabled={publishDisabled} onClick={() => { setOpen(false); props.onPublish?.(); }}><Rocket size={13} aria-hidden="true" />Publish…</button>}
+      <button ref={item} type="button" role="menuitem" disabled={props.saveAsDisabled} onClick={() => { setOpen(false); props.onSaveAs(); }}><CopyPlus size={13} aria-hidden="true" />Save as…</button>
     </div>}
   </div>;
 }

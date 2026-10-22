@@ -30,6 +30,7 @@ export function resolvePluginWorkerExecArgv(entry: string, requireFn = createReq
 export function createIsolatedPluginRuntime(options: {
   api: ZccPluginApi; entry: string; generation: number; databasePath: string;
   onFailure(error: Error): void; startupTimeoutMs?: number; heartbeatTimeoutMs?: number;
+  admitCall?: () => void;
 }) {
   if (active >= 64) throw new Error('Plugin worker capacity exceeded');
   const entry = workerEntry();
@@ -39,9 +40,10 @@ export function createIsolatedPluginRuntime(options: {
   let bridge!: ReturnType<typeof createPluginWorkerBridge>;
   const worker = new Worker(entry, { execArgv, workerData: {}, resourceLimits: { maxOldGenerationSizeMb: 256, stackSizeMb: 4 } });
   active++;
-  let termination: Promise<number> | undefined;
-  const terminate = () => termination ??= worker.terminate();
-  bridge = createPluginWorkerBridge(worker, 'server', { terminate });
+  // One worker termination is shared by the bridge's commit fence and runtime disposal.
+  let workerTermination: Promise<number> | undefined;
+  const terminate = () => workerTermination ??= worker.terminate();
+  bridge = createPluginWorkerBridge(worker, 'server', { terminate, admitCall: options.admitCall });
   let stopped = false;
   let ready = false;
   let apiWaitStarted: number | undefined;
@@ -65,11 +67,14 @@ export function createIsolatedPluginRuntime(options: {
     if (ready && !commitGraceActive(Date.now()) && !(apiWaitStarted !== undefined && Date.now() - apiWaitStarted < 10_000) && Date.now() - lastHeartbeat > (options.heartbeatTimeoutMs ?? PLUGIN_HEARTBEAT_TIMEOUT_MS)) fail(new Error('Plugin event loop stopped responding'));
   }, 250);
   watchdog.unref();
-  function dispose(error = new Error('Plugin runtime stopped')) {
-    if (stopped) return;
+  let termination: Promise<void> | undefined;
+  function dispose(error = new Error('Plugin runtime stopped')): Promise<void> {
+    if (termination) return termination;
     stopped = true; clearTimeout(startup); clearInterval(watchdog);
     bridge.dispose(error); if (!ready) rejectReady(error);
-    void terminate();
+    termination = terminate().then(() => undefined);
+    void termination.catch(() => {}); // Observe failure immediately; strict teardown still awaits the original promise.
+    return termination;
   }
   function fail(error: Error) { if (stopped) return; dispose(error); options.onFailure(error); }
   worker.on('message', message => {
@@ -113,5 +118,5 @@ export function createIsolatedPluginRuntime(options: {
     }),
     entry: options.entry, generation: options.generation, databasePath: options.databasePath, sqlite: sqliteWorkerConfiguration()
   }}); } catch (error) { fail(error instanceof Error ? error : new Error(String(error))); }
-  return { started, dispose, get retainedFunctions() { return bridge.retainedFunctions; } };
+  return { started, dispose, isBusy: () => bridge.isBusy(), get retainedFunctions() { return bridge.retainedFunctions; } };
 }

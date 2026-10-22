@@ -26,6 +26,7 @@ async function startOwnedRun(query: string) {
     suggestionsStore: createMemorySuggestionsStore(),
     projects: { get: (id) => (id === 'proj-1' ? { id, name: 'Proj', path: '/tmp/proj-1', createdAt: 0, lastActiveAt: 0 } : null) },
     executionService: { start } as never,
+    resolveExecutionLaunchApproval: () => 'direct',
     validateTeamRouteIdentity: () => true,
     validateLaunchRouteIdentity: async () => true,
     log: () => {}

@@ -47,7 +47,8 @@ const h = vi.hoisted(() => {
     lastWin: undefined as any,
     sent: [] as unknown[][],
     winDestroyed: false,
-    contentsDestroyed: (() => false) as () => boolean
+    contentsDestroyed: (() => false) as () => boolean,
+    runtimeStart: undefined as any
   };
 });
 
@@ -208,7 +209,7 @@ vi.mock('../runtime/runtime-supervisor.js', async importOriginal => {
       const real = actual.createProductRouteSquadRuntime(...args);
       return new Proxy(real, { get: (t, k) => (typeof k === 'string' && h.runtimeOverride[k]) || (t as any)[k] });
     },
-    startRuntimeSupervisor: async () => { throw new Error('no runtime in unit test'); }
+    startRuntimeSupervisor: async () => { if (h.runtimeStart) return h.runtimeStart; throw new Error('no runtime in unit test'); }
   };
 });
 vi.mock('@zana-ai/zcc-server/mobile/manager', () => ({
@@ -880,4 +881,35 @@ describe('host bootstrap wiring', () => {
     await settle();
     expect(() => beforeQuit({ preventDefault: vi.fn() })).not.toThrow();
   });
+
+  it('connects bulk plugin updates to the production supervisor', async () => {
+    const value = { updated: ['fixture'], failed: [] };
+    const updateAllPlugins = vi.fn(async () => value);
+    const noop = () => () => {};
+    h.runtimeStart = new Proxy({
+      rendererUrl: 'http://127.0.0.1:1/', hostUrl: 'http://127.0.0.1:1', hostId: 'host-test',
+      updateAllPlugins, listProjects: async () => [], close: async () => {},
+      publishProductEvent: async () => {}
+    }, { get: (target, key) => key === 'then' ? undefined : key in target ? target[key as keyof typeof target] : noop });
+    vi.resetModules();
+    h.appHandlers.clear();
+    h.controlPlaneDeps = undefined;
+    const rendererUrl = process.env.ELECTRON_RENDERER_URL;
+    delete process.env.ELECTRON_RENDERER_URL;
+    try {
+      await import('../host.js');
+      h.ready!();
+      await vi.waitFor(() => expect(h.controlPlaneDeps?.pluginHost, JSON.stringify(vi.mocked(console.error).mock.calls)).toBeDefined(), { timeout: 20000 });
+      await expect(h.controlPlaneDeps.pluginHost.updateAll()).resolves.toEqual(value);
+      expect(updateAllPlugins).toHaveBeenCalledOnce();
+      updateAllPlugins.mockRejectedValueOnce(new Error('plugin host stopped'));
+      await expect(h.controlPlaneDeps.pluginHost.updateAll()).rejects.toThrow('plugin host stopped');
+    } finally {
+      h.appHandlers.get('before-quit')?.[0]?.({ preventDefault: vi.fn() });
+      await settle();
+      h.runtimeStart = undefined;
+      if (rendererUrl === undefined) delete process.env.ELECTRON_RENDERER_URL;
+      else process.env.ELECTRON_RENDERER_URL = rendererUrl;
+    }
+  }, 30000);
 });

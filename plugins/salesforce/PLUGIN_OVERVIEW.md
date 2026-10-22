@@ -3,7 +3,7 @@ Salesforce DX inner loop for ZCC: org identity, SOQL, Apex, LWC, and Agentforce 
 ## What you get
 
 - Org identity and doctor checks for the connected Salesforce org.
-- SOQL Explorer, Apex and LWC editors, and Agentforce playground and preview.
+- SOQL Explorer, Apex and LWC editors, and Agentforce Studio and preview.
 - Agent tools that require an explicit confirm before any mutating API call.
 
 ## How it works

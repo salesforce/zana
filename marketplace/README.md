@@ -1,7 +1,9 @@
 # Official Zana plugin marketplace
 
-Pointer-only catalog for first-party plugins. Refresh never executes plugin code;
-install resolves each entry's `source.git` or `source.npm`.
+Pointer-only catalog for first-party plugin discovery. Refresh never executes
+plugin code. Registered bundled plugins install from the current Zana release;
+the catalog cannot override their reserved identities with Git/npm code.
+Independent entries resolve their `source.git` or `source.npm`.
 
 This registry is the **source of truth** for the public feed served at
 `/marketplace/v1/marketplace.json` on the Zana website.
@@ -48,6 +50,9 @@ site keeps the last good copy, then the copy bundled in the image. Set
 `MARKETPLACE_UPSTREAM_URL` to another https URL, or `off` to serve only the
 bundled copy.
 
+This updates listing metadata. Bundled plugin code reaches users in a Zana app
+release. See [plugin update policy](../docs/extensions.md#updates).
+
 ### Entry shape
 
 ```json
@@ -79,7 +84,7 @@ Use `source.npm` (`package` + `range`) when the installable package is on npm in
 
 ```bash
 zcc marketplace add https://<PUBLIC_BASE_URL>/marketplace/v1/marketplace.json
-zcc marketplace install memory@official
+zcc plugin install memory
 ```
 
 Desktop builds seed the official catalog from the public HTTPS feed

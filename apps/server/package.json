@@ -45,11 +45,13 @@
     "@zana-ai/zcc-thread-view": "workspace:*",
     "better-sqlite3": "^12.11.1",
     "jiti": "^2.6.1",
+    "semver": "^7.8.5",
     "ws": "^8.21.3",
     "@zana-ai/zcc-process-utils": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",
+    "@types/semver": "^7.8.0",
     "@types/ws": "^8.18.1",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2",

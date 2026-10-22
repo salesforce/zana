@@ -48,6 +48,14 @@ describe('ToolStrip', () => {
 });
 
 describe('EditorTabs', () => {
+  it('marks the combined tests workbench separately from org browsers', () => {
+    render(<EditorTabs tabs={[
+      { id: 'org-tests', kind: 'org', target: 'tests', label: 'Tests' },
+      { id: 'org-agents', kind: 'org', target: 'agents', label: 'Agents' }
+    ]} active="org-tests" onSelect={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.getByRole('tab', { name: 'TESTS Tests' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'ORG Agents' })).toBeTruthy();
+  });
   const tabs: EditorTab[] = [
     { id: 'agent:a', kind: 'agent', label: 'A.agent', path: 'a.agent' },
     { id: 'apex:Lookup', kind: 'apex', label: 'Lookup', target: 'apex://Lookup' },
@@ -67,15 +75,29 @@ describe('EditorTabs', () => {
     expect(screen.getByText('TYPE')).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: /Lookup/ }));
     expect(onSelect).toHaveBeenLastCalledWith('apex:Lookup');
-    fireEvent.keyDown(screen.getByRole('tab', { name: /A\.agent/ }), { key: 'ArrowLeft' });
+    fireEvent.keyDown(screen.getByRole('tab', { name: /Script/ }), { key: 'ArrowLeft' });
     expect(onSelect).toHaveBeenLastCalledWith('type:c__Order');
-    fireEvent.keyDown(screen.getByRole('tab', { name: /A\.agent/ }), { key: 'ArrowRight' });
+    fireEvent.keyDown(screen.getByRole('tab', { name: /Script/ }), { key: 'ArrowRight' });
     expect(onSelect).toHaveBeenLastCalledWith('apex:Lookup');
     onSelect.mockClear();
-    fireEvent.keyDown(screen.getByRole('tab', { name: /A\.agent/ }), { key: 'q' });
+    fireEvent.keyDown(screen.getByRole('tab', { name: /Script/ }), { key: 'q' });
     expect(onSelect).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Close Refund' }));
     expect(onClose).toHaveBeenCalledWith('flow:Refund');
+  });
+  it('names the Script tab by its label, keeps it closeable only with its agent, and shows view tabs without a kind mark', () => {
+    const onClose = vi.fn();
+    render(<EditorTabs tabs={[
+      { id: 'agent:a', kind: 'agent', label: 'A.agent', path: 'a.agent' },
+      { id: 'view:preview', kind: 'view', label: 'Preview', target: 'preview' },
+      { id: 'view:tests', kind: 'view', label: 'Tests', target: 'tests' }
+    ]} active="view:preview" onSelect={vi.fn()} onClose={onClose} />);
+    expect(screen.getByRole('tab', { name: 'Script' }).getAttribute('title')).toBe('a.agent');
+    expect(screen.queryByRole('button', { name: /Close A\.agent|Close Script/ })).toBeNull();
+    expect(screen.getByRole('tab', { name: 'Preview' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.queryByText('read-only')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Close Tests' }));
+    expect(onClose).toHaveBeenCalledWith('view:tests');
   });
   it('lists the tabs each close command removes', () => {
     expect(tabsToClose(tabs, 'apex:Lookup', 'close')).toEqual(['apex:Lookup']);
@@ -111,7 +133,7 @@ describe('EditorTabs', () => {
   it('opens the tab menu from the keyboard and dismisses it', () => {
     const onCloseMany = vi.fn();
     render(<EditorTabs tabs={tabs} active="agent:a" onSelect={vi.fn()} onClose={vi.fn()} onCloseMany={onCloseMany} />);
-    const agent = screen.getByRole('tab', { name: /A\.agent/ });
+    const agent = screen.getByRole('tab', { name: /Script/ });
     fireEvent.keyDown(agent, { key: 'F10', shiftKey: true });
     expect(screen.getByRole('menu')).toBeTruthy();
     fireEvent.keyDown(document, { key: 'Escape' });
@@ -131,7 +153,7 @@ describe('EditorTabs', () => {
   });
   it('keeps the native context menu without a bulk close handler', () => {
     render(<EditorTabs tabs={tabs} active="agent:a" onSelect={vi.fn()} onClose={vi.fn()} />);
-    const agent = screen.getByRole('tab', { name: /A\.agent/ });
+    const agent = screen.getByRole('tab', { name: /Script/ });
     expect(fireEvent.contextMenu(agent)).toBe(true);
     fireEvent.keyDown(agent, { key: 'ContextMenu' });
     expect(screen.queryByRole('menu')).toBeNull();

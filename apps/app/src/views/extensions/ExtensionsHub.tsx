@@ -53,6 +53,7 @@ import { listSettingsSections, subscribePluginSlots } from '@/plugins/plugin-slo
 import { PluginHubIncludes } from './PluginHubIncludes.js';
 import { PluginSubmissionAction } from './PluginSubmissionAction.js';
 import { PluginBrowseSplit } from './PluginBrowseSplit.js';
+import { PluginUpdateDetails, pluginUpdateDelivery } from './PluginUpdateDetails.js';
 import { PluginMoreFromAuthor, PluginOverviewLead, PluginReleaseSection, PluginDetailsSection } from './CatalogPluginDetail.js';
 import { PluginOverviewMarkdown } from './PluginOverviewMarkdown.js';
 import { InstalledPluginCollection } from './InstalledPluginCollection.js';
@@ -168,13 +169,28 @@ export function ExtensionsHub({
       .finally(() => setRedeploying(false));
   };
 
+  const [updatingAll, setUpdatingAll] = useState(false);
+  const updateAll = async () => {
+    setMoreOpen(false);
+    setUpdatingAll(true);
+    try {
+      const result = await product.pluginApps.applyAllUpdates();
+      if (!result.ok) throw new Error(result.message);
+      const { updated, failed } = result.value;
+      useUi.getState().pushToast(`${updated.length} plugin${updated.length === 1 ? "" : "s"} updated${failed.length ? `; ${failed.length} failed` : ""}`, failed.length ? "error" : undefined);
+    } catch (error) { useUi.getState().pushToast(error instanceof Error ? error.message : "Plugin updates failed", "error"); }
+    finally { setUpdatingAll(false); }
+  };
+
   const checkUpdates = () => {
     setMoreOpen(false);
     setCheckingUpdates(true);
     product.pluginApps
       .checkUpdates()
-      .then((updates) => {
-        useUi.getState().pushToast(pluginUpdatesCheckedMessage(updates.length));
+      .then(async (updates) => {
+        const apps = await product.pluginApps.list();
+        const failed = apps.filter(app => app.updateCheck?.outcome === 'unavailable').length;
+        useUi.getState().pushToast(failed ? `${updates.length} update${updates.length === 1 ? '' : 's'} available; ${failed} source check${failed === 1 ? '' : 's'} failed` : pluginUpdatesCheckedMessage(updates.length), failed ? 'error' : undefined);
       })
       .catch(() => {
         useUi.getState().pushToast('Could not check for plugin updates', 'error');
@@ -188,6 +204,10 @@ export function ExtensionsHub({
   };
 
   const maintenanceButtons = <>
+    <button type="button" role={compact ? undefined : 'menuitem'} onClick={() => void updateAll()} disabled={updatingAll || checkingUpdates}>
+      <ArrowUpCircle size={14} className={updatingAll ? 'ext-spin' : undefined} />
+      {updatingAll ? 'Updating plugins…' : 'Update all independent plugins'}
+    </button>
     <button type="button" role={compact ? undefined : "menuitem"} onClick={checkUpdates} disabled={checkingUpdates}>
       <ArrowUpCircle size={14} className={checkingUpdates ? 'ext-spin' : undefined} />
       {checkingUpdates ? 'Checking for updates…' : 'Check for updates'}
@@ -636,8 +656,9 @@ function ExtensionDetail({ row }: { row: HubRow }) {
         </section>
         <PluginReleaseSection
           version={entry?.manifest?.version ?? plugin?.npmResolvedVersion ?? undefined}
-          delivery="Updates with ZCC"
+          delivery={pluginUpdateDelivery(plugin)}
         />
+        {plugin ? <PluginUpdateDetails plugin={plugin} /> : null}
         {plugin ? <PluginHubIncludes plugin={plugin} /> : entry ? <InstallConfirmationCard entry={entry} /> : null}
       </div>
       {module.loadError ? (

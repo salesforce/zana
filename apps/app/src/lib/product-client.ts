@@ -1151,6 +1151,11 @@ function httpProduct(): Pick<
           };
         }
       },
+      applyAllUpdates: async () => {
+        try {
+          return await apiJson<import('@zana-ai/zcc-domain/product').Result<import('@zana-ai/zcc-domain/product').PluginUpdateAllResult>>('/plugin-apps/update-all', { method: 'POST', body: '{}' });
+        } catch (error) { return { ok: false as const, code: 'WRITE_FAILED', message: error instanceof Error ? error.message : String(error) }; }
+      },
       checkUpdates: async () => {
         const body = await apiJson<{ updates?: Array<{
           id: string;

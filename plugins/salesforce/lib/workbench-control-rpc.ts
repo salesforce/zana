@@ -10,7 +10,7 @@ import { UI_WAKE_CHANNEL } from './studio-contract.js';
 export function uiCommandReadsOrg(command: unknown, input: Record<string, unknown> | undefined): boolean {
   return ['object.select', 'record.open', 'log.open'].includes(String(command))
     || (command === 'view.open' && input?.view !== 'agentforce')
-    || (command === 'panel.open' && ['agents', 'org-preview', 'release'].includes(String(input?.tool)))
+    || (command === 'panel.open' && ['agents', 'org-preview'].includes(String(input?.tool)))
     // Preview offers only Simulate and Live, and both talk to the org.
     || command === 'preview.start' || command === 'preview.send'
     // The Org tests tab lists the org's definitions and reads the named one or run.

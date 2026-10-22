@@ -349,7 +349,8 @@ const IS_WORKER = /worker standby/.test(PROMPT);
 const ANSWERS_REPORTS = /E2E own Squad reports/.test(PROMPT);
 const IS_OWNER = ANSWERS_REPORTS || /E2E start Job Team/.test(PROMPT);
 // Design-session role: proposes a Squad launch from files the spec wrote, then rests idle.
-const IS_PROPOSER = /E2E propose Squad/.test(PROMPT);
+// 'E2E launch Squad' is the same role for specs whose entries use squad_launch (see proposer()).
+const IS_PROPOSER = /E2E (propose|launch) Squad/.test(PROMPT);
 const FAILED_DAG = ${JSON.stringify(flags.failedDag)};
 // Stuck-worker reclaim repro (run df216947): the worker claims its unit, goes
 // ✻ working (NON-restful), and holds forever — never completes/blocks/idles. The
@@ -521,7 +522,8 @@ async function answerReports() {
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', function (chunk) {
     log('stdin', JSON.stringify(String(chunk)));
-    buf += String(chunk);
+    // Terminal-generated mouse and focus reports can precede or split a report; they are not text.
+    buf += String(chunk).replace(/\x1b\[(?:<[0-9;]*[Mm]|[IO])/g, '');
     const m = buf.match(REPORT_RE);
     if (!m || answering) return;
     answering = true;
@@ -537,6 +539,7 @@ async function answerReports() {
         await sleep(500);
       }
       setIdle();
+      answering = false;
     })();
   });
   process.stdin.resume();
@@ -546,17 +549,29 @@ async function answerReports() {
 // Design session that hands a design to a Squad: reads the proposals the spec
 // wrote, checks the plan and proposes each. It then rests idle (so the host sees
 // a restful agent and delivers [Squad report] text) and logs every stdin chunk.
+// An entry with tool 'squad_launch' starts the Squad (mode in its input); the launcher then
+// reads the run with execution.snapshot (logged as snapshot[label]). spec.answerReports makes
+// it answer the blocker its owner [Squad report] names, like the 'E2E own Squad reports' owner.
 async function proposer() {
   log('proposer start');
-  process.stdin.setEncoding('utf8');
-  process.stdin.on('data', function (chunk) { log('stdin', JSON.stringify(String(chunk))); });
-  process.stdin.resume();
   const spec = JSON.parse(fs.readFileSync(path.join(CWD, '.e2e-proposal.json'), 'utf8'));
+  if (spec.answerReports) await answerReports();
+  else {
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', function (chunk) { log('stdin', JSON.stringify(String(chunk))); });
+    process.stdin.resume();
+  }
   const check = await tryMcp('squad_plan_check', { path: spec.planPath });
   log('plan_check', JSON.stringify(check));
   for (const entry of spec.proposals) {
-    const proposed = await tryMcp('squad_propose', entry.input);
+    // An entry with waitFor starts only once the spec has created that file in the project folder.
+    if (entry.waitFor) while (!fs.existsSync(path.join(CWD, entry.waitFor))) await sleep(500);
+    const proposed = await tryMcp(entry.tool || 'squad_propose', entry.input);
     log('propose[' + entry.label + ']', JSON.stringify(proposed));
+    if (entry.tool === 'squad_launch' && proposed.ok && proposed.value && proposed.value.executionId) {
+      const snap = await tryMcp('execution.snapshot', { executionId: proposed.value.executionId, after: 0 });
+      log('snapshot[' + entry.label + ']', JSON.stringify({ ok: snap.ok, state: snap.ok && snap.value && snap.value.execution ? snap.value.execution.state : snap.error }));
+    }
   }
   setIdle();
   log('proposer idle');

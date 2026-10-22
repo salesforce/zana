@@ -33,7 +33,9 @@ describe('Modern team-launch config source', () => {
     const configured = await resolvePluginSessionTools([source], session);
     expect(configured.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
       'execution_start',
-      'execution_snapshot'
+      'execution_snapshot',
+      'execution_status',
+      'squad_launch'
     ]));
   });
 
@@ -49,7 +51,7 @@ describe('Modern team-launch config source', () => {
     expect(off.tools.map((tool) => tool.name)).not.toEqual(expect.arrayContaining(['execution_start']));
     pushed = { teamLaunchEnabled: false, teamJobLaunchEnabled: true };
     const on = await resolvePluginSessionTools([source], session);
-    expect(on.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(['squad_propose', 'squad_plan_check', 'list_teams', 'execution_start']));
+    expect(on.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(['squad_propose', 'squad_launch', 'squad_plan_check', 'list_teams', 'execution_start', 'execution_status']));
     expect(pushedRuntimeAppConfig({ teamLaunchEnabled: true, teamJobLaunchEnabled: false })).toEqual({
       teamLaunchEnabled: true, teamJobLaunchEnabled: false, composerShowAutonomousTeam: false
     });

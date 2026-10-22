@@ -7,21 +7,22 @@ export const AGENT_SCRIPT_TOOLS = [
   { id: 'graph', title: 'Graph view', description: 'Topics, actions, and conversation routes', icon: 'M6 3v6h12V3 M12 9v6 M9 15h6v6H9z' },
   { id: 'preview', title: 'Preview', description: 'Try the current draft in a conversation', icon: 'm8 4 12 8-12 8z' },
   { id: 'test', title: 'Tests', description: 'Run scenarios and review evaluations', icon: 'M9 3h6 M10 3v7L4 20h16l-6-10V3 M7 16h10' },
-  { id: 'release', title: 'Release', description: 'Publish, activate and roll back versions', icon: 'M5 15c-1.5 1.3-2 5-2 5s3.7-.5 5-2 M12 15l-3-3a22 22 0 0 1 2-3.9A12.9 12.9 0 0 1 22 2c0 2.7-.8 7.5-6 11a22 22 0 0 1-4 2Z M9 12H4s.6-3 2-4c1.6-1.1 5 0 5 0 M12 15v5s3-.6 4-2c1.1-1.6 0-5 0-5' },
   { id: 'actions', title: 'Actions', description: 'Inspect Apex, Flow, inputs, and outputs', icon: 'm8 6-6 6 6 6 M16 6l6 6-6 6 M14 3l-4 18' },
   { id: 'org-preview', title: 'Org preview', description: 'Talk to an agent in your connected org', icon: 'M7 18h11a4 4 0 0 0 0-8 6 6 0 0 0-11-3 5.5 5.5 0 0 0 0 11Z' },
   { id: 'comments', title: 'Comments', description: 'Review notes anchored to lines of this agent', icon: 'M4 4h16v12H8l-4 4z M8 9h8 M8 12h5' },
 ] as const;
 export type AgentScriptTool = typeof AGENT_SCRIPT_TOOLS[number]['id'];
+/** Tools that live in the Studio's own side column. Graph, Preview, Tests and Org preview are editor view tabs instead. */
+export const COLUMN_TOOLS: readonly AgentScriptTool[] = ['agents', 'files', 'actions', 'comments'];
+export const isColumnTool = (value: unknown): value is AgentScriptTool => COLUMN_TOOLS.includes(value as AgentScriptTool);
 type ToolState = { tabs: AgentScriptTool[]; active: AgentScriptTool | 'new'; open: boolean };
 const initialState: ToolState = { tabs: ['files'], active: 'files', open: true };
-const isTool = (value: unknown): value is AgentScriptTool => AGENT_SCRIPT_TOOLS.some(tool => tool.id === value);
 
 function readState(key: string): ToolState {
   try {
     const value = JSON.parse(localStorage.getItem(key) ?? 'null');
     if (!value || !Array.isArray(value.tabs)) return initialState;
-    const tabs = [...new Set<AgentScriptTool>(value.tabs.filter(isTool))];
+    const tabs = [...new Set<AgentScriptTool>(value.tabs.filter(isColumnTool))];
     return { tabs, active: tabs.includes(value.active) ? value.active : 'new', open: value.open !== false };
   } catch { return initialState; }
 }
@@ -65,7 +66,7 @@ export function AgentScriptTools({ tools, render, hiddenTools = [], chrome = tru
     strip.current?.querySelector('[aria-selected=true]')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
   }, [state.active, state.open]);
   const title = (id: AgentScriptTool) => AGENT_SCRIPT_TOOLS.find(tool => tool.id === id)!.title;
-  const pickable = AGENT_SCRIPT_TOOLS.filter(tool => !hiddenTools.includes(tool.id));
+  const pickable = AGENT_SCRIPT_TOOLS.filter(tool => isColumnTool(tool.id) && !hiddenTools.includes(tool.id));
   return <aside className="af-tools" aria-label="AgentScript side panel" hidden={!state.open}>
     {chrome && <div className="thread-secondary-chrome">
       <div className="thread-secondary-tabs" role="tablist" aria-label="AgentScript tools" ref={strip}>

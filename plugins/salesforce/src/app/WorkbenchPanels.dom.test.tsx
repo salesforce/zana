@@ -377,11 +377,7 @@ describe("public Salesforce panels", () => {
     expect(screen.getAllByRole('combobox', { name: 'Salesforce org' })).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'Close pane' }).closest('.sf-workbench-toolbar')).toBeTruthy();
     expect(document.querySelector('.sf-workbench>.sf-footer')).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Open beside agent" }));
-    expect(navigate.openThreadPanel).toHaveBeenCalledWith({
-      actionId: "playground",
-      params: { projectId: "p", orgAlias: "dev" },
-    });
+    expect(screen.queryByRole("button", { name: "Open beside agent" })).toBeNull();
     expect(call).toHaveBeenCalledWith(
       "doctor",
       expect.objectContaining({ projectId: "p", threadId: "t" }),

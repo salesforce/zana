@@ -50,6 +50,10 @@ or refreshing the catalog does not execute plugin code. Install records the
 resolved npm version or Git commit, while a local path stays connected to its
 working directory.
 
+Bundled plugin IDs are reserved by the app's registry. Install them with
+`zcc plugin install <name>` or `builtin:<name>`; a Git, npm, or catalog package
+cannot claim one of those IDs, even if its listing uses a different name.
+
 PluginService validates the manifest and compatible engine versions, then
 loads the enabled contributions. **Install and enable are trust decisions:**
 plugin server code runs full-trust, in-process on `apps/server`. It is not a
@@ -67,6 +71,83 @@ Use `zcc plugin dev` for the local edit → build → reload loop. It watches
 source changes, rebuilds the app bundle, and reloads the installed plugin.
 Path installs load their server entry from source; published packages declare
 their built entry points.
+
+Developers overriding a bundled plugin from a local path must run a managed
+development host with `ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD=1`. This flag
+also enables bundled source watching. It never permits Git or npm packages to
+replace bundled identities. Ordinary plugins with their own IDs need no flag.
+
+## Updates
+
+Official plugins registered in `builtin-registry.ts` ship with Zana, including
+the optional plugins you install from Browse. Their code updates with a Zana
+release. Merging a plugin change or refreshing a marketplace listing does not
+update that code on existing users' machines.
+
+At startup Zana reconciles installed bundled plugins with the current app
+bundle, including version and entry points. Plugin storage, settings, disabled
+state, and uninstall choices remain in place. `zcc plugin update <id>` does not
+install a separate release of a bundled plugin.
+
+Independent Git and npm plugins use their recorded sources. Never-checked or
+overdue sources are checked at startup, then every six hours, with at most four
+source checks running together. Checks save their timestamp, compatible candidate,
+incompatible release reasons, and source failures across restarts. They do not
+execute candidate code or activate it. Apply a candidate from its installed row,
+use **Update all independent plugins** in the Plugins menu, or run
+`zcc plugin update --all`.
+
+npm ranges and dist-tags follow their recorded selector and registry; exact
+versions remain pinned. Git branches and default HEAD can advance; exact commits
+and named tags remain pinned. A moved or missing installed release tag requires
+an explicit reinstall. Updates install the exact checked npm version and integrity
+or Git commit, preserving configuration and disabled state. Reload reuses the
+installed artifact.
+
+Catalog Git subdirectories and tag prefixes are recorded at installation, so an
+installed plugin can still update when its catalog is removed or edited. Direct
+Git sources support the same monorepo options, for example:
+
+```sh
+zcc plugin install 'git:https://example.com/team/plugins.git@semver:^1.0.0#subdir=plugins%2Fnotes&tagPrefix=notes-'
+```
+
+Older catalog Git installs that lack recorded subdirectory metadata show a
+reinstall notice instead of guessing their update source.
+
+Applying an update is an explicit action. To update an existing remote install,
+use Update or `zcc plugin update <id>` instead of installing it again.
+
+Independent managed updates stop the previous plugin before taking a private,
+SQLite-safe snapshot of its database, KV storage (including named schedule
+keys), settings and secret files. For a running plugin, the candidate must start
+and remain healthy for the activation window before the update commits. Disabled
+or safe-mode-suspended plugins keep that state without running candidate code.
+A failure during activation restores the
+previous code and owned state, and its failure reason remains visible in Plugins.
+Interrupted activation or restoration is recovered before plugins run at the
+next server startup. A snapshot or teardown failure prevents candidate activation;
+an unsafe teardown or damaged recovery requires attention or a restart.
+
+Updates defer while a plugin has an active call or an open provider session.
+Close those sessions and retry; an update does not terminate an active agent
+turn. New plugin calls are rejected during activation and can be retried after
+it completes. Completed backups and
+unused managed generations are removed; pending recovery backups are retained.
+Snapshots are limited to 256 MiB and 1,024 entries per plugin.
+
+Recovery covers the plugin-owned local state above. External API effects and
+arbitrary files written by full-trust plugin code are outside this recovery.
+Local path authoring continues to use explicit reload or `zcc plugin dev`.
+
+A catalog's
+Official label alone does not make its plugins part of the app bundle. See the
+[plugin release process](official-plugin-release-process.md) for publishing guidance.
+
+Older independent installations that occupy a bundled ID retain their current
+code and data. Their remote updates are blocked and Plugins shows migration
+guidance. Back up and migrate their data before switching to bundled code;
+Zana does not assume a newer independent version has a compatible data schema.
 
 | Action | What happens |
 | :--- | :--- |
@@ -135,9 +216,8 @@ or `zcc plugin install <name>`):
 | `secrets` | Host secrets |
 | `connect` | Host connect |
 
-Packages that live under repo `plugins/` today include `docs`, `memory`,
-`plugin-guide`, `design-docs`, and `salesforce`; other official plugins may ship from the
-catalog without a tree copy.
+The registered plugins above ship in the application bundle. Optional plugins
+remain available offline without being auto-installed.
 
 ## Official marketplace
 
@@ -174,7 +254,7 @@ zcc plugin ls
 zcc plugin enable <id>
 zcc plugin reload <id>
 zcc marketplace add https://<PUBLIC_BASE_URL>/marketplace/v1/marketplace.json
-zcc marketplace install tasks@official
+zcc plugin install tasks
 ```
 
 A one-release shim still reads legacy `extension.json` directories.

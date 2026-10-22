@@ -642,12 +642,18 @@ zcc plugin logs <id> -f
 zcc plugin search tasks
 zcc plugin outdated
 zcc plugin update <id>
+zcc plugin update --all
 
 # Official catalog (the website serves this feed)
 zcc marketplace add https://<PUBLIC_BASE_URL>/marketplace/v1/marketplace.json
 zcc marketplace ls
-zcc marketplace install tasks@official
+zcc plugin install tasks
 ```
+
+Bundled plugin names resolve to the installed Zana release, without a network
+download. Bundled IDs cannot be replaced by Git/npm/catalog packages and update
+with Zana releases. `plugin outdated` / `plugin update` target independent
+plugins; update checks never install code automatically. `update --all` applies compatible candidates, preserves disabled state, and reports individual failures (with a nonzero exit status). Exact npm versions, Git commits and immutable Git tags remain pinned.
 
 `plugin ls` / `new` / `types` / `build` work with the app down. `plugin reload`
 and `plugin dev` use product HTTP (`POST /api/v1/plugin-apps/:id/reload`) and do

@@ -1,7 +1,7 @@
 import { useRealtime, useZccNavigate, type PluginMessageDirectiveProps } from '@zana-ai/zcc-plugin-sdk/app';
 import type { TurnTrace } from '../../../lib/studio-contract.js';
 import { STUDIO_CHANGED_CHANNEL, STUDIO_RPC } from '../../../lib/studio-contract.js';
-import { AGENTFORCE_PREVIEW_ACTION } from '../agentforce-panel-params.js';
+import { routeStudioIntent } from '../studio/studio-intents.js';
 import { CARD_STYLES, ErrorCard, Pill, cleanAttr, isNotImplemented, parseLine, rpc, rpcFailure, useLoaded } from './card-kit.js';
 
 interface RunSummary { steps: number; latencyMs: number; note: string | null }
@@ -11,6 +11,8 @@ export function PreviewCard({ pluginId, attributes, source, message }: PluginMes
   const navigate = useZccNavigate();
   const runId = cleanAttr(attributes.runId ?? attributes.runid, 256);
   const turn = parseLine(attributes.turn);
+  // An optional `path` attribute names the agent, so the run opens in that agent's Preview.
+  const agentPath = cleanAttr(attributes.path);
   const projectId = message.projectId;
   const loaded = useLoaded<RunSummary | null>(async () => {
     if (!runId) return null;
@@ -29,16 +31,14 @@ export function PreviewCard({ pluginId, attributes, source, message }: PluginMes
   });
   if (!runId) return <ErrorCard kind="preview" message="Invalid preview link: a runId is required." source={source} />;
   const summary = loaded.data;
-  const open = () => navigate.openThreadPanel({
-    actionId: AGENTFORCE_PREVIEW_ACTION,
-    title: 'Preview',
-    params: { runId, ...(turn ? { turn: String(turn) } : {}) },
-    ...(message.threadId ? { threadId: message.threadId } : {})
+  const open = (from: Element | null) => routeStudioIntent({
+    pluginId, projectId: projectId ?? null, threadId: message.threadId ?? null, from, navigate,
+    intent: { kind: 'preview', ...(agentPath ? { path: agentPath } : {}), runId, ...(turn ? { turn } : {}) }
   });
   return (
     <div className="plugin-directive-card sf-dcard" data-testid="sf-card-preview">
       <style>{CARD_STYLES}</style>
-      <button type="button" className="plugin-directive-card-main" onClick={open} title="Open this run in Preview">
+      <button type="button" className="plugin-directive-card-main" onClick={event => void open(event.currentTarget)} title="Open this run in Preview">
         <span className="sf-dcard-icon" aria-hidden>PV</span>
         <span className="sf-dcard-body">
           <span className="sf-dcard-line">

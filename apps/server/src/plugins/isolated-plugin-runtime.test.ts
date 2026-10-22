@@ -56,7 +56,9 @@ it('surfaces factory errors and does not retain a live callback', async () => {
   const f = await fixture('export default () => { throw Error("broken factory"); }'); await expect(f.runtime.started).rejects.toThrow('broken factory'); expect(f.failure).toHaveBeenCalledOnce();
 });
 it('disposes during initialization without leaking an unhandled rejection', async () => {
-  const f = await fixture('export default () => new Promise(() => {})'); f.runtime.dispose(); await expect(f.runtime.started).rejects.toThrow('stopped'); expect(f.failure).not.toHaveBeenCalled();
+  const f = await fixture('export default () => new Promise(() => {})'); const termination = f.runtime.dispose();
+  expect(f.runtime.dispose()).toBe(termination); await termination;
+  await expect(f.runtime.started).rejects.toThrow('stopped'); expect(f.failure).not.toHaveBeenCalled(); expect(f.runtime.isBusy()).toBe(false);
 });
 
 it('preserves trusted service values, Promise returns and errors through the worker', async () => {

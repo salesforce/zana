@@ -29,7 +29,7 @@ export function parseAgentScriptSource(source: string, dialect: AgentScriptDiale
     graph.edges = graph.edges.filter(edge => !edge.target.startsWith('action:'));
     for (const action of actions) {
       const id = `action:${action.id}`;
-      graph.nodes.push({ id, kind: 'action', label: action.name, actionId: action.id });
+      graph.nodes.push({ id, kind: 'action', label: action.name, actionId: action.id, ...(action.target ? { target: action.target } : {}) });
       const owner = action.owner.startsWith('start_agent.') ? 'start' : `topic:${action.owner.split('.')[1]}`;
       if (graph.nodes.some(node => node.id === owner)) {
         const kinds = [...new Set(action.uses.map(use => use.kind))];

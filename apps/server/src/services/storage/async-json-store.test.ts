@@ -30,6 +30,14 @@ it('shares writers across hot reload generations and rejects stale leases', asyn
   expect(await b.get('a')).toBe(1); const closing = b.dispose(); const c = openAsyncJsonStore(file); stores.push(c);
   await c.set('c', 3); await closing; expect(await c.list()).toEqual(['a', 'b', 'c']); await c.delete('a'); await c.clear(); expect(await c.list()).toEqual([]);
 });
+it('drains admitted writes before final lease teardown and a replacement lease opens', async () => {
+  const { file } = await fixture(); const a = openAsyncJsonStore(file); stores.push(a);
+  const writes = Array.from({ length: 20 }, (_, i) => a.set(String(i), i));
+  const closing = a.dispose({ drain: true }); const b = openAsyncJsonStore(file); stores.push(b);
+  await Promise.all(writes); await closing;
+  expect(await b.list()).toHaveLength(20); expect(await b.get('19')).toBe(19);
+  await b.dispose({ drain: true }); expect(() => b.set('stale', 1)).toThrow('disposed');
+});
 it('bounds pending calls and rejects disposed operations', async () => {
   const { store } = await fixture(); const results = await Promise.allSettled(Array.from({ length: 40 }, (_, i) => store.set(String(i), i)));
   expect(results.filter(r => r.status === 'rejected')).toHaveLength(8);

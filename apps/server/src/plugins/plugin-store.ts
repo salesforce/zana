@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { atomicDurableWrite, createSerializedTransactionQueue } from '../durable-store.js';
 import type { ToolPolicyClassification } from './plugin-tool-policy-state.js';
+import type { PluginSourceIntent } from './plugin-update-resolver.js';
 import {
   classifyDeclaredToolPolicy,
   persistKnownTrueMonotonically,
@@ -24,6 +25,7 @@ export interface InstalledPluginRow {
   provenance: PluginProvenance;
   sourceKind: PluginSourceKind;
   source: string;
+  sourceIntent?: PluginSourceIntent;
   rootDir: string;
   serverEntry: string | null;
   appEntry: string | null;
@@ -35,6 +37,7 @@ export interface InstalledPluginRow {
   installedAt: number;
   updatedAt: number;
   toolPolicy?: ToolPolicyClassification;
+  lastActivationFailure?: { version: string; at: number; detail: string };
 }
 
 interface PluginStoreFile {

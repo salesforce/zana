@@ -58,12 +58,15 @@ afterEach(() => {
 vi.mock('@/components/SquadSwitcher', () => ({ SquadSwitcher: () => null }));
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }));
 
-import { nodeActivity, SquadFlowView, SquadGraph, STREAMING_FRESH_MS } from './SquadFlowView';
+import { nodeActivity, squadChipLabel, SquadFlowView, SquadGraph, squadHeaderLabel, STREAMING_FRESH_MS } from './SquadFlowView';
+import { SOLO_GROUP_ICON, SOLO_GROUP_LABEL, type FlowGraph } from '@/lib/squadFlow';
+import { BLOCKER_H, NODE_H, nodeHeight } from './squadFlowLayout';
 
 // happy-dom rewrites import.meta.url to a non-file scheme, so resolve source
 // files from the repo root (vitest cwd) instead of a relative file URL.
 const view = readFileSync(join(process.cwd(), 'apps/app/src/views/agents/SquadFlowView.tsx'), 'utf8');
 const css = readFileSync(join(process.cwd(), 'apps/app/src/styles/global.css'), 'utf8');
+const layoutSource = readFileSync(join(process.cwd(), 'apps/app/src/views/agents/squadFlowLayout.ts'), 'utf8');
 
 function flowNode(over: Partial<SquadFlowNode>): SquadFlowNode {
   const sessionId = over.sessionId ?? 's';
@@ -165,11 +168,12 @@ describe('SquadGraph activity rendering (real DOM)', () => {
     expect(live[0].textContent).toBe('live');
   });
 
-  it('shows the neutral "claimed · no recent output" chip only for the stranded-claim node', () => {
+  it('shows the neutral "no output" chip only for the stranded-claim node, full explanation in its title', () => {
     const { container } = render(<SquadGraph graph={fourTierGraph()} />);
-    const chips = container.querySelectorAll('.squad-flow-claimed');
+    const chips = container.querySelectorAll<HTMLElement>('.squad-flow-claimed');
     expect(chips).toHaveLength(1);
-    expect(chips[0].textContent).toContain('claimed · no recent output');
+    expect(chips[0].textContent).toBe('no output');
+    expect(chips[0].title).toContain('no recent output');
   });
 
   it('applies the tier border classes: --streaming (1), --working (2, incl. the streaming node), --claimed (1)', () => {
@@ -229,6 +233,197 @@ describe('SquadGraph blocker chip audience', () => {
   });
 });
 
+describe('squad group labels (chip + header)', () => {
+  afterEach(cleanup);
+
+  function labelGraph(over: Partial<FlowGraph> = {}, nodes: SquadFlowNode[] = [flowNode({ sessionId: 'w', label: 'worker' })]): FlowGraph {
+    return { projectId: 'p1', nodes, edges: [], summary: { total: nodes.length, working: 0, blocked: 0, idle: nodes.length, exited: 0 }, builtAt: 1, ...over };
+  }
+  const orchNode = flowNode({ sessionId: 'o', label: 'team/lead-agent', isOrchestrator: true });
+
+  it('chip: solo graph is the solo label even with an orchestrator or squad name', () => {
+    expect(squadChipLabel(labelGraph({ isSolo: true, squad: { id: 'x', name: 'Named', workerCount: 1 } }, [orchNode]), 1)).toBe(SOLO_GROUP_LABEL);
+    expect(SOLO_GROUP_LABEL).toBe('Solo agents');
+  });
+
+  it('chip: teamName, then orchestrator label, then squad name, then ordinal', () => {
+    expect(squadChipLabel(labelGraph({ teamName: 'Review Team' }, [orchNode]), 1)).toBe('Review Team');
+    expect(squadChipLabel(labelGraph({ squad: { id: 'x', name: 'Named', workerCount: 1 } }, [orchNode]), 1)).toBe('lead-agent');
+    expect(squadChipLabel(labelGraph({ squad: { id: 'x', name: 'Named', workerCount: 1 } }), 1)).toBe('Named');
+    expect(squadChipLabel(labelGraph(), 3)).toBe('Squad 3');
+  });
+
+  it('header: solo, run label, teamName, squad name, then "Squad"', () => {
+    expect(squadHeaderLabel(labelGraph({ isSolo: true, teamName: 'T' }))).toBe(SOLO_GROUP_LABEL);
+    expect(squadHeaderLabel(labelGraph({ teamName: 'Review Team', executionId: 'execution-12345678', executionJobTitle: 'Ship it' })))
+      .toBe('Ship it · Review Team · Run 12345678');
+    expect(squadHeaderLabel(labelGraph({ teamName: 'Review Team' }))).toBe('Review Team');
+    expect(squadHeaderLabel(labelGraph({ squad: { id: 'x', name: 'Named', workerCount: 1 } }, [orchNode]))).toBe('Named');
+    expect(squadHeaderLabel(labelGraph())).toBe('Squad');
+  });
+
+  it('renders the solo label and solo icon in the header of a solo graph', () => {
+    const { container } = render(<SquadGraph graph={labelGraph({ isSolo: true })} />);
+    expect(container.querySelector('.squad-flow-name')!.textContent).toBe('Solo agents');
+    expect(container.querySelector('.squad-flow-icon')!.textContent).toBe(SOLO_GROUP_ICON);
+  });
+
+  it('keeps the team run label in the header of a team graph with an execution', () => {
+    const { container } = render(<SquadGraph graph={labelGraph({ teamName: 'Review Team', executionId: 'execution-12345678' })} />);
+    expect(container.querySelector('.squad-flow-name')!.textContent).toBe('Review Team · Run 12345678');
+    expect(container.querySelector('.squad-flow-icon')!.textContent).toBe('🤖');
+  });
+});
+
+describe('SquadGraph card height', () => {
+  afterEach(cleanup);
+
+  const now = 5_000_000;
+  const oneNode = (node: SquadFlowNode): FlowGraph => ({
+    projectId: 'p1', nodes: [node], edges: [], summary: { total: 1, working: 0, blocked: 0, idle: 1, exited: 0 }, builtAt: now
+  });
+  const cardHeight = (container: HTMLElement) => container.querySelector<HTMLElement>('.squad-flow-node')!.style.height;
+  const kids = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `c${i}`, status: 'running' as const, startedAt: i, description: `child ${i}` }));
+  const blocker = { executionId: 'e1', needsAttention: true, blockerQuestion: 'Which env?', blockerAudience: 'human' as const };
+
+  it('sets the inline card height to nodeHeight for a card with 7 children', () => {
+    const node = flowNode({ sessionId: 'p', liveSubagents: 7, subagentChildren: kids(7) });
+    const { container } = render(<SquadGraph graph={oneNode(node)} />);
+    expect(cardHeight(container)).toBe(`${nodeHeight(node)}px`);
+    expect(container.querySelectorAll('.squad-flow-child')).toHaveLength(4);
+    expect(container.querySelector('.squad-flow-child-more')!.textContent).toBe('+3 more');
+  });
+
+  it('renders the blocker notice as its own line after the status row and adds BLOCKER_H', () => {
+    const { container } = render(<SquadGraph graph={oneNode(flowNode({ state: 'blocked', job: blocker }))} />);
+    const notice = container.querySelector('.squad-flow-node-blocker')!;
+    expect(notice.closest('.squad-flow-node-state')).toBeNull();
+    expect(container.querySelector('.squad-flow-node-state')!.nextElementSibling).toBe(notice);
+    expect(cardHeight(container)).toBe(`${NODE_H + BLOCKER_H}px`);
+  });
+
+  it('renders the coordinator notice as its own line after the status row and adds BLOCKER_H', () => {
+    const job = { executionId: 'e1', needsAttention: false, blockerQuestion: 'Retry?', blockerAudience: 'coordinator' as const };
+    const { container } = render(<SquadGraph graph={oneNode(flowNode({ job }))} />);
+    const notice = container.querySelector('.squad-flow-node-coord')!;
+    expect(notice.closest('.squad-flow-node-state')).toBeNull();
+    expect(container.querySelector('.squad-flow-node-state')!.nextElementSibling).toBe(notice);
+    expect(cardHeight(container)).toBe(`${NODE_H + BLOCKER_H}px`);
+  });
+
+  it('keeps live, claimed, role and sub-agent count chips inside the single status row', () => {
+    const graph: FlowGraph = {
+      projectId: 'p1',
+      nodes: [
+        flowNode({ sessionId: 'n-live', state: 'working', role: 'worker', claim: { claimedAt: 1, progressAt: now - 1_000, leaseExpiresAt: now + 60_000 } }),
+        flowNode({ sessionId: 'n-claim', liveSubagents: 2, claim: { claimedAt: 1, leaseExpiresAt: now + 60_000 } })
+      ],
+      edges: [], summary: { total: 2, working: 1, blocked: 0, idle: 1, exited: 0 }, builtAt: now
+    };
+    const { container } = render(<SquadGraph graph={graph} />);
+    for (const cls of ['.squad-flow-live', '.squad-flow-claimed', '.squad-flow-node-role', '.squad-flow-subagents']) {
+      expect(container.querySelector(cls)!.parentElement!.classList.contains('squad-flow-node-state')).toBe(true);
+    }
+    for (const card of container.querySelectorAll<HTMLElement>('.squad-flow-node')) expect(card.style.height).toBe(`${NODE_H}px`);
+  });
+
+  it('renders the state verb first in the status row and keeps full chip text in titles', () => {
+    const graph: FlowGraph = {
+      projectId: 'p1',
+      nodes: [
+        flowNode({ sessionId: 'n-claim', role: 'worker', claim: { claimedAt: now - 12 * 60_000, leaseExpiresAt: now + 60_000 } }),
+        flowNode({ sessionId: 'n-orch', isOrchestrator: true, state: 'working', role: 'orchestrator', liveSubagents: 3 })
+      ],
+      edges: [], summary: { total: 2, working: 1, blocked: 0, idle: 1, exited: 0 }, builtAt: now
+    };
+    const { container } = render(<SquadGraph graph={graph} />);
+    const rows = [...container.querySelectorAll('.squad-flow-node-state')];
+    expect(rows.map((row) => row.firstElementChild!.classList.contains('squad-flow-state-text'))).toEqual([true, true]);
+    expect(rows.map((row) => row.firstElementChild!.textContent)).toEqual(expect.arrayContaining(['claimed · 12m', 'working']));
+    const roles = [...container.querySelectorAll<HTMLElement>('.squad-flow-node-role')];
+    expect(roles.map((role) => role.title).sort()).toEqual(['orchestrator', 'worker']);
+    expect(container.querySelector<HTMLElement>('.squad-flow-subagents')!.title).toBe('3 sub-agents running');
+  });
+
+  it('places every orchestrator, so a second launch\'s lead and its edges still render', () => {
+    const graph: FlowGraph = {
+      projectId: 'p1',
+      nodes: [
+        flowNode({ sessionId: 'o1', isOrchestrator: true }),
+        flowNode({ sessionId: 'o2', isOrchestrator: true }),
+        flowNode({ sessionId: 'w2' })
+      ],
+      edges: [{ fromSessionId: 'o2', toSessionId: 'w2', count: 1, lastTs: 1, pending: false }],
+      summary: { total: 3, working: 0, blocked: 0, idle: 3, exited: 0 }, builtAt: now
+    };
+    const { container } = render(<SquadGraph graph={graph} />);
+    expect(container.querySelectorAll('.squad-flow-node')).toHaveLength(3);
+    expect(container.querySelectorAll('.squad-flow-node--orch')).toHaveLength(2);
+    expect(container.querySelectorAll('path.squad-flow-edge')).toHaveLength(1);
+  });
+
+  it('keeps the card height unchanged for a very long label and blocker question', () => {
+    const long = 'x'.repeat(400);
+    const short = render(<SquadGraph graph={oneNode(flowNode({ label: 'a', job: blocker }))} />);
+    const shortHeight = cardHeight(short.container);
+    cleanup();
+    const { container } = render(<SquadGraph graph={oneNode(flowNode({ label: long, job: { ...blocker, blockerQuestion: long } }))} />);
+    expect(cardHeight(container)).toBe(shortHeight);
+  });
+});
+
+describe('SquadFlowView card line CSS contract', () => {
+  const rule = (selector: string) => {
+    const match = css.match(new RegExp(`${selector.replace(/[.]/g, '\\.')} \\{([^}]*)\\}`));
+    expect(match, selector).not.toBeNull();
+    return match![1];
+  };
+
+  it('keeps the label to one ellipsized line', () => {
+    expect(rule('.squad-flow-node-label')).toMatch(/white-space:\s*nowrap;[^]*overflow:\s*hidden;[^]*text-overflow:\s*ellipsis;/);
+  });
+
+  it('keeps the status row to one clipped line', () => {
+    const state = rule('.squad-flow-node-state');
+    expect(state).toMatch(/flex-wrap:\s*nowrap;/);
+    expect(state).toMatch(/overflow:\s*hidden;/);
+    expect(state).toMatch(/white-space:\s*nowrap;/);
+    expect(state).toMatch(/min-width:\s*0;/);
+  });
+
+  it('never shrinks the state verb; chips shrink first with an ellipsis, role before live/claimed', () => {
+    const verb = rule('.squad-flow-state-text');
+    expect(verb).toMatch(/flex:\s*0 0 auto;/);
+    expect(verb).toMatch(/white-space:\s*nowrap;/);
+    const shrink = (selector: string) => Number(rule(selector).match(/flex:\s*0 (\d+) auto;/)?.[1]);
+    for (const selector of ['.squad-flow-live', '.squad-flow-claimed', '.squad-flow-node-role', '.squad-flow-subagents']) {
+      const chip = rule(selector);
+      expect(chip, selector).toMatch(/min-width:\s*0;/);
+      expect(chip, selector).toMatch(/overflow:\s*hidden;/);
+      expect(chip, selector).toMatch(/text-overflow:\s*ellipsis;/);
+      expect(chip, selector).toMatch(/white-space:\s*nowrap;/);
+      expect(shrink(selector), selector).toBeGreaterThanOrEqual(1);
+    }
+    expect(shrink('.squad-flow-node-role')).toBeGreaterThan(shrink('.squad-flow-live'));
+    expect(shrink('.squad-flow-node-role')).toBeGreaterThan(shrink('.squad-flow-claimed'));
+    expect(shrink('.squad-flow-subagents')).toBeGreaterThan(shrink('.squad-flow-live'));
+  });
+
+  it('keeps each notice to one ellipsized block line', () => {
+    for (const selector of ['.squad-flow-node-blocker', '.squad-flow-node-coord']) {
+      const notice = rule(selector);
+      expect(notice).toMatch(/display:\s*block;/);
+      expect(notice).toMatch(/white-space:\s*nowrap;/);
+      expect(notice).toMatch(/overflow:\s*hidden;/);
+      expect(notice).toMatch(/text-overflow:\s*ellipsis;/);
+    }
+  });
+
+  it('no longer pads the layout with the 140px slack', () => {
+    expect(layoutSource).not.toContain('+ 140');
+  });
+});
+
 describe('SquadFlowView activity CSS contract', () => {
   it('keeps the Flow graph off the kanban card pulse (motion is the chevron, not a breathing node)', () => {
     expect(css).not.toContain('@keyframes squad-flow-pulse');
@@ -265,12 +460,12 @@ describe('SquadFlowView execution-board poll refresh', () => {
 
 describe('SquadFlowView back-edge routing', () => {
   it('raises PAD_TOP so a top-row target keeps inY on-canvas', () => {
-    expect(view).toContain('const EDGE_OFFSET = 22;');
-    expect(view).toContain('const PAD_TOP = EDGE_OFFSET + 16;');
+    expect(layoutSource).toContain('const EDGE_OFFSET = 22;');
+    expect(layoutSource).toContain('const PAD_TOP = EDGE_OFFSET + 16;');
   });
 
   it('clamps back-edge inY so a top-row target cannot clip above y=0', () => {
-    expect(view).toContain('const inY = Math.max(ty - EDGE_OFFSET, 4);');
+    expect(layoutSource).toContain('const inY = Math.max(ty - EDGE_OFFSET, 4);');
   });
 });
 

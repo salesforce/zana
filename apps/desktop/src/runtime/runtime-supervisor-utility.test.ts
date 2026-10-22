@@ -16,7 +16,7 @@ vi.mock('electron', () => ({
           setImmediate(() => child.emit('message', {
             type: 'ready', protocolVersion: h.pv, url: `http://127.0.0.1/${entry}`, hostId: 'host-1', instanceId: 'inst-1'
           }));
-        } else if (message.type === 'request' && message.operation === 'thread-queue-turn') {
+        } else if (message.type === 'request' && ['thread-queue-turn', 'plugins-update-all'].includes(message.operation)) {
           h.queueRequests.push(message);
           setImmediate(() => child.emit('message', h.queued === 'runtime-error'
             ? { type: 'error', protocolVersion: h.pv, id: message.id, message: 'thread store unavailable' }
@@ -39,6 +39,23 @@ const { startRuntimeSupervisor } = await import('./runtime-supervisor.js');
 afterEach(() => { h.children.length = 0; });
 
 describe('utility-backed runtime supervisor', () => {
+  it('round-trips bulk plugin updates through the utility protocol and propagates errors', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-utility-updates-'));
+    vi.stubEnv('ZCC_HOST_ENROLL_TOKEN', 'x'.repeat(32));
+    const runtime = await startRuntimeSupervisor({ rendererRoot: dataDir, dataDir, runtimeDir: dataDir });
+    try {
+      const result = { updated: ['plugin-1'], failed: [{ id: 'plugin-2', message: 'unavailable' }] };
+      h.queued = result;
+      await expect(runtime.updateAllPlugins()).resolves.toEqual(result);
+      expect(h.queueRequests.at(-1)).toMatchObject({ operation: 'plugins-update-all' });
+      h.queued = 'runtime-error';
+      await expect(runtime.updateAllPlugins()).rejects.toThrow('thread store unavailable');
+    } finally {
+      await runtime.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('queues a thread turn through the server runtime and rejects a malformed reply', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-utility-sup-'));
     vi.stubEnv('ZCC_HOST_ENROLL_TOKEN', 'x'.repeat(32));

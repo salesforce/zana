@@ -228,6 +228,7 @@ export interface ControlPlaneDeps {
     search(query: string): Promise<unknown>;
     outdated(): Promise<unknown>;
     update(id: string): Promise<unknown>;
+    updateAll?(): Promise<unknown>;
     listMarketplaces(): Promise<unknown>;
     addMarketplace(url: string): Promise<unknown>;
     refreshMarketplace(url: string): Promise<unknown>;
@@ -844,6 +845,10 @@ export async function dispatchOp(
           return { ok: true, value: await (host?.outdated() ?? (await ensureFallbackPluginService()).checkUpdates()) };
         }
         if (op === 'plugin.update') {
+          if (args.all === true) {
+            if (args.id !== undefined) return { ok: false, code: 'BAD_ARGS', message: 'Choose id or all' };
+            return { ok: true, value: await (host ? host.updateAll?.() ?? Promise.reject(new Error('Bulk update is unavailable')) : (await ensureFallbackPluginService()).applyAllUpdates()) };
+          }
           const id = str(args.id);
           if (!id) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
           return { ok: true, value: await (host?.update(id) ?? (await ensureFallbackPluginService()).applyUpdate(id)) };

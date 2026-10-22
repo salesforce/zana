@@ -40842,8 +40842,9 @@ body.split-frame-guard webview {
   color: inherit;
   font: inherit;
   cursor: grab;
-  /* Fixed-width card (width set inline). Clip so nothing spills past the
-     rounded edge if a child row is wider than the content box. */
+  /* Width and height are set inline from squadFlowLayout's nodeHeight(); every
+     line below has a fixed height so that estimate is exact. Clip so nothing
+     spills past the rounded edge. */
   overflow: hidden;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   transition: border-color 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
@@ -40927,6 +40928,11 @@ body.split-frame-guard webview {
 
 .squad-flow-live {
   align-self: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 9.5px;
   font-weight: 700;
   text-transform: uppercase;
@@ -40954,6 +40960,11 @@ body.split-frame-guard webview {
    from the blue live badge and from the gold orchestrator tag. No motion. */
 .squad-flow-claimed {
   align-self: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 9.5px;
   font-weight: 700;
   text-transform: uppercase;
@@ -40964,10 +40975,39 @@ body.split-frame-guard webview {
   border-radius: 5px;
 }
 
+.squad-flow-node-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+.squad-flow-node-icon {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+.squad-flow-node-dot {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+}
+.squad-flow-node-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.squad-flow-node-chevron {
+  flex: 0 0 auto;
+  margin-top: 3px;
+}
 .squad-flow-node-top {
   display: flex;
   align-items: center;
   gap: 8px;
+  height: 20px;
   /* Allow children to shrink below their content width so the label can
      ellipsis instead of pushing the orchestrator tag out of the card. */
   min-width: 0;
@@ -40996,6 +41036,11 @@ body.split-frame-guard webview {
   border-radius: 5px;
 }
 .squad-flow-node-role {
+  flex: 0 4 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11px;
   color: var(--text-dim);
 }
@@ -41003,12 +41048,23 @@ body.split-frame-guard webview {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  height: 20px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  white-space: nowrap;
+  min-width: 0;
   font-size: 11.5px;
+}
+/* The verb never shrinks: chips to its right give up width first (role and
+   sub-agent count before live/claimed), each ellipsizing with full text in title. */
+.squad-flow-state-text {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .squad-flow-node-blocker {
   display: block;
-  margin-top: 3px;
+  height: 16px;
+  line-height: 16px;
   color: var(--danger);
   font-size: 10.5px;
   white-space: nowrap;
@@ -41017,7 +41073,8 @@ body.split-frame-guard webview {
 }
 .squad-flow-node-coord {
   display: block;
-  margin-top: 3px;
+  height: 16px;
+  line-height: 16px;
   color: var(--text-muted);
   font-size: 10.5px;
   white-space: nowrap;
@@ -41037,8 +41094,13 @@ body.split-frame-guard webview {
   color: var(--success);
 }
 .squad-flow-subagents {
-  display: inline-flex;
-  align-items: center;
+  /* block, not inline-flex: text-overflow only ellipsizes a block's own text. */
+  display: block;
+  flex: 0 2 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 10.5px;
   color: var(--text-muted);
   background: var(--bg-hover);
@@ -41060,8 +41122,10 @@ body.split-frame-guard webview {
   display: flex;
   align-items: center;
   gap: 6px;
+  height: 16px;
   font-size: 11px;
   min-width: 0;
+  overflow: hidden;
 }
 .squad-flow-child-type {
   flex: 0 0 auto;
@@ -41075,12 +41139,15 @@ body.split-frame-guard webview {
   border-radius: 4px;
 }
 .squad-flow-child-desc {
+  min-width: 0;
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .squad-flow-child-more {
+  height: 16px;
+  line-height: 16px;
   font-size: 10.5px;
   color: var(--text-dim);
   padding-left: 15px;

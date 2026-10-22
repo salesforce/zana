@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { callPluginRpc, experimental_requestApproval, useRealtime } from '@zana-ai/zcc-plugin-sdk/app';
 import {
   ORG_TESTS_CHANGED_KIND, ORG_TESTS_LIMITS, ORG_TESTS_RPC, definitionImportText, isOrgRunTerminal,
   type OrgRunRecord, type OrgRunResults, type OrgTestDefinition, type OrgTestDefinitionSummary, type OrgTestCase
 } from '../../../lib/org-tests-contract.js';
-import { STUDIO_CHANGED_CHANNEL, STUDIO_RPC } from '../../../lib/studio-contract.js';
+import { STUDIO_CHANGED_CHANNEL, STUDIO_RPC, type ScenarioSuite } from '../../../lib/studio-contract.js';
 import { RELEASE_RPC, type ReleasePrepared } from '../../../lib/release-contract.js';
-import { declined, type Message } from './ReleasePane.js';
+import { declined, type Message } from './approval-notice.js';
 import { OrgRunDetail } from './OrgRunDetail.js';
 import { ORG_CASE_TABLE_STYLES, OrgCaseTable } from './OrgCaseTable.js';
 import { agentNameFromPath, filterDefinitions, groupDefinitions, passRate, percent, relativeTime, sameAgent, sparkSeries } from './org-tests-model.js';
@@ -26,6 +26,8 @@ export interface OrgTestsViewProps {
   /** A request (agent ui.command or a click elsewhere) to show a definition and/or run; handled once per seq. */
   focus?: OrgTestsFocus | null;
   onFocusHandled?(seq: number): void;
+  /** The same local case editor used by the side panel. Local reads are independent of org reads. */
+  renderLocalSuite?(suite: ScenarioSuite): ReactNode;
 }
 export interface OrgTestsFocus { name?: string; runId?: string; seq: number }
 
@@ -61,6 +63,7 @@ const STYLES = `
 .sf-ot-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(260px, 420px) minmax(0, 1fr); }
 .sf-ot-side { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--sf-border); background: var(--sf-surface, transparent); }
 .sf-ot-list { flex: 1; min-height: 0; overflow: auto; }
+.sf-ot-source { margin: 0; padding: 8px 12px; font-size: 11px; color: var(--sf-muted); border-bottom: 1px solid var(--sf-border); }
 .sf-ot-scope { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--sf-border); }
 .sf-ot-scope strong { font-size: 12px; }
 .sf-ot-group { border-bottom: 1px solid var(--sf-border); }
@@ -183,6 +186,11 @@ export function OrgTestsView(props: OrgTestsViewProps) {
   const [attachId, setAttachId] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const localEnabled = Boolean(props.renderLocalSuite);
+  const [localSuites, setLocalSuites] = useState<ScenarioSuite[] | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [selectedLocal, setSelectedLocal] = useState<string | null>(null);
+  const localSeq = useRef(0);
   const alive = useRef(true);
   const listSeq = useRef(0);
   const runSeq = useRef(0);
@@ -194,6 +202,29 @@ export function OrgTestsView(props: OrgTestsViewProps) {
     const reply = await call(pluginId, method, { ...(projectId ? { projectId } : {}), ...args }) as Reply | null;
     return reply ?? { ok: false, error: 'No response.' };
   }, [call, pluginId, projectId]);
+
+  const loadLocal = useCallback(async () => {
+    if (!localEnabled) return;
+    const seq = ++localSeq.current;
+    try {
+      const reply = await rpc(STUDIO_RPC.suites);
+      if (!alive.current || seq !== localSeq.current) return;
+      if (reply.ok === false || !Array.isArray(reply.suites)) throw Error(reply.error || 'Could not read the local suites.');
+      setLocalSuites(reply.suites as ScenarioSuite[]);
+      setLocalError(null);
+    } catch (error) {
+      if (alive.current && seq === localSeq.current) {
+        setLocalSuites(current => current ?? []);
+        setLocalError(error instanceof Error ? error.message : String(error));
+      }
+    }
+  }, [localEnabled, rpc]);
+  useEffect(() => {
+    ++localSeq.current;
+    setLocalSuites(null); setLocalError(null); setSelectedLocal(null);
+    return () => { ++localSeq.current; };
+  }, [rpc]);
+  useEffect(() => { if (visible) void loadLocal(); }, [visible, loadLocal]);
 
   const loadRuns = useCallback(async () => {
     try {
@@ -274,6 +305,7 @@ export function OrgTestsView(props: OrgTestsViewProps) {
 
   /** Loads a run's results, plus the previous finished run of the same definition for the diff. */
   const openRun = useCallback(async (id: string, history: OrgRunRecord[] = runs) => {
+    setSelectedLocal(null);
     const seq = ++runSeq.current;
     setRunId(id); setPollFailed(false);
     try {
@@ -293,6 +325,7 @@ export function OrgTestsView(props: OrgTestsViewProps) {
 
   /** Resolves true when this selection is still the current one after loading. */
   const select = useCallback(async (name: string): Promise<boolean> => {
+    setSelectedLocal(null);
     const seq = ++defSeq.current;
     const runToken = ++runSeq.current;
     setSelected(name); setDefinition(null); setRun(null); setPrevious(null); setRunId(null); setConfirming(false); setNotice(null); setPollFailed(false);
@@ -324,6 +357,7 @@ export function OrgTestsView(props: OrgTestsViewProps) {
   useEffect(() => {
     if (!focus || !visible || focus.seq === focusSeen.current) return;
     focusSeen.current = focus.seq;
+    setSelectedLocal(null);
     onFocusHandled?.(focus.seq);
     void (async () => {
       if (focus.name && !await select(focus.name)) return;
@@ -367,7 +401,9 @@ export function OrgTestsView(props: OrgTestsViewProps) {
 
   useRealtime(STUDIO_CHANGED_CHANNEL, payload => {
     const row = payload as { kind?: string; projectId?: string; runId?: string } | null;
-    if (!row || row.kind !== ORG_TESTS_CHANGED_KIND || (row.projectId && row.projectId !== projectId) || !visible) return;
+    if (!row || (row.projectId && row.projectId !== projectId) || !visible) return;
+    if (row.kind === 'suites' || row.kind === 'suite-progress') { void loadLocal(); return; }
+    if (row.kind !== ORG_TESTS_CHANGED_KIND) return;
     void loadRuns();
     if (row.runId && row.runId === openId && runStatus && !isOrgRunTerminal(runStatus)) void openRun(row.runId);
   });
@@ -441,7 +477,7 @@ export function OrgTestsView(props: OrgTestsViewProps) {
       const notice: Notice = { tone: 'ok', text: `Attached run ${attached.runId}.` };
       // The user picked something else while the attach was in flight: keep their choice.
       if (defToken !== defSeq.current || runToken !== runSeq.current) return notice;
-      const show = () => { setRun(attached); setPrevious(null); setRunId(attached.runId); setPollFailed(false); };
+      const show = () => { setSelectedLocal(null); setRun(attached); setPrevious(null); setRunId(attached.runId); setPollFailed(false); };
       if (attached.definition !== 'unknown' && DEFINITION_NAME.test(attached.definition)) {
         if (attached.definition !== selected) {
           const settled = await select(attached.definition);
@@ -486,6 +522,18 @@ export function OrgTestsView(props: OrgTestsViewProps) {
   const selectedDef = selected ? all.find(def => def.name === selected) : undefined;
   const lastRun = history[0];
   const filtered = Boolean(query.trim()) || hasRuns;
+  const localAll = localSuites ?? [];
+  const localMatching = localAll.filter(suite => {
+    if (scoped && suite.id.toLowerCase() !== agent?.toLowerCase()) return false;
+    if (hasRuns && !suite.progress && !suite.lastEval && !suite.cases.some(c => suite.lastResults?.[c.id])) return false;
+    const search = query.trim().toLowerCase();
+    return !search || [suite.id, suite.path, ...suite.cases.flatMap(c => [c.name, ...c.utterances])].some(value => value.toLowerCase().includes(search));
+  });
+  const local = localAll.find(suite => suite.path === selectedLocal);
+  const selectLocal = (suite: ScenarioSuite) => {
+    ++defSeq.current; ++runSeq.current;
+    setSelectedLocal(suite.path); setSelected(null); setDefinition(null); setRun(null); setPrevious(null); setRunId(null); setConfirming(false); setPollFailed(false);
+  };
 
   const row = (def: OrgTestDefinitionSummary) => {
     const runsOf = runsFor(def.name);
@@ -521,16 +569,16 @@ export function OrgTestsView(props: OrgTestsViewProps) {
     <div className="sf-ot" data-testid="org-tests-view">
       <style>{STYLES}</style>
       <div className="sf-ot-top">
-        <h2>Org tests</h2>
+        <h2>{localEnabled ? 'Tests' : 'Org tests'}</h2>
         {org && <span className={`sf-ot-org${org.isProduction ? ' is-production' : ''}`} title={org.isProduction ? 'Production org' : undefined}>{org.alias}{org.isProduction ? ' (production)' : ''}</span>}
         <span className="sf-tp-spacer" />
-        <input type="search" className="sf-ot-search" aria-label="Filter org tests" value={query} onChange={e => setQuery(e.target.value)} placeholder="Filter by name or label" />
+        <input type="search" className="sf-ot-search" aria-label={localEnabled ? 'Filter tests' : 'Filter org tests'} value={query} onChange={e => setQuery(e.target.value)} placeholder="Filter by name or label" />
         {agent && <div className="sf-tp-seg" role="group" aria-label="Scope">
           <button type="button" aria-pressed={scope === 'this'} onClick={() => setScope('this')} title={`Tests of ${agent}`}>This agent</button>
           <button type="button" aria-pressed={scope === 'all'} onClick={() => setScope('all')}>All agents</button>
         </div>}
         <button type="button" className="sf-tp-btn sf-ot-toggle" aria-pressed={hasRuns} onClick={() => setHasRuns(on => !on)}>Has runs</button>
-        <button type="button" className="sf-tp-btn sf-ot-icon" aria-label="Refresh" title="Refresh the list from the org" onClick={() => void loadList(true)}>↻</button>
+        <button type="button" className="sf-tp-btn sf-ot-icon" aria-label="Refresh" title="Refresh tests" onClick={() => { void loadList(true); void loadLocal(); void loadRuns(); }}>↻</button>
         <div className="sf-ot-menu">
           <button type="button" className="sf-tp-btn sf-ot-icon" aria-label="More actions" aria-expanded={menuOpen} onClick={() => setMenuOpen(open => !open)}>⋯</button>
           {menuOpen && <div className="sf-ot-pop" role="dialog" aria-label="Attach a run" onKeyDown={e => { if (e.key === 'Escape') setMenuOpen(false); }}>
@@ -550,6 +598,18 @@ export function OrgTestsView(props: OrgTestsViewProps) {
       <div className="sf-ot-body">
         <div className="sf-ot-side">
           <div className="sf-ot-list" data-testid="org-tests-table">
+            {localEnabled && <section aria-label="Local cases" data-testid="local-tests-list">
+              <h3 className="sf-ot-source">Local cases · Project</h3>
+              {localError && <p className="sf-tp-message is-error" role="alert">{localError}</p>}
+              {!localSuites && <p className="sf-ot-source">Loading local cases…</p>}
+              {localSuites && !localMatching.length && <p className="sf-ot-source">{filtered ? 'No local cases match.' : scoped ? `No local cases for ${agent} yet.` : 'No local cases in this project yet.'}</p>}
+              <ul className="sf-ot-rows sf-ot-flat">{localMatching.map(suite => <li key={suite.path} className="sf-ot-row" data-testid={`local-suite-${suite.id}`} aria-selected={selectedLocal === suite.path}>
+                <button type="button" className="sf-ot-link" aria-pressed={selectedLocal === suite.path} onClick={() => selectLocal(suite)}>{suite.id}</button>
+                <span className="sf-ot-rowsub"><span>{plural(suite.cases.length, 'case')}</span><span className="sf-ot-api">{suite.path}</span></span>
+                <span className="sf-ot-right"><span className="sf-ot-chip">{suite.progress ? 'Running…' : suite.lastEval || suite.cases.some(c => suite.lastResults?.[c.id]) ? 'Has runs' : 'No runs'}</span></span>
+              </li>)}</ul>
+            </section>}
+            {localEnabled && <h3 className="sf-ot-source">Org tests · {org?.alias ?? 'Salesforce'}</h3>}
             {!defs && <div className="sf-ot-blank"><p>Loading org tests…</p></div>}
             {scoped && <div className="sf-ot-scope" data-testid="org-tests-scope">
               <strong>{agent}</strong><span className="sf-tp-sub">· {withRunsText(mine, plural(mine.length, 'test'))}</span>
@@ -573,7 +633,7 @@ export function OrgTestsView(props: OrgTestsViewProps) {
             })}
           </div>
           {defs && <div className="sf-ot-foot" aria-live="polite">
-            <span>{shown.length} of {plural(all.length, 'test')}</span>
+            <span>{localEnabled ? `${localMatching.length} of ${plural(localAll.length, 'local suite')} · ${shown.length} of ${plural(all.length, 'org test')}` : `${shown.length} of ${plural(all.length, 'test')}`}</span>
             {progress && progress.done < progress.total && <>
               <span className="sf-tp-spacer" />
               <span>Reading definitions {progress.done}/{progress.total}</span>
@@ -586,7 +646,8 @@ export function OrgTestsView(props: OrgTestsViewProps) {
         </div>
 
         <div className="sf-ot-detail">
-          {!selected && !run && <div className="sf-ot-empty">Pick a test to see its cases and runs.</div>}
+          {local && props.renderLocalSuite?.(local)}
+          {!local && !selected && !run && <div className="sf-ot-empty">{localEnabled ? 'Pick local cases or an org test to see its cases and runs.' : 'Pick a test to see its cases and runs.'}</div>}
           {!selected && run && <OrgRunDetail run={run} previous={previous} path={path} busy={working}
             onImport={cases => importCases(run.definition, undefined, cases, 'import-run')} onAskAgent={onAskAgent} />}
           {selected && <section className="sf-ot-run" aria-label={`Test ${selected}`} data-testid="org-def-detail">

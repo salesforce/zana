@@ -17,7 +17,9 @@ import { registerStudioComments } from './studio-comments.js';
 import { registerStudioPreview, type SuiteEvalReply } from './scenario-suites.js';
 import { evalCaseOutcomes } from './eval-spec.js';
 import { registerStudioExplorer } from './studio-explorer.js';
+import { registerAgentScriptDocuments } from './agent-script-document.js';
 import { registerOrgTests } from './org-tests.js';
+import { registerSimulations } from './simulation-batches.js';
 import { createAgentDraft, draftDestination, DRAFT_PROJECT } from './agent-drafts.js';
 import type { AgentDraftInput } from './agent-draft-contract.js';
 import type { PluginAgentToolContext, PluginInteractionResult, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
@@ -63,6 +65,7 @@ import { createKvArtifactStore, type ArtifactStore } from './artifacts.js';
 import { CONSTITUTION_INSTRUCTIONS, shouldContributeConstitution } from './constitution.js';
 import { ConnectionError, ConnectionManager } from './connection.js';
 import { AgentforceLab } from './agentforce-lab.js';
+import type { LabEngine } from './agentforce-lab-contract.js';
 import type { AgentforceTransport } from './agentforce-transport.js';
 import { formatDoctor } from './doctor.js';
 import { createSalesforceSdk } from './sdk.js';
@@ -118,6 +121,7 @@ import {
   type EnvelopeKind,
   type PluginSettingsValues,
   type PublicOrgView,
+  type ResolvedOrg,
   type SafetyEnvelope,
   type SalesforceDeps,
   type ToolFailure,
@@ -207,26 +211,27 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   const releaseScope = () => contexts.current()?.projectId ?? 'global';
   // A release run has no thread: the host-signed sheet approved its one action, and any other gate stays closed.
   const releaseCtx = (): PluginAgentToolContext => ({ threadId: '', projectId: contexts.current()?.projectId ?? '', signal: new AbortController().signal });
+  // Same gate as agentPreview.* and query.execute: production and unknown orgs confirm in the thread.
+  const authorizeLab = async (org: ResolvedOrg, { engine, threadId, startedByUser }: { engine: LabEngine; threadId: string; startedByUser: boolean }) => {
+    // The user's own click on Start is the approval; an agent-driven start still asks in its thread.
+    if (startedByUser) return;
+    const verb = engine === 'preview' ? 'Simulate' : 'Rehearse';
+    const mediated = await guardrail.mediate({
+      threadId,
+      orgAlias: org.alias,
+      orgId: org.orgId,
+      orgKind: org.kind,
+      summary: `${verb} an Agentforce draft on ${org.alias} (${org.kind}). This makes Salesforce model calls in that org.`
+    });
+    if (mediated.approved) return;
+    throw new Error(mediated.reason === 'headless'
+      ? `${org.alias} is a ${org.kind} org. Start this run beside a thread to approve it, or pick a sandbox.`
+      : `Operator ${mediated.reason} the ${verb.toLowerCase()} run.`);
+  };
   const lab = new AgentforceLab({
     transport: labTransport,
     connect: () => connections.connect(),
-    // Same gate as agentPreview.* and query.execute: production and unknown orgs confirm in the thread.
-    authorize: async (org, { engine, threadId, startedByUser }) => {
-      // The user's own click on Start is the approval; an agent-driven start still asks in its thread.
-      if (startedByUser) return;
-      const verb = engine === 'preview' ? 'Simulate' : 'Rehearse';
-      const mediated = await guardrail.mediate({
-        threadId,
-        orgAlias: org.alias,
-        orgId: org.orgId,
-        orgKind: org.kind,
-        summary: `${verb} an Agentforce draft on ${org.alias} (${org.kind}). This makes Salesforce model calls in that org.`
-      });
-      if (mediated.approved) return;
-      throw new Error(mediated.reason === 'headless'
-        ? `${org.alias} is a ${org.kind} org. Start this run beside a thread to approve it, or pick a sandbox.`
-        : `Operator ${mediated.reason} the ${verb.toLowerCase()} run.`);
-    },
+    authorize: authorizeLab,
     scope: () => contexts.current()?.projectId ?? contexts.current()?.settings.projectRoot ?? 'global'
   });
   zcc.onDispose(() => lab.dispose());
@@ -682,7 +687,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     return result.ok ? { ok: true, result: result.result } : { ok: false, error: result.error };
   });
   registerRpc('agentScript.examples', async () => ({ ok: true, examples: AGENT_SCRIPT_EXAMPLES }));
-  // A "Load versions" approval also lets Compile reach a production org from the window.
+  // An org-read approval (Allow reads…) also lets Compile reach a production org from the window.
   registerRpc('agentScript.compile', (args) => runUiCompile(args, clickedSdk(readGrants.wrap(sdk, releaseScope()), args), deps, readSettings));
   registerRpc('agentBuilder.open', (args) => runOpenInBuilder(args, clickedSdk(readGrants.wrap(sdk, releaseScope()), args), deps, readSettings));
   const release = createReleaseService({
@@ -837,13 +842,14 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   const assistant = registerStudioAssistant(studio);
   registerStudioContext(studio);
   registerStudioComments(studio);
+  const agentAt = async (path: string) => {
+    const loaded = await loadAgentBundles({ path }, await readSettings(), deps);
+    if (!('projectRoot' in loaded)) return loaded as ToolFailure;
+    if (!loaded.bundle) return fail('not_found', `Agentforce bundle not found: ${path}`) as ToolFailure;
+    return { apiName: loaded.bundle.apiName, source: deps.readFile(loaded.bundle.path) ?? '' };
+  };
   registerStudioPreview(studio, {
-    agent: async (path) => {
-      const loaded = await loadAgentBundles({ path }, await readSettings(), deps);
-      if (!('projectRoot' in loaded)) return loaded as ToolFailure;
-      if (!loaded.bundle) return fail('not_found', `Agentforce bundle not found: ${path}`) as ToolFailure;
-      return { apiName: loaded.bundle.apiName, source: deps.readFile(loaded.bundle.path) ?? '' };
-    },
+    agent: agentAt,
     // The suite path is confined under the project; a production org needs the Studio read grant (Release "Load versions").
     runEval: async (spec) => {
       const settings = await readSettings();
@@ -854,8 +860,18 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     }
   });
   registerStudioExplorer(studio);
+  registerAgentScriptDocuments(studio);
   // Org tests read the org through the Studio read grants, like Release "Load versions"; a Studio click approves the read.
   registerOrgTests(studio, { sdkFor: args => clickedSdk(readGrants.wrap(sdk, releaseScope()), args) });
+  // A batch is approved once, like one lab run; its lanes then start without asking again.
+  registerSimulations(studio, {
+    agent: agentAt,
+    authorize: async request => {
+      const org = await connections.connect();
+      await authorizeLab(org, request);
+      return { orgAlias: org.alias };
+    }
+  });
   zcc.agents.registerTool({
     desktopOnly: ['ui.views', 'ui.command', 'ui.result'],
     name: 'sf_workbench',
@@ -1033,7 +1049,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     desktopOnly: ['ui.views', 'ui.command', 'ui.result'],
     name: 'sf_agent',
     description:
-      'Agentforce lifecycle: LSP diagnose (diagnostics/hover/complete/definition/symbols) on a confined .agent file, compile/inspect, preview (simulate by default; live confirms), eval via a confined YAML/JSON spec (sf agent test run-eval) or an org AiEvaluationDefinition, and fail-closed publish/activate/deactivate. Edit source in the Agentforce Playground side panel or file tools. Publish, activate, deactivate, and live preview always confirm.',
+      'Agentforce lifecycle: LSP diagnose (diagnostics/hover/complete/definition/symbols) on a confined .agent file, compile/inspect, preview (simulate by default; live confirms), eval via a confined YAML/JSON spec (sf agent test run-eval) or an org AiEvaluationDefinition, and fail-closed publish/activate/deactivate. Edit source in Agentforce Studio or file tools. Publish, activate, deactivate, and live preview always confirm.',
     parameters: {
       type: 'object',
       properties: {
@@ -1052,7 +1068,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
             'lifecycle.publish',
             'lifecycle.activate',
             'lifecycle.deactivate',
-            ...workbenchActionNames.filter(name => /^(source|draft|files|studio|actions)\./.test(name))
+            ...workbenchActionNames.filter(name => /^(source|draft|files|studio|actions|simulations)\./.test(name))
           ]
         },
         apiName: { type: 'string' },

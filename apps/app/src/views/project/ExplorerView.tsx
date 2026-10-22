@@ -14,6 +14,7 @@ import { useAiEnhanceSelection } from '@/components/AiEnhanceSelection';
 import { DelayedStencilList } from '@/components/ui/Skeleton';
 import { useFileDrop } from '@/hooks/useFileDrop';
 import { useMonacoTheme } from '@/hooks/useMonacoTheme';
+import { useExplorerFileReveal } from './useExplorerFileReveal.js';
 import {
   WorktreeMenu,
   ExplorerGitFooter,
@@ -297,12 +298,8 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
     appliedGotoNonceRef.current = goto.nonce;
   }, [goto]);
 
-  const loadDir = useCallback(
-    async (path: string, force = false): Promise<FsEntry[]> => {
-      if (!force) {
-        const cached = entries.get(path);
-        if (cached) return cached;
-      }
+  const fetchDir = useCallback(
+    async (path: string): Promise<FsEntry[]> => {
       setLoading((s) => {
         const next = new Set(s);
         next.add(path);
@@ -332,41 +329,10 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
       });
       return list;
     },
-    [entries, isRemote, project.id, pushToast, scope, viewRoot]
+    [isRemote, project.id, pushToast, scope, viewRoot]
   );
 
-  // Walk down from project root, loading & expanding each ancestor folder of
-  // `filePath`, then scroll the file's row into view. Used when search or
-  // quick-open navigates to a file the user hasn't manually expanded yet.
-  const revealFile = useCallback(
-    async (filePath: string) => {
-      if (!filePath.startsWith(viewRoot + '/')) return;
-      const rest = filePath.slice(viewRoot.length).replace(/^\//, '');
-      if (!rest) return;
-      const segments = rest.split('/');
-      // Drop the file name itself; we only need to expand ancestor dirs.
-      segments.pop();
-      let dir = viewRoot;
-      for (const seg of segments) {
-        await loadDir(dir);
-        dir = dir + '/' + seg;
-        setExpanded((s) => {
-          if (s.get(dir) === true) return s;
-          const next = new Map(s);
-          next.set(dir, true);
-          return next;
-        });
-      }
-      // Wait one frame so the freshly expanded rows are in the DOM.
-      requestAnimationFrame(() => {
-        const root = treeBodyRef.current;
-        if (!root) return;
-        const rows = root.querySelectorAll<HTMLElement>('.tree-row.file.active');
-        rows[0]?.scrollIntoView({ block: 'nearest' });
-      });
-    },
-    [viewRoot, loadDir]
-  );
+  const { loadDir, revealFile } = useExplorerFileReveal({ fetchDir, entries, setExpanded, treeBodyRef, activeRoot, treeMode });
 
   useEffect(() => {
     setExpanded(new Map());
@@ -467,7 +433,9 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
     };
   }, [diffMode, explorerFile, headResult, scope]);
 
-  useEffect(() => { if (explorerFile) void revealFile(explorerFile); }, [explorerFile, revealFile]);
+  // Reveal only when a file is opened (or the root changes), not on every tree
+  // load, so folders the user collapses afterwards stay collapsed.
+  useEffect(() => { if (explorerFile) void revealFile(explorerFile, viewRoot); }, [explorerFile, viewRoot, revealFile]);
 
   // load file contents when explorerFile changes
   useEffect(() => {

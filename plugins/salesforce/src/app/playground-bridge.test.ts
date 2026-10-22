@@ -26,6 +26,18 @@ describe('playground bridge', () => {
       expect(isHostToPlayground({ ...graph, ...change })).toBe(false);
     }
   });
+  it('accepts bounded test coverage and a pinned case on graph snapshots, and draft-case requests back', () => {
+    const graph = { source: PLAYGROUND_BRIDGE_SOURCE, type: 'graph', content: 'start_agent:', visible: true, theme: 'light' };
+    const coverage = { cases: [{ id: 'a', name: 'A', outcome: 'pass', path: ['start_agent'], missing: [] }] };
+    expect(isHostToPlayground({ ...graph, coverage, focusCase: 'a' })).toBe(true);
+    expect(isHostToPlayground({ ...graph, coverage: null })).toBe(true);
+    for (const change of [{ coverage: { cases: [{ id: 1 }] } }, { coverage: 'x' }, { focusCase: 4 }, { focusCase: 'x'.repeat(201) }]) {
+      expect(isHostToPlayground({ ...graph, ...change })).toBe(false);
+    }
+    const draft = { source: PLAYGROUND_BRIDGE_SOURCE, type: 'draftCases', labels: ['Errors'] };
+    expect(isPlaygroundToHost(draft)).toBe(true);
+    for (const labels of [[], 'Errors', [''], [7], Array(51).fill('a'), ['x'.repeat(201)]]) expect(isPlaygroundToHost({ ...draft, labels })).toBe(false);
+  });
   it('validates draft identities and save-as flags before accepting editor messages', () => {
     const persist = { source: PLAYGROUND_BRIDGE_SOURCE, type: 'persist', path: 'New.agent', content: 'source', draftKey: 'p:example:one', create: true };
     expect(isPlaygroundToHost(persist)).toBe(true);
@@ -130,5 +142,10 @@ describe('studio bridge messages', () => {
     rejects(isHostToPlayground, { type: 'setComments', comments: [comment] }, [{ comments: [{ ...comment, line: 0 }] }, { comments: 'x' }, { comments: Array(501).fill(comment) }]);
     rejects(isHostToPlayground, { type: 'setHits', lines: [1, 2] }, [{ lines: [0] }, { lines: 'x' }, { lines: Array(1001).fill(1) }]);
     rejects(isHostToPlayground, { type: 'setLayout', compact: true }, [{ compact: 'yes' }]);
+    rejects(isHostToPlayground, { type: 'setReadOnly', readOnly: true, content: 'x' }, [{ readOnly: 'yes' }, { content: 3 }, { content: 'x'.repeat(AGENT_SOURCE_MAX + 1) }]);
+    expect(isHostToPlayground({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'setReadOnly', readOnly: false })).toBe(true);
+    // A re-baseline names the saved text and its sha together.
+    rejects(isHostToPlayground, { type: 'setReadOnly', readOnly: false, baseline: 'disk', baseSha: 'a'.repeat(64) },
+      [{ baseSha: undefined }, { baseSha: 'A'.repeat(64) }, { baseSha: 'a'.repeat(63) }, { baseline: 3 }, { baseline: undefined }, { baseline: 'x'.repeat(AGENT_SOURCE_MAX + 1) }]);
   });
 });

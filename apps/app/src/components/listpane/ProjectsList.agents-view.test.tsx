@@ -148,6 +148,26 @@ describe('ProjectsList agents-only view', () => {
     expect(screen.getByTestId('location').textContent).toBe('/sessions/s1');
   });
 
+  it('filters squad workers by their own title and orchestrators by job title', () => {
+    localStorage.setItem('zcc.sidebarProjectView', 'agents');
+    const cohort = { cohortId: 'c', teamId: 't', teamName: 'Squad', executionId: 'e', executionJobTitle: 'Run Aida Plan' };
+    h.threads = [];
+    h.terminals = {
+      p1: [
+        { ...session('w1', 'Engineer', 2_000), cohort: { ...cohort, role: 'worker' } } as TerminalSession,
+        { ...session('o1', 'Claude Code', 1_000), cohort: { ...cohort, role: 'orchestrator' } } as TerminalSession
+      ]
+    };
+    renderList();
+    const input = screen.getByPlaceholderText('Filter agents');
+    const names = () => within(screen.getByRole('list', { name: 'Agents' })).getAllByRole('listitem')
+      .map((row) => row.querySelector('.project-terminal-name')?.textContent);
+    fireEvent.change(input, { target: { value: 'engineer' } });
+    expect(names()).toEqual(['Engineer']);
+    fireEvent.change(input, { target: { value: 'aida' } });
+    expect(names()).toEqual(['Run Aida Plan']);
+  });
+
   it('offers a way back to projects when there are no agents', () => {
     h.threads = [];
     h.terminals = {};

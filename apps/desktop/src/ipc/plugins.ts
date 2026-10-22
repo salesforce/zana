@@ -13,6 +13,7 @@ import {
   setPluginAppEnabledOnProductServer,
   checkPluginUpdatesFromProductServer,
   applyPluginUpdateOnProductServer,
+  applyAllPluginUpdatesOnProductServer,
   removePluginAppOnProductServer,
   reloadPluginAppOnProductServer,
   callPluginRpcOnProductServer,
@@ -130,7 +131,16 @@ export function registerPluginsIpc(): void {
       if (ctx.runtimeSupervisor) return ctx.runtimeSupervisor.outdatedPlugins();
       return checkPluginUpdatesFromProductServer();
     },
-    () => []
+    (error) => { throw error; }
+  );
+  ctx.safeHandle(
+    IPC.pluginApps.applyAllUpdates,
+    async () => {
+      if (!ctx.runtimeSupervisor) return applyAllPluginUpdatesOnProductServer();
+      try { return { ok: true, value: await ctx.runtimeSupervisor.updateAllPlugins() }; }
+      catch (error) { return { ok: false, code: 'WRITE_FAILED', message: error instanceof Error ? error.message : String(error) }; }
+    },
+    (error) => ({ ok: false, code: 'WRITE_FAILED', message: error instanceof Error ? error.message : String(error) })
   );
   ctx.safeHandle(
     IPC.pluginApps.applyUpdate,

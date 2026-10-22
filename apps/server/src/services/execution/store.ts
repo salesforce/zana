@@ -39,6 +39,11 @@ import {
 } from './contracts.js';
 
 export type ExecutionState = 'READY' | 'STARTING' | 'RUNNING' | 'COMPLETED' | 'BLOCKED' | 'STOPPED' | 'FAILED';
+/** States an execution never leaves. BLOCKED is not terminal: it can resume. */
+export const TERMINAL_EXECUTION_STATES: ReadonlySet<ExecutionState> = new Set(['COMPLETED', 'STOPPED', 'FAILED']);
+export function isTerminalExecutionState(state: ExecutionState): boolean {
+  return TERMINAL_EXECUTION_STATES.has(state);
+}
 export type ExecutionWorkUnitState = 'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'SKIPPED';
 export type ExecutionCohortAuthority = { role: 'worker' | 'orchestrator'; slotId: string };
 export type ExecutionLaunchKind = 'team';
@@ -560,7 +565,7 @@ function assertClaimFence(unit: ExecutionWorkUnit, claim?: { claimId: string; cl
 }
 const DELIVERED_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 const storeQueue = createSerializedTransactionQueue();
-const terminalStates = new Set<ExecutionState>(['COMPLETED', 'STOPPED', 'FAILED']);
+const terminalStates = TERMINAL_EXECUTION_STATES;
 const failureCodes = new Set<ExecutionFailureCode>(EXECUTION_FAILURE_CODES);
 
 function clone<T>(value: T): T {
@@ -3028,6 +3033,15 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       .slice(-safeLimit).reverse()));
   }
 
+  /** Live runs the principal owns in a project, uncapped (unlike `list`, which returns the newest 100 of any state). */
+  async function countActiveOwned(callerPrincipalId: string, projectId: string): Promise<number> {
+    return storeQueue.run(async () => read().state.records.filter((record) =>
+      (record.callerPrincipalId === string(callerPrincipalId, 'caller principal id')
+        || record.effectiveOwnerPrincipalIds?.includes(callerPrincipalId))
+      && record.projectId === string(projectId, 'project id') && record.dismissedAt === undefined
+      && !isTerminalExecutionState(record.state)).length);
+  }
+
   async function listInProject(projectId: string, before?: number, limit = 100): Promise<{ records: ExecutionRecord[]; hasMore: boolean }> {
     const safeLimit = Math.max(1, Math.min(limit, 100));
     return storeQueue.run(async () => {
@@ -3153,7 +3167,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, markReported, markBlockerReported, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, listInProject, listActive, listUndisposedSquadWorktrees, listUnreportedExecutions, listUnreportedBlockers, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, markReported, markBlockerReported, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, countActiveOwned, listInProject, listActive, listUndisposedSquadWorktrees, listUnreportedExecutions, listUnreportedBlockers, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 function normalizeModelSnapshot(snapshot: ResolvedModelSnapshotV1): ResolvedModelSnapshotV1 {

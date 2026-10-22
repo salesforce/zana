@@ -11,6 +11,7 @@ import { EXECUTION_HANDOFF_OPERATION, EXECUTION_RESUME_MONITOR_OPERATION, type c
 import { MAX_TEAM_INITIAL_TASK_BYTES } from '../launch/team-lifecycle-store.js';
 import { isWithin } from '@zana-ai/zcc-path-confine';
 import { EXECUTION_FAILURE_CODES, EXECUTION_FAILURE_DETAIL_MAX_CHARS } from '@zana-ai/zcc-domain/product';
+import { LAUNCH_REVIEW_REQUIRED_MESSAGE, type LaunchApproval } from '@zana-ai/zcc-domain/squad-proposal';
 import { MAX_EXECUTION_PLAN_BYTES, validOutputDeclaration } from './contracts.js';
 import { assembledResultProjection } from './projection.js';
 
@@ -211,7 +212,19 @@ export interface RegisterExecutionToolOptions {
   approveHandoff?: (sourceSessionId: string, targetSessionId: string, projectId: string, executionId: string, operation: typeof EXECUTION_HANDOFF_OPERATION | typeof EXECUTION_RESUME_MONITOR_OPERATION) => Promise<boolean>;
   /** How this route's session receives a `[Squad report]`: a CLI Agent PTY (default) or a Modern thread. */
   reportKind?: 'pty' | 'thread';
+  /**
+   * The launch-approval policy that applies to a Squad in this project. `review`
+   * makes `execution.start` refuse so the agent proposes the run for the user to
+   * Launch instead. Unwired ⇒ every start is refused (LAUNCH_APPROVAL_UNAVAILABLE).
+   */
+  resolveLaunchApproval?: (teamId: string, projectId: string) => LaunchApproval | Promise<LaunchApproval>;
 }
+
+export { LAUNCH_REVIEW_REQUIRED_MESSAGE };
+
+/** Shared by the CLI Agent and Modern thread `execution.start` tool definitions. */
+export const EXECUTION_START_DESCRIPTION =
+  'Low-level start of one execution in this live session project (explicit slots, work units, policy). Deprecated for agent use: to launch a group of agents, prefer squad_launch. A launch target or project set to Review before launch refuses this with LAUNCH_REVIEW_REQUIRED. Pass either full request fields or a bounded requestPath. Main authorizes launch slots and stores launch identity before launch.';
 
 function denied(name: string) {
   return { isError: true, content: [{ type: 'text' as const, text: `${name} unavailable: session MCP is not authorized for this live session.` }] };
@@ -506,7 +519,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   });
 
   register('execution.start', {
-    description: 'Start one execution in this live session project. Pass either full request fields or a bounded requestPath. Main authorizes launch slots and stores launch identity before launch.',
+    description: EXECUTION_START_DESCRIPTION,
     inputSchema: executionStartInputSchema
   }, async (input) => {
     if (!await ownerAuthorized()) return denied('execution.start');
@@ -516,6 +529,17 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
       if (!hasBoundedWorkUnits(start.workUnits)) throw new Error(`workUnits must not exceed ${MAX_START_WORK_UNITS_BYTES} UTF-8 bytes`);
     } catch (error) {
       return { isError: true, content: [{ type: 'text' as const, text: `execution.start failed: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+    let approval: LaunchApproval;
+    try {
+      if (!options.resolveLaunchApproval) throw new Error('launch approval resolver is not wired');
+      approval = await options.resolveLaunchApproval(start.teamId, options.projectId);
+    } catch (error) {
+      console.error(`[execution-mcp] launch approval lookup failed for project ${options.projectId}`, error);
+      return { isError: true, content: [{ type: 'text' as const, text: 'execution.start failed: LAUNCH_APPROVAL_UNAVAILABLE: the Squad launch approval setting could not be read, so the run was not started.' }] };
+    }
+    if (approval === 'review') {
+      return { isError: true, content: [{ type: 'text' as const, text: `execution.start failed: LAUNCH_REVIEW_REQUIRED: ${LAUNCH_REVIEW_REQUIRED_MESSAGE}` }] };
     }
     const { version, launchKind, launchDisplay, teamId, launchRequestId, jobTitle, summary, slots, deadlineMs, maxConcurrent, maxLaunches, maxTurnsPerClaim, maxClaimWallClockMs, usageBudget, workflow, workUnits, worktree, notify } = start;
     const request: ExecutionRequestV1 = {
@@ -542,7 +566,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.status', {
     description: 'Read one project-scoped execution.', inputSchema: executionIdSchema
   }, async ({ executionId }) => {
-    if (!await authorized()) return denied('execution.status');
+    if (!await ownerAuthorized()) return denied('execution.status');
     const cohort = await binding(executionId);
     if (cohort) return wrongAuthority('execution.status');
     const record = await options.service.status(options.sessionId!, options.projectId, executionId);
@@ -585,7 +609,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.list', {
     description: 'List recent project-scoped executions started by this session identity.', inputSchema: {}
   }, async () => {
-    if (!await authorized()) return denied('execution.list');
+    if (!await ownerAuthorized()) return denied('execution.list');
     const cohort = await binding();
     if (cohort) return wrongAuthority('execution.list');
     const records = await options.service.list(options.sessionId!, options.projectId);
@@ -595,7 +619,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.events', {
     description: 'Read ordered execution events after an optional sequence cursor.', inputSchema: executionEventsSchema
   }, async ({ executionId, after, limit }) => {
-    if (!await authorized()) return denied('execution.events');
+    if (!await ownerAuthorized()) return denied('execution.events');
     const events = await options.service.events(options.sessionId!, options.projectId, executionId, after ?? 0, limit ?? 100);
     return { content: [{ type: 'text' as const, text: JSON.stringify(events) }] };
   });
@@ -654,7 +678,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.stop', {
     description: 'Request a stop for one project-scoped Squad execution at an expected state version.', inputSchema: executionControlSchema
   }, async ({ executionId, expectedStateVersion }) => {
-    if (!await authorized()) return denied('execution.stop');
+    if (!await ownerAuthorized()) return denied('execution.stop');
     const result = await options.service.stop(options.sessionId!, options.projectId, executionId, expectedStateVersion);
     return result.ok
       ? { content: [{ type: 'text' as const, text: JSON.stringify(result) }] }
@@ -678,10 +702,12 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
       : { isError: true, content: [{ type: 'text' as const, text: `execution.complete failed: ${result.message}` }] };
   });
 
+  // Retry, recovery and resume are owner controls: a CLI Agent or Modern thread
+  // owner passes the owner gate, and the service still checks the record's owner.
   register('execution.retry', {
     description: 'Retry a pre-dispatch blocked execution using a fresh Team launch identity.', inputSchema: executionControlSchema
   }, async ({ executionId, expectedStateVersion }) => {
-    if (!await authorized()) return denied('execution.retry');
+    if (!await ownerAuthorized()) return denied('execution.retry');
     const result = await options.service.retry(options.sessionId!, options.projectId, executionId, expectedStateVersion);
     return result.ok
       ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
@@ -691,7 +717,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.recover_retained', {
     description: "Recover a retained stopped/failed Squad. mode 'exact-native' resumes the existing agents; mode 'fresh-plan' launches a NEW cohort from the retained plan.", inputSchema: executionRetainedRecoverySchema
   }, async ({ executionId, expectedStateVersion, mode }) => {
-    if (!await authorized()) return denied('execution.recover_retained');
+    if (!await ownerAuthorized()) return denied('execution.recover_retained');
     const result = await options.service.recoverRetained(options.sessionId!, options.projectId, executionId, expectedStateVersion, mode);
     return result.ok
       ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
@@ -701,7 +727,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.relaunch_retained_plan', {
     description: 'Launch a NEW cohort from the retained plan. Does not resume existing agents. Completed work stays retained; all other units are reprompted.', inputSchema: executionControlSchema
   }, async ({ executionId, expectedStateVersion }) => {
-    if (!await authorized()) return denied('execution.relaunch_retained_plan');
+    if (!await ownerAuthorized()) return denied('execution.relaunch_retained_plan');
     const result = await options.service.recoverRetained(options.sessionId!, options.projectId, executionId, expectedStateVersion, 'fresh-plan');
     return result.ok
       ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
@@ -711,7 +737,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.resume_run', {
     description: 'Deprecated. Despite its name, launches a NEW cohort (same as execution.relaunch_retained_plan). To resume existing agents use execution.recover_retained with mode exact-native.', inputSchema: executionResumeRunSchema
   }, async ({ executionId, expectedStateVersion, replay }) => {
-    if (!await authorized()) return denied('execution.resume_run');
+    if (!await ownerAuthorized()) return denied('execution.resume_run');
     const result = await options.service.resumeRun(options.sessionId!, options.projectId, executionId, expectedStateVersion, replay === true);
     return result.ok
       ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
@@ -741,7 +767,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
         ? { content: [{ type: 'text' as const, text: JSON.stringify({ executionId, blockerId, stateVersion: answered.value.stateVersion, state: answered.value.state }) }] }
         : { isError: true, content: [{ type: 'text' as const, text: `execution.respond failed: ${answered.message}` }] };
     }
-    if (!await authorized()) return denied('execution.respond');
+    if (!await ownerAuthorized()) return denied('execution.respond');
     if (expectedStateVersion === undefined) return { isError: true, content: [{ type: 'text' as const, text: 'execution.respond failed: expectedStateVersion is required with slotId' }] };
     const result = await options.service.respond(options.sessionId!, options.projectId, executionId, expectedStateVersion, slotId!, message);
     return result.ok
@@ -752,7 +778,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.resume', {
     description: 'Resume a blocked execution by delivering a message to one authorized live slot. Does not relaunch stopped work.', inputSchema: executionMessageSchema
   }, async ({ executionId, expectedStateVersion, slotId, message }) => {
-    if (!await authorized()) return denied('execution.resume');
+    if (!await ownerAuthorized()) return denied('execution.resume');
     const result = await options.service.resume(options.sessionId!, options.projectId, executionId, expectedStateVersion, slotId, message);
     return result.ok
       ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }

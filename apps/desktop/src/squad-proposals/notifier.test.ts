@@ -25,6 +25,7 @@ function setup(over: Partial<SquadProposalNotifierDeps> = {}, current: () => Exe
     ptyLive: vi.fn(() => true),
     ptyState: vi.fn(() => state),
     lastInputAt: vi.fn(() => lastInput),
+    draftPending: vi.fn(() => false),
     deliverableWhenWaiting: vi.fn(() => false),
     threadLive: vi.fn(async () => true),
     queueThreadTurn: vi.fn(async () => ({ ok: true })),
@@ -768,6 +769,150 @@ describe('owner report target (agent-owned execution.start)', () => {
     const { deps, notifier } = setup({ listUnreported: vi.fn(async () => [owned]), markReported }, () => owned);
     await notifier.replayUnreported();
     await notifier.onTerminal(owned);
+    expect(deps.reply).toHaveBeenCalledOnce();
+    expect(deps.appendInbox).not.toHaveBeenCalled();
+  });
+});
+
+describe('Inbox fallback when the report target is gone', () => {
+  const ownerPty = () => record({ proposal: undefined, reportTo: { kind: 'pty', id: 's1', role: 'owner' } } as never);
+  const ownerThread = () => record({ proposal: undefined, reportTo: { kind: 'thread', id: 't1', role: 'owner' } } as never);
+  const proposerPty = (over: Partial<ExecutionRecord> = {}) => record({ proposal: undefined, reportTo: { kind: 'pty', id: 's1', role: 'proposer' }, ...over } as never);
+  const blocker = { id: 'b1', question: 'Which file?' };
+
+  it('posts the owner report to the Inbox when its PTY is gone, then marks it reported', async () => {
+    const { deps, notifier } = setup({ ptyLive: vi.fn(() => false) }, ownerPty);
+    await notifier.onTerminal(ownerPty());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.reply).not.toHaveBeenCalled();
+    expect(deps.appendInbox).toHaveBeenCalledOnce();
+    expect(deps.appendInbox).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'p1', executionId: 'e1', comments: expect.stringContaining('[Squad report] "Ship it" completed'),
+      dedupeKey: 'squad-proposal-result:e1:1', report: true
+    }));
+    expect(deps.markReported).toHaveBeenCalledWith('e1', 1);
+  });
+
+  it('posts the owner report to the Inbox when its thread is gone', async () => {
+    const { deps, notifier } = setup({ threadLive: vi.fn(async () => false) }, ownerThread);
+    await notifier.onTerminal(ownerThread());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.queueThreadTurn).not.toHaveBeenCalled();
+    expect(deps.appendInbox).toHaveBeenCalledOnce();
+    expect(deps.markReported).toHaveBeenCalledWith('e1', 1);
+  });
+
+  it('posts the owner report at boot replay when the owner is confirmed gone', async () => {
+    const { deps, notifier } = setup({ ptyLive: vi.fn(() => false), listUnreported: vi.fn(async () => [ownerPty()]) }, ownerPty);
+    await notifier.replayUnreported();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.appendInbox).toHaveBeenCalledOnce();
+    expect(deps.markReported).toHaveBeenCalledWith('e1', 1);
+  });
+
+  it('posts when the owner PTY disappears while its report waits to be typed', async () => {
+    const { deps, notifier, setState } = setup({}, ownerPty);
+    setState('running');
+    await notifier.onTerminal(ownerPty());
+    expect(deps.appendInbox).not.toHaveBeenCalled();
+    notifier.forget('s1');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.appendInbox).toHaveBeenCalledOnce();
+    expect(deps.markReported).toHaveBeenCalledWith('e1', 1);
+  });
+
+  it('does not post for a delivered owner report', async () => {
+    const { deps, notifier } = setup({}, ownerPty);
+    await notifier.onTerminal(ownerPty());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.reply).toHaveBeenCalledOnce();
+    expect(deps.appendInbox).not.toHaveBeenCalled();
+  });
+
+  it('does not post for transient failures: failed liveness check or refused thread turn', async () => {
+    const throwing = setup({ threadLive: vi.fn(async () => { throw new Error('down'); }) }, ownerThread);
+    await throwing.notifier.onTerminal(ownerThread());
+    const refused = setup({ queueThreadTurn: vi.fn(async () => ({ ok: false, reason: 'busy' })) }, ownerThread);
+    await refused.notifier.onTerminal(ownerThread());
+    await vi.advanceTimersByTimeAsync(0);
+    for (const { deps } of [throwing, refused]) {
+      expect(deps.appendInbox).not.toHaveBeenCalled();
+      expect(deps.markReported).not.toHaveBeenCalled();
+    }
+  });
+
+  it('logs a failing Inbox push for a gone owner, leaves the run unmarked and does not throw', async () => {
+    const { deps, notifier } = setup({ ptyLive: vi.fn(() => false), appendInbox: vi.fn(async () => { throw new Error('inbox down'); }) }, ownerPty);
+    await expect(notifier.onTerminal(ownerPty())).resolves.toBeUndefined();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('result entry failed'), expect.any(Error));
+    expect(deps.markReported).not.toHaveBeenCalled();
+  });
+
+  it('retries a gone owner report on a later report once a failed Inbox push released it', async () => {
+    const appendInbox = vi.fn().mockRejectedValueOnce(new Error('inbox down')).mockResolvedValue(undefined);
+    const { deps, notifier } = setup({ ptyLive: vi.fn(() => false), appendInbox }, ownerPty);
+    await notifier.onTerminal(ownerPty());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.markReported).not.toHaveBeenCalled();
+    await notifier.onTerminal(ownerPty());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(appendInbox).toHaveBeenCalledTimes(2);
+    expect(deps.markReported).toHaveBeenCalledWith('e1', 1);
+  });
+
+  it('retries a gone proposer blocker on a later offer once a failed Inbox push released it', async () => {
+    const appendInbox = vi.fn().mockRejectedValueOnce(new Error('inbox down')).mockResolvedValue(undefined);
+    const { deps, notifier } = setup({ ptyLive: vi.fn(() => false), appendInbox }, proposerPty);
+    await notifier.onHumanBlocker(proposerPty(), blocker as never);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.markBlockerReported).not.toHaveBeenCalled();
+    await notifier.onHumanBlocker(proposerPty(), blocker as never);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(appendInbox).toHaveBeenCalledTimes(2);
+    expect(deps.markBlockerReported).toHaveBeenCalledWith('e1', 'b1');
+  });
+
+  it('does not double-post a proposer report when its session is gone', async () => {
+    const { deps, notifier } = setup({ ptyLive: vi.fn(() => false) }, proposerPty);
+    await notifier.onTerminal(proposerPty());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.appendInbox).toHaveBeenCalledOnce();
+    expect(deps.markReported).toHaveBeenCalledWith('e1', 1);
+  });
+
+  it('posts a gone owner blocker to the Inbox without marking it, so a returning owner still gets it', async () => {
+    const { deps, notifier } = setup({ ptyLive: vi.fn(() => false) }, ownerPty);
+    await notifier.onHumanBlocker(ownerPty(), blocker as never);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.appendInbox).toHaveBeenCalledOnce();
+    expect(deps.appendInbox).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'p1', executionId: 'e1', subject: 'Squad needs an answer: Ship it',
+      comments: expect.stringContaining('Which file?'), dedupeKey: 'squad-proposal-blocker:e1:b1'
+    }));
+    expect(deps.markBlockerReported).not.toHaveBeenCalled();
+  });
+
+  it('posts a gone proposer blocker to the Inbox, then marks it', async () => {
+    const { deps, notifier } = setup({ threadLive: vi.fn(async () => false) }, proposerPty);
+    await notifier.onHumanBlocker(proposerPty({ reportTo: { kind: 'thread', id: 't1', role: 'proposer' } } as never), blocker as never);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.appendInbox).toHaveBeenCalledOnce();
+    expect(deps.markBlockerReported).toHaveBeenCalledWith('e1', 'b1');
+  });
+
+  it('leaves a gone proposer blocker unmarked and logs when the Inbox push fails', async () => {
+    const { deps, notifier } = setup({ ptyLive: vi.fn(() => false), appendInbox: vi.fn(async () => { throw new Error('inbox down'); }) }, proposerPty);
+    await expect(notifier.onHumanBlocker(proposerPty(), blocker as never)).resolves.toBeUndefined();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('blocker entry failed'), expect.any(Error));
+    expect(deps.markBlockerReported).not.toHaveBeenCalled();
+  });
+
+  it('does not post a blocker that was delivered', async () => {
+    const { deps, notifier } = setup({}, ownerPty);
+    await notifier.onHumanBlocker(ownerPty(), blocker as never);
+    await vi.advanceTimersByTimeAsync(0);
     expect(deps.reply).toHaveBeenCalledOnce();
     expect(deps.appendInbox).not.toHaveBeenCalled();
   });

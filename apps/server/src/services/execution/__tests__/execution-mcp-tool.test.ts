@@ -7,8 +7,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { registerExecutionTools, EXECUTION_MEMBER_TOOL_NAMES, getExecutionToolDescriptors } from '../execution-mcp-tool.js';
+import { registerExecutionTools as registerExecutionToolsUnderTest, EXECUTION_MEMBER_TOOL_NAMES, getExecutionToolDescriptors, type RegisterExecutionToolOptions } from '../execution-mcp-tool.js';
 import { createExecutionHandoffStore } from '../handoff-store.js';
+
+/** Registers the tools with a Squad that may launch directly, unless the test sets the policy itself. */
+function registerExecutionTools(server: Parameters<typeof registerExecutionToolsUnderTest>[0], options: RegisterExecutionToolOptions): void {
+  registerExecutionToolsUnderTest(server, 'resolveLaunchApproval' in options ? options : { resolveLaunchApproval: () => 'direct', ...options });
+}
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
   isError?: boolean;
@@ -263,6 +268,56 @@ describe('execution MCP tools', () => {
     expect(execution.start).toHaveBeenLastCalledWith('thread-1', 'project-1', expect.anything(), undefined);
   });
 
+  describe('launch approval', () => {
+    const request = { version: 1, teamId: 'team-1', launchRequestId: 'request-1', slots: [{ initialTask: 'work' }] };
+    const register = (resolveLaunchApproval: unknown) => {
+      const execution = service();
+      const { server, tools } = fakeServer();
+      registerExecutionTools(server as never, {
+        sessionId: 'session-1', projectId: 'project-1', service: execution as never,
+        validateRouteIdentity: () => true, validateOwnerRouteIdentity: async () => true,
+        resolveLaunchApproval: resolveLaunchApproval as never
+      });
+      return { execution, start: tools.get('execution.start')! };
+    };
+
+    it('refuses a review Squad with LAUNCH_REVIEW_REQUIRED and starts nothing', async () => {
+      const resolve = vi.fn(async () => 'review' as const);
+      const { execution, start } = register(resolve);
+      const result = await start(request);
+      expect(result.isError).toBe(true);
+      expect(text(result)).toBe("execution.start failed: LAUNCH_REVIEW_REQUIRED: This Squad requires review before launch. Use squad_launch with mode 'review' so the user can Launch it from the Inbox.");
+      expect(resolve).toHaveBeenCalledWith('team-1', 'project-1');
+      expect(execution.start).not.toHaveBeenCalled();
+    });
+
+    it('starts a direct Squad', async () => {
+      const { execution, start } = register(() => 'direct');
+      expect((await start(request)).isError).not.toBe(true);
+      expect(execution.start).toHaveBeenCalledTimes(1);
+    });
+
+    it('fails closed when no policy lookup is wired', async () => {
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { execution, start } = register(undefined);
+      const result = await start(request);
+      expect(result.isError).toBe(true);
+      expect(text(result)).toContain('LAUNCH_APPROVAL_UNAVAILABLE');
+      expect(execution.start).not.toHaveBeenCalled();
+      spy.mockRestore();
+    });
+
+    it('fails closed when the policy cannot be read', async () => {
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { execution, start } = register(async () => { throw new Error('disk'); });
+      const result = await start(request);
+      expect(result.isError).toBe(true);
+      expect(text(result)).toContain('LAUNCH_APPROVAL_UNAVAILABLE');
+      expect(execution.start).not.toHaveBeenCalled();
+      spy.mockRestore();
+    });
+  });
+
   it('refuses a blocker answer over 16 KiB with its size, and leaves slot replies alone', async () => {
     const execution = { ...service(), respondToHumanBlockerAsOwner: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', state: 'RUNNING', stateVersion: 8 } })) };
     const { server, tools } = fakeServer();
@@ -280,7 +335,7 @@ describe('execution MCP tools', () => {
     expect(execution.respond).toHaveBeenCalledOnce();
   });
 
-  it('lets the owner answer a human blocker with execution.respond, and keeps slot replies as they were', async () => {
+  it('lets the owner answer a human blocker with execution.respond, and gates slot replies on the owner route', async () => {
     const execution = { ...service(), respondToHumanBlockerAsOwner: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', state: 'RUNNING', stateVersion: 8, deliveries: ['secret'] } })) };
     const { server, tools } = fakeServer();
     let ownerLive = true;
@@ -302,7 +357,7 @@ describe('execution MCP tools', () => {
     }
     ownerLive = false;
     expect(text(await respond({ executionId: 'execution-1', expectedStateVersion: 7, blockerId: 'b1', message: 'x' }))).toContain('session MCP is not authorized');
-    // A slot reply still needs the PTY route gate.
+    // A slot reply is owner-facing too: it needs the owner route gate.
     expect(text(await respond({ executionId: 'execution-1', expectedStateVersion: 7, slotId: 's', message: 'x' }))).toContain('session MCP is not authorized');
     expect(execution.respond).not.toHaveBeenCalled();
   });
@@ -983,6 +1038,106 @@ describe('execution MCP tools', () => {
     expect(result).toMatchObject({ isError: true });
     expect(text(result)).toContain('exact-native recovery requires at least one restorable native slot');
     expect(execution.recoverRetained).toHaveBeenCalledExactlyOnceWith('session-1', 'project-1', 'execution-1', 4, 'exact-native');
+  });
+
+  describe('Modern thread owner control', () => {
+    const modernOwner = (ownerLive: boolean | (() => Promise<boolean>) = true, execution = service(), sessionId = 'thread-1') => {
+      const { server, tools } = fakeServer();
+      registerExecutionTools(server as never, {
+        sessionId, projectId: 'project-1', service: execution as never, reportKind: 'thread',
+        validateRouteIdentity: () => false,
+        validateOwnerRouteIdentity: typeof ownerLive === 'function' ? ownerLive : async () => ownerLive
+      });
+      return { execution, tools };
+    };
+
+    it('lets a live Modern thread owner read status, list, events, stop, and reply to a slot', async () => {
+      const { execution, tools } = modernOwner();
+      expect((await tools.get('execution.status')!({ executionId: 'execution-1' })).isError).toBeFalsy();
+      expect(execution.status).toHaveBeenCalledWith('thread-1', 'project-1', 'execution-1');
+      expect((await tools.get('execution.list')!({})).isError).toBeFalsy();
+      expect(execution.list).toHaveBeenCalledWith('thread-1', 'project-1');
+      expect((await tools.get('execution.events')!({ executionId: 'execution-1', after: 2 })).isError).toBeFalsy();
+      expect(execution.events).toHaveBeenCalledWith('thread-1', 'project-1', 'execution-1', 2, 100);
+      expect((await tools.get('execution.stop')!({ executionId: 'execution-1', expectedStateVersion: 4 })).isError).toBeFalsy();
+      expect(execution.stop).toHaveBeenCalledWith('thread-1', 'project-1', 'execution-1', 4);
+      expect((await tools.get('execution.respond')!({ executionId: 'execution-1', expectedStateVersion: 4, slotId: 's', message: 'go' })).isError).toBeFalsy();
+      expect(execution.respond).toHaveBeenCalledWith('thread-1', 'project-1', 'execution-1', 4, 's', 'go');
+    });
+
+    it('denies an unverified or forged route without touching the service', async () => {
+      const execution = service();
+      const { tools } = modernOwner(false, execution, 'forged-thread');
+      for (const [name, input] of [
+        ['execution.status', { executionId: 'execution-1' }],
+        ['execution.list', {}],
+        ['execution.events', { executionId: 'execution-1' }],
+        ['execution.stop', { executionId: 'execution-1', expectedStateVersion: 4 }],
+        ['execution.respond', { executionId: 'execution-1', expectedStateVersion: 4, slotId: 's', message: 'go' }]
+      ] as const) {
+        const result = await tools.get(name)!(input);
+        expect(result.isError, name).toBe(true);
+        expect(text(result), name).toContain('not authorized for this live session');
+      }
+      expect(execution.status).not.toHaveBeenCalled();
+      expect(execution.list).not.toHaveBeenCalled();
+      expect(execution.events).not.toHaveBeenCalled();
+      expect(execution.stop).not.toHaveBeenCalled();
+      expect(execution.respond).not.toHaveBeenCalled();
+    });
+
+    const recoveryCalls = [
+      ['execution.retry', { executionId: 'execution-1', expectedStateVersion: 4 }, 'retry', ['thread-1', 'project-1', 'execution-1', 4]],
+      ['execution.recover_retained', { executionId: 'execution-1', expectedStateVersion: 4, mode: 'exact-native' }, 'recoverRetained', ['thread-1', 'project-1', 'execution-1', 4, 'exact-native']],
+      ['execution.relaunch_retained_plan', { executionId: 'execution-1', expectedStateVersion: 4 }, 'recoverRetained', ['thread-1', 'project-1', 'execution-1', 4, 'fresh-plan']],
+      ['execution.resume_run', { executionId: 'execution-1', expectedStateVersion: 4 }, 'resumeRun', ['thread-1', 'project-1', 'execution-1', 4, false]],
+      ['execution.resume', { executionId: 'execution-1', expectedStateVersion: 4, slotId: 's', message: 'go' }, 'resume', ['thread-1', 'project-1', 'execution-1', 4, 's', 'go']]
+    ] as const;
+
+    it('lets a live Modern thread owner retry, recover, relaunch, and resume its run', async () => {
+      for (const [name, input, method, args] of recoveryCalls) {
+        const { execution, tools } = modernOwner();
+        expect((await tools.get(name)!(input)).isError, name).toBeFalsy();
+        expect(execution[method], name).toHaveBeenCalledWith(...args);
+      }
+    });
+
+    it('denies retry, recovery, relaunch, and resume on a forged route without touching the service', async () => {
+      for (const [name, input, method] of recoveryCalls) {
+        const { execution, tools } = modernOwner(false, service(), 'forged-thread');
+        const result = await tools.get(name)!(input);
+        expect(result.isError, name).toBe(true);
+        expect(text(result), name).toContain('not authorized for this live session');
+        expect(execution[method], name).not.toHaveBeenCalled();
+      }
+    });
+
+    it('still lets the record-level principal check refuse a non-owner caller', async () => {
+      const execution = {
+        ...service(),
+        status: vi.fn(async () => undefined),
+        stop: vi.fn(async () => ({ ok: false as const, code: 'NOT_FOUND', message: 'execution not found for caller' }))
+      };
+      const { tools } = modernOwner(true, execution as never, 'other-thread');
+      const status = await tools.get('execution.status')!({ executionId: 'execution-1' });
+      expect(text(status)).toBe('execution.status failed: execution not found for caller.');
+      expect(execution.status).toHaveBeenCalledWith('other-thread', 'project-1', 'execution-1');
+      const stop = await tools.get('execution.stop')!({ executionId: 'execution-1', expectedStateVersion: 4 });
+      expect(text(stop)).toBe('execution.stop failed: execution not found for caller');
+    });
+
+    it('keeps execution.status off cohort workers even when the owner gate passes', async () => {
+      const execution = service();
+      const { server, tools } = fakeServer();
+      registerExecutionTools(server as never, {
+        sessionId: 'worker-1', projectId: 'project-1', service: execution as never,
+        validateRouteIdentity: () => true, validateOwnerRouteIdentity: async () => true,
+        resolveCohortBinding: () => ({ executionId: 'execution-1', projectId: 'project-1', slotId: 'slot-1' }) as never
+      });
+      const result = await tools.get('execution.status')!({ executionId: 'execution-1' });
+      expect(text(result)).toContain('WRONG_AUTHORITY');
+      expect(execution.status).not.toHaveBeenCalled();
+    });
   });
 
   it('rejects stale route identity before every execution operation', async () => {

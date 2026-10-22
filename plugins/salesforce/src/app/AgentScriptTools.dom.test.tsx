@@ -1,7 +1,7 @@
 /** @vitest-environment happy-dom */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { AgentScriptTools, useAgentScriptTools } from './AgentScriptTools.js';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { AGENT_SCRIPT_TOOLS, AgentScriptTools, COLUMN_TOOLS, isColumnTool, useAgentScriptTools } from './AgentScriptTools.js';
 
 function Workspace({ scope = 'one' }: { scope?: string }) {
   const tools = useAgentScriptTools(scope);
@@ -17,25 +17,25 @@ function add(name: string) {
 it('keeps tools mounted on switch/hide, deduplicates tabs, and restores a project layout', () => {
   const view = render(<Workspace />);
   fireEvent.change(screen.getByLabelText('files draft'), { target: { value: 'filter' } });
-  add('Graph view');
-  add('Preview');
-  fireEvent.change(screen.getByLabelText('preview draft'), { target: { value: 'my conversation' } });
-  add('Graph view');
-  expect(screen.getAllByRole('tab', { name: 'Graph view' })).toHaveLength(1);
-  fireEvent.click(screen.getByRole('tab', { name: 'Preview' }));
-  expect((screen.getByLabelText('preview draft') as HTMLInputElement).value).toBe('my conversation');
+  add('Comments');
+  add('Agents');
+  fireEvent.change(screen.getByLabelText('agents draft'), { target: { value: 'my conversation' } });
+  add('Comments');
+  expect(screen.getAllByRole('tab', { name: 'Comments' })).toHaveLength(1);
+  fireEvent.click(screen.getByRole('tab', { name: 'Agents' }));
+  expect((screen.getByLabelText('agents draft') as HTMLInputElement).value).toBe('my conversation');
   fireEvent.click(screen.getByRole('button', { name: 'Hide side panel' }));
   expect(screen.queryByRole('tablist')).toBeNull();
   fireEvent.click(screen.getByText('Toggle panel'));
-  expect((screen.getByLabelText('preview draft') as HTMLInputElement).value).toBe('my conversation');
-  fireEvent.click(screen.getByRole('button', { name: 'Close Preview' }));
-  expect(screen.getByRole('tab', { name: 'Graph view' }).getAttribute('aria-selected')).toBe('true');
+  expect((screen.getByLabelText('agents draft') as HTMLInputElement).value).toBe('my conversation');
+  fireEvent.click(screen.getByRole('button', { name: 'Close Agents' }));
+  expect(screen.getByRole('tab', { name: 'Comments' }).getAttribute('aria-selected')).toBe('true');
   fireEvent.click(screen.getByRole('button', { name: 'Close File explorer' }));
-  expect(screen.getByRole('tab', { name: 'Graph view' }).getAttribute('aria-selected')).toBe('true');
+  expect(screen.getByRole('tab', { name: 'Comments' }).getAttribute('aria-selected')).toBe('true');
   view.unmount();
   const restored = render(<Workspace />);
-  expect(screen.getByRole('tab', { name: 'Graph view' }).getAttribute('aria-selected')).toBe('true');
-  fireEvent.click(screen.getByRole('button', { name: 'Close Graph view' }));
+  expect(screen.getByRole('tab', { name: 'Comments' }).getAttribute('aria-selected')).toBe('true');
+  fireEvent.click(screen.getByRole('button', { name: 'Close Comments' }));
   expect(screen.getByRole('heading', { name: 'Add a tool' })).toBeTruthy();
   restored.unmount();
   render(<Workspace scope="two" />);
@@ -43,8 +43,8 @@ it('keeps tools mounted on switch/hide, deduplicates tabs, and restores a projec
 });
 
 it('supports roving keyboard tabs, wrapping, Home/End, and Delete with focus recovery', () => {
-  render(<Workspace />); add('Graph view'); add('Actions');
-  const graph = screen.getByRole('tab', { name: 'Graph view' });
+  render(<Workspace />); add('Comments'); add('Actions');
+  const graph = screen.getByRole('tab', { name: 'Comments' });
   fireEvent.keyDown(screen.getByRole('tab', { name: 'Actions' }), { key: 'ArrowLeft' });
   expect(document.activeElement).toBe(graph);
   fireEvent.keyDown(graph, { key: 'Home' });
@@ -62,7 +62,7 @@ it('supports roving keyboard tabs, wrapping, Home/End, and Delete with focus rec
 });
 
 it('sanitizes stored state and tolerates unavailable browser storage', () => {
-  localStorage.setItem('salesforce:agent-tools:one', JSON.stringify({ tabs: ['graph', 'graph', 'unknown'], active: 'unknown', open: false }));
+  localStorage.setItem('salesforce:agent-tools:one', JSON.stringify({ tabs: ['comments', 'comments', 'unknown', 'graph', 'release'], active: 'unknown', open: false }));
   const view = render(<Workspace />);
   expect(screen.queryByRole('tablist')).toBeNull();
   fireEvent.click(screen.getByText('Toggle panel'));
@@ -75,6 +75,18 @@ it('sanitizes stored state and tolerates unavailable browser storage', () => {
   fallback.unmount();
   vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw Error('denied'); });
   vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw Error('denied'); });
-  render(<Workspace />); add('Tests');
-  expect(screen.getByRole('tab', { name: 'Tests' }).getAttribute('aria-selected')).toBe('true');
+  render(<Workspace />); add('Actions');
+  expect(screen.getByRole('tab', { name: 'Actions' }).getAttribute('aria-selected')).toBe('true');
+});
+
+it('offers only the column tools; graph, preview, tests and org preview are editor views, and Release is gone', () => {
+  expect([...COLUMN_TOOLS]).toEqual(['agents', 'files', 'actions', 'comments']);
+  expect(AGENT_SCRIPT_TOOLS.some(tool => (tool.id as string) === 'release')).toBe(false);
+  expect(isColumnTool('graph')).toBe(false);
+  expect(isColumnTool('comments')).toBe(true);
+  render(<Workspace />);
+  fireEvent.click(screen.getByRole('button', { name: 'Add side panel tab' }));
+  const picker = within(document.querySelector('.af-tool-picker') as HTMLElement).getAllByRole('button').map(button => button.textContent ?? '');
+  expect(picker).toHaveLength(4);
+  for (const hidden of ['Graph view', 'Preview', 'Tests', 'Org preview', 'Release']) expect(picker.some(text => text.startsWith(hidden))).toBe(false);
 });

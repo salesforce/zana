@@ -107,6 +107,7 @@ import { createLaunchCoordinator, LaunchSpawnError } from '@zana-ai/zcc-server/s
 import { createLaunchLedgerStore } from '@zana-ai/zcc-server/services/launch/ledger-store';
 import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, preflightLaunch } from '@zana-ai/zcc-server/services/launch/preflight';
 import { planNormalizationNote, resolveSquadPlan } from './team-trigger-semantics.js';
+import { createSquadSourceSnapshotter, launchSquad, type SquadLaunchDeps, type SquadSourceProvider } from './squad-launch-core.js';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
 import { launchExecutionScope, usesCliRemoteToolProxy } from './cli-remote-tool-proxy.js';
@@ -295,7 +296,7 @@ import { listCommands } from '@zana-ai/zcc-server/services/skills/commands';
 import { ScheduleGroupsStore } from '@zana-ai/zcc-server/services/scheduler/schedule-groups-store';
 import { watch as fsWatch, mkdirSync, type FSWatcher } from 'node:fs';
 import { lstat, open as openFile, realpath, rm } from 'node:fs/promises';
-import { personaCanWriteFiles, type SquadProposalInput } from '@zana-ai/zcc-domain/squad-proposal';
+import { personaCanWriteFiles, resolveLaunchApproval, type SquadProposalInput } from '@zana-ai/zcc-domain/squad-proposal';
 import { createSquadProposalStore } from './squad-proposals/store.js';
 import { createSquadProposalService, SQUAD_LAUNCH_PROPOSAL_ACTION, type SquadProposalServiceDeps } from './squad-proposals/service.js';
 import { createSquadProposalNotifier } from './squad-proposals/notifier.js';
@@ -1524,6 +1525,18 @@ function isTrueSshRemoteSession(session: TerminalSession): boolean {
  */
 function sessionHasUnreliableStatusChannel(session: TerminalSession): boolean {
   if (!isTrueSshRemoteSession(session)) return false;
+  const mode = providerFor(session.profile as LaunchProfileId).adapter.status?.mode;
+  return mode === 'output-activity' || mode === 'screen-scan';
+}
+
+/**
+ * Harnesses whose status comes from output-activity / screen-scan heuristics (Codex, Cursor, Pi,
+ * OpenCode) have no OSC glyph and rest in `waiting`, so `waiting` is a deliverable rest state for
+ * them. Headless cohort workers rest deliverable too (see {@link suppressesInteractiveBlocked}).
+ */
+export function sessionRestsInWaiting(session: TerminalSession | null | undefined): boolean {
+  if (!session) return false;
+  if (suppressesInteractiveBlocked(session)) return true;
   const mode = providerFor(session.profile as LaunchProfileId).adapter.status?.mode;
   return mode === 'output-activity' || mode === 'screen-scan';
 }
@@ -4999,14 +5012,6 @@ export async function goalExecutionSourcePaths(
   return [...paths.values()];
 }
 
-function redactCapturedExecutionSourcePaths(text: string | undefined, descriptors: readonly ExecutionSourcePathDescriptor[]): string | undefined {
-  if (text === undefined) return undefined;
-  const paths = descriptors.flatMap(({ representations }) => representations)
-    .filter((path, index, all) => all.indexOf(path) === index)
-    .sort((left, right) => right.length - left.length);
-  return paths.reduce((sanitized, path) => sanitized.split(path).join(`[captured execution source: ${basename(path)}]`), text);
-}
-
 /**
  * The team dies with its lead. Given the id of a session that just exited and a
  * snapshot of every live session, close every OTHER still-live member of the
@@ -6187,6 +6192,14 @@ export async function lookupProposer(sessionId: string, projectId: string) {
   return null;
 }
 
+/** Review wins when the Squad (including a shadowed project copy) or its Project asks for it. */
+export async function resolveTeamLaunchApproval(teamId: string, projectId: string) {
+  return resolveLaunchApproval({
+    squad: teams.launchReviewRequired(teamId) ? { launchApproval: 'review' } : teams.list().find((team) => team.id === teamId),
+    project: await getAuthoritativeProjectSettings(projectId)
+  });
+}
+
 export function findExecutionForProposal(projectId: string, proposalId: string): Promise<string | undefined> {
   return findProposalExecution(executionStore, projectId, proposalId);
 }
@@ -6237,7 +6250,21 @@ const squadProposalServiceDeps: SquadProposalServiceDeps = {
   now: () => Date.now(),
   newId: () => randomUUID(),
   findLaunchedExecution: findExecutionForProposal,
-  logError: (context, error) => logMainError(context, error)
+  logError: (context, error) => logMainError(context, error),
+  launchNow: {
+    launchApproval: resolveTeamLaunchApproval,
+    // Counts every owned non-terminal run, however it was started, not only runs started through squad_launch.
+    activeOwnedRuns: (sessionId, projectId) => executionStore.countActiveOwned(sessionId, projectId),
+    executionState: async (executionId) => (await executionStore.get(executionId))?.state,
+    launch: async ({ team, project, goal, coordinationMode, title, summary, sourcePaths }, ctx) => {
+      const sourceBases = squadSourceBases();
+      return launchSquad(squadNowLaunchDeps, {
+        teamId: team.id, project, slots: expandTeamSlots(team), goal, coordinationMode, title, summary,
+        sourceCapabilityIds: [], sourcePaths,
+        goalSources: await goalExecutionSourcePaths(goal, project.path, sourceBases.home, sourceBases)
+      }, ctx);
+    }
+  }
 };
 export const squadProposalService = createSquadProposalService(squadProposalServiceDeps);
 // squad_plan_check's route carries no session id: the MCP tool has already
@@ -6256,8 +6283,9 @@ export const squadProposalNotifier = createSquadProposalNotifier({
   reply: (sessionId, text) => ptys.reply(sessionId, text),
   ptyLive: (id) => { const session = ptys.getSession(id); return !!session && session.status !== 'exited'; },
   ptyState: (id) => agentStatus.get(id),
-  lastInputAt: (id) => ptys.getSession(id)?.lastInputAt,
-  deliverableWhenWaiting: (id) => suppressesInteractiveBlocked(ptys.getSession(id)),
+  lastInputAt: (id) => ptys.getSession(id)?.lastKeyInputAt,
+  draftPending: (id) => ptys.getSession(id)?.draftPending === true,
+  deliverableWhenWaiting: (id) => sessionRestsInWaiting(ptys.getSession(id)),
   threadLive: isConversationThreadLive,
   queueThreadTurn: queueThreadTurnForProposal,
   // appendOnce: a replayed report must not re-surface the result entry as a new occurrence.
@@ -6312,6 +6340,7 @@ export function squadProposalMcpDeps() {
   if (!teamExecutionEnabled()) return {};
   return {
     proposeSquad: (route: { projectId: string; sessionId: string }, input: SquadProposalInput) => squadProposalService.propose(route, input),
+    launchSquadNow: (route: { projectId: string; sessionId: string }, input: SquadProposalInput) => squadProposalService.launchSquadNow(route, input),
     checkSquadPlan: (route: { projectId: string }, input: { path?: string; text?: string }) => squadPlanCheckService.checkPlan({ ...route, sessionId: '' }, input)
   };
 }
@@ -6670,55 +6699,24 @@ export async function startTeamJobFromUi(
   }
   const proposalId = proposed ? (typeof input.proposalId === 'string' ? input.proposalId.trim() : '') : undefined;
   const renewal = scopedSourceRenewal(executionSources, sourceContext?.windowId, projectId);
-  return withRenewedSources(() => withProposalLaunch(proposalLaunchDeps, proposalId, projectId, async (proposal, reviewedSourcePaths) => {
-    // A proposed launch attaches goal-named files outside the Project only when the reviewed card listed them.
-    let goalSourceDescriptors = discoveredGoalSources;
-    let redactedGoalSources = discoveredGoalSources;
-    if (proposal) {
-      const projectReal = await realpath(project.path).catch(() => undefined);
-      const split = splitProposedGoalSources(discoveredGoalSources, projectReal, reviewedSourcePaths);
-      if (split.refused) {
-        return {
-          ok: false, code: 'SOURCE_NOT_ALLOWED',
-          message: `The goal names ${split.refused.exactPath}, which is outside this project and was not listed in the proposal's sources, so the card did not show it. `
-            + 'The agent must list it in the proposal\'s `sources` (the user then sees it on the card before Launch), or remove it from the goal.'
-        } as TeamJobLaunchResponse;
-      }
-      goalSourceDescriptors = split.attach;
-      redactedGoalSources = split.known;
-    }
-    // Mint identity before snapshotting: source content lands in a dedicated,
-    // immutable content store and execution ledger carries only bounded metadata.
-    const launchRequestId = `ui:${randomUUID()}`;
-    const snapshot = await snapshotTeamJobSources({
-      windowId: sourceContext?.windowId, projectId, launchRequestId, sourceCapabilityIds, goalSourceDescriptors,
-      // Re-checked against the realpath issue() takes, so a symlink swapped in after discovery can't escape.
-      policy: await resolveSourcePolicy(realpath, { projectRoot: project.path, ...sourceBases })
-    });
-    if (!snapshot.ok) return snapshot;
-    const { sourceBundle } = snapshot;
-    const built = await buildTeamJobStartRequest({
-      teamId, projectId, projectName: project.name, launchRequestId, coordinationMode, slots, attended: !!sourceContext,
-      goal: originalGoal, title: originalJobTitle, summary: originalSummary, sourceBundle, goalSourceDescriptors: redactedGoalSources
-    });
-    if (!built.ok) return built.response;
+  const sources: SquadSourceProvider | undefined = sourceContext ? { kind: 'window', windowId: sourceContext.windowId } : undefined;
+  return withRenewedSources(() => withProposalLaunch(proposalLaunchDeps, proposalId, projectId, (proposal, reviewedSourcePaths) => launchSquad(squadLaunchDeps, {
+    teamId, project, slots, goal: originalGoal, coordinationMode, title: originalJobTitle, summary: originalSummary,
+    sourceCapabilityIds, goalSources: discoveredGoalSources, reviewedSourcePaths
+  }, {
+    sources,
     // A proposed run reports back to the conversation that proposed it.
-    const result = proposal
-      ? await squadExecutionService.start('interactive:local', projectId, built.request, {
+    owner: proposal
+      ? {
+        principalId: 'interactive:local',
         proposal,
         reportTo: {
           kind: proposal.proposerKind, id: proposal.proposerId, role: 'proposer',
           ...(proposal.proposerTitle ? { title: proposal.proposerTitle } : {})
         }
-      })
-      : await squadExecutionService.start('interactive:local', projectId, built.request);
-    if (!result.ok && sourceBundle) await executionSources.removeSnapshot(sourceBundle.contentRef);
-    if (!result.ok) {
-      planCorrectionLaunchBinding.forgetLaunch(launchRequestId);
-      return teamJobFailureResponse(result);
-    }
-    return { ok: true, value: { executionId: result.value.id, state: result.value.state } };
-  }), sourceCapabilityIds, renewal.reissue, logMainError, renewal.discardRetired);
+      }
+      : { principalId: 'interactive:local' }
+  })), sourceCapabilityIds, renewal.reissue, logMainError, renewal.discardRetired);
 }
 
 const proposalLaunchDeps: ProposalLaunchDeps<NonNullable<ExecutionRecord['proposal']>> = {
@@ -6728,113 +6726,21 @@ const proposalLaunchDeps: ProposalLaunchDeps<NonNullable<ExecutionRecord['propos
   logError: (context, error) => logMainError(context, error)
 };
 
-type TeamJobSourceBundle = Awaited<ReturnType<typeof executionSources.resolve>>;
-
-/** Issue capabilities for the goal-named paths, then snapshot every source of a Team job launch. */
-async function snapshotTeamJobSources(args: {
-  windowId: number | undefined;
-  projectId: string;
-  launchRequestId: string;
-  sourceCapabilityIds: string[];
-  goalSourceDescriptors: ExecutionSourcePathDescriptor[];
-  policy: SourcePolicy;
-}): Promise<{ ok: true; sourceBundle?: TeamJobSourceBundle } | { ok: false; code: string; message: string }> {
-  const { windowId, projectId } = args;
-  try {
-    const goalSourceCapabilities = args.goalSourceDescriptors.length
-      ? await executionSources.issue({
-        windowId: windowId!, projectId, paths: args.goalSourceDescriptors.map(({ exactPath }) => exactPath), policy: args.policy
-      })
-      : [];
-    const capabilityIds = [...new Set([...args.sourceCapabilityIds, ...goalSourceCapabilities.map(({ id }) => id)])];
-    if (!capabilityIds.length) return { ok: true };
-    const sourceBundle = await executionSources.resolve({
-      windowId: windowId!, projectId, capabilityIds, snapshotKey: args.launchRequestId.replace(/[^a-zA-Z0-9:_-]/g, '_')
-    });
-    return { ok: true, sourceBundle };
-  } catch (error) {
-    return error instanceof ExecutionSourceError
-      ? { ok: false, code: error.code, message: error.message }
-      : { ok: false, code: 'SOURCE_SNAPSHOT_FAILED', message: error instanceof Error ? error.message : String(error) };
-  }
-}
-
-/**
- * Redact captured source paths, resolve the plan and build the Squad start request. An
- * invalid provided plan parks for correction (attended) or is refused (unattended).
- */
-async function buildTeamJobStartRequest(args: {
-  teamId: string;
-  projectId: string;
-  projectName: string;
-  launchRequestId: string;
-  coordinationMode: 'structured' | 'freeform';
-  slots: ReturnType<typeof expandTeamSlots>;
-  attended: boolean;
-  goal: string;
-  title?: string;
-  summary?: string;
-  sourceBundle?: TeamJobSourceBundle;
-  goalSourceDescriptors: ExecutionSourcePathDescriptor[];
-}): Promise<{ ok: true; request: ExecutionRequestV1 } | { ok: false; response: TeamJobLaunchResponse }> {
-  const { sourceBundle, launchRequestId } = args;
-  const capturedPathDescriptors = [...(sourceBundle?.pathDescriptors ?? []), ...args.goalSourceDescriptors];
-  const sanitizedGoal = (redactCapturedExecutionSourcePaths(args.goal, capturedPathDescriptors) ?? args.goal).slice(0, 4_000);
-  const sanitizedExplicitTitle = redactCapturedExecutionSourcePaths(args.title, capturedPathDescriptors)?.slice(0, 256) || undefined;
-  const sanitizedSummary = redactCapturedExecutionSourcePaths(args.summary, capturedPathDescriptors)?.slice(0, 4_000) || undefined;
-  const sourceMetadata = sourceBundle?.sources.map(({ extractedText: _content, ...metadata }) => metadata);
-  // One resolver for interactive and triggered launches: "Plan provided in goal"
-  // (structured) must yield a complete durable DAG or park for plan correction;
-  // "Infer plan from goal" (freeform) leaves planning to the coordinator.
-  const resolvedPlan = resolveSquadPlan(
-    args.coordinationMode === 'structured' ? 'provided' : 'infer',
-    [...(sourceBundle?.sources ?? []).map((source) => source.extractedText), args.goal]
-  );
-  const plannedWorkUnits = resolvedPlan.workUnits;
-  const providedPlanError = resolvedPlan.planError;
-  const planRefusal = await gateInvalidProvidedPlan(
-    { inboxStore, planCorrectionLaunchBinding },
-    { planError: providedPlanError, unattended: !args.attended, projectId: args.projectId, projectName: args.projectName, launchRequestId }
-  );
-  if (planRefusal) return { ok: false, response: planRefusal };
-  const sanitizedJobTitle = await nameTeamExecution(
-    launchRequestId, sanitizedGoal, sanitizedExplicitTitle,
-    sourceBundle?.sources.map((source) => redactCapturedExecutionSourcePaths(source.extractedText, capturedPathDescriptors))
-  );
-  const sharedTask = [
-    `Shared job goal: ${sanitizedGoal}`,
-    sanitizedSummary ? `Context: ${sanitizedSummary}` : '',
-    providedPlanError ? PlanCorrectionService.correctionPrompt(providedPlanError) : '',
-    planNormalizationNote(resolvedPlan.idRenames),
-    'Work toward this goal. Coordinate through the Team orchestrator when one is present.'
-  ].filter(Boolean).join('\n\n');
-  const initialTask = args.slots.map((slot) => ({
-    initialTask: slot.role === 'orchestrator'
-      ? `${sharedTask}\n\nCoordinate workers, delegate role-specific work, and explicitly report execution completion with a summary when goal is met.`
-      : `${sharedTask}\n\nCheck orchestrator instructions and report progress or blockers to it.`
-  }));
-  return {
-    ok: true,
-    request: {
-      version: 1,
-      teamId: args.teamId,
-      launchRequestId,
-      coordinationMode: args.coordinationMode,
-      origin: 'explicit',
-      jobTitle: sanitizedJobTitle,
-      objective: sanitizedGoal,
-      summary: sanitizedSummary,
-      slots: initialTask,
-      ...(plannedWorkUnits ? { workUnits: plannedWorkUnits } : {}),
-      ...(sourceBundle && sourceMetadata ? { sourceBundle: { contentRef: sourceBundle.contentRef, sources: sourceMetadata } } : {}),
-      policy: {
-        ...(store.getConfig().autonomousTimeoutMs === 0
-          ? {}
-          : { deadlineMs: store.getConfig().autonomousTimeoutMs ?? AUTONOMOUS_DEFAULTS.timeoutMs })
-      }
-    }
-  };
-}
+const squadLaunchDeps: SquadLaunchDeps = {
+  snapshotSources: createSquadSourceSnapshotter(executionSources),
+  removeSnapshot: (contentRef) => executionSources.removeSnapshot(contentRef),
+  realpath: (path) => realpath(path),
+  sourceBases: () => squadSourceBases(),
+  newLaunchRequestId: () => `ui:${randomUUID()}`,
+  inboxStore,
+  planCorrectionLaunchBinding,
+  nameTeamExecution: (launchId, objective, explicitTitle, sourceTexts) => nameTeamExecution(launchId, objective, explicitTitle, sourceTexts),
+  autonomousTimeoutMs: () => store.getConfig().autonomousTimeoutMs,
+  squadExecutionService,
+  log: (message, error) => logMainError(message, error)
+};
+// Agent-started runs get their own launch id prefix, distinct from UI launches.
+const squadNowLaunchDeps: SquadLaunchDeps = { ...squadLaunchDeps, newLaunchRequestId: () => `agent:${randomUUID()}` };
 
 /**
  * Launch a team as an autonomous run (the body of the `teams:launchAutonomous`
@@ -9154,6 +9060,7 @@ async function bootstrapNormal() {
     reportTeamTask: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? reportTeamTask : undefined,
     executionService: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? squadExecutionService : undefined,
     executionHandoffs: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? executionHandoffs : undefined,
+    resolveExecutionLaunchApproval: resolveTeamLaunchApproval,
     resolveExecutionCohortBinding: async (sessionId, projectId, fence) => {
       const session = ptys.getSession(sessionId);
       const cohort = session?.cohort;
@@ -9732,6 +9639,7 @@ async function bootstrapNormal() {
           search: (query) => runtimeSupervisor!.searchPlugins(query),
           outdated: () => runtimeSupervisor!.outdatedPlugins(),
           update: (id) => runtimeSupervisor!.updatePlugin(id),
+          updateAll: () => runtimeSupervisor!.updateAllPlugins(),
           listMarketplaces: () => runtimeSupervisor!.listMarketplaces(),
           addMarketplace: (url) => runtimeSupervisor!.addMarketplace(url),
           refreshMarketplace: (url) => runtimeSupervisor!.refreshMarketplace(url),

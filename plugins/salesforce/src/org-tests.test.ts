@@ -416,13 +416,28 @@ describe('org tests RPCs', () => {
       expect(await t.call(ORG_TESTS_RPC.details, { names: ['New_Test'] })).toMatchObject({ ok: true, definitions: [{ subjectName: 'Billing_Agent' }] });
     });
 
-    it('bounds the summary cache', async () => {
-      const t = setup();
+    it('bounds the summary cache across orgs', async () => {
       const names = (from: number) => Array.from({ length: ORG_TESTS_LIMITS.detailsBatch }, (_, i) => `S${from + i}`);
-      for (let at = 0; at <= 5_000; at += ORG_TESTS_LIMITS.detailsBatch) await t.call(ORG_TESTS_RPC.details, { names: names(at) });
+      const seeds = [['00D1', 0, 2_000], ['00D2', 2_000, 2_000], ['00D3', 4_000, 1_000]] as const;
+      const kv = new Map<string, unknown>(seeds.map(([id, from, count]) => [
+        `orgTests:summaries:${id}`,
+        { rows: Object.fromEntries(Array.from({ length: count }, (_, i) => [`S${from + i}`, { subjectName: 'Billing_Agent' }])) },
+      ]));
+      let orgId: string = seeds[0][0];
+      const t = setup({ kv, wrap: sdk => ({ ...sdk, connect: async () => ({ ...org(), orgId }) }) });
+      // Fill the cache from valid persisted snapshots, avoiding 5,000 unrelated file writes.
+      for (const [id, from] of seeds) {
+        orgId = id;
+        expect(await t.call(ORG_TESTS_RPC.details, { names: names(from) })).toMatchObject({ ok: true, missing: [] });
+      }
+      expect(t.sdk.execSf).not.toHaveBeenCalled();
+      await t.call(ORG_TESTS_RPC.details, { names: names(5_000) });
       const calls = t.sdk.execSf.mock.calls.length;
+      expect(calls).toBe(1);
+      orgId = '00D1';
       await t.call(ORG_TESTS_RPC.details, { names: names(0) });
       expect(t.sdk.execSf.mock.calls.length).toBe(calls + 1);
+      orgId = '00D3';
       await t.call(ORG_TESTS_RPC.details, { names: names(5_000) });
       expect(t.sdk.execSf.mock.calls.length).toBe(calls + 1);
     });
