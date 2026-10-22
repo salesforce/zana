@@ -35522,6 +35522,19 @@ body.split-frame-guard webview {
   pointer-events: auto;
 }
 
+.thread-detail-search-count {
+  flex: 0 0 auto;
+  margin-left: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.thread-detail-search-count.is-empty {
+  color: var(--danger, var(--text-muted));
+}
+
 .thread-detail-title-row {
   display: flex;
   align-items: baseline;
@@ -36624,6 +36637,23 @@ body.split-frame-guard webview {
 @keyframes thread-search-flash {
   from { background: color-mix(in srgb, var(--accent, #4c8dff) 28%, transparent); }
   to { background: transparent; }
+}
+
+/* Find-in-thread: every match, and the current one (CSS Custom Highlight API). */
+::highlight(thread-search-match) {
+  background-color: color-mix(in srgb, var(--accent-gold, #d4a017) 35%, transparent);
+}
+
+::highlight(thread-search-current) {
+  background-color: var(--accent-gold, #d4a017);
+  color: #000;
+}
+
+/* When the current match is not in rendered text, its row is marked instead. */
+.thread-timeline-search-current {
+  border-radius: 6px;
+  outline: 2px solid var(--accent-gold, #d4a017);
+  outline-offset: 2px;
 }
 
 .thread-scroll-bottom {

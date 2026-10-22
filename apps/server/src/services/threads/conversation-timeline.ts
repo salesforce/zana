@@ -16,7 +16,9 @@ import {
 import {
   buildThreadTimelineFromEvents,
   buildThreadTimelineTurnDetailsFromEvents,
+  countThreadSearchMatches,
   EMPTY_ACCEPTED_CLIENT_REQUEST_CONTEXT,
+  threadSearchPattern,
   type ThreadEventWithMeta
 } from '@zana-ai/zcc-thread-view';
 import { planCommandForProvider } from './thread-provider-catalog.js';
@@ -331,6 +333,7 @@ export function conversationTimeline(
 export function conversationItemsFromRows(rows: Array<{
   kind: string;
   id: string;
+  sourceSeqStart?: number;
   role?: 'user' | 'assistant';
   text?: string;
   attachments?: {
@@ -341,6 +344,7 @@ export function conversationItemsFromRows(rows: Array<{
   children?: Array<{
     kind: string;
     id: string;
+    sourceSeqStart?: number;
     role?: 'user' | 'assistant';
     text?: string;
     attachments?: {
@@ -355,25 +359,31 @@ export function conversationItemsFromRows(rows: Array<{
   preview: string;
   attachmentSummary: { imageCount: number; fileCount: number } | null;
 }> {
-  return rows.flatMap((row) => {
-    if (row.kind !== 'conversation') {
-      if (row.kind === 'turn') {
-        return conversationItemsFromRows(row.children ?? []);
+  return conversationRowsIn(rows).map((row) => ({
+    id: row.id,
+    role: row.role ?? 'assistant',
+    preview: outlinePreview(row.text ?? ''),
+    attachmentSummary: row.attachments
+      ? {
+        imageCount: row.attachments.webImages + row.attachments.localImages,
+        fileCount: row.attachments.localFiles
       }
-      return [];
-    }
-    return [{
-      id: row.id,
-      role: row.role ?? 'assistant',
-      preview: outlinePreview(row.text ?? ''),
-      attachmentSummary: row.attachments
-        ? {
-          imageCount: row.attachments.webImages + row.attachments.localImages,
-          fileCount: row.attachments.localFiles
-        }
-        : null
-    }];
+      : null
+  }));
+}
+
+type OutlineSourceRow = Parameters<typeof conversationItemsFromRows>[0][number];
+
+function conversationRowsIn(rows: readonly OutlineSourceRow[]): OutlineSourceRow[] {
+  return rows.flatMap((row) => {
+    if (row.kind === 'conversation') return [row];
+    return row.kind === 'turn' ? conversationRowsIn(row.children ?? []) : [];
   });
+}
+
+/** Full message text per outline item, for counting find-in-thread matches. */
+export function conversationSearchTextsFromRows(rows: readonly OutlineSourceRow[]): Array<{ id: string; seq: number; text: string }> {
+  return conversationRowsIn(rows).map((row) => ({ id: row.id, seq: row.sourceSeqStart ?? 0, text: row.text ?? '' }));
 }
 
 export function conversationTimelineTurnSummaryDetails(
@@ -426,10 +436,15 @@ export function conversationTimelineTurnSummaryDetails(
   }) : null };
 }
 
-export function conversationOutline(ctx: ProductHttpContext, threadId: string) {
+/**
+ * Messages in the thread, oldest first. With a `query`, also `matches`: how
+ * many find-in-thread matches each message's full text holds, so the renderer
+ * can count and reach matches in pages it has not loaded yet.
+ */
+export function conversationOutline(ctx: ProductHttpContext, threadId: string, query?: string) {
   const thread = requireThread(ctx, threadId);
   const environment = thread.environmentId ? getEnvironment(ctx.db, thread.environmentId) : null;
-  const project = () => {
+  const projectRows = () => {
     const rows = listConversationThreadEvents(ctx.db, threadId, {
       omitPayloadTypes: ['turn/diff/updated', 'item/commandExecution/outputDelta'],
       onlyItemTypes: ['agentMessage', 'userMessage']
@@ -453,15 +468,28 @@ export function conversationOutline(ctx: ProductHttpContext, threadId: string) {
         planCommand: planCommandForProvider(thread.providerId)
       }
     });
-    return {
-      items: conversationItemsFromRows(timeline.rows),
-      maxSeq: rows[rows.length - 1]?.sequence ?? 0
-    };
+    return { rows: timeline.rows, maxSeq: rows[rows.length - 1]?.sequence ?? 0 };
   };
-  // The main-owned database and authorized thread are resolved before reuse.
-  return cachedConversationOutline(ctx.db, threadId, JSON.stringify([
+  const context = JSON.stringify([
     thread.providerId, thread.status, thread.title, environment?.path, includeProviderUnhandledOperations(ctx), planCommandForProvider(thread.providerId)
-  ]), project);
+  ]);
+  // The main-owned database and authorized thread are resolved before reuse.
+  const outline = cachedConversationOutline(ctx.db, threadId, context, () => {
+    const projected = projectRows();
+    return { items: conversationItemsFromRows(projected.rows), maxSeq: projected.maxSeq };
+  });
+  const pattern = query === undefined ? null : threadSearchPattern(query);
+  if (!pattern) return outline;
+  // The texts are cached apart from the outline so the plain outline stays small.
+  const texts = cachedConversationOutline(ctx.db, `${threadId}:search`, context,
+    () => conversationSearchTextsFromRows(projectRows().rows));
+  return {
+    ...outline,
+    matches: texts.flatMap(({ id, seq, text }) => {
+      const count = countThreadSearchMatches(text, pattern);
+      return count > 0 ? [{ id, seq, count }] : [];
+    })
+  };
 }
 
 export function resolveActivePlanTurn(ctx: ProductHttpContext, thread: ConversationThreadRow) {

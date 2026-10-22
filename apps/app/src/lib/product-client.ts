@@ -857,8 +857,9 @@ function httpProduct(): Pick<
       },
       openAsThread: async (threadId) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/open-as-thread`, { method: 'POST', body: '{}' }),
-      conversationOutline: async (threadId) =>
-        apiJson(`/threads/${encodeURIComponent(threadId)}/conversation-outline`),
+      conversationOutline: async (threadId, query) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/conversation-outline${
+          query === undefined ? '' : `?q=${encodeURIComponent(query)}`}`),
       timelineTurnSummaryDetails: async (threadId, query) => {
         const params = new URLSearchParams();
         params.set('turnId', query.turnId);

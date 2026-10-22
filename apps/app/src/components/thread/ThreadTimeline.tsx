@@ -36,6 +36,7 @@ import { TimelineRows } from './timeline/TimelineRows.js';
 import { retainTerminalExpansionIds } from './timeline/timeline-window.js';
 import { THREAD_MESSAGE_SENT_EVENT } from './timeline/thread-optimistic-events.js';
 import { observeStickyUserPrompts } from './timeline/timeline-sticky-user.js';
+import { useThreadSearchHighlights } from './timeline/search-highlight.js';
 import { PaneEmptyState } from '../PaneEmptyState.js';
 
 export interface ThreadTimelineProps {
@@ -58,6 +59,8 @@ export interface ThreadTimelineProps {
   onFork?: (sourceSeqEnd?: number) => void;
   forceExpandedRowIds?: ReadonlySet<string>;
   searchHitRowId?: string | null;
+  /** Active find-in-thread: matches are highlighted, the current one in `searchHitRowId`. */
+  search?: { query: string; occurrence: number; navigation: number };
   messageActions?: readonly ThreadChatMessageAction[];
   includePluginMessageActions?: boolean;
   planExecution?: PlanExecutionView | null;
@@ -106,6 +109,7 @@ export function ThreadTimeline({
   onFork,
   forceExpandedRowIds,
   searchHitRowId,
+  search,
   messageActions,
   includePluginMessageActions,
   planExecution,
@@ -207,8 +211,15 @@ export function ThreadTimeline({
     return () => window.removeEventListener(THREAD_MESSAGE_SENT_EVENT, onSend);
   }, [threadId, pin]);
 
+  const searchTarget = useMemo(
+    () => search && { ...search, rowId: searchHitRowId ?? null },
+    [search?.navigation, search?.occurrence, search?.query, searchHitRowId]
+  );
+  useThreadSearchHighlights(paneRef, searchTarget);
+
+  // Message links flash their row; find-in-thread highlights matches instead.
   useEffect(() => {
-    if (!searchHitRowId) return;
+    if (!searchHitRowId || searchTarget) return;
     const pane = paneRef.current;
     if (!pane) return;
     const el = pane.querySelector(`[data-row-id="${CSS.escape(searchHitRowId)}"]`);
@@ -219,7 +230,7 @@ export function ThreadTimeline({
       el.classList.remove('thread-timeline-search-hit');
     }, 1600);
     return () => window.clearTimeout(timer);
-  }, [searchHitRowId, viewRows]);
+  }, [searchHitRowId, viewRows, searchTarget]);
 
   useEffect(() => () => {
     clearTransientScrollbarScrolling(paneRef.current, scrollbarIdleRef);

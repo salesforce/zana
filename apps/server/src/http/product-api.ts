@@ -1521,7 +1521,7 @@ export async function handleProductHttp(
     const threadOutline = routeParams(path, '/api/v1/threads/:id/conversation-outline');
     if (threadOutline && method === 'GET') {
       try {
-        sendJson(response, 200, conversationOutline(ctx, threadOutline.id));
+        sendJson(response, 200, conversationOutline(ctx, threadOutline.id, requestUrl.searchParams.get('q') ?? undefined));
       } catch (error) {
         if (error instanceof ThreadCreateError) {
           sendJson(response, error.status, { error: error.code, message: error.message });

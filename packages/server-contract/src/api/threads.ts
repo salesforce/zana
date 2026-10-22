@@ -1000,11 +1000,40 @@ export type ThreadConversationOutlineItem = z.infer<
   typeof threadConversationOutlineItemSchema
 >;
 
+/**
+ * Longest find-in-thread query the route accepts. The server matches at most
+ * `THREAD_SEARCH_QUERY_MAX` characters of it (`@zana-ai/zcc-thread-view`,
+ * which depends on this package); the slack allows surrounding whitespace.
+ */
+export const THREAD_CONVERSATION_SEARCH_QUERY_MAX = 1000;
+
+export const threadConversationOutlineQuerySchema = z
+  .object({
+    /** Find-in-thread query; the response adds `matches` for it. */
+    q: z.string().max(THREAD_CONVERSATION_SEARCH_QUERY_MAX),
+  })
+  .partial();
+export type ThreadConversationOutlineQuery = z.infer<
+  typeof threadConversationOutlineQuerySchema
+>;
+
+export const threadConversationOutlineMatchSchema = z
+  .object({
+    id: z.string().min(1),
+    /** The message's first event sequence, to place it among loaded rows. */
+    seq: z.number().int().nonnegative(),
+    /** Matches in the message's full text (the preview may be truncated). */
+    count: z.number().int().positive(),
+  })
+  .strict();
+
 export const threadConversationOutlineResponseSchema = z
   .object({
     items: z.array(threadConversationOutlineItemSchema),
     /** Thread high-water event sequence this outline reflects. */
     maxSeq: z.number().int().nonnegative(),
+    /** Messages matching `q`, oldest first; present only for a non-blank `q`. */
+    matches: z.array(threadConversationOutlineMatchSchema).optional(),
   })
   .strict();
 export type ThreadConversationOutlineResponse = z.infer<

@@ -1055,6 +1055,9 @@ describe('product HTTP', () => {
     const outlineResponse = await fetch(`${server.url}api/v1/threads/${thread.id}/conversation-outline`);
     expect(outlineResponse.status).toBe(200);
     await expect(outlineResponse.json()).resolves.toMatchObject({ items: [], maxSeq: 0 });
+    const searchResponse = await fetch(`${server.url}api/v1/threads/${thread.id}/conversation-outline?q=${encodeURIComponent('needle')}`);
+    expect(searchResponse.status).toBe(200);
+    await expect(searchResponse.json()).resolves.toEqual({ items: [], maxSeq: 0, matches: [] });
     expect(timeline).toMatchObject({
       activeThinking: null,
       pendingTodos: null,

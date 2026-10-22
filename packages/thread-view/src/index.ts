@@ -85,3 +85,9 @@ export type {
 export { compactThreadTimelineSummaryEvents } from "./summary-event-compaction.js";
 export { parseCompactionLifecycleEvent } from "./compaction-lifecycle.js";
 export type { ThreadEventWithMeta } from "./group-event-projection-turns.js";
+export {
+  THREAD_SEARCH_QUERY_MAX,
+  countThreadSearchMatches,
+  threadSearchPattern,
+  threadSearchRanges,
+} from "./text-search.js";

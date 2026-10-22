@@ -662,9 +662,11 @@ export interface CcApi {
     }>>;
     /** Move a side-panel conversation into the Agents list. */
     openAsThread(threadId: string): Promise<{ thread: Record<string, unknown> }>;
-    conversationOutline(threadId: string): Promise<{
+    /** With `query`, `matches` counts find-in-thread matches per message (oldest first). */
+    conversationOutline(threadId: string, query?: string): Promise<{
       items: Array<{ id: string; role: 'user' | 'assistant'; preview: string; attachmentSummary: unknown }>;
       maxSeq: number;
+      matches?: Array<{ id: string; seq: number; count: number }>;
     }>;
     timelineTurnSummaryDetails(
       threadId: string,

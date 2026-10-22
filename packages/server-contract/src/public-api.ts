@@ -191,6 +191,7 @@ import type {
   ThreadHostFileContentQuery,
   ThreadListQuery,
   ThreadListResponse,
+  ThreadConversationOutlineQuery,
   ThreadConversationOutlineResponse,
   ThreadOpenRequest,
   ThreadOpenResponse,
@@ -328,6 +329,7 @@ import {
   terminalListQuerySchema,
   terminalOutputQuerySchema,
   terminalResizeRequestSchema,
+  threadConversationOutlineQuerySchema,
   threadTimelineQuerySchema,
   systemCliSkillsStatusQuerySchema,
   systemInstallCliSkillsRequestSchema,
@@ -1354,7 +1356,9 @@ export const publicApiRoutes = {
     conversationOutline: defineRoute({
       path: "/threads/:id/conversation-outline",
       method: "get",
-      request: noRequest<PathId>(),
+      request: optionalQueryRequest<PathId, ThreadConversationOutlineQuery>(
+        threadConversationOutlineQuerySchema,
+      ),
       response: jsonResponse<ThreadConversationOutlineResponse>(),
     }),
     timelineTurnSummaryDetails: defineRoute({

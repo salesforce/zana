@@ -21,3 +21,10 @@ it('stops a thread\'s background tasks, targeting item ids only when given', asy
   await product.threads.stopBackground('t/1');
   expect(http.apiJson).toHaveBeenLastCalledWith('/threads/t%2F1/background/stop', { method: 'POST', body: '{}' });
 });
+
+it('sends a find-in-thread query to the conversation outline only when given', async () => {
+  await product.threads.conversationOutline('t/1');
+  expect(http.apiJson).toHaveBeenLastCalledWith('/threads/t%2F1/conversation-outline');
+  await product.threads.conversationOutline('t/1', 'a&b c');
+  expect(http.apiJson).toHaveBeenLastCalledWith('/threads/t%2F1/conversation-outline?q=a%26b%20c');
+});

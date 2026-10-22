@@ -6,7 +6,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { PanelRight } from 'lucide-react';
 import type { ActiveThinking, ThreadTimelineGoal, ThreadTimelineModelFallback, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
 import { mergeTimelinePages, type ThreadContextWindowUsage, type TimelineRow } from '@zana-ai/zcc-server-contract';
-import { buildTimelineViewRows, type TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
+import { type TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
 import { product } from '../../lib/product-client.js';
 import { ThreadCommandComposer } from '../../components/ThreadCommandComposer.js';
 import { useMobileThreadActionsTarget, useMobileThreadControlsTarget, useMobileThreadTitleTarget } from '../../components/useMobileThreadTitleTarget.js';
@@ -85,10 +85,10 @@ import {
   THREAD_STOP_REQUESTED_EVENT
 } from '../../components/thread/timeline/thread-optimistic-events.js';
 import {
-  findDeepestTimelineSearchHit,
   findTimelineMessageAtSequence,
   type TimelineSearchHit
 } from '../../components/thread/timeline/thread-search.js';
+import { useThreadSearch } from './useThreadSearch.js';
 import {
   loadThreadDetailProgressively,
   resolveThreadDetailStatus,
@@ -219,7 +219,6 @@ function ThreadDetailBody({
   const [stoppingAnchorAt, setStoppingAnchorAt] = useState(0);
   const [searchDraft, setSearchDraft] = useState('');
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
   const [linkParams] = useSearchParams();
   const linkSequence = Number(linkParams.get('message'));
   const linkLoads = useRef(0);
@@ -259,10 +258,6 @@ function ThreadDetailBody({
     return mergePendingStopRow(withOptimistic, { threadId, isStopping, stoppingAnchorAt });
   }, [isStopping, optimisticRow, rows, stoppingAnchorAt, threadId]);
 
-  const forceExpandedRowIds = useMemo(() => {
-    if (!searchHit) return undefined;
-    return new Set([...searchHit.ancestorIds, searchHit.id]);
-  }, [searchHit]);
 
   useEffect(() => {
     const onOptimistic = (event: Event) => {
@@ -306,15 +301,6 @@ function ThreadDetailBody({
   useEffect(() => {
     if (isStopping && hasConfirmedStopRow(rows)) setIsStopping(false);
   }, [isStopping, rows]);
-
-  useEffect(() => {
-    if (!searchHit || !searchQuery) return;
-    const viewRows = buildTimelineViewRows(displayRows);
-    const next = findDeepestTimelineSearchHit(viewRows, searchQuery);
-    if (next && (next.id !== searchHit.id || next.ancestorIds.join() !== searchHit.ancestorIds.join())) {
-      setSearchHit(next);
-    }
-  }, [displayRows, searchHit, searchQuery]);
 
   useEffect(() => {
     if (!threadId || !timelineEnabled) return;
@@ -808,6 +794,23 @@ function ThreadDetailBody({
     }
   };
 
+  const search = useThreadSearch({
+    threadId,
+    rows: displayRows,
+    hasOlder: olderCursor !== null,
+    olderCursorKey: olderCursor?.anchorId ?? null,
+    loadingOlder,
+    loadOlder: () => { void loadOlderHistory(); }
+  });
+  const searchQuery = search.query;
+  // The box shows the counter and highlights only for the query it reflects.
+  const searchActive = searchQuery !== '' && searchDraft.trim() === searchQuery;
+  const timelineTarget = searchQuery ? (searchActive ? search.current : null) : searchHit;
+  const forceExpandedRowIds = useMemo(() => {
+    if (!timelineTarget) return undefined;
+    return new Set([...timelineTarget.ancestorIds, timelineTarget.id]);
+  }, [timelineTarget]);
+
   useEffect(() => {
     if (!timelineEnabled) return;
     if (!Number.isSafeInteger(linkSequence) || linkSequence <= 0 || searchQuery) return;
@@ -827,20 +830,6 @@ function ThreadDetailBody({
       setPlanExitPending(false);
     });
   }, [planExitPending, threadId]);
-
-  const runThreadSearch = useCallback((needle: string) => {
-    setSearchQuery(needle);
-    if (!needle) {
-      setSearchHit(null);
-      return;
-    }
-    const viewRows = buildTimelineViewRows(displayRows);
-    void product.threads.conversationOutline(threadId).then((outline) => {
-      setSearchHit(findDeepestTimelineSearchHit(viewRows, needle, outline.items));
-    }).catch(() => {
-      setSearchHit(findDeepestTimelineSearchHit(viewRows, needle));
-    });
-  }, [displayRows, threadId]);
 
   const overflow = (
     <ThreadDetailOverflow
@@ -893,7 +882,9 @@ function ThreadDetailBody({
               onClose={() => setMobileSearchOpen(false)}
               value={searchDraft}
               onChange={setSearchDraft}
-              onSubmit={runThreadSearch}
+              onSubmit={search.submit}
+              matchIndex={searchActive && !search.pending ? search.index : undefined}
+              matchCount={searchActive && !search.pending ? search.matches.length : undefined}
             />}
             <ThreadStatusBadge status={status} waitingOnUser={awaitingUser} thinking={thinking} />
             {!mobileControlsTarget && <PluginThreadHeaderActions threadId={threadId} projectId={projectId} />}
@@ -958,7 +949,12 @@ function ThreadDetailBody({
               projectId={projectId}
               parentThreadId={parentThreadId}
               forceExpandedRowIds={forceExpandedRowIds}
-              searchHitRowId={searchHit?.id ?? null}
+              searchHitRowId={timelineTarget?.id ?? null}
+              search={searchActive ? {
+                query: searchQuery,
+                occurrence: search.current?.occurrence ?? -1,
+                navigation: search.navigation
+              } : undefined}
               onFork={(sourceSeqEnd) => {
                 void product.threads.fork(threadId, sourceSeqEnd != null ? { sourceSeqEnd } : undefined).then((forked) => {
                   if (forked.ok && forked.value?.id) {
