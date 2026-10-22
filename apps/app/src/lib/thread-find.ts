@@ -10,6 +10,8 @@ import { shortcutForCommand } from './keyboard-shortcut-settings.js';
  *   column opens that thread's search;
  * - focus in a terminal, a Monaco editor, or a thread's side panel (the
  *   in-app browser keeps ⌘F for find in page) is left to that surface;
+ * - focus in a dialog (the palette, Settings, a popover) stays there, and an
+ *   open modal hides the threads behind it;
  * - anywhere else, the focused primary thread takes it.
  */
 export interface ThreadFindTarget {
@@ -26,6 +28,7 @@ const targets: ThreadFindTarget[] = [];
 let lastPointerTarget: Element | null = null;
 
 const SURFACES_WITH_OWN_FIND = '.xterm, .monaco-editor';
+const OVERLAYS = '[role="dialog"], [role="alertdialog"], [aria-modal="true"]';
 
 function rememberPointer(event: PointerEvent) {
   lastPointerTarget = event.target instanceof Element ? event.target : null;
@@ -53,6 +56,7 @@ function contextElement(event: KeyboardEvent): Element | null {
 function targetFor(event: KeyboardEvent): ThreadFindTarget | null {
   const element = contextElement(event);
   if (element?.closest(SURFACES_WITH_OWN_FIND)) return null;
+  const overlay = element?.closest(OVERLAYS) ?? null;
   if (element) {
     // Innermost owner: a chat embedded in another thread's side panel wins.
     let owner: ThreadFindTarget | null = null;
@@ -60,10 +64,17 @@ function targetFor(event: KeyboardEvent): ThreadFindTarget | null {
       const root = target.root();
       if (root?.contains(element) && (!owner || owner.root()!.contains(root))) owner = target;
     }
-    if (owner) return owner.main()?.contains(element) ? owner : null;
+    // A dialog or popover inside the thread keeps the key.
+    if (owner) return owner.main()?.contains(element) && (!overlay || overlay.contains(owner.root())) ? owner : null;
   }
+  // Focus in a dialog (the palette, Settings) only reaches a thread inside it;
+  // with nothing focused, an open modal hides every thread outside it.
+  const modals = Array.from(document.querySelectorAll('[aria-modal="true"]')).filter((modal) => modal.getClientRects().length > 0);
   for (let index = targets.length - 1; index >= 0; index -= 1) {
-    if (targets[index]!.isPrimary()) return targets[index]!;
+    const target = targets[index]!;
+    const root = target.root();
+    const reachable = overlay ? overlay.contains(root) : modals.every((modal) => modal.contains(root));
+    if (reachable && target.isPrimary()) return target;
   }
   return null;
 }

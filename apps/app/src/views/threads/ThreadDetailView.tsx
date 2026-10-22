@@ -34,8 +34,8 @@ import { getThreadRoutePath } from '../../lib/route-paths.js';
 import { useRouteState } from '../../hooks/useRouteState.js';
 import { useCompactLayout } from '../../hooks/useCompactLayout.js';
 import { pendingChildThreads, useThreads, type ThreadListItem } from '../../thread-store.js';
-import { useData, useUi } from '../../store.js';
-import { registerThreadFindTarget } from '../../lib/thread-find.js';
+import { useData } from '../../store.js';
+import { useThreadFindTarget } from '../../lib/use-thread-find-target.js';
 import { ThreadPendingInteractionBanner } from '../../components/thread/pending-interactions/ThreadPendingInteractionBanner.js';
 import { ChildThreadPendingBanners } from '../../components/thread/pending-interactions/ChildThreadPendingBanners.js';
 import {
@@ -221,7 +221,14 @@ function ThreadDetailBody({
   const [stoppingAnchorAt, setStoppingAnchorAt] = useState(0);
   const [searchDraft, setSearchDraft] = useState('');
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
-  const [searchFocusRequest, setSearchFocusRequest] = useState(0);
+  const searchFocusRequest = useThreadFindTarget({
+    viewRef,
+    mainRef,
+    embedded,
+    modal,
+    paneFocused: pane?.isFocused !== false,
+    onOpenCollapsed: mobileControlsTarget ? () => setMobileSearchOpen(true) : undefined
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [linkParams] = useSearchParams();
   const linkSequence = Number(linkParams.get('message'));
@@ -844,24 +851,6 @@ function ThreadDetailBody({
       setSearchHit(findDeepestTimelineSearchHit(viewRows, needle));
     });
   }, [displayRows, threadId]);
-
-  const findState = useRef({ embedded, modal, paneFocused: pane?.isFocused !== false, mobileControls: Boolean(mobileControlsTarget) });
-  findState.current = { embedded, modal, paneFocused: pane?.isFocused !== false, mobileControls: Boolean(mobileControlsTarget) };
-  useEffect(() => registerThreadFindTarget({
-    root: () => viewRef.current,
-    main: () => mainRef.current,
-    isPrimary: () => {
-      const view = viewRef.current;
-      const { embedded: isEmbedded, modal: isModal, paneFocused } = findState.current;
-      if (!view || view.getClientRects().length === 0 || isEmbedded || !paneFocused) return false;
-      const ui = useUi.getState();
-      return isModal || (!ui.threadModal && !ui.agentModal);
-    },
-    open: () => {
-      if (findState.current.mobileControls) setMobileSearchOpen(true);
-      setSearchFocusRequest((value) => value + 1);
-    }
-  }), []);
 
   const overflow = (
     <ThreadDetailOverflow

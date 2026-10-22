@@ -65,7 +65,7 @@ export const DEFAULT_APP_KEYBINDINGS: AppDefaultKeybindings = [
     command: 'thread.find',
     desktopOnly: false,
     shortcut: { key: 'f', mod: true, meta: false, control: false, alt: false, shift: false },
-    when: { all: [], none: ['terminalFocus', 'browserFocus'] }
+    when: { all: [], none: [] }
   },
   {
     command: 'file.quickOpen',

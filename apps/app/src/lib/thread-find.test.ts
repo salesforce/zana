@@ -24,6 +24,15 @@ function threadView(primary = true) {
   return { root, main, composer, sideInput, target };
 }
 
+function overlay({ role = 'dialog', modal = false, inside = document.body }: { role?: string; modal?: boolean; inside?: Element } = {}) {
+  const dialog = document.createElement('div');
+  dialog.setAttribute('role', role);
+  if (modal) dialog.setAttribute('aria-modal', 'true');
+  dialog.append(document.createElement('input'));
+  inside.append(dialog);
+  return dialog;
+}
+
 function pressFind(target: EventTarget, init: KeyboardEventInit = { key: 'f', ctrlKey: true }) {
   const event = new KeyboardEvent('keydown', { ...init, bubbles: true, cancelable: true });
   let opened = false;
@@ -123,6 +132,41 @@ describe('thread find routing', () => {
     expect(hidden.target.open).not.toHaveBeenCalled();
     unregister.shift()!();
     expect(pressFind(outside).opened).toBe(false);
+  });
+
+  it('leaves the palette, dialogs and popovers in charge of their own focus', () => {
+    const view = threadView();
+    const palette = overlay({ modal: true });
+    const settings = overlay({ role: 'alertdialog' });
+    const popover = overlay({ inside: view.main });
+    for (const dialog of [palette, settings, popover]) {
+      expect(pressFind(dialog.querySelector('input')!)).toEqual({ opened: false, claimed: false, prevented: false });
+    }
+    expect(view.target.open).not.toHaveBeenCalled();
+  });
+
+  it('hides the threads behind an open modal when nothing has focus', () => {
+    const view = threadView();
+    const palette = overlay({ modal: true });
+    // A closed palette that stays mounted (display: none) has no boxes.
+    palette.getClientRects = () => [] as unknown as DOMRectList;
+    expect(pressFind(document.body).opened).toBe(true);
+    palette.getClientRects = () => [new DOMRect(0, 0, 10, 10)] as unknown as DOMRectList;
+    expect(pressFind(document.body).opened).toBe(false);
+    expect(view.target.open).toHaveBeenCalledTimes(1);
+  });
+
+  it('still opens a thread shown inside a modal', () => {
+    const background = threadView();
+    const modal = overlay({ modal: true });
+    modal.getClientRects = () => [new DOMRect(0, 0, 10, 10)] as unknown as DOMRectList;
+    const shown = threadView();
+    modal.append(shown.root);
+    expect(pressFind(shown.composer).opened).toBe(true);
+    expect(pressFind(modal.querySelector('input')!).opened).toBe(true);
+    expect(pressFind(document.body).opened).toBe(true);
+    expect(shown.target.open).toHaveBeenCalledTimes(3);
+    expect(background.target.open).not.toHaveBeenCalled();
   });
 
   it('drops the click tracker once the last thread unregisters', () => {

@@ -25,6 +25,13 @@ describe('KeyboardSettingsSection', () => {
       expect(html).toContain(command.label);
     }
   });
+
+  it('shows the same intro that Settings search indexes, thread search included', async () => {
+    const { entries } = await import('../../lib/settings-search/entries/keyboard.js');
+    const intro = entries.find((entry) => entry.id === 'keyboard.shortcuts-intro')!.help!;
+    expect(intro).toContain('thread search');
+    expect(renderToStaticMarkup(<KeyboardSettingsSection />)).toContain(intro);
+  });
 });
 
 describe('keyboard shortcut helpers', () => {
