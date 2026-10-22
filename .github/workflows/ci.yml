@@ -227,11 +227,15 @@ jobs:
   # Every affected seam is exercised in the built app; failures fail CI.
   # Keep model-spending live attach suites outside unattended CI.
   e2e:
-    name: Affected Electron boundaries
+    name: Affected Electron boundaries (${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
-    # Broad release branches select 81 production-boundary cases; the first
-    # 50 took 31 minutes in CI. Bound the private build and complete suite.
+    # Broad branches select 94 serial production-boundary cases, over an hour
+    # on one runner. Split them by spec file and bound each private build and shard.
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -269,12 +273,13 @@ jobs:
         env:
           CI_BASE_SHA: ${{ inputs.base_sha || github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
           NODE_OPTIONS: --max-old-space-size=6144
+          CI_E2E_SHARD: ${{ matrix.shard }}/3
 
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: |
             playwright-report
             e2e/.artifacts

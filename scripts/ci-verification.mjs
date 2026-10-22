@@ -164,7 +164,12 @@ export function runVerification(args, env, io = { execute: execFileSync, read: r
     io.log('Changed production statements and branches meet the 80% coverage floor.');
   } else {
     const specs = boundarySpecs([...changes.keys()]);
-    if (specs.length) io.execute('pnpm', ['test:e2e', '--', ...specs], { stdio: 'inherit' });
+    // Broad branches select more serial cases than one runner finishes; CI splits them by spec file.
+    const shard = env.CI_E2E_SHARD;
+    if (shard !== undefined && !/^[1-9]\d*\/[1-9]\d*$/.test(shard)) { io.error(`Invalid CI_E2E_SHARD: ${shard}`); return 1; }
+    // A shard can draw no spec file when few specs are affected; the other shards still run them.
+    const sharding = shard ? [`--shard=${shard}`, '--pass-with-no-tests'] : [];
+    if (specs.length) io.execute('pnpm', ['test:e2e', '--', ...specs, ...sharding], { stdio: 'inherit' });
     else io.log('No Electron production boundary changed.');
   }
   return 0;

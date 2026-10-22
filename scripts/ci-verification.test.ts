@@ -207,6 +207,16 @@ it('runs the private production app suite only for affected paths and fails miss
   expect(runVerification(['--coverage', 'coverage.json'], {}, io)).toBe(0);
 });
 
+it('forwards a CI shard to the production app suite and rejects a malformed one', () => {
+  const io = { execute: vi.fn().mockReturnValue('+++ b/apps/app/src/App.tsx\n@@ -1 +1 @@'), read: vi.fn(), log: vi.fn(), error: vi.fn() };
+  expect(runVerification([], { CI_E2E_SHARD: '2/3' }, io)).toBe(0);
+  expect(io.execute.mock.calls[1][1]).toEqual(expect.arrayContaining(['e2e/smoke.spec.ts', '--shard=2/3', '--pass-with-no-tests']));
+  io.execute.mockClear();
+  expect(runVerification([], { CI_E2E_SHARD: '0/3' }, io)).toBe(1);
+  expect(io.error).toHaveBeenCalledWith('Invalid CI_E2E_SHARD: 0/3');
+  expect(io.execute).toHaveBeenCalledOnce();
+});
+
 it('allows type-only files while rejecting uncovered runtime TypeScript', () => {
   const root = mkdtempSync(join(tmpdir(), 'zcc-ci-coverage-'));
   const folder = join(root, 'packages/demo/src'); mkdirSync(folder, { recursive: true });
