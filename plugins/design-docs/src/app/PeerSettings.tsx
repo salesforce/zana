@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { Loader2, RefreshCw } from 'lucide-react';
 import type { GroupStatus, PeerLifecycleReason, RepairResult } from '../shared/peer-group.js';
 import { NOT_CONNECTED, ownerText, stuckJob } from '../shared/peer-group.js';
 import { useRealtime } from '@zana-ai/zcc-plugin-sdk/app';
@@ -118,7 +118,7 @@ export function labelsOf(connections: readonly ConnectionView[]): Map<string, st
 }
 
 /** A computer row's status badge (dot + short label) and, when there is more to say, one detail line. */
-interface ComputerBadge { state: 'setting-up' | 'unsynced' | 'connected' | 'reconnecting' | 'disconnected' | 'removing'; label: string; detail?: string }
+interface ComputerBadge { state: 'setting-up' | 'unsynced' | 'connected' | 'reconnecting' | 'disconnected' | 'removing'; label: string; detail?: string; working?: boolean }
 
 function computerStatus(c: ConnectionView, status: GroupStatus | null): ComputerBadge {
   if (c.retiring) return { state: 'removing', label: 'Being removed', detail: 'Waiting for committed frontier; data sync disabled' };
@@ -130,6 +130,11 @@ function computerStatus(c: ConnectionView, status: GroupStatus | null): Computer
   }
   // Core shows this connection as Connected; say database sync is missing unless this computer actually syncs with it.
   if (c.usedByThisPlugin && c.state === 'connected' && !c.syncing) {
+    // Setup is talking to the other computer right now: show progress, not an idle "not set up" that invites Repair.
+    if (c.settingUp && (!status || status.lifecycleAvailable)) {
+      return { state: 'unsynced', label: 'Connected, setting up sync', working: true,
+        detail: 'Setting up database sync with this computer. Keep both computers open; no action needed.' };
+    }
     return { state: 'unsynced', label: 'Connected, sync not set up',
       detail: !status || status.lifecycleAvailable ? 'The connection works but database sync is not set up with this computer. Repair retries setup.' : lifecycleText(status.lifecycleReason) };
   }
@@ -154,9 +159,11 @@ function ComputerRow({ c, label, status, busy, note, denied, onUse, onStop, onRe
     <li className="dd-peers-card" data-state={c.state}>
       <div className="dd-peers-card-head">
         <strong className="dd-peers-card-name">{label}</strong>
-        <span className="dd-peers-badge" data-state={badge.state} role="status">{badge.label}</span>
+        <span className="dd-peers-badge" data-state={badge.state} data-working={badge.working || undefined} role="status">
+          {badge.label}{badge.working ? <Loader2 size={12} className="dd-spin" aria-hidden data-testid="setup-spinner" /> : null}
+        </span>
         <span className="dd-peers-card-actions">
-          {badge.state === 'unsynced' ? <button type="button" className="btn dd-btn-secondary" disabled={busy} onClick={onRepair}
+          {badge.state === 'unsynced' ? <button type="button" className="btn dd-btn-secondary" disabled={busy || !!badge.working} onClick={onRepair}
             title="Retry Design Docs sync setup. Reconnect the computer from Settings → Peers if its connection needs repair.">Repair</button> : null}
           {c.usedByThisPlugin ? (
             <button type="button" className="btn dd-btn-remove" disabled={busy || settingUp} onClick={onStop}>Stop using</button>
@@ -200,8 +207,8 @@ export function PeerSettings() {
   const loadStatus = useCallback(() => {
     void api.groupStatus().then((value) => { if (mounted.current) setStatus(value); }).catch(() => undefined);
   }, [api, mounted]);
-  // Core's approval sheet decides a Use request, so poll quickly while any row waits on it.
-  const waiting = !!connections?.some((c) => c.use === 'pending');
+  // Core's approval sheet decides a Use request, and setup finishes on its own: poll quickly while any row waits on either.
+  const waiting = !!connections?.some((c) => c.use === 'pending' || c.settingUp);
   useEffect(() => {
     let active = true;
     const load = () => {

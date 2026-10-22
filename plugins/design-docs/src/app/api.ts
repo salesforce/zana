@@ -31,6 +31,8 @@ export interface ConnectionView {
   use: 'pending' | 'approved' | 'denied' | null;
   syncing: boolean;
   retiring: boolean;
+  /** Sync setup work with this computer is running right now. */
+  settingUp?: boolean;
 }
 
 export interface TemplateInfo {

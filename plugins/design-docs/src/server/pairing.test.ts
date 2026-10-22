@@ -1953,13 +1953,48 @@ describe('DD core connections API', () => {
       await a.pairing.useConnection('d'); await a.pairing.useConnection('e'); await a.pairing.useConnection('f');
       void d;
       const byId = Object.fromEntries((await a.pairing.connections()).map((view) => [view.computerId, view]));
-      expect(byId.b).toEqual({ computerId: 'b', hostname: 'host-b', state: 'connected', usedByThisPlugin: true, use: 'approved', syncing: true, retiring: false });
+      expect(byId.b).toEqual({ computerId: 'b', hostname: 'host-b', state: 'connected', usedByThisPlugin: true, use: 'approved', syncing: true, retiring: false, settingUp: false });
       expect(byId.c).toMatchObject({ use: 'approved', syncing: false, retiring: true });
       expect(byId.d).toMatchObject({ state: 'reconnecting', usedByThisPlugin: false, use: 'pending', syncing: false, retiring: false });
       expect(byId.e).toMatchObject({ use: 'denied' });
       // Approved by core's answer but not (yet) reflected in the list: no stale "approved" badge.
       expect(byId.f).toMatchObject({ use: null });
       expect(calls.list).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
+    });
+
+    it('reports setup work in flight with a used computer, and never for an unused one', async () => {
+      const net = network(), a = net.app('a');
+      const state = { list: [conn('b'), conn('c', { usedByThisPlugin: false })] };
+      withConnections(a, state);
+      const view = async (id: string) => (await a.pairing.connections()).find((entry) => entry.computerId === id)!;
+      expect((await view('b')).settingUp).toBe(false);
+      const internals = a.pairing as unknown as { following: Map<string, unknown>; restoring: Map<string, number>; enablingPeer: string | null };
+      internals.following.set('b', { attempts: 0, nextAt: 0, scope: null, failedAt: null });
+      internals.following.set('c', { attempts: 0, nextAt: 0, scope: null, failedAt: null });
+      expect((await view('b')).settingUp).toBe(true);
+      expect((await view('c')).settingUp).toBe(false);
+      // An unreachable initiator backs off: that is waiting, not work in flight.
+      internals.following.set('b', { attempts: 1, nextAt: 0, scope: null, failedAt: '' });
+      expect((await view('b')).settingUp).toBe(false);
+      internals.restoring.set('b', Date.now() + 60_000);
+      expect((await view('b')).settingUp).toBe(true);
+      internals.restoring.clear();
+      internals.enablingPeer = 'b';
+      expect((await view('b')).settingUp).toBe(true);
+    });
+
+    it('a request settled by core no longer shows pending after a Stop using from either computer', async () => {
+      const net = network(), a = net.app('a');
+      const state = { list: [conn('b', { usedByThisPlugin: false })] };
+      const calls = withConnections(a, state);
+      calls.requestUse.mockResolvedValue({ status: 'pending' });
+      await a.pairing.useConnection('b');
+      expect((await a.pairing.connections())[0]!.use).toBe('pending');
+      // Both owners approved; later the other computer stops using it.
+      state.list = [conn('b')];
+      expect((await a.pairing.connections())[0]!.use).toBe('approved');
+      state.list = [conn('b', { usedByThisPlugin: false })];
+      expect((await a.pairing.connections())[0]!.use).toBeNull();
     });
 
     it('still lists connections when the sync status cannot be read', async () => {

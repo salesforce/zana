@@ -85,6 +85,8 @@ export interface ConnectionView {
   use: 'pending' | 'approved' | 'denied' | null;
   syncing: boolean;
   retiring: boolean;
+  /** Sync setup work with this computer is running right now (enable, waiting on the initiator, grant restore or a pending job). */
+  settingUp?: boolean;
 }
 
 /** The handler core gives an `onConnectionRemoving` call; stay well inside it. */
@@ -120,6 +122,8 @@ export class DesignDocPairing {
   private readonly unsubscribes: Array<() => void> = [];
   private running: Promise<void> | null = null;
   private enabling: Promise<GroupStatus> | null = null;
+  /** The computer the running `enabling` negotiates with. */
+  private enablingPeer: string | null = null;
   private revoking: Promise<GroupStatus> | null = null;
   private reconciling: Promise<void> | null = null;
   private enableError: string | null = null;
@@ -353,11 +357,22 @@ export class DesignDocPairing {
     try { status = await this.status(); } catch { this.abort.signal.throwIfAborted(); }
     return list.map((connection) => {
       const member = status?.members.find((entry) => entry.machineId === connection.computerId && entry.replicaId !== status!.replicaId);
+      // Core's approval settles a remembered request: a later Stop using (from either computer) must not show it as still pending.
+      if (connection.usedByThisPlugin) this.lastUse.delete(connection.computerId);
       const remembered = this.lastUse.get(connection.computerId) ?? null;
       const use = connection.usedByThisPlugin ? 'approved' as const : remembered === 'approved' ? null : remembered;
       return { computerId: connection.computerId, hostname: connection.hostname, state: connection.state, usedByThisPlugin: connection.usedByThisPlugin,
-        use, syncing: !!status && syncedWith(status, connection.computerId), retiring: !!member?.retiring };
+        use, syncing: !!status && syncedWith(status, connection.computerId), retiring: !!member?.retiring,
+        settingUp: connection.usedByThisPlugin && this.settingUp(connection.computerId, status) };
     });
+  }
+
+  /** True while setup work with `computerId` is in flight, so the card can show progress instead of an idle "not set up". */
+  private settingUp(computerId: string, status: GroupStatus | null): boolean {
+    if (this.enablingPeer === computerId) return true;
+    if (this.following.get(computerId)?.failedAt === null) return true;
+    if ((this.restoring.get(computerId) ?? 0) > Date.now()) return true;
+    return !!status?.jobs.some((job) => job.peerId === computerId && job.state === 'pending');
   }
 
   /** Ask core to let this plugin use a connection. Core's error codes (e.g. `unknown_connection`) pass through unchanged. */
@@ -768,7 +783,8 @@ export class DesignDocPairing {
   private async enableNow(peerId: string): Promise<GroupStatus> {
     id.parse(peerId);
     if (this.enabling || this.revoking) return Promise.reject(new PeerProtocolError('conflict', 'database lifecycle action already running'));
-    this.enabling = this.negotiate(peerId).finally(() => { this.enabling = null; });
+    this.enablingPeer = peerId;
+    this.enabling = this.negotiate(peerId).finally(() => { this.enabling = null; this.enablingPeer = null; });
     return this.enabling;
   }
 

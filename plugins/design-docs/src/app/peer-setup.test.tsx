@@ -174,6 +174,16 @@ describe('Repair and unsynced', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
+  it('shows a spinner while setup talks to the other computer, and holds Repair', async () => {
+    mount({ connections: async () => [used({ syncing: false, settingUp: true })] });
+    const card = await screen.findByRole('listitem');
+    expect(within(card).getByText('Connected, setting up sync')).toBeTruthy();
+    expect(within(card).getByTestId('setup-spinner')).toBeTruthy();
+    expect(within(card).getByText(/Setting up database sync with this computer/)).toBeTruthy();
+    expect(within(card).getByRole('button', { name: 'Repair' })).toHaveProperty('disabled', true);
+    expect(within(card).queryByText('Connected, sync not set up')).toBeNull();
+  });
+
   it('shows active setup instead of offering a second repair', async () => {
     const status = { ...EMPTY, setup: { peerId: 'app-b', repoId: 'database', state: 'pending' as const, error: null } };
     mount({ connections: async () => [used({ syncing: false })], groupStatus: async () => status });
