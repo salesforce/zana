@@ -24,6 +24,7 @@ import {
   SESSION_CALLBACK_ENV_KEYS,
   SESSION_IDENTITY_ENV_KEYS,
   sessionEnvFilePath,
+  stripInheritedSessionCallbacks,
   withBlankedSessionCallbacks,
   writeSessionEnvFile
 } from './tmux-session-env.js';
@@ -1663,6 +1664,12 @@ export class PtyManager extends EventEmitter {
     // dev, but sanitizing at the source removes the footgun for good. See
     // stripInheritedClaudeSession.
     stripInheritedClaudeSession(env);
+    // Same footgun for Zana's own per-session callback URLs: an app launched from
+    // a Zana tab inherits that tab's ZCC_MCP_URL / hook URLs. A harness that does
+    // not re-set a key below (codex wires MCP via `-c`, not ZCC_MCP_URL) would
+    // otherwise call back into the PARENT session's route, which is not bound to
+    // this session's execution. Every key this launch owns is re-set later.
+    stripInheritedSessionCallbacks(env);
     ensureInteractiveTerminalEnv(env);
     // Per-harness auth env override: merge AFTER stripInheritedClaudeSession (it
     // touches only CLAUDE* session markers, never our auth vars) and AFTER the
@@ -2655,6 +2662,7 @@ export class PtyManager extends EventEmitter {
       TERM: 'xterm-256color'
     };
     spawnEnv.PATH = augmentPath(spawnEnv.PATH ?? process.env.PATH);
+    stripInheritedSessionCallbacks(spawnEnv);
     ensureInteractiveTerminalEnv(spawnEnv);
 
     (this.hostServices.prepareNativePty ?? ensureNodePtySpawnHelperExecutable)();

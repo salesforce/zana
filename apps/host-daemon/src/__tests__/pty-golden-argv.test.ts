@@ -577,3 +577,87 @@ describe('golden command — remote buildRemoteCmd matrix', () => {
     }
   }
 });
+
+describe('inherited parent-session callback env', () => {
+  // The app can itself run inside a Zana session (dev from a Zana tab, E2E from
+  // an agent shell). Its ambient ZCC_*_URL vars name THAT session. A harness that
+  // does not re-set a key (codex wires MCP with `-c`, never ZCC_MCP_URL) must not
+  // hand the child the parent's endpoint: the fake job-team codex cohort called
+  // the parent route and every bound execution tool returned "session is not
+  // bound to this execution".
+  const PARENT = 'http://127.0.0.1:61000/mcp/parent-proj/parent-session/parent-cred';
+  const AMBIENT = {
+    ZCC_MCP_URL: PARENT,
+    ZCC_HOOK_URL: `${PARENT}/hook`,
+    ZCC_NOTIFY_URL: `${PARENT}/notify`,
+    ZCC_NATIVETOOL_URL: `${PARENT}/nativetool`,
+    ZCC_TOOLACTIVITY_URL: `${PARENT}/toolactivity`
+  };
+
+  function withAmbient(run: () => void): void {
+    const env = process.env as Record<string, string | undefined>;
+    const saved = Object.fromEntries(Object.keys(AMBIENT).map((k) => [k, env[k]]));
+    Object.assign(env, AMBIENT);
+    try {
+      run();
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete env[k];
+        else env[k] = v;
+      }
+    }
+  }
+
+  beforeEach(() => {
+    spawns.length = 0;
+  });
+
+  for (const profile of ['codex', 'shell'] as const) {
+    it(`${profile} never inherits the parent session's callback URLs`, () => {
+      withAmbient(() => {
+        const mgr = new PtyManager();
+        mgr.setMcpBaseUrl(MCP_BASE);
+        const session = mgr.create({
+          projectId: 'proj1', profile, cwd: '/tmp/work', cols: 80, rows: 24, config: BASE_CONFIG
+        });
+        const call = spawns[spawns.length - 1]!;
+        for (const [key, parentValue] of Object.entries(AMBIENT)) {
+          expect(call.env[key], key).not.toBe(parentValue);
+        }
+        expect(call.env.ZCC_MCP_URL).toBeUndefined();
+        expect(call.env.ZCC_SESSION_ID).toBe(session.id);
+        if (profile === 'codex') {
+          const url = call.args.find((arg) => arg.startsWith('mcp_servers.zcc-inbox.url='));
+          expect(url).toContain(`/mcp/proj1/${session.id}/`);
+        }
+      });
+    });
+  }
+
+  it('claude replaces the inherited ZCC_MCP_URL with its own session route', () => {
+    withAmbient(() => {
+      const mgr = new PtyManager();
+      mgr.setMcpBaseUrl(MCP_BASE);
+      const session = mgr.create({
+        projectId: 'proj1', profile: 'claude', cwd: '/tmp/work', cols: 80, rows: 24, config: BASE_CONFIG
+      });
+      const call = spawns[spawns.length - 1]!;
+      expect(call.env.ZCC_MCP_URL).toContain(`${MCP_BASE}/mcp/proj1/${session.id}/`);
+      expect(call.env.ZCC_NOTIFY_URL).toContain(session.id);
+    });
+  });
+
+  it('a remote ssh launch does not carry the parent callback URLs on the local ssh env', () => {
+    withAmbient(() => {
+      const mgr = new PtyManager();
+      mgr.setMcpBaseUrl(MCP_BASE);
+      mgr.create({
+        projectId: 'proj1', profile: 'codex', cwd: '/tmp/work', cols: 80, rows: 24, config: BASE_CONFIG,
+        remote: { host: 'devbox', user: 'sfwork', remotePath: '/home/sfwork/core' }
+      });
+      const call = spawns[spawns.length - 1]!;
+      expect(call.command).toBe('ssh');
+      for (const key of Object.keys(AMBIENT)) expect(call.env[key], key).toBeUndefined();
+    });
+  });
+});
