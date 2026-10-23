@@ -914,11 +914,10 @@ const windows = new Map<number, { win: BrowserWindow; projectId?: string; view?:
 // theme: new windows take `current()`, open ones are re-coloured on a Theme
 // setting change (ipc/config.ts) and on OS appearance changes (`bind()`).
 const titleBarOverlays = createWindowsTitleBarOverlays({
-  platform: process.platform,
+  get platform() { return process.platform; },
   windows,
   theme: resolveTheme,
   // Lazy: host-loading unit tests mock electron without these.
-  /* v8 ignore next -- only read on Windows; covered by e2e/windows-titlebar-overlay-theme.spec.ts */
   electron: () => ({ nativeTheme, systemPreferences }),
   logError: logMainError
 });
@@ -8107,7 +8106,6 @@ async function runStartupMigration(): Promise<StartupState> {
 
 async function bootstrap() {
   // Before any window (including the repair window) so none misses a flip.
-  /* v8 ignore next -- runs after app ready; covered by e2e/windows-titlebar-overlay-theme.spec.ts */
   stopTitleBarOverlayTheme ??= titleBarOverlays.bind();
   registerStartupStateIpc();
   await runStartupMigration();

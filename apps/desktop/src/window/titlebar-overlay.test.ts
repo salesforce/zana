@@ -175,14 +175,48 @@ describe('createWindowsTitleBarOverlays', () => {
     expect(main.applied).toHaveLength(1);
   });
 
-  it('does nothing on macOS and Linux, which have no overlay', () => {
+  it('never touches a window on macOS and Linux, which have no overlay', () => {
     for (const platform of ['darwin', 'linux'] as const) {
-      const { overlays, nativeTheme, main } = setup(platform);
+      const { overlays, nativeTheme, main, getColor } = setup(platform);
       const stop = overlays.bind();
-      expect(nativeTheme.listenerCount('updated')).toBe(0);
+      nativeTheme.shouldUseHighContrastColors = true;
+      nativeTheme.emit('updated');
       overlays.refresh();
       stop();
+      expect(nativeTheme.listenerCount('updated')).toBe(0);
       expect(main.applied).toEqual([]);
+      expect(getColor).not.toHaveBeenCalled();
     }
+  });
+
+  it('logs and carries on when the OS appearance listener cannot be attached', () => {
+    const err = new Error('nativeTheme unavailable');
+    const logError = vi.fn();
+    const overlays = createWindowsTitleBarOverlays({
+      platform: 'win32',
+      windows: new Map(),
+      theme: () => 'dark',
+      electron: () => { throw err; },
+      logError
+    });
+    const stop = overlays.bind();
+    expect(logError).toHaveBeenCalledExactlyOnceWith('titleBarOverlay bind', err);
+    expect(stop).not.toThrow();
+  });
+
+  it('reads the platform on every refresh', () => {
+    const main = fakeWindow(1);
+    let platform: NodeJS.Platform = 'linux';
+    const overlays = createWindowsTitleBarOverlays({
+      get platform() { return platform; },
+      windows: new Map([[1, { win: main.win }]]),
+      theme: () => 'light',
+      electron: () => ({ nativeTheme: Object.assign(new EventEmitter(), { shouldUseHighContrastColors: false }), systemPreferences: { getColor: () => '' } }),
+      logError: vi.fn()
+    });
+    overlays.refresh();
+    platform = 'win32';
+    overlays.refresh();
+    expect(main.applied).toEqual([windowsTitleBarOverlay('light')]);
   });
 });

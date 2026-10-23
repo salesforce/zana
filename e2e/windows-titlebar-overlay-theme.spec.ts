@@ -81,19 +81,23 @@ test('Windows caption buttons follow the Theme setting and the OS appearance in 
       );
     }
 
-    // Theme System: the overlay follows the OS appearance, and an OS change
-    // (nativeTheme `updated`) re-colours every window without a restart.
+    // Theme System: the overlay follows a real appearance change. Forcing
+    // `themeSource` flips `shouldUseDarkColors` and the renderer's
+    // prefers-color-scheme, and Electron emits `updated` itself, as on an OS switch.
     await main.evaluate(() => window.cc.config.set({ theme: 'system' }));
-    const osTheme = await electron.evaluate(({ nativeTheme }) => (nativeTheme.shouldUseDarkColors ? 'dark' : 'light'));
-    await expect(main.locator('html')).toHaveAttribute('data-theme', osTheme);
-    const systemPainted = await paintedTitleBar(main, '.titlebar');
-    const before = await lastOverlays();
-    await electron.evaluate(({ nativeTheme }) => { nativeTheme.emit('updated'); });
-    await expect.poll(async () => (await lastOverlays()).map((entry) => [entry.count, entry.last])).toEqual(
-      before.map((entry) => [entry.count + 1, { ...systemPainted, height: 44 }])
-    );
+    for (const appearance of ['light', 'dark'] as const) {
+      await electron.evaluate(({ nativeTheme }, value) => { nativeTheme.themeSource = value; }, appearance);
+      await expect(main.locator('html')).toHaveAttribute('data-theme', appearance);
+      await expect(projectWindow!.locator('html')).toHaveAttribute('data-theme', appearance);
+      const painted = await paintedTitleBar(main, '.titlebar');
+      expect(painted).toEqual(await paintedTitleBar(projectWindow!, '.titlebar'));
+      await expect.poll(async () => (await lastOverlays()).map((entry) => entry.last)).toEqual(
+        Array.from({ length: windowCount }, () => ({ ...painted, height: 44 }))
+      );
+    }
   } finally {
-    await electron.evaluate(() => {
+    await electron.evaluate(({ nativeTheme }) => {
+      nativeTheme.themeSource = 'system';
       (globalThis as any).__overlayCheck?.restore();
       delete (globalThis as any).__overlayCheck;
     });

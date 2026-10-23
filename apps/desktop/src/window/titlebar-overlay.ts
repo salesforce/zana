@@ -87,7 +87,8 @@ interface ThemeEvents {
 }
 
 export interface WindowsTitleBarOverlayDeps {
-  platform: NodeJS.Platform;
+  /** Read on every refresh. */
+  readonly platform: NodeJS.Platform;
   /** The live window registry; read on every refresh. */
   windows: { values(): Iterable<{ win: OverlayWindow }> };
   /** The effective app theme (Theme setting, with System resolved). */
@@ -105,7 +106,7 @@ export interface WindowsTitleBarOverlayDeps {
  * (`refresh`, after the Theme setting changes), and the OS appearance listener
  * (`bind`: light/dark while Theme is System, and contrast themes). `bind` is
  * called once at app init and returns its unsubscribe for shutdown. Off
- * Windows there is no overlay, so `refresh` and `bind` do nothing.
+ * Windows there is no overlay, so `refresh` does nothing.
  */
 export function createWindowsTitleBarOverlays(deps: WindowsTitleBarOverlayDeps) {
   // A failed theme read must not stop a window from opening: fall back to the
@@ -128,13 +129,20 @@ export function createWindowsTitleBarOverlays(deps: WindowsTitleBarOverlayDeps) 
     if (deps.platform !== 'win32') return;
     applyWindowsTitleBarOverlay(Array.from(deps.windows.values(), (entry) => entry.win), current(), deps.logError);
   };
+  // Subscribes on every platform, like the tray's theme listener, so the boot
+  // wiring is the same everywhere; `refresh` itself does nothing off Windows.
+  // A failed subscription must not abort boot: log it and carry on.
   const bind = () => {
-    if (deps.platform !== 'win32') return () => {};
-    const { nativeTheme } = deps.electron();
-    nativeTheme.on('updated', refresh);
-    return () => {
-      nativeTheme.off('updated', refresh);
-    };
+    try {
+      const { nativeTheme } = deps.electron();
+      nativeTheme.on('updated', refresh);
+      return () => {
+        nativeTheme.off('updated', refresh);
+      };
+    } catch (err) {
+      deps.logError('titleBarOverlay bind', err);
+      return () => {};
+    }
   };
   return { current, refresh, bind };
 }
