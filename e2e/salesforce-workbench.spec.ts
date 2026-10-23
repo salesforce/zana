@@ -125,6 +125,9 @@ console.log(JSON.stringify({status:process.exitCode || 0, result}));
       await use({
         ZCC_FAKE_PROVIDER: "1",
         PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+        // A shell that prints nothing makes ensureProcessPath skip the login-shell PATH, which would
+        // otherwise sort the real /opt/homebrew/bin sf ahead of the fake one in <home>/bin.
+        SHELL: "/usr/bin/true",
         SF_E2E_URL: `http://127.0.0.1:${address.port}`,
         SF_E2E_TRACE: join(home, "sf-trace.jsonl"),
       });
