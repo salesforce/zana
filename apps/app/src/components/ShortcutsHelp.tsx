@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { X } from 'lucide-react';
 import { platformKey, platformShortcut } from '../lib/platformShortcut.js';
+import { terminalPasteHelpRow } from '../lib/terminalPaste.js';
 
 interface Props {
   onClose: () => void;
@@ -72,6 +73,7 @@ const SECTIONS: Section[] = [
     rows: [
       { keys: ['⌘', 'F'], label: 'Find in active terminal' },
       { keys: ['⌘', 'K'], label: 'Clear active terminal scrollback' },
+      ...[terminalPasteHelpRow()].filter((row): row is Row => row !== null),
       { keys: ['Enter'], label: 'Find: next match' },
       { keys: ['⇧', 'Enter'], label: 'Find: previous match' },
       { keys: ['Esc'], label: 'Close find / palette' },

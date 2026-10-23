@@ -2413,6 +2413,15 @@ export interface AppConfig {
    */
   terminalClipboardWriteEnabled?: boolean;
   /**
+   * Whether Ctrl+V pastes the clipboard into a terminal on Windows and Linux,
+   * like Shift+Insert (and Ctrl+Shift+V, which always pastes there). When off,
+   * Ctrl+V sends the literal `^V` control character to the program, as
+   * readline's "insert next character literally" and vim's block select
+   * expect. Unset ⇒ platform default: on for Windows, off for Linux. macOS
+   * ignores it (⌘V pastes). See `apps/app/src/lib/terminalPaste.ts`.
+   */
+  terminalCtrlVPasteEnabled?: boolean;
+  /**
    * Enable the Zana Mobile gateway — the authenticated network edge in front of
    * the loopback product server that a paired phone connects through
    * (Settings → Phone). Default OFF: it opens a network listener (bound to this
