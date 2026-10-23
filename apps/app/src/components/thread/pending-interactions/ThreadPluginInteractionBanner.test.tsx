@@ -28,12 +28,22 @@ function show(request: PluginExtensionPendingInteraction | PluginPendingInteract
 }
 
 afterEach(() => {
+  delete (window as any).cc;
   cleanup();
   for (const id of ['provider-pi', 'other-plugin']) clearPluginSlots(id);
   vi.resetAllMocks();
 });
 
 describe('plugin request banners', () => {
+  it('submits plugin-origin answers through main IPC when available', async () => {
+    const respond = vi.fn(async () => undefined);
+    (window as any).cc = { threads: { interactions: { respond } } };
+    interpretPluginApp('other-plugin', definePluginApp(app => app.slots.pendingInteraction({ id: 'form', component: ({ submit }) => <button onClick={() => void submit(true)}>Answer</button> })));
+    show({ id: 'plugin-1', threadId: 'thr-1', turnId: null, origin: { kind: 'plugin', pluginId: 'other-plugin', rendererId: 'form' }, status: 'pending', payload: { kind: 'plugin', title: 'Confirm', data: {}, requireHuman: true }, resolution: null, statusReason: null, createdAt: 1, resolvedAt: null });
+    fireEvent.click(screen.getByText('Answer'));
+    await waitFor(() => expect(respond).toHaveBeenCalledWith('thr-1', 'plugin-1', true));
+    expect(product.threads.interactions.respond).not.toHaveBeenCalled();
+  });
   it('renders the real Pi picker and returns the selected label through provider resolve', async () => {
     interpretPluginApp('provider-pi', piApp);
     show();

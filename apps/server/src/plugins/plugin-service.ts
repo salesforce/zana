@@ -337,10 +337,12 @@ export interface PluginServiceOptions {
     title: string;
     payload: import('@zana-ai/zcc-domain/thread-runtime').JsonValue;
     timeoutMs: number;
+    requireHuman?: boolean;
     signal?: AbortSignal;
   }) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginInteractionResult>;
   interruptPluginInteractions?: (pluginId: string) => void;
   consumePluginApproval?: (args: { pluginId: string; token: string; binding: unknown }) => boolean;
+  requestPluginToolApproval?: (input: import('../http/plugin-approval-proof.js').PluginToolApprovalScope) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginApprovalResult>;
   getInteraction?: (args: { pluginId: string; interactionId: string }) => Promise<
     import('@zana-ai/zcc-domain').InteractionContract | null
   >;
@@ -1270,6 +1272,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       requestPluginInteraction: opts.requestPluginInteraction,
       interruptPluginInteractions: opts.interruptPluginInteractions,
       consumePluginApproval: opts.consumePluginApproval,
+      requestPluginToolApproval: opts.requestPluginToolApproval,
       getInteraction: opts.getInteraction,
       upsertInteraction: opts.upsertInteraction,
       acknowledgeInteraction: opts.acknowledgeInteraction,

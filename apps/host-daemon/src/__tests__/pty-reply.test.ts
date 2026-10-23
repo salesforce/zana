@@ -66,6 +66,7 @@ const CONFIG: AppConfig = {
 
 function makeSession(mgr: PtyManager) {
   return mgr.create({
+    nativeToolPolicyRequired: false,
     projectId: 'p1',
     profile: 'shell',
     cwd: '/tmp',
@@ -77,6 +78,7 @@ function makeSession(mgr: PtyManager) {
 
 function makeOpenCodeSession(mgr: PtyManager) {
   return mgr.create({
+    nativeToolPolicyRequired: false,
     projectId: 'p1',
     profile: 'opencode',
     cwd: '/tmp',
@@ -88,6 +90,7 @@ function makeOpenCodeSession(mgr: PtyManager) {
 
 function makeCodexSession(mgr: PtyManager) {
   return mgr.create({
+    nativeToolPolicyRequired: false,
     projectId: 'p1',
     profile: 'codex',
     cwd: '/tmp',

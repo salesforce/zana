@@ -1,4 +1,7 @@
 import { pagedConversationPromptHistory } from '../services/threads/conversation-prompt-history.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
+import { captureStablePluginToolApprovalIdentity, isPluginToolApprovalScopeLive, parsePluginApprovalBinding, parsePluginToolApprovalRequest, type PluginApprovalResult, type PluginToolApprovalIdentity, type PluginToolApprovalRequest, type PluginToolApprovalScope } from '../http/plugin-approval-proof.js';
 import { validatePluginHostValue } from './plugin-host-rpc.js';
 import { searchPluginInbox, readPluginInbox } from './plugin-inbox.js';
 import { completePluginAssistant } from './plugin-assistant.js';
@@ -11,7 +14,7 @@ import {
   type InteractionContract,
   type ProjectIcon
 } from '@zana-ai/zcc-domain';
-import { threadProviderFamily } from '../services/threads/thread-execution-options.js';
+import { capabilityRegistry, terminalCapabilityKey } from './capability-registry.js';
 import { readHostFile, writeHostFile } from '../http/files-via-host.js';
 import { readPluginProjectFile, writePluginProjectFile } from '../http/plugin-project-files.js';
 import { environmentPullRequest } from '../services/environments/environment-actions.js';
@@ -26,7 +29,6 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { applyPluginSqliteMigrations } from './plugin-database-migrations.js';
 import { createRequire } from 'node:module';
 import { createSqliteDatabase, listHosts, getPrimaryHost, getConversationThread } from '@zana-ai/zcc-db';
-import { MODERN_SQUAD_THREAD_ORIGIN } from '@zana-ai/zcc-domain/squad-origin';
 import type {
   PluginAgentConfigureContext,
   PluginProviderDeclaration,
@@ -247,11 +249,13 @@ export function createPluginApi(
       title: string;
       payload: JsonValue;
       timeoutMs: number;
+      requireHuman?: boolean;
       signal?: AbortSignal;
     }) => Promise<PluginInteractionResult>;
     interruptPluginInteractions?: (pluginId: string) => void;
     /** Consumes a host-signed approval for this plugin; absent means every token is refused. */
     consumePluginApproval?: (args: { pluginId: string; token: string; binding: unknown }) => boolean;
+    requestPluginToolApproval?: (input: PluginToolApprovalScope) => Promise<PluginApprovalResult>;
     getInteraction?: (args: { pluginId: string; interactionId: string }) => Promise<InteractionContract | null>;
     upsertInteraction?: (args: {
       pluginId: string;
@@ -367,6 +371,16 @@ export function createPluginApi(
   let stale = false;
   let disposal: Promise<void> | undefined;
   const assistantLifecycle = new AbortController();
+  const toolInvocations = new AsyncLocalStorage<{
+    threadId: string; projectId: string; invocationId: string; signal: AbortSignal; desktopPresentation: boolean; active: boolean;
+    identity: PluginToolApprovalIdentity | null;
+  }>();
+  const approvalScopeLive = (scope: NonNullable<ReturnType<typeof toolInvocations.getStore>>): boolean => {
+    try {
+      return !options?.productContext || Boolean(scope.identity && isPluginToolApprovalScopeLive(
+        options.productContext, scope.threadId, scope.projectId, scope.identity));
+    } catch { return false; }
+  };
   const cliRecord: { registration: PluginCliRegistration | null } = { registration: null };
   const httpRoutes: PluginHttpRouteRecord[] = [];
   const agentTools: PluginAgentToolRecord[] = [];
@@ -433,6 +447,63 @@ export function createPluginApi(
     await hostEntryLoaded;
   };
 
+  const requestToolApproval = async (request: PluginToolApprovalRequest): Promise<PluginApprovalResult> => {
+    assertLive();
+     const scope = toolInvocations.getStore();
+     if (!scope?.active || !scope.desktopPresentation || scope.signal.aborted || !scope.threadId || !scope.projectId || !approvalScopeLive(scope)) {
+       return { approved: false, reason: 'unavailable' };
+     }
+    if (!request || typeof request !== 'object' || Array.isArray(request)
+      || !parsePluginApprovalBinding(request.binding).ok
+      || (request.threadId !== undefined && request.threadId !== scope.threadId)
+      || (request.invocationId !== undefined && request.invocationId !== scope.invocationId)
+      || (request.binding?.threadId !== undefined && request.binding.threadId !== scope.threadId)
+      || (request.binding?.invocationId !== undefined && request.binding.invocationId !== scope.invocationId)) {
+      return { approved: false, reason: 'invalid' };
+    }
+    const parsed = parsePluginToolApprovalRequest({ ...request, threadId: scope.threadId, invocationId: scope.invocationId,
+      binding: { ...request.binding, threadId: scope.threadId, invocationId: scope.invocationId } });
+    if (!parsed.ok) return { approved: false, reason: 'invalid' };
+    const ask = options?.requestPluginToolApproval ?? options?.productContext?.requestPluginToolApproval;
+    if (!ask) return { approved: false, reason: 'unavailable' };
+    const signal = AbortSignal.any([scope.signal, assistantLifecycle.signal]);
+    const deadline = Date.now() + parsed.value.timeoutMs!;
+    return new Promise(resolve => {
+      let settled = false;
+      const finish = (result: PluginApprovalResult) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal.removeEventListener('abort', cancel);
+        resolve(!scope.active || stale || !approvalScopeLive(scope) ? { approved: false, reason: 'unavailable' }
+          : Date.now() >= deadline ? { approved: false, reason: 'timeout' } : result);
+      };
+      const cancel = () => finish({ approved: false, reason: 'cancelled' });
+      const timer = setTimeout(() => finish({ approved: false, reason: 'timeout' }), parsed.value.timeoutMs!);
+      signal.addEventListener('abort', cancel, { once: true });
+      if (signal.aborted) { cancel(); return; }
+      void Promise.resolve().then(() => settled || !scope.active || !approvalScopeLive(scope) ? { approved: false as const, reason: 'unavailable' as const }
+        : ask({ pluginId, projectId: scope.projectId, ...(scope.identity ? { identity: scope.identity } : {}), request: parsed.value as PluginToolApprovalScope['request'] })).then(finish,
+        () => finish({ approved: false, reason: 'unavailable' }));
+    });
+  };
+
+  const consumeApproval: ZccPluginApi['ui']['consumeApproval'] = async (request) => {
+    assertLive();
+    if (!request || typeof request !== 'object' || typeof request.token !== 'string' || !parsePluginApprovalBinding(request.binding).ok) return false;
+    let binding = request.binding;
+    const scope = toolInvocations.getStore();
+    if (scope) {
+      if (!scope.active || scope.signal.aborted || !scope.desktopPresentation || !binding
+        || (binding.threadId !== undefined && binding.threadId !== scope.threadId)
+        || (binding.invocationId !== undefined && binding.invocationId !== scope.invocationId)) return false;
+      if (!approvalScopeLive(scope)) return false;
+      binding = { ...binding, threadId: scope.threadId, invocationId: scope.invocationId };
+    } else if (binding?.threadId !== undefined || binding?.invocationId !== undefined) return false;
+    try { return options?.consumePluginApproval?.({ pluginId, token: request.token, binding }) ?? false; }
+    catch { return false; }
+  };
+
   function emitLog(level: 'debug' | 'info' | 'warn' | 'error', message: string): void {
     const line = `[plugin:${pluginId}] ${message.slice(0, 8192)}`;
     if (level === 'debug') console.debug(line);
@@ -448,24 +519,11 @@ export function createPluginApi(
    * a plugin/renderer can pick WHICH thread to ask about but cannot make a
    * capability answer `available: true` that main's wiring doesn't back.
    */
-  function capabilityDescriptors(providerId: string | null, modernSquad = false): CapabilityDescriptor[] {
-    const family = providerId ? threadProviderFamily(providerId) : null;
-    const nativeToolCapable = !modernSquad && (family === 'claude' || family === 'codex');
+  function capabilityDescriptors(key: import('@zana-ai/zcc-domain').CapabilitySurfaceKey | null): CapabilityDescriptor[] {
     return [
-      { id: 'message-admission', available: Boolean(options?.productContext) },
-      { id: 'lifecycle-delivery', available: Boolean(options?.productContext) },
-      {
-        id: 'tool-before-native',
-        available: nativeToolCapable,
-        ...(nativeToolCapable ? {} : { reason: modernSquad ? 'Modern squad provider-native tool policy is not wired' : providerId ? `provider "${providerId}" has no native tool hook adapter` : 'no thread resolved' })
-      },
-      {
-        id: 'tool-after-native',
-        available: nativeToolCapable,
-        ...(nativeToolCapable ? {} : { reason: modernSquad ? 'Modern squad provider-native tool policy is not wired' : providerId ? `provider "${providerId}" has no native tool hook adapter` : 'no thread resolved' })
-      },
-      { id: 'project-rpc', available: Boolean(options?.hostCall) },
-      { id: 'interactions', available: Boolean(options?.upsertInteraction) }
+      ...capabilityRegistry.describe(key).map(row => row.id === 'interactions' && row.available && !options?.upsertInteraction
+        ? { id: row.id, available: false, reason: 'Interaction host wiring unavailable' } : row),
+      options?.hostCall ? { id: 'project-rpc', available: true } : { id: 'project-rpc', available: false, reason: 'Project RPC host wiring unavailable' }
     ];
   }
 
@@ -1199,7 +1257,14 @@ export function createPluginApi(
           const id = typeof threadId === 'string' ? threadId.trim() : '';
           if (!id) throw new Error('threadId is required');
           const thread = options?.productContext ? getConversationThread(options.productContext.db, id) : null;
-          return { capabilities: capabilityDescriptors(thread?.providerId ?? null, thread?.originPluginId === MODERN_SQUAD_THREAD_ORIGIN) };
+          let session: import('@zana-ai/zcc-domain/product').TerminalSession | undefined = !thread ? options?.productContext?.terminalSessions?.get(id) : undefined;
+          if (!thread && !session && options?.productContext?.cliAgentOps) {
+            const result = await options.productContext.cliAgentOps.get(id) as import('@zana-ai/zcc-domain/product').Result<import('@zana-ai/zcc-domain/product').TerminalSession>;
+            if (result?.ok && result.value.id === id) session = result.value;
+          }
+          const key = thread ? { surface: 'modern' as const, harness: thread.providerId, headless: false, hookBase: true }
+            : session ? terminalCapabilityKey(session) : null;
+          return { capabilities: capabilityDescriptors(key) };
         },
         forExecution: async ({ executionId }) => {
           assertLive();
@@ -1379,6 +1444,19 @@ export function createPluginApi(
         if (agentTools.some((existing) => existing.name === record.name)) {
           throw new Error(`tool "${record.name}" is already registered`);
         }
+        const execute = record.execute;
+        record.execute = async (input, ctx) => {
+          assertLive();
+          let identity: PluginToolApprovalIdentity | null = null;
+          try { if (options?.productContext) identity = await captureStablePluginToolApprovalIdentity(options.productContext, ctx.threadId, ctx.signal); }
+          catch { /* An unresolved invocation has no approval authority. */ }
+          const scope = { threadId: ctx.threadId, projectId: ctx.projectId, invocationId: randomUUID(),
+            identity, signal: ctx.signal, desktopPresentation: (ctx as { desktopPresentation?: boolean }).desktopPresentation === true, active: true };
+          return toolInvocations.run(scope, async () => {
+            try { return await execute(input, ctx); }
+            finally { scope.active = false; }
+          });
+        };
         agentTools.push(record);
       },
       registerPersonas: (personas) => {
@@ -1414,6 +1492,11 @@ export function createPluginApi(
       }
     },
     ui: {
+      requestToolApproval,
+      requestApproval: requestToolApproval,
+      experimental_requestApproval: requestToolApproval,
+      consumeApproval,
+      experimental_consumeApproval: consumeApproval,
       requestInput: async (request, requestOptions) => {
         assertLive();
         const parsed = validatePluginRequestInput(request);
@@ -1427,14 +1510,9 @@ export function createPluginApi(
           title: parsed.title,
           payload: parsed.payload,
           timeoutMs: parsed.timeoutMs,
+          requireHuman: parsed.requireHuman,
           signal: requestOptions?.signal
         });
-      },
-      experimental_consumeApproval: async (request) => {
-        assertLive();
-        // Fail closed: a missing verifier, a malformed request or a reused token all refuse.
-        if (!request || typeof request !== 'object' || typeof request.token !== 'string') return false;
-        return options?.consumePluginApproval?.({ pluginId, token: request.token, binding: request.binding }) ?? false;
       },
       registerMentionProvider: (registration) => {
         assertLive();
@@ -1658,6 +1736,7 @@ export function validatePluginRequestInput(request: PluginInteractionRequest): {
   title: string;
   payload: JsonValue;
   timeoutMs: number;
+  requireHuman: boolean;
 } {
   if (!request || typeof request !== 'object') {
     throw new Error('ui.requestInput requires an options object');
@@ -1688,6 +1767,9 @@ export function validatePluginRequestInput(request: PluginInteractionRequest): {
     throw new Error('ui.requestInput payload must be JSON-serializable');
   }
   const timeoutMs = request.timeoutMs ?? 10 * 60 * 1000;
+  if (request.requireHuman !== undefined && typeof request.requireHuman !== 'boolean') {
+    throw new Error('ui.requestInput requireHuman must be boolean');
+  }
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > PLUGIN_INTERACTION_MAX_TIMEOUT_MS) {
     throw new Error(`ui.requestInput timeoutMs must be between 1 and ${PLUGIN_INTERACTION_MAX_TIMEOUT_MS}`);
   }
@@ -1696,7 +1778,8 @@ export function validatePluginRequestInput(request: PluginInteractionRequest): {
     rendererId: request.rendererId,
     title: request.title.trim(),
     payload,
-    timeoutMs
+    timeoutMs,
+    requireHuman: request.requireHuman ?? false
   };
 }
 

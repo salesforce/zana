@@ -104,6 +104,15 @@ export interface TeamContributionContract {
   personaIds: readonly string[];
 }
 
+export type InteractionActor = 'human' | 'cli' | 'agent' | 'unknown';
+
+export interface CapabilitySurfaceKey {
+  surface: 'pty' | 'modern';
+  harness: string;
+  headless: boolean;
+  hookBase: boolean;
+}
+
 export interface CapabilityDescriptor {
   id: string;
   available: boolean;

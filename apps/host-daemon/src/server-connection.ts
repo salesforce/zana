@@ -17,6 +17,7 @@ import { createRuntimeManager, type ThreadRuntimeAdapter } from './runtime-manag
 import { createEnrolledPty, type EnrolledPty } from './enrolled-pty.js';
 import { createInteractiveRequestHttpClient } from './interactive-request-client.js';
 import { createPluginToolCallHttpClient } from './plugin-tool-call-client.js';
+import { createNativeToolPolicyHttpClient } from './native-tool-policy-client.js';
 import { createPluginHostArtifactHttpClient } from './plugin-host-artifact-client.js';
 import {
   InteractiveRequestRegistry,
@@ -56,6 +57,7 @@ export function startEnrolledHostConnection(options: {
 
   let socket: ReturnType<typeof createHostServerSocket> | undefined;
   let closed = false;
+  let connectionGeneration = 0;
   let stopTask: Promise<void> | undefined;
   const delivery = createEventDelivery({
     onTimeout: () => socket?.reconnect('event-ack-timeout'),
@@ -105,6 +107,10 @@ export function startEnrolledHostConnection(options: {
     hostKey: options.hostKey,
     sessionId: instanceId
   });
+  const nativeToolPolicy = createNativeToolPolicyHttpClient({
+    fetchFn, serverUrl: options.serverUrl, hostId: options.hostId,
+    hostKey: options.hostKey, sessionId: instanceId
+  });
   const pluginHostArtifacts = createPluginHostArtifactHttpClient({
     fetchFn,
     serverUrl: options.serverUrl,
@@ -150,6 +156,17 @@ export function startEnrolledHostConnection(options: {
         }
       },
       onPluginToolCall: (request) => pluginToolCalls.invoke(request),
+      onNativeToolDecision: async (request, signal) => {
+        if (closed || !socket?.connected) return { action: 'deny', reason: 'host session is not connected' };
+        const generation = connectionGeneration;
+        await sink.flush();
+        if (signal.aborted || closed || !socket?.connected || generation !== connectionGeneration) {
+          return { action: 'deny', reason: 'host session ended' };
+        }
+        const decision = await nativeToolPolicy(request, signal);
+        return signal.aborted || closed || !socket?.connected || generation !== connectionGeneration
+          ? { action: 'deny', reason: 'host session ended' } : decision;
+      },
       fetchPluginHostArtifact: (args) => pluginHostArtifacts.fetch(args),
       onProcessExit: (info) => {
         const threadIds = info.threads.map((thread) => thread.threadId);
@@ -247,6 +264,7 @@ export function startEnrolledHostConnection(options: {
     onTerminated: () => { void stopConnection().catch(() => undefined); },
     onHello: hello => (runtime.pluginHosts ?? pluginHosts).reconcileGenerations(hello.pluginHostGenerations),
     onConnectionChange: connected => {
+      connectionGeneration++;
       if (!connected) {
         delivery.cancel();
         machineEnvironment?.clear();

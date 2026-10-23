@@ -18,7 +18,7 @@ Handed to `export default function plugin(zcc)`.
 | `remoteEnvironment.provide` / `refresh` | Environment variables for sessions on non-primary machines (manifest allowlist `zcc.extra.remoteEnvironment`; held in memory, never stored) |
 | `agents.contributeInstructions` / `contributeSkills` / `registerTool` / `configure` | Agent capabilities. `registerTool` takes Zod or JSON Schema `parameters` (parsed on invoke). `configure` sees thread / project / environment / host / provider / `origin` / frozen `pluginMetadata` |
 | `ui.requestInput` | Host prompt |
-| `ui.experimental_consumeApproval` | Verify and burn a host-signed approval token (see `approvals`) |
+| `ui.requestToolApproval` / `ui.consumeApproval` | Await main's approval sheet in an active server tool; verify and burn its scoped proof (see `approvals`) |
 | `status.needsConfiguration` | Degraded-until-configured |
 | `sdk.threads` / `sdk.files` / `sdk.environments` / `sdk.providers` | Product SDK: attributed spawn with host, environment and service tier; thread metadata; confined host file read/write; environment PR lookup; provider models discovered on the selected host |
 | `sdk.system.defaultHost()` | Primary enrolled host ID, or `null` when none is configured |
@@ -138,7 +138,33 @@ Headless (no pixels), plus picker chrome:
 - `settings-define` — `zcc.settings.define`
 - `background` — `zcc.background.service` / `schedule`
 - `desktop-browsers` — `zcc.sdk.experimental_desktopBrowsers` (experimental; first-party Browser Automation)
-- `approvals` — host-signed approvals (experimental): `experimental_requestApproval(pluginId, { binding, title, summary?, details?, confirmLabel?, tone? })` from `@zana-ai/zcc-plugin-sdk/app` has desktop main draw its own sandboxed sheet and sign the binding it showed; the server calls `zcc.ui.experimental_consumeApproval({ token, binding })` with a binding rebuilt from its own sources before acting. One plugin, one binding (`action`, `target`, `targetLabel`, `subject`, `revision?`, `confirmText?`), one use, five minutes. `confirmText` must be typed. Web, mobile and headless return `{ approved: false, reason: 'unavailable' }`. Agent-initiated actions keep `sdk.confirm`. Tests: `harness.approve(binding)`.
+- `approvals` — stable `zcc.ui.requestToolApproval({ binding, title, summary?, details?, confirmLabel?, tone?, timeoutMs? })` waits for a main-owned sandboxed sheet from an active registered **server tool**. The host derives plugin/thread/invocation identity; supplied scope is only an assertion and mismatches are refused. Wait is a positive integer, at most five minutes (default five minutes). `requestApproval` and `experimental_requestApproval` are aliases with the same active-invocation restriction. Button flows use `requestApproval(pluginId, request)` from `@zana-ai/zcc-plugin-sdk/app`, without tool scope.
+
+### Tool Approval
+
+```ts
+async execute(input, ctx) {
+  const binding = await rebuildBindingFromServerState(input);
+  const approval = await zcc.ui.requestToolApproval({
+    binding, title: 'Activate agent', confirmLabel: 'Activate', tone: 'danger'
+  });
+  if (!approval.approved) throw new Error(`Approval refused: ${approval.reason}`);
+  // Re-read state after the wait; a changed target/revision needs new approval.
+  const current = await rebuildBindingFromServerState(input);
+  if (!(await zcc.ui.consumeApproval({ token: approval.token, binding: current }))) {
+    throw new Error('Approval no longer matches');
+  }
+  return activate(current);
+}
+```
+
+Main signs an opaque MAC over plugin/thread/invocation and binding (`action`, `target`, `targetLabel`, `subject`, `revision?`, `confirmText?`). Server `consumeApproval` injects the active scope and verifies exactly once before mutation. A proof expires **at** five minutes, not after; replay-cache capacity rejects fresh consumption rather than evicting live entries. `experimental_consumeApproval` is a compatibility alias. Never return tokens in tool results, transcripts, metadata or agent environment.
+
+Thread/project/environment local scope is re-read before requesting, after the wait, and before consumption. Main re-resolves the owning window and running plugin before signing. Archiving, hiding, deleting, moving to a remote host, or ending the invocation invalidates pending approval. Only this authenticated approval control operation extends the normal ten-second control deadline to its bounded approval wait.
+
+Only the authenticated product server can request a tool sheet through main control. Operator/agent control requests and renderer requests for scoped proofs are refused. Missing desktop credential/window, headless/remote/hidden/unresolvable thread, cancellation, timeout, abort and runtime failure never grant approval. Existing provider and local permission checks still apply; this proof does not bypass them. Typed `confirmText` is compared by main. Tests can use `harness.approve(binding)` and an explicit fake-host `requestToolApproval` stub; default fake hosts return `unavailable`.
+
+### Other Platform Hooks
 - `contentScripts` — `contentScripts.register`
 - `experimental_providerIcon` — picker glyph for a provider id
 
@@ -304,17 +330,67 @@ PTY tool input over 256 KiB (counted in JSON characters of the parsed input,
 not wire bytes) is denied with an explicit reason, without calling plugins.
 The same holds in a `pnpm dev` build.
 
-| Provider | Native before/after | Delivery surface |
-| --- | --- | --- |
-| Claude (Modern) | native | `agents.registerTool` |
-| Claude (PTY / CLI Agent) | native | `zcc.mcpServers` |
-| Codex (Modern) | native | `agents.registerTool` |
-| Codex (PTY / CLI Agent) | native | `zcc.mcpServers` |
-| Cursor | unsupported | — |
-| OpenCode | unsupported | — |
+`hooks.onToolPolicy` is public and stable. Capability descriptors describe host
+wiring, not provider-family guesses. Unknown surfaces fail closed with a reason.
+PTY native availability requires recorded hook-base evidence. Local headless
+Claude and Codex sessions receive the same fail-closed native-policy hook;
+remote headless sessions remain unavailable because remote hook forwarding is
+not wired.
+
+Codex hook delivery and trust: the host delivers its lifecycle and native-policy
+hooks to Codex PTY sessions as config overrides in Codex's session-flags layer
+(no file is written to the user's `~/.codex/config.toml`). Codex discovers hooks
+per config layer and appends them, so the user's and project's hooks still run
+alongside the host's. A session-injected hook is untrusted by Codex until its
+content hash is trusted; to make its own hooks run, the host passes
+`--dangerously-bypass-hook-trust`. At the pinned Codex version that flag is
+global, so it also skips the trust prompt for any enabled user or project hook in
+a host-launched Codex session. Codex Modern (app-server) sessions pass no such
+flag. Scoped trust — trusting only the host's own hook hashes and removing the
+bypass flag — is a planned follow-up.
+
+Scaffolded plugins declare `engines.zccPluginSdk: >=0.1.0`, the public host
+compatibility baseline. This range is intentionally independent from the SDK
+package version selected for development dependencies.
+
+| Surface / Harness | Native Before | Native After | Admission | Lifecycle |
+| --- | --- | --- | --- | --- |
+| Modern / claude-code | unavailable | unavailable | available | available |
+| Modern / codex | unavailable | unavailable | available | available |
+| Modern / pi | unavailable | unavailable | available | available |
+| Modern / acp | unavailable | unavailable | available | available |
+| Modern / acp-opencode | unavailable | unavailable | available | available |
+| Modern / acp-cursor | unavailable | unavailable | available | available |
+| PTY / claude (hook base, visible) | available | unavailable | unavailable | unavailable |
+| PTY / codex (hook base, visible) | available | unavailable | unavailable | unavailable |
+| PTY / opencode | unavailable | unavailable | unavailable | unavailable |
+| PTY / cursor | unavailable | unavailable | unavailable | unavailable |
+| PTY / Claude or Codex (hook base, headless) | available | unavailable | unavailable | unavailable |
+| PTY / missing hook base, or remote headless | unavailable | unavailable | unavailable | unavailable |
 
 A registered agent tool (`agents.registerTool`) is reachable from Modern
 Claude/Codex threads; `zcc.mcpServers` is the matching path for Claude/Codex
 PTY and CLI Agent sessions. Declare both if a tool must work on every
-surface listed as native above — Threads do not read `zcc.mcpServers`, and
+surface supported above — Threads do not read `zcc.mcpServers`, and
 PTY/CLI sessions do not read `agents.registerTool`.
+
+### Actor-attributed request input
+
+`ui.requestInput({ threadId, rendererId, title, payload, timeoutMs?, requireHuman? })`
+defaults `requireHuman` to `false`. Submitted results include `actor`:
+`human | cli | agent | unknown`; the actor is also persisted in the resolution.
+Only `requireHuman: true` rejects unproven/agent answers. Bare HTTP is `unknown`,
+never human; session-marked HTTP is `agent`. Invalid, forged, expired, mismatched,
+or reused proofs return 403. Responses without the opt-in remain usable by agents.
+
+Desktop responses pass through verified main-window IPC. Main sends a short-lived,
+single-use MAC proof directly to the product server, bound to thread, interaction,
+response body, actor, window/control source and expiry. Proofs never reach plugin
+processes, renderer storage, or agent environment.
+
+`zcc thread interactions <threadId> respond <interactionId> --value '<JSON>'`
+uses the desktop control socket. Operator-class callers count as `human`; agent
+and orchestrator callers remain `agent` and receive 403 for human-required gates.
+Known limit: a same-uid process that reads the shared control token and omits its
+session fields is classified `operator`. CLI human proof is best-effort; desktop
+UI proof is the strong path. Non-desktop HTTP cannot satisfy human-required gates.

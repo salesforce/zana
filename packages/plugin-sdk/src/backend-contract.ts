@@ -1,4 +1,6 @@
 import type * as z from "zod";
+import type { PluginApprovalBinding, PluginApprovalResult, PluginToolApprovalRequest } from './approval-contract.js';
+export type { PluginApprovalBinding, PluginApprovalRequest, PluginApprovalResult, PluginToolApprovalRequest } from './approval-contract.js';
 
 /** SQLite handle surface used by plugin storage. Host-owned; not a driver import. */
 export interface PluginSqliteDatabase {
@@ -1492,6 +1494,15 @@ export interface PluginMentionProviderRegistration {
 }
 
 export interface PluginUi {
+  /** Active server tools only. Scope is host-derived; unavailable hosts fail closed. */
+  requestToolApproval(request: PluginToolApprovalRequest): Promise<PluginApprovalResult>;
+  /** Alias for requestToolApproval. */
+  requestApproval(request: PluginToolApprovalRequest): Promise<PluginApprovalResult>;
+  /** @deprecated Use requestToolApproval. */
+  experimental_requestApproval(request: PluginToolApprovalRequest): Promise<PluginApprovalResult>;
+  consumeApproval(request: { token: string; binding: PluginApprovalBinding }): Promise<boolean>;
+  /** @deprecated Use consumeApproval. */
+  experimental_consumeApproval(request: { token: string; binding: PluginApprovalBinding }): Promise<boolean>;
   /** Block until the app submits or cancels a plugin-owned composer form. */
   requestInput(
     request: PluginInteractionRequest,

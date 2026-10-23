@@ -62,6 +62,7 @@ const CONFIG: AppConfig = {
 
 function makeSession(mgr: PtyManager) {
   return mgr.create({
+    nativeToolPolicyRequired: false,
     projectId: 'p1',
     profile: 'shell',
     cwd: '/tmp',

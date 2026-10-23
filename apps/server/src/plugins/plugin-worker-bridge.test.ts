@@ -1,10 +1,11 @@
 import { MessageChannel } from 'node:worker_threads';
+import { AsyncLocalStorage, AsyncResource } from 'node:async_hooks';
 import { PLUGIN_INTERACTION_MAX_TIMEOUT_MS } from '@zana-ai/zcc-domain/thread-runtime';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPluginWorkerBridge } from './plugin-worker-bridge';
 const closes: (() => void)[] = [];
 afterEach(() => { closes.splice(0).forEach(close => close()); });
-function pair() { const ports = new MessageChannel(); const a = createPluginWorkerBridge(ports.port1, 'server'), b = createPluginWorkerBridge(ports.port2, 'plugin'); closes.push(() => { a.dispose(); b.dispose(); ports.port1.close(); ports.port2.close(); }); return { a, b }; }
+function pair() { const ports = new MessageChannel(); const a = createPluginWorkerBridge(ports.port1, 'server'), b = createPluginWorkerBridge(ports.port2, 'plugin'); closes.push(() => { a.dispose(); b.dispose(); ports.port1.close(); ports.port2.close(); }); return { a, b, ports }; }
 it('roundtrips callbacks, bound methods, types, undefined and exceptions', async () => {
   const { a, b } = pair(); const object = { n: 3, async echo(input: unknown) { return { n: this.n, input }; }, async fail() { throw Object.assign(new Error('no'), { code: 'E_NO' }); } };
   const decoded = b.decode(a.encode(object)); const data = { bytes: new Uint8Array([1, 2]), date: new Date(0), value: 4n, missing: undefined };
@@ -123,5 +124,100 @@ describe('caller-owned calls', () => {
       await expect(remote(once)).rejects.toThrow('Cyclic');
     }
     expect(await remote({ signal: controller.signal })).toBe('ok');
+  });
+});
+
+describe('host-owned invocation correlation', () => {
+  const flush = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)); };
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it('restores concurrent host scopes after worker awaits without trusting request fields', async () => {
+    const { a, b } = pair();
+    const scopes = new AsyncLocalStorage<string>();
+    const read = b.decode(a.encode(async (_forged: unknown) => scopes.getStore()));
+    const finish: Array<() => void> = [];
+    const execute = a.decode(b.encode(async () => {
+      await new Promise<void>(resolve => finish.push(resolve));
+      return read({ threadId: 'forged', invocationId: 'forged', context: 'forged' });
+    }));
+    const first = scopes.run('host-one', () => execute());
+    const second = scopes.run('host-two', () => execute());
+    await flush();
+    finish[1]!(); expect(await second).toBe('host-two');
+    finish[0]!(); expect(await first).toBe('host-one');
+    expect(await read({ threadId: 'host-one' })).toBeUndefined();
+  });
+
+  it.each(['success', 'failure', 'abort', 'timeout'] as const)('revokes correlation after %s and refuses forged or absent correlations', async outcome => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const { a, b, ports } = pair();
+    const scopes = new AsyncLocalStorage<string>();
+    const readScope = vi.fn(async () => scopes.getStore());
+    const wire = a.encode(readScope, 'sdk.readScope');
+    const read = b.decode(wire);
+    let correlation: string | undefined;
+    ports.port2.on('message', message => { if (message.kind === 'call') correlation = message.context; });
+    let late!: () => Promise<unknown>;
+    let finish!: () => void;
+    const execute = a.decode(b.encode(async () => {
+      late = () => read();
+      await new Promise<void>((resolve, reject) => { finish = outcome === 'failure' ? () => reject(new Error('failed')) : resolve; });
+      return read();
+    }));
+    const controller = new AbortController();
+    const result = scopes.run('host-scope', () => execute({ signal: controller.signal }));
+    const rejected = outcome === 'success' ? undefined : expect(result).rejects.toThrow();
+    await flush();
+    expect(correlation).toMatch(/^[a-f0-9-]{36}$/);
+    // A random or missing capability cannot restore an otherwise live scope.
+    for (const context of [undefined, 'forged']) {
+      ports.port2.postMessage({ kind: 'call', id: 999, fn: wire.id, args: [], context });
+      await flush();
+      await expect(readScope.mock.results.at(-1)?.value).resolves.toBeUndefined();
+    }
+    if (outcome === 'abort') controller.abort();
+    else if (outcome === 'timeout') vi.advanceTimersByTime(PLUGIN_INTERACTION_MAX_TIMEOUT_MS + 60_001);
+    else finish();
+    if (rejected) await rejected; else expect(await result).toBe('host-scope');
+    expect(await late()).toBeUndefined();
+    ports.port2.postMessage({ kind: 'call', id: 1000, fn: wire.id, args: [], context: correlation });
+    await flush();
+    await expect(readScope.mock.results.at(-1)?.value).resolves.toBeUndefined();
+  });
+
+  it('destroys captured resources on disposal and encode/post errors', async () => {
+    const destroy = vi.spyOn(AsyncResource.prototype, 'emitDestroy');
+    const { a, b } = pair();
+    const execute = a.decode(b.encode(async () => new Promise(() => {})));
+    const pending = execute();
+    const rejected = expect(pending).rejects.toThrow('stopped');
+    a.dispose(); await rejected;
+    expect(destroy).toHaveBeenCalledTimes(1);
+    a.dispose(); expect(destroy).toHaveBeenCalledTimes(1);
+
+    const port: any = { on() {}, off() {}, postMessage() { throw new Error('disconnected'); } };
+    const bridge = createPluginWorkerBridge(port, 'server'); closes.push(() => bridge.dispose());
+    const remote = bridge.decode({ __zcc_plugin_wire: 'function', side: 'plugin', id: 1, async: true });
+    await expect(remote()).rejects.toThrow('disconnected');
+    expect(destroy).toHaveBeenCalledTimes(2);
+    const cyclic: any = {}; cyclic.self = cyclic;
+    await expect(remote(cyclic)).rejects.toThrow('Cyclic');
+    expect(destroy).toHaveBeenCalledTimes(3);
+    bridge.dispose(); expect(destroy).toHaveBeenCalledTimes(3);
+  });
+
+  it('extends only approval API deadlines, leaving ordinary calls at two minutes', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const { a, b } = pair();
+    const hang = async () => new Promise(() => {});
+    const ui = b.decode(a.encode({ ui: { requestToolApproval: hang, requestApproval: hang, experimental_requestApproval: hang, other: hang } })).ui;
+    const approvalCalls = [ui.requestToolApproval(), ui.requestApproval(), ui.experimental_requestApproval()];
+    const failures = approvalCalls.map(call => expect(call).rejects.toThrow('timed out'));
+    let settled = false; void Promise.all(approvalCalls).catch(() => { settled = true; });
+    const plain = expect(ui.other()).rejects.toThrow('timed out');
+    await flush(); vi.advanceTimersByTime(120_001); await plain; await flush();
+    expect(settled).toBe(false);
+    vi.advanceTimersByTime(180_000); await Promise.all(failures);
+    expect(settled).toBe(true);
   });
 });

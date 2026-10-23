@@ -1,6 +1,7 @@
 import { harnessFamilyOf, parseProfile } from '@zana-ai/zcc-domain/launch-provider';
 import {
   normalizeNativeToolPolicyReason,
+  NativeToolPolicyDecisionSchema,
   type NativeToolPolicyDecision,
   type NativeToolPolicyRequest
 } from '@zana-ai/zcc-contracts/runtime';
@@ -28,18 +29,22 @@ export function toolPolicyProviderId(profile: string): string {
  */
 export async function decideMainOwnedToolPolicy(
   plugins: Pick<PluginService, 'decideToolPolicy'> | undefined,
-  request: NativeToolPolicyRequest
+  request: NativeToolPolicyRequest,
+  resolvedProviderId?: string
 ): Promise<NativeToolPolicyDecision> {
   if (!plugins) return { action: 'deny', reason: 'plugin service is unavailable' };
   const decision = await plugins.decideToolPolicy({
     invocationId: request.invocationId,
     threadId: request.threadId,
     projectId: request.projectId,
-    providerId: toolPolicyProviderId(request.profile),
+    providerId: resolvedProviderId ?? toolPolicyProviderId(request.profile),
     toolName: request.toolName,
     input: redactToolInput(request.input)
   });
-  return decision.action === 'deny'
-    ? { action: 'deny', reason: normalizeNativeToolPolicyReason(decision.reason, 'denied by plugin tool policy') }
-    : { action: 'allow' };
+  const parsed = NativeToolPolicyDecisionSchema.safeParse(decision);
+  if (parsed.success && parsed.data.action === 'allow') return parsed.data;
+  if (decision?.action === 'deny') return {
+    action: 'deny', reason: normalizeNativeToolPolicyReason(decision.reason, 'denied by plugin tool policy')
+  };
+  return { action: 'deny', reason: 'plugin tool policy returned an invalid decision' };
 }

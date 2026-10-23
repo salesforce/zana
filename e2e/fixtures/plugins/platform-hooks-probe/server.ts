@@ -193,7 +193,8 @@ export default function plugin(zcc: ZccPluginApi) {
       threadId,
       rendererId: 'platform-hooks-probe-pending',
       title: 'Platform Hooks Probe: confirm action',
-      payload: { kind: 'probe-confirmation' }
+      payload: { kind: 'probe-confirmation' },
+      requireHuman: (args as { requireHuman?: boolean })?.requireHuman ?? false
     });
   });
 

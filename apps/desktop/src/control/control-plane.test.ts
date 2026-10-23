@@ -57,9 +57,9 @@ describe('classifyCaller', () => {
     const verify = (credential: unknown) => credential === 'product-secret';
     expect(classifyCaller(undefined, undefined, 'product-secret', undefined, verify)).toBe('product-server');
     expect(classifyCaller('', undefined, 'product-secret', undefined, verify)).toBe('product-server');
-    // Wrong or missing credential stays operator (human zcc still confirms).
-    expect(classifyCaller(undefined, undefined, 'nope', undefined, verify)).toBe('operator');
-    expect(classifyCaller(undefined, undefined, 'product-secret')).toBe('operator');
+    // A credential without a session marker never upgrades to a human caller.
+    expect(classifyCaller(undefined, undefined, 'nope', undefined, verify)).toBe('agent');
+    expect(classifyCaller(undefined, undefined, 'product-secret')).toBe('agent');
     // A session id still wins — an agent cannot steal product-server even with the secret.
     expect(classifyCaller('sess-1', undefined, 'product-secret', undefined, verify)).toBe('agent');
   });

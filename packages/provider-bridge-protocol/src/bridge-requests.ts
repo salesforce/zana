@@ -12,6 +12,7 @@ import { z } from "zod";
 export const BRIDGE_INBOUND_REQUEST_METHODS = {
   toolCall: "item/tool/call",
   interactionRequest: "interaction/request",
+  nativeToolDecision: "tool/policy/decide",
 } as const;
 
 export type BridgeInboundRequestMethod =
@@ -73,3 +74,19 @@ export type InteractionRequestParams = z.infer<
 
 export const interactionResolutionResultSchema =
   pendingInteractionResolutionSchema;
+
+export const nativeToolDecisionRequestSchema = z.object({
+  threadId: z.string().min(1).max(256),
+  providerThreadId: z.string().min(1).max(256),
+  callId: z.string().min(1).max(512),
+  toolName: z.string().min(1).max(512).regex(/^[^\x00-\x1f\x7f]+$/),
+  input: z.record(z.string(), z.unknown()).refine((input) => {
+    try { return JSON.stringify(input).length <= 256 * 1024; } catch { return false; }
+  }, 'tool input exceeds native policy limit'),
+});
+export const nativeToolDecisionSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('allow') }).strict(),
+  z.object({ action: z.literal('deny'), reason: z.string().min(1).max(1024) }).strict(),
+]);
+export type NativeToolDecisionRequest = z.infer<typeof nativeToolDecisionRequestSchema>;
+export type NativeToolDecision = z.infer<typeof nativeToolDecisionSchema>;

@@ -12,6 +12,7 @@ import {
   NATIVE_TOOL_INPUT_TOO_LARGE,
   parseNativeToolHookEvent,
   productRouteToolPolicyDecider,
+  productRouteToolPolicyInventory,
   supervisorToolPolicyDecider,
   warnNativeToolPolicy,
   type NativeToolPolicySession
@@ -283,6 +284,32 @@ describe('productRouteToolPolicyDecider (no runtime supervisor)', () => {
     } finally {
       fetchSpy.mockRestore();
     }
+  });
+});
+
+describe('productRouteToolPolicyInventory (pre-spawn readiness, no runtime supervisor)', () => {
+  const secret = 'k'.repeat(64);
+
+  it('posts an empty body signed for that body and returns the readiness shape', async () => {
+    const verify = createNativeToolPolicyVerifier(secret);
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const headers = init!.headers as Record<string, string>;
+      expect(verify(headers[NATIVE_TOOL_POLICY_PROOF_HEADER], init!.body as string)).toBe(true);
+      return Response.json({ ready: false, required: [{ pluginId: 'acme' }] });
+    });
+    const read = productRouteToolPolicyInventory({ serverUrl: () => 'http://127.0.0.1:8781/', credential: () => secret, fetch: fetchImpl });
+    await expect(read()).resolves.toEqual({ ready: false, required: [{ pluginId: 'acme' }] });
+    const [url, init] = fetchImpl.mock.calls[0]!;
+    expect(String(url)).toBe('http://127.0.0.1:8781/api/v1/native-tool-policy-inventory');
+    expect(init).toMatchObject({ method: 'POST', body: '', headers: { 'content-type': 'application/json' } });
+    expect(init!.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('rejects on a refused request so the caller fails closed', async () => {
+    const read = productRouteToolPolicyInventory({
+      serverUrl: () => 'http://127.0.0.1:8781/', credential: () => secret, fetch: async () => Response.json({ error: 'no' }, { status: 403 })
+    });
+    await expect(read()).rejects.toThrow('product server answered HTTP 403');
   });
 });
 

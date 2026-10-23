@@ -1381,6 +1381,8 @@ export interface CliPlanFile {
 
 export interface TerminalSession {
   id: string;
+  /** Host-stamped launch wiring; absent on older sessions, which fail closed. */
+  capabilitySurface?: import('./contracts.js').CapabilitySurfaceKey;
   /** Execution owner for a terminal hosted by an enrolled machine. */
   hostId?: string;
   /** Opaque main-owned capability used to restore/reconnect this launch. */

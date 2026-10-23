@@ -159,19 +159,23 @@ export async function callPluginRpc(pluginId: string, method: string, args?: unk
 /**
  * Ask the host to draw an approval sheet for an action the user started from
  * this plugin's own UI, such as a Publish button. The host shows the binding,
- * collects any typed confirmation, and returns a single-use token signed for
+ * collects any typed confirmation, and returns a single-use opaque token for
  * that binding; pass it to your server, which rebuilds the binding and calls
- * `zcc.ui.experimental_consumeApproval`. Resolves `unavailable` where no
+ * `zcc.ui.consumeApproval`. Resolves `unavailable` where no
  * desktop host can draw the sheet, so the action must fail closed there.
  */
-export async function experimental_requestApproval(
+export async function requestApproval(
   pluginId: string,
   request: PluginApprovalRequest
 ): Promise<PluginApprovalResult> {
   const host = (globalThis as { __ZCC_PLUGIN_HOST__?: PluginHostBridge }).__ZCC_PLUGIN_HOST__;
   if (!host?.requestApproval) return { approved: false, reason: 'unavailable' };
-  return host.requestApproval(pluginId, request);
+  try { return await host.requestApproval(pluginId, request); }
+  catch { return { approved: false, reason: 'unavailable' }; }
 }
+
+/** @deprecated Use requestApproval. */
+export const experimental_requestApproval = requestApproval;
 
 export async function getPluginSettings(pluginId: string): Promise<PluginSettingsSnapshot> {
   return pluginHost().getSettings(pluginId);

@@ -1,0 +1,51 @@
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+import { CapabilityRegistry, capabilityRegistry, terminalCapabilityKey } from './capability-registry.js';
+
+describe('surface wiring registry', () => {
+  it.each(['claude', 'codex', 'opencode', 'cursor', 'pi', 'unknown'])('uses recorded PTY evidence for %s', harness => {
+    for (const headless of [false, true]) for (const hookBase of [false, true]) {
+      const capabilities = capabilityRegistry.describe({ surface: 'pty', harness, headless, hookBase });
+      expect(capabilities.find(row => row.id === 'tool-before-native')?.available).toBe(['claude', 'codex'].includes(harness) && hookBase);
+      expect(capabilities.find(row => row.id === 'tool-after-native')?.available).toBe(false);
+    }
+  });
+  // Codex is no longer in this list: p0-modern-codex-veto wires its Modern veto.
+  it.each(['pi', 'acp', 'acp-opencode', 'acp-cursor', 'spoofed-claude'])('does not infer Modern native hooks for %s', harness => {
+    const rows = capabilityRegistry.describe({ surface: 'modern', harness, headless: false, hookBase: true });
+    expect(rows.find(row => row.id === 'tool-before-native')).toMatchObject({ available: false, reason: expect.any(String) });
+    expect(rows.find(row => row.id === 'tool-after-native')?.available).toBe(false);
+    expect(rows.find(row => row.id === 'message-admission')?.available).toBe(harness !== 'spoofed-claude');
+  });
+  it.each([false, true])('advertises the awaited Modern native veto for each wired harness (headless=%s)', headless => {
+    for (const harness of ['claude-code', 'codex']) {
+      expect(capabilityRegistry.describe({ surface: 'modern', harness, headless, hookBase: true })
+        .find(row => row.id === 'tool-before-native')).toEqual({ id: 'tool-before-native', available: true });
+      expect(capabilityRegistry.describe({ surface: 'modern', harness, headless, hookBase: false })
+        .find(row => row.id === 'tool-before-native')?.available).toBe(false);
+    }
+  });
+  it('wires the Modern Codex command + file-change native veto', () => {
+    const row = capabilityRegistry.describe({ surface: 'modern', harness: 'codex', headless: false, hookBase: true })
+      .find(row => row.id === 'tool-before-native');
+    expect(row).toEqual({ id: 'tool-before-native', available: true });
+  });
+  it('allows explicit wiring registration only; unknown and missing session evidence unavailable', () => {
+    const key = terminalCapabilityKey({ profile: 'codex-yolo' });
+    expect(key).toEqual({ surface: 'pty', harness: 'codex', headless: false, hookBase: false });
+    expect(terminalCapabilityKey({ profile: 'shell', capabilitySurface: { ...key, hookBase: true } })).toEqual({ ...key, hookBase: true });
+    const registry = new CapabilityRegistry();
+    expect(registry.describe(null).every(row => !row.available && row.reason)).toBe(true);
+    registry.register(key, 'tool-before-native', { available: true });
+    registry.register(key, 'tool-before-native', { available: false, reason: 'disconnected' });
+    expect(registry.describe(key).find(row => row.id === 'tool-before-native')).toEqual({ id: 'tool-before-native', available: false, reason: 'disconnected' });
+  });
+  it('documents registry native availability without overclaiming post-tool', () => {
+    const doc = readFileSync(new URL('../../../../docs/extensions-sdk-reference.md', import.meta.url), 'utf8');
+    for (const harness of ['codex', 'pi', 'acp', 'acp-opencode', 'acp-cursor']) {
+      expect(doc).toContain(`| Modern / ${harness} | unavailable | unavailable | available | available |`);
+    }
+    expect(doc).toContain('same-uid process');
+    expect(doc).toContain('`hooks.onToolPolicy` is public and stable');
+  });
+});

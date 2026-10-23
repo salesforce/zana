@@ -6,6 +6,7 @@ import {
 } from '@zana-ai/zcc-contracts/runtime';
 import {
   NATIVE_TOOL_POLICY_PATH,
+  NATIVE_TOOL_POLICY_INVENTORY_PATH,
   NATIVE_TOOL_POLICY_PROOF_HEADER,
   signNativeToolPolicyRequest
 } from '@zana-ai/zcc-server/http/native-tool-policy-proof';
@@ -149,6 +150,32 @@ export function productRouteToolPolicyDecider(deps: ProductRouteToolPolicyDeps):
   return async (request) => {
     const body = JSON.stringify(request);
     const response = await (deps.fetch ?? fetch)(new URL(NATIVE_TOOL_POLICY_PATH, deps.serverUrl()), {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [NATIVE_TOOL_POLICY_PROOF_HEADER]: signNativeToolPolicyRequest(deps.credential(), body)
+      },
+      body,
+      signal: AbortSignal.timeout(deps.timeoutMs ?? 4_000)
+    });
+    if (!response.ok) throw new Error(`product server answered HTTP ${response.status}`);
+    return await response.json();
+  };
+}
+
+/**
+ * The product server's tool-policy inventory route as a pre-spawn readiness
+ * reader, for electron-vite dev where no runtime supervisor runs (OBL-018). It
+ * posts an empty body signed with the product-server credential so the server
+ * knows main asserted the identity, and returns the readiness shape
+ * (`{ ready, required, reason? }`). The caller decides whether the veto is
+ * demanded; this never authorizes anything. A non-ok response throws so the
+ * caller fails closed.
+ */
+export function productRouteToolPolicyInventory(deps: ProductRouteToolPolicyDeps): () => Promise<unknown> {
+  return async () => {
+    const body = '';
+    const response = await (deps.fetch ?? fetch)(new URL(NATIVE_TOOL_POLICY_INVENTORY_PATH, deps.serverUrl()), {
       method: 'POST',
       headers: {
         'content-type': 'application/json',

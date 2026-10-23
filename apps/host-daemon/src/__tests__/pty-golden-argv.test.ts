@@ -271,6 +271,24 @@ describe('golden argv — local create() matrix', () => {
 });
 
 describe('preallocated launch identity', () => {
+  it.each([false, true])('records actual local/remote hook-base evidence (headless=%s)', (headless) => {
+    for (const hookBase of [false, true]) {
+      const mgr = new PtyManager();
+      if (hookBase) mgr.setMcpBaseUrl(MCP_BASE);
+      // This test asserts the capability surface's hookBase evidence, not the
+      // fail-closed veto gate (OBL-018, covered in pty-native-tool-veto.test.ts).
+      // The no-hook branch must still spawn to observe hookBase:false, so it
+      // opts out of the policy requirement.
+      const options = { projectId: 'proj1', profile: 'codex' as const, cwd: '/tmp/work', cols: 80, rows: 24, config: BASE_CONFIG, headless, nativeToolPolicyRequired: false };
+      const local = mgr.create(options);
+      expect(local.capabilitySurface).toEqual({ surface: 'pty', harness: 'codex', headless, hookBase });
+      const remote = mgr.createRemote({ ...options, remote: { host: 'test-host', path: '/tmp/work' } });
+      // Remote headless sessions do not receive hook forwarding, so their
+      // descriptor remains unavailable rather than overstating enforcement.
+      expect(remote.capabilitySurface).toEqual({ surface: 'pty', harness: 'codex', headless, hookBase: hookBase && !headless });
+    }
+  });
+
   it('uses one coordinator-owned session id in record, env, hooks, and tmux identity', () => {
     const mgr = new PtyManager();
     mgr.setMcpBaseUrl(MCP_BASE);
@@ -296,7 +314,9 @@ describe('restored harness identity', () => {
       cols: 80,
       rows: 24,
       config: BASE_CONFIG,
-      resumeSessionId: 'ses_abc123'
+      resumeSessionId: 'ses_abc123',
+      // Not exercising the veto gate here; this harness has no MCP relay.
+      nativeToolPolicyRequired: false
     });
 
     expect(session.openCodeSessionId).toBe('ses_abc123');
@@ -316,7 +336,9 @@ describe('spawn PATH for GUI launches', () => {
       cwd: '/tmp/work',
       cols: 80,
       rows: 24,
-      config: BASE_CONFIG
+      config: BASE_CONFIG,
+      // Not exercising the veto gate here; this harness has no MCP relay.
+      nativeToolPolicyRequired: false
     });
     const path = spawns[0]!.env.PATH ?? '';
     expect(path.split(':')).toEqual(expect.arrayContaining([join(homedir(), '.local', 'bin')]));
@@ -465,7 +487,10 @@ describe('golden argv — auto-mode + overseer variants', () => {
       cwd: '/tmp/work',
       cols: 80,
       rows: 24,
-      config: BASE_CONFIG
+      config: BASE_CONFIG,
+      // This test asserts the no-MCP argv; the veto gate (which would refuse a
+      // no-hook spawn) is exercised separately in pty-native-tool-veto.test.ts.
+      nativeToolPolicyRequired: false
     });
     const call = spawns[0];
     expect(
@@ -548,6 +573,10 @@ describe('golden command — remote buildRemoteCmd matrix', () => {
           rows: 24,
           config: BASE_CONFIG,
           remote,
+          // Golden argv matrix: the mocked ssh harness has no reverse-tunnelled
+          // native-tool route, so opt out of the veto gate (covered separately in
+          // pty-native-tool-veto.test.ts).
+          nativeToolPolicyRequired: false,
           ...layerOpts(layer)
         });
         expect(spawns.length).toBe(1);

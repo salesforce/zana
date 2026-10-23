@@ -15,7 +15,8 @@ import { projectConfigCompatibility } from '@zana-ai/zcc-domain/harness-config-c
 import { getPrimaryHost, countConversationThreadsForQuit } from '@zana-ai/zcc-db';
 import { handleProjectSourcesApi } from './project-sources-api.js';
 import { handleNotificationsApi } from './notifications-api.js';
-import { handleNativeToolPolicyApi } from './native-tool-policy-api.js';
+import { handleNativeToolPolicyApi, handleNativeToolPolicyInventoryApi } from './native-tool-policy-api.js';
+import { INTERACTION_PROOF_HEADER } from './interaction-proof.js';
 import { resolveProjectHost } from './project-host.js';
 import { mutateProjectFile } from './project-file-mutations.js';
 import { invalidateHarnessModelCatalog } from '@zana-ai/zcc-host-daemon/harness/registry';
@@ -551,6 +552,7 @@ export async function handleProductHttp(
     if (await handleProjectSourcesApi(request, response, ctx, path, method)) return true;
     if (await handleNotificationsApi(request, response, ctx, path, method, requestUrl)) return true;
     if (await handleNativeToolPolicyApi(request, response, ctx, path, method)) return true;
+    if (await handleNativeToolPolicyInventoryApi(request, response, ctx, path, method)) return true;
 
     if (path === '/api/v1/projects' && method === 'GET') {
       sendJson(response, 200, { projects: ctx.projects.list() });
@@ -2401,10 +2403,25 @@ export async function handleProductHttp(
           sendJson(response, 400, { error: 'invalid_request', message: 'respond value must be JSON' });
           return true;
         }
+        const proof = headerValue(request.headers, INTERACTION_PROOF_HEADER);
+        const verifiedActor = proof ? ctx.verifyInteractionProof?.(proof, {
+          threadId: threadInteractionRespond.id,
+          interactionId: threadInteractionRespond.interactionId,
+          body: JSON.stringify(body)
+        }) : null;
+        if (proof && !verifiedActor) {
+          throw new ThreadCreateError(403, 'invalid-proof', 'Invalid interaction proof');
+        }
+        // Caller markers can only lower trust. HTTP alone never establishes human authority.
+        const actor = verifiedActor ?? (headerValue(request.headers, 'authorization')
+          || headerValue(request.headers, 'x-zcc-session-token')
+          || headerValue(request.headers, 'x-zcc-caller-credential')
+          || headerValue(request.headers, 'x-zcc-caller-session-id') ? 'agent' : 'unknown');
         const interaction = ctx.pendingInteractions.respondToPluginInteraction({
           threadId: threadInteractionRespond.id,
           interactionId: threadInteractionRespond.interactionId,
-          value: parsed.data
+          value: parsed.data,
+          actor
         });
         sendJson(response, 200, interaction);
       } catch (error) {

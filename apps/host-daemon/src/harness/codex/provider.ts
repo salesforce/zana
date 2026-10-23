@@ -6,11 +6,16 @@
  *  - RESUME IS A SUBCOMMAND, not a flag: `codex resume --last` reopens the most
  *    recent session (vs claude's `--resume`/`--continue` flag). So the base argv
  *    for `codex-resume` is `['resume', '--last']`, not a leading `--flag`.
- *  - HOOKS come from `~/.codex/config.toml` / codex's hook schema, NOT from CLI
- *    flags. So the Claude flag stack (`--settings`, `--session-id`,
- *    `--permission-mode`) is not part of codex's interface, and this provider
- *    returns `[]` for the persona / project-settings flag stacks. Those
- *    `ProviderCapabilities` stay OFF (see `providerCapabilities`).
+ *  - HOOKS are discovered PER CONFIG LAYER and APPENDED, not sourced from one
+ *    file: codex collects hooks from each layer (user `~/.codex/config.toml`,
+ *    project `.codex`, the session-flags layer our `-c hooks.*` lands in, and
+ *    managed/requirements layers) lowest-precedence-first and concatenates them.
+ *    Our `-c hooks.<Event>=…` overrides only replace each other WITHIN the
+ *    session-flags layer; they do NOT drop the user's or project's hooks. Hooks
+ *    do NOT come from CLI flags, so the Claude flag stack (`--settings`,
+ *    `--session-id`, `--permission-mode`) is not part of codex's interface, and
+ *    this provider returns `[]` for the persona / project-settings flag stacks.
+ *    Those `ProviderCapabilities` stay OFF (see `providerCapabilities`).
  *
  * MCP, GUIDANCE, and HOOKS are all bridged through the SAME `-c` global-override
  * channel — codex accepts three launcher injections natively, each written with
@@ -22,9 +27,14 @@
  *    report guidance as a developer-role message — see {@link guidanceArgs}.
  *  - **HOOKS** (A6/C9): `-c hooks.<Event>=[…]` registers `command` hooks that curl
  *    our local `/hook/*` callbacks, PLUS the global `--dangerously-bypass-hook-trust`
- *    flag (a `-c`-injected hook is untrusted and won't RUN without it; the source
- *    is self-vetted since WE build the curl-to-127.0.0.1 commands) — see
- *    {@link hookArgs}. Full lifecycle parity with the claude `--settings` hooks,
+ *    flag (a `-c`-injected hook lands in the session-flags layer UNTRUSTED and
+ *    won't RUN without it; the source is self-vetted since WE build the
+ *    curl-to-127.0.0.1 commands). CAVEAT: this flag is GLOBAL — it skips the trust
+ *    prompt for the user's and project's enabled hooks too, not only ours, for this
+ *    invocation (codex has no session-flags-scoped trust flag at the pinned
+ *    version). Scoped trust that trusts only our hooks is the subject of a
+ *    follow-up — see {@link hookArgs}. Full lifecycle parity with the claude
+ *    `--settings` hooks,
  *    reaching the SAME provider-agnostic `/hook/*` handlers:
  *      · `Stop` → `/hook/stop` — turn END (auto-close, scheduler stamp, goal loop);
  *        codex's `supportsHooks`/`canAutoCloseOnFinish` are ON because of it.
@@ -398,11 +408,17 @@ export class CodexProvider extends BaseLaunchProvider {
     // (codex's `HookEventsToml` config struct).
     //
     // Two hard requirements, both verified on codex 0.140.0 (A6/C9 spike):
-    //  1. A `-c`-injected hook is UNTRUSTED and parses-but-won't-RUN unless we also
-    //     pass the global `--dangerously-bypass-hook-trust` flag. That's a
-    //     deliberate security-posture choice; it's the flag's stated use ("automation
-    //     that already vets hook sources") — every command is OUR curl to 127.0.0.1,
-    //     never agent- or user-supplied. The flag is global (valid before OR after
+    //  1. A `-c`-injected hook lands in codex's SESSION-FLAGS config layer and is
+    //     UNTRUSTED (hash has no matching `trusted_hash` entry), so it
+    //     parses-but-won't-RUN unless we also pass the global
+    //     `--dangerously-bypass-hook-trust` flag. The flag's stated use is
+    //     "automation that already vets hook sources" — every command here is OUR
+    //     curl to 127.0.0.1, never agent- or user-supplied. CAVEAT: the flag is
+    //     GLOBAL, not session-flags-scoped — it also skips trust for any enabled
+    //     user/project hook in THIS invocation. codex 0.140.0 has no flag that
+    //     trusts only the session-flags layer; scoped trust (persisting a
+    //     `trusted_hash` for our hooks only, then dropping this flag) is a
+    //     follow-up. The flag is global in placement too (valid before OR after
     //     the `resume` subcommand), same slot as our `-c` args. Emitted ONCE.
     //  2. codex delivers each hook's event JSON on the command's STDIN (verified:
     //     the binary logs `failed to write hook stdin`). Fire-and-forget hooks that

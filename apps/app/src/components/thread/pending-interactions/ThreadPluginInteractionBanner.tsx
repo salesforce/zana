@@ -28,7 +28,12 @@ export function ThreadPluginInteractionBanner({ interaction, threadId, sourceThr
 
   const resolve = async (value: JsonValue) => {
     if (pluginRequest) {
-      await product.threads.interactions.respond(threadId, interaction.id, value);
+      if (window.cc?.threads?.interactions?.respond) {
+        await window.cc.threads.interactions.respond(threadId, interaction.id, value);
+      } else {
+        // Non-desktop HTTP cannot establish a human actor; required gates fail closed.
+        await product.threads.interactions.respond(threadId, interaction.id, value);
+      }
     } else {
       await product.threads.interactions.resolve(threadId, interaction.id, { kind: 'request_answer', value });
     }

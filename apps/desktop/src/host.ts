@@ -7,11 +7,14 @@ import {
   createNativeToolPolicyHook,
   firstToolPolicyDecider,
   productRouteToolPolicyDecider,
+  productRouteToolPolicyInventory,
   supervisorToolPolicyDecider,
   warnNativeToolPolicy
 } from './runtime/native-tool-policy.js';
 import { localMetadataProjects, localProjectPathOptions } from '@zana-ai/zcc-server/services/projects/project-metadata';
 import { invokeSharedProduct } from './ipc/shared-product-registry.js';
+import { createInteractionResponder } from './interaction-proof.js';
+import { registerInteractionResponseIpc } from './ipc/interaction-response.js';
 import { cliHostProblem, teamHostProblem } from './ipc/cli-host-guard.js';
 import { SHARED_PRODUCT_EVENTS } from '@zana-ai/zcc-contracts/shared-product';
 import { SharedClient, allowsSharedNavigation } from './window/shared-client.js';
@@ -3200,6 +3203,37 @@ export const nativeToolPolicyHook = createNativeToolPolicyHook({
   log: warnNativeToolPolicy
 });
 
+const productRouteNativeToolPolicyInventory = productRouteToolPolicyInventory({
+  serverUrl: productServerUrl,
+  credential: ensureProductServerCredential
+});
+
+/**
+ * Whether the native-tool veto must be reachable for a provider spawn (OBL-018).
+ * Reads the same inventory shape the squad preflight uses: a non-empty `required`
+ * means at least one enabled plugin owns tool policy, so the spawn must fail
+ * closed if it can't reach the hook. Mirrors {@link nativeToolPolicyHook}'s
+ * decider order — supervised runtime channel first, then the signed product route
+ * in electron-vite dev. If neither answers, fail closed (treat as required) so a
+ * torn or unreachable inventory never silently drops the veto.
+ */
+async function resolveNativeToolPolicyRequired(): Promise<boolean> {
+  const read = async (): Promise<unknown> => {
+    if (runtimeSupervisor) return runtimeSupervisor.toolPolicyReadiness();
+    if (process.env.ELECTRON_RENDERER_URL) return productRouteNativeToolPolicyInventory();
+    return null;
+  };
+  try {
+    const inventory = await read();
+    if (!inventory || typeof inventory !== 'object') return true;
+    const required = (inventory as { required?: unknown }).required;
+    return Array.isArray(required) && required.length > 0;
+  } catch (err) {
+    warnNativeToolPolicy(`tool-policy inventory read failed; failing closed: ${String(err)}`);
+    return true;
+  }
+}
+
 function verifyProductServerCredential(credential: unknown): boolean {
   const expected = productServerCredential;
   if (!expected || typeof credential !== 'string') return false;
@@ -4096,6 +4130,13 @@ export function createTerminalConfined(
     };
     /** Main-resolved cwd shared by discovery authorization and spawn. */
     effectiveLaunch?: EffectiveLaunch;
+    /**
+     * MAIN-only pre-spawn native-tool veto gate (OBL-018). The async caller read
+     * the tool-policy inventory and set this true when an enabled plugin owns
+     * tool policy; the pty layer then fails closed if the native-tool hook is
+     * unreachable. Omitted defaults to required for a provider launch.
+     */
+    nativeToolPolicyRequired?: boolean;
     /** MAIN-only text for OpenCode's spawn-time tab namer. Null suppresses it. */
     tabNamerPrompt?: string | null;
     /** Keep a main-owned retained squad worktree after this agent exits. */
@@ -4236,7 +4277,18 @@ export function createTerminalConfined(
     });
     const resolvedMicroVmImage =
       req.microVmImage ?? effectivePersona?.microVmImage ?? projectMicroVmSettings.microVmImage;
+    // Pre-spawn native-tool veto gate (OBL-018). A plain shell runs no provider
+    // agent, so no native tool policy applies. For a provider launch, the async
+    // caller resolved the tool-policy inventory (this fn is sync — git resolution
+    // already happened upstream) and passed `opts.nativeToolPolicyRequired`: when
+    // any enabled plugin owns tool policy, the spawn must reach the native-tool
+    // hook, and the pty layer fails closed on this flag when it can't. Absent
+    // (an internal caller that didn't resolve it) defaults to required for a
+    // provider so the veto is never silently dropped.
+    const nativeToolPolicyRequired =
+      selection.profile !== 'shell' && (opts?.nativeToolPolicyRequired ?? true);
     const session = ptys.create({
+      nativeToolPolicyRequired,
       preallocatedSessionId: opts?.preallocatedSessionId,
       projectId: req.projectId,
       profile: selection.profile,
@@ -4542,8 +4594,15 @@ async function launchAuthorizedTerminal(
         authorizedPlan.resolved.config
       );
       const spawn = async () => {
+      // Resolve the native-tool veto gate here (async) so the sync
+      // createTerminalConfined can consume it (OBL-018). Shell launches need no
+      // policy; a provider launch requires the hook be reachable when a plugin
+      // owns tool policy, and the pty layer fails closed on the flag.
+      const nativeToolPolicyRequired =
+        request.profile !== 'shell' && (await resolveNativeToolPolicyRequired());
       const result = createTerminalConfined(request, {
         ...spawnOpts,
+        nativeToolPolicyRequired,
         preallocatedSessionId: authorizedPlan.sessionId,
         launchSnapshot: {
           project: authorizedPlan.resolved.project,
@@ -7637,15 +7696,34 @@ export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown
   return { ok: true };
 }
 
+const pluginApprovalHandler = createPluginApprovalHandler({
+  secret: ensureProductServerCredential,
+  listApps: () => runtimeSupervisor ? runtimeSupervisor.listPluginApps() : listPluginAppsFromProductServer(),
+  showSheet: (parent, view, timeoutMs) => showApprovalSheet(parent, view, (options) => new BrowserWindow(options), timeoutMs),
+    resolveToolWindow: async (threadId, projectId) => {
+      const base = new URL(productServerUrl());
+      if (!['http:', 'https:'].includes(base.protocol) || !['127.0.0.1', 'localhost'].includes(base.hostname)) return null;
+      const project = store.listProjects().find(row => row.id === projectId);
+      const hostId = localHostId();
+      if (!hostId || !project || project.remote || (project.hostId && project.hostId !== hostId)) return null;
+      const response = await fetch(new URL(`api/v1/threads/${encodeURIComponent(threadId)}`, base), {
+        redirect: 'error', signal: AbortSignal.timeout(5000)
+      });
+      if (!response.ok) return null;
+      const { thread } = await response.json() as { thread?: { id?: string; projectId?: string; hostId?: string; visibility?: string; archivedAt?: number | null } };
+      if (!thread || thread.id !== threadId || thread.projectId !== projectId || thread.hostId !== hostId
+        || thread.visibility !== 'visible' || thread.archivedAt !== null) return null;
+      const scoped = [...windows.values()].find(row => !row.win.isDestroyed() && (row.threadView?.threadId === threadId || row.projectId === projectId));
+      return scoped?.win ?? mainWindow();
+    }
+});
+
 function registerIpc() {
+  registerInteractionResponseIpc(safeHandleFromWindow, createInteractionResponder({ serverUrl: productServerUrl, secret: ensureProductServerCredential }));
   safeHandleFromWindow(IPC.uiSend, sendQueuedMessageNow, err => { throw err; });
   // Plugin buttons with no thread (release actions) get a sheet main draws and signs.
   /* v8 ignore next -- registered at built-Electron boot; createPluginApprovalHandler is unit-tested */
-  safeHandleFromWindow(IPC.pluginApprovals.request, createPluginApprovalHandler({
-    secret: ensureProductServerCredential,
-    listApps: () => runtimeSupervisor ? runtimeSupervisor.listPluginApps() : listPluginAppsFromProductServer(),
-    showSheet: (parent, view) => showApprovalSheet(parent, view, (options) => new BrowserWindow(options))
-  }), () => ({ approved: false as const, reason: 'unavailable' as const }));
+  safeHandleFromWindow(IPC.pluginApprovals.request, pluginApprovalHandler, () => ({ approved: false as const, reason: 'unavailable' as const }));
   /* v8 ignore next -- registered at built-Electron boot; registerPluginViewIpc is unit-tested */
   registerPluginViewIpc(safeHandle, pluginViews);
   /* v8 ignore next -- registered at built-Electron boot; registerThreadViewIpc is unit-tested */
@@ -9439,6 +9517,8 @@ async function bootstrapNormal() {
   const controlDir = resolveZccDataDir(process.env, app.getPath('home'));
   ensureProductServerCredential();
   startControlPlane({
+    requestPluginToolApproval: pluginApprovalHandler.requestToolApproval,
+    respondInteraction: createInteractionResponder({ serverUrl: productServerUrl, secret: ensureProductServerCredential }),
     invokeSharedProduct,
     socketPath: join(controlDir, 'control.sock'),
     tokenPath: join(controlDir, 'control.token'),

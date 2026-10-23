@@ -16,7 +16,13 @@ import type {
   ToolCallResponse,
 } from "@zana-ai/zcc-domain/thread-runtime";
 import type { HostDaemonAcpLaunchSpec } from "@zana-ai/zcc-host-daemon-contract";
-import type { ProviderHealthResult } from "@zana-ai/zcc-provider-bridge-protocol";
+import type { NativeToolDecision, NativeToolDecisionRequest, ProviderHealthResult } from "@zana-ai/zcc-provider-bridge-protocol";
+
+export type AgentRuntimeNativeToolDecisionRequest = NativeToolDecisionRequest & {
+  providerId: string;
+  projectId: string;
+  environmentId: string;
+};
 
 export type AgentRuntimeShellEnvironment = Record<string, string>;
 
@@ -137,6 +143,12 @@ export interface AgentRuntimeOptions {
   /** Called when a provider needs to execute a tool.
    *  `threadId` is always the ZCC thread id and `providerThreadId` is always present. */
   onToolCall: (request: ToolCallRequest) => Promise<ToolCallResponse>;
+
+  /** Native-tool veto, scoped from the live provider process and thread records. */
+  onNativeToolDecision?: (
+    request: AgentRuntimeNativeToolDecisionRequest,
+    signal: AbortSignal,
+  ) => Promise<NativeToolDecision>;
 
   /** Called when a provider pauses for user permission or approval.
    *  The runtime converts provider-native requests into zcc's shared pending-interaction contract. */

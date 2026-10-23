@@ -518,7 +518,15 @@ export function toCodexThreadPermissionSettings(
       };
     case "full":
       return {
-        approvalPolicy: "never",
+        // OBL-018/p0-modern-codex-veto: "untrusted" (UnlessTrusted) is the ONLY
+        // approvalPolicy that still raises command + file-change approval requests
+        // under sandbox:danger-full-access (codex safety.rs returns AskUser BEFORE
+        // the sandbox check). Every other value auto-approves under full access, so
+        // nothing would reach the native-tool veto. The sandbox is UNCHANGED. These
+        // approvals are intercepted and auto-allowed in bridge.ts (decideNativeTool)
+        // so full-access sessions surface no human prompt when no tool-policy plugin
+        // is live; landing this flip WITHOUT that interception is a UX regression.
+        approvalPolicy: "untrusted",
         approvalsReviewer: toCodexApprovalsReviewer(options),
         sandbox: "danger-full-access",
       };
@@ -544,7 +552,9 @@ export function toCodexPermissionSettings(
       };
     case "full":
       return {
-        approvalPolicy: "never",
+        // See toCodexThreadPermissionSettings: "untrusted" keeps danger-full-access
+        // while still raising command/file-change approvals for the veto to intercept.
+        approvalPolicy: "untrusted",
         approvalsReviewer: toCodexApprovalsReviewer(args.options),
         sandbox: "danger-full-access",
         sandboxPolicy: { type: "dangerFullAccess" },

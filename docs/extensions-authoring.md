@@ -186,6 +186,13 @@ Migrate to them when a plugin currently works around a missing generic hook:
 - A `projectTab` that can be unavailable for some projects should register
   `ui.registerProjectTabAvailability` instead of hiding the tab outright —
   users should see a disabled tab with a reason, not a tab that vanishes.
+- On Codex PTY sessions the host injects its lifecycle and native-policy hooks
+  into Codex's session-flags config layer and currently launches with
+  `--dangerously-bypass-hook-trust` so those hooks run. That flag is global at
+  the pinned Codex version, so it also trusts a user's or project's enabled
+  Codex hooks for the host-launched session — see
+  [Native tool policy](./extensions-sdk-reference.md#native-tool-policy-claude--codex-only).
+  Do not rely on this bypass as a security boundary; scoped trust is planned.
 
 ## Marketplace
 

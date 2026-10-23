@@ -481,6 +481,11 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
     request: NativeToolPolicyRequestSchema
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
+    // OBL-018 pre-spawn readiness: main reads the tool-policy inventory before a
+    // provider launch to decide whether the native-tool veto must be reachable.
+    operation: z.literal('plugins-tool-policy-inventory')
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('marketplace-list')
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({

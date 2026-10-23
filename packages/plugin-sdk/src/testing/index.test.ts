@@ -91,6 +91,25 @@ describe('createFakePluginHost', () => {
     expect(harness.approve(binding)).not.toBe(token);
   });
 
+  it('exports stable approval aliases, defaults to unavailable and keeps scoped proof identity', async () => {
+    const binding = { action: 'agent.activate', target: 'org', targetLabel: 'dev', subject: 'Agent', threadId: 't', invocationId: 'i' };
+    const request = { binding, title: 'Activate' };
+    const bare = createFakePluginHost();
+    expect(await bare.zcc.ui.requestToolApproval(request)).toEqual({ approved: false, reason: 'unavailable' });
+    const ask = vi.fn(async () => ({ approved: false as const, reason: 'denied' as const }));
+    const { zcc, harness } = createFakePluginHost({ requestToolApproval: ask });
+    for (const fn of [zcc.ui.requestToolApproval, zcc.ui.requestApproval, zcc.ui.experimental_requestApproval]) {
+      expect(await fn(request)).toEqual({ approved: false, reason: 'denied' });
+    }
+    expect(ask).toHaveBeenCalledTimes(3);
+    const token = harness.approve(binding);
+    expect(await zcc.ui.consumeApproval({ token, binding: { ...binding, invocationId: 'other' } })).toBe(false);
+    expect(await zcc.ui.consumeApproval({ token, binding })).toBe(true);
+    expect(await zcc.ui.experimental_consumeApproval({ token, binding })).toBe(false);
+    await harness.dispose();
+    await expect(zcc.ui.requestToolApproval(request)).rejects.toThrow('stale');
+  });
+
   it('poisons the api after dispose', async () => {
     const { zcc, harness } = createFakePluginHost({ pluginId: 'gone' });
     await harness.dispose();

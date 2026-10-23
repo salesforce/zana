@@ -74,6 +74,7 @@ describe('PtyManager — spawn-time cwd confinement (Rule 2 / 0.4)', () => {
 
   it('spawns when the cwd resolves inside a registered root', () => {
     const session = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'shell',
       cwd: root,
@@ -89,7 +90,7 @@ describe('PtyManager — spawn-time cwd confinement (Rule 2 / 0.4)', () => {
   it('spawns when the cwd is a subdir of a registered root', async () => {
     const sub = join(root, 'nested');
     await mkdir(sub, { recursive: true });
-    ptys.create({ projectId: 'p1', profile: 'shell', cwd: sub, cols: 80, rows: 24, config: cfg() });
+    ptys.create({ nativeToolPolicyRequired: false, projectId: 'p1', profile: 'shell', cwd: sub, cols: 80, rows: 24, config: cfg() });
     expect(spawned).toHaveLength(1);
   });
 
@@ -100,6 +101,7 @@ describe('PtyManager — spawn-time cwd confinement (Rule 2 / 0.4)', () => {
     try {
       expect(() =>
         ptys.create({
+          nativeToolPolicyRequired: false,
           projectId: 'p1',
           profile: 'shell',
           cwd: escapeLink,
@@ -117,6 +119,7 @@ describe('PtyManager — spawn-time cwd confinement (Rule 2 / 0.4)', () => {
   it('REJECTS a cwd that does not resolve at all', () => {
     expect(() =>
       ptys.create({
+        nativeToolPolicyRequired: false,
         projectId: 'p1',
         profile: 'shell',
         cwd: join(outside, 'no', 'such', 'dir'),
@@ -130,7 +133,7 @@ describe('PtyManager — spawn-time cwd confinement (Rule 2 / 0.4)', () => {
 
   it('is a NO-OP when no roots supplier is injected (unit-test default)', () => {
     const bare = new PtyManager();
-    bare.create({ projectId: 'p1', profile: 'shell', cwd: outside, cols: 80, rows: 24, config: cfg() });
+    bare.create({ nativeToolPolicyRequired: false, projectId: 'p1', profile: 'shell', cwd: outside, cols: 80, rows: 24, config: cfg() });
     expect(spawned).toHaveLength(1);
   });
 
@@ -145,13 +148,13 @@ describe('PtyManager — spawn-time cwd confinement (Rule 2 / 0.4)', () => {
     try {
       const mgr = new PtyManager();
       mgr.setProjectRoots(() => [root, wtRoot]);
-      mgr.create({ projectId: 'p1', profile: 'shell', cwd: wt, cols: 80, rows: 24, config: cfg() });
+      mgr.create({ nativeToolPolicyRequired: false, projectId: 'p1', profile: 'shell', cwd: wt, cols: 80, rows: 24, config: cfg() });
       expect(spawned).toHaveLength(1);
       expect(realpathSync(spawned[0].cwd)).toBe(realpathSync(wt));
 
       // A path under NEITHER root is still rejected.
       expect(() =>
-        mgr.create({ projectId: 'p1', profile: 'shell', cwd: outside, cols: 80, rows: 24, config: cfg() })
+        mgr.create({ nativeToolPolicyRequired: false, projectId: 'p1', profile: 'shell', cwd: outside, cols: 80, rows: 24, config: cfg() })
       ).toThrow(/escapes every registered project root/);
       expect(spawned).toHaveLength(1);
     } finally {

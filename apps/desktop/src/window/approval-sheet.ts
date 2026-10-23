@@ -162,7 +162,7 @@ export function approvalSheetWindowOptions(parent: BrowserWindow, request: Plugi
   };
 }
 
-type SheetWindow = Pick<BrowserWindow, 'once' | 'on' | 'close' | 'isDestroyed' | 'show' | 'loadURL'> & {
+type SheetWindow = Pick<BrowserWindow, 'once' | 'on' | 'destroy' | 'isDestroyed' | 'show' | 'loadURL'> & {
   webContents: Pick<BrowserWindow['webContents'], 'on' | 'setWindowOpenHandler'>;
 };
 
@@ -185,7 +185,9 @@ export function showApprovalSheet(
       settled = true;
       clearTimeout(timer);
       parent.removeListener('closed', onParentClosed);
-      if (!sheet.isDestroyed()) sheet.close();
+      // This disposable sandbox has no unload work. Native modal close can leave
+      // the answered sheet alive while its title-update callback is running.
+      if (!sheet.isDestroyed()) sheet.destroy();
       resolve(outcome);
     };
     const onParentClosed = () => finish({ kind: 'cancelled' });

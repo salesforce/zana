@@ -65,6 +65,7 @@ import { parseProfile } from '@zana-ai/zcc-domain/launch-provider';
 import { scheduleSummary } from '@zana-ai/zcc-domain/schedule-spec';
 import { scheduleRunQuerySchema, scheduleRunRefsSchema } from '@zana-ai/zcc-server/services/scheduler/schedule-run-schemas';
 import { scheduleDefinitionPatchSchema } from '@zana-ai/zcc-server/services/scheduler/schedule-manage-mcp-tools';
+import { parsePluginToolApprovalRequest, type PluginApprovalResult } from '@zana-ai/zcc-server/http/plugin-approval-proof';
 
 /** Caps a single request line so a malformed/hostile client can't balloon memory. */
 const MAX_REQUEST_BYTES = 256 * 1024;
@@ -104,6 +105,8 @@ function constantTimeEqual(a: string, b: string): boolean {
  * handlers use — main authorizes, the CLI just asks.
  */
 export interface ControlPlaneDeps {
+  requestPluginToolApproval?: (input: unknown) => Promise<PluginApprovalResult>;
+  respondInteraction?: (input: unknown, actor: import('@zana-ai/zcc-domain').InteractionActor, source: string) => Promise<unknown>;
   invokeSharedProduct?: (input: unknown) => Promise<unknown>;
   invalidateModelCatalog?: (providerId: string) => void;
   /** List registered projects (read surface + name/id resolution). */
@@ -275,6 +278,7 @@ export type CallerClass = 'operator' | 'orchestrator' | 'agent' | 'product-serve
 
 /** Ops an agent-class caller may invoke — the read surface only. */
 const AGENT_ALLOWED_OPS = new Set<string>([
+  'interaction.respond',
   'status',
   'project.list',
   'persona.list',
@@ -295,6 +299,7 @@ const AGENT_ALLOWED_OPS = new Set<string>([
  * and do not skip confirm based on a forgeable args.source field.
  */
 const PRODUCT_SERVER_ALLOWED_OPS = new Set<string>([
+  'plugin.toolApproval.request',
   'product.invoke',
   'harness.models.invalidate',
   'term.create',
@@ -351,6 +356,7 @@ const ORCHESTRATOR_ALLOWED_OPS = new Set<string>([
 
 /** Every op the control plane understands. */
 const KNOWN_OPS = new Set<string>([
+  'plugin.toolApproval.request',
   'product.invoke',
   ...AGENT_ALLOWED_OPS,
   ...PLUGIN_CONTROL_OPS,
@@ -411,11 +417,13 @@ export function classifyCaller(
     return 'agent';
   }
   if (verifyProductServerCredential?.(callerCredential) === true) return 'product-server';
+  if (typeof callerCredential === 'string' && callerCredential.length > 0) return 'agent';
   return 'operator';
 }
 
 /** True when an op is refused for the given non-operator caller class. */
 function isOpRefusedFor(caller: CallerClass, op: string): boolean {
+  if (op === 'plugin.toolApproval.request') return caller !== 'product-server';
   if (caller === 'operator') return false;
   if (PLUGIN_CONTROL_OPS.has(op)) return false;
   if (caller === 'product-server') return !PRODUCT_SERVER_ALLOWED_OPS.has(op);
@@ -529,6 +537,23 @@ export async function dispatchOp(
   const dim = (v: unknown, fallback: number): number =>
     typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.min(Math.floor(v), 1000) : fallback;
   switch (op) {
+    case 'plugin.toolApproval.request': {
+      if (caller.class !== 'product-server') return { ok: false, code: 'FORBIDDEN', message: 'Product server authority required' };
+      if (!parsePluginToolApprovalRequest(args).ok || typeof args.pluginId !== 'string' || !/^[a-z0-9][a-z0-9-]{0,127}$/.test(args.pluginId)
+        || typeof args.projectId !== 'string' || !/^[A-Za-z0-9._:-]{1,200}$/.test(args.projectId)) return { ok: false, code: 'BAD_ARGS', message: 'Invalid tool approval request' };
+      if (!deps.requestPluginToolApproval) return { ok: true, value: { approved: false, reason: 'unavailable' } };
+      try { return { ok: true, value: await deps.requestPluginToolApproval(args) }; }
+      catch { return { ok: true, value: { approved: false, reason: 'unavailable' } }; }
+    }
+    case 'interaction.respond': {
+      if (!deps.respondInteraction) return { ok: false, code: 'UNAVAILABLE', message: 'Interaction responder unavailable' };
+      try {
+        const actor = caller.class === 'operator' ? 'human' : 'agent';
+        return { ok: true, value: await deps.respondInteraction(args, actor, `control:${caller.class}`) };
+      } catch (error) {
+        return { ok: false, code: 'INTERACTION_REFUSED', message: error instanceof Error ? error.message : 'Interaction refused' };
+      }
+    }
     case 'product.invoke': {
       if (caller.class !== 'product-server' || !deps.invokeSharedProduct) return { ok: false, code: 'FORBIDDEN', message: 'Product server authority required' };
       try { return { ok: true, value: await deps.invokeSharedProduct(args) }; }
@@ -1084,6 +1109,13 @@ async function handleConnection(
     if (authd.op === 'plugin.cli') {
       clearTimeout(timer);
       timer = setTimeout(() => finish({ ok: false, code: 'TIMEOUT', message: 'plugin command timed out' }), PLUGIN_CLI_TIMEOUT_MS);
+    }
+    if (authd.op === 'plugin.toolApproval.request' && authd.caller === 'product-server') {
+      const request = parsePluginToolApprovalRequest(authd.args);
+      if (request.ok) {
+        clearTimeout(timer);
+        timer = setTimeout(() => finish({ ok: true, value: { approved: false, reason: 'timeout' } }), request.value.timeoutMs!);
+      }
     }
     try {
       if (

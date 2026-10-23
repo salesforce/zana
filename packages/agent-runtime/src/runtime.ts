@@ -25,6 +25,7 @@ import {
   BRIDGE_JSON_RPC_ERRORS,
   ThreadEventGrammar,
   providerHealthResultSchema,
+  type NativeToolDecisionRequest,
 } from "@zana-ai/zcc-provider-bridge-protocol";
 import {
   JsonRpcResponseError,
@@ -69,6 +70,7 @@ import type {
   AgentRuntime,
   AgentRuntimeBridgeLaunch,
   AgentRuntimeExecutionOptions,
+  AgentRuntimeNativeToolDecisionRequest,
   AgentRuntimeOptions,
   AgentRuntimeProviderRecoveryHint,
   ReapedIdleProviderSession,
@@ -843,6 +845,24 @@ function createAgentRuntimeInternal(
     return resolvedThreadId;
   }
 
+  function resolveNativeToolIdentity(proc: ProviderProcess, request: NativeToolDecisionRequest): AgentRuntimeNativeToolDecisionRequest | null {
+    try {
+      const threadId = resolveBbThreadIdForProcess(proc, request.providerThreadId);
+      if (!threadId || threadId !== request.threadId) return null;
+      const config = threadRuntimeConfigs.get(threadId);
+      const session = threadIdentityRegistry.getProviderSession(threadId);
+      if (!config?.projectId || !session || config.processKey !== proc.processKey
+        || config.providerId !== proc.providerId || session.providerId !== proc.providerId
+        || proc.adapter.id !== proc.providerId || session.providerThreadId !== request.providerThreadId
+        || proc.child.killed || proc.expectedShutdownExpectations > 0
+        || requireProviderProcessForThread(threadId) !== proc) return null;
+      return { ...request, threadId, providerThreadId: session.providerThreadId,
+        providerId: session.providerId, projectId: config.projectId, environmentId: config.environmentId };
+    } catch {
+      return null;
+    }
+  }
+
   function requireProviderRequestPlan(
     args: RequireProviderRequestPlanArgs,
   ): ProviderRequestCommandPlan {
@@ -1500,6 +1520,13 @@ function createAgentRuntimeInternal(
           threadRuntimeConfigs.get(threadId)?.options,
         onInteractiveRequest: options.onInteractiveRequest,
         onToolCall: options.onToolCall,
+        onNativeToolDecision: options.onNativeToolDecision ? async (request, signal) => {
+          const config = threadRuntimeConfigs.get(request.threadId);
+          const decision = await options.onNativeToolDecision!(request, signal);
+          return threadRuntimeConfigs.get(request.threadId) !== config
+            ? { action: 'deny', reason: 'native policy session replaced' } : decision;
+        } : undefined,
+        resolveNativeToolIdentity: request => resolveNativeToolIdentity(proc, request),
         parsedId: parsedLine.parsedId,
         parsedMethod: parsedLine.parsedMethod,
         providerProcess: proc,

@@ -1,4 +1,6 @@
 import type { MessagePort, Worker } from 'node:worker_threads';
+import { AsyncLocalStorage, AsyncResource } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
 import { PLUGIN_INTERACTION_MAX_TIMEOUT_MS } from '@zana-ai/zcc-domain/thread-runtime';
 
 type Wire = any;
@@ -8,6 +10,7 @@ const MAX_PENDING = 64;
 const MAX_FUNCTIONS = 4096;
 const SYNC_BYTES = 16 * 1024 * 1024;
 const CALL_TIMEOUT_MS = 120_000;
+const TOOL_APPROVAL_TIMEOUT_MS = 5 * 60_000;
 // A call carrying a live AbortSignal belongs to its caller and may wait on a person
 // (a tool asking a question), so it is bounded by that signal and the longest
 // interaction a plugin may open instead of the plain RPC deadline.
@@ -45,6 +48,9 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin') 
   const signalRefs = new Map<number, number>();
   let collectedSignals: number[] | null = null;
   const pending = new Map<number, { resolve(value: any): void; reject(error: Error): void }>();
+  // Correlations are bridge-owned capabilities, never SDK-supplied invocation fields.
+  const contexts = new Map<string, AsyncResource>();
+  const incomingContext = new AsyncLocalStorage<string>();
   const shared = side === 'plugin' ? new SharedArrayBuffer(SYNC_BYTES) : undefined;
 
   function encode(value: any, path = '', depth = 0, seen = new Set<object>()): Wire {
@@ -57,7 +63,9 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin') 
         id = ++nextId; functions.set(id, value); functionIds.set(value, id);
       }
       const async = side === 'plugin' || value.__zccPluginOnce === true || value.constructor?.name === 'AsyncFunction' || /^(sdk|host|storage\.kv)(\.|$)/.test(path);
-      return { [TAG]: 'function', side, id, async, once: value.__zccPluginOnce === true };
+      return { [TAG]: 'function', side, id, async, once: value.__zccPluginOnce === true,
+        ...(/^ui\.(requestToolApproval|requestApproval|experimental_requestApproval)$/.test(path) && side === 'server'
+          ? { approval: true } : {}) };
     }
     if (typeof value === 'bigint') return { [TAG]: 'bigint', value: String(value) };
     if (!value || typeof value !== 'object') return value;
@@ -104,7 +112,7 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin') 
     if (!value || typeof value !== 'object') return value;
     if (value[TAG] === 'function') {
       if (value.side === side) return functions.get(value.id);
-      const remote = (...args: any[]) => side === 'plugin' && !value.async ? invokeSync(value.id, args) : invoke(value.id, args);
+      const remote = (...args: any[]) => side === 'plugin' && !value.async ? invokeSync(value.id, args) : invoke(value.id, args, false, side === 'plugin' && value.approval === true);
       Object.defineProperty(remote, '__zccPluginInvokeObserved', { value: (...args: any[]) => invoke(value.id, args, true) });
       Object.defineProperty(remote, '__zccPluginOnce', { value: value.once });
       return remote;
@@ -139,23 +147,27 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin') 
     }
   }
 
-  function invoke(fn: number, args: any[], observe = false): Promise<any> {
+  function invoke(fn: number, args: any[], observe = false, approval = false): Promise<any> {
     if (stopped) return Promise.reject(new Error('Plugin runtime stopped'));
     if (pending.size >= MAX_PENDING) return Promise.reject(new Error('Plugin runtime is busy'));
     const id = ++nextId;
     const owner = callerSignal(args);
+    const context = side === 'server' ? randomUUID() : incomingContext.getStore();
+    const resource = side === 'server' ? new AsyncResource('PluginWorkerInvocation', { requireManualDestroy: true }) : undefined;
+    if (resource) contexts.set(context!, resource);
     return new Promise((resolve, reject) => {
       let carried: number[] = [];
       let settled = false;
       const settle = (finish: () => void) => {
         if (settled) return;
         settled = true; pending.delete(id); clearTimeout(timer); owner?.removeEventListener('abort', onAbort);
+        if (resource) { contexts.delete(context!); resource.emitDestroy(); }
         // An observed call replies before the remote work ends, so its signals stay live.
         if (!observe) releaseSignals(carried);
         finish();
       };
       const onAbort = () => settle(() => reject(abortError(owner!)));
-      const timer = setTimeout(() => settle(() => reject(new Error('Plugin callback timed out'))), owner ? SIGNALLED_CALL_TIMEOUT_MS : CALL_TIMEOUT_MS);
+      const timer = setTimeout(() => settle(() => reject(new Error('Plugin callback timed out'))), approval ? TOOL_APPROVAL_TIMEOUT_MS : owner ? SIGNALLED_CALL_TIMEOUT_MS : CALL_TIMEOUT_MS);
       pending.set(id, { resolve: value => settle(() => resolve(value)), reject: error => settle(() => reject(error)) });
       try {
         const outer = collectedSignals;
@@ -167,7 +179,7 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin') 
           for (const signalId of carried) signalRefs.set(signalId, (signalRefs.get(signalId) ?? 0) + 1);
         }
         owner?.addEventListener('abort', onAbort, { once: true });
-        port.postMessage({ kind: 'call', id, fn, args: wire, observe }, []);
+        port.postMessage({ kind: 'call', id, fn, args: wire, observe, ...(context ? { context } : {}) }, []);
       } catch (error) { settle(() => reject(error as Error)); }
     });
   }
@@ -177,7 +189,7 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin') 
     Atomics.store(header, 0, 0);
     port.postMessage({ kind: 'api-wait', waiting: true }, []);
     try {
-    port.postMessage({ kind: 'call', fn, args: encode(args), shared }, []);
+    port.postMessage({ kind: 'call', fn, args: encode(args), shared, context: incomingContext.getStore() }, []);
     if (Atomics.wait(header, 0, 0, 10_000) === 'timed-out') { stopped = true; throw new Error('Plugin API call timed out'); }
     const bytes = new Uint8Array(shared, 8, Atomics.load(header, 1));
     const result = JSON.parse(Buffer.from(bytes).toString('utf8'));
@@ -214,7 +226,12 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin') 
     if (!callback) { reply(undefined, new Error('Unknown plugin callback')); return; }
     try {
       if (Reflect.get(callback, '__zccPluginOnce')) functions.delete(message.fn);
-      const result = callback(...decode(message.args));
+      const call = () => callback(...decode(message.args));
+      const context = typeof message.context === 'string' ? message.context : undefined;
+      const resource = side === 'server' && context ? contexts.get(context) : undefined;
+      const result = side === 'plugin' && context
+        ? incomingContext.run(context, call)
+        : resource ? resource.runInAsyncScope(call) : call();
       if (message.observe) {
         if (result && typeof result.then === 'function') {
           const promise = Promise.resolve(result); void promise.catch(() => {});
@@ -233,6 +250,8 @@ export function createPluginWorkerBridge(port: Port, side: 'server' | 'plugin') 
       stopped = true; port.off('message', onMessage);
       for (const call of [...pending.values()]) call.reject(error);
       pending.clear(); functions.clear();
+      for (const resource of contexts.values()) resource.emitDestroy();
+      contexts.clear(); incomingContext.disable();
       for (const remove of removeSignalListeners.values()) remove();
       removeSignalListeners.clear(); signalRefs.clear();
       for (const controller of signals.values()) controller.abort();

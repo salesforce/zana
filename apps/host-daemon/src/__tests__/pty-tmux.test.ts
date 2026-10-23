@@ -79,7 +79,7 @@ describe('pty tmux wrapping (local)', () => {
   });
 
   it('wraps the command in tmux when scope is "all" and tmux is available', () => {
-    ptys.create({ projectId: 'p1', profile: 'shell', config: cfg({ tmuxScope: 'all' }), ...dims });
+    ptys.create({ nativeToolPolicyRequired: false, projectId: 'p1', profile: 'shell', config: cfg({ tmuxScope: 'all' }), ...dims });
     const proc = spawned[0];
     expect(proc.command).toBe('tmux');
     // Leading `set -g …` clauses configure OSC-title forwarding; the
@@ -95,28 +95,29 @@ describe('pty tmux wrapping (local)', () => {
   });
 
   it('does NOT wrap when scope is unset (default)', () => {
-    ptys.create({ projectId: 'p1', profile: 'shell', config: cfg(), ...dims });
+    ptys.create({ nativeToolPolicyRequired: false, projectId: 'p1', profile: 'shell', config: cfg(), ...dims });
     expect(spawned[0].command).toBe('/bin/zsh');
   });
 
   it('does NOT wrap when scope is "off"', () => {
-    ptys.create({ projectId: 'p1', profile: 'shell', config: cfg({ tmuxScope: 'off' }), ...dims });
+    ptys.create({ nativeToolPolicyRequired: false, projectId: 'p1', profile: 'shell', config: cfg({ tmuxScope: 'off' }), ...dims });
     expect(spawned[0].command).toBe('/bin/zsh');
   });
 
   it('does NOT wrap a local session when scope is "remote" (remote-only)', () => {
-    ptys.create({ projectId: 'p1', profile: 'shell', config: cfg({ tmuxScope: 'remote' }), ...dims });
+    ptys.create({ nativeToolPolicyRequired: false, projectId: 'p1', profile: 'shell', config: cfg({ tmuxScope: 'remote' }), ...dims });
     expect(spawned[0].command).toBe('/bin/zsh');
   });
 
   it('does NOT wrap when tmux is unavailable, even with scope "all"', () => {
     tmuxAvailable.mockReturnValue(false);
-    ptys.create({ projectId: 'p1', profile: 'shell', config: cfg({ tmuxScope: 'all' }), ...dims });
+    ptys.create({ nativeToolPolicyRequired: false, projectId: 'p1', profile: 'shell', config: cfg({ tmuxScope: 'all' }), ...dims });
     expect(spawned[0].command).toBe('/bin/zsh');
   });
 
   it('runs a scheduled session through the non-tmux supervisor', () => {
     ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'shell',
       config: cfg({ tmuxScope: 'all' }),
@@ -129,6 +130,7 @@ describe('pty tmux wrapping (local)', () => {
 
   it('wraps a headless Team worker so lifecycle restoration can reattach it', () => {
     ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'shell',
       config: cfg({ tmuxScope: 'all' }),
@@ -144,6 +146,7 @@ describe('pty tmux wrapping (local)', () => {
 
   it('does NOT wrap an unrelated headless run', () => {
     ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'shell',
       config: cfg({ tmuxScope: 'all' }),
@@ -155,6 +158,7 @@ describe('pty tmux wrapping (local)', () => {
 
   it('the cc- session name embeds the real session id (reaper match key)', () => {
     const session = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'shell',
       config: cfg({ tmuxScope: 'all' }),
@@ -166,9 +170,11 @@ describe('pty tmux wrapping (local)', () => {
 
   it('preserves local tmux clients on shutdown while killing plain sessions', () => {
     ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1', profile: 'shell', config: cfg({ tmuxScope: 'all' }), ...dims
     });
     ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1', profile: 'shell', config: cfg(), ...dims
     });
 
@@ -180,6 +186,7 @@ describe('pty tmux wrapping (local)', () => {
 
   it('explicit close kills the local tmux session, not only the client pty', () => {
     const session = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1', profile: 'shell', config: cfg({ tmuxScope: 'all' }), ...dims
     });
 
@@ -201,6 +208,7 @@ describe('pty tmux wrapping (remote)', () => {
 
   it('wraps the remote login command in a tmux session honoring the compound shell command', () => {
     const session = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'shell',
       config: cfg({ tmuxScope: 'all' }),
@@ -226,6 +234,7 @@ describe('pty tmux wrapping (remote)', () => {
 
   it('wraps the remote login command when scope is "remote" (remote-only)', () => {
     const session = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'shell',
       config: cfg({ tmuxScope: 'remote' }),
@@ -238,6 +247,7 @@ describe('pty tmux wrapping (remote)', () => {
 
   it('adds SSH keepalive options so an idle link is not silently reaped', () => {
     ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'shell',
       config: cfg({ tmuxScope: 'all' }),
@@ -255,6 +265,7 @@ describe('pty tmux wrapping (remote)', () => {
 
   it('wraps a remote session when scope is unset (default matches Settings "all")', () => {
     const session = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'shell',
       config: cfg(),
@@ -268,6 +279,7 @@ describe('pty tmux wrapping (remote)', () => {
 
   it('does NOT wrap a remote session when scope is "off"', () => {
     ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'shell',
       config: cfg({ tmuxScope: 'off' }),
@@ -280,6 +292,7 @@ describe('pty tmux wrapping (remote)', () => {
 
   it('cd-prefixes a remote with no remotePath to the global remoteDefaultPath', () => {
     ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'shell',
       config: cfg({ tmuxScope: 'off', remoteDefaultPath: '/opt/workspace/core-public' }),
@@ -293,6 +306,7 @@ describe('pty tmux wrapping (remote)', () => {
 
   it('per-project remotePath overrides the global remoteDefaultPath', () => {
     const session = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'shell',
       config: cfg({ tmuxScope: 'off', remoteDefaultPath: '/opt/workspace/core-public' }),
@@ -309,6 +323,7 @@ describe('pty tmux wrapping (remote)', () => {
 
   it('no cd prefix when neither remotePath nor remoteDefaultPath is set', () => {
     ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'shell',
       config: cfg(),
@@ -322,6 +337,7 @@ describe('pty tmux wrapping (remote)', () => {
 
   it('wraps OpenCode bootstrap in tmux without replaying its opening prompt outside the login shell', () => {
     const session = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'opencode',
       config: cfg({ tmuxScope: 'remote' }),
@@ -356,6 +372,7 @@ describe('pty remote wake-reconnect', () => {
 
   it('re-attaches the OLD tmux session name and mints a FRESH local id', () => {
     const session = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'claude',
       config: cfg({ tmuxScope: 'all' }),
@@ -383,6 +400,7 @@ describe('pty remote wake-reconnect', () => {
 
   it('folds --continue into the remote claude argv on resume', () => {
     ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'claude',
       config: cfg({ tmuxScope: 'all' }),
@@ -402,6 +420,7 @@ describe('pty remote wake-reconnect', () => {
     // The box session only exists because persistence was ON at first spawn;
     // re-attaching requires the wrap regardless of the current flag.
     const session = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'claude',
       config: cfg({ tmuxScope: 'off' }),
@@ -422,6 +441,7 @@ describe('pty remote wake-reconnect', () => {
     // Renderer-supplied and flows into the tmux command string, so a non-UUID
     // must not be reused as the session name (shell-metachar injection guard).
     const session = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'claude',
       config: cfg({ tmuxScope: 'all' }),
@@ -442,6 +462,7 @@ describe('pty remote wake-reconnect', () => {
 
   it('does not duplicate --continue when extraArgs already carries a resume flag', () => {
     ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'claude',
       config: cfg({ tmuxScope: 'all' }),
@@ -475,6 +496,7 @@ describe('remote hooks over ssh -R reverse tunnel', () => {
 
   it('adds an -R reverse forward and bakes ZCC_* hook URLs into the remote claude command', () => {
     const session = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj-remote',
       profile: 'claude',
       config: cfg({ tmuxScope: 'off' }),
@@ -508,6 +530,7 @@ describe('remote hooks over ssh -R reverse tunnel', () => {
 
   it('marks the session with an optimistic remoteTunnel posture when the -R forward is wired', () => {
     const session = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj-remote',
       profile: 'claude',
       config: cfg(),
@@ -519,6 +542,7 @@ describe('remote hooks over ssh -R reverse tunnel', () => {
 
   it('leaves remoteTunnel absent for a plain shell remote (no tunnel requested)', () => {
     const session = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj-remote',
       profile: 'shell',
       config: cfg(),
@@ -530,6 +554,7 @@ describe('remote hooks over ssh -R reverse tunnel', () => {
 
   it('forwards MCP over the tunnel when remoteMcpEnabled: inline --mcp-config + inbox tools', () => {
     const session = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj-remote',
       profile: 'claude',
       config: cfg({ tmuxScope: 'off', remoteMcpEnabled: true }),
@@ -552,6 +577,7 @@ describe('remote hooks over ssh -R reverse tunnel', () => {
 
   it('forwards execution MCP to a headless remote durable Team worker', () => {
     const session = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj-remote',
       profile: 'opencode',
       config: cfg({ tmuxScope: 'off' }),
@@ -580,6 +606,7 @@ describe('remote hooks over ssh -R reverse tunnel', () => {
 
   it('keeps unrelated headless remote OpenCode sessions MCP-cut-off by default', () => {
     ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj-remote',
       profile: 'opencode',
       config: cfg({ tmuxScope: 'off' }),
@@ -594,6 +621,7 @@ describe('remote hooks over ssh -R reverse tunnel', () => {
   it('does not wire remote hooks when the MCP server is not up', () => {
     ptys.setMcpBaseUrl(null);
     ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj-remote',
       profile: 'claude',
       config: cfg(),
@@ -607,6 +635,7 @@ describe('remote hooks over ssh -R reverse tunnel', () => {
 
   it('does not wire remote hooks for a plain shell profile', () => {
     ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj-remote',
       profile: 'shell',
       config: cfg(),
@@ -652,6 +681,7 @@ describe('remote session-id / resume parity', () => {
 
   it('mints + injects a stable --session-id and records it on the remote session', () => {
     const session = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'claude',
       config: cfg({ tmuxScope: 'off' }),
@@ -671,6 +701,7 @@ describe('remote session-id / resume parity', () => {
 
   it('does NOT inject a --session-id for a plain remote shell profile', () => {
     const session = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'shell',
       config: cfg(),
@@ -684,6 +715,7 @@ describe('remote session-id / resume parity', () => {
   it('does NOT mint when the caller pins a --resume id, and recovers that id', () => {
     const pinned = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
     const session = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'claude',
       config: cfg({ tmuxScope: 'off' }),
@@ -702,6 +734,7 @@ describe('remote session-id / resume parity', () => {
 
   it('does NOT mint for the claude-resume profile (caller owns the session)', () => {
     const session = ptys.create({
+      nativeToolPolicyRequired: false,
       projectId: 'p1',
       profile: 'claude-resume',
       config: cfg(),

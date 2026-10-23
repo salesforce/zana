@@ -124,6 +124,7 @@ export type {
   PluginInteractionResult,
   PluginApprovalBinding,
   PluginApprovalRequest,
+  PluginToolApprovalRequest,
   PluginApprovalResult,
   PluginInteractionCancelReason,
   PluginStatusApi,

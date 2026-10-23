@@ -57,8 +57,9 @@ import { startConversationHistoryMaintenance } from '../services/threads/convers
 import { PersistentTerminalSessions } from './persistent-terminal-sessions.js';
 import { ProviderModelCatalogStore } from '../services/threads/provider-model-catalog-store.js';
 import { createUiSendVerifier } from './ui-send-proof.js';
-import { createPluginApprovalVerifier } from './plugin-approval-proof.js';
+import { capturePluginToolApprovalIdentity, createPluginApprovalVerifier, isPluginToolApprovalScopeLive, requestPluginToolApprovalViaControl, type PluginToolApprovalScope } from './plugin-approval-proof.js';
 import { createNativeToolPolicyVerifier } from './native-tool-policy-proof.js';
+import { createInteractionProofVerifier, type InteractionProofBinding } from './interaction-proof.js';
 import { bridgeLaunchForProvider, listThreadProviders } from '../services/threads/thread-provider-catalog.js';
 import { createDbTunnelHostStore, createTunnelHostReopener, type TunnelHostStore } from '../services/hosts/tunnel-hosts.js';
 import { reconcileRemoteProjectBindings, repairHost, tunnelLocalPort } from '../services/hosts/host-bootstrap.js';
@@ -116,8 +117,10 @@ export interface ProductHttpContext {
   verifyUiSend: (proof: unknown, threadId: string, itemId: string, caller?: import('./ui-send-proof.js').UiSendCaller) => boolean;
   /** Consumes a desktop-signed plugin approval (plugin-approval-proof.ts). Absent or secretless servers refuse every token. */
   verifyPluginApproval?: (token: unknown, pluginId: string, binding: unknown) => boolean;
+  requestPluginToolApproval?: (input: PluginToolApprovalScope) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginApprovalResult>;
   /** Consumes main's proof on a native tool policy request (native-tool-policy-proof.ts). Absent or secretless servers refuse every one. */
   verifyNativeToolPolicy?: (token: unknown, body: string) => boolean;
+  verifyInteractionProof?: (token: unknown, binding: InteractionProofBinding) => import('@zana-ai/zcc-domain').InteractionActor | null;
   toProjects(): Project[];
   /** Release long-lived watchers started with this context. */
   dispose(): void | Promise<void>;
@@ -383,10 +386,12 @@ export function createProductHttpContext(
   let verifyUiSend: ProductHttpContext['verifyUiSend'] = rejectUiSend;
   let verifyPluginApproval: NonNullable<ProductHttpContext['verifyPluginApproval']> = rejectUiSend;
   let verifyNativeToolPolicy: NonNullable<ProductHttpContext['verifyNativeToolPolicy']> = rejectUiSend;
+  let verifyInteractionProof: NonNullable<ProductHttpContext['verifyInteractionProof']> = () => null;
   if (options.uiSendSecret && options.uiSendSecret.length >= 32) {
     verifyUiSend = createUiSendVerifier(options.uiSendSecret);
     verifyPluginApproval = createPluginApprovalVerifier(options.uiSendSecret);
     verifyNativeToolPolicy = createNativeToolPolicyVerifier(options.uiSendSecret);
+    verifyInteractionProof = createInteractionProofVerifier(options.uiSendSecret);
   }
 
   const remoteProjectReconciler = createCoalescedReconciler(
@@ -419,7 +424,16 @@ export function createProductHttpContext(
     pluginHostArtifacts: new PluginHostArtifactRegistry(),
     verifyUiSend,
     verifyPluginApproval,
+    requestPluginToolApproval: async (input) => {
+      const scope = { db, projects, hostHub };
+      const identity = input.identity ?? capturePluginToolApprovalIdentity(scope, input.request.threadId);
+      if (!identity || !isPluginToolApprovalScopeLive(scope, input.request.threadId, input.projectId, identity)) return { approved: false, reason: 'unavailable' };
+      const result = await requestPluginToolApprovalViaControl(dataDir, input);
+      if (result.approved && !isPluginToolApprovalScopeLive(scope, input.request.threadId, input.projectId, identity)) return { approved: false, reason: 'unavailable' };
+      return result;
+    },
     verifyNativeToolPolicy,
+    verifyInteractionProof,
     toProjects: () => projects.list() as unknown as Project[],
     dispose: () => {
       const reconcilerStopped = remoteProjectReconciler.dispose();

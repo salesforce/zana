@@ -949,8 +949,8 @@ export interface PluginAgents {
 }
 
 import type { JsonObject, JsonValue, ProviderFork } from '@zana-ai/zcc-domain/thread-runtime';
-import type { PluginApprovalBinding } from './approval-contract.js';
-export type { PluginApprovalBinding, PluginApprovalRequest, PluginApprovalResult } from './approval-contract.js';
+import type { PluginApprovalBinding, PluginToolApprovalRequest, PluginApprovalResult } from './approval-contract.js';
+export type { PluginApprovalBinding, PluginApprovalRequest, PluginToolApprovalRequest, PluginApprovalResult } from './approval-contract.js';
 import type { PluginServices } from './plugin-services.js';
 import type {
   PluginProviderExtensionKindDeclaration,
@@ -982,7 +982,7 @@ export type PluginInteractionCancelReason =
   | 'timeout';
 
 export type PluginInteractionResult =
-  | { outcome: 'submitted'; value: JsonValue }
+  | { outcome: 'submitted'; value: JsonValue; actor: import('@zana-ai/zcc-domain').InteractionActor }
   | { outcome: 'cancelled'; reason: PluginInteractionCancelReason };
 
 export interface PluginInteractionRequest {
@@ -991,6 +991,8 @@ export interface PluginInteractionRequest {
   title: string;
   payload: JsonValue;
   timeoutMs?: number;
+  /** Default false. True requires a single-use response proof verified by main. */
+  requireHuman?: boolean;
 }
 
 export interface PluginMentionSuggestion {
@@ -1039,17 +1041,29 @@ export interface PluginProjectTabAvailabilityRegistration {
 }
 
 export interface PluginUi {
+  /** Await main's human approval sheet during an active registered server tool.
+   * Missing desktop, remote, archived or stale thread scope fails closed.
+   * Keep the returned token in plugin code, never in tool results, transcripts or agent env.
+   */
+  requestToolApproval(request: PluginToolApprovalRequest): Promise<PluginApprovalResult>;
+  /** Alias for requestToolApproval. Requires an active server-tool invocation. */
+  requestApproval(request: PluginToolApprovalRequest): Promise<PluginApprovalResult>;
+  /** @deprecated Use requestToolApproval. */
+  experimental_requestApproval(request: PluginToolApprovalRequest): Promise<PluginApprovalResult>;
   requestInput(
     request: PluginInteractionRequest,
     options?: { signal?: AbortSignal }
   ): Promise<PluginInteractionResult>;
   /**
-   * Consume a token the app obtained with `experimental_requestApproval`.
+   * Consume a token obtained with `requestToolApproval` or an app button approval.
    * Pass the binding rebuilt from your own sources: it resolves true once,
    * for this plugin, within five minutes, when every field matches what the
    * user approved. Anything else, including a host without a desktop signer,
-   * resolves false.
+   * resolves false. Tool approvals must be consumed within the same active
+   * invocation; rebuild target and revision after the approval wait.
    */
+  consumeApproval(request: { token: string; binding: PluginApprovalBinding }): Promise<boolean>;
+  /** @deprecated Use consumeApproval. */
   experimental_consumeApproval(request: { token: string; binding: PluginApprovalBinding }): Promise<boolean>;
   registerMentionProvider(registration: PluginMentionProviderRegistration): void;
   registerProjectTabAvailability(registration: PluginProjectTabAvailabilityRegistration): void;

@@ -1,0 +1,12 @@
+{
+  "name": "zcc-plugin-native-tool-policy-probe",
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "zcc": ">=1.0.0", "zccPluginSdk": ">=0.1.0" },
+  "zcc": {
+    "name": "Native Tool Policy Probe",
+    "description": "Test-only native tool policy boundary probe.",
+    "branding": { "icon": "FlaskConical" },
+    "server": "./server.ts"
+  }
+}

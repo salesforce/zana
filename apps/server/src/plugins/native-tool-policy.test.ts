@@ -57,6 +57,18 @@ describe('decideMainOwnedToolPolicy', () => {
   it('lets a plugin service failure propagate so the caller fails closed', async () => {
     await expect(decideMainOwnedToolPolicy(plugins(new Error('policy store offline')), call)).rejects.toThrow('policy store offline');
   });
+
+  it.each([undefined, null, {}, { action: 'unknown' }, { action: 'allow', reason: 'ignored' }])('denies malformed decision %j', async decision => {
+    await expect(decideMainOwnedToolPolicy(plugins(decision as never), call)).resolves.toEqual({
+      action: 'deny', reason: 'plugin tool policy returned an invalid decision'
+    });
+  });
+
+  it('uses the resolved Modern provider identity without interpreting a launch profile', async () => {
+    const service = plugins({ action: 'allow' });
+    await decideMainOwnedToolPolicy(service, call, 'provider-exact');
+    expect(service.decideToolPolicy).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'provider-exact' }));
+  });
 });
 
 describe('toolPolicyProviderId', () => {

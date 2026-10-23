@@ -444,6 +444,22 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** Crash-on-start GET/stop still need the record after `live` drops. Rule 5 cap. */
 export const PTY_RECENT_EXITED_CAP = 32;
 
+/**
+ * Thrown by {@link PtyManager.create} when a spawn is refused before any child
+ * is started. Carries a stable machine `code` so callers (and the headless
+ * native-tool-policy e2e) can assert the exact refusal. OBL-018: fail-closed
+ * when a tool-policy plugin is required but no native-tool hook is reachable.
+ */
+export class SpawnRefusedError extends Error {
+  constructor(
+    readonly code: 'native-tool-policy-unreachable',
+    message: string
+  ) {
+    super(message);
+    this.name = 'SpawnRefusedError';
+  }
+}
+
 /** Supplied by the process that owns execution. The standalone daemon must
  * receive only a session credential, never the shared instance's signing key. */
 export interface PtyManagerHostServices {
@@ -974,6 +990,14 @@ export class PtyManager extends EventEmitter {
      * for resume / scheduled launches.
      */
     openingPrompt?: string;
+    /**
+     * MAIN-only (rule 1): whether an enabled tool-policy plugin requires a native
+     * veto on this spawn. Main owns the plugin inventory and decides before spawn;
+     * the daemon only checks the flag. When set and no native-tool hook endpoint is
+     * reachable, the spawn is REFUSED (fail-closed, OBL-018). Absent → treated as
+     * `true` by the daemon so an older caller cannot open a fail-open window.
+     */
+    nativeToolPolicyRequired?: boolean;
   }): TerminalSession {
     if (opts.remote) {
       return this.createRemote({ ...opts, remote: opts.remote });
@@ -1232,21 +1256,40 @@ export class PtyManager extends EventEmitter {
     // claude returns [] here (its hooks ride the launcher-owned `--settings` JSON
     // gated on `injectsClaudeMcpConfig`); cursor/shell return []. Rule 6: the
     // concrete `-c hooks.…` strings + bypass flag live ONLY in the codex provider.
+    // Lifecycle hooks (stop/notify/firstprompt/subagent) stay interactive-only:
+    // headless sessions have no live tab to drive status, so their lifecycle base
+    // is null, unchanged. The native-tool VETO is different — it must reach headless
+    // workers (scheduler, goals, squad) too, so it derives from a separate
+    // headless-independent URL off the same relay. OBL-018: fail-open closed below.
     const providerHookBase =
       this.mcpBaseUrl && !opts.headless
         ? `${this.mcpBaseUrl}/hook`
         : null;
-    const providerHookUrls: ProviderHookUrls = providerHookBase
-      ? {
-          stop: `${providerHookBase}/stop/${opts.projectId}/${sessionId}`,
-          notify: `${providerHookBase}/notify/${opts.projectId}/${sessionId}`,
-          firstPrompt: opts.scheduled || isDurableCoordination(opts.coordinationMode)
-            ? undefined
-            : `${providerHookBase}/firstprompt/${opts.projectId}/${sessionId}`,
-          subagent: `${providerHookBase}/subagent/${opts.projectId}/${sessionId}`,
-          nativeTool: `${providerHookBase}/nativetool/${opts.projectId}/${sessionId}`
-        }
-      : {};
+    const nativeToolUrl = this.mcpBaseUrl
+      ? `${this.mcpBaseUrl}/hook/nativetool/${opts.projectId}/${sessionId}`
+      : null;
+    // Main decides whether a tool-policy plugin is enabled before spawn (rule 1);
+    // the daemon only checks the main-supplied flag. Absent (older caller) → required.
+    const nativeToolPolicyRequired = opts.nativeToolPolicyRequired ?? true;
+    if (!nativeToolUrl && nativeToolPolicyRequired) {
+      throw new SpawnRefusedError(
+        'native-tool-policy-unreachable',
+        'tool policy plugin enabled but native-tool hook endpoint is unavailable'
+      );
+    }
+    const providerHookUrls: ProviderHookUrls = {
+      ...(providerHookBase
+        ? {
+            stop: `${providerHookBase}/stop/${opts.projectId}/${sessionId}`,
+            notify: `${providerHookBase}/notify/${opts.projectId}/${sessionId}`,
+            firstPrompt: opts.scheduled || isDurableCoordination(opts.coordinationMode)
+              ? undefined
+              : `${providerHookBase}/firstprompt/${opts.projectId}/${sessionId}`,
+            subagent: `${providerHookBase}/subagent/${opts.projectId}/${sessionId}`
+          }
+        : {}),
+      ...(nativeToolUrl ? { nativeTool: nativeToolUrl } : {})
+    };
     // Per-harness AUTH override (Settings → Harness): a stored base URL + token
     // for this profile's credential family, letting the operator point the CLI at
     // a gateway/proxy or supply a key WITHOUT running the CLI's own `login`. The
@@ -1261,7 +1304,7 @@ export class PtyManager extends EventEmitter {
     const providerIntegration = provider.integration.configure({
       profile: effectiveProfile,
       ...(mcpServerUrl ? { mcp: { url: mcpServerUrl }, guidance: composedGuidanceText } : {}),
-      ...(providerHookBase ? {
+      ...(providerHookBase || providerHookUrls.nativeTool ? {
         lifecycle: {
           stop: providerHookUrls.stop,
           blocked: providerHookUrls.notify ? `${providerHookUrls.notify}/blocked` : undefined,
@@ -1835,6 +1878,13 @@ export class PtyManager extends EventEmitter {
     // Session record, shared by both launch paths.
     const session: TerminalSession = {
       id: sessionId,
+      capabilitySurface: {
+        // hookBase gates the registry's tool-before-native veto descriptor, so it
+        // tracks NATIVE-TOOL reachability (headless-independent), not just lifecycle:
+        // codex rides nativeToolUrl, claude rides lifecycleBase's nativeTool hook.
+        surface: 'pty', harness: registrationFor(effectiveProfile)?.id ?? effectiveProfile,
+        headless: !!opts.headless, hookBase: Boolean(nativeToolUrl || lifecycleBase)
+      },
       projectId: opts.projectId,
       // Title tracks the REQUESTED profile (matching the old titleFor(opts.profile)),
       // not the persona's effective baseProfile.
@@ -2289,6 +2339,13 @@ export class PtyManager extends EventEmitter {
      * Reconnect re-attach must not replay it (bindRemoteProc is reused without this).
      */
     openingPrompt?: string;
+    /**
+     * See {@link create}'s `nativeToolPolicyRequired`. The remote veto rides the
+     * reverse-tunnelled /hook/nativetool route; when set and that route is
+     * unreachable the remote spawn is REFUSED (fail-closed, OBL-018). Absent →
+     * treated as `true` so an older caller cannot open a fail-open window.
+     */
+    nativeToolPolicyRequired?: boolean;
   }): TerminalSession {
     const { remote } = opts;
     // The session record is consumed by the renderer for remote file drops. It
@@ -2517,6 +2574,15 @@ export class PtyManager extends EventEmitter {
       } : {},
       scope: 'remote'
     });
+    // Fail-closed on the remote path too (OBL-018): the native-tool veto rides the
+    // reverse-tunnelled /hook/nativetool route. If main requires a tool policy but
+    // no such route is reachable (no tunnel / no local MCP port), refuse before spawn.
+    if (!remoteHookUrls?.nativeTool && (opts.nativeToolPolicyRequired ?? true)) {
+      throw new SpawnRefusedError(
+        'native-tool-policy-unreachable',
+        'tool policy plugin enabled but native-tool hook endpoint is unavailable for the remote spawn'
+      );
+    }
     const { cmd: builtCmd, claudeSessionId: remoteClaudeSessionId } = renderRemoteCommand(remoteEffectiveProfile, {
       ...opts,
       extraArgs: remoteExtraWithMint,
@@ -2621,6 +2687,10 @@ export class PtyManager extends EventEmitter {
 
     const session: TerminalSession = {
       id: sessionId,
+      capabilitySurface: {
+        surface: 'pty', harness: remoteRegistration.id,
+        headless: !!opts.headless, hookBase: Boolean(remoteHookUrls?.nativeTool)
+      },
       projectId: opts.projectId,
       title: opts.title ?? `${remoteProvider.title(opts.profile)} · ${remote.host}`,
       profile: opts.profile,

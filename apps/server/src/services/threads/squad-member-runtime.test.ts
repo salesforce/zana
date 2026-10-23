@@ -15,6 +15,7 @@ import { PluginHostArtifactRegistry } from '../../plugins/plugin-host-artifact-r
 import { createConversationFromRequest } from './conversation-create.js';
 import { readConversationPluginMetadata, updateConversationPluginMetadata } from './conversation-plugin-metadata.js';
 import { registerThreadProvider } from './thread-provider-catalog.js';
+import { capabilityRegistry } from '../../plugins/capability-registry.js';
 import {
   activateSquadMemberConversation, completeSquadMemberDelivery, createSquadMemberConversation, deliverSquadMemberConversation, MODERN_SQUAD_BINDING_ORIGIN,
   preflightSquadRuntime, squadMemberStatus, stopSquadMemberConversation, handleMainSquadRuntimeHttp,
@@ -686,13 +687,23 @@ describe('trusted Modern member runtime', () => {
 });
 
 describe('Modern runtime preflight', () => {
-  it('reports registered host providers and refuses unknown provider, missing plugins and required native policy', async () => {
+  it('reports registered host providers, unavailable providers, and policy inventory failures', async () => {
     expect(await preflightSquadRuntime(ctx, { projectId: 'p', providerIds: ['test-provider'] })).toMatchObject({ ready: true, policyInventoryReady: true });
     expect(await preflightSquadRuntime(ctx, { projectId: 'p', providerIds: ['missing'] })).toMatchObject({ ready: false, providers: [{ available: false }] });
     expect(await preflightSquadRuntime(ctx, { projectId: 'p', providerIds: ['test-provider'], nativeToolPolicyRequired: true })).toMatchObject({
-      ready: false, nativeToolPolicyWired: false, reason: 'Modern provider-native tool policy is not wired'
+      ready: true, nativeToolPolicyWired: false
     });
-    await expect(createSquadMemberConversation(ctx, { ...member, nativeToolPolicyRequired: true })).rejects.toThrow('not wired');
+    await expect(createSquadMemberConversation(ctx, { ...member, nativeToolPolicyRequired: true })).resolves.toEqual({ threadId: bindingId });
+    // nativeToolPolicyWired is sourced from the host-owned capability registry, not a constant:
+    // registering an available tool-before-native descriptor for this provider's Modern surface flips it true.
+    capabilityRegistry.register({ surface: 'modern', harness: 'test-provider', headless: false, hookBase: true }, 'tool-before-native', { available: true });
+    try {
+      expect(await preflightSquadRuntime(ctx, { projectId: 'p', providerIds: ['test-provider'] })).toMatchObject({
+        ready: true, nativeToolPolicyWired: true
+      });
+    } finally {
+      capabilityRegistry.register({ surface: 'modern', harness: 'test-provider', headless: false, hookBase: true }, 'tool-before-native', { available: false, reason: 'test teardown' });
+    }
     ctx.plugins = undefined;
     expect(await preflightSquadRuntime(ctx, { projectId: 'p', providerIds: ['test-provider'] })).toMatchObject({ ready: false, policyInventoryReady: false });
   });

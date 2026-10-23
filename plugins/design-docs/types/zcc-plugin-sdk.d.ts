@@ -442,7 +442,10 @@ export type PluginSdkInbox = PluginSdk['inbox'];
       ): void;
     };
     readonly ui: {
-      requestInput(request: { threadId: string; rendererId: string; title: string; payload: unknown }): Promise<unknown>;
+      requestInput(request: { threadId: string; rendererId: string; title: string; payload: unknown; timeoutMs?: number; requireHuman?: boolean }, options?: { signal?: AbortSignal }): Promise<
+        | { outcome: 'submitted'; value: unknown; actor: 'human' | 'cli' | 'agent' | 'unknown' }
+        | { outcome: 'cancelled'; reason: 'user' | 'request-aborted' | 'thread-stopped' | 'thread-deleted' | 'plugin-disposed' | 'server-restarted' | 'timeout' }
+      >;
       registerMentionProvider(registration: {
         id: string;
         label: string;

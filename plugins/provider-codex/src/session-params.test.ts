@@ -503,14 +503,17 @@ function permissionSettings(
 }
 
 describe("codex permission settings", () => {
-  it("defaults full permission scope to unreviewed danger-full-access", () => {
+  it("raises command/file-change approvals under danger-full-access for the native veto", () => {
+    // p0-modern-codex-veto: "untrusted" is the only approvalPolicy that still raises
+    // command + file-change approvals under danger-full-access (so the bridge native
+    // veto can intercept them); the sandbox itself is unchanged.
     expect(toCodexThreadPermissionSettings(FULL_OPTIONS)).toEqual({
-      approvalPolicy: "never",
+      approvalPolicy: "untrusted",
       approvalsReviewer: "user",
       sandbox: "danger-full-access",
     });
     expect(permissionSettings(FULL_OPTIONS)).toEqual({
-      approvalPolicy: "never",
+      approvalPolicy: "untrusted",
       approvalsReviewer: "user",
       sandbox: "danger-full-access",
       sandboxPolicy: { type: "dangerFullAccess" },

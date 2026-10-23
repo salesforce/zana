@@ -24,6 +24,7 @@ import type { ProductHttpContext } from '../../http/product-context.js';
 import { activatePreparedConversation, createConversationFromRequest } from './conversation-create.js';
 import { stopConversation, sendConversationTurn } from './conversation-lifecycle.js';
 import { bridgeLaunchForProvider, canonicalThreadProviderId, getThreadProvider, waitForThreadProvider } from './thread-provider-catalog.js';
+import { capabilityRegistry } from '../../plugins/capability-registry.js';
 import { validateProviderModelSelection } from './provider-model-validation.js';
 import type { ModernTeamMember } from '../agents/modern-team-launch-tools.js';
 
@@ -122,8 +123,14 @@ export async function preflightSquadRuntime(
     ? await ctx.plugins.toolPolicyReadiness()
     : { ready: false, required: [], reason: 'plugin service is unavailable' };
   const policyInventoryReady = inventory.ready;
-  // Modern bridges currently enforce host/proxy tools only, not all provider-native tools.
-  const nativeToolPolicyWired = false;
+  // Veto state comes from the host-owned capability registry, never a constant:
+  // wired only when every requested Modern provider advertises an available
+  // `tool-before-native` descriptor. Honest per OBL-019; no launch block (D2).
+  const requestedProviderIds = [...new Set(request.providerIds.map(canonicalThreadProviderId))];
+  const nativeToolPolicyWired = requestedProviderIds.length > 0 && requestedProviderIds.every(providerId =>
+    capabilityRegistry
+      .describe({ surface: 'modern', harness: providerId, headless: false, hookBase: true })
+      .some(descriptor => descriptor.id === 'tool-before-native' && descriptor.available));
   const nativeToolPolicyRequired = request.nativeToolPolicyRequired === true || inventory.required.length > 0;
   const status = ProviderStatusResultSchema.parse(await ctx.hostHub.callHostOnlineRpc({
     hostId, command: { type: 'provider.status' }
@@ -146,9 +153,10 @@ export async function preflightSquadRuntime(
     }
     providers.push({ providerId, available: !reason, ...(reason ? { reason: reason.slice(0, 1024) } : {}) });
   }
+  // Missing Modern provider-native enforcement is advertised by capability
+  // descriptors. It must not prevent an otherwise supported squad from starting.
   const reason = !policyInventoryReady ? `plugin tool policy inventory is not ready${inventory.reason ? `: ${inventory.reason}` : ''}`
-    : nativeToolPolicyRequired && !nativeToolPolicyWired ? 'Modern provider-native tool policy is not wired'
-       : providers.some(row => !row.available) ? 'one or more Modern providers are unavailable' : undefined;
+    : providers.some(row => !row.available) ? 'one or more Modern providers are unavailable' : undefined;
   if (!reason) for (const selection of request.selections ?? []) {
     const providerId = canonicalThreadProviderId(selection.providerId);
     if (!providers.some(provider => provider.providerId === providerId && provider.available)) throw new Error('Modern selection provider is unavailable');

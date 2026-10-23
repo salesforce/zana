@@ -614,6 +614,19 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
         value: await decideMainOwnedToolPolicy(productContext?.plugins, message.request)
       });
     }
+    if (message.operation === 'plugins-tool-policy-inventory') {
+      // Pre-spawn readiness (OBL-018). No plugin service yet, or stopped, reads
+      // as not-ready with an empty `required`, so main treats the veto as not
+      // demanded rather than refusing a launch during startup.
+      parentPort.postMessage({
+        type: 'result',
+        protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+        id: message.id,
+        value: productContext?.plugins
+          ? await productContext.plugins.toolPolicyReadiness()
+          : { ready: false, required: [], reason: 'plugin service is unavailable' }
+      });
+    }
     if (message.operation === 'plugins-cli-run') {
       if (!plugins) {
         parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, message: 'plugin host is unavailable' });

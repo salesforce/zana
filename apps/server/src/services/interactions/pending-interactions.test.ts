@@ -79,6 +79,17 @@ function providerRequest(threadId: string, extras?: { providerRequestId?: string
 }
 
 describe('PendingInteractionLifecycle', () => {
+  it('keeps human-required interaction pending after unproven and agent responses', async () => {
+    const { lifecycle, thread } = setup();
+    const pending = lifecycle.requestPluginInteraction({ pluginId: 'fixture', threadId: thread.id, rendererId: 'form', title: 'Confirm', payload: {}, timeoutMs: 1000, requireHuman: true });
+    const interactionId = lifecycle.listPendingThreadInteractions(thread.id)[0]!.id;
+    for (const actor of ['agent', 'cli', 'unknown'] as const) {
+      expect(() => lifecycle.respondToPluginInteraction({ threadId: thread.id, interactionId, value: true, actor })).toThrow('Human proof required');
+      expect(lifecycle.getThreadInteraction({ threadId: thread.id, interactionId }).status).toBe('pending');
+    }
+    lifecycle.respondToPluginInteraction({ threadId: thread.id, interactionId, value: true, actor: 'human' });
+    await expect(pending).resolves.toEqual({ outcome: 'submitted', value: true, actor: 'human' });
+  });
   it.each(['Allow once', false, null, { draft: ['line one', 'line two'], approved: true }])('round-trips a plugin request answer %j and clears Need you', async (value) => {
     const { lifecycle, thread, callHostOnlineRpc, hub } = setup();
     const request = { ...providerRequest(thread.id), payload: { kind: 'test-plugin/dialog', title: 'Choose', data: { options: ['Allow once', 'Block'] } } };
@@ -227,7 +238,7 @@ describe('PendingInteractionLifecycle', () => {
       value: { ok: true }
     });
     expect(submitted.status).toBe('resolved');
-    await expect(pending).resolves.toEqual({ outcome: 'submitted', value: { ok: true } });
+    await expect(pending).resolves.toEqual({ outcome: 'submitted', value: { ok: true }, actor: 'unknown' });
 
     const timedOut = lifecycle.requestPluginInteraction({
       pluginId: 'ask-user',

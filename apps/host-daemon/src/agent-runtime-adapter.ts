@@ -270,6 +270,7 @@ export function createAgentRuntimeAdapter(options: {
   getRemoteDefaultPath?: () => string | undefined;
   onInteractiveRequest?: (request: PendingInteractionCreate) => Promise<PendingInteractionResolution>;
   onPluginToolCall?: (request: ToolCallRequest) => Promise<ToolCallResponse>;
+  onNativeToolDecision?: AgentRuntimeOptions['onNativeToolDecision'];
   fetchPluginHostArtifact?: FetchPluginHostArtifact;
   artifactCacheLogger?: ArtifactCacheLogger;
   onProcessExit?: (info: {
@@ -286,7 +287,7 @@ export function createAgentRuntimeAdapter(options: {
   const discoveryRuntimes = new Set<AgentRuntime>();
   const environmentRuntimes = new Set<string>();
   const runtimeMeta = new Map<string, { catalogHash: string; cwd: string }>();
-  const threadLocation = new Map<string, { environmentId: string; cwd: string; status: 'active' | 'idle' | 'error' }>();
+  const threadLocation = new Map<string, { environmentId: string; projectId: string; cwd: string; status: 'active' | 'idle' | 'error' }>();
   const remoteProxyByThread = new Map<string, ThreadRemoteProxy>();
   const submitByThread = new Map<string, Promise<void>>();
   const createRuntime = options.createRuntime
@@ -324,7 +325,7 @@ export function createAgentRuntimeAdapter(options: {
   }
 
   function createEnvironmentRuntime(cwd: string): AgentRuntime {
-    return createRuntime({
+    const runtime = createRuntime({
       workspacePath: cwd,
       threadStorageRootPath: storageRoot,
       skillRoots: loadRuntimeSkillRoots(skillDataDir),
@@ -365,6 +366,24 @@ export function createAgentRuntimeAdapter(options: {
         };
       },
       ...(options.onInteractiveRequest ? { onInteractiveRequest: options.onInteractiveRequest } : {}),
+      onNativeToolDecision: async (request, signal) => {
+        const location = threadLocation.get(request.threadId);
+        const session = runtime.getProviderSession(request.threadId);
+        if (signal.aborted || !options.onNativeToolDecision || !location
+          || runtimes.get(location.environmentId) !== runtime || location.projectId !== request.projectId
+          || location.environmentId !== request.environmentId || session?.providerId !== request.providerId
+          || session.providerThreadId !== request.providerThreadId) {
+          return { action: 'deny', reason: 'native policy thread is not live on this runtime' };
+        }
+        const decision = await options.onNativeToolDecision(request, signal);
+        const current = runtime.getProviderSession(request.threadId);
+        if (signal.aborted || threadLocation.get(request.threadId) !== location
+          || runtimes.get(location.environmentId) !== runtime || current?.providerId !== session.providerId
+          || current.providerThreadId !== session.providerThreadId) {
+          return { action: 'deny', reason: 'native policy session ended' };
+        }
+        return decision;
+      },
       onProcessExit: info => {
         for (const thread of info.threads) {
           const location = threadLocation.get(thread.threadId);
@@ -373,6 +392,7 @@ export function createAgentRuntimeAdapter(options: {
         options.onProcessExit?.(info);
       }
     });
+    return runtime;
   }
 
   function runtimeFor(environmentId: string, cwd: string, isEnvironment = true): AgentRuntime {
@@ -449,7 +469,7 @@ export function createAgentRuntimeAdapter(options: {
     async startWork(input: ThreadWorkInput) {
       syncProviderBridgeRecording();
       const runtime = runtimeFor(input.environmentId, input.cwd);
-      threadLocation.set(input.threadId, { environmentId: input.environmentId, cwd: input.cwd, status: 'active' });
+      threadLocation.set(input.threadId, { environmentId: input.environmentId, projectId: input.projectId, cwd: input.cwd, status: 'active' });
       const remoteProxy = usesRemoteToolProxy(input);
       if (remoteProxy && input.remote) {
         remoteProxyByThread.set(
@@ -540,7 +560,7 @@ export function createAgentRuntimeAdapter(options: {
     async resumeWork(input: ThreadResumeInput) {
       syncProviderBridgeRecording();
       const runtime = runtimeFor(input.environmentId, input.cwd);
-      threadLocation.set(input.threadId, { environmentId: input.environmentId, cwd: input.cwd, status: 'active' });
+      threadLocation.set(input.threadId, { environmentId: input.environmentId, projectId: input.projectId, cwd: input.cwd, status: 'active' });
       try {
         const result = await runtime.resumeThread({
           skillRoots: await skillSnapshots.capture(runtime),

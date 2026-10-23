@@ -54,6 +54,8 @@ export type {
 
 export {
   BRIDGE_INBOUND_REQUEST_METHODS,
+  nativeToolDecisionRequestSchema,
+  nativeToolDecisionSchema,
   BRIDGE_JSON_RPC_ERRORS,
   BRIDGE_NOTIFICATION_METHODS,
   BRIDGE_REQUEST_METHODS,
@@ -85,6 +87,8 @@ export {
   providerInstallationStatusParamsSchema,
 } from "@zana-ai/zcc-provider-bridge-protocol";
 export type {
+  NativeToolDecisionRequest,
+  NativeToolDecision,
   BridgeExecutionOptions,
   DeltaBackgroundTaskShape,
   DeltaFileChange,
@@ -131,6 +135,7 @@ export {
   completeStartedToolItem,
   createBridgeIo,
   createBridgeLineHandler,
+  createNativeToolDecisionTracker,
   createPendingToolCallTracker,
   createProviderTurnStateRegistry,
   createProviderVisibilityMetadata,
@@ -194,6 +199,7 @@ export {
 export type {
   AcceptedUserMessageState,
   BridgeJsonRpcResponse,
+  BridgeNativeToolDecisionRequest,
   BridgeToolCallRequest,
   BuildInteractiveResponseArgs,
   DecodedInteractiveRequest,

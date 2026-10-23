@@ -116,11 +116,13 @@ const ASK: Record<Exclude<ReleaseAction, 'org.read'>, (version?: number) => stri
 };
 
 /** What to say when the host did not sign an approval. Shared with the Tests pane. */
-export function declined(reason: 'cancelled' | 'unavailable' | 'busy' | 'invalid', ask?: string): Message {
+export function declined(reason: 'cancelled' | 'denied' | 'timeout' | 'unavailable' | 'busy' | 'invalid', ask?: string): Message {
   switch (reason) {
     case 'unavailable': return { tone: 'error', text: 'Approvals need the Zana desktop app. Ask the agent in a thread to do this instead.', ...(ask ? { ask } : {}) };
     case 'busy': return { tone: 'error', text: 'Another approval is open in this window. Finish it first.' };
     case 'invalid': return { tone: 'error', text: 'Zana could not show this approval.' };
+    case 'timeout': return { tone: 'muted', text: 'Approval timed out. Nothing changed.' };
+    case 'denied': return { tone: 'muted', text: 'Approval denied. Nothing changed.' };
     default: return { tone: 'muted', text: 'Cancelled. Nothing changed.' };
   }
 }

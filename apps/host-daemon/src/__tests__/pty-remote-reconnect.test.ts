@@ -92,6 +92,7 @@ const CONFIG: AppConfig = {
 
 function makeRemote(mgr: PtyManager): TerminalSession {
   return mgr.create({
+    nativeToolPolicyRequired: false,
     projectId: 'p1',
     profile: 'shell',
     cwd: '/work/p1',
@@ -346,6 +347,7 @@ describe('PtyManager remote auto-reconnect', () => {
     try {
       const mgr = new PtyManager();
       const session = mgr.create({
+        nativeToolPolicyRequired: false,
         projectId: 'p1',
         profile: 'shell',
         cwd: '/work/p1',

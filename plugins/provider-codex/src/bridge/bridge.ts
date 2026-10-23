@@ -47,6 +47,9 @@ import {
   type ProviderRuntimeEvent,
   experimental_defineProviderBridge,
   type ProviderRecoveryHint,
+  createNativeToolDecisionTracker,
+  type BridgeNativeToolDecisionRequest,
+  type NativeToolDecision,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
@@ -229,8 +232,15 @@ interface BridgeRuntimeRequest {
 }
 
 const { send, sendResult, sendError } = createBridgeIo<
-  BridgeNotification | BridgeRuntimeRequest
+  BridgeNotification | BridgeRuntimeRequest | BridgeNativeToolDecisionRequest
 >();
+
+// OBL-018/p0-modern-codex-veto: Modern Codex command + file-change approvals are
+// routed through the host native-tool policy BEFORE the human interaction path.
+// With approvalPolicy:"untrusted" (session-params.ts) codex raises an approval for
+// every command/file-change even under danger-full-access; this tracker lets a
+// tool-policy plugin veto, and auto-allows (no human prompt) when none is live.
+const nativeToolDecisionTracker = createNativeToolDecisionTracker(send);
 
 function sendNotification(
   method: string,
@@ -466,6 +476,8 @@ function releaseSession(session: CodexBridgeSession): Promise<void> {
     return session.releasePromise;
   }
   session.closing = true;
+  // Fail closed any native-tool decision still in flight for this session.
+  nativeToolDecisionTracker.cancel(session);
   if (sessionsByBbThreadId.get(session.bbThreadId) === session) {
     sessionsByBbThreadId.delete(session.bbThreadId);
   }
@@ -679,6 +691,85 @@ const codexChildToolCallParamsSchema = z.object({
   arguments: z.unknown(),
 });
 
+// Codex approval subjects the native-tool veto governs. permission_grant and
+// user_question keep the human interaction path (a permission grant is a user
+// decision, not a tool-before-native hook point; see research-codex-modern-tool-classes).
+const NATIVE_TOOL_VETO_CODEX_SUBJECTS = new Set(["command", "file_change"]);
+
+// Translate an approval subject into the native-tool toolName the policy decides on.
+function codexSubjectToolName(subjectKind: string): string {
+  return subjectKind === "file_change" ? "codex.file_change" : "codex.command";
+}
+
+// Synthesize the codex wire response for a policy decision WITHOUT a human prompt.
+// allow -> allow_once (always an available decision for these subjects, no grant);
+// deny -> deny. Reuses buildCodexInteractiveResponse so the encoder stays single-source.
+function buildCodexPolicyInteractiveResponse(
+  request: DecodedInteractiveRequest,
+  decision: NativeToolDecision,
+): ReturnType<typeof buildCodexInteractiveResponse> {
+  const resolution =
+    decision.action === "allow"
+      ? ({ decision: "allow_once", grantedPermissions: null } as const)
+      : ({ decision: "deny" } as const);
+  return buildCodexInteractiveResponse(
+    approvalInteractionOutcomeSchema.parse({
+      payload: request.payload,
+      resolution,
+    }),
+  );
+}
+
+// Route a decoded command/file-change approval through the native-tool veto.
+// On allow, codex proceeds with no human prompt (danger-full-access UX preserved);
+// on deny/timeout/transport-failure the tracker fails closed and the tool is refused.
+function routeCodexNativeToolPolicy(
+  session: CodexBridgeSession,
+  request: DecodedInteractiveRequest,
+  responder: CodexAppServerRequestResponder,
+): void {
+  if (request.payload.kind !== "approval") {
+    responder.error(
+      BRIDGE_JSON_RPC_ERRORS.BRIDGE_ERROR,
+      "native-tool policy routing requires an approval payload",
+    );
+    return;
+  }
+  const subject = request.payload.subject;
+  void nativeToolDecisionTracker
+    .decide(
+      {
+        threadId: session.bbThreadId,
+        providerThreadId: session.codexThreadId ?? request.providerThreadId,
+        callId: subject.itemId,
+        toolName: codexSubjectToolName(subject.kind),
+        input: request.payload as unknown as Record<string, unknown>,
+      },
+      session,
+    )
+    .then((decision) => {
+      // The session may have been torn down while the decision was in flight;
+      // fail closed rather than resolving a request on a dead session.
+      if (
+        currentSession(session.bbThreadId, session.serial) !== session ||
+        session.closing
+      ) {
+        responder.error(
+          BRIDGE_JSON_RPC_ERRORS.BRIDGE_ERROR,
+          "native-tool policy session unavailable",
+        );
+        return;
+      }
+      responder.result(buildCodexPolicyInteractiveResponse(request, decision));
+    })
+    .catch((error: unknown) => {
+      responder.error(
+        BRIDGE_JSON_RPC_ERRORS.BRIDGE_ERROR,
+        error instanceof Error ? error.message : String(error),
+      );
+    });
+}
+
 function handleChildRequest(
   bbThreadId: string,
   serial: number,
@@ -752,6 +843,17 @@ function handleChildRequest(
     return;
   }
   const request = decoded;
+
+  // OBL-018: command + file-change approvals are a native-tool veto point, not a
+  // human prompt. Route them through the policy; permission_grant + user_question
+  // still go to the human interaction path below.
+  if (
+    request.payload.kind === "approval" &&
+    NATIVE_TOOL_VETO_CODEX_SUBJECTS.has(request.payload.subject.kind)
+  ) {
+    routeCodexNativeToolPolicy(session, request, responder);
+    return;
+  }
 
   void sendRuntimeRequest(BRIDGE_INBOUND_REQUEST_METHODS.interactionRequest, {
     providerThreadId: session.codexThreadId ?? request.providerThreadId,
@@ -1955,6 +2057,9 @@ async function handleRequest(
 
 function handleParsedMessage(parsed: unknown): void {
   const response = decodeBridgeJsonRpcResponse(parsed);
+  if (response && nativeToolDecisionTracker.handle(response)) {
+    return;
+  }
   if (response && typeof response.id === "number") {
     const pending = pendingRuntimeRequests.get(response.id);
     if (pending) {

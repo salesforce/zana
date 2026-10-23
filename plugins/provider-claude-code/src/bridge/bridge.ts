@@ -18,12 +18,15 @@ import {
   type InitializeResult,
   createBridgeIo,
   createBridgeLineHandler,
+  createNativeToolDecisionTracker,
   createPendingToolCallTracker,
   decodeBridgeJsonRpcResponse,
   runBridgeRequest,
   shouldAutoDenyInteractiveRequest,
   withoutBridgeRuntimeEnv,
   type BridgeToolCallRequest,
+  type BridgeNativeToolDecisionRequest,
+  type NativeToolDecision,
   experimental_defineProviderBridge,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import { randomUUID } from "node:crypto";
@@ -227,6 +230,7 @@ interface ThreadSession {
   sessionSerial: number;
   closing: boolean;
   pendingForwardedToolCalls: number;
+  pendingNativeToolDecisions: number;
   pendingSessionCronIds: Set<string>;
   restartBeforeNextTurn: ClaudeSessionRestart | null;
   launchedWithBypassPermissions: boolean;
@@ -248,6 +252,7 @@ interface ThreadAttachment {
   envSignature: string;
   sessionConstructionConfig: SessionConstructionConfig;
   sessionOptions: SdkSessionOptions;
+  baseHooks: SdkSessionOptions["hooks"];
   closing: boolean;
   residentSession: ThreadSession | null;
   idleTimer: ReturnType<typeof setTimeout> | null;
@@ -259,6 +264,7 @@ interface ThreadAttachment {
   liveSettings: ClaudeLiveSessionSettings;
   approvedPlanPermissionMode: ClaudePermissionMode;
   providerThreadId?: string;
+  announcedProviderThreadId?: string;
   sessionPermissionGrants: ClaudeSessionPermissionGrant[];
   threadIdRef: ThreadIdRef;
 }
@@ -408,19 +414,24 @@ export const CLAUDE_IDLE_QUERY_GRACE_MS = 30_000;
 const CLAUDE_CHROME_SETTING_RESTART_REASON = "Claude in Chrome setting changed";
 
 const { send, sendResult, sendError } = createBridgeIo<
-  SdkMessageNotification | BridgeEventNotification | BridgeToolCallRequest
+  | SdkMessageNotification
+  | BridgeEventNotification
+  | BridgeNativeToolDecisionRequest
+  | BridgeToolCallRequest
 >();
 
 const threadAttachments = new Map<string, ThreadAttachment>();
 const closingSessions = new Map<string, Promise<void>>();
 const toolCallTracker = createPendingToolCallTracker({ sendToolCall: send });
 const { forwardToolCall, handleToolCallResponse } = toolCallTracker;
+const nativeToolDecisionTracker = createNativeToolDecisionTracker(send);
 
 function resolvePendingSessionWork(
   threadSession: ThreadSession,
   message: string,
 ): void {
   toolCallTracker.resolvePendingToolCalls(threadSession, message);
+  nativeToolDecisionTracker.cancel(threadSession);
   resolvePendingInteractiveRequests(threadSession, message);
 }
 
@@ -439,6 +450,7 @@ function isThreadSessionQuiescent(
   return (
     !threadSession.translator.hasOpenSessionWork(threadId) &&
     threadSession.pendingForwardedToolCalls === 0 &&
+    threadSession.pendingNativeToolDecisions === 0 &&
     threadSession.pendingInteractiveRequests.size === 0 &&
     threadSession.pendingSessionCronIds.size === 0 &&
     (threadSession.sdkSessionState === undefined ||
@@ -480,6 +492,7 @@ function scheduleIdleQueryRelease(
       return;
     }
     threadSession.closing = true;
+    resolvePendingSessionWork(threadSession, "Claude query released after idle");
     attachment.residentSession = null;
     attachment.residencyGeneration += 1;
     threadSession.session.stop();
@@ -777,9 +790,7 @@ async function applyPermissionSettings(
   if (rebuilt.additionalDirectories) attachment.sessionOptions.additionalDirectories = rebuilt.additionalDirectories;
   else delete attachment.sessionOptions.additionalDirectories;
   if (needsRestart && resident) {
-    const hooks = rebuilt.hooks;
-    attachment.sessionOptions.hooks = hooks;
-    addSessionTrackingHooks(attachment.sessionOptions, attachment.threadIdRef);
+    attachment.baseHooks = rebuilt.hooks;
     resident.restartBeforeNextTurn = { reason: "Claude Code permissions changed", showRuntimeNote: false };
   }
   return needsRestart;
@@ -1022,6 +1033,8 @@ function sendThreadIdentity(threadId: string, providerThreadId: string): void {
       sessionRestorable: true,
     },
   });
+  const attachment = threadAttachments.get(threadId);
+  if (attachment) attachment.announcedProviderThreadId = providerThreadId;
 }
 
 function nextSessionSerial(): number {
@@ -1117,6 +1130,7 @@ function createThreadAttachment(
     ),
     sessionConstructionConfig: args.sessionConstructionConfig,
     sessionOptions: args.sessionOptions,
+    baseHooks: args.sessionOptions.hooks,
     closing: false,
     residentSession: null,
     idleTimer: null,
@@ -1139,6 +1153,12 @@ function createThreadAttachment(
 
 function createThreadSession(attachment: ThreadAttachment): ThreadSession {
   const sessionSerial = nextSessionSerial();
+  // Rebind from base hooks, never from a previous resident's policy callback.
+  attachment.sessionOptions.hooks = attachment.baseHooks;
+  addSessionTrackingHooks(attachment.sessionOptions, {
+    sessionSerial,
+    threadIdRef: attachment.threadIdRef,
+  });
   const session = new SdkSession(
     attachment.sessionOptions,
     createOnSdkMessage({
@@ -1169,6 +1189,7 @@ function createThreadSession(attachment: ThreadAttachment): ThreadSession {
     sessionSerial,
     closing: false,
     pendingForwardedToolCalls: 0,
+    pendingNativeToolDecisions: 0,
     pendingSessionCronIds: new Set(),
     restartBeforeNextTurn: null,
     launchedWithBypassPermissions: attachment.sessionOptions.allowBypassPermissions && process.getuid?.() !== 0,
@@ -1295,7 +1316,8 @@ function trackSdkAssistantPermissionEscalation(
 }
 
 function buildSessionTrackingHooks(
-  threadIdRef: ThreadIdRef,
+  { sessionSerial, threadIdRef }: CreateSdkCallbackArgs,
+  readonlyPreToolUse: HookCallback | undefined,
 ): NonNullable<SdkSessionOptions["hooks"]> {
   const trackPermissionRequest: HookCallback = async (input, toolUseId) => {
     if (
@@ -1321,61 +1343,134 @@ function buildSessionTrackingHooks(
     return { continue: true };
   };
 
-  const trackPreToolUse: HookCallback = async (input) => {
+  const trackPreToolUse: HookCallback = async (input, _toolUseId, context) => {
     if (input.hook_event_name !== "PreToolUse") {
       return { continue: true };
     }
-    const threadSession = threadAttachments.get(
-      threadIdRef.current,
-    )?.residentSession;
-    if (threadSession) {
-      const permissionEscalation = resolvePermissionEscalationForWork(
-        threadSession,
-        {
-          ...(input.agent_id !== undefined ? { agentId: input.agent_id } : {}),
-          ...(input.prompt_id !== undefined
-            ? { promptId: input.prompt_id }
-            : {}),
-        },
-      );
-      threadSession.permissionEscalationByToolUseId.set(
+    const threadId = threadIdRef.current;
+    const deny = (reason: string) => ({
+      continue: true,
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse" as const,
+        permissionDecision: "deny" as const,
+        permissionDecisionReason: reason,
+      },
+    });
+    const threadSession = getCurrentThreadSession({ sessionSerial, threadId });
+    if (
+      !threadSession ||
+      threadSession.attachment.closing ||
+      threadSession.streamEnded
+    ) {
+      return deny("Native tool policy session unavailable");
+    }
+    if (
+      typeof input.tool_input !== "object" ||
+      input.tool_input === null ||
+      Array.isArray(input.tool_input)
+    ) {
+      return deny("Invalid native tool input");
+    }
+    const providerThreadId =
+      threadSession.attachment.providerThreadId ??
+      threadSession.session.getSessionId() ??
+      input.session_id;
+    if (!providerThreadId?.trim()) {
+      return deny("Native tool policy identity unavailable");
+    }
+    if (threadSession.attachment.providerThreadId === undefined) {
+      threadSession.attachment.providerThreadId = providerThreadId;
+    }
+
+    const permissionEscalation = resolvePermissionEscalationForWork(
+      threadSession,
+      {
+        ...(input.agent_id !== undefined ? { agentId: input.agent_id } : {}),
+        ...(input.prompt_id !== undefined ? { promptId: input.prompt_id } : {}),
+      },
+    );
+    threadSession.permissionEscalationByToolUseId.set(
+      input.tool_use_id,
+      permissionEscalation,
+    );
+    if (CLAUDE_PROVIDER_SUBAGENT_TOOL_NAMES.has(input.tool_name)) {
+      threadSession.permissionEscalationBySubagentParentToolUseId.set(
         input.tool_use_id,
         permissionEscalation,
       );
-      if (CLAUDE_PROVIDER_SUBAGENT_TOOL_NAMES.has(input.tool_name)) {
-        threadSession.permissionEscalationBySubagentParentToolUseId.set(
-          input.tool_use_id,
-          permissionEscalation,
-        );
+    }
+
+    // PreToolUse also runs for bypass, auto, and cached native approvals.
+    threadSession.pendingNativeToolDecisions += 1;
+    let decision: NativeToolDecision;
+    try {
+      if (threadSession.attachment.announcedProviderThreadId !== providerThreadId) {
+        sendThreadIdentity(threadId, providerThreadId);
       }
-      if (
-        !threadSession.attachment.liveSettings.providerSubagentsEnabled &&
-        CLAUDE_PROVIDER_SUBAGENT_TOOL_NAMES.has(input.tool_name)
-      ) {
-        return {
-          continue: true,
-          hookSpecificOutput: {
-            hookEventName: "PreToolUse",
-            permissionDecision: "deny",
-            permissionDecisionReason:
-              "ZCC has disabled Claude Code native subagents; use ZCC delegation instead.",
-          },
-        };
-      }
-      if (
-        !threadSession.attachment.liveSettings.workflowsEnabled &&
-        input.tool_name === CLAUDE_WORKFLOW_TOOL_NAME
-      ) {
-        return {
-          continue: true,
-          hookSpecificOutput: {
-            hookEventName: "PreToolUse",
-            permissionDecision: "deny",
-            permissionDecisionReason:
-              "ZCC has disabled the Claude Code Workflow tool.",
-          },
-        };
-      }
+      decision = await nativeToolDecisionTracker.decide(
+        {
+          threadId,
+          providerThreadId,
+          callId: input.tool_use_id,
+          toolName: input.tool_name,
+          input: input.tool_input as Record<string, unknown>,
+        },
+        threadSession,
+        context.signal,
+      );
+    } catch {
+      return deny("native policy transport failed");
+    } finally {
+      threadSession.pendingNativeToolDecisions -= 1;
+      refreshIdleQueryRelease(threadSession, threadId);
+    }
+    if (
+      getCurrentThreadSession({ sessionSerial, threadId }) !== threadSession ||
+      threadSession.attachment.closing ||
+      threadSession.streamEnded ||
+      threadSession.attachment.providerThreadId !== providerThreadId
+    ) {
+      return deny("Native tool policy session unavailable");
+    }
+    if (context.signal.aborted) {
+      return deny("native policy cancelled");
+    }
+    if (decision.action !== "allow") {
+      return deny(decision.reason);
+    }
+    if (
+      !threadSession.attachment.liveSettings.providerSubagentsEnabled &&
+      CLAUDE_PROVIDER_SUBAGENT_TOOL_NAMES.has(input.tool_name)
+    ) {
+      return {
+        continue: true,
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason:
+            "ZCC has disabled Claude Code native subagents; use ZCC delegation instead.",
+        },
+      };
+    }
+    if (
+      !threadSession.attachment.liveSettings.workflowsEnabled &&
+      input.tool_name === CLAUDE_WORKFLOW_TOOL_NAME
+    ) {
+      return {
+        continue: true,
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason:
+            "ZCC has disabled the Claude Code Workflow tool.",
+        },
+      };
+    }
+
+    // Policy allow is only a veto pass, never a provider permission grant.
+    // Run the existing readonly gate sequentially so its allow cannot mask deny.
+    if (readonlyPreToolUse) {
+      return readonlyPreToolUse(input, _toolUseId, context);
     }
     return { continue: true };
   };
@@ -1454,10 +1549,13 @@ function buildSessionTrackingHooks(
 
 function addSessionTrackingHooks(
   sessionOptions: SdkSessionOptions,
-  threadIdRef: ThreadIdRef,
+  args: CreateSdkCallbackArgs,
 ): void {
   const existingHooks = sessionOptions.hooks;
-  const trackingHooks = buildSessionTrackingHooks(threadIdRef);
+  const trackingHooks = buildSessionTrackingHooks(
+    args,
+    existingHooks?.PreToolUse?.[0]?.hooks[0],
+  );
   sessionOptions.hooks = {
     ...existingHooks,
     PermissionDenied: [
@@ -1476,10 +1574,7 @@ function addSessionTrackingHooks(
       ...(trackingHooks.PostToolUseFailure ?? []),
       ...(existingHooks?.PostToolUseFailure ?? []),
     ],
-    PreToolUse: [
-      ...(trackingHooks.PreToolUse ?? []),
-      ...(existingHooks?.PreToolUse ?? []),
-    ],
+    PreToolUse: trackingHooks.PreToolUse,
     Stop: [...(trackingHooks.Stop ?? []), ...(existingHooks?.Stop ?? [])],
     SubagentStart: [
       ...(trackingHooks.SubagentStart ?? []),
@@ -1502,7 +1597,6 @@ function buildTrackedSessionOptions(
     env,
   );
   sessionOptions.permissionMode = params.permissionMode;
-  addSessionTrackingHooks(sessionOptions, threadIdRef);
   sessionOptions.recordThreadId = () => threadIdRef.current;
   return sessionOptions;
 }
@@ -2938,6 +3032,9 @@ function buildPromptText(input: unknown): string | undefined {
 
 function handleParsedMessage(parsed: unknown): void {
   const response = decodeBridgeJsonRpcResponse(parsed);
+  if (response && nativeToolDecisionTracker.handle(response)) {
+    return;
+  }
   if (response && handleToolCallResponse(response)) {
     return;
   }

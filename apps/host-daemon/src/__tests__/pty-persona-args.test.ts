@@ -146,6 +146,7 @@ describe('PtyManager.create — persona layer integration', () => {
       appendSystemPrompt: 'project prompt'
     };
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'claude',
       cwd: '/tmp',
@@ -175,6 +176,7 @@ describe('PtyManager.create — persona layer integration', () => {
   it('emits Agent model and execution routing over Persona, Project, and Global settings', () => {
     const mgr = new PtyManager();
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'opencode',
       cwd: '/tmp',
@@ -219,6 +221,7 @@ describe('PtyManager.create — persona layer integration', () => {
   it('does not append structured execution flags to unrestricted profiles', () => {
     const mgr = new PtyManager();
     expect(() => mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'codex-yolo',
       cwd: '/tmp',
@@ -236,6 +239,7 @@ describe('PtyManager.create — persona layer integration', () => {
   it('emits one Persona-precedence Codex execution tuple over Project portable state', () => {
     const mgr = new PtyManager();
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1', profile: 'codex', cwd: '/tmp', cols: 80, rows: 24,
       config: { ...CONFIG, harnessCodexEnabled: true },
       projectSettings: { executionState: 'plan' },
@@ -258,6 +262,7 @@ describe('PtyManager.create — persona layer integration', () => {
       allowedTools: ['Read', 'Write']
     };
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'claude',
       cwd: '/tmp',
@@ -303,6 +308,7 @@ describe('PtyManager.create — persona layer integration', () => {
   it('combines global, project, and persona denied tools into one flag', () => {
     const mgr = new PtyManager();
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1', profile: 'claude', cwd: '/tmp', cols: 80, rows: 24,
       config: { ...CONFIG, claudeDeniedTools: ['Bash(rm:*)'] },
       projectSettings: { deniedTools: ['Write'] },
@@ -321,6 +327,7 @@ describe('PtyManager.create — persona layer integration', () => {
       baseProfile: 'claude-yolo'
     };
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'claude', // caller asks for plain claude
       cwd: '/tmp',
@@ -343,6 +350,7 @@ describe('PtyManager.create — persona layer integration', () => {
       permissionMode: 'acceptEdits'
     };
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'claude',
       cwd: '/tmp',
@@ -362,6 +370,7 @@ describe('PtyManager.create — persona layer integration', () => {
       name: 'Test'
     };
     const session = mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'claude',
       cwd: '/tmp',
@@ -382,6 +391,7 @@ describe('PtyManager.create — persona layer integration', () => {
       mcpServers: ['filesystem', 'git']
     };
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'claude',
       cwd: '/tmp',
@@ -402,6 +412,7 @@ describe('PtyManager.create — persona layer integration', () => {
     const mgr = new PtyManager();
     mgr.setMcpBaseUrl('http://127.0.0.1:3000');
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'claude',
       cwd: '/tmp',
@@ -425,6 +436,7 @@ describe('PtyManager.create — trustZccToolsEnabled (whole-server pre-approval)
     const mgr = new PtyManager();
     mgr.setMcpBaseUrl('http://127.0.0.1:3000');
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'claude',
       cwd: '/tmp',
@@ -448,6 +460,7 @@ describe('PtyManager.create — trustZccToolsEnabled (whole-server pre-approval)
     const mgr = new PtyManager();
     mgr.setMcpBaseUrl('http://127.0.0.1:3000');
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'claude',
       cwd: '/tmp',
@@ -474,6 +487,7 @@ describe('PtyManager.create — trustZccToolsEnabled (whole-server pre-approval)
     const mgr = new PtyManager();
     mgr.setMcpBaseUrl('http://127.0.0.1:3000');
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'claude',
       cwd: '/tmp',
@@ -497,6 +511,7 @@ describe('PtyManager.create — Codex MCP approval overrides', () => {
     const mgr = new PtyManager();
     mgr.setMcpBaseUrl('http://127.0.0.1:3000');
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'codex',
       cwd: '/tmp',
@@ -530,6 +545,7 @@ describe('PtyManager.create — Codex MCP approval overrides', () => {
     const mgr = new PtyManager();
     mgr.setMcpBaseUrl('http://127.0.0.1:3000');
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'codex',
       cwd: '/tmp',
@@ -551,14 +567,14 @@ describe('PtyManager.create — Codex MCP approval overrides', () => {
   it.each([undefined, 'interactive-team'] as const)('does not add native approval overrides to an ordinary %s session', (coordinationMode) => {
     const mgr = new PtyManager();
     mgr.setMcpBaseUrl('http://127.0.0.1:3000');
-    mgr.create({ projectId: 'proj1', profile: 'codex', cwd: '/tmp', cols: 80, rows: 24,
+    mgr.create({ nativeToolPolicyRequired: false, projectId: 'proj1', profile: 'codex', cwd: '/tmp', cols: 80, rows: 24,
       coordinationMode, config: { ...CONFIG, trustZccToolsEnabled: false } });
     expect(spawned[0].args.some((arg) => arg.includes('approval_mode'))).toBe(false);
   });
 
   it('does not add native approvals without a wired MCP server', () => {
     const mgr = new PtyManager();
-    mgr.create({ projectId: 'proj1', profile: 'codex', cwd: '/tmp', cols: 80, rows: 24,
+    mgr.create({ nativeToolPolicyRequired: false, projectId: 'proj1', profile: 'codex', cwd: '/tmp', cols: 80, rows: 24,
       coordinationMode: 'job-team', config: { ...CONFIG, trustZccToolsEnabled: true } });
     expect(spawned[0].args.some((arg) => arg.includes('approval_mode'))).toBe(false);
   });
@@ -573,6 +589,7 @@ describe('PtyManager.create — isolated-worktree self-awareness layer', () => {
     const mgr = new PtyManager();
     mgr.setMcpBaseUrl('http://127.0.0.1:3000');
     mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'claude',
       cwd: '/Users/me/zcc-worktrees/proj1/featx',
@@ -600,6 +617,7 @@ describe('PtyManager.create — isolated-worktree self-awareness layer', () => {
     const mgr = new PtyManager();
     mgr.setMcpBaseUrl('http://127.0.0.1:3000');
     const session = mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'claude',
       cwd: '/Users/me/zcc-worktrees/proj1/featx',
@@ -618,6 +636,7 @@ describe('PtyManager.create — isolated-worktree self-awareness layer', () => {
     const mgr = new PtyManager();
     mgr.setMcpBaseUrl('http://127.0.0.1:3000');
     const session = mgr.create({
+      nativeToolPolicyRequired: false,
       projectId: 'proj1',
       profile: 'claude',
       cwd: '/tmp',

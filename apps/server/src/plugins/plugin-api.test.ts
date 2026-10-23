@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PLUGIN_INTERACTION_MAX_TIMEOUT_MS } from '@zana-ai/zcc-domain/thread-runtime';
+import { createPluginApprovalVerifier, signPluginApproval, type PluginToolApprovalScope } from '../http/plugin-approval-proof.js';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createPluginApi,
@@ -19,6 +20,12 @@ import {
 } from './plugin-api.js';
 
 describe('plugin requestInput validation', () => {
+  it('defaults requireHuman to false and validates opt-in without coercion', () => {
+    const base = { threadId: 't', rendererId: 'form', title: 'Confirm', payload: null };
+    expect(validatePluginRequestInput(base).requireHuman).toBe(false);
+    expect(validatePluginRequestInput({ ...base, requireHuman: true }).requireHuman).toBe(true);
+    expect(() => validatePluginRequestInput({ ...base, requireHuman: 'true' } as never)).toThrow('requireHuman must be boolean');
+  });
   it('accepts a well-formed request and trims the title', () => {
     expect(validatePluginRequestInput({
       threadId: 'thr-1',
@@ -156,6 +163,156 @@ describe('plugin requestInput validation', () => {
     expect(consumePluginApproval).toHaveBeenCalledTimes(2);
     await handle.dispose();
     await expect(handle.api.ui.experimental_consumeApproval({ token: 'good', binding })).rejects.toThrow();
+  });
+});
+
+describe('server tool approvals', () => {
+  const binding = { action: 'agent.activate', target: 'org', targetLabel: 'sandbox', subject: 'Agent', revision: 'sha-1' };
+  const request = { binding, title: 'Activate Agent', timeoutMs: 50 };
+  const ctx = (threadId = 't-1', overrides = {}) => ({ threadId, projectId: 'p-1', signal: new AbortController().signal, desktopPresentation: true, ...overrides });
+  const setup = (ask?: (input: PluginToolApprovalScope) => Promise<any>) => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-tool-approval-'));
+    const secret = 's'.repeat(40);
+    const verify = createPluginApprovalVerifier(secret);
+    const calls: PluginToolApprovalScope[] = [];
+    const requestPluginToolApproval = vi.fn(async (input: PluginToolApprovalScope) => {
+      calls.push(input);
+      return ask ? ask(input) : { approved: true, token: signPluginApproval(secret, input.pluginId, input.request.binding), expiresAt: Date.now() + 300000 };
+    });
+    const handle = createPluginApi('approval-plugin', dir, { requestPluginToolApproval,
+      consumePluginApproval: ({ pluginId, token, binding }) => verify(token, pluginId, binding) });
+    const run = async (execute: () => any, context = ctx()) => {
+      const name = `approval_${handle.agentTools.length}`;
+      handle.api.agents.registerTool({ name, description: 'Approval test', parameters: { type: 'object' }, execute });
+      return handle.agentTools.at(-1)!.execute({}, context);
+    };
+    const close = async () => { await handle.dispose(); rmSync(dir, { recursive: true, force: true }); };
+    return { handle, run, close, calls, requestPluginToolApproval };
+  };
+
+  it('derives exact plugin/thread/invocation; consumes rebuilt binding once without exposing proof', async () => {
+    const s = setup();
+    try {
+      const result = await s.run(async () => {
+        const result = await s.handle.api.ui.requestToolApproval(request);
+        if (!result.approved) throw new Error(result.reason);
+        expect(await s.handle.api.ui.consumeApproval({ token: result.token, binding: { ...binding, revision: 'changed' } })).toBe(false);
+        expect(await s.handle.api.ui.consumeApproval({ token: result.token, binding })).toBe(true);
+        expect(await s.handle.api.ui.experimental_consumeApproval({ token: result.token, binding })).toBe(false);
+        return { changed: true };
+      });
+      expect(result).toEqual({ changed: true });
+      expect(s.calls[0]).toMatchObject({ pluginId: 'approval-plugin', projectId: 'p-1', request: {
+        threadId: 't-1', invocationId: expect.any(String), binding: { ...binding, threadId: 't-1', invocationId: expect.any(String) }
+      } });
+    } finally { await s.close(); }
+  });
+
+  it('refuses RPC/outside invocation, headless, missing desktop context, malformed and forged scope', async () => {
+    const s = setup();
+    try {
+      expect(await s.handle.api.ui.requestToolApproval(request)).toEqual({ approved: false, reason: 'unavailable' });
+      for (const context of [ctx('t', { desktopPresentation: false }), ctx('t', { desktopPresentation: undefined }), ctx('', {}), ctx('t', { projectId: '' })]) {
+        expect(await s.run(() => s.handle.api.ui.requestApproval(request), context)).toEqual({ approved: false, reason: 'unavailable' });
+      }
+      for (const value of [null, [], { ...request, binding: null }, { ...request, binding: [] }, { ...request, binding: undefined },
+        { ...request, threadId: 'forged' }, { ...request, invocationId: 'forged' },
+        { ...request, binding: { ...binding, threadId: 'forged' } }, { ...request, binding: { ...binding, invocationId: 'forged' } },
+        { ...request, timeoutMs: 300001 }, { ...request, title: '' }]) {
+        expect(await s.run(() => s.handle.api.ui.experimental_requestApproval(value as never))).toEqual({ approved: false, reason: 'invalid' });
+      }
+      expect(s.requestPluginToolApproval).not.toHaveBeenCalled();
+    } finally { await s.close(); }
+  });
+
+  it('isolates concurrent invocations and refuses a proof in the next invocation', async () => {
+    const s = setup();
+    let token = '';
+    try {
+      await Promise.all(['t-1', 't-2'].map(thread => s.run(async () => {
+        await Promise.resolve();
+        const result = await s.handle.api.ui.requestToolApproval(request);
+        if (result.approved) token = result.token;
+      }, ctx(thread))));
+      expect(s.calls.map(call => call.request.threadId).sort()).toEqual(['t-1', 't-2']);
+      expect(new Set(s.calls.map(call => call.request.invocationId)).size).toBe(2);
+      expect(await s.run(() => s.handle.api.ui.consumeApproval({ token, binding }))).toBe(false);
+      expect(await s.handle.api.ui.consumeApproval({ token, binding: s.calls[1]!.request.binding })).toBe(false);
+    } finally { await s.close(); }
+  });
+
+  it('bounds wait and fails closed on rejection, aborted invocation, disposal and stale async work', async () => {
+    const failed = setup(async () => { throw new Error('offline'); });
+    try { expect(await failed.run(() => failed.handle.api.ui.requestToolApproval(request))).toEqual({ approved: false, reason: 'unavailable' }); }
+    finally { await failed.close(); }
+    const s = setup(() => new Promise(() => {}));
+    try {
+      expect(await s.run(() => s.handle.api.ui.requestToolApproval({ ...request, timeoutMs: 5 }))).toEqual({ approved: false, reason: 'timeout' });
+      const controller = new AbortController();
+      const pending = s.run(() => s.handle.api.ui.requestToolApproval(request), ctx('t', { signal: controller.signal }));
+      controller.abort();
+      expect(await pending).toEqual({ approved: false, reason: 'cancelled' });
+      let late!: () => Promise<any>;
+      await s.run(async () => { late = () => s.handle.api.ui.requestToolApproval(request); });
+      expect(await late()).toEqual({ approved: false, reason: 'unavailable' });
+      const waiting = s.run(() => s.handle.api.ui.requestToolApproval(request));
+      await s.handle.dispose();
+      expect(await waiting).toEqual({ approved: false, reason: 'unavailable' });
+      await expect(s.handle.api.ui.requestToolApproval(request)).rejects.toThrow('stale');
+    } finally { await s.close(); }
+  });
+  it('does not forward approval after same-turn abort or trust malformed consume bindings', async () => {
+    const s = setup();
+    try {
+      const controller = new AbortController();
+      await s.run(async () => {
+        const pending = s.handle.api.ui.requestToolApproval(request);
+        controller.abort();
+        expect(await pending).toEqual({ approved: false, reason: 'cancelled' });
+      }, ctx('t', { signal: controller.signal }));
+      expect(s.requestPluginToolApproval).not.toHaveBeenCalled();
+      for (const raw of [null, [], { token: 't', binding: null }, { token: 't', binding: [] }]) {
+        expect(await s.handle.api.ui.consumeApproval(raw as never)).toBe(false);
+      }
+      const host = createPluginApi('approval-plugin', '/tmp', { consumePluginApproval: () => { throw new Error('verifier offline'); } });
+      try { expect(await host.api.ui.consumeApproval({ token: 't', binding })).toBe(false); }
+      finally { await host.dispose(); }
+    } finally { await s.close(); }
+  });
+  it('has no approval authority without host wiring and rejects a result exactly at deadline', async () => {
+    const host = createPluginApi('approval-plugin', '/tmp');
+    try {
+      host.api.agents.registerTool({ name: 'approve', description: 'Ask', parameters: { type: 'object' }, execute: () => host.api.ui.requestToolApproval(request) });
+      expect(await host.agentTools[0]!.execute({}, ctx())).toEqual({ approved: false, reason: 'unavailable' });
+    } finally { await host.dispose(); }
+    vi.useFakeTimers();
+    const s = setup(async () => {
+      vi.setSystemTime(Date.now() + request.timeoutMs);
+      return { approved: true, token: 'late', expiresAt: Date.now() + 300000 };
+    });
+    try { expect(await s.run(() => s.handle.api.ui.requestToolApproval(request))).toEqual({ approved: false, reason: 'timeout' }); }
+    finally { await s.close(); vi.useRealTimers(); }
+  });
+  it('revokes detached async context after invocation completion and on aborted consumption', async () => {
+    const { AsyncLocalStorage } = await import('node:async_hooks');
+    const s = setup();
+    let later!: () => Promise<void>;
+    try {
+      const controller = new AbortController();
+      await s.run(async () => {
+        const result = await s.handle.api.ui.requestToolApproval(request);
+        if (!result.approved) throw new Error(result.reason);
+        const restore = AsyncLocalStorage.snapshot();
+        later = () => restore(async () => {
+          expect(await s.handle.api.ui.requestToolApproval(request)).toEqual({ approved: false, reason: 'unavailable' });
+          expect(await s.handle.api.ui.consumeApproval({ token: result.token, binding })).toBe(false);
+        });
+        controller.abort();
+        expect(await s.handle.api.ui.consumeApproval({ token: result.token, binding })).toBe(false);
+      }, ctx('t', { signal: controller.signal }));
+      await later();
+      expect(s.requestPluginToolApproval).toHaveBeenCalledTimes(1);
+    } finally { await s.close(); }
   });
 });
 
@@ -1044,7 +1201,7 @@ describe('agents.registerTool', () => {
 });
 
 describe('sdk.capabilities', () => {
-  it('reports native-tool descriptors as available only for a Claude-family thread, and reports project-rpc/interactions/message-admission/lifecycle-delivery as available when wired', async () => {
+  it('reports native hook capabilities from host-wired Modern provider surfaces', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-sdk-capabilities-'));
     const db = openDatabase(join(dir, 'data/zcc.sqlite'));
     upsertHost(db, { id: 'h1', name: 'Primary', hostKeyHash: 'hash', isPrimary: true });
@@ -1060,7 +1217,12 @@ describe('sdk.capabilities', () => {
     });
     try {
       const handle = createPluginApi('demo', dir, {
-        productContext: { db, hub: { emit: vi.fn() } } as never,
+        productContext: { db, hub: { emit: vi.fn() }, cliAgentOps: { get: vi.fn(async (id) => id === 'control-session'
+          ? { ok: true, value: { id, profile: 'codex', capabilitySurface: { surface: 'pty', harness: 'codex', headless: false, hookBase: true } } }
+          : { ok: false }) }, terminalSessions: new Map([
+          ['pty-session', { profile: 'shell', capabilitySurface: { surface: 'pty', harness: 'codex', headless: false, hookBase: true } }],
+          ['legacy-session', { profile: 'codex' }]
+        ]) } as never,
         hostCall: vi.fn(),
         upsertInteraction: vi.fn()
       });
@@ -1069,12 +1231,21 @@ describe('sdk.capabilities', () => {
         expect.arrayContaining([
           { id: 'message-admission', available: true },
           { id: 'lifecycle-delivery', available: true },
-          { id: 'tool-before-native', available: true },
-          { id: 'tool-after-native', available: true },
           { id: 'project-rpc', available: true },
           { id: 'interactions', available: true }
         ])
       );
+      expect(claudeResult.capabilities.find(c => c.id === 'tool-before-native')).toEqual({ id: 'tool-before-native', available: true });
+      expect(claudeResult.capabilities.find(c => c.id === 'tool-after-native')).toMatchObject({ available: false });
+
+      const ptyResult = await handle.api.sdk.capabilities.forThread({ threadId: 'pty-session' });
+      expect(ptyResult.capabilities.find(c => c.id === 'tool-before-native')).toMatchObject({ available: true });
+      expect(ptyResult.capabilities.find(c => c.id === 'tool-after-native')).toMatchObject({ available: false });
+      const legacyResult = await handle.api.sdk.capabilities.forThread({ threadId: 'legacy-session' });
+      expect(legacyResult.capabilities.find(c => c.id === 'tool-before-native')).toMatchObject({ available: false });
+      const controlResult = await handle.api.sdk.capabilities.forThread({ threadId: 'control-session' });
+      expect(controlResult.capabilities.find(c => c.id === 'tool-before-native')).toMatchObject({ available: true });
+      expect(controlResult.capabilities.find(c => c.id === 'interactions')).toMatchObject({ available: false });
 
       const cursorResult = await handle.api.sdk.capabilities.forThread({ threadId: cursorThread.id });
       const cursorNativeTool = cursorResult.capabilities.find((c) => c.id === 'tool-before-native');
@@ -1082,10 +1253,10 @@ describe('sdk.capabilities', () => {
       expect(cursorNativeTool?.reason).toMatch(/acp-cursor/);
       const squadThread = createConversationThread(db, { projectId: 'p1', hostId: 'h1', providerId: 'claude-code', originPluginId: 'host-modern-squad' });
       const squadResult = await handle.api.sdk.capabilities.forThread({ threadId: squadThread.id });
-      for (const id of ['tool-before-native', 'tool-after-native']) {
-        expect(squadResult.capabilities.find(capability => capability.id === id))
-          .toMatchObject({ available: false, reason: 'Modern squad provider-native tool policy is not wired' });
-      }
+      expect(squadResult.capabilities.find(capability => capability.id === 'tool-before-native'))
+        .toEqual({ id: 'tool-before-native', available: true });
+      expect(squadResult.capabilities.find(capability => capability.id === 'tool-after-native'))
+        .toMatchObject({ available: false, reason: expect.stringContaining('modern/claude-code') });
 
       const executionResult = await handle.api.sdk.capabilities.forExecution({ executionId: 'exec-1' });
       expect(executionResult.capabilities.find((c) => c.id === 'tool-before-native')).toMatchObject({ available: false });
@@ -1107,10 +1278,10 @@ describe('sdk.capabilities', () => {
       const result = await bare.api.sdk.capabilities.forExecution({ executionId: 'exec-1' });
       expect(result.capabilities).toEqual(
         expect.arrayContaining([
-          { id: 'message-admission', available: false },
-          { id: 'lifecycle-delivery', available: false },
-          { id: 'project-rpc', available: false },
-          { id: 'interactions', available: false }
+          { id: 'message-admission', available: false, reason: 'no thread resolved' },
+          { id: 'lifecycle-delivery', available: false, reason: 'no thread resolved' },
+          { id: 'project-rpc', available: false, reason: 'Project RPC host wiring unavailable' },
+          { id: 'interactions', available: false, reason: 'no thread resolved' }
         ])
       );
       await bare.dispose();
