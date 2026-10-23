@@ -65,7 +65,8 @@ describe('Harness setup layout', () => {
     state.rows = [
       { family: 'pi', label: 'Pi', installed: false, alwaysEnabled: false, enabled: false, binary: 'pi', installHint: 'install' },
       { family: 'codex', label: 'Codex', installed: true, alwaysEnabled: false, enabled: true, binary: 'codex', installHint: 'install' },
-      { family: 'claude', label: 'Claude Code', installed: true, alwaysEnabled: true, enabled: true, binary: 'claude', installHint: 'install' }
+      { family: 'claude', label: 'Claude Code', installed: true, alwaysEnabled: true, enabled: true, binary: 'claude', installHint: 'install' },
+      { family: 'opencode', label: 'Pi', installed: true, alwaysEnabled: false, enabled: true, binary: 'opencode', installHint: 'install' }
     ];
     state.descriptors.mockResolvedValue(state.rows.map((row) => ({
       id: row.family, label: row.label, agentDefaultEligible: true, terminalEligible: false,
@@ -76,13 +77,13 @@ describe('Harness setup layout', () => {
     })));
     state.anchor = 'harness-legacy';
     render(<View initial={{ defaultHarness: 'pi' } as AppConfig} />);
-    await waitFor(() => expect(screen.getByText('2 installed · 2 enabled')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('3 installed · 3 enabled')).toBeTruthy());
     const names = [...screen.getByTestId('harness-status-list').querySelectorAll('.opener-row-name')].map((el) => el.textContent);
-    expect(names).toEqual(['Claude Code', 'Codex', 'Pi']);
+    expect(names).toEqual(['Claude Code', 'Codex', 'Pi', 'Pi']);
+    expect(state.rows.map((row) => row.family)).toEqual(['pi', 'codex', 'claude', 'opencode']);
     fireEvent.click(await screen.findByRole('button', { name: 'Default harness' }));
     const options = (await screen.findAllByRole('option')).map((el) => el.textContent ?? '');
-    expect(options.map((text) => text.replace(' (not installed)', '').trim())).toEqual(['Claude Code', 'Codex', 'Pi']);
-    expect(state.rows.map((row) => row.family)).toEqual(['pi', 'codex', 'claude']);
+    expect(options.map((text) => text.replace(' (not installed)', '').trim())).toEqual(['Claude Code', 'Codex', 'Pi', 'Pi']);
   });
 
   it('leads with installation, gives the machine context, and persists the enable switch immediately', async () => {
