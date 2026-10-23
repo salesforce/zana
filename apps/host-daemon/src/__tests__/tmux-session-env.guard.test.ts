@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SESSION_CALLBACK_ENV_KEYS } from '../tmux-session-env.js';
+import { SESSION_CALLBACK_ENV_KEYS, SESSION_IDENTITY_ENV_KEYS } from '../tmux-session-env.js';
 
 // A tmux pane inherits the tmux SERVER's env, so every per-session ZCC_* var the
 // launch writes into its env must ride `new-session -e`. This guard fails when a
@@ -10,12 +10,12 @@ import { SESSION_CALLBACK_ENV_KEYS } from '../tmux-session-env.js';
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
- * Control-plane identity vars. Deliberately NOT forwarded through `-e`: tmux `-e`
- * values sit on the client's argv (visible to `ps`), and the token is a bearer
- * credential. A 2nd+ tmux pane therefore still inherits the server snapshot's
- * identity until a file-based hand-off replaces this exemption.
+ * Control-plane identity vars. Not forwarded through `-e`: tmux `-e` values sit on
+ * the client's argv (visible to `ps`) and the token is a bearer credential. They
+ * reach the pane via a 0600 env file the pane sources then deletes
+ * (`writeSessionEnvFile`), so they must match `SESSION_IDENTITY_ENV_KEYS`.
  */
-const IDENTITY_NOT_FORWARDED = ['ZCC_SESSION_ID', 'ZCC_SESSION_TOKEN'];
+const IDENTITY_NOT_FORWARDED: readonly string[] = SESSION_IDENTITY_ENV_KEYS;
 
 function assignedZccVars(relPath: string): string[] {
   const text = readFileSync(join(SRC, relPath), 'utf8')

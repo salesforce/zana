@@ -20,7 +20,13 @@ import { alwaysOnPluginMcpAllowlist, ensureMcpConfigForProjectSync } from './mcp
 import { stripInheritedClaudeSession, ensureInteractiveTerminalEnv, augmentPath } from './env.js';
 import { resolveHarnessCommand } from './harness/harness-verify.js';
 import { isTmuxAvailable, buildLocalTmuxCommand, wrapRemoteTmux, tmuxSessionName, killLocalTmuxSession } from './tmux.js';
-import { SESSION_CALLBACK_ENV_KEYS, withBlankedSessionCallbacks } from './tmux-session-env.js';
+import {
+  SESSION_CALLBACK_ENV_KEYS,
+  SESSION_IDENTITY_ENV_KEYS,
+  sessionEnvFilePath,
+  withBlankedSessionCallbacks,
+  writeSessionEnvFile
+} from './tmux-session-env.js';
 import { providerFor, registrationFor, renderRemoteCommand } from './harness/registry.js';
 import { effectiveUnattendedProfile, profilePostureOf, unattendedExecutionRouting, withoutExecutionIntent } from './harness/unattended-launch.js';
 import type { AgentLiveness, HarnessAuthInjection, ProviderHookUrls } from './harness/launch-provider.js';
@@ -502,6 +508,8 @@ export class PtyManager extends EventEmitter {
    *  written on spawn and unlinked in {@link finalizeExit}. Absent for providers
    *  that carry MCP another way (claude file-arg, codex `-c`, shell none). */
   private sessionMcpConfigFiles = new Map<string, string>();
+  /** Tmux identity env files not yet consumed by the pane; unlinked on exit (the pane normally deletes it first). */
+  private sessionEnvFiles = new Map<string, string>();
 
   /** Run scheduled commands through a native supervisor with stable child PID ownership. */
   private scheduledSupervisor(command: string, args: string[]): { command: string; args: string[] } {
@@ -1902,8 +1910,10 @@ export class PtyManager extends EventEmitter {
     // above any prompt we emit, so when the tmux-wrapped command would breach the
     // imsg budget we fall back to a plain (non-restore-backed) spawn: launching
     // correctly beats tmux restore-backing for the rare oversized session.
+    // Identity rides a 0600 env file the pane sources then deletes, never `-e`.
+    const identityEnvFile = sessionEnvFilePath(sessionId);
     const prospectiveTmux = wantsTmux
-      ? buildLocalTmuxCommand(sessionId, inner.command, inner.args, withBlankedSessionCallbacks(sessionEnv))
+      ? buildLocalTmuxCommand(sessionId, inner.command, inner.args, withBlankedSessionCallbacks(sessionEnv), identityEnvFile)
       : undefined;
     // Conservative bound below MAX_IMSGSIZE (16384) minus tmux's per-arg framing
     // and imsg header; empirically a serialized argv ~16 KiB is rejected while
@@ -1918,6 +1928,13 @@ export class PtyManager extends EventEmitter {
         `[pty] session ${sessionId}: tmux wrapper skipped — command ${tmuxCommandBytes}B ` +
           `exceeds imsg-safe budget ${TMUX_IMSG_SAFE_BYTES}B; spawning directly (no restore backing).`
       );
+    }
+    if (useTmux) {
+      writeSessionEnvFile(
+        sessionId,
+        Object.fromEntries(SESSION_IDENTITY_ENV_KEYS.map((key) => [key, env[key]]))
+      );
+      this.sessionEnvFiles.set(sessionId, identityEnvFile);
     }
     const spawnCmd = useTmux && prospectiveTmux
       ? prospectiveTmux
@@ -2142,6 +2159,15 @@ export class PtyManager extends EventEmitter {
     this.diagnosticFiles.delete(sessionId);
     // Unlink this session's provider MCP config file (OpenCode's `OPENCODE_CONFIG`),
     // if we wrote one. Best-effort; a crash orphan is swept by age on next write.
+    const envFile = this.sessionEnvFiles.get(sessionId);
+    if (envFile) {
+      this.sessionEnvFiles.delete(sessionId);
+      try {
+        unlinkSync(envFile);
+      } catch {
+        /* best-effort — the pane already consumed it */
+      }
+    }
     const mcpConfigFile = this.sessionMcpConfigFiles.get(sessionId);
     if (mcpConfigFile) {
       this.sessionMcpConfigFiles.delete(sessionId);

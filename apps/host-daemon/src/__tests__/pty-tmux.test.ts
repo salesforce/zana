@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { readFileSync, statSync } from 'node:fs';
 
 // Capture BOTH the command and argv each spawn receives, so we can assert
 // whether the tmux wrap was applied.
@@ -53,7 +54,7 @@ vi.mock('../tmux.js', async (importOriginal) => {
 
 import { PtyManager, remotePortForSession, detectRemoteForwardFailure } from '../pty.js';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
-import { SESSION_CALLBACK_ENV_KEYS } from '../tmux-session-env.js';
+import { SESSION_CALLBACK_ENV_KEYS, sessionEnvFilePath } from '../tmux-session-env.js';
 
 function cfg(over: Partial<AppConfig> = {}): AppConfig {
   return {
@@ -114,10 +115,11 @@ describe('pty tmux wrapping (local)', () => {
     expect(ns).toBeGreaterThanOrEqual(0);
     expect(proc.args.slice(ns, ns + 3)).toEqual(['new-session', '-A', '-s']);
     expect(proc.args[ns + 3]).toMatch(/^cc-/); // cc-<sessionId>
-    // The real shell command follows the `--` terminator.
+    // The pane runs the identity env-file wrapper, which execs the real shell.
     const dashdash = proc.args.indexOf('--');
     expect(dashdash).toBeGreaterThan(0);
-    expect(proc.args[dashdash + 1]).toBe('/bin/zsh');
+    expect(proc.args.slice(dashdash + 1, dashdash + 3)).toEqual(['sh', '-c']);
+    expect(proc.args[proc.args.length - 1]).toBe('/bin/zsh');
   });
 
   it('passes each local Claude callback URL through tmux for its session', () => {
@@ -157,12 +159,19 @@ describe('pty tmux wrapping (local)', () => {
     }
   });
 
-  it('keeps the session token off the tmux argv', () => {
+  it('hands session identity to the pane through a 0600 env file, never the tmux argv', () => {
     ptys.setMcpBaseUrl('http://127.0.0.1:54321');
-    ptys.create({ projectId: 'p1', profile: 'claude', config: cfg({ tmuxScope: 'all' }), ...dims });
-    const pairs = tmuxEnvPairs(spawned[0].args);
+    const session = ptys.create({ projectId: 'p1', profile: 'claude', config: cfg({ tmuxScope: 'all' }), ...dims });
+    const args = spawned[0].args;
+    const pairs = tmuxEnvPairs(args);
     expect(pairs.some((pair) => pair.startsWith('ZCC_SESSION_TOKEN='))).toBe(false);
     expect(pairs.some((pair) => pair.startsWith('ZCC_SESSION_ID='))).toBe(false);
+    const file = sessionEnvFilePath(session.id);
+    expect(args).toContain(file);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    const body = readFileSync(file, 'utf8');
+    expect(body).toContain(`export ZCC_SESSION_ID='${session.id}'`);
+    expect(body).toMatch(/export ZCC_SESSION_TOKEN='[^']+'/);
   });
 
   it('blanks callback URLs a launch does not set so the tmux server snapshot cannot supply them', () => {
