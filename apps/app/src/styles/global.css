@@ -25680,6 +25680,23 @@ button.launch-persona {
   margin-top: 8px;
 }
 
+.team-composer-limit {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.team-composer-limit.is-over {
+  color: var(--danger, #e5484d);
+}
+
+.team-composer-limit-message {
+  margin: 6px 0 0;
+  color: var(--danger, #e5484d);
+  font-size: 12px;
+}
+
 .launch-job-details textarea {
   background: var(--bg-app, var(--bg-panel));
   border: 1px solid var(--border);
