@@ -174,6 +174,9 @@ export function SettingsView() {
       if (typeof patch.terminalClipboardWriteEnabled === 'boolean') {
         useData.getState().setTerminalClipboardWriteEnabled(patch.terminalClipboardWriteEnabled);
       }
+      if (typeof patch.terminalCtrlVPasteEnabled === 'boolean') {
+        useData.getState().setTerminalCtrlVPasteEnabled(patch.terminalCtrlVPasteEnabled);
+      }
       if (typeof patch.structuredQuestionsEnabled === 'boolean') {
         useData.getState().setStructuredQuestionsEnabled(patch.structuredQuestionsEnabled);
       }

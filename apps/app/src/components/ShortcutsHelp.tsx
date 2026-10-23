@@ -1,9 +1,12 @@
 import { useEffect } from 'react';
 import { X } from 'lucide-react';
 import { platformKey, platformShortcut } from '../lib/platformShortcut.js';
+import { ctrlVPastesByDefault, terminalPasteHelpRow } from '../lib/terminalPaste.js';
 
 interface Props {
   onClose: () => void;
+  /** Live "Ctrl+V pastes" setting; the platform default when omitted. */
+  ctrlVPasteEnabled?: boolean;
 }
 
 interface Row {
@@ -16,7 +19,7 @@ interface Section {
   rows: Row[];
 }
 
-const SECTIONS: Section[] = [
+const sections = (pasteRow: Row | null): Section[] => [
   {
     title: 'Navigation',
     rows: [
@@ -32,7 +35,7 @@ const SECTIONS: Section[] = [
       { keys: ['⌘', 'O'], label: 'Open Agents dashboard' },
       { keys: ['⌘', 'I'], label: 'Toggle Inbox' },
       { keys: ['⌘', 'J'], label: 'Toggle Scheduler' },
-      { keys: ['⌘', ','], label: 'Toggle Settings' },
+      { keys: ['⌘', ','], label: 'Toggle Settings (Project settings inside a project)' },
       { keys: ['⌘', '?'], label: 'This help' }
     ]
   },
@@ -64,7 +67,8 @@ const SECTIONS: Section[] = [
     title: 'Thread',
     rows: [
       { keys: ['⌘', 'F'], label: 'Search in the open thread (remappable in Settings → Shortcuts)' },
-      { keys: ['Esc'], label: 'Close thread search' }
+      { keys: ['Esc'], label: 'Close thread search' },
+      { keys: ['⌘', '↵'], label: 'Agent question: Next, or Submit on the last question' }
     ]
   },
   {
@@ -72,6 +76,7 @@ const SECTIONS: Section[] = [
     rows: [
       { keys: ['⌘', 'F'], label: 'Find in active terminal' },
       { keys: ['⌘', 'K'], label: 'Clear active terminal scrollback' },
+      ...(pasteRow ? [pasteRow] : []),
       { keys: ['Enter'], label: 'Find: next match' },
       { keys: ['⇧', 'Enter'], label: 'Find: previous match' },
       { keys: ['Esc'], label: 'Close find / palette' },
@@ -112,7 +117,7 @@ const SECTIONS: Section[] = [
   }
 ];
 
-export function ShortcutsHelp({ onClose }: Props) {
+export function ShortcutsHelp({ onClose, ctrlVPasteEnabled = ctrlVPastesByDefault() }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -131,7 +136,7 @@ export function ShortcutsHelp({ onClose }: Props) {
           </button>
         </header>
         <div className="shortcuts-body">
-          {SECTIONS.map((s) => (
+          {sections(terminalPasteHelpRow(ctrlVPasteEnabled)).map((s) => (
             <section key={s.title} className="shortcuts-section">
               <h4>{s.title}</h4>
               {s.rows.map((r, i) => (

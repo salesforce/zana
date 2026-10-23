@@ -1,8 +1,23 @@
+import { useState } from 'react';
 import { cellDisplay, discoverColumns, flattenRecords } from './soql-flatten.js';
 import { useWidthTier } from '../studio/useWidthTier.js';
 import { EmptyState, LoadingState } from '../components/SalesforceState.js';
+import { copyText } from './soql-export.js';
 
 const NARROW_BREAKPOINT = [520] as const;
+
+function SoqlCountResult({ count }: { count: number }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="sf-soql-count" data-testid="soql-results-count">
+      <span>Count: <strong data-testid="soql-results-count-value">{count.toLocaleString()}</strong></span>
+      <button type="button" className="sf-soql-btn" aria-label={copied ? 'Count copied' : 'Copy count'} onClick={() => void copyText(String(count)).then(setCopied)}>
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+      <p className="sf-soql-count-hint">Use <code>COUNT(Id)</code> to get the count as a row you can export.</p>
+    </div>
+  );
+}
 
 export function SoqlResultsGrid(props: {
   hasRun?: boolean;
@@ -15,6 +30,7 @@ export function SoqlResultsGrid(props: {
   onLoadMore?: () => void;
   onLoadAll?: () => void;
   busy?: boolean;
+  countQuery?: boolean;
 }) {
   const [widthRef, tier] = useWidthTier(NARROW_BREAKPOINT);
   const narrow = tier === 0;
@@ -30,6 +46,7 @@ export function SoqlResultsGrid(props: {
     return (
       <div data-testid="soql-results-empty">
         {props.busy ? <LoadingState art="data" label="Running your query…" hint="Fetching records from the selected org." /> :
+          props.hasRun && Number.isFinite(props.totalSize) && (props.totalSize! > 0 || props.countQuery) ? <SoqlCountResult key={props.totalSize} count={props.totalSize!} /> :
           <EmptyState art="data" title={props.hasRun ? 'No records matched this query.' : 'Run a query to see records.'}>
             {props.hasRun ? 'Try adjusting the filters or choosing another object.' : 'Choose an object, select your fields, and explore the results here.'}
           </EmptyState>}

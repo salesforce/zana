@@ -347,7 +347,8 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
       routingEnforced,
       transport,
       ...(defaultPlanning ? { defaultPlanning } : {}),
-      ...(launchApproval ? { launchApproval } : {})
+      ...(launchApproval ? { launchApproval } : {}),
+      ...(keepsId && team?.isDefault ? { isDefault: true } : {})
     };
     if (keepsId && team) input.id = team.id;
 

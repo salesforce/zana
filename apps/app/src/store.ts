@@ -55,6 +55,7 @@ import { appNavigate } from './lib/app-navigate.js';
 import { projectSplitScopeKey } from './lib/split-layout/scope.js';
 import { useSplitWorkspace } from './lib/split-layout/store.js';
 import { hasDesktopBridge } from './lib/app-surface.js';
+import { ctrlVPastesByDefault } from './lib/terminalPaste.js';
 import {
   readLocalStorageItem,
   removeLocalStorageItem,
@@ -75,7 +76,11 @@ import {
   getSchedulerRoutePath,
   getSettingsTabRoutePath
 } from './lib/route-paths.js';
-import { resolveProjectBackPath } from './lib/route-memory.js';
+import {
+  getRememberedAppRoutePath,
+  getRouteBeforeProjectSettings,
+  resolveProjectBackPath
+} from './lib/route-memory.js';
 import {
   EMPTY_HOST_INSTALL_DRAWER,
   reduceHostInstallAppend,
@@ -609,6 +614,13 @@ interface UiState {
   setSettingsTab: (tab: SettingsTab) => void;
   /** Open `/projects/:id/settings` for a specific project (sidebar + palette). */
   openProjectSettings: (projectId: string) => void;
+  /**
+   * ⌘, / the Settings… menu item. Drilled into a project, opens that project's
+   * Settings (as its rail's Settings button does); otherwise global Settings.
+   * From Settings, returns to the focused project's view, or else to the route
+   * the rail's "Back to app" link uses.
+   */
+  toggleSettings: () => void;
   /** Page selected in the focused top-level Extensions workspace. */
   extensionsTab: ExtensionsTab;
   setExtensionsTab: (tab: ExtensionsTab) => void;
@@ -820,6 +832,7 @@ function mirroredConfigFlags(config: AppConfig) {
     catchUpSummaryDelaySeconds: config.catchUpSummaryDelaySeconds ?? 20,
     feedNoiseClassifierEnabled: config.feedNoiseClassifierEnabled ?? false,
     terminalClipboardWriteEnabled: config.terminalClipboardWriteEnabled ?? true,
+    terminalCtrlVPasteEnabled: config.terminalCtrlVPasteEnabled ?? ctrlVPastesByDefault(),
     autoOpenThreadPlanPanel: config.autoOpenThreadPlanPanel ?? false,
     structuredQuestionsEnabled: config.structuredQuestionsEnabled ?? true,
     reviewerApprovalMode: config.reviewerApprovalMode ?? 'ask',
@@ -959,14 +972,20 @@ export function pushErrorToast(message: string) {
 }
 
 const RAIL_KEEPING_NAVS = new Set(['projects', 'inbox', 'suggestions', 'settings']);
+/** Base for parsing an app route (path + query + hash) with `URL`. */
+const ROUTE_PARSE_BASE = 'http://zcc.local';
+
+function decodeDestination(path: string) {
+  const url = new URL(path, ROUTE_PARSE_BASE);
+  return decodeRoutePath(url.pathname, url.hash, url.search);
+}
 
 function applyDestination(
   set: (partial: Partial<UiState> | ((s: UiState) => Partial<UiState>)) => void,
   path: string,
   extra?: Partial<UiState>
 ) {
-  const url = new URL(path, 'http://zcc.local');
-  const decoded = decodeRoutePath(url.pathname, url.hash, url.search);
+  const decoded = decodeDestination(path);
   set((s) => {
     const keepFocus =
       s.focusedProjectId != null &&
@@ -1227,6 +1246,32 @@ export const useUi = create<UiState>((set, get) => ({
   openProjectSettings: (projectId) => {
     get().selectProject(projectId);
     applyDestination(set, getProjectSettingsRoutePath(projectId));
+  },
+  toggleSettings: () => {
+    const s = get();
+    // A focus left behind by a removed project is cleared by App; don't route
+    // to its Settings in the meantime.
+    const projectId =
+      s.focusedProjectId && useData.getState().projects.some((p) => p.id === s.focusedProjectId)
+        ? s.focusedProjectId
+        : null;
+    if (s.nav !== 'settings') {
+      if (projectId) s.openProjectSettings(projectId);
+      else s.setNav('settings');
+      return;
+    }
+    if (projectId) {
+      // Back to the project route it was opened from (a schedule, a thread…),
+      // else to the project's last view.
+      const before = getRouteBeforeProjectSettings();
+      if (decodeDestination(before).focusedProjectId === projectId) {
+        applyDestination(set, before);
+      } else {
+        s.setProjectView(projectId, s.projectView[projectId] ?? 'agents');
+      }
+      return;
+    }
+    applyDestination(set, getRememberedAppRoutePath());
   },
   setExtensionsTab: (extensionsTab) =>
     applyDestination(set, getExtensionsTabRoutePath(extensionsTab)),
@@ -1609,6 +1654,10 @@ interface DataState {
    *  kept live by the Settings toggle. Default TRUE (write path shipped on); when
    *  off, terminal output can never touch the system clipboard. */
   terminalClipboardWriteEnabled: boolean;
+  /** Mirror of AppConfig.terminalCtrlVPasteEnabled — whether Ctrl+V pastes in a
+   *  terminal on Windows/Linux (off: it sends `^V`). Resolved with the platform
+   *  default (on for Windows) when unset; read live by TerminalView's key handler. */
+  terminalCtrlVPasteEnabled: boolean;
   /** Mirror of AppConfig.autoOpenThreadPlanPanel — experimental. When on, Plan
    *  mode (native ACP Plan, /plan, or a durable plan) opens the thread side
    *  panel on the Plan pin. Default off. Approvals still open the panel. */
@@ -1695,6 +1744,7 @@ interface DataState {
   setCatchUpSummaryDelaySeconds: (seconds: number) => void;
   setFeedNoiseClassifierEnabled: (on: boolean) => void;
   setTerminalClipboardWriteEnabled: (on: boolean) => void;
+  setTerminalCtrlVPasteEnabled: (on: boolean) => void;
   setAutoOpenThreadPlanPanel: (on: boolean) => void;
   setSuggestionsEnabled: (on: boolean) => void;
   setStructuredQuestionsEnabled: (on: boolean) => void;
@@ -2061,6 +2111,7 @@ export const useData = create<DataState>((set, get) => ({
   catchUpSummaryDelaySeconds: 20,
   feedNoiseClassifierEnabled: false,
   terminalClipboardWriteEnabled: true,
+  terminalCtrlVPasteEnabled: ctrlVPastesByDefault(),
   autoOpenThreadPlanPanel: false,
   suggestionsEnabled: false,
   structuredQuestionsEnabled: true,
@@ -2138,6 +2189,10 @@ export const useData = create<DataState>((set, get) => ({
 
   setTerminalClipboardWriteEnabled(on) {
     set({ terminalClipboardWriteEnabled: on });
+  },
+
+  setTerminalCtrlVPasteEnabled(on) {
+    set({ terminalCtrlVPasteEnabled: on });
   },
 
   setAutoOpenThreadPlanPanel(on) {

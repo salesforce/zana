@@ -1059,6 +1059,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.terminalClipboardWriteEnabled === 'boolean') {
     normalized.terminalClipboardWriteEnabled = input.terminalClipboardWriteEnabled;
   }
+  if (typeof input.terminalCtrlVPasteEnabled === 'boolean') {
+    normalized.terminalCtrlVPasteEnabled = input.terminalCtrlVPasteEnabled;
+  }
   if (typeof input.mobileGatewayEnabled === 'boolean') {
     normalized.mobileGatewayEnabled = input.mobileGatewayEnabled;
   }
