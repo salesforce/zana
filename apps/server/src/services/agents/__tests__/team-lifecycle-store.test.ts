@@ -762,6 +762,40 @@ describe('team lifecycle integration', () => {
     });
   }));
 
+  it('keeps retained orchestrator capacity held until its session exits', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
+    const input = claimInput('principal-a');
+    input.launchResult = {
+      ...input.launchResult,
+      orchestratorSessionId: 'orchestrator-session',
+      launched: 2,
+      workers: [...input.launchResult.workers, {
+        sessionId: 'orchestrator-session', cohortId: 'cohort-1', slotId: 'orchestrator', personaId: 'orchestrator',
+        projectId: 'project-1', authorizationId: 'authorization-orchestrator'
+      }]
+    };
+    input.workers = [...input.workers, {
+      sessionId: 'orchestrator-session', cohortId: 'cohort-1', slotId: 'orchestrator', personaId: 'orchestrator',
+      projectId: 'project-1', authorizationId: 'authorization-orchestrator', process: 'authorized',
+      attention: 'active', task: 'unknown', delivery: 'bound-at-spawn'
+    }];
+    input.capacity!.launched = 2;
+    const claimed = await store.claim(input);
+    await markClaimedWorkerRunning(store, claimed.record.id);
+    await markClaimedWorkerRunning(store, claimed.record.id, 'orchestrator');
+    await store.complete(claimed.record.id, { ok: true, value: claimed.record.launchResult });
+    const released: string[] = [];
+    const integration = createTeamLifecycleIntegration({
+      store, isLiveSession: () => true, closeSession: async () => true, releaseCapacity: (id) => { released.push(id); }
+    });
+    integration.track((await store.get(claimed.record.id))!);
+
+    await integration.cancelTeamLaunch('principal-a', 'request-1', { retainOrchestrator: true });
+    expect(released).not.toContain('authorization-orchestrator');
+    const exited = await store.updateWorker(claimed.record.id, 'orchestrator', { process: 'exited' });
+    expect(exited.capacityReleasedNow).toBe(true);
+  }));
+
   it('closes all sessions when orchestrator retention lacks a named orchestrator', async () => fixture(async (filePath) => {
     const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
     const claimed = await store.claim(claimInput('principal-a'));
