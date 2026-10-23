@@ -260,6 +260,7 @@ import {
 } from './window/thread-view-windows.js';
 import { createThreadViewHost } from './window/thread-view-host.js';
 import { findUnscopedWindow, isUnscopedRegistration } from './window/main-window-registry.js';
+import { createWindowsTitleBarOverlays } from './window/titlebar-overlay.js';
 import { registerPluginViewIpc, registerThreadViewIpc } from './ipc/windows.js';
 import { showApprovalSheet } from './window/approval-sheet.js';
 import { startPeerUsePrompts } from './ipc/peer-use-prompts.js';
@@ -909,6 +910,19 @@ function setActiveProjectSkillsWatcher(
  * thread may have no project, so it is never the unscoped main window either.
  */
 const windows = new Map<number, { win: BrowserWindow; projectId?: string; view?: PluginViewTarget; threadView?: ThreadViewTarget }>();
+// Windows caption buttons (minimize / maximize / close) follow the effective
+// theme: new windows take `current()`, open ones are re-coloured on a Theme
+// setting change (ipc/config.ts) and on OS appearance changes (`bind()`).
+const titleBarOverlays = createWindowsTitleBarOverlays({
+  platform: process.platform,
+  windows,
+  theme: resolveTheme,
+  // Lazy: host-loading unit tests mock electron without these.
+  /* v8 ignore next -- only read on Windows; covered by e2e/windows-titlebar-overlay-theme.spec.ts */
+  electron: () => ({ nativeTheme, systemPreferences }),
+  logError: logMainError
+});
+let stopTitleBarOverlayTheme: (() => void) | null = null;
 const boundsControllers = new Map<number, ReturnType<typeof createBoundsStateController>>();
 const rendererReadiness = new RendererReadiness();
 
@@ -6825,15 +6839,6 @@ function createMainTeamProductOps() {
 }
 
 /**
- * Geometry and theme for Windows Electron titleBarOverlay.
- * Must match the CSS tokens in apps/app/src/styles/global.css:
- * --titlebar-h (44px), --bg-base (#181818), --text-muted (#a1a1aa).
- */
-export const WINDOWS_TITLEBAR_HEIGHT = 44;
-export const WINDOWS_TITLEBAR_OVERLAY_BG = '#181818';
-export const WINDOWS_TITLEBAR_OVERLAY_SYMBOL = '#a1a1aa';
-
-/**
  * Open an app window. With no `projectId` it's the full, unscoped shell (the
  * default window opened at boot and on dock-reactivate). With a `projectId` the
  * renderer locks to that one project — see `windows:openProject` and the
@@ -6912,11 +6917,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
       : process.platform === 'win32'
       ? {
           titleBarStyle: 'hidden' as const,
-          titleBarOverlay: {
-            color: WINDOWS_TITLEBAR_OVERLAY_BG,
-            symbolColor: WINDOWS_TITLEBAR_OVERLAY_SYMBOL,
-            height: WINDOWS_TITLEBAR_HEIGHT
-          }
+          titleBarOverlay: titleBarOverlays.current()
         }
       : {
           titleBarStyle: 'hidden' as const
@@ -7765,6 +7766,7 @@ function registerIpc() {
     get ptys() { return ptys; },
     get quickPrompts() { return quickPrompts; },
     get readLiveSessionStats() { return readLiveSessionStats; },
+    get refreshTitleBarOverlays() { return titleBarOverlays.refresh; },
     get registerExtensionProject() { return registerExtensionProject; },
     get reportTeamTask() { return reportTeamTask; },
     get resolveTheme() { return resolveTheme; },
@@ -8104,6 +8106,9 @@ async function runStartupMigration(): Promise<StartupState> {
 }
 
 async function bootstrap() {
+  // Before any window (including the repair window) so none misses a flip.
+  /* v8 ignore next -- runs after app ready; covered by e2e/windows-titlebar-overlay-theme.spec.ts */
+  stopTitleBarOverlayTheme ??= titleBarOverlays.bind();
   registerStartupStateIpc();
   await runStartupMigration();
 }
@@ -9729,6 +9734,8 @@ app.on('before-quit', (event) => {
   tray = null;
   menubar?.stop();
   menubar = null;
+  stopTitleBarOverlayTheme?.();
+  stopTitleBarOverlayTheme = null;
   templates.stop();
   quickPrompts.stop();
   promptRegistry.stop();
