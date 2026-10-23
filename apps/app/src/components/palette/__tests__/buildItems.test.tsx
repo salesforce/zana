@@ -217,6 +217,8 @@ describe('buildPaletteItems', () => {
     expect(hint(null)).toBe('⌘,');
     // Drilled in, ⌘, opens the project's Settings, so the global row drops it.
     expect(hint('p1')).toBeUndefined();
+    // A focus left on a removed project: ⌘, opens global Settings, so keep the hint.
+    expect(hint('gone')).toBe('⌘,');
   });
 
   it('opens global Settings with its own navigation after leaving project focus', () => {

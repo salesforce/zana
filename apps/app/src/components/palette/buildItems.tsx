@@ -223,8 +223,9 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
       key: 'action:settings',
       icon: <Settings size={14} />,
       label: 'Open Settings',
-      // Drilled into a project, ⌘, opens that project's Settings instead.
-      hint: ctx.projectId ? undefined : '⌘,',
+      // Drilled into a project, ⌘, opens that project's Settings instead
+      // (a focus on a removed project still opens global Settings).
+      hint: ctx.projectId && ctx.projects.some((p) => p.id === ctx.projectId) ? undefined : '⌘,',
       category: 'Actions',
       source: 'core',
       run: () => {

@@ -75,11 +75,11 @@ import {
   getSchedulerRoutePath,
   getSettingsTabRoutePath
 } from './lib/route-paths.js';
-import { resolveProjectBackPath } from './lib/route-memory.js';
 import {
   getRememberedAppRoutePath,
-  getRouteBeforeProjectSettings
-} from './hooks/useAppSettingsRouteMemory.js';
+  getRouteBeforeProjectSettings,
+  resolveProjectBackPath
+} from './lib/route-memory.js';
 import {
   EMPTY_HOST_INSTALL_DRAWER,
   reduceHostInstallAppend,
@@ -970,14 +970,20 @@ export function pushErrorToast(message: string) {
 }
 
 const RAIL_KEEPING_NAVS = new Set(['projects', 'inbox', 'suggestions', 'settings']);
+/** Base for parsing an app route (path + query + hash) with `URL`. */
+const ROUTE_PARSE_BASE = 'http://zcc.local';
+
+function decodeDestination(path: string) {
+  const url = new URL(path, ROUTE_PARSE_BASE);
+  return decodeRoutePath(url.pathname, url.hash, url.search);
+}
 
 function applyDestination(
   set: (partial: Partial<UiState> | ((s: UiState) => Partial<UiState>)) => void,
   path: string,
   extra?: Partial<UiState>
 ) {
-  const url = new URL(path, 'http://zcc.local');
-  const decoded = decodeRoutePath(url.pathname, url.hash, url.search);
+  const decoded = decodeDestination(path);
   set((s) => {
     const keepFocus =
       s.focusedProjectId != null &&
@@ -1255,9 +1261,9 @@ export const useUi = create<UiState>((set, get) => ({
     if (projectId) {
       // Back to the project route it was opened from (a schedule, a thread…),
       // else to the project's last view.
-      const before = new URL(getRouteBeforeProjectSettings(), 'http://zcc.local');
-      if (decodeRoutePath(before.pathname, before.hash, before.search).focusedProjectId === projectId) {
-        applyDestination(set, `${before.pathname}${before.search}${before.hash}`);
+      const before = getRouteBeforeProjectSettings();
+      if (decodeDestination(before).focusedProjectId === projectId) {
+        applyDestination(set, before);
       } else {
         s.setProjectView(projectId, s.projectView[projectId] ?? 'agents');
       }

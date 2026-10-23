@@ -1,12 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  getRememberedAppRoutePath,
-  getRouteBeforeProjectSettings,
-  resetAppSettingsRouteMemory,
-  useAppSettingsRouteMemory
-} from '../useAppSettingsRouteMemory.js';
+import { getRememberedAppRoutePath, getRouteBeforeProjectSettings } from '../../lib/route-memory.js';
+import { resetAppSettingsRouteMemory, useAppSettingsRouteMemory } from '../useAppSettingsRouteMemory.js';
 
 function Probe({ onPath }: { onPath: (path: string) => void }) {
   const memory = useAppSettingsRouteMemory();
