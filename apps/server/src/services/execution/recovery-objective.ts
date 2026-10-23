@@ -2,6 +2,21 @@ import { SQUAD_GOAL_MAX_CHARS, formatSquadChars } from '@zana-ai/zcc-domain/squa
 
 const RECOVERY_BLOCK_SEPARATOR = '\n\n';
 
+/** The parts of a timeout-recovery successor's goal, before any shortening. */
+export interface RecoveryTextInput {
+  objective?: string;
+  header: string;
+  sections: readonly string[];
+  /** The unresolved human question; it exists nowhere else in the successor. */
+  pinnedSection?: string;
+  sourceExecutionId: string;
+  limit?: number;
+}
+
+function plainRecoveryText(input: RecoveryTextInput): string {
+  return [input.objective, input.header, ...input.sections, input.pinnedSection].filter(Boolean).join(RECOVERY_BLOCK_SEPARATOR);
+}
+
 /** Cut `text` to at most `max` UTF-16 code units without splitting a surrogate pair. */
 function safeCut(text: string, max: number): string {
   if (max <= 0) return '';
@@ -30,20 +45,15 @@ function fitPinned(text: string, max: number): string {
  * goal limit. When the plain join fits it is returned unchanged; otherwise the
  * objective and header are kept, `pinnedSection` (the unresolved human question,
  * which exists nowhere else in the successor) is reserved up to half of the
- * limit, and the sections fill what is left.
+ * limit, and the sections fill what is left. The result is a bounded preview:
+ * when it is shortened, the full outputs and questions remain only in the source
+ * execution's record, which the successor's members cannot read.
  */
-export function fitRecoveryObjective(input: {
-  objective?: string;
-  header: string;
-  sections: readonly string[];
-  pinnedSection?: string;
-  sourceExecutionId: string;
-  limit?: number;
-}): string {
+export function fitRecoveryObjective(input: RecoveryTextInput): string {
   const limit = input.limit ?? SQUAD_GOAL_MAX_CHARS;
   const { header, sections } = input;
   let objective = input.objective;
-  const plain = [objective, header, ...sections, input.pinnedSection].filter(Boolean).join(RECOVERY_BLOCK_SEPARATOR);
+  const plain = plainRecoveryText(input);
   if (plain.length <= limit) return plain;
 
   // A recovery of a recovery: drop the earlier block so the original goal survives whole.
@@ -52,7 +62,7 @@ export function fitRecoveryObjective(input: {
     if (earlier >= 0) objective = objective.slice(0, earlier);
   }
 
-  const marker = `${RECOVERY_BLOCK_SEPARATOR}[Recovery context shortened to fit the ${formatSquadChars(limit)}-character goal limit. Full outputs: execution ${input.sourceExecutionId}.]`;
+  const marker = `${RECOVERY_BLOCK_SEPARATOR}[Recovery context shortened to fit the ${formatSquadChars(limit)}-character goal limit. Full outputs and questions: execution ${input.sourceExecutionId}.]`;
   const pinned = input.pinnedSection ? fitPinned(input.pinnedSection, Math.floor(limit / 2)) : '';
   const pinnedBlock = pinned ? `${RECOVERY_BLOCK_SEPARATOR}${pinned}` : '';
   const tailBlock = header + pinnedBlock + marker;

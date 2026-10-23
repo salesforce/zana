@@ -98,6 +98,78 @@ describe('Squad goal and summary limit in the execution service and store', () =
     expect(objective.length).toBeLessThanOrEqual(2048);
     expect(objective).toContain('Recovery run');
     expect(objective).toContain('Approve target A?');
-    expect(objective).toContain('Recovery context shortened to fit the 2,048-character goal limit. Full outputs: execution execution-1.]');
+    expect(objective).toContain('Recovery context shortened to fit the 2,048-character goal limit. Full outputs and questions: execution execution-1.]');
+  }));
+
+  // A goal near the limit plus long, several open questions: the successor still launches, with a
+  // bounded preview that keeps the re-ask instruction, and its slots are left as they were.
+  async function recoverWithLongContext(filePath: string, objective: string) {
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: (() => { let next = 0; return () => `execution-${++next}`; })(), now: () => now });
+    const service = new SquadExecutionService(deps(filePath, { store, now: () => now }));
+    const started = await service.start('owner', 'project-1', {
+      ...request, objective, launchRequestId: 'source-context', policy: { deadlineMs: 100 },
+      slots: [{ initialTask: 'Lead the run' }, { initialTask: 'Run tests' }]
+    });
+    if (!started.ok) throw new Error(`source launch failed: ${started.message}`);
+    let source = await store.registerPlan(started.value.id, started.value.stateVersion, [
+      { id: 'done', title: 'Inspect', task: 'Inspect', dependencies: [], readOnly: true },
+      { id: 'ask-a', title: 'Ask A', task: 'Ask A', dependencies: ['done'], readOnly: true },
+      { id: 'ask-b', title: 'Ask B', task: 'Ask B', dependencies: ['done'], readOnly: true }
+    ]);
+    source = await store.claimWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'done');
+    source = await store.completeWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'done', 'r'.repeat(2000));
+    source = await store.claimWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'ask-a');
+    source = await store.blockWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'ask-a', {
+      id: 'blocker-a', question: `${'Context for the release decision. '.repeat(40)}Approve staging or production?`, options: ['Staging first', 'Straight to production']
+    });
+    source = await store.claimWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-2' }, 'ask-b');
+    source = await store.blockWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-2' }, 'ask-b', {
+      id: 'blocker-b', question: 'Which label should result.txt use?', options: ['About Atlas', 'Atlas']
+    });
+    now = 1_101;
+    source = (await store.decideDeadline(source.id, 1_100, 0)).record;
+    const recovered = await service.recoverTimedOut('owner', 'project-1', source.id, source.stateVersion, 'recover-context');
+    expect(recovered).toMatchObject({ ok: true, value: { id: 'execution-2' } });
+    return (await store.get('execution-2'))!;
+  }
+
+  it('recovers a near-limit goal with long and several open questions as a bounded preview', async () => fixture(async (filePath) => {
+    const successor = await recoverWithLongContext(filePath, `${'g'.repeat(2036)}GOAL-TAIL.`);
+    const objective = successor.request.objective!;
+    expect(objective.length).toBeLessThanOrEqual(2048);
+    expect(objective).toContain('Recovery run: completed read-only work must not be repeated.');
+    expect(objective).toContain('Unresolved human input from the timed-out run:\n- Context for the release decision.');
+    expect(objective).toContain('Ask this again with execution.work.block before continuing');
+    expect(objective).toContain('Full outputs and questions: execution execution-1.]');
+    expect(successor.request.slots.map((slot) => slot.initialTask)).toEqual(['Lead the run', 'Run tests']);
+  }));
+
+  it('launches a recovery whose goal fits with its slots exactly as they were', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: (() => { let next = 0; return () => `execution-${++next}`; })(), now: () => now });
+    const service = new SquadExecutionService(deps(filePath, { store, now: () => now }));
+    const started = await service.start('owner', 'project-1', { ...request, objective: 'Ship it', launchRequestId: 'source-short', policy: { deadlineMs: 100 } });
+    if (!started.ok) throw new Error('source launch failed');
+    let source = await store.registerPlan(started.value.id, started.value.stateVersion, [
+      { id: 'done', title: 'Inspect', task: 'Inspect', dependencies: [], readOnly: true },
+      { id: 'pending', title: 'Report', task: 'Report', dependencies: ['done'], readOnly: true }
+    ]);
+    source = await store.claimWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'done');
+    source = await store.completeWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'done', 'found A');
+    source = await store.claimWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'pending');
+    source = await store.blockWork(source.id, source.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'pending', { id: 'blocker', question: 'Approve target A?' });
+    now = 1_101;
+    source = (await store.decideDeadline(source.id, 1_100, 0)).record;
+    const recovered = await service.recoverTimedOut('owner', 'project-1', source.id, source.stateVersion, 'recover-short');
+    expect(recovered).toMatchObject({ ok: true });
+    const successor = (await store.get('execution-2'))!;
+    expect(successor.request.objective).toBe([
+      'Ship it',
+      'Recovery run: completed read-only work must not be repeated.',
+      'Verified completed outputs:\nInspect: found A',
+      'Unresolved human input from the timed-out run:\n- Approve target A?\nAsk this again with execution.work.block before continuing; do not assume an answer or contact canceled workers.'
+    ].join('\n\n'));
+    expect(successor.request.slots).toEqual(source.request.slots);
   }));
 });

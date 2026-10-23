@@ -113,6 +113,20 @@ describe('TeamComposer goal limit', () => {
     expect(screen.queryByTestId('team-command-error')).toBeNull();
   });
 
+  it('clears an earlier launch error when it refuses an over-limit goal', async () => {
+    h.goalText = 'do it';
+    h.startJob.mockResolvedValue({ ok: false, code: 'X', message: 'boom' });
+    const view = render(<TeamComposer prefill={prefill()} />);
+    fireEvent.click(screen.getByTestId('team-command-send'));
+    await waitFor(() => expect(screen.getByTestId('team-command-error').textContent).toContain('boom'));
+    h.goalText = 'a'.repeat(2049);
+    view.rerender(<TeamComposer prefill={prefill()} />);
+    await act(async () => { h.captured?.onSubmit(); });
+    expect(screen.queryByTestId('team-command-error')).toBeNull();
+    expect(screen.getByTestId('team-goal-limit-message').textContent).toBe(goalMessage(2049));
+    expect(h.startJob).toHaveBeenCalledTimes(1);
+  });
+
   it('launches a goal of exactly the limit', async () => {
     h.goalText = 'a'.repeat(2048);
     h.startJob.mockResolvedValue({ ok: true, value: {} });

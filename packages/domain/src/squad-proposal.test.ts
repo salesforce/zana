@@ -3,6 +3,7 @@ import { toTeamSummary, type Team } from './product.js';
 import {
   SQUAD_GOAL_MAX_CHARS,
   SQUAD_LIMIT_COUNTER_FROM,
+  SQUAD_LIMIT_COUNTER_RATIO,
   SQUAD_PROPOSAL_LIMITS,
   SQUAD_SUMMARY_MAX_CHARS,
   formatSquadChars,
@@ -119,7 +120,9 @@ describe('shared Squad goal and summary limit', () => {
     expect(SQUAD_SUMMARY_MAX_CHARS).toBe(2048);
   });
 
-  it('starts the counter at 1,844', () => {
+  it('starts the counter at 1,844, from the one shared ratio', () => {
+    expect(SQUAD_LIMIT_COUNTER_RATIO).toBe(0.9);
+    expect(SQUAD_LIMIT_COUNTER_FROM).toBe(Math.ceil(SQUAD_GOAL_MAX_CHARS * SQUAD_LIMIT_COUNTER_RATIO));
     expect(SQUAD_LIMIT_COUNTER_FROM).toBe(1844);
   });
 

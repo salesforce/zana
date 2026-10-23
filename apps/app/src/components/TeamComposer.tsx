@@ -215,10 +215,12 @@ export function TeamComposer({
   const launch = async () => {
     if (!teamId || !project || launching) return;
     if (field.typeaheadOpen && field.suggestions.length > 0) return;
-    if (textOverMessage) return;
     setError(null);
     setRequirementFailure(null);
     setAvailabilityUnknown(null);
+    // Over the limit, the limit message is the only one that applies: clear any
+    // error from an earlier attempt, then refuse.
+    if (textOverMessage) return;
     setLaunching(true);
     const revision = field.captureRevision();
     try {

@@ -32,8 +32,10 @@ export function resolveLaunchApproval(
 export const SQUAD_GOAL_MAX_CHARS = 2048;
 /** The execution store's persisted summary limit; not higher because an older Zana treats the whole execution store as corrupt when one record has a longer summary. */
 export const SQUAD_SUMMARY_MAX_CHARS = 2048;
-/** The composer shows its character counter from this length (90% of the goal limit). */
-export const SQUAD_LIMIT_COUNTER_FROM = Math.ceil(SQUAD_GOAL_MAX_CHARS * 0.9);
+/** The share of a Squad text limit at which the composer starts showing its character counter. */
+export const SQUAD_LIMIT_COUNTER_RATIO = 0.9;
+/** The goal length from which the composer shows its character counter. */
+export const SQUAD_LIMIT_COUNTER_FROM = Math.ceil(SQUAD_GOAL_MAX_CHARS * SQUAD_LIMIT_COUNTER_RATIO);
 
 export type SquadLaunchLimitCode = 'GOAL_TOO_LONG' | 'SUMMARY_TOO_LONG';
 

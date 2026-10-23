@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { fitRecoveryObjective } from '../recovery-objective.js';
 
 const HEADER = 'Recovery run: completed read-only work must not be repeated.';
-const MARKER = '[Recovery context shortened to fit the 2,048-character goal limit. Full outputs: execution exec-1.]';
+const MARKER = '[Recovery context shortened to fit the 2,048-character goal limit. Full outputs and questions: execution exec-1.]';
 const fit = (input: Partial<Parameters<typeof fitRecoveryObjective>[0]>) =>
   fitRecoveryObjective({ header: HEADER, sections: [], sourceExecutionId: 'exec-1', ...input });
 
@@ -73,7 +73,7 @@ describe('fitRecoveryObjective', () => {
     expect(second.startsWith(goal + '\n\n' + HEADER)).toBe(true);
     expect(second.split(HEADER)).toHaveLength(2);
     expect(second.split('[Recovery context shortened')).toHaveLength(2);
-    expect(second).toContain('Full outputs: execution exec-2.]');
+    expect(second).toContain('Full outputs and questions: execution exec-2.]');
     expect(second).not.toContain('exec-1');
     expect(second).not.toContain('d'.repeat(50));
   });
@@ -130,5 +130,31 @@ describe('fitRecoveryObjective', () => {
     expect(second).toContain('Q2 new question');
     expect(second).not.toContain('Q1 old question');
     expect(second).not.toContain('…');
+  });
+});
+
+describe('fitRecoveryObjective with long and several open questions', () => {
+  const question = [
+    'Unresolved human input from the timed-out run:',
+    `- ${'Context for the release decision. '.repeat(40)}Approve staging or production? Options: Staging first | Straight to production`,
+    '- Which label should result.txt use? Options: About Atlas | Atlas',
+    'Ask this again with execution.work.block before continuing; do not assume an answer or contact canceled workers.'
+  ].join('\n');
+
+  it('keeps a bounded preview: header, the start of the questions, the re-ask instruction and the source pointer', () => {
+    const objective = `${'g'.repeat(2036)}GOAL-TAIL.`;
+    const out = fit({ objective, sections: [`Verified completed outputs:\n${'o'.repeat(3000)}`], pinnedSection: question });
+    expect(out.length).toBeLessThanOrEqual(2048);
+    expect(out).toContain(HEADER);
+    expect(out).toContain('Unresolved human input from the timed-out run:\n- Context for the release decision.');
+    expect(out).toContain('…\nAsk this again with execution.work.block before continuing');
+    expect(out.endsWith(MARKER)).toBe(true);
+  });
+
+  it('keeps every question whole when the questions fit in half the limit', () => {
+    const short = 'Unresolved human input from the timed-out run:\n- Approve staging or production? Options: Staging first | Straight to production\n- Which label? Options: About Atlas | Atlas\nAsk this again with execution.work.block before continuing.';
+    const out = fit({ objective: `${'g'.repeat(2036)}GOAL-TAIL.`, sections: ['o'.repeat(3000)], pinnedSection: short });
+    expect(out.length).toBeLessThanOrEqual(2048);
+    expect(out).toContain(short);
   });
 });
