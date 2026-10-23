@@ -40,7 +40,7 @@ import type { Persona, PersonaInput, TeamInput } from '@zana-ai/zcc-domain/produ
 import { harnessEffectiveDefault, harnessVerifyBundle } from './harness-via-rpc.js';
 import { listJsonFiles } from './disk-json.js';
 import { PluginSpawnHarnessError, pluginProviderAvailable, resolvePluginSpawnProvider } from './plugin-thread-spawn.js';
-import { productPluginSpawnRouting } from './plugin-harness-routing.js';
+import { pluginEffectiveHarnessDefault, productPluginSpawnRouting } from './plugin-harness-routing.js';
 import { slashPlanPromptInput } from './plugin-thread-routing.js';
 import { ThreadCreateError } from './thread-create.js';
 import { InteractionService } from '../services/interactions/interaction-service.js';
@@ -390,10 +390,15 @@ export function createAttachedProductPluginService(
         harness,
         providers: listThreadProviders(),
         defaultHarness: ctx.config.getConfig().defaultHarness,
-        effectiveDefault: () => productProjectHarnessDefault(ctx, projectId, hostId)
+        effectiveDefault: () => pluginEffectiveHarnessDefault(
+          ctx,
+          { pluginId, projectId, ...(hostId ? { hostId } : {}) },
+          () => productProjectHarnessDefault(ctx, projectId, hostId)
+        )
       });
       const routing = await productPluginSpawnRouting(ctx, {
         projectId,
+        pluginId,
         ...(hostId ? { hostId } : {}),
         providerId: resolved.providerId,
         ...(resolved.harness ? { harness: resolved.harness } : {})
@@ -430,7 +435,9 @@ export function createAttachedProductPluginService(
         if (fromOverride && error instanceof ThreadCreateError && error.code === 'invalid-model') {
           throw new PluginSpawnHarnessError(
             `${error.message} (from the ${fromOverride.source} AI harness override). `
-            + 'Change it in Settings → AI Harness.'
+            + (fromOverride.source === 'plugin'
+              ? "Change it in this plugin's AI Harness settings."
+              : 'Change it in Settings → AI Harness.')
           );
         }
         throw error;

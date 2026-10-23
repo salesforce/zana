@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname } from 'node:path';
-import { COMPOSER_LAUNCH_SURFACES_REV, type AppConfig } from '@zana-ai/zcc-domain/product';
+import { COMPOSER_LAUNCH_SURFACES_REV, type AppConfig, type PluginHarnessOverrideV1 } from '@zana-ai/zcc-domain/product';
 import { DEFAULT_TERMINAL_THEME } from '@zana-ai/zcc-domain/terminal-themes';
 import { atomicDurableWrite, DurableWriteConflictError } from '../../durable-store.js';
 
@@ -58,6 +58,37 @@ export function ensureComposerLaunchSurfaces<T extends Partial<AppConfig>>(confi
   return next;
 }
 
+/**
+ * Plugin-keyed Global AI-harness overrides, stored beside Core's
+ * `harnessRouting` but never part of {@link AppConfig}. The injected
+ * normalizers drop unknown keys, so every write here carries this key over
+ * from disk; only {@link createConfigStore}'s plugin accessors change it.
+ */
+export const PLUGIN_HARNESS_ROUTING_KEY = 'pluginHarnessRouting';
+
+type PluginHarnessRoutingMap = Record<string, PluginHarnessOverrideV1>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isRouting(value: unknown): value is PluginHarnessOverrideV1 {
+  return isRecord(value) && value.schemaVersion === 1 && isRecord(value.byAdapter);
+}
+
+function pluginHarnessRoutingOf(raw: unknown): PluginHarnessRoutingMap {
+  const map = isRecord(raw) ? raw[PLUGIN_HARNESS_ROUTING_KEY] : undefined;
+  if (!isRecord(map)) return {};
+  return Object.fromEntries(Object.entries(map).filter(([, value]) => isRouting(value))) as PluginHarnessRoutingMap;
+}
+
+function withPluginHarnessRouting<T extends object>(config: T, map: PluginHarnessRoutingMap): T {
+  const next = { ...config } as Record<string, unknown>;
+  if (Object.keys(map).length) next[PLUGIN_HARNESS_ROUTING_KEY] = map;
+  else delete next[PLUGIN_HARNESS_ROUTING_KEY];
+  return next as T;
+}
+
 function composerLaunchSurfacesDiffer(before: Partial<AppConfig>, after: Partial<AppConfig>): boolean {
   return before.composerShowCliAgent !== after.composerShowCliAgent
     || before.composerShowModern !== after.composerShowModern
@@ -85,10 +116,15 @@ export function createConfigStore(
     }
   };
 
-  const writeConfig = (config: AppConfig, expectedHash: string | null): void => {
+  const writeRaw = (value: object, expectedHash: string | null): void => {
     const directory = dirname(configFile);
     if (!existsSync(directory)) mkdirSync(directory, { recursive: true });
-    atomicDurableWrite(configFile, Buffer.from(JSON.stringify(config, null, 2)), { expectedHash });
+    atomicDurableWrite(configFile, Buffer.from(JSON.stringify(value, null, 2)), { expectedHash });
+  };
+
+  /** Write `config`, carrying the plugin overrides already on `disk`. */
+  const writeConfig = (config: AppConfig, disk: { value: unknown; hash: string | null }): void => {
+    writeRaw(withPluginHarnessRouting(config, pluginHarnessRoutingOf(disk.value)), disk.hash);
   };
 
   const fallback = (): AppConfig => ({
@@ -162,7 +198,7 @@ export function createConfigStore(
       const healed = ensureComposerLaunchSurfaces(merged);
       if (disk.hash !== null && composerLaunchSurfacesDiffer(merged, healed)) {
         try {
-          writeConfig(deps.canonicalConfigForWrite(healed), disk.hash);
+          writeConfig(deps.canonicalConfigForWrite(healed), disk);
         } catch {
           /* still serve the healed view if another writer won the file */
         }
@@ -179,7 +215,9 @@ export function createConfigStore(
         ...deps.normalizeConfig(next),
         version: 1 as const
       }));
-      writeConfig(deps.canonicalConfigForWrite(normalized), expectedHash);
+      // A changed file fails the expected-hash check, so carrying the current
+      // disk's plugin overrides never resurrects a stale copy.
+      writeConfig(deps.canonicalConfigForWrite(normalized), { value: readJsonRaw<unknown>({}).value, hash: expectedHash });
       return normalized;
     },
     setConfig(patch: Partial<AppConfig>): AppConfig {
@@ -194,8 +232,35 @@ export function createConfigStore(
         normalizedPatch
       );
       const committed = deps.canonicalConfigForWrite(next);
-      writeConfig(committed, disk.hash);
+      writeConfig(committed, disk);
       return hydrate(committed);
+    },
+    /** This plugin's Global AI-harness override, or `null`. */
+    getPluginHarnessRouting(pluginId: string): PluginHarnessOverrideV1 | null {
+      return pluginHarnessRoutingOf(readJsonRaw<unknown>({}).value)[pluginId] ?? null;
+    },
+    /**
+     * Set or clear (`null`) one plugin's Global override. Callers validate the
+     * value first. Compare-and-swap on the file hash; a concurrent writer in
+     * another process is retried against its result, never overwritten.
+     */
+    setPluginHarnessRouting(pluginId: string, value: PluginHarnessOverrideV1 | null): void {
+      for (let attempt = 0; ; attempt += 1) {
+        const disk = readJsonRaw<unknown>({});
+        if (disk.hash !== null && !isRecord(disk.value)) {
+          throw new Error('config file is not a JSON object');
+        }
+        const map = pluginHarnessRoutingOf(disk.value);
+        if (value) map[pluginId] = value;
+        else delete map[pluginId];
+        const base = isRecord(disk.value) ? disk.value : {};
+        try {
+          writeRaw(withPluginHarnessRouting(base, map), disk.hash);
+          return;
+        } catch (error) {
+          if (!(error instanceof DurableWriteConflictError) || attempt >= 2) throw error;
+        }
+      }
     }
   };
 }

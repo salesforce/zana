@@ -2,7 +2,6 @@ import { ProjectSourcesSettings } from './ProjectSourcesSettings.js';
 import { product } from '../../lib/product-client.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { ChevronRight } from 'lucide-react';
 import type {
   Project,
   ProjectSettings,
@@ -24,22 +23,11 @@ import { useData, useUi } from '@/store';
 import { Section, Field, ChipField, TextArgsField } from '@/components/settings/FormFields';
 import { HarnessOptionSelect } from '@/components/HarnessOptionSelect';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
-import { StencilForm, Skeleton } from '@/components/ui/Skeleton';
-import { profileIcon } from '@/lib/profileIcon';
+import { StencilForm } from '@/components/ui/Skeleton';
+import { HarnessRoutingEditor, applyHarnessRoutingPatch, type HarnessRoutingPatch } from './HarnessRoutingEditor.js';
 
 const USE_DEFAULT = { id: '', label: 'Use default' } as const;
 const CODEX_UI = providerUiSchema('codex');
-const FAMILY_PROFILE: Record<HarnessFamily, LaunchProfileId> = {
-  claude: 'claude',
-  cursor: 'cursor',
-  codex: 'codex',
-  pi: 'pi',
-  opencode: 'opencode',
-  grok: 'grok',
-  mastracode: 'mastracode',
-  afcode: 'afcode'
-};
-
 interface ProjectTabProps {
   project: Project | null;
   onOpen: (path: string) => void;
@@ -627,8 +615,6 @@ export function ProjectHarnessSettings({
   const [descriptors, setDescriptors] = useState<HarnessAdapterDescriptor[] | null>(null);
   const [settingsState, setSettingsState] = useState<{ projectId: string; value: ProjectSettings } | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
-  const [openHarnesses, setOpenHarnesses] = useState<Set<string>>(() => new Set());
-  const [activeHarnessTabs, setActiveHarnessTabs] = useState<Record<string, 'launch' | 'harness' | 'files'>>({});
   const writeSequence = useRef(0);
   const currentProjectId = useRef(project.id);
   const pendingSettingsWrites = useRef(0);
@@ -725,38 +711,10 @@ export function ProjectHarnessSettings({
     }
   };
 
-  const saveRouting = (
-    adapterId: HarnessFamily,
-    patch: { providerTargetId?: string; modelTargetId?: string; executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous' }
-  ) => {
+  const saveRouting = (adapterId: HarnessFamily, patch: HarnessRoutingPatch) => {
     if (!settings) return;
-    const byAdapter = { ...(settings.harnessRouting?.byAdapter ?? {}) };
-    const current = byAdapter[adapterId] ?? {};
-    const next = { ...current, ...patch };
-    for (const key of Object.keys(next) as Array<keyof typeof next>) {
-      if (next[key] === undefined) delete next[key];
-    }
-    if (Object.keys(next).length) byAdapter[adapterId] = next;
-    else delete byAdapter[adapterId];
-    const harnessRouting = Object.keys(byAdapter).length
-      ? { schemaVersion: 1 as const, byAdapter }
-      : undefined;
-    saveSettings({ harnessRouting });
+    saveSettings({ harnessRouting: applyHarnessRoutingPatch(settings.harnessRouting, adapterId, patch) });
   };
-
-  const toggleHarness = (id: string) => {
-    setOpenHarnesses((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const portableLabel = (value: string) => value
-    .split('-')
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
 
   return (
     <Section
@@ -765,203 +723,61 @@ export function ProjectHarnessSettings({
       title="AI harnesses"
       help="Project settings apply after Global defaults and before Persona and Agent choices: Global → Project → Persona → Agent. Later choices take priority when a setting cannot be combined."
     >
-      <Field label="Default harness" searchId="project.default-harness">
-        {descriptors === null || !settingsReady ? (
-          <Skeleton width="180px" height="28px" />
+      <HarnessRoutingEditor
+        descriptors={descriptors ?? []}
+        value={settings?.harnessRouting}
+        onChange={saveRouting}
+        loading={descriptors === null || !settingsReady}
+        defaultHarness={{ value: current, onChange: save }}
+        notice={settingsError ? <ProjectSettingsError message={settingsError} /> : null}
+        renderLaunchExtras={(descriptor) => {
+          if (!settings) return null;
+          if (descriptor.id === 'claude') {
+            return (
+              <ClaudeProjectLaunchFields
+                settings={settings}
+                update={(patch) => setSettingsState({ projectId: project.id, value: { ...settings, ...patch } })}
+                save={(patch) => void saveSettings(patch)}
+              />
+            );
+          }
+          if (descriptor.id === 'codex') return <CodexProjectLaunchFields settings={settings} save={(patch) => void saveSettings(patch)} />;
+          if (descriptor.id === 'pi') return <PiProjectLaunchFields settings={settings} save={(patch) => void saveSettings(patch)} />;
+          return null;
+        }}
+        renderTab={(tab, descriptor) => tab === 'harness' ? (
+          descriptor.id === 'claude' && !project.remote ? (
+            <ProjectClaudeSettings projectId={project.id} onSaved={onSaved} compact />
+          ) : descriptor.id === 'codex' && !project.remote ? (
+            <ProjectCodexSettings projectId={project.id} descriptor={descriptor} onSaved={onSaved} />
+          ) : descriptor.id === 'opencode' && !project.remote ? (
+            <ProjectOpenCodeSettings projectId={project.id} descriptor={descriptor} onSaved={onSaved} />
+          ) : <p className="settings-help">{descriptor.configFiles[0]?.reason ?? 'No native harness settings are available.'}</p>
+        ) : descriptor.id === 'claude' ? (
+          <ClaudeHarnessFiles projectPath={project.path} onOpen={onOpen} />
+        ) : descriptor.id === 'cursor' ? (
+          <CursorHarnessFiles projectPath={project.path} onOpen={onOpen} />
+        ) : descriptor.id === 'opencode' ? (
+          <OpenCodeHarnessFiles projectPath={project.path} onOpen={onOpen} />
+        ) : descriptor.id === 'codex' ? (
+          <CodexHarnessFiles projectPath={project.path} onOpen={onOpen} />
         ) : (
-          <PopoverPicklist
-            ariaLabel="Default harness"
-            value={current}
-            onChange={save}
-            options={[
-              { value: '', label: 'Use global default' },
-              ...options.map((entry) => ({
-                value: entry.id,
-                label: entry.label,
-                disabled: !entry.availability.enabled || !entry.availability.installed
-              }))
-            ]}
-          />
-        )}
-      </Field>
-      {settingsError && <ProjectSettingsError message={settingsError} />}
-      <div className="opener-list">
-      {settings && options.map((descriptor) => {
-          const id = descriptor.id as HarnessFamily;
-          const open = openHarnesses.has(id);
-          const activeTab = activeHarnessTabs[id] ?? 'launch';
-          const routing = settings.harnessRouting?.byAdapter?.[id];
-          const executionMapping = descriptor.targets?.executionStateMapping;
-          const unavailable = !descriptor.availability.enabled || !descriptor.availability.installed;
-          const enabled = id === 'claude' || descriptor.availability.enabled;
-          return (
-            <div className={`opener-row${enabled ? '' : ' opener-row--off'}`} key={id}>
-              <div className="opener-row-head">
-                <button
-                  type="button"
-                  className="opener-row-expand"
-                  aria-expanded={open}
-                  aria-label={`Project settings for ${descriptor.label}`}
-                  onClick={() => toggleHarness(id)}
-                >
-                  <ChevronRight size={14} className={open ? 'opener-row-chevron opener-row-chevron--open' : 'opener-row-chevron'} aria-hidden />
-                </button>
-                <span className="opener-row-glyph" aria-hidden>
-                  {profileIcon(FAMILY_PROFILE[id], 17)}
+          <>
+            {descriptor.configFiles.map((file) => (
+              <div className="settings-field" key={file.id}>
+                <span className="settings-label">{file.label}</span>
+                <span className="settings-help harness-file-status">
+                  {file.effect === 'native-file' ? 'Native file' : file.effect === 'argv-app-store' ? 'Zana app/argv' : 'Unsupported'} —
+                  {' '}
+                  {file.effect === 'native-file'
+                    ? `${file.scopes.join(' + ')}; structured edit available; raw edit ${file.rawEdit ? 'available' : 'unavailable'}.`
+                    : file.reason ?? 'Unsupported'}
                 </span>
-                <div className="opener-row-text">
-                  <span className="opener-row-name">{descriptor.label}</span>
-                  <span className="opener-row-blurb">Project-specific launch settings</span>
-                </div>
               </div>
-              {open ? (
-                <div className="opener-row-advanced">
-                  <div className="harness-settings-tabs" role="tablist" aria-label={`${descriptor.label} settings`}>
-                    {([
-                      ['launch', 'Zana Settings'],
-                      ['harness', 'Harness Settings'],
-                      ['files', 'Harness Files']
-                    ] as const).map(([tab, label]) => (
-                      <button
-                        key={tab}
-                        type="button"
-                        role="tab"
-                        aria-selected={activeTab === tab}
-                        className={activeTab === tab ? 'active' : ''}
-                        onClick={() => setActiveHarnessTabs((current) => ({ ...current, [id]: tab }))}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                  {activeTab === 'launch' && <section className="harness-settings-group">
-                  <p className="settings-help">Launch and routing settings affect Zana-created sessions only.</p>
-                  <fieldset disabled={unavailable} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
-                  {!!descriptor.targets?.providers?.length && (
-                    <Field searchId="project.default-provider" label="Default Provider" help={descriptor.targets.providerModelRelationship === 'fixed-provider'
-                      ? `${descriptor.label} uses this fixed provider.`
-                      : 'Selects which provider’s models appear below. Combined provider/model harnesses encode this choice in the model id.'}>
-                      <PopoverPicklist
-                        value={routing?.providerTargetId
-                          ?? descriptor.targets.models.find((target) => target.id === routing?.modelTargetId)?.provider
-                          ?? (descriptor.targets.providerModelRelationship === 'fixed-provider' ? descriptor.targets.providers[0]?.id : '')}
-                        ariaLabel="Default provider"
-                        searchable={false}
-                        disabled={descriptor.targets.providerModelRelationship === 'fixed-provider'}
-                        onChange={(providerId) => {
-                          const providerTargetId = providerId || undefined;
-                          const currentModel = descriptor.targets?.models.find((target) => target.id === routing?.modelTargetId);
-                          saveRouting(id, {
-                            providerTargetId,
-                            ...(!providerTargetId || (currentModel && currentModel.provider !== providerTargetId)
-                              ? { modelTargetId: undefined }
-                              : {})
-                          });
-                        }}
-                        options={[
-                          ...(descriptor.targets.providerModelRelationship !== 'fixed-provider' ? [{ value: '', label: 'Use global default' }] : []),
-                          ...descriptor.targets.providers.map((provider) => ({ value: provider.id, label: provider.label }))
-                        ]}
-                      />
-                    </Field>
-                  )}
-                  {!!descriptor.targets?.models.length && (
-                    <Field searchId="project.default-model-level" label="Default Model Level" help={`Native ${descriptor.label} models with portable mappings.`}>
-                      <PopoverPicklist
-                        value={routing?.modelTargetId ?? ''}
-                        ariaLabel="Default model level"
-                        onChange={(modelTargetId) => saveRouting(id, { modelTargetId: modelTargetId || undefined })}
-                        disabled={unavailable}
-                        title={unavailable ? descriptor.availability.reason ?? 'Harness unavailable' : undefined}
-                        options={[
-                          { value: '', label: 'Use global default' },
-                          ...descriptor.targets.models
-                          .filter((target) => !routing?.providerTargetId || !target.provider || target.provider === routing.providerTargetId)
-                          .map((target) => ({
-                            value: target.id,
-                            label: `${target.label}${target.level ? ` [${portableLabel(target.level)}]` : ''}`
-                          }))
-                        ]}
-                      />
-                    </Field>
-                  )}
-                  {executionMapping && id !== 'codex' && (
-                    <Field searchId="project.default-execution-state" label="Default Execution State" help={`Native ${descriptor.label} policies with portable mappings.`}>
-                      <PopoverPicklist
-                        value={routing?.executionState ?? ''}
-                        ariaLabel="Default execution state"
-                        searchable={false}
-                        onChange={(executionState) => saveRouting(id, {
-                          executionState: (executionState || undefined) as
-                            | 'plan'
-                            | 'interactive'
-                            | 'accept-edits'
-                            | 'autonomous'
-                            | undefined
-                        })}
-                        disabled={unavailable}
-                        title={unavailable ? descriptor.availability.reason ?? 'Harness unavailable' : undefined}
-                        options={[
-                          { value: '', label: 'Use global default' },
-                          ...Object.entries(executionMapping).map(([state, native]) => ({
-                            value: state,
-                            label: `${native} [${portableLabel(state)}]`
-                          }))
-                        ]}
-                      />
-                    </Field>
-                  )}
-                  {id === 'claude' && (
-                    <ClaudeProjectLaunchFields
-                      settings={settings}
-                      update={(patch) => setSettingsState({ projectId: project.id, value: { ...settings, ...patch } })}
-                      save={(patch) => void saveSettings(patch)}
-                    />
-                  )}
-                  {id === 'codex' && <CodexProjectLaunchFields settings={settings} save={(patch) => void saveSettings(patch)} />}
-                  {id === 'pi' && <PiProjectLaunchFields settings={settings} save={(patch) => void saveSettings(patch)} />}
-                  {!descriptor.targets?.models.length && !executionMapping && id !== 'claude' && id !== 'codex' && id !== 'pi' && (
-                    <p className="settings-help">No project-specific settings are available for this harness.</p>
-                  )}
-                  </fieldset>
-                  </section>}
-                  {activeTab === 'harness' && <section className="harness-settings-group">
-                  {descriptor.id === 'claude' && !project.remote ? (
-                    <ProjectClaudeSettings projectId={project.id} onSaved={onSaved} compact />
-                  ) : descriptor.id === 'codex' && !project.remote ? (
-                    <ProjectCodexSettings projectId={project.id} descriptor={descriptor} onSaved={onSaved} />
-                  ) : descriptor.id === 'opencode' && !project.remote ? (
-                    <ProjectOpenCodeSettings projectId={project.id} descriptor={descriptor} onSaved={onSaved} />
-                  ) : <p className="settings-help">{descriptor.configFiles[0]?.reason ?? 'No native harness settings are available.'}</p>}
-                  </section>}
-                  {activeTab === 'files' && <section className="harness-settings-group">
-                  {descriptor.id === 'claude' ? (
-                    <ClaudeHarnessFiles projectPath={project.path} onOpen={onOpen} />
-                  ) : descriptor.id === 'cursor' ? (
-                    <CursorHarnessFiles projectPath={project.path} onOpen={onOpen} />
-                  ) : descriptor.id === 'opencode' ? (
-                    <OpenCodeHarnessFiles projectPath={project.path} onOpen={onOpen} />
-                  ) : descriptor.id === 'codex' ? (
-                    <CodexHarnessFiles projectPath={project.path} onOpen={onOpen} />
-                  ) : descriptor.configFiles.map((file) => (
-                    <div className="settings-field" key={file.id}>
-                      <span className="settings-label">{file.label}</span>
-                      <span className="settings-help harness-file-status">
-                        {file.effect === 'native-file' ? 'Native file' : file.effect === 'argv-app-store' ? 'Zana app/argv' : 'Unsupported'} —
-                        {' '}
-                        {file.effect === 'native-file'
-                          ? `${file.scopes.join(' + ')}; structured edit available; raw edit ${file.rawEdit ? 'available' : 'unavailable'}.`
-                          : file.reason ?? 'Unsupported'}
-                      </span>
-                    </div>
-                  ))}
-                  </section>}
-                </div>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
+            ))}
+          </>
+        )}
+      />
     </Section>
   );
 }

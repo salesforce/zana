@@ -141,7 +141,7 @@ export type EffectiveHarnessDefaultResult =
       ok: true;
       profile: LaunchProfileId;
       family: HarnessFamily;
-      source: 'persona-pin' | 'project-canonical' | 'project-legacy' | 'global-default' | 'adapter-compatibility';
+      source: 'persona-pin' | 'project-canonical' | 'project-legacy' | 'global-default' | 'adapter-compatibility' | 'plugin-override';
     }
   | {
       ok: false;
@@ -4135,6 +4135,12 @@ export interface HarnessModelRoutingV1 {
       permissionMode?: string;
     };
   }>>;
+}
+
+/** A plugin's AI-harness override at one scope: Core's routing rows plus an optional harness choice. */
+export interface PluginHarnessOverrideV1 extends HarnessModelRoutingV1 {
+  /** Run the plugin's agents on this harness instead of the project's default harness. */
+  defaultHarness?: HarnessFamily;
 }
 
 /**

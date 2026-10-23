@@ -4,7 +4,7 @@
  * validates and attributes every mutation.
  */
 import { useMemo } from 'react';
-import { useRpc } from '@zana-ai/zcc-plugin-sdk/app';
+import { useRpc, type HarnessRoutingEditorProps, type PluginHarnessOverride } from '@zana-ai/zcc-plugin-sdk/app';
 import type {
   CommentStatus,
   DesignDocComment,
@@ -87,9 +87,19 @@ export interface UpdateArgs {
   alternativeTo?: string | null;
 }
 
+/** Where this plugin's AI harness override is stored; the Default Project is where project-less docs run. */
+export type HarnessScope = { kind: 'global' } | { kind: 'default-project' } | { kind: 'project'; projectId: string };
+export type HarnessRouting = PluginHarnessOverride;
+export type HarnessDescriptors = HarnessRoutingEditorProps['descriptors'];
+
 export interface DesignDocsApi {
   templates(): Promise<TemplateInfo[]>;
   projects(): Promise<ProjectInfo[]>;
+  harnessDescriptors(): Promise<HarnessDescriptors>;
+  /** This plugin's override at one scope, null when it inherits. */
+  harnessRouting(scope: HarnessScope): Promise<HarnessRouting | null>;
+  /** Save (or clear with null) the override; the host rejects a value that cannot launch. Returns what was stored. */
+  setHarnessRouting(scope: HarnessScope, value: HarnessRouting | null): Promise<HarnessRouting | null>;
   peerStatus(): Promise<PeerStatus>;
   groupStatus(): Promise<GroupStatus>;
   enablePeer(peerId: string): Promise<GroupStatus>;
@@ -170,6 +180,9 @@ export function createApi(call: Call): DesignDocsApi {
   return {
     templates: () => typed('templates'),
     projects: () => typed('projects'),
+    harnessDescriptors: () => typed('harnessDescriptors'),
+    harnessRouting: (scope) => typed('harnessRouting', scope),
+    setHarnessRouting: (scope, value) => typed('setHarnessRouting', { scope, value }),
     peerStatus: () => typed('peerStatus'),
     groupStatus: () => typed('groupStatus'),
     enablePeer: (peerId) => typed('enablePeer', { peerId }),

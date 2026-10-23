@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { ProjectSettingsPatchSchema, type ProjectSettingsPatch } from '@zana-ai/zcc-contracts/project-settings';
+import type { PluginHarnessOverrideV1 } from '@zana-ai/zcc-domain/product';
 import { atomicDurableWrite, createSerializedTransactionQueue } from './durable-store.js';
 
 type StoredProjectSettings = Record<string, unknown>;
@@ -17,10 +18,21 @@ export interface ProjectSettingsStoreOptions {
   projectSettingsFile: string;
 }
 
+/**
+ * Per-project, plugin-keyed AI-harness overrides, nested in the project's own
+ * entry (so removing the project removes them) and kept out of `get()`:
+ * they are not Core settings and must not round-trip through a settings patch.
+ */
+export const PLUGIN_HARNESS_ROUTING_KEY = 'pluginHarnessRouting';
+
 export interface ProjectSettingsStore {
   get(id: string): StoredProjectSettings;
   set(id: string, patch: ProjectSettingsPatch): Promise<StoredProjectSettings>;
   remove(id: string): Promise<void>;
+  /** One plugin's override for one project, or `null`. */
+  getPluginHarnessRouting(id: string, pluginId: string): PluginHarnessOverrideV1 | null;
+  /** Set or clear (`null`) one plugin's override for one project. Callers validate first. */
+  setPluginHarnessRouting(id: string, pluginId: string, value: PluginHarnessOverrideV1 | null): Promise<void>;
 }
 
 interface Snapshot {
@@ -124,6 +136,14 @@ function canonicalForWrite(settings: StoredProjectSettings): StoredProjectSettin
   return next;
 }
 
+function pluginHarnessRoutingOf(entry: unknown): Record<string, PluginHarnessOverrideV1> {
+  const map = isRecord(entry) ? entry[PLUGIN_HARNESS_ROUTING_KEY] : undefined;
+  if (!isRecord(map)) return {};
+  return Object.fromEntries(Object.entries(map).filter(([, value]) =>
+    isRecord(value) && value.schemaVersion === 1 && isRecord(value.byAdapter)
+  )) as Record<string, PluginHarnessOverrideV1>;
+}
+
 function readSnapshot(path: string): Snapshot {
   try {
     if (!existsSync(path)) return { all: {}, hash: null };
@@ -157,7 +177,26 @@ export function createProjectSettingsStore({ projectSettingsFile }: ProjectSetti
 
   return {
     get(id) {
-      return compatibility(readSnapshot(projectSettingsFile).all[id] ?? {});
+      const settings = { ...readSnapshot(projectSettingsFile).all[id] };
+      delete settings[PLUGIN_HARNESS_ROUTING_KEY];
+      return compatibility(settings);
+    },
+    getPluginHarnessRouting(id, pluginId) {
+      return pluginHarnessRoutingOf(readSnapshot(projectSettingsFile).all[id])[pluginId] ?? null;
+    },
+    setPluginHarnessRouting(id, pluginId, value) {
+      return queue.run(async () => {
+        const { all, hash } = readSnapshot(projectSettingsFile);
+        const entry = isRecord(all[id]) ? { ...all[id] } : {};
+        const map = pluginHarnessRoutingOf(entry);
+        if (value) map[pluginId] = value;
+        else delete map[pluginId];
+        if (Object.keys(map).length) entry[PLUGIN_HARNESS_ROUTING_KEY] = map;
+        else delete entry[PLUGIN_HARNESS_ROUTING_KEY];
+        if (Object.keys(entry).length) all[id] = entry;
+        else delete all[id];
+        write(all, hash);
+      });
     },
     set(id, patch) {
       return queue.run(async () => {

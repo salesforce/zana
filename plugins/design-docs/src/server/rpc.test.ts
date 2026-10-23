@@ -451,7 +451,62 @@ describe('Design Docs RPC', () => {
     expect(method.mock.calls.map(([name]) => name)).not.toContain('agentSettings');
     expect(method.mock.calls.map(([name]) => name)).not.toContain('setAgentSettings');
     expect(method.mock.calls.map(([name]) => name)).not.toContain('agentHarnesses');
-    expect(method).toHaveBeenCalledTimes(47);
+    expect(method.mock.calls.map(([name]) => name)).toEqual(expect.arrayContaining(['harnessDescriptors', 'harnessRouting', 'setHarnessRouting']));
+    expect(method).toHaveBeenCalledTimes(50);
+  });
+});
+
+describe('Design Docs harness override RPC handlers', () => {
+  function routing() {
+    const store = new DesignDocStore(createTestDatabase());
+    const harnessRouting = {
+      descriptors: vi.fn(async () => [{ id: 'claude' }]),
+      read: vi.fn(async () => null),
+      write: vi.fn(async () => undefined)
+    };
+    const sdk = { harnessRouting, projects: { list: async () => [{ id: 'p1', name: 'App' }] } };
+    const rpc = createRpcHandlers({ store, changed: vi.fn(), sdk: sdk as never });
+    return { rpc, harnessRouting };
+  }
+  const value = { schemaVersion: 1, byAdapter: { claude: { modelTargetId: 'sonnet' } } };
+
+  it('lists descriptors and reads each scope kind through the host', async () => {
+    const { rpc, harnessRouting } = routing();
+    await expect(rpc.harnessDescriptors!(undefined)).resolves.toEqual([{ id: 'claude' }]);
+    await rpc.harnessRouting!({ kind: 'global' });
+    await rpc.harnessRouting!({ kind: 'default-project' });
+    await rpc.harnessRouting!({ kind: 'project', projectId: 'p1' });
+    expect(harnessRouting.read.mock.calls.map(([scope]) => scope)).toEqual([
+      { kind: 'global' }, { kind: 'default-project' }, { kind: 'project', projectId: 'p1' }
+    ]);
+  });
+
+  it('writes a value or clears with null, then returns what the host stored', async () => {
+    const { rpc, harnessRouting } = routing();
+    harnessRouting.read.mockResolvedValueOnce(value as never);
+    await expect(rpc.setHarnessRouting!({ scope: { kind: 'global' }, value })).resolves.toEqual(value);
+    expect(harnessRouting.write).toHaveBeenCalledWith({ kind: 'global' }, value);
+    await rpc.setHarnessRouting!({ scope: { kind: 'default-project' } });
+    expect(harnessRouting.write).toHaveBeenLastCalledWith({ kind: 'default-project' }, null);
+  });
+
+  it('rejects malformed scopes, unknown projects and bad values before the host sees them', async () => {
+    const { rpc, harnessRouting } = routing();
+    await expect(rpc.harnessRouting!({ kind: 'weird' })).rejects.toThrow(/scope.kind/);
+    await expect(rpc.harnessRouting!({ kind: 'global', projectId: 'p1' })).rejects.toThrow(/no projectId/);
+    await expect(rpc.harnessRouting!({ kind: 'project' })).rejects.toThrow(/projectId/);
+    await expect(rpc.harnessRouting!({ kind: 'project', projectId: 'nope' })).rejects.toThrow(/unknown project/);
+    await expect(rpc.harnessRouting!({ kind: 'global', extra: 1 })).rejects.toThrow(/accepts only/);
+    await expect(rpc.setHarnessRouting!({ scope: { kind: 'global' }, value: [] })).rejects.toThrow(/object or null/);
+    await expect(rpc.setHarnessRouting!({ scope: { kind: 'global' }, value, other: 1 })).rejects.toThrow(/accepts only/);
+    expect(harnessRouting.read).not.toHaveBeenCalled();
+    expect(harnessRouting.write).not.toHaveBeenCalled();
+  });
+
+  it('passes a host rejection through unchanged', async () => {
+    const { rpc, harnessRouting } = routing();
+    harnessRouting.write.mockRejectedValueOnce(new Error('Claude Code cannot apply plan.'));
+    await expect(rpc.setHarnessRouting!({ scope: { kind: 'global' }, value })).rejects.toThrow('Claude Code cannot apply plan.');
   });
 });
 

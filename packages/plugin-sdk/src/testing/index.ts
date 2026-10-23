@@ -744,6 +744,12 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
           return options.loadProviderModels(args);
         }
       },
+      harnessRouting: {
+        descriptors: async (input) => invokeSdk('harnessRouting.descriptors', () => [], input) as Awaited<ReturnType<ZccPluginApi['sdk']['harnessRouting']['descriptors']>>,
+        read: async (scope) => invokeSdk('harnessRouting.read', () => null, scope) as Awaited<ReturnType<ZccPluginApi['sdk']['harnessRouting']['read']>>,
+        write: async (scope, value) => { await invokeSdk('harnessRouting.write', () => undefined, scope, value); },
+        check: async (scope, value) => invokeSdk('harnessRouting.check', () => ({ ok: true }), scope, value) as Awaited<ReturnType<ZccPluginApi['sdk']['harnessRouting']['check']>>
+      },
       experimental_desktopBrowsers: {
         listInstances: (input) => invokeSdk('experimental_desktopBrowsers.listInstances', undefined, input) as ReturnType<ZccPluginApi['sdk']['experimental_desktopBrowsers']['listInstances']>,
         listTabs: (input) => invokeSdk('experimental_desktopBrowsers.listTabs', undefined, input) as ReturnType<ZccPluginApi['sdk']['experimental_desktopBrowsers']['listTabs']>,
