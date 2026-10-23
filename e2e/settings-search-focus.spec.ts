@@ -51,6 +51,8 @@ test("Ctrl/Cmd+, drilled into a project opens and closes that project's Settings
     const rail = win.locator('.project-scoped-nav.project-focused-nav');
     await rail.getByTestId('project-nav-scheduler').click();
     await expect(win).toHaveURL(new RegExp(`/projects/${projectId}/scheduler$`));
+    // The URL changes before the route renders; closing returns to the rendered view.
+    await expect(rail.getByTestId('project-nav-scheduler')).toHaveAttribute('aria-current', 'page');
 
     await win.keyboard.press('ControlOrMeta+Comma');
     await expect(win).toHaveURL(new RegExp(`/projects/${projectId}/settings$`));
