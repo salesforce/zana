@@ -3,12 +3,13 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const scope = vi.hoisted(() => ({ projectId: null as string | null }));
+const storeState = vi.hoisted(() => ({ loading: false, empty: false }));
 
 vi.mock('../../lib/product-client.js', () => ({ product: { personas: { delete: vi.fn() } } }));
 vi.mock('@/store', () => ({
   usePersonas: (selector: (s: { personas: unknown[]; loading: boolean }) => unknown) =>
     selector({
-      personas: [
+      personas: storeState.empty ? [] : [
         { id: 'user:zebra', name: 'Zebra 10', description: 'Last', source: 'user' },
         { id: 'builtin:reviewer', name: 'Reviewer', description: 'Reviews code', source: 'builtin' },
         { id: 'user:alpha-10', name: 'Alpha 10', description: 'Ten', source: 'user' },
@@ -20,7 +21,7 @@ vi.mock('@/store', () => ({
         { id: 'project:a', name: 'Project A', description: 'In scope', source: { projectId: 'project-a', projectName: 'A' } },
         { id: 'project:b', name: 'Project B', description: 'Out of scope', source: { projectId: 'project-b', projectName: 'B' } }
       ],
-      loading: false
+      loading: storeState.loading
     }),
   useUi: (selector: (s: { pushToast: () => void }) => unknown) => selector({ pushToast: () => undefined })
 }));
@@ -33,6 +34,8 @@ vi.mock('@/components/PersonaEditor', () => ({
 import { PersonasView } from './PersonasView';
 
 afterEach(() => {
+  storeState.loading = false;
+  storeState.empty = false;
   scope.projectId = null;
   cleanup();
 });
@@ -76,5 +79,21 @@ describe('PersonasView catalogue order', () => {
     expect(container.querySelector('[data-settings-target="personas.persona.project:b"]')).toBeNull();
     expect(screen.getByRole('tab', { name: /All 9/ })).toBeDefined();
     expect(screen.getByRole('tab', { name: /Project 1/ })).toBeDefined();
+  });
+
+  it('shows a loading stencil while personas load', () => {
+    storeState.loading = true;
+    const { container } = render(<PersonasView />);
+    expect(container.querySelector('.skills-row')).toBeNull();
+    expect(screen.queryByText('No matches')).toBeNull();
+  });
+
+  it('distinguishes an empty catalogue from a search with no matches', () => {
+    fireEvent.change(render(<PersonasView />).container.ownerDocument.querySelector('input[aria-label="Search personas"]')!, { target: { value: 'zzzz-none' } });
+    expect(screen.getByText('No matches')).toBeDefined();
+    cleanup();
+    storeState.empty = true;
+    render(<PersonasView />);
+    expect(screen.getByText('No personas found')).toBeDefined();
   });
 });
