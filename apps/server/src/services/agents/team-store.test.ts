@@ -21,6 +21,15 @@ import { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-
 import type { Project } from '@zana-ai/zcc-domain/product';
 
 describe('sanitizeTeam', () => {
+  it('preserves boolean retention and drops omitted or invalid values', () => {
+    for (const retainOrchestrator of [true, false]) {
+      expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], retainOrchestrator })?.retainOrchestrator).toBe(retainOrchestrator);
+    }
+    for (const retainOrchestrator of [undefined, 'true', 1, null]) {
+      expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], retainOrchestrator })?.retainOrchestrator).toBeUndefined();
+    }
+  });
+
   it('keeps only an explicit true isDefault', () => {
     expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], isDefault: true })).toMatchObject({ isDefault: true });
     expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], isDefault: 'true' })?.isDefault).toBeUndefined();
@@ -268,6 +277,17 @@ describe('TeamStore', () => {
   it('saveUser round-trips defaultPlanning', () => {
     const saved = store.saveUser({ name: 'Planner', slots: [], defaultPlanning: 'provided' });
     expect(store.list().find((team) => team.id === saved.id)?.defaultPlanning).toBe('provided');
+  });
+
+  it.each([true, false])('saveUser persists retention %s through a fresh store', (retainOrchestrator) => {
+    const saved = store.saveUser({ name: 'Retention', slots: [], retainOrchestrator });
+    expect(saved.retainOrchestrator).toBe(retainOrchestrator);
+    const reloaded = new TeamStore(() => []);
+    reloaded.refresh();
+    expect(reloaded.list().find((team) => team.id === saved.id)?.retainOrchestrator).toBe(retainOrchestrator);
+    store.saveUser({ id: saved.id, name: saved.name, slots: [] });
+    reloaded.refresh();
+    expect(reloaded.list().find((team) => team.id === saved.id)?.retainOrchestrator).toBeUndefined();
   });
 
   it('saveUser keeps a single default: flagging one un-flags the previous', () => {

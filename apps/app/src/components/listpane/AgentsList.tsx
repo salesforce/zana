@@ -260,6 +260,8 @@ function partitionExecutionRows(
 /** Build (or re-skin) the one row that represents a Job's execution as a whole. */
 function executionRowHost(member: AgentRow | undefined, execution: ExecutionBoardProjection, synthetic = !member): AgentRow {
   const terminal = execution.state === 'COMPLETED' || execution.state === 'FAILED' || execution.state === 'STOPPED';
+  // A retained orchestrator outlives its finished run: it stays a live Idle row, not Done.
+  const retainedLive = terminal && !synthetic && member !== undefined && member.session.status !== 'exited';
   const displayTitle = execution.jobTitle;
   const session = member?.session ?? {
     id: `execution:${execution.executionId}`,
@@ -273,7 +275,7 @@ function executionRowHost(member: AgentRow | undefined, execution: ExecutionBoar
       ...session,
       id: synthetic ? `execution:${execution.executionId}` : session.id,
       title: displayTitle,
-      status: terminal ? 'exited' : 'running',
+      status: terminal && !retainedLive ? 'exited' : 'running',
       // A live Modern squad's host is synthetic (no PTY) but still foreground work.
       headless: (synthetic && !execution.modernMembers?.some((member) => member.live)) || session.headless,
       cohort: {
@@ -283,7 +285,7 @@ function executionRowHost(member: AgentRow | undefined, execution: ExecutionBoar
         role: 'orchestrator'
       }
     },
-    state: terminal ? 'done' : executionNeedsAttention(execution) ? 'blocked'
+    state: retainedLive ? 'idle' : terminal ? 'done' : executionNeedsAttention(execution) ? 'blocked'
       : execution.state === 'RUNNING' || execution.state === 'STARTING' ? 'working' : 'idle',
     execution
   };

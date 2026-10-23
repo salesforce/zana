@@ -4353,6 +4353,8 @@ export interface TeamLaunchRequestInput {
   coordinationMode?: TeamCoordinationMode;
   /** Main-owned trigger identity propagated to execution-backed sessions. */
   origin?: LaunchOrigin;
+  /** Post an Inbox notice after this Squad completes. */
+  completionInboxNotice?: boolean;
   /** Main-owned durable job briefing composed after source snapshotting. */
   jobContext?: {
     objective: string;
@@ -4430,6 +4432,8 @@ export interface Team {
   transport?: SquadTransport;
   /** Planning mode preselected when this Squad is picked or proposed. Absent ⇒ the global default. */
   defaultPlanning?: SquadPlanning;
+  /** Keep the orchestrator session open after successful Squad completion. */
+  retainOrchestrator?: boolean;
   /** Whether agent-started runs of this Squad need the user's Launch first. Review is a floor: the Project's review applies even when this is absent or direct. Absent ⇒ direct unless the Project asks for review. */
   launchApproval?: LaunchApproval;
   /** Preselected in the New Agent squad picker. Absent ⇒ the first squad alphabetically. */

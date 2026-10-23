@@ -68,6 +68,7 @@ export interface SquadLaunchInput {
   coordinationMode: 'structured' | 'freeform';
   title?: string;
   summary?: string;
+  completionInboxNotice: boolean;
   sourceCapabilityIds: string[];
   /** Realpaths main already confined, issued to a session provider (a window presents capability ids). */
   sourcePaths?: readonly string[];
@@ -198,7 +199,8 @@ export async function launchSquad(
     const built = await buildSquadStartRequest(deps, {
       teamId: input.teamId, projectId: project.id, projectName: project.name, launchRequestId,
       coordinationMode: input.coordinationMode, slots: input.slots, attended: ctx.sources?.kind === 'window',
-      goal: input.goal, title: input.title, summary: input.summary, sourceBundle, goalSourceDescriptors: redactedGoalSources
+      goal: input.goal, title: input.title, summary: input.summary, completionInboxNotice: input.completionInboxNotice,
+      sourceBundle, goalSourceDescriptors: redactedGoalSources
     });
     if (!built.ok) return built.response;
     const result = owner.proposal || owner.reportTo
@@ -253,6 +255,7 @@ async function buildSquadStartRequest(deps: SquadLaunchDeps, args: {
   goal: string;
   title?: string;
   summary?: string;
+  completionInboxNotice: boolean;
   sourceBundle?: SquadSourceBundle;
   goalSourceDescriptors: ExecutionSourcePathDescriptor[];
 }): Promise<{ ok: true; request: ExecutionRequestV1 } | { ok: false; response: TeamJobLaunchResponse }> {
@@ -304,6 +307,7 @@ async function buildSquadStartRequest(deps: SquadLaunchDeps, args: {
       jobTitle: sanitizedJobTitle,
       objective: sanitizedGoal,
       summary: sanitizedSummary,
+      completionInboxNotice: args.completionInboxNotice,
       slots: initialTask,
       ...(plannedWorkUnits ? { workUnits: plannedWorkUnits } : {}),
       ...(sourceBundle && sourceMetadata ? { sourceBundle: { contentRef: sourceBundle.contentRef, sources: sourceMetadata } } : {}),

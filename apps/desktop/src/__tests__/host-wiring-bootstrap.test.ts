@@ -643,6 +643,17 @@ describe('host bootstrap wiring', () => {
     vi.mocked(c.personas.list).mockRestore();
   });
 
+  it('forwards the retain option from the exported cancel wrapper and the execution deps to the lifecycle store', async () => {
+    const seen: unknown[] = [];
+    h.lifecycleOverride.cancelTeamLaunch = async (_c: string, _id: string, opts?: unknown) => {
+      seen.push(opts);
+      return { ok: true, canceledSessionIds: [], pendingSessionIds: [], lifecycleState: 'cancelled' };
+    };
+    await host.cancelTeamLaunch('c', 'ok', { retainOrchestrator: true });
+    await host.cancelTeamLaunch('c', 'ok');
+    expect(seen).toEqual([{ retainOrchestrator: true }, undefined]);
+  });
+
   it('reports team launch lifecycle results through the exported wrappers', async () => {
     h.lifecycleOverride.cancelTeamLaunch = async (_c: string, id: string) => id === 'ok'
       ? { ok: true, canceledSessionIds: ['a'], pendingSessionIds: [], lifecycleState: 'cancelled' }

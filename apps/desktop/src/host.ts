@@ -4986,18 +4986,20 @@ export async function goalExecutionSourcePaths(
   const policy = await resolveSourcePolicy(realpath, { projectRoot: home, home: userHome, ...opts });
   const rawCandidates: string[] = [];
   // 1. Quoted paths (preserves spaces in "C:\Program Files\..." or '/path with space/...')
-  for (const m of goal.matchAll(/["'`]((?:[A-Za-z]:[/\\]|\/)[^"'`]+)["'`]/g)) {
+  for (const m of goal.matchAll(/["'`]((?:[A-Za-z]:[/\\]|\/|~\/)[^"'`]+)["'`]/g)) {
     if (m[1]) rawCandidates.push(m[1]);
   }
   // 2. Unquoted paths
-  for (const m of goal.matchAll(/(?:^|[\s(])((?:[A-Za-z]:[/\\]|\/)[^\s`'"),;:]+)/g)) {
+  for (const m of goal.matchAll(/(?:^|[\s(])((?:[A-Za-z]:[/\\]|\/|~\/)[^\s`'"),;:]+)/g)) {
     if (m[1]) rawCandidates.push(m[1]);
   }
   // 3. `@path` mentions, as the composer writes a dropped, picked or typeahead file:
   // project-relative inside the project, absolute outside it. Same policy checks below.
   rawCandidates.push(...goalMentionPaths(goal, home));
   for (const match of rawCandidates) {
-    const raw = match.trim().replace(/^[`'"(]+|[`'"),;:]+$/g, '');
+    const trimmed = match.trim().replace(/^[`'"(]+|[`'"),;:]+$/g, '');
+    // A leading `~/` names the user's HOME, which the shell would have expanded.
+    const raw = trimmed.startsWith('~/') ? join(userHome, trimmed.slice(2)) : trimmed;
     const candidates = [raw];
     if (raw.endsWith('.')) candidates.push(raw.slice(0, -1));
     for (const candidate of candidates) {
@@ -5704,6 +5706,7 @@ export async function launchTeam(
   }, team.id) as Extract<LaunchPrincipal, { kind: 'team' }>;
   const claim = await teamLifecycle.claim({
     callerPrincipalId, launchRequestId, payloadDigest,
+    retainOrchestrator: team.retainOrchestrator === true,
     capacity: { principal: runPrincipal, launched: 0 }
   });
   if (claim.outcome === 'in-progress') {
@@ -6087,16 +6090,17 @@ export async function launchTeam(
 
 export async function cancelTeamLaunch(
   callerPrincipalId: string,
-  launchRequestId: string
+  launchRequestId: string,
+  opts?: { retainOrchestrator?: boolean }
 ): Promise<Result<CancelTeamLaunchResult>> {
   if (!callerPrincipalId.trim() || !launchRequestId.trim()) {
     return { ok: false, code: 'INVALID', message: 'callerPrincipalId and launchRequestId are required' };
   }
-  let canceled = await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId);
+  let canceled = await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId, opts);
   const record = await teamLifecycle.findRequest(callerPrincipalId, launchRequestId);
   if (record?.workers.some(worker => worker.transport === 'MODERN' && !worker.capacityReleased)) {
     await reconcileModernMembers([record]);
-    canceled = await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId);
+    canceled = await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId, opts);
   }
   return canceled.ok
     ? { ok: true, value: {
@@ -6273,10 +6277,10 @@ const squadProposalServiceDeps: SquadProposalServiceDeps = {
     // Counts every owned non-terminal run, however it was started, not only runs started through squad_launch.
     activeOwnedRuns: (sessionId, projectId) => executionStore.countActiveOwned(sessionId, projectId),
     executionState: async (executionId) => (await executionStore.get(executionId))?.state,
-    launch: async ({ team, project, goal, coordinationMode, title, summary, sourcePaths }, ctx) => {
+    launch: async ({ team, project, goal, coordinationMode, title, summary, completionInboxNotice, sourcePaths }, ctx) => {
       const sourceBases = squadSourceBases();
       return launchSquad(squadNowLaunchDeps, {
-        teamId: team.id, project, slots: expandTeamSlots(team), goal, coordinationMode, title, summary,
+        teamId: team.id, project, slots: expandTeamSlots(team), goal, coordinationMode, title, summary, completionInboxNotice,
         sourceCapabilityIds: [], sourcePaths,
         goalSources: await goalExecutionSourcePaths(goal, project.path, sourceBases.home, sourceBases)
       }, ctx);
@@ -6375,7 +6379,7 @@ const squadExecutionService = new SquadExecutionService({
     const result = await getTeamLaunch(callerPrincipalId, launchRequestId);
     return result.ok ? result.value : undefined;
   },
-  cancelTeamLaunch: async (callerPrincipalId, launchRequestId) => cancelTeamLaunch(callerPrincipalId, launchRequestId),
+  cancelTeamLaunch: async (callerPrincipalId, launchRequestId, opts) => cancelTeamLaunch(callerPrincipalId, launchRequestId, opts),
   revokeTeamAuthorizations: (authorizationIds) => {
     for (const id of authorizationIds) launchAuthorization.revoke(id);
   },
@@ -6719,6 +6723,7 @@ export async function startTeamJobFromUi(
   const sources: SquadSourceProvider | undefined = sourceContext ? { kind: 'window', windowId: sourceContext.windowId } : undefined;
   return withRenewedSources(() => withProposalLaunch(proposalLaunchDeps, proposalId, projectId, (proposal, reviewedSourcePaths) => launchSquad(squadLaunchDeps, {
     teamId, project, slots, goal: originalGoal, coordinationMode, title: originalJobTitle, summary: originalSummary,
+    completionInboxNotice: true,
     sourceCapabilityIds, goalSources: discoveredGoalSources, reviewedSourcePaths
   }, {
     sources,

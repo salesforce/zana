@@ -106,6 +106,7 @@ export function sanitizeTeam(raw: unknown): Team | null {
     initialPrompt: typeof r.initialPrompt === 'string' ? r.initialPrompt : undefined,
     worktreeIsolation: typeof r.worktreeIsolation === 'boolean' ? r.worktreeIsolation : undefined,
     routingEnforced: typeof r.routingEnforced === 'boolean' ? r.routingEnforced : undefined,
+    retainOrchestrator: typeof r.retainOrchestrator === 'boolean' ? r.retainOrchestrator : undefined,
     transport,
     defaultPlanning: r.defaultPlanning === 'infer' || r.defaultPlanning === 'provided' ? r.defaultPlanning : undefined,
     launchApproval: isLaunchApproval(r.launchApproval) ? r.launchApproval : undefined,

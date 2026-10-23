@@ -258,6 +258,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
   const [defaultProjectId, setDefaultProjectId] = useState(team?.defaultProjectId ?? '');
   const [worktreeIsolation, setWorktreeIsolation] = useState<boolean | undefined>(team?.worktreeIsolation);
   const [routingEnforced, setRoutingEnforced] = useState<boolean | undefined>(team?.routingEnforced);
+  const [retainOrchestrator, setRetainOrchestrator] = useState(team?.retainOrchestrator === true);
   const [transport, setTransport] = useState<SquadTransport>(team?.transport ?? 'CLI');
   const [defaultPlanning, setDefaultPlanning] = useState<'' | 'infer' | 'provided'>(team?.defaultPlanning ?? '');
   const [launchApproval, setLaunchApproval] = useState<'' | LaunchApproval>(team?.launchApproval ?? '');
@@ -345,6 +346,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
       defaultProjectId: defaultProjectId || undefined,
       worktreeIsolation,
       routingEnforced,
+      retainOrchestrator,
       transport,
       ...(defaultPlanning ? { defaultPlanning } : {}),
       ...(launchApproval ? { launchApproval } : {}),
@@ -637,6 +639,20 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
           <p className="settings-help">
             Use default follows the global setting; On tier-routes work when supported; Off falls
             back. Manual assignments are not checked.
+          </p>
+        </div>
+
+        <div className="scheduler-form-field">
+          <label className="scheduler-checkbox-row">
+            <input
+              type="checkbox"
+              checked={retainOrchestrator}
+              onChange={(event) => setRetainOrchestrator(event.target.checked)}
+            />
+            Keep orchestrator running after completion
+          </label>
+          <p className="settings-help">
+            Keeps the orchestrator open after a successful run. Workers still close; stopping or failing the run closes all agents.
           </p>
         </div>
 
