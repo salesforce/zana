@@ -20,6 +20,7 @@ import { alwaysOnPluginMcpAllowlist, ensureMcpConfigForProjectSync } from './mcp
 import { stripInheritedClaudeSession, ensureInteractiveTerminalEnv, augmentPath } from './env.js';
 import { resolveHarnessCommand } from './harness/harness-verify.js';
 import { isTmuxAvailable, buildLocalTmuxCommand, wrapRemoteTmux, tmuxSessionName, killLocalTmuxSession } from './tmux.js';
+import { SESSION_CALLBACK_ENV_KEYS, withBlankedSessionCallbacks } from './tmux-session-env.js';
 import { providerFor, registrationFor, renderRemoteCommand } from './harness/registry.js';
 import { effectiveUnattendedProfile, profilePostureOf, unattendedExecutionRouting, withoutExecutionIntent } from './harness/unattended-launch.js';
 import type { AgentLiveness, HarnessAuthInjection, ProviderHookUrls } from './harness/launch-provider.js';
@@ -1716,14 +1717,7 @@ export class PtyManager extends EventEmitter {
     // (PATH, HOME, …) still inherits normally; only these per-session ZCC_*
     // vars need the override.
     const sessionEnv: Record<string, string | undefined> = {
-      ZCC_MCP_URL: env.ZCC_MCP_URL,
-      ZCC_HOOK_URL: env.ZCC_HOOK_URL,
-      ZCC_NOTIFY_URL: env.ZCC_NOTIFY_URL,
-      ZCC_FIRSTPROMPT_URL: env.ZCC_FIRSTPROMPT_URL,
-      ZCC_SUBAGENT_URL: env.ZCC_SUBAGENT_URL,
-      ZCC_TOOLACTIVITY_URL: env.ZCC_TOOLACTIVITY_URL,
-      ZCC_OVERSEER_URL: env.ZCC_OVERSEER_URL,
-      ZCC_CONTENTSCREEN_URL: env.ZCC_CONTENTSCREEN_URL,
+      ...Object.fromEntries(SESSION_CALLBACK_ENV_KEYS.map((key) => [key, env[key]])),
       // OpenCode's inline MCP config carries the per-session zcc-inbox URL, so it's
       // session-scoped exactly like the ZCC_*_URL vars: without the `-e` override a
       // 2nd+ tmux-backed OpenCode agent would inherit the 1st's baked-in session URL
@@ -1909,7 +1903,7 @@ export class PtyManager extends EventEmitter {
     // imsg budget we fall back to a plain (non-restore-backed) spawn: launching
     // correctly beats tmux restore-backing for the rare oversized session.
     const prospectiveTmux = wantsTmux
-      ? buildLocalTmuxCommand(sessionId, inner.command, inner.args, sessionEnv)
+      ? buildLocalTmuxCommand(sessionId, inner.command, inner.args, withBlankedSessionCallbacks(sessionEnv))
       : undefined;
     // Conservative bound below MAX_IMSGSIZE (16384) minus tmux's per-arg framing
     // and imsg header; empirically a serialized argv ~16 KiB is rejected while

@@ -148,8 +148,8 @@ export function resetTmuxAvailabilityCache(): void {
  * environment as its server-global env. Every LATER `new-session` makes its
  * pane inherit the SERVER's env — NOT the new client's. So our session-scoped
  * vars (`ZCC_FIRSTPROMPT_URL`, `ZCC_SUBAGENT_URL`, `ZCC_NOTIFY_URL`,
- * `ZCC_HOOK_URL`, `ZCC_MCP_URL`, `ZCC_OVERSEER_URL` — each carries THIS
- * session's id) would leak:
+ * `ZCC_HOOK_URL`, `ZCC_MCP_URL`, `ZCC_OVERSEER_URL`, `ZCC_NATIVETOOL_URL` —
+ * each carries THIS session's id) would leak:
  * the 2nd+ agent's child would inherit the 1st agent's URLs, so its first-prompt
  * hook names the WRONG card and its sub-agent hook flips the WRONG card to
  * "Delegating". `new-session -e KEY=VAL` sets the var for THIS session only,

@@ -53,6 +53,7 @@ vi.mock('../tmux.js', async (importOriginal) => {
 
 import { PtyManager, remotePortForSession, detectRemoteForwardFailure } from '../pty.js';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
+import { SESSION_CALLBACK_ENV_KEYS } from '../tmux-session-env.js';
 
 function cfg(over: Partial<AppConfig> = {}): AppConfig {
   return {
@@ -67,6 +68,31 @@ function cfg(over: Partial<AppConfig> = {}): AppConfig {
 }
 
 const dims = { cwd: '/work/p1', cols: 80, rows: 24 };
+
+const sessionCallbackPaths = {
+  ZCC_NATIVETOOL_URL: 'nativetool',
+  ZCC_HOOK_URL: 'stop',
+  ZCC_NOTIFY_URL: 'notify',
+  ZCC_SUBAGENT_URL: 'subagent',
+  ZCC_FIRSTPROMPT_URL: 'firstprompt'
+} as const;
+
+function tmuxEnvPairs(args: string[]): string[] {
+  const dashdash = args.indexOf('--');
+  const pairs: string[] = [];
+  for (let i = 0; i < dashdash; i++) {
+    if (args[i] === '-e') pairs.push(args[i + 1] as string);
+  }
+  return pairs;
+}
+
+function expectSessionCallbackUrls(pairs: string[], projectId: string, sessionId: string) {
+  for (const [key, path] of Object.entries(sessionCallbackPaths)) {
+    expect(pairs).toContain(
+      `${key}=http://127.0.0.1:54321/hook/${path}/${projectId}/${sessionId}`
+    );
+  }
+}
 
 describe('pty tmux wrapping (local)', () => {
   let ptys: PtyManager;
@@ -92,6 +118,73 @@ describe('pty tmux wrapping (local)', () => {
     const dashdash = proc.args.indexOf('--');
     expect(dashdash).toBeGreaterThan(0);
     expect(proc.args[dashdash + 1]).toBe('/bin/zsh');
+  });
+
+  it('passes each local Claude callback URL through tmux for its session', () => {
+    ptys.setMcpBaseUrl('http://127.0.0.1:54321');
+    const session = ptys.create({
+      projectId: 'p1',
+      profile: 'claude',
+      config: cfg({ tmuxScope: 'all' }),
+      ...dims
+    });
+
+    expectSessionCallbackUrls(tmuxEnvPairs(spawned[0].args), 'p1', session.id);
+  });
+
+  it('passes distinct local Claude callback URLs through tmux for concurrent sessions', () => {
+    ptys.setMcpBaseUrl('http://127.0.0.1:54321');
+    const first = ptys.create({
+      projectId: 'p1',
+      profile: 'claude',
+      config: cfg({ tmuxScope: 'all' }),
+      ...dims
+    });
+    const second = ptys.create({
+      projectId: 'p1',
+      profile: 'claude',
+      config: cfg({ tmuxScope: 'all' }),
+      ...dims
+    });
+    const firstPairs = tmuxEnvPairs(spawned[0].args);
+    const secondPairs = tmuxEnvPairs(spawned[1].args);
+
+    expectSessionCallbackUrls(firstPairs, 'p1', first.id);
+    expectSessionCallbackUrls(secondPairs, 'p1', second.id);
+    for (const key of Object.keys(sessionCallbackPaths)) {
+      expect(firstPairs.find((pair) => pair.startsWith(`${key}=`)))
+        .not.toBe(secondPairs.find((pair) => pair.startsWith(`${key}=`)));
+    }
+  });
+
+  it('keeps the session token off the tmux argv', () => {
+    ptys.setMcpBaseUrl('http://127.0.0.1:54321');
+    ptys.create({ projectId: 'p1', profile: 'claude', config: cfg({ tmuxScope: 'all' }), ...dims });
+    const pairs = tmuxEnvPairs(spawned[0].args);
+    expect(pairs.some((pair) => pair.startsWith('ZCC_SESSION_TOKEN='))).toBe(false);
+    expect(pairs.some((pair) => pair.startsWith('ZCC_SESSION_ID='))).toBe(false);
+  });
+
+  it('blanks callback URLs a launch does not set so the tmux server snapshot cannot supply them', () => {
+    // The pty spreads process.env into the launch env, so neutralize any ambient
+    // callback vars (this suite may itself run under the app) and restore after.
+    const saved = SESSION_CALLBACK_ENV_KEYS.map((key) => [key, process.env[key]] as const);
+    for (const key of SESSION_CALLBACK_ENV_KEYS) delete process.env[key];
+    try {
+      // No setMcpBaseUrl and a plain shell: no lifecycle callbacks exist, so
+      // without blanking every callback key is omitted and the pane inherits the
+      // server's (another session's) URLs.
+      ptys.create({ projectId: 'p1', profile: 'shell', config: cfg({ tmuxScope: 'all' }), ...dims });
+    } finally {
+      for (const [key, value] of saved) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+    const pairs = tmuxEnvPairs(spawned[0].args);
+    for (const key of SESSION_CALLBACK_ENV_KEYS) {
+      expect(pairs).toContain(`${key}=`);
+    }
   });
 
   it('does NOT wrap when scope is unset (default)', () => {
