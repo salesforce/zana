@@ -677,6 +677,22 @@ describe('Ctrl+Enter / ⌘↵ does what the primary button does', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: /Large/ }));
   });
 
+  it('keeps focus in the panel when Back unmounts itself and when Next turns into Submit', () => {
+    render(viewOf(twoQuestions('chord-buttons-focus')));
+    fireEvent.click(screen.getByRole('button', { name: 'Docs' }));
+    const next = screen.getByTestId('thread-pending-question-next');
+    next.focus();
+    fireEvent.click(next);
+    expect(screen.getByText('2 of 2')).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByTestId('thread-pending-question-submit'));
+    const back = screen.getByTestId('thread-pending-question-back');
+    back.focus();
+    fireEvent.click(back);
+    expect(screen.getByText('1 of 2')).toBeTruthy();
+    expect(screen.queryByTestId('thread-pending-question-back')).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Docs' }));
+  });
+
   it('ignores Shift or Alt chords and does nothing while the answer is being sent', () => {
     const interaction = twoQuestions('chord-ignored');
     const view = render(viewOf(interaction));

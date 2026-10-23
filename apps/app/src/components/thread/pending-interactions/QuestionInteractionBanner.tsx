@@ -118,8 +118,8 @@ export function QuestionInteractionBanner({
   const formRef = useRef<HTMLFormElement>(null);
   const refocusAfterMove = useRef(false);
   useEffect(() => {
-    // A keyboard move can unmount the focused option; keep focus in the panel so
-    // the next key (digit, Enter, ⌘↵) still reaches it.
+    // A move can unmount the focused control; keep focus in the panel so the
+    // next key (digit, Enter, ⌘↵) still reaches it.
     if (!refocusAfterMove.current) return;
     refocusAfterMove.current = false;
     const form = formRef.current;
@@ -128,9 +128,10 @@ export function QuestionInteractionBanner({
       ?? form.querySelector<HTMLElement>('.thread-pending-option, .thread-pending-question-input');
     target?.focus();
   }, [currentIndex]);
-  const allAnswered = questions.length > 0 && questions.every((question) => (
+  const isAnswered = (question: PendingInteractionUserQuestionQuestion) => (
     isQuestionAnswered(question, answers[question.id] ?? { selected: [], otherSelected: false })
-  ));
+  );
+  const allAnswered = questions.length > 0 && questions.every(isAnswered);
   const updateAnswer = (
     questionId: string,
     update: (answer: QuestionAnswerDraft) => QuestionAnswerDraft
@@ -169,6 +170,8 @@ export function QuestionInteractionBanner({
       updateAnswer(current.id, (draft) => toggleOtherChoice(current, draft));
     }
   };
+  // Back/Next and keyboard moves can unmount the focused control (Back on
+  // question 1, Next becoming Submit, an option); moveTo keeps focus in the panel.
   const moveTo = (index: number) => {
     refocusAfterMove.current = true;
     setCurrentIndex(index);
@@ -178,11 +181,7 @@ export function QuestionInteractionBanner({
   const advance = (form: HTMLFormElement) => {
     if (!isLast) moveTo(Math.min(currentIndex + 1, total - 1));
     else if (allAnswered) form.requestSubmit();
-    else if (current && isQuestionAnswered(current, answers[current.id] ?? { selected: [], otherSelected: false })) {
-      moveTo(questions.findIndex((question) => (
-        !isQuestionAnswered(question, answers[question.id] ?? { selected: [], otherSelected: false })
-      )));
-    }
+    else if (current && isAnswered(current)) moveTo(questions.findIndex((question) => !isAnswered(question)));
   };
   const onFormKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
     // ⌘↵ / Ctrl+↵ works from anywhere in the panel, including the free-text box.
@@ -220,10 +219,7 @@ export function QuestionInteractionBanner({
           <div className="thread-pending-question-steps">
             <div className="thread-pending-question-step-list">
               {questions.map((question, index) => {
-                const answered = isQuestionAnswered(
-                  question,
-                  answers[question.id] ?? { selected: [], otherSelected: false }
-                );
+                const answered = isAnswered(question);
                 return (
                   <button
                     key={question.id}
@@ -313,7 +309,7 @@ export function QuestionInteractionBanner({
               className="thread-pending-banner-decision is-ghost"
               data-testid="thread-pending-question-back"
               disabled={disabled}
-              onClick={() => setCurrentIndex((index) => Math.max(index - 1, 0))}
+              onClick={() => moveTo(Math.max(currentIndex - 1, 0))}
             >
               Back
             </button>
@@ -337,7 +333,7 @@ export function QuestionInteractionBanner({
               title={platformShortcut('Next (⌘↵)')}
               aria-keyshortcuts={PRIMARY_KEYSHORTCUTS}
               disabled={disabled}
-              onClick={() => setCurrentIndex((index) => Math.min(index + 1, total - 1))}
+              onClick={() => moveTo(Math.min(currentIndex + 1, total - 1))}
             >
               Next
             </button>
