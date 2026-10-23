@@ -4,7 +4,7 @@ import type { DesignDocDetail, DesignDocFileMeta } from '../shared/contract.js';
 import { formatBytes } from '../shared/display.js';
 import { MAX_BINARY_FILE_BYTES, MAX_FILES_PER_DOC, MAX_TEXT_FILE_BYTES } from '../shared/limits.js';
 import { extensionOf, fileKindOf, isBinaryKind } from '../shared/paths.js';
-import { errorMessage, toast, useApi } from './api.js';
+import { errorMessage, toast, useApi, type DocKind } from './api.js';
 import { buildTree, type TreeNode } from './content.js';
 import { ConfirmDialog, FileIcon, IconButton, MenuItem, Popover, type ConfirmRequest } from './ui.js';
 
@@ -198,7 +198,8 @@ export function FileTree({
   onOpen,
   onPathChanged,
   hasDraft,
-  onHide
+  onHide,
+  docKind
 }: {
   doc: DesignDocDetail;
   activePath: string | null;
@@ -209,6 +210,7 @@ export function FileTree({
   hasDraft?(path: string): boolean;
   /** Collapse the inline tree; absent where the tree is not a column. */
   onHide?(): void;
+  docKind?: DocKind;
 }) {
   const api = useApi();
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
@@ -232,7 +234,7 @@ export function FileTree({
       return;
     }
     try {
-      await api.writeFile(doc.id, { path, content: starterContent(path), baseRevision: 0, baseFileId: null });
+      await api.writeFile(doc.id, { path, content: starterContent(path), baseRevision: 0, baseFileId: null }, docKind);
       onOpen(path);
     } catch (error) {
       toast(`Could not create ${path}: ${errorMessage(error)}`, 'error');
@@ -245,7 +247,7 @@ export function FileTree({
     if (!to || to === from) return;
     const run = async () => {
       try {
-        const result = await api.renameFile(doc.id, from, to, file.revision, file.fileId);
+        const result = await api.renameFile(doc.id, from, to, file.revision, file.fileId, docKind);
         onPathChanged(from, result.path);
       } catch (error) {
         toast(`Could not rename ${from}: ${errorMessage(error)}`, 'error');
@@ -281,7 +283,7 @@ export function FileTree({
       const observed = doc.files.find((entry) => entry.path === path);
       try {
         const body = await readUpload(file);
-        await api.writeFile(doc.id, { path, ...body, baseRevision: observed?.revision ?? 0, baseFileId: observed?.fileId ?? null });
+        await api.writeFile(doc.id, { path, ...body, baseRevision: observed?.revision ?? 0, baseFileId: observed?.fileId ?? null }, docKind);
         const relative = path.slice(folderOfActive.length);
         toast(kind === 'font' || !asset ? `Added ${path}` : `Added ${path}. Reference it with ![${file.name}](${relative})`);
       } catch (error) {
@@ -309,7 +311,7 @@ export function FileTree({
       danger: true,
       run: async () => {
         try {
-          await api.deleteFile(doc.id, file.path, file.revision, file.fileId);
+          await api.deleteFile(doc.id, file.path, file.revision, file.fileId, docKind);
           onPathChanged(file.path, null);
         } catch (error) {
           toast(`Could not delete ${file.path}: ${errorMessage(error)}`, 'error');

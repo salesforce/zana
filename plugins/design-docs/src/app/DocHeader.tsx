@@ -185,7 +185,8 @@ export function DocHeader({
   compact,
   collapsible = false,
   actions,
-  onDeleted
+  onDeleted,
+  template = false
 }: {
   doc: DesignDocDetail;
   projects: ProjectInfo[];
@@ -195,6 +196,7 @@ export function DocHeader({
   /** Primary actions (Ask agent) rendered at the right of the title row. */
   actions?: ReactNode;
   onDeleted(): void;
+  template?: boolean;
 }) {
   const api = useApi();
   const [menu, setMenu] = useState(false);
@@ -206,7 +208,8 @@ export function DocHeader({
 
   const update = async (patch: UpdateArgs) => {
     try {
-      await api.update(doc.id, { ...patch, expectedHead: doc.head });
+      if (template) await api.templateUpdateMeta(doc.id, { ...patch, expectedHead: doc.head });
+      else await api.update(doc.id, { ...patch, expectedHead: doc.head });
     } catch (error) {
       toast(`Could not update the doc: ${errorMessage(error)}`, 'error');
       throw error;
@@ -227,8 +230,8 @@ export function DocHeader({
         />
         <span className="dd-spacer" />
         {actions}
-        <button type="button" className="btn" onClick={() => setConflicts(true)}>Peer conflicts</button>
-        <Popover
+        {template ? null : <button type="button" className="btn" onClick={() => setConflicts(true)}>Peer conflicts</button>}
+        {template ? null : <Popover
           open={menu}
           onClose={() => setMenu(false)}
           className="dd-menu"
@@ -238,7 +241,7 @@ export function DocHeader({
           }} />}
         >
           {docActions.items(menu ? menuDoc.current : doc, () => setMenu(false), onDeleted)}
-        </Popover>
+        </Popover>}
       </div>
       {collapsed ? null : (
         <EditableText
@@ -252,12 +255,12 @@ export function DocHeader({
         />
       )}
       <div className="dd-doc-meta">
-        <StatusMenu status={doc.status} onChange={(status) => void update({ status }).catch(() => undefined)} />
-        <span className="dd-doc-project" title={project ? `Project · ${project.name}` : 'Visible to agents in every project'}>
+        {template ? null : <StatusMenu status={doc.status} onChange={(status) => void update({ status }).catch(() => undefined)} />}
+        {template ? null : <span className="dd-doc-project" title={project ? `Project · ${project.name}` : 'Visible to agents in every project'}>
           {project ? null : <Globe size={12} aria-hidden />}
           {project ? project.name : doc.projectId ? 'Unknown project' : 'Global'}
-        </span>
-        {collapsed ? null : <TagEditor tags={doc.tags} onChange={(tags) => void update({ tags }).catch(() => undefined)} />}
+        </span>}
+        {template || collapsed ? null : <TagEditor tags={doc.tags} onChange={(tags) => void update({ tags }).catch(() => undefined)} />}
         <span className="dd-spacer" />
         <span className="dd-doc-updated">
           <ActorLabel actor={doc.updatedBy} /> <TimeAgo at={doc.updatedAt} now={Date.now()} />
@@ -271,8 +274,8 @@ export function DocHeader({
           />
         ) : null}
       </div>
-      {docActions.dialogs}
-      {conflicts ? <PeerConflictView key={doc.id} docId={doc.id} onClose={() => setConflicts(false)} /> : null}
+      {template ? null : docActions.dialogs}
+      {template ? null : conflicts ? <PeerConflictView key={doc.id} docId={doc.id} onClose={() => setConflicts(false)} /> : null}
     </header>
   );
 }

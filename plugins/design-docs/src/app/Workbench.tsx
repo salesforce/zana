@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { PopoverPicklist, type PopoverPicklistOption } from '@zana-ai/zcc-ui/popover-picklist';
 import {
@@ -8,13 +8,18 @@ import {
   DraftingCompass,
   FolderOpen,
   ListTree,
+  MoreHorizontal,
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
   Pin,
+  Pencil,
   Plus,
   Search,
   Sparkles,
+  Download,
+  Copy,
+  Trash2,
   X
 } from 'lucide-react';
 import { STATUS_LABELS, DOC_STATUSES, type DesignDocSummary, type DocStatus } from '../shared/contract.js';
@@ -30,7 +35,8 @@ import { useDocs, useNow, usePersistentState, useProjects, useTemplates } from '
 import { SyncButton, usePeerSync, type PeerSync } from './PeerSettings.js';
 import { SettingsToggle, SettingsView } from './Settings.js';
 import { markSeen, parseSeen, unseenAgentEdit } from './seen.js';
-import { ContextMenu, contextMenuPoint, Dialog, IconButton, Spinner, StatusPill, TimeAgo } from './ui.js';
+import { ContextMenu, contextMenuPoint, Dialog, IconButton, MenuItem, Popover, Spinner, StatusPill, TimeAgo } from './ui.js';
+import { saveBytes } from './download.js';
 
 type StatusFilter = DocStatus | 'active' | 'all';
 const GLOBAL_ONLY = '__global__';
@@ -204,6 +210,7 @@ function DocList({
   onCollapse,
   peerSync,
   onOpenSettings,
+  onTemplates,
   headerActions
 }: {
   projectId: string | null;
@@ -216,6 +223,7 @@ function DocList({
   onCollapse(): void;
   peerSync: PeerSync;
   onOpenSettings(): void;
+  onTemplates(): void;
   headerActions?: ReactNode;
 }) {
   const [query, setQuery] = useState('');
@@ -295,9 +303,10 @@ function DocList({
         <span className="dd-spacer" />
         <SettingsToggle open={false} onToggle={onOpenSettings} />
         <SyncButton peerSync={peerSync} />
-        <button type="button" className="btn primary dd-head-btn dd-new" onClick={onNew}>
+         <button type="button" className="btn primary dd-head-btn dd-new" onClick={onNew}>
           <Plus size={13} aria-hidden /> New
-        </button>
+         </button>
+         <button type="button" className="btn dd-head-btn" onClick={onTemplates}>Templates</button>
         <IconButton icon={PanelLeftClose} label="Hide doc list" onClick={onCollapse} />
         {headerActions}
       </div>
@@ -399,6 +408,62 @@ function TemplateCards({ templates, selected, onSelect }: { templates: TemplateI
           <span className="dd-template-files">{template.files.join(' · ')}</span>
         </button>
       ))}
+    </div>
+  );
+}
+
+function TemplateLanding({ templates, onNew, onEdit, onChanged }: { templates: TemplateInfo[] | null; onNew(template?: string): void; onEdit(template: TemplateInfo): void; onChanged(): void }) {
+  const api = useApi();
+  const input = useRef<HTMLInputElement | null>(null);
+  const [query, setQuery] = useState('');
+  const [more, setMore] = useState(false);
+  const [menu, setMenu] = useState<{ template: TemplateInfo; at: { x: number; y: number } } | null>(null);
+  const filtered = (templates ?? []).filter((template) => `${template.label} ${template.description} ${template.files.join(' ')}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const run = async (action: 'duplicate' | 'export' | 'delete', template: TemplateInfo) => {
+    try {
+      if (action === 'duplicate') await api.templateDuplicate(template.id);
+      else if (action === 'export') {
+        const bundle = await api.templatesExport([template.id]);
+        saveBytes(`${template.id}.design-doc-templates.json`, new TextEncoder().encode(bundle.bundleText), 'application/json');
+      } else await api.templateDelete(template.id);
+      onChanged();
+    } catch (error) {
+      toast(`Could not ${action} template: ${errorMessage(error)}`, 'error');
+    }
+  };
+  const importTemplates = async (file: File | null) => {
+    if (!file) return;
+    try {
+      await api.templatesImport(await file.text());
+      onChanged();
+    } catch (error) {
+      toast(`Could not import templates: ${errorMessage(error)}`, 'error');
+    } finally {
+      if (input.current) input.current.value = '';
+    }
+  };
+  return (
+    <div className="dd-landing">
+      <div className="dd-landing-inner">
+        <div className="dd-template-heading">
+          <span className="dd-section-label">Start from a template</span>
+          <span className="dd-spacer" />
+          <button type="button" className="btn" onClick={() => void api.templateNew({ label: 'New template' }).then((template) => { onChanged(); onEdit({ id: template.id, key: template.id, docId: template.id, origin: 'user', entryPath: template.entryPath, label: template.title, description: template.summary, files: template.files.map((file) => file.path) }); }).catch((error) => toast(`Could not create template: ${errorMessage(error)}`, 'error'))}>New template</button>
+          <Popover open={more} onClose={() => setMore(false)} className="dd-menu" anchor={<IconButton icon={MoreHorizontal} label="Template actions" active={more} onClick={() => setMore(!more)} />}>
+            <MenuItem icon={FolderOpen} label="Import" onSelect={() => { setMore(false); input.current?.click(); }} />
+            <MenuItem icon={Download} label="Export all" onSelect={() => { setMore(false); void api.templatesExport().then((bundle) => saveBytes('design-doc-templates.json', new TextEncoder().encode(bundle.bundleText), 'application/json')).catch((error) => toast(`Could not export templates: ${errorMessage(error)}`, 'error')); }} />
+            {templates?.some((template) => template.origin === 'builtin') ? null : <MenuItem icon={Copy} label="Restore built-ins" onSelect={() => { setMore(false); void api.templatesRestoreBuiltins().then(onChanged).catch((error) => toast(`Could not restore built-ins: ${errorMessage(error)}`, 'error')); }} />}
+          </Popover>
+        </div>
+        <input ref={input} type="file" accept="application/json,.json" hidden onChange={(event) => void importTemplates(event.target.files?.[0] ?? null)} />
+        <label className="dd-search"><Search size={13} aria-hidden /><input value={query} placeholder="Filter templates" aria-label="Filter templates" onChange={(event) => setQuery(event.target.value)} /></label>
+        <div className="dd-template-scroll">
+          <div className="dd-templates" role="list">
+            {filtered.map((template) => <div key={template.id} className="dd-template-wrap"><button type="button" className="dd-template" onClick={() => onNew(template.id)}><span className="dd-template-label">{template.label}</span><span className="dd-template-desc">{template.description}</span><span className="dd-template-files">{template.files.join(' · ')}</span></button><IconButton icon={MoreHorizontal} label={`Actions for ${template.label}`} size={13} onClick={() => setMenu({ template, at: { x: 0, y: 0 } })} /></div>)}
+          </div>
+        </div>
+      </div>
+      {menu ? <ContextMenu at={menu.at} label={`Actions for ${menu.template.label}`} onClose={() => setMenu(null)}><MenuItem icon={Pencil} label="Edit" onSelect={() => { setMenu(null); onEdit(menu.template); }} /><MenuItem icon={Copy} label="Duplicate" onSelect={() => { setMenu(null); void run('duplicate', menu.template); }} /><MenuItem icon={Download} label="Export" onSelect={() => { setMenu(null); void run('export', menu.template); }} /><MenuItem icon={Trash2} label="Delete" danger disabledReason={templates && templates.length <= 1 ? 'Keep at least one template.' : undefined} onSelect={() => { setMenu(null); void run('delete', menu.template); }} /></ContextMenu> : null}
     </div>
   );
 }
@@ -611,7 +676,8 @@ export function Workbench({
   const templates = useTemplates();
   const [creating, setCreating] = useState<{ template: string | null } | null>(null);
   const [listOpen, setListOpen] = usePersistentState<boolean>('list-open', true);
-  const [view, setView] = useState<'docs' | 'settings'>('docs');
+  const [view, setView] = useState<'docs' | 'templates' | 'settings'>('docs');
+  const [templateId, setTemplateId] = useState<string | null>(null);
   const peerSync = usePeerSync();
   const projectList = projects.data ?? [];
 
@@ -646,6 +712,7 @@ export function Workbench({
           onCollapse={() => setListOpen(false)}
           peerSync={peerSync}
           onOpenSettings={() => setView('settings')}
+          onTemplates={() => { setTemplateId(null); setView('templates'); onLocationChange({ docId: null, path: null }); }}
           headerActions={headerActions}
         />
       ) : (
@@ -657,7 +724,11 @@ export function Workbench({
         </nav>
       )}
       <main className="dd-main">
-        {location.docId ? (
+        {view === 'templates' && templateId ? (
+          <DocView key={templateId} docId={templateId} path={null} layout="workbench" kind="template" onOpenPath={() => undefined} onDeleted={() => { setTemplateId(null); templates.reload(); }} />
+        ) : view === 'templates' ? (
+          <TemplateLanding templates={templates.data} onNew={(template) => setCreating({ template: template ?? null })} onEdit={(template) => setTemplateId(template.docId)} onChanged={templates.reload} />
+        ) : location.docId ? (
           <DocView
             key={location.docId}
             docId={location.docId}

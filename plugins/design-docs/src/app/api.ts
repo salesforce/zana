@@ -37,10 +37,16 @@ export interface ConnectionView {
 
 export interface TemplateInfo {
   id: string;
+  key: string;
+  docId: string;
+  origin: 'builtin' | 'user';
+  entryPath: string;
   label: string;
   description: string;
   files: string[];
 }
+
+export type DocKind = 'doc' | 'template';
 
 export interface ProjectInfo {
   id: string;
@@ -94,6 +100,13 @@ export type HarnessDescriptors = HarnessRoutingEditorProps['descriptors'];
 
 export interface DesignDocsApi {
   templates(): Promise<TemplateInfo[]>;
+  templateNew(args: { label: string; description?: string }): Promise<DesignDocDetail>;
+  templateDuplicate(template: string): Promise<DesignDocDetail>;
+  templateUpdateMeta(template: string, patch: UpdateArgs): Promise<DesignDocSummary>;
+  templateDelete(template: string): Promise<void>;
+  templatesRestoreBuiltins(): Promise<TemplateInfo[]>;
+  templatesExport(keys?: string[]): Promise<{ bundleText: string }>;
+  templatesImport(bundleText: string): Promise<DesignDocDetail[]>;
   projects(): Promise<ProjectInfo[]>;
   /** Harnesses on the project's host, or this computer's when no project is given. */
   harnessDescriptors(projectId?: string): Promise<HarnessDescriptors>;
@@ -124,29 +137,29 @@ export interface DesignDocsApi {
   peerConflictFile(doc: string, remoteHead: string, path: string): Promise<PeerConflictFile>;
   resolvePeerConflict(doc: string, args: { expectedHead: string; remoteHead: string; choice: PeerResolutionChoice }): Promise<{ head: string }>;
   list(args?: ListArgs): Promise<DesignDocSummary[]>;
-  get(doc: string): Promise<DesignDocDetail>;
+  get(doc: string, kind?: DocKind): Promise<DesignDocDetail>;
   create(args: CreateArgs): Promise<DesignDocDetail>;
   update(doc: string, patch: UpdateArgs): Promise<DesignDocSummary>;
   pin(doc: string, pinned: boolean): Promise<DesignDocSummary>;
   remove(doc: string): Promise<void>;
-  readFile(doc: string, path: string): Promise<DesignDocFile>;
+  readFile(doc: string, path: string, kind?: DocKind): Promise<DesignDocFile>;
   /** An HTML page bundled for the preview frame; `draft` renders unsaved HTML in place of the file. */
-  renderPage(doc: string, args: { path: string; draft?: string }): Promise<RenderedPage>;
+  renderPage(doc: string, args: { path: string; draft?: string }, kind?: DocKind): Promise<RenderedPage>;
   /** A file a rendered page fetches, or null when the doc has none at that path. */
-  readPageFile(doc: string, path: string): Promise<PageFile | null>;
+  readPageFile(doc: string, path: string, kind?: DocKind): Promise<PageFile | null>;
   /** The page served standalone, for the system browser. */
   pageLink(doc: string, path: string): Promise<{ url: string }>;
   /** The doc as a static site: its files, the kit its pages load, and `.nojekyll`. */
   siteFiles(doc: string): Promise<{ slug: string; files: SiteFile[] }>;
   reportRender(doc: string, report: PageRenderReport): Promise<void>;
-  writeFile(doc: string, args: { path: string; content: string; encoding?: 'base64'; baseRevision?: number; baseFileId?: string | null; note?: string }): Promise<WriteResult>;
-  editFile(doc: string, args: { path: string; edits: TextEdit[]; baseRevision?: number; baseFileId?: string | null }): Promise<WriteResult>;
-  deleteFile(doc: string, path: string, baseRevision?: number, baseFileId?: string | null): Promise<void>;
-  renameFile(doc: string, from: string, to: string, baseRevision?: number, baseFileId?: string | null): Promise<WriteResult>;
-  history(doc: string, args?: { path?: string; limit?: number }): Promise<DesignDocRevision[]>;
-  revision(doc: string, id: number): Promise<RevisionContent>;
+  writeFile(doc: string, args: { path: string; content: string; encoding?: 'base64'; baseRevision?: number; baseFileId?: string | null; note?: string }, kind?: DocKind): Promise<WriteResult>;
+  editFile(doc: string, args: { path: string; edits: TextEdit[]; baseRevision?: number; baseFileId?: string | null }, kind?: DocKind): Promise<WriteResult>;
+  deleteFile(doc: string, path: string, baseRevision?: number, baseFileId?: string | null, kind?: DocKind): Promise<void>;
+  renameFile(doc: string, from: string, to: string, baseRevision?: number, baseFileId?: string | null, kind?: DocKind): Promise<WriteResult>;
+  history(doc: string, args?: { path?: string; limit?: number }, kind?: DocKind): Promise<DesignDocRevision[]>;
+  revision(doc: string, id: number, kind?: DocKind): Promise<RevisionContent>;
   /** `baseRevision` is the file's current revision as shown, 0 when it is gone. */
-  restore(doc: string, id: number, baseRevision?: number, baseFileId?: string | null): Promise<WriteResult>;
+  restore(doc: string, id: number, baseRevision?: number, baseFileId?: string | null, kind?: DocKind): Promise<WriteResult>;
   addComment(doc: string, args: { body: string; path?: string; quote?: string }): Promise<DesignDocComment>;
   replyToComment(doc: string, id: string, body: string): Promise<DesignDocComment>;
   setCommentStatus(doc: string, id: string, status: CommentStatus): Promise<DesignDocComment>;
@@ -180,6 +193,13 @@ export function createApi(call: Call): DesignDocsApi {
   };
   return {
     templates: () => typed('templates'),
+    templateNew: (args) => typed('templateNew', args),
+    templateDuplicate: (template) => typed('templateDuplicate', { template }),
+    templateUpdateMeta: (template, patch) => typed('templateUpdateMeta', { template, ...patch }),
+    templateDelete: (template) => done(typed('templateDelete', { template })),
+    templatesRestoreBuiltins: () => typed('templatesRestoreBuiltins'),
+    templatesExport: (keys) => typed('templatesExport', keys ? { keys } : undefined),
+    templatesImport: (bundleText) => typed('templatesImport', { bundleText }),
     projects: () => typed('projects'),
     harnessDescriptors: (projectId) => typed('harnessDescriptors', projectId ? { projectId } : undefined),
     harnessRouting: (scope) => typed('harnessRouting', scope),
@@ -201,24 +221,24 @@ export function createApi(call: Call): DesignDocsApi {
     peerConflictFile: (doc, remoteHead, path) => typed('peerConflictFile', { doc, remoteHead, path }),
     resolvePeerConflict: (doc, args) => typed('resolvePeerConflict', { doc, ...args }),
     list: (args = {}) => typed('list', args),
-    get: (doc) => typed('get', { doc }),
+    get: (doc, kind) => typed('get', { doc, kind }),
     create: (args) => typed('create', args),
     update: (doc, patch) => typed('update', { doc, ...patch }),
     pin: (doc, pinned) => typed('pin', { doc, pinned }),
     remove: (doc) => done(typed('remove', { doc })),
-    readFile: (doc, path) => typed('readFile', { doc, path }),
-    renderPage: (doc, args) => typed('renderPage', { doc, ...args }),
-    readPageFile: (doc, path) => typed('readPageFile', { doc, path }),
+    readFile: (doc, path, kind) => typed('readFile', { doc, path, kind }),
+    renderPage: (doc, args, kind) => typed('renderPage', { doc, ...args, kind }),
+    readPageFile: (doc, path, kind) => typed('readPageFile', { doc, path, kind }),
     pageLink: (doc, path) => typed('pageLink', { doc, path }),
     siteFiles: (doc) => typed('siteFiles', { doc }),
     reportRender: (doc, report) => done(typed('reportRender', { doc, ...report })),
-    writeFile: (doc, args) => typed('writeFile', { doc, ...args }),
-    editFile: (doc, args) => typed('editFile', { doc, ...args }),
-    deleteFile: (doc, path, baseRevision, baseFileId) => done(typed('deleteFile', { doc, path, baseRevision, baseFileId })),
-    renameFile: (doc, from, to, baseRevision, baseFileId) => typed('renameFile', { doc, from, to, baseRevision, baseFileId }),
-    history: (doc, args = {}) => typed('history', { doc, ...args }),
-    revision: (doc, id) => typed('revision', { doc, id }),
-    restore: (doc, id, baseRevision, baseFileId) => typed('restore', { doc, id, baseRevision, baseFileId }),
+    writeFile: (doc, args, kind) => typed('writeFile', { doc, ...args, kind }),
+    editFile: (doc, args, kind) => typed('editFile', { doc, ...args, kind }),
+    deleteFile: (doc, path, baseRevision, baseFileId, kind) => done(typed('deleteFile', { doc, path, baseRevision, baseFileId, kind })),
+    renameFile: (doc, from, to, baseRevision, baseFileId, kind) => typed('renameFile', { doc, from, to, baseRevision, baseFileId, kind }),
+    history: (doc, args = {}, kind) => typed('history', { doc, ...args, kind }),
+    revision: (doc, id, kind) => typed('revision', { doc, id, kind }),
+    restore: (doc, id, baseRevision, baseFileId, kind) => typed('restore', { doc, id, baseRevision, baseFileId, kind }),
     addComment: (doc, args) => typed('addComment', { doc, ...args }),
     replyToComment: (doc, id, body) => typed('replyToComment', { doc, id, body }),
     setCommentStatus: (doc, id, status) => typed('setCommentStatus', { doc, id, status }),
