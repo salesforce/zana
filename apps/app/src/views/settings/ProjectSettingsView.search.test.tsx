@@ -86,6 +86,18 @@ async function openRow(container: HTMLElement, label: string, tab?: string) {
 }
 
 describe('ProjectSettingsView settings-search targets', () => {
+  it('orders project harness cards alphabetically by label', async () => {
+    render(<ProjectSettingsView project={local} onOpen={vi.fn()} onSaved={vi.fn()} />);
+    await screen.findByRole('button', { name: 'Project settings for Claude Code' });
+    const labels = screen
+      .getAllByRole('button', { name: /^Project settings for / })
+      .map((b) => b.getAttribute('aria-label')?.replace('Project settings for ', ''));
+    expect(labels).toEqual(['Claude Code', 'Codex', 'OpenCode', 'Pi']);
+    fireEvent.click(screen.getByRole('button', { name: 'Default harness' }));
+    const options = (await screen.findAllByRole('option')).map((el) => el.textContent?.trim());
+    expect(options).toEqual(['Use global default', 'Claude Code', 'Codex', 'OpenCode', 'Pi']);
+  });
+
   it('renders the landing target without a project', () => {
     const { container } = render(<ProjectSettingsView project={null} onOpen={vi.fn()} onSaved={vi.fn()} />);
     expect(seen(container)).toEqual(['project.landing']);
