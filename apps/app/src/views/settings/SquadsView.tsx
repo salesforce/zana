@@ -1,7 +1,7 @@
 import { product } from '../../lib/product-client.js';
 import { DelayedStencilList } from '../../components/ui/Skeleton.js';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
-import { Users, Search, FolderOpen, Play, ChevronDown, ChevronRight, Plus, Download, Upload, Copy, Pencil, Trash2, Crown } from 'lucide-react';
+import { Users, Search, FolderOpen, Play, ChevronDown, ChevronRight, Plus, Download, Upload, Copy, Pencil, Trash2, Crown, Star } from 'lucide-react';
 import type { CancelTeamLaunchResult, LaunchTeamResult, Project, Result, Team, Persona } from '@zana-ai/zcc-domain/product';
 import { useTeams, useData, useUi, usePersonas } from '@/store';
 import { resolveIcon } from '@/lib/resolveIcon';
@@ -11,6 +11,7 @@ import { squadSearchId } from '@/lib/settings-search/providers/catalogues';
 import { SquadEditor } from '@/components/SquadEditor';
 import { SquadTransportChip } from '@/components/SquadTransportChip';
 import { squadTransport, squadTransportClass } from '@/lib/squad-transport';
+import { sortCatalogueByName } from '@/lib/catalogue-sort';
 
 /**
  * Teams management panel — a catalogue of launchable Teams (builtin ⊕
@@ -155,6 +156,8 @@ export function SquadsView() {
     });
   }, [teams, filter, query]);
 
+  const ordered = useMemo(() => sortCatalogueByName(filtered), [filtered]);
+
   const counts = useMemo(() => {
     const c = { all: teams.length, builtin: 0, user: 0, project: 0, extension: 0 };
     for (const t of teams) c[sourceKind(t.source)] += 1;
@@ -217,6 +220,16 @@ export function SquadsView() {
       return;
     }
     pushToast(`Deleted squad “${team.name}”`, 'info');
+  };
+
+  const toggleDefault = async (team: Team) => {
+    const { source: _source, ...input } = team;
+    const result = await product.teams.save({ ...input, isDefault: team.isDefault ? undefined : true });
+    if (!result.ok) {
+      pushToast(`Could not update default squad: ${result.message}`, 'error');
+      return;
+    }
+    pushToast(team.isDefault ? `“${team.name}” is no longer the default squad` : `“${team.name}” is now the default squad`, 'info');
   };
 
   const importBundle = async () => {
@@ -282,7 +295,7 @@ export function SquadsView() {
 
             {loading ? (
               <DelayedStencilList label="Loading squads" className="scheduler-empty" />
-            ) : filtered.length === 0 ? (
+            ) : ordered.length === 0 ? (
               <div className="scheduler-empty">
                 <Users size={28} className="scheduler-empty-icon" />
                 <div className="scheduler-empty-title">
@@ -296,7 +309,7 @@ export function SquadsView() {
               </div>
             ) : (
               <ul className="skills-list">
-                {filtered.map((t) => (
+                {ordered.map((t) => (
                   <TeamRow
                     key={t.id}
                     team={t}
@@ -349,6 +362,7 @@ export function SquadsView() {
           onOpen={() => setEditor({ kind: 'open', team: rowMenu.team })}
           onReveal={() => void reveal()}
           onDuplicate={() => void duplicateTeam(rowMenu.team)}
+          onToggleDefault={() => void toggleDefault(rowMenu.team)}
           onDelete={() => void deleteTeam(rowMenu.team)}
         />
       )}
@@ -540,6 +554,11 @@ function TeamRow({
           <div className="skills-row-body">
             <div className="skills-row-head">
               <span className="skills-row-name">{team.name}</span>
+              {team.isDefault && (
+                <span className="scheduler-pill scheduler-pill--default" title="Preselected in New Agent">
+                  <Star size={10} fill="currentColor" aria-hidden="true" /> Default
+                </span>
+              )}
               <SquadTransportChip team={team} />
               <span className="scheduler-pill scheduler-pill--source">{sourceLabel(team.source)}</span>
               <span className="scheduler-pill">
@@ -688,6 +707,7 @@ function TeamRowMenu({
   onOpen,
   onReveal,
   onDuplicate,
+  onToggleDefault,
   onDelete
 }: {
   team: Team;
@@ -696,6 +716,7 @@ function TeamRowMenu({
   onOpen: () => void;
   onReveal: () => void;
   onDuplicate: () => void;
+  onToggleDefault: () => void;
   onDelete: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -763,6 +784,9 @@ function TeamRowMenu({
       </button>
       <button ref={(item) => { itemRefs.current[2] = item; }} role="menuitem" onClick={() => { onClose(); onDuplicate(); }}>
         <Copy size={13} /> Duplicate
+      </button>
+      <button ref={(item) => { itemRefs.current[4] = item; }} role="menuitem" onClick={() => { onClose(); onToggleDefault(); }}>
+        <Star size={13} /> {team.isDefault ? 'Clear default' : 'Set as default'}
       </button>
       {canDelete && (
         <>

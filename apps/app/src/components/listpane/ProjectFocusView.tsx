@@ -25,6 +25,7 @@ import {
 } from '../agentCardActions.js';
 import { PromptModal } from '../PromptModal.js';
 import type { AgentCard } from '../AgentBoard.js';
+import { sortCatalogueByName } from '../../lib/catalogue-sort.js';
 
 /** Quick-launch profiles offered by the focus-view "+" dropdown, in order. */
 const FOCUS_NEW_PROFILES: { profile: LaunchProfileId; label: string }[] = [
@@ -103,6 +104,7 @@ export function ProjectFocusView({ project }: { project: Project }) {
       !('projectId' in p.source) ||
       p.source.projectId === project.id
   );
+  const quickLaunchPersonas = useMemo(() => sortCatalogueByName(personas), [personas]);
 
   const buckets = useMemo(() => {
     // Pass the FULL list (visible + hidden). Hidden tabs (closed but still
@@ -221,12 +223,12 @@ export function ProjectFocusView({ project }: { project: Project }) {
                   <span>{label}</span>
                 </button>
               ))}
-              {personas.length > 0 && (
+              {quickLaunchPersonas.length > 0 && (
                 <>
                   <div className="focus-new-menu-label" role="presentation">
                     Personas
                   </div>
-                  {personas.map((p) => (
+                  {quickLaunchPersonas.map((p) => (
                     <button
                       key={p.id}
                       type="button"

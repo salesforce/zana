@@ -4423,6 +4423,8 @@ export interface Team {
   defaultPlanning?: SquadPlanning;
   /** Whether agent-started runs of this Squad need the user's Launch first. Review is a floor: the Project's review applies even when this is absent or direct. Absent ⇒ direct unless the Project asks for review. */
   launchApproval?: LaunchApproval;
+  /** Preselected in the New Agent squad picker. Absent ⇒ the first squad alphabetically. */
+  isDefault?: boolean;
   /** Set by the loader/host for UI display; never read from disk / trusted from the renderer. */
   source?: PersonaSource;
 }
