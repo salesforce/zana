@@ -3,7 +3,7 @@ import { Bot, Clock, Inbox } from 'lucide-react';
 import type { CompanionPanelKind } from '@zana-ai/zcc-domain/product';
 import { product } from '../../lib/product-client.js';
 import { railIndicators, type Indicator } from './companion-model.js';
-import fairyGlyph from '../../assets/zana-glyph.svg';
+import zanaLogo from '../../assets/zana-favicon.svg';
 import { useCompanion } from './useCompanion.js';
 
 /** Pointer travel (px) before a press on the rail becomes a drag. */
@@ -114,8 +114,8 @@ export function CompanionRail() {
           onClick={() => !suppressClick.current && void product.companion.exit()}
           {...tip.bind('Open Zana', 'Leave Command Center', () => !!drag.current?.dragging)}
         >
-          {/* Mask, like the menu-bar popover: the glyph takes the theme's text colour. */}
-          <span className="cc-rail-glyph" aria-hidden style={{ mask: `url("${fairyGlyph}") center / contain no-repeat` }} />
+          {/* The app's own brand mark, as shown in the mobile shell header. */}
+          <img className="cc-rail-glyph" src={zanaLogo} width={28} height={28} alt="" draggable={false} />
         </button>
 
         <RailButton

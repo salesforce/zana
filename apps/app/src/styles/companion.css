@@ -73,9 +73,9 @@ html.companion-surface #root {
 
 .cc-rail-glyph {
   display: block;
-  width: 24px;
-  height: 24px;
-  background-color: var(--text-primary);
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
   pointer-events: none;
 }
 

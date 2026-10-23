@@ -137,7 +137,7 @@ it('a shrink mid-pulse stops the pulse instead of leaving it stuck', async () =>
 it('the logo exits Command Center', async () => {
   const { container } = await mount();
   // The shipped glyph asset resolves (a missing file once rendered a broken image).
-  expect((container.querySelector('.cc-rail-glyph') as HTMLElement).style.mask).toContain('fairy');
+  expect((container.querySelector('img.cc-rail-glyph') as HTMLImageElement).getAttribute('src')).toMatch(/zana-favicon|^data:image\/svg/);
   fireEvent.click(btn(/Open the full window/));
   expect(h.exit).toHaveBeenCalledOnce();
 });

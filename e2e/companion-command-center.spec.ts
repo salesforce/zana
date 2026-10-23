@@ -50,6 +50,10 @@ test('companion: rail replaces the window, opens one panel, and hands back to Za
   await expect(rail.locator('.cc-rail')).toBeVisible();
   await expect(rail.locator('.cc-rail-btn')).toHaveCount(4);
   await expect(rail.locator('.cc-rail-logo')).toBeVisible();
+  // The brand logo actually loads: a missing asset once rendered a broken image.
+  const logo = rail.locator('.cc-rail-logo img');
+  await expect.poll(() => logo.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+  if (process.env.ZCC_E2E_RAIL_SHOT) await rail.screenshot({ path: process.env.ZCC_E2E_RAIL_SHOT });
 
   // The full window is hidden; only the rail floats.
   await expect
