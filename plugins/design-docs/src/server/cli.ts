@@ -277,7 +277,7 @@ async function dispatch(deps: CliDeps, argv: string[], ctx: PluginCliContext): P
         const files = projectFiles(caller, 'templates export');
         const path = localPath(files, out, ctx.cwd);
         if (!isInside(path, files.root)) throw new DesignDocError('invalid', '--out must be inside the project folder');
-        const bundle = deps.store.templatesExport(action === 'export' && positional.length > 1 ? positional.slice(1) : undefined);
+        const bundle = deps.store.templatesExport(action === 'export' && positional.length > 1 ? positional.slice(1) : undefined, action === 'purge');
         await deps.writeLocalFile({ files, path, content: bundle, encoding: 'utf8' });
         if (action === 'purge') { deps.store.purgeTemplates(bundle); deps.changed(''); }
         return `${action === 'purge' ? 'Exported and purged' : 'Exported'} templates to ${path}.`;

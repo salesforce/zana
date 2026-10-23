@@ -122,11 +122,11 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
   ) => deps.sdk.threads.spawn({ ...args, harness: 'project-default' });
 
   return {
-    templates: () => store.listTemplates().map(({ id, label, description, files, entryPath }) => ({
+    templates: () => store.listTemplateRecords().map(({ id, label, description, files, entryPath, docId, origin }) => ({
       id,
       key: id,
-      docId: store.requireTemplate(id).id,
-      origin: store.requireTemplate(id).template_origin,
+      docId,
+      origin,
       entryPath,
       label,
       description,
@@ -387,11 +387,7 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       } catch {
         return null;
       }
-      let file;
-      if (kind === 'template') {
-        try { file = store.readFile(doc.id, path, kind); }
-        catch (error) { if (!(error instanceof DesignDocError) || error.code !== 'not_found') throw error; file = null; }
-      } else file = docPageReader(store, doc.id, deps.kit ?? NO_KIT)(path);
+      const file = docPageReader(store, doc.id, deps.kit ?? NO_KIT, kind)(path);
       return file ? { kind: file.kind, encoding: file.encoding, content: file.content } : null;
     },
 

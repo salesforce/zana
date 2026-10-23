@@ -623,9 +623,7 @@ function TemplateManager({ templates, onNew, onEdit, onChanged }: { templates: T
         >
           <MenuItem icon={FolderOpen} label="Import" onSelect={() => { setMore(false); input.current?.click(); }} />
           <MenuItem icon={Download} label="Export all" onSelect={() => { setMore(false); void api.templatesExport().then((bundle) => saveBytes('design-doc-templates.json', new TextEncoder().encode(bundle.bundleText), 'application/json')).catch((error) => toast(`Could not export templates: ${errorMessage(error)}`, 'error')); }} />
-          {templates?.some((template) => template.origin === 'builtin') ? null : (
-            <MenuItem icon={Copy} label="Restore built-ins" onSelect={() => { setMore(false); void api.templatesRestoreBuiltins().then(onChanged).catch((error) => toast(`Could not restore built-ins: ${errorMessage(error)}`, 'error')); }} />
-          )}
+          <MenuItem icon={Copy} label="Restore built-ins" onSelect={() => { setMore(false); void api.templatesRestoreBuiltins().then(onChanged).catch((error) => toast(`Could not restore built-ins: ${errorMessage(error)}`, 'error')); }} />
         </Popover>
       </div>
       <input ref={input} type="file" accept="application/json,.json" hidden onChange={(event) => void importTemplates(event.target.files?.[0] ?? null)} />

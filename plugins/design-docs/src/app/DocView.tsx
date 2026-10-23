@@ -77,6 +77,7 @@ function Rail({
     { id: 'history', label: 'History', icon: History },
     { id: 'agents', label: 'Agents', icon: Bot, count: doc.threads.length }
   ]);
+  const active: RailTab = template ? 'history' : tab;
   return (
     <aside className="dd-rail" aria-label="Comments, history and agents">
       <div className="dd-rail-tabs" role="tablist">
@@ -85,8 +86,8 @@ function Rail({
             key={entry.id}
             type="button"
             role="tab"
-            aria-selected={tab === entry.id}
-            className={`dd-rail-tab${tab === entry.id ? ' on' : ''}`}
+            aria-selected={active === entry.id}
+            className={`dd-rail-tab${active === entry.id ? ' on' : ''}`}
             onClick={() => onTab(entry.id)}
           >
             <entry.icon size={13} aria-hidden />
@@ -101,7 +102,9 @@ function Rail({
           </>
         ) : null}
       </div>
-      {tab === 'comments' && !template ? (
+      {template ? (
+        <HistoryPane doc={doc} activePath={activePath} now={now} selectedId={selectedRevision} onSelect={onSelectRevision} docKind="template" />
+      ) : tab === 'comments' ? (
         <CommentsPane
           doc={doc}
           activePath={activePath}
@@ -113,7 +116,7 @@ function Rail({
           onFocusComment={onFocusComment}
         />
       ) : tab === 'history' ? (
-        <HistoryPane doc={doc} activePath={activePath} now={now} selectedId={selectedRevision} onSelect={onSelectRevision} docKind={template ? 'template' : undefined} />
+        <HistoryPane doc={doc} activePath={activePath} now={now} selectedId={selectedRevision} onSelect={onSelectRevision} />
       ) : (
         <AgentsPane doc={doc} now={now} openInPanel={openInPanel} />
       )}

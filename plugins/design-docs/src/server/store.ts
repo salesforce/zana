@@ -53,7 +53,7 @@ import { DEFAULT_TEMPLATE_ID, DESIGN_DOC_TEMPLATES, renderTemplateFiles, type De
 import { DESIGN_DOC_MIGRATIONS } from './schema.js';
 import type { PeerOperationOrigin } from '../shared/peer-contract.js';
 import { templateBundleSchema, templateInputSchema, type TemplateInput } from '../shared/template-bundle.js';
-import { MAX_TEMPLATE_BUNDLE_BYTES } from '../shared/limits.js';
+import { MAX_TEMPLATES, MAX_TEMPLATE_BUNDLE_BYTES, MAX_TEMPLATE_LABEL_LENGTH } from '../shared/limits.js';
 
 // A development build recorded peer-sync migrations before the released navigation
 // migration existed. Move that complete lineage aside so the host can apply index 2.
@@ -291,8 +291,26 @@ export class DesignDocStore {
   // ── Docs ──────────────────────────────────────────────────────────────
 
   listTemplates(): DesignDocTemplate[] {
+    return this.listTemplateRecords().map(({ docId: _docId, origin: _origin, ...template }) => template);
+  }
+
+  /** Every template with its row id and origin, from two queries however many templates exist. */
+  listTemplateRecords(): Array<DesignDocTemplate & { docId: string; origin: 'builtin' | 'user' }> {
     const rows = this.db.prepare(`SELECT * FROM docs WHERE ${TEMPLATE_ONLY} ORDER BY template_order, template_key`).all() as DocRow[];
-    return rows.map((row) => this.toTemplate(row));
+    const filesByDoc = new Map<string, Array<Pick<FileRow, 'path' | 'content' | 'encoding'>>>();
+    // docs-kind: allow Files are joined to template rows only.
+    const files = this.db.prepare(`SELECT f.doc_id, f.path, f.content, f.encoding FROM doc_files f JOIN docs d ON d.id = f.doc_id
+      WHERE d.${TEMPLATE_ONLY} ORDER BY f.path`).all() as Array<Pick<FileRow, 'path' | 'content' | 'encoding'> & { doc_id: string }>;
+    for (const file of files) {
+      const list = filesByDoc.get(file.doc_id) ?? [];
+      list.push(file);
+      filesByDoc.set(file.doc_id, list);
+    }
+    return rows.map((row) => ({
+      ...this.templateOf(row, filesByDoc.get(row.id) ?? []),
+      docId: row.id,
+      origin: row.template_origin?.startsWith('builtin:') ? 'builtin' as const : 'user' as const
+    }));
   }
 
   templateNew(input: unknown, actor: DocActor): DesignDocDetail {
@@ -345,11 +363,12 @@ export class DesignDocStore {
     return this.listTemplates();
   }
 
-  templatesExport(keys?: string[]): string {
+  /** `unbounded` skips the size cap: purge compares against the full bundle, which may exceed what a user can import. */
+  templatesExport(keys?: string[], unbounded = false): string {
     const templates = keys === undefined ? this.listTemplates() : [...new Set(keys)].map((key) => this.toTemplate(this.requireTemplate(key)));
     const text = JSON.stringify({ kind: 'zcc-design-doc-templates', version: 1,
       templates: templates.map(({ id, ...template }) => ({ ...template, key: id })) }, null, 2);
-    if (Buffer.byteLength(text) > MAX_TEMPLATE_BUNDLE_BYTES) throw new DesignDocError('limit', 'template bundle is too large');
+    if (!unbounded && Buffer.byteLength(text) > MAX_TEMPLATE_BUNDLE_BYTES) throw new DesignDocError('limit', 'template bundle is too large');
     return text;
   }
 
@@ -369,7 +388,7 @@ export class DesignDocStore {
 
   purgeTemplates(expectedBundle: string): void {
     this.db.transaction(() => {
-      if (this.templatesExport() !== expectedBundle) throw new DesignDocError('conflict', 'templates changed during export; retry purge');
+      if (this.templatesExport(undefined, true) !== expectedBundle) throw new DesignDocError('conflict', 'templates changed during export; retry purge');
       for (const row of this.db.prepare(`SELECT id FROM docs WHERE ${TEMPLATE_ONLY}`).all() as Array<{ id: string }>) this.deleteTemplateRows(row.id);
     });
   }
@@ -378,7 +397,7 @@ export class DesignDocStore {
     const labels = new Set((this.db.prepare(`SELECT title FROM docs WHERE ${TEMPLATE_ONLY}`).all() as Array<{ title: string }>).map((row) => row.title));
     for (let index = 1; ; index++) {
       const suffix = index === 1 ? ' (copy)' : ` (copy ${index})`;
-      const candidate = label.slice(0, 200 - suffix.length) + suffix;
+      const candidate = label.slice(0, MAX_TEMPLATE_LABEL_LENGTH - suffix.length) + suffix;
       if (!labels.has(candidate)) return candidate;
     }
   }
@@ -435,14 +454,8 @@ export class DesignDocStore {
         if (this.countTemplates() >= 1000) throw new DesignDocError('limit', 'template capacity reached');
         const id = this.randomId('ddt_');
         const key = this.templateByKey(template.id) ? this.randomId('builtin_') : template.id;
-        const prepared = sanitizeTemplateInput({ key, label: template.label, description: template.description,
-          entryPath: template.entryPath ?? template.files.find((file) => file.path.toLowerCase() === 'readme.md')?.path
-            ?? template.files.find((file) => file.path.toLowerCase() === 'index.html')?.path ?? template.files[0]!.path,
-          files: template.files }).files;
-        const entryPath = template.entryPath
-          ?? prepared.find((file) => file.path.toLowerCase() === 'readme.md')?.path
-          ?? prepared.find((file) => file.path.toLowerCase() === 'index.html')?.path
-          ?? prepared[0]!.path;
+        const { files: prepared, entryPath } = sanitizeTemplateInput({ key, label: template.label, description: template.description,
+          entryPath: template.entryPath ?? defaultEntryPath(template.files), files: template.files });
         this.db.prepare(
           `INSERT INTO docs (id, slug, title, summary, status, project_id, tags, entry_path, revision,
             created_at, updated_at, created_by, updated_by, kind, template_key, template_origin, template_order)
@@ -616,6 +629,10 @@ export class DesignDocStore {
   private toTemplate(row: DocRow): DesignDocTemplate {
     this.requireTemplate(row.id);
     const files = this.db.prepare('SELECT path, content, encoding FROM doc_files WHERE doc_id = ? ORDER BY path').all(row.id) as Array<Pick<FileRow, 'path' | 'content' | 'encoding'>>;
+    return this.templateOf(row, files);
+  }
+
+  private templateOf(row: DocRow, files: Array<Pick<FileRow, 'path' | 'content' | 'encoding'>>): DesignDocTemplate {
     return {
       id: row.template_key!,
       label: row.title,
@@ -1780,4 +1797,10 @@ function toThreadLink(row: ThreadRow): DesignDocThreadLink {
     role: role in ROLE_RANK ? role : 'assistant',
     lastActivityAt: row.last_activity_at
   };
+}
+
+/** README.md, else index.html, else the first file. */
+function defaultEntryPath(files: ReadonlyArray<{ path: string }>): string {
+  return files.find((file) => file.path.toLowerCase() === 'readme.md')?.path
+    ?? files.find((file) => file.path.toLowerCase() === 'index.html')?.path ?? files[0]!.path;
 }

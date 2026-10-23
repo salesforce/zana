@@ -36,6 +36,24 @@ describe('template kind isolation', () => {
     expect(() => store.templateNew({}, user)).toThrow('capacity reached');
   });
 
+  it('lists template records in bulk and lets purge ignore the export size cap', () => {
+    const db = createTestDatabase(), store = new DesignDocStore(db);
+    const custom = store.templateNew({ label: 'Mine' }, user);
+    const records = store.listTemplateRecords();
+    expect(records.filter((record) => record.origin === 'builtin')).toHaveLength(7);
+    expect(records.find((record) => record.docId === custom.id)).toMatchObject({ origin: 'user', label: 'Mine' });
+    expect(records.every((record) => record.files.length > 0)).toBe(true);
+    const registry = store as unknown as { listTemplates(): unknown[] };
+    registry.listTemplates = () => [{ id: 'key', label: 'x'.repeat(MAX_TEMPLATE_BUNDLE_BYTES) }];
+    expect(() => store.templatesExport()).toThrow('too large');
+    const bundle = store.templatesExport(undefined, true);
+    expect(bundle.length).toBeGreaterThan(MAX_TEMPLATE_BUNDLE_BYTES);
+    registry.listTemplates = DesignDocStore.prototype.listTemplates.bind(store);
+    expect(() => store.purgeTemplates(bundle)).toThrow('changed during export');
+    store.purgeTemplates(store.templatesExport(undefined, true));
+    expect(store.listTemplates()).toEqual([]);
+  });
+
   it('restores builtin origins without overwriting custom colliding keys and defaults to first remaining template', () => {
     const db = createTestDatabase(), store = new DesignDocStore(db);
     store.templateDelete('technical');

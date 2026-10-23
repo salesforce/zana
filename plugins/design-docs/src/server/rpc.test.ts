@@ -187,6 +187,10 @@ describe('Design Docs RPC', () => {
     const { call } = setup();
     expect(call('templates').map((template: { id: string }) => template.id)).toEqual(['technical', 'product', 'adr', 'api', 'report', 'html-design', 'blank']);
     expect(call('templates')[0].files).toContain('README.md');
+    const custom = call('templateNew', { label: 'Mine' });
+    const listed = call('templates') as Array<{ id: string; docId: string; origin: string }>;
+    expect(listed.filter((template) => template.origin === 'builtin')).toHaveLength(7);
+    expect(listed.find((template) => template.docId === custom.id)?.origin).toBe('user');
     await expect(call('projects')).resolves.toEqual([{ id: 'p1', name: 'App' }, { id: 'q', name: 'Default Project', quickAgent: true }]);
   });
 

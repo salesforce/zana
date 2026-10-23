@@ -211,7 +211,7 @@ export function DocHeader({
       if (template) await api.templateUpdateMeta(doc.id, { ...patch, expectedHead: doc.head });
       else await api.update(doc.id, { ...patch, expectedHead: doc.head });
     } catch (error) {
-      toast(`Could not update the doc: ${errorMessage(error)}`, 'error');
+      toast(`Could not update the ${template ? 'template' : 'doc'}: ${errorMessage(error)}`, 'error');
       throw error;
     }
   };

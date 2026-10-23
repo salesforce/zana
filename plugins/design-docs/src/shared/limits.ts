@@ -31,3 +31,7 @@ export const MAX_EDITS_PER_CALL = 50;
 export const DEFAULT_LIST_LIMIT = 50;
 export const MAX_LIST_LIMIT = 200;
 export const MAX_HISTORY_LIMIT = 100;
+
+/** Templates a store may hold, and the longest template label (copy names are trimmed to fit). */
+export const MAX_TEMPLATES = 1000;
+export const MAX_TEMPLATE_LABEL_LENGTH = 200;

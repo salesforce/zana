@@ -101,6 +101,18 @@ describe('DocHeader overlays', () => {
     expect(screen.getByRole('tab', { name: /History/ })).toBeTruthy();
   });
 
+  it('shows History for a template even when the shared rail tab was left on Agents', async () => {
+    localStorage.setItem('zcc.design-docs.rail-tab', JSON.stringify('agents'));
+    const harness = createHarness();
+    const template = harness.store.templateNew({ label: 'Personal template' }, UI_USER);
+    renderDoc(harness, template.id, { kind: 'template' });
+    await findPane('README.md');
+    expect(document.querySelector('.dd-rail')).toBeTruthy();
+    expect(screen.queryByText(/No agents/i)).toBeNull();
+    expect(document.querySelector('.dd-rail-tab.on')?.textContent).toContain('History');
+    localStorage.removeItem('zcc.design-docs.rail-tab');
+  });
+
   it('opens and dismisses the peer conflicts dialog and the more-actions menu', async () => {
     const harness = createHarness();
     const doc = simpleDoc(harness);
