@@ -39,7 +39,7 @@ export const CLI_COMMANDS = [
   { name: 'revoke-peer', summary: 'Disable local database links without claiming group removal', usage: 'revoke-peer <peer-id>' },
   { name: 'sync', summary: 'Sync persisted database changes, including drafts', usage: 'sync' },
   { name: 'list', summary: 'List design docs', usage: 'list [--query <text>] [--status active|all|<status>] [--all-projects] [--json]' },
-  { name: 'templates', summary: 'List available templates', usage: 'templates list [--json]' },
+  { name: 'templates', summary: 'List, export, import or purge templates', usage: 'templates (list [--json] | export [key...] --out <file> | import <file> | purge --out <file>)' },
   { name: 'show', summary: 'Show a doc manifest and its entry file', usage: 'show <doc> [--all] [--json]' },
   { name: 'read', summary: 'Print one text file raw', usage: 'read <doc> <path>' },
   {
@@ -261,7 +261,28 @@ async function dispatch(deps: CliDeps, argv: string[], ctx: PluginCliContext): P
       return listDocs(operation, { query: stringFlag(flags, 'query'), status: stringFlag(flags, 'status'), scope });
     }
     case 'templates': {
-      if (positional[0] && positional[0] !== 'list') throw new DesignDocError('invalid', 'templates accepts only list');
+      const action = positional[0] ?? 'list';
+      if (action === 'import') {
+        const files = projectFiles(caller, 'templates import');
+        const file = await deps.readLocalFile({ files, path: need(positional, 1, 'file'), cwd: ctx.cwd });
+        if (file.encoding !== 'utf8') throw new DesignDocError('invalid', 'template bundle must be UTF-8 JSON');
+        const templates = deps.store.templatesImport(file.content, caller.actor);
+        for (const template of templates) deps.changed(template.id);
+        return `Imported ${templates.length} templates.`;
+      }
+      if (action === 'export' || action === 'purge') {
+        const out = stringFlag(flags, 'out');
+        if (!out) throw new DesignDocError('invalid', 'templates export/purge requires --out <file>');
+        if (!deps.writeLocalFile) throw new DesignDocError('invalid', 'template export is not available here');
+        const files = projectFiles(caller, 'templates export');
+        const path = localPath(files, out, ctx.cwd);
+        if (!isInside(path, files.root)) throw new DesignDocError('invalid', '--out must be inside the project folder');
+        const bundle = deps.store.templatesExport(action === 'export' && positional.length > 1 ? positional.slice(1) : undefined);
+        await deps.writeLocalFile({ files, path, content: bundle, encoding: 'utf8' });
+        if (action === 'purge') { deps.store.purgeTemplates(bundle); deps.changed(''); }
+        return `${action === 'purge' ? 'Exported and purged' : 'Exported'} templates to ${path}.`;
+      }
+      if (action !== 'list') throw new DesignDocError('invalid', 'templates accepts list, export, import or purge');
       const templates = deps.store.listTemplates().map(({ id, label, description, files, entryPath }) => ({ key: id, label, description, files: files.map((file) => file.path), entryPath }));
       return json ? JSON.stringify(templates, null, 2) : templates.map((template) => `${template.key}\t${template.label}\t${template.description}`).join('\n');
     }

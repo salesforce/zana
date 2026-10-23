@@ -10,6 +10,7 @@ export const MAX_FILES_PER_DOC = 500;
 export const MAX_TEXT_FILE_BYTES = 2 * 1024 * 1024;
 export const MAX_BINARY_FILE_BYTES = 2 * 1024 * 1024;
 export const MAX_DOC_BYTES = 24 * 1024 * 1024;
+export const MAX_TEMPLATE_BUNDLE_BYTES = 64 * 1024 * 1024;
 
 /** Revisions kept per file; older ones are pruned on write. */
 export const MAX_TEXT_REVISIONS_PER_FILE = 25;

@@ -4,6 +4,7 @@ import {
   LARGE_TEXT_FILE_BYTES,
   MAX_COMMENTS_PER_DOC,
   MAX_FILES_PER_DOC,
+  MAX_TEMPLATE_BUNDLE_BYTES,
   MAX_LARGE_TEXT_REVISIONS_PER_FILE,
   MAX_TEXT_FILE_BYTES,
   MAX_TEXT_REVISIONS_PER_FILE,
@@ -19,6 +20,99 @@ const user: DocActor = { kind: 'user', label: 'You', threadId: null };
 const agent: DocActor = { kind: 'agent', label: 'Planner', threadId: 'thread-1' };
 
 describe('template kind isolation', () => {
+  it('bounds import/export bundles and stored template count', () => {
+    const db = createTestDatabase(), store = new DesignDocStore(db);
+    expect(() => store.templatesImport(' '.repeat(MAX_TEMPLATE_BUNDLE_BYTES + 1), user)).toThrow('too large');
+    const huge = 'x'.repeat(MAX_TEMPLATE_BUNDLE_BYTES);
+    const registry = store as unknown as { listTemplates(): unknown[] };
+    const original = registry.listTemplates;
+    registry.listTemplates = () => [{ id: 'key', label: huge }];
+    expect(() => store.templatesExport()).toThrow('too large');
+    registry.listTemplates = original;
+    const existing = store.listTemplates().length;
+    db.prepare(`WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x < ?)
+      INSERT INTO docs (id, slug, title, created_at, updated_at, created_by, updated_by, kind, template_key)
+      SELECT 'capacity-' || x, 'capacity-' || x, 'Private', 1, 1, '{}', '{}', 'template', 'capacity-' || x FROM n`).run(1000 - existing);
+    expect(() => store.templateNew({}, user)).toThrow('capacity reached');
+  });
+
+  it('restores builtin origins without overwriting custom colliding keys and defaults to first remaining template', () => {
+    const db = createTestDatabase(), store = new DesignDocStore(db);
+    store.templateDelete('technical');
+    expect(store.create({ title: 'Fallback' }, user).files.length).toBeGreaterThan(0);
+    const custom = store.templateNew({ label: 'Custom' }, user);
+    db.prepare("UPDATE docs SET template_key = 'technical' WHERE id = ?").run(custom.id);
+    store.templatesRestoreBuiltins();
+    expect(store.templateByKey('technical')!.label).toBe('Custom');
+    expect(db.prepare("SELECT COUNT(*) AS n FROM docs WHERE kind = 'template' AND template_origin = 'builtin:technical'").get()).toEqual({ n: 1 });
+    store.templatesRestoreBuiltins();
+    expect(db.prepare("SELECT COUNT(*) AS n FROM docs WHERE kind = 'template' AND template_origin = 'builtin:technical'").get()).toEqual({ n: 1 });
+  });
+  it('manages, copies, restores and round-trips templates without doc or peer leakage', () => {
+    const db = createTestDatabase(), mutations: unknown[] = [];
+    const store = new DesignDocStore(db, { onMutation: (event) => mutations.push(event) });
+    const template = store.templateNew({ label: 'Custom', files: [{ path: 'README.md', content: '# {{title}}' }, { path: 'image.png', content: 'AAEC', encoding: 'base64' }] }, user);
+    expect(store.list()).toEqual([]);
+    expect(store.templateByKey(store.requireTemplate(template.id).template_key)!.label).toBe('Custom');
+    const copy = store.templateDuplicate(template.id, user);
+    expect(copy.title).toBe('Custom (copy)');
+    expect(store.templateDuplicate(template.id, user).title).toBe('Custom (copy 2)');
+    expect(store.templateUpdateMeta(copy.id, { label: 'Edited', description: 'description', entryPath: 'image.png' }, user).entryPath).toBe('image.png');
+    expect(() => store.templateUpdateMeta(copy.id, { status: 'approved' }, user)).toThrow('accepts only');
+    expect(() => store.templateUpdateMeta(copy.id, { entryPath: 'missing.md' }, user)).toThrow('entryPath');
+    expect(mutations).toEqual([]);
+    const bundle = store.templatesExport([store.requireTemplate(template.id).template_key!]);
+    const imported = store.templatesImport(bundle, user)[0]!;
+    expect(imported.title).toBe('Custom (copy)');
+    expect(store.readFile(imported.id, 'image.png', 'template').content).toBe('AAEC');
+    expect(store.requireTemplate(imported.id).template_key).not.toBe(store.requireTemplate(template.id).template_key);
+    const doc = store.create({ title: 'Source', files: [{ path: 'README.md', content: 'source' }] }, user);
+    const saved = store.templateFromDoc(doc.id, user);
+    expect(saved.title).toBe('Source (copy)');
+    expect(store.readFile(saved.id, 'README.md', 'template').content).toBe('source');
+    expect(() => store.templatesImport('bad', user)).toThrow('malformed');
+    expect(() => store.templatesImport(3, user)).toThrow('string');
+    expect(() => store.templatesImport('{}', user)).toThrow();
+    store.templateDelete('technical');
+    expect(store.templateByKey('technical')).toBeNull();
+    store.templatesRestoreBuiltins();
+    expect(store.templateByKey('technical')).not.toBeNull();
+    expect(store.templateByKey(store.requireTemplate(copy.id).template_key)!.label).toBe('Edited');
+    const all = store.templatesExport();
+    expect(() => store.purgeTemplates('stale')).toThrow('changed');
+    store.purgeTemplates(all);
+    expect(store.listTemplates()).toEqual([]);
+    expect(store.get(doc.id).title).toBe('Source');
+    const only = store.templateNew({}, user);
+    expect(() => store.templateDelete(only.id)).toThrow('last template');
+  });
+
+  it('rolls back an entire import when inserting any template fails', () => {
+    const db = createTestDatabase(), store = new DesignDocStore(db);
+    const before = store.listTemplates();
+    const bundle = { kind: 'zcc-design-doc-templates', version: 1, templates: ['one', 'two'].map((key) => ({
+      key, label: key, description: '', entryPath: 'README.md', files: [{ path: 'README.md', content: key }]
+    })) };
+    db.runScript("CREATE TRIGGER fail_second BEFORE INSERT ON docs WHEN NEW.template_key = 'two' BEGIN SELECT RAISE(ABORT, 'insert fault'); END");
+    expect(() => store.templatesImport(JSON.stringify(bundle), user)).toThrow('insert fault');
+    expect(store.listTemplates()).toEqual(before);
+  });
+
+  it('edits template files and revisions without linking agents or emitting mutations', () => {
+    const events: unknown[] = [], store = new DesignDocStore(createTestDatabase(), { onMutation: (event) => events.push(event) });
+    const template = store.templateNew({}, user);
+    store.writeFile(template.id, { path: 'README.md', content: 'old' }, agent, 'template');
+    const revision = store.history(template.id, {}, 'template')[0]!;
+    store.editFile(template.id, { path: 'README.md', edits: [{ oldText: 'old', newText: 'new' }] }, agent, 'template');
+    store.renameFile(template.id, 'README.md', 'renamed.md', agent, {}, 'template');
+    expect(store.get(template.id, 'template').entryPath).toBe('renamed.md');
+    store.restoreRevision(template.id, revision.id, user, {}, 'template');
+    expect(store.revisionContent(template.id, revision.id, 'template').content).toBe('old');
+    store.deleteFile(template.id, 'renamed.md', agent, {}, 'template');
+    expect(store.get(template.id, 'template').entryPath).toBe('README.md');
+    expect(store.get(template.id, 'template').threads).toEqual([]);
+    expect(events).toEqual([]);
+  });
   it('hides templates from doc lookups, search, alternatives, files, comments and mutations', () => {
     const db = createTestDatabase();
     const mutations: unknown[] = [];

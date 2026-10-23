@@ -16,11 +16,49 @@ function setup() {
     projects: { list: async () => [{ id: 'p1', name: 'App', path: '/secret/path' }, { id: 'q', name: 'Default Project', quickAgent: true }] }
   };
   const rpc = createRpcHandlers({ store, changed, sdk: sdk as never });
-  const call = (name: string, args?: unknown) => rpc[name]!(args) as any;
+  const call = (name: string, args?: unknown) => rpc[name]!(args && typeof args === 'object' && !name.startsWith('template') ? { kind: 'doc', ...args } : args) as any;
   return { store, changed, spawn, get, call };
 }
 
 describe('Design Docs RPC', () => {
+  it('manages templates and checks kind for every file and asset RPC', async () => {
+    const { store, call } = setup();
+    const template = call('templateNew', { label: 'Managed' });
+    const doc = store.create({ title: 'Doc', template: 'blank' }, UI_USER);
+    const operations = [
+      ['readFile', { path: 'README.md' }], ['writeFile', { path: 'README.md', content: 'wrong' }],
+      ['editFile', { path: 'README.md', edits: [{ oldText: 'x', newText: 'y' }] }],
+      ['deleteFile', { path: 'README.md' }], ['renameFile', { from: 'README.md', to: 'new.md' }],
+      ['history', {}], ['revision', { id: 1 }], ['restore', { id: 1 }],
+      ['readPageFile', { path: 'pic.png' }], ['renderPage', { path: 'index.html' }]
+    ] as const;
+    for (const [name, args] of operations) {
+      expect(() => call(name, { doc: template.id, kind: 'doc', ...args })).toThrow('not found');
+      expect(() => call(name, { doc: doc.id, kind: 'template', ...args })).toThrow('not found');
+      expect(() => call(name, { doc: doc.id, kind: undefined, ...args })).toThrow('kind must');
+    }
+    await expect(call('update', { doc: template.id, kind: 'doc', entryPath: 'README.md' })).rejects.toThrow('not found');
+    await expect(call('update', { doc: doc.id, kind: 'template', entryPath: 'README.md' })).rejects.toThrow('not found');
+    const copy = call('templateDuplicate', { template: template.id });
+    expect(copy.title).toBe('Managed (copy)');
+    expect(call('templateFromDoc', { doc: doc.id }).title).toBe('Doc (copy)');
+    call('templateUpdateMeta', { template: copy.id, label: 'Edited' });
+    call('writeFile', { kind: 'template', doc: copy.id, path: 'index.html', content: '<img src="pic.png"><p>Hello</p>' });
+    call('writeFile', { kind: 'template', doc: copy.id, path: 'pic.png', content: 'AAEC', encoding: 'base64' });
+    expect(call('readPageFile', { kind: 'template', doc: copy.id, path: 'pic.png' }).content).toBe('AAEC');
+    expect(call('readPageFile', { kind: 'template', doc: copy.id, path: 'absent.png' })).toBeNull();
+    expect(call('renderPage', { kind: 'template', doc: copy.id, path: 'index.html' }).html).toContain('Hello');
+    await call('update', { kind: 'template', doc: copy.id, entryPath: 'index.html' });
+    await expect(call('update', { kind: 'template', doc: copy.id, entryPath: 'index.html', status: 'approved' })).rejects.toThrow('accepts only');
+    for (const [name, args] of [['pin', { pinned: true }], ['addComment', { body: 'no' }], ['publish', {}], ['askAgent', {}]] as const) {
+      await expect(Promise.resolve().then(() => call(name, { doc: copy.id, ...args }))).rejects.toThrow('not found');
+    }
+    const key = store.requireTemplate(copy.id).template_key!;
+    expect(call('templatesImport', call('templatesExport', { keys: [key] }))).toHaveLength(1);
+    call('templateDelete', { template: copy.id });
+    expect(() => store.requireTemplate(copy.id)).toThrow('not found');
+    expect(call('templatesRestoreBuiltins')).toBeInstanceOf(Array);
+  });
   it('bounds peer review to retained heads and attributes resolution to user without trusting renderer origin', () => {
     const { store } = setup();
     const doc = store.create({ title: 'Review', template: 'blank' }, UI_USER);
@@ -76,14 +114,14 @@ describe('Design Docs RPC', () => {
       expect(expectedHead).toBe(sync.head('repo', doc.id));
       store.writeFile(doc.id, { path: 'README.md', content: 'replacement' }, UI_USER);
       const before = store.get(doc.id), operations = sync.operations('repo');
-      await expect(handlers.update!({ doc: doc.id, ...patch, expectedHead })).rejects.toThrow(/head changed/);
-      await expect(handlers.update!({ doc: doc.id, ...patch })).rejects.toThrow(/expectedHead/);
-      await expect(handlers.update!({ doc: doc.id, ...patch, expectedHead: 42 })).rejects.toThrow(/string/);
+      await expect(handlers.update!({ kind: 'doc', doc: doc.id, ...patch, expectedHead })).rejects.toThrow(/head changed/);
+      await expect(handlers.update!({ kind: 'doc', doc: doc.id, ...patch })).rejects.toThrow(/expectedHead/);
+      await expect(handlers.update!({ kind: 'doc', doc: doc.id, ...patch, expectedHead: 42 })).rejects.toThrow(/string/);
       expect(store.get(doc.id)).toEqual(before);
       expect(sync.operations('repo')).toEqual(operations);
       expect(sync.readyIntents('repo')).toEqual([]);
       expect(changed).not.toHaveBeenCalled();
-      await handlers.update!({ doc: doc.id, ...patch, expectedHead: before.head });
+      await handlers.update!({ kind: 'doc', doc: doc.id, ...patch, expectedHead: before.head });
       expect(changed).toHaveBeenCalledExactlyOnceWith(doc.id);
     }
   );
@@ -224,13 +262,13 @@ describe('Design Docs RPC', () => {
     const rpc = createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never, kit });
     const doc = await rpc.create!({ title: 'Site', template: 'blank' }) as { id: string };
     store.writeFile(doc.id, { path: 'index.html', content: '<link rel="stylesheet" href="zcc-kit/site.css"><p>hi</p>' }, UI_USER);
-    const page = rpc.renderPage!({ doc: doc.id, path: 'index.html' }) as { html: string; revision: number; deps: unknown[] };
+    const page = rpc.renderPage!({ kind: 'doc', doc: doc.id, path: 'index.html' }) as { html: string; revision: number; deps: unknown[] };
     expect(page.html).toContain('<style data-dd-href="zcc-kit/site.css">p{}</style>');
     expect(page.deps).toEqual([{ path: 'zcc-kit/site.css', revision: 0 }]);
-    expect((rpc.renderPage!({ doc: doc.id, path: 'index.html', draft: '<p>new</p>' }) as { html: string }).html).toContain('<p>new</p>');
-    expect(() => rpc.renderPage!({ doc: doc.id, path: 'index.html', draft: 4 })).toThrow(/draft must be a string/);
+    expect((rpc.renderPage!({ kind: 'doc', doc: doc.id, path: 'index.html', draft: '<p>new</p>' }) as { html: string }).html).toContain('<p>new</p>');
+    expect(() => rpc.renderPage!({ kind: 'doc', doc: doc.id, path: 'index.html', draft: 4 })).toThrow(/draft must be a string/);
     const plain = createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never });
-    expect((plain.renderPage!({ doc: doc.id, path: 'index.html' }) as { missing: string[] }).missing).toEqual(['zcc-kit/site.css']);
+    expect((plain.renderPage!({ kind: 'doc', doc: doc.id, path: 'index.html' }) as { missing: string[] }).missing).toEqual(['zcc-kit/site.css']);
   });
 
   it('reads the files a page fetches, the site kit included', async () => {
@@ -239,12 +277,12 @@ describe('Design Docs RPC', () => {
     const rpc = createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never, kit });
     const doc = await rpc.create!({ title: 'Site', template: 'blank' }) as { id: string };
     store.writeFile(doc.id, { path: 'data/runs.json', content: '[1]' }, UI_USER);
-    expect(rpc.readPageFile!({ doc: doc.id, path: './data/runs.json' })).toEqual({ kind: 'code', encoding: 'utf8', content: '[1]' });
-    expect(rpc.readPageFile!({ doc: doc.id, path: 'zcc-kit/site.js' })).toEqual({ kind: 'code', encoding: 'utf8', content: 'go()' });
-    expect(rpc.readPageFile!({ doc: doc.id, path: 'absent.json' })).toBeNull();
-    expect(rpc.readPageFile!({ doc: doc.id, path: '../escape.json' })).toBeNull();
-    expect(createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never }).readPageFile!({ doc: doc.id, path: 'zcc-kit/site.js' })).toBeNull();
-    expect(() => rpc.readPageFile!({ doc: doc.id })).toThrow(/path/);
+    expect(rpc.readPageFile!({ kind: 'doc', doc: doc.id, path: './data/runs.json' })).toEqual({ kind: 'code', encoding: 'utf8', content: '[1]' });
+    expect(rpc.readPageFile!({ kind: 'doc', doc: doc.id, path: 'zcc-kit/site.js' })).toEqual({ kind: 'code', encoding: 'utf8', content: 'go()' });
+    expect(rpc.readPageFile!({ kind: 'doc', doc: doc.id, path: 'absent.json' })).toBeNull();
+    expect(rpc.readPageFile!({ kind: 'doc', doc: doc.id, path: '../escape.json' })).toBeNull();
+    expect(createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never }).readPageFile!({ kind: 'doc', doc: doc.id, path: 'zcc-kit/site.js' })).toBeNull();
+    expect(() => rpc.readPageFile!({ kind: 'doc', doc: doc.id })).toThrow(/path/);
   });
 
   it('hands over the doc as a static site for download, the kit its pages load included', async () => {
@@ -452,7 +490,7 @@ describe('Design Docs RPC', () => {
     expect(method.mock.calls.map(([name]) => name)).not.toContain('setAgentSettings');
     expect(method.mock.calls.map(([name]) => name)).not.toContain('agentHarnesses');
     expect(method.mock.calls.map(([name]) => name)).toEqual(expect.arrayContaining(['harnessDescriptors', 'harnessRouting', 'setHarnessRouting']));
-    expect(method).toHaveBeenCalledTimes(50);
+    expect(method).toHaveBeenCalledTimes(58);
   });
 });
 

@@ -147,7 +147,7 @@ describe('immutable sync store', () => {
       SELECT printf('doc-%05d', x), printf('doc-%05d', x), 'Paged manual', 1, 1, ?, ? FROM n`)
       .run(JSON.stringify(actor), JSON.stringify(actor));
     db.prepare(`INSERT INTO doc_files (doc_id, path, content, encoding, size, revision, updated_at, updated_by, sync_id)
-      SELECT id, 'README.md', '', 'utf8', 0, 1, 1, ?, 'file-' || id FROM docs`).run(JSON.stringify(actor));
+      SELECT id, 'README.md', '', 'utf8', 0, 1, 1, ?, 'file-' || id FROM docs WHERE kind = 'doc'`).run(JSON.stringify(actor));
     let cursor: string | null = '', total = 0;
     do {
       cursor = sync.prepareManual(cursor!);

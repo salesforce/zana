@@ -52,6 +52,8 @@ import {
 import { DEFAULT_TEMPLATE_ID, DESIGN_DOC_TEMPLATES, renderTemplateFiles, type DesignDocTemplate } from '../shared/templates.js';
 import { DESIGN_DOC_MIGRATIONS } from './schema.js';
 import type { PeerOperationOrigin } from '../shared/peer-contract.js';
+import { templateBundleSchema, templateInputSchema, type TemplateInput } from '../shared/template-bundle.js';
+import { MAX_TEMPLATE_BUNDLE_BYTES } from '../shared/limits.js';
 
 // A development build recorded peer-sync migrations before the released navigation
 // migration existed. Move that complete lineage aside so the host can apply index 2.
@@ -240,6 +242,7 @@ const COMMENT_EXCERPT_LENGTH = 160;
 
 export const DOC_ONLY = `kind = 'doc'`;
 export const TEMPLATE_ONLY = `kind = 'template'`;
+export type DocKind = 'doc' | 'template';
 
 // docs-kind: allow Correlated file counts inherit the outer docs kind predicate.
 const SUMMARY_COLUMNS = `d.*,
@@ -292,6 +295,118 @@ export class DesignDocStore {
     return rows.map((row) => this.toTemplate(row));
   }
 
+  templateNew(input: unknown, actor: DocActor): DesignDocDetail {
+    const raw = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    return this.db.transaction(() => this.insertTemplate(sanitizeTemplateInput({
+      key: this.randomId('custom_'), label: raw.label ?? 'New template', description: raw.description ?? '',
+      entryPath: raw.entryPath ?? 'README.md', files: raw.files ?? [{ path: 'README.md', content: '# {{title}}\n\n{{summary}}\n' }]
+    }), actor));
+  }
+
+  templateDuplicate(ref: unknown, actor: DocActor): DesignDocDetail {
+    const source = this.toTemplate(this.requireTemplate(ref));
+    return this.db.transaction(() => this.insertTemplate(sanitizeTemplateInput({
+      ...source, key: this.randomId('custom_'), label: this.uniqueCopyName(source.label), description: source.description
+    }), actor));
+  }
+
+  templateFromDoc(ref: unknown, actor: DocActor): DesignDocDetail {
+    const doc = this.get(ref);
+    return this.db.transaction(() => this.insertTemplate(sanitizeTemplateInput({
+      key: this.randomId('custom_'), label: this.uniqueCopyName(doc.title), description: doc.summary,
+      entryPath: doc.entryPath, files: this.readAllFiles(doc.id)
+    }), actor));
+  }
+
+  templateUpdateMeta(ref: unknown, patch: unknown, actor: DocActor): DesignDocDetail {
+    const row = this.requireTemplate(ref);
+    const raw = patch && typeof patch === 'object' ? patch as Record<string, unknown> : {};
+    if (Object.keys(raw).some((key) => !['label', 'description', 'entryPath'].includes(key))) {
+      throw new DesignDocError('invalid', 'template metadata accepts only label, description, entryPath');
+    }
+    const sanitized = sanitizeTemplateInput({ ...this.toTemplate(row), key: row.template_key,
+      label: raw.label ?? row.title, description: raw.description ?? row.summary, entryPath: raw.entryPath ?? row.entry_path });
+    this.db.prepare(`UPDATE docs SET title = ?, summary = ?, entry_path = ?, revision = revision + 1,
+      updated_at = ?, updated_by = ? WHERE ${TEMPLATE_ONLY} AND id = ?`)
+      .run(sanitized.label, sanitized.description, sanitized.entryPath, this.now(), JSON.stringify(actor), row.id);
+    return this.get(row.id, 'template');
+  }
+
+  templateDelete(ref: unknown): void {
+    this.db.transaction(() => {
+      const row = this.requireTemplate(ref);
+      if (this.countTemplates() <= 1) throw new DesignDocError('invalid', 'cannot delete the last template');
+      this.deleteTemplateRows(row.id);
+    });
+  }
+
+  templatesRestoreBuiltins(): DesignDocTemplate[] {
+    this.insertMissingBuiltinTemplates();
+    return this.listTemplates();
+  }
+
+  templatesExport(keys?: string[]): string {
+    const templates = keys === undefined ? this.listTemplates() : [...new Set(keys)].map((key) => this.toTemplate(this.requireTemplate(key)));
+    const text = JSON.stringify({ kind: 'zcc-design-doc-templates', version: 1,
+      templates: templates.map(({ id, ...template }) => ({ ...template, key: id })) }, null, 2);
+    if (Buffer.byteLength(text) > MAX_TEMPLATE_BUNDLE_BYTES) throw new DesignDocError('limit', 'template bundle is too large');
+    return text;
+  }
+
+  templatesImport(text: unknown, actor: DocActor): DesignDocDetail[] {
+    if (typeof text !== 'string') throw new DesignDocError('invalid', 'bundleText must be a string');
+    if (Buffer.byteLength(text) > MAX_TEMPLATE_BUNDLE_BYTES) throw new DesignDocError('limit', 'template bundle is too large');
+    let value: unknown;
+    try { value = JSON.parse(text); } catch { throw new DesignDocError('invalid', 'malformed template bundle JSON'); }
+    const parsed = templateBundleSchema.safeParse(value);
+    if (!parsed.success) throw new DesignDocError('invalid', parsed.error.message);
+    const templates = parsed.data.templates.map(sanitizeTemplateInput);
+    return this.db.transaction(() => templates.map((template) => {
+      if (this.templateByKey(template.key)) template = { ...template, key: this.randomId('custom_'), label: this.uniqueCopyName(template.label) };
+      return this.insertTemplate(template, actor);
+    }));
+  }
+
+  purgeTemplates(expectedBundle: string): void {
+    this.db.transaction(() => {
+      if (this.templatesExport() !== expectedBundle) throw new DesignDocError('conflict', 'templates changed during export; retry purge');
+      for (const row of this.db.prepare(`SELECT id FROM docs WHERE ${TEMPLATE_ONLY}`).all() as Array<{ id: string }>) this.deleteTemplateRows(row.id);
+    });
+  }
+
+  private uniqueCopyName(label: string): string {
+    const labels = new Set((this.db.prepare(`SELECT title FROM docs WHERE ${TEMPLATE_ONLY}`).all() as Array<{ title: string }>).map((row) => row.title));
+    for (let index = 1; ; index++) {
+      const suffix = index === 1 ? ' (copy)' : ` (copy ${index})`;
+      const candidate = label.slice(0, 200 - suffix.length) + suffix;
+      if (!labels.has(candidate)) return candidate;
+    }
+  }
+
+  private insertTemplate(input: ReturnType<typeof sanitizeTemplateInput>, actor: DocActor): DesignDocDetail {
+    if (this.countTemplates() >= 1000) throw new DesignDocError('limit', 'template capacity reached');
+    const id = this.randomId('ddt_'), at = this.now(), actorJson = JSON.stringify(actor);
+    const order = (this.db.prepare(`SELECT COALESCE(MAX(template_order), -1) + 1 AS n FROM docs WHERE ${TEMPLATE_ONLY}`).get() as { n: number }).n;
+    this.db.prepare(`INSERT INTO docs (id, slug, title, summary, status, tags, entry_path, created_at, updated_at,
+      created_by, updated_by, kind, template_key, template_order)
+      VALUES (?, ?, ?, ?, 'draft', '[]', ?, ?, ?, ?, ?, 'template', ?, ?)`)
+      .run(id, this.uniqueSlug(id), input.label, input.description, input.entryPath, at, at, actorJson, actorJson, input.key, order);
+    for (const file of input.files) {
+      this.insertFile(id, file, 1, at, actorJson);
+      this.recordRevision(id, file.path, 1, 'create', file, actorJson, at);
+    }
+    return this.get(id, 'template');
+  }
+
+  // docs-kind: id-checked
+  private deleteTemplateRows(id: string): void {
+    this.requireTemplate(id);
+    for (const table of ['doc_files', 'doc_revisions', 'doc_comments', 'doc_threads', 'sync_file_generations', 'sync_file_identity_generations']) {
+      this.db.prepare(`DELETE FROM ${table} WHERE doc_id = ?`).run(id);
+    }
+    this.db.prepare(`DELETE FROM docs WHERE ${TEMPLATE_ONLY} AND id = ?`).run(id);
+  }
+
   templateByKey(key: unknown): DesignDocTemplate | null {
     if (typeof key !== 'string' || !key.trim()) return null;
     const row = this.db.prepare(`SELECT * FROM docs WHERE ${TEMPLATE_ONLY} AND template_key = ?`).get(key.trim()) as DocRow | undefined;
@@ -317,8 +432,13 @@ export class DesignDocStore {
         // docs-kind: allow Template registry insert is template-only by literal kind value.
         const exists = this.db.prepare(`SELECT 1 FROM docs WHERE ${TEMPLATE_ONLY} AND template_origin = ?`).get(origin);
         if (exists) continue;
+        if (this.countTemplates() >= 1000) throw new DesignDocError('limit', 'template capacity reached');
         const id = this.randomId('ddt_');
-        const prepared = template.files.map((file) => prepareContent(file.path, file.content, file.encoding));
+        const key = this.templateByKey(template.id) ? this.randomId('builtin_') : template.id;
+        const prepared = sanitizeTemplateInput({ key, label: template.label, description: template.description,
+          entryPath: template.entryPath ?? template.files.find((file) => file.path.toLowerCase() === 'readme.md')?.path
+            ?? template.files.find((file) => file.path.toLowerCase() === 'index.html')?.path ?? template.files[0]!.path,
+          files: template.files }).files;
         const entryPath = template.entryPath
           ?? prepared.find((file) => file.path.toLowerCase() === 'readme.md')?.path
           ?? prepared.find((file) => file.path.toLowerCase() === 'index.html')?.path
@@ -327,7 +447,7 @@ export class DesignDocStore {
           `INSERT INTO docs (id, slug, title, summary, status, project_id, tags, entry_path, revision,
             created_at, updated_at, created_by, updated_by, kind, template_key, template_origin, template_order)
            VALUES (?, ?, ?, ?, 'draft', NULL, '[]', ?, 1, ?, ?, ?, ?, 'template', ?, ?, ?)`
-        ).run(id, this.uniqueSlug(`template-${template.id}`), template.label, template.description, entryPath, at, at, actor, actor, template.id, origin, order);
+        ).run(id, this.uniqueSlug(`template-${template.id}`), template.label, template.description, entryPath, at, at, actor, actor, key, origin, order);
         for (const file of prepared) this.insertFile(id, file, 1, at, actor);
       }
     });
@@ -388,8 +508,8 @@ export class DesignDocStore {
   }
 
   // docs-kind: id-checked
-  get(ref: unknown): DesignDocDetail {
-    const row = this.requireRow(ref);
+  get(ref: unknown, kind: DocKind = 'doc'): DesignDocDetail {
+    const row = kind === 'template' ? this.requireTemplate(ref) : this.requireRow(ref);
     const files = (
       this.db
         .prepare(
@@ -424,7 +544,8 @@ export class DesignDocStore {
     if (input.files && input.files.length > 0) {
       files = input.files;
     } else {
-      const template = this.templateByKey(input.template ?? DEFAULT_TEMPLATE_ID);
+      const template = input.template !== undefined ? this.templateByKey(input.template)
+        : this.templateByKey(DEFAULT_TEMPLATE_ID) ?? this.listTemplates()[0];
       if (!template) {
         throw new DesignDocError('invalid', `unknown template ${JSON.stringify(input.template)}`);
       }
@@ -630,8 +751,8 @@ export class DesignDocStore {
 
   // ── Files ─────────────────────────────────────────────────────────────
 
-  readFile(ref: unknown, rawPath: unknown): DesignDocFile {
-    const row = this.requireRow(ref);
+  readFile(ref: unknown, rawPath: unknown, kind: DocKind = 'doc'): DesignDocFile {
+    const row = kind === 'template' ? this.requireTemplate(ref) : this.requireRow(ref);
     const path = normalizePath(rawPath);
     const file = this.fileRow(row.id, path);
     if (!file) throw this.missingFile(row.id, path);
@@ -640,8 +761,8 @@ export class DesignDocStore {
 
   /** Every file with content, sorted, for bundles and exports. */
   // docs-kind: id-checked
-  readAllFiles(ref: unknown): DesignDocFile[] {
-    const row = this.requireRow(ref);
+  readAllFiles(ref: unknown, kind: DocKind = 'doc'): DesignDocFile[] {
+    const row = kind === 'template' ? this.requireTemplate(ref) : this.requireRow(ref);
     return (this.db.prepare('SELECT * FROM doc_files WHERE doc_id = ?').all(row.id) as FileRow[])
       .map((file) => ({
         ...toFileMeta(file),
@@ -652,8 +773,8 @@ export class DesignDocStore {
   }
 
   // docs-kind: id-checked
-  writeFile(ref: unknown, input: WriteFileInput, actor: DocActor): WriteResult {
-    const row = this.requireRow(ref);
+  writeFile(ref: unknown, input: WriteFileInput, actor: DocActor, kind: DocKind = 'doc'): WriteResult {
+    const row = kind === 'template' ? this.requireTemplate(ref) : this.requireRow(ref);
     const prepared = prepareContent(input.path, input.content, input.encoding);
     const note = cleanNote(input.note);
     return this.db.transaction(() => {
@@ -683,7 +804,7 @@ export class DesignDocStore {
         note
       });
       this.touch(row.id, actor, at);
-      if (actor.threadId) this.linkThreadRow(row.id, actor.threadId, actor.label, 'editor', at);
+      if (row.kind === 'doc' && actor.threadId) this.linkThreadRow(row.id, actor.threadId, actor.label, 'editor', at);
       this.notifyMutation({ docId: row.id, kind: existing ? 'write' : 'create-file', payload: null });
       const meta = toFileMeta(this.fileRow(row.id, prepared.path)!);
       return { ...meta, docId: row.id, created: !existing };
@@ -700,9 +821,10 @@ export class DesignDocStore {
   editFile(
     ref: unknown,
     input: { path: string; edits: TextEdit[]; baseRevision?: number; baseFileId?: string | null; note?: string },
-    actor: DocActor
+    actor: DocActor,
+    kind: DocKind = 'doc'
   ): WriteResult {
-    const row = this.requireRow(ref);
+    const row = kind === 'template' ? this.requireTemplate(ref) : this.requireRow(ref);
     const path = normalizePath(input.path);
     if (!Array.isArray(input.edits) || input.edits.length === 0) {
       throw new DesignDocError('invalid', 'edits must be a non-empty array');
@@ -721,7 +843,8 @@ export class DesignDocStore {
       return this.writeFile(
         row.id,
         { path, content, baseRevision: existing.revision, baseFileId: existing.sync_id, note: input.note },
-        actor
+        actor,
+        kind
       );
     });
   }
@@ -731,9 +854,10 @@ export class DesignDocStore {
     ref: unknown,
     rawPath: unknown,
     actor: DocActor,
-    options: { baseRevision?: number; baseFileId?: string | null; note?: string } = {}
+    options: { baseRevision?: number; baseFileId?: string | null; note?: string } = {},
+    kind: DocKind = 'doc'
   ): void {
-    const row = this.requireRow(ref);
+    const row = kind === 'template' ? this.requireTemplate(ref) : this.requireRow(ref);
     const path = normalizePath(rawPath);
     this.db.transaction(() => {
       const existing = this.fileRow(row.id, path);
@@ -749,10 +873,10 @@ export class DesignDocStore {
       });
       if (row.entry_path === path) {
         const next = this.firstFilePath(row.id);
-        this.db.prepare(`UPDATE docs SET entry_path = ? WHERE ${DOC_ONLY} AND id = ?`).run(next, row.id);
+        this.db.prepare(`UPDATE docs SET entry_path = ? WHERE kind = ? AND id = ?`).run(next, kind, row.id);
       }
       this.touch(row.id, actor, at);
-      if (actor.threadId) this.linkThreadRow(row.id, actor.threadId, actor.label, 'editor', at);
+      if (row.kind === 'doc' && actor.threadId) this.linkThreadRow(row.id, actor.threadId, actor.label, 'editor', at);
       this.notifyMutation({ docId: row.id, kind: 'delete-file', payload: null });
     });
   }
@@ -763,9 +887,10 @@ export class DesignDocStore {
     rawFrom: unknown,
     rawTo: unknown,
     actor: DocActor,
-    options: { baseRevision?: number; baseFileId?: string | null; note?: string } = {}
+    options: { baseRevision?: number; baseFileId?: string | null; note?: string } = {},
+    kind: DocKind = 'doc'
   ): WriteResult {
-    const row = this.requireRow(ref);
+    const row = kind === 'template' ? this.requireTemplate(ref) : this.requireRow(ref);
     const from = normalizePath(rawFrom);
     const to = normalizePath(rawTo);
     if (from === to) throw new DesignDocError('invalid', 'renameTo must differ from path');
@@ -794,10 +919,10 @@ export class DesignDocStore {
       // Comments follow the file so they stay anchored (and filterable) after a move.
       this.db.prepare('UPDATE doc_comments SET path = ? WHERE doc_id = ? AND path = ?').run(to, row.id, from);
       if (row.entry_path === from) {
-        this.db.prepare(`UPDATE docs SET entry_path = ? WHERE ${DOC_ONLY} AND id = ?`).run(to, row.id);
+        this.db.prepare(`UPDATE docs SET entry_path = ? WHERE kind = ? AND id = ?`).run(to, kind, row.id);
       }
       this.touch(row.id, actor, at);
-      if (actor.threadId) this.linkThreadRow(row.id, actor.threadId, actor.label, 'editor', at);
+      if (row.kind === 'doc' && actor.threadId) this.linkThreadRow(row.id, actor.threadId, actor.label, 'editor', at);
       this.notifyMutation({ docId: row.id, kind: 'rename-file', payload: null });
       return { ...toFileMeta(this.fileRow(row.id, to)!), docId: row.id, created: true };
     });
@@ -805,8 +930,8 @@ export class DesignDocStore {
 
   // ── History ───────────────────────────────────────────────────────────
 
-  history(ref: unknown, options: { path?: string; limit?: number } = {}): DesignDocRevision[] {
-    const row = this.requireRow(ref);
+  history(ref: unknown, options: { path?: string; limit?: number } = {}, kind: DocKind = 'doc'): DesignDocRevision[] {
+    const row = kind === 'template' ? this.requireTemplate(ref) : this.requireRow(ref);
     const limit = clampLimit(options.limit, 50, MAX_HISTORY_LIMIT);
     const columns = 'r.id, r.doc_id, r.path, r.revision, r.op, r.size, r.note, r.renamed_from, r.actor, r.created_at';
     const source = 'doc_revisions r LEFT JOIN sync_history_order o ON o.doc_id = r.doc_id AND o.history_id = r.sync_id';
@@ -821,8 +946,8 @@ export class DesignDocStore {
     return rows.map(toRevision);
   }
 
-  revisionContent(ref: unknown, revisionId: unknown): DesignDocRevision & { content: string; encoding: 'utf8' | 'base64' } {
-    const row = this.requireRow(ref);
+  revisionContent(ref: unknown, revisionId: unknown, kind: DocKind = 'doc'): DesignDocRevision & { content: string; encoding: 'utf8' | 'base64' } {
+    const row = kind === 'template' ? this.requireTemplate(ref) : this.requireRow(ref);
     const revision = this.revisionRow(row.id, revisionId);
     return {
       ...toRevision(revision),
@@ -835,8 +960,8 @@ export class DesignDocStore {
    * Write a past snapshot back as the newest revision (recreating a deleted
    * file). `baseRevision` is the file's revision the caller saw, 0 if absent.
    */
-  restoreRevision(ref: unknown, revisionId: unknown, actor: DocActor, options: { baseRevision?: number; baseFileId?: string | null } = {}): WriteResult {
-    const row = this.requireRow(ref);
+  restoreRevision(ref: unknown, revisionId: unknown, actor: DocActor, options: { baseRevision?: number; baseFileId?: string | null } = {}, kind: DocKind = 'doc'): WriteResult {
+    const row = kind === 'template' ? this.requireTemplate(ref) : this.requireRow(ref);
     const revision = this.revisionRow(row.id, revisionId);
     return this.aggregate(() => this.writeFile(
       row.id,
@@ -848,7 +973,8 @@ export class DesignDocStore {
         baseFileId: options.baseFileId,
         note: `Restored revision ${revision.revision}`
       },
-      actor
+      actor,
+      kind
     ), 'restore-undo');
   }
 
@@ -1239,9 +1365,10 @@ export class DesignDocStore {
   }
 
   private touch(docId: string, actor: DocActor, at = this.now()): void {
+    const kind = this.db.prepare(`SELECT kind FROM docs WHERE kind IN ('doc', 'template') AND id = ?`).get(docId) as { kind: DocKind };
     this.db
-      .prepare(`UPDATE docs SET revision = revision + 1, updated_at = ?, updated_by = ? WHERE ${DOC_ONLY} AND id = ?`)
-      .run(at, JSON.stringify(actor), docId);
+      .prepare(`UPDATE docs SET revision = revision + 1, updated_at = ?, updated_by = ? WHERE kind = ? AND id = ?`)
+      .run(at, JSON.stringify(actor), kind.kind, docId);
   }
 
   /** Review activity changes the doc but not its content, so "last edited by" stays put. */
@@ -1342,6 +1469,24 @@ export class DesignDocStore {
 }
 
 // ── Pure helpers ────────────────────────────────────────────────────────
+
+export function sanitizeTemplateInput(value: unknown): Omit<TemplateInput, 'files'> & {
+  files: Array<{ path: string; content: string; encoding: string; size: number }>
+} {
+  const parsed = templateInputSchema.safeParse(value);
+  if (!parsed.success) throw new DesignDocError('invalid', parsed.error.message);
+  const input = parsed.data;
+  const files = input.files.map((file) => prepareContent(file.path, file.content, file.encoding));
+  const paths = new Set<string>();
+  for (const file of files) {
+    if (paths.has(file.path.toLowerCase())) throw new DesignDocError('invalid', `duplicate file path ${file.path}`);
+    paths.add(file.path.toLowerCase());
+  }
+  if (files.reduce((total, file) => total + file.size, 0) > MAX_DOC_BYTES) throw new DesignDocError('limit', 'template files exceed document budget');
+  const entryPath = normalizePath(input.entryPath);
+  if (!files.some((file) => file.path === entryPath)) throw new DesignDocError('invalid', 'entryPath is not one of the template files');
+  return { ...input, entryPath, files };
+}
 
 export function slugify(title: string): string {
   const slug = title

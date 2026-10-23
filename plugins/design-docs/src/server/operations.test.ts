@@ -96,7 +96,7 @@ describe('agent operations', () => {
     createDoc(ctx, { title: 'Site', files: site, entryPath: 'index.html' }, agent);
     expect(store.summary('site').entryPath).toBe('index.html');
 
-    expect(() => createDoc(ctx, { title: 'x', template: 'nope' }, agent)).toThrow(/template must be one of/);
+    expect(() => createDoc(ctx, { title: 'x', template: 'nope' }, agent)).toThrow(/unknown template/);
     expect(() => createDoc(ctx, { title: 'x', files: 'a' }, agent)).toThrow(/files must be an array/);
     expect(() => createDoc(ctx, { title: 'x', files: [{ path: 'a.md' }] }, agent)).toThrow(/files\[0\]/);
     expect(() => createDoc(ctx, { title: 'x', status: 'shipped' }, agent)).toThrow(/status must be one of/);
