@@ -50,3 +50,20 @@ it('bounds concurrent HTTP callbacks and aborts a disconnected caller', async ()
   } finally { held.forEach(call => call.resolve({ status: 200, bodyBase64: '' })); await Promise.all(running); }
   f.forward.mockResolvedValue({ status: 200, bodyBase64: '' }); expect((await f.send()).status).toBe(200);
 });
+it('reserves a separate pool so held /mcp callbacks never starve native tool policy calls', async () => {
+  const f = fixture(); const held: Array<(value: { status: number; bodyBase64: string }) => void> = [];
+  f.forward.mockImplementation((() => new Promise(resolve => held.push(resolve))) as never);
+  const nativeInput = { ...input, path: '/hook/nativetool/project/11111111-1111-4111-8111-111111111111' };
+  const mcp = Array.from({ length: 8 }, () => handleHostInternalHttp(request(), f.response().response, f.ctx as never));
+  try {
+    await vi.waitFor(() => expect(held).toHaveLength(8));
+    expect((await f.send()).status).toBe(429);
+    const native = Array.from({ length: 64 }, () => handleHostInternalHttp(request(nativeInput), f.response().response, f.ctx as never));
+    await vi.waitFor(() => expect(held).toHaveLength(72));
+    expect((await f.send(request(nativeInput))).status).toBe(429);
+    held.splice(0).forEach(resolve => resolve({ status: 200, bodyBase64: '' }));
+    await Promise.all(native);
+  } finally { held.splice(0).forEach(resolve => resolve({ status: 200, bodyBase64: '' })); await Promise.all(mcp); }
+  f.forward.mockResolvedValue({ status: 200, bodyBase64: '' });
+  expect((await f.send()).status).toBe(200); expect((await f.send(request(nativeInput))).status).toBe(200);
+});

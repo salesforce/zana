@@ -17424,6 +17424,15 @@ body.resizing-col .explorer-resizer::after {
   white-space: nowrap;
 }
 
+.scheduler-pill--default {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent-gold);
+  border-color: color-mix(in srgb, var(--accent-gold) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent-gold) 12%, var(--bg-elevated));
+}
+
 .scheduler-pill--interval {
   color: var(--accent-blue);
   border-color: color-mix(in srgb, var(--accent-blue) 35%, var(--border));

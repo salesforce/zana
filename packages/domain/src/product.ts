@@ -2413,6 +2413,15 @@ export interface AppConfig {
    */
   terminalClipboardWriteEnabled?: boolean;
   /**
+   * Whether Ctrl+V pastes the clipboard into a terminal on Windows and Linux,
+   * like Shift+Insert (and Ctrl+Shift+V, which always pastes there). When off,
+   * Ctrl+V sends the literal `^V` control character to the program, as
+   * readline's "insert next character literally" and vim's block select
+   * expect. Unset ⇒ platform default: on for Windows, off for Linux. macOS
+   * ignores it (⌘V pastes). See `apps/app/src/lib/terminalPaste.ts`.
+   */
+  terminalCtrlVPasteEnabled?: boolean;
+  /**
    * Enable the Zana Mobile gateway — the authenticated network edge in front of
    * the loopback product server that a paired phone connects through
    * (Settings → Phone). Default OFF: it opens a network listener (bound to this
@@ -4429,6 +4438,8 @@ export interface Team {
   defaultPlanning?: SquadPlanning;
   /** Whether agent-started runs of this Squad need the user's Launch first. Review is a floor: the Project's review applies even when this is absent or direct. Absent ⇒ direct unless the Project asks for review. */
   launchApproval?: LaunchApproval;
+  /** Preselected in the New Agent squad picker. Absent ⇒ the first squad alphabetically. */
+  isDefault?: boolean;
   /** Set by the loader/host for UI display; never read from disk / trusted from the renderer. */
   source?: PersonaSource;
 }

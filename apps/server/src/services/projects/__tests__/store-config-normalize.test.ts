@@ -539,6 +539,14 @@ describe('normalizeConfig — catch-up summary flags', () => {
     expect(normalizeConfig({ feedNoiseClassifierEnabled: 'yes' }).feedNoiseClassifierEnabled).toBeUndefined();
   });
 
+  it('passes through a boolean terminalCtrlVPasteEnabled, drops non-booleans and leaves it unset by default', () => {
+    expect(normalizeConfig({ terminalCtrlVPasteEnabled: true }).terminalCtrlVPasteEnabled).toBe(true);
+    expect(normalizeConfig({ terminalCtrlVPasteEnabled: false }).terminalCtrlVPasteEnabled).toBe(false);
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ terminalCtrlVPasteEnabled: 'yes' }).terminalCtrlVPasteEnabled).toBeUndefined();
+    expect(normalizeConfig({}).terminalCtrlVPasteEnabled).toBeUndefined();
+  });
+
   it('passes through a boolean terminalClipboardWriteEnabled, drops non-booleans', () => {
     expect(normalizeConfig({ terminalClipboardWriteEnabled: true }).terminalClipboardWriteEnabled).toBe(true);
     expect(normalizeConfig({ terminalClipboardWriteEnabled: false }).terminalClipboardWriteEnabled).toBe(false);

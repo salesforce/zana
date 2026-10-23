@@ -100,6 +100,8 @@ export interface IpcCtx {
   ptys: any;
   quickPrompts: any;
   readLiveSessionStats: any;
+  /** Re-colour every window's Windows caption buttons for the current theme. */
+  refreshTitleBarOverlays: () => void;
   registerExtensionProject: any;
   reportTeamTask: any;
   resolveTheme: any;

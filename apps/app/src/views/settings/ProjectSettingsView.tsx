@@ -24,6 +24,7 @@ import { Section, Field, ChipField, TextArgsField } from '@/components/settings/
 import { HarnessOptionSelect } from '@/components/HarnessOptionSelect';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 import { StencilForm } from '@/components/ui/Skeleton';
+import { sortHarnessDisplayRows } from '@/lib/harness-display-order';
 import { HarnessRoutingEditor, applyHarnessRoutingPatch, type HarnessRoutingPatch } from './HarnessRoutingEditor.js';
 
 const USE_DEFAULT = { id: '', label: 'Use default' } as const;
@@ -660,7 +661,11 @@ export function ProjectHarnessSettings({
   const current = project.launchDefault?.kind === 'exact-profile'
     ? project.launchDefault.adapterId
     : '';
-  const options = (descriptors ?? []).filter((entry) => entry.agentDefaultEligible);
+  const options = sortHarnessDisplayRows(
+    (descriptors ?? []).filter((entry) => entry.agentDefaultEligible),
+    (entry) => entry.label,
+    (entry) => entry.id
+  );
 
   const save = (adapterId: string) => {
     if (!settingsReady) return;

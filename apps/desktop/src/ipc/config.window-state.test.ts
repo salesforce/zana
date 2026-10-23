@@ -6,13 +6,14 @@ const h = vi.hoisted(() => ({
   handlers: new Map<string, (...args: unknown[]) => unknown>(),
   setConfig: vi.fn((patch: Record<string, unknown>) => ({ ...patch })),
   safeSend: vi.fn(),
+  refreshTitleBarOverlays: vi.fn(),
   verifyState: { cache: undefined as unknown }
 }));
 vi.mock('./shared-product-registration.js', () => ({
   productHandle: (channel: string, handler: (...args: unknown[]) => unknown) => h.handlers.set(channel, handler),
   safeProductHandle: (channel: string, handler: (...args: unknown[]) => unknown) => h.handlers.set(channel, handler)
 }));
-vi.mock('./ctx.js', () => ({ ctx: { safeSend: h.safeSend } }));
+vi.mock('./ctx.js', () => ({ ctx: { safeSend: h.safeSend, refreshTitleBarOverlays: h.refreshTitleBarOverlays } }));
 vi.mock('./shared.js', () => ({ harnessVerifyState: h.verifyState }));
 vi.mock('@zana-ai/zcc-server/http/public-app-url', () => ({ presentAppConfig: (config: unknown) => config }));
 vi.mock('@zana-ai/zcc-server/services/projects/store', () => ({
@@ -23,6 +24,7 @@ beforeEach(() => {
   h.handlers.clear();
   h.setConfig.mockClear();
   h.safeSend.mockClear();
+  h.refreshTitleBarOverlays.mockClear();
   h.verifyState.cache = undefined;
   registerConfigIpc();
 });
@@ -51,5 +53,16 @@ describe('config.set window state', () => {
     expect(h.setConfig).toHaveBeenCalledWith({ theme: 'light' });
     expect(next).toEqual({ theme: 'light' });
     expect(h.safeSend).toHaveBeenCalledWith(IPC.config.onChanged, { theme: 'light' });
+  });
+});
+
+describe('config.set theme', () => {
+  it('re-colours the Windows caption buttons of every window when the theme changes', () => {
+    h.handlers.get(IPC.config.set)!({ theme: 'system' });
+    expect(h.refreshTitleBarOverlays).toHaveBeenCalledTimes(1);
+  });
+  it('leaves the caption buttons alone for other settings', () => {
+    h.handlers.get(IPC.config.set)!({ claudeBinary: '/configured/claude' });
+    expect(h.refreshTitleBarOverlays).not.toHaveBeenCalled();
   });
 });
