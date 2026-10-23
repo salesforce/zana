@@ -7,6 +7,7 @@ import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapt
 import type { ProviderCliInstallActionKind, ProviderCliKey, ProviderCliStatusResponse } from '@zana-ai/zcc-contracts/host-rpc';
 import { useData, useUi } from '@/store';
 import { profileIcon } from '@/lib/profileIcon';
+import { sortHarnessDisplayRows } from '@/lib/harness-display-order';
 import { useHosts, primaryHost } from '../../hooks/useHosts.js';
 import { getSettingsRoutePath } from '../../lib/route-paths.js';
 import {
@@ -699,6 +700,7 @@ export function ThreadProviderCatalog({
     getThreadModelCatalog,
     getThreadModelCatalog
   );
+  const sortedProviders = sortHarnessDisplayRows(providers, (provider) => provider.displayName, (provider) => provider.id);
   if (providers.length === 0) {
     return <p className="settings-help">No Modern providers registered.</p>;
   }
@@ -706,7 +708,7 @@ export function ThreadProviderCatalog({
     <>
     {catalog.rosterError ? <p role="status" className="settings-help">Could not refresh providers. {catalog.rosterError}</p> : null}
     <ul className="opener-list thread-provider-list" data-testid="thread-provider-catalog">
-      {providers.map((provider) => (
+      {sortedProviders.map((provider) => (
         <ThreadProviderRow
           key={provider.id}
           provider={provider}
@@ -989,7 +991,12 @@ export function HarnessView({
     'pi-global-defaults': piNativeAdvanced
   };
   const descriptorsById = new Map((descriptors ?? []).map((descriptor) => [descriptor.id, descriptor]));
-  const defaultHarnessOptions = (descriptors ?? []).filter((descriptor) => descriptor.agentDefaultEligible);
+  const defaultHarnessOptions = sortHarnessDisplayRows(
+    (descriptors ?? []).filter((descriptor) => descriptor.agentDefaultEligible),
+    (descriptor) => descriptor.label,
+    (descriptor) => descriptor.id
+  );
+  const sortedStatus = sortHarnessDisplayRows(status, (row) => row.label, (row) => row.family);
   const selectedDefaultEnableKey = config.defaultHarness ? ENABLE_KEY[config.defaultHarness] : undefined;
   const selectedDefaultStatus = config.defaultHarness
     ? status.find((entry) => entry.family === config.defaultHarness)
@@ -1048,7 +1055,7 @@ export function HarnessView({
   const settingsRows = status.length === 0 ? (
     <p className="settings-help">Checking…</p>
   ) : (
-    status.map((h) => {
+    sortedStatus.map((h) => {
       const descriptor = descriptorsById.get(h.family);
       const contributionIds = descriptor?.settingsContributionIds ?? (descriptors === null
         ? h.family === 'claude'
@@ -1119,7 +1126,7 @@ export function HarnessView({
         {status.length === 0 ? (
           <p className="settings-help">Checking…</p>
         ) : (
-          status.map((h) => {
+          sortedStatus.map((h) => {
             const provider = providerCliKeyForFamily(h.family);
             const row = provider
               ? orderedProviderCliRows(cliStatus).find((entry) => entry.provider === provider)

@@ -244,7 +244,8 @@ function ctx(callHostOnlineRpc: (input: unknown) => Promise<unknown>, config: Re
     pluginHostArtifacts,
     plugins: {
       admitDispatch: vi.fn(async () => ({ action: 'proceed' })),
-      emitThreadEvent: vi.fn().mockResolvedValue(undefined)
+      emitThreadEvent: vi.fn().mockResolvedValue(undefined),
+      sessionTools: vi.fn(async () => undefined)
     },
     pendingInteractions: pendingInteractionsStub()
   } as unknown as ProductHttpContext;
@@ -2373,7 +2374,8 @@ describe('resuming open sessions after a host restart', () => {
     vi.mocked(listOpenSessionConversationThreadsForHost).mockReturnValue([idle]);
     const declaration = getThreadProvider(idle.providerId)!;
     for (const handle of providerHandles.splice(0)) handle.unregister();
-    trackThreadProviderStartup(new Promise(() => {}));
+    const startup = Promise.withResolvers<void>();
+    trackThreadProviderStartup(startup.promise);
     try {
       const rpc = vi.fn(async () => ({ threadId: idle.id, resumed: true }));
       vi.useFakeTimers();
@@ -2382,6 +2384,8 @@ describe('resuming open sessions after a host restart', () => {
       expect(rpc).not.toHaveBeenCalled();
       vi.useRealTimers();
       providerHandles.push(registerThreadProvider('test', declaration));
+      // The resumed session's plugin tools also wait for the rest of plugin startup.
+      startup.resolve();
       await expect(pass).resolves.toBe(1);
       expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ command: expect.objectContaining({ type: 'thread.resume', threadId: idle.id }) }));
     } finally {

@@ -830,9 +830,45 @@ export interface PluginSdk {
   files: PluginSdkFiles;
   library: PluginSdkLibrary;
   providers: PluginSdkProviders;
+  /** This plugin's own AI-harness overrides; the host binds the plugin id. */
+  harnessRouting: PluginHarnessRoutingApi;
   experimental_desktopBrowsers: PluginSdkDesktopBrowsers;
   capabilities: PluginCapabilityIntrospection;
 }
+
+/** Renderer-safe per-family harness metadata (targets, profiles, availability). */
+export type HarnessRoutingDescriptor = import('@zana-ai/zcc-domain/harness-adapter').HarnessAdapterDescriptor;
+
+/**
+ * Where a plugin harness override lives. `default-project` is the built-in
+ * Default Project (where project-less work runs); the host resolves it.
+ */
+export type HarnessOverrideScope =
+  | { kind: 'global' }
+  | { kind: 'default-project' }
+  | { kind: 'project'; projectId: string };
+
+export type HarnessRoutingCheckResult = { ok: true } | { ok: false; reason: string };
+
+/**
+ * A plugin's AI-harness overrides, stored per scope under the plugin's own id
+ * and kept apart from Core's `harnessRouting`. `write` re-runs `check` and
+ * rejects an invalid value; `null` clears the scope.
+ */
+export interface PluginHarnessRoutingApi {
+  descriptors(input?: { projectId?: string; hostId?: string }): Promise<HarnessRoutingDescriptor[]>;
+  read(scope: HarnessOverrideScope): Promise<PluginHarnessOverride | null>;
+  write(scope: HarnessOverrideScope, value: PluginHarnessOverride | null): Promise<void>;
+  check(scope: HarnessOverrideScope, value: PluginHarnessOverride): Promise<HarnessRoutingCheckResult>;
+}
+
+/**
+ * One scope's override: per-harness rows (Core's routing shape) plus an
+ * optional `defaultHarness` that runs the plugin's agents on that harness
+ * instead of the project's default. Narrower scopes win per field: the
+ * harness choice and each harness row resolve independently.
+ */
+export type PluginHarnessOverride = import('@zana-ai/zcc-domain/product').PluginHarnessOverrideV1;
 
 export interface PluginSdkDesktopBrowserScope {
   hostId: string;

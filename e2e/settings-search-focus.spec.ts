@@ -1,4 +1,7 @@
 import type { Page } from '@playwright/test';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
 import { test, expect } from './fixtures/app.js';
 
 // Opening Settings puts focus in "Search settings…" so typing goes straight into
@@ -17,6 +20,9 @@ async function leaveSettings(win: Page) {
 test('Ctrl/Cmd+, focuses search; typing filters, Escape clears and keeps Settings open', async ({ app }) => {
   const win = app.window;
   await leaveSettings(win);
+  // Closing comes back here, so wait until the Inbox route has actually landed.
+  await expect(win).toHaveURL(/\/inbox$/);
+  await expect(win.getByTestId('nav-inbox')).toHaveAttribute('aria-current', 'page');
   await win.keyboard.press('ControlOrMeta+Comma');
   await expect(search(win)).toBeFocused();
   await win.keyboard.type('heartbeat');
@@ -25,9 +31,44 @@ test('Ctrl/Cmd+, focuses search; typing filters, Escape clears and keeps Setting
   await win.keyboard.press('Escape');
   await expect(search(win)).toHaveValue('');
   await expect(search(win)).toBeFocused();
-  // The shortcut still toggles Settings closed.
+  // The shortcut still toggles Settings closed, back where it was opened.
   await win.keyboard.press('ControlOrMeta+Comma');
   await expect(search(win)).toHaveCount(0);
+  await expect(win).toHaveURL(/\/inbox$/);
+});
+
+test("Ctrl/Cmd+, drilled into a project opens and closes that project's Settings", async ({ app }) => {
+  const win = app.window;
+  const projectDir = mkdtempSync(join(tmpdir(), 'zcc-settings-shortcut-'));
+  const projectId = await win.evaluate(async (path) => {
+    const res = await window.cc.projects.add(path);
+    return ((res && 'ok' in res ? (res as { value: { id: string } }).value : res) as { id: string }).id;
+  }, projectDir);
+  try {
+    const projects = win.getByTestId('sidebar-projects-heading');
+    if ((await projects.getAttribute('aria-expanded')) === 'false') await projects.click();
+    await win.locator('.project-item').filter({ hasText: basename(projectDir) }).first().click();
+    const rail = win.locator('.project-scoped-nav.project-focused-nav');
+    await rail.getByTestId('project-nav-scheduler').click();
+    await expect(win).toHaveURL(new RegExp(`/projects/${projectId}/scheduler$`));
+    // The URL changes before the route renders; closing returns to the rendered view.
+    await expect(rail.getByTestId('project-nav-scheduler')).toHaveAttribute('aria-current', 'page');
+
+    await win.keyboard.press('ControlOrMeta+Comma');
+    await expect(win).toHaveURL(new RegExp(`/projects/${projectId}/settings$`));
+    await expect(win.getByRole('heading', { name: 'Project settings' })).toBeVisible();
+    await expect(rail.getByRole('button', { name: 'Back to Global settings' })).toBeVisible();
+    // Project Settings has no search box, so nothing tries to focus one.
+    await expect(search(win)).toHaveCount(0);
+
+    await win.keyboard.press('ControlOrMeta+Comma');
+    await expect(win).toHaveURL(new RegExp(`/projects/${projectId}/scheduler$`));
+    await expect(rail).toBeVisible();
+  } finally {
+    await win.evaluate(async (pid) => {
+      try { await window.cc.projects.remove(pid); } catch { /* best-effort cleanup */ }
+    }, projectId);
+  }
 });
 
 test('the sidebar Settings link focuses search; moving between sections does not take focus back', async ({ app }) => {

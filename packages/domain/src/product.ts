@@ -1,3 +1,4 @@
+import type { ApiErrorResumeConfig } from './api-error-resume.js';
 import type { AgentsViewId } from './agents-view.js';
 export { isAgentsViewId, type AgentsViewId } from './agents-view.js';
 import type { ProjectIcon } from './project-icons.js';
@@ -140,7 +141,7 @@ export type EffectiveHarnessDefaultResult =
       ok: true;
       profile: LaunchProfileId;
       family: HarnessFamily;
-      source: 'persona-pin' | 'project-canonical' | 'project-legacy' | 'global-default' | 'adapter-compatibility';
+      source: 'persona-pin' | 'project-canonical' | 'project-legacy' | 'global-default' | 'adapter-compatibility' | 'plugin-override';
     }
   | {
       ok: false;
@@ -2412,6 +2413,15 @@ export interface AppConfig {
    */
   terminalClipboardWriteEnabled?: boolean;
   /**
+   * Whether Ctrl+V pastes the clipboard into a terminal on Windows and Linux,
+   * like Shift+Insert (and Ctrl+Shift+V, which always pastes there). When off,
+   * Ctrl+V sends the literal `^V` control character to the program, as
+   * readline's "insert next character literally" and vim's block select
+   * expect. Unset ⇒ platform default: on for Windows, off for Linux. macOS
+   * ignores it (⌘V pastes). See `apps/app/src/lib/terminalPaste.ts`.
+   */
+  terminalCtrlVPasteEnabled?: boolean;
+  /**
    * Enable the Zana Mobile gateway — the authenticated network edge in front of
    * the loopback product server that a paired phone connects through
    * (Settings → Phone). Default OFF: it opens a network listener (bound to this
@@ -2664,6 +2674,8 @@ export interface AppConfig {
    * agent to continue or to say so and stop if it's blocked / done.
    */
   heartbeatMessage?: string;
+  /** Resume after API errors (Settings → Agents). Absent = off. */
+  apiErrorResume?: ApiErrorResumeConfig;
   /**
    * Autonomous-team run backstops. Defaults applied in main when a run starts
    * (see AUTONOMOUS_DEFAULTS). A value of 0 disables that backstop.
@@ -2925,6 +2937,8 @@ export const SESSION_MEMORY_DEFAULTS = {
   /** Fraction of physical RAM the session fleet may claim when deriving the cap. */
   ramFractionForSessions: 0.5
 } as const;
+
+export * from './api-error-resume.js';
 
 /** Defaults for the Agent Heartbeat feature (used when the config field is absent). */
 export const HEARTBEAT_DEFAULTS = {
@@ -4132,6 +4146,12 @@ export interface HarnessModelRoutingV1 {
   }>>;
 }
 
+/** A plugin's AI-harness override at one scope: Core's routing rows plus an optional harness choice. */
+export interface PluginHarnessOverrideV1 extends HarnessModelRoutingV1 {
+  /** Run the plugin's agents on this harness instead of the project's default harness. */
+  defaultHarness?: HarnessFamily;
+}
+
 /**
  * A named, reusable Claude Code personality (Reviewer, Architect, Bug-hunter…)
  * that composes native `claude` CLI flags. A persona is **not** a new launch
@@ -4418,6 +4438,8 @@ export interface Team {
   defaultPlanning?: SquadPlanning;
   /** Whether agent-started runs of this Squad need the user's Launch first. Review is a floor: the Project's review applies even when this is absent or direct. Absent ⇒ direct unless the Project asks for review. */
   launchApproval?: LaunchApproval;
+  /** Preselected in the New Agent squad picker. Absent ⇒ the first squad alphabetically. */
+  isDefault?: boolean;
   /** Set by the loader/host for UI display; never read from disk / trusted from the renderer. */
   source?: PersonaSource;
 }

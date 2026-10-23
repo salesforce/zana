@@ -32,6 +32,7 @@ import {
   stageRemoteComposerAttachments
 } from './legacy-agent-home.js';
 import { platformShortcut } from '../lib/platformShortcut.js';
+import { sortCatalogueByName } from '../lib/catalogue-sort.js';
 
 /** A source chip. A file outside the project (proposed from HOME or the clone root) shows its path. */
 type ComposerSource = ExecutionSourceCapabilityView & { path?: string; outsideProject?: boolean };
@@ -90,6 +91,7 @@ export function TeamComposer({
   const launchRef = useRef<() => void>(() => undefined);
   const launchProjects = useMemo(() => composerProjectOptions(projects), [projects]);
   const project = pinnedProject ?? launchProjects.find((candidate) => candidate.id === projectId);
+  const sortedTeams = useMemo(() => sortCatalogueByName(teams), [teams]);
   const selectedTeam = teams.find((team) => team.id === teamId);
 
   const field = useComposerPromptField({
@@ -403,7 +405,7 @@ export function TeamComposer({
                     ariaLabel="Squad"
                     placeholder="Select a squad"
                     searchable={teams.length > 6}
-                    options={teams.map((team) => squadPicklistOption(team, { withDescription: true }))}
+                    options={sortedTeams.map((team) => squadPicklistOption(team, { withDescription: true }))}
                     // The selected Squad's planning default is applied by the effect above, which
                     // keeps a planning mode the user (or a reviewed proposal) already chose.
                     onChange={setTeamId}

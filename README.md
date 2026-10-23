@@ -222,6 +222,22 @@ pnpm test:e2e
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow and
 [e2e/README.md](e2e/README.md) for end-to-end testing.
 
+### Optional pre-push AI review (internal developers)
+
+Authorized internal developers can opt in to an advisory
+[TinyNod](https://git.soma.salesforce.com/cc-oms/pr-reviewer) review that runs
+during `git push`. It is off by default, never blocks a push, and never runs in
+public CI.
+
+```bash
+git config --local zana.tinynod.enabled true    # opt in (set false to opt out)
+TINYNOD_SKIP_HOOK=1 git push                    # skip TinyNod for one push
+```
+
+Setup for DevBar / AI Suite users and everyone else, reading results, having an
+AI fix findings, and troubleshooting are in
+[docs/tinynod-local-review.md](docs/tinynod-local-review.md).
+
 ## Open source, yours to shape
 
 Zana is **[MIT-licensed](LICENSE.txt)**. Fork it, adapt the interface, add your

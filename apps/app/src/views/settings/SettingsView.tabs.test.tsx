@@ -113,6 +113,7 @@ it('applies config patches to the store and flashes Saved', async () => {
     catchUpSummaryDelaySeconds: 9,
     feedNoiseClassifierEnabled: true,
     terminalClipboardWriteEnabled: true,
+    terminalCtrlVPasteEnabled: true,
     structuredQuestionsEnabled: true,
     worktreeIsolationDefault: true,
     agentListNeedsYouFromTriage: true,
@@ -137,7 +138,8 @@ it('applies config patches to the store and flashes Saved', async () => {
     'setFontSize', 'setTerminalTheme', 'setInboxGuidanceEnabled', 'setTerminalWheelArrowsEnabled',
     'setHeartbeatEnabled', 'setGoalsEnabled', 'setCliRemoteToolProxyEnabled', 'setFollowUpsEnabled',
     'setCatchUpSummaryEnabled', 'setClassicSessionViewEnabled', 'setCatchUpSummaryDelaySeconds',
-    'setFeedNoiseClassifierEnabled', 'setTerminalClipboardWriteEnabled', 'setStructuredQuestionsEnabled',
+    'setFeedNoiseClassifierEnabled', 'setTerminalClipboardWriteEnabled', 'setTerminalCtrlVPasteEnabled',
+    'setStructuredQuestionsEnabled',
     'setWorktreeIsolationDefault', 'setAgentListNeedsYouFromTriage', 'setVoiceInputEnabled',
     'setHarnessCursorEnabled', 'setHarnessCodexEnabled', 'setHarnessPiEnabled', 'setHarnessOpenCodeEnabled',
     'setHarnessGrokEnabled', 'setHarnessMastracodeEnabled', 'setHarnessAfcodeEnabled', 'setMicroVmEnabled',
@@ -166,6 +168,17 @@ it('swallows config.set failures without flashing Saved', async () => {
   await screen.findByText('tab-global');
   h.setMock.mockRejectedValueOnce(new Error('nope'));
   await act(async () => { await h.props.global.onUpdate({ fontSize: 12 }); });
+  expect(screen.queryByText('Saved')).toBeNull();
+});
+
+it('rethrows a config.set failure when the caller asks for it', async () => {
+  useUi.setState({ settingsTab: 'agents', settingsAnchor: null });
+  mount();
+  await screen.findByText('tab-agents');
+  h.setMock.mockRejectedValueOnce(new Error('nope'));
+  await act(async () => {
+    await expect(h.props.agents.onUpdate({ fontSize: 12 }, { throwOnError: true })).rejects.toThrow('nope');
+  });
   expect(screen.queryByText('Saved')).toBeNull();
 });
 

@@ -582,6 +582,152 @@ describe('question drafts across navigation', () => {
   });
 });
 
+describe('Ctrl+Enter / ⌘↵ does what the primary button does', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.mocked(product.threads.interactions.resolve).mockClear();
+  });
+
+  function twoQuestions(id: string, second: Record<string, unknown> = {}): PendingInteraction {
+    return {
+      ...commandInteraction(), id, resolution: null,
+      payload: { kind: 'user_question', questions: [
+        { id: 'topic', prompt: 'Choose a topic', multiSelect: false, allowFreeText: true,
+          options: [{ value: 'code', label: 'Code' }, { value: 'docs', label: 'Docs' }] },
+        { id: 'details', prompt: 'Describe the changes', multiSelect: false, allowFreeText: true, ...second }
+      ] }
+    };
+  }
+  const viewOf = (interaction: PendingInteraction, threadId = 'chord-thread') => <MemoryRouter>
+    <ThreadPendingInteractionBanner interaction={interaction} threadId={threadId} />
+  </MemoryRouter>;
+  const ctrlEnter = (target: Element, init: Record<string, boolean> = {}) => (
+    fireEvent.keyDown(target, { key: 'Enter', ctrlKey: true, ...init })
+  );
+
+  it('goes Next from the free-text box, keeps plain Enter as a newline, and submits with ⌘↵ on the last question', async () => {
+    const interaction = twoQuestions('chord-textarea');
+    render(viewOf(interaction));
+    fireEvent.click(screen.getByRole('button', { name: 'Other…' }));
+    const first = screen.getByRole('textbox');
+    fireEvent.change(first, { target: { value: 'Another topic' } });
+    expect(fireEvent.keyDown(first, { key: 'Enter' })).toBe(true);
+    expect(screen.getByText('1 of 2')).toBeTruthy();
+    first.focus();
+    expect(ctrlEnter(first)).toBe(false);
+    expect(screen.getByText('2 of 2')).toBeTruthy();
+    const second = screen.getByRole('textbox');
+    expect(document.activeElement).toBe(second);
+    fireEvent.change(second, { target: { value: 'Line one' } });
+    expect(fireEvent.keyDown(second, { key: 'Enter' })).toBe(true);
+    expect(product.threads.interactions.resolve).not.toHaveBeenCalled();
+    fireEvent.keyDown(second, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(product.threads.interactions.resolve).toHaveBeenCalledWith('chord-thread', interaction.id, {
+      kind: 'user_answer', answers: {
+        topic: { selected: [], freeText: 'Another topic' },
+        details: { selected: [], freeText: 'Line one' }
+      }
+    }));
+  });
+
+  it('acts from any control in the panel and blocks the focused button’s own Enter', () => {
+    render(viewOf(twoQuestions('chord-buttons')));
+    const docs = screen.getByRole('button', { name: 'Docs' });
+    fireEvent.click(docs);
+    expect(ctrlEnter(screen.getAllByTestId('thread-pending-question-step')[0])).toBe(false);
+    expect(screen.getByText('2 of 2')).toBeTruthy();
+    // Last question unanswered: Ctrl+Enter on Back neither goes back nor submits.
+    expect(ctrlEnter(screen.getByTestId('thread-pending-question-back'))).toBe(false);
+    expect(screen.getByText('2 of 2')).toBeTruthy();
+    expect(product.threads.interactions.resolve).not.toHaveBeenCalled();
+  });
+
+  it('jumps back to the first unanswered question when the last one is answered, then submits', async () => {
+    const interaction = twoQuestions('chord-unanswered');
+    render(viewOf(interaction));
+    fireEvent.click(screen.getAllByTestId('thread-pending-question-step')[1]);
+    const details = screen.getByRole('textbox');
+    fireEvent.change(details, { target: { value: 'Details first' } });
+    details.focus();
+    ctrlEnter(details);
+    expect(screen.getByText('1 of 2')).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Code' }));
+    fireEvent.keyDown(document.activeElement!, { key: '2' });
+    ctrlEnter(document.activeElement!);
+    expect(screen.getByText('2 of 2')).toBeTruthy();
+    ctrlEnter(document.activeElement!);
+    await waitFor(() => expect(product.threads.interactions.resolve).toHaveBeenCalledWith('chord-thread', interaction.id, {
+      kind: 'user_answer', answers: {
+        topic: { selected: ['docs'] },
+        details: { selected: [], freeText: 'Details first' }
+      }
+    }));
+  });
+
+  it('keeps focus in the panel after Enter on an option unmounts it, preferring the selected option', () => {
+    render(viewOf(twoQuestions('chord-refocus', {
+      allowFreeText: false,
+      options: [{ value: 'small', label: 'Small' }, { value: 'large', label: 'Large (Recommended)' }]
+    })));
+    const code = screen.getByRole('button', { name: 'Code' });
+    code.focus();
+    fireEvent.keyDown(code, { key: 'Enter' });
+    expect(screen.getByText('2 of 2')).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: /Large/ }));
+  });
+
+  it('keeps focus in the panel when Back unmounts itself and when Next turns into Submit', () => {
+    render(viewOf(twoQuestions('chord-buttons-focus')));
+    fireEvent.click(screen.getByRole('button', { name: 'Docs' }));
+    const next = screen.getByTestId('thread-pending-question-next');
+    next.focus();
+    fireEvent.click(next);
+    expect(screen.getByText('2 of 2')).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByTestId('thread-pending-question-submit'));
+    const back = screen.getByTestId('thread-pending-question-back');
+    back.focus();
+    fireEvent.click(back);
+    expect(screen.getByText('1 of 2')).toBeTruthy();
+    expect(screen.queryByTestId('thread-pending-question-back')).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Docs' }));
+  });
+
+  it('ignores Shift or Alt chords and does nothing while the answer is being sent', () => {
+    const interaction = twoQuestions('chord-ignored');
+    const view = render(viewOf(interaction));
+    const code = screen.getByRole('button', { name: 'Code' });
+    ctrlEnter(code, { shiftKey: true });
+    ctrlEnter(code, { altKey: true });
+    expect(screen.getByText('1 of 2')).toBeTruthy();
+    view.rerender(viewOf({ ...interaction, status: 'resolving' } as PendingInteraction));
+    expect(ctrlEnter(screen.getByRole('button', { name: 'Code' }))).toBe(false);
+    expect(screen.getByText('1 of 2')).toBeTruthy();
+  });
+
+  it('only moves the panel that has focus', () => {
+    render(<>{viewOf(twoQuestions('chord-panel-a'), 'thread-a')}{viewOf(twoQuestions('chord-panel-b'), 'thread-b')}</>);
+    const [a] = screen.getAllByRole('button', { name: 'Code' });
+    ctrlEnter(a);
+    expect(screen.getByText('2 of 2')).toBeTruthy();
+    expect(screen.getByText('1 of 2')).toBeTruthy();
+  });
+
+  it('shows the shortcut on the Next and Submit buttons for the platform', () => {
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('Win32');
+    const view = render(viewOf(twoQuestions('chord-title-win')));
+    const next = screen.getByTestId('thread-pending-question-next');
+    expect(next.title).toBe('Next (Ctrl+Enter)');
+    expect(next.getAttribute('aria-keyshortcuts')).toBe('Control+Enter Meta+Enter');
+    fireEvent.click(next);
+    expect(screen.getByTestId('thread-pending-question-submit').title).toBe('Submit (Ctrl+Enter)');
+    view.unmount();
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
+    render(viewOf(twoQuestions('chord-title-mac')));
+    expect(screen.getByTestId('thread-pending-question-next').title).toBe('Next (⌘↵)');
+  });
+});
+
 describe('resolved cards stay locked until they unmount', () => {
   const decisionIds = ['allow_once', 'allow_for_session', 'deny'];
   const settle = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });

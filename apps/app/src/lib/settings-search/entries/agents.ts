@@ -5,6 +5,7 @@ import {
   normalizeNotificationDefaults
 } from '@zana-ai/zcc-domain';
 import {
+  API_ERROR_RESUME_DEFAULTS,
   AUTO_CLOSE_IDLE_DEFAULTS,
   HEARTBEAT_DEFAULTS,
   SESSION_MEMORY_DEFAULTS,
@@ -401,6 +402,58 @@ export const entries: readonly SettingsSearchEntry[] = [
     kind: 'setting',
     dependsOn: 'agents.heartbeat',
     value: (s) => s.config.heartbeatMessage || HEARTBEAT_DEFAULTS.message,
+  },
+  {
+    id: 'agents.api-error-resume.intro',
+    section: 'agents',
+    anchor: 'api-error-resume',
+    label: 'Resume after API errors',
+    help: "When an agent's turn stops on an API error that matches a rule below, Zana sends it a message so it carries on. Off by default. Works with Claude Code sessions: CLI Agent tabs, Squad engineers and scheduled runs.",
+    keywords: ['api error', 'continue', 'retry', 'overloaded', 'provider not found', 'connection lost', 'stopfailure'],
+    kind: 'subsection',
+  },
+  {
+    id: 'agents.api-error-resume',
+    section: 'agents',
+    anchor: 'api-error-resume',
+    label: 'Resume after matching API errors',
+    keywords: ['api error', 'resume', 'continue', 'auto retry'],
+    kind: 'setting',
+    value: (s) => onOff(s.config.apiErrorResume?.enabled ?? false),
+  },
+  {
+    id: 'agents.api-error-resume-rules',
+    section: 'agents',
+    anchor: 'api-error-resume',
+    label: 'Resume rules: when the error matches, send a message after a delay',
+    help: "Zana only sends the message if you haven't typed in that agent since the error. Only add errors that clear up by themselves. Sign-in, billing and “request too large” errors fail again if the agent just carries on.",
+    keywords: ['rule', 'regex', 'contains', 'message', 'delay'],
+    kind: 'setting',
+    dependsOn: 'agents.api-error-resume',
+    value: (s) => String(s.config.apiErrorResume?.rules.length ?? 0),
+  },
+  {
+    id: 'agents.api-error-resume-cap',
+    section: 'agents',
+    anchor: 'api-error-resume',
+    label: 'Stop after messages in minutes for one agent, then mark it as needing you',
+    keywords: ['limit', 'cap', 'window', 'needs you'],
+    kind: 'setting',
+    dependsOn: 'agents.api-error-resume',
+    value: (s) => {
+      const r = s.config.apiErrorResume;
+      return `${r?.maxPerWindow ?? API_ERROR_RESUME_DEFAULTS.maxPerWindow} in ${r?.windowMinutes ?? API_ERROR_RESUME_DEFAULTS.windowMinutes} min`;
+    },
+  },
+  {
+    id: 'agents.api-error-resume-check',
+    section: 'agents',
+    anchor: 'api-error-resume',
+    label: 'Check an error',
+    help: 'Paste an error to see which rule would fire. Check is only available in the desktop app.',
+    keywords: ['test rule', 'try'],
+    kind: 'setting',
+    dependsOn: 'agents.api-error-resume',
   },
   {
     id: 'agents.squad-idle-timeout',

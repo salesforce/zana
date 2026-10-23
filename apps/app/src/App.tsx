@@ -494,7 +494,7 @@ function AppShell() {
       const projectId = ui.selectedProjectId;
       switch (event) {
         case 'app:openSettings':
-          ui.setNav(ui.nav === 'settings' ? 'home' : 'settings');
+          ui.toggleSettings();
           return;
         case 'app:toggleInbox':
           ui.setNav(ui.nav === 'inbox' ? 'home' : 'inbox');
@@ -959,9 +959,10 @@ function WalkthroughHost() {
 
 function ShortcutsHelpHost() {
   const open = useUi((s) => s.shortcutsOpen);
+  const ctrlVPasteEnabled = useData((s) => s.terminalCtrlVPasteEnabled);
   const close = () => useUi.getState().setShortcutsOpen(false);
   if (!open) return null;
-  return <ShortcutsHelp onClose={close} />;
+  return <ShortcutsHelp onClose={close} ctrlVPasteEnabled={ctrlVPasteEnabled} />;
 }
 
 function AgentModalHost() {

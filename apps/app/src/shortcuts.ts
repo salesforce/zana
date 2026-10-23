@@ -70,10 +70,11 @@ export function installShortcuts(): () => void {
       data.restartTerminal(activeTabId, projectId).catch(() => {});
       return;
     }
-    // cmd+, — toggle Settings. Remappable in Settings → Shortcuts.
+    // cmd+, — toggle Settings (the project's, while drilled into one).
+    // Remappable in Settings → Shortcuts.
     if (shortcutForCommand('settings.open', e)) {
       e.preventDefault();
-      ui.setNav(ui.nav === 'settings' ? 'home' : 'settings');
+      ui.toggleSettings();
       return;
     }
     // cmd+n — New Chat (Home composer in the user's default launch mode).

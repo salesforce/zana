@@ -103,3 +103,115 @@ it('derives active ownership from product records, current enrollment, and regis
   vi.mocked(getHost).mockReturnValueOnce(undefined as never); expect(register).toThrow('ownership');
   vi.mocked(getHost).mockReturnValueOnce({ destroyedAt: 'now' } as never); expect(register).toThrow('ownership');
 });
+
+// Native tool policy callbacks are answered server-side from the grant and the session record.
+const nativeInput = (body: object = { tool_use_id: 'u1', tool_name: 'Bash', tool_input: { command: 'ls' } }) =>
+  ({ ...input, path: `/hook/nativetool/project/${grant.sessionId}`, bodyBase64: Buffer.from(JSON.stringify(body)).toString('base64') });
+const replyOf = (response: { bodyBase64: string }) => JSON.parse(Buffer.from(response.bodyBase64, 'base64').toString()).hookSpecificOutput;
+function nativeFixture(decide: (request: any) => Promise<unknown> = async () => ({ action: 'allow' }), profile: string | undefined = 'claude') {
+  const plugins = { decideToolPolicy: vi.fn(decide) };
+  const f = fixture({ plugins: () => plugins });
+  Object.assign(f.owner, { profile });
+  return { ...f, plugins };
+}
+it('answers an enrolled native tool call with a real allow in the relay reply shape, never forwarding to main', async () => {
+  const f = nativeFixture();
+  const response = await f.forward(nativeInput());
+  expect(response).toMatchObject({ status: 200, contentType: 'application/json; charset=utf-8' });
+  expect(replyOf(response)).toEqual({ hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: 'allowed' });
+  expect(f.fetcher).not.toHaveBeenCalled();
+});
+it('relays a plugin deny with its own reason and judges with the server-recorded profile and project, not the body', async () => {
+  const f = nativeFixture(async () => ({ action: 'deny', reason: 'plugin says no' }));
+  const reply = replyOf(await f.forward(nativeInput({ tool_use_id: 'u1', tool_name: 'Bash', tool_input: {}, profile: 'forged', project_id: 'forged', session_id: 'forged' })));
+  expect(reply).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: 'plugin says no' });
+  expect(f.plugins.decideToolPolicy).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'project', threadId: grant.sessionId, providerId: 'claude-code', toolName: 'Bash' }));
+});
+it.each([
+  ['no plugin service', (f: any) => { f.options.plugins = () => undefined; }, nativeInput(), 'plugin service is unavailable'],
+  ['a throwing policy', (f: any) => { f.plugins.decideToolPolicy.mockRejectedValue(new Error('boom')); }, nativeInput(), 'no native tool policy decision'],
+  ['a malformed event', () => undefined, nativeInput({ nonsense: true }), 'no native tool policy decision'],
+  ['no recorded profile', (f: any) => { f.owner.profile = undefined; }, nativeInput(), 'no native tool policy decision'],
+  ['oversize tool input', () => undefined, nativeInput({ tool_use_id: 'u1', tool_name: 'Bash', tool_input: { blob: 'x'.repeat(300 * 1024) } }), 'larger than the 256 KiB']
+])('fails closed with a specific deny for %s', async (_label, arrange, request, reason) => {
+  const f = nativeFixture(); arrange(f);
+  const reply = replyOf(await f.forward(request));
+  expect(reply.permissionDecision).toBe('deny'); expect(reply.permissionDecisionReason).toContain(reason);
+});
+it('denies within the bound when the policy never answers', async () => {
+  vi.useFakeTimers();
+  try {
+    const f = nativeFixture(() => new Promise(() => undefined));
+    const result = f.forward(nativeInput()); await vi.advanceTimersByTimeAsync(3_000);
+    expect(replyOf(await result)).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: 'native tool policy timed out' });
+  } finally { vi.useRealTimers(); }
+});
+it('rejects a native tool callback for a revoked or foreign grant and when aborted', async () => {
+  const f = nativeFixture();
+  await expect(f.forward(nativeInput(), 'other')).rejects.toThrow('not authorized');
+  await expect(f.forward({ ...nativeInput(), path: `/hook/nativetool/project/${randomUUID()}` })).rejects.toThrow('not authorized');
+  const controller = new AbortController(); controller.abort();
+  await expect(f.forward(nativeInput(), 'host', controller.signal)).rejects.toThrow('aborted');
+  f.authority.revoke(grant.sessionId); await expect(f.forward(nativeInput())).rejects.toThrow('not authorized');
+});
+it('rejects a non-canonical native tool body', async () => {
+  await expect(nativeFixture().forward({ ...nativeInput(), bodyBase64: 'Zh==' })).rejects.toThrow('Invalid CLI callback body');
+});
+it('keeps a separate native tool pool: shared slots busy still decides, the 9th concurrent native call gets 429', async () => {
+  const release: Array<() => void> = [];
+  const f = nativeFixture(() => new Promise(resolve => release.push(() => resolve({ action: 'allow' }))));
+  f.fetcher.mockImplementation((() => new Promise<Response>(() => undefined)) as never);
+  const shared = Array.from({ length: 8 }, () => f.forward().catch(() => undefined));
+  const blocked = f.forward(); await expect(blocked).rejects.toMatchObject({ status: 429 });
+  const native = Array.from({ length: 8 }, () => f.forward(nativeInput()));
+  await vi.waitFor(() => expect(release).toHaveLength(8));
+  await expect(f.forward(nativeInput())).rejects.toMatchObject({ status: 429 });
+  release.splice(0).forEach(fn => fn());
+  expect((await Promise.all(native)).every(r => replyOf(r).permissionDecision === 'allow')).toBe(true);
+  void shared;
+});
+it('exposes the session profile from the product record to the policy', async () => {
+  const terminalSessions = { get: vi.fn(() => ({ projectId: 'project', profile: 'claude', daemonInstanceId: 'daemon', hostId: 'host', status: 'running' })) };
+  const plugins = { decideToolPolicy: vi.fn(async () => ({ action: 'allow' })) };
+  const ctx = { terminalSessions, plugins, projects: { list: () => [{ id: 'project' }] }, db: {}, hostHub: { getSession: () => ({ instanceId: 'daemon' }) } };
+  const authority = createProductCliCallbackAuthority(ctx as never, () => 'http://127.0.0.1:4444');
+  authority.register(grant);
+  await authority.forward('host', nativeInput(), new AbortController().signal);
+  expect(plugins.decideToolPolicy).toHaveBeenCalledOnce();
+});
+it('budgets native tool calls per session so one busy session cannot deny another', async () => {
+  const release: Array<() => void> = [];
+  const f = nativeFixture(() => new Promise(resolve => release.push(() => resolve({ action: 'allow' }))));
+  const second = { ...grant, sessionId: '33333333-3333-4333-8333-333333333333', credential: 'b'.repeat(64) };
+  f.authority.register(second);
+  const secondInput = { ...nativeInput(), sessionId: second.sessionId, path: `/hook/nativetool/project/${second.sessionId}` };
+  const busy = Array.from({ length: 8 }, () => f.forward(nativeInput()));
+  await vi.waitFor(() => expect(release).toHaveLength(8));
+  await expect(f.forward(nativeInput())).rejects.toMatchObject({ status: 429 });
+  const other = f.forward(secondInput);
+  await vi.waitFor(() => expect(release).toHaveLength(9));
+  release.splice(0).forEach(fn => fn());
+  expect(replyOf(await other).permissionDecision).toBe('allow');
+  await Promise.all(busy);
+  // Budgets are released: the busy session can decide again.
+  const again = f.forward(nativeInput());
+  await vi.waitFor(() => expect(release).toHaveLength(1)); release.splice(0).forEach(fn => fn());
+  expect(replyOf(await again).permissionDecision).toBe('allow');
+});
+it.each([{ active: false }, { daemonInstanceId: 'restarted' }, { hostId: 'other' }])('denies nothing and rejects when ownership changes during the decision: %j', async patch => {
+  const f = nativeFixture(async () => { Object.assign(f.owner, patch); return { action: 'allow' }; });
+  await expect(f.forward(nativeInput())).rejects.toMatchObject({ status: 403 });
+});
+it('rejects when the grant is revoked during the decision', async () => {
+  const f = nativeFixture(async () => { f.authority.revoke(grant.sessionId); return { action: 'allow' }; });
+  await expect(f.forward(nativeInput())).rejects.toMatchObject({ status: 403 });
+});
+it('logs a failed policy decision with the session prefix and a bounded message, still denying', async () => {
+  const log = vi.fn();
+  const f = nativeFixture(); f.options.log = log; f.plugins.decideToolPolicy.mockRejectedValue(new Error('x'.repeat(500)));
+  expect(replyOf(await f.forward(nativeInput())).permissionDecision).toBe('deny');
+  expect(log).toHaveBeenCalledOnce();
+  const line = String(log.mock.calls[0]![0]);
+  expect(line).toContain(`[cli-callback] decision failed for session ${grant.sessionId.slice(0, 8)}`);
+  expect(line.length).toBeLessThan(300);
+});

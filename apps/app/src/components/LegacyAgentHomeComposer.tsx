@@ -98,6 +98,7 @@ import { useHosts } from '../hooks/useHosts.js';
 import { cliAgentCatalogScope } from './cli-agent-catalog-scope.js';
 import { RemoteComposerConnection } from './RemoteComposerConnection.js';
 import { effectiveWorktreeIsolation } from '../lib/workspace-choice.js';
+import { sortCatalogueByName } from '../lib/catalogue-sort.js';
 
 const EMPTY_MODELS: readonly HarnessModelTarget[] = [];
 const CLI_WORK_MODE_ENTRIES = composerModeEntries({
@@ -746,6 +747,10 @@ export function LegacyAgentHomeComposer({
     'claude-code'
   ).filter((row) => !project?.remote || (catalogScope.ready && catalog.providers.some(provider => provider.id === row.id)))
     .map((row) => ({ value: row.id, label: row.displayName }));
+  const personaOptions = useMemo(
+    () => [{ value: '', label: 'None' }, ...sortCatalogueByName(personas).map((persona) => ({ value: persona.id, label: persona.name }))],
+    [personas]
+  );
 
   return (
     <PluginComposerChrome
@@ -1001,10 +1006,7 @@ export function LegacyAgentHomeComposer({
                 ariaLabel="Persona"
                 searchable={false}
                 onChange={setPersonaId}
-                options={[
-                  { value: '', label: 'None' },
-                  ...personas.map((persona) => ({ value: persona.id, label: persona.name }))
-                ]}
+                options={personaOptions}
               />
             </div>
             <PluginComposerAdvanced scope={{ kind: 'cli-agent', projectId: projectId || null }} />

@@ -131,7 +131,9 @@ export function SettingsView() {
     product.openers.openIn('cursor', resolve(path)).catch(() => {});
   };
 
-  const update = async (patch: Partial<AppConfig>) => {
+  // Failures are swallowed by default; a section that keeps unsaved input
+  // passes `throwOnError` so it can tell the person the save didn't land.
+  const update = async (patch: Partial<AppConfig>, opts?: { throwOnError?: boolean }) => {
     try {
       const next = await product.config.set(patch);
       setConfig(next);
@@ -171,6 +173,9 @@ export function SettingsView() {
       }
       if (typeof patch.terminalClipboardWriteEnabled === 'boolean') {
         useData.getState().setTerminalClipboardWriteEnabled(patch.terminalClipboardWriteEnabled);
+      }
+      if (typeof patch.terminalCtrlVPasteEnabled === 'boolean') {
+        useData.getState().setTerminalCtrlVPasteEnabled(patch.terminalCtrlVPasteEnabled);
       }
       if (typeof patch.structuredQuestionsEnabled === 'boolean') {
         useData.getState().setStructuredQuestionsEnabled(patch.structuredQuestionsEnabled);
@@ -228,8 +233,8 @@ export function SettingsView() {
       }
       if (patch.theme) applyTheme(patch.theme);
       markSaved();
-    } catch {
-      // noop
+    } catch (error) {
+      if (opts?.throwOnError) throw error;
     }
   };
 

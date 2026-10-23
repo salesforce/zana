@@ -238,7 +238,14 @@ Frontend runtime exports you may import from `@zana-ai/zcc-plugin-sdk/app`:
 `experimental_useSidebarThreads`, `experimental_useSidebarThreadActions`,
 `experimental_useSidebarThreadPullRequest`,
 `experimental_useSidebarThreadSplit`, `ThreadChat`, `Markdown`,
-`experimental_NewThreadComposer`, `experimental_requestApproval`.
+`experimental_NewThreadComposer`, `experimental_HarnessRoutingEditor`,
+`experimental_requestApproval`.
+
+`experimental_HarnessRoutingEditor({ descriptors, value, onChange, defaultHarness?, inheritLabel?, loading?, notice?, rowCopy? })`
+renders Zana's own AI-harness editor for a plugin's harness override: list
+`descriptors` from `zcc.harnessRouting.descriptors({ projectId? })`, read and
+write the value with `zcc.harnessRouting.read/write(scope, value)` over your RPC.
+`rowCopy` names what the rows set (`expandLabel`, `blurb`, `empty`).
 
 `composer.customize({ id, scopes?, actions?, banners?, plusMenu?, richText?, meta?, advanced? })`
 adds chrome on the shared prompt box. `scopes` may include `"cli-agent"` for the
