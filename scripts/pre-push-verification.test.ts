@@ -890,6 +890,7 @@ const PUSH_INPUT = `${feature.localRef} ${OID} ${feature.remoteRef} ${BASE}\n`;
 
 function fakeAdapter(overrides: Record<string, unknown> = {}) {
   const events: string[] = [];
+  const trees: string[] = [];
   const review = { child: { pid: 4242 }, dir: '/tmp/none' };
   const lock = { release: vi.fn(() => events.push('lock-released')) };
   const cleanup = { setLock: vi.fn(), setChild: vi.fn(), track: vi.fn(), untrack: vi.fn(), cleanup: vi.fn(() => events.push('cleanup')), dispose: vi.fn() };
@@ -900,6 +901,7 @@ function fakeAdapter(overrides: Record<string, unknown> = {}) {
     acquireReviewLock: vi.fn(() => lock),
     installAbortCleanup: vi.fn(() => cleanup),
     withRepoIdentityEnv: vi.fn((env: object) => ({ ...env, LOG_LEVEL: 'warn' })),
+    createReviewTree: vi.fn(() => { const tree = mkdtempSync(join(tmpdir(), 'tn-fake-tree-')); trees.push(tree); return tree; }),
     startReview: vi.fn(() => { events.push('review-started'); return review; }),
     finishReview: vi.fn(async () => ({ stdout: '' })),
     classifyReview: vi.fn(() => ({ status: 'clean', message: 'no findings', findings: [] })),
@@ -907,7 +909,7 @@ function fakeAdapter(overrides: Record<string, unknown> = {}) {
     recordAndPruneHistory: vi.fn(),
     ...overrides,
   };
-  return { adapter, events, lock, cleanup, review };
+  return { adapter, events, lock, cleanup, review, trees };
 }
 
 const withReview = (adapter: object) => (context: object) => prepareTinynodReview({ ...(context as Record<string, unknown>), adapter } as never);
@@ -989,9 +991,9 @@ describe('prepareTinynodReview', () => {
     const developer = makeRepo('git@github.com:salesforce/zana.git');
     const snapshot = makeRepo('/developer/checkout');
     try {
-      const { adapter } = fakeAdapter();
+      const { adapter } = fakeAdapter({ createReviewTree: () => snapshot });
       const session = prepareTinynodReview({ ...base(adapter), root: developer } as never);
-      session.start(snapshot, OID);
+      session.start('/ignored-snapshot', OID);
       expect(adapter.withRepoIdentityEnv).toHaveBeenLastCalledWith(expect.any(Object), {}, { developerOrigin: 'git@github.com:salesforce/zana.git', slotOrigin: '/developer/checkout' });
     } finally {
       rmSync(developer, { recursive: true, force: true });
@@ -999,16 +1001,62 @@ describe('prepareTinynodReview', () => {
     }
   });
 
-  it('starts at the exact target in the snapshot with an explicit environment, once per target oid', () => {
-    const { adapter, events } = fakeAdapter();
+  it('starts at the exact target in a private tree with an explicit environment, once per target oid', () => {
+    const { adapter, events, trees } = fakeAdapter();
     const context = base(adapter);
     const session = prepareTinynodReview(context as never);
     session.start('/snap', 'f'.repeat(40));
     expect(adapter.startReview).not.toHaveBeenCalled();
     session.start('/snap', OID);
-    expect(adapter.startReview).toHaveBeenCalledWith({ base: BASE, cwd: '/snap', env: expect.objectContaining({ LOG_LEVEL: 'warn' }) });
+    expect(adapter.createReviewTree).toHaveBeenCalledWith(expect.objectContaining({ root: process.cwd(), oid: OID }));
+    expect(trees).toHaveLength(1);
+    expect(adapter.startReview).toHaveBeenCalledWith({ base: BASE, cwd: trees[0], env: expect.objectContaining({ LOG_LEVEL: 'warn' }) });
     expect(context.log).toHaveBeenCalledWith(`pre-push: tinynod review started (base ${BASE.slice(0, 12)}, head ${OID.slice(0, 12)})`);
     expect(events).toEqual(['review-started']);
+  });
+
+  it('runs the review outside the snapshot and removes its private tree when it finishes, aborts or restarts', async () => {
+    const finished = fakeAdapter();
+    const finishSession = prepareTinynodReview(base(finished.adapter) as never);
+    finishSession.start('/snap', OID);
+    expect(finished.adapter.startReview).not.toHaveBeenCalledWith(expect.objectContaining({ cwd: '/snap' }));
+    expect(existsSync(finished.trees[0])).toBe(true);
+    await finishSession.finish();
+    expect(existsSync(finished.trees[0])).toBe(false);
+
+    const aborted = fakeAdapter();
+    const abortSession = prepareTinynodReview(base(aborted.adapter) as never);
+    abortSession.start('/snap', OID);
+    abortSession.abort();
+    expect(existsSync(aborted.trees[0])).toBe(false);
+
+    const restarted = fakeAdapter();
+    const restartSession = prepareTinynodReview(base(restarted.adapter) as never);
+    restartSession.start('/snap-a', OID);
+    restartSession.start('/snap-b', OID);
+    expect(restarted.trees).toHaveLength(2);
+    expect(existsSync(restarted.trees[0])).toBe(false);
+    expect(existsSync(restarted.trees[1])).toBe(true);
+    await restartSession.finish();
+    expect(existsSync(restarted.trees[1])).toBe(false);
+  });
+
+  it('skips the review, not the push, when the private tree cannot be created', () => {
+    const { adapter } = fakeAdapter({ createReviewTree: () => { throw new Error('no space'); } });
+    const context = base(adapter);
+    const session = prepareTinynodReview(context as never);
+    expect(() => session.start('/snap', OID)).not.toThrow();
+    expect(adapter.startReview).not.toHaveBeenCalled();
+    expect(context.error).toHaveBeenCalledWith(expect.stringContaining('no space'));
+  });
+
+  it('does not throw on null findings', async () => {
+    const { adapter } = fakeAdapter({ classifyReview: () => ({ status: 'findings', message: '2 findings', findings: [null, 'text'] }) });
+    const context = base(adapter);
+    const session = prepareTinynodReview(context as never);
+    session.start('/snap', OID);
+    await session.finish();
+    expect(context.log).toHaveBeenCalledWith('  [unknown] null');
   });
 
   it('logs and carries on when the review cannot start', () => {
@@ -1094,6 +1142,20 @@ describe('prepareTinynodReview', () => {
 
 describe('runPrePush with the review seam', () => {
   const common = { remoteUrl: REMOTE, run: () => ({ status: 1 }) };
+
+  it('does not prepare a review unless one is injected', () => {
+    const fastVerify = vi.fn();
+    expect(runPrePush({ ...common, input: PUSH_INPUT, log: vi.fn(), error: vi.fn(), select: () => ({ action: 'fast', reason: 'r', oid: OID, base: BASE, paths: [] }), fastVerify })).toBe(0);
+    expect(fastVerify).toHaveBeenCalledWith(expect.not.objectContaining({ review: expect.anything() }));
+  });
+
+  it('keeps the exit code when a session rejects while finishing', async () => {
+    const session = { start: vi.fn(), abort: vi.fn(), finish: vi.fn(async () => { throw new Error('boom'); }) };
+    const error = vi.fn();
+    const code = await runPrePushWithReview({ ...common, input: PUSH_INPUT, log: vi.fn(), error, select: () => ({ action: 'fast', reason: 'r', oid: OID, base: BASE, paths: [] }), fastVerify: vi.fn(), review: () => session });
+    expect(code).toBe(0);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('boom'));
+  });
 
   it('passes verifiers the session only when a review exists, and keeps their other arguments', () => {
     const fastVerify = vi.fn(); const verify = vi.fn();

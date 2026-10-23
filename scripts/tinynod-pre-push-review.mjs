@@ -47,12 +47,15 @@ function parseBool(value) {
 export function resolveEnablement({ env = process.env, readConfig = () => null } = {}) {
   const skip = String(env.TINYNOD_SKIP_HOOK ?? '').trim().toLowerCase();
   if (skip === '1' || skip === 'true') return { enabled: false, source: 'TINYNOD_SKIP_HOOK' };
+  // An empty or blank env value counts as unset; git config is read only when needed.
   const sources = [
-    ['ZANA_TINYNOD_REVIEW', env.ZANA_TINYNOD_REVIEW],
-    ['git config zana.tinynod.enabled', readConfig()],
+    ['ZANA_TINYNOD_REVIEW', () => env.ZANA_TINYNOD_REVIEW],
+    ['git config zana.tinynod.enabled', readConfig],
   ];
-  for (const [source, value] of sources) {
+  for (const [source, read] of sources) {
+    const value = read();
     if (value === undefined || value === null) continue;
+    if (source === 'ZANA_TINYNOD_REVIEW' && String(value).trim() === '') continue;
     const parsed = parseBool(value);
     if (parsed === null) return { enabled: false, source, warning: `invalid value ${JSON.stringify(String(value))} for ${source}; tinynod review is off` };
     return { enabled: parsed, source };
@@ -273,6 +276,23 @@ export function checkTinynodVersion({ run = spawnSync, command = 'tinynod', env 
 }
 
 /**
+ * A private, checkout-free clone of the pushed commit for the review to read.
+ * The review can outlive verification, which releases or deletes its snapshot,
+ * so it must not run inside it. The caller removes the returned directory.
+ */
+export function createReviewTree({ root, oid, env = process.env, tmp = tmpdir(), fs = nodeFs, run = spawnSync }) {
+  const dir = fs.mkdtempSync(join(tmp, 'zana-tinynod-tree-'));
+  const clean = { ...env };
+  for (const key of GIT_ROUTING) delete clean[key];
+  const git = (args, cwd) => run('git', args, { cwd, env: clean, encoding: 'utf8' })?.status === 0;
+  if (!git(['clone', '--quiet', '--shared', '--no-checkout', root, dir], root) || !git(['update-ref', '--no-deref', 'HEAD', oid], dir)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw new Error('could not create a private review checkout');
+  }
+  return dir;
+}
+
+/**
  * Starts the review detached into its own process group, with output going to
  * owner-only temp files so a chatty review can neither block on a pipe nor
  * leak its output to other users.
@@ -347,16 +367,27 @@ export async function finishReview(review, { budgetMs = REVIEW_BUDGET_MS, graceM
   return { stdout, stderrTail, timedOut, tooLarge, spawnError: review.spawnError, exitCode: review.exitCode };
 }
 
+const MAX_JSON_CANDIDATES = 20;
+
+function tryParseObject(text) {
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch { return null; }
+}
+
+// Whole output first, then a bounded number of lines that start a JSON object,
+// so log-heavy output cannot cause quadratic re-parsing.
 function parseReviewJson(stdout) {
+  const whole = tryParseObject(stdout);
+  if (whole) return whole;
   const lines = stdout.split('\n');
-  for (let index = 0; index < lines.length; index += 1) {
+  let tried = 0;
+  for (let index = 0; index < lines.length && tried < MAX_JSON_CANDIDATES; index += 1) {
     if (!lines[index].startsWith('{')) continue;
-    for (const text of [lines.slice(index).join('\n'), lines[index]]) {
-      try {
-        const parsed = JSON.parse(text);
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
-      } catch { /* try the next candidate */ }
-    }
+    tried += 1;
+    const parsed = tryParseObject(lines.slice(index).join('\n')) ?? tryParseObject(lines[index]);
+    if (parsed) return parsed;
   }
   return null;
 }
@@ -419,16 +450,23 @@ function confinedRealpath(file, root, fs) {
 
 // Deletes one ledgered entry: its review and comments files, then its directory
 // when nothing else is left in it. Every path must resolve inside the history root.
+// Returns false when a delete failed, so the caller keeps the entry for a retry.
+// Paths outside the root are never deleted and are dropped from the ledger.
 function deleteHistoryEntry(old, root, fs, warn) {
+  let settled = true;
   for (const file of [old.file, old.commentsFile]) {
     const real = typeof file === 'string' && confinedRealpath(file, root, fs);
     if (!real) continue;
-    try { fs.rmSync(real, { recursive: true, force: true }); } catch (error) { warn(`pre-push: could not delete tinynod history ${JSON.stringify(file)}: ${error.message}`); }
+    try { fs.rmSync(real, { recursive: true, force: true }); } catch (error) {
+      settled = false;
+      warn(`pre-push: could not delete tinynod history ${JSON.stringify(file)}: ${error.message}`);
+    }
   }
   const dir = typeof old.dir === 'string' ? old.dir : dirname(old.file);
   const realDir = confinedRealpath(dir, root, fs);
-  if (!realDir) return;
+  if (!realDir) return settled;
   try { if (fs.readdirSync(realDir).length === 0) fs.rmdirSync(realDir); } catch { /* shared or already gone */ }
+  return settled;
 }
 
 /**
@@ -446,7 +484,8 @@ export function recordAndPruneHistory({ commonDir, entry, historyRoot = join(hom
     ledger.sort((left, right) => right.at - left.at);
     const kept = ledger.slice(0, keep);
     const root = (() => { try { return fs.realpathSync(historyRoot); } catch { return null; } })();
-    if (root) for (const old of ledger.slice(keep)) deleteHistoryEntry(old, root, fs, warn);
+    // Without a resolvable history root nothing can be deleted yet, so keep every entry.
+    for (const old of ledger.slice(keep)) if (!root || !deleteHistoryEntry(old, root, fs, warn)) kept.push(old);
     const temp = `${ledgerPath}.${randomUUID()}.tmp`;
     fs.writeFileSync(temp, JSON.stringify(kept, null, 2), { mode: 0o600 });
     fs.renameSync(temp, ledgerPath);

@@ -650,6 +650,7 @@ const REVIEW_FINDINGS_SHOWN = 10;
 const DOCS_ONLY_REASON = 'verified inert prose only';
 
 function describeFinding(finding) {
+  if (!finding || typeof finding !== 'object') return `  [unknown] ${String(finding)}`;
   const place = [finding.filePath ?? finding.file ?? finding.path, finding.lineNumber ?? finding.line].filter((part) => part !== undefined && part !== null).join(':');
   const text = finding.comment ?? finding.title ?? finding.message ?? '';
   return `  [${finding.severity ?? 'unknown'}] ${place ? `${place} ` : ''}${String(text).split('\n')[0]}`.trimEnd();
@@ -702,14 +703,33 @@ export function prepareTinynodReview({ tuples, selection, root, env = process.en
 
 // Stops a review's process group and removes its capture files without waiting.
 function stopReview(review) {
-  try { process.kill(-review.child.pid, 'SIGKILL'); } catch { /* already exited */ }
+  try { process.kill(-review.child?.pid, 'SIGKILL'); } catch { /* already exited */ }
   rmSync(review.dir, { recursive: true, force: true });
+}
+
+// Prints the verdict and findings, then records the review's history.
+function reportReview({ a, outcome, target, common, log, error }) {
+  const verdict = a.classifyReview({ ...outcome, base: target.base });
+  log(`pre-push: tinynod review (advisory) ${verdict.status}: ${verdict.message}`);
+  const findings = verdict.findings ?? [];
+  for (const finding of findings.slice(0, REVIEW_FINDINGS_SHOWN)) log(describeFinding(finding));
+  if (findings.length > REVIEW_FINDINGS_SHOWN) log(`  ... ${findings.length - REVIEW_FINDINGS_SHOWN} more`);
+  if (!verdict.payload) return;
+  const entry = a.ledgerEntryFor({ payload: verdict.payload, oid: target.oid, base: target.base });
+  if (entry) a.recordAndPruneHistory({ commonDir: common, entry, warn: error });
 }
 
 function createReviewSession({ a, target, root, common, lock, developerOrigin, env, log, error }) {
   const cleanup = a.installAbortCleanup();
   cleanup.setLock(lock);
   let review = null;
+  let tree = null;
+  const dropTree = () => {
+    if (!tree) return;
+    cleanup.untrack(tree);
+    rmSync(tree, { recursive: true, force: true });
+    tree = null;
+  };
   const discardReview = () => {
     if (!review) return;
     cleanup.cleanup();
@@ -718,21 +738,26 @@ function createReviewSession({ a, target, root, common, lock, developerOrigin, e
   let finished = false;
   const close = () => {
     finished = true;
+    dropTree();
     cleanup.dispose();
     lock.release();
   };
   return {
     // The same push can verify twice (a lost snapshot lock re-verifies in a
-    // fresh clone), so a second start replaces the first review.
-    start(snapshot, oid) {
+    // fresh clone), so a second start replaces the first review. The snapshot
+    // only marks when verification begins; the review does not run in it.
+    start(_snapshot, oid) {
       if (finished || oid !== target.oid) return;
       try {
         if (review) {
           cleanup.untrack(review.dir);
           stopReview(review);
         }
-        const slotOrigin = gitOk(['remote', 'get-url', 'origin'], { cwd: snapshot, env: withoutGitRouting(env) });
-        review = a.startReview({ base: target.base, cwd: snapshot, env: a.withRepoIdentityEnv(env, {}, { developerOrigin, slotOrigin }) });
+        dropTree();
+        tree = a.createReviewTree({ root, oid: target.oid, env });
+        cleanup.track(tree);
+        const slotOrigin = gitOk(['remote', 'get-url', 'origin'], { cwd: tree, env: withoutGitRouting(env) });
+        review = a.startReview({ base: target.base, cwd: tree, env: a.withRepoIdentityEnv(env, {}, { developerOrigin, slotOrigin }) });
         cleanup.setChild(review.child);
         cleanup.track(review.dir);
         log(`pre-push: tinynod review started (base ${target.base.slice(0, 12)}, head ${target.oid.slice(0, 12)})`);
@@ -754,16 +779,7 @@ function createReviewSession({ a, target, root, common, lock, developerOrigin, e
         // Verification ran in a blocking call; let pending child events land
         // before the budget is judged.
         await new Promise((resolveTick) => setImmediate(resolveTick));
-        const outcome = await a.finishReview(review);
-        const verdict = a.classifyReview({ ...outcome, base: target.base });
-        const label = verdict.status === 'warning' ? 'warning' : verdict.status;
-        log(`pre-push: tinynod review (advisory) ${label}: ${verdict.message}`);
-        for (const finding of (verdict.findings ?? []).slice(0, REVIEW_FINDINGS_SHOWN)) log(describeFinding(finding));
-        if ((verdict.findings?.length ?? 0) > REVIEW_FINDINGS_SHOWN) log(`  ... ${verdict.findings.length - REVIEW_FINDINGS_SHOWN} more`);
-        if (verdict.payload) {
-          const entry = a.ledgerEntryFor({ payload: verdict.payload, oid: target.oid, base: target.base });
-          if (entry) a.recordAndPruneHistory({ commonDir: common, entry, warn: error });
-        }
+        reportReview({ a, outcome: await a.finishReview(review), target, common, log, error });
       } catch (cause) {
         error(`pre-push: tinynod review failed to finish (base ${target.base.slice(0, 12)}, head ${target.oid.slice(0, 12)}): ${cause.message}`);
       } finally {
@@ -774,7 +790,7 @@ function createReviewSession({ a, target, root, common, lock, developerOrigin, e
   };
 }
 
-export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, root = process.cwd(), log = console.log, error = console.error, select = selectPush, verify = runFullVerification, fastVerify = runFastVerification, run = spawnCommand, review = prepareTinynodReview } = {}) {
+export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, root = process.cwd(), log = console.log, error = console.error, select = selectPush, verify = runFullVerification, fastVerify = runFastVerification, run = spawnCommand, review = () => null } = {}) {
   if (!remoteUrl) {
     error('pre-push: Git did not provide remote URL; aborting push.');
     return 1;
@@ -834,7 +850,9 @@ export async function runPrePushWithReview(options = {}) {
     if (session) sessions.push(session);
     return session;
   } });
-  for (const session of sessions) await session.finish();
+  for (const session of sessions) {
+    try { await session.finish(); } catch (cause) { (options.error ?? console.error)(`pre-push: tinynod review failed to finish: ${cause.message}`); }
+  }
   return code;
 }
 

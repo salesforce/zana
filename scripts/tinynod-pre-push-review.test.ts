@@ -1,6 +1,6 @@
 import { spawn as nodeSpawn, spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, truncateSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, truncateSync, utimesSync, writeFileSync } from 'node:fs';
 import * as nodeFs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +9,7 @@ import {
   acquireReviewLock,
   checkTinynodVersion,
   classifyReview,
+  createReviewTree,
   deriveReviewBase,
   deriveReviewTarget,
   finishReview,
@@ -49,6 +50,16 @@ describe('resolveEnablement', () => {
     expect(resolveEnablement({ env: { ZANA_TINYNOD_REVIEW: '0' }, readConfig: () => 'true' })).toMatchObject({ enabled: false, source: 'ZANA_TINYNOD_REVIEW' });
     expect(resolveEnablement({ env: { ZANA_TINYNOD_REVIEW: 'true' }, readConfig: () => 'false' })).toMatchObject({ enabled: true });
     expect(resolveEnablement({ env: { ZANA_TINYNOD_REVIEW: 'false' } })).toMatchObject({ enabled: false });
+  });
+
+  it('treats a blank environment switch as unset and reads git config only when needed', () => {
+    for (const blank of ['', '   ']) {
+      expect(resolveEnablement({ env: { ZANA_TINYNOD_REVIEW: blank }, readConfig: () => 'true' })).toMatchObject({ enabled: true, source: 'git config zana.tinynod.enabled' });
+    }
+    const readConfig = vi.fn(() => 'true');
+    resolveEnablement({ env: { ZANA_TINYNOD_REVIEW: '0' }, readConfig });
+    expect(readConfig).not.toHaveBeenCalled();
+    expect(resolveEnablement({ env: { ZANA_TINYNOD_REVIEW: 'maybe' }, readConfig: () => 'true' })).toMatchObject({ enabled: false, warning: expect.stringContaining('maybe') });
   });
 
   it('falls back to git config, then off', () => {
@@ -562,6 +573,18 @@ function spawnDetached(command: string, options: object) {
   // A stand-in review that never finishes, run with the options startReview chose.
   return nodeSpawn(command, ['-e', 'setInterval(() => {}, 1000)'], options);
 }
+describe('classifyReview JSON extraction', () => {
+  const result = { failed: false, comments: [], summary: 'ok' };
+  it('parses the whole output, or a result after log lines', () => {
+    expect(classifyReview({ stdout: JSON.stringify(result, null, 2) })).toMatchObject({ status: 'clean' });
+    expect(classifyReview({ stdout: `starting\n${JSON.stringify(result)}` })).toMatchObject({ status: 'clean' });
+  });
+  it('bounds the number of candidate lines it tries', () => {
+    const noise = Array.from({ length: 200 }, (_, index) => `{ not json ${index}`).join('\n');
+    expect(classifyReview({ stdout: `${noise}\n${JSON.stringify(result)}` })).toMatchObject({ status: 'warning', reason: 'unparseable' });
+  });
+});
+
 describe('classifyReview', () => {
   const INFO = '2026-10-23T12:25:09.280Z [INFO] Review started | service=pr-processor\n2026-10-23T12:25:09.282Z [INFO] Using mock AI service | service=mock-claude\n';
   const review = (extra: object = {}) => ({ reviewId: 'r', base: BASE, summary: 's', failed: false, severityCounts: { info: 0, warning: 0, error: 0, critical: 0 }, ...extra });
@@ -757,7 +780,8 @@ describe('recordAndPruneHistory', () => {
     writeFileSync(ledger, JSON.stringify([{ file, at: 1 }]));
     rmSync(historyRoot, { recursive: true });
     recordAndPruneHistory({ commonDir, historyRoot, entry: { file: join(commonDir, 'x'), at: 2 }, keep: 1 });
-    expect(read(ledger)).toHaveLength(1);
+    // Nothing could be deleted, so the older entry stays ledgered for a later prune.
+    expect(read(ledger)).toHaveLength(2);
   });
 
   it('warns and never throws when the ledger cannot be written', () => {
@@ -773,6 +797,34 @@ describe('recordAndPruneHistory', () => {
     const fs = { ...nodeFs, rmSync: ((path: string, options?: nodeFs.RmOptions) => { if (path === first) throw new Error('locked'); return nodeFs.rmSync(path, options); }) as typeof nodeFs.rmSync };
     recordAndPruneHistory({ commonDir, historyRoot, entry: { file: addFile(historyRoot, 'b'), at: 2 }, keep: 1, fs, warn });
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('could not delete tinynod history'));
+    // The failed delete keeps its entry so a later prune retries it.
+    expect(read(join(commonDir, 'zana-tinynod-history.json')).map((entry: { file: string }) => entry.file)).toContain(first);
+  });
+});
+
+describe('createReviewTree', () => {
+  it('clones the pushed commit without a working tree, pinned to that commit', () => {
+    const repo = tempDir('tn-tree-src-');
+    const git = (...args: string[]) => spawnSync('git', [...GIT_IDENTITY, ...args], { cwd: repo, encoding: 'utf8' });
+    git('init', '-q', '-b', 'main');
+    git('commit', '-q', '--allow-empty', '-m', 'one');
+    const first = git('rev-parse', 'HEAD').stdout.trim();
+    git('commit', '-q', '--allow-empty', '-m', 'two');
+    const tmp = tempDir('tn-tree-tmp-');
+    const tree = createReviewTree({ root: repo, oid: first, tmp });
+    expect(tree.startsWith(tmp)).toBe(true);
+    expect(spawnSync('git', ['rev-parse', 'HEAD'], { cwd: tree, encoding: 'utf8' }).stdout.trim()).toBe(first);
+    expect(existsSync(join(tree, '.git'))).toBe(true);
+    // Independent of the source checkout's lifetime of its working tree files.
+    expect(readdirSync(tree)).toEqual(['.git']);
+  });
+
+  it('removes its directory and throws when the commit is unknown', () => {
+    const repo = tempDir('tn-tree-bad-');
+    spawnSync('git', ['init', '-q'], { cwd: repo });
+    const tmp = tempDir('tn-tree-badtmp-');
+    expect(() => createReviewTree({ root: repo, oid: 'f'.repeat(40), tmp })).toThrow('private review checkout');
+    expect(readdirSync(tmp)).toEqual([]);
   });
 });
 
