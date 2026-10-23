@@ -223,24 +223,35 @@ describe('peers view', () => {
 });
 
 describe('creating docs', () => {
-  it('opens template management, filters cards, and exposes each card action', async () => {
+  it('manages templates on the landing page: filter, per-card actions, editor and back', async () => {
     const harness = createHarness();
     harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Templates' }));
-    expect(screen.getByText('Start from a template')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'New template' })).toBeTruthy();
+    expect(await screen.findByText('Start from a template')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Templates' })).toBeNull();
+    expect(screen.getByRole('button', { name: /New template/ }).className).toContain('primary');
     const filter = screen.getByRole('textbox', { name: 'Filter templates' });
     fireEvent.change(filter, { target: { value: 'decision record' } });
     expect(await screen.findByText('Decision record')).toBeTruthy();
     expect(screen.queryByText('Product spec')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Decision record' }));
-    expect(screen.getByRole('menuitem', { name: 'Edit' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: 'Duplicate' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: 'Export' })).toBeTruthy();
-    fireEvent.click(document.body);
-
     expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Back to templates' }));
+    expect(await screen.findByText('Start from a template')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Back to templates' })).toBeNull();
+  });
+
+  it('Home returns from a template editor to the landing page', async () => {
+    const harness = createHarness();
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    fireEvent.click(await screen.findByRole('button', { name: /New template/ }));
+    expect(await screen.findByRole('button', { name: 'Back to templates' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Home' }));
+    expect(await screen.findByText('Design docs your agents work on with you')).toBeTruthy();
   });
 
   it('starts on the landing page and creates a doc from a template', async () => {
@@ -249,8 +260,8 @@ describe('creating docs', () => {
     expect(await screen.findByText('Design docs your agents work on with you')).toBeTruthy();
     expect(await screen.findByText('No design docs yet.')).toBeTruthy();
 
-    const landing = screen.getByText('Start from a template').parentElement!;
-    fireEvent.click(await within(landing).findByRole('radio', { name: /Decision record/ }));
+    const landing = screen.getByText('Start from a template').closest('.dd-landing-start') as HTMLElement;
+    fireEvent.click(await within(landing).findByRole('button', { name: /^Decision record/ }));
     const dialog = screen.getByRole('dialog', { name: 'New design doc' });
     expect((await within(dialog).findByRole('radio', { name: /Decision record/ })).getAttribute('aria-checked')).toBe('true');
     const create = within(dialog).getByRole('button', { name: 'Create' }) as HTMLButtonElement;
