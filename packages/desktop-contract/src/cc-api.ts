@@ -1106,6 +1106,15 @@ export interface CcApi {
      *  config, so each window re-applies its mirrored feature flags live. */
     onChanged(cb: (config: AppConfig) => void): () => void;
   };
+  apiErrorResume: {
+    /** Which resume rule would fire for a pasted error; sends nothing. */
+    check(input: { text: string; rules: unknown }): Promise<{
+      ruleId: string | null;
+      message?: string;
+      delaySeconds?: number;
+      skipped: { ruleId: string; reason: string }[];
+    }>;
+  };
   overseer: {
     /**
      * Recent Overseer decisions for the dry-run review pane, newest-first and

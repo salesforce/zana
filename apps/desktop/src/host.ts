@@ -260,6 +260,7 @@ import {
 } from './window/thread-view-windows.js';
 import { createThreadViewHost } from './window/thread-view-host.js';
 import { findUnscopedWindow, isUnscopedRegistration } from './window/main-window-registry.js';
+import { createWindowsTitleBarOverlays } from './window/titlebar-overlay.js';
 import { registerPluginViewIpc, registerThreadViewIpc } from './ipc/windows.js';
 import { showApprovalSheet } from './window/approval-sheet.js';
 import { startPeerUsePrompts } from './ipc/peer-use-prompts.js';
@@ -341,6 +342,7 @@ import { Overseer, type OverseerToolEvent } from '@zana-ai/zcc-server/services/f
 import { OverseerAuditRing } from '@zana-ai/zcc-server/services/followups/overseer-audit';
 import { ContentScreen, type ContentScreenEvent, buildWarningText } from './window/content-screen.js';
 import { HeartbeatService } from '@zana-ai/zcc-server/services/followups/heartbeat';
+import { createApiErrorResume, handleApiErrorStop } from './api-error-resume-wiring.js';
 import { LocalExtensionWatcher } from '@zana-ai/zcc-server/services/extensions/local-extension-watcher';
 import { AutonomousRunSupervisor, AUTONOMOUS_DEFAULTS } from '@zana-ai/zcc-server/services/agents/autonomous-run-supervisor';
 import { AutoCloseIdleService } from '@zana-ai/zcc-server/services/followups/auto-close-idle';
@@ -909,6 +911,18 @@ function setActiveProjectSkillsWatcher(
  * thread may have no project, so it is never the unscoped main window either.
  */
 const windows = new Map<number, { win: BrowserWindow; projectId?: string; view?: PluginViewTarget; threadView?: ThreadViewTarget }>();
+// Windows caption buttons (minimize / maximize / close) follow the effective
+// theme: new windows take `current()`, open ones are re-coloured on a Theme
+// setting change (ipc/config.ts) and on OS appearance changes (`bind()`).
+const titleBarOverlays = createWindowsTitleBarOverlays({
+  get platform() { return process.platform; },
+  windows,
+  theme: resolveTheme,
+  // Lazy: host-loading unit tests mock electron without these.
+  electron: () => ({ nativeTheme, systemPreferences }),
+  logError: logMainError
+});
+let stopTitleBarOverlayTheme: (() => void) | null = null;
 const boundsControllers = new Map<number, ReturnType<typeof createBoundsStateController>>();
 const rendererReadiness = new RendererReadiness();
 
@@ -1988,6 +2002,8 @@ const heartbeat = new HeartbeatService({
   setTimer: (fn, ms) => setTimeout(fn, ms),
   clearTimer: (handle) => clearTimeout(handle)
 });
+/** Resume after API errors by user rule (Settings → Agents). Absent config = off. */
+const apiErrorResume = createApiErrorResume({ getConfig: () => store.getConfig(), ptys, agentStatus, inboxStore, suppressesInteractiveBlocked, logMainError });
 /**
  * Autonomous team runs: orchestrator + workers driven toward a goal until the
  * orchestrator declares done (it ends its own session via
@@ -2204,7 +2220,8 @@ const autoCloseIdle = new AutoCloseIdleService({
   isFavorite: (sessionId) => {
     const s = ptys.getSession(sessionId);
     if (!s) return false;
-    return favoriteAgentKeys.has(s.claudeSessionId ?? sessionId);
+    // An agent that rests on an API error hasn't finished; spare it until its next turn.
+    return favoriteAgentKeys.has(s.claudeSessionId ?? sessionId) || apiErrorResume.restedOnApiError(sessionId);
   },
   now: () => Date.now(),
   // Expected close ⇒ exit code 0 (this was the app's decision, not a crash).
@@ -6825,15 +6842,6 @@ function createMainTeamProductOps() {
 }
 
 /**
- * Geometry and theme for Windows Electron titleBarOverlay.
- * Must match the CSS tokens in apps/app/src/styles/global.css:
- * --titlebar-h (44px), --bg-base (#181818), --text-muted (#a1a1aa).
- */
-export const WINDOWS_TITLEBAR_HEIGHT = 44;
-export const WINDOWS_TITLEBAR_OVERLAY_BG = '#181818';
-export const WINDOWS_TITLEBAR_OVERLAY_SYMBOL = '#a1a1aa';
-
-/**
  * Open an app window. With no `projectId` it's the full, unscoped shell (the
  * default window opened at boot and on dock-reactivate). With a `projectId` the
  * renderer locks to that one project — see `windows:openProject` and the
@@ -6912,11 +6920,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
       : process.platform === 'win32'
       ? {
           titleBarStyle: 'hidden' as const,
-          titleBarOverlay: {
-            color: WINDOWS_TITLEBAR_OVERLAY_BG,
-            symbolColor: WINDOWS_TITLEBAR_OVERLAY_SYMBOL,
-            height: WINDOWS_TITLEBAR_HEIGHT
-          }
+          titleBarOverlay: titleBarOverlays.current()
         }
       : {
           titleBarStyle: 'hidden' as const
@@ -7256,6 +7260,7 @@ function wireBridgeListeners() {
     transcriptSource.forget(sessionId);
     // Same release for the OpenCode session-id resolver's cache (Rule 5).
     heartbeat.remove(sessionId);
+    apiErrorResume.forget(sessionId);
     // Drop a session that exits while working so a dead pty can't pin the Mac
     // awake; releases (after grace) if it was the last working agent.
     keepAwake.remove(sessionId);
@@ -7754,6 +7759,7 @@ function registerIpc() {
     set offLoudInboxAppended(value) { offLoudInboxAppended = value; },
     get openProjectWindow() { return openProjectWindow; },
     get overseerAudit() { return overseerAudit; },
+    get apiErrorResume() { return apiErrorResume; },
     get packAndInstallLocal() { return packAndInstallLocal; },
     get pendingWhatsNew() { return pendingWhatsNew; },
     set pendingWhatsNew(value) { pendingWhatsNew = value; },
@@ -7765,6 +7771,7 @@ function registerIpc() {
     get ptys() { return ptys; },
     get quickPrompts() { return quickPrompts; },
     get readLiveSessionStats() { return readLiveSessionStats; },
+    get refreshTitleBarOverlays() { return titleBarOverlays.refresh; },
     get registerExtensionProject() { return registerExtensionProject; },
     get reportTeamTask() { return reportTeamTask; },
     get resolveTheme() { return resolveTheme; },
@@ -8104,6 +8111,8 @@ async function runStartupMigration(): Promise<StartupState> {
 }
 
 async function bootstrap() {
+  // Before any window (including the repair window) so none misses a flip.
+  stopTitleBarOverlayTheme ??= titleBarOverlays.bind();
   registerStartupStateIpc();
   await runStartupMigration();
 }
@@ -8592,6 +8601,7 @@ async function bootstrapNormal() {
        // A lifecycle Stop is the authoritative end of an interactive turn. The
        // tracker keeps fallback behaviour for harnesses that never send one.
        agentStatus.turnFinished(sessionId);
+       apiErrorResume.cancel(sessionId);
        void scheduler.onAgentFinished(sessionId).catch(error => logMainError('scheduler Stop', error));
       // A goal worker finishing its turn is the trigger to evaluate + branch
       // (achieved / re-spawn / escalate). No-op for non-goal sessions.
@@ -8615,6 +8625,7 @@ async function bootstrapNormal() {
         if (event?.kind === 'requested') agentStatus.inputRequested(sessionId, event.key);
         else if (event?.kind === 'resolved') agentStatus.inputResolved(sessionId, event.keys);
         else if (event?.kind === 'interrupted') agentStatus.turnFinished(sessionId);
+        else if (event?.kind === 'api-error-stop') handleApiErrorStop({ service: apiErrorResume, agentStatus, logMainError }, sessionId, event);
         return;
       }
       if (action === 'blocked') {
@@ -8632,7 +8643,10 @@ async function bootstrapNormal() {
           return;
         }
         agentStatus.markBlocked(sessionId);
-      } else agentStatus.turnStarted(sessionId);
+      } else {
+        apiErrorResume.cancel(sessionId);
+        agentStatus.turnStarted(sessionId);
+      }
       // Diagnostic: confirms the hook reached the main process. The emit to the
       // renderer is debounced (~250ms), so the red/grey dot is the real proof
       // the state landed — this line just proves the curl callback arrived.
@@ -9729,6 +9743,8 @@ app.on('before-quit', (event) => {
   tray = null;
   menubar?.stop();
   menubar = null;
+  stopTitleBarOverlayTheme?.();
+  stopTitleBarOverlayTheme = null;
   templates.stop();
   quickPrompts.stop();
   promptRegistry.stop();

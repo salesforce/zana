@@ -1,6 +1,6 @@
 import { remoteInteractionSurface } from '../services/threads/interaction-surface.js';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { CliCallbackRequestSchema, CLI_CALLBACK_MAX_BODY_BYTES } from '@zana-ai/zcc-contracts/cli-callbacks';
+import { CliCallbackRequestSchema, CLI_CALLBACK_MAX_ACTIVE, CLI_CALLBACK_MAX_ACTIVE_NATIVE_TOOL, CLI_CALLBACK_MAX_BODY_BYTES, isCliNativeToolPath } from '@zana-ai/zcc-contracts/cli-callbacks';
 import { CliCallbackError } from '../services/launch/cli-callback-authority.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
@@ -240,7 +240,13 @@ async function handleHostEnroll(
   return true;
 }
 
+/** Callers still reading their body; the class pools below only know a callback's path once it is parsed. */
+/** Readers may hold both class pools' worth of slots, so neither class can be starved before its path is known. */
+const MAX_READING_CLI_CALLBACKS = CLI_CALLBACK_MAX_ACTIVE + CLI_CALLBACK_MAX_ACTIVE_NATIVE_TOOL;
+let readingCliCallbackRequests = 0;
 let activeCliCallbackRequests = 0;
+/** Reserved so long /mcp and question callbacks cannot starve the per-tool-call policy hook; each call is bounded by the 3s policy deadline, and the authority enforces the per-session budget. */
+let activeNativeToolCallbackRequests = 0;
 async function handleHostCliCallback(request: IncomingMessage, response: ServerResponse, ctx: ProductHttpContext): Promise<boolean> {
   const auth = authenticateHostCall(request, new URL(request.url ?? '/', 'http://127.0.0.1'), ctx);
   if ('error' in auth) { sendJson(response, auth.status, { error: auth.error }); return true; }
@@ -249,8 +255,9 @@ async function handleHostCliCallback(request: IncomingMessage, response: ServerR
   }
   if (request.method !== 'POST') { sendJson(response, 405, { error: 'method not allowed' }); return true; }
   if (!ctx.cliCallbacks) { sendJson(response, 503, { error: 'CLI callback owner is unavailable' }); return true; }
-  if (activeCliCallbackRequests >= 8) { sendJson(response, 429, { error: 'CLI callback capacity reached' }); return true; }
-  activeCliCallbackRequests++;
+  if (readingCliCallbackRequests >= MAX_READING_CLI_CALLBACKS) { sendJson(response, 429, { error: 'CLI callback capacity reached' }); return true; }
+  readingCliCallbackRequests++;
+  let reading = true, nativeTool: boolean | undefined;
   const controller = new AbortController(), onClose = () => controller.abort();
   response.once('close', onClose);
   const bodyTimer = setTimeout(() => request.destroy(), 15_000);
@@ -261,12 +268,18 @@ async function handleHostCliCallback(request: IncomingMessage, response: ServerR
     finally { clearTimeout(bodyTimer); }
     const parsed = CliCallbackRequestSchema.safeParse(body);
     if (!parsed.success) { sendJson(response, 400, { error: 'invalid callback request' }); return true; }
+    nativeTool = isCliNativeToolPath(parsed.data.path);
+    if (nativeTool ? activeNativeToolCallbackRequests >= CLI_CALLBACK_MAX_ACTIVE_NATIVE_TOOL : activeCliCallbackRequests >= CLI_CALLBACK_MAX_ACTIVE) { sendJson(response, 429, { error: 'CLI callback capacity reached' }); return true; }
+    readingCliCallbackRequests--; reading = false;
+    if (nativeTool) activeNativeToolCallbackRequests++; else activeCliCallbackRequests++;
     const result = await ctx.cliCallbacks.forward(auth.hostId, parsed.data, controller.signal);
     if (!response.destroyed) sendJson(response, 200, result);
   } catch (error) {
     if (!response.destroyed) sendJson(response, error instanceof CliCallbackError ? error.status : 502, { error: 'CLI callback unavailable or not authorized' });
   } finally {
-    clearTimeout(bodyTimer); response.off('close', onClose); controller.abort(); activeCliCallbackRequests--;
+    clearTimeout(bodyTimer); response.off('close', onClose); controller.abort();
+    if (reading) readingCliCallbackRequests--;
+    else if (nativeTool) activeNativeToolCallbackRequests--; else activeCliCallbackRequests--;
   }
   return true;
 }

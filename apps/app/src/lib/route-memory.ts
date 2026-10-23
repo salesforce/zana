@@ -1,5 +1,7 @@
+import { matchPath } from 'react-router-dom';
 import {
   APP_ROOT_ROUTE_PATH,
+  PROJECT_SETTINGS_ROUTE_PATH,
   SETTINGS_ROUTE_PATH,
   TOOLS_PLUGINS_ROUTE_PATH,
   getAgentsRoutePath,
@@ -93,4 +95,47 @@ export function visibleRouteMemory(
       ? resolveProjectBackPath(stored.lastNonProjectAppRoutePath)
       : current
   };
+}
+
+/**
+ * Module-level so ProjectScopedNav still sees the last non-project path after
+ * the global Sidebar unmounts. A per-component ref reset to Home, so Back
+ * either no-op'd on the project URL or dumped the user on New Chat.
+ */
+let storedMemory: StoredRouteMemory = { ...INITIAL_STORED_ROUTE_MEMORY };
+let recordedLocationKey = '';
+/** Last app route that wasn't a project's Settings: where closing it returns. */
+let lastRouteBeforeProjectSettings = APP_ROOT_ROUTE_PATH;
+
+/** Records a rendered location (once per distinct URL) and returns the memory. */
+export function rememberLocation(location: {
+  pathname: string;
+  search: string;
+  hash: string;
+}): StoredRouteMemory {
+  const current = getLocationRoutePath(location);
+  if (current === recordedLocationKey) return storedMemory;
+  recordedLocationKey = current;
+  storedMemory = nextStoredRouteMemory(storedMemory, location);
+  if (shellRouteKind(location.pathname) === 'app' && !matchPath(PROJECT_SETTINGS_ROUTE_PATH, location.pathname)) {
+    lastRouteBeforeProjectSettings = current;
+  }
+  return storedMemory;
+}
+
+/** Test-only: drop remembered paths so files don't leak across workers. */
+export function resetAppSettingsRouteMemory(): void {
+  storedMemory = { ...INITIAL_STORED_ROUTE_MEMORY };
+  recordedLocationKey = '';
+  lastRouteBeforeProjectSettings = APP_ROOT_ROUTE_PATH;
+}
+
+/** The "Back to app" destination from Settings, for callers outside React. */
+export function getRememberedAppRoutePath(): string {
+  return resolveProjectBackPath(storedMemory.lastAppRoutePath);
+}
+
+/** The app route seen last before a project's Settings, for callers outside React. */
+export function getRouteBeforeProjectSettings(): string {
+  return lastRouteBeforeProjectSettings;
 }

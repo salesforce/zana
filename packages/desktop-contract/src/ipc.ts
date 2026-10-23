@@ -169,6 +169,10 @@ export const IPC = {
      *  rebuild the status/session lists (same render-storm guard as onIdleTriage). */
     onOverseerActivity: 'terminals:onOverseerActivity'
   },
+  apiErrorResume: {
+    /** Settings "Check an error": which rule would fire for a pasted error. */
+    check: 'apiErrorResume:check'
+  },
   overseer: {
     /** Recent Overseer decisions for the dry-run review pane (bounded by the
      *  audit ring's cap). Read-only diagnostic surface. */

@@ -37,6 +37,7 @@ import { resolveModelAlias } from '@zana-ai/zcc-llm';
 import type { ModelLevel } from '@zana-ai/zcc-domain/harness-adapter';
 import { resolveExecutionState, resolveModelTarget, resolveRoleTarget } from '../target-resolution.js';
 import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js';
+import { claudeInteractionHook } from './interaction-hooks.js';
 import { claudeLegacyRouting } from './legacy-routing.js';
 import { resolveGenuineClaudeFromPath } from './binary-identity.js';
 
@@ -106,7 +107,7 @@ const CLAUDE_ADAPTER: TrustedHarnessAdapter = {
     ],
     terminatesAtDoubleDash: true
   },
-  status: { mode: 'osc' },
+  status: { mode: 'osc', interactionHook: claudeInteractionHook },
   legacyRouting: claudeLegacyRouting,
   evidence: [
     ...['haiku', 'sonnet', 'opus', 'fable'].flatMap((id) => [

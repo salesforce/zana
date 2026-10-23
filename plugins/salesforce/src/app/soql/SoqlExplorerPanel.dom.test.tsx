@@ -61,6 +61,21 @@ function deferred<T = unknown>() {
   return { promise, resolve };
 }
 
+describe('SOQL count results', () => {
+  it.each([1234, 0])('shows a bare COUNT() of %i as a count, with export disabled', async (totalSize) => {
+    const soql = 'SELECT COUNT() FROM Account';
+    call.mockImplementation(async (method: string) => method === 'soql.query'
+      ? { ok: true, org, soql, sobjectName: 'Account', totalSize, done: true, records: [] }
+      : respond(method));
+    await mount();
+    fireEvent.click(screen.getByTestId('soql-run'));
+    await screen.findByTestId('soql-results-count');
+    expect(screen.getByTestId('soql-results-count-value').textContent).toBe(totalSize.toLocaleString());
+    expect(screen.queryByText('No records matched this query.')).toBeNull();
+    expect((screen.getByLabelText('Export results') as HTMLSelectElement).disabled).toBe(true);
+  });
+});
+
 describe('SOQL workbench interactions', () => {
   it('loads pages on the original target, inspects filtered records and stages evidence', async () => {
     const add = vi.fn();
