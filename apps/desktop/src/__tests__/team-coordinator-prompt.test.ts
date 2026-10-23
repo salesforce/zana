@@ -111,6 +111,15 @@ describe('jobCoordinatorPrompt — shared invariants (both flows)', () => {
   });
 });
 
+describe('jobCoordinatorPrompt — result-only policy', () => {
+  it.each([true, false])('never mentions artifact tools and points to unit results (planReady=%s)', (planReady) => {
+    const prompt = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: baseJob, roster, planReady });
+    expect(prompt).not.toContain('artifact.put');
+    expect(prompt).not.toContain('artifact.list');
+    expect(prompt).toContain('`result` of `execution.work.complete`');
+  });
+});
+
 describe('jobCoordinatorPrompt — native recovery', () => {
   it('tells a resumed coordinator to continue durable plan state without replacing workers', () => {
     const prompt = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: baseJob, roster, planReady: true, recoveryResume: true });
@@ -188,5 +197,92 @@ describe('boundedWorkUnitDigest', () => {
     const taskPart = digest.split(': ')[1] ?? '';
     expect(taskPart.length).toBeLessThanOrEqual(30);
     expect(digest).not.toContain('\n  ');
+  });
+});
+
+/**
+ * squad-bugs lifecycle contract. The prompt must follow the transport's real
+ * capabilities: a CLI coordinator keeps the file handoff (the host rereads the
+ * file on PTY idle), while a Modern/ACP coordinator has a bound
+ * `execution.plan.register` MCP tool and no host reader, so it must register once
+ * and must NOT be told to write a plan file as its kickoff.
+ * `transport` is not a prompt input yet: the Modern cases are expected red until
+ * the contract is implemented.
+ */
+describe('jobCoordinatorPrompt — transport contract (squad-bugs)', () => {
+  const planFilePath = '.zana/execution-plan-exec-1.md';
+
+  it('CLI keeps the file handoff and forbids plan.register', () => {
+    const prompt = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: baseJob, roster, planReady: false, planFilePath });
+    expect(prompt).toContain(`Write your COMPLETE portable-executable plan to \`${planFilePath}\``);
+    expect(prompt).toContain('Do NOT call `execution.plan.register`');
+    expect(prompt).not.toContain('`execution.plan.register` EXACTLY ONCE');
+  });
+
+  it('Modern registers once through the bound MCP tool and has no file-write kickoff', () => {
+    const prompt = jobCoordinatorPrompt({
+      team, executionId: 'exec-1', job: baseJob, roster, planReady: false, planFilePath, transport: 'modern'
+    } as Parameters<typeof jobCoordinatorPrompt>[0]);
+    expect(prompt).toContain('`execution.plan.register` EXACTLY ONCE');
+    expect(prompt).not.toContain(planFilePath);
+    expect(prompt).not.toContain('with your file-write tool');
+    expect(prompt).not.toContain('Do NOT call `execution.plan.register`, `execution.work.dispatch_ready`');
+  });
+
+  it('Modern without a plan file still registers exactly once and never hand-dispatches', () => {
+    const prompt = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: baseJob, roster, planReady: false });
+    expect(prompt.match(/`execution\.plan\.register` EXACTLY ONCE/g)).toHaveLength(1);
+    expect(prompt).toContain('Do NOT call `execution.work.dispatch_ready`');
+  });
+
+  it('a valid host seed makes zero authoring calls on either transport', () => {
+    for (const transport of [undefined, 'modern', 'cli']) {
+      const prompt = jobCoordinatorPrompt({
+        team, executionId: 'exec-1', job: baseJob, roster, planReady: true, workUnits: units, planFilePath, ...(transport ? { transport } : {})
+      } as Parameters<typeof jobCoordinatorPrompt>[0]);
+      expect(prompt).toContain('Kickoff is host-managed');
+      expect(prompt).toContain('Do NOT call `execution.snapshot`, `execution.plan.register`');
+      expect(prompt).not.toContain('EXACTLY ONCE');
+      expect(prompt).not.toContain('file-write tool');
+    }
+  });
+});
+
+describe('jobCoordinatorPrompt — provided plan awaiting correction review (squad-bugs B2a)', () => {
+  const planFilePath = '.zana/execution-plan-exec-1.md';
+
+  it('CLI parks instead of authoring the plan file at kickoff', () => {
+    const prompt = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: baseJob, roster, planReady: false, planFilePath, planCorrectionPending: true });
+    expect(prompt).toContain('awaiting operator correction review');
+    expect(prompt).toContain(`Do NOT write any plan file now, including \`${planFilePath}\``);
+    expect(prompt).toContain('write only that file');
+    expect(prompt).toContain('do not run shell or network commands');
+    expect(prompt).not.toContain('Write your COMPLETE portable-executable plan');
+    expect(prompt).not.toContain('EXACTLY ONCE');
+    expect(prompt).toContain('Do not call get_team_launch during normal kickoff.');
+  });
+
+  it('Modern registers one corrected candidate that the host holds for review', () => {
+    const modern = jobCoordinatorPrompt({
+      team, executionId: 'exec-1', job: baseJob, roster, planReady: false, planFilePath, transport: 'modern', planCorrectionPending: true
+    });
+    expect(modern).toContain('Call `execution.plan.register` EXACTLY ONCE with that corrected DAG');
+    expect(modern).toContain('plan held for operator correction review');
+    expect(modern).toContain('Do not retry it.');
+    expect(modern).not.toContain('awaiting operator correction review');
+    expect(modern).not.toContain(planFilePath);
+    expect(modern).toContain('Do not call get_team_launch during normal kickoff.');
+    const withSources = jobCoordinatorPrompt({
+      team, executionId: 'exec-1', job: { ...baseJob, sourceBundle: { contentRef: 'ref', sources: [{ id: 's1' }] } as never }, roster,
+      planReady: false, transport: 'modern', planCorrectionPending: true
+    });
+    expect(withSources).toContain('the attached execution sources');
+    const unpending = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: baseJob, roster, planReady: false, transport: 'modern' });
+    expect(unpending).toContain('`execution.plan.register` EXACTLY ONCE with the work DAG');
+  });
+
+  it('a pending flag on a ready plan keeps the host-managed arm', () => {
+    const ready = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: baseJob, roster, planReady: true, workUnits: units, planFilePath, planCorrectionPending: true });
+    expect(ready).toContain('Kickoff is host-managed');
   });
 });

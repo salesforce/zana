@@ -68,7 +68,7 @@ describe('createPlanCorrectionHost', () => {
     c.nudge('sess', 'txt');
     expect(d.nudge).toHaveBeenCalledWith('sess', 'txt');
     await c.wakeCoordinator('e', 'wake');
-    expect(d.wakeCoordinator).toHaveBeenCalledWith('e', 'wake');
+    expect(d.wakeCoordinator).toHaveBeenCalledWith('e', 'wake', undefined);
     await expect(c.readSourcePlan('e')).resolves.toBe('obj');
     d.executionStore.get.mockResolvedValueOnce(undefined);
     await expect(c.readSourcePlan('e')).resolves.toBeUndefined();
@@ -79,6 +79,16 @@ describe('createPlanCorrectionHost', () => {
     expect(c.logWarning).toBeTypeOf('function');
     c.logWarning('e', 'msg', 'err');
     expect(d.logError).toHaveBeenCalledWith('planCorrection:e: msg', 'err');
+  });
+
+  it('wires the correction trace sink to the info log only when logInfo is provided', () => {
+    createPlanCorrectionHost(deps());
+    expect(m.ctorDeps.trace).toBeUndefined();
+    const logInfo = vi.fn();
+    createPlanCorrectionHost(deps({ logInfo }));
+    const event = { executionId: 'e', sessionId: 's', slotId: 'o', stage: 'review', status: 'invalid', reason: 'r', match: false };
+    m.ctorDeps.trace(event);
+    expect(logInfo).toHaveBeenCalledWith('squad plan correction trace review', JSON.stringify(event));
   });
 
   it('configures the store with filePath, database and retired check', async () => {

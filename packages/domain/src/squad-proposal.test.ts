@@ -6,6 +6,7 @@ import {
   SQUAD_LIMIT_COUNTER_RATIO,
   SQUAD_PROPOSAL_LIMITS,
   SQUAD_SUMMARY_MAX_CHARS,
+  canAuthorAndRegisterPlan,
   formatSquadChars,
   isLaunchApproval,
   personaCanWriteFiles,
@@ -183,8 +184,39 @@ describe('shared Squad goal and summary limit', () => {
       expect(squadLaunchTextProblem({ goal: 'a'.repeat(2049), summary: 'b'.repeat(3000) })?.code).toBe('GOAL_TOO_LONG');
     });
 
-    it('does not trim', () => {
+  it('does not trim', () => {
       expect(squadLaunchTextProblem({ goal: ' '.repeat(2049) })?.code).toBe('GOAL_TOO_LONG');
     });
+});
+
+describe('canAuthorAndRegisterPlan', () => {
+  it('uses file-write ability for CLI coordinators', () => {
+    expect(canAuthorAndRegisterPlan({}, { transport: 'cli' })).toBe(true);
+    expect(canAuthorAndRegisterPlan({ deniedTools: ['Write'] }, { transport: 'cli' })).toBe(false);
+    expect(canAuthorAndRegisterPlan({ permissionMode: 'plan' }, { transport: 'cli' })).toBe(false);
+  });
+
+  it('uses plan-register capability for Modern coordinators', () => {
+    expect(canAuthorAndRegisterPlan({ deniedTools: ['Write', 'Edit'] }, { transport: 'modern' })).toBe(true);
+    expect(canAuthorAndRegisterPlan({ codexSandbox: 'read-only' }, { transport: 'modern' })).toBe(true);
+    expect(canAuthorAndRegisterPlan({ deniedTools: ['mcp__zcc-inbox__execution.plan.register'] }, { transport: 'modern' })).toBe(false);
+  });
+});
+
+describe('planAuthoringTransportOf + register denial forms', () => {
+  it('maps only MODERN to modern', async () => {
+    const { planAuthoringTransportOf } = await import('./squad-proposal.js');
+    expect(planAuthoringTransportOf('MODERN')).toBe('modern');
+    expect(planAuthoringTransportOf('CLI')).toBe('cli');
+    expect(planAuthoringTransportOf(undefined)).toBe('cli');
+  });
+
+  it('a server-wide zcc-inbox deny blocks only Modern register-based authoring', async () => {
+    const { canAuthorAndRegisterPlan } = await import('./squad-proposal.js');
+    for (const tool of ['mcp__zcc-inbox', 'mcp__zcc-inbox__*']) {
+      expect(canAuthorAndRegisterPlan({ deniedTools: [tool] }, { transport: 'modern' })).toBe(false);
+      expect(canAuthorAndRegisterPlan({ deniedTools: [tool] }, { transport: 'cli' })).toBe(true);
+    }
+    expect(canAuthorAndRegisterPlan({ executionState: 'plan' }, { transport: 'cli' })).toBe(false);
   });
 });

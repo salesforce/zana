@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { readdir as readdirAsync, stat as statAsync, unlink as unlinkAsync } from 'node:fs/promises';
-import { dirname, join, sep } from 'node:path';
+import { dirname, isAbsolute, join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { isWithin } from '@zana-ai/zcc-path-confine';
 import type { LaunchProfileId, TerminalSession, AppConfig, ProjectSettings, ProjectRemote, InboxNotifyLevel, Persona, SessionCohort, SessionWorktree, HarnessModelRoutingV1 } from '@zana-ai/zcc-domain/product';
@@ -895,6 +895,14 @@ export class PtyManager extends EventEmitter {
     autonomous?: boolean;
     /** Main-owned Team launch semantics; renderer cannot set this field. */
     coordinationMode?: import('@zana-ai/zcc-domain/product').TeamCoordinationMode;
+    /**
+     * Absolute paths of the durable coordinator's plan-handoff files (authored
+     * plan plus the host-named plan-correction files). MAIN-only. Each grants an
+     * exact-file `Edit(//abs)` rule (the Claude CLI ignores `Write(path)` rules;
+     * `Edit(path)` covers every file-editing tool) so the coordinator can write
+     * only those files without a broad edit permission.
+     */
+    authoredPlanPaths?: readonly string[];
     /** Opening task already composes persona kickoff, so delayed pty injection must stay off. */
     suppressPersonaInitialPrompt?: boolean;
     /**
@@ -1557,13 +1565,19 @@ export class PtyManager extends EventEmitter {
           'mcp__zcc-inbox__execution.delivery.pull',
           'mcp__zcc-inbox__execution.delivery.ack',
           'mcp__zcc-inbox__execution.event',
-          'mcp__zcc-inbox__execution.artifact.put',
-          'mcp__zcc-inbox__execution.artifact.list',
           'mcp__zcc-inbox__execution.complete'
       ]
       : [];
     const jobTeamArgs = claudeJobTeamPolicy
       ? ['--disallowedTools', 'AskUserQuestion']
+      : [];
+    // Exact-file plan-authoring grant (`//` = absolute in Claude permission rules).
+    // Deny rules still win over this allow, so it never widens persona/managed policy.
+    // Every path is checked on its own; an unsafe entry is dropped, never widened.
+    const authoredPlanAllow = claudeJobTeamPolicy
+      ? (opts.authoredPlanPaths ?? [])
+          .filter((path) => typeof path === 'string' && isAbsolute(path) && !/[(),]/.test(path))
+          .map((path) => `Edit(/${path})`)
       : [];
     // Codex supports native MCP approval configuration via `-c`. Keep ordinary
     // sessions on their configured on-request policy; durable Job Teams get only
@@ -1620,7 +1634,7 @@ export class PtyManager extends EventEmitter {
            ...lifecycleContribution.args,
           ...cleanedExtra
         ],
-        [...inboxAllow, ...(claudeJobTeamPolicy ? jobTeamAllow : [])]
+        [...inboxAllow, ...(claudeJobTeamPolicy ? jobTeamAllow : []), ...authoredPlanAllow]
       ),
       opts.remoteToolProxy && caps.injectsClaudeMcpConfig
         ? [...REMOTE_TOOL_PROXY_DISALLOWED_TOOLS]

@@ -191,6 +191,24 @@ describe('execution MCP tools', () => {
     expect([...tools.keys()].sort()).toEqual([...new Set(Object.values(EXECUTION_MEMBER_TOOL_NAMES).flat())].sort());
   });
 
+  it('member catalogs omit artifact tools and ordinary unit results create no artifacts', async () => {
+    const all = Object.values(EXECUTION_MEMBER_TOOL_NAMES).flat() as string[];
+    expect(all.filter((name) => name.startsWith('execution.artifact.'))).toEqual([]);
+    const execution = service();
+    const memberFence = { bindingId: 'binding-1', generation: 1 };
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, {
+      sessionId: 'worker', projectId: 'project-1', service: execution as never, memberFence,
+      validateRouteIdentity: async () => true,
+      resolveCohortBinding: async () => ({ executionId: 'execution-1', projectId: 'project-1', role: 'worker', slotId: 'slot-1', memberFence })
+    });
+    expect(tools.has('execution.artifact.put')).toBe(false);
+    expect(tools.has('execution.artifact.list')).toBe(false);
+    await tools.get('execution.work.complete')!({ executionId: 'execution-1', workUnitId: 'unit-1', result: 'done' });
+    expect(execution.putArtifact).not.toHaveBeenCalled();
+    expect(execution.putBoundArtifact).not.toHaveBeenCalled();
+  });
+
   it('captures canonical strict schemas including requestPath without running service', () => {
     const descriptors = getExecutionToolDescriptors();
     expect(getExecutionToolDescriptors()).toBe(descriptors);
@@ -928,6 +946,10 @@ describe('execution MCP tools', () => {
     };
     expect(inputSchema.safeParse(valid).success).toBe(true);
     expect(inputSchema.safeParse({ ...valid, worktree: true }).success).toBe(true);
+    expect(inputSchema.safeParse({ ...valid, target: { kind: 'project-root' } }).success).toBe(true);
+    expect(inputSchema.safeParse({ ...valid, target: { kind: 'worktree', branch: 'feat/x' } }).success).toBe(true);
+    expect(inputSchema.safeParse({ ...valid, target: { kind: 'worktree', branch: 'feat/x', path: '/tmp/x' } }).success).toBe(false);
+    expect(inputSchema.safeParse({ ...valid, target: { kind: 'path', path: '/tmp/x' } }).success).toBe(false);
     expect(inputSchema.safeParse({ requestPath: '/Users/me/.zcc/execution-requests/request.json' }).success).toBe(true);
     for (const invalid of [
       { ...valid, modelTier: 'HIGH' },
@@ -1000,6 +1022,9 @@ describe('execution MCP tools', () => {
     expect(execution.start).toHaveBeenLastCalledWith('session-1', 'project-1', expect.objectContaining({ worktree: true, workUnits: [unit] }), undefined);
     await tools.get('execution.start')!({ version: 1, teamId: 'team-1', launchRequestId: 'request-2', slots: [{ initialTask: 'work' }] });
     expect(execution.start.mock.calls.at(-1)![2]).not.toHaveProperty('worktree');
+    expect(execution.start.mock.calls.at(-1)![2]).not.toHaveProperty('target');
+    await tools.get('execution.start')!({ version: 1, teamId: 'team-1', launchRequestId: 'request-3', slots: [{ initialTask: 'work' }], target: { kind: 'worktree', branch: 'feat' } });
+    expect(execution.start).toHaveBeenLastCalledWith('session-1', 'project-1', expect.objectContaining({ target: { kind: 'worktree', branch: 'feat' } }), undefined);
   });
 
   it('denies retained recovery controls on stale route identity and surfaces service failures', async () => {

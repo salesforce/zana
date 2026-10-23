@@ -184,11 +184,18 @@ it('validates and forwards squad worktree actions', async () => {
   const act = state.windows.get(IPC.executionBoard.worktreeAction)!;
   squadWorktreeAction.mockResolvedValueOnce({ ok: true, value: true });
   await expect(act({ id: 8 }, 'registered', 'execution', 3, 'instruct', 'do it')).resolves.toEqual({ ok: true, value: true });
-  expect(squadWorktreeAction).toHaveBeenCalledWith('registered', 'execution', 3, 'instruct', 'do it');
+  expect(squadWorktreeAction).toHaveBeenCalledWith('registered', 'execution', 3, 'instruct', 'do it', undefined);
+  squadWorktreeAction.mockResolvedValueOnce({ ok: true, value: true });
+  await act({ id: 8 }, 'registered', 'execution', 3, 'instruct', 'do it', 'persona-1');
+  expect(squadWorktreeAction).toHaveBeenLastCalledWith('registered', 'execution', 3, 'instruct', 'do it', 'persona-1');
+  for (const bad of [5, '', '  ', 'x'.repeat(201)]) {
+    await expect(act({ id: 8 }, 'registered', 'execution', 3, 'instruct', 'do it', bad)).resolves.toMatchObject({ code: 'INVALID' });
+  }
+  expect(squadWorktreeAction).toHaveBeenCalledTimes(2);
   await expect(act({ id: 8 }, 'registered', 'execution', 3.5, 'leave')).resolves.toMatchObject({ code: 'INVALID' });
   await expect(act({ id: 8 }, 'registered', 'execution', 3, 'nuke')).resolves.toMatchObject({ code: 'INVALID' });
   await expect(act({ id: 8 }, 'registered', 'execution', 3, 'leave', 5)).resolves.toMatchObject({ code: 'INVALID' });
-  expect(squadWorktreeAction).toHaveBeenCalledOnce();
+  expect(squadWorktreeAction).toHaveBeenCalledTimes(2);
   squadWorktreeAction.mockRejectedValueOnce(new Error('x'));
   await expect(state.shared.get(IPC.executionBoard.worktreeAction)!('registered', 'execution', 3, 'delete'))
     .resolves.toEqual({ ok: false, code: 'UNAVAILABLE', message: 'squad worktree action unavailable' });

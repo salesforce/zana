@@ -168,6 +168,26 @@ describe('launchSquad', () => {
     expect(deps.nameTeamExecution).toHaveBeenCalledWith('ui:launch-1', 'Follow [captured execution source: notes.md]', 'Run [captured execution source: notes.md]', [validPlan]);
   });
 
+  it('forwards a validated execution target onto the start request', async () => {
+    const { deps, start } = makeDeps();
+    await launchSquad(deps, makeInput({ target: { kind: 'worktree', branch: 'feat/x' } }), { owner: { principalId: 'interactive:local' } });
+    expect((start.mock.calls[0]?.[2] as Record<string, any>).target).toEqual({ kind: 'worktree', branch: 'feat/x' });
+  });
+
+  it('omits target when none is selected (legacy)', async () => {
+    const { deps, start } = makeDeps();
+    await launchSquad(deps, makeInput(), { owner: { principalId: 'interactive:local' } });
+    expect(start.mock.calls[0]?.[2]).not.toHaveProperty('target');
+  });
+
+  it('rejects an invalid target selector without snapshotting or starting', async () => {
+    const { deps, start } = makeDeps();
+    const result = await launchSquad(deps, makeInput({ target: { kind: 'worktree', branch: '../etc' } as never }), { owner: { principalId: 'interactive:local' } });
+    expect(result).toMatchObject({ ok: false, code: 'INVALID' });
+    expect(start).not.toHaveBeenCalled();
+    expect(deps.snapshotSources).not.toHaveBeenCalled();
+  });
+
   it('caps the deadline at the configured timeout', async () => {
     const { deps, start } = makeDeps({ autonomousTimeoutMs: () => 60_000 });
     await launchSquad(deps, makeInput(), { owner: { principalId: 'interactive:local' } });

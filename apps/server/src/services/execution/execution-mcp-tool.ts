@@ -71,6 +71,14 @@ const executionStartSchema = z.strictObject({
   maxClaimWallClockMs: z.number().int().min(1_000).max(24 * 60 * 60 * 1000).optional(),
   usageBudget: z.strictObject({ maxTokens: z.number().int().min(1).optional(), maxUsd: z.number().positive().optional() }).optional(),
   worktree: z.boolean().optional(),
+  /**
+   * Existing user-owned target, resolved by main against the registered project's own
+   * git worktrees. Names a branch, never a path; conflicts with `worktree: true`.
+   */
+  target: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('project-root') }),
+    z.strictObject({ kind: z.literal('worktree'), branch: z.string().min(1).max(200) })
+  ]).optional(),
   workflow: workflowSchema.optional(),
   workUnits: z.array(workUnitSchema).min(1).max(100).optional(),
   /**
@@ -541,11 +549,12 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     if (approval === 'review') {
       return { isError: true, content: [{ type: 'text' as const, text: `execution.start failed: LAUNCH_REVIEW_REQUIRED: ${LAUNCH_REVIEW_REQUIRED_MESSAGE}` }] };
     }
-    const { version, launchKind, launchDisplay, teamId, launchRequestId, jobTitle, summary, slots, deadlineMs, maxConcurrent, maxLaunches, maxTurnsPerClaim, maxClaimWallClockMs, usageBudget, workflow, workUnits, worktree, notify } = start;
+    const { version, launchKind, launchDisplay, teamId, launchRequestId, jobTitle, summary, slots, deadlineMs, maxConcurrent, maxLaunches, maxTurnsPerClaim, maxClaimWallClockMs, usageBudget, workflow, workUnits, worktree, target, notify } = start;
     const request: ExecutionRequestV1 = {
       version, launchKind, ...(launchDisplay === undefined ? {} : { launchDisplay }), teamId, launchRequestId, jobTitle, summary, slots,
       ...(workflow === undefined ? {} : { workflow }), ...(workUnits === undefined ? {} : { workUnits }), coordinationMode: 'job-team',
       ...(worktree === undefined ? {} : { worktree }),
+      ...(target === undefined ? {} : { target }),
       policy: {
         ...(deadlineMs === undefined ? {} : { deadlineMs }),
         ...(maxConcurrent === undefined ? {} : { maxConcurrent }),

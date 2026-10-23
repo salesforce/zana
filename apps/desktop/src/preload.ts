@@ -334,8 +334,8 @@ const api: CcApi = {
       ipcRenderer.invoke(IPC.executionBoard.recoverTimedOut, projectId, executionId, expectedStateVersion, clientRequestId),
     recoverRetainedSquad: (projectId, executionId, expectedStateVersion, mode) =>
       ipcRenderer.invoke(IPC.executionBoard.recoverRetained, projectId, executionId, expectedStateVersion, mode),
-    worktreeAction: (projectId, executionId, expectedStateVersion, action, instruction) =>
-      ipcRenderer.invoke(IPC.executionBoard.worktreeAction, projectId, executionId, expectedStateVersion, action, instruction),
+    worktreeAction: (projectId, executionId, expectedStateVersion, action, instruction, personaId) =>
+      ipcRenderer.invoke(IPC.executionBoard.worktreeAction, projectId, executionId, expectedStateVersion, action, instruction, personaId),
     clearResumeToken: (projectId, executionId) => ipcRenderer.invoke(IPC.executionBoard.clearResumeToken, projectId, executionId),
     relaunchMonitor: (projectId, executionId) => ipcRenderer.invoke(IPC.executionBoard.relaunchMonitor, projectId, executionId)
   },

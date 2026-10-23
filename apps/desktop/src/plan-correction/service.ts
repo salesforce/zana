@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { InboxActionOperatorError } from '../inbox-actions/registry.js';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import type { ExecutionWorkUnitInput } from '@zana-ai/zcc-server/services/execution/store';
+import type { CoordinatorWakeConfirmation } from '@zana-ai/zcc-server/services/execution/coordinator-wake-confirmation';
 import { hasPortablePlanStep } from '@zana-ai/zcc-server/services/execution/portable-plan';
 import {
   correctionProseRelPath,
@@ -10,6 +11,7 @@ import {
   correctedPlanRelPath,
   authoredPlanRelPath,
   readHandoffArtifact,
+  boundTraceReason as boundReason,
   type AuthoredPlanRead,
   type CoordinatorHandoffContext
 } from '../team-plan-handoff.js';
@@ -20,6 +22,19 @@ export const PLAN_CORRECTION_MAX_RETRIES = 3;
 /** Coordinator idle edges after a correction request with no artifact before the operator is told it stalled. */
 export const PLAN_CORRECTION_STALL_IDLE_EDGES = 2;
 const SOURCE_PLAN_PROMPT_CAP = 8_000;
+/**
+ * Mirrors the execution store's per-string cap (`MAX_STRING`) that
+ * `queueCoordinatorWake` enforces; a longer correction wake is rejected outright.
+ */
+export const COORDINATOR_WAKE_MESSAGE_MAX = 2_048;
+/** Register refusal for a coordinator submission the host holds for operator review. */
+export const PLAN_CORRECTION_HELD_MESSAGE = 'plan held for operator correction review; end your turn and do not register again. The host registers the plan once the operator approves it';
+const SOURCE_PLAN_MIN_EXCERPT = 80;
+const TRUNCATED_MARK = '\n[truncated]';
+/** Stall cause for an operator card: idle edges without a plan, or a correction request never picked up. */
+type Stall = boolean | 'lost-wake';
+export const LOST_WAKE_LEAD = 'The coordinator did not pick up the correction request: it stayed idle after the request was delivered twice. ';
+const PORTABLE_PLAN_GRAMMAR = 'H3 `id: Title <!-- executable-step -->` headings, each with the fixed label bullets Mode, Work and Verification; every Mutating step must list its Write scope';
 
 const correctionArtifactPaths = (executionId: string) => new Set([
   authoredPlanRelPath(executionId),
@@ -75,7 +90,11 @@ export interface PlanCorrectionDeps {
   appendInbox(input: Omit<InboxEntry, 'id' | 'ts'>): Promise<InboxEntry>;
   bindInboxAction(entry: InboxEntry, action: { kind: string; ref: string }): boolean;
   nudge(sessionId: string, text: string): void;
-  wakeCoordinator?(executionId: string, text: string): Promise<void>;
+  /**
+   * Durable coordinator wake. The confirmation fence keeps the wake queued until
+   * the coordinator is seen consuming it; one bounded redelivery, then escalation.
+   */
+  wakeCoordinator?(executionId: string, text: string, confirmation?: CoordinatorWakeConfirmation): Promise<void>;
   /** Original supplied plan text, so a held coordinator can author a correction from it. */
   readSourcePlan?(executionId: string): Promise<string | undefined>;
   readCorrectedPlan(projectRoot: string, executionId: string): Promise<AuthoredPlanRead>;
@@ -91,6 +110,24 @@ export interface PlanCorrectionDeps {
   logRecoveryError?(executionId: string, error: unknown): void;
   /** Diagnostics for failures the service deliberately absorbs (write-back, source-plan read). */
   logWarning?(executionId: string, message: string, error: unknown): void;
+  /** Correlation trace sink; observes only, a throw here never changes the decision. */
+  trace?(event: PlanCorrectionTrace): void;
+}
+
+/** Bounded, body-free record of the approve-time reread of the corrected plan. */
+export interface PlanCorrectionTrace {
+  executionId: string;
+  sessionId: string;
+  slotId: string;
+  /** `review`: idle-edge read of the corrected file; `reread`: approve-time digest check. */
+  stage: 'review' | 'reread';
+  status: AuthoredPlanRead['status'];
+  bodyDigest?: string;
+  offeredDigest?: string;
+  rereadDigest?: string;
+  /** Bounded parser reason for an invalid corrected plan (never the plan body). */
+  reason?: string;
+  match: boolean;
 }
 
 export interface PlanCorrectionRecoveryFailure {
@@ -155,8 +192,11 @@ export class PlanCorrectionService {
   }
 
   private async reviewCorrected(current: PlanCorrectionRecord, corrected: AuthoredPlanRead): Promise<Extract<AuthoredPlanRead, { status: 'ok' }> | 'wait' | 'reject'> {
+    this.traceReread(current, corrected, 'review');
     if (current.status === 'cancelled') return this.rejectCancelled(current);
     if (current.status === 'approved') {
+      // A register-channel approval binds the captured submission; no file backs it.
+      if (current.channel === 'register') return this.approvedSnapshot(current);
       // Approval authorizes one captured plan. A later file edit starts another review.
       if (corrected.status === 'ok' && current.approvedDigest === planDigest(corrected.units)) return this.approvedSnapshot(current);
       this.clearApproval(current);
@@ -177,14 +217,18 @@ export class PlanCorrectionService {
       // consumes the card, wait for the artifact rather than duplicating the card.
       if (current.status === 'correction-required' && current.retries > 0) {
         const idles = (this.missingArtifactIdles.get(current.executionId) ?? 0) + 1;
+        const invalidReason = corrected.status === 'invalid' ? corrected.reason : undefined;
         if (idles < PLAN_CORRECTION_STALL_IDLE_EDGES) {
           this.missingArtifactIdles.set(current.executionId, idles);
+          // A corrected plan that exists but does not parse is not silence: tell the
+          // coordinator why, within the same bounded idle-edge budget.
+          if (invalidReason !== undefined) await this.feedbackInvalidCorrection(current, invalidReason);
           return 'wait';
         }
-        // The coordinator ended its turn(s) without writing a plan. Surface that
-        // to the operator instead of waiting silently forever.
+        // The coordinator ended its turn(s) without writing a usable plan. Surface
+        // that to the operator instead of waiting silently forever.
         this.missingArtifactIdles.delete(current.executionId);
-        return this.request(current, true);
+        return this.request(current, true, [], invalidReason);
       }
       if (current.retries >= PLAN_CORRECTION_MAX_RETRIES) return 'reject';
       return this.request(current);
@@ -211,7 +255,7 @@ export class PlanCorrectionService {
     return this.request(current, false, notes);
   }
 
-  private async request(current: PlanCorrectionRecord, stalled = false, notes: readonly string[] = []): Promise<'wait' | 'reject'> {
+  private async request(current: PlanCorrectionRecord, stalled: Stall = false, notes: readonly string[] = [], invalidReason?: string): Promise<'wait' | 'reject'> {
     if (current.retries >= PLAN_CORRECTION_MAX_RETRIES) return 'reject';
     current.retries += 1;
     current.status = 'pending';
@@ -219,13 +263,22 @@ export class PlanCorrectionService {
     current.offeredActionId = randomUUID();
     // Persist complete offer before appendInbox exposes its approval action.
     if (!await this.persistActive(current)) return this.rejectCancelled(current);
-    return this.publishPendingOffer(current, stalled, notes);
+    return this.publishPendingOffer(current, stalled, notes, invalidReason);
   }
 
   /** Re-publish a durable offer after an inbox append/bind failure or restart. */
-  private async publishPendingOffer(current: PlanCorrectionRecord, stalled = false, notes: readonly string[] = []): Promise<'wait' | 'reject'> {
+  private async publishPendingOffer(current: PlanCorrectionRecord, stalled: Stall = false, notes: readonly string[] = [], invalidReason?: string): Promise<'wait' | 'reject'> {
     const ctx = current.ctx;
     const reviewReady = !!current.offeredDigest;
+    const stallLead = !stalled
+      ? ''
+      : stalled === 'lost-wake'
+        ? LOST_WAKE_LEAD
+        : invalidReason !== undefined
+          ? `The coordinator's corrected plan is still invalid: ${boundReason(invalidReason)}. `
+          : 'The coordinator finished its turn without writing a corrected plan. ';
+    // A lost wake is news even when an earlier proposal is still reviewable.
+    const reviewLead = stalled === 'lost-wake' ? LOST_WAKE_LEAD : '';
     const entry = await this.deps.appendInbox({
       projectId: ctx.projectId,
       projectLabel: undefined,
@@ -237,12 +290,13 @@ export class PlanCorrectionService {
       dedupeKey: `plan-correction:${ctx.executionId}:${current.offeredActionId ?? 'pending'}`,
       subject: 'Plan correction required',
       comments: reviewReady
-        ? `${planReviewSummary(current.reason, current.offeredUnits ?? [], notes)}\n\nReview the proposed corrected plan below before work can continue. Approve starts work using this exact revision. Request changes sends it back for revision. Cancel stops this run.`
-        : `${stalled ? 'The coordinator finished its turn without writing a corrected plan. ' : ''}Plan requires revisions to proceed. Problem with the supplied plan: ${current.reason.replace(/\.$/, '')}. Select Request changes, then Continue, to ask the coordinator to write a complete corrected plan. Select Cancel, then Continue, to stop this run.`,
+        ? `${reviewLead}${planReviewSummary(current.reason, current.offeredUnits ?? [], notes)}\n\nReview the proposed corrected plan below before work can continue. Approve starts work using this exact revision. Request changes sends it back for revision. Cancel stops this run.`
+        : `${stallLead}Plan requires revisions to proceed. Problem with the supplied plan: ${current.reason.replace(/\.$/, '')}. Select Request changes, then Continue, to ask the coordinator to write a complete corrected plan. Select Cancel, then Continue, to stop this run.`,
       decisionGuidance: {
         kind: 'plan-correction',
         diagnostic: current.reason,
-        ...(reviewReady ? {
+        // A register-channel candidate is the captured submission, not a file.
+        ...(reviewReady && current.channel !== 'register' ? {
           originalPlanPath: authoredPlanRelPath(ctx.executionId),
           correctedPlanPath: correctedPlanRelPath(ctx.executionId)
         } : {})
@@ -309,7 +363,12 @@ export class PlanCorrectionService {
     if (choice === 'approve' && (!pending.offeredDigest || offer.digest !== pending.offeredDigest)) return 'reject';
     if (choice !== 'approve' && offer.digest !== (pending.offeredDigest ?? '')) return 'reject';
     if (choice === 'approve') {
-      const corrected = await this.deps.readCorrectedPlan(pending.ctx.projectRoot, executionId);
+      // A register-channel offer is the immutable captured submission; recheck its
+      // digest instead of rereading a corrected file the coordinator never wrote.
+      const corrected: AuthoredPlanRead = pending.channel === 'register'
+        ? pending.offeredUnits ? { status: 'ok', units: cloneUnits(pending.offeredUnits), realPath: correctedPlanRelPath(executionId) } : { status: 'missing' }
+        : await this.deps.readCorrectedPlan(pending.ctx.projectRoot, executionId);
+      this.traceReread(pending, corrected, 'reread');
       if (corrected.status !== 'ok' || !pending.offeredDigest || planDigest(corrected.units) !== pending.offeredDigest) {
         pending.status = 'correction-required';
         pending.offeredActionId = undefined;
@@ -367,20 +426,88 @@ export class PlanCorrectionService {
       source = undefined;
       this.deps.logWarning?.(record.executionId, 'could not read the supplied plan for the correction request', error);
     }
-    const excerpt = source && source.length > SOURCE_PLAN_PROMPT_CAP ? `${source.slice(0, SOURCE_PLAN_PROMPT_CAP)}\n[truncated]` : source;
+    const corrected = correctedPlanRelPath(record.executionId);
+    const head = [lead, `The supplied execution plan was rejected: ${boundReason(record.reason)}`].filter(Boolean).join('\n\n');
+    // One short line per sentence: a terminal in canonical mode drops any input
+    // line longer than its line buffer (1024 bytes on macOS), so never send one.
+    const instruction = record.channel === 'register' ? [
+      'The operator requested changes to your submitted plan.',
+      'Call `execution.plan.register` exactly once with the complete corrected work DAG. It must fix the rejection above.',
+      'The host holds that submission for operator review; its "plan held for operator correction review" refusal is expected. Do not retry it.',
+      'If a detail such as a write scope is missing, choose the most conservative reasonable value; the operator reviews the plan before any work starts.',
+      'Do not stop to ask the operator. Do not call other execution.* tools or run shell or network commands. Then end your turn.'
+    ].join('\n') : [
+      `Write the complete corrected portable plan to \`${corrected}\` using your file-write tool (${PORTABLE_PLAN_GRAMMAR}).`,
+      'It must fix the rejection above: a copy of the supplied plan is rejected again.',
+      `\`${corrected}\` is the only plan file the host reads for this correction. Do not edit the supplied plan, \`${authoredPlanRelPath(record.executionId)}\`, or any other plan file.`,
+      `If a detail such as a write scope is missing, choose the most conservative reasonable value, record that assumption in \`${correctionProseRelPath(record.executionId)}\`, and still write the plan; the operator reviews it before any work starts.`,
+      'Do not stop to ask the operator. Do not call execution.* tools, run shell or network commands, or inspect the environment to find the execution.',
+      `The host rereads \`${corrected}\` when your turn ends. Then end your turn.`
+    ].join('\n');
+    // The durable wake queue rejects a message over its string cap, which silently
+    // drops the whole correction request. Fit the source excerpt into what is left.
+    const blockOverhead = '\n\nSupplied plan:\n```md\n\n```\n\n'.length + TRUNCATED_MARK.length;
+    const budget = Math.min(SOURCE_PLAN_PROMPT_CAP, COORDINATOR_WAKE_MESSAGE_MAX - head.length - instruction.length - blockOverhead);
+    const excerpt = !source || budget < SOURCE_PLAN_MIN_EXCERPT
+      ? undefined
+      : source.length > budget ? `${source.slice(0, budget)}${TRUNCATED_MARK}` : source;
     return [
-      lead,
-      `The supplied execution plan was rejected: ${record.reason}`,
+      head,
       excerpt ? `Supplied plan:\n\`\`\`md\n${excerpt}\n\`\`\`` : undefined,
-      `Write the complete corrected portable plan to \`${correctedPlanRelPath(record.executionId)}\` using your file-write tool (H3 \`id: Title <!-- executable-step -->\` headings, each with the fixed label bullets Mode, Work and Verification; every Mutating step must list its Write scope). ` +
-        `Keep the supplied plan unchanged. If a required detail such as a file path or write scope is missing, choose the most conservative reasonable value, record that assumption in \`${correctionProseRelPath(record.executionId)}\`, and still write the plan; the operator reviews it before any work starts. Do not stop to ask the operator. Then end your turn.`
+      instruction
     ].filter(Boolean).join('\n\n');
+  }
+
+  /**
+   * One bounded, precise retry hint for a corrected plan that exists but does not
+   * parse. It never resets the stall count, so the operator still hears about it.
+   */
+  private async feedbackInvalidCorrection(record: PlanCorrectionRecord, reason: string): Promise<void> {
+    const corrected = correctedPlanRelPath(record.executionId);
+    const text = `Your corrected plan at \`${corrected}\` is still invalid: ${boundReason(reason)}. ` +
+      `Rewrite the complete plan in \`${corrected}\` (${PORTABLE_PLAN_GRAMMAR}) so it fixes that problem, then end your turn. ` +
+      'Do not call execution.* tools or run shell or network commands.';
+    if (this.deps.wakeCoordinator) await this.deps.wakeCoordinator(record.executionId, text, this.wakeConfirmation(record));
+    else this.deps.nudge(record.ctx.sessionId, text);
   }
 
   private async nudgeCoordinator(record: PlanCorrectionRecord, text: string): Promise<void> {
     this.missingArtifactIdles.delete(record.executionId);
-    if (this.deps.wakeCoordinator) await this.deps.wakeCoordinator(record.executionId, text);
+    if (this.deps.wakeCoordinator) await this.deps.wakeCoordinator(record.executionId, text, this.wakeConfirmation(record));
     else this.deps.nudge(record.ctx.sessionId, text);
+  }
+
+  /**
+   * Fence a correction wake to the request that sent it: it stays wanted only
+   * while that request is still awaiting a corrected plan for the same offer, so
+   * cancel, approve or a newer offer stops any redelivery.
+   */
+  private wakeConfirmation(record: PlanCorrectionRecord): CoordinatorWakeConfirmation {
+    const { executionId } = record;
+    const offerId = record.offeredActionId;
+    return {
+      isCurrent: async () => {
+        const current = await this.deps.store.get(executionId);
+        return current?.status === 'correction-required' && current.offeredActionId === offerId;
+      },
+      onUnconsumed: () => this.escalateLostWake(executionId, offerId)
+    };
+  }
+
+  /**
+   * The correction request was delivered twice and the coordinator never left
+   * idle. Raise the stall card naming that, instead of waiting for a plan that
+   * cannot come; the same retry budget as any other stall applies.
+   */
+  async escalateLostWake(executionId: string, offerId: string | undefined): Promise<void> {
+    await this.serialize(executionId, async () => {
+      const current = await this.deps.store.get(executionId);
+      if (current?.status !== 'correction-required' || current.offeredActionId !== offerId) return;
+      this.missingArtifactIdles.delete(executionId);
+      if (await this.request(current, 'lost-wake') === 'reject') {
+        this.deps.logWarning?.(executionId, 'coordinator did not pick up the correction request and the review budget is spent', undefined);
+      }
+    });
   }
 
   private async serialize<T>(executionId: string, operation: () => Promise<T>): Promise<T> {
@@ -437,6 +564,29 @@ export class PlanCorrectionService {
     await this.deps.stopExecution(record.executionId);
   }
 
+  /** Emit a corrected-plan read correlation; swallowed so the decision is unaffected. */
+  private traceReread(pending: PlanCorrectionRecord, corrected: AuthoredPlanRead, stage: PlanCorrectionTrace['stage']): void {
+    const sink = this.deps.trace;
+    if (!sink) return;
+    try {
+      const rereadDigest = corrected.status === 'ok' ? planDigest(corrected.units) : undefined;
+      sink({
+        executionId: pending.executionId,
+        sessionId: pending.ctx.sessionId,
+        slotId: pending.ctx.slotId,
+        stage,
+        status: corrected.status,
+        ...(corrected.status !== 'missing' && corrected.bodyDigest ? { bodyDigest: corrected.bodyDigest } : {}),
+        ...(pending.offeredDigest ? { offeredDigest: pending.offeredDigest } : {}),
+        ...(rereadDigest ? { rereadDigest } : {}),
+        ...(corrected.status === 'invalid' ? { reason: boundReason(corrected.reason) } : {}),
+        match: !!pending.offeredDigest && rereadDigest === pending.offeredDigest
+      });
+    } catch {
+      // observation only
+    }
+  }
+
   private async persistActive(record: PlanCorrectionRecord): Promise<boolean> {
     const persisted = await this.deps.store.put(record);
     if (persisted.status !== 'cancelled') return true;
@@ -457,14 +607,57 @@ export class PlanCorrectionService {
     return record?.status === 'approved' ? this.approvedSnapshot(record) : undefined;
   }
 
-  /** Shared service gate: correction state applies equally to host and MCP paths. */
-  async authorizeRegistration(executionId: string, units: readonly ExecutionWorkUnitInput[]): Promise<{ ok: true } | { ok: false; message: string }> {
+  /**
+   * Shared service gate: correction state applies equally to host and MCP paths.
+   *
+   * `submitter` is the bound coordinator of an `execution.plan.register` call. A
+   * Modern/ACP coordinator has no idle-edge file reread, so while a correction
+   * awaits its first (or next requested) candidate, the refused submission is
+   * captured as the immutable offered snapshot and published as the one Inbox
+   * review card for this offer. Registration itself is still refused: only the
+   * approved digest may enter the durable execution.
+   */
+  async authorizeRegistration(
+    executionId: string,
+    units: readonly ExecutionWorkUnitInput[],
+    submitter?: CoordinatorHandoffContext
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
     const pending = await this.deps.store.get(executionId);
     if (!pending) return { ok: true };
     if (pending.status === 'cancelled') return { ok: false, message: 'plan correction was cancelled' };
-    if (pending.status !== 'approved' || !pending.approvedDigest) return { ok: false, message: 'plan correction approval is pending' };
+    if (pending.status !== 'approved' || !pending.approvedDigest) {
+      if (submitter && submitter.executionId === executionId) return this.serialize(executionId, () => this.holdSubmission(executionId, units, submitter));
+      return { ok: false, message: 'plan correction approval is pending' };
+    }
     if (pending.approvedDigest !== planDigest(units)) return { ok: false, message: 'corrected plan changed after approval; renewed approval is required' };
     return { ok: true };
+  }
+
+  /** Capture a refused coordinator submission as the next correction offer (at most one live card). */
+  private async holdSubmission(executionId: string, units: readonly ExecutionWorkUnitInput[], submitter: CoordinatorHandoffContext): Promise<{ ok: false; message: string }> {
+    const current = await this.deps.store.get(executionId);
+    if (!current || current.status === 'cancelled') {
+      if (current) await this.rejectCancelled(current);
+      return { ok: false, message: 'plan correction was cancelled' };
+    }
+    // Approval landed while this call waited for the serialization turn: the
+    // submission is not the approved revision, so it still needs renewed approval.
+    if (current.status === 'approved') return { ok: false, message: 'corrected plan changed after approval; renewed approval is required' };
+    if (current.status === 'pending') {
+      // An offer is already in front of the operator. Never replace it or add a
+      // second card; only re-publish the same durable offer after a lost bind/restart.
+      if (current.offeredActionId && !this.publishedOfferIds.has(current.offeredActionId)) await this.publishPendingOffer(current);
+      return { ok: false, message: PLAN_CORRECTION_HELD_MESSAGE };
+    }
+    if (current.retries >= PLAN_CORRECTION_MAX_RETRIES) return { ok: false, message: 'plan correction approval is pending' };
+    current.ctx = { ...submitter };
+    current.channel = 'register';
+    this.clearApproval(current);
+    current.offeredDigest = planDigest(units);
+    current.offeredUnits = cloneUnits(units);
+    // Retries were checked above, so a reject here is a cancellation that won the write.
+    if (await this.request(current) === 'reject') return { ok: false, message: 'plan correction was cancelled' };
+    return { ok: false, message: PLAN_CORRECTION_HELD_MESSAGE };
   }
 
   static correctionPrompt(reason: string): string {
@@ -482,7 +675,12 @@ export class PlanCorrectionService {
 
   private approvedSnapshot(record: PlanCorrectionRecord): Extract<AuthoredPlanRead, { status: 'ok' }> {
     if (!record.approvedUnits || !record.approvedDigest) throw new Error('approved plan correction snapshot is missing');
-    return { status: 'ok', units: cloneUnits(record.approvedUnits), realPath: correctedPlanRelPath(record.executionId) };
+    return {
+      status: 'ok',
+      units: cloneUnits(record.approvedUnits),
+      realPath: correctedPlanRelPath(record.executionId),
+      ...(record.channel === 'register' ? { origin: 'register' as const } : {})
+    };
   }
 
 }

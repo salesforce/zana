@@ -2,6 +2,7 @@ import { boundedText, LargeTextPreview } from './LargeTextPreview.js';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { ExecutionBoardSnapshot } from '@zana-ai/zcc-domain/product';
 import { useUi } from '../store';
+import { usePersonas, useTeams } from '../stores/live.js';
 import { copyText } from '../lib/copy-text.js';
 import { startSerialPoll } from '../lib/serial-poll.js';
 import { mergeExecutionEvents } from './execution-event-tail.js';
@@ -220,6 +221,10 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, string>>({});
   const [artifactContent, setArtifactContent] = useState<Record<string, string>>({});
   const [followUpInstruction, setFollowUpInstruction] = useState('');
+  // '' = the Squad's coordinator (main default). Main re-validates any pick against the roster.
+  const [followUpPersonaId, setFollowUpPersonaId] = useState('');
+  const teams = useTeams((state) => state.teams);
+  const personas = usePersonas((state) => state.personas);
   const recoveryReasonId = useId();
   const refresh = useCallback(async (after = 0) => {
     const scope = scopeRef.current;
@@ -313,6 +318,10 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
       .then(() => useUi.getState().pushToast('Job details copied', 'info'))
       .catch(() => useUi.getState().pushToast('Failed to copy job details', 'error'));
   };
+  // Offer only this Squad's own personas; the renderer list is advisory, main enforces the roster.
+  const followUpTeam = teams.find((team) => team.id === execution.teamId);
+  const followUpRosterIds = new Set([followUpTeam?.orchestratorPersonaId, ...(followUpTeam?.slots ?? []).map((slot) => slot.personaId)].filter((id): id is string => Boolean(id)));
+  const followUpRoster = personas.filter((persona) => followUpRosterIds.has(persona.id));
   const worktreeAction = async (action: 'leave' | 'instruct' | 'delete' | 'force-delete') => {
     if (!execution.retainedWorktree || execution.stateVersion === undefined) return;
     if ((action === 'delete' || action === 'force-delete') && !window.confirm(
@@ -324,7 +333,8 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
     }
     await mutate(() => window.cc.executionBoard.worktreeAction(
       projectId, executionId, execution.stateVersion!, action,
-      action === 'instruct' ? followUpInstruction.trim() : undefined
+      action === 'instruct' ? followUpInstruction.trim() : undefined,
+      action === 'instruct' && followUpPersonaId ? followUpPersonaId : undefined
     ));
     if (action === 'instruct') setFollowUpInstruction('');
   };
@@ -355,6 +365,12 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
          <p><code>{execution.retainedWorktree.path}</code> · {execution.retainedWorktree.branch}</p>
          {execution.retainedWorktree.disposition === 'left' ? <p role="status">Worktree left by user. No further lifecycle action is pending.</p> : <>
            <p>Leave preserves this checkout. Delete requires confirmation and refuses dirty worktrees.</p>
+           {followUpRoster.length > 0 && <label className="execution-follow-up-persona">Follow-up persona{' '}
+             <select aria-label="Follow-up persona" value={followUpPersonaId} onChange={(event) => setFollowUpPersonaId(event.target.value)}>
+               <option value="">Squad coordinator (default)</option>
+               {followUpRoster.map((persona) => <option key={persona.id} value={persona.id}>{persona.name ?? persona.id}</option>)}
+             </select>
+           </label>}
            <textarea aria-label="Follow-up agent instruction" value={followUpInstruction} onChange={(event) => setFollowUpInstruction(event.target.value)} placeholder="Describe the follow-up work…" rows={3} />
            <div className="execution-details-actions">
              <button className="btn" type="button" disabled={busy || !followUpInstruction.trim()} onClick={() => void worktreeAction('instruct')}>Instruct an agent</button>

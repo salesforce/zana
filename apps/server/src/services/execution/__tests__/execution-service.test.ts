@@ -457,7 +457,21 @@ describe('execution admission', () => {
       id: 'direct', title: 'Direct', task: 'bypass handoff', dependencies: [], files: ['src/direct.ts'], verification: ['pnpm test']
     }])).resolves.toEqual({ ok: false, code: 'INVALID', message: 'plan correction approval is pending' });
     expect(authorizePlanRegistration).toHaveBeenCalledOnce();
+    // The bound coordinator is passed so main can hold the refused candidate for review.
+    expect(authorizePlanRegistration).toHaveBeenCalledWith(expect.objectContaining({ id: 'execution-1' }), expect.any(Array), coordinator);
     expect((await store.get('execution-1'))?.workUnits).toBeUndefined();
+  }));
+
+  it('checks admission before correction consent so only admissible plans can be held', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const authorizePlanRegistration = vi.fn(() => ({ ok: false as const, message: 'plan correction approval is pending' }));
+    const service = new SquadExecutionService(deps(filePath, { store, authorizePlanRegistration }));
+    await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team' });
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'lead-1', role: 'orchestrator' as const };
+
+    const result = await service.registerPlan(coordinator, [{ id: 'nofiles', title: 'No files', task: 'mutate', dependencies: [], verification: ['pnpm test'] }]);
+    expect(result.ok).toBe(false);
+    expect(authorizePlanRegistration).not.toHaveBeenCalled();
   }));
 
   it('rejects direct coordinator registration after correction cancellation', async () => fixture(async (filePath) => {
@@ -567,6 +581,54 @@ describe('execution admission', () => {
 
     expect(started).toMatchObject({ ok: true, value: { request: { onComplete: 'merge' } } });
     expect(launchTeam).toHaveBeenCalledWith('team-1', 'project-1', expect.objectContaining({ onComplete: 'merge' }));
+  }));
+
+  it('rejects an invalid or conflicting target selector before any durable state (B8)', async () => fixture(async (filePath) => {
+    const launchTeam = vi.fn(async () => ({ ok: true }));
+    const prepareSquadWorktree = vi.fn();
+    const options = deps(filePath, { launchTeam, prepareSquadWorktree });
+    const claim = vi.spyOn(options.store, 'claim');
+    const service = new ExecutionService(options);
+    for (const bad of [
+      { target: { kind: 'worktree', branch: '../escape' } },
+      { target: { kind: 'path', path: '/tmp/x' } },
+      { target: { kind: 'project-root' }, worktree: true },
+      { target: { kind: 'project-root' }, onComplete: 'delete' },
+      { target: { kind: 'worktree', branch: 'feat' }, onComplete: 'merge' }
+    ]) {
+      await expect(service.start('owner', 'project-1', { ...request, ...bad } as never)).resolves.toMatchObject({ ok: false, code: 'INVALID' });
+    }
+    expect(claim).not.toHaveBeenCalled();
+    expect(prepareSquadWorktree).not.toHaveBeenCalled();
+    expect(launchTeam).not.toHaveBeenCalled();
+  }));
+
+  it('persists and forwards a target selector to preparation and launch (B8)', async () => fixture(async (filePath) => {
+    const launchTeam = vi.fn(async () => ({ ok: true }));
+    const prepareSquadWorktree = vi.fn(async (record: ExecutionRecord) => serviceDeps.store.setSquadWorktree(record.id, record.stateVersion, {
+      path: '/repo', branch: 'main', ownership: 'user', targetKind: 'project-root'
+    }));
+    const serviceDeps = deps(filePath, { launchTeam, prepareSquadWorktree });
+    const service = new ExecutionService(serviceDeps);
+    const target = { kind: 'project-root' as const };
+
+    const started = await service.start('owner', 'project-1', { ...request, worktree: false, onComplete: 'leave', target });
+
+    expect(started).toMatchObject({ ok: true, value: { request: { target }, squadWorktree: { ownership: 'user' } } });
+    expect(prepareSquadWorktree).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ target }));
+    expect(launchTeam).toHaveBeenCalledWith('team-1', 'project-1', expect.objectContaining({ target }));
+  }));
+
+  it('fails with TARGET_UNAVAILABLE and never launches when the target does not resolve (B8)', async () => fixture(async (filePath) => {
+    const launchTeam = vi.fn(async () => ({ ok: true }));
+    const service = new ExecutionService(deps(filePath, {
+      launchTeam,
+      prepareSquadWorktree: async () => { throw new Error('TARGET_UNAVAILABLE'); }
+    }));
+
+    await expect(service.start('owner', 'project-1', { ...request, target: { kind: 'worktree', branch: 'gone' } }))
+      .resolves.toMatchObject({ ok: false, code: 'TARGET_UNAVAILABLE' });
+    expect(launchTeam).not.toHaveBeenCalled();
   }));
 
   it('promotes to RUNNING when members bump stateVersion during launchTeam', async () => fixture(async (filePath) => {
@@ -3623,6 +3685,52 @@ describe('SquadExecutionService', () => {
 
     expect(resumed).toMatchObject({ ok: true, value: { state: 'RUNNING', attempt: 2, attemptStartedAt: now } });
     expect(setTimer).toHaveBeenLastCalledWith(expect.any(Function), 100);
+  }));
+
+  it('pauses the planless watchdog while a plan-correction decision is open and fails with the cap message at 24h', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    let open = true;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
+    const timers: Array<{ fn: () => void; ms: number }> = [];
+    const setTimer = vi.fn((fn: () => void, ms: number) => { timers.push({ fn, ms }); return timers.length as unknown as NodeJS.Timeout; });
+    const isPlanCorrectionOpen = vi.fn(async () => open);
+    const service = new SquadExecutionService(deps(filePath, {
+      store, now: () => now, setTimer, clearTimer: vi.fn(),
+      planStartupGraceMs: () => 100,
+      isPlanCorrectionOpen
+    }));
+    const started = await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team' });
+    if (!started.ok) throw new Error('launch failed');
+    const fireLast = async () => { timers.pop()!.fn(); await new Promise((resolve) => setTimeout(resolve, 0)); };
+
+    now += 101;
+    await fireLast();
+    expect(isPlanCorrectionOpen).toHaveBeenCalledWith(started.value.id);
+    expect((await store.get(started.value.id))?.state).toBe('RUNNING');
+
+    now = started.value.attemptStartedAt + 24 * 60 * 60 * 1_000;
+    await fireLast();
+    await vi.waitFor(async () => expect((await store.get(started.value.id))?.state).toBe('FAILED'));
+    const events = (JSON.parse(await readFile(filePath, 'utf8')) as { events: Array<{ summary: string }> }).events;
+    expect(events.some((event) => event.summary === 'No plan registered within the 24h safety cap while a plan-correction decision was pending')).toBe(true);
+  }));
+
+  it('fails a planless run with the startup-grace message when no plan-correction predicate is wired', async () => fixture(async (filePath) => {
+    let now = 1_000;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
+    const timers: Array<() => void> = [];
+    const service = new SquadExecutionService(deps(filePath, {
+      store, now: () => now, clearTimer: vi.fn(),
+      setTimer: vi.fn((fn: () => void) => { timers.push(fn); return timers.length as unknown as NodeJS.Timeout; }),
+      planStartupGraceMs: () => 100
+    }));
+    const started = await service.start('owner', 'project-1', { ...request, coordinationMode: 'job-team' });
+    if (!started.ok) throw new Error('launch failed');
+    now += 101;
+    timers.pop()!();
+    await vi.waitFor(async () => expect((await store.get(started.value.id))?.state).toBe('FAILED'));
+    const events = (JSON.parse(await readFile(filePath, 'utf8')) as { events: Array<{ summary: string }> }).events;
+    expect(events.some((event) => event.summary === 'No plan registered within startup grace')).toBe(true);
   }));
 
   it('rejects retained resume for timeout successors and unresolved blocker timeouts', async () => fixture(async (filePath) => {

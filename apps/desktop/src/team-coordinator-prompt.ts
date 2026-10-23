@@ -1,5 +1,6 @@
 import type { Persona, Team, TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
 import type { ExecutionWorkUnitInput } from '@zana-ai/zcc-server/services/execution/store';
+import type { PlanAuthoringTransport } from '@zana-ai/zcc-domain/squad-proposal';
 
 /**
  * Compact, bounded rendering of a seeded work DAG for the coordinator's opening
@@ -76,6 +77,39 @@ function fileHandoffKickoffLines(input: { planFilePath: string; sourceFilePath?:
 }
 
 /**
+ * Flow B file-handoff kickoff while the provided plan awaits operator correction
+ * review. The coordinator must NOT author the plan file itself (the generic
+ * file-handoff instruction would make it write an unreviewed plan); it parks
+ * until the host wakes it with the exact corrected-plan file to write.
+ */
+function correctionPendingKickoffLines(planFilePath: string): string[] {
+  return [
+    'Kickoff: the provided execution plan was rejected and is awaiting operator correction review:',
+    `- Do NOT write any plan file now, including \`${planFilePath}\`. The host does not register a plan you write before the operator decides.`,
+    '- End this turn and remain idle. If the operator requests changes, the host wakes you with the rejection and the exact file to write; write only that file, then end your turn.',
+    '- Do NOT call `execution.plan.register`, `execution.work.dispatch_ready`, or `execution.work.assign`, and do not run shell or network commands to inspect the execution.',
+    '- Do not call `execution.source.list` or `execution.source.read`.',
+    ...KICKOFF_DENIALS
+  ];
+}
+
+/**
+ * Modern/ACP kickoff for a provided plan that failed validation. There is no host
+ * file reread, so the coordinator's single `execution.plan.register` is the
+ * correction candidate: main holds it for the operator's Inbox review instead of
+ * dispatching, and registers it only once approved.
+ */
+function modernCorrectionPendingKickoffLines(hasSources: boolean): string[] {
+  return [
+    'Kickoff: the provided execution plan was rejected and needs a corrected plan the operator reviews before any work starts:',
+    `- Derive a complete corrected work DAG from the goal${hasSources ? ', the attached execution sources,' : ''} and the rejection reason. Do not modify the provided source plan.`,
+    '- Call `execution.plan.register` EXACTLY ONCE with that corrected DAG. The host holds it for operator review and refuses with "plan held for operator correction review"; that refusal is expected. Do not retry it.',
+    '- Then end this turn and remain idle. If the operator requests changes, the host wakes you with what to fix; register the revised DAG once, then end your turn. The host registers and dispatches the approved plan itself.',
+    ...KICKOFF_DENIALS
+  ];
+}
+
+/**
  * Flow B/C legacy MCP kickoff (no plan-file handoff): the coordinator authors the
  * plan with a single `execution.plan.register`; the host auto-dispatches on
  * register. Kept for a harness that can reach the MCP bridge and for tests that
@@ -144,19 +178,37 @@ export function jobCoordinatorPrompt(input: {
    * `execution.source.read` MCP call. Absent = no sources / not mirrored.
    */
   sourceFilePath?: string;
+  /**
+   * True when the provided plan failed validation and a human plan-correction
+   * decision is pending. With the CLI file handoff the coordinator parks instead
+   * of authoring `planFilePath`; the correction wake names the file to write.
+   * A Modern coordinator registers one corrected candidate that main holds for review.
+   */
+  planCorrectionPending?: boolean;
   /** True only when this coordinator reopens a trusted provider-native session. */
   recoveryResume?: boolean;
+  /**
+   * Coordinator transport. A Modern/ACP coordinator has a bound
+   * `execution.plan.register` tool and no host file reader, so it always gets the
+   * register-once kickoff and `planFilePath` is ignored. CLI (default) keeps the
+   * file handoff the host rereads on PTY idle.
+   */
+  transport?: PlanAuthoringTransport;
 }): string {
   const sources = input.job.sourceBundle?.sources ?? [];
   const sourceMetadata = JSON.stringify(sources.length ? sources : []);
   const rosterLines = input.roster.map((worker) => `- ${worker.label} — session \`${worker.sessionId}\`, slot \`${worker.slotId}\``);
   const hasSources = sources.length > 0;
-  // One of three kickoff arms, keyed on host-computed plan readiness then on
+  // One of four kickoff arms, keyed on host-computed plan readiness then on
   // whether a plan-file handoff path was provided. Each arm is a named helper; the
   // emitted line set is byte-identical to the prior inline ternary.
   const planReadyLines = input.planReady
     ? planReadyKickoffLines(input.workUnits)
-    : input.planFilePath
+    : input.planFilePath && input.transport !== 'modern' && input.planCorrectionPending
+    ? correctionPendingKickoffLines(input.planFilePath)
+    : input.transport === 'modern' && input.planCorrectionPending
+    ? modernCorrectionPendingKickoffLines(hasSources)
+    : input.planFilePath && input.transport !== 'modern'
     ? fileHandoffKickoffLines({ planFilePath: input.planFilePath, sourceFilePath: input.sourceFilePath, hasSources })
     : legacyMcpKickoffLines(hasSources);
   return [
@@ -187,7 +239,7 @@ export function jobCoordinatorPrompt(input: {
       '- Workers must close each unit with `execution.work.complete`, `execution.work.fail`, `execution.work.block`, or `execution.work.release`.',
       '- Scheduling is host-managed: a pre-registered plan is already dispatched, and registering a plan auto-dispatches its ready units. Do NOT call `execution.work.dispatch_ready` yourself; the engine assigns and re-dispatches ready units to workers. End the turn and remain parked after any authoring. Do not relay assignments or routine results with `agent_send`. Never let workers independently execute the whole goal.',
       '- Record meaningful progress and outcomes with `execution.event`. Route human-required questions through `execution.work.block`, never event-only blockers or AskUserQuestion. While blocked, do not poll `execution.delivery.pull`. Responses inject when idle. Call `execution.delivery.pull` only after an injected notification. Delivery is at-least-once and may repeat after a crash: use the stable deliveryId as an idempotency key, apply side effects idempotently or transactionally where possible, and persist a completed-application marker only after successful application (or atomically with it). If that completed marker already exists, do not apply the payload again. A crash before that marker may replay delivery, so do not claim exactly-once processing. Then call `execution.delivery.ack` with the deliveryId and leaseId: set `delivered: true` once you have applied the response in this session, and set `delivered: false` with an error ONLY when applying the payload genuinely failed. Pulling then acking IS the entire way to consume a response — never call `execution.resume` or `execution.respond` to accept your own delivered answer. Those are owner-only control tools; a worker or coordinator calling them fails with "execution not found for caller", and that authorization denial is NOT an application failure — do not report it as a delivery `error` or you will loop the response forever.',
-      '- Store durable outputs with `execution.artifact.put`.',
+      '- Report outcomes through unit results: workers put the outcome in the `result` of `execution.work.complete`. Ordinary unit results are not artifacts; no artifact tools are available to this cohort.',
        '- On an explicit wake notification, resolve or escalate only that human blocker, semantic conflict, or policy escalation. Do not resume routine coordination. A `SEMANTIC_CONFLICT` wake that names a work unit and a `blockerId=<id>` is a worker asking YOU to decide one plan/spec detail so it can finish: make the decision from the goal and available context and answer it with `execution.work.answer` (that blockerId + your concrete answer) — the worker resumes automatically, so this is how you make a thin plan executable rather than stalling it. Reserve human escalation (leave it, or raise it yourself) for a genuine human-only decision or credential.',
        '- On an explicit health or escalation wake, call `execution.snapshot` once for this host-bound execution before deciding. This bounded snapshot is diagnostic-only; do not poll it during kickoff or routine progress. Do not call `execution.status` or `execution.list`: they are owner-history tools and return `WRONG_AUTHORITY` for a bound cohort.',
       '- Terminal status and summary are assembled mechanically from durable work outcomes, policy state, events, and artifacts. Optional narrative may augment that record but never gates settlement.'

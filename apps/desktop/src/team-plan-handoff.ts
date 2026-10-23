@@ -2,10 +2,11 @@ import { mkdir, open, realpath, rename, rm } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isWithin, resolveContained, resolveContainedReal } from '@zana-ai/zcc-path-confine';
 import { parsePortablePlan } from '@zana-ai/zcc-server/services/execution/portable-plan';
 import { normalizeExecutionPlan } from '@zana-ai/zcc-server/services/launch/preflight';
+import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import type { ExecutionWorkUnitInput } from '@zana-ai/zcc-server/services/execution/store';
 
 /**
@@ -35,6 +36,26 @@ export const TEAM_PLAN_HANDOFF_DIR = '.zana';
 
 /** Whole-file byte cap for BOTH the authored plan and the mirrored source. */
 export const MAX_HANDOFF_FILE_BYTES = 512 * 1024;
+
+/** Longest reason a correlation trace carries. */
+export const PLAN_TRACE_REASON_MAX = 240;
+
+/** Content digest of a plan body for correlation traces; the body itself is never traced. */
+export function planBodyDigest(text: string): string {
+  return `sha256:${createHash('sha256').update(text, 'utf8').digest('hex')}`;
+}
+
+/** Normalized work-unit digest; the same value plan correction binds approvals to. */
+export function planUnitsDigest(units: readonly ExecutionWorkUnitInput[]): string {
+  return launchDigest(units);
+}
+
+/** One bounded line of a reason, safe to put in a trace. */
+export function boundTraceReason(reason: string | undefined): string | undefined {
+  if (reason === undefined) return undefined;
+  const flat = reason.replace(/\s+/g, ' ').trim();
+  return flat.length > PLAN_TRACE_REASON_MAX ? `${flat.slice(0, PLAN_TRACE_REASON_MAX)}…` : flat;
+}
 
 /** executionId → filesystem-safe token (ids are `ui:<uuid>`-shaped). */
 function safeToken(executionId: string): string {
@@ -132,9 +153,11 @@ export function correctionDiffRelPath(executionId: string): string {
 
 export type AuthoredPlanRead =
   /** `normalizations` lists recoverable defects the parser repaired; omitted when none. */
-  | { status: 'ok'; units: ExecutionWorkUnitInput[]; realPath: string; normalizations?: string[] }
+  /** `bodyDigest` is the digest of the exact bytes read, for correlation only. */
+  /** `origin: 'register'` marks a captured `execution.plan.register` submission: no file backs it. */
+  | { status: 'ok'; units: ExecutionWorkUnitInput[]; realPath: string; normalizations?: string[]; bodyDigest?: string; origin?: 'register' }
   | { status: 'missing' }
-  | { status: 'invalid'; reason: string };
+  | { status: 'invalid'; reason: string; bodyDigest?: string };
 
 /**
  * Read + validate the coordinator-authored plan file. `missing` (no file yet /
@@ -168,13 +191,14 @@ async function readPlan(projectRoot: string, rel: string): Promise<AuthoredPlanR
   } finally {
     await handle?.close().catch(() => {});
   }
+  const bodyDigest = planBodyDigest(text);
   const parsed = parsePortablePlan(text);
-  if (!parsed.ok) return { status: 'invalid', reason: parsed.reason };
+  if (!parsed.ok) return { status: 'invalid', reason: parsed.reason, bodyDigest };
   try {
     const units = normalizeExecutionPlan(parsed.units, true) as ExecutionWorkUnitInput[];
-    return { status: 'ok', units, realPath: real, ...(parsed.normalizations ? { normalizations: parsed.normalizations } : {}) };
+    return { status: 'ok', units, realPath: real, ...(parsed.normalizations ? { normalizations: parsed.normalizations } : {}), bodyDigest };
   } catch (error) {
-    return { status: 'invalid', reason: error instanceof Error ? error.message : String(error) };
+    return { status: 'invalid', reason: error instanceof Error ? error.message : String(error), bodyDigest };
   }
 }
 
@@ -307,6 +331,30 @@ export interface PlanHandoffDeps {
   logInfo?(message: string, detail: string): void;
   /** Nudges allowed before deferring to the plan-readiness watchdog. Default 2. */
   maxNudges?: number;
+  /** Correlation trace sink; observes only, a throw here never changes the handoff. */
+  trace?(event: PlanHandoffTrace): void;
+}
+
+/** Bounded, body-free correlation record for one handoff decision. */
+export interface PlanHandoffTrace {
+  executionId: string;
+  projectId: string;
+  slotId: string;
+  sessionId: string;
+  stage: 'read' | 'register' | 'nudge' | 'nudge-exhausted';
+  /** Project-relative authored path the coordinator was told to write; absent for a register-channel plan. */
+  path?: string;
+  /** Basename of the confined real file actually read. */
+  resolvedFile?: string;
+  status?: AuthoredPlanRead['status'];
+  bodyDigest?: string;
+  unitCount?: number;
+  unitsDigest?: string;
+  reason?: string;
+  registered?: boolean;
+  /** `register`: an approved captured `execution.plan.register` submission, not a file. */
+  source?: 'authored' | 'corrected' | 'register';
+  nudges?: number;
 }
 
 interface HandoffState {
@@ -351,6 +399,13 @@ export class TeamPlanHandoff {
         return;
       }
       const read = await this.deps.readAuthoredPlan(ctx.projectRoot, ctx.executionId);
+      this.emit(ctx, () => ({
+        stage: 'read',
+        status: read.status,
+        ...(read.status === 'ok' ? { resolvedFile: basename(read.realPath), ...unitsTrace(read.units) } : {}),
+        ...(read.status !== 'missing' && read.bodyDigest ? { bodyDigest: read.bodyDigest } : {}),
+        ...(read.status === 'invalid' ? { reason: boundTraceReason(read.reason) } : {})
+      }));
       if (read.status === 'ok') {
         const verdict = await this.deps.review?.(ctx, read);
         if (verdict === 'wait') return;
@@ -360,6 +415,7 @@ export class TeamPlanHandoff {
         }
         const accepted = typeof verdict === 'object' ? verdict : read;
         const registered = await this.deps.register(ctx, accepted.units);
+        this.emitRegister(ctx, accepted, registered, accepted === read ? 'authored' : 'corrected');
         if (registered.ok) {
           entry.done = true;
           // Repairs never gate registration, but they must not be silent either.
@@ -398,6 +454,7 @@ export class TeamPlanHandoff {
     }
     if (typeof verdict === 'object') {
       const registered = await this.deps.register(ctx, verdict.units);
+      this.emitRegister(ctx, verdict, registered, 'corrected');
       if (registered.ok) {
         entry.done = true;
         await this.deps.cleanup(ctx.projectRoot, ctx.executionId).catch(() => {});
@@ -414,12 +471,87 @@ export class TeamPlanHandoff {
       // Budget spent — stop prompting; the plan-readiness watchdog owns the
       // clean FAILED transition so the run does not hang or loop.
       entry.done = true;
+      this.emit(ctx, () => ({ stage: 'nudge-exhausted', reason: boundTraceReason(reason), nudges: entry.nudges }));
       return;
     }
     entry.nudges += 1;
+    this.emit(ctx, () => ({ stage: 'nudge', reason: boundTraceReason(reason), nudges: entry.nudges }));
     this.deps.nudge(
       ctx.sessionId,
       `Your execution plan is not registered: ${reason}. Write your COMPLETE portable-executable plan (H3 \`id: Title <!-- executable-step -->\` headings with the fixed label bullets, every mutating step listing its Write scope and Verification) to \`${authoredPlanRelPath(ctx.executionId)}\` using your file-write tool, then end your turn. Do not call any execution.* tool.`
     );
   }
+
+  private emitRegister(
+    ctx: CoordinatorHandoffContext,
+    accepted: Extract<AuthoredPlanRead, { status: 'ok' }>,
+    registered: { ok: boolean; message?: string },
+    source: 'authored' | 'corrected'
+  ): void {
+    // A register-channel plan was never written to a file: name no path for it.
+    const fromRegister = accepted.origin === 'register';
+    this.emit(ctx, () => ({
+      stage: 'register',
+      source: fromRegister ? 'register' : source,
+      registered: registered.ok,
+      ...(fromRegister ? {} : { resolvedFile: basename(accepted.realPath) }),
+      ...unitsTrace(accepted.units),
+      ...(accepted.bodyDigest ? { bodyDigest: accepted.bodyDigest } : {}),
+      ...(registered.ok ? {} : { reason: boundTraceReason(registered.message ?? 'register failed') })
+    }), fromRegister);
+  }
+
+  /** Build lazily and swallow every failure: tracing must never alter the handoff. */
+  private emit(ctx: CoordinatorHandoffContext, build: () => Omit<PlanHandoffTrace, 'executionId' | 'projectId' | 'slotId' | 'sessionId' | 'path'>, omitPath = false): void {
+    const sink = this.deps.trace;
+    if (!sink) return;
+    try {
+      sink({
+        executionId: ctx.executionId,
+        projectId: ctx.projectId,
+        slotId: ctx.slotId,
+        sessionId: ctx.sessionId,
+        ...(omitPath ? {} : { path: authoredPlanRelPath(ctx.executionId) }),
+        ...build()
+      });
+    } catch {
+      // observation only
+    }
+  }
+}
+
+function unitsTrace(units: readonly ExecutionWorkUnitInput[]): { unitCount: number; unitsDigest?: string } {
+  try {
+    return { unitCount: units.length, unitsDigest: planUnitsDigest(units) };
+  } catch {
+    return { unitCount: units.length };
+  }
+}
+
+/** Generation fence stamped onto a trace at emit time. */
+export interface PlanTraceGeneration {
+  attempt: number;
+  stateVersion: number;
+}
+
+/**
+ * Host sink for {@link PlanHandoffTrace}: stamps the execution's current
+ * attempt/stateVersion so a trace from a stale generation is distinguishable,
+ * then logs one bounded JSON line. Fire-and-forget; every failure is absorbed.
+ */
+export function createPlanTraceSink(deps: {
+  generation(projectId: string, executionId: string): Promise<PlanTraceGeneration | undefined>;
+  log(context: string, message: string): void;
+}): (event: PlanHandoffTrace) => void {
+  return (event) => {
+    void deps.generation(event.projectId, event.executionId)
+      .catch(() => undefined)
+      .then((generation) => {
+        deps.log(
+          `squad plan trace ${event.stage}`,
+          JSON.stringify(generation ? { ...event, attempt: generation.attempt, stateVersion: generation.stateVersion } : event)
+        );
+      })
+      .catch(() => {});
+  };
 }

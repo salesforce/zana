@@ -502,6 +502,24 @@ describe('golden argv — auto-mode + overseer variants', () => {
   });
 });
 
+describe('golden argv — durable job-team allowlist is result-only', () => {
+  beforeEach(() => {
+    spawns.length = 0;
+  });
+
+  it('grants unit-result tools but not execution.artifact.put/list', () => {
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl(MCP_BASE);
+    mgr.create({
+      projectId: 'proj1', profile: 'claude', cwd: '/tmp/work', cols: 80, rows: 24,
+      config: BASE_CONFIG, autonomous: true, coordinationMode: 'job-team'
+    });
+    const joined = spawns[0].args.join(' ');
+    expect(joined).toContain('mcp__zcc-inbox__execution.work.complete');
+    expect(joined).not.toContain('execution.artifact');
+  });
+});
+
 describe('golden argv — caller-pinned session id', () => {
   beforeEach(() => {
     spawns.length = 0;

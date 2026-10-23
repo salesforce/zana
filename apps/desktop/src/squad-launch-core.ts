@@ -1,5 +1,5 @@
 import { basename } from 'node:path';
-import type { Project, TeamJobLaunchResponse } from '@zana-ai/zcc-domain/product';
+import { validateSquadExecutionTarget, type Project, type SquadExecutionTargetSelector, type TeamJobLaunchResponse } from '@zana-ai/zcc-domain/product';
 import { AUTONOMOUS_DEFAULTS } from '@zana-ai/zcc-server/services/agents/autonomous-run-supervisor';
 import type { ExpandedTeamSlot } from '@zana-ai/zcc-server/services/agents/team-slot-expansion';
 import type { ExecutionRequestV1, SquadExecutionService } from '@zana-ai/zcc-server/services/execution/service';
@@ -77,6 +77,8 @@ export interface SquadLaunchInput {
   goalSources: ExecutionSourcePathDescriptor[];
   /** Realpaths of the sources a reviewed proposal card listed. */
   reviewedSourcePaths?: readonly string[];
+  /** User-selected existing execution target; validated here, resolved and revalidated by main. */
+  target?: SquadExecutionTargetSelector;
 }
 
 export interface SquadLaunchContext {
@@ -164,6 +166,9 @@ export async function launchSquad(
 ): Promise<TeamJobLaunchResponse> {
   const { project } = input;
   const { owner } = ctx;
+  // Never fall back to a generated worktree when a selector is present but unusable.
+  const targetCheck = validateSquadExecutionTarget({ target: input.target });
+  if (!targetCheck.ok) return { ok: false, code: 'INVALID', message: targetCheck.message };
   // A proposed or agent-started launch attaches goal-named files outside the Project only when
   // they were listed: on the reviewed card, or in the agent's own sources.
   const sessionLaunch = ctx.sources?.kind === 'session';
@@ -200,8 +205,9 @@ export async function launchSquad(
     const built = await buildSquadStartRequest(deps, {
       teamId: input.teamId, projectId: project.id, projectName: project.name, launchRequestId,
       coordinationMode: input.coordinationMode, slots: input.slots, attended: ctx.sources?.kind === 'window',
-      goal: input.goal, title: input.title, summary: input.summary, completionInboxNotice: input.completionInboxNotice,
-      sourceBundle, goalSourceDescriptors: redactedGoalSources
+    goal: input.goal, title: input.title, summary: input.summary, completionInboxNotice: input.completionInboxNotice,
+    goal: input.goal, title: input.title, summary: input.summary, sourceBundle, goalSourceDescriptors: redactedGoalSources,
+    ...(targetCheck.target ? { target: targetCheck.target } : {})
     });
     if (!built.ok) return built.response;
     const result = owner.proposal || owner.reportTo
@@ -259,6 +265,7 @@ async function buildSquadStartRequest(deps: SquadLaunchDeps, args: {
   completionInboxNotice: boolean;
   sourceBundle?: SquadSourceBundle;
   goalSourceDescriptors: ExecutionSourcePathDescriptor[];
+  target?: SquadExecutionTargetSelector;
 }): Promise<{ ok: true; request: ExecutionRequestV1 } | { ok: false; response: TeamJobLaunchResponse }> {
   const { sourceBundle, launchRequestId } = args;
   const capturedPathDescriptors = [...(sourceBundle?.pathDescriptors ?? []), ...args.goalSourceDescriptors];
@@ -320,6 +327,7 @@ async function buildSquadStartRequest(deps: SquadLaunchDeps, args: {
       completionInboxNotice: args.completionInboxNotice,
       slots: initialTask,
       ...(plannedWorkUnits ? { workUnits: plannedWorkUnits } : {}),
+      ...(args.target ? { target: args.target } : {}),
       ...(sourceBundle && sourceMetadata ? { sourceBundle: { contentRef: sourceBundle.contentRef, sources: sourceMetadata } } : {}),
       policy: {
         ...(autonomousTimeoutMs === 0 ? {} : { deadlineMs: autonomousTimeoutMs ?? AUTONOMOUS_DEFAULTS.timeoutMs })

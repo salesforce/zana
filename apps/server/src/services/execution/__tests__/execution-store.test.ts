@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createExecutionStore, EXECUTION_RECOVERY_TTL_MS, isTerminalExecutionState, KICKOFF_FAILURE_BLOCK_THRESHOLD } from '../store.js';
+import { createExecutionStore, EXECUTION_RECOVERY_TTL_MS, isTerminalExecutionState, isUserOwnedSquadWorktree, KICKOFF_FAILURE_BLOCK_THRESHOLD } from '../store.js';
 import { usageRollup } from '../contracts.js';
 import { MAX_TEAM_INITIAL_TASK_BYTES } from '../../launch/team-lifecycle-store.js';
 
@@ -1597,6 +1597,56 @@ describe('execution store', () => {
     });
   }));
 
+  it('persists a user-owned target selector and ownership, and never deletes it (B8)', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const base = request();
+    const claimed = await store.claim({ ...base, request: { ...base.request, target: { kind: 'worktree' as const, branch: 'feat' } } });
+    if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+    expect(claimed.record.request.target).toEqual({ kind: 'worktree', branch: 'feat' });
+    const prepared = await store.setSquadWorktree(claimed.record.id, claimed.record.stateVersion, {
+      path: '/repo/checkouts/feat', branch: 'feat', ownership: 'user', targetKind: 'worktree'
+    });
+    expect(prepared.squadWorktree).toEqual({ path: '/repo/checkouts/feat', branch: 'feat', ownership: 'user', targetKind: 'worktree' });
+    // Same target reattaches idempotently; a managed claim on the same branch is a conflict.
+    await expect(store.setSquadWorktree(prepared.id, prepared.stateVersion, {
+      path: '/repo/checkouts/feat', branch: 'feat', ownership: 'user', targetKind: 'worktree'
+    })).resolves.toMatchObject({ stateVersion: prepared.stateVersion });
+    await expect(store.setSquadWorktree(prepared.id, prepared.stateVersion, { path: '/repo/checkouts/feat', branch: 'feat' }))
+      .rejects.toThrow('squad worktree already differs');
+    const starting = await store.transition(prepared.id, prepared.stateVersion, 'STARTING', 'info', 'Starting');
+    const stopped = await store.transition(starting.id, starting.stateVersion, 'STOPPED', 'info', 'Stopped');
+    await expect(store.disposeSquadWorktree(stopped.id, stopped.stateVersion, 'deleted')).rejects.toThrow('never deleted');
+    await expect(store.disposeSquadWorktree(stopped.id, stopped.stateVersion, 'left')).resolves.toMatchObject({ squadWorktreeDisposition: 'left' });
+
+    const restarted = createExecutionStore({ filePath, id: () => 'other' });
+    await expect(restarted.get(stopped.id)).resolves.toMatchObject({
+      request: { target: { kind: 'worktree', branch: 'feat' } },
+      squadWorktree: { ownership: 'user', targetKind: 'worktree' }
+    });
+  }));
+
+  it('rejects invalid ownership fields and keeps legacy records managed (B8)', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const claimed = await store.claim(request());
+    if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+    const id = claimed.record.id;
+    const version = claimed.record.stateVersion;
+    await expect(store.setSquadWorktree(id, version, { path: '/r', branch: 'b', ownership: 'other' as never })).rejects.toThrow('invalid squad worktree ownership');
+    await expect(store.setSquadWorktree(id, version, { path: '/r', branch: 'b', ownership: 'user' })).rejects.toThrow('invalid squad worktree target kind');
+    const legacy = await store.setSquadWorktree(id, version, { path: '/repo/.worktrees/x', branch: 'zcc/x', ownership: 'managed' });
+    expect(legacy.squadWorktree).toEqual({ path: '/repo/.worktrees/x', branch: 'zcc/x' });
+    expect(isUserOwnedSquadWorktree(legacy.squadWorktree)).toBe(false);
+    expect(isUserOwnedSquadWorktree(undefined)).toBe(false);
+    await expect(store.setSquadWorktree(id, legacy.stateVersion, { path: '/repo/.worktrees/x', branch: 'zcc/x', ownership: 'user', targetKind: 'worktree' }))
+      .rejects.toThrow('squad worktree already differs');
+  }));
+
+  it('refuses to persist an invalid target selector snapshot (B8)', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const base = request();
+    await expect(store.claim({ ...base, request: { ...base.request, target: { kind: 'path', path: '/tmp' } as never } })).rejects.toThrow();
+  }));
+
   it('refuses to dismiss active executions', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const claimed = await store.claim(request());
@@ -2056,5 +2106,63 @@ describe('execution store dispatchReady (engine-cascade auto-assign)', () => {
     ]);
     expect((await deliveryStore.dispatchReady(delivery.id, { enforceRouting: true })).assignments)
       .toEqual([expect.objectContaining({ workUnitId: 'review', slotId: '1:builtin:squad-worker-high:0' })]);
+  }));
+});
+
+describe('local Composer durable report mark', () => {
+  const local = (over: Record<string, unknown> = {}) => ({ ...request(), callerPrincipalId: 'interactive:local', ...over });
+  async function terminal(store: ReturnType<typeof createExecutionStore>, input: ReturnType<typeof local>) {
+    let record = (await store.claim(input as never)).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    return store.transition(record.id, record.stateVersion, 'STOPPED', 'info', 'stop');
+  }
+
+  it('flags only target-less local claims', async () => fixture(async (filePath) => {
+    let n = 0;
+    const store = createExecutionStore({ filePath, id: () => `e-${++n}` });
+    expect((await store.claim(local({ launchRequestId: 'a' }) as never)).record.localReport).toBe(true);
+    expect((await store.claim(request() as never)).record.localReport).toBeUndefined();
+    expect((await store.claim(local({ launchRequestId: 'c', reportTo: { kind: 'pty', id: 's', role: 'owner' } }) as never)).record.localReport).toBeUndefined();
+  }));
+
+  it('lists an unmarked terminal local run, marks it atomically, and survives reload without re-listing', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'e-1' });
+    const stopped = await terminal(store, local());
+    expect((await store.listUnreportedExecutions()).map((r) => r.id)).toEqual(['e-1']);
+    await expect(store.markReported('e-1', stopped.attempt + 1)).rejects.toThrow('stale execution attempt');
+    const marked = await store.markReported('e-1', stopped.attempt);
+    expect(marked.reportNoticeVersion).toBe(stopped.attempt);
+    expect(marked.proposalNoticeVersion).toBeUndefined();
+    expect(marked.stateVersion).toBe(stopped.stateVersion);
+    expect(await store.markReported('e-1', stopped.attempt)).toEqual(marked);
+    const reloaded = createExecutionStore({ filePath });
+    expect(await reloaded.listUnreportedExecutions()).toEqual([]);
+    expect((await reloaded.get('e-1'))?.localReport).toBe(true);
+  }));
+
+  it('does not list non-terminal runs, legacy local runs without the flag, or plan-correction stops', async () => fixture(async (filePath) => {
+    let n = 0;
+    const store = createExecutionStore({ filePath, id: () => `e-${++n}` });
+    await store.claim(local({ launchRequestId: 'live' }) as never);
+    const legacy = await terminal(store, local({ launchRequestId: 'legacy' }));
+    const corrected = await store.claim(local({ launchRequestId: 'pc' }) as never);
+    await store.stopForPlanCorrection(corrected.record.id);
+    const durable = JSON.parse(await readFile(filePath, 'utf8'));
+    delete durable.records.find((r: { id: string }) => r.id === legacy.id).localReport;
+    await writeFile(filePath, JSON.stringify(durable));
+    const reloaded = createExecutionStore({ filePath });
+    expect(await reloaded.listUnreportedExecutions()).toEqual([]);
+    await expect(reloaded.markReported(legacy.id, legacy.attempt)).rejects.toThrow('terminal report target is unavailable');
+    await expect(reloaded.markReported(corrected.record.id, 1)).rejects.toThrow('terminal report target is unavailable');
+  }));
+
+  it('rejects a malformed localReport on load', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'e-1' });
+    await store.claim(local() as never);
+    const durable = JSON.parse(await readFile(filePath, 'utf8'));
+    durable.records[0].localReport = false;
+    await writeFile(filePath, JSON.stringify(durable));
+    await expect(createExecutionStore({ filePath }).get('e-1')).rejects.toThrow('corrupt execution store');
   }));
 });

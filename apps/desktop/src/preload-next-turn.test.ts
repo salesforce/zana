@@ -134,8 +134,8 @@ it('exposes squad worktree, resume and inbox host-action channels with coerced r
   electron.invoke.mockClear();
   electron.invoke.mockResolvedValue({ ok: true });
 
-  await api.executionBoard.worktreeAction('p', 'e', 2, 'instruct', 'go');
-  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.executionBoard.worktreeAction, 'p', 'e', 2, 'instruct', 'go');
+  await api.executionBoard.worktreeAction('p', 'e', 2, 'instruct', 'go', 'pers');
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.executionBoard.worktreeAction, 'p', 'e', 2, 'instruct', 'go', 'pers');
   await api.executionBoard.recoverRetainedSquad('p', 'e', 2, 'fresh-plan');
   expect(electron.invoke).toHaveBeenLastCalledWith(IPC.executionBoard.recoverRetained, 'p', 'e', 2, 'fresh-plan');
 

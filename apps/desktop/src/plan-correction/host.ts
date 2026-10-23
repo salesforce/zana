@@ -15,7 +15,7 @@ export interface PlanCorrectionHostDeps {
   inboxStore: { appendOnce: PlanCorrectionDeps['appendInbox'] };
   inboxActionRegistry: Pick<InboxActionRegistry, 'bind' | 'register'>;
   nudge: PlanCorrectionDeps['nudge'];
-  wakeCoordinator(executionId: string, text: string): Promise<void>;
+  wakeCoordinator: NonNullable<PlanCorrectionDeps['wakeCoordinator']>;
   stopExecution(executionId: string): Promise<void>;
   /** Resume the coordinator hand-off once a correction is approved. */
   resume: PlanCorrectionDeps['resume'];
@@ -26,6 +26,8 @@ export interface PlanCorrectionHostDeps {
   scheduler: { get: ScheduledPromptDeps['getSchedule']; update: ScheduledPromptDeps['updateSchedule'] };
   goals: { list(): Array<{ id: string } & ReturnType<NonNullable<ScheduledPromptDeps['getGoal']>>>; update: NonNullable<ScheduledPromptDeps['updateGoal']> };
   logError(label: string, error: unknown): void;
+  /** Bounded correlation log line for corrected-plan reads (body-free). */
+  logInfo?(context: string, message: string): void;
 }
 
 /**
@@ -39,7 +41,7 @@ export function createPlanCorrectionHost(deps: PlanCorrectionHostDeps) {
     appendInbox: (input) => deps.inboxStore.appendOnce(input),
     bindInboxAction: (entry, action) => deps.inboxActionRegistry.bind(entry, action),
     nudge: (sessionId, text) => deps.nudge(sessionId, text),
-    wakeCoordinator: (executionId, text) => deps.wakeCoordinator(executionId, text),
+    wakeCoordinator: (executionId, text, confirmation) => deps.wakeCoordinator(executionId, text, confirmation),
     readSourcePlan: async (executionId) => (await deps.executionStore.get(executionId))?.request?.objective,
     readCorrectedPlan,
     store: createPlanCorrectionStore({
@@ -61,7 +63,8 @@ export function createPlanCorrectionHost(deps: PlanCorrectionHostDeps) {
       updateGoal: (goalId, patch) => deps.goals.update(goalId, patch)
     }, ctx, units),
     resume: (ctx) => deps.resume(ctx),
-    stopExecution: (executionId) => deps.stopExecution(executionId)
+    stopExecution: (executionId) => deps.stopExecution(executionId),
+    ...(deps.logInfo ? { trace: (event) => deps.logInfo!(`squad plan correction trace ${event.stage}`, JSON.stringify(event)) } : {})
   });
   const launchBinding = new PlanCorrectionLaunchBinding();
   deps.inboxActionRegistry.register(PLAN_CORRECTION_ACTION, ({ ref, input }) => runPlanCorrectionHostAction(planCorrection, ref, input?.optionId));

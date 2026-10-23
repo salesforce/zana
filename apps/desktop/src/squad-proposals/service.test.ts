@@ -331,6 +331,19 @@ describe('propose', () => {
     });
   });
 
+  it('judges infer on the team transport: Modern needs register, not file write', async () => {
+    teamRecord.orchestratorPersonaId = 'ro';
+    teamRecord.transport = 'MODERN';
+    const r = await svc.service.propose(route, { teamId: 'team1', goal: 'g' } as never);
+    expect(r.ok && r.value.planning).toBe('infer');
+    personaMap.nr = { id: 'nr', name: 'NoReg', deniedTools: ['mcp__zcc-inbox__execution.plan.register'] } as Persona;
+    teamRecord.orchestratorPersonaId = 'nr';
+    expect(await svc.service.propose(route, { ...input, planning: 'infer' })).toEqual({
+      ok: false, code: 'ORCHESTRATOR_CANNOT_PLAN',
+      message: "NoReg can't call execution.plan.register, so Infer plan from goal can't finish. Write a portable plan, check it with squad_plan_check, and propose with planning 'provided'."
+    });
+  });
+
   it('passes plan errors through and requires plan steps', async () => {
     resolveSquadPlan.mockReturnValue({ planError: 'unit u2 depends on missing u9' });
     expect(await svc.service.propose(route, input)).toEqual({ ok: false, code: 'INVALID_PLAN', message: 'unit u2 depends on missing u9' });

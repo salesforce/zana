@@ -1,5 +1,5 @@
 import type { AgentState } from '@zana-ai/zcc-domain/product';
-import { executionReportTarget, reportedAttempt, type ExecutionRecord, type ExecutionReportTarget } from '@zana-ai/zcc-server/services/execution/store';
+import { executionReportTarget, isLocalReportRecord, isUserOwnedSquadWorktree, LOCAL_COMPOSER_PRINCIPAL, reportedAttempt, type ExecutionRecord, type ExecutionReportTarget } from '@zana-ai/zcc-server/services/execution/store';
 import type { InboxInput } from '@zana-ai/zcc-server/services/inbox/inbox-store';
 import { shouldReplaySquadWorktreeTerminalEffects } from '../squad-worktree-lifecycle.js';
 import { createPtyReportQueue, type PtyReportQueueDeps } from './pty-report-queue.js';
@@ -10,7 +10,6 @@ type Blocker = NonNullable<ExecutionRecord['blockers']>[number];
 const TERMINAL = new Set(['COMPLETED', 'FAILED', 'STOPPED']);
 /** Blocker ids are remembered per execution; this bounds how many executions are tracked at once. */
 const MAX_TRACKED_EXECUTIONS = 256;
-
 export interface SquadProposalNotifierDeps extends PtyReportQueueDeps {
   getRecord(executionId: string): Promise<ExecutionRecord | undefined>;
   markReported(executionId: string, attempt: number): Promise<unknown>;
@@ -53,6 +52,8 @@ export interface SquadProposalNotifier {
 export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): SquadProposalNotifier {
   /** Attempts being reported, or delivered without a durable Inbox result (left for boot replay). */
   const claimed = new Set<string>();
+  /** Local Composer attempts whose Inbox result is posted or in flight (`id:attempt`). */
+  const localClaimed = new Set<string>();
   const seenBlockers = new Map<string, Set<string>>();
   let disposed = false;
   let ready = false;
@@ -147,8 +148,50 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
   const unreported = (record: ExecutionRecord): boolean =>
     !!executionReportTarget(record) && reportedAttempt(record) !== record.attempt && TERMINAL.has(record.state);
 
+  /**
+   * A run started from the local Composer: no `reportTo`, no proposal. A plan-correction stop is
+   * not a result and is never reported.
+   */
+  const isLocalComposerRun = (record: ExecutionRecord): boolean =>
+    !executionReportTarget(record) && !record.proposal && record.callerPrincipalId === LOCAL_COMPOSER_PRINCIPAL
+    && TERMINAL.has(record.state) && record.timeoutReason !== 'plan-correction-cancelled'
+    && !(record.localReport && reportedAttempt(record) === record.attempt);
+
+  /**
+   * One Inbox result for a local Composer run. Idempotent per execution attempt (in-process set plus
+   * the Inbox dedupe key); waits for worktree settlement; a failed post releases the claim for replay.
+   */
+  async function reportLocal(record: ExecutionRecord, given: SquadWorktreeOutcome | undefined): Promise<void> {
+    if (disposed || !record || !isLocalComposerRun(record)) return;
+    const key = `${record.id}:${record.attempt}`;
+    if (localClaimed.has(key)) return;
+    localClaimed.add(key);
+    let posted = false;
+    try {
+      const fresh = (await deps.getRecord(record.id)) ?? record;
+      if (!isLocalComposerRun(fresh) || fresh.attempt !== record.attempt) return;
+      const outcome = worktreeOutcome(fresh, given);
+      if (outcome === undefined) return;
+      const text = buildSquadReport(fresh, { ...(outcome === 'none' ? {} : { worktree: outcome }), role: 'proposer' });
+      // A retained Zana-managed checkout is not a finished hand-off: say so instead of calling it completed.
+      // A user-owned target (project root or linked worktree) was never created here, so nothing is "kept".
+      const label = outcome === 'kept' && fresh.state === 'COMPLETED' && !isUserOwnedSquadWorktree(fresh.squadWorktree) ? 'ended, worktree kept' : squadOutcomeLabel(fresh.state);
+      posted = await postEntry('result', fresh, `Squad ${label}: ${fresh.jobTitle}`, text, `squad-local-result:${fresh.id}:${fresh.attempt}`);
+      // Durable mark so a restart does not revisit it. A failed mark only costs a deduped re-post on replay.
+      if (posted && fresh.localReport) {
+        try { await deps.markReported(fresh.id, fresh.attempt); } catch (error) { safeLog(`squad local report mark failed for ${fresh.id}`, error); }
+      }
+    } catch (error) {
+      safeLog(`squad local report failed for ${record.id}`, error);
+    } finally {
+      if (!posted) localClaimed.delete(key);
+    }
+  }
+
   async function report(record: ExecutionRecord, given: SquadWorktreeOutcome | undefined, targetLive: boolean | undefined): Promise<void> {
-    if (disposed || !record || !unreported(record)) return;
+    if (disposed || !record) return;
+    if (!executionReportTarget(record)) { await reportLocal(record, given); return; }
+    if (!unreported(record)) return;
     const key = `${record.id}:${record.attempt}`;
     if (claimed.has(key)) return;
     claimed.add(key);
@@ -268,7 +311,11 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
     for (const record of records) {
       try {
         const target = executionReportTarget(record);
-        if (!target) continue;
+        if (!target) {
+          // Target-less: a local Composer run tracked by the durable mark.
+          if (isLocalReportRecord(record)) await reportLocal(record, undefined);
+          continue;
+        }
         const live = await targetLive(record, target);
         // A failed check is not a gone conversation: leave the report unmarked for the next boot.
         if (live !== undefined) await report(record, undefined, live);
@@ -306,6 +353,7 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
       disposed = true;
       ptyQueue.dispose();
       claimed.clear();
+      localClaimed.clear();
       seenBlockers.clear();
     },
     replayUnreported

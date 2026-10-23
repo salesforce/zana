@@ -175,3 +175,26 @@ describe('planNormalizationNote', () => {
     expect(many.startsWith('The supplied plan was accepted after automatic normalization')).toBe(true);
   });
 });
+
+/**
+ * squad-bugs: parser/renderer precedence. What the host seeds must be the same
+ * plan the operator-facing surfaces describe: the earliest candidate that is a
+ * complete DAG wins, a later (even valid) candidate never overrides it, and
+ * example markers inside a fenced block are not executable steps.
+ */
+describe('resolveSquadPlan precedence (squad-bugs)', () => {
+  const planWith = (id: string) => validPlan.replace('### write:', `### ${id}:`);
+
+  it('seeds from the earliest valid source and ignores a later valid goal plan', () => {
+    const resolved = resolveSquadPlan('provided', [planWith('from-source'), planWith('from-goal')]);
+    expect(resolved.workUnits?.map((unit) => unit.id)).toEqual(['from-source']);
+  });
+
+  it('an invalid source does not mask a valid goal plan, and reports no planError', () => {
+    const invalid = '### broken: Broken <!-- executable-step -->\n\n- **Mode:** Mutating\n- **Work:** x.\n- **Verification:** y.';
+    const resolved = resolveSquadPlan('provided', [invalid, planWith('from-goal')]);
+    expect(resolved.coordinationMode).toBe('structured');
+    expect(resolved.workUnits?.map((unit) => unit.id)).toEqual(['from-goal']);
+    expect(resolved).not.toHaveProperty('planError');
+  });
+});

@@ -4,7 +4,7 @@
  * launches it. No I/O; shared by main, the MCP tools and the renderer.
  */
 import { z } from 'zod';
-import type { Persona } from './product.js';
+import type { Persona, SquadTransport } from './product.js';
 
 /** How the Squad's plan is produced: the orchestrator infers it, or the goal/sources provide it. */
 export type SquadPlanning = 'infer' | 'provided';
@@ -249,4 +249,35 @@ export function personaCanWriteFiles(
   if (p.executionState === 'plan') return false;
   if (p.codexSandbox === 'read-only') return false;
   return true;
+}
+
+/** How a planless coordinator hands its authored plan to the host on a given transport. */
+export type PlanAuthoringTransport = 'cli' | 'modern';
+
+export function planAuthoringTransportOf(transport: SquadTransport | undefined): PlanAuthoringTransport {
+  return transport === 'MODERN' ? 'modern' : 'cli';
+}
+
+const PLAN_REGISTER_DENIALS = [
+  'mcp__zcc-inbox__execution.plan.register',
+  'mcp__zcc-inbox__*',
+  'mcp__zcc-inbox'
+] as const;
+
+/**
+ * Whether a coordinator can both author a plan AND get it registered on its
+ * transport, i.e. whether "Infer plan from goal" can finish.
+ *  - CLI: the coordinator writes the plan file and the host rereads it on idle,
+ *    so it needs file-write ability ({@link personaCanWriteFiles}).
+ *  - Modern: the coordinator calls its bound `execution.plan.register` MCP tool
+ *    once and writes no file, so only a denied register tool blocks it.
+ */
+export function canAuthorAndRegisterPlan(
+  p: Pick<Persona, 'deniedTools' | 'permissionMode' | 'executionState' | 'codexSandbox'>,
+  ctx: { transport: PlanAuthoringTransport }
+): boolean {
+  const denied = p.deniedTools ?? [];
+  return ctx.transport === 'modern'
+    ? !PLAN_REGISTER_DENIALS.some((tool) => denied.includes(tool))
+    : personaCanWriteFiles(p);
 }

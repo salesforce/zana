@@ -19,6 +19,12 @@ export interface PlanCorrectionRecord {
   offeredUnits?: ExecutionWorkUnitInput[];
   approvedDigest?: string;
   approvedUnits?: ExecutionWorkUnitInput[];
+  /**
+   * `register`: the coordinator submits corrections through its bound
+   * `execution.plan.register` tool (Modern/ACP), so offered and approved units are
+   * the captured submission snapshot rather than a host-reread corrected file.
+   */
+  channel?: 'register';
 }
 
 interface StateFile { version: 1; revision: number; records: PlanCorrectionRecord[]; }
@@ -48,7 +54,8 @@ function validRecord(value: unknown): value is PlanCorrectionRecord {
     && (record.offeredDigest === undefined || typeof record.offeredDigest === 'string')
     && (record.offeredUnits === undefined || record.offeredUnits.every(validUnit))
     && (record.approvedDigest === undefined || typeof record.approvedDigest === 'string')
-    && (record.approvedUnits === undefined || record.approvedUnits.every(validUnit));
+    && (record.approvedUnits === undefined || record.approvedUnits.every(validUnit))
+    && (record.channel === undefined || record.channel === 'register');
 }
 
 /** Durable, execution-keyed consent ledger. Unknown/corrupt state is never treated as approval. */

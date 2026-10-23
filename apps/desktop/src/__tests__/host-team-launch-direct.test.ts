@@ -816,7 +816,8 @@ describe('launchTeam Modern structured path', () => {
       ['a remote project', () => { h.projects[0].remote = { host: 'ssh-box' }; h.projects[0].hostId = 'other-host'; }, {}, /requires a local project/],
       ['a native-recovery slot', () => {}, { nativeRecovery: true }, /cannot adopt CLI native recovery/],
       ['persona tool overrides', () => { h.personas[1] = persona('w1', { allowedTools: ['Bash'] }); }, {}, /tool or sandbox overrides/],
-      ['plan-only personas', () => { h.personas[1] = persona('w1', { permissionMode: 'plan' }); }, {}, /plan-only execution/]
+      ['plan-only personas', () => { h.personas[1] = persona('w1', { permissionMode: 'plan' }); }, {}, /plan-only execution/],
+      ['manual-approval (default) personas', () => { h.personas[1] = persona('w1', { permissionMode: 'default' }); }, {}, /manual-approval permission is not supported/]
     ] as const)('refuses %s before preflight or create', async (_label, arrange, slotExtra, message) => {
       arrange();
       const req = structuredReq();
@@ -1026,5 +1027,61 @@ describe('launchTeam Modern structured path', () => {
       // Capacity stays held: neither observation is exact terminal evidence.
       expect(lifecycle(req.launchRequestId).workers.find(worker => worker.threadId === member.bindingId)).toMatchObject({ capacityReleased: false });
     });
+
+    it('planless durable Modern coordinator registers once via MCP and gets no plan-file handoff (B1)', async () => {
+      const execution = await claimExecution(`exec-${reqId()}`);
+      const req = { ...structuredReq(), executionId: execution.id, jobContext: { objective: 'List root files' } };
+      const result = await launchTeam('team1', 'p1', req as never);
+      expect(result.ok).toBe(true);
+      const orchestrator = h.runtime.createSquadMember.mock.calls.map(([request]) => request).find((request) => request.role === 'orchestrator')!;
+      expect(orchestrator.prompt).toContain('`execution.plan.register` EXACTLY ONCE');
+      expect(orchestrator.prompt).not.toContain('.zana/execution-plan-');
+      expect(orchestrator.prompt).not.toContain('file-write tool');
+      expect(h.creates).toEqual([]);
+    });
+  });
+});
+
+describe('launchTeam CLI planless durable coordinator plan-file grant (B2)', () => {
+  const claimExecution = async () => (await h.squadOpts.store.claim({
+    callerPrincipalId: `cli-owner-${seq}`, projectId: 'p1', teamId: 'team1', jobTitle: 'Work', requestDigest: `digest-${reqId()}`,
+    launchRequestId: `exec-${reqId()}`, resolvedModels: [], request: { version: 1, slots: [{ initialTask: 'Work' }], resolvedModels: [] }
+  })).record as { id: string };
+  const launchPlanless = async () => {
+    const execution = await claimExecution();
+    const result = await launchTeam('team1', 'p1', {
+      callerPrincipalId: 'owner', launchRequestId: reqId(), coordinationMode: 'freeform', executionId: execution.id,
+      jobContext: { objective: 'List root files' },
+      slots: SLOT_IDS.map((slotId) => ({ slotId, initialTask: `task ${slotId}` }))
+    } as never);
+    expect(result.ok).toBe(true);
+    return { execution, orchestrator: h.creates.find((create) => create.cohort?.role === 'orchestrator') };
+  };
+
+  it('grants the orchestrator exactly its own plan file and keeps the file handoff prompt', async () => {
+    const { execution, orchestrator } = await launchPlanless();
+    const rel = `.zana/execution-plan-${execution.id}.md`;
+    expect(orchestrator.authoredPlanPaths).toEqual([
+      join(projectDir, rel),
+      join(projectDir, `.zana/execution-plan-corrected-${execution.id}.md`),
+      join(projectDir, `.zana/execution-plan-correction-${execution.id}.md`)
+    ]);
+    expect(JSON.stringify([orchestrator.openingPrompt, orchestrator.extraArgs])).toContain(`Write your COMPLETE portable-executable plan to \`${rel}\``);
+    expect(orchestrator.autonomous).toBe(false);
+    for (const worker of h.creates.filter((create) => create.cohort?.role === 'worker')) {
+      expect(worker.authoredPlanPaths).toBeUndefined();
+    }
+  });
+
+  it('gives no grant when the orchestrator persona cannot write files', async () => {
+    h.personas = [persona('orch', { deniedTools: ['Edit'] }), persona('w1'), persona('w2')];
+    const { orchestrator } = await launchPlanless();
+    expect(orchestrator.authoredPlanPaths).toBeUndefined();
+  });
+
+  it('gives no grant to a remote project PTY', async () => {
+    h.projects = [{ id: 'p1', name: 'Remote', path: projectDir, hostId: 'other-host', remote: { host: 'ssh-box' } }];
+    const { orchestrator } = await launchPlanless();
+    expect(orchestrator.authoredPlanPaths).toBeUndefined();
   });
 });

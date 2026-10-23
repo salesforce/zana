@@ -10,8 +10,13 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 import type { ExecutionWorkUnitInput } from '@zana-ai/zcc-server/services/execution/store';
 import {
   MAX_HANDOFF_FILE_BYTES,
+  PLAN_TRACE_REASON_MAX,
   TeamPlanHandoff,
   authoredPlanRelPath,
+  boundTraceReason,
+  createPlanTraceSink,
+  planBodyDigest,
+  planUnitsDigest,
   correctedPlanRelPath,
   cleanupHandoffFiles,
   readAuthoredPlan,
@@ -20,7 +25,8 @@ import {
   sourceMirrorRelPath,
   writeSourceMirror,
   type AuthoredPlanRead,
-  type CoordinatorHandoffContext
+  type CoordinatorHandoffContext,
+  type PlanHandoffTrace
 } from '../team-plan-handoff.js';
 import { createInferredPlanCorrection } from '../inferred-plan-correction.js';
 import { PlanCorrectionService } from '../plan-correction/service.js';
@@ -720,5 +726,161 @@ describe('TeamPlanHandoff register rejection routes through plan correction', ()
     await handoff.onCoordinatorIdle(ctx);
     expect(register).toHaveBeenCalledOnce();
     expect(nudge).not.toHaveBeenCalled();
+  });
+});
+
+describe('plan handoff correlation trace', () => {
+  const traceCtx: CoordinatorHandoffContext = { sessionId: 'sess-1', projectId: 'proj-1', projectRoot: '/root', executionId: 'ui:exec-1', slotId: 'slot-1' };
+  const units: ExecutionWorkUnitInput[] = [{ id: 'a', title: 'A', task: 'do a', dependencies: [] }];
+  const SECRET_BODY = 'TOP-SECRET-PLAN-BODY sk-live-abc123';
+
+  function traced(overrides: {
+    read?: AuthoredPlanRead;
+    register?: { ok: boolean; message?: string };
+    maxNudges?: number;
+    trace?: (event: PlanHandoffTrace) => void;
+    review?: ConstructorParameters<typeof TeamPlanHandoff>[0]['review'];
+  } = {}) {
+    const events: PlanHandoffTrace[] = [];
+    const register = vi.fn(async () => overrides.register ?? { ok: true });
+    const nudge = vi.fn();
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => overrides.read ?? { status: 'ok', units, realPath: '/root/.zana/execution-plan-ui_exec-1.md', bodyDigest: planBodyDigest(SECRET_BODY) },
+      register,
+      nudge,
+      cleanup: async () => {},
+      logError: () => {},
+      maxNudges: overrides.maxNudges,
+      review: overrides.review,
+      trace: overrides.trace ?? ((event) => events.push(event))
+    });
+    return { handoff, events, register, nudge };
+  }
+
+  it('digests bodies without carrying them and bounds reasons', () => {
+    const digest = planBodyDigest(SECRET_BODY);
+    expect(digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(digest).not.toContain('SECRET');
+    expect(planBodyDigest(SECRET_BODY)).toBe(digest);
+    expect(planBodyDigest(`${SECRET_BODY} `)).not.toBe(digest);
+    expect(boundTraceReason(undefined)).toBeUndefined();
+    expect(boundTraceReason('  a\n\n  b\tc ')).toBe('a b c');
+    const long = boundTraceReason('x'.repeat(1000))!;
+    expect(long).toHaveLength(PLAN_TRACE_REASON_MAX + 1);
+    expect(long.endsWith('…')).toBe(true);
+    expect(planUnitsDigest(units)).toBe(planUnitsDigest(units.map((unit) => ({ ...unit }))));
+  });
+
+  it('stamps bodyDigest on ok and invalid reads but not on missing or oversize files', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'zcc-plan-trace-'));
+    try {
+      expect(await readAuthoredPlan(root, 'exec-1')).toEqual({ status: 'missing' });
+      await mkdir(join(root, '.zana'), { recursive: true });
+      await writeFile(join(root, authoredPlanRelPath('exec-1')), VALID_PLAN, 'utf8');
+      expect(await readAuthoredPlan(root, 'exec-1')).toMatchObject({ status: 'ok', bodyDigest: planBodyDigest(VALID_PLAN) });
+      const bad = '### x: X <!-- executable-step -->\n\n- **Mode:** Mutating\n- **Work:** do x\n- **Verification:** check\n';
+      await writeFile(join(root, authoredPlanRelPath('exec-1')), bad, 'utf8');
+      expect(await readAuthoredPlan(root, 'exec-1')).toMatchObject({ status: 'invalid', bodyDigest: planBodyDigest(bad) });
+      await writeFile(join(root, authoredPlanRelPath('exec-1')), 'x'.repeat(MAX_HANDOFF_FILE_BYTES + 1), 'utf8');
+      const oversize = await readAuthoredPlan(root, 'exec-1');
+      expect(oversize.status).toBe('invalid');
+      expect('bodyDigest' in oversize).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('traces read and register with correlation ids, digests, and no plan body', async () => {
+    const { handoff, events, register } = traced();
+    await handoff.onCoordinatorIdle(traceCtx);
+    expect(register).toHaveBeenCalledOnce();
+    const base = { executionId: 'ui:exec-1', projectId: 'proj-1', slotId: 'slot-1', sessionId: 'sess-1', path: authoredPlanRelPath('ui:exec-1') };
+    expect(events).toEqual([
+      { ...base, stage: 'read', status: 'ok', resolvedFile: 'execution-plan-ui_exec-1.md', unitCount: 1, unitsDigest: planUnitsDigest(units), bodyDigest: planBodyDigest(SECRET_BODY) },
+      { ...base, stage: 'register', source: 'authored', registered: true, resolvedFile: 'execution-plan-ui_exec-1.md', unitCount: 1, unitsDigest: planUnitsDigest(units), bodyDigest: planBodyDigest(SECRET_BODY) }
+    ]);
+    const serialized = JSON.stringify(events);
+    expect(serialized).not.toContain('SECRET');
+    expect(serialized).not.toContain('do a');
+    expect(serialized).not.toContain('/root');
+  });
+
+  it('traces a corrected register source and a bounded rejection reason', async () => {
+    const corrected = { status: 'ok' as const, units: [{ ...units[0], id: 'b' }], realPath: '/root/.zana/execution-plan-corrected-ui_exec-1.md' };
+    const { handoff, events } = traced({ review: async () => corrected, register: { ok: false, message: `nope ${'r'.repeat(500)}` } });
+    await handoff.onCoordinatorIdle(traceCtx);
+    const reg = events.find((event) => event.stage === 'register')!;
+    expect(reg).toMatchObject({ source: 'corrected', registered: false, resolvedFile: 'execution-plan-corrected-ui_exec-1.md', unitsDigest: planUnitsDigest(corrected.units) });
+    expect('bodyDigest' in reg).toBe(false);
+    expect(reg.reason!.length).toBe(PLAN_TRACE_REASON_MAX + 1);
+  });
+
+  it('traces an approved register-channel plan as source=register with no file path', async () => {
+    const captured = { status: 'ok' as const, units: [{ ...units[0], id: 'c' }], realPath: '.zana/execution-plan-corrected-ui_exec-1.md', origin: 'register' as const };
+    const { handoff, events } = traced({ review: async () => captured });
+    await handoff.onCoordinatorIdle(traceCtx);
+    const reg = events.find((event) => event.stage === 'register')!;
+    expect(reg).toEqual({
+      executionId: 'ui:exec-1', projectId: 'proj-1', slotId: 'slot-1', sessionId: 'sess-1',
+      stage: 'register', source: 'register', registered: true, unitCount: 1, unitsDigest: planUnitsDigest(captured.units)
+    });
+    expect(JSON.stringify(reg)).not.toContain('corrected');
+  });
+
+  it('traces invalid reads, nudges, and exhaustion with bounded reasons', async () => {
+    const { handoff, events, nudge } = traced({ read: { status: 'invalid', reason: `bad\n${'z'.repeat(400)}`, bodyDigest: 'sha256:x' }, maxNudges: 1 });
+    await handoff.onCoordinatorIdle(traceCtx);
+    await handoff.onCoordinatorIdle(traceCtx);
+    expect(nudge).toHaveBeenCalledOnce();
+    expect(events.map((event) => event.stage)).toEqual(['read', 'nudge', 'read', 'nudge-exhausted']);
+    expect(events[0]).toMatchObject({ status: 'invalid', bodyDigest: 'sha256:x' });
+    expect(events[0].reason!.startsWith('bad z')).toBe(true);
+    expect(events[0].reason!.length).toBe(PLAN_TRACE_REASON_MAX + 1);
+    expect(events[1]).toMatchObject({ nudges: 1 });
+    expect(events[3]).toMatchObject({ nudges: 1 });
+  });
+
+  it('traces a missing read without a body digest or resolved file', async () => {
+    const { handoff, events } = traced({ read: { status: 'missing' }, maxNudges: 0 });
+    await handoff.onCoordinatorIdle(traceCtx);
+    expect(events[0]).toEqual({ executionId: 'ui:exec-1', projectId: 'proj-1', slotId: 'slot-1', sessionId: 'sess-1', path: authoredPlanRelPath('ui:exec-1'), stage: 'read', status: 'missing' });
+    expect(events[1].stage).toBe('nudge-exhausted');
+  });
+
+  it('a throwing trace sink never changes registration or nudging', async () => {
+    const ok = traced({ trace: () => { throw new Error('sink down'); } });
+    await ok.handoff.onCoordinatorIdle(traceCtx);
+    expect(ok.register).toHaveBeenCalledOnce();
+    const bad = traced({ read: { status: 'missing' }, trace: () => { throw new Error('sink down'); } });
+    await bad.handoff.onCoordinatorIdle(traceCtx);
+    expect(bad.nudge).toHaveBeenCalledOnce();
+  });
+
+  it('host sink stamps the current attempt/stateVersion generation', async () => {
+    const log = vi.fn();
+    const generation = vi.fn(async () => ({ attempt: 2, stateVersion: 7 }));
+    const sink = createPlanTraceSink({ generation, log });
+    const event: PlanHandoffTrace = { executionId: 'ui:exec-1', projectId: 'proj-1', slotId: 'slot-1', sessionId: 'sess-1', stage: 'read', path: 'p', status: 'missing' };
+    sink(event);
+    await vi.waitFor(() => expect(log).toHaveBeenCalledOnce());
+    expect(generation).toHaveBeenCalledWith('proj-1', 'ui:exec-1');
+    expect(log.mock.calls[0][0]).toBe('squad plan trace read');
+    expect(JSON.parse(log.mock.calls[0][1])).toEqual({ ...event, attempt: 2, stateVersion: 7 });
+  });
+
+  it('host sink logs unstamped when the record is gone or lookup fails, and absorbs log failures', async () => {
+    const event: PlanHandoffTrace = { executionId: 'e', projectId: 'p', slotId: 's', sessionId: 'x', stage: 'nudge', path: 'p', nudges: 1 };
+    const missingLog = vi.fn();
+    createPlanTraceSink({ generation: async () => undefined, log: missingLog })(event);
+    await vi.waitFor(() => expect(missingLog).toHaveBeenCalledOnce());
+    expect(JSON.parse(missingLog.mock.calls[0][1])).toEqual(event);
+    const failingLog = vi.fn();
+    createPlanTraceSink({ generation: async () => { throw new Error('db'); }, log: failingLog })(event);
+    await vi.waitFor(() => expect(failingLog).toHaveBeenCalledOnce());
+    expect(JSON.parse(failingLog.mock.calls[0][1])).toEqual(event);
+    const throwingLog = vi.fn(() => { throw new Error('log down'); });
+    expect(() => createPlanTraceSink({ generation: async () => undefined, log: throwingLog })(event)).not.toThrow();
+    await vi.waitFor(() => expect(throwingLog).toHaveBeenCalledOnce());
   });
 });

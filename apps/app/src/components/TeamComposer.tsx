@@ -39,6 +39,8 @@ import {
   composerDropProjectRoot,
   stageRemoteComposerAttachments
 } from './legacy-agent-home.js';
+import { NO_TARGET, squadTargetOptions, squadTargetSelector } from './team-composer-target.js';
+import type { Worktree } from '@zana-ai/zcc-domain/product';
 import { platformShortcut } from '../lib/platformShortcut.js';
 import { sortCatalogueByName } from '../lib/catalogue-sort.js';
 
@@ -89,6 +91,8 @@ export function TeamComposer({
   const prefillSourcesGuardRef = useRef(Boolean(prefill?.sources.length));
   const [pickingSources, setPickingSources] = useState(false);
   const [launching, setLaunching] = useState(false);
+  const [targetValue, setTargetValue] = useState(NO_TARGET);
+  const [worktrees, setWorktrees] = useState<Worktree[]>([]);
   const [error, setError] = useState<string | null>(null);
   const jobSourcesRef = useRef(jobSources);
   jobSourcesRef.current = jobSources;
@@ -101,6 +105,22 @@ export function TeamComposer({
   const project = pinnedProject ?? launchProjects.find((candidate) => candidate.id === projectId);
   const sortedTeams = useMemo(() => sortCatalogueByName(teams), [teams]);
   const selectedTeam = teams.find((team) => team.id === teamId);
+
+  // The picker needs at least one linked worktree beyond Default + Project root. Existing worktrees are offered by branch only for local Projects; main re-resolves the selector at launch.
+  const projectPath = project?.path;
+  const projectIsRemote = Boolean(project?.remote);
+  useEffect(() => {
+    setTargetValue(NO_TARGET);
+    setWorktrees([]);
+    if (!projectPath || projectIsRemote) return;
+    let cancelled = false;
+    product.git.listWorktrees(projectPath).then(
+      (list) => { if (!cancelled) setWorktrees(list); },
+      () => undefined
+    );
+    return () => { cancelled = true; };
+  }, [projectPath, projectIsRemote]);
+  const targetOptions = useMemo(() => squadTargetOptions(worktrees), [worktrees]);
 
   const field = useComposerPromptField({
     placeholder: platformShortcut('Describe the GOAL for the squad to reach (⌘↵ to launch). Attach or drop supporting files.'),
@@ -269,6 +289,7 @@ export function TeamComposer({
         goal,
         coordinationMode,
         ...(prefill ? { proposalId: prefill.proposalId } : {}),
+        ...(squadTargetSelector(targetValue) ? { target: squadTargetSelector(targetValue) } : {}),
         ...(title.trim() ? { title: title.trim() } : {}),
         ...(summary.trim() ? { summary: summary.trim() } : {}),
         ...(jobSources.length ? { sourceCapabilityIds: jobSources.map(({ id }) => id) } : {})
@@ -455,6 +476,18 @@ export function TeamComposer({
                     }}
                   />
                 </div>
+                {!projectIsRemote && targetOptions.length > 2 ? (
+                  <div className="thread-command-chip">
+                    <PopoverPicklist
+                      id="team-target"
+                      value={targetValue}
+                      ariaLabel="Squad target"
+                      searchable={targetOptions.length > 6}
+                      options={targetOptions}
+                      onChange={setTargetValue}
+                    />
+                  </div>
+                ) : null}
               </div>
               <div className="thread-command-footer-end">
                 <span className="composer-control-tooltip" data-tooltip={field.canAttach ? 'Attach files' : 'Attachments are unavailable while sending'}>

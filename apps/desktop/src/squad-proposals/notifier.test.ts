@@ -917,3 +917,154 @@ describe('Inbox fallback when the report target is gone', () => {
     expect(deps.appendInbox).not.toHaveBeenCalled();
   });
 });
+
+describe('local Composer runs (no reportTo, no proposal)', () => {
+  const local = (over: Partial<ExecutionRecord> = {}) =>
+    record({ proposal: undefined, callerPrincipalId: 'interactive:local', ...over } as never);
+
+  it.each([['COMPLETED', 'completed'], ['FAILED', 'failed'], ['STOPPED', 'stopped']])('posts one Inbox result for %s', async (state, word) => {
+    const rec = local({ state: state as never });
+    const { deps, notifier } = setup({}, () => rec);
+    await notifier.onTerminal(rec);
+    expect(deps.appendInbox).toHaveBeenCalledOnce();
+    expect(deps.appendInbox).toHaveBeenCalledWith(expect.objectContaining({
+      subject: `Squad ${word}: Ship it`, executionId: 'e1', dedupeKey: 'squad-local-result:e1:1', report: true, squadNotice: 'proposal-result'
+    }));
+    expect(deps.markReported).not.toHaveBeenCalled();
+    expect(deps.reply).not.toHaveBeenCalled();
+    expect(deps.queueThreadTurn).not.toHaveBeenCalled();
+  });
+
+  it('does not double-report the same attempt, in flight or after', async () => {
+    const rec = local();
+    const { deps, notifier } = setup({}, () => rec);
+    await Promise.all([notifier.onTerminal(rec), notifier.onTerminal(rec)]);
+    await notifier.onTerminal(rec);
+    expect(deps.appendInbox).toHaveBeenCalledOnce();
+  });
+
+  it('marks a durable local run reported after the Inbox post, once', async () => {
+    const rec = local({ localReport: true } as never);
+    const { deps, notifier } = setup({}, () => rec);
+    await notifier.onTerminal(rec);
+    await notifier.onTerminal(rec);
+    expect(deps.appendInbox).toHaveBeenCalledOnce();
+    expect(deps.markReported).toHaveBeenCalledOnce();
+    expect(deps.markReported).toHaveBeenCalledWith('e1', 1);
+  });
+
+  it('does not mark when the Inbox post fails, and a mark failure is logged only', async () => {
+    const rec = local({ localReport: true } as never);
+    const failing = setup({ appendInbox: vi.fn(async () => { throw new Error('inbox down'); }) }, () => rec);
+    await failing.notifier.onTerminal(rec);
+    expect(failing.deps.markReported).not.toHaveBeenCalled();
+    const markFails = setup({ markReported: vi.fn(async () => { throw new Error('store down'); }) }, () => rec);
+    await markFails.notifier.onTerminal(rec);
+    expect(markFails.deps.appendInbox).toHaveBeenCalledOnce();
+    expect(markFails.deps.log).toHaveBeenCalledWith(expect.stringContaining('mark failed'), expect.any(Error));
+  });
+
+  it('replays an unmarked durable local run after restart, then not once marked', async () => {
+    const rec = local({ localReport: true } as never);
+    const listUnreported = vi.fn(async () => [rec]);
+    const { deps, notifier } = setup({ listUnreported }, () => rec);
+    await notifier.onTerminal(rec);
+    expect(deps.appendInbox).not.toHaveBeenCalled();
+    await notifier.replayUnreported();
+    await notifier.replayUnreported();
+    expect(deps.appendInbox).toHaveBeenCalledOnce();
+    expect(deps.markReported).toHaveBeenCalledWith('e1', 1);
+    // Next boot: the store lists nothing, and a marked record handed in directly is skipped.
+    const marked = local({ localReport: true, reportNoticeVersion: 1 } as never);
+    const next = setup({ listUnreported: vi.fn(async () => [marked]) }, () => marked);
+    await next.notifier.replayUnreported();
+    await next.notifier.onTerminal(marked);
+    expect(next.deps.appendInbox).not.toHaveBeenCalled();
+    expect(next.deps.markReported).not.toHaveBeenCalled();
+  });
+
+  it('replay ignores target-less records that are not durable local runs and tolerates a failing list', async () => {
+    const legacy = local();
+    const a = setup({ listUnreported: vi.fn(async () => [legacy]) });
+    await a.notifier.replayUnreported();
+    expect(a.deps.appendInbox).not.toHaveBeenCalled();
+    const b = setup({ listUnreported: vi.fn(async () => { throw new Error('boom'); }) });
+    await b.notifier.replayUnreported();
+    expect(b.deps.log).toHaveBeenCalled();
+  });
+
+  it('never reports a plan-correction stop, other principals or non-terminal runs', async () => {
+    const { deps, notifier } = setup({}, () => local());
+    await notifier.onTerminal(local({ state: 'STOPPED' as never, timeoutReason: 'plan-correction-cancelled' }));
+    await notifier.onTerminal(local({ callerPrincipalId: 'pty:abc' }));
+    await notifier.onTerminal(local({ state: 'RUNNING' as never }));
+    expect(deps.appendInbox).not.toHaveBeenCalled();
+  });
+
+  it('waits while worktree terminal effects are pending, then reports with the outcome', async () => {
+    const pending = local({ stateVersion: 4, squadWorktree: { path: '/wt', branch: 'sq', baseBranch: 'main' } } as never);
+    const { deps, notifier } = setup({}, () => pending);
+    await notifier.onTerminal(pending);
+    expect(deps.appendInbox).not.toHaveBeenCalled();
+    await notifier.onTerminal(pending, { worktree: 'merged' });
+    expect(deps.appendInbox).toHaveBeenCalledWith(expect.objectContaining({ subject: 'Squad completed: Ship it', comments: expect.stringContaining('merged') }));
+  });
+
+  it('does not call a retained worktree a completion', async () => {
+    const rec = local({ squadWorktree: { path: '/wt', branch: 'sq', baseBranch: 'main' } } as never);
+    const { deps, notifier } = setup({}, () => rec);
+    await notifier.onTerminal(rec, { worktree: 'kept' });
+    expect(deps.appendInbox).toHaveBeenCalledWith(expect.objectContaining({ subject: 'Squad ended, worktree kept: Ship it' }));
+  });
+
+  it('calls a user-owned project-root target completed, not kept', async () => {
+    const rec = local({ squadWorktree: { path: '/proj', branch: 'main', ownership: 'user', targetKind: 'project-root' } } as never);
+    const { deps, notifier } = setup({}, () => rec);
+    await notifier.onTerminal(rec, { worktree: 'kept' });
+    expect(deps.appendInbox).toHaveBeenCalledWith(expect.objectContaining({ subject: 'Squad completed: Ship it' }));
+  });
+
+  it('calls a user-owned linked worktree target completed', async () => {
+    const rec = local({ squadWorktree: { path: '/linked', branch: 'feat', ownership: 'user', targetKind: 'linked-worktree' } } as never);
+    const { deps, notifier } = setup({}, () => rec);
+    await notifier.onTerminal(rec, { worktree: 'kept' });
+    expect(deps.appendInbox).toHaveBeenCalledWith(expect.objectContaining({ subject: 'Squad completed: Ship it' }));
+  });
+
+  it('keeps the worktree-kept wording for a retained managed worktree', async () => {
+    const rec = local({ squadWorktree: { path: '/wt', branch: 'sq', baseBranch: 'main', ownership: 'managed' } } as never);
+    const { deps, notifier } = setup({}, () => rec);
+    await notifier.onTerminal(rec, { worktree: 'kept' });
+    expect(deps.appendInbox).toHaveBeenCalledWith(expect.objectContaining({ subject: 'Squad ended, worktree kept: Ship it' }));
+  });
+
+  it('calls a run with no worktree completed', async () => {
+    const rec = local();
+    const { deps, notifier } = setup({}, () => rec);
+    await notifier.onTerminal(rec);
+    expect(deps.appendInbox).toHaveBeenCalledWith(expect.objectContaining({ subject: 'Squad completed: Ship it' }));
+  });
+
+  it('retries after a failed post, and ignores a record re-read as another attempt', async () => {
+    const rec = local();
+    const appendInbox = vi.fn().mockRejectedValueOnce(new Error('disk')).mockResolvedValue(undefined);
+    const { deps, notifier } = setup({ appendInbox }, () => rec);
+    await notifier.onTerminal(rec);
+    await notifier.onTerminal(rec);
+    expect(deps.appendInbox).toHaveBeenCalledTimes(2);
+    const other = setup({}, () => local({ attempt: 2 }));
+    await other.notifier.onTerminal(local());
+    expect(other.deps.appendInbox).not.toHaveBeenCalled();
+  });
+
+  it('does nothing after dispose, and a reportTo run keeps the normal path', async () => {
+    const d = setup({}, () => local());
+    d.notifier.dispose();
+    await d.notifier.onTerminal(local());
+    expect(d.deps.appendInbox).not.toHaveBeenCalled();
+    const owned = setup({}, () => record());
+    await owned.notifier.onTerminal(record());
+    expect(owned.deps.appendInbox).toHaveBeenCalledWith(expect.objectContaining({ dedupeKey: 'squad-proposal-result:e1:1' }));
+    expect(owned.deps.markReported).toHaveBeenCalledWith('e1', 1);
+  });
+});

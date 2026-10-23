@@ -476,7 +476,8 @@ describe('host bootstrap wiring', () => {
     const launch = host.resolveEffectiveLaunch({ worktreeInfo: { path: `${squadBase}/squad-1`, branch: 'b' } } as never, project);
     expect(launch.worktree?.branch).toBe('b');
     expect(host.revalidateEffectiveLaunch(launch, project)).toEqual({ ok: true });
-    const outside = { ...launch, cwd: root, trustedPath: root };
+    // A user-owned squad target may be the project root itself; anything beyond the project stays rejected.
+    const outside = { ...launch, cwd: h.root, trustedPath: h.root };
     expect(host.revalidateEffectiveLaunch(outside, project)).toEqual({ ok: false, reason: 'effective launch path changed after preflight' });
     const escaped = host.resolveEffectiveLaunch({ worktreeInfo: { path: h.root, branch: 'b' } } as never, project);
     expect(escaped.worktree).toBeUndefined();
@@ -624,6 +625,7 @@ describe('host bootstrap wiring', () => {
     expect(typeof o.claimRecoveryObserveEnabled()).toBe('boolean');
     expect(typeof o.claimRecoveryEnforceEnabled()).toBe('boolean');
     expect(typeof o.planStartupGraceMs()).toBe('number');
+    await expect(o.isPlanCorrectionOpen('no-such-execution')).resolves.toBe(false);
     expect(typeof o.routeFitObserveEnabled()).toBe('boolean');
     const tryIt = (fn: () => unknown) => { try { return fn(); } catch { return undefined; } };
     tryIt(() => o.getAgentState('owner-live'));

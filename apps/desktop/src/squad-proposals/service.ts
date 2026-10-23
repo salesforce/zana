@@ -3,7 +3,8 @@ import type { InboxEntry, Persona, Team, TeamJobLaunchResponse } from '@zana-ai/
 import {
   LAUNCH_REVIEW_REQUIRED_MESSAGE,
   SQUAD_PROPOSAL_LIMITS,
-  personaCanWriteFiles,
+  canAuthorAndRegisterPlan,
+  planAuthoringTransportOf,
   planningToCoordinationMode,
   squadGoalTooLongMessage,
   squadSummaryTooLongMessage,
@@ -259,10 +260,13 @@ async function prepare(
   if (refusedGoalPath) {
     return fail('SOURCE_NOT_ALLOWED', `The goal names ${refusedGoalPath.path}, which can't be attached. ${sourcePolicyText(scope?.policy)} Remove the path from the goal, or name a file that can be.`);
   }
-  const planning: SquadPlanning = planningInput ?? team.defaultPlanning ?? (personaCanWriteFiles(orchestrator) ? 'infer' : 'provided');
-  if (planning === 'infer' && !personaCanWriteFiles(orchestrator)) {
+  const transport = planAuthoringTransportOf(team.transport);
+  const canInfer = canAuthorAndRegisterPlan(orchestrator, { transport });
+  const planning: SquadPlanning = planningInput ?? team.defaultPlanning ?? (canInfer ? 'infer' : 'provided');
+  if (planning === 'infer' && !canInfer) {
+    const reason = transport === 'modern' ? "can't call execution.plan.register" : "can't write files";
     return fail('ORCHESTRATOR_CANNOT_PLAN',
-      `${orchestrator.name} can't write files, so Infer plan from goal can't finish. Write a portable plan, check it with squad_plan_check, and propose with planning 'provided'.`);
+      `${orchestrator.name} ${reason}, so Infer plan from goal can't finish. Write a portable plan, check it with squad_plan_check, and propose with planning 'provided'.`);
   }
   let planSteps: SquadPlanStep[] | undefined;
   if (planning === 'provided') {

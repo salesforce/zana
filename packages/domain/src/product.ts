@@ -1367,6 +1367,62 @@ export function isDurableCoordination(mode: TeamCoordinationMode | undefined): b
 }
 
 /**
+ * Trusted selector for an existing, user-owned execution target. It names a
+ * target by role and branch only — never by a raw host path — and main
+ * resolves it against the registered project's own git worktree list.
+ * `project-root` is the registered checkout; `worktree` is a non-main
+ * worktree of the same repository whose current branch is `branch`.
+ */
+export type SquadExecutionTargetSelector =
+  | { kind: 'project-root' }
+  | { kind: 'worktree'; branch: string };
+
+/** Who owns a squad execution target's lifecycle. Absent on legacy records means `managed`. */
+export type SquadWorktreeOwnership = 'managed' | 'user';
+
+const TARGET_BRANCH_MAX = 200;
+
+/** Shape check for a git branch name supplied in a target selector (no refspec tricks, no paths up). */
+export function isSafeTargetBranch(branch: unknown): branch is string {
+  if (typeof branch !== 'string' || !branch || branch.length > TARGET_BRANCH_MAX) return false;
+  if (branch.startsWith('-') || branch.startsWith('/') || branch.endsWith('/') || branch.endsWith('.')
+    || branch.endsWith('.lock') || branch.includes('..') || branch.includes('//') || branch.includes('@{')) return false;
+  return /^[A-Za-z0-9._/-]+$/.test(branch);
+}
+
+export function isSquadExecutionTargetSelector(value: unknown): value is SquadExecutionTargetSelector {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (record.kind === 'project-root') return keys.length === 1;
+  if (record.kind === 'worktree') return keys.length === 2 && isSafeTargetBranch(record.branch);
+  return false;
+}
+
+/**
+ * Deterministic admission rule for a target selector next to the legacy
+ * generated-worktree flag:
+ * - selector absent: legacy `worktree` boolean semantics are unchanged;
+ * - selector invalid: reject (never fall back to a generated worktree);
+ * - selector + `worktree: true`: reject as conflicting;
+ * - selector + `worktree: false`: the selector wins (false only opts out of generation);
+ * - selector + `onComplete` `merge`/`delete`: reject, a user-owned target is never merged or removed.
+ */
+export function validateSquadExecutionTarget(input: {
+  target?: unknown;
+  worktree?: boolean;
+  onComplete?: 'leave' | 'merge' | 'delete';
+}): { ok: true; target?: SquadExecutionTargetSelector } | { ok: false; message: string } {
+  if (input.target === undefined) return { ok: true };
+  if (!isSquadExecutionTargetSelector(input.target)) return { ok: false, message: 'invalid execution target selector' };
+  if (input.worktree === true) return { ok: false, message: 'execution target conflicts with a generated worktree request' };
+  if (input.onComplete === 'merge' || input.onComplete === 'delete') {
+    return { ok: false, message: `a user-owned execution target cannot use onComplete '${input.onComplete}'` };
+  }
+  return { ok: true, target: input.target };
+}
+
+/**
  * Canonical name for a PTY-spawned coding agent. Same shape as
  * {@link TerminalSession}; Threads use a separate domain type and must not
  * share this map, RPC, or event log.
@@ -4471,6 +4527,8 @@ export interface TeamLaunchRequestInput {
   worktree?: boolean;
   /** Main-owned terminal disposition for an execution-owned shared worktree. */
   onComplete?: 'leave' | 'merge' | 'delete';
+  /** Main-resolved existing user-owned target; see {@link validateSquadExecutionTarget}. */
+  target?: SquadExecutionTargetSelector;
   /** Main-only immutable execution display title for Team session cohorts. */
   executionJobTitle?: string;
   /** Main-derived admission digest; launch revalidates it before spawning. */
@@ -6404,6 +6462,8 @@ export interface TeamJobLaunchInput {
   coordinationMode?: Extract<TeamCoordinationMode, 'structured' | 'freeform'>;
   /** Main-held Squad proposal id. Only valid from a desktop window; main re-authorizes it. */
   proposalId?: string;
+  /** Existing user-owned execution target by role/branch. Absent keeps legacy behavior; main resolves and revalidates it. */
+  target?: SquadExecutionTargetSelector;
 }
 
 /** Safe renderer projection for a main-owned, short-lived selected-file capability. */
