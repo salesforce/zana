@@ -1,12 +1,14 @@
-import { useLocation } from 'react-router-dom';
+import { matchPath, useLocation } from 'react-router-dom';
 import {
   INITIAL_STORED_ROUTE_MEMORY,
   nextStoredRouteMemory,
   resolveProjectBackPath,
+  shellRouteKind,
   visibleRouteMemory,
   type AppSettingsRouteMemory,
   type StoredRouteMemory
 } from '../lib/route-memory.js';
+import { PROJECT_SETTINGS_ROUTE_PATH, getLocationRoutePath } from '../lib/route-paths.js';
 
 /**
  * Module-level so ProjectScopedNav still sees the last non-project path after
@@ -15,6 +17,8 @@ import {
  */
 let storedMemory: StoredRouteMemory = { ...INITIAL_STORED_ROUTE_MEMORY };
 let recordedLocationKey = '';
+/** Last app route that wasn't a project's Settings: where closing it returns. */
+let lastRouteBeforeProjectSettings = '/';
 
 function locationKey(location: { pathname: string; search: string; hash: string }): string {
   return `${location.pathname}${location.search}${location.hash}`;
@@ -25,17 +29,26 @@ function rememberLocation(location: { pathname: string; search: string; hash: st
   if (key === recordedLocationKey) return;
   recordedLocationKey = key;
   storedMemory = nextStoredRouteMemory(storedMemory, location);
+  if (shellRouteKind(location.pathname) === 'app' && !matchPath(PROJECT_SETTINGS_ROUTE_PATH, location.pathname)) {
+    lastRouteBeforeProjectSettings = getLocationRoutePath(location);
+  }
 }
 
 /** Test-only: drop remembered paths so files don't leak across workers. */
 export function resetAppSettingsRouteMemory(): void {
   storedMemory = { ...INITIAL_STORED_ROUTE_MEMORY };
   recordedLocationKey = '';
+  lastRouteBeforeProjectSettings = '/';
 }
 
 /** The "Back to app" destination from Settings, for callers outside React. */
 export function getRememberedAppRoutePath(): string {
   return resolveProjectBackPath(storedMemory.lastAppRoutePath);
+}
+
+/** The app route seen last before a project's Settings, for callers outside React. */
+export function getRouteBeforeProjectSettings(): string {
+  return lastRouteBeforeProjectSettings;
 }
 
 /**

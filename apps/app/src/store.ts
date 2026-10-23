@@ -76,7 +76,10 @@ import {
   getSettingsTabRoutePath
 } from './lib/route-paths.js';
 import { resolveProjectBackPath } from './lib/route-memory.js';
-import { getRememberedAppRoutePath } from './hooks/useAppSettingsRouteMemory.js';
+import {
+  getRememberedAppRoutePath,
+  getRouteBeforeProjectSettings
+} from './hooks/useAppSettingsRouteMemory.js';
 import {
   EMPTY_HOST_INSTALL_DRAWER,
   reduceHostInstallAppend,
@@ -1250,7 +1253,14 @@ export const useUi = create<UiState>((set, get) => ({
       return;
     }
     if (projectId) {
-      s.setProjectView(projectId, s.projectView[projectId] ?? 'agents');
+      // Back to the project route it was opened from (a schedule, a thread…),
+      // else to the project's last view.
+      const before = new URL(getRouteBeforeProjectSettings(), 'http://zcc.local');
+      if (decodeRoutePath(before.pathname, before.hash, before.search).focusedProjectId === projectId) {
+        applyDestination(set, `${before.pathname}${before.search}${before.hash}`);
+      } else {
+        s.setProjectView(projectId, s.projectView[projectId] ?? 'agents');
+      }
       return;
     }
     applyDestination(set, getRememberedAppRoutePath());

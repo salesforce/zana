@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   getRememberedAppRoutePath,
+  getRouteBeforeProjectSettings,
   resetAppSettingsRouteMemory,
   useAppSettingsRouteMemory
 } from '../useAppSettingsRouteMemory.js';
@@ -72,5 +73,21 @@ describe('useAppSettingsRouteMemory', () => {
     visit('/projects/p1/settings');
     visit('/settings');
     expect(getRememberedAppRoutePath()).toBe('/agents');
+  });
+
+  it("remembers the app route before a project's Settings, skipping Settings pages", () => {
+    const visit = (path: string) =>
+      renderToStaticMarkup(
+        <MemoryRouter initialEntries={[path]}>
+          <Probe onPath={() => {}} />
+        </MemoryRouter>
+      );
+    expect(getRouteBeforeProjectSettings()).toBe('/');
+    visit('/projects/p1/scheduler?tab=runs');
+    visit('/projects/p1/settings');
+    visit('/settings/terminal');
+    expect(getRouteBeforeProjectSettings()).toBe('/projects/p1/scheduler?tab=runs');
+    visit('/inbox');
+    expect(getRouteBeforeProjectSettings()).toBe('/inbox');
   });
 });
