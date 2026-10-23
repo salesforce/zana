@@ -206,3 +206,12 @@ it('rejects when the grant is revoked during the decision', async () => {
   const f = nativeFixture(async () => { f.authority.revoke(grant.sessionId); return { action: 'allow' }; });
   await expect(f.forward(nativeInput())).rejects.toMatchObject({ status: 403 });
 });
+it('logs a failed policy decision with the session prefix and a bounded message, still denying', async () => {
+  const log = vi.fn();
+  const f = nativeFixture(); f.options.log = log; f.plugins.decideToolPolicy.mockRejectedValue(new Error('x'.repeat(500)));
+  expect(replyOf(await f.forward(nativeInput())).permissionDecision).toBe('deny');
+  expect(log).toHaveBeenCalledOnce();
+  const line = String(log.mock.calls[0]![0]);
+  expect(line).toContain(`[cli-callback] decision failed for session ${grant.sessionId.slice(0, 8)}`);
+  expect(line.length).toBeLessThan(300);
+});

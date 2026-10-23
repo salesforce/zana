@@ -1,5 +1,5 @@
 import {
-  CLI_CALLBACK_MAX_BODY_BYTES, CLI_CALLBACK_MAX_RESPONSE_BYTES, CliCallbackGrantSchema,
+  CLI_CALLBACK_MAX_ACTIVE_NATIVE_TOOL, CLI_CALLBACK_MAX_BODY_BYTES, CLI_CALLBACK_MAX_RESPONSE_BYTES, CliCallbackGrantSchema,
   CliCallbackRequestSchema, CliCallbackResponseSchema, cliCallbackPaths, isCliNativeToolPath,
   type CliCallbackGrant, type CliCallbackWireResponse
 } from '@zana-ai/zcc-contracts/cli-callbacks';
@@ -12,7 +12,7 @@ import { decideMainOwnedToolPolicy } from '../../plugins/native-tool-policy.js';
 const NATIVE_TOOL_POLICY_TIMEOUT_MS = 3_000;
 /** Per session; a global ceiling still bounds all sessions together. */
 const MAX_PENDING_NATIVE_TOOL_PER_SESSION = 8;
-const MAX_PENDING_NATIVE_TOOL = 64;
+const MAX_PENDING_NATIVE_TOOL = CLI_CALLBACK_MAX_ACTIVE_NATIVE_TOOL;
 
 interface SessionOwner { projectId: string; hostId: string; daemonInstanceId: string; active: boolean; profile?: string }
 interface Grant {
@@ -55,6 +55,8 @@ export class CliCallbackAuthority {
     mcpBaseUrl(): string | null;
     /** Read late: plugins attach to the product context after the authority exists. */
     plugins?(): Parameters<typeof decideMainOwnedToolPolicy>[0];
+    /** Policy failures are denials; this records why. Defaults to console.warn. */
+    log?(message: string): void;
     fetch?: typeof fetch;
     timeoutMs?: number;
   }) {}
@@ -112,6 +114,7 @@ export class CliCallbackAuthority {
           return id === sessionId && owner?.active && owner.profile && this.current(grant)
             ? { id, projectId, profile: owner.profile, status: 'running' } : null;
         },
+        log: message => (this.options.log ?? console.warn)(`[cli-callback] ${message}`),
         decider: () => request => decideMainOwnedToolPolicy(this.options.plugins?.(), request)
       });
       const verdict = await Promise.race([
