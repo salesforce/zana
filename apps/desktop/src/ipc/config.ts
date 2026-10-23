@@ -65,8 +65,12 @@ export function registerConfigIpc(): void {
         if (next.menubarPopoverEnabled !== true) ctx.menubar?.hide();
         ctx.tray?.refreshSurface();
       }
-      // Theme change re-themes an open popover on its next push.
-      if (patch.theme !== undefined) ctx.menubar?.refresh();
+      // Theme change re-themes an open popover on its next push, and the
+      // Windows caption buttons of every window now.
+      if (patch.theme !== undefined) {
+        ctx.menubar?.refresh();
+        ctx.refreshTitleBarOverlays();
+      }
       // Fan the new config out to EVERY window so other windows (per-project
       // windows, the focus window) refresh their mirrored feature flags live.
       // Without this a flag toggled off in one window (e.g. Follow-ups) keeps

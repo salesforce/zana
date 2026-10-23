@@ -13,6 +13,7 @@ import {
   confirmExport,
   confirmLoadAll,
   emptyOrgMessage,
+  isBareCountQuery,
   newRequestId,
   orgChip,
   productionBanner
@@ -89,6 +90,9 @@ ${STUDIO_TOKENS}.sf-soql { height: 100%; min-height: 0; display: flex; flex-dire
 .sf-soql-table th, .sf-soql-table td { border-bottom: 1px solid var(--sf-border); padding: 6px 8px; text-align: left; white-space: nowrap; }
 .sf-soql-table th { position: sticky; top: 0; background: var(--sf-elevated); }
 .sf-soql-empty { padding: 16px; font-size: 12px; color: var(--sf-muted); }
+.sf-soql-count { padding: 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; color: var(--sf-muted); }
+.sf-soql-count strong { font-size: 20px; font-weight: 600; color: var(--sf-text); }
+.sf-soql-count-hint { flex-basis: 100%; margin: 0; font-size: 12px; color: var(--sf-muted); }
 .sf-soql-history { width: 260px; flex-shrink: 0; border-left: 1px solid var(--sf-border); background: var(--sf-sunken); overflow: auto; }
 .sf-soql-history-row { display: flex; align-items: center; }
 .sf-soql-search-table { height: 28px; width: 160px; font: inherit; font-size: 12px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--sf-border); background: var(--sf-sunken); color: var(--sf-text); }
@@ -494,6 +498,7 @@ export function SoqlExplorerPanel(props: { pluginId: string; projectId?: string;
                 totalSize={result?.totalSize}
                 hasMore={Boolean(result?.nextRecordsUrl)}
                 busy={busy}
+                countQuery={isBareCountQuery(result?.soql)}
                 onLoadMore={() => void loadMore(false)}
                 onLoadAll={() => void loadMore(true)}
               />

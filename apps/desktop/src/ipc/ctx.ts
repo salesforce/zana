@@ -89,6 +89,7 @@ export interface IpcCtx {
   offLoudInboxAppended: any;
   openProjectWindow: any;
   overseerAudit: any;
+  apiErrorResume: any;
   packAndInstallLocal: any;
   pendingWhatsNew: any;
   permissionBroker: any;
@@ -99,6 +100,8 @@ export interface IpcCtx {
   ptys: any;
   quickPrompts: any;
   readLiveSessionStats: any;
+  /** Re-colour every window's Windows caption buttons for the current theme. */
+  refreshTitleBarOverlays: () => void;
   registerExtensionProject: any;
   reportTeamTask: any;
   resolveTheme: any;

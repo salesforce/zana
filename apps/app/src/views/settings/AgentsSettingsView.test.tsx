@@ -212,7 +212,8 @@ describe('Agents settings search entries', () => {
       autoCloseIdleEnabled: true,
       overseerMode: 'on',
       overseerLlmTierEnabled: true,
-      autoModeEnabled: true
+      autoModeEnabled: true,
+      apiErrorResume: { enabled: true, rules: [], maxPerWindow: 3, windowMinutes: 15 }
     };
     const html = renderToStaticMarkup(
       <AgentsTab config={open} onConfigDraft={vi.fn()} onUpdate={vi.fn().mockResolvedValue(undefined)} />
@@ -335,5 +336,15 @@ describe('AgentsTab idle thread sessions', () => {
     const entry = agentsEntries.find((row) => row.id === 'agents.thread-session-release');
     expect(entry?.value?.({ config } as never)).toBe('After 30 minutes');
     expect(entry?.value?.({ config: { ...config, threadSessionReleaseMinutes: 0 } } as never)).toBe('Never');
+  });
+});
+
+describe('AgentsTab resume after API errors', () => {
+  it('renders the section for a config with no apiErrorResume and no window.cc', () => {
+    const html = renderToStaticMarkup(
+      <AgentsTab config={config} onConfigDraft={vi.fn()} onUpdate={vi.fn().mockResolvedValue(undefined)} />
+    );
+    expect(html).toContain('Resume after API errors');
+    expect(html).toContain('settings-anchor-api-error-resume');
   });
 });

@@ -8,6 +8,7 @@ const fixtures = vi.hoisted(() => ({
   compact: false, unread: 0, drawer: vi.fn(),
   pluginChanged: null as null | ((entries: unknown[]) => void),
   navigateFromMain: null as null | ((path: string) => void),
+  menuEvent: null as null | ((event: string) => void),
   recoverCatalogs: vi.fn(), recoverStale: vi.fn(), recoverAfterWake: vi.fn(), offWake: vi.fn(),
   onWake: null as null | (() => void), reconcilePlugins: vi.fn().mockResolvedValue(undefined),
   unsubscribePlugins: vi.fn()
@@ -19,6 +20,9 @@ vi.mock('./lib/product-client.js', () => ({ product: new Proxy({}, { get: (_targ
   } : String(surface) === 'terminals' && String(method) === 'onWake' ? (callback: () => void) => {
     fixtures.onWake = callback;
     return fixtures.offWake;
+  } : String(surface) === 'app' && String(method) === 'onMenuEvent' ? (callback: (event: string) => void) => {
+    fixtures.menuEvent = callback;
+    return () => {};
   } : String(surface) === 'windows' && String(method) === 'onNavigate' ? (callback: (path: string) => void) => {
     fixtures.navigateFromMain = callback;
     return () => {};
@@ -117,6 +121,27 @@ it('retries unavailable model catalogs on plugin changes and ignores late pushes
   await act(async () => { notify([]); });
   expect(fixtures.recoverCatalogs).toHaveBeenCalledOnce();
   expect(fixtures.reconcilePlugins).toHaveBeenCalledOnce();
+});
+
+it('native menu items reach the same store actions as their shortcuts', async () => {
+  const actions = { toggleSettings: vi.fn(), setNav: vi.fn(), setPaletteOpen: vi.fn(), setShortcutsOpen: vi.fn() };
+  const original = store.useUi.getState();
+  store.useUi.setState({ ...actions, selectedProjectId: null, nav: 'home', shortcutsOpen: false });
+  const view = render(<MemoryRouter><App /></MemoryRouter>);
+  try {
+    act(() => {
+      for (const event of ['app:openSettings', 'app:toggleInbox', 'app:openPalette', 'app:openShortcuts',
+        'app:toggleProjectView', 'app:newClaudeTab', 'app:reopenTab', 'app:closeTab']) fixtures.menuEvent!(event);
+    });
+    // Settings… shares ⌘,'s toggle, so drilled in it opens Project settings too.
+    expect(actions.toggleSettings).toHaveBeenCalledOnce();
+    expect(actions.setNav).toHaveBeenCalledWith('inbox');
+    expect(actions.setPaletteOpen).toHaveBeenCalledWith(true);
+    expect(actions.setShortcutsOpen).toHaveBeenCalledWith(true);
+  } finally {
+    view.unmount();
+    store.useUi.setState(original);
+  }
 });
 
 it('recovers model catalogs when the window becomes visible or the machine wakes', async () => {

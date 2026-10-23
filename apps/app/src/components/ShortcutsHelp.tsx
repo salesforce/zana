@@ -32,7 +32,7 @@ const SECTIONS: Section[] = [
       { keys: ['⌘', 'O'], label: 'Open Agents dashboard' },
       { keys: ['⌘', 'I'], label: 'Toggle Inbox' },
       { keys: ['⌘', 'J'], label: 'Toggle Scheduler' },
-      { keys: ['⌘', ','], label: 'Toggle Settings' },
+      { keys: ['⌘', ','], label: 'Toggle Settings (Project settings inside a project)' },
       { keys: ['⌘', '?'], label: 'This help' }
     ]
   },

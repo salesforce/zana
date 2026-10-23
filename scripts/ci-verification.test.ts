@@ -54,6 +54,16 @@ it('selects the Squad proposal specs for proposal, team and composer seams', () 
     expect(boundarySpecs([path])).toEqual(expect.arrayContaining(['e2e/squad-proposal-flow.spec.ts', 'e2e/job-team-launch-ui.spec.ts']));
     expect(boundarySpecs([path])).not.toContain('e2e/squad-direct-report.spec.ts');
   }
+  for (const path of [
+    'apps/host-daemon/src/harness/claude/hooks.ts',
+    'apps/host-daemon/src/harness/claude/interaction-hooks.ts',
+    'apps/server/src/services/followups/api-error-resume.ts',
+    'apps/desktop/src/api-error-resume-wiring.ts',
+    'apps/desktop/src/ipc/api-error-resume.ts',
+    'apps/app/src/components/settings/ApiErrorResumeSection.tsx'
+  ]) {
+    expect(boundarySpecs([path])).toContain('e2e/api-error-resume.spec.ts');
+  }
   // Unrelated Squad and launcher files must not pull in the slow proposal specs.
   for (const path of [
     'docs/readme.md',

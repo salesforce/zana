@@ -169,6 +169,17 @@ it('swallows config.set failures without flashing Saved', async () => {
   expect(screen.queryByText('Saved')).toBeNull();
 });
 
+it('rethrows a config.set failure when the caller asks for it', async () => {
+  useUi.setState({ settingsTab: 'agents', settingsAnchor: null });
+  mount();
+  await screen.findByText('tab-agents');
+  h.setMock.mockRejectedValueOnce(new Error('nope'));
+  await act(async () => {
+    await expect(h.props.agents.onUpdate({ fontSize: 12 }, { throwOnError: true })).rejects.toThrow('nope');
+  });
+  expect(screen.queryByText('Saved')).toBeNull();
+});
+
 it('clears the Saved flash after its timeout and on unmount', async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   try {
