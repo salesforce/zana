@@ -9,7 +9,6 @@ import { isDocStatus, type CommentStatus, type DocActor, type TextEdit } from '.
 import type { PageFile } from '../shared/frame-protocol.js';
 import { normalizeDocPath } from '../shared/paths.js';
 import { buildPublishPrompt, parsePublishTarget, PublishTargetError } from '../shared/publish.js';
-import { DESIGN_DOC_TEMPLATES } from '../shared/templates.js';
 import { asInput, optionalString, requiredString } from './operations.js';
 import { docPageReader, NO_KIT, renderPage, type KitReader } from './pages.js';
 import { parseRenderReport, type RenderReports } from './render-reports.js';
@@ -113,7 +112,7 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
   ) => deps.sdk.threads.spawn({ ...args, harness: 'project-default' });
 
   return {
-    templates: () => DESIGN_DOC_TEMPLATES.map(({ id, label, description, files }) => ({
+    templates: () => store.listTemplates().map(({ id, label, description, files }) => ({
       id,
       label,
       description,

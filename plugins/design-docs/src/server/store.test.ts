@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { DocActor } from '../shared/contract.js';
 import {
   LARGE_TEXT_FILE_BYTES,
@@ -370,8 +370,8 @@ describe('DesignDocStore peer mutation boundary', () => {
     const observed = new DesignDocStore(other, { onMutation: () => { throw new Error('capture failed'); } });
     expect(() => observed.create({ title: 'Rollback', status: 'approved', template: 'blank' }, user)).toThrow('capture failed');
     expect(observed.list()).toEqual([]);
-    expect(other.prepare('SELECT * FROM doc_files').all()).toEqual([]);
-    expect(other.prepare('SELECT * FROM doc_revisions').all()).toEqual([]);
+    expect(other.prepare("SELECT f.* FROM doc_files f JOIN docs d ON d.id = f.doc_id WHERE d.kind = 'doc'").all()).toEqual([]);
+    expect(other.prepare("SELECT r.* FROM doc_revisions r JOIN docs d ON d.id = r.doc_id WHERE d.kind = 'doc'").all()).toEqual([]);
   });
 
   it('deletes paired doc dependents and records a scrubbed tombstone in the same transaction', () => {
@@ -465,6 +465,20 @@ describe('DesignDocStore — docs', () => {
     expect(store.readFile(doc.id, 'README.md').content).toContain('# Offline Sync');
     expect(store.readFile(doc.id, 'README.md').content).toContain('> Sync while offline');
     expect(store.history(doc.id)).toHaveLength(2);
+  });
+
+  it('seeds and reads the builtin registry from template rows', async () => {
+    const store = makeStore();
+    expect(store.listTemplates().map((template) => template.id)).toEqual(['technical', 'product', 'adr', 'api', 'report', 'html-design', 'blank']);
+    expect(store.templateByKey('technical')?.files.map((file) => file.path)).toEqual(['README.md', 'diagrams/architecture.mmd']);
+    const set = vi.fn();
+    const kv = { get: async () => undefined as boolean | undefined, set };
+    await store.seedBuiltinTemplates(kv);
+    expect(store.listTemplates()).toHaveLength(7);
+    expect(set).toHaveBeenCalledWith('templates.seed.v1', true);
+    (store as any).db.prepare("DELETE FROM docs WHERE kind = 'template' AND template_key = 'technical'").run();
+    await store.seedBuiltinTemplates({ get: async () => true, set });
+    expect(store.templateByKey('technical')).toBeNull();
   });
 
   it('creates from explicit files, picks a markdown entry, and rejects bad input', () => {

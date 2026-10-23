@@ -8,7 +8,6 @@ import type { PluginCliContext, PluginCliResult, ZccPluginApi } from '@zana-ai/z
 import type { DocActor } from '../shared/contract.js';
 import { formatBytes } from '../shared/display.js';
 import { MAX_DOC_BYTES, MAX_FILES_PER_DOC } from '../shared/limits.js';
-import { DESIGN_DOC_TEMPLATES } from '../shared/templates.js';
 import { formatBundle } from './format.js';
 import {
   commentDoc,
@@ -40,12 +39,13 @@ export const CLI_COMMANDS = [
   { name: 'revoke-peer', summary: 'Disable local database links without claiming group removal', usage: 'revoke-peer <peer-id>' },
   { name: 'sync', summary: 'Sync persisted database changes, including drafts', usage: 'sync' },
   { name: 'list', summary: 'List design docs', usage: 'list [--query <text>] [--status active|all|<status>] [--all-projects] [--json]' },
+  { name: 'templates', summary: 'List available templates', usage: 'templates list [--json]' },
   { name: 'show', summary: 'Show a doc manifest and its entry file', usage: 'show <doc> [--all] [--json]' },
   { name: 'read', summary: 'Print one text file raw', usage: 'read <doc> <path>' },
   {
     name: 'create',
     summary: 'Create a design doc',
-    usage: `create --title <title> [--summary <text>] [--template ${DESIGN_DOC_TEMPLATES.map((template) => template.id).join('|')}] [--status <status>] [--tags a,b] [--global]`
+    usage: 'create --title <title> [--summary <text>] [--template <key>] [--status <status>] [--tags a,b] [--global]'
   },
   {
     name: 'write',
@@ -259,6 +259,11 @@ async function dispatch(deps: CliDeps, argv: string[], ctx: PluginCliContext): P
         return JSON.stringify(docs, null, 2);
       }
       return listDocs(operation, { query: stringFlag(flags, 'query'), status: stringFlag(flags, 'status'), scope });
+    }
+    case 'templates': {
+      if (positional[0] && positional[0] !== 'list') throw new DesignDocError('invalid', 'templates accepts only list');
+      const templates = deps.store.listTemplates().map(({ id, label, description, files, entryPath }) => ({ key: id, label, description, files: files.map((file) => file.path), entryPath }));
+      return json ? JSON.stringify(templates, null, 2) : templates.map((template) => `${template.key}\t${template.label}\t${template.description}`).join('\n');
     }
     case 'show': {
       if (json) return JSON.stringify(deps.store.get(ref(0)), null, 2);

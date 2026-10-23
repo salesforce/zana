@@ -171,7 +171,7 @@ describe('zcc design-docs', () => {
       expect(result.stdout).toBe(`${helpText()}\n`);
     }
     expect(helpText()).toContain('zcc design-docs export <doc> (--out <folder> | [--json])');
-    expect(helpText()).toContain('[--template technical|product|adr|api|report|html-design|blank]');
+    expect(helpText()).toContain('[--template <key>]');
     const unknown = await run(['frobnicate']);
     expect(unknown).toMatchObject({ exitCode: 2 });
     expect(unknown.stderr).toMatch(/^unknown command "frobnicate"/);

@@ -67,6 +67,7 @@ export default function plugin(zcc: ZccPluginApi): void {
       peerSync?.mutationCommitted();
     }
   });
+  void store.seedBuiltinTemplates(zcc.storage.kv).catch((error: unknown) => zcc.log.warn(`design docs template seed failed: ${error instanceof Error ? error.message : String(error)}`));
   syncStore = new DesignDocSyncStore(guarded);
   const sdkPeers = zcc.sdk.peers;
   const fenceDatabase: PluginDatabase = {

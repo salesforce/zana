@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import type { PluginDatabase } from '@zana-ai/zcc-plugin-sdk/server';
+import type { PluginDatabase, PluginKvStorage } from '@zana-ai/zcc-plugin-sdk/server';
 import {
   isDocStatus,
   type CommentExcerpt,
@@ -49,7 +49,7 @@ import {
   isBinaryKind,
   normalizeDocPath
 } from '../shared/paths.js';
-import { DEFAULT_TEMPLATE_ID, renderTemplateFiles, templateById } from '../shared/templates.js';
+import { DEFAULT_TEMPLATE_ID, DESIGN_DOC_TEMPLATES, renderTemplateFiles, type DesignDocTemplate } from '../shared/templates.js';
 import { DESIGN_DOC_MIGRATIONS } from './schema.js';
 import type { PeerOperationOrigin } from '../shared/peer-contract.js';
 
@@ -281,9 +281,57 @@ export class DesignDocStore {
     db.migrate(DESIGN_DOC_MIGRATIONS);
     // docs-kind: allow Startup backfill repairs file identities for both kinds without peer capture.
     db.prepare("UPDATE doc_files SET sync_id = 'f_' || lower(hex(randomblob(16))) WHERE sync_id IS NULL").run();
+    // Creation APIs are synchronous. A fresh database must therefore have a registry before callers use it.
+    if (this.countTemplates() === 0) this.insertMissingBuiltinTemplates();
   }
 
   // ── Docs ──────────────────────────────────────────────────────────────
+
+  listTemplates(): DesignDocTemplate[] {
+    const rows = this.db.prepare(`SELECT * FROM docs WHERE ${TEMPLATE_ONLY} ORDER BY template_order, template_key`).all() as DocRow[];
+    return rows.map((row) => this.toTemplate(row));
+  }
+
+  templateByKey(key: unknown): DesignDocTemplate | null {
+    if (typeof key !== 'string' || !key.trim()) return null;
+    const row = this.db.prepare(`SELECT * FROM docs WHERE ${TEMPLATE_ONLY} AND template_key = ?`).get(key.trim()) as DocRow | undefined;
+    return row ? this.toTemplate(row) : null;
+  }
+
+  async seedBuiltinTemplates(kv: Pick<PluginKvStorage, 'get' | 'set'>): Promise<void> {
+    const marked = await kv.get<boolean>('templates.seed.v1');
+    if (!marked || this.countTemplates() === 0) this.insertMissingBuiltinTemplates();
+    await kv.set('templates.seed.v1', true);
+  }
+
+  private countTemplates(): number {
+    return (this.db.prepare(`SELECT COUNT(*) AS count FROM docs WHERE ${TEMPLATE_ONLY}`).get() as { count: number }).count;
+  }
+
+  private insertMissingBuiltinTemplates(): void {
+    const actor = JSON.stringify({ kind: 'user', label: 'Zana', threadId: null } satisfies DocActor);
+    const at = this.now();
+    this.db.transaction(() => {
+      for (const [order, template] of DESIGN_DOC_TEMPLATES.entries()) {
+        const origin = `builtin:${template.id}`;
+        // docs-kind: allow Template registry insert is template-only by literal kind value.
+        const exists = this.db.prepare(`SELECT 1 FROM docs WHERE ${TEMPLATE_ONLY} AND template_origin = ?`).get(origin);
+        if (exists) continue;
+        const id = this.randomId('ddt_');
+        const prepared = template.files.map((file) => prepareContent(file.path, file.content, file.encoding));
+        const entryPath = template.entryPath
+          ?? prepared.find((file) => file.path.toLowerCase() === 'readme.md')?.path
+          ?? prepared.find((file) => file.path.toLowerCase() === 'index.html')?.path
+          ?? prepared[0]!.path;
+        this.db.prepare(
+          `INSERT INTO docs (id, slug, title, summary, status, project_id, tags, entry_path, revision,
+            created_at, updated_at, created_by, updated_by, kind, template_key, template_origin, template_order)
+           VALUES (?, ?, ?, ?, 'draft', NULL, '[]', ?, 1, ?, ?, ?, ?, 'template', ?, ?, ?)`
+        ).run(id, this.uniqueSlug(`template-${template.id}`), template.label, template.description, entryPath, at, at, actor, actor, template.id, origin, order);
+        for (const file of prepared) this.insertFile(id, file, 1, at, actor);
+      }
+    });
+  }
 
   list(filter: ListFilter = {}): DesignDocSummary[] {
     const where: string[] = [`d.${DOC_ONLY}`];
@@ -376,7 +424,7 @@ export class DesignDocStore {
     if (input.files && input.files.length > 0) {
       files = input.files;
     } else {
-      const template = templateById(input.template ?? DEFAULT_TEMPLATE_ID);
+      const template = this.templateByKey(input.template ?? DEFAULT_TEMPLATE_ID);
       if (!template) {
         throw new DesignDocError('invalid', `unknown template ${JSON.stringify(input.template)}`);
       }
@@ -441,6 +489,19 @@ export class DesignDocStore {
       this.notifyMutation({ docId: id, kind: 'create', payload: null, statusAfter: status, origin });
     });
     return this.get(id);
+  }
+
+  // docs-kind: id-checked
+  private toTemplate(row: DocRow): DesignDocTemplate {
+    this.requireTemplate(row.id);
+    const files = this.db.prepare('SELECT path, content, encoding FROM doc_files WHERE doc_id = ? ORDER BY path').all(row.id) as Array<Pick<FileRow, 'path' | 'content' | 'encoding'>>;
+    return {
+      id: row.template_key!,
+      label: row.title,
+      description: row.summary,
+      files: files.map((file) => ({ path: file.path, content: file.content, ...(file.encoding === 'base64' ? { encoding: 'base64' as const } : {}) })),
+      entryPath: row.entry_path
+    };
   }
 
   /** Trusted server import paths use one aggregate boundary, never renderer origin flags. */
