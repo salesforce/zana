@@ -19,6 +19,14 @@ export function isolatedKeychainEnv(preserveHome: boolean): Record<string, strin
   return preserveHome ? {} : { SF_USE_GENERIC_UNIX_KEYCHAIN: 'true' };
 }
 
+/**
+ * A preserved real HOME also drops a value inherited from the parent shell, or the real
+ * home would get a new `.sfdx/key.json` that cannot decrypt its org logins. A spec's own value wins.
+ */
+export function dropInheritedKeychainEnv(env: Record<string, string>, preserveHome: boolean, explicit: Record<string, string> = {}): void {
+  if (preserveHome && explicit.SF_USE_GENERIC_UNIX_KEYCHAIN === undefined) delete env.SF_USE_GENERIC_UNIX_KEYCHAIN;
+}
+
 /** Isolated homes have no login keychain. Never discover a real Claude by default. */
 export function writeAppConfig(
   home: string,

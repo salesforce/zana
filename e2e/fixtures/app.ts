@@ -44,7 +44,7 @@ import { fileURLToPath } from 'node:url';
 import { startLocalRegistry, type LocalRegistry, type DummyExtensionSpec } from './registry.js';
 import { EventRecorder } from '../sdk/events.js';
 import { linuxCiElectronArgs, linuxCiElectronEnv } from './linux-electron-launch.js';
-import { isolatedClaudePath, isolatedKeychainEnv, writeAppConfig } from './app-config.js';
+import { dropInheritedKeychainEnv, isolatedClaudePath, isolatedKeychainEnv, writeAppConfig } from './app-config.js';
 import { isolateTmuxEnvironment, cleanupTmuxEnvironment } from './tmux-isolation.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -317,6 +317,7 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
   if (!opts.env?.ZCC_SERVER_URL) delete env.ZCC_SERVER_URL;
   if (!opts.env?.ZCC_HOST_ENROLL_TOKEN) delete env.ZCC_HOST_ENROLL_TOKEN;
   if (packagedExecutable) delete env.ZCC_E2E_APP_VERSION;
+  dropInheritedKeychainEnv(env, preserveHome, opts.env);
   if (opts.caCertPath) env.NODE_EXTRA_CA_CERTS = opts.caCertPath;
 
   const app = await electron.launch({
