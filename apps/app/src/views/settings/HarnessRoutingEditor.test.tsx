@@ -105,4 +105,18 @@ describe('HarnessRoutingEditor', () => {
     rerender(<HarnessRoutingEditor descriptors={descriptors} value={undefined} onChange={vi.fn()} loading />);
     expect(screen.queryByLabelText('Project settings for Claude Code')).toBeNull();
   });
+
+  it('names rows with the caller’s copy', () => {
+    render(
+      <HarnessRoutingEditor
+        descriptors={[descriptor('pi', 'Pi', { models: [], executionStateMapping: undefined })]}
+        value={undefined}
+        onChange={vi.fn()}
+        rowCopy={{ expandLabel: (label) => `Agent settings for ${label}`, blurb: 'Agent launch settings', empty: 'Nothing to set.' }}
+      />
+    );
+    expect(screen.getByText('Agent launch settings')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Agent settings for Pi'));
+    expect(screen.getByText('Nothing to set.')).toBeTruthy();
+  });
 });

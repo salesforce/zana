@@ -39,7 +39,13 @@ import { asControlResult, callControlAsProductServer } from './cli-agent-ops.js'
 import type { Persona, PersonaInput, TeamInput } from '@zana-ai/zcc-domain/product';
 import { harnessEffectiveDefault, harnessVerifyBundle } from './harness-via-rpc.js';
 import { listJsonFiles } from './disk-json.js';
-import { PluginSpawnHarnessError, pluginProviderAvailable, resolvePluginSpawnProvider } from './plugin-thread-spawn.js';
+import {
+  AI_HARNESS_SETTINGS_HINT,
+  PLUGIN_AI_HARNESS_SETTINGS_HINT,
+  PluginSpawnHarnessError,
+  pluginProviderAvailable,
+  resolvePluginSpawnProvider
+} from './plugin-thread-spawn.js';
 import { pluginEffectiveHarnessDefault, productPluginSpawnRouting } from './plugin-harness-routing.js';
 import { slashPlanPromptInput } from './plugin-thread-routing.js';
 import { ThreadCreateError } from './thread-create.js';
@@ -434,10 +440,8 @@ export function createAttachedProductPluginService(
         const fromOverride = !model && routing?.applied.find((entry) => entry.field === 'model');
         if (fromOverride && error instanceof ThreadCreateError && error.code === 'invalid-model') {
           throw new PluginSpawnHarnessError(
-            `${error.message} (from the ${fromOverride.source} AI harness override). `
-            + (fromOverride.source === 'plugin'
-              ? "Change it in this plugin's AI Harness settings."
-              : 'Change it in Settings → AI Harness.')
+            `${error.message} (from the ${fromOverride.source} AI harness override).`,
+            fromOverride.source === 'plugin' ? PLUGIN_AI_HARNESS_SETTINGS_HINT : AI_HARNESS_SETTINGS_HINT
           );
         }
         throw error;

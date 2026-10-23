@@ -69,7 +69,7 @@ async function openAgentSettings(win: Page) {
 }
 
 async function expandClaude(win: Page) {
-  const expand = win.getByRole('region', { name: 'Agent harness' }).getByRole('button', { name: 'Project settings for Claude Code' });
+  const expand = win.getByRole('region', { name: 'Agent harness' }).getByRole('button', { name: 'Agent settings for Claude Code' });
   if (await expand.getAttribute('aria-expanded') !== 'true') await expand.click();
   await expect(expand).toHaveAttribute('aria-expanded', 'true');
 }

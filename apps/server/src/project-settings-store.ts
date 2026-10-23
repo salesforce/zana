@@ -4,6 +4,10 @@ import { dirname } from 'node:path';
 import { ProjectSettingsPatchSchema, type ProjectSettingsPatch } from '@zana-ai/zcc-contracts/project-settings';
 import type { PluginHarnessOverrideV1 } from '@zana-ai/zcc-domain/product';
 import { atomicDurableWrite, createSerializedTransactionQueue } from './durable-store.js';
+// Per-project, plugin-keyed AI-harness overrides are nested in the project's own
+// entry (so removing the project removes them) and kept out of `get()`: they
+// are not Core settings and must not round-trip through a settings patch.
+import { PLUGIN_HARNESS_ROUTING_KEY, pluginHarnessRoutingOf } from './services/config/plugin-harness-routing-map.js';
 
 type StoredProjectSettings = Record<string, unknown>;
 type SettingsByProject = Record<string, StoredProjectSettings>;
@@ -17,13 +21,6 @@ const RETIRED_PROJECT_SETTINGS_KEYS = [
 export interface ProjectSettingsStoreOptions {
   projectSettingsFile: string;
 }
-
-/**
- * Per-project, plugin-keyed AI-harness overrides, nested in the project's own
- * entry (so removing the project removes them) and kept out of `get()`:
- * they are not Core settings and must not round-trip through a settings patch.
- */
-export const PLUGIN_HARNESS_ROUTING_KEY = 'pluginHarnessRouting';
 
 export interface ProjectSettingsStore {
   get(id: string): StoredProjectSettings;
@@ -134,14 +131,6 @@ function canonicalForWrite(settings: StoredProjectSettings): StoredProjectSettin
   pruneEmptyHarnesses(harnesses);
   if (!harnesses.byId) delete next.harnesses;
   return next;
-}
-
-function pluginHarnessRoutingOf(entry: unknown): Record<string, PluginHarnessOverrideV1> {
-  const map = isRecord(entry) ? entry[PLUGIN_HARNESS_ROUTING_KEY] : undefined;
-  if (!isRecord(map)) return {};
-  return Object.fromEntries(Object.entries(map).filter(([, value]) =>
-    isRecord(value) && value.schemaVersion === 1 && isRecord(value.byAdapter)
-  )) as Record<string, PluginHarnessOverrideV1>;
 }
 
 function readSnapshot(path: string): Snapshot {

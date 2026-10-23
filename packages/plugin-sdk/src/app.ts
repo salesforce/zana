@@ -27,6 +27,7 @@ export type {
   ComposerView,
   HarnessRoutingEditorPatch,
   HarnessRoutingEditorProps,
+  HarnessRoutingEditorRowCopy,
   MarkdownProps,
   NewThreadComposerProps,
   PluginHarnessOverride,

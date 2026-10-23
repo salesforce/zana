@@ -82,7 +82,21 @@ export interface HarnessRoutingEditorProps {
   renderLaunchExtras?(descriptor: HarnessRoutingDescriptor): ReactNode;
   /** Host content for the harness/files tabs. When omitted the tab bar is hidden. */
   renderTab?(tab: Exclude<HarnessEditorTab, 'launch'>, descriptor: HarnessRoutingDescriptor): ReactNode;
+  /** Row copy naming what these settings apply to; defaults to project settings. */
+  rowCopy?: HarnessRoutingRowCopy;
 }
+
+export interface HarnessRoutingRowCopy {
+  expandLabel(harnessLabel: string): string;
+  blurb: string;
+  empty: string;
+}
+
+const PROJECT_ROW_COPY: HarnessRoutingRowCopy = {
+  expandLabel: (harnessLabel) => `Project settings for ${harnessLabel}`,
+  blurb: 'Project-specific launch settings',
+  empty: 'No project-specific settings are available for this harness.'
+};
 
 export function HarnessRoutingEditor({
   descriptors,
@@ -93,7 +107,8 @@ export function HarnessRoutingEditor({
   defaultHarness,
   notice,
   renderLaunchExtras,
-  renderTab
+  renderTab,
+  rowCopy = PROJECT_ROW_COPY
 }: HarnessRoutingEditorProps) {
   const [open, setOpen] = useState<Set<string>>(() => new Set());
   const [activeTabs, setActiveTabs] = useState<Record<string, HarnessEditorTab>>({});
@@ -153,7 +168,7 @@ export function HarnessRoutingEditor({
                   type="button"
                   className="opener-row-expand"
                   aria-expanded={isOpen}
-                  aria-label={`Project settings for ${descriptor.label}`}
+                  aria-label={rowCopy.expandLabel(descriptor.label)}
                   onClick={() => toggle(id)}
                 >
                   <ChevronRight size={14} className={isOpen ? 'opener-row-chevron opener-row-chevron--open' : 'opener-row-chevron'} aria-hidden />
@@ -163,7 +178,7 @@ export function HarnessRoutingEditor({
                 </span>
                 <div className="opener-row-text">
                   <span className="opener-row-name">{descriptor.label}</span>
-                  <span className="opener-row-blurb">Project-specific launch settings</span>
+                  <span className="opener-row-blurb">{rowCopy.blurb}</span>
                 </div>
               </div>
               {isOpen ? (
@@ -258,7 +273,7 @@ export function HarnessRoutingEditor({
                       )}
                       {extras}
                       {!descriptor.targets?.models.length && !executionMapping && !extras && (
-                        <p className="settings-help">No project-specific settings are available for this harness.</p>
+                        <p className="settings-help">{rowCopy.empty}</p>
                       )}
                     </fieldset>
                   </section>}

@@ -125,6 +125,16 @@ describe('project settings store plugin harness routing', () => {
     expect(store.getPluginHarnessRouting('p1', 'a')).toBeNull();
   });
 
+  it('drops a stored override that fails the override schema', () => {
+    const file = join(makeDir(), 'project-settings.json');
+    writeFileSync(file, JSON.stringify({
+      p1: { pluginHarnessRouting: { a: routing, bad: { schemaVersion: 1, byAdapter: {}, defaultHarness: 'not-a-harness' } } }
+    }));
+    const store = createProjectSettingsStore({ projectSettingsFile: file });
+    expect(store.getPluginHarnessRouting('p1', 'a')).toEqual(routing);
+    expect(store.getPluginHarnessRouting('p1', 'bad')).toBeNull();
+  });
+
   it('clearing the last override drops an otherwise empty entry', async () => {
     const file = join(makeDir(), 'project-settings.json');
     const store = createProjectSettingsStore({ projectSettingsFile: file });

@@ -35,7 +35,7 @@ import { validateProviderModelSelection } from '../services/threads/provider-mod
 import type { ProductHttpContext } from './product-context.js';
 import { ThreadCreateError } from './thread-create.js';
 import { resolvePluginThreadRouting, type PluginThreadRouting } from './plugin-thread-routing.js';
-import { PluginSpawnHarnessError } from './plugin-thread-spawn.js';
+import { PLUGIN_AI_HARNESS_SETTINGS_HINT, PluginSpawnHarnessError } from './plugin-thread-spawn.js';
 
 export type PluginHarnessRoutingCtx = Pick<
   ProductHttpContext,
@@ -123,10 +123,7 @@ export async function productPluginSpawnRouting(
     return { ...routing, applied: routing.applied.map((entry) => ({ ...entry, source: 'plugin' })) };
   } catch (error) {
     if (!(error instanceof PluginSpawnHarnessError)) throw error;
-    throw new PluginSpawnHarnessError(error.message.replace(
-      /Change it in Settings → AI Harness\.$/,
-      "Change it in this plugin's AI Harness settings."
-    ));
+    throw new PluginSpawnHarnessError(error.detail, PLUGIN_AI_HARNESS_SETTINGS_HINT);
   }
 }
 
@@ -302,8 +299,11 @@ async function checkThreadRow(
     }
     return null;
   } catch (error) {
-    if (error instanceof PluginSpawnHarnessError) return error.message.replace(/ Change it in Settings → AI Harness\.$/, '');
+    if (error instanceof PluginSpawnHarnessError) return error.detail;
     if (error instanceof ThreadCreateError) return error.message;
+    // Host or catalog unreachable: the spawn re-checks, but say why this save was not checked.
+    console.warn(`[plugin-harness-routing] could not check the ${family} row against ${providerId}`
+      + ` (${project ? `project ${project.id}` : 'global'}): ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 }

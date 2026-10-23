@@ -5,9 +5,9 @@
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowLeft, Bot, Settings as SettingsIcon, Users, type LucideIcon } from 'lucide-react';
-import type { HarnessRoutingEditorPatch } from '@zana-ai/zcc-plugin-sdk/app';
+import type { HarnessRoutingEditorPatch, HarnessRoutingEditorRowCopy } from '@zana-ai/zcc-plugin-sdk/app';
 import { experimental_HarnessRoutingEditor as HarnessRoutingEditor } from '@zana-ai/zcc-plugin-sdk/app';
-import { errorMessage, toast, useApi, type HarnessRouting, type HarnessScope, type PeerStatus } from './api.js';
+import { errorMessage, toast, useApi, type DesignDocsApi, type HarnessRouting, type HarnessScope, type PeerStatus } from './api.js';
 import { usePersistentState, useProjects, useResource } from './hooks.js';
 import { PeerSettings } from './PeerSettings.js';
 
@@ -186,6 +186,107 @@ export function patchDefaultHarness(value: HarnessRouting | null, family: string
   } as HarnessRouting);
 }
 
+/** The editor's row copy: these rows set what Design Docs agents use, at any scope. */
+const AGENT_ROW_COPY: HarnessRoutingEditorRowCopy = {
+  expandLabel: (harnessLabel) => `Agent settings for ${harnessLabel}`,
+  blurb: 'Design Docs agent launch settings',
+  empty: 'No agent settings are available for this harness.'
+};
+
+type ScopedRouting = { key: string; routing: HarnessRouting | null };
+
+/**
+ * This plugin's override at one scope, edited optimistically: each edit is
+ * applied to the latest local value and saves run one at a time, so quick
+ * successive edits never overwrite each other. A rejected save restores the
+ * last value the host stored.
+ */
+function useScopedHarnessRouting(api: DesignDocsApi, scope: HarnessScope | null) {
+  const key = scope ? JSON.stringify(scope) : null;
+  const [value, setValue] = useState<ScopedRouting | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const latest = useRef<ScopedRouting | null>(null);
+  const stored = useRef<ScopedRouting | null>(null);
+  const saves = useRef(0);
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const show = (next: ScopedRouting) => {
+    latest.current = next;
+    setValue(next);
+  };
+
+  useEffect(() => {
+    setError(null);
+    if (!scope || !key) return;
+    let cancelled = false;
+    void api.harnessRouting(scope).then(
+      (routing) => {
+        if (cancelled) return;
+        stored.current = { key, routing };
+        show({ key, routing });
+      },
+      (failure: unknown) => { if (!cancelled) setError(errorMessage(failure)); }
+    );
+    return () => { cancelled = true; };
+    // `scope` is derived from `key`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, key]);
+
+  const save = (edit: (value: HarnessRouting | null) => HarnessRouting | null) => {
+    if (!scope || !key || latest.current?.key !== key) return;
+    const next = edit(latest.current.routing);
+    const sequence = ++saves.current;
+    setError(null);
+    show({ key, routing: next });
+    queue.current = queue.current
+      .then(() => api.setHarnessRouting(scope, next))
+      .then(
+        (routing) => {
+          stored.current = { key, routing };
+          if (sequence === saves.current && latest.current?.key === key) show({ key, routing });
+        },
+        (failure: unknown) => {
+          if (sequence !== saves.current) return;
+          const message = errorMessage(failure);
+          if (latest.current?.key === key && stored.current?.key === key) show(stored.current);
+          setError(message);
+          toast(message, 'error');
+        }
+      );
+  };
+
+  return { loaded: !!key && value?.key === key, current: value?.key === key ? value.routing : null, error, save };
+}
+
+function ScopeTabs({ kind, onSelect }: { kind: ScopeKind; onSelect(kind: ScopeKind): void }) {
+  return (
+    <div className="dd-agent-scopes" role="tablist" aria-label="Harness scope">
+      {SCOPE_TABS.map(([id, label]) => (
+        <button
+          key={id}
+          type="button"
+          role="tab"
+          id={`dd-agent-scope-${id}`}
+          aria-controls="dd-agent-scope-panel"
+          className={`dd-agent-scope${kind === id ? ' active' : ''}`}
+          aria-selected={kind === id}
+          tabIndex={kind === id ? 0 : -1}
+          onClick={() => onSelect(id)}
+          onKeyDown={(event) => {
+            const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+            if (!step) return;
+            event.preventDefault();
+            const next = SCOPE_TABS[(SCOPE_TABS.findIndex(([tab]) => tab === kind) + step + SCOPE_TABS.length) % SCOPE_TABS.length]![0];
+            onSelect(next);
+            document.getElementById(`dd-agent-scope-${next}`)?.focus();
+          }}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /**
  * Which AI harness Design Docs agents run on. Core's own harness editor edits
  * this plugin's override at Default or one Project. The harness choice and each
@@ -204,41 +305,13 @@ export function AgentSettings() {
   const scope: HarnessScope | null = kind === 'project'
     ? (selected ? { kind, projectId: selected } : null)
     : { kind };
-  const key = scope ? JSON.stringify(scope) : null;
-  const descriptors = useResource('harness-descriptors', () => api.harnessDescriptors());
-  const [value, setValue] = useState<{ key: string; routing: HarnessRouting | null } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const saves = useRef(0);
-
-  useEffect(() => {
-    setError(null);
-    if (!scope || !key) return;
-    let cancelled = false;
-    void api.harnessRouting(scope).then(
-      (routing) => { if (!cancelled) setValue({ key, routing }); },
-      (failure: unknown) => { if (!cancelled) setError(errorMessage(failure)); }
-    );
-    return () => { cancelled = true; };
-    // `scope` is derived from `key`.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, key]);
-
-  const current = value?.key === key ? value.routing : null;
-  const ready = !!scope && value?.key === key && descriptors.data !== null;
-
-  const save = (next: HarnessRouting | null) => {
-    if (!scope || !key || !ready) return;
-    const sequence = ++saves.current;
-    setError(null);
-    api.setHarnessRouting(scope, next).then(
-      (routing) => { if (sequence === saves.current) setValue({ key, routing }); },
-      (failure: unknown) => {
-        if (sequence !== saves.current) return;
-        const message = errorMessage(failure);
-        setError(message);
-        toast(message, 'error');
-      }
-    );
+  // A Project's harnesses come from that project's host; Default lists this computer's.
+  const hostProject = kind === 'project' ? selected : '';
+  const descriptors = useResource(`harness-descriptors:${hostProject}`, () => api.harnessDescriptors(hostProject || undefined));
+  const { loaded, current, error, save: saveEdit } = useScopedHarnessRouting(api, scope);
+  const ready = loaded && descriptors.data !== null;
+  const save = (edit: (value: HarnessRouting | null) => HarnessRouting | null) => {
+    if (ready) saveEdit(edit);
   };
 
   return (
@@ -248,31 +321,7 @@ export function AgentSettings() {
         project&apos;s choice wins over Default. Where neither is set, agents follow Zana&apos;s AI harness settings for the
         doc&apos;s project.
       </p>
-      <div className="dd-agent-scopes" role="tablist" aria-label="Harness scope">
-        {SCOPE_TABS.map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            id={`dd-agent-scope-${id}`}
-            aria-controls="dd-agent-scope-panel"
-            className={`dd-agent-scope${kind === id ? ' active' : ''}`}
-            aria-selected={kind === id}
-            tabIndex={kind === id ? 0 : -1}
-            onClick={() => setKind(id)}
-            onKeyDown={(event) => {
-              const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
-              if (!step) return;
-              event.preventDefault();
-              const next = SCOPE_TABS[(SCOPE_TABS.findIndex(([tab]) => tab === kind) + step + SCOPE_TABS.length) % SCOPE_TABS.length]![0];
-              setKind(next);
-              document.getElementById(`dd-agent-scope-${next}`)?.focus();
-            }}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <ScopeTabs kind={kind} onSelect={setKind} />
       <div className="dd-agent-scope-panel" id="dd-agent-scope-panel" role="tabpanel" aria-labelledby={`dd-agent-scope-${kind}`}>
         <p className="dd-muted dd-agent-help">{SCOPE_HELP[kind]}</p>
         {kind === 'project' && (projectList.length ? (
@@ -287,11 +336,12 @@ export function AgentSettings() {
           <HarnessRoutingEditor
             descriptors={descriptors.data ?? []}
             value={current ?? undefined}
-            onChange={(adapterId, patch) => save(patchHarnessRouting(current, adapterId, patch))}
+            onChange={(adapterId, patch) => save((latest) => patchHarnessRouting(latest, adapterId, patch))}
             defaultHarness={{
               value: current?.defaultHarness ?? '',
-              onChange: (family) => save(patchDefaultHarness(current, family))
+              onChange: (family) => save((latest) => patchDefaultHarness(latest, family))
             }}
+            rowCopy={AGENT_ROW_COPY}
             inheritLabel={kind === 'global' ? 'Use Zana’s AI harness settings' : 'Use Default'}
             loading={!ready && !error}
             notice={error ? <p className="dd-agent-error" role="alert">{error}</p> : null}

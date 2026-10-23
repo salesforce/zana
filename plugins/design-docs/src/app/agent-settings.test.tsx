@@ -152,6 +152,69 @@ describe('Design Docs settings: Agent section', () => {
     expect(harness.toasts.at(-1)?.kind).toBe('error');
     expect(screen.getByTestId('harness-editor-value').textContent).toBe('null');
   });
+
+  it('keeps both of two quick edits: the second builds on the first and saves after it', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const saved: unknown[] = [];
+    const harness = createHarness({
+      rpcOverrides: {
+        setHarnessRouting: async (args: { value: unknown }) => {
+          if (!saved.length) await gate;
+          saved.push(args.value);
+          return args.value;
+        }
+      }
+    });
+    installEditorProbe();
+    await openAgentSettings(harness);
+    await waitFor(() => expect(screen.getByTestId('harness-editor').getAttribute('data-loading')).toBe('false'));
+    fireEvent.click(screen.getByRole('button', { name: 'run on codex' }));
+    // Shown at once, before the host answers.
+    expect(screen.getByTestId('harness-editor-choice').textContent).toBe('codex');
+    fireEvent.click(screen.getByRole('button', { name: 'choose sonnet' }));
+    const both = { schemaVersion: 1, byAdapter: { claude: { modelTargetId: 'sonnet' } }, defaultHarness: 'codex' };
+    expect(screen.getByTestId('harness-editor-value').textContent).toBe(JSON.stringify(both));
+    expect(saved).toEqual([]);
+    release();
+    await waitFor(() => expect(saved).toHaveLength(2));
+    expect(saved).toEqual([{ schemaVersion: 1, byAdapter: {}, defaultHarness: 'codex' }, both]);
+    expect(screen.getByTestId('harness-editor-value').textContent).toBe(JSON.stringify(both));
+  });
+
+  it('restores the last stored value when the latest save is rejected', async () => {
+    let calls = 0;
+    const harness = createHarness({
+      rpcOverrides: {
+        setHarnessRouting: async (args: { value: unknown }) => {
+          if (++calls === 2) throw new Error('Codex is disabled.');
+          return args.value;
+        }
+      }
+    });
+    installEditorProbe();
+    await openAgentSettings(harness);
+    await waitFor(() => expect(screen.getByTestId('harness-editor').getAttribute('data-loading')).toBe('false'));
+    fireEvent.click(screen.getByRole('button', { name: 'choose sonnet' }));
+    fireEvent.click(screen.getByRole('button', { name: 'run on codex' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Codex is disabled.');
+    expect(screen.getByTestId('harness-editor-value').textContent)
+      .toBe(JSON.stringify({ schemaVersion: 1, byAdapter: { claude: { modelTargetId: 'sonnet' } } }));
+    expect(screen.getByTestId('harness-editor-choice').textContent).toBe('');
+  });
+
+  it('lists the harnesses of the selected project’s host on the Project tab', async () => {
+    const harness = createHarness();
+    const probe = installEditorProbe();
+    await openAgentSettings(harness);
+    await waitFor(() => expect(screen.getByTestId('harness-editor').getAttribute('data-loading')).toBe('false'));
+    expect(harness.rpcCalls.find((call) => call.method === 'harnessDescriptors')?.input ?? null).toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: 'Project' }));
+    const select = await screen.findByRole('combobox', { name: 'Project' }) as HTMLSelectElement;
+    await waitFor(() => expect(harness.rpcCalls.some((call) => call.method === 'harnessDescriptors'
+      && (call.input as { projectId?: string } | undefined)?.projectId === select.value)).toBe(true));
+    expect(probe.props().rowCopy.expandLabel('Claude Code')).toBe('Agent settings for Claude Code');
+  });
 });
 
 describe('Design Docs agents spawn on the project AI harness', () => {

@@ -1051,6 +1051,17 @@ export interface HarnessRoutingEditorProps {
   };
   /** Rendered above the rows, e.g. an error banner. */
   notice?: ReactNode;
+  /** Row copy for what these settings apply to. Defaults to Zana's project-settings wording. */
+  rowCopy?: HarnessRoutingEditorRowCopy;
+}
+
+export interface HarnessRoutingEditorRowCopy {
+  /** Accessible name of a row's expand button, given the harness label. */
+  expandLabel(harnessLabel: string): string;
+  /** Line under the harness name. */
+  blurb: string;
+  /** Shown when a harness has no launch fields to set. */
+  empty: string;
 }
 
 /** A plugin's stored AI-harness override at one scope (see `zcc.sdk.harnessRouting`). */

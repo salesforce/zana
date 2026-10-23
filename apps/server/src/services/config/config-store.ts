@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { COMPOSER_LAUNCH_SURFACES_REV, type AppConfig, type PluginHarnessOverrideV1 } from '@zana-ai/zcc-domain/product';
 import { DEFAULT_TERMINAL_THEME } from '@zana-ai/zcc-domain/terminal-themes';
 import { atomicDurableWrite, DurableWriteConflictError } from '../../durable-store.js';
+import { PLUGIN_HARNESS_ROUTING_KEY, pluginHarnessRoutingOf, type PluginHarnessRoutingMap } from './plugin-harness-routing-map.js';
 
 export { DurableWriteConflictError };
 
@@ -64,22 +65,8 @@ export function ensureComposerLaunchSurfaces<T extends Partial<AppConfig>>(confi
  * normalizers drop unknown keys, so every write here carries this key over
  * from disk; only {@link createConfigStore}'s plugin accessors change it.
  */
-export const PLUGIN_HARNESS_ROUTING_KEY = 'pluginHarnessRouting';
-
-type PluginHarnessRoutingMap = Record<string, PluginHarnessOverrideV1>;
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
-}
-
-function isRouting(value: unknown): value is PluginHarnessOverrideV1 {
-  return isRecord(value) && value.schemaVersion === 1 && isRecord(value.byAdapter);
-}
-
-function pluginHarnessRoutingOf(raw: unknown): PluginHarnessRoutingMap {
-  const map = isRecord(raw) ? raw[PLUGIN_HARNESS_ROUTING_KEY] : undefined;
-  if (!isRecord(map)) return {};
-  return Object.fromEntries(Object.entries(map).filter(([, value]) => isRouting(value))) as PluginHarnessRoutingMap;
 }
 
 function withPluginHarnessRouting<T extends object>(config: T, map: PluginHarnessRoutingMap): T {

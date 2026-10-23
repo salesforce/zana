@@ -320,8 +320,14 @@ describe('plugin-keyed harness overrides', () => {
     threadProvider('codex');
     const { ctx } = overrideCtx();
     validateProviderModelSelection.mockRejectedValueOnce(new Error('host offline'));
-    await expect(checkPluginHarnessRouting(ctx, { kind: 'global' }, routing('codex', { modelTargetId: 'gpt-5.4' })))
-      .resolves.toEqual({ ok: true });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await expect(checkPluginHarnessRouting(ctx, { kind: 'global' }, routing('codex', { modelTargetId: 'gpt-5.4' })))
+        .resolves.toEqual({ ok: true });
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/could not check the codex row .*\(global\): host offline$/));
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('reads and writes only the bound plugin key in the resolved scope', async () => {

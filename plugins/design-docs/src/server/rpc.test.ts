@@ -481,6 +481,15 @@ describe('Design Docs harness override RPC handlers', () => {
     ]);
   });
 
+  it('lists a registered project’s host harnesses and rejects an unknown project or extra keys', async () => {
+    const { rpc, harnessRouting } = routing();
+    await rpc.harnessDescriptors!({ projectId: 'p1' });
+    expect(harnessRouting.descriptors).toHaveBeenLastCalledWith({ projectId: 'p1' });
+    await expect(rpc.harnessDescriptors!({ projectId: 'nope' })).rejects.toThrow('unknown project nope');
+    await expect(rpc.harnessDescriptors!({ projectId: 'p1', host: 'x' })).rejects.toThrow();
+    expect(harnessRouting.descriptors).toHaveBeenCalledTimes(1);
+  });
+
   it('writes a value or clears with null, then returns what the host stored', async () => {
     const { rpc, harnessRouting } = routing();
     harnessRouting.read.mockResolvedValueOnce(value as never);

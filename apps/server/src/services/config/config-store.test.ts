@@ -255,7 +255,12 @@ describe('createConfigStore plugin harness routing', () => {
     mkdirSync(dirname(configFile), { recursive: true });
     writeFileSync(configFile, JSON.stringify({
       version: 1, composerShowCliAgent: false, composerShowModern: false,
-      pluginHarnessRouting: { a: routing('gpt-5.4'), junk: { schemaVersion: 2 } }
+      pluginHarnessRouting: {
+        a: routing('gpt-5.4'),
+        junk: { schemaVersion: 2 },
+        // A well-shaped entry with an invalid field is dropped too, not only bad schema versions.
+        badHarness: { schemaVersion: 1, byAdapter: {}, defaultHarness: 'not-a-harness' }
+      }
     }));
     expect(store.getConfig().composerShowModern).toBe(true);
     expect(raw().pluginHarnessRouting).toEqual({ a: routing('gpt-5.4') });

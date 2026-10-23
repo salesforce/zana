@@ -124,7 +124,13 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
 
     // This plugin's own harness overrides. The host binds the plugin id, validates on write and
     // resolves them above the project/global chain for `harness: 'project-default'` spawns.
-    harnessDescriptors: async () => deps.sdk.harnessRouting.descriptors(),
+    // A project's descriptors come from that project's host, so a remote project shows its own harnesses.
+    harnessDescriptors: async (raw) => {
+      const projectId = optionalString(onlyKeys(raw, ['projectId']), 'projectId');
+      if (projectId === undefined) return deps.sdk.harnessRouting.descriptors();
+      await requireProject(projectId);
+      return deps.sdk.harnessRouting.descriptors({ projectId });
+    },
 
     harnessRouting: async (raw) => deps.sdk.harnessRouting.read(await harnessScope(raw)),
 

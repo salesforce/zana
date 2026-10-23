@@ -95,7 +95,8 @@ export type HarnessDescriptors = HarnessRoutingEditorProps['descriptors'];
 export interface DesignDocsApi {
   templates(): Promise<TemplateInfo[]>;
   projects(): Promise<ProjectInfo[]>;
-  harnessDescriptors(): Promise<HarnessDescriptors>;
+  /** Harnesses on the project's host, or this computer's when no project is given. */
+  harnessDescriptors(projectId?: string): Promise<HarnessDescriptors>;
   /** This plugin's override at one scope, null when it inherits. */
   harnessRouting(scope: HarnessScope): Promise<HarnessRouting | null>;
   /** Save (or clear with null) the override; the host rejects a value that cannot launch. Returns what was stored. */
@@ -180,7 +181,7 @@ export function createApi(call: Call): DesignDocsApi {
   return {
     templates: () => typed('templates'),
     projects: () => typed('projects'),
-    harnessDescriptors: () => typed('harnessDescriptors'),
+    harnessDescriptors: (projectId) => typed('harnessDescriptors', projectId ? { projectId } : undefined),
     harnessRouting: (scope) => typed('harnessRouting', scope),
     setHarnessRouting: (scope, value) => typed('setHarnessRouting', { scope, value }),
     peerStatus: () => typed('peerStatus'),
