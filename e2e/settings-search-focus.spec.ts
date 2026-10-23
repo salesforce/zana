@@ -20,6 +20,9 @@ async function leaveSettings(win: Page) {
 test('Ctrl/Cmd+, focuses search; typing filters, Escape clears and keeps Settings open', async ({ app }) => {
   const win = app.window;
   await leaveSettings(win);
+  // Closing comes back here, so wait until the Inbox route has actually landed.
+  await expect(win).toHaveURL(/\/inbox$/);
+  await expect(win.getByTestId('nav-inbox')).toHaveAttribute('aria-current', 'page');
   await win.keyboard.press('ControlOrMeta+Comma');
   await expect(search(win)).toBeFocused();
   await win.keyboard.type('heartbeat');
