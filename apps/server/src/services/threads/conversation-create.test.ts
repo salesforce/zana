@@ -375,6 +375,33 @@ describe('waitForPluginStartup', () => {
     await waiting;
     expect(settled).toBe(false);
   });
+
+  it('spends the bound once per startup, so a hung activation does not delay every thread', async () => {
+    vi.useFakeTimers();
+    trackThreadProviderStartup(new Promise(() => {}));
+    const results: Array<[string, boolean]> = [];
+    const first = waitForPluginStartup(1_000).then((value) => { results.push(['first', value]); });
+    await vi.advanceTimersByTimeAsync(600);
+    // A later wait only gets the time left on the first wait's bound.
+    const second = waitForPluginStartup(1_000).then((value) => { results.push(['second', value]); });
+    await vi.advanceTimersByTimeAsync(400);
+    await Promise.all([first, second]);
+    expect(results).toEqual([['first', false], ['second', false]]);
+    // Once the bound has passed, waits return at once without arming a timer.
+    const late = waitForPluginStartup(1_000);
+    expect(vi.getTimerCount()).toBe(0);
+    await expect(late).resolves.toBe(false);
+    // A newly tracked startup gets a fresh bound.
+    const next = Promise.withResolvers<void>();
+    trackThreadProviderStartup(next.promise);
+    let settled: boolean | undefined;
+    const waiting = waitForPluginStartup(1_000).then((value) => { settled = value; });
+    await vi.advanceTimersByTimeAsync(999);
+    expect(settled).toBeUndefined();
+    next.resolve();
+    await waiting;
+    expect(settled).toBe(true);
+  });
 });
 
 describe('unmanaged environment reuse', () => {

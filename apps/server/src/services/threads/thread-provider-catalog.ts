@@ -15,6 +15,7 @@ export interface ThreadProviderRecord extends PluginProviderDeclaration {
 const providers = new Map<string, ThreadProviderRecord[]>();
 const registrationListeners = new Set<() => void>();
 let providerStartup: Promise<unknown> | null = null;
+const pluginStartupDeadlines = new WeakMap<Promise<unknown>, number>();
 
 export const THREAD_PROVIDER_STARTUP_WAIT_MS = 30_000;
 
@@ -143,12 +144,21 @@ export function waitForThreadProvider(
  * thread created as soon as its provider registers would otherwise miss the
  * tools of plugins that load after the provider. Resolves `true` once plugin
  * startup settles (or when none is tracked), `false` after `timeoutMs`.
+ * The bound runs once per startup, from its first wait: later waits get only
+ * the time left, so a hung plugin activation delays threads by at most one bound.
  */
 export function waitForPluginStartup(timeoutMs = THREAD_PROVIDER_STARTUP_WAIT_MS): Promise<boolean> {
   const startup = providerStartup;
   if (!startup) return Promise.resolve(true);
+  let deadline = pluginStartupDeadlines.get(startup);
+  if (deadline === undefined) {
+    deadline = Date.now() + timeoutMs;
+    pluginStartupDeadlines.set(startup, deadline);
+  }
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) return Promise.resolve(false);
   return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(false), timeoutMs);
+    const timer = setTimeout(() => resolve(false), remainingMs);
     const finish = () => {
       clearTimeout(timer);
       resolve(true);
