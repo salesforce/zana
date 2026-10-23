@@ -49,7 +49,7 @@ function simpleDoc(harness: Harness, content = 'Line one\nLine two', projectId: 
   );
 }
 
-function renderDoc(harness: Harness, docId: string, options: { path?: string | null; layout?: DocLayout; contextProjectId?: string | null } = {}) {
+function renderDoc(harness: Harness, docId: string, options: { path?: string | null; layout?: DocLayout; contextProjectId?: string | null; kind?: 'doc' | 'template' } = {}) {
   const opened: Array<[string | null, boolean | undefined]> = [];
   const onDeleted = vi.fn();
   function Host() {
@@ -60,6 +60,7 @@ function renderDoc(harness: Harness, docId: string, options: { path?: string | n
         path={path}
         layout={options.layout ?? 'workbench'}
         contextProjectId={options.contextProjectId ?? null}
+        kind={options.kind}
         onDeleted={onDeleted}
         onOpenPath={(next, replace) => {
           opened.push([next, replace]);
@@ -87,6 +88,19 @@ afterEach(() => {
 });
 
 describe('DocHeader overlays', () => {
+  it('uses editor-only chrome for templates', async () => {
+    const harness = createHarness();
+    const template = harness.store.templateNew({ label: 'Personal template' }, UI_USER);
+    renderDoc(harness, template.id, { kind: 'template' });
+    await findPane('README.md');
+    expect(screen.queryByRole('button', { name: 'Publish' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Ask agent/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Peer conflicts' })).toBeNull();
+    expect(screen.queryByRole('tab', { name: /Comments/ })).toBeNull();
+    expect(screen.queryByRole('tab', { name: /Agents/ })).toBeNull();
+    expect(screen.getByRole('tab', { name: /History/ })).toBeTruthy();
+  });
+
   it('opens and dismisses the peer conflicts dialog and the more-actions menu', async () => {
     const harness = createHarness();
     const doc = simpleDoc(harness);

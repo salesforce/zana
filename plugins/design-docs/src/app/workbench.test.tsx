@@ -223,6 +223,26 @@ describe('peers view', () => {
 });
 
 describe('creating docs', () => {
+  it('opens template management, filters cards, and exposes each card action', async () => {
+    const harness = createHarness();
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Templates' }));
+    expect(screen.getByText('Start from a template')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'New template' })).toBeTruthy();
+    const filter = screen.getByRole('textbox', { name: 'Filter templates' });
+    fireEvent.change(filter, { target: { value: 'decision record' } });
+    expect(await screen.findByText('Decision record')).toBeTruthy();
+    expect(screen.queryByText('Product spec')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Decision record' }));
+    expect(screen.getByRole('menuitem', { name: 'Edit' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Duplicate' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Export' })).toBeTruthy();
+    fireEvent.click(document.body);
+
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeTruthy();
+  });
+
   it('starts on the landing page and creates a doc from a template', async () => {
     const harness = createHarness();
     harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);

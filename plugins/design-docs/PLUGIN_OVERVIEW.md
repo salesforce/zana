@@ -4,7 +4,7 @@ Write design documents with your agents: specs, RFCs, ADRs, product briefs and A
 
 - A Design Docs workbench. It has a doc list with search and status filters, a file tree for each doc, and a reading view with preview, edit and side-by-side modes. The list groups docs by project, keeps pinned docs and docs with open comments on top, and nests alternative proposals under the doc they compete with.
 - Multi-file docs. Markdown with tables, task lists, math and Mermaid. Standalone `.mmd` diagrams. Self-contained HTML mockups, with desktop, tablet and phone widths. SVG, images and highlighted code.
-- Templates for technical designs, product specs, ADRs and API designs, or a blank doc.
+- Personal templates for technical designs, product specs, ADRs, API designs, sites and blank docs. Manage them from **Templates**: create, edit, duplicate, export, import, delete, or restore built-ins. Template exports are JSON bundles, shared across projects on this machine, and never peer-synced.
 - Review comments. Select any passage to comment on it or ask an agent about it. Comments are anchored to the quoted text and highlighted in the page.
 - History with diffs. Every save, by you or an agent, is a revision. Compare it with the previous one and restore it in one click.
 - A Design tab in each project, showing that project's docs and the global ones.
@@ -26,3 +26,5 @@ A doc with HTML pages can be published as a GitHub Pages site. Publish asks for 
 ## Data
 
 Docs are stored in the plugin's local database on this machine. A doc belongs to one project or is global. Deleting a file keeps it in history. Deleting a doc removes it permanently.
+
+Templates use separate local rows, so they are not listed as docs and never sent to peers. Before downgrading to a build without template support, run `zcc design-docs templates purge`.
