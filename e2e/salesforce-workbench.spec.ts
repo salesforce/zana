@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { mkdirSync, writeFileSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, realpathSync } from "node:fs";
 import { join, delimiter } from "node:path";
 import { test as base, expect } from "./fixtures/app.js";
 import type { Page } from "@playwright/test";
@@ -84,7 +84,7 @@ const test = base.extend({
       `#!${process.execPath}
 const fs = require('node:fs');
 const args = process.argv.slice(2);
-fs.appendFileSync(process.env.SF_E2E_TRACE, JSON.stringify({ args, cwd: process.cwd(), home: process.env.HOME }) + '\\n');
+fs.appendFileSync(process.env.SF_E2E_TRACE, JSON.stringify({ args, cwd: process.cwd(), home: process.env.HOME, keychain: process.env.SF_USE_GENERIC_UNIX_KEYCHAIN ?? null }) + '\\n');
 const alias = args[args.indexOf('--target-org') + 1] || 'dev';
 const org = { alias, username: alias + '@example.com', orgId: '00D000000000001', instanceUrl: process.env.SF_E2E_URL, isSandbox: alias !== 'org-158', isScratchOrg: false, isScratch: false, accessToken: 'FAKE_PRIVATE_TOKEN', apiVersion: '62.0' };
 const authFile = process.env.SF_E2E_TRACE + '.auth.json';
@@ -183,6 +183,12 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
   const roster = (await window.evaluate(() =>
     window.cc.pluginApps.callRpc("salesforce", "orgs"),
   )) as { orgs: unknown[] };
+  const tracePath = join(home, "sf-trace.jsonl");
+  const rows = existsSync(tracePath)
+    ? readFileSync(tracePath, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))
+    : [];
+  expect(rows.length, "the plugin must run the spec's fake sf, not a real Salesforce CLI").toBeGreaterThan(0);
+  expect(rows.filter((row) => row.keychain !== "true")).toEqual([]);
   expect(roster.orgs).toHaveLength(160);
   expect(JSON.stringify(roster)).not.toContain("FAKE_PRIVATE_TOKEN");
   await route(window, `/projects/${projectId}`);
