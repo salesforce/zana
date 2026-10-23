@@ -80,6 +80,125 @@ describe('HarnessRoutingEditor', () => {
     expect(onChange).toHaveBeenCalledWith('claude', { modelTargetId: 'm1' });
   });
 
+  it('collapses an open row when toggled twice', () => {
+    render(<HarnessRoutingEditor descriptors={descriptors} value={undefined} onChange={vi.fn()} />);
+    const expand = screen.getByLabelText('Project settings for Claude Code');
+    fireEvent.click(expand);
+    expect(expand.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(expand);
+    expect(expand.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('marks disabled non-claude rows off and titles unavailable pickers', () => {
+    const off = {
+      ...descriptor('opencode', 'OpenCode'),
+      availability: { enabled: false, installed: true, reason: 'Not signed in' }
+    } as unknown as HarnessAdapterDescriptor;
+    const offNoReason = {
+      ...descriptor('pi', 'Pi'),
+      availability: { enabled: false, installed: false }
+    } as unknown as HarnessAdapterDescriptor;
+    const { container } = render(<HarnessRoutingEditor descriptors={[off, offNoReason]} value={undefined} onChange={vi.fn()} />);
+    expect(container.querySelectorAll('.opener-row--off').length).toBe(2);
+    fireEvent.click(screen.getByLabelText('Project settings for OpenCode'));
+    expect(screen.getByRole('button', { name: /Default model level/ }).getAttribute('title')).toBe('Not signed in');
+    expect(screen.getByRole('button', { name: /Default execution state/ }).getAttribute('title')).toBe('Not signed in');
+    fireEvent.click(screen.getByLabelText('Project settings for Pi'));
+    expect(screen.getAllByRole('button', { name: /Default model level/ })[1].getAttribute('title')).toBe('Harness unavailable');
+  });
+
+  it('picks execution state and clears it with inherit', () => {
+    const onChange = vi.fn();
+    render(<HarnessRoutingEditor descriptors={descriptors} value={{ schemaVersion: 1, byAdapter: { claude: { executionState: 'accept-edits' } } }} onChange={onChange} />);
+    fireEvent.click(screen.getByLabelText('Project settings for Claude Code'));
+    fireEvent.click(screen.getByRole('button', { name: /Default execution state/ }));
+    fireEvent.click(screen.getByRole('option', { name: 'Use global default' }));
+    expect(onChange).toHaveBeenCalledWith('claude', { executionState: undefined });
+    fireEvent.click(screen.getByRole('button', { name: /Default execution state/ }));
+    fireEvent.click(screen.getByRole('option', { name: 'acceptEdits [Accept Edits]' }));
+    expect(onChange).toHaveBeenCalledWith('claude', { executionState: 'accept-edits' });
+  });
+
+  it('clears the model with inherit', () => {
+    const onChange = vi.fn();
+    render(<HarnessRoutingEditor descriptors={descriptors} value={{ schemaVersion: 1, byAdapter: { claude: { modelTargetId: 'm1' } } }} onChange={onChange} />);
+    fireEvent.click(screen.getByLabelText('Project settings for Claude Code'));
+    fireEvent.click(screen.getByRole('button', { name: /Default model level/ }));
+    fireEvent.click(screen.getByRole('option', { name: 'Use global default' }));
+    expect(onChange).toHaveBeenCalledWith('claude', { modelTargetId: undefined });
+  });
+
+  describe('provider picklist', () => {
+    const providers = [{ id: 'p1', label: 'Provider One' }, { id: 'p2', label: 'Provider Two' }];
+    const models = [
+      { id: 'a', label: 'Alpha', provider: 'p1', scope: ['local'] },
+      { id: 'b', label: 'Beta', provider: 'p2', level: 'extra-high', scope: ['local'] },
+      { id: 'c', label: 'Gamma', scope: ['local'] }
+    ];
+    const open = (value: unknown, extra: object = {}, onChange = vi.fn()) => {
+      render(
+        <HarnessRoutingEditor
+          descriptors={[descriptor('opencode', 'OpenCode', { providers, models, ...extra })]}
+          value={value as never}
+          onChange={onChange}
+        />
+      );
+      fireEvent.click(screen.getByLabelText('Project settings for OpenCode'));
+      return onChange;
+    };
+    const pickProvider = (name: string) => {
+      fireEvent.click(screen.getByRole('button', { name: /Default provider/ }));
+      fireEvent.click(screen.getByRole('option', { name }));
+    };
+
+    it('clears the model when choosing a different provider', () => {
+      const onChange = open({ schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'a' } } });
+      pickProvider('Provider Two');
+      expect(onChange).toHaveBeenCalledWith('opencode', { providerTargetId: 'p2', modelTargetId: undefined });
+    });
+
+    it('keeps the model when choosing the same provider', () => {
+      const onChange = open({ schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'a' } } });
+      pickProvider('Provider One');
+      expect(onChange).toHaveBeenCalledWith('opencode', { providerTargetId: 'p1' });
+    });
+
+    it('keeps the model-less selection and clears on inherit', () => {
+      const onChange = open({ schemaVersion: 1, byAdapter: { opencode: { providerTargetId: 'p1' } } });
+      pickProvider('Provider Two');
+      expect(onChange).toHaveBeenCalledWith('opencode', { providerTargetId: 'p2' });
+      pickProvider('Use global default');
+      expect(onChange).toHaveBeenCalledWith('opencode', { providerTargetId: undefined, modelTargetId: undefined });
+    });
+
+    it('filters models by the routed provider and labels levels', () => {
+      open({ schemaVersion: 1, byAdapter: { opencode: { providerTargetId: 'p2' } } });
+      fireEvent.click(screen.getByRole('button', { name: /Default model level/ }));
+      const labels = screen.getAllByRole('option').map((option) => option.textContent);
+      expect(labels).toEqual(['Use global default', 'Beta [Extra High]', 'Gamma']);
+    });
+
+    it('shows all models with no provider routed', () => {
+      open(undefined);
+      fireEvent.click(screen.getByRole('button', { name: /Default model level/ }));
+      expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+        'Use global default', 'Alpha', 'Beta [Extra High]', 'Gamma'
+      ]);
+    });
+
+    it('shows a fixed provider without an inherit option', () => {
+      open(undefined, { providers: [{ id: 'p1', label: 'Provider One' }], providerModelRelationship: 'fixed-provider' });
+      expect(screen.getByText('OpenCode uses this fixed provider.')).toBeTruthy();
+      const button = screen.getByRole('button', { name: /Default provider/ });
+      expect(button.textContent).toContain('Provider One');
+    });
+
+    it('derives the shown provider from the routed model', () => {
+      open({ schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'b' } } });
+      expect(screen.getByRole('button', { name: /Default provider/ }).textContent).toContain('Provider Two');
+    });
+  });
+
   it('shows tabs, extras, and tab content from host renderers', () => {
     render(
       <HarnessRoutingEditor

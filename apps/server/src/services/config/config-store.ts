@@ -240,9 +240,9 @@ export function createConfigStore(
         const map = pluginHarnessRoutingOf(disk.value);
         if (value) map[pluginId] = value;
         else delete map[pluginId];
-        const base = isRecord(disk.value) ? disk.value : {};
+        // A missing or unreadable file reads as `{}`; any other value was checked above.
         try {
-          writeRaw(withPluginHarnessRouting(base, map), disk.hash);
+          writeRaw(withPluginHarnessRouting(disk.value as Record<string, unknown>, map), disk.hash);
           return;
         } catch (error) {
           if (!(error instanceof DurableWriteConflictError) || attempt >= 2) throw error;

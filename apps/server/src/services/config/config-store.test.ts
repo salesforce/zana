@@ -266,6 +266,25 @@ describe('createConfigStore plugin harness routing', () => {
     expect(raw().pluginHarnessRouting).toEqual({ a: routing('gpt-5.4') });
   });
 
+  it('gives up after retrying a file it cannot read, leaving the file as it was', () => {
+    const { store, configFile } = make();
+    mkdirSync(dirname(configFile), { recursive: true });
+    writeFileSync(configFile, '{not json');
+    expect(() => store.setPluginHarnessRouting('a', routing('x'))).toThrow(/Durable write rejected/);
+    expect(readFileSync(configFile, 'utf8')).toBe('{not json');
+  });
+
+  it('rethrows a write failure that is not a conflict without retrying', () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'zcc-config-store-plugin-'));
+    const notADirectory = join(homeDir, 'file');
+    writeFileSync(notADirectory, '');
+    const store = createConfigStore(
+      { homeDir, configFile: join(notADirectory, 'config.json') },
+      { normalizeConfig: (input) => input, projectConfigCompatibility: (input) => input, canonicalConfigForWrite: (input) => input as AppConfig, harnessEnabled: () => true }
+    );
+    expect(() => store.setPluginHarnessRouting('a', routing('x'))).toThrow(/ENOTDIR|EEXIST/);
+  });
+
   it('rejects a non-object config file instead of overwriting it', () => {
     const { store, configFile } = make();
     mkdirSync(dirname(configFile), { recursive: true });
