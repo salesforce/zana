@@ -1,8 +1,10 @@
 /**
- * Design Docs agents always run on the project's effective AI harness
- * (`harness: 'project-default'`) with that harness's AI-harness overrides.
- * An unusable harness fails with an actionable error, never a silent fallback
- * to whichever provider registered first.
+ * Design Docs agents run on the project's effective AI harness
+ * (`harness: 'project-default'`) with that harness's AI-harness overrides,
+ * unless Design Docs' own Agent settings store a plugin override, which then
+ * replaces the inherited chain for that harness (Project → Default, where
+ * Default is stored at the host's Global scope). Overrides are validated when saved. An unusable harness fails with
+ * an actionable error, never a silent fallback to another provider.
  */
 import { mkdirSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
@@ -45,6 +47,38 @@ async function threadRecord(win: Page, id: string) {
     ((await (await fetch(`/api/v1/threads/${threadId}`)).json()) as { thread: Record<string, unknown> }).thread, id);
 }
 
+type Scope = { kind: 'global' } | { kind: 'default-project' } | { kind: 'project'; projectId: string };
+
+async function storedRouting(win: Page, scope: Scope) {
+  return win.evaluate((scope) => window.cc.pluginApps.callRpc('design-docs', 'harnessRouting', scope), scope);
+}
+
+async function askAgent(win: Page, doc: string) {
+  return win.evaluate((doc) => window.cc.pluginApps.callRpc('design-docs', 'askAgent', { doc, action: 'review' }), doc) as Promise<{ threadId: string; projectId: string }>;
+}
+
+async function threadCount(win: Page, doc: string) {
+  return (await win.evaluate((doc) => window.cc.pluginApps.callRpc('design-docs', 'get', { doc }), doc) as { threads: unknown[] }).threads.length;
+}
+
+async function openAgentSettings(win: Page) {
+  await win.getByRole('button', { name: /^Design Docs/ }).click();
+  await win.locator('.dd-list').getByRole('button', { name: 'Settings', exact: true }).click();
+  await win.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Agent', exact: true }).click();
+  return win.getByRole('region', { name: 'Agent harness' });
+}
+
+async function expandClaude(win: Page) {
+  const expand = win.getByRole('region', { name: 'Agent harness' }).getByRole('button', { name: 'Agent settings for Claude Code' });
+  if (await expand.getAttribute('aria-expanded') !== 'true') await expand.click();
+  await expect(expand).toHaveAttribute('aria-expanded', 'true');
+}
+
+async function pick(win: Page, control: string, option: RegExp) {
+  await win.getByRole('region', { name: 'Agent harness' }).getByRole('button', { name: control }).click();
+  await win.getByRole('listbox', { name: control }).getByRole('option', { name: option }).click();
+}
+
 async function rpcError(win: Page, method: string, args: unknown): Promise<string> {
   return win.evaluate(async ({ method, args }) => {
     try {
@@ -81,14 +115,15 @@ test('Design Docs agents report an unusable project harness instead of starting 
   const afterMenu = await win.evaluate((doc) => window.cc.pluginApps.callRpc('design-docs', 'get', { doc }), docId) as { threads: unknown[] };
   expect(afterMenu.threads).toEqual([]);
 
-  // The Agent tab only explains where the harness comes from; it has no controls.
-  await win.locator('.dd-list').getByRole('button', { name: 'Settings', exact: true }).click();
-  await win.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Agent', exact: true }).click();
-  const agent = win.getByRole('region', { name: 'Agent harness' });
-  await expect(agent).toContainText("the doc's project");
-  await expect(agent).toContainText('for a doc with no project, the Default Project');
-  await expect(agent).toContainText('Settings → AI Harness');
-  await expect(agent.locator('input, select')).toHaveCount(0);
+  // The Agent tab offers per-scope overrides; an uninstalled harness's controls are disabled.
+  const agent = await openAgentSettings(win);
+  await expect(agent).toContainText("A project's choice wins over Default.");
+  const scopes = agent.getByRole('tablist', { name: 'Harness scope' });
+  await expect(scopes.getByRole('tab', { name: 'Default', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(scopes.getByRole('tab', { name: 'Project', exact: true })).toBeVisible();
+  await expect(scopes.getByRole('tab')).toHaveCount(2);
+  await expandClaude(win);
+  await expect(agent.getByRole('button', { name: 'Default execution state' })).toBeDisabled();
 });
 
 test('Design Docs agents run on the project harness and honor its AI-harness overrides', async ({ home }) => {
@@ -97,7 +132,8 @@ test('Design Docs agents run on the project harness and honor its AI-harness ove
     // PATH is headed by a deterministic fake `claude`, so no live Claude runs.
     allowLiveClaude: true,
     env: { PATH: `${fakeClaude.dir}${delimiter}${process.env.PATH ?? ''}` },
-    initialConfig: { sponsorPromptDismissed: true, claudeBinary: fakeClaude.path, defaultHarness: 'claude' }
+    // Codex is disabled so a harness choice that names it is deterministically unusable.
+    initialConfig: { sponsorPromptDismissed: true, claudeBinary: fakeClaude.path, defaultHarness: 'claude', harnessCodexEnabled: false } as never
   });
   try {
     const win = app.window;
@@ -141,13 +177,140 @@ test('Design Docs agents run on the project harness and honor its AI-harness ove
     const after = (await win.evaluate((doc) => window.cc.pluginApps.callRpc('design-docs', 'get', { doc }), docId) as { threads: unknown[] }).threads.length;
     expect(after).toBe(before);
 
-    // The Agent tab explains the inheritance and offers no override controls.
-    await win.getByRole('button', { name: /^Design Docs/ }).click();
-    await win.locator('.dd-list').getByRole('button', { name: 'Settings', exact: true }).click();
-    await win.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Agent', exact: true }).click();
-    const agent = win.getByRole('region', { name: 'Agent harness' });
-    await expect(agent).toContainText('Settings → AI Harness');
-    await expect(agent.locator('input, select')).toHaveCount(0);
+    // A Design Docs Global override set in its Agent settings replaces the
+    // inherited chain as a whole value: the project's unmapped `plan` mode
+    // no longer applies, and the plugin's execution state + model do.
+    const agent = await openAgentSettings(win);
+    await expect(agent.getByRole('tab', { name: 'Default', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expandClaude(win);
+    await pick(win, 'Default execution state', /\[Autonomous\]$/);
+    await expect.poll(() => storedRouting(win, { kind: 'global' })).toMatchObject({
+      schemaVersion: 1, byAdapter: { claude: { executionState: 'autonomous' } }
+    });
+    await pick(win, 'Default model level', /\[Low\]$/);
+    await expect.poll(() => storedRouting(win, { kind: 'global' })).toMatchObject({
+      byAdapter: { claude: { executionState: 'autonomous', modelTargetId: 'haiku' } }
+    });
+    await expect(agent.getByRole('alert')).toHaveCount(0);
+    const pluginGlobal = await askAgent(win, docId);
+    expect(await threadRecord(win, pluginGlobal.threadId)).toMatchObject({
+      providerId: 'claude-code', originPluginId: 'design-docs', permissionMode: 'full', model: 'haiku'
+    });
+
+    // A Project-scope plugin override wins over the plugin's Global one, whole:
+    // Global's model is not merged in.
+    await agent.getByRole('tab', { name: 'Project', exact: true }).click();
+    await agent.getByRole('combobox', { name: 'Project' }).selectOption(projectId);
+    await expandClaude(win);
+    await pick(win, 'Default execution state', /\[Accept Edits\]$/);
+    await expect.poll(() => storedRouting(win, { kind: 'project', projectId })).toEqual({
+      schemaVersion: 1, byAdapter: { claude: { executionState: 'accept-edits' } }
+    });
+    const pluginProject = await askAgent(win, docId);
+    const projectThread = await threadRecord(win, pluginProject.threadId);
+    expect(projectThread).toMatchObject({ providerId: 'claude-code', originPluginId: 'design-docs', permissionMode: 'accept-edits' });
+    expect(projectThread.model).not.toBe('haiku');
+
+    // Save-time validation: an unknown provider target or a malformed model id
+    // is rejected and the stored override is left as it was.
+    const projectScope = { kind: 'project', projectId } as const;
+    const badProvider = await rpcError(win, 'setHarnessRouting', {
+      scope: projectScope, value: { schemaVersion: 1, byAdapter: { claude: { providerTargetId: 'retired-provider' } } }
+    });
+    expect(badProvider).not.toBe('unexpected success');
+    expect(badProvider).toContain('claude:');
+    const badModel = await rpcError(win, 'setHarnessRouting', {
+      scope: projectScope, value: { schemaVersion: 1, byAdapter: { claude: { modelTargetId: 'bad model!' } } }
+    });
+    expect(badModel).not.toBe('unexpected success');
+    expect(badModel).toContain('claude:');
+    expect(await storedRouting(win, projectScope)).toEqual({
+      schemaVersion: 1, byAdapter: { claude: { executionState: 'accept-edits' } }
+    });
+
+    // Clearing the Project override falls back to the plugin's Global override.
+    await win.evaluate((scope) => window.cc.pluginApps.callRpc('design-docs', 'setHarnessRouting', { scope, value: null }), projectScope);
+    expect(await storedRouting(win, projectScope)).toBeNull();
+    const cleared = await askAgent(win, docId);
+    expect(await threadRecord(win, cleared.threadId)).toMatchObject({ permissionMode: 'full', model: 'haiku' });
+
+    // The plugin's harness choice, not Zana's default, picks the harness.
+    // (Zana keeps only an enabled harness as its default, so its default stays Claude here.)
+    const beforeChoice = await threadCount(win, docId);
+
+    // Choosing Claude Code at Default in Design Docs Settings stores the choice and runs on it, with the Default rows.
+    await agent.getByRole('tab', { name: 'Default', exact: true }).click();
+    await pick(win, 'Default harness', /^Claude Code$/);
+    await expect.poll(() => storedRouting(win, { kind: 'global' })).toMatchObject({ defaultHarness: 'claude' });
+    await expect(agent.getByRole('alert')).toHaveCount(0);
+    const chosen = await askAgent(win, docId);
+    expect(await threadRecord(win, chosen.threadId)).toMatchObject({
+      providerId: 'claude-code', originPluginId: 'design-docs', permissionMode: 'full', model: 'haiku'
+    });
+    expect(await threadCount(win, docId)).toBe(beforeChoice + 1);
+
+    // A Project choice wins over Default: naming the disabled Codex fails closed,
+    // never falling back to Default's Claude or Zana's (usable) Claude default.
+    await win.evaluate((scope) => window.cc.pluginApps.callRpc('design-docs', 'setHarnessRouting', {
+      scope, value: { schemaVersion: 1, byAdapter: {}, defaultHarness: 'codex' }
+    }), projectScope);
+    const blocked = await rpcError(win, 'askAgent', { doc: docId, action: 'review' });
+    expect(blocked).toContain("this plugin's harness (codex) is disabled or unavailable");
+    expect(await threadCount(win, docId)).toBe(beforeChoice + 1);
+
+    // Clearing the Project choice falls back to Default's Claude choice.
+    await win.evaluate((scope) => window.cc.pluginApps.callRpc('design-docs', 'setHarnessRouting', { scope, value: null }), projectScope);
+    const restored = await askAgent(win, docId);
+    expect(await threadRecord(win, restored.threadId)).toMatchObject({ providerId: 'claude-code', model: 'haiku' });
+  } finally {
+    await closeApp(app.electron);
+  }
+});
+
+test('Design Docs Settings rejects an invalid harness override and spawns name the plugin setting', async ({ home }) => {
+  test.setTimeout(180_000);
+  // A stale Global override (a provider target the harness no longer lists),
+  // as left by an older catalog. Seeded raw: the save path would reject it.
+  const stale = { schemaVersion: 1, byAdapter: { claude: { providerTargetId: 'retired-provider' } } };
+  const app = await launchApp(home, {
+    allowLiveClaude: true,
+    env: { PATH: `${fakeClaude.dir}${delimiter}${process.env.PATH ?? ''}` },
+    initialConfig: {
+      sponsorPromptDismissed: true, claudeBinary: fakeClaude.path, defaultHarness: 'claude',
+      pluginHarnessRouting: { 'design-docs': stale }
+    } as never
+  });
+  try {
+    const win = app.window;
+    await installDesignDocs(win);
+    const { docId } = await projectDoc(win, join(home, 'dd-harness-invalid'), 'Invalid override doc');
+    await waitForThreadProvider(win, 'claude-code', 90_000);
+    expect(await storedRouting(win, { kind: 'global' })).toEqual(stale);
+
+    // The spawn rejects, points at this plugin's setting, and starts nothing.
+    const spawn = await rpcError(win, 'askAgent', { doc: docId, action: 'review' });
+    expect(spawn).not.toBe('unexpected success');
+    expect(spawn).toContain("Change it in this plugin's AI Harness settings.");
+    expect(spawn).not.toContain('Settings → AI Harness');
+    expect(await threadCount(win, docId)).toBe(0);
+
+    // Editing it in Settings re-validates the whole value; the rejection is
+    // shown inline and nothing is persisted.
+    const agent = await openAgentSettings(win);
+    await expandClaude(win);
+    await pick(win, 'Default execution state', /\[Autonomous\]$/);
+    const alert = agent.getByRole('alert');
+    await expect(alert).toBeVisible();
+    await expect(alert).toContainText('claude:');
+    expect(await storedRouting(win, { kind: 'global' })).toEqual(stale);
+    await pick(win, 'Default model level', /\[Low\]$/);
+    await expect(alert).toContainText('claude:');
+    expect(await storedRouting(win, { kind: 'global' })).toEqual(stale);
+
+    // Clearing the override restores the inherited project harness.
+    await win.evaluate(() => window.cc.pluginApps.callRpc('design-docs', 'setHarnessRouting', { scope: { kind: 'global' }, value: null }));
+    const started = await askAgent(win, docId);
+    expect(await threadRecord(win, started.threadId)).toMatchObject({ providerId: 'claude-code', originPluginId: 'design-docs' });
   } finally {
     await closeApp(app.electron);
   }

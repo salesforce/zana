@@ -3,7 +3,7 @@
  * user and announced on the realtime `changed` channel, exactly like agent
  * writes, so every open view refreshes.
  */
-import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
+import type { HarnessOverrideScope, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import { agentActionById, buildAgentPrompt, MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
 import { isDocStatus, type CommentStatus, type DocActor, type TextEdit } from '../shared/contract.js';
 import type { PageFile } from '../shared/frame-protocol.js';
@@ -24,7 +24,7 @@ export const UI_USER: DocActor = { kind: 'user', label: 'You', threadId: null };
 export interface RpcDeps {
   store: DesignDocStore;
   changed(docId: string): void;
-  sdk: Pick<ZccPluginApi['sdk'], 'threads' | 'projects' | 'peers'>;
+  sdk: Pick<ZccPluginApi['sdk'], 'threads' | 'projects' | 'peers' | 'harnessRouting'>;
   peerSync?: DesignDocPeerService;
   pairing?: DesignDocPairing;
   /** The bundled site kit behind `zcc-kit/` paths. */
@@ -91,6 +91,18 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       throw new DesignDocError('invalid', `unknown project ${projectId}`);
     }
   };
+  /** The scope the renderer names for this plugin's harness override; a project must be registered. */
+  const harnessScope = async (raw: unknown): Promise<HarnessOverrideScope> => {
+    const input = onlyKeys(raw, ['kind', 'projectId']);
+    if (input.kind === 'global' || input.kind === 'default-project') {
+      if (input.projectId !== undefined) throw new DesignDocError('invalid', `${input.kind} scope takes no projectId`);
+      return { kind: input.kind };
+    }
+    if (input.kind !== 'project') throw new DesignDocError('invalid', 'scope.kind must be global, default-project or project');
+    const projectId = requiredString(input, 'projectId');
+    await requireProject(projectId);
+    return { kind: 'project', projectId };
+  };
   /**
    * Every Design Docs agent goes through here: it always runs on the project's
    * AI harness and that harness's overrides (`harness: 'project-default'`); the
@@ -109,6 +121,28 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
     })),
 
     projects: async () => (await deps.sdk.projects.list()).map(({ id, name, quickAgent }) => ({ id, name, ...(quickAgent ? { quickAgent: true } : {}) })),
+
+    // This plugin's own harness overrides. The host binds the plugin id, validates on write and
+    // resolves them above the project/global chain for `harness: 'project-default'` spawns.
+    // A project's descriptors come from that project's host, so a remote project shows its own harnesses.
+    harnessDescriptors: async (raw) => {
+      const projectId = optionalString(onlyKeys(raw, ['projectId']), 'projectId');
+      if (projectId === undefined) return deps.sdk.harnessRouting.descriptors();
+      await requireProject(projectId);
+      return deps.sdk.harnessRouting.descriptors({ projectId });
+    },
+
+    harnessRouting: async (raw) => deps.sdk.harnessRouting.read(await harnessScope(raw)),
+
+    setHarnessRouting: async (raw) => {
+      const input = asInput(raw);
+      if (Object.keys(input).some((key) => key !== 'scope' && key !== 'value')) throw new DesignDocError('invalid', 'accepts only scope, value');
+      const scope = await harnessScope(input.scope);
+      const value = input.value ?? null;
+      if (value !== null && (typeof value !== 'object' || Array.isArray(value))) throw new DesignDocError('invalid', 'value must be an object or null');
+      await deps.sdk.harnessRouting.write(scope, value as never);
+      return deps.sdk.harnessRouting.read(scope);
+    },
 
     backupDatabase: async () => {
       if (!deps.backups?.available) throw new DesignDocError('invalid', 'database backup is unavailable');

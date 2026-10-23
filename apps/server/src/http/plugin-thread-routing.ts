@@ -25,7 +25,7 @@ import {
   resolveRoleTarget,
   type ExecutionResolution
 } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
-import { PluginSpawnHarnessError, type PluginSpawnPermissionMode } from './plugin-thread-spawn.js';
+import { AI_HARNESS_SETTINGS_HINT, PluginSpawnHarnessError, type PluginSpawnPermissionMode } from './plugin-thread-spawn.js';
 
 export interface PluginThreadRoutingInput {
   family: HarnessFamily;
@@ -64,8 +64,6 @@ export interface PluginThreadRouting {
   applied: PluginThreadRoutingApplied[];
 }
 
-const SETTINGS_HINT = 'Change it in Settings → AI Harness.';
-
 function sourceLabel(source: string): string {
   if (source === 'persona' || source === 'Persona') return 'persona';
   if (source === 'project' || source === 'Project') return 'project';
@@ -74,7 +72,7 @@ function sourceLabel(source: string): string {
 
 function fail(input: Pick<PluginThreadRoutingInput, 'providerLabel'>, message: string): never {
   const sentence = /[.!?]$/.test(message.trim()) ? message.trim() : `${message.trim()}.`;
-  throw new PluginSpawnHarnessError(`${input.providerLabel} cannot apply the AI harness override: ${sentence} ${SETTINGS_HINT}`);
+  throw new PluginSpawnHarnessError(`${input.providerLabel} cannot apply the AI harness override: ${sentence}`, AI_HARNESS_SETTINGS_HINT);
 }
 
 function resolve<T>(input: PluginThreadRoutingInput, run: () => T): T {

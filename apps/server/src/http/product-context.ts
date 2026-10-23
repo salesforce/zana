@@ -116,7 +116,7 @@ export interface ProductHttpContext {
   remoteEnvironment: RemoteEnvironmentService;
   projects: ProjectStore;
   /** Per-project settings (Settings → Project), read from disk on every call. */
-  projectSettings: Pick<ProjectSettingsStore, 'get'>;
+  projectSettings: Pick<ProjectSettingsStore, 'get' | 'getPluginHarnessRouting' | 'setPluginHarnessRouting'>;
   remoteProjectReconciler?: CoalescedReconciler;
   config: ReturnType<typeof createConfigStore>;
   inbox: IInboxStore;
@@ -206,7 +206,7 @@ export interface CreateProductHttpContextOptions {
   /** Reuse a process-local project store when one already exists. */
   projects?: ProjectStore;
   /** Reuse a process-local project-settings store when one already exists. */
-  projectSettings?: Pick<ProjectSettingsStore, 'get'>;
+  projectSettings?: Pick<ProjectSettingsStore, 'get' | 'getPluginHarnessRouting' | 'setPluginHarnessRouting'>;
   onLibraryChanged?: () => void;
   onProjectsChanged?: () => void;
 }

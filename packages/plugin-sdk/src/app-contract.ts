@@ -1029,6 +1029,44 @@ export interface NewThreadComposerProps {
   onSubmit: (request: { projectId: string; providerId: string; input: unknown[] }) => void | Promise<void>;
 }
 
+export type HarnessRoutingEditorPatch = {
+  providerTargetId?: string;
+  modelTargetId?: string;
+  executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous';
+};
+
+/** Props for the host-rendered harness routing editor (same editor Core Project settings uses). */
+export interface HarnessRoutingEditorProps {
+  descriptors: readonly import('@zana-ai/zcc-domain/harness-adapter').HarnessAdapterDescriptor[];
+  value: import('@zana-ai/zcc-domain/product').HarnessModelRoutingV1 | undefined;
+  onChange(adapterId: import('@zana-ai/zcc-domain/product').HarnessFamily, patch: HarnessRoutingEditorPatch): void;
+  /** Label of the inherit option. Defaults to "Use global default". */
+  inheritLabel?: string;
+  /** Shows skeletons instead of rows while descriptors or the value load. */
+  loading?: boolean;
+  /** Optional harness picker above the rows; `''` is the inherit option. */
+  defaultHarness?: {
+    value: string;
+    onChange(adapterId: string): void;
+  };
+  /** Rendered above the rows, e.g. an error banner. */
+  notice?: ReactNode;
+  /** Row copy for what these settings apply to. Defaults to Zana's project-settings wording. */
+  rowCopy?: HarnessRoutingEditorRowCopy;
+}
+
+export interface HarnessRoutingEditorRowCopy {
+  /** Accessible name of a row's expand button, given the harness label. */
+  expandLabel(harnessLabel: string): string;
+  /** Line under the harness name. */
+  blurb: string;
+  /** Shown when a harness has no launch fields to set. */
+  empty: string;
+}
+
+/** A plugin's stored AI-harness override at one scope (see `zcc.sdk.harnessRouting`). */
+export type PluginHarnessOverride = import('@zana-ai/zcc-domain/product').PluginHarnessOverrideV1;
+
 export interface PluginRpcClient {
   call(method: string, args?: unknown): Promise<unknown>;
 }
@@ -1089,6 +1127,7 @@ export interface PluginSdkApp {
   ThreadChat: ComponentType<ThreadChatProps>;
   Markdown: ComponentType<MarkdownProps>;
   experimental_NewThreadComposer: ComponentType<NewThreadComposerProps>;
+  experimental_HarnessRoutingEditor: ComponentType<HarnessRoutingEditorProps>;
   /** Host-only toast helper; not a public SDK export. */
   toast?(message: string, kind?: 'info' | 'error'): void;
 }

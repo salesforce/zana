@@ -276,7 +276,8 @@ export {
   experimental_useSidebarThreadSplit,
   ThreadChat,
   Markdown,
-  experimental_NewThreadComposer
+  experimental_NewThreadComposer,
+  experimental_HarnessRoutingEditor
 } from './app.js';
 export type { PluginHostBridge } from './app.js';
 export {

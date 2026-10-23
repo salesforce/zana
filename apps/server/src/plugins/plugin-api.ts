@@ -14,6 +14,12 @@ import {
 import { threadProviderFamily } from '../services/threads/thread-execution-options.js';
 import { readHostFile, writeHostFile } from '../http/files-via-host.js';
 import { readPluginProjectFile, writePluginProjectFile } from '../http/plugin-project-files.js';
+import {
+  checkPluginHarnessRouting,
+  pluginHarnessDescriptors,
+  readPluginHarnessRouting,
+  writePluginHarnessRouting
+} from '../http/plugin-harness-routing.js';
 import { environmentPullRequest } from '../services/environments/environment-actions.js';
 import { conversationHistoryAsync } from '../services/threads/conversation-history.js';
 import { threadSummary } from './thread-events.js';
@@ -774,6 +780,28 @@ export function createPluginApi(
       }
     } satisfies PluginHooks,
     sdk: {
+      harnessRouting: {
+        descriptors: async (input) => {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          return pluginHarnessDescriptors(options.productContext, input ?? {});
+        },
+        read: async (scope) => {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          return readPluginHarnessRouting(options.productContext, pluginId, scope);
+        },
+        write: async (scope, value) => {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          await writePluginHarnessRouting(options.productContext, pluginId, scope, value);
+        },
+        check: async (scope, value) => {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          return checkPluginHarnessRouting(options.productContext, scope, value);
+        }
+      },
       experimental_promptHistory: {
         list: async (args: { scope: 'thread' | 'project' | 'all'; threadId?: string; projectId?: string; cursor?: string; query?: string }) => {
           assertLive();

@@ -209,3 +209,87 @@ describe('createConfigStore', () => {
     });
   });
 });
+
+describe('createConfigStore plugin harness routing', () => {
+  const routing = (model: string) => ({ schemaVersion: 1 as const, byAdapter: { codex: { modelTargetId: model } } });
+  // Mirror main's normalizer: unknown keys are dropped.
+  const make = () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'zcc-config-store-plugin-'));
+    const configFile = join(homeDir, '.zcc', 'config.json');
+    const dropUnknown = (input: Partial<AppConfig>) => {
+      const { pluginHarnessRouting: _drop, ...rest } = input as Partial<AppConfig> & { pluginHarnessRouting?: unknown };
+      return rest as Partial<AppConfig>;
+    };
+    const store = createConfigStore(
+      { homeDir, configFile },
+      {
+        normalizeConfig: dropUnknown,
+        projectConfigCompatibility: (input) => input,
+        canonicalConfigForWrite: (input) => dropUnknown(input) as AppConfig,
+        harnessEnabled: () => true
+      }
+    );
+    return { store, configFile, raw: () => JSON.parse(readFileSync(configFile, 'utf8')) as Record<string, unknown> };
+  };
+
+  it('stores per plugin, survives Core writes, and clears', () => {
+    const { store, raw } = make();
+    expect(store.getPluginHarnessRouting('a')).toBeNull();
+    store.setPluginHarnessRouting('a', routing('gpt-5.4'));
+    store.setPluginHarnessRouting('b', routing('gpt-5.4-mini'));
+    store.setConfig({ theme: 'light' });
+    const snap = store.snapshot();
+    store.replaceConfig({ ...snap.config, fontSize: 15 }, snap.hash);
+    expect(store.getConfig()).not.toHaveProperty('pluginHarnessRouting');
+    expect(raw()).toMatchObject({ theme: 'light', fontSize: 15 });
+    expect(store.getPluginHarnessRouting('a')).toEqual(routing('gpt-5.4'));
+    expect(store.getPluginHarnessRouting('b')).toEqual(routing('gpt-5.4-mini'));
+    store.setPluginHarnessRouting('a', null);
+    store.setPluginHarnessRouting('b', null);
+    expect(raw()).not.toHaveProperty('pluginHarnessRouting');
+    expect(raw()).toMatchObject({ theme: 'light' });
+  });
+
+  it('keeps plugin overrides through the composer-surface heal write', () => {
+    const { store, configFile, raw } = make();
+    mkdirSync(dirname(configFile), { recursive: true });
+    writeFileSync(configFile, JSON.stringify({
+      version: 1, composerShowCliAgent: false, composerShowModern: false,
+      pluginHarnessRouting: {
+        a: routing('gpt-5.4'),
+        junk: { schemaVersion: 2 },
+        // A well-shaped entry with an invalid field is dropped too, not only bad schema versions.
+        badHarness: { schemaVersion: 1, byAdapter: {}, defaultHarness: 'not-a-harness' }
+      }
+    }));
+    expect(store.getConfig().composerShowModern).toBe(true);
+    expect(raw().pluginHarnessRouting).toEqual({ a: routing('gpt-5.4') });
+  });
+
+  it('gives up after retrying a file it cannot read, leaving the file as it was', () => {
+    const { store, configFile } = make();
+    mkdirSync(dirname(configFile), { recursive: true });
+    writeFileSync(configFile, '{not json');
+    expect(() => store.setPluginHarnessRouting('a', routing('x'))).toThrow(/Durable write rejected/);
+    expect(readFileSync(configFile, 'utf8')).toBe('{not json');
+  });
+
+  it('rethrows a write failure that is not a conflict without retrying', () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'zcc-config-store-plugin-'));
+    const notADirectory = join(homeDir, 'file');
+    writeFileSync(notADirectory, '');
+    const store = createConfigStore(
+      { homeDir, configFile: join(notADirectory, 'config.json') },
+      { normalizeConfig: (input) => input, projectConfigCompatibility: (input) => input, canonicalConfigForWrite: (input) => input as AppConfig, harnessEnabled: () => true }
+    );
+    expect(() => store.setPluginHarnessRouting('a', routing('x'))).toThrow(/ENOTDIR|EEXIST/);
+  });
+
+  it('rejects a non-object config file instead of overwriting it', () => {
+    const { store, configFile } = make();
+    mkdirSync(dirname(configFile), { recursive: true });
+    writeFileSync(configFile, '[1]');
+    expect(() => store.setPluginHarnessRouting('a', routing('x'))).toThrow('config file is not a JSON object');
+    expect(readFileSync(configFile, 'utf8')).toBe('[1]');
+  });
+});

@@ -67,6 +67,7 @@ import {
   type ExperimentalFixedTabTargetState,
   type ExperimentalOpenFixedTabOptions,
   type ExperimentalPluginFixedTabReference,
+  type HarnessRoutingEditorProps,
   type NewThreadComposerProps,
   type ExperimentalPermissionModePickerProps,
   type ExperimentalProviderModelPickerProps,
@@ -437,6 +438,20 @@ function TestFileLink({
         navigate.experimental_openFilePreview(options);
       }}
     />
+  );
+}
+
+/** Stand-in for the host-rendered harness routing editor: one row per descriptor. */
+function TestHarnessRoutingEditor({ descriptors, loading }: HarnessRoutingEditorProps) {
+  if (loading) return <div data-testid="bb-harness-routing-editor" data-loading="true" />;
+  return (
+    <div data-testid="bb-harness-routing-editor">
+      {descriptors.map((descriptor) => (
+        <div key={descriptor.id} data-testid={`bb-harness-routing-row-${descriptor.id}`}>
+          {descriptor.label}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -811,6 +826,7 @@ const testPluginSdkApp = {
   experimental_FileLink: TestFileLink,
   UrlLink: TestUrlLink,
   experimental_NewThreadComposer: TestNewThreadComposer,
+  experimental_HarnessRoutingEditor: TestHarnessRoutingEditor,
   experimental_ProviderModelPicker: TestProviderModelPicker,
   experimental_PermissionModePicker: TestPermissionModePicker,
   experimental_SourceCode: TestSourceCode,
