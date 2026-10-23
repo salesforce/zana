@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { DISABLED_CLAUDE_BINARY, isolatedClaudePath, writeAppConfig } from '../e2e/fixtures/app-config.js';
+import { DISABLED_CLAUDE_BINARY, isolatedClaudePath, isolatedKeychainEnv, writeAppConfig } from '../e2e/fixtures/app-config.js';
 
 const homes: string[] = [];
 function home() {
@@ -71,5 +71,21 @@ describe('E2E Claude isolation', () => {
     expect(read(path).claudeBinary).toBeUndefined();
     writeAppConfig(path, {}, true);
     expect(read(path).claudeBinary).toBeUndefined();
+  });
+});
+
+describe('E2E keychain isolation', () => {
+  it('keeps Salesforce keys out of the keychain for an isolated home', () => {
+    expect(isolatedKeychainEnv(false)).toEqual({ SF_USE_GENERIC_UNIX_KEYCHAIN: 'true' });
+  });
+
+  it('leaves a preserved real HOME on its real keychain', () => {
+    expect(isolatedKeychainEnv(true)).toEqual({});
+  });
+
+  it.runIf(process.platform === 'darwin')('documents that an isolated home has no macOS keychain', () => {
+    const result = spawnSync('/usr/bin/security', ['default-keychain'], { env: { ...process.env, HOME: home() }, encoding: 'utf8' });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('could not be found');
   });
 });

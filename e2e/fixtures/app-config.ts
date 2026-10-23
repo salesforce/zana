@@ -10,6 +10,15 @@ export function isolatedClaudePath(path: string | undefined, allowLiveClaude = f
   return [dirname(DISABLED_CLAUDE_BINARY), path].filter(Boolean).join(delimiter);
 }
 
+/**
+ * Isolated homes have no macOS login keychain, so `@salesforce/core` would ask macOS to
+ * create one and open a "Keychain Not Found" dialog. The generic keychain keeps the key in
+ * the isolated home's `.sfdx/key.json`. A preserved real HOME keeps its real keychain.
+ */
+export function isolatedKeychainEnv(preserveHome: boolean): Record<string, string> {
+  return preserveHome ? {} : { SF_USE_GENERIC_UNIX_KEYCHAIN: 'true' };
+}
+
 /** Isolated homes have no login keychain. Never discover a real Claude by default. */
 export function writeAppConfig(
   home: string,
