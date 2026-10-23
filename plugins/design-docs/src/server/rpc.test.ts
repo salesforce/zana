@@ -35,7 +35,8 @@ describe('Design Docs RPC', () => {
     for (const [name, args] of operations) {
       expect(() => call(name, { doc: template.id, kind: 'doc', ...args })).toThrow('not found');
       expect(() => call(name, { doc: doc.id, kind: 'template', ...args })).toThrow('not found');
-      expect(() => call(name, { doc: doc.id, kind: undefined, ...args })).toThrow('kind must');
+      expect(() => call(name, { doc: template.id, kind: undefined, ...args })).toThrow('not found');
+      expect(() => call(name, { doc: doc.id, kind: 'page', ...args })).toThrow('kind must');
     }
     await expect(call('update', { doc: template.id, kind: 'doc', entryPath: 'README.md' })).rejects.toThrow('not found');
     await expect(call('update', { doc: doc.id, kind: 'template', entryPath: 'README.md' })).rejects.toThrow('not found');

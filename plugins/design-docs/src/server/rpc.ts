@@ -49,7 +49,9 @@ function optionalNumber(input: Record<string, unknown>, key: string): number | u
   return value;
 }
 
+// A missing kind means 'doc', so callers that predate templates keep working.
 function requiredKind(input: Record<string, unknown>): DocKind {
+  if (input.kind === undefined) return 'doc';
   if (input.kind !== 'doc' && input.kind !== 'template') throw new DesignDocError('invalid', 'kind must be doc or template');
   return input.kind;
 }
@@ -268,7 +270,7 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       });
     },
 
-    get: (raw) => { const input = asInput(raw); return store.get(requiredString(input, 'doc'), input.kind === undefined ? 'doc' : requiredKind(input)); },
+    get: (raw) => { const input = asInput(raw); return store.get(requiredString(input, 'doc'), requiredKind(input)); },
 
     create: async (raw) => {
       const input = asInput(raw);

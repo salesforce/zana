@@ -20,8 +20,8 @@ const docRef = {
 } as const;
 
 export const TOOL_NAMES = [
-  'design_doc_list',
   'design_doc_templates_list',
+  'design_doc_list',
   'design_doc_read',
   'design_doc_create',
   'design_doc_write',
