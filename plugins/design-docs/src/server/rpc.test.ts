@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { MAX_TEXT_FILE_BYTES } from '../shared/limits.js';
 import { RenderReports } from './render-reports.js';
 import { createRpcHandlers, registerRpc, titleFromMarkdown, UI_USER } from './rpc.js';
 import { DesignDocError, DesignDocStore } from './store.js';
@@ -259,6 +260,20 @@ describe('Design Docs RPC', () => {
     const first = history.at(-1);
     expect(call('revision', { doc: doc.id, id: first.id }).content).toContain('# Doc');
     expect(call('restore', { doc: doc.id, id: first.id }).revision).toBe(4);
+  });
+
+  it('renders template pages with the site kit and rejects non-HTML or oversized drafts', async () => {
+    const store = new DesignDocStore(createTestDatabase());
+    const kit = (path: string) => (path === 'site.css' ? { path: `zcc-kit/${path}`, kind: 'code' as const, content: 'p{}', encoding: 'utf8' as const, revision: 0 } : null);
+    const rpc = createRpcHandlers({ store, changed: vi.fn(), sdk: {} as never, kit });
+    const template = store.templateNew({ label: 'Site' }, UI_USER);
+    store.writeFile(template.id, { path: 'index.html', content: '<link rel="stylesheet" href="zcc-kit/site.css"><p>hi</p>' }, UI_USER, 'template');
+    const page = rpc.renderPage!({ kind: 'template', doc: template.id, path: 'index.html' }) as { html: string };
+    expect(page.html).toContain('<style data-dd-href="zcc-kit/site.css">p{}</style>');
+    expect(rpc.readPageFile!({ kind: 'template', doc: template.id, path: 'zcc-kit/site.css' })).toMatchObject({ content: 'p{}' });
+    expect(() => rpc.renderPage!({ kind: 'template', doc: template.id, path: 'README.md' })).toThrow(/not an HTML page/);
+    expect(() => rpc.renderPage!({ kind: 'template', doc: template.id, path: 'index.html', draft: 'x'.repeat(MAX_TEXT_FILE_BYTES + 1) })).toThrow(/too large/);
+    expect(() => rpc.renderPage!({ kind: 'template', doc: template.id, path: 'index.html', draft: 4 })).toThrow(/draft must be a string/);
   });
 
   it('renders HTML pages, saved or drafted, with the site kit behind zcc-kit/', async () => {

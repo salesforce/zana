@@ -359,13 +359,7 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
         if (fileKindOf(path) !== 'html') throw new DesignDocError('invalid', `${path} is not an HTML page`);
         if (draft !== undefined && Buffer.byteLength(draft) > MAX_TEXT_FILE_BYTES) throw new DesignDocError('limit', 'draft is too large');
         const file = store.readFile(doc.id, path, kind);
-        const read = (path: string) => {
-          try { return store.readFile(doc.id, path, kind); }
-          catch (error) {
-            if (!(error instanceof DesignDocError) || error.code !== 'not_found') throw error;
-            return path.startsWith('zcc-kit/') ? (deps.kit ?? NO_KIT)(path.slice('zcc-kit/'.length)) : null;
-          }
-        };
+        const read = docPageReader(store, doc.id, deps.kit ?? NO_KIT, kind);
         return { docId: doc.id, path, revision: file.revision, ...bundlePage({ entryPath: path, html: draft ?? file.content, read }) };
       }
       return renderPage(store, deps.kit ?? NO_KIT, {
