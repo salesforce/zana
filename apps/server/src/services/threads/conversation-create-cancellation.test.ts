@@ -141,14 +141,24 @@ describe('provider plugin startup', () => {
   it('creates the thread once a provider still loading at launch registers', async () => {
     const declaration = getThreadProvider('test-provider')!;
     unregister();
-    trackThreadProviderStartup(new Promise(() => {}));
+    const startup = Promise.withResolvers<void>();
+    trackThreadProviderStartup(startup.promise);
+    let toolsCollected = false;
+    sessionTools = async () => { toolsCollected = true; return { tools: [] }; };
     try {
       const creating = createConversationFromRequest(ctx, { id: threadId, projectId: 'p', providerId: 'test-provider', input: ['do work'], promptInput: [{ type: 'text', text: 'do work', mentions: [] }] });
       await new Promise(resolve => setImmediate(resolve));
       expect(getConversationThread(db, threadId)).toBeFalsy();
       expect(commands).toEqual([]);
       unregister = registerThreadProvider('test', declaration).unregister;
+      // Plugins after the provider are still activating: session tools wait for them.
+      await vi.waitFor(() => expect(commands).toContain('environment.provision'));
+      await new Promise(resolve => setImmediate(resolve));
+      expect(toolsCollected).toBe(false);
+      expect(commands).not.toContain('thread.start');
+      startup.resolve();
       expect(await creating).toMatchObject({ id: threadId, status: 'active' });
+      expect(toolsCollected).toBe(true);
       expect(commands).toContain('thread.start');
     } finally {
       trackThreadProviderStartup(Promise.resolve());

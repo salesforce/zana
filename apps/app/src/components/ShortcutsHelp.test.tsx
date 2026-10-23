@@ -43,6 +43,16 @@ describe('ShortcutsHelp', () => {
     expect(screen.queryByText(/Ctrl\+V pastes/)).toBeNull();
   });
 
+  it('lists the agent question shortcut under Thread', () => {
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('Win32');
+    render(<ShortcutsHelp onClose={() => undefined} />);
+    const label = screen.getByText('Agent question: Next, or Submit on the last question');
+    expect(label.closest('section')?.querySelector('h4')?.textContent).toBe('Thread');
+    const keys = [...label.closest('.shortcut-row')!.querySelectorAll('kbd')].map((kbd) => kbd.textContent);
+    expect(keys).toEqual(['Ctrl', 'Enter']);
+    vi.restoreAllMocks();
+  });
+
   it('closes on Escape, the close button and the backdrop, but not inside the modal', () => {
     const onClose = vi.fn();
     const { container, unmount } = render(<ShortcutsHelp onClose={onClose} />);

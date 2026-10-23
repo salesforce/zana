@@ -21,6 +21,12 @@ import { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-
 import type { Project } from '@zana-ai/zcc-domain/product';
 
 describe('sanitizeTeam', () => {
+  it('keeps only an explicit true isDefault', () => {
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], isDefault: true })).toMatchObject({ isDefault: true });
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], isDefault: 'true' })?.isDefault).toBeUndefined();
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], isDefault: false })?.isDefault).toBeUndefined();
+  });
+
   it('preserves the explicit shared-worktree toggle', () => {
     expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], worktreeIsolation: true }))
       .toMatchObject({ worktreeIsolation: true });
@@ -262,6 +268,17 @@ describe('TeamStore', () => {
   it('saveUser round-trips defaultPlanning', () => {
     const saved = store.saveUser({ name: 'Planner', slots: [], defaultPlanning: 'provided' });
     expect(store.list().find((team) => team.id === saved.id)?.defaultPlanning).toBe('provided');
+  });
+
+  it('saveUser keeps a single default: flagging one un-flags the previous', () => {
+    const first = store.saveUser({ name: 'First', slots: [], isDefault: true });
+    expect(store.list().find((t) => t.id === first.id)?.isDefault).toBe(true);
+    const second = store.saveUser({ name: 'Second', slots: [], isDefault: true });
+    const listed = store.list();
+    expect(listed.find((t) => t.id === second.id)?.isDefault).toBe(true);
+    expect(listed.find((t) => t.id === first.id)?.isDefault).toBeUndefined();
+    store.saveUser({ id: second.id, name: 'Second', slots: [] });
+    expect(store.list().some((t) => t.isDefault)).toBe(false);
   });
 
   it('saveUser round-trips launchApproval', () => {
