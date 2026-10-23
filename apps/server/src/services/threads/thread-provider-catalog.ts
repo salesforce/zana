@@ -138,6 +138,25 @@ export function waitForThreadProvider(
   });
 }
 
+/**
+ * Plugin agent tools register as each plugin activates, in load order, so a
+ * thread created as soon as its provider registers would otherwise miss the
+ * tools of plugins that load after the provider. Resolves `true` once plugin
+ * startup settles (or when none is tracked), `false` after `timeoutMs`.
+ */
+export function waitForPluginStartup(timeoutMs = THREAD_PROVIDER_STARTUP_WAIT_MS): Promise<boolean> {
+  const startup = providerStartup;
+  if (!startup) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), timeoutMs);
+    const finish = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    startup.then(finish, finish);
+  });
+}
+
 export function listThreadProviders(): ThreadProviderRecord[] {
   syncFakeProvider();
   const rows = [...providers.values()].flatMap((stack) => stack.at(-1) ?? []);

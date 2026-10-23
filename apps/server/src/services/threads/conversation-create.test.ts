@@ -10,6 +10,7 @@ import {
   registerThreadProvider,
   holdThreadProviderStartup,
   trackThreadProviderStartup,
+  waitForPluginStartup,
   waitForThreadProvider
 } from './thread-provider-catalog.js';
 
@@ -319,6 +320,60 @@ describe('waitForThreadProvider', () => {
     await vi.advanceTimersByTimeAsync(1);
     await waiting;
     expect(resolved).toBe(true);
+  });
+});
+
+describe('waitForPluginStartup', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    trackThreadProviderStartup(Promise.resolve());
+  });
+
+  it('waits past provider registration until plugin startup settles', async () => {
+    vi.useFakeTimers();
+    const release = holdThreadProviderStartup();
+    const handle = registerThreadProvider('provider-pi', {
+      id: 'pi',
+      displayName: 'Pi',
+      capabilities: { supportsServiceTier: false, fork: 'tip', supportsManualCompaction: false,
+        supportsThreadArchive: false, supportsThreadRename: false, permissionModes: ['full'] },
+      composerActions: []
+    });
+    try {
+      await waitForThreadProvider('pi');
+      let settled: boolean | undefined;
+      const waiting = waitForPluginStartup().then((value) => { settled = value; });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(settled).toBeUndefined();
+      release();
+      await waiting;
+      expect(settled).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      handle.unregister();
+    }
+  });
+
+  it.each([
+    ['resolved', () => Promise.resolve()],
+    ['rejected', () => Promise.reject(new Error('plugin startup failed'))]
+  ])('resolves true once startup has %s', async (_label, settle) => {
+    const startup = settle();
+    startup.catch(() => {});
+    trackThreadProviderStartup(startup);
+    await expect(waitForPluginStartup()).resolves.toBe(true);
+  });
+
+  it('resolves false after the wait bound when startup never settles', async () => {
+    vi.useFakeTimers();
+    trackThreadProviderStartup(new Promise(() => {}));
+    let settled: boolean | undefined;
+    const waiting = waitForPluginStartup(1_000).then((value) => { settled = value; });
+    await vi.advanceTimersByTimeAsync(999);
+    expect(settled).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    await waiting;
+    expect(settled).toBe(false);
   });
 });
 
