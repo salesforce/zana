@@ -7,14 +7,15 @@
  *   - Ctrl+V pastes the system clipboard exactly once (the Edit menu's
  *     `role: 'paste'` accelerator must not paste a second copy);
  *   - Ctrl+Shift+V pastes too;
- *   - a multi-line paste waits for Enter when the shell uses bracketed paste;
+ *   - a multi-line paste arrives inside bracketed-paste markers when the
+ *     program turned that mode on;
  *   - with "Ctrl+V pastes" off, Ctrl+V types nothing from the clipboard.
  *
  * CI runs on Linux, where the setting defaults to off, so the spec turns it on
  * through the initial config. macOS keeps xterm's `^V` (⌘V pastes), so skip it.
  */
 import { test, expect } from './fixtures/app.js';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
@@ -66,19 +67,33 @@ test('terminal: Ctrl+V and Ctrl+Shift+V paste the clipboard once, and the settin
     await expect.poll(backlog).toContain('SHIFTV_43_DONE\r\n');
     expect(await backlog()).not.toContain('SHIFTV_43_DONEecho');
 
-    // Multi-line paste: with bracketed paste on (bash/readline sets ?2004h), the
-    // lines are inserted but none runs until Enter.
-    if ((await backlog()).includes('\x1b[?2004h')) {
-      await setClipboard('echo MULTI_$((1+1))_A\necho MULTI_$((2+2))_B');
-      await page.keyboard.press('Control+V');
-      // Prove the paste arrived before checking nothing ran: an output-only
-      // marker would be ambiguous, so wait on the echoed (still unrun) text.
-      await expect.poll(backlog).toContain('MULTI_$((2+2))_B');
-      expect(await backlog()).not.toContain('MULTI_2_A\r\n');
-      await page.keyboard.press('Enter');
-      await expect.poll(backlog).toContain('MULTI_4_B\r\n');
-      expect(await backlog()).toContain('MULTI_2_A\r\n');
-    }
+    // Multi-line paste with bracketed paste on: the program must receive the
+    // text inside ESC[200~ … ESC[201~ (so a shell inserts the lines instead of
+    // running each one), with xterm's CR line endings. The probe script turns
+    // the mode on and then asks for the cursor position. Only the renderer's
+    // xterm answers that, after parsing ?2004h, so once PASTE_READY appears the
+    // paste can't race the mode switch (bash itself turns the mode off while a
+    // command runs and back on at the next prompt).
+    const probe = join(projectDir, 'paste-probe.sh');
+    writeFileSync(probe, [
+      'stty raw -echo',
+      "printf '\\033[?2004h\\033[6n'",
+      'IFS= read -r -d R _pos',
+      "printf 'PASTE_READY'",
+      "IFS= read -r -d '~' start",
+      "IFS= read -r -d '~' body",
+      'stty sane',
+      "printf '\\033[?2004l\\r\\n'",
+      "if [ \"$start\" = $'\\033[200' ] && [ \"$body\" = $'MULTI_A\\rMULTI_B\\033[201' ]; then echo BRACKETED_OK; else printf 'BRACKETED_BAD %q %q\\n' \"$start\" \"$body\"; fi",
+      ''
+    ].join('\n'));
+    await setClipboard('MULTI_A\nMULTI_B');
+    await page.evaluate(([id, path]) => window.cc.terminals.write(id, `bash '${path}'\r`), [sessionId!, probe] as const);
+    await expect.poll(backlog, { timeout: 20_000 }).toContain('PASTE_READY');
+    await input.focus();
+    await page.keyboard.press('Control+V');
+    await expect.poll(backlog).toMatch(/BRACKETED_(OK|BAD)/);
+    expect(await backlog()).toContain('BRACKETED_OK\r\n');
 
     // Setting off: the store picks the change up live, and Ctrl+V goes back to
     // xterm's ^V, so the clipboard text is never typed. Main sends
