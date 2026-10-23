@@ -258,7 +258,7 @@ function partitionExecutionRows(
 }
 
 /** Build (or re-skin) the one row that represents a Job's execution as a whole. */
-function executionRowHost(member: AgentRow | undefined, execution: ExecutionBoardProjection, synthetic = !member): AgentRow {
+export function executionRowHost(member: AgentRow | undefined, execution: ExecutionBoardProjection, synthetic = !member): AgentRow {
   const terminal = execution.state === 'COMPLETED' || execution.state === 'FAILED' || execution.state === 'STOPPED';
   // A retained orchestrator outlives its finished run: it stays a live Idle row, not Done.
   const retainedLive = terminal && !synthetic && member !== undefined && member.session.status !== 'exited';
