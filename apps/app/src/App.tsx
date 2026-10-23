@@ -959,9 +959,10 @@ function WalkthroughHost() {
 
 function ShortcutsHelpHost() {
   const open = useUi((s) => s.shortcutsOpen);
+  const ctrlVPasteEnabled = useData((s) => s.terminalCtrlVPasteEnabled);
   const close = () => useUi.getState().setShortcutsOpen(false);
   if (!open) return null;
-  return <ShortcutsHelp onClose={close} />;
+  return <ShortcutsHelp onClose={close} ctrlVPasteEnabled={ctrlVPasteEnabled} />;
 }
 
 function AgentModalHost() {

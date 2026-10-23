@@ -54,10 +54,18 @@ describe('isTerminalPasteKey', () => {
 });
 
 describe('terminalPasteHelpRow', () => {
-  it('shows Ctrl+V on Windows, Ctrl+Shift+V on Linux and nothing on macOS', () => {
-    expect(terminalPasteHelpRow('Win32')?.keys).toEqual(['Ctrl', 'V']);
-    expect(terminalPasteHelpRow('Linux x86_64')?.keys).toEqual(['Ctrl', '⇧', 'V']);
-    expect(terminalPasteHelpRow('Linux x86_64')?.label).toContain('Ctrl+V pastes');
-    expect(terminalPasteHelpRow('MacIntel')).toBeNull();
+  it('follows the setting, not the platform default, and shows nothing on macOS', () => {
+    for (const platform of ['Win32', 'Linux x86_64']) {
+      expect(terminalPasteHelpRow(true, platform)?.keys).toEqual(['Ctrl', 'V']);
+      expect(terminalPasteHelpRow(true, platform)?.label).toContain('turn off “Ctrl+V pastes”');
+      expect(terminalPasteHelpRow(false, platform)?.keys).toEqual(['Ctrl', '⇧', 'V']);
+      expect(terminalPasteHelpRow(false, platform)?.label).toContain('turn on “Ctrl+V pastes”');
+    }
+    expect(terminalPasteHelpRow(true, 'MacIntel')).toBeNull();
+    expect(terminalPasteHelpRow(false, 'MacIntel')).toBeNull();
+  });
+
+  it('reads navigator.platform by default', () => {
+    expect(terminalPasteHelpRow(true)).toEqual(terminalPasteHelpRow(true, navigator.platform));
   });
 });

@@ -64,10 +64,16 @@ export function isTerminalPasteKey(
   return e.shiftKey || ctx.ctrlVPasteEnabled;
 }
 
-/** The Ctrl+/ help row for terminal paste, or null on macOS (⌘V, unchanged). */
-export function terminalPasteHelpRow(platform = currentPlatform()): { keys: string[]; label: string } | null {
+/**
+ * The Ctrl+/ help row for terminal paste, following the resolved "Ctrl+V
+ * pastes" setting, or null on macOS (⌘V, unchanged).
+ */
+export function terminalPasteHelpRow(
+  ctrlVPasteEnabled: boolean,
+  platform = currentPlatform()
+): { keys: string[]; label: string } | null {
   if (isMacShortcutPlatform(platform)) return null;
-  return ctrlVPastesByDefault(platform)
-    ? { keys: ['Ctrl', 'V'], label: 'Paste (Ctrl+Shift+V too; Ctrl+V can be turned off in Settings → Terminal)' }
+  return ctrlVPasteEnabled
+    ? { keys: ['Ctrl', 'V'], label: 'Paste (Ctrl+Shift+V too; turn off “Ctrl+V pastes” in Settings → Terminal to send ^V)' }
     : { keys: ['Ctrl', '⇧', 'V'], label: 'Paste (turn on “Ctrl+V pastes” in Settings → Terminal for Ctrl+V)' };
 }

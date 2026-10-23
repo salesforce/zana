@@ -5,7 +5,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { ShortcutsHelp } from './ShortcutsHelp.js';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe('ShortcutsHelp', () => {
   it('lists the remappable split shortcuts', () => {
@@ -22,6 +25,22 @@ describe('ShortcutsHelp', () => {
     for (const label of ['Next / previous message', 'Reply to the open message', 'Send the reply', 'Leave the reply box and keep reading', 'Delete the open message']) {
       expect(screen.getByText(label)).toBeTruthy();
     }
+  });
+
+  it('shows the terminal paste chord from the live setting off macOS, defaulting to the platform', () => {
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('Linux x86_64');
+    const { rerender } = render(<ShortcutsHelp onClose={() => undefined} ctrlVPasteEnabled />);
+    expect(screen.getByText(/turn off “Ctrl\+V pastes”/)).toBeTruthy();
+    rerender(<ShortcutsHelp onClose={() => undefined} ctrlVPasteEnabled={false} />);
+    expect(screen.getByText(/turn on “Ctrl\+V pastes”/)).toBeTruthy();
+    cleanup();
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('Win32');
+    render(<ShortcutsHelp onClose={() => undefined} />);
+    expect(screen.getByText(/turn off “Ctrl\+V pastes”/)).toBeTruthy();
+    cleanup();
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
+    render(<ShortcutsHelp onClose={() => undefined} ctrlVPasteEnabled />);
+    expect(screen.queryByText(/Ctrl\+V pastes/)).toBeNull();
   });
 
   it('closes on Escape, the close button and the backdrop, but not inside the modal', () => {
