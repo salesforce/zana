@@ -1911,8 +1911,15 @@ export class PtyManager extends EventEmitter {
     // imsg budget we fall back to a plain (non-restore-backed) spawn: launching
     // correctly beats tmux restore-backing for the rare oversized session.
     // Identity rides a 0600 env file the pane sources then deletes, never `-e`.
-    const identityEnvFile = sessionEnvFilePath(sessionId);
-    const prospectiveTmux = wantsTmux
+    let identityEnvFile: string | undefined;
+    if (wantsTmux) {
+      try {
+        identityEnvFile = sessionEnvFilePath(sessionId);
+      } catch (err) {
+        console.warn(`[pty] session ${sessionId}: identity env dir unavailable; spawning without tmux:`, err);
+      }
+    }
+    const prospectiveTmux = identityEnvFile
       ? buildLocalTmuxCommand(sessionId, inner.command, inner.args, withBlankedSessionCallbacks(sessionEnv), identityEnvFile)
       : undefined;
     // Conservative bound below MAX_IMSGSIZE (16384) minus tmux's per-arg framing
@@ -1922,19 +1929,24 @@ export class PtyManager extends EventEmitter {
     const tmuxCommandBytes = prospectiveTmux
       ? Buffer.byteLength([prospectiveTmux.command, ...prospectiveTmux.args].join(' '), 'utf8')
       : 0;
-    const useTmux = wantsTmux && tmuxCommandBytes < TMUX_IMSG_SAFE_BYTES;
-    if (wantsTmux && !useTmux) {
+    let useTmux = !!prospectiveTmux && tmuxCommandBytes < TMUX_IMSG_SAFE_BYTES;
+    if (prospectiveTmux && !useTmux) {
       console.warn(
         `[pty] session ${sessionId}: tmux wrapper skipped — command ${tmuxCommandBytes}B ` +
           `exceeds imsg-safe budget ${TMUX_IMSG_SAFE_BYTES}B; spawning directly (no restore backing).`
       );
     }
-    if (useTmux) {
-      writeSessionEnvFile(
-        sessionId,
-        Object.fromEntries(SESSION_IDENTITY_ENV_KEYS.map((key) => [key, env[key]]))
-      );
-      this.sessionEnvFiles.set(sessionId, identityEnvFile);
+    if (useTmux && identityEnvFile) {
+      try {
+        writeSessionEnvFile(
+          sessionId,
+          Object.fromEntries(SESSION_IDENTITY_ENV_KEYS.map((key) => [key, env[key]]))
+        );
+        this.sessionEnvFiles.set(sessionId, identityEnvFile);
+      } catch (err) {
+        console.warn(`[pty] session ${sessionId}: writing ${identityEnvFile} failed; spawning without tmux:`, err);
+        useTmux = false;
+      }
     }
     const spawnCmd = useTmux && prospectiveTmux
       ? prospectiveTmux
@@ -2157,8 +2169,7 @@ export class PtyManager extends EventEmitter {
     }
     this.clearDataBuffer(sessionId);
     this.diagnosticFiles.delete(sessionId);
-    // Unlink this session's provider MCP config file (OpenCode's `OPENCODE_CONFIG`),
-    // if we wrote one. Best-effort; a crash orphan is swept by age on next write.
+    // Unlink the tmux identity env file if the pane never consumed it.
     const envFile = this.sessionEnvFiles.get(sessionId);
     if (envFile) {
       this.sessionEnvFiles.delete(sessionId);
@@ -2168,6 +2179,8 @@ export class PtyManager extends EventEmitter {
         /* best-effort — the pane already consumed it */
       }
     }
+    // Unlink this session's provider MCP config file (OpenCode's `OPENCODE_CONFIG`),
+    // if we wrote one. Best-effort; a crash orphan is swept by age on next write.
     const mcpConfigFile = this.sessionMcpConfigFiles.get(sessionId);
     if (mcpConfigFile) {
       this.sessionMcpConfigFiles.delete(sessionId);

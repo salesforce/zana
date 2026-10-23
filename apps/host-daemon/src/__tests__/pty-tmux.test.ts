@@ -52,6 +52,23 @@ vi.mock('../tmux.js', async (importOriginal) => {
   };
 });
 
+// Lets a test make the identity env file fail to write (EACCES on a foreign dir).
+const envFileFailure = { write: false, path: false };
+vi.mock('../tmux-session-env.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../tmux-session-env.js')>();
+  return {
+    ...actual,
+    sessionEnvFilePath: (id: string) => {
+      if (envFileFailure.path) throw new Error('EACCES: mkdtemp');
+      return actual.sessionEnvFilePath(id);
+    },
+    writeSessionEnvFile: (id: string, vars: Record<string, string | undefined>) => {
+      if (envFileFailure.write) throw new Error('EACCES: write');
+      return actual.writeSessionEnvFile(id, vars);
+    }
+  };
+});
+
 import { PtyManager, remotePortForSession, detectRemoteForwardFailure } from '../pty.js';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { SESSION_CALLBACK_ENV_KEYS, sessionEnvFilePath } from '../tmux-session-env.js';
@@ -100,6 +117,8 @@ describe('pty tmux wrapping (local)', () => {
 
   beforeEach(() => {
     spawned.length = 0;
+    envFileFailure.write = false;
+    envFileFailure.path = false;
     tmuxAvailable.mockReturnValue(true);
     killLocalTmuxSession.mockClear();
     ptys = new PtyManager();
@@ -172,6 +191,28 @@ describe('pty tmux wrapping (local)', () => {
     const body = readFileSync(file, 'utf8');
     expect(body).toContain(`export ZCC_SESSION_ID='${session.id}'`);
     expect(body).toMatch(/export ZCC_SESSION_TOKEN='[^']+'/);
+  });
+
+  it('falls back to a direct spawn when the identity env file cannot be written', () => {
+    envFileFailure.write = true;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      ptys.create({ projectId: 'p1', profile: 'shell', config: cfg({ tmuxScope: 'all' }), ...dims });
+    } finally {
+      warn.mockRestore();
+    }
+    expect(spawned[0].command).not.toBe('tmux');
+  });
+
+  it('falls back to a direct spawn when the private env dir cannot be created', () => {
+    envFileFailure.path = true;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      ptys.create({ projectId: 'p1', profile: 'shell', config: cfg({ tmuxScope: 'all' }), ...dims });
+    } finally {
+      warn.mockRestore();
+    }
+    expect(spawned[0].command).not.toBe('tmux');
   });
 
   it('blanks callback URLs a launch does not set so the tmux server snapshot cannot supply them', () => {

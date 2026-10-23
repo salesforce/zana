@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -41,11 +41,20 @@ export function withBlankedSessionCallbacks(
  */
 export const SESSION_IDENTITY_ENV_KEYS = ['ZCC_SESSION_ID', 'ZCC_SESSION_TOKEN'] as const;
 
-const SESSION_ENV_FILE_DIR = join(tmpdir(), 'zcc-session-env');
+let sessionEnvDir: string | undefined;
 
-/** Where a session's identity env file lives. */
+/**
+ * Per-process private dir. `mkdtempSync` gives a unique, caller-owned 0700 dir, so
+ * another local user cannot pre-create or swap it on a shared `/tmp`.
+ */
+function privateSessionEnvDir(): string {
+  sessionEnvDir ??= mkdtempSync(join(tmpdir(), 'zcc-session-env-'));
+  return sessionEnvDir;
+}
+
+/** Where a session's identity env file lives. May throw if the private dir cannot be created. */
 export function sessionEnvFilePath(sessionId: string): string {
-  return join(SESSION_ENV_FILE_DIR, `${sessionId}.env`);
+  return join(privateSessionEnvDir(), `${sessionId}.env`);
 }
 
 function shSingleQuote(value: string): string {
@@ -53,16 +62,21 @@ function shSingleQuote(value: string): string {
 }
 
 /**
- * Write `export KEY='VAL'` lines for the defined vars to a 0600 file in a 0700
- * directory. The pane command sources then deletes it (see `buildLocalTmuxCommand`).
+ * Write the env file: `export KEY='VAL'` for defined vars, `unset KEY` for
+ * undefined ones (so the pane never keeps the tmux server snapshot's value).
+ * Created 0600 with O_EXCL so a planted symlink or file is rejected. The pane
+ * command sources then deletes it (see `buildLocalTmuxCommand`).
  */
 export function writeSessionEnvFile(sessionId: string, vars: Record<string, string | undefined>): string {
-  mkdirSync(SESSION_ENV_FILE_DIR, { recursive: true, mode: 0o700 });
   const path = sessionEnvFilePath(sessionId);
   const body = Object.entries(vars)
-    .filter((entry): entry is [string, string] => entry[1] !== undefined)
-    .map(([key, value]) => `export ${key}=${shSingleQuote(value)}\n`)
+    .map(([key, value]) => (value === undefined ? `unset ${key}\n` : `export ${key}=${shSingleQuote(value)}\n`))
     .join('');
-  writeFileSync(path, body, { mode: 0o600 });
+  try {
+    unlinkSync(path); // stale file from a prior launch of the same session id
+  } catch {
+    /* none */
+  }
+  writeFileSync(path, body, { mode: 0o600, flag: 'wx' });
   return path;
 }
