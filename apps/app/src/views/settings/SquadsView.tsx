@@ -224,12 +224,23 @@ export function SquadsView() {
 
   const toggleDefault = async (team: Team) => {
     const { source: _source, ...input } = team;
-    const result = await product.teams.save({ ...input, isDefault: team.isDefault ? undefined : true });
-    if (!result.ok) {
-      pushToast(`Could not update default squad: ${result.message}`, 'error');
+    const clearing = team.isDefault === true;
+    let failure: string | null = null;
+    try {
+      const result = await product.teams.save({ ...input, isDefault: clearing ? undefined : true });
+      if (!result.ok) failure = result.message ?? 'save failed';
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+    }
+    if (failure) {
+      pushToast(`Could not update default squad: ${failure}`, 'error');
       return;
     }
-    pushToast(team.isDefault ? `“${team.name}” is no longer the default squad` : `“${team.name}” is now the default squad`, 'info');
+    const copyNote = team.source === 'user' ? '' : ' Saved as a user copy of this squad.';
+    pushToast(
+      `${clearing ? `“${team.name}” is no longer the default squad.` : `“${team.name}” is now the default squad.`}${copyNote}`,
+      'info'
+    );
   };
 
   const importBundle = async () => {
@@ -785,13 +796,13 @@ function TeamRowMenu({
       <button ref={(item) => { itemRefs.current[2] = item; }} role="menuitem" onClick={() => { onClose(); onDuplicate(); }}>
         <Copy size={13} /> Duplicate
       </button>
-      <button ref={(item) => { itemRefs.current[4] = item; }} role="menuitem" onClick={() => { onClose(); onToggleDefault(); }}>
+      <button ref={(item) => { itemRefs.current[3] = item; }} role="menuitem" onClick={() => { onClose(); onToggleDefault(); }}>
         <Star size={13} /> {team.isDefault ? 'Clear default' : 'Set as default'}
       </button>
       {canDelete && (
         <>
           <div className="tab-context-sep" />
-          <button ref={(item) => { itemRefs.current[3] = item; }} role="menuitem" className="tab-context-danger" onClick={() => { onClose(); onDelete(); }}>
+          <button ref={(item) => { itemRefs.current[4] = item; }} role="menuitem" className="tab-context-danger" onClick={() => { onClose(); onDelete(); }}>
             <Trash2 size={13} /> Delete
           </button>
         </>

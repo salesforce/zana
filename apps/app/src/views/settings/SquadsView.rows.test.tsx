@@ -1,10 +1,11 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const scope = vi.hoisted(() => ({ projectId: null as string | null }));
 
 const save = vi.hoisted(() => vi.fn());
+const toast = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/product-client.js', () => ({ product: { teams: { save } } }));
 vi.mock('@/store', () => ({
   useTeams: (selector: (s: { teams: unknown[]; loading: boolean }) => unknown) =>
@@ -24,7 +25,7 @@ vi.mock('@/store', () => ({
       loading: false
     }),
   useData: (selector: (s: { projects: unknown[] }) => unknown) => selector({ projects: [] }),
-  useUi: (selector: (s: { pushToast: () => void }) => unknown) => selector({ pushToast: () => undefined }),
+  useUi: (selector: (s: { pushToast: () => void }) => unknown) => selector({ pushToast: toast }),
   usePersonas: (selector: (s: { personas: unknown[] }) => unknown) =>
     selector({ personas: [{ id: 'p1', name: 'Planner', source: 'user' }] })
 }));
@@ -35,6 +36,7 @@ import { SquadsView } from './SquadsView';
 
 afterEach(() => {
   save.mockReset();
+  toast.mockReset();
   scope.projectId = null;
   cleanup();
 });
@@ -135,5 +137,41 @@ describe('SquadsView default squad', () => {
     fireEvent.contextMenu(rowOf(container, 'user:mine').querySelector('.skills-row-open')!);
     fireEvent.click(screen.getByRole('menuitem', { name: /Clear default/ }));
     expect(save.mock.calls[0][0].isDefault).toBeUndefined();
+  });
+
+  const openMenuAndSetDefault = async (container: HTMLElement, id: string) => {
+    fireEvent.contextMenu(rowOf(container, id).querySelector('.skills-row-open')!);
+    fireEvent.click(screen.getByRole('menuitem', { name: /Set as default/ }));
+    await waitFor(() => expect(toast).toHaveBeenCalled());
+  };
+
+  it('toasts an error when the save result is unsuccessful', async () => {
+    save.mockResolvedValue({ ok: false, message: 'disk full' });
+    const { container } = render(<SquadsView />);
+    await openMenuAndSetDefault(container, 'user:alpha-10');
+    expect(toast).toHaveBeenCalledWith('Could not update default squad: disk full', 'error');
+  });
+
+  it('toasts an error instead of an unhandled rejection when save rejects', async () => {
+    save.mockRejectedValue(new Error('ipc down'));
+    const { container } = render(<SquadsView />);
+    await openMenuAndSetDefault(container, 'user:alpha-10');
+    expect(toast).toHaveBeenCalledWith('Could not update default squad: ipc down', 'error');
+  });
+
+  it('says a user copy was saved when defaulting a non-user squad', async () => {
+    save.mockResolvedValue({ ok: true, value: {} });
+    const { container } = render(<SquadsView />);
+    await openMenuAndSetDefault(container, 'builtin:core');
+    expect(toast.mock.calls[0][0]).toContain('Saved as a user copy');
+  });
+
+  it('keeps menu ref order matching visual order: Default before Delete', () => {
+    const { container } = render(<SquadsView />);
+    fireEvent.contextMenu(rowOf(container, 'user:alpha-10').querySelector('.skills-row-open')!);
+    const labels = screen.getAllByRole('menuitem').map((item) => item.textContent?.trim());
+    expect(labels).toEqual(['Edit', 'Reveal folder', 'Duplicate', 'Set as default', 'Delete']);
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'End' });
+    expect(document.activeElement?.textContent?.trim()).toBe('Delete');
   });
 });

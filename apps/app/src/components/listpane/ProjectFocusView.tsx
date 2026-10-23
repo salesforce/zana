@@ -97,14 +97,19 @@ export function ProjectFocusView({ project }: { project: Project }) {
   const agentById = useAgentStatus((s) => s.byId);
   // Personas offered in the "+" menu: builtin + global + this project's own.
   const allPersonas = usePersonas((s) => s.personas);
-  const personas = allPersonas.filter(
-    (p) =>
-      typeof p.source !== 'object' ||
-      p.source === null ||
-      !('projectId' in p.source) ||
-      p.source.projectId === project.id
+  const quickLaunchPersonas = useMemo(
+    () =>
+      sortCatalogueByName(
+        allPersonas.filter(
+          (p) =>
+            typeof p.source !== 'object' ||
+            p.source === null ||
+            !('projectId' in p.source) ||
+            p.source.projectId === project.id
+        )
+      ),
+    [allPersonas, project.id]
   );
-  const quickLaunchPersonas = useMemo(() => sortCatalogueByName(personas), [personas]);
 
   const buckets = useMemo(() => {
     // Pass the FULL list (visible + hidden). Hidden tabs (closed but still

@@ -77,7 +77,7 @@ test('built Electron orders catalogue display without changing raw defaults or l
     'E2E alpha 2', 'E2E Alpha 10'
   ]);
 
-  // Home retains raw-first squad as default, while its picker displays alphabetically.
+  // Home's squad picker displays alphabetically; with no flagged default the first squad alphabetically is preselected.
   await window.evaluate(() => {
     history.pushState({}, '', '/');
     dispatchEvent(new PopStateEvent('popstate'));
@@ -91,7 +91,7 @@ test('built Electron orders catalogue display without changing raw defaults or l
   await expect(homePicker).toContainText('E2E Zebra 10');
   await window.keyboard.press('Escape');
 
-  // Rename the raw-first entry through the successful save IPC. Its selected ID
+  // Rename the selected entry through the successful save IPC. Its selected ID
   // remains stable, even though its alphabetical position changes.
   await window.evaluate(async () => {
     const result = await window.cc.teams.save({ id: 'e2e-team-zebra', name: 'E2E Before Accent', slots: [] });
