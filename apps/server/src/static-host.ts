@@ -367,7 +367,12 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
     expectedOrigin = url.slice(0, -1);
     if (options.product) {
       options.product.origins.serverPort = address.port;
-      unregister = await registerBoundLocalPeerApp(server, options.product.dataDir, options.product.productInstanceId);
+      // Peers are optional: a failed endpoint registration leaves peer forwarding off, never the core server.
+      try {
+        unregister = await registerBoundLocalPeerApp(server, options.product.dataDir, options.product.productInstanceId);
+      } catch (error) {
+        console.warn(`[zcc] local peer app registration failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
       // SSH reverse tunnels target this allowlist-only port. Without it, tunnel
       // installs and reopens fail closed; they never expose serverPort.
       try {

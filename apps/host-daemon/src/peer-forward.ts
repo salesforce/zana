@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { PeerForwardCommandSchema } from '@zana-ai/zcc-contracts/host-rpc';
 import { HostCommandError } from './host-command-error.js';
+import { posixPermissions } from './posix-permissions.js';
 
 export const PEER_FORWARD_MAX_BYTES = 8 * 1024 * 1024;
 export const PEER_FORWARD_MAX_CONCURRENCY = 4;
@@ -35,12 +36,6 @@ function waitForPeerOperation<T>(operation: Promise<T>, signal: AbortSignal): Pr
 function isWellFormedString(value: string): boolean {
   const native = (value as string & { isWellFormed?: () => boolean }).isWellFormed;
   return typeof native === 'function' ? native.call(value) : Buffer.from(value, 'utf8').toString('utf8') === value;
-}
-
-/** Windows has no process.getuid; ownership is then not checkable, so it is not a mismatch. */
-export function ownedByCurrentUser(uid: number): boolean {
-  const me = typeof process.getuid === 'function' ? process.getuid() : undefined;
-  return me === undefined || uid === me;
 }
 
 export class PeerForwarder {
@@ -193,13 +188,13 @@ async function registrationDirectory(dataDir: string, create: boolean): Promise<
   // Only a host-selected local app directory may be supplied, never an RPC path.
   const base = await realpath(dataDir);
   const root = await lstat(base);
-  if (!root.isDirectory() || !ownedByCurrentUser(root.uid) || (root.mode & 0o022) !== 0) {
+  if (!root.isDirectory() || posixPermissions() && (root.uid !== process.getuid!() || (root.mode & 0o022) !== 0)) {
     throw new Error('untrusted local peer app directory');
   }
   const directory = join(base, 'peer-app');
   if (create) await mkdir(directory, { mode: 0o700 }).catch(error => { if (error.code !== 'EEXIST') throw error; });
   const info = await lstat(directory);
-  if (!info.isDirectory() || info.uid !== root.uid || (info.mode & 0o077) !== 0) {
+  if (!info.isDirectory() || posixPermissions() && (info.uid !== root.uid || (info.mode & 0o077) !== 0)) {
     throw new Error('untrusted local peer app registration directory');
   }
   return directory;
@@ -209,7 +204,7 @@ async function readRegistration(directory: string): Promise<z.infer<typeof Local
   const file = await open(join(directory, 'endpoint.json'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const info = await file.stat();
-    if (!info.isFile() || !ownedByCurrentUser(info.uid) || (info.mode & 0o077) !== 0 || info.nlink !== 1 || info.size > 1024) {
+    if (!info.isFile() || info.nlink !== 1 || info.size > 1024 || posixPermissions() && (info.uid !== process.getuid!() || (info.mode & 0o077) !== 0)) {
       throw new Error('untrusted local peer app registration');
     }
     const bytes = Buffer.alloc(1025);

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, link, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +8,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HOST_RPC_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/host-rpc';
 import {
   createStoredLocalPeerAppResolver,
-  ownedByCurrentUser,
   PEER_FORWARD_MAX_BYTES,
   PEER_FORWARD_MAX_CONCURRENCY,
   PeerForwarder,
@@ -30,6 +29,7 @@ const cleanup: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 async function listen(handler: (req: IncomingMessage, res: ServerResponse) => void) {
@@ -367,18 +367,41 @@ async function storage() {
 }
 const signal = () => new AbortController().signal;
 
-describe('ownership check', () => {
-  it('treats a platform without process.getuid as not mismatched, and otherwise compares uids', () => {
-    const original = Object.getOwnPropertyDescriptor(process, 'getuid');
-    try {
-      Object.defineProperty(process, 'getuid', { value: undefined, configurable: true });
-      expect(ownedByCurrentUser(12345)).toBe(true);
-      Object.defineProperty(process, 'getuid', { value: () => 1000, configurable: true });
-      expect(ownedByCurrentUser(1000)).toBe(true);
-      expect(ownedByCurrentUser(0)).toBe(false);
-    } finally {
-      if (original) Object.defineProperty(process, 'getuid', original); else delete (process as { getuid?: unknown }).getuid;
-    }
+/** Windows: no process.getuid, uid 0, and synthetic modes (directories 0o777/0o666, writable files 0o666). */
+function simulateWindows(): void {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  const getuid = Object.getOwnPropertyDescriptor(process, 'getuid');
+  Object.defineProperty(process, 'getuid', { value: undefined, configurable: true });
+  cleanup.push(() => { if (getuid) Object.defineProperty(process, 'getuid', getuid); else delete (process as { getuid?: unknown }).getuid; });
+}
+
+describe('local app registration on Windows', () => {
+  it('registers and resolves despite Windows-reported modes, keeping link, size, type and symlink checks', async () => {
+    simulateWindows();
+    const { dir, marker, resolve } = await storage();
+    await chmod(dir, 0o777);
+    await registerLocalPeerApp(dir, { port: 18780, instanceId: randomUUID() });
+    await chmod(join(dir, 'peer-app'), 0o777);
+    await chmod(marker, 0o666);
+    expect(await resolve(signal())).toBe(18780);
+    const bytes = await readFile(marker), external = join(dir, 'outside.json');
+    await writeFile(external, bytes, { mode: 0o666 });
+    await rm(marker);
+    await link(external, marker);
+    expect(await resolve(signal())).toBeNull();
+    await rm(marker);
+    await writeFile(marker, ' '.repeat(1025), { mode: 0o666 });
+    expect(await resolve(signal())).toBeNull();
+    await rm(marker);
+    await mkdir(marker);
+    expect(await resolve(signal())).toBeNull();
+    await rm(join(dir, 'peer-app'), { recursive: true });
+    await mkdir(join(dir, 'other'));
+    await symlink(join(dir, 'other'), join(dir, 'peer-app'), 'junction');
+    await expect(registerLocalPeerApp(dir, { port: 18780, instanceId: randomUUID() })).rejects.toThrow('untrusted local peer app registration directory');
+    await rm(join(dir, 'peer-app'));
+    await writeFile(join(dir, 'file'), '');
+    await expect(registerLocalPeerApp(join(dir, 'file'), { port: 18780, instanceId: randomUUID() })).rejects.toThrow('untrusted local peer app directory');
   });
 });
 
