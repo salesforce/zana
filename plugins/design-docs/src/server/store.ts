@@ -161,6 +161,10 @@ export interface DesignDocMutation {
 }
 
 interface DocRow {
+  kind: 'doc' | 'template';
+  template_key: string | null;
+  template_origin: string | null;
+  template_order: number | null;
   id: string;
   slug: string;
   title: string;
@@ -234,6 +238,10 @@ const ROLE_RANK: Record<ThreadRole, number> = { assistant: 1, reviewer: 2, edito
 /** Characters of the newest open comment carried in each summary. */
 const COMMENT_EXCERPT_LENGTH = 160;
 
+export const DOC_ONLY = `kind = 'doc'`;
+export const TEMPLATE_ONLY = `kind = 'template'`;
+
+// docs-kind: allow Correlated file counts inherit the outer docs kind predicate.
 const SUMMARY_COLUMNS = `d.*,
   (SELECT h.head_id FROM sync_doc_heads h WHERE h.doc_id = d.id
     AND h.repo_id = (SELECT repo_id FROM sync_repositories ORDER BY created_at LIMIT 1)) AS head,
@@ -271,13 +279,14 @@ export class DesignDocStore {
     this.maxHistoryBytes = options.maxHistoryBytes ?? MAX_HISTORY_BYTES_PER_DOC;
     repairLegacyPeerSyncMigrationIndexes(db);
     db.migrate(DESIGN_DOC_MIGRATIONS);
+    // docs-kind: allow Startup backfill repairs file identities for both kinds without peer capture.
     db.prepare("UPDATE doc_files SET sync_id = 'f_' || lower(hex(randomblob(16))) WHERE sync_id IS NULL").run();
   }
 
   // ── Docs ──────────────────────────────────────────────────────────────
 
   list(filter: ListFilter = {}): DesignDocSummary[] {
-    const where: string[] = [];
+    const where: string[] = [`d.${DOC_ONLY}`];
     const params: unknown[] = [];
     if (filter.projectId !== undefined) {
       if (filter.projectId === null) {
@@ -299,6 +308,7 @@ export class DesignDocStore {
       // LIKE ignores ASCII case by itself. Keep the query as typed: lowercasing
       // it in JS would miss "Été", which SQLite cannot fold.
       const like = `%${escapeLike(query)}%`;
+      // docs-kind: allow Correlated content search inherits list's outer doc-only predicate.
       const contents =
         filter.contents === false
           ? ''
@@ -310,6 +320,7 @@ export class DesignDocStore {
       if (contents) params.push(like);
     }
     const limit = clampLimit(filter.limit, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+    // docs-kind: allow The WHERE list always starts with d.DOC_ONLY.
     const sql = `SELECT ${SUMMARY_COLUMNS} FROM docs d
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY d.updated_at DESC, d.id LIMIT ?`;
@@ -328,6 +339,7 @@ export class DesignDocStore {
     return toSummary(this.requireRow(ref));
   }
 
+  // docs-kind: id-checked
   get(ref: unknown): DesignDocDetail {
     const row = this.requireRow(ref);
     const files = (
@@ -508,7 +520,7 @@ export class DesignDocStore {
       const references = this.db.prepare('SELECT project_json FROM sync_doc_references WHERE doc_id = ?')
         .get(row.id) as { project_json: string } | undefined;
       const projectReferenceChanged = patch.projectId !== undefined && references && JSON.parse(references.project_json) !== patch.projectId;
-      this.db.prepare(`UPDATE docs SET ${sets.join(', ')} WHERE id = ?`).run(...params, row.id);
+      this.db.prepare(`UPDATE docs SET ${sets.join(', ')} WHERE ${DOC_ONLY} AND id = ?`).run(...params, row.id);
       if (patch.projectId !== undefined) this.db.prepare('UPDATE sync_doc_references SET project_json = ? WHERE doc_id = ?')
         .run(JSON.stringify(patch.projectId), row.id);
       const after = this.requireRow(row.id);
@@ -526,7 +538,7 @@ export class DesignDocStore {
   setPinned(ref: unknown, pinned: boolean): DesignDocSummary {
     const row = this.requireRow(ref);
     if (pinned !== (row.pinned_at !== null)) {
-      this.db.prepare('UPDATE docs SET pinned_at = ? WHERE id = ?').run(pinned ? this.now() : null, row.id);
+      this.db.prepare(`UPDATE docs SET pinned_at = ? WHERE ${DOC_ONLY} AND id = ?`).run(pinned ? this.now() : null, row.id);
     }
     return toSummary(this.requireRow(row.id));
   }
@@ -535,16 +547,17 @@ export class DesignDocStore {
    * Delete a doc with its files, history, comments and thread links. While paired, the `delete-doc` mutation
    * (same transaction, after the rows are gone) records a sync tombstone that deletes it on paired computers too.
    */
+  // docs-kind: id-checked
   remove(ref: unknown, actor: DocActor = { kind: 'user', label: 'You', threadId: null }): void {
     const row = this.requireRow(ref);
     // Without a sync observer no tombstone is recorded, so a paired delete would silently resurrect on the next sync.
     if (!this.onMutation && this.isPaired()) throw new DesignDocError('conflict', 'Paired design docs cannot be deleted while sync capture is unavailable.');
     this.db.transaction(() => {
-      this.db.prepare('UPDATE docs SET alternative_to = NULL WHERE alternative_to = ?').run(row.id);
+      this.db.prepare(`UPDATE docs SET alternative_to = NULL WHERE ${DOC_ONLY} AND alternative_to = ?`).run(row.id);
       for (const table of ['doc_files', 'doc_revisions', 'doc_comments', 'doc_threads', 'sync_doc_references', 'sync_history_order']) {
         this.db.prepare(`DELETE FROM ${table} WHERE doc_id = ?`).run(row.id);
       }
-      this.db.prepare('DELETE FROM docs WHERE id = ?').run(row.id);
+      this.db.prepare(`DELETE FROM docs WHERE ${DOC_ONLY} AND id = ?`).run(row.id);
       this.notifyMutation({ docId: row.id, kind: 'delete-doc', payload: { actor } });
     });
   }
@@ -565,6 +578,7 @@ export class DesignDocStore {
   }
 
   /** Every file with content, sorted, for bundles and exports. */
+  // docs-kind: id-checked
   readAllFiles(ref: unknown): DesignDocFile[] {
     const row = this.requireRow(ref);
     return (this.db.prepare('SELECT * FROM doc_files WHERE doc_id = ?').all(row.id) as FileRow[])
@@ -576,6 +590,7 @@ export class DesignDocStore {
       .sort((a, b) => comparePaths(a.path, b.path));
   }
 
+  // docs-kind: id-checked
   writeFile(ref: unknown, input: WriteFileInput, actor: DocActor): WriteResult {
     const row = this.requireRow(ref);
     const prepared = prepareContent(input.path, input.content, input.encoding);
@@ -650,6 +665,7 @@ export class DesignDocStore {
     });
   }
 
+  // docs-kind: id-checked
   deleteFile(
     ref: unknown,
     rawPath: unknown,
@@ -672,7 +688,7 @@ export class DesignDocStore {
       });
       if (row.entry_path === path) {
         const next = this.firstFilePath(row.id);
-        this.db.prepare('UPDATE docs SET entry_path = ? WHERE id = ?').run(next, row.id);
+        this.db.prepare(`UPDATE docs SET entry_path = ? WHERE ${DOC_ONLY} AND id = ?`).run(next, row.id);
       }
       this.touch(row.id, actor, at);
       if (actor.threadId) this.linkThreadRow(row.id, actor.threadId, actor.label, 'editor', at);
@@ -680,6 +696,7 @@ export class DesignDocStore {
     });
   }
 
+  // docs-kind: id-checked
   renameFile(
     ref: unknown,
     rawFrom: unknown,
@@ -716,7 +733,7 @@ export class DesignDocStore {
       // Comments follow the file so they stay anchored (and filterable) after a move.
       this.db.prepare('UPDATE doc_comments SET path = ? WHERE doc_id = ? AND path = ?').run(to, row.id, from);
       if (row.entry_path === from) {
-        this.db.prepare('UPDATE docs SET entry_path = ? WHERE id = ?').run(to, row.id);
+        this.db.prepare(`UPDATE docs SET entry_path = ? WHERE ${DOC_ONLY} AND id = ?`).run(to, row.id);
       }
       this.touch(row.id, actor, at);
       if (actor.threadId) this.linkThreadRow(row.id, actor.threadId, actor.label, 'editor', at);
@@ -884,7 +901,8 @@ export class DesignDocStore {
     this.db.transaction(() => {
       this.db
         .prepare(
-          `UPDATE doc_threads SET last_activity_at = ?, title = CASE WHEN ? <> '' THEN ? ELSE title END WHERE thread_id = ?`
+           `UPDATE doc_threads SET last_activity_at = ?, title = CASE WHEN ? <> '' THEN ? ELSE title END
+             WHERE thread_id = ? AND doc_id IN (SELECT id FROM docs WHERE ${DOC_ONLY})`
         )
         .run(at, cleanTitle, cleanTitle, threadId);
       for (const docId of docIds) this.notifyMutation({ docId, kind: 'thread-touch', payload: null });
@@ -896,7 +914,7 @@ export class DesignDocStore {
   forgetThread(threadId: string): string[] {
     const docIds = this.docsForThread(threadId);
     if (docIds.length) this.db.transaction(() => {
-      this.db.prepare('DELETE FROM doc_threads WHERE thread_id = ?').run(threadId);
+      this.db.prepare(`DELETE FROM doc_threads WHERE thread_id = ? AND doc_id IN (SELECT id FROM docs WHERE ${DOC_ONLY})`).run(threadId);
       for (const docId of docIds) {
         this.removeThreadReference(docId, threadId);
         this.notifyMutation({ docId, kind: 'thread-forget', payload: null });
@@ -907,7 +925,7 @@ export class DesignDocStore {
 
   private docsForThread(threadId: string): string[] {
     return (
-      this.db.prepare('SELECT doc_id FROM doc_threads WHERE thread_id = ?').all(threadId) as Array<{ doc_id: string }>
+      this.db.prepare(`SELECT doc_id FROM doc_threads JOIN docs d ON d.id = doc_id WHERE d.${DOC_ONLY} AND thread_id = ?`).all(threadId) as Array<{ doc_id: string }>
     ).map((row) => row.doc_id);
   }
 
@@ -921,6 +939,7 @@ export class DesignDocStore {
   // ── Internals ─────────────────────────────────────────────────────────
 
   private notifyMutation(mutation: DesignDocMutation): void {
+    if (this.db.prepare(`SELECT 1 FROM docs WHERE ${TEMPLATE_ONLY} AND id = ?`).get(mutation.docId)) return;
     const next = { ...mutation, origin: mutation.origin ?? this.mutationOrigin };
     if (this.mutationDepth) {
       const previous = this.pendingMutations.get(next.docId);
@@ -958,7 +977,7 @@ export class DesignDocStore {
     if (typeof ref !== 'string' || !ref.trim()) return null;
     const value = ref.trim();
     return (
-      (this.db.prepare(`SELECT ${SUMMARY_COLUMNS} FROM docs d WHERE d.id = ? OR d.slug = ? LIMIT 1`).get(
+      (this.db.prepare(`SELECT ${SUMMARY_COLUMNS} FROM docs d WHERE d.${DOC_ONLY} AND (d.id = ? OR d.slug = ?) LIMIT 1`).get(
         value,
         value.toLowerCase()
       ) as DocRow | undefined) ?? null
@@ -972,7 +991,7 @@ export class DesignDocStore {
     if (target.alternative_to !== null) {
       throw new DesignDocError('invalid', `${target.slug} is itself an alternative; point at the doc it is an alternative to (${target.alternative_to})`);
     }
-    const own = this.db.prepare('SELECT COUNT(*) AS n FROM docs WHERE alternative_to = ?').get(row.id) as { n: number };
+    const own = this.db.prepare(`SELECT COUNT(*) AS n FROM docs WHERE ${DOC_ONLY} AND alternative_to = ?`).get(row.id) as { n: number };
     if (own.n > 0) {
       throw new DesignDocError('invalid', `${row.slug} has its own alternatives; detach them before making it an alternative`);
     }
@@ -990,8 +1009,18 @@ export class DesignDocStore {
     return row;
   }
 
+  requireTemplate(ref: unknown): DocRow {
+    const row = typeof ref === 'string' && ref.trim()
+      ? this.db.prepare(`SELECT * FROM docs WHERE ${TEMPLATE_ONLY} AND (id = ? OR template_key = ?) LIMIT 1`)
+        .get(ref.trim(), ref.trim()) as DocRow | undefined
+      : undefined;
+    if (!row) throw new DesignDocError('not_found', `template ${JSON.stringify(ref)} not found; list templates to get a valid key`);
+    return row;
+  }
+
   private fileRow(docId: string, path: string): FileRow | null {
     return (
+      // docs-kind: allow Private file helper receives ids only from kind-checked store methods.
       (this.db.prepare('SELECT * FROM doc_files WHERE doc_id = ? AND path = ?').get(docId, path) as
         | FileRow
         | undefined) ?? null
@@ -999,10 +1028,12 @@ export class DesignDocStore {
   }
 
   private fileCount(docId: string): number {
+    // docs-kind: allow Private file helper receives ids only from kind-checked store methods.
     return (this.db.prepare('SELECT COUNT(*) AS n FROM doc_files WHERE doc_id = ?').get(docId) as { n: number }).n;
   }
 
   private firstFilePath(docId: string): string {
+    // docs-kind: allow Private file helper receives ids only from kind-checked store methods.
     const paths = (this.db.prepare('SELECT path FROM doc_files WHERE doc_id = ?').all(docId) as Array<{ path: string }>)
       .map((file) => file.path)
       .sort(comparePaths);
@@ -1015,6 +1046,7 @@ export class DesignDocStore {
 
   private missingFile(docId: string, path: string): DesignDocError {
     const available = (
+      // docs-kind: allow Private file helper receives ids only from kind-checked store methods.
       this.db.prepare('SELECT path FROM doc_files WHERE doc_id = ? ORDER BY path LIMIT 40').all(docId) as Array<{
         path: string;
       }>
@@ -1023,6 +1055,7 @@ export class DesignDocStore {
   }
 
   private caseInsensitiveClash(docId: string, path: string, except?: string): string | null {
+    // docs-kind: allow Private file helper receives ids only from kind-checked store methods.
     const clash = this.db
       .prepare('SELECT path FROM doc_files WHERE doc_id = ? AND lower(path) = lower(?) AND path <> ? LIMIT 1')
       .get(docId, path, except ?? '') as { path: string } | undefined;
@@ -1040,6 +1073,7 @@ export class DesignDocStore {
   private assertDocBudget(docId: string, delta: number): void {
     if (delta <= 0) return;
     const total = (
+      // docs-kind: allow Private file helper receives ids only from kind-checked store methods.
       this.db.prepare('SELECT COALESCE(SUM(size), 0) AS n FROM doc_files WHERE doc_id = ?').get(docId) as { n: number }
     ).n;
     if (total + delta > MAX_DOC_BYTES) {
@@ -1062,6 +1096,7 @@ export class DesignDocStore {
     at: number,
     actorJson: string
   ): void {
+    // docs-kind: allow New ids are minted by create; existing ids come from kind-checked store methods.
     this.db
       .prepare(
         `INSERT INTO doc_files (doc_id, path, content, encoding, size, revision, updated_at, updated_by, sync_id)
@@ -1144,13 +1179,13 @@ export class DesignDocStore {
 
   private touch(docId: string, actor: DocActor, at = this.now()): void {
     this.db
-      .prepare('UPDATE docs SET revision = revision + 1, updated_at = ?, updated_by = ? WHERE id = ?')
+      .prepare(`UPDATE docs SET revision = revision + 1, updated_at = ?, updated_by = ? WHERE ${DOC_ONLY} AND id = ?`)
       .run(at, JSON.stringify(actor), docId);
   }
 
   /** Review activity changes the doc but not its content, so "last edited by" stays put. */
   private touchReview(docId: string): void {
-    this.db.prepare('UPDATE docs SET revision = revision + 1 WHERE id = ?').run(docId);
+    this.db.prepare(`UPDATE docs SET revision = revision + 1 WHERE ${DOC_ONLY} AND id = ?`).run(docId);
   }
 
   private linkThreadRow(docId: string, threadId: string, title: string, role: ThreadRole, at: number): void {
@@ -1230,6 +1265,7 @@ export class DesignDocStore {
   private uniqueSlug(base: string): string {
     const taken = new Set(
       (
+        // docs-kind: allow Slug uniqueness is a database-wide constraint, including internal template slugs.
         this.db.prepare(`SELECT slug FROM docs WHERE slug = ? OR slug LIKE ? ESCAPE '\\'`).all(
           base,
           `${escapeLike(base)}-%`

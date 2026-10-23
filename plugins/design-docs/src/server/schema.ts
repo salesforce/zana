@@ -3,6 +3,7 @@
  * reorder an entry: the host records each by index + hash and refuses a
  * mismatch. Add a new statement at the end instead.
  */
+// docs-kind: allow Append-only historical migrations predate kind and must retain their recorded hashes.
 export const DESIGN_DOC_MIGRATIONS: readonly string[] = [
   `CREATE TABLE docs (
     id TEXT PRIMARY KEY,
@@ -274,5 +275,10 @@ export const DESIGN_DOC_MIGRATIONS: readonly string[] = [
         ON CONFLICT (doc_id, path) DO UPDATE SET generation = MAX(generation, excluded.generation), file_id = excluded.file_id;
       INSERT INTO sync_file_identity_generations SELECT NEW.doc_id, NEW.sync_id, NEW.revision WHERE NEW.sync_id IS NOT NULL
         ON CONFLICT (doc_id, file_id) DO UPDATE SET generation = MAX(generation, excluded.generation);
-    END;`
+    END;`,
+  `ALTER TABLE docs ADD COLUMN kind TEXT NOT NULL DEFAULT 'doc';
+   ALTER TABLE docs ADD COLUMN template_key TEXT;
+   ALTER TABLE docs ADD COLUMN template_origin TEXT;
+   ALTER TABLE docs ADD COLUMN template_order INTEGER;
+   CREATE UNIQUE INDEX docs_template_key ON docs (template_key) WHERE kind = 'template';`
 ];

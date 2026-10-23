@@ -18,6 +18,50 @@ import { MAX_PEER_STORED_BYTES, MAX_PEER_STORED_VERSIONS } from '../shared/peer-
 const user: DocActor = { kind: 'user', label: 'You', threadId: null };
 const agent: DocActor = { kind: 'agent', label: 'Planner', threadId: 'thread-1' };
 
+describe('template kind isolation', () => {
+  it('hides templates from doc lookups, search, alternatives, files, comments and mutations', () => {
+    const db = createTestDatabase();
+    const mutations: unknown[] = [];
+    const store = new DesignDocStore(db, { onMutation: (event) => mutations.push(event) });
+    const template = store.create({ title: 'Private template', template: 'blank' }, user);
+    db.prepare("UPDATE docs SET kind = 'template', template_key = 'private' WHERE id = ?").run(template.id);
+    const doc = store.create({ title: 'Visible doc', template: 'blank' }, user);
+    db.prepare(`INSERT INTO doc_threads (doc_id, thread_id, title, role, last_activity_at)
+      VALUES (?, 'shared-thread', 'Private thread', 'author', 1)`).run(template.id);
+    store.linkThread(doc.id, 'shared-thread', 'Public thread', 'author');
+    expect(store.touchThread('shared-thread', 'Changed')).toEqual([doc.id]);
+    expect(db.prepare('SELECT title FROM doc_threads WHERE doc_id = ?').get(template.id)).toEqual({ title: 'Private thread' });
+    expect(store.forgetThread('shared-thread')).toEqual([doc.id]);
+    expect(db.prepare('SELECT title FROM doc_threads WHERE doc_id = ?').get(template.id)).toEqual({ title: 'Private thread' });
+    mutations.length = 0;
+    expect(store.list().map((row) => row.id)).toEqual([doc.id]);
+    expect(store.list({ query: 'Private' })).toEqual([]);
+    expect(store.find(template.id)).toBeNull();
+    expect(store.find(template.slug)).toBeNull();
+    expect(store.requireTemplate('private').id).toBe(template.id);
+    expect(store.requireTemplate(template.id).id).toBe(template.id);
+    expect(() => store.requireTemplate(doc.id)).toThrow('template');
+    expect(() => store.requireTemplate(null)).toThrow('template');
+    for (const action of [
+      () => store.get(template.id),
+      () => store.summary(template.id),
+      () => store.readFile(template.id, 'README.md'),
+      () => store.writeFile(template.id, { path: 'README.md', content: 'changed' }, user),
+      () => store.update(template.id, { title: 'Changed' }, user),
+      () => store.update(doc.id, { alternativeTo: template.id }, user),
+      () => store.setPinned(template.id, true),
+      () => store.addComment(template.id, { body: 'Comment' }, user),
+      () => store.linkThread(template.id, 'thread', 'Thread', 'author'),
+      () => store.remove(template.id)
+    ]) expect(action).toThrow('not found');
+    // Exercise the internal emission boundary independently of doc API authorization.
+    (store as unknown as { notifyMutation: (event: { docId: string; kind: string; payload: null }) => void })
+      .notifyMutation({ docId: template.id, kind: 'write', payload: null });
+    expect(mutations).toEqual([]);
+    expect(store.requireTemplate('private').title).toBe('Private template');
+  });
+});
+
 describe('DesignDocStore legacy migration repair', () => {
   const hashes = [
     '0e5d810d8f1a4bb65a824698f308f5974bc08a3a9da2fade6f420b7fae1523a4',

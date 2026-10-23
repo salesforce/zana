@@ -9,9 +9,23 @@ function migrate(db: ReturnType<typeof createTestDatabase>, statements: readonly
 }
 
 describe('DESIGN_DOC_MIGRATIONS', () => {
+  it('defaults upgraded rows to docs and enforces template key uniqueness only for templates', () => {
+    const db = createTestDatabase();
+    migrate(db, DESIGN_DOC_MIGRATIONS.slice(0, -1));
+    db.prepare(`INSERT INTO docs (id, slug, title, created_at, updated_at, created_by, updated_by)
+      VALUES ('old', 'old', 'Old', 1, 1, 'you', 'you')`).run();
+    migrate(db, DESIGN_DOC_MIGRATIONS);
+    expect(db.prepare('SELECT kind, template_key, template_origin, template_order FROM docs').get())
+      .toEqual({ kind: 'doc', template_key: null, template_origin: null, template_order: null });
+    const insert = db.prepare(`INSERT INTO docs (id, slug, title, created_at, updated_at, created_by, updated_by, kind, template_key)
+      VALUES (?, ?, 'Template', 1, 1, 'you', 'you', ?, 'key')`);
+    insert.run('t1', 't1', 'template');
+    expect(() => insert.run('t2', 't2', 'template')).toThrow(/UNIQUE/);
+    expect(() => insert.run('d1', 'd1', 'doc')).not.toThrow();
+  });
   it('upgrades the peer-first development lineage without replaying migrations', () => {
     const db = createTestDatabase();
-    const peerFirstMigrations = [...DESIGN_DOC_MIGRATIONS.slice(0, 2), ...DESIGN_DOC_MIGRATIONS.slice(3, -1)];
+    const peerFirstMigrations = [...DESIGN_DOC_MIGRATIONS.slice(0, 2), ...DESIGN_DOC_MIGRATIONS.slice(3, 10)];
     migrate(db, peerFirstMigrations);
     db.prepare(`INSERT INTO docs (id, slug, title, created_at, updated_at, created_by, updated_by)
       VALUES (?, ?, ?, ?, ?, ?, ?)`).run('doc-1', 'legacy', 'Legacy doc', 1, 1, 'you', 'you');
