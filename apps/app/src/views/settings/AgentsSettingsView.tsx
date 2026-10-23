@@ -16,6 +16,7 @@ import {
   type OwnNotificationLevel
 } from '@zana-ai/zcc-domain';
 import { Section, Field, CheckboxField } from '@/components/settings/FormFields';
+import { ApiErrorResumeSection } from '@/components/settings/ApiErrorResumeSection';
 import { OverseerRecentPane } from '@/components/settings/OverseerRecentPane';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 import { RemoteMachineDefaultsList } from './RemoteMachineDefaultsList.js';
@@ -34,7 +35,7 @@ export function AgentsSettingsView({
 }: {
   config: AppConfig;
   onConfigDraft: (config: AppConfig) => void;
-  onUpdate: (patch: Partial<AppConfig>) => Promise<void>;
+  onUpdate: (patch: Partial<AppConfig>, opts?: { throwOnError?: boolean }) => Promise<void>;
 }) {
   // Auto mode defaults ON (absent ⇒ true). The Overseer only makes sense as the
   // fallback, so we soften its help text while auto mode is on.
@@ -504,6 +505,8 @@ export function AgentsSettingsView({
           onChange={(v) => onUpdate({ keepAwakeWhileWorking: v })}
         />
       </Section>
+
+      <ApiErrorResumeSection config={config} onUpdate={onUpdate} onConfigDraft={onConfigDraft} />
 
       {/* Auto-close idle agents — reclaim at-rest agents on a timer. Its dwell
           sub-field only shows when it's on. Distinct from heartbeat (which

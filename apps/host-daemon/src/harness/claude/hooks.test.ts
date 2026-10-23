@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { executeNativeToolHook, type NativeToolHookEvent, type NativeToolHookState } from './hooks.js';
+import { buildClaudeHookSettings, renderClaudeLifecycle, executeNativeToolHook, type NativeToolHookEvent, type NativeToolHookState } from './hooks.js';
 
 function statesOf(calls: unknown[][]): NativeToolHookState[] {
   return calls.map((call) => (call[0] as NativeToolHookEvent).state);
@@ -162,5 +162,35 @@ describe('executeNativeToolHook', () => {
     for (const call of emit.mock.calls) {
       expect((call[0] as NativeToolHookEvent).input).toEqual({});
     }
+  });
+});
+
+describe('StopFailure hook', () => {
+  const stopFailure = (settings: string) =>
+    (JSON.parse(settings) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }).hooks.StopFailure;
+
+  it('is present when notify is on and posts the body to the unblocked route', () => {
+    const entry = stopFailure(buildClaudeHookSettings({ stop: false, notify: true }));
+    const cmd = entry[0].hooks[0].command;
+    expect(cmd).toContain('$ZCC_NOTIFY_URL/unblocked');
+    expect(cmd).toContain('--data-binary @-');
+    expect(cmd.endsWith('exit 0')).toBe(true);
+  });
+
+  it('is absent when notify is off', () => {
+    expect(stopFailure(buildClaudeHookSettings({ stop: true, notify: false, firstPrompt: true }))).toBeUndefined();
+  });
+
+  it.each(['local', 'remote'] as const)('is rendered for %s sessions', (scope) => {
+    const out = renderClaudeLifecycle({
+      profile: 'claude' as never,
+      caps: { injectsClaudeMcpConfig: true } as never,
+      config: {} as never,
+      scheduled: false, headless: false, autoModeActive: false,
+      callbacks: { notify: 'http://127.0.0.1:1/notify' },
+      scope,
+    });
+    const idx = out.args.indexOf('--settings');
+    expect(stopFailure(out.args[idx + 1])).toHaveLength(1);
   });
 });

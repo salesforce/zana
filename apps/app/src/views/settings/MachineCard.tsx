@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { sortHarnessDisplayRows } from '@/lib/harness-display-order';
 import { machineSearchId } from '@/lib/settings-search/providers/machines';
 import {
   AlertTriangle,
@@ -63,6 +64,7 @@ export function MachineCliInventory({
   onInstall: (provider: ProviderCliKey, actionKind: ProviderCliInstallActionKind) => void;
 }) {
   const summary = machineCliInventorySummary(rows);
+  const displayedRows = sortHarnessDisplayRows(rows, (row) => row.status.displayName, (row) => row.provider);
   return (
     <div className="machine-cli-panel">
       <div className="machine-cli-panel-head">
@@ -73,7 +75,7 @@ export function MachineCliInventory({
         <p className="machine-cli-empty">Checking harness CLIs…</p>
       ) : (
         <ul className="machine-cli-list" data-testid={`machine-cli-list-${hostId}`}>
-          {rows.map((row) => {
+          {displayedRows.map((row) => {
             const copy = providerCliPresentation(row.status);
             const key = `${hostId}:${row.provider}`;
             const busy = busyKey === key;

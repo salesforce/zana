@@ -67,6 +67,9 @@ export default function(pi) {
 test('Pi question cards normalize legacy input, render details, reject empty input, and cancel', async ({ app, home }) => {
   test.setTimeout(120_000);
   const window = app.window;
+  // Deliberately no wait for the ask-user-question plugin: it activates after
+  // provider-pi, and thread creation itself must wait for plugin startup so
+  // the first thread after launch is offered ask_user_question.
   await waitForThreadProvider(window, 'pi');
   const path = join(home, 'questions-project');
   mkdirSync(path);

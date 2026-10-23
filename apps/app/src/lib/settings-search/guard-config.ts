@@ -39,7 +39,7 @@ export const SECTION_SOURCES: Record<SearchSection, readonly string[]> = {
   peers: ['views/settings/PeersSettingsView.tsx'],
   phone: ['views/settings/PhoneSettingsView.tsx', 'views/settings/PhoneAccountConnection.tsx'],
   'remote-access': ['views/settings/RemoteAccessView.tsx', 'views/settings/SharedPreviews.tsx'],
-  agents: ['views/settings/AgentsSettingsView.tsx', 'views/settings/AgentGuidanceSettings.tsx', 'components/settings/OverseerRecentPane.tsx'],
+  agents: ['views/settings/AgentsSettingsView.tsx', 'views/settings/AgentGuidanceSettings.tsx', 'components/settings/OverseerRecentPane.tsx', 'components/settings/ApiErrorResumeSection.tsx'],
   personas: ['views/settings/PersonasView.tsx'],
   squads: ['views/settings/SquadsView.tsx'],
   usage: ['views/settings/UsageView.tsx'],

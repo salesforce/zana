@@ -107,6 +107,7 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
     { id: 'scheduled', label: 'Scheduled' },
     { id: 'agent-automation', label: 'Agent automation' },
     { id: 'agent-heartbeat', label: 'Agent heartbeat' },
+    { id: 'api-error-resume', label: 'Resume after API errors' },
     { id: 'auto-close-idle', label: 'Idle handling & follow-ups' },
     { id: 'legacy-agent', label: 'CLI Agent' },
     { id: 'overseer', label: 'Overseer' },

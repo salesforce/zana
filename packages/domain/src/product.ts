@@ -1,3 +1,4 @@
+import type { ApiErrorResumeConfig } from './api-error-resume.js';
 import type { AgentsViewId } from './agents-view.js';
 export { isAgentsViewId, type AgentsViewId } from './agents-view.js';
 import type { ProjectIcon } from './project-icons.js';
@@ -2664,6 +2665,8 @@ export interface AppConfig {
    * agent to continue or to say so and stop if it's blocked / done.
    */
   heartbeatMessage?: string;
+  /** Resume after API errors (Settings → Agents). Absent = off. */
+  apiErrorResume?: ApiErrorResumeConfig;
   /**
    * Autonomous-team run backstops. Defaults applied in main when a run starts
    * (see AUTONOMOUS_DEFAULTS). A value of 0 disables that backstop.
@@ -2925,6 +2928,8 @@ export const SESSION_MEMORY_DEFAULTS = {
   /** Fraction of physical RAM the session fleet may claim when deriving the cap. */
   ramFractionForSessions: 0.5
 } as const;
+
+export * from './api-error-resume.js';
 
 /** Defaults for the Agent Heartbeat feature (used when the config field is absent). */
 export const HEARTBEAT_DEFAULTS = {
@@ -4418,6 +4423,8 @@ export interface Team {
   defaultPlanning?: SquadPlanning;
   /** Whether agent-started runs of this Squad need the user's Launch first. Review is a floor: the Project's review applies even when this is absent or direct. Absent ⇒ direct unless the Project asks for review. */
   launchApproval?: LaunchApproval;
+  /** Preselected in the New Agent squad picker. Absent ⇒ the first squad alphabetically. */
+  isDefault?: boolean;
   /** Set by the loader/host for UI display; never read from disk / trusted from the renderer. */
   source?: PersonaSource;
 }

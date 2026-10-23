@@ -143,6 +143,15 @@ export function buildClaudeHookSettings(opts: ClaudeHookSettings): string {
     hooks.PreToolUse = [{ matcher: 'AskUserQuestion', hooks: [{ type: 'command', command: postBlocked }] }];
     hooks.PostToolUse = [{ matcher: 'AskUserQuestion', hooks: [{ type: 'command', command: postUnblocked }] }];
     hooks.UserPromptSubmit = [{ matcher: '', hooks: [{ type: 'command', command: postUnblocked }] }];
+    // Claude fires StopFailure (not Stop) when a turn ends on an API error. The body goes
+    // to the notify route; every session with a notify callback (local, remote, scheduled,
+    // headless) gets this hook because renderClaudeLifecycle sets notify for all of them.
+    const postStopFailure =
+      'ZCC_IN=$(cat); ' +
+      '[ -n "$ZCC_NOTIFY_URL" ] && ' +
+      'printf "%s" "$ZCC_IN" | ' +
+      'curl -s -m 5 -X POST --data-binary @- "$ZCC_NOTIFY_URL/unblocked" >/dev/null 2>&1 || true; exit 0';
+    hooks.StopFailure = [{ matcher: '', hooks: [{ type: 'command', command: postStopFailure }] }];
     if (!opts.stop) {
       const stopUnblock = { type: 'command', command: postUnblocked };
       if (Array.isArray(hooks.Stop)) (hooks.Stop[0] as { hooks: unknown[] }).hooks.push(stopUnblock);

@@ -723,6 +723,9 @@ const api: CcApi = {
       return () => ipcRenderer.off(IPC.config.onChanged, handler);
     }
   },
+  apiErrorResume: {
+    check: (input) => ipcRenderer.invoke(IPC.apiErrorResume.check, input)
+  },
   overseer: {
     recent: (limit) => ipcRenderer.invoke(IPC.overseer.recent, limit)
   },

@@ -202,6 +202,7 @@ describe('Settings subsection navigation', () => {
       'scheduled',
       'agent-automation',
       'agent-heartbeat',
+      'api-error-resume',
       'auto-close-idle',
       'legacy-agent',
       'overseer',

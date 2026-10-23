@@ -483,17 +483,35 @@ describe('packHostSessionTooling', () => {
 });
 
 describe('safePackPluginSession', () => {
-  it('returns an empty object when loading throws', async () => {
-    await expect(safePackPluginSession(async () => {
-      throw new Error('down');
-    })).resolves.toEqual({});
+  const ids = { threadId: 'thr-1', projectId: 'proj-1' };
+
+  it('returns an empty object when there is no loader', async () => {
+    await expect(safePackPluginSession(undefined, ids)).resolves.toEqual({});
+  });
+
+  it('returns an empty object and logs the ids when loading throws', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await expect(safePackPluginSession(async () => {
+        throw new Error('down');
+      }, ids)).resolves.toEqual({});
+      await expect(safePackPluginSession(async () => {
+        throw 'plain';
+      }, ids)).resolves.toEqual({});
+      expect(warn.mock.calls).toEqual([
+        ['[plugins] session tools failed for thread thr-1 (project proj-1); starting without plugin tools:', 'down'],
+        ['[plugins] session tools failed for thread thr-1 (project proj-1); starting without plugin tools:', 'plain']
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('packs a successful session', async () => {
     await expect(safePackPluginSession(async () => ({
       tools: [{ name: 'sf_soql', description: 'SOQL', inputSchema: { type: 'object' } }],
       instructions: 'Use sf_soql.'
-    }))).resolves.toEqual({
+    }), ids)).resolves.toEqual({
       dynamicTools: [{ name: 'sf_soql', description: 'SOQL', inputSchema: { type: 'object' } }],
       instructions: 'Use sf_soql.'
     });

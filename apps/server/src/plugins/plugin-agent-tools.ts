@@ -46,13 +46,19 @@ export function packHostSessionTooling(
   };
 }
 
+/** A failed load still starts the session, without plugin tools; the failure is logged with its ids. */
 export async function safePackPluginSession(
-  load?: () => Promise<PluginSessionTools | undefined>
+  load: (() => Promise<PluginSessionTools | undefined>) | undefined,
+  ids: { threadId: string; projectId: string }
 ): Promise<{ dynamicTools?: DynamicTool[]; instructions?: string }> {
   if (!load) return {};
   try {
     return packHostSessionTooling(await load());
-  } catch {
+  } catch (error) {
+    console.warn(
+      `[plugins] session tools failed for thread ${ids.threadId} (project ${ids.projectId}); starting without plugin tools:`,
+      error instanceof Error ? error.message : error
+    );
     return {};
   }
 }
