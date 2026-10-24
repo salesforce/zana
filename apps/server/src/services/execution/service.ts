@@ -3,7 +3,7 @@ import { squadLaunchTextProblem } from '@zana-ai/zcc-domain/squad-proposal';
 import { fitRecoveryObjective } from './recovery-objective.js';
 import { createHash } from 'node:crypto';
 import { launchDigest } from '../launch/digest.js';
-import { EXECUTION_RETENTION_MS, KICKOFF_FAILURE_BLOCK_THRESHOLD, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
+import { EXECUTION_RETENTION_MS, KICKOFF_FAILURE_BLOCK_THRESHOLD, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
 import type { createExecutionStore } from './store.js';
 import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './artifact-store.js';
 import { validateWorkflowPolicyResult, type WorkflowPolicyResultV1 } from './policy-result.js';
@@ -180,6 +180,8 @@ export interface ExecutionRequestV1 {
   worktree?: boolean;
   /** Terminal disposition for an execution-owned shared worktree. */
   onComplete?: 'leave' | 'merge' | 'delete';
+  /** Opt-in terminal inbox notice for runs without an owner report target. */
+  completionInboxNotice?: boolean;
 }
 
 /** @deprecated Use ExecutionRequestV1. Retained for Team backend callers. */
@@ -213,7 +215,7 @@ export interface ExecutionServiceDeps {
   ) => Promise<{ ok: true; value: TeamLaunchAuthorizationResult } | { ok: false; code: string; message: string }> | { ok: true; value: TeamLaunchAuthorizationResult } | { ok: false; code: string; message: string };
   launchTeam: (teamId: string, projectId: string, request: TeamLaunchRequestInput) => Promise<{ ok: boolean; code?: string; message?: string }>;
   getTeamLaunch: (callerPrincipalId: string, launchRequestId: string) => Promise<unknown>;
-  cancelTeamLaunch: (callerPrincipalId: string, launchRequestId: string) => Promise<{
+  cancelTeamLaunch: (callerPrincipalId: string, launchRequestId: string, opts?: { retainOrchestrator?: boolean }) => Promise<{
     ok: boolean;
     code?: string;
     message?: string;
@@ -351,6 +353,7 @@ export class ExecutionSnapshotTimeoutError extends Error {
 interface ExtractedLifecycle {
   orchestratorSessionId?: string;
   orchestratorAuthorizationId?: string;
+  retainOrchestrator?: boolean;
   workers?: Array<{
     slotId?: string;
     sessionId?: string;
@@ -384,6 +387,7 @@ function extractLifecycleInfo(lifecycle: any): ExtractedLifecycle | undefined {
   return {
     orchestratorSessionId,
     orchestratorAuthorizationId,
+    retainOrchestrator: lifecycle.retainOrchestrator === true,
     workers,
     launchResult: lifecycle.launchResult,
     outcome: lifecycle.outcome
@@ -663,7 +667,7 @@ export class ExecutionService {
         ...(opts?.proposal ? { proposal: opts.proposal } : {}),
         ...(opts?.reportTo ? { reportTo: opts.reportTo } : {}),
         launchRequestId: request.launchRequestId,
-        request: { version: 1, launchKind: request.launchKind ?? 'team', ...(request.launchDisplay ? { launchDisplay: request.launchDisplay } : {}), slots: request.slots, policy: effectivePolicy, workflow: request.workflow, resolvedModels, sourceBundle: request.sourceBundle, objective: request.objective, ...(request.worktree === undefined ? {} : { worktree: request.worktree }), ...(request.onComplete === undefined ? {} : { onComplete: request.onComplete }) },
+        request: { version: 1, launchKind: request.launchKind ?? 'team', ...(request.launchDisplay ? { launchDisplay: request.launchDisplay } : {}), slots: request.slots, policy: effectivePolicy, workflow: request.workflow, resolvedModels, sourceBundle: request.sourceBundle, objective: request.objective, ...(request.worktree === undefined ? {} : { worktree: request.worktree }), ...(request.onComplete === undefined ? {} : { onComplete: request.onComplete }), completionInboxNotice: request.completionInboxNotice === true },
         ...(request.workUnits ? { workUnits: request.workUnits } : {}),
         resolvedModels,
         requestDigest: launchDigest({ callerPrincipalId, projectId, request: { ...withoutDefaultLaunchKind(resolvedRequest), jobTitle, summary } })
@@ -1640,8 +1644,12 @@ export class ExecutionService {
       return;
     }
     try {
-      await this.cleanupTerminal(terminal);
-      await this.deps.cancelTeamLaunch(terminal.callerPrincipalId, terminal.teamLaunchRequestId);
+      if (terminal.state === 'COMPLETED') {
+        await this.teardownCompleted(terminal);
+      } else {
+        await this.cleanupTerminal(terminal);
+        await this.deps.cancelTeamLaunch(terminal.callerPrincipalId, terminal.teamLaunchRequestId);
+      }
     } catch (error) {
       console.error(`[execution] auto-finalize cleanup failed for ${executionId}`, error);
     }
@@ -2091,8 +2099,7 @@ export class ExecutionService {
     const evidence = current ? await this.terminalEvidence(current) : { artifacts: [], events: [] };
     const result = await this.mutateBound(binding, (record) => this.deps.store.completeExecution(record.id, record.stateVersion, summary, evidence.artifacts, this.deps.routeFitObserveEnabled?.() === true));
     if (result.ok) {
-      await this.cleanupTerminal(result.value);
-      await this.deps.cancelTeamLaunch(result.value.callerPrincipalId, result.value.teamLaunchRequestId);
+      await this.teardownCompleted(result.value);
     }
     return result;
   }
@@ -2686,8 +2693,7 @@ export class ExecutionService {
       const current = (await this.deps.store.get(record.id)) ?? record;
       const evidence = await this.terminalEvidence(current);
       const completed = await this.deps.store.completeExecution(current.id, current.stateVersion, summary.trim(), evidence.artifacts, this.deps.routeFitObserveEnabled?.() === true);
-      await this.cleanupTerminal(completed);
-      await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
+      await this.teardownCompleted(completed);
       return { ok: true as const, value: completed };
     } catch (error) {
       return { ok: false as const, code: 'CONFLICT', message: error instanceof Error ? error.message : String(error) };
@@ -3285,6 +3291,37 @@ export class ExecutionService {
       await this.deps.onTerminal?.(record);
     } catch (error) {
       this.deps.logError?.(`execution terminal lifecycle ${record.id}`, error);
+    }
+  }
+
+  /** Shared teardown for a successfully completed run: notice, terminal cleanup, then cancel (optionally keeping the orchestrator). */
+  private async teardownCompleted(record: ExecutionRecord): Promise<void> {
+    await this.appendCompletionInboxNotice(record);
+    let retainOrchestrator = false;
+    try {
+      retainOrchestrator = extractLifecycleInfo(await this.deps.getTeamLaunch(
+        record.callerPrincipalId,
+        record.teamLaunchRequestId
+      ))?.retainOrchestrator === true;
+    } catch (error) {
+      this.deps.logError?.(`execution completion lifecycle lookup failed for ${record.id}`, error);
+    }
+    await this.cleanupTerminal(record);
+    await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId, { retainOrchestrator });
+  }
+
+  private async appendCompletionInboxNotice(record: ExecutionRecord): Promise<void> {
+    if (executionReportTarget(record) || record.request.completionInboxNotice !== true || !this.deps.inbox?.appendOnce) return;
+    try {
+      await this.deps.inbox.appendOnce({
+        projectId: record.projectId,
+        subject: record.jobTitle || 'Squad Completed',
+        comments: record.finalSummary || 'Squad completed.',
+        executionId: record.id,
+        dedupeKey: record.id
+      });
+    } catch (error) {
+      this.deps.logError?.(`execution completion inbox append failed for ${record.id}`, error);
     }
   }
 

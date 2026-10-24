@@ -241,7 +241,7 @@ describe('paired whole-document deletion', () => {
     const offer = a.service.createOffer(a.sync.readyIntents('repo')[0]!);
     const forged = { ...offer, versions: offer.versions.map((version) => ({ ...version, operation: { ...version.operation, kind: 'delete' } })) };
     expect(() => b.sync.apply(forged)).toThrow();
-    expect(b.db.prepare('SELECT COUNT(*) AS n FROM docs').get()).toEqual({ n: 0 });
+    expect(b.db.prepare("SELECT COUNT(*) AS n FROM docs WHERE kind = 'doc'").get()).toEqual({ n: 0 });
   });
 
   it('a delete covers held forks, ignores unknown ones, and refuses through too many', () => {

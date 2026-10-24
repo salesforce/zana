@@ -3,10 +3,12 @@
  * two-pane view (grouped section rail + content) that replaces the doc list
  * and doc while open.
  */
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowLeft, Bot, Settings as SettingsIcon, Users, type LucideIcon } from 'lucide-react';
-import type { PeerStatus } from './api.js';
-import { usePersistentState } from './hooks.js';
+import type { HarnessRoutingEditorPatch, HarnessRoutingEditorRowCopy } from '@zana-ai/zcc-plugin-sdk/app';
+import { experimental_HarnessRoutingEditor as HarnessRoutingEditor } from '@zana-ai/zcc-plugin-sdk/app';
+import { errorMessage, toast, useApi, type DesignDocsApi, type HarnessRouting, type HarnessScope, type PeerStatus } from './api.js';
+import { usePersistentState, useProjects, useResource } from './hooks.js';
 import { PeerSettings } from './PeerSettings.js';
 
 export type SettingsTab = 'peers' | 'agent';
@@ -41,7 +43,7 @@ const NAV_GROUPS: Array<{ label: string; sections: SettingsSection[] }> = [
         label: 'Agent',
         icon: Bot,
         title: 'Agent harness',
-        description: 'Which AI harness Design Docs agents run on.'
+        description: 'Which AI harness Design Docs agents run on, per scope.'
       }
     ]
   }
@@ -142,31 +144,210 @@ export function SettingsView({ peer, onBack, headerActions }: { peer: PeerStatus
   );
 }
 
+type ScopeKind = Exclude<HarnessScope['kind'], 'default-project'>;
+type HarnessFamily = keyof HarnessRouting['byAdapter'];
+
 /**
- * Which AI harness Design Docs agents run on. Informational: agents always
- * follow the project's AI harness setting (`harness: 'project-default'`).
- *
- * DECISION(design-docs-ai-harness, 2026-10-13): inherit-only. No "Always use"
- * mode and no override pickers here until core offers a plugin-facing harness
- * control (doc-vault zana/design-docs-ai-harness/proposal.md). A read-only
- * "what will this resolve to" summary was skipped: it needs a new SDK surface.
+ * Design Docs offers two scopes: Default (stored at the host's Global scope)
+ * and one Project. The host's Default Project scope is not offered: it would
+ * reach the same docs as Default and only shadow it.
+ */
+const SCOPE_TABS: ReadonlyArray<readonly [ScopeKind, string]> = [
+  ['global', 'Default'],
+  ['project', 'Project']
+];
+
+const SCOPE_HELP: Record<ScopeKind, string> = {
+  global: 'Applies to every Design Docs agent, including docs without a project, unless the doc’s project sets its own.',
+  project: 'Applies only to docs in this project, over Default.'
+};
+
+/** An override that sets nothing is null, so the scope inherits again. */
+function orInherit(value: HarnessRouting): HarnessRouting | null {
+  return Object.keys(value.byAdapter).length || value.defaultHarness ? value : null;
+}
+
+/** Merge one adapter's patch into a routing value; undefined keys clear, an empty result is null (inherit). */
+export function patchHarnessRouting(value: HarnessRouting | null, adapterId: HarnessFamily, patch: HarnessRoutingEditorPatch): HarnessRouting | null {
+  const byAdapter: Record<string, Record<string, unknown>> = { ...(value?.byAdapter ?? {}) };
+  const next: Record<string, unknown> = { ...(byAdapter[adapterId] ?? {}), ...patch };
+  for (const key of Object.keys(next)) if (next[key] === undefined) delete next[key];
+  if (Object.keys(next).length) byAdapter[adapterId] = next;
+  else delete byAdapter[adapterId];
+  return orInherit({ ...value, schemaVersion: 1, byAdapter } as HarnessRouting);
+}
+
+/** Set (or clear with `''`) the harness this scope runs Design Docs agents on. */
+export function patchDefaultHarness(value: HarnessRouting | null, family: string): HarnessRouting | null {
+  return orInherit({
+    schemaVersion: 1,
+    byAdapter: value?.byAdapter ?? {},
+    ...(family ? { defaultHarness: family } : {})
+  } as HarnessRouting);
+}
+
+/** The editor's row copy: these rows set what Design Docs agents use, at any scope. */
+const AGENT_ROW_COPY: HarnessRoutingEditorRowCopy = {
+  expandLabel: (harnessLabel) => `Agent settings for ${harnessLabel}`,
+  blurb: 'Design Docs agent launch settings',
+  empty: 'No agent settings are available for this harness.'
+};
+
+type ScopedRouting = { key: string; routing: HarnessRouting | null };
+
+/**
+ * This plugin's override at one scope, edited optimistically: each edit is
+ * applied to the latest local value and saves run one at a time, so quick
+ * successive edits never overwrite each other. A rejected save restores the
+ * last value the host stored.
+ */
+function useScopedHarnessRouting(api: DesignDocsApi, scope: HarnessScope | null) {
+  const key = scope ? JSON.stringify(scope) : null;
+  const [value, setValue] = useState<ScopedRouting | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const latest = useRef<ScopedRouting | null>(null);
+  const stored = useRef<ScopedRouting | null>(null);
+  const saves = useRef(0);
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const show = (next: ScopedRouting) => {
+    latest.current = next;
+    setValue(next);
+  };
+
+  useEffect(() => {
+    setError(null);
+    if (!scope || !key) return;
+    let cancelled = false;
+    void api.harnessRouting(scope).then(
+      (routing) => {
+        if (cancelled) return;
+        stored.current = { key, routing };
+        show({ key, routing });
+      },
+      (failure: unknown) => { if (!cancelled) setError(errorMessage(failure)); }
+    );
+    return () => { cancelled = true; };
+    // `scope` is derived from `key`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, key]);
+
+  const save = (edit: (value: HarnessRouting | null) => HarnessRouting | null) => {
+    if (!scope || !key || latest.current?.key !== key) return;
+    const next = edit(latest.current.routing);
+    const sequence = ++saves.current;
+    setError(null);
+    show({ key, routing: next });
+    queue.current = queue.current
+      .then(() => api.setHarnessRouting(scope, next))
+      .then(
+        (routing) => {
+          stored.current = { key, routing };
+          if (sequence === saves.current && latest.current?.key === key) show({ key, routing });
+        },
+        (failure: unknown) => {
+          if (sequence !== saves.current) return;
+          const message = errorMessage(failure);
+          if (latest.current?.key === key && stored.current?.key === key) show(stored.current);
+          setError(message);
+          toast(message, 'error');
+        }
+      );
+  };
+
+  return { loaded: !!key && value?.key === key, current: value?.key === key ? value.routing : null, error, save };
+}
+
+function ScopeTabs({ kind, onSelect }: { kind: ScopeKind; onSelect(kind: ScopeKind): void }) {
+  return (
+    <div className="dd-agent-scopes" role="tablist" aria-label="Harness scope">
+      {SCOPE_TABS.map(([id, label]) => (
+        <button
+          key={id}
+          type="button"
+          role="tab"
+          id={`dd-agent-scope-${id}`}
+          aria-controls="dd-agent-scope-panel"
+          className={`dd-agent-scope${kind === id ? ' active' : ''}`}
+          aria-selected={kind === id}
+          tabIndex={kind === id ? 0 : -1}
+          onClick={() => onSelect(id)}
+          onKeyDown={(event) => {
+            const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+            if (!step) return;
+            event.preventDefault();
+            const next = SCOPE_TABS[(SCOPE_TABS.findIndex(([tab]) => tab === kind) + step + SCOPE_TABS.length) % SCOPE_TABS.length]![0];
+            onSelect(next);
+            document.getElementById(`dd-agent-scope-${next}`)?.focus();
+          }}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Which AI harness Design Docs agents run on. Core's own harness editor edits
+ * this plugin's override at Default or one Project. The harness choice and each
+ * harness's row come from the narrowest scope that sets them (Project, then
+ * Default), a row as a whole value; where neither is set, agents follow Zana's
+ * AI harness settings for the doc's project. Saving a
+ * choice is the consent: there is no extra prompt (`harness: 'project-default'`).
  */
 export function AgentSettings() {
+  const api = useApi();
+  const projects = useProjects();
+  const [kind, setKind] = useState<ScopeKind>('global');
+  const [projectId, setProjectId] = useState('');
+  const projectList = (projects.data ?? []).filter((project) => !project.quickAgent);
+  const selected = projectId || projectList[0]?.id || '';
+  const scope: HarnessScope | null = kind === 'project'
+    ? (selected ? { kind, projectId: selected } : null)
+    : { kind };
+  // A Project's harnesses come from that project's host; Default lists this computer's.
+  const hostProject = kind === 'project' ? selected : '';
+  const descriptors = useResource(`harness-descriptors:${hostProject}`, () => api.harnessDescriptors(hostProject || undefined));
+  const { loaded, current, error, save: saveEdit } = useScopedHarnessRouting(api, scope);
+  const ready = loaded && descriptors.data !== null;
+  const save = (edit: (value: HarnessRouting | null) => HarnessRouting | null) => {
+    if (ready) saveEdit(edit);
+  };
+
   return (
     <section className="dd-agent-settings" aria-label="Agent harness">
       <p className="dd-muted dd-agent-intro">
-        Design Docs agents (Create &amp; draft, Ask agent and Publish) use the AI harness settings of the doc&apos;s project. They
-        look in this order:
+        Choose the AI harness, model and execution state Design Docs agents (Create &amp; draft, Ask agent and Publish) use. A
+        project&apos;s choice wins over Default. Where neither is set, agents follow Zana&apos;s AI harness settings for the
+        doc&apos;s project.
       </p>
-      <ol className="dd-muted dd-agent-order">
-        <li>the doc&apos;s project;</li>
-        <li>for a doc with no project, the Default Project;</li>
-        <li>anything the project leaves unset, the global AI harness settings.</li>
-      </ol>
-      <p className="dd-muted dd-agent-help">
-        Change these in <strong>Settings → AI Harness</strong>, where you can also install and enable harnesses. If a project
-        setting can&apos;t be used by Design Docs agents, the agent won&apos;t start and the error names that setting.
-      </p>
+      <ScopeTabs kind={kind} onSelect={setKind} />
+      <div className="dd-agent-scope-panel" id="dd-agent-scope-panel" role="tabpanel" aria-labelledby={`dd-agent-scope-${kind}`}>
+        <p className="dd-muted dd-agent-help">{SCOPE_HELP[kind]}</p>
+        {kind === 'project' && (projectList.length ? (
+          <label className="dd-field dd-agent-project">
+            <span className="dd-field-label">Project</span>
+            <select className="dd-input dd-select" aria-label="Project" value={selected} onChange={(event) => setProjectId(event.target.value)}>
+              {projectList.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+            </select>
+          </label>
+        ) : <p className="dd-muted dd-agent-help">No projects are registered.</p>)}
+        {(scope || error) && (
+          <HarnessRoutingEditor
+            descriptors={descriptors.data ?? []}
+            value={current ?? undefined}
+            onChange={(adapterId, patch) => save((latest) => patchHarnessRouting(latest, adapterId, patch))}
+            defaultHarness={{
+              value: current?.defaultHarness ?? '',
+              onChange: (family) => save((latest) => patchDefaultHarness(latest, family))
+            }}
+            rowCopy={AGENT_ROW_COPY}
+            inheritLabel={kind === 'global' ? 'Use Zana’s AI harness settings' : 'Use Default'}
+            loading={!ready && !error}
+            notice={error ? <p className="dd-agent-error" role="alert">{error}</p> : null}
+          />
+        )}
+      </div>
     </section>
   );
 }

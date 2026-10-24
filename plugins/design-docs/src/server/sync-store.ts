@@ -32,6 +32,7 @@ import { MAX_FILES_PER_DOC, MAX_COMMENTS_PER_DOC, MAX_THREAD_LINKS_PER_DOC, MAX_
 import type { DocActor, PeerConflictPage, PeerConflictReview, PeerConflictFile, PeerResolutionChoice } from '../shared/contract.js';
 import { normalizeDocPath } from '../shared/paths.js';
 import { mergeDocument, mergeHistory, type DocumentMergeResult } from './peer-merge.js';
+import { DOC_ONLY, TEMPLATE_ONLY } from './store.js';
 
 export interface SyncStoreOptions {
   now?: () => number;
@@ -211,6 +212,7 @@ export class DesignDocSyncStore {
   }
 
   private recordOperationRow(repoId: string, operation: PeerOperation): void {
+    this.refuseTemplateId(operation.docId);
     if (!this.repository(repoId)) throw new PeerProtocolError('invalid', 'sync repository is not initialized');
     if (!operation.id || !operation.replicaId || !operation.docId || !operation.payloadHash || !operation.kind) {
       throw new PeerProtocolError('invalid', 'peer operation is incomplete');
@@ -268,6 +270,7 @@ export class DesignDocSyncStore {
   }
 
   recordLocalMutation(input: { docId: string; kind: string; payload: unknown; statusBefore?: string; statusAfter?: string; origin?: PeerOperationOrigin }): void {
+    if (this.db.prepare(`SELECT 1 FROM docs WHERE ${TEMPLATE_ONLY} AND id = ?`).get(input.docId)) return;
     const local = this.localRepository();
     if (!local?.groupId || local.rosterEpoch < 1) return;
     if (input.kind === DELETE_DOC_MUTATION) {
@@ -308,7 +311,8 @@ export class DesignDocSyncStore {
     const local = this.localRepository();
     if (!local?.groupId || local.rosterEpoch < 1) return null;
     return this.db.transaction(() => {
-      if (this.db.prepare('SELECT 1 FROM docs WHERE id = ?').get(docId)) throw new PeerProtocolError('invalid', 'document still exists');
+      this.refuseTemplateId(docId);
+      if (this.db.prepare(`SELECT 1 FROM docs WHERE ${DOC_ONLY} AND id = ?`).get(docId)) throw new PeerProtocolError('invalid', 'document still exists');
       const head = this.head(local.repoId, docId);
       // Never journaled while paired, so no peer can hold it: deleting is purely local.
       if (!head) return null;
@@ -361,11 +365,13 @@ export class DesignDocSyncStore {
 
   /** Remove every local projection of a doc: files, history, comments, thread links and sync-side references. */
   private dropProjection(docId: string): void {
-    this.db.prepare('UPDATE docs SET alternative_to = NULL WHERE alternative_to = ?').run(docId);
+    this.refuseTemplateId(docId);
+    this.db.prepare(`UPDATE docs SET alternative_to = NULL WHERE ${DOC_ONLY} AND alternative_to = ?`).run(docId);
+    // docs-kind: allow Peer deletion refuses template ids before deleting doc-owned projections.
     for (const table of ['doc_files', 'doc_revisions', 'doc_comments', 'doc_threads', 'sync_doc_references', 'sync_history_order']) {
       this.db.prepare(`DELETE FROM ${table} WHERE doc_id = ?`).run(docId);
     }
-    this.db.prepare('DELETE FROM docs WHERE id = ?').run(docId);
+    this.db.prepare(`DELETE FROM docs WHERE ${DOC_ONLY} AND id = ?`).run(docId);
   }
 
   /**
@@ -430,7 +436,7 @@ export class DesignDocSyncStore {
     if (!local?.groupId) throw new PeerProtocolError('invalid', 'sync group is not configured');
     this.requireDataMembers(local.repoId, local.replicaId);
     return this.db.transaction(() => {
-      const docs = this.db.prepare('SELECT id FROM docs WHERE id > ? ORDER BY id LIMIT ?')
+      const docs = this.db.prepare(`SELECT id FROM docs WHERE ${DOC_ONLY} AND id > ? ORDER BY id LIMIT ?`)
         .all(afterDocId, MAX_PEER_PAGE_OPERATIONS) as Array<{ id: string }>;
       return docs.flatMap(({ id }) => {
         this.recordLocalMutation({ docId: id, kind: 'document', payload: null, origin: 'bootstrap' });
@@ -446,7 +452,7 @@ export class DesignDocSyncStore {
     this.requireDataMembers(local.repoId, local.replicaId);
     return this.db.transaction(() => {
       this.pruneManualSessions();
-      const docs = this.db.prepare('SELECT id FROM docs WHERE id > ? ORDER BY id LIMIT ?')
+      const docs = this.db.prepare(`SELECT id FROM docs WHERE ${DOC_ONLY} AND id > ? ORDER BY id LIMIT ?`)
         .all(afterDocId, MAX_PEER_PAGE_OPERATIONS + 1) as Array<{ id: string }>;
       const intents = this.freezeManual(afterDocId);
       for (const member of this.members(local.repoId).filter((member) => member.replicaId !== local.replicaId)) {
@@ -1197,7 +1203,8 @@ export class DesignDocSyncStore {
       let merged = false, deleted = false;
       for (const [docId, incoming] of Object.entries(offer.heads)) {
         const version = this.version(offer.repoId, incoming)!;
-        const exists = this.db.prepare('SELECT id FROM docs WHERE id = ?').get(docId);
+        this.refuseTemplateId(docId);
+        const exists = this.db.prepare(`SELECT id FROM docs WHERE ${DOC_ONLY} AND id = ?`).get(docId);
         let current = this.head(offer.repoId, docId);
         // Untracked/preexisting local data is a fork, not permission to overwrite.
         if (exists && (!current || canonicalPeerHash(this.capture(docId)) !== this.version(offer.repoId, current)?.operation.payloadHash)) {
@@ -1249,6 +1256,7 @@ export class DesignDocSyncStore {
           continue;
         }
         const safe = !unresolved && (!exists || current === incoming || (!!current && this.isAncestor(offer.repoId, current, incoming)));
+        // docs-kind: allow Slug uniqueness spans both kinds; a collision must become a fork, never overwrite a template.
         const slugClash = this.db.prepare('SELECT id FROM docs WHERE slug = ? AND id <> ?').get(version.closure.doc.slug, docId);
         const commentClash = version.closure.comments.some((comment) => this.db.prepare('SELECT id FROM doc_comments WHERE id = ? AND doc_id <> ?').get(comment.id, docId));
         if (!safe || slugClash || commentClash) {
@@ -1380,6 +1388,7 @@ export class DesignDocSyncStore {
 
   private saveVersion(repoId: string, version: PeerVersion): void {
     const operation = validateOperation(version.operation);
+    this.refuseTemplateId(operation.docId);
     const closure = validatedClosures.has(version.closure) ? version.closure : validatedClosure(version.closure);
     if (operation.docId !== closure.doc.id || operation.payloadHash !== closurePayloadHash(closure)) throw new PeerProtocolError('conflict', 'payload identity or hash mismatch');
     if ((operation.kind === PEER_DELETE_KIND) !== isDeletionClosure(closure)) throw new PeerProtocolError('conflict', 'operation kind does not match payload');
@@ -1393,7 +1402,7 @@ export class DesignDocSyncStore {
     // Capacity relief runs before this version puts any blob, so collection never sees half-written payloads.
     const estimate = Buffer.byteLength(canonicalJson(closure), 'utf8');
     // A large vault needs one retained payload per current document, still bounded by journal capacity.
-    const documents = (this.db.prepare('SELECT COUNT(*) AS n FROM docs').get() as { n: number }).n;
+    const documents = (this.db.prepare(`SELECT COUNT(*) AS n FROM docs WHERE ${DOC_ONLY}`).get() as { n: number }).n;
     const versionLimit = Math.min(MAX_PEER_STORED_OPERATIONS, Math.max(MAX_PEER_STORED_VERSIONS, documents));
     const fits = () => this.retainedVersions() < versionLimit && this.storedBytes() + estimate <= MAX_PEER_STORED_BYTES;
     if (!fits()) this.relieve(fits);
@@ -1458,8 +1467,9 @@ export class DesignDocSyncStore {
 
   private capture(docId: string): PeerDocumentClosure {
     const doc = this.db.prepare(`SELECT id, slug, title, summary, status, project_id, tags, entry_path,
-      created_at, updated_at, created_by, updated_by FROM docs WHERE id = ?`).get(docId) as PeerDocumentClosure['doc'] & { tags: string } | undefined;
+      created_at, updated_at, created_by, updated_by FROM docs WHERE ${DOC_ONLY} AND id = ?`).get(docId) as PeerDocumentClosure['doc'] & { tags: string } | undefined;
     if (!doc) throw new PeerProtocolError('invalid', 'document missing at capture');
+    // docs-kind: allow Capture has resolved docId through the doc-only SELECT above.
     for (const table of ['doc_files', 'doc_revisions']) {
       const rows = this.db.prepare(`SELECT rowid AS row_id FROM ${table} WHERE doc_id = ? AND sync_id IS NULL LIMIT ?`)
         .all(docId, MAX_PEER_HISTORY_ROWS + 1) as Array<{ row_id: number }>;
@@ -1467,6 +1477,7 @@ export class DesignDocSyncStore {
       for (const row of rows) this.db.prepare(`UPDATE ${table} SET sync_id = ? WHERE rowid = ?`).run(this.randomId(), row.row_id);
     }
     const refs = this.db.prepare('SELECT project_json, threads_json FROM sync_doc_references WHERE doc_id = ?').get(docId) as { project_json: string; threads_json: string } | undefined;
+    // docs-kind: allow Capture has resolved docId through the doc-only SELECT above.
     const files = this.db.prepare(`SELECT sync_id, path, content, encoding, size, updated_at, updated_by FROM doc_files WHERE doc_id = ? ORDER BY path LIMIT ?`)
       .all(docId, MAX_FILES_PER_DOC + 1) as PeerDocumentClosure['files'];
     const unordered = this.db.prepare(`SELECT sync_id, path, revision, op, content, encoding, size, note, renamed_from, actor, created_at
@@ -1491,16 +1502,17 @@ export class DesignDocSyncStore {
 
   private project(closure: PeerDocumentClosure): void {
     const doc = closure.doc;
+    this.refuseTemplateId(doc.id);
     // Do not bind foreign project/thread IDs to local execution surfaces.
     this.db.prepare(`INSERT INTO docs (id, slug, title, summary, status, project_id, tags, entry_path, revision,
       created_at, updated_at, created_by, updated_by) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 1, ?, ?, ?, ?)
       ON CONFLICT (id) DO UPDATE SET title = excluded.title, summary = excluded.summary, status = excluded.status,
       tags = excluded.tags, entry_path = excluded.entry_path, revision = docs.revision + 1,
-      updated_at = excluded.updated_at, updated_by = excluded.updated_by`)
+      updated_at = excluded.updated_at, updated_by = excluded.updated_by WHERE docs.${DOC_ONLY}`)
       .run(doc.id, doc.slug, doc.title, doc.summary, doc.status, JSON.stringify(doc.tags), doc.entry_path,
         doc.created_at, doc.updated_at, doc.created_by, doc.updated_by);
     // Existing local binding may survive only when selected logical project is unchanged.
-    this.db.prepare('UPDATE docs SET project_id = NULL WHERE id = ? AND (project_id <> ? OR ? IS NULL)')
+    this.db.prepare(`UPDATE docs SET project_id = NULL WHERE ${DOC_ONLY} AND id = ? AND (project_id <> ? OR ? IS NULL)`)
       .run(doc.id, doc.project_id, doc.project_id);
     this.db.prepare(`INSERT INTO sync_doc_references (doc_id, project_json, threads_json) VALUES (?, ?, ?)
       ON CONFLICT (doc_id) DO UPDATE SET project_json = excluded.project_json, threads_json = excluded.threads_json`)
@@ -1515,6 +1527,7 @@ export class DesignDocSyncStore {
       else this.db.prepare('UPDATE doc_threads SET title = ?, role = ?, last_activity_at = ? WHERE doc_id = ? AND thread_id = ?')
         .run(retained.title, retained.role, retained.last_activity_at, doc.id, local.thread_id);
     }
+    // docs-kind: allow Projection refuses template ids and upserts only doc rows before touching files.
     for (const table of ['doc_files', 'doc_comments']) this.db.prepare(`DELETE FROM ${table} WHERE doc_id = ?`).run(doc.id);
     const history = this.db.prepare('SELECT id, sync_id FROM doc_revisions WHERE doc_id = ? LIMIT ?').all(doc.id, MAX_PEER_HISTORY_ROWS + 1) as Array<{ id: number; sync_id: string }>;
     if (history.length > MAX_PEER_HISTORY_ROWS) throw new PeerProtocolError('limit', 'history projection limit reached');
@@ -1523,6 +1536,7 @@ export class DesignDocSyncStore {
     for (const file of closure.files) {
       const pathGeneration = (this.db.prepare('SELECT generation FROM sync_file_generations WHERE doc_id = ? AND path = ?').get(doc.id, file.path) as { generation: number } | undefined)?.generation ?? 0;
       const identityGeneration = (this.db.prepare('SELECT generation FROM sync_file_identity_generations WHERE doc_id = ? AND file_id = ?').get(doc.id, file.sync_id) as { generation: number } | undefined)?.generation ?? 0;
+      // docs-kind: allow Projection refuses template ids and upserts only doc rows before touching files.
       this.db.prepare(`INSERT INTO doc_files (doc_id, path, content, encoding, size, revision, updated_at, updated_by, sync_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(doc.id, file.path, file.content, file.encoding, file.size,
           Math.max(pathGeneration, identityGeneration) + 1, file.updated_at, file.updated_by, file.sync_id);
@@ -1537,7 +1551,14 @@ export class DesignDocSyncStore {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.id, doc.id, row.path, row.quote, row.body, row.author, row.status, row.created_at, row.resolved_at, row.parent_id);
   }
 
+  private refuseTemplateId(docId: string): void {
+    if (this.db.prepare(`SELECT 1 FROM docs WHERE ${TEMPLATE_ONLY} AND id = ?`).get(docId)) {
+      throw new PeerProtocolError('invalid', 'templates cannot be peer-synced');
+    }
+  }
+
   createFrozenIntents(repoId: string, docId: string, frozenHead: string, scopeHash: string, exclude: string[] = []): FrozenSyncIntent[] {
+    this.refuseTemplateId(docId);
     const version = this.version(repoId, frozenHead);
     if (!version || version.operation.docId !== docId || version.operation.payloadHash !== scopeHash) {
       throw new PeerProtocolError('invalid', 'intent requires an immutable document payload');

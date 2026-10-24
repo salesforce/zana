@@ -79,6 +79,7 @@ export interface SquadLaunchNowRequest {
   coordinationMode: 'structured' | 'freeform';
   title?: string;
   summary?: string;
+  completionInboxNotice: boolean;
   /** Realpaths of the confined sources the agent listed. */
   sourcePaths: string[];
 }
@@ -155,6 +156,7 @@ function validateInput(input: SquadProposalInput): string | undefined {
   if (input.title !== undefined && (typeof input.title !== 'string' || input.title.length > L.titleChars)) return `title must be at most ${L.titleChars} characters.`;
   if (input.summary !== undefined && typeof input.summary !== 'string') return 'summary must be text.';
   if (input.summary !== undefined && input.summary.length > L.summaryChars) return squadSummaryTooLongMessage(input.summary.length);
+  if (input.completionInboxNotice !== undefined && typeof input.completionInboxNotice !== 'boolean') return 'completionInboxNotice must be a boolean.';
   if (input.sources !== undefined) {
     if (!Array.isArray(input.sources)) return 'sources must be a list of paths.';
     if (input.sources.length <= L.maxSources && input.sources.some((s) => typeof s !== 'string' || !s.trim() || s.length > PATH_MAX_CHARS)) {
@@ -591,6 +593,7 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
           team, project, goal: input.goal.trim(), coordinationMode: planningToCoordinationMode(planning),
           ...(input.title?.trim() ? { title: input.title.trim() } : {}),
           ...(input.summary?.trim() ? { summary: input.summary.trim() } : {}),
+          completionInboxNotice: input.completionInboxNotice === true,
           sourcePaths: prepared.value.sources.map((s) => s.path)
         }, {
           sources: { kind: 'session', sessionId: route.sessionId },

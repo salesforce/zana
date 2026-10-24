@@ -258,7 +258,7 @@ describe('propose', () => {
     lookup = async () => ({ kind: 'pty', id: 's1', squadMember: false });
 
     for (const bad of [{ teamId: '' }, { goal: ' ' }, { goal: 'x'.repeat(2049) }, { planning: 'wat' }, { title: 'x'.repeat(257) },
-      { summary: 'x'.repeat(2049) }, { sources: 'plan.md' }, { sources: [''] }]) {
+       { summary: 'x'.repeat(2049) }, { completionInboxNotice: 'yes' }, { sources: 'plan.md' }, { sources: [''] }]) {
       expect(code(await run(bad))).toBe('INVALID');
     }
     expect(code(await svc.service.propose(route, null as never))).toBe('INVALID');
@@ -530,8 +530,9 @@ describe('launchSquadNow', () => {
     expect(launchNow).toHaveBeenCalledTimes(1);
     const [request, ctx] = launchNow.mock.calls[0]!;
     expect(request).toEqual({
-      team: teamRecord, project: { id: 'p1', name: 'Proj', path: join(root, 'proj') }, goal: 'Build the thing\nwith details',
-      coordinationMode: 'structured', title: 'Mine', summary: 'S', sourcePaths: [join(root, 'proj', 'plan.md')]
+       team: teamRecord, project: { id: 'p1', name: 'Proj', path: join(root, 'proj') }, goal: 'Build the thing\nwith details',
+       coordinationMode: 'structured', title: 'Mine', summary: 'S', completionInboxNotice: false,
+       sourcePaths: [join(root, 'proj', 'plan.md')]
     });
     expect(ctx).toEqual({
       sources: { kind: 'session', sessionId: 's1' },
@@ -542,6 +543,14 @@ describe('launchSquadNow', () => {
     expect(await svc.store.listPending('p1')).toHaveLength(0);
     expect(appendOnce).not.toHaveBeenCalled();
     expect(issueSources).not.toHaveBeenCalled();
+  });
+
+  it('defaults completion inbox notices off and forwards an explicit opt-in', async () => {
+    await now();
+    expect(launchNow.mock.calls[0]![0]).toMatchObject({ completionInboxNotice: false });
+
+    await now({ goal: 'Notify me', completionInboxNotice: true });
+    expect(launchNow.mock.calls[1]![0]).toMatchObject({ completionInboxNotice: true });
   });
 
   it('reports to a Modern thread as a thread, and leaves out an empty title and summary', async () => {

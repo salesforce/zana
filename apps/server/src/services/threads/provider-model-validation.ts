@@ -5,7 +5,7 @@ import { overlayCustomModels } from './thread-execution-options.js';
 import { bridgeLaunchForProvider, getThreadProvider } from './thread-provider-catalog.js';
 
 export async function validateProviderModelSelection(
-  ctx: ProductHttpContext,
+  ctx: Pick<ProductHttpContext, 'modelCatalogs' | 'pluginHostArtifacts' | 'config'>,
   input: {
     hostId: string;
     providerId: string;

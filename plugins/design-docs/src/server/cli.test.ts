@@ -56,6 +56,44 @@ describe('parseArgs', () => {
 });
 
 describe('zcc design-docs', () => {
+  it('reports template command input and capability failures', async () => {
+    const store = new DesignDocStore(createTestDatabase());
+    const actor = { kind: 'user' as const, label: 'CLI', threadId: null };
+    const deps: CliDeps = { store, changed: vi.fn(), caller: async () => ({ actor, projectId: null, files: REPO }),
+      readLocalFile: async () => ({ content: '', encoding: 'base64', sizeBytes: 0 }) };
+    const ctx = { pluginId: 'design-docs', argv: [] };
+    expect(await runCli(deps, ['templates', 'export', '--out', 'bundle.json'], ctx)).toMatchObject({ exitCode: 2, stderr: expect.stringContaining('not available') });
+    expect(await runCli(deps, ['templates', 'import', 'bundle.json'], ctx)).toMatchObject({ exitCode: 2, stderr: expect.stringContaining('UTF-8') });
+    expect(await runCli(deps, ['templates', 'unknown'], ctx)).toMatchObject({ exitCode: 2 });
+  });
+  it('exports, imports and purges only after backup write succeeds', async () => {
+    const db = createTestDatabase(), store = new DesignDocStore(db);
+    const actor = { kind: 'user' as const, label: 'CLI', threadId: null };
+    const doc = store.create({ title: 'Kept', template: 'blank' }, actor);
+    let bundle = '';
+    const write = vi.fn(async ({ content }: { content: string }) => {
+      expect(store.listTemplates().length).toBeGreaterThan(0);
+      bundle = content;
+    });
+    const deps: CliDeps = { store, changed: vi.fn(), caller: async () => ({ actor, projectId: 'p1', files: REPO }),
+      readLocalFile: async () => ({ content: bundle, encoding: 'utf8', sizeBytes: bundle.length }), writeLocalFile: write };
+    const ctx = { pluginId: 'design-docs', argv: [], cwd: '/repo' };
+    const run = (args: string[]) => runCli(deps, ['templates', ...args], ctx);
+    expect(await run(['export', 'blank', '--out', 'templates.json'])).toMatchObject({ exitCode: 0 });
+    expect(JSON.parse(bundle).templates).toHaveLength(1);
+    expect(await run(['import', 'templates.json'])).toMatchObject({ exitCode: 0 });
+    expect(await run(['purge'])).toMatchObject({ exitCode: 2 });
+    expect(await run(['export', '--out', '../escape.json'])).toMatchObject({ exitCode: 2 });
+    const before = store.listTemplates();
+    write.mockRejectedValueOnce(new Error('disk failure'));
+    expect(await run(['purge', '--out', 'backup.json'])).toMatchObject({ exitCode: 1, stderr: expect.stringContaining('disk failure') });
+    expect(store.listTemplates()).toEqual(before);
+    expect(await run(['purge', '--out', 'backup.json'])).toMatchObject({ exitCode: 0 });
+    expect(store.listTemplates()).toEqual([]);
+    expect(store.get(doc.id).title).toBe('Kept');
+    expect(await run(['import', 'backup.json'])).toMatchObject({ exitCode: 0 });
+    expect(store.listTemplates()).toHaveLength(before.length);
+  });
   it.each([['write', '--content', 'fresh'], ['edit', '--old', 'two', '--new', 'fresh'], ['rm'], ['mv', 'moved.md']])(
     'passes --base-file-id to %s', async (verb, ...args) => {
       const { store, run, changed } = setup();
@@ -171,7 +209,7 @@ describe('zcc design-docs', () => {
       expect(result.stdout).toBe(`${helpText()}\n`);
     }
     expect(helpText()).toContain('zcc design-docs export <doc> (--out <folder> | [--json])');
-    expect(helpText()).toContain('[--template technical|product|adr|api|report|html-design|blank]');
+    expect(helpText()).toContain('[--template <key>]');
     const unknown = await run(['frobnicate']);
     expect(unknown).toMatchObject({ exitCode: 2 });
     expect(unknown.stderr).toMatch(/^unknown command "frobnicate"/);

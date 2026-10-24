@@ -86,7 +86,7 @@ const emptyComponents: Record<string, string[]> = {
   './plugins/PluginThemesHost.js': ['PluginThemesHost'],
   './modules/ModulePanelHost.js': ['ModulePanelHost'],
   './modules/ModuleBackgroundHost.js': ['ModuleBackgroundHost'],
-  ...Object.fromEntries(['CommandPalette', 'QuickOpen', 'ResumePicker', 'SearchPanel', 'ShortcutsHelp',
+  ...Object.fromEntries(['CommandPalette', 'QuickOpen', 'ResumePicker', 'SearchPanel',
     'AgentTerminalModal', 'ThreadModal', 'FavoriteAgentsDrawer', 'NotificationsDrawer', 'HostInstallDrawer',
     'Walkthrough', 'Toaster', 'PendingLaunches', 'HostDialogs', 'UpdateBanner', 'SponsorNudge',
     'WhatsNewModal', 'ExtensionConsent', 'HashNavigationScroll'].map(name => [`./components/${name}.js`, [name]]))
@@ -97,6 +97,9 @@ beforeAll(async () => {
   for (const [path, names] of Object.entries(emptyComponents)) {
     vi.doMock(path, () => Object.fromEntries(names.map(name => [name, ({ children }: any) => <>{children}</>])));
   }
+  vi.doMock('./components/ShortcutsHelp.js', () => ({
+    ShortcutsHelp: ({ ctrlVPasteEnabled }: { ctrlVPasteEnabled?: boolean }) => <div data-testid="shortcuts-help">{String(ctrlVPasteEnabled)}</div>
+  }));
   store = await import('./store.js');
   store.useData.setState({ init: vi.fn().mockResolvedValue(undefined), projects: [], terminals: {} });
   App = (await import('./App.js')).App;
@@ -162,6 +165,20 @@ it('recovers model catalogs when the window becomes visible or the machine wakes
     expect(fixtures.recoverStale).toHaveBeenCalledOnce();
   } finally {
     visibility.mockRestore();
+  }
+});
+
+it('passes the live "Ctrl+V pastes" setting to the shortcuts help', () => {
+  fixtures.compact = false; fixtures.unread = 0;
+  store.useUi.setState({ shortcutsOpen: true });
+  store.useData.setState({ terminalCtrlVPasteEnabled: false });
+  try {
+    render(<MemoryRouter><App /></MemoryRouter>);
+    expect(screen.getByTestId('shortcuts-help').textContent).toBe('false');
+    act(() => { store.useData.setState({ terminalCtrlVPasteEnabled: true }); });
+    expect(screen.getByTestId('shortcuts-help').textContent).toBe('true');
+  } finally {
+    store.useUi.setState({ shortcutsOpen: false });
   }
 });
 

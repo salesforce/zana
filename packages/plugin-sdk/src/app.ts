@@ -1,5 +1,6 @@
 import type {
   ComposerView,
+  HarnessRoutingEditorProps,
   MarkdownProps,
   NewThreadComposerProps,
   PluginAppDefinition,
@@ -24,8 +25,12 @@ export type {
   ComposerCustomization,
   ComposerPlusMenuItem,
   ComposerView,
+  HarnessRoutingEditorPatch,
+  HarnessRoutingEditorProps,
+  HarnessRoutingEditorRowCopy,
   MarkdownProps,
   NewThreadComposerProps,
+  PluginHarnessOverride,
   PluginAppBuilder,
   PluginAppComposer,
   PluginAppContentScripts,
@@ -304,7 +309,7 @@ function hostReact(): typeof import('react') | undefined {
 }
 
 function renderHostComponent<P extends object>(
-  name: keyof Pick<PluginSdkApp, 'ThreadChat' | 'Markdown' | 'experimental_NewThreadComposer'>,
+  name: keyof Pick<PluginSdkApp, 'ThreadChat' | 'Markdown' | 'experimental_NewThreadComposer' | 'experimental_HarnessRoutingEditor'>,
   props: P
 ) {
   const React = hostReact();
@@ -323,4 +328,8 @@ export function Markdown(props: MarkdownProps) {
 
 export function experimental_NewThreadComposer(props: NewThreadComposerProps) {
   return renderHostComponent('experimental_NewThreadComposer', props);
+}
+
+export function experimental_HarnessRoutingEditor(props: HarnessRoutingEditorProps) {
+  return renderHostComponent('experimental_HarnessRoutingEditor', props);
 }

@@ -469,6 +469,33 @@ describe('partitionExecutionMembers', () => {
     expect(top[0].session.title).toBe('Named job spec');
     expect(top[0].session.cohort?.executionJobTitle).toBe('Named job spec');
   });
+
+  it('keeps a live orchestrator of a finished run in the Idle lane, not Done', () => {
+    const orchestrator = memberCard('orch', 'co1', 'orchestrator');
+    orchestrator.session.cohort = { ...orchestrator.session.cohort!, executionId: 'execution-1' };
+    for (const state of ['COMPLETED', 'FAILED', 'STOPPED'] as const) {
+      const execution: ExecutionBoardProjection = {
+        executionId: 'execution-1', projectId: 'p1', teamId: 't1', teamName: 'Squad',
+        jobTitle: 'Job', state, attempt: 1, createdAt: 1, updatedAt: 2
+      };
+      const { top } = partitionExecutionMembers([orchestrator], [execution]);
+      expect(top[0].session.status).toBe('running');
+      expect(top[0].state).toBe('idle');
+      expect(LANES.find((lane) => lane.match(top[0]))?.key).toBe('idle');
+    }
+  });
+
+  it('keeps a finished run with no live orchestrator in the Done lane', () => {
+    const worker = memberCard('w1', 'co1', 'worker');
+    worker.session.cohort = { ...worker.session.cohort!, executionId: 'execution-1' };
+    const execution: ExecutionBoardProjection = {
+      executionId: 'execution-1', projectId: 'p1', teamId: 't1', teamName: 'Squad',
+      jobTitle: 'Job', state: 'COMPLETED', attempt: 1, createdAt: 1, updatedAt: 2
+    };
+    const { top } = partitionExecutionMembers([worker], [execution]);
+    expect(top[0].session.status).toBe('exited');
+    expect(LANES.find((lane) => lane.match(top[0]))?.key).toBe('done');
+  });
 });
 
 describe('executionNeedsAttention', () => {

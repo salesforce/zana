@@ -1,5 +1,6 @@
-import { useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { Check } from 'lucide-react';
+import { platformShortcut } from '../../../lib/platformShortcut.js';
 import type { PendingInteractionUserAnswer, PendingInteractionUserQuestionQuestion } from '@zana-ai/zcc-domain/thread-runtime';
 import { loadQuestionDraft, saveQuestionDraft, clearQuestionDraft, questionDraftKey } from './question-drafts.js';
 import { PendingInteractionShell } from './PendingInteractionShell.js';
@@ -17,6 +18,9 @@ import {
   toUserAnswerResolution,
   type QuestionAnswerDraft
 } from './pending-interaction-question-form.js';
+
+// The primary button's chord; both modifiers work on every platform, as in Inbox.
+const PRIMARY_KEYSHORTCUTS = 'Control+Enter Meta+Enter';
 
 function InlineText({ text }: { text: string }) {
   if (!text.includes('`')) return <>{text}</>;
@@ -111,9 +115,23 @@ export function QuestionInteractionBanner({
   const total = questions.length;
   const current = questions[Math.min(currentIndex, Math.max(total - 1, 0))] ?? null;
   const disabled = busy || resolving;
-  const allAnswered = questions.length > 0 && questions.every((question) => (
+  const formRef = useRef<HTMLFormElement>(null);
+  const refocusAfterMove = useRef(false);
+  useEffect(() => {
+    // A move can unmount the focused control; keep focus in the panel so the
+    // next key (digit, Enter, ⌘↵) still reaches it.
+    if (!refocusAfterMove.current) return;
+    refocusAfterMove.current = false;
+    const form = formRef.current;
+    if (!form || form.contains(document.activeElement)) return;
+    const target = form.querySelector<HTMLElement>('.thread-pending-option.is-selected')
+      ?? form.querySelector<HTMLElement>('.thread-pending-option, .thread-pending-question-input');
+    target?.focus();
+  }, [currentIndex]);
+  const isAnswered = (question: PendingInteractionUserQuestionQuestion) => (
     isQuestionAnswered(question, answers[question.id] ?? { selected: [], otherSelected: false })
-  ));
+  );
+  const allAnswered = questions.length > 0 && questions.every(isAnswered);
   const updateAnswer = (
     questionId: string,
     update: (answer: QuestionAnswerDraft) => QuestionAnswerDraft
@@ -152,7 +170,27 @@ export function QuestionInteractionBanner({
       updateAnswer(current.id, (draft) => toggleOtherChoice(current, draft));
     }
   };
+  // Back/Next and keyboard moves can unmount the focused control (Back on
+  // question 1, Next becoming Submit, an option); moveTo keeps focus in the panel.
+  const moveTo = (index: number) => {
+    refocusAfterMove.current = true;
+    setCurrentIndex(index);
+  };
+  // What the primary button does: Next, Submit, or (last question, something
+  // earlier unanswered) jump back to the first unanswered question.
+  const advance = (form: HTMLFormElement) => {
+    if (!isLast) moveTo(Math.min(currentIndex + 1, total - 1));
+    else if (allAnswered) form.requestSubmit();
+    else if (current && isAnswered(current)) moveTo(questions.findIndex((question) => !isAnswered(question)));
+  };
   const onFormKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
+    // ⌘↵ / Ctrl+↵ works from anywhere in the panel, including the free-text box.
+    // preventDefault also stops Enter from activating a focused Back or step button.
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey) {
+      event.preventDefault();
+      if (!disabled) advance(event.currentTarget);
+      return;
+    }
     if (disabled || event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLInputElement) return;
     const choice = questionChoiceIndexForKey(event.key, choiceCount);
@@ -164,8 +202,7 @@ export function QuestionInteractionBanner({
     if (event.key !== 'Enter' || event.shiftKey) return;
     if (!(event.target instanceof HTMLElement) || !event.target.closest('.thread-pending-option')) return;
     event.preventDefault();
-    if (!isLast) setCurrentIndex((index) => Math.min(index + 1, total - 1));
-    else if (allAnswered) event.currentTarget.requestSubmit();
+    advance(event.currentTarget);
   };
   return (
     <PendingInteractionShell
@@ -177,15 +214,12 @@ export function QuestionInteractionBanner({
       sourceThread={sourceThread}
       errorMessage={error}
     >
-      <form className="thread-pending-question-form" onSubmit={submit} onKeyDown={onFormKeyDown}>
+      <form ref={formRef} className="thread-pending-question-form" onSubmit={submit} onKeyDown={onFormKeyDown}>
         {total > 1 ? (
           <div className="thread-pending-question-steps">
             <div className="thread-pending-question-step-list">
               {questions.map((question, index) => {
-                const answered = isQuestionAnswered(
-                  question,
-                  answers[question.id] ?? { selected: [], otherSelected: false }
-                );
+                const answered = isAnswered(question);
                 return (
                   <button
                     key={question.id}
@@ -275,7 +309,7 @@ export function QuestionInteractionBanner({
               className="thread-pending-banner-decision is-ghost"
               data-testid="thread-pending-question-back"
               disabled={disabled}
-              onClick={() => setCurrentIndex((index) => Math.max(index - 1, 0))}
+              onClick={() => moveTo(Math.max(currentIndex - 1, 0))}
             >
               Back
             </button>
@@ -285,6 +319,8 @@ export function QuestionInteractionBanner({
               type="submit"
               className="thread-pending-banner-decision is-primary"
               data-testid="thread-pending-question-submit"
+              title={platformShortcut('Submit (⌘↵)')}
+              aria-keyshortcuts={PRIMARY_KEYSHORTCUTS}
               disabled={disabled || !allAnswered}
             >
               Submit
@@ -294,8 +330,10 @@ export function QuestionInteractionBanner({
               type="button"
               className="thread-pending-banner-decision is-primary"
               data-testid="thread-pending-question-next"
+              title={platformShortcut('Next (⌘↵)')}
+              aria-keyshortcuts={PRIMARY_KEYSHORTCUTS}
               disabled={disabled}
-              onClick={() => setCurrentIndex((index) => Math.min(index + 1, total - 1))}
+              onClick={() => moveTo(Math.min(currentIndex + 1, total - 1))}
             >
               Next
             </button>

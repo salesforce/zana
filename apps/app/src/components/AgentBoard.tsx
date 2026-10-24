@@ -409,6 +409,8 @@ export function executionNeedsAttention(execution: ExecutionBoardProjection): bo
 /** Board-only job host for retained execution workers after their real lead exits. */
 function executionHost(member: AgentCard | undefined, execution: ExecutionBoardProjection, synthetic = !member): AgentCard {
   const terminal = execution.state === 'COMPLETED' || execution.state === 'FAILED' || execution.state === 'STOPPED';
+  // A retained orchestrator outlives its finished run: it stays a live Idle card, not Done.
+  const retainedLive = terminal && !synthetic && member !== undefined && member.session.status !== 'exited';
   const displayTitle = execution.jobTitle;
   const session = member?.session ?? {
       id: `execution:${execution.executionId}`,
@@ -424,7 +426,7 @@ function executionHost(member: AgentCard | undefined, execution: ExecutionBoardP
       ...session,
       id: synthetic ? `execution:${execution.executionId}` : session.id,
       title: displayTitle,
-      status: terminal ? 'exited' : 'running',
+      status: terminal && !retainedLive ? 'exited' : 'running',
       // A Modern squad has no PTY, so its Job host is always synthetic; it is
       // foreground work while any member thread is live, not a background run.
       headless: (synthetic && !execution.modernMembers?.some((member) => member.live)) || session.headless,
@@ -437,7 +439,7 @@ function executionHost(member: AgentCard | undefined, execution: ExecutionBoardP
     },
     // A live execution can still report RUNNING while a worker waits for a human
     // answer. The actionable Details prompt wins until delivery is in flight.
-    state: terminal ? 'done' : executionNeedsAttention(execution) ? 'blocked'
+    state: retainedLive ? 'idle' : terminal ? 'done' : executionNeedsAttention(execution) ? 'blocked'
       : execution.state === 'RUNNING' || execution.state === 'STARTING' ? 'working' : 'idle',
     stateSince: execution.updatedAt,
     liveSubagents: 0,

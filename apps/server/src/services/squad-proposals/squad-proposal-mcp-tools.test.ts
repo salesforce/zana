@@ -146,10 +146,10 @@ describe('registerSquadProposalTools', () => {
 
   it('squad_launch now returns the launch JSON and passes the route without mode', async () => {
     const { tools, propose, launchSquadNow } = setup();
-    const res = await tools.get('squad_launch')!({ mode: 'now', teamId: 't', goal: 'g', sources: ['a.md'] });
+    const res = await tools.get('squad_launch')!({ mode: 'now', teamId: 't', goal: 'g', sources: ['a.md'], completionInboxNotice: true });
     expect(res.isError).toBeUndefined();
     expect(JSON.parse(res.content[0].text)).toEqual(nowValue);
-    expect(launchSquadNow).toHaveBeenCalledWith({ projectId: 'p', sessionId: 's1' }, { teamId: 't', goal: 'g', sources: ['a.md'] });
+    expect(launchSquadNow).toHaveBeenCalledWith({ projectId: 'p', sessionId: 's1' }, { teamId: 't', goal: 'g', sources: ['a.md'], completionInboxNotice: true });
     expect(propose).not.toHaveBeenCalled();
   });
 

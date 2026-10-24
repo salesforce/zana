@@ -71,6 +71,8 @@ export interface Harness {
   navigateCalls: NavigateCall[];
   toasts: Toast[];
   spawn: ReturnType<typeof vi.fn>;
+  /** The plugin's stored harness overrides by JSON scope (what `sdk.harnessRouting.write` kept). */
+  harnessStore: Map<string, unknown>;
   /** Make the next calls to `method` reject with `message`. */
   fail(method: string, message: string): void;
   restore(method: string): void;
@@ -94,7 +96,24 @@ export function createHarness(options: HarnessOptions = {}): Harness {
   const projects = options.projects ?? PROJECTS;
   let spawned = 0;
   const spawn = vi.fn(async () => ({ id: `thread-${++spawned}` }));
+  const harnessStore = new Map<string, unknown>();
   const sdk = {
+    harnessRouting: {
+      descriptors: async () => [{
+        id: 'claude',
+        label: 'Claude Code',
+        agentDefaultEligible: true,
+        availability: { enabled: true, installed: true },
+        configFiles: [],
+        targets: { providers: [], providerModelRelationship: 'none', models: [{ id: 'sonnet', label: 'Sonnet' }] }
+      }],
+      read: async (scope: unknown) => harnessStore.get(JSON.stringify(scope)) ?? null,
+      write: async (scope: unknown, value: unknown) => {
+        if (value === null) harnessStore.delete(JSON.stringify(scope));
+        else harnessStore.set(JSON.stringify(scope), value);
+      },
+      check: async () => ({ ok: true })
+    },
     threads: {
       spawn,
       get: async ({ threadId }: { threadId: string }) =>
@@ -162,6 +181,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     navigateCalls: installed.navigateCalls,
     toasts,
     spawn,
+    harnessStore,
     fail: (method, message) => failures.set(method, message),
     restore: (method) => failures.delete(method),
     emit: (payload, channel) => act(() => emit(payload, channel)),

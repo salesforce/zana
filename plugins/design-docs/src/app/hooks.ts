@@ -6,7 +6,7 @@ import {
   type DesignDocFile,
   type DesignDocSummary
 } from '../shared/contract.js';
-import { errorMessage, useApi, type ListArgs, type ProjectInfo, type TemplateInfo } from './api.js';
+import { errorMessage, useApi, type DocKind, type ListArgs, type ProjectInfo, type TemplateInfo } from './api.js';
 
 export interface Resource<T> {
   data: T | null;
@@ -102,9 +102,9 @@ export function useDocs(args: ListArgs): Resource<DesignDocSummary[]> {
   return resource;
 }
 
-export function useDoc(docId: string | null): Resource<DesignDocDetail> {
+export function useDoc(docId: string | null, kind?: DocKind): Resource<DesignDocDetail> {
   const api = useApi();
-  const resource = useResource(docId, () => api.get(docId!));
+  const resource = useResource(docId ? `${kind ?? 'doc'}\u0000${docId}` : null, () => api.get(docId!, kind));
   useDocChanges((changed) => {
     if (changed === null || changed === docId) resource.reload();
   });
@@ -112,10 +112,10 @@ export function useDoc(docId: string | null): Resource<DesignDocDetail> {
 }
 
 /** Refetch on revision changes and inbound events, including same-counter identity replacement. */
-export function useFile(docId: string | null, path: string | null, revision: number | null): Resource<DesignDocFile> {
+export function useFile(docId: string | null, path: string | null, revision: number | null, kind?: DocKind): Resource<DesignDocFile> {
   const api = useApi();
-  const key = docId && path && revision !== null ? `${docId}\u0000${path}\u0000${revision}` : null;
-  const resource = useResource(key, () => api.readFile(docId!, path!));
+  const key = docId && path && revision !== null ? `${kind ?? 'doc'}\u0000${docId}\u0000${path}\u0000${revision}` : null;
+  const resource = useResource(key, () => api.readFile(docId!, path!, kind));
   useDocChanges((changed) => {
     if (changed === null || changed === docId) resource.reload();
   });

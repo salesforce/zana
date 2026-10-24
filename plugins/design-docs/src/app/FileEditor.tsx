@@ -1,7 +1,7 @@
 import { useCallback, useDeferredValue, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { AlertTriangle, FileWarning, RotateCcw, Save } from 'lucide-react';
 import type { DesignDocFile } from '../shared/contract.js';
-import { errorMessage, isConflict, toast, useApi, type WriteResult } from './api.js';
+import { errorMessage, isConflict, toast, useApi, type DocKind, type WriteResult } from './api.js';
 import { ActorLabel, Spinner } from './ui.js';
 
 export interface EditorState {
@@ -28,7 +28,8 @@ export function FileEditor({
   split,
   renderPreview,
   onStateChange,
-  onSaved
+  onSaved,
+  kind
 }: {
   docId: string;
   file: DesignDocFile;
@@ -38,6 +39,7 @@ export function FileEditor({
   renderPreview(content: string): ReactNode;
   onStateChange?(state: EditorState): void;
   onSaved?(result: WriteResult): void;
+  kind?: DocKind;
 }) {
   const api = useApi();
   const [draft, setDraft] = useState(file.content);
@@ -82,7 +84,7 @@ export function FileEditor({
       try {
         // Revision 0 recreates a removed file, unless someone already did.
         const observed = base ?? (removed ? { revision: 0, fileId: null } : saved);
-        const result = await api.writeFile(docId, { path: file.path, content: draft, baseRevision: observed.revision, baseFileId: observed.fileId });
+        const result = await api.writeFile(docId, { path: file.path, content: draft, baseRevision: observed.revision, baseFileId: observed.fileId }, kind);
         // The doc reload may still carry the pre-save sticky file until its content fetch finishes.
         awaitingRefresh.current = file;
         setSaved({ content: draft, revision: result.revision, fileId: result.fileId });
@@ -91,7 +93,7 @@ export function FileEditor({
       } catch (error) {
         if (isConflict(error)) {
           try {
-            const latest = await api.readFile(docId, file.path);
+            const latest = await api.readFile(docId, file.path, kind);
             setConflict({ revision: latest.revision, fileId: latest.fileId, by: latest.updatedBy, verified: true });
           } catch (readError) {
             const missing = /not found/i.test(errorMessage(readError));
@@ -109,7 +111,7 @@ export function FileEditor({
 
   const loadLatest = async () => {
     try {
-      const latest = await api.readFile(docId, file.path);
+      const latest = await api.readFile(docId, file.path, kind);
       setDraft(latest.content);
       setSaved({ content: latest.content, revision: latest.revision, fileId: latest.fileId });
       setConflict(null);

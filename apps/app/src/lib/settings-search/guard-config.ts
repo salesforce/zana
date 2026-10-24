@@ -46,5 +46,10 @@ export const SECTION_SOURCES: Record<SearchSection, readonly string[]> = {
   experimental: ['views/settings/ExperimentalView.tsx'],
   performance: ['views/settings/PerformanceSettingsView.tsx'],
   about: ['views/settings/AboutView.tsx'],
-  project: ['views/settings/ProjectSettingsView.tsx', 'views/settings/ProjectSourcesSettings.tsx', 'components/settings/ScopeControl.tsx']
+  project: [
+    'views/settings/ProjectSettingsView.tsx',
+    'views/settings/HarnessRoutingEditor.tsx',
+    'views/settings/ProjectSourcesSettings.tsx',
+    'components/settings/ScopeControl.tsx'
+  ]
 };

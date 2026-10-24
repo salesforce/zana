@@ -2,6 +2,7 @@ import { useSidebarThreads, useSidebarThreadActions, useSidebarThreadSplit } fro
 import { lazy, Suspense, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type {
+  HarnessRoutingEditorProps as PluginHarnessRoutingEditorProps,
   PluginComposerApi,
   PluginSdkApp,
   PluginSettingsState,
@@ -40,6 +41,7 @@ import { requestPluginPanelTool, usePluginPagePanel, usePluginPagePanelOpen } fr
 import { resolveThreadPanelOwnerId, useThreadPanelOwnerId } from './thread-panel-owner.js';
 import { subscribeProductEvent } from '../lib/product-ws.js';
 import { deepLinksFor } from './plugin-deep-links.js';
+import { HarnessRoutingEditor } from '../views/settings/HarnessRoutingEditor.js';
 
 const ThreadDetailLazy = lazy(async () => {
   const mod = await import('../views/threads/ThreadDetailView.js');
@@ -296,6 +298,10 @@ function NewThreadComposerImpl({
   );
 }
 
+function HarnessRoutingEditorImpl({ descriptors, ...rest }: PluginHarnessRoutingEditorProps) {
+  return <HarnessRoutingEditor descriptors={[...descriptors]} {...rest} />;
+}
+
 export function installPluginRuntime(): void {
   const runtime: PluginSdkApp = {
     definePluginApp: (setup) => ({ __zccPluginApp: true, setup }),
@@ -334,6 +340,7 @@ export function installPluginRuntime(): void {
     ThreadChat: ThreadChatImpl,
     Markdown: MarkdownImpl as ComponentType<{ content: string; className?: string }>,
     experimental_NewThreadComposer: NewThreadComposerImpl as never,
+    experimental_HarnessRoutingEditor: HarnessRoutingEditorImpl,
     toast: (message, kind = 'info') => {
       void import('../store.js').then((mod) => {
         mod.useUi.getState().pushToast(message, kind);

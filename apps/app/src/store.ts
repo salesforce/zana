@@ -55,6 +55,7 @@ import { appNavigate } from './lib/app-navigate.js';
 import { projectSplitScopeKey } from './lib/split-layout/scope.js';
 import { useSplitWorkspace } from './lib/split-layout/store.js';
 import { hasDesktopBridge } from './lib/app-surface.js';
+import { ctrlVPastesByDefault } from './lib/terminalPaste.js';
 import {
   readLocalStorageItem,
   removeLocalStorageItem,
@@ -831,6 +832,7 @@ function mirroredConfigFlags(config: AppConfig) {
     catchUpSummaryDelaySeconds: config.catchUpSummaryDelaySeconds ?? 20,
     feedNoiseClassifierEnabled: config.feedNoiseClassifierEnabled ?? false,
     terminalClipboardWriteEnabled: config.terminalClipboardWriteEnabled ?? true,
+    terminalCtrlVPasteEnabled: config.terminalCtrlVPasteEnabled ?? ctrlVPastesByDefault(),
     autoOpenThreadPlanPanel: config.autoOpenThreadPlanPanel ?? false,
     structuredQuestionsEnabled: config.structuredQuestionsEnabled ?? true,
     reviewerApprovalMode: config.reviewerApprovalMode ?? 'ask',
@@ -1652,6 +1654,10 @@ interface DataState {
    *  kept live by the Settings toggle. Default TRUE (write path shipped on); when
    *  off, terminal output can never touch the system clipboard. */
   terminalClipboardWriteEnabled: boolean;
+  /** Mirror of AppConfig.terminalCtrlVPasteEnabled — whether Ctrl+V pastes in a
+   *  terminal on Windows/Linux (off: it sends `^V`). Resolved with the platform
+   *  default (on for Windows) when unset; read live by TerminalView's key handler. */
+  terminalCtrlVPasteEnabled: boolean;
   /** Mirror of AppConfig.autoOpenThreadPlanPanel — experimental. When on, Plan
    *  mode (native ACP Plan, /plan, or a durable plan) opens the thread side
    *  panel on the Plan pin. Default off. Approvals still open the panel. */
@@ -1738,6 +1744,7 @@ interface DataState {
   setCatchUpSummaryDelaySeconds: (seconds: number) => void;
   setFeedNoiseClassifierEnabled: (on: boolean) => void;
   setTerminalClipboardWriteEnabled: (on: boolean) => void;
+  setTerminalCtrlVPasteEnabled: (on: boolean) => void;
   setAutoOpenThreadPlanPanel: (on: boolean) => void;
   setSuggestionsEnabled: (on: boolean) => void;
   setStructuredQuestionsEnabled: (on: boolean) => void;
@@ -2104,6 +2111,7 @@ export const useData = create<DataState>((set, get) => ({
   catchUpSummaryDelaySeconds: 20,
   feedNoiseClassifierEnabled: false,
   terminalClipboardWriteEnabled: true,
+  terminalCtrlVPasteEnabled: ctrlVPastesByDefault(),
   autoOpenThreadPlanPanel: false,
   suggestionsEnabled: false,
   structuredQuestionsEnabled: true,
@@ -2181,6 +2189,10 @@ export const useData = create<DataState>((set, get) => ({
 
   setTerminalClipboardWriteEnabled(on) {
     set({ terminalClipboardWriteEnabled: on });
+  },
+
+  setTerminalCtrlVPasteEnabled(on) {
+    set({ terminalCtrlVPasteEnabled: on });
   },
 
   setAutoOpenThreadPlanPanel(on) {

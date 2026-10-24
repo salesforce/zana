@@ -138,7 +138,15 @@ export const DESIGN_DOCS_STYLES = `
 }
 .dd-agent-settings { display: flex; flex-direction: column; gap: 10px; }
 .dd-agent-intro, .dd-agent-help { margin: 0; font-size: 12px; line-height: 1.5; }
-.dd-agent-order { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.6; }
+.dd-agent-scopes { display: flex; gap: 2px; border-bottom: 1px solid var(--border); overflow-x: auto; }
+.dd-agent-scope { position: relative; flex: 0 0 auto; margin-bottom: -1px; padding: 7px 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-muted); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; transition: color 0.12s, border-color 0.12s; }
+.dd-agent-scope:hover { color: var(--text-primary); }
+.dd-agent-scope.active { border-bottom-color: var(--accent-blue); color: var(--text-primary); font-weight: 550; }
+.dd-agent-scope:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent-blue); border-radius: 4px 4px 0 0; }
+.dd-agent-scope-panel { display: flex; flex-direction: column; gap: 12px; padding-top: 4px; }
+.dd-agent-project { flex: 0 0 auto; max-width: 360px; }
+.dd-agent-project .dd-select { min-height: 32px; padding: 6px 8px; font-size: 13px; }
+.dd-agent-error { margin: 0; font-size: 12px; color: var(--danger, #d33); }
 .dd-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .dd-peers { display: flex; flex-direction: column; gap: 12px; min-width: 0; font-size: 13px; color: var(--text-primary); }
 .dd-peers p { margin: 0; }
@@ -511,6 +519,12 @@ export const DESIGN_DOCS_STYLES = `
 .dd-landing-points svg { flex: 0 0 auto; position: relative; top: 2px; color: var(--accent-blue); }
 .dd-landing-points strong { color: var(--text-primary); }
 .dd-landing-start { display: flex; flex-direction: column; gap: 10px; }
+.dd-template-heading { display: flex; align-items: center; gap: 8px; }
+.dd-template-filter { margin: 4px 0 6px; }
+.dd-template-wrap { position: relative; display: flex; }
+.dd-template-wrap .dd-template { width: 100%; padding-right: 36px; }
+.dd-template-wrap > .dd-pop-anchor { position: absolute; top: 6px; right: 6px; }
+.dd-template-bar { flex: 0 0 auto; display: flex; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border); }
 .dd-templates { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
 .dd-template {
   display: flex;

@@ -4,7 +4,7 @@ import { MessageSquarePlus, Sparkles } from 'lucide-react';
 import type { DesignDocFileMeta } from '../shared/contract.js';
 import { MAX_QUOTE_LENGTH } from '../shared/limits.js';
 import type { FileKind } from '../shared/paths.js';
-import { toast, useApi } from './api.js';
+import { toast, useApi, type DocKind } from './api.js';
 import { codeFence, fenced, fileDataUrl, inlineImages, referencedImages, resolveDocLink } from './content.js';
 import { COMMENT_HIGHLIGHT, FOCUS_HIGHLIGHT, findQuoteRanges, paintRanges } from './highlight.js';
 import { PageFrame } from './PageFrame.js';
@@ -32,7 +32,7 @@ function rememberAsset(key: string, url: string) {
 }
 
 /** Data URLs for the doc images a markdown/HTML file references, keyed by path. */
-export function useImageAssets(docId: string, files: readonly DesignDocFileMeta[], paths: readonly string[]): ReadonlyMap<string, string> {
+export function useImageAssets(docId: string, files: readonly DesignDocFileMeta[], paths: readonly string[], kind?: DocKind): ReadonlyMap<string, string> {
   const api = useApi();
   const wanted = useMemo(() => {
     const byPath = new Map(files.map((file) => [file.path, file]));
@@ -62,7 +62,7 @@ export function useImageAssets(docId: string, files: readonly DesignDocFileMeta[
     void Promise.all(
       missing.map(async (meta) => {
         try {
-          const file = await api.readFile(docId, meta.path);
+          const file = await api.readFile(docId, meta.path, kind);
           const url = fileDataUrl(file);
           if (url) {
             rememberAsset(`${docId}\u0000${file.path}\u0000${file.revision}`, url);
@@ -97,7 +97,8 @@ export function FilePreview({
   onQuote,
   onAskAbout,
   handleRef,
-  draft = false
+  draft = false,
+  kind
 }: {
   docId: string;
   file: PreviewFile;
@@ -110,6 +111,7 @@ export function FilePreview({
   handleRef?: MutableRefObject<PreviewHandle | null>;
   /** `file.content` is not the saved file (an editor draft, an old revision). */
   draft?: boolean;
+  kind?: DocKind;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -120,7 +122,7 @@ export function FilePreview({
     () => (file.kind === 'markdown' ? referencedImages(file.path, file.content) : []),
     [file.path, file.content, file.kind]
   );
-  const assets = useImageAssets(docId, files, imagePaths);
+  const assets = useImageAssets(docId, files, imagePaths, kind);
   const known = useMemo(() => new Set(files.map((entry) => entry.path)), [files]);
 
   const markdown = useMemo(() => {
@@ -231,6 +233,7 @@ export function FilePreview({
         onQuote={onQuote}
         onAskAbout={onAskAbout}
         handleRef={handleRef}
+        kind={kind}
       />
     );
   } else if (file.kind === 'image' || file.kind === 'svg') {

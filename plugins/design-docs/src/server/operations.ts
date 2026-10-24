@@ -6,7 +6,6 @@
 import { DOC_STATUSES, isDocStatus, type DesignDocDetail, type DocActor, type DocStatus, type TextEdit } from '../shared/contract.js';
 import { pageText } from '../shared/html-scan.js';
 import { fileKindOf, imageMediaTypeOf } from '../shared/paths.js';
-import { DESIGN_DOC_TEMPLATES } from '../shared/templates.js';
 import {
   commentLine,
   formatBundle,
@@ -204,10 +203,10 @@ export function createDoc(ctx: OperationContext, raw: unknown, actor: DocActor):
   // Origin is trusted callsite state, never agent/renderer-controlled JSON.
   if (input.origin !== undefined) throw new DesignDocError('invalid', 'origin is not an authoring parameter');
   const template = optionalString(input, 'template');
-  if (template && !DESIGN_DOC_TEMPLATES.some((entry) => entry.id === template)) {
+  if (template && !ctx.store.templateByKey(template)) {
     throw new DesignDocError(
       'invalid',
-      `template must be one of ${DESIGN_DOC_TEMPLATES.map((entry) => entry.id).join(', ')}`
+      `unknown template ${JSON.stringify(template)}`
     );
   }
   const files = input.files;

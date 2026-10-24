@@ -9,6 +9,8 @@ import {
 } from '@zana-ai/zcc-domain/terminal-themes';
 import { Section, Field, CheckboxField } from '@/components/settings/FormFields';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
+import { isMacShortcutPlatform } from '@/lib/platformShortcut';
+import { ctrlVPastesByDefault } from '@/lib/terminalPaste';
 
 /** Settings-search target for the tmux runtime-status row (a bare div, not a FormFields primitive). */
 const TMUX_STATUS_TARGET = { searchId: 'terminal.tmux-status' };
@@ -115,8 +117,16 @@ export function TerminalSettingsView({
         anchorId="terminal-clipboard"
         searchId="terminal.clipboard-intro"
         title="Clipboard"
-        help="Control whether terminal output may change your system clipboard."
+        help="Control how the terminal pastes, and whether terminal output may change your system clipboard."
       >
+        <CheckboxField
+          searchId="terminal.ctrl-v-paste"
+          label="Ctrl+V pastes"
+          help="Windows and Linux. When on (the default on Windows), Ctrl+V pastes the clipboard into the terminal, like Shift+Insert. Turn OFF to send a literal ^V to the program instead (bash’s “insert next character literally”, vim’s block select, or an agent’s own image paste). Ctrl+Shift+V always pastes. On macOS, ⌘V pastes and this setting has no effect. Applies immediately to open terminals."
+          checked={config.terminalCtrlVPasteEnabled ?? ctrlVPastesByDefault()}
+          disabled={isMacShortcutPlatform()}
+          onChange={(v) => onUpdate({ terminalCtrlVPasteEnabled: v })}
+        />
         <CheckboxField
           searchId="terminal.clipboard-write"
           label="Allow terminal output to write the clipboard (OSC 52)"

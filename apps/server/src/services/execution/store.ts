@@ -387,6 +387,8 @@ export interface ExecutionRequestSnapshotV1 {
   /** Explicit execution API override. Undefined defers to project then Team defaults. */
   worktree?: boolean;
   onComplete?: 'leave' | 'merge' | 'delete';
+  /** Opt-in terminal inbox notice for runs without an owner report target. */
+  completionInboxNotice?: boolean;
 }
 
 /** Minimal durable identity for one shared squad checkout. */
@@ -973,6 +975,7 @@ function validRequestSnapshot(value: unknown): value is ExecutionRequestSnapshot
     && (request.objective === undefined || validString(request.objective))
     && (request.worktree === undefined || typeof request.worktree === 'boolean')
     && (request.onComplete === undefined || ['leave', 'merge', 'delete'].includes(request.onComplete))
+    && (request.completionInboxNotice === undefined || typeof request.completionInboxNotice === 'boolean')
     && (request.sourceBundle === undefined || validSourceBundle(request.sourceBundle))
     && (request.policy === undefined || validExecutionPolicy(request.policy))
     && (request.workflow === undefined || typeof request.workflow === 'object');

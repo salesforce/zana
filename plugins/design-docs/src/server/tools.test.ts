@@ -20,6 +20,10 @@ it('exposes expectedHead and forwards tool CAS without stale intents', async () 
   expect(update.parameters.properties.expectedHead.type).toEqual(['string', 'null']);
   const write = tools.find((tool) => tool.name === 'design_doc_write');
   expect(write.parameters.properties.baseFileId.type).toEqual(['string', 'null']);
+  const templates = tools.find((tool) => tool.name === 'design_doc_templates_list');
+  expect(await templates.execute({}, {})).toEqual(expect.arrayContaining([expect.objectContaining({ key: 'technical' })]));
+  const create = tools.find((tool) => tool.name === 'design_doc_create');
+  expect(create.parameters.properties.template.enum).toBeUndefined();
   const file = store.readFile(doc.id, 'README.md');
   await expect(write.execute({ doc: doc.id, path: file.path, content: 'stale', baseRevision: file.revision, baseFileId: 'stale-id' }, {})).rejects.toThrow(/identity changed/);
   const expectedHead = store.summary(doc.id).head;
