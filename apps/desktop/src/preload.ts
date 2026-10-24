@@ -29,6 +29,11 @@ import {
   parseDesktopBrowserState,
   parseDesktopBrowserTabRef
 } from '@zana-ai/zcc-desktop-contract';
+import { seedDocumentTheme } from './window/window-theme.js';
+
+// Paint the first frame in the window's theme: main passes it in argv
+// (`--zcc-theme=`), and the renderer's applyTheme takes over once the config loads.
+seedDocumentTheme(process.argv, globalThis.document, globalThis.MutationObserver);
 
 // `ipcRenderer` is a single process-wide EventEmitter shared by every subscriber
 // in the renderer. High-fan-out channels — chiefly `terminals:onData`/`onExit`,
