@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readSourceText } from '../../__tests__/helpers/source-text.js';
 
 describe('LegacyAgentHomeComposer', () => {
   it('spawns through createTerminal without owning the launch-mode switcher', () => {
-    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url));
     expect(source).toContain('createTerminal');
     expect(source).not.toContain('product.threads.create');
     expect(source).not.toContain('shouldLaunchManagedThread');
@@ -88,7 +88,7 @@ describe('LegacyAgentHomeComposer', () => {
   });
 
   it('shows a sending spinner on the launch button while createTerminal is in flight', () => {
-    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url));
     expect(source).toContain('Loader2');
     expect(source).toContain('is-sending');
     expect(source).toContain('aria-busy={launching}');
@@ -98,7 +98,7 @@ describe('LegacyAgentHomeComposer', () => {
   });
 
   it('uploads remote-project attaches before launch and rewrites the prompt', () => {
-    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url));
     expect(source).toContain('stageRemoteComposerAttachments');
     expect(source).toContain("product.fs.uploadToRemote(project.id, localPath, '.')");
     expect(source).toContain('product.fs.uploadProjectAttachmentToRemote(project.id, relativePath)');
@@ -106,7 +106,7 @@ describe('LegacyAgentHomeComposer', () => {
   });
 
   it('sources OpenCode roles from the SAME ACP mode list as the Modern composer', () => {
-    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url));
     // Full parity: the CLI picker reads the shared ACP session-mode list off the
     // model catalog rather than running its own `opencode agent list` discovery.
     expect(source).toContain("familyId === 'opencode'\n    ? visibleAcpModeOptions(catalogEntry?.acpMode?.options ?? [], nativeAgentDiscoveryEnabled)");
@@ -123,7 +123,7 @@ describe('LegacyAgentHomeComposer', () => {
   });
 
   it('drops the forced catalog model when a native OpenCode role is picked', () => {
-    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url));
     // A native agent pins its own model; forcing an `aisuite/*` catalog `--model`
     // alongside `--agent <role>` breaks with ProviderModelNotFoundError on any
     // install whose provider inventory differs from the shipped snapshot. Role and
@@ -143,7 +143,7 @@ describe('LegacyAgentHomeComposer', () => {
   });
 
   it('maps OpenCode Agent to no role override and custom modes to native roles', () => {
-    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url));
     expect(source).toContain('<ComposerModePicker');
     expect(source).toContain("familyId === 'opencode' ? (");
     expect(source).toContain('value={openCodeMode}');
@@ -157,7 +157,7 @@ describe('LegacyAgentHomeComposer', () => {
   });
 
   it('offers ComposerModePicker Agent/Plan for standard harnesses and Modern-parity modes for OpenCode', () => {
-    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url));
     expect(source).toContain('<ComposerModePicker');
     expect(source).toContain("modeChip === 'work-mode'");
     expect(source).toContain('entries={CLI_WORK_MODE_ENTRIES}');
@@ -169,13 +169,13 @@ describe('LegacyAgentHomeComposer', () => {
   });
 
   it('puts mode before the harness picker, matching Thread', () => {
-    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url));
     const footer = source.slice(source.indexOf('thread-command-footer-start'));
     expect(footer.indexOf('<ComposerModePicker')).toBeLessThan(footer.indexOf('<ModelReasoningPicker'));
   });
 
   it('defaults the harness like Modern via resolveCliAgentFamily (current → remembered → effectiveDefault)', () => {
-    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url));
     // Family precedence is delegated to the shared helper: keep the current pick,
     // else the last-used (remembered) family, else the project's effective default.
     expect(source).toContain('resolveCliAgentFamily({');
@@ -190,7 +190,7 @@ describe('LegacyAgentHomeComposer', () => {
   });
 
   it('keeps the current harness pick sticky by feeding familyIdRef into resolveCliAgentFamily', () => {
-    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url));
     expect(source).toContain('const currentFamilyId = familyIdRef.current;');
     expect(source).toContain('currentFamilyId,');
     expect(source).toContain('stickyFamilyId');
@@ -207,7 +207,7 @@ describe('LegacyAgentHomeComposer', () => {
   });
 
   it('replaces the isolation checkbox with a workspace picker for real local projects', () => {
-    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url));
     expect(source).toContain('workspace: project.quickAgent ? undefined : workspace');
     expect(source).toContain('isolateScratch: project.quickAgent ? args.title || true : undefined');
     expect(source).toContain('project?.remote');
@@ -223,7 +223,7 @@ describe('LegacyAgentHomeComposer', () => {
   });
 
   it('marks an SSH project as Remote host', () => {
-    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url));
     expect(source).toContain('agentCardRuntimeLabel');
     expect(source).toContain('data-testid="composer-remote-host-mark"');
     expect(source).toContain('remote: true');
@@ -236,7 +236,7 @@ describe('LegacyAgentHomeComposer', () => {
   });
 
   it('uses live host models when available without requiring a daemon for SSH launches', () => {
-    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url));
     expect(source).toContain('void hostCatalog.ensure()');
     expect(source).toContain('[hostCatalog, catalogHostId, hosts.length, catalogScope.ready]');
     expect(source).toContain('if (!catalogScope.ready || (!catalogHostId && hosts.length === 0)) return');
@@ -253,7 +253,7 @@ describe('LegacyAgentHomeComposer', () => {
   });
 
   it('feeds Thread selectedOnlyModels into the shared ModelReasoningPicker More list', () => {
-    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url));
     expect(source).toContain('catalogMoreModels: catalogEntry?.selectedOnlyModels');
     expect(source).toContain('fallbackMoreModelsForProvider');
     expect(source).toContain('fallbackModelsForProvider');
@@ -263,7 +263,7 @@ describe('LegacyAgentHomeComposer', () => {
   });
 
   it('does not skeleton the model picker while harness default is still resolving', () => {
-    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url));
     expect(source).toContain('modelIsLoading={catalogModelsLoading}');
     expect(source).not.toContain("selectionState === 'loading' || catalogModelsLoading");
     expect(source).toContain('&& !catalogEntry');
@@ -277,7 +277,7 @@ describe('LegacyAgentHomeComposer', () => {
   });
 
   it('keeps launch available while the host catalog and local descriptor settle independently', () => {
-    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url));
     expect(source).toContain('resolveCliAgentSpawnProfile({');
     expect(source).toContain('&& spawnProfile');
     expect(source).toContain("const message = 'Agent launch failed: no launch profile for this harness'");
@@ -288,13 +288,13 @@ describe('LegacyAgentHomeComposer', () => {
   });
 
   it('launches absolute-path prompts when slash-command typeahead has no matches', () => {
-    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url));
     expect(source).toContain('if (field.typeaheadOpen && field.suggestions.length > 0) return;');
     expect(source).not.toContain('if (field.typeaheadOpen) return;');
   });
 
   it('stays on the current surface after CLI create instead of entering project view', () => {
-    const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url));
     expect(source).not.toContain('enterProjectFocus');
     const launchStart = source.indexOf('if (onLaunched) {');
     expect(launchStart).toBeGreaterThan(-1);

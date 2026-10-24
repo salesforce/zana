@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MOBILE_THREAD_TITLE_ID, MOBILE_THREAD_CONTROLS_ID } from '../useMobileThreadTitleTarget.js';
 import { resolve } from 'node:path';
-import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 const layout = vi.hoisted(() => ({ compact: false }));
@@ -55,6 +54,7 @@ vi.mock('../InboxSidebar.js', () => ({ InboxSidebar: () => null }));
 vi.mock('../SavedSidebar.js', () => ({ SavedSidebar: () => null }));
 
 import { InboxPane } from './InboxPane.js';
+import { readSourceText } from '../../__tests__/helpers/source-text.js';
 
 describe('InboxPane tabs', () => {
   it('exposes Feed and Saved tabs, not a Reports tab', () => {
@@ -90,7 +90,7 @@ describe('InboxPane tabs', () => {
 
 describe('InboxPane compact chrome contract', () => {
   it('keeps grouping / clear in the ⋯ menu instead of a second icon row', () => {
-    const source = readFileSync(resolve('apps/app/src/components/listpane/InboxPane.tsx'), 'utf8');
+    const source = readSourceText(resolve('apps/app/src/components/listpane/InboxPane.tsx'));
     const html = renderToStaticMarkup(<InboxPane />);
 
     expect(source).toContain('<span className="inbox-tab-label">Saved</span>');
@@ -111,11 +111,10 @@ describe('InboxPane compact chrome contract', () => {
   });
 
   it('always shows the ⋯ menu and floors the list column at 345px', () => {
-    const css = readFileSync(
-      resolve('apps/app/src/styles/global.css'),
-      'utf8'
+    const css = readSourceText(
+      resolve('apps/app/src/styles/global.css')
     );
-    const store = readFileSync(resolve('apps/app/src/store.ts'), 'utf8');
+    const store = readSourceText(resolve('apps/app/src/store.ts'));
 
     expect(store).toContain('export const INBOX_LIST_MIN = 345;');
     expect(css).toContain('--inbox-list-min: 345px;');
@@ -133,10 +132,9 @@ describe('InboxPane compact chrome contract', () => {
   });
 
   it('does not steal the titlebar reserve when the sidebar is collapsed', () => {
-    const source = readFileSync(resolve('apps/app/src/components/listpane/InboxPane.tsx'), 'utf8');
-    const css = readFileSync(
-      resolve('apps/app/src/styles/global.css'),
-      'utf8'
+    const source = readSourceText(resolve('apps/app/src/components/listpane/InboxPane.tsx'));
+    const css = readSourceText(
+      resolve('apps/app/src/styles/global.css')
     );
     expect(source).not.toContain('ownsWindowTopLeft');
     expect(css).not.toContain('.app-shell.sidebar-is-collapsed .inbox-list-pane .list-header {\n  display: flex;\n}');

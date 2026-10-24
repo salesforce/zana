@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
@@ -50,12 +49,13 @@ import {
   threadModalLabel,
   toggleInspectorFullScreen
 } from './ThreadModal.js';
+import { readSourceText } from '../__tests__/helpers/source-text.js';
 
-const modalSource = readFileSync(new URL('./ThreadModal.tsx', import.meta.url), 'utf8');
-const board = readFileSync(new URL('../views/agents/AgentsBoard.tsx', import.meta.url), 'utf8');
-const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
-const store = readFileSync(new URL('../store.ts', import.meta.url), 'utf8');
-const css = readFileSync(fileURLToPath(new URL('../styles/global.css', import.meta.url)), 'utf8');
+const modalSource = readSourceText(new URL('./ThreadModal.tsx', import.meta.url));
+const board = readSourceText(new URL('../views/agents/AgentsBoard.tsx', import.meta.url));
+const app = readSourceText(new URL('../App.tsx', import.meta.url));
+const store = readSourceText(new URL('../store.ts', import.meta.url));
+const css = readSourceText(fileURLToPath(new URL('../styles/global.css', import.meta.url)));
 
 describe('ThreadModal', () => {
   it('hosts ThreadDetail in the agent-inspector overlay chrome', () => {

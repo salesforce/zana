@@ -2,14 +2,14 @@
  * The first-run GitHub star nudge must mount in the main shell only.
  */
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
+import { readSourceText } from './helpers/source-text.js';
 
 const RENDERER_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 function src(rel: string): string {
-  return readFileSync(join(RENDERER_ROOT, rel), 'utf8');
+  return readSourceText(join(RENDERER_ROOT, rel));
 }
 
 describe('SponsorNudge shell mount', () => {

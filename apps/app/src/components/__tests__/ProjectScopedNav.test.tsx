@@ -1,11 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
 import type { ComponentProps, MouseEvent, ReactElement } from 'react';
 import type { SidebarRailItem } from '../SidebarRail.js';
 import type { AppModule } from '@zana-ai/zcc-extension-sdk/renderer';
 import type { Project } from '@zana-ai/zcc-domain/product';
+import { readSourceText } from '../../__tests__/helpers/source-text.js';
 
 const project: Project = {
   id: 'proj-1',
@@ -360,7 +360,7 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
   });
 
   it('opens this project Agents board from the Agents destination', () => {
-    const source = readFileSync(new URL('../ProjectScopedNav.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../ProjectScopedNav.tsx', import.meta.url));
 
     expect(source).toContain("mode: 'agents'");
     expect(source).toContain('useUi.getState().exitProjectFocus(');
@@ -405,8 +405,8 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
   });
 
   it('lets the Project tree occupy the same bottom rail slot as global Projects', () => {
-    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
-    const source = readFileSync(new URL('../ProjectScopedNav.tsx', import.meta.url), 'utf8');
+    const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
+    const source = readSourceText(new URL('../ProjectScopedNav.tsx', import.meta.url));
     expect(source).toContain('kind: \'section\'');
     expect(source).toContain('TRAILING_PROJECT_NAV_IDS');
     expect(css).toContain('.project-scoped-nav .sidebar-nav {\n  display: flex;\n  flex: 1 1 auto;\n  flex-direction: column;\n  gap: 2px;\n  min-height: 0;\n  overflow: hidden;');
