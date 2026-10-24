@@ -110,6 +110,27 @@ test('a plugin page opens an agent side panel from its launcher and New Tab', as
   await win.waitForTimeout(1_500);
   await shot(app.electron, win, testInfo, '3b-agent-chat');
 
+  // The sticky prompt's opaque backing must blend into the side panel;
+  // a different surface color paints a second rectangle around the bubble.
+  const prompt = chat.getByTestId('thread-user-text').first();
+  const promptItem = prompt.locator('..');
+  for (const theme of ['light', 'dark'] as const) {
+    await win.evaluate(value => window.cc.config.set({ theme: value }), theme);
+    await expect(win.locator('html')).toHaveAttribute('data-theme', theme);
+    const panelBackground = await chat.evaluate(node => {
+      for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+        const background = getComputedStyle(parent).backgroundColor;
+        if (background !== 'rgba(0, 0, 0, 0)') return background;
+      }
+      throw new Error('Agent side panel has no opaque background');
+    });
+    await expect(promptItem).toHaveCSS('background-color', panelBackground);
+    await expect(promptItem).toHaveCSS('position', 'sticky');
+    const bubble = prompt.locator('.thread-timeline-bubble');
+    await expect(bubble).not.toHaveCSS('background-color', panelBackground);
+    await shot(app.electron, win, testInfo, `3c-agent-chat-${theme}`);
+  }
+
   await win.getByTestId('thread-secondary-new-tab').click();
   await expect(win.getByTestId('thread-new-tab-agent')).toBeVisible();
   await shot(app.electron, win, testInfo, '4-new-tab-agent-entry');
