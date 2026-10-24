@@ -338,6 +338,46 @@ describe('normalizeConfig — auto-close-idle flags', () => {
     expect(out.autoCloseIdleMinutes).toBeUndefined();
   });
 
+  it('keeps known explorer minimap options and drops anything else', () => {
+    const out = normalizeConfig({
+      explorerMinimapEnabled: false,
+      explorerMinimapWidth: 'wide',
+      explorerMinimapRenderCharacters: false,
+      explorerMinimapVerticalSize: 'fit',
+      explorerMinimapSlider: 'always',
+      explorerMinimapSide: 'left'
+    });
+    expect(out).toMatchObject({
+      explorerMinimapEnabled: false,
+      explorerMinimapWidth: 'wide',
+      explorerMinimapRenderCharacters: false,
+      explorerMinimapVerticalSize: 'fit',
+      explorerMinimapSlider: 'always',
+      explorerMinimapSide: 'left'
+    });
+    const junk = normalizeConfig({
+      explorerMinimapEnabled: 'yes' as never,
+      explorerMinimapWidth: 'off' as never,
+      explorerMinimapRenderCharacters: 1 as never,
+      explorerMinimapVerticalSize: 'huge' as never,
+      explorerMinimapSlider: 3 as never,
+      explorerMinimapSide: 'top' as never
+    });
+    for (const key of ['explorerMinimapEnabled', 'explorerMinimapWidth', 'explorerMinimapRenderCharacters', 'explorerMinimapVerticalSize', 'explorerMinimapSlider', 'explorerMinimapSide'] as const) {
+      expect(junk[key]).toBeUndefined();
+    }
+    expect(normalizeConfig({}).explorerMinimapWidth).toBeUndefined();
+  });
+
+  it('keeps a known explorer file icon theme and drops anything else', () => {
+    for (const theme of ['seti', 'minimal', 'none'] as const) {
+      expect(normalizeConfig({ explorerFileIconTheme: theme }).explorerFileIconTheme).toBe(theme);
+    }
+    expect(normalizeConfig({ explorerFileIconTheme: 'material' as never }).explorerFileIconTheme).toBeUndefined();
+    expect(normalizeConfig({ explorerFileIconTheme: 3 as never }).explorerFileIconTheme).toBeUndefined();
+    expect(normalizeConfig({}).explorerFileIconTheme).toBeUndefined();
+  });
+
   it('keeps threadSessionReleaseMinutes in range, 0 as never, and drops junk', () => {
     expect(normalizeConfig({ threadSessionReleaseMinutes: 120.4 }).threadSessionReleaseMinutes).toBe(120);
     expect(normalizeConfig({ threadSessionReleaseMinutes: 0 }).threadSessionReleaseMinutes).toBe(0);

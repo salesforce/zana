@@ -11529,6 +11529,21 @@ button.statusbar-item {
   color: var(--accent-gold);
 }
 
+/* No icon theme: collapse the empty slot so names align without a gap. */
+.tree-icon:empty,
+.palette-icon:empty {
+  display: none;
+}
+
+.file-icon {
+  font-family: 'seti';
+  font-style: normal;
+  font-weight: normal;
+  line-height: 1;
+  white-space: pre;
+  user-select: none;
+}
+
 .tree-name {
   flex: 1;
   min-width: 0;
@@ -11597,6 +11612,54 @@ button.statusbar-item {
 
 .tree-context-menu button:hover {
   background: var(--bg-hover);
+}
+
+/* Explorer minimap right-click menu (VS Code-style submenus). */
+.minimap-context-menu {
+  min-width: 200px;
+}
+.minimap-context-menu button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.minimap-context-menu button:disabled:hover {
+  background: transparent;
+}
+.minimap-menu-check {
+  display: inline-flex;
+  width: 14px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+}
+.minimap-menu-label {
+  flex: 1;
+}
+.minimap-menu-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border-strong);
+}
+.minimap-menu-note {
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.minimap-submenu-wrap {
+  position: relative;
+}
+.minimap-submenu {
+  position: absolute;
+  top: -5px;
+  left: 100%;
+  min-width: 170px;
+  margin-left: 2px;
+}
+.minimap-submenu.flip {
+  left: auto;
+  right: 100%;
+  margin-left: 0;
+  margin-right: 2px;
 }
 
 .tab-context-menu {
@@ -12172,6 +12235,10 @@ body.resizing-col .explorer-resizer::after {
   text-align: center;
   padding: 24px;
   gap: 12px;
+}
+
+.explorer-viewer-loading {
+  width: 100%;
 }
 
 .explorer-viewer-header {

@@ -1,4 +1,4 @@
-import { isAgentsViewId, type AgentsViewId } from '@zana-ai/zcc-domain/product';
+import { EXPLORER_FILE_ICON_THEME_DEFAULT, EXPLORER_MINIMAP_DEFAULTS, isAgentsViewId, resolveExplorerFileIconTheme, resolveExplorerMinimap, type AgentsViewId, type ExplorerFileIconTheme, type ExplorerMinimapConfig, type ExplorerMinimapPrefs } from '@zana-ai/zcc-domain/product';
 import { subscribeClientRecovery } from './lib/client-recovery.js';
 import { create } from 'zustand';
 import type {
@@ -797,6 +797,9 @@ export function bindSystemThemeListener() {
  * lingering until reload. Purely config→flag; no side effects (theme /
  * pane-width / workspace-mode application stays at the call sites).
  */
+/** The `AppConfig.explorerMinimap*` keys, as written by the Explorer minimap menu. */
+export type ExplorerMinimapPatch = ExplorerMinimapConfig;
+
 function mirroredConfigFlags(config: AppConfig) {
   return {
     defaultHarness: config.defaultHarness ?? null,
@@ -811,6 +814,12 @@ function mirroredConfigFlags(config: AppConfig) {
     terminalTheme: config.terminalTheme ?? DEFAULT_TERMINAL_THEME,
     inboxGuidanceEnabled: config.inboxGuidanceEnabled ?? true,
     terminalWheelArrowsEnabled: config.terminalWheelArrowsEnabled ?? true,
+    explorerMinimap: (() => {
+      const minimap = resolveExplorerMinimap(config);
+      syncConfirmedMinimap(minimap);
+      return minimap;
+    })(),
+    explorerFileIconTheme: resolveExplorerFileIconTheme(config),
     heartbeatEnabled: config.heartbeatEnabled ?? false,
     goalsEnabled: config.goalsEnabled ?? false,
     cliRemoteToolProxyEnabled: config.cliRemoteToolProxyEnabled ?? false,
@@ -1579,6 +1588,10 @@ interface DataState {
    *  translation on (default true). Read live by TerminalView's custom wheel
    *  handler so a flip takes effect on open terminals without reopening them. */
   terminalWheelArrowsEnabled: boolean;
+  /** Resolved mirror of AppConfig.explorerMinimap* — read live by the Explorer FileViewer. */
+  explorerMinimap: ExplorerMinimapPrefs;
+  /** Resolved mirror of AppConfig.explorerFileIconTheme — read live by every file-icon site. */
+  explorerFileIconTheme: ExplorerFileIconTheme;
   /** Mirror of AppConfig.heartbeatEnabled — gates the per-agent Heartbeat
    *  toggle in the agent inspector. Hydrated on init, kept live by the Settings
    *  toggle. Default off. */
@@ -1735,6 +1748,15 @@ interface DataState {
   setTerminalTheme: (id: TerminalThemeId) => void;
   setInboxGuidanceEnabled: (on: boolean) => void;
   setTerminalWheelArrowsEnabled: (on: boolean) => void;
+  /** Update active file icon theme; called by SettingsView when the user changes preferences. */
+  setExplorerFileIconTheme: (theme: ExplorerFileIconTheme) => void;
+  /** Update active explorer minimap preferences; called by SettingsView when changing editor settings. */
+  setExplorerMinimap: (prefs: ExplorerMinimapPrefs) => void;
+  /**
+   * Optimistically apply and persist a minimap change (from the editor's right-click menu).
+   * Note: product.config.set merges partial updates into the persisted config.
+   */
+  updateExplorerMinimap: (patch: ExplorerMinimapPatch) => void;
   setHeartbeatEnabled: (on: boolean) => void;
   setGoalsEnabled: (on: boolean) => void;
   setCliRemoteToolProxyEnabled: (on: boolean) => void;
@@ -2077,6 +2099,34 @@ function applySidebarChrome(config: AppConfig) {
   });
 }
 
+/**
+ * Minimap writes are versioned per preference field so a delayed failure
+ * cannot roll back newer preferences applied by subsequent user actions.
+ */
+const minimapFieldVersions: Record<keyof ExplorerMinimapPrefs, number> = {
+  enabled: 0,
+  width: 0,
+  renderCharacters: 0,
+  verticalSize: 0,
+  slider: 0,
+  side: 0
+};
+const minimapConfirmedPrefs: ExplorerMinimapPrefs = { ...EXPLORER_MINIMAP_DEFAULTS };
+
+function syncConfirmedMinimap(prefs: ExplorerMinimapPrefs) {
+  Object.assign(minimapConfirmedPrefs, prefs);
+  for (const key of ['enabled', 'width', 'renderCharacters', 'verticalSize', 'slider', 'side'] as const) {
+    minimapFieldVersions[key]++;
+  }
+}
+
+export function _resetMinimapSyncForTesting(initial: ExplorerMinimapPrefs = EXPLORER_MINIMAP_DEFAULTS) {
+  Object.assign(minimapConfirmedPrefs, initial);
+  for (const key of ['enabled', 'width', 'renderCharacters', 'verticalSize', 'slider', 'side'] as const) {
+    minimapFieldVersions[key] = 0;
+  }
+}
+
 export const useData = create<DataState>((set, get) => ({
   projects: [],
   terminals: {},
@@ -2089,6 +2139,8 @@ export const useData = create<DataState>((set, get) => ({
   terminalTheme: DEFAULT_TERMINAL_THEME,
   inboxGuidanceEnabled: true,
   terminalWheelArrowsEnabled: true,
+  explorerMinimap: EXPLORER_MINIMAP_DEFAULTS,
+  explorerFileIconTheme: EXPLORER_FILE_ICON_THEME_DEFAULT,
   heartbeatEnabled: false,
   goalsEnabled: false,
   cliRemoteToolProxyEnabled: false,
@@ -2156,6 +2208,77 @@ export const useData = create<DataState>((set, get) => ({
 
   setTerminalWheelArrowsEnabled(on) {
     set({ terminalWheelArrowsEnabled: on });
+  },
+
+  setExplorerFileIconTheme(theme) {
+    set({ explorerFileIconTheme: theme });
+  },
+
+  setExplorerMinimap(prefs) {
+    syncConfirmedMinimap(prefs);
+    set({ explorerMinimap: prefs });
+  },
+
+  updateExplorerMinimap(patch) {
+    const cur = get().explorerMinimap;
+    const optimistic: ExplorerMinimapPrefs = {
+      enabled: patch.explorerMinimapEnabled ?? cur.enabled,
+      width: patch.explorerMinimapWidth ?? cur.width,
+      renderCharacters: patch.explorerMinimapRenderCharacters ?? cur.renderCharacters,
+      verticalSize: patch.explorerMinimapVerticalSize ?? cur.verticalSize,
+      slider: patch.explorerMinimapSlider ?? cur.slider,
+      side: patch.explorerMinimapSide ?? cur.side
+    };
+
+    const targetVersions: Partial<Record<keyof ExplorerMinimapPrefs, number>> = {};
+    if (patch.explorerMinimapEnabled !== undefined) {
+      targetVersions.enabled = ++minimapFieldVersions.enabled;
+    }
+    if (patch.explorerMinimapWidth !== undefined) {
+      targetVersions.width = ++minimapFieldVersions.width;
+    }
+    if (patch.explorerMinimapRenderCharacters !== undefined) {
+      targetVersions.renderCharacters = ++minimapFieldVersions.renderCharacters;
+    }
+    if (patch.explorerMinimapVerticalSize !== undefined) {
+      targetVersions.verticalSize = ++minimapFieldVersions.verticalSize;
+    }
+    if (patch.explorerMinimapSlider !== undefined) {
+      targetVersions.slider = ++minimapFieldVersions.slider;
+    }
+    if (patch.explorerMinimapSide !== undefined) {
+      targetVersions.side = ++minimapFieldVersions.side;
+    }
+
+    set({ explorerMinimap: optimistic });
+
+    product.config.set(patch)
+      .then(() => {
+        if (patch.explorerMinimapEnabled !== undefined) minimapConfirmedPrefs.enabled = patch.explorerMinimapEnabled;
+        if (patch.explorerMinimapWidth !== undefined) minimapConfirmedPrefs.width = patch.explorerMinimapWidth;
+        if (patch.explorerMinimapRenderCharacters !== undefined) minimapConfirmedPrefs.renderCharacters = patch.explorerMinimapRenderCharacters;
+        if (patch.explorerMinimapVerticalSize !== undefined) minimapConfirmedPrefs.verticalSize = patch.explorerMinimapVerticalSize;
+        if (patch.explorerMinimapSlider !== undefined) minimapConfirmedPrefs.slider = patch.explorerMinimapSlider;
+        if (patch.explorerMinimapSide !== undefined) minimapConfirmedPrefs.side = patch.explorerMinimapSide;
+      })
+      .catch((err) => {
+        console.error('Failed to persist explorer minimap preferences', err);
+        const latest = get().explorerMinimap;
+        const next = { ...latest };
+        let changed = false;
+
+        for (const key of ['enabled', 'width', 'renderCharacters', 'verticalSize', 'slider', 'side'] as const) {
+          const version = targetVersions[key];
+          if (version !== undefined && minimapFieldVersions[key] === version) {
+            (next as Record<string, unknown>)[key] = minimapConfirmedPrefs[key];
+            changed = true;
+          }
+        }
+
+        if (changed) {
+          set({ explorerMinimap: next });
+        }
+      });
   },
 
   setHeartbeatEnabled(on) {

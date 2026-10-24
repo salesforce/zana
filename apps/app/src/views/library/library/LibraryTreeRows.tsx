@@ -1,4 +1,5 @@
-import { ChevronRight, ChevronDown, Folder, FolderOpen, FileText } from 'lucide-react';
+import { ChevronRight, ChevronDown } from 'lucide-react';
+import { FileIcon, FolderIcon } from '@/components/FileIcon';
 
 import type { LibraryDoc } from '@zana-ai/zcc-domain/product';
 import type { LibraryTreeNode } from '../libraryTree.js';
@@ -54,15 +55,7 @@ export function LibraryTreeRows({
                 {isDir && (isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />)}
               </span>
               <span className="tree-icon">
-                {isDir ? (
-                  isOpen ? (
-                    <FolderOpen size={13} />
-                  ) : (
-                    <Folder size={13} />
-                  )
-                ) : (
-                  <FileText size={13} />
-                )}
+                {isDir ? <FolderIcon open={isOpen} /> : <FileIcon name={node.name} />}
               </span>
               <span className="tree-name">{node.name}</span>
               {isDir && typeof node.count === 'number' && (
