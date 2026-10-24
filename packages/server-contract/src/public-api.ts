@@ -40,6 +40,10 @@ import {
 import type {
   EmptyInput,
   PathId,
+  PathHostId,
+  PathPeerConnection,
+  PathPeerComputer,
+  PathPeerLinkUse,
   PathProjectId,
   PathPreviewAndFilePath,
   PathThreadAndFilePath,
@@ -53,6 +57,30 @@ import type {
   ContinueAfterProviderRateLimitRequest,
   ContinueAfterProviderRateLimitResponse,
   CreateHostJoinCodeRequest,
+  PeerIntroduction,
+  PeerIntroductionDecisionRequest,
+  PeerIntroductionListResponse,
+  PeerInstallation,
+  PeerInstallationListResponse,
+  PeerLinkListResponse,
+  PeerLeftoverListResponse,
+  ForgetPeerLeftoverResponse,
+  RemovePeerLinkResponse,
+  RemovePeerLinkResult,
+  PeerLinkActivityResponse,
+  RepairPeerLinkResponse,
+  PeerConnection,
+  PeerConnectionListResponse,
+  PeerRemoteLoginCheckResponse,
+  CreatePeerConnectionResponse,
+  JoinPeerConnectionRequest,
+  ApprovePeerConnectionRequest,
+  PeerSshEndpoint,
+  PeerSshEndpointListResponse,
+  PeerRouteOriginRequest,
+  PeerRouteOriginListResponse,
+  PeerRouteOriginAddResponse,
+  PeerRouteOriginRemoveResponse,
   CreateHostJoinCodeResponse,
   CreateTerminalRequest,
   CreateProjectRequest,
@@ -255,6 +283,11 @@ import {
   restartTerminalRequestSchema,
   createProjectRequestSchema,
   createHostJoinCodeRequestSchema,
+  joinPeerConnectionRequestSchema,
+  approvePeerConnectionRequestSchema,
+  peerIntroductionDecisionRequestSchema,
+  peerSshEndpointSchema,
+  peerRouteOriginRequestSchema,
   createProjectSourceRequestSchema,
   createQueuedMessageRequestSchema,
   stopBackgroundTasksRequestSchema,
@@ -628,6 +661,177 @@ export const publicApiRoutes = {
   hosts: {
     createJoinCode: defineRoute({
       path: "/hosts/join-codes",
+      method: "post",
+      request: jsonRequest<EmptyInput, CreateHostJoinCodeRequest>(
+        createHostJoinCodeRequestSchema,
+      ),
+      response: jsonResponse<CreateHostJoinCodeResponse>({ status: 201 }),
+    }),
+    /** Lists pending and decided peer introductions awaiting this owner's consent. */
+    listPeerIntroductions: defineRoute({
+      path: "/peers/introductions",
+      method: "get",
+      request: noRequest<EmptyInput>(),
+      response: jsonResponse<PeerIntroductionListResponse>(),
+    }),
+    /** Records explicit owner consent. Approval starts a bounded forward-only enrollment when the installer is available. */
+    decidePeerIntroduction: defineRoute({
+      path: "/peers/introductions/:id/decision",
+      method: "post",
+      request: jsonRequest<PathId, PeerIntroductionDecisionRequest>(
+        peerIntroductionDecisionRequestSchema,
+      ),
+      response: jsonResponse<PeerIntroduction>(),
+    }),
+    /** Retries (idempotently) the forward-only enrollment of an approved introduction. */
+    enrollPeerIntroduction: defineRoute({
+      path: "/peers/introductions/:id/enroll",
+      method: "post",
+      request: noRequest<PathId>(),
+      response: jsonResponse<PeerInstallation>(),
+    }),
+    listPeerInstallations: defineRoute({
+      path: "/peers/installations",
+      method: "get",
+      request: noRequest<EmptyInput>(),
+      response: jsonResponse<PeerInstallationListResponse>(),
+    }),
+    /** Owner-session only: core-owned computer connections (Add / Join / Approve), independent of any plugin. */
+    listPeerConnections: defineRoute({
+      path: "/peer-connections",
+      method: "get",
+      request: noRequest<EmptyInput>(),
+      response: jsonResponse<PeerConnectionListResponse>(),
+    }),
+    /** Starts Zana's own sshd and runs its self-test on this computer; `ok:false` carries the fixed reason the directions are keyed on. */
+    checkPeerRemoteLogin: defineRoute({
+      path: "/peer-connections/remote-login",
+      method: "post",
+      request: noRequest<EmptyInput>(),
+      response: jsonResponse<PeerRemoteLoginCheckResponse>(),
+    }),
+    createPeerConnection: defineRoute({
+      path: "/peer-connections",
+      method: "post",
+      request: noRequest<EmptyInput>(),
+      response: jsonResponse<CreatePeerConnectionResponse>({ status: 201 }),
+    }),
+    joinPeerConnection: defineRoute({
+      path: "/peer-connections/join",
+      method: "post",
+      request: jsonRequest<EmptyInput, JoinPeerConnectionRequest>(joinPeerConnectionRequestSchema),
+      response: jsonResponse<PeerConnection>({ status: 201 }),
+    }),
+    /** Inviter's owner approves by typing the code the other computer shows. */
+    approvePeerConnection: defineRoute({
+      path: "/peer-connections/:invitationId/approve",
+      method: "post",
+      request: jsonRequest<PathPeerConnection, ApprovePeerConnectionRequest>(approvePeerConnectionRequestSchema),
+      response: jsonResponse<PeerConnection>(),
+    }),
+    denyPeerConnection: defineRoute({
+      path: "/peer-connections/:invitationId/deny",
+      method: "post",
+      request: noRequest<PathPeerConnection>(),
+      response: jsonResponse<PeerConnection>(),
+    }),
+    cancelPeerConnection: defineRoute({
+      path: "/peer-connections/:invitationId",
+      method: "delete",
+      request: noRequest<PathPeerConnection>(),
+      response: jsonResponse<PeerConnection>(),
+    }),
+    /** Computers removed with Remove anyway while a plugin's cleanup had failed. Matched before `/:hostId`. */
+    listPeerLeftovers: defineRoute({
+      path: "/peer-links/leftover",
+      method: "get",
+      request: noRequest<EmptyInput>(),
+      response: jsonResponse<PeerLeftoverListResponse>(),
+    }),
+    /** Retry cleanup once, then drop the record whatever the result. 404 when no such record. */
+    forgetPeerLeftover: defineRoute({
+      path: "/peer-links/leftover/:computerId/forget",
+      method: "post",
+      request: noRequest<PathPeerComputer>(),
+      response: jsonResponse<ForgetPeerLeftoverResponse>(),
+    }),
+    /** Owner-session only (never the mobile proxy): every plugin link with the uses that justify it. */
+    listPeerLinks: defineRoute({
+      path: "/peer-links",
+      method: "get",
+      request: noRequest<EmptyInput>(),
+      response: jsonResponse<PeerLinkListResponse>(),
+    }),
+    /** Owner gesture. Optional `?scope=` narrows to one use; the link stays even when no use is left. */
+    removePeerLinkUse: defineRoute({
+      path: "/peer-links/:hostId/uses/:pluginId",
+      method: "delete",
+      request: noRequest<PathPeerLinkUse>(),
+      response: jsonResponse<RemovePeerLinkResponse>(),
+    }),
+    /** Owner gesture: re-keys and reopens a dropped or unhealthy link. Distinct from resuming a paused one. */
+    repairPeerLink: defineRoute({
+      path: "/peer-links/:hostId/repair",
+      method: "post",
+      request: noRequest<PathHostId>(),
+      response: jsonResponse<RepairPeerLinkResponse>(),
+    }),
+    /** Plugins that completed a call with the link's computer in the last 10 s; drives the "Stop anyway?" confirm. */
+    peerLinkActivity: defineRoute({
+      path: "/peer-links/:hostId/activity",
+      method: "get",
+      request: noRequest<PathHostId>(),
+      response: jsonResponse<PeerLinkActivityResponse>(),
+    }),
+    /** Owner gesture: removes the link and every use on it. `?force=1` is Remove anyway after a plugin handler failed. */
+    removePeerLink: defineRoute({
+      path: "/peer-links/:hostId",
+      method: "delete",
+      request: noRequest<PathHostId>(),
+      response: jsonResponse<RemovePeerLinkResult>(),
+    }),
+    listPeerSshEndpoints: defineRoute({
+      path: "/peers/ssh-endpoints",
+      method: "get",
+      request: noRequest<EmptyInput>(),
+      response: jsonResponse<PeerSshEndpointListResponse>(),
+    }),
+    /** Explicit owner registration of a pinned SSH route; never created automatically. */
+    registerPeerSshEndpoint: defineRoute({
+      path: "/peers/ssh-endpoints",
+      method: "post",
+      request: jsonRequest<EmptyInput, PeerSshEndpoint>(peerSshEndpointSchema),
+      response: jsonResponse<PeerSshEndpoint>({ status: 201 }),
+    }),
+    removePeerSshEndpoint: defineRoute({
+      path: "/peers/ssh-endpoints/:id",
+      method: "delete",
+      request: noRequest<PathId>(),
+      response: jsonResponse<{ removed: boolean }>(),
+    }),
+    /** Owner-managed allowlist of non-loopback https origins accepted as advertised peer routes. Applies live. */
+    listPeerRouteOrigins: defineRoute({
+      path: "/peers/route-origins",
+      method: "get",
+      request: noRequest<EmptyInput>(),
+      response: jsonResponse<PeerRouteOriginListResponse>(),
+    }),
+    /** Explicit owner action; idempotent. Rejects non-https (except loopback http), credentials, paths and wildcards. */
+    addPeerRouteOrigin: defineRoute({
+      path: "/peers/route-origins",
+      method: "post",
+      request: jsonRequest<EmptyInput, PeerRouteOriginRequest>(peerRouteOriginRequestSchema),
+      response: jsonResponse<PeerRouteOriginAddResponse>({ status: 201 }),
+    }),
+    removePeerRouteOrigin: defineRoute({
+      path: "/peers/route-origins",
+      method: "delete",
+      request: jsonRequest<EmptyInput, PeerRouteOriginRequest>(peerRouteOriginRequestSchema),
+      response: jsonResponse<PeerRouteOriginRemoveResponse>(),
+    }),
+    /** Mints a single-use code whose enrollment can only relay peer traffic: no execution, threads, files or host calls. */
+    createForwardJoinCode: defineRoute({
+      path: "/hosts/forward-join-codes",
       method: "post",
       request: jsonRequest<EmptyInput, CreateHostJoinCodeRequest>(
         createHostJoinCodeRequestSchema,

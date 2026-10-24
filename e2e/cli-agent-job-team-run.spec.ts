@@ -54,6 +54,8 @@ test('CLI Agent starts a durable Job Team, surfaces its question, and completes'
     // CLI Agent hides or rejects an unverified launch even when config is current.
     await window.getByRole('link', { name: 'Settings' }).click();
     await window.locator('.settings-section-item').filter({ hasText: 'AI Harness' }).click();
+    // AI Harness reuses the boot-time probe; re-probe explicitly after replacing the CLI.
+    await window.getByRole('button', { name: 'Check status' }).click();
     const claudeSettings = window.locator('#settings-anchor-harness-claude');
     await expect(claudeSettings.locator('.opener-row-status')).toHaveClass(/opener-row-status--ok/);
     await window.locator('.settings-app-back').click();

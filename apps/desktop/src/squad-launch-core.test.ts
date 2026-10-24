@@ -59,6 +59,7 @@ function makeInput(overrides: Partial<SquadLaunchInput> = {}): SquadLaunchInput 
     slots: [{ role: 'orchestrator' }, { role: 'worker' }],
     goal: 'Ship the fix',
     coordinationMode: 'freeform',
+    completionInboxNotice: false,
     sourceCapabilityIds: [],
     goalSources: [],
     ...overrides
@@ -80,8 +81,9 @@ describe('launchSquad', () => {
       coordinationMode: 'freeform',
       origin: 'explicit',
       jobTitle: 'Named: Ship the fix',
-      objective: 'Ship the fix',
-      summary: undefined,
+       objective: 'Ship the fix',
+       summary: undefined,
+       completionInboxNotice: false,
       slots: [
         { initialTask: `${sharedTask}\n\nCoordinate workers, delegate role-specific work, and explicitly report execution completion with a summary when goal is met.` },
         { initialTask: `${sharedTask}\n\nCheck orchestrator instructions and report progress or blockers to it.` }
@@ -91,6 +93,15 @@ describe('launchSquad', () => {
     expect(deps.snapshotSources).toHaveBeenCalledWith({ kind: 'window', windowId: 7 }, expect.objectContaining({
       projectId: 'p1', launchRequestId: 'ui:launch-1', sourceCapabilityIds: [], sourcePaths: [], goalSourceDescriptors: []
     }));
+  });
+
+  it('carries the requested completion inbox notice into the execution request', async () => {
+    const { deps, start } = makeDeps();
+    await launchSquad(deps, makeInput({ completionInboxNotice: true }), {
+      sources: { kind: 'session', sessionId: 'agent-session' },
+      owner: { principalId: 'agent-session' }
+    });
+    expect(start.mock.calls[0]![2]).toMatchObject({ completionInboxNotice: true });
   });
 
   it('gives a session launch its confined source paths and starts it unattended', async () => {

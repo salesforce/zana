@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   HOST_RPC_PROTOCOL_VERSION,
@@ -16,6 +16,8 @@ import {
   HostRpcResponseMessageSchema,
   isForbiddenHostEnvironmentName,
   HostEnvironmentEntrySchema,
+  PeerForwardCommandSchema,
+  PeerRequestEnvelopeSchema,
   parseHostRpcResult
 } from './host-rpc.js';
 
@@ -23,6 +25,62 @@ const hostId = randomUUID();
 const instanceId = randomUUID();
 const threadId = randomUUID();
 const environmentId = randomUUID();
+const peerCommand = {
+  protocolVersion: 2 as const, pairId: 'pair-a', senderId: 'app-a', recipientId: 'app-b',
+  pluginId: 'plugin-a', scope: 'opaque-repo-1', route: '/api/v1/peer/plugin-a/handshake', httpMethod: 'POST' as const,
+  payloadHash: createHash('sha256').update('{}').digest('hex'), signature: 'a'.repeat(43),
+  nonce: 'n'.repeat(16), issuedAt: 1_000_000, epoch: 1,
+  type: 'peer.forward' as const, method: 'handshake', body: '{}', timeoutMs: 1000
+};
+
+describe('peer.forward v2 contract', () => {
+  it('round-trips the flat command and envelope with separate protocol versions', () => {
+    const { type: _type, method: _method, body: _body, timeoutMs: _timeout, ...envelope } = peerCommand;
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(46);
+    expect(PeerRequestEnvelopeSchema.parse(envelope)).toEqual(envelope);
+    expect(PeerForwardCommandSchema.parse(peerCommand)).toEqual(peerCommand);
+    expect(HostRpcCommandSchema.parse(peerCommand)).toEqual(peerCommand);
+    expect(HostRpcRequestMessageSchema.parse({ type: 'host-rpc.request', protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+      requestId: 'peer-1', command: peerCommand }).command).toEqual(peerCommand);
+    expect(parseHostRpcResult('peer.forward', { status: 409, body: '{}' })).toEqual({ status: 409, body: '{}' });
+    for (const result of [{ status: 0, body: '' }, { status: 600, body: '' }, { status: 200, body: 1 },
+      { status: 200, body: '', headers: {} }]) expect(() => parseHostRpcResult('peer.forward', result)).toThrow();
+    expect(PeerRequestEnvelopeSchema.safeParse(peerCommand).success).toBe(false);
+  });
+
+  it.each(Object.keys(peerCommand))('requires explicit %s without legacy defaults', field => {
+    const incomplete = { ...peerCommand };
+    delete incomplete[field as keyof typeof incomplete];
+    expect(PeerForwardCommandSchema.safeParse(incomplete).success).toBe(false);
+    expect(HostRpcCommandSchema.safeParse(incomplete).success).toBe(false);
+  });
+
+  it.each([
+    { protocolVersion: 1 }, { protocolVersion: 44 }, { pairId: '../pair' }, { senderId: 'app\n' },
+    { recipientId: 'app\r' }, { recipientId: peerCommand.senderId }, { pluginId: 'Plugin-a' },
+    { scope: '' }, { scope: 'x'.repeat(1025) }, { scope: '\u00e9'.repeat(513) }, { scope: '\ud800' },
+    { scope: 'x\n' }, { scope: 'x\u007f' }, { httpMethod: 'GET' }, { payloadHash: 'A'.repeat(64) },
+    { payloadHash: 'a'.repeat(63) }, { signature: 'a'.repeat(42) }, { signature: '+'.repeat(43) },
+    { nonce: 'n'.repeat(15) }, { nonce: 'n'.repeat(129) }, { issuedAt: -1 }, { issuedAt: 1.5 },
+    { issuedAt: Number.MAX_SAFE_INTEGER + 1 }, { epoch: 0 }, { epoch: 1.5 }, { epoch: Number.MAX_SAFE_INTEGER + 1 },
+    { method: '../apply' }, { method: 'apply' }, { pluginId: 'plugin-b' }, { route: '/api/v1/peer/plugin-b/handshake' },
+    { route: '/api/v1/peer/plugin-a/apply' }, { route: '/api/v1/peer/plugin-a/%68andshake' },
+    { route: '/api/v1/peer/plugin-a/handshake?x=1' }, { route: 'http://127.0.0.1/api/v1/peer/plugin-a/handshake' },
+    { timeoutMs: 0 }, { timeoutMs: 30_001 }, { timeoutMs: 1.5 }, { body: 'x'.repeat(8 * 1024 * 1024 + 1) },
+    { type: 'host.read_file' }, { headers: {} }, { url: 'http://evil.example' }, { envelope: {} }
+  ])('rejects strict malformed or mismatched envelope %j', patch => {
+    expect(PeerForwardCommandSchema.safeParse({ ...peerCommand, ...patch }).success).toBe(false);
+    expect(HostRpcCommandSchema.safeParse({ ...peerCommand, ...patch }).success).toBe(false);
+  });
+
+  it('accepts matching method/route changes and exact scalar boundaries', () => {
+    const command = { ...peerCommand, method: 'apply', route: '/api/v1/peer/plugin-a/apply',
+      scope: '\u00e9'.repeat(512), nonce: 'n'.repeat(128), issuedAt: 0, epoch: Number.MAX_SAFE_INTEGER,
+      timeoutMs: 30_000, body: '' };
+    expect(PeerForwardCommandSchema.parse(command)).toEqual(command);
+    expect(PeerForwardCommandSchema.parse({ ...command, timeoutMs: 1, issuedAt: Number.MAX_SAFE_INTEGER }).timeoutMs).toBe(1);
+  });
+});
 
 describe('host-rpc contract', () => {
   it('round-trips native catalogue discovery and author restrictions at protocol 45', () => {
@@ -137,13 +195,13 @@ describe('host-rpc contract', () => {
       callId: 'call-1', method: 'echo', input: {}, timeoutMs: 1000,
       projectRoot: '/registered/project'
     };
-    expect(HOST_RPC_PROTOCOL_VERSION).toBeGreaterThanOrEqual(44);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(46);
     expect(HostRpcRequestMessageSchema.parse({
       type: 'host-rpc.request', protocolVersion: HOST_RPC_PROTOCOL_VERSION,
       requestId: 'r1', command
     }).command).toEqual(command);
     expect(HostRpcRequestMessageSchema.safeParse({
-      type: 'host-rpc.request', protocolVersion: 41,
+      type: 'host-rpc.request', protocolVersion: HOST_RPC_PROTOCOL_VERSION - 1,
       requestId: 'r1', command
     }).success).toBe(false);
     expect(HostRpcCommandSchema.safeParse({ ...command, projectRoot: '' }).success).toBe(false);
@@ -887,7 +945,7 @@ describe('host-rpc contract', () => {
   });
 
   it('parses desktop.browser commands, results, and a non-UUID thread payload', () => {
-    expect(HOST_RPC_PROTOCOL_VERSION).toBeGreaterThanOrEqual(44);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(46);
     expect(HostRpcCommandSchema.parse({
       type: 'desktop.browser.list_instances'
     }).type).toBe('desktop.browser.list_instances');
@@ -945,8 +1003,8 @@ it('validates bounded preview declarations and their owner generation', () => {
 describe('host.environment.replace', () => {
   const entry = { name: 'GH_TOKEN', value: 'token-value' };
 
-  it('is introduced at protocol 44 and parses a bounded, strict entry list', () => {
-    expect(HOST_RPC_PROTOCOL_VERSION).toBeGreaterThanOrEqual(44);
+  it('retains protocol 44 environment forwarding in the combined protocol and parses a bounded, strict entry list', () => {
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(46);
     const command = {
       type: 'host.environment.replace',
       entries: [

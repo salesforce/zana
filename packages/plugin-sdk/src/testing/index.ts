@@ -9,7 +9,8 @@ import type {
   ZccPluginFactory
 } from '../server.js';
 import { bindPluginServices, createPluginServicesRegistry } from '../server.js';
-import type { PluginServicesRegistry } from '../server.js';
+import { normalizePluginDatabaseBackupOptions, PluginDatabaseBackupError, type PluginDatabaseBackup } from '../database-backup.js';
+import type { PluginServicesRegistry, PluginInvitationStatus, PluginPeerLink, PluginApprovalRequest } from '../server.js';
 import { enforcePluginCliOutputLimit } from '../server.js';
 import { normalizeRegisteredAgentTool } from '../internal/host-policy.js';
 
@@ -40,8 +41,12 @@ export class PluginContextStaleError extends Error {
 
 export interface FakePluginHarness {
   rpc: Map<string, (args: unknown) => unknown | Promise<unknown>>;
+  /** Backups the plugin requested through `storage.backupDatabase`, in order. */
+  backups: PluginDatabaseBackup[];
   settings: Record<string, PluginSettingDescriptor>;
   kv: Map<string, unknown>;
+  /** Core-held storage epoch behind `sdk.peers.storageEpoch`; set `null` to simulate a host without the fence. */
+  storageEpoch: number | null;
   published: Array<{ event: string; payload: unknown }>;
   schedules: Array<{ name: string; cron: string; job: () => void | Promise<void> }>;
   extraSkillRoots: string[];
@@ -223,6 +228,8 @@ export interface FakePluginHostOptions {
     | Array<{ id: string; name: string; path?: string; icon?: import('@zana-ai/zcc-domain').ProjectIcon }>
     | Promise<Array<{ id: string; name: string; path?: string; icon?: import('@zana-ai/zcc-domain').ProjectIcon }>>;
   database?: PluginDatabase;
+  /** Real backup behaviour for tests that need one; the default records a metadata-only backup. */
+  backupDatabase?: ZccPluginApi['storage']['backupDatabase'];
   experimental_callHostRpc?: (call: {
     method: string;
     input: unknown;
@@ -246,6 +253,7 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
   const approvals = new Map<string, string>();
   let approvalSequence = 0;
   const kv = new Map<string, unknown>();
+  const backups: PluginDatabaseBackup[] = [];
   const rpc = new Map<string, (args: unknown) => unknown | Promise<unknown>>();
   const settings: Record<string, PluginSettingDescriptor> = {};
   let settingValues: Record<string, PluginSettingValue | undefined> = {};
@@ -368,6 +376,26 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
             return fn();
           }
         };
+      },
+      async backupDatabase(backupOptions) {
+        assertLive();
+        if (options?.backupDatabase) {
+          const backup = await options.backupDatabase(backupOptions);
+          backups.push(backup);
+          return backup;
+        }
+        const { name } = normalizePluginDatabaseBackupOptions(backupOptions);
+        if (backupOptions.signal?.aborted) throw new PluginDatabaseBackupError('aborted', 'database backup aborted');
+        const backup: PluginDatabaseBackup = {
+          backupId: `fake-backup-${backups.length + 1}`,
+          name,
+          path: `/fake-plugin-data/${pluginId}/backups/${name}.db`,
+          bytes: 0,
+          sha256: '0'.repeat(64),
+          createdAt: Date.now()
+        };
+        backups.push(backup);
+        return backup;
       }
     },
     http: {
@@ -419,6 +447,110 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
           assertLive();
           args?.signal?.throwIfAborted();
           return invokeSdk('hosts.list', undefined, args) as Promise<Array<{ id: string; name: string }>>;
+        }
+      },
+      peers: {
+        async localIdentity() {
+          assertLive();
+          return invokeSdk('peers.localIdentity', undefined) as ReturnType<ZccPluginApi['sdk']['peers']['localIdentity']>;
+        },
+        async storageEpoch() {
+          assertLive();
+          return invokeSdk('peers.storageEpoch', () => harness.storageEpoch) as Promise<number | null>;
+        },
+        async advanceStorageEpoch(expected) {
+          assertLive();
+          return invokeSdk('peers.advanceStorageEpoch', () => {
+            if (harness.storageEpoch === null) throw new Error('plugin storage epoch unavailable');
+            if (harness.storageEpoch !== expected) throw new Error('storage epoch mismatch');
+            return ++harness.storageEpoch;
+          }, expected) as Promise<number>;
+        },
+        async features() {
+          assertLive();
+          return invokeSdk('peers.features', () => ({ lifecycle: false, introductions: false, installer: false, invitations: false })) as ReturnType<ZccPluginApi['sdk']['peers']['features']>;
+        },
+        async enrolled(args) {
+          assertLive();
+          args?.signal?.throwIfAborted();
+          return invokeSdk('peers.enrolled', undefined, args) as ReturnType<ZccPluginApi['sdk']['peers']['enrolled']>;
+        },
+        async enable(peerId, args) {
+          assertLive();
+          args.signal?.throwIfAborted();
+          return invokeSdk('peers.enable', undefined, peerId, args) as ReturnType<ZccPluginApi['sdk']['peers']['enable']>;
+        },
+        async revoke(peerId, args) {
+          assertLive();
+          await invokeSdk('peers.revoke', undefined, peerId, args);
+        },
+        async introduce(peerId, args) {
+          assertLive();
+          args.signal?.throwIfAborted();
+          return invokeSdk('peers.introduce', undefined, peerId, args) as ReturnType<ZccPluginApi['sdk']['peers']['introduce']>;
+        },
+        async createInvitation(args) {
+          assertLive();
+          args.signal?.throwIfAborted();
+          return invokeSdk('peers.createInvitation', undefined, args) as Promise<{ invitationId: string; token: string; expiresAt: number; code: string }>;
+        },
+        async redeemInvitation(args) {
+          assertLive();
+          args.signal?.throwIfAborted();
+          return invokeSdk('peers.redeemInvitation', undefined, args) as Promise<PluginInvitationStatus>;
+        },
+        async invitationStatus(args) {
+          assertLive();
+          args.signal?.throwIfAborted();
+          return invokeSdk('peers.invitationStatus', undefined, args) as Promise<PluginInvitationStatus>;
+        },
+        async listInvitations(args) {
+          assertLive();
+          args?.signal?.throwIfAborted();
+          return invokeSdk('peers.listInvitations', () => [], args) as Promise<PluginInvitationStatus[]>;
+        },
+        async invitationApproval(args) {
+          assertLive();
+          args.signal?.throwIfAborted();
+          return invokeSdk('peers.invitationApproval', undefined, args) as Promise<PluginApprovalRequest>;
+        },
+        async decideInvitation(args) {
+          assertLive();
+          args.signal?.throwIfAborted();
+          return invokeSdk('peers.decideInvitation', undefined, args) as Promise<PluginInvitationStatus>;
+        },
+        async cancelInvitation(args) {
+          assertLive();
+          args.signal?.throwIfAborted();
+          await invokeSdk('peers.cancelInvitation', undefined, args);
+        },
+        async peerLinks(args) {
+          assertLive();
+          args?.signal?.throwIfAborted();
+          return invokeSdk('peers.peerLinks', () => [], args) as Promise<PluginPeerLink[]>;
+        },
+        async setPeerLinkNote(peerId, args) {
+          assertLive();
+          args.signal?.throwIfAborted();
+          await invokeSdk('peers.setPeerLinkNote', () => undefined, peerId, args);
+        },
+        async reconnectPeer(peerId, args) {
+          assertLive();
+          args?.signal?.throwIfAborted();
+          return invokeSdk('peers.reconnectPeer', undefined, peerId, args) as Promise<PluginPeerLink[]>;
+        },
+        async list(args) {
+          assertLive();
+          args?.signal?.throwIfAborted();
+          return invokeSdk('peers.list', undefined, args) as ReturnType<ZccPluginApi['sdk']['peers']['list']>;
+        },
+        async call(peerId, method, body, args) {
+          assertLive();
+          args?.signal?.throwIfAborted();
+          return invokeSdk('peers.call', undefined, { peerId, method, body, ...args });
+        },
+        handle(_method, _handler) {
+          assertLive();
         }
       },
       threads: {
@@ -611,6 +743,12 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
           }
           return options.loadProviderModels(args);
         }
+      },
+      harnessRouting: {
+        descriptors: async (input) => invokeSdk('harnessRouting.descriptors', () => [], input) as Awaited<ReturnType<ZccPluginApi['sdk']['harnessRouting']['descriptors']>>,
+        read: async (scope) => invokeSdk('harnessRouting.read', () => null, scope) as Awaited<ReturnType<ZccPluginApi['sdk']['harnessRouting']['read']>>,
+        write: async (scope, value) => { await invokeSdk('harnessRouting.write', () => undefined, scope, value); },
+        check: async (scope, value) => invokeSdk('harnessRouting.check', () => ({ ok: true }), scope, value) as Awaited<ReturnType<ZccPluginApi['sdk']['harnessRouting']['check']>>
       },
       experimental_desktopBrowsers: {
         listInstances: (input) => invokeSdk('experimental_desktopBrowsers.listInstances', undefined, input) as ReturnType<ZccPluginApi['sdk']['experimental_desktopBrowsers']['listInstances']>,
@@ -873,8 +1011,10 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
 
   const harness: FakePluginHarness = {
     rpc,
+    backups,
     settings,
     kv,
+    storageEpoch: 0,
     published,
     schedules,
     extraSkillRoots,

@@ -75,10 +75,10 @@ export function createKitReader(kitDir: string): KitReader {
 }
 
 /** Doc files by path, with `zcc-kit/…` falling back to the kit when the doc has no such file. */
-export function docPageReader(store: DesignDocStore, docId: string, kit: KitReader): (path: string) => PageSource | null {
+export function docPageReader(store: DesignDocStore, docId: string, kit: KitReader, kind: 'doc' | 'template' = 'doc'): (path: string) => PageSource | null {
   return (path) => {
     try {
-      const file = store.readFile(docId, path);
+      const file = store.readFile(docId, path, kind);
       return { path: file.path, kind: file.kind, content: file.content, encoding: file.encoding, revision: file.revision };
     } catch (error) {
       if (!(error instanceof DesignDocError) || (error.code !== 'not_found' && error.code !== 'invalid')) throw error;

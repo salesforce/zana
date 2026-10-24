@@ -63,6 +63,7 @@ beforeEach(() => {
   h.ui.settingsTab = 'global';
   h.ui.selectedProjectId = 'selected';
   h.ui.focusedProjectId = null;
+  h.peersVisible = false;
   h.ui.settingsAnchor = null;
   vi.clearAllMocks();
 });
@@ -311,5 +312,13 @@ describe('focused Settings navigation', () => {
     h.ui.selectedProjectId = null;
     mount();
     expect(screen.getByRole('link', { name: 'Project settings' }).getAttribute('href')).toBe('/settings/project');
+  });
+});
+
+describe('SettingsPane Peers navigation', () => {
+  it('always shows the Peers row', () => {
+    mount();
+    expect(screen.getByTestId('settings-nav-peers')).toBeTruthy();
+    expect(screen.getByTestId('settings-nav-machines')).toBeTruthy();
   });
 });

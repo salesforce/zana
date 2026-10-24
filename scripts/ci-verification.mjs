@@ -29,6 +29,8 @@ export function boundarySpecs(paths) {
     // OBL-004: the native tool policy relay, hook route and runtime channel. 2.3.4 shipped
     // denying every Claude PTY tool call because no spec drove this path.
     if (/native-tool|harness\/(claude\/hooks|codex\/provider)|services\/mcp\/mcp-server|utility-entry|runtime-supervisor|fixtures\/plugins\/platform-hooks-probe/.test(path)) add('native-tool-policy-pty', 'platform-hooks-probe-fixture');
+    // #421: StopFailure hook, resume service, wiring, IPC and the Settings section.
+    if (/harness\/claude\/(hooks|interaction-hooks)|followups\/api-error-resume|api-error-resume-wiring|ipc\/api-error-resume|ApiErrorResumeSection/.test(path)) add('api-error-resume');
     if (/build-plugin-(app|server)\.ts/.test(path)) add('plugin-authoring-live');
     if (/opencode/.test(path)) add('opencode-launch-boundary');
     if (/desktop-browser/.test(path)) add('desktop-browser-broker');
@@ -164,7 +166,12 @@ export function runVerification(args, env, io = { execute: execFileSync, read: r
     io.log('Changed production statements and branches meet the 80% coverage floor.');
   } else {
     const specs = boundarySpecs([...changes.keys()]);
-    if (specs.length) io.execute('pnpm', ['test:e2e', '--', ...specs], { stdio: 'inherit' });
+    // Broad branches select more serial cases than one runner finishes; CI splits them by spec file.
+    const shard = env.CI_E2E_SHARD;
+    if (shard !== undefined && !/^[1-9]\d*\/[1-9]\d*$/.test(shard)) { io.error(`Invalid CI_E2E_SHARD: ${shard}`); return 1; }
+    // A shard can draw no spec file when few specs are affected; the other shards still run them.
+    const sharding = shard ? [`--shard=${shard}`, '--pass-with-no-tests'] : [];
+    if (specs.length) io.execute('pnpm', ['test:e2e', '--', ...specs, ...sharding], { stdio: 'inherit' });
     else io.log('No Electron production boundary changed.');
   }
   return 0;

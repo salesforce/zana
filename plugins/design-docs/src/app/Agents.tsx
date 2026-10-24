@@ -3,7 +3,7 @@ import { useZccNavigate, type ZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { AtSign, Bot, ChevronDown, Sparkles, Unlink } from 'lucide-react';
 import { AGENT_ACTIONS, agentActionById, buildAgentPrompt, MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
 import type { DesignDocDetail, ThreadRole } from '../shared/contract.js';
-import { errorMessage, toast, useApi } from './api.js';
+import { defaultAgentProject, errorMessage, toast, useApi } from './api.js';
 import { useProjects } from './hooks.js';
 import { actionIcon, EmptyState, IconButton, Popover, Spinner, TimeAgo } from './ui.js';
 
@@ -151,7 +151,7 @@ export function AskAgentButton({
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const needsProject = !doc.projectId;
   const projectOptions = projects.data ?? [];
-  const chosenProject = needsProject ? projectId || projectOptions[0]?.id || '' : doc.projectId!;
+  const chosenProject = needsProject ? projectId || defaultAgentProject(projectOptions) || '' : doc.projectId!;
 
   useEffect(() => {
     if (!request) return;

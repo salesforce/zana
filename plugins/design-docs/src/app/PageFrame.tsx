@@ -27,7 +27,7 @@ import {
 import { escapeAttribute, prependToHead } from '../shared/html-scan.js';
 import { MAX_FILES_PER_DOC } from '../shared/limits.js';
 import { MAX_RPC_PAYLOAD_BYTES, renderIsStale, scriptJson, withFetched, type PageRenderReport, type RenderedPage } from '../shared/page.js';
-import { errorMessage, toast, useApi } from './api.js';
+import { errorMessage, toast, useApi, type DocKind } from './api.js';
 import { readThemeTokens, themedHtml } from './content.js';
 import type { PreviewFile, PreviewHandle } from './FilePreview.js';
 import { IconButton, Popover, Spinner } from './ui.js';
@@ -160,7 +160,8 @@ export function PageFrame({
   onOpenPath,
   onQuote,
   onAskAbout,
-  handleRef
+  handleRef,
+  kind
 }: {
   docId: string;
   file: PreviewFile;
@@ -172,6 +173,7 @@ export function PageFrame({
   onQuote?(text: string): void;
   onAskAbout?(text: string): void;
   handleRef?: MutableRefObject<PreviewHandle | null>;
+  kind?: DocKind;
 }) {
   const api = useApi();
   const path = file.path;
@@ -230,7 +232,7 @@ export function PageFrame({
     }
     setTooLarge(false);
     setBusy(true);
-    api.renderPage(docId, { path, draft: draftText ?? undefined }).then(
+    api.renderPage(docId, { path, draft: draftText ?? undefined }, kind).then(
       (page) => {
         if (id !== seq.current) return;
         const config: PageConfig = {
@@ -252,7 +254,7 @@ export function PageFrame({
         setBusy(false);
       }
     );
-  }, [api, docId, path, draftText, renderKey, nonce]);
+  }, [api, docId, path, draftText, renderKey, nonce, kind]);
 
   // Re-render when the doc changes under the page, once per change.
   const retried = useRef('');
@@ -376,7 +378,7 @@ export function PageFrame({
         const queued = fetches.add(async () => {
           let found: PageFile | null = null;
           try {
-            found = await api.readPageFile(docId, message.path);
+            found = await api.readPageFile(docId, message.path, kind);
           } catch {
             found = null;
           }

@@ -15,6 +15,7 @@ import { startStaticHost } from './static-host.js';
 import { createRuntimeDiagnostics, diagnosticRuntimeLabel } from './services/diagnostics/runtime-stalls.js';
 import { toBrowserProjectSummaries } from './browser-bootstrap.js';
 import { createProductHttpContext } from './http/product-context.js';
+import { consumePeerBootKey } from './services/peers/protected-key.js';
 import type { ProductHub } from './http/product-hub.js';
 import { DEFAULT_DEV_APP_PORT, serverPortFromEnv } from './http/ports.js';
 import { SERVER_RUNTIME_PROTOCOL_VERSION, type ServerRuntimeInbound } from '@zana-ai/zcc-contracts/runtime';
@@ -59,6 +60,7 @@ const parentPort: ParentPortLike = utilityParentPort;
 const uiSendSecret = process.env.ZCC_PRODUCT_SERVER_CREDENTIAL;
 retainProductServerCredential(uiSendSecret);
 delete process.env.ZCC_PRODUCT_SERVER_CREDENTIAL;
+const peerKeyProvider = consumePeerBootKey();
 
 let close: (() => Promise<void>) | null = null;
 let version = '';
@@ -108,10 +110,12 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
       const product = createProductHttpContext({
         dataDir: message.dataDir,
         uiSendSecret,
+        peerKeyProvider,
         origins: { serverPort: preferredPort, devAppPort: DEFAULT_DEV_APP_PORT },
         onLibraryChanged: () => parentPort.postMessage({ type: 'library-changed', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION }),
         onProjectsChanged: () => parentPort.postMessage({ type: 'projects-changed', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION }),
-        projects: projects ?? undefined
+        projects: projects ?? undefined,
+        projectSettings: projectSettings ?? undefined
       });
       productHub = product.hub;
       productContext = product;
@@ -218,6 +222,8 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
       runtimeDatabase = null;
       await close?.();
       close = null;
+      productContext?.dispose();
+      peerKeyProvider.dispose();
       parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, message: error instanceof Error ? error.message : String(error) });
     }
   }
@@ -644,6 +650,7 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
     diagnostics.stop();
     plugins?.stop();
     await close?.();
+    peerKeyProvider.dispose();
     runtimeDatabase?.close();
     parentPort.postMessage({ type: 'stopped', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION });
     process.exit(0);

@@ -12,6 +12,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { homedir, hostname, tmpdir } from 'node:os';
 import { basename, join, posix, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import * as tinynod from './tinynod-pre-push-review.mjs';
 
 const ZERO_OID = /^0+$/;
 const GITHUB_REPOSITORY = 'salesforce/zana';
@@ -596,9 +597,10 @@ function prepareSlackAssets(snapshot, run, log, mode) {
   if (assets.status !== 0) throw new Error('snapshot Slack runtime asset preparation failed');
 }
 
-export function runFullVerification({ oid, root = process.cwd(), run = spawnCommand, log = console.log, env = process.env, cacheRoot }) {
+export function runFullVerification({ oid, root = process.cwd(), run = spawnCommand, log = console.log, env = process.env, cacheRoot, review }) {
   const time = createPhaseTimer({ env, log });
   return withSnapshot({ oid, mode: 'full', root, run, log, env, time, cacheRoot }, (snapshot) => {
+    review?.start(snapshot, oid);
     time('slack-assets', () => prepareSlackAssets(snapshot, run, log, 'full'));
     log('pre-push: full (est. verify:full)');
     const result = time('verify:full', () => run('pnpm', ['verify:full'], { cwd: snapshot, stdio: 'inherit' }));
@@ -612,10 +614,11 @@ function guardTests(snapshot, run) {
   return result.stdout.trim().split('\n').filter(Boolean).sort();
 }
 
-export function runFastVerification({ oid, base, paths = [], root = process.cwd(), run = spawnCommand, log = console.log, env = process.env, cacheRoot }) {
+export function runFastVerification({ oid, base, paths = [], root = process.cwd(), run = spawnCommand, log = console.log, env = process.env, cacheRoot, review }) {
   if (!base) throw new Error('no base object available for fast verification');
   const time = createPhaseTimer({ env, log });
   return withSnapshot({ oid, mode: 'fast', root, run, log, env, time, cacheRoot }, (snapshot) => {
+    review?.start(snapshot, oid);
     log('pre-push: fast (est. typecheck)');
     const typecheck = time('typecheck', () => run('pnpm', ['run', 'typecheck'], { cwd: snapshot, stdio: 'inherit' }));
     if (typecheck.status !== 0) throw new Error('verification failed: pnpm run typecheck');
@@ -643,43 +646,216 @@ export function runFastVerification({ oid, base, paths = [], root = process.cwd(
   });
 }
 
-export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, root = process.cwd(), log = console.log, error = console.error, select = selectPush, verify = runFullVerification, fastVerify = runFastVerification, run = spawnCommand } = {}) {
+const REVIEW_FINDINGS_SHOWN = 10;
+const DOCS_ONLY_REASON = 'verified inert prose only';
+
+function describeFinding(finding) {
+  if (!finding || typeof finding !== 'object') return `  [unknown] ${String(finding)}`;
+  const place = [finding.filePath ?? finding.file ?? finding.path, finding.lineNumber ?? finding.line].filter((part) => part !== undefined && part !== null).join(':');
+  const text = finding.comment ?? finding.title ?? finding.message ?? '';
+  return `  [${finding.severity ?? 'unknown'}] ${place ? `${place} ` : ''}${String(text).split('\n')[0]}`.trimEnd();
+}
+
+/**
+ * Advisory tinynod review of the pushed commit. Returns a session the
+ * verifiers start inside the snapshot, or null when the review is off, not
+ * applicable, or cannot run. Nothing here can fail or block a push: every
+ * problem is logged and the mandatory verification proceeds unchanged.
+ */
+export function prepareTinynodReview({ tuples, selection, root, env = process.env, aliases = {}, checks, log = console.log, error = console.error, adapter = {} }) {
+  const a = { ...tinynod, ...adapter };
+  try {
+    const enablement = a.resolveEnablement({ env, readConfig: () => a.readGitEnablement(root, { env }) });
+    if (enablement.warning) error(`pre-push: tinynod review: ${enablement.warning}`);
+    if (!enablement.enabled) return null;
+    if (selection.action === 'abort') return null;
+    if (selection.action === 'skip') {
+      log(`pre-push: tinynod review skipped: ${selection.reason === DOCS_ONLY_REASON ? 'docs-only push (no snapshot)' : selection.reason}`);
+      return null;
+    }
+    const target = a.deriveReviewTarget(tuples, checks);
+    if (target.skip) {
+      log(`pre-push: tinynod review skipped: ${target.skip}`);
+      return null;
+    }
+    const version = a.checkTinynodVersion({ env });
+    if (!version.ok) {
+      log(`pre-push: tinynod review skipped: ${version.reason}`);
+      return null;
+    }
+    const common = gitOk(['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: root, env: withoutGitRouting(env) });
+    if (!common) {
+      log('pre-push: tinynod review skipped: no git common directory');
+      return null;
+    }
+    const lock = a.acquireReviewLock(common);
+    if (!lock) {
+      log('pre-push: tinynod review skipped: another review is running for this repository');
+      return null;
+    }
+    const developerOrigin = gitOk(['remote', 'get-url', 'origin'], { cwd: root, env: withoutGitRouting(env) });
+    return createReviewSession({ a, target, root, common, lock, developerOrigin, env: a.withRepoIdentityEnv(env, aliases), log, error });
+  } catch (cause) {
+    error(`pre-push: tinynod review unavailable: ${cause.message}`);
+    return null;
+  }
+}
+
+// Stops a review's process group and removes its capture files without waiting.
+function stopReview(review) {
+  try { process.kill(-review.child?.pid, 'SIGKILL'); } catch { /* already exited */ }
+  rmSync(review.dir, { recursive: true, force: true });
+}
+
+// Prints the verdict and findings, then records the review's history.
+function reportReview({ a, outcome, target, common, log, error }) {
+  const verdict = a.classifyReview({ ...outcome, base: target.base });
+  log(`pre-push: tinynod review (advisory) ${verdict.status}: ${verdict.message}`);
+  const findings = verdict.findings ?? [];
+  for (const finding of findings.slice(0, REVIEW_FINDINGS_SHOWN)) log(describeFinding(finding));
+  if (findings.length > REVIEW_FINDINGS_SHOWN) log(`  ... ${findings.length - REVIEW_FINDINGS_SHOWN} more`);
+  if (!verdict.payload) return;
+  const entry = a.ledgerEntryFor({ payload: verdict.payload, oid: target.oid, base: target.base });
+  if (entry) a.recordAndPruneHistory({ commonDir: common, entry, warn: error });
+}
+
+function createReviewSession({ a, target, root, common, lock, developerOrigin, env, log, error }) {
+  const cleanup = a.installAbortCleanup();
+  cleanup.setLock(lock);
+  let review = null;
+  let tree = null;
+  const dropTree = () => {
+    if (!tree) return;
+    cleanup.untrack(tree);
+    rmSync(tree, { recursive: true, force: true });
+    tree = null;
+  };
+  const discardReview = () => {
+    if (!review) return;
+    cleanup.cleanup();
+    review = null;
+  };
+  let finished = false;
+  const close = () => {
+    finished = true;
+    dropTree();
+    cleanup.dispose();
+    lock.release();
+  };
+  return {
+    // The same push can verify twice (a lost snapshot lock re-verifies in a
+    // fresh clone), so a second start replaces the first review. The snapshot
+    // only marks when verification begins; the review does not run in it.
+    start(_snapshot, oid) {
+      if (finished || oid !== target.oid) return;
+      try {
+        if (review) {
+          cleanup.untrack(review.dir);
+          stopReview(review);
+        }
+        dropTree();
+        tree = a.createReviewTree({ root, oid: target.oid, env });
+        cleanup.track(tree);
+        const slotOrigin = gitOk(['remote', 'get-url', 'origin'], { cwd: tree, env: withoutGitRouting(env) });
+        review = a.startReview({ base: target.base, cwd: tree, env: a.withRepoIdentityEnv(env, {}, { developerOrigin, slotOrigin }) });
+        cleanup.setChild(review.child);
+        cleanup.track(review.dir);
+        log(`pre-push: tinynod review started (base ${target.base.slice(0, 12)}, head ${target.oid.slice(0, 12)})`);
+      } catch (cause) {
+        error(`pre-push: tinynod review could not start (base ${target.base.slice(0, 12)}, head ${target.oid.slice(0, 12)}): ${cause.message}`);
+        review = null;
+      }
+    },
+    // Verification failed: the review no longer matters.
+    abort() {
+      if (finished) return;
+      discardReview();
+      close();
+    },
+    async finish() {
+      if (finished) return;
+      try {
+        if (!review) return;
+        // Verification ran in a blocking call; let pending child events land
+        // before the budget is judged.
+        await new Promise((resolveTick) => setImmediate(resolveTick));
+        reportReview({ a, outcome: await a.finishReview(review), target, common, log, error });
+      } catch (cause) {
+        error(`pre-push: tinynod review failed to finish (base ${target.base.slice(0, 12)}, head ${target.oid.slice(0, 12)}): ${cause.message}`);
+      } finally {
+        review = null;
+        close();
+      }
+    },
+  };
+}
+
+export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, root = process.cwd(), log = console.log, error = console.error, select = selectPush, verify = runFullVerification, fastVerify = runFastVerification, run = spawnCommand, review = () => null } = {}) {
   if (!remoteUrl) {
     error('pre-push: Git did not provide remote URL; aborting push.');
     return 1;
   }
   const tuples = parseTuples(input);
   const runGit = (args) => gitOk(args, { cwd: root });
-  let selection = select({
-    tuples,
-    remoteUrl,
-    aliases: configuredAliases(run),
+  const aliases = configuredAliases(run);
+  const checks = {
     hasObject: (object) => runGit(['cat-file', '-e', `${object}^{commit}`]) !== null,
     mergeBase: (left, right) => runGit(['merge-base', left, right]),
     isAncestor: (left, right) => runGit(['merge-base', '--is-ancestor', left, right]) !== null,
+  };
+  let selection = select({
+    tuples,
+    remoteUrl,
+    aliases,
+    ...checks,
     changed: (base, oid) => changedPaths(base, oid, runGit),
   });
   log(`pre-push: ${selection.action}; ${selection.reason}`);
   if (selection.paths?.length) log(`pre-push: selected paths:\n${selection.paths.map((path) => `  ${path}`).join('\n')}`);
+  const session = selection.action === 'abort' ? null : review({
+    tuples, selection, root, aliases, log, error,
+    checks: { ...checks, remoteVerified: githubRepository(remoteUrl, aliases) !== null },
+  });
+  const withReview = session ? { review: session } : {};
   if (selection.action === 'abort') return 1;
   if (selection.action === 'skip') return 0;
   const time = createPhaseTimer({ log });
   try {
     if (selection.action === 'fast') {
-      time('total', () => fastVerify({ oid: selection.oid, base: selection.base, paths: selection.paths, root, log, run }));
+      time('total', () => fastVerify({ oid: selection.oid, base: selection.base, paths: selection.paths, root, log, run, ...withReview }));
       return 0;
     }
     const oids = selection.oids ?? (selection.oid ? [selection.oid] : [...new Set((tuples ?? [])
       .filter((tuple) => !ZERO_OID.test(tuple.localOid)).map((tuple) => tuple.localOid))]);
     if (!oids.length) throw new Error('no pushed object available for full verification');
-    time('total', () => { for (const oid of oids) verify({ oid, root, log }); });
+    time('total', () => { for (const oid of oids) verify({ oid, root, log, ...withReview }); });
     return 0;
   } catch (cause) {
+    session?.abort();
     error(`pre-push: ${cause.message}`);
     return 1;
   }
 }
 
+/**
+ * Runs the sync push policy, then waits for the advisory review (if one was
+ * started) and reports it. The exit code is decided before the review is
+ * awaited and is never changed by it.
+ */
+export async function runPrePushWithReview(options = {}) {
+  const sessions = [];
+  const prepare = options.review ?? prepareTinynodReview;
+  const code = runPrePush({ ...options, review: (context) => {
+    const session = prepare(context);
+    if (session) sessions.push(session);
+    return session;
+  } });
+  for (const session of sessions) {
+    try { await session.finish(); } catch (cause) { (options.error ?? console.error)(`pre-push: tinynod review failed to finish: ${cause.message}`); }
+  }
+  return code;
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  process.exitCode = runPrePush({ remoteUrl: process.argv[3] });
+  process.exitCode = await runPrePushWithReview({ remoteUrl: process.argv[3] });
 }

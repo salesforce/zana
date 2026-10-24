@@ -45,7 +45,7 @@ there, and do not create a doc or offer to write one.
 | --- | --- |
 | `design_doc_list` | Find docs. Defaults to active docs of this project plus global docs. `query` searches titles, summaries, tags and contents. |
 | `design_doc_read` | Without `path`: manifest, open comments and the entry file. With `path`: one file and its revision. `includeAll: true` returns every text file. For HTML pages it adds the page check and what the panel saw when it last ran the page. |
-| `design_doc_create` | New doc from `files` or a `template`: `technical`, `product`, `adr`, `api` or `blank` for written docs, `report` or `html-design` for a site. `entryPath` picks the file it opens on. |
+| `design_doc_create` | New doc from `files` or a `template` key returned by `design_doc_templates_list`. `entryPath` picks the file it opens on. |
 | `design_doc_write` | Change one file: `edits` (preferred), `content` (whole file, creates it), `delete`, or `renameTo`. Writing an HTML page returns its page check. |
 | `design_doc_update` | Title, summary, status, tags, entry file, `alternativeTo` (the doc this one is a competing proposal to; `""` detaches it). |
 | `design_doc_comment` | Add a comment, reply in one's thread (`replyTo`), or `resolve` / `reopen` one by id (`body` becomes a reply). |
@@ -61,6 +61,17 @@ files into a doc and `export --out` writes a doc out as a site (see
 
 A doc reference is its id or its slug. A slug only names a doc of this project
 or a global one; use the id to reach another project's doc.
+
+## Templates
+
+Call `design_doc_templates_list` before `design_doc_create`. Pass a returned
+`key` as `template`; do not guess a template key. Templates are personal to
+this machine, shared across projects, and never peer-synced. The user manages
+them from **Templates** in the Design Docs workbench: create, edit, duplicate,
+export, import, delete, and restore built-ins.
+
+An export is a JSON template bundle. Import accepts that bundle only. Templates
+are not design docs: agents do not list or receive them as project context.
 
 ## Workflow
 

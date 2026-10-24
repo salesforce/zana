@@ -2542,6 +2542,40 @@ describe('product HTTP plugins', () => {
     await expect(full.json()).resolves.toEqual(settings);
   });
 
+  it('maps expected plugin RPC domain errors to 4xx with a code and leaves other failures legacy', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-rpc-errors-'));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    const domain = (code: string) => Object.assign(new Error(`domain ${code}`), { code });
+    server.ctx.plugins = {
+      snapshot: () => [],
+      callRpc: async (_id: string, method: string) => {
+        if (method === 'statusOnly') throw Object.assign(new Error('too fancy'), { status: 422 });
+        if (method === 'boom') throw new Error('database exploded');
+        if (method === 'unknown') throw new Error('unknown rpc demo.unknown');
+        if (method === 'nonError') throw 'plain string';
+        throw domain(method);
+      }
+    } as never;
+    const call = async (method: string) => {
+      const response = await fetch(`${server.url}api/v1/plugin-apps/demo/rpc`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ method })
+      });
+      return { status: response.status, body: await response.json() };
+    };
+    await expect(call('invalid')).resolves.toEqual({ status: 400, body: { error: 'domain invalid', code: 'invalid' } });
+    await expect(call('forbidden')).resolves.toEqual({ status: 403, body: { error: 'domain forbidden', code: 'forbidden' } });
+    await expect(call('not_found')).resolves.toEqual({ status: 404, body: { error: 'domain not_found', code: 'not_found' } });
+    await expect(call('conflict')).resolves.toEqual({ status: 409, body: { error: 'domain conflict', code: 'conflict' } });
+    await expect(call('limit')).resolves.toEqual({ status: 413, body: { error: 'domain limit', code: 'limit' } });
+    await expect(call('statusOnly')).resolves.toEqual({ status: 422, body: { error: 'too fancy', code: 'invalid' } });
+    // Unexpected failures keep the legacy mapping and expose no code.
+    await expect(call('boom')).resolves.toEqual({ status: 400, body: { error: 'database exploded' } });
+    await expect(call('unknown')).resolves.toEqual({ status: 404, body: { error: 'unknown rpc demo.unknown' } });
+    await expect(call('nonError')).resolves.toEqual({ status: 400, body: { error: 'plain string' } });
+  });
+
   it('calls plugin RPC and reads or writes settings', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-rpc-'));
     server = await startTestProductServer({

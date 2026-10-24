@@ -190,6 +190,37 @@ export function harnessFamilyOf(p: LaunchProfileId): HarnessFamily | null {
 }
 
 /**
+ * The ONE table between a harness family and the thread provider id that runs
+ * it. Both directions ({@link threadProviderIdForHarnessFamily} and
+ * {@link harnessFamilyForThreadProviderId}) derive from it so they cannot drift.
+ */
+export const THREAD_PROVIDER_ID_BY_HARNESS_FAMILY = Object.freeze({
+  claude: 'claude-code',
+  cursor: 'acp-cursor',
+  codex: 'codex',
+  pi: 'pi',
+  opencode: 'acp-opencode',
+  grok: 'acp-grok',
+  mastracode: 'acp-mastracode',
+  afcode: 'acp-afcode'
+} as const satisfies Record<HarnessFamily, string>);
+
+/** Thread provider id for a harness family, or `null` for an unknown family. */
+export function threadProviderIdForHarnessFamily(family: string): string | null {
+  return Object.prototype.hasOwnProperty.call(THREAD_PROVIDER_ID_BY_HARNESS_FAMILY, family)
+    ? THREAD_PROVIDER_ID_BY_HARNESS_FAMILY[family as HarnessFamily]
+    : null;
+}
+
+/** Harness family a thread provider id runs, or `null` (e.g. `fake`, `shell`). */
+export function harnessFamilyForThreadProviderId(providerId: string): HarnessFamily | null {
+  for (const [family, id] of Object.entries(THREAD_PROVIDER_ID_BY_HARNESS_FAMILY) as Array<[HarnessFamily, string]>) {
+    if (id === providerId) return family;
+  }
+  return null;
+}
+
+/**
  * Provider capabilities — what a profile can do. Drives conditional UI
  * (showing summarize / resume / auto-close controls) and what command-line
  * flags / hooks we can wire up at spawn. Grounded in CURRENT usage — see the

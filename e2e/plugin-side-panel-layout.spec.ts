@@ -45,13 +45,18 @@ test('plugin pages share the rail, tabs, resizing and maximize layout across glo
       const rail = host.getByRole('toolbar', { name: 'Side panel' });
       await expect(rail).toBeVisible();
       const main = host.locator(':scope > .split-plugin-main');
-      const hostBox = (await host.boundingBox())!;
-      const mainBox = (await main.boundingBox())!;
-      const railBox = (await rail.boundingBox())!;
-      expect(Math.abs(mainBox.x + mainBox.width - railBox.x)).toBeLessThan(2);
-      expect(railBox.width).toBeGreaterThanOrEqual(35.5);
-      expect(railBox.width).toBeLessThanOrEqual(38);
-      expect(Math.abs(railBox.x + railBox.width - hostBox.x - hostBox.width)).toBeLessThan(2);
+      // The previous page's host can still match right after the route change and be replaced mid-measurement (a null
+      // box on slow runners), so measure all three together until the new page's layout holds.
+      let hostBox!: { x: number; y: number; width: number; height: number };
+      await expect(async () => {
+        const [h, m, r] = await Promise.all([host.boundingBox(), main.boundingBox(), rail.boundingBox()]);
+        expect(h && m && r).toBeTruthy();
+        expect(Math.abs(m!.x + m!.width - r!.x)).toBeLessThan(2);
+        expect(r!.width).toBeGreaterThanOrEqual(35.5);
+        expect(r!.width).toBeLessThanOrEqual(38);
+        expect(Math.abs(r!.x + r!.width - h!.x - h!.width)).toBeLessThan(2);
+        hostBox = h!;
+      }).toPass({ timeout: 10_000 });
       await captureElectronScreenshot(app.electron, win, testInfo.outputPath(`page-${index}-rail.png`));
 
       await host.getByTestId('plugin-panel-secondary-show').click();

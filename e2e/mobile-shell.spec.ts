@@ -140,7 +140,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
         usedTokens: 47_000, modelContextWindow: 100_000, estimated: false
       } } });
     });
-    await phone.route('**/api/v1/system/voice-status', (route) => route.fulfill({ json: { enabled: true } }));
+    await phone.route('**/api/v1/system/voice-status', (route) => route.fulfill({ json: { enabled: true, reason: null } }));
     const wsConnected = phone.waitForEvent('websocket', {
       predicate: (socket) => socket.url().endsWith('/ws')
     });

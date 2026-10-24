@@ -73,7 +73,8 @@ import { onOrchestratorIdle } from './coordinator-idle.js';
 import { finalSessionStats } from './session-stats-cache.js';
 import { applyPluginAgentCapabilities } from '@zana-ai/zcc-server/services/extensions/plugin-agent-sync';
 import { runtimeHostAvailable, setRuntimeHostSupervisor } from '@zana-ai/zcc-host-daemon/harness/execution-environment';
-import { IPC, type PluginViewTarget, type ThreadViewTarget } from '@zana-ai/zcc-desktop-contract';
+import { IPC, resolveDeepLinkChannel, type PluginViewTarget, type ThreadViewTarget } from '@zana-ai/zcc-desktop-contract';
+import { createDeepLinkHost, registerDeepLinkIpc, registerDeepLinkScheme, wantsSingleInstanceLock } from './deep-link-host.js';
 import { signUiSend } from '@zana-ai/zcc-server/http/ui-send-proof';
 import { MenubarThreadOpenResultSchema, MenubarThreadsListResultSchema, type SquadMemberStatus } from '@zana-ai/zcc-contracts/runtime';
 import { createDesktopBrowserViewManager } from './desktop-browser-view.js';
@@ -259,8 +260,10 @@ import {
 } from './window/thread-view-windows.js';
 import { createThreadViewHost } from './window/thread-view-host.js';
 import { findUnscopedWindow, isUnscopedRegistration } from './window/main-window-registry.js';
+import { createWindowsTitleBarOverlays } from './window/titlebar-overlay.js';
 import { registerPluginViewIpc, registerThreadViewIpc } from './ipc/windows.js';
 import { showApprovalSheet } from './window/approval-sheet.js';
+import { startPeerUsePrompts } from './ipc/peer-use-prompts.js';
 import { createPluginApprovalHandler } from './ipc/plugin-approvals.js';
 import { listPluginAppsFromProductServer } from './ipc/plugin-apps-loopback.js';
 import { createLoopbackPluginCommands } from './control/plugin-commands-loopback.js';
@@ -339,6 +342,7 @@ import { Overseer, type OverseerToolEvent } from '@zana-ai/zcc-server/services/f
 import { OverseerAuditRing } from '@zana-ai/zcc-server/services/followups/overseer-audit';
 import { ContentScreen, type ContentScreenEvent, buildWarningText } from './window/content-screen.js';
 import { HeartbeatService } from '@zana-ai/zcc-server/services/followups/heartbeat';
+import { createApiErrorResume, handleApiErrorStop } from './api-error-resume-wiring.js';
 import { LocalExtensionWatcher } from '@zana-ai/zcc-server/services/extensions/local-extension-watcher';
 import { AutonomousRunSupervisor, AUTONOMOUS_DEFAULTS } from '@zana-ai/zcc-server/services/agents/autonomous-run-supervisor';
 import { AutoCloseIdleService } from '@zana-ai/zcc-server/services/followups/auto-close-idle';
@@ -907,6 +911,18 @@ function setActiveProjectSkillsWatcher(
  * thread may have no project, so it is never the unscoped main window either.
  */
 const windows = new Map<number, { win: BrowserWindow; projectId?: string; view?: PluginViewTarget; threadView?: ThreadViewTarget }>();
+// Windows caption buttons (minimize / maximize / close) follow the effective
+// theme: new windows take `current()`, open ones are re-coloured on a Theme
+// setting change (ipc/config.ts) and on OS appearance changes (`bind()`).
+const titleBarOverlays = createWindowsTitleBarOverlays({
+  get platform() { return process.platform; },
+  windows,
+  theme: resolveTheme,
+  // Lazy: host-loading unit tests mock electron without these.
+  electron: () => ({ nativeTheme, systemPreferences }),
+  logError: logMainError
+});
+let stopTitleBarOverlayTheme: (() => void) | null = null;
 const boundsControllers = new Map<number, ReturnType<typeof createBoundsStateController>>();
 const rendererReadiness = new RendererReadiness();
 
@@ -1986,6 +2002,8 @@ const heartbeat = new HeartbeatService({
   setTimer: (fn, ms) => setTimeout(fn, ms),
   clearTimer: (handle) => clearTimeout(handle)
 });
+/** Resume after API errors by user rule (Settings → Agents). Absent config = off. */
+const apiErrorResume = createApiErrorResume({ getConfig: () => store.getConfig(), ptys, agentStatus, inboxStore, suppressesInteractiveBlocked, logMainError });
 /**
  * Autonomous team runs: orchestrator + workers driven toward a goal until the
  * orchestrator declares done (it ends its own session via
@@ -2202,7 +2220,8 @@ const autoCloseIdle = new AutoCloseIdleService({
   isFavorite: (sessionId) => {
     const s = ptys.getSession(sessionId);
     if (!s) return false;
-    return favoriteAgentKeys.has(s.claudeSessionId ?? sessionId);
+    // An agent that rests on an API error hasn't finished; spare it until its next turn.
+    return favoriteAgentKeys.has(s.claudeSessionId ?? sessionId) || apiErrorResume.restedOnApiError(sessionId);
   },
   now: () => Date.now(),
   // Expected close ⇒ exit code 0 (this was the app's decision, not a crash).
@@ -3563,6 +3582,8 @@ const threadViews = createThreadViewHost({
 let loudSinceFocus = 0;
 /** Disposer for the once-registered `inboxStore.onAppended` loud-tier subscription; released in before-quit (Rule 3). */
 let offLoudInboxAppended: (() => void) | null = null;
+/** Stops the once-started core stream of plugin-use approvals owed by this computer's owner; released in before-quit (Rule 3). */
+let stopPeerUsePrompts: (() => void) | null = null;
 
 function clearLoudBadge() {
   loudSinceFocus = 0;
@@ -4965,18 +4986,20 @@ export async function goalExecutionSourcePaths(
   const policy = await resolveSourcePolicy(realpath, { projectRoot: home, home: userHome, ...opts });
   const rawCandidates: string[] = [];
   // 1. Quoted paths (preserves spaces in "C:\Program Files\..." or '/path with space/...')
-  for (const m of goal.matchAll(/["'`]((?:[A-Za-z]:[/\\]|\/)[^"'`]+)["'`]/g)) {
+  for (const m of goal.matchAll(/["'`]((?:[A-Za-z]:[/\\]|\/|~\/)[^"'`]+)["'`]/g)) {
     if (m[1]) rawCandidates.push(m[1]);
   }
   // 2. Unquoted paths
-  for (const m of goal.matchAll(/(?:^|[\s(])((?:[A-Za-z]:[/\\]|\/)[^\s`'"),;:]+)/g)) {
+  for (const m of goal.matchAll(/(?:^|[\s(])((?:[A-Za-z]:[/\\]|\/|~\/)[^\s`'"),;:]+)/g)) {
     if (m[1]) rawCandidates.push(m[1]);
   }
   // 3. `@path` mentions, as the composer writes a dropped, picked or typeahead file:
   // project-relative inside the project, absolute outside it. Same policy checks below.
   rawCandidates.push(...goalMentionPaths(goal, home));
   for (const match of rawCandidates) {
-    const raw = match.trim().replace(/^[`'"(]+|[`'"),;:]+$/g, '');
+    const trimmed = match.trim().replace(/^[`'"(]+|[`'"),;:]+$/g, '');
+    // A leading `~/` names the user's HOME, which the shell would have expanded.
+    const raw = trimmed.startsWith('~/') ? join(userHome, trimmed.slice(2)) : trimmed;
     const candidates = [raw];
     if (raw.endsWith('.')) candidates.push(raw.slice(0, -1));
     for (const candidate of candidates) {
@@ -5683,6 +5706,7 @@ export async function launchTeam(
   }, team.id) as Extract<LaunchPrincipal, { kind: 'team' }>;
   const claim = await teamLifecycle.claim({
     callerPrincipalId, launchRequestId, payloadDigest,
+    retainOrchestrator: team.retainOrchestrator === true,
     capacity: { principal: runPrincipal, launched: 0 }
   });
   if (claim.outcome === 'in-progress') {
@@ -6066,16 +6090,17 @@ export async function launchTeam(
 
 export async function cancelTeamLaunch(
   callerPrincipalId: string,
-  launchRequestId: string
+  launchRequestId: string,
+  opts?: { retainOrchestrator?: boolean }
 ): Promise<Result<CancelTeamLaunchResult>> {
   if (!callerPrincipalId.trim() || !launchRequestId.trim()) {
     return { ok: false, code: 'INVALID', message: 'callerPrincipalId and launchRequestId are required' };
   }
-  let canceled = await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId);
+  let canceled = await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId, opts);
   const record = await teamLifecycle.findRequest(callerPrincipalId, launchRequestId);
   if (record?.workers.some(worker => worker.transport === 'MODERN' && !worker.capacityReleased)) {
     await reconcileModernMembers([record]);
-    canceled = await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId);
+    canceled = await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId, opts);
   }
   return canceled.ok
     ? { ok: true, value: {
@@ -6252,10 +6277,10 @@ const squadProposalServiceDeps: SquadProposalServiceDeps = {
     // Counts every owned non-terminal run, however it was started, not only runs started through squad_launch.
     activeOwnedRuns: (sessionId, projectId) => executionStore.countActiveOwned(sessionId, projectId),
     executionState: async (executionId) => (await executionStore.get(executionId))?.state,
-    launch: async ({ team, project, goal, coordinationMode, title, summary, sourcePaths }, ctx) => {
+    launch: async ({ team, project, goal, coordinationMode, title, summary, completionInboxNotice, sourcePaths }, ctx) => {
       const sourceBases = squadSourceBases();
       return launchSquad(squadNowLaunchDeps, {
-        teamId: team.id, project, slots: expandTeamSlots(team), goal, coordinationMode, title, summary,
+        teamId: team.id, project, slots: expandTeamSlots(team), goal, coordinationMode, title, summary, completionInboxNotice,
         sourceCapabilityIds: [], sourcePaths,
         goalSources: await goalExecutionSourcePaths(goal, project.path, sourceBases.home, sourceBases)
       }, ctx);
@@ -6354,7 +6379,7 @@ const squadExecutionService = new SquadExecutionService({
     const result = await getTeamLaunch(callerPrincipalId, launchRequestId);
     return result.ok ? result.value : undefined;
   },
-  cancelTeamLaunch: async (callerPrincipalId, launchRequestId) => cancelTeamLaunch(callerPrincipalId, launchRequestId),
+  cancelTeamLaunch: async (callerPrincipalId, launchRequestId, opts) => cancelTeamLaunch(callerPrincipalId, launchRequestId, opts),
   revokeTeamAuthorizations: (authorizationIds) => {
     for (const id of authorizationIds) launchAuthorization.revoke(id);
   },
@@ -6698,6 +6723,7 @@ export async function startTeamJobFromUi(
   const sources: SquadSourceProvider | undefined = sourceContext ? { kind: 'window', windowId: sourceContext.windowId } : undefined;
   return withRenewedSources(() => withProposalLaunch(proposalLaunchDeps, proposalId, projectId, (proposal, reviewedSourcePaths) => launchSquad(squadLaunchDeps, {
     teamId, project, slots, goal: originalGoal, coordinationMode, title: originalJobTitle, summary: originalSummary,
+    completionInboxNotice: true,
     sourceCapabilityIds, goalSources: discoveredGoalSources, reviewedSourcePaths
   }, {
     sources,
@@ -6821,15 +6847,6 @@ function createMainTeamProductOps() {
 }
 
 /**
- * Geometry and theme for Windows Electron titleBarOverlay.
- * Must match the CSS tokens in apps/app/src/styles/global.css:
- * --titlebar-h (44px), --bg-base (#181818), --text-muted (#a1a1aa).
- */
-export const WINDOWS_TITLEBAR_HEIGHT = 44;
-export const WINDOWS_TITLEBAR_OVERLAY_BG = '#181818';
-export const WINDOWS_TITLEBAR_OVERLAY_SYMBOL = '#a1a1aa';
-
-/**
  * Open an app window. With no `projectId` it's the full, unscoped shell (the
  * default window opened at boot and on dock-reactivate). With a `projectId` the
  * renderer locks to that one project — see `windows:openProject` and the
@@ -6908,11 +6925,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
       : process.platform === 'win32'
       ? {
           titleBarStyle: 'hidden' as const,
-          titleBarOverlay: {
-            color: WINDOWS_TITLEBAR_OVERLAY_BG,
-            symbolColor: WINDOWS_TITLEBAR_OVERLAY_SYMBOL,
-            height: WINDOWS_TITLEBAR_HEIGHT
-          }
+          titleBarOverlay: titleBarOverlays.current()
         }
       : {
           titleBarStyle: 'hidden' as const
@@ -7252,6 +7265,7 @@ function wireBridgeListeners() {
     transcriptSource.forget(sessionId);
     // Same release for the OpenCode session-id resolver's cache (Rule 5).
     heartbeat.remove(sessionId);
+    apiErrorResume.forget(sessionId);
     // Drop a session that exits while working so a dead pty can't pin the Mac
     // awake; releases (after grace) if it was the last working agent.
     keepAwake.remove(sessionId);
@@ -7639,6 +7653,16 @@ export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown
 
 function registerIpc() {
   safeHandleFromWindow(IPC.uiSend, sendQueuedMessageNow, err => { throw err; });
+  // A plugin asking to use a connection: core pushes the owed approval, main draws and signs the sheet (once, at init).
+  /* v8 ignore next -- started at built-Electron boot; startPeerUsePrompts is unit-tested */
+  stopPeerUsePrompts ??= startPeerUsePrompts({
+    secret: ensureProductServerCredential,
+    serverUrl: () => productServerUrl(),
+    listApps: () => runtimeSupervisor ? runtimeSupervisor.listPluginApps() : listPluginAppsFromProductServer(),
+    showSheet: (parent, view) => showApprovalSheet(parent, view, (options) => new BrowserWindow(options)),
+    pickParent: () => BrowserWindow.getFocusedWindow() ?? mainWindow(),
+    log: (message, error) => logMainError(message, error ?? 'peer use')
+  }).stop;
   // Plugin buttons with no thread (release actions) get a sheet main draws and signs.
   /* v8 ignore next -- registered at built-Electron boot; createPluginApprovalHandler is unit-tested */
   safeHandleFromWindow(IPC.pluginApprovals.request, createPluginApprovalHandler({
@@ -7648,6 +7672,7 @@ function registerIpc() {
   }), () => ({ approved: false as const, reason: 'unavailable' as const }));
   /* v8 ignore next -- registered at built-Electron boot; registerPluginViewIpc is unit-tested */
   registerPluginViewIpc(safeHandle, pluginViews);
+  registerDeepLinkIpc(safeHandleFromWindow, deepLinks);
   /* v8 ignore next -- registered at built-Electron boot; registerThreadViewIpc is unit-tested */
   registerThreadViewIpc(safeHandle, threadViews);
   safeHandleFromWindow(IPC.sharedClient.list, () => sharedClient.instances(), err => { throw err; });
@@ -7739,6 +7764,7 @@ function registerIpc() {
     set offLoudInboxAppended(value) { offLoudInboxAppended = value; },
     get openProjectWindow() { return openProjectWindow; },
     get overseerAudit() { return overseerAudit; },
+    get apiErrorResume() { return apiErrorResume; },
     get packAndInstallLocal() { return packAndInstallLocal; },
     get pendingWhatsNew() { return pendingWhatsNew; },
     set pendingWhatsNew(value) { pendingWhatsNew = value; },
@@ -7750,6 +7776,7 @@ function registerIpc() {
     get ptys() { return ptys; },
     get quickPrompts() { return quickPrompts; },
     get readLiveSessionStats() { return readLiveSessionStats; },
+    get refreshTitleBarOverlays() { return titleBarOverlays.refresh; },
     get registerExtensionProject() { return registerExtensionProject; },
     get reportTeamTask() { return reportTeamTask; },
     get resolveTheme() { return resolveTheme; },
@@ -7957,14 +7984,55 @@ function buildAppMenu() {
 // hazards (control-socket steal, rival scheduler, racing writes to the shared
 // JSON) apply to the dev session. The shipped (packaged) build KEEPS the gate,
 // so end users still get the single-owner guarantee.
-if (!app.isPackaged) {
+//
+// Deep links: a dev run that pins its own userData under ZCC_DATA_DIR (`pnpm dev`)
+// also takes the lock, so `pnpm dev:open-link` forwards its argv to the running
+// dev app instead of starting a second one. Locks are per-userData, so an
+// installed app and isolated E2E runs never see each other. See deep-link-host.ts.
+const deepLinkChannel = resolveDeepLinkChannel({ isPackaged: app.isPackaged, env: process.env });
+const deepLinks = createDeepLinkHost({
+  channel: deepLinkChannel,
+  logError: logMainError,
+  deliver: async (delivery) => {
+    if (!await ensureMainWindowReady()) throw new Error('main window did not become ready');
+    showMainWindow();
+    const win = unscopedWindow();
+    if (!win || win.isDestroyed() || win.webContents.isDestroyed()) throw new Error('main window is unavailable');
+    win.webContents.send(IPC.deepLinks.onLink, delivery);
+  }
+});
+const deepLinkRegistration = registerDeepLinkScheme({
+  channel: deepLinkChannel,
+  isPackaged: app.isPackaged,
+  platform: process.platform,
+  env: process.env,
+  execPath: process.execPath,
+  appEntry: process.argv[1] ? resolve(process.argv[1]) : undefined,
+  setAsDefaultProtocolClient: (scheme, execPath, args) => app.setAsDefaultProtocolClient(scheme, execPath, args),
+  log: (message) => console.warn(`[zcc] ${message}`)
+});
+if (deepLinkRegistration === 'failed') logMainError('deepLink.register', `could not register ${deepLinkChannel.scheme}://`);
+// Subscribed once at module init, never in createWindow(). macOS delivers
+// `open-url` (possibly before ready); Windows/Linux deliver argv to the first
+// process (cold start) or to `second-instance` (lock holder).
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  deepLinks.submitOsLink(url);
+});
+deepLinks.submitArgv(process.argv.slice(1));
+if (!wantsSingleInstanceLock({ isPackaged: app.isPackaged, env: process.env })) {
+  app.on('second-instance', (_event, argv) => {
+    deepLinks.submitArgv(argv);
+    showMainWindow();
+  });
   app.whenReady().then(bootstrap);
 } else if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
     // A duplicate launch (Dock, Finder, `open -a`) just surfaces the existing
-    // window instead of spawning a rival process.
+    // window instead of spawning a rival process. A link in its argv is routed.
+    deepLinks.submitArgv(argv);
     showMainWindow();
   });
   app.whenReady().then(bootstrap);
@@ -8048,6 +8116,8 @@ async function runStartupMigration(): Promise<StartupState> {
 }
 
 async function bootstrap() {
+  // Before any window (including the repair window) so none misses a flip.
+  stopTitleBarOverlayTheme ??= titleBarOverlays.bind();
   registerStartupStateIpc();
   await runStartupMigration();
 }
@@ -8536,6 +8606,7 @@ async function bootstrapNormal() {
        // A lifecycle Stop is the authoritative end of an interactive turn. The
        // tracker keeps fallback behaviour for harnesses that never send one.
        agentStatus.turnFinished(sessionId);
+       apiErrorResume.cancel(sessionId);
        void scheduler.onAgentFinished(sessionId).catch(error => logMainError('scheduler Stop', error));
       // A goal worker finishing its turn is the trigger to evaluate + branch
       // (achieved / re-spawn / escalate). No-op for non-goal sessions.
@@ -8559,6 +8630,7 @@ async function bootstrapNormal() {
         if (event?.kind === 'requested') agentStatus.inputRequested(sessionId, event.key);
         else if (event?.kind === 'resolved') agentStatus.inputResolved(sessionId, event.keys);
         else if (event?.kind === 'interrupted') agentStatus.turnFinished(sessionId);
+        else if (event?.kind === 'api-error-stop') handleApiErrorStop({ service: apiErrorResume, agentStatus, logMainError }, sessionId, event);
         return;
       }
       if (action === 'blocked') {
@@ -8576,7 +8648,10 @@ async function bootstrapNormal() {
           return;
         }
         agentStatus.markBlocked(sessionId);
-      } else agentStatus.turnStarted(sessionId);
+      } else {
+        apiErrorResume.cancel(sessionId);
+        agentStatus.turnStarted(sessionId);
+      }
       // Diagnostic: confirms the hook reached the main process. The emit to the
       // renderer is debounced (~250ms), so the red/grey dot is the real proof
       // the state landed — this line just proves the curl callback arrived.
@@ -9207,12 +9282,6 @@ async function bootstrapNormal() {
       }
     })
     .catch((err) => logMainError('startMcpServer', err));
-  // Start the Zana Mobile gateway if the user has enabled phone access. A start
-  // failure (e.g. port already held by another process) is recorded on the manager
-  // and surfaced through `mobile:status`; it must never abort boot.
-  if (store.getConfig().mobileGatewayEnabled === true) {
-    mobileGateway.start().catch((err) => logMainError('mobileGateway.start', err));
-  }
   // Bind the PTY/agent-status → renderer bridge ONCE for the process lifetime,
   // before the first window. Must not live in createWindow() (re-entrant on
   // macOS reactivate) or every reopen would double-send PTY output.
@@ -9246,7 +9315,18 @@ async function bootstrapNormal() {
     normalBootstrapStarted = false;
     throw error;
   }
+  // Start the Zana Mobile gateway if the user has enabled phone access. It must
+  // start only after ensureRendererStaticHost() has called
+  // setProductionRendererOrigin(): the gateway resolves its loopback upstream
+  // (productServerUrl) at start, and before that it falls back to :8780, which
+  // makes peer/phone connections close with 1011 after an app restart. A start
+  // failure (e.g. port already held by another process) is recorded on the manager
+  // and surfaced through `mobile:status`; it must never abort boot.
+  if (store.getConfig().mobileGatewayEnabled === true) {
+    mobileGateway.start().catch((err) => logMainError('mobileGateway.start', err));
+  }
   if (!unscopedWindow()) createWindow();
+  deepLinks.arm();
   void sharedClient.restore().catch(error => logMainError('sharedClient.restore', error));
   // Reconcile only this instance's recorded tmux sessions, never another app's
   // cc-* sessions on the shared default socket. Kill owned sessions from a
@@ -9668,6 +9748,8 @@ app.on('before-quit', (event) => {
   tray = null;
   menubar?.stop();
   menubar = null;
+  stopTitleBarOverlayTheme?.();
+  stopTitleBarOverlayTheme = null;
   templates.stop();
   quickPrompts.stop();
   promptRegistry.stop();
@@ -9719,6 +9801,8 @@ app.on('before-quit', (event) => {
   // Release the loud-tier inbox subscription (Rule 3).
   offLoudInboxAppended?.();
   offLoudInboxAppended = null;
+  stopPeerUsePrompts?.();
+  stopPeerUsePrompts = null;
   // Local tmux owns persistent inner processes. Let process teardown close our
   // client naturally; explicitly killing it emits a false terminal exit that
   // marks Team lifecycle state dead before next launch can reattach.

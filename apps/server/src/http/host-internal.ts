@@ -1,6 +1,6 @@
 import { remoteInteractionSurface } from '../services/threads/interaction-surface.js';
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { CliCallbackRequestSchema, CLI_CALLBACK_MAX_BODY_BYTES } from '@zana-ai/zcc-contracts/cli-callbacks';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { CliCallbackRequestSchema, CLI_CALLBACK_MAX_ACTIVE, CLI_CALLBACK_MAX_ACTIVE_NATIVE_TOOL, CLI_CALLBACK_MAX_BODY_BYTES, isCliNativeToolPath } from '@zana-ai/zcc-contracts/cli-callbacks';
 import { CliCallbackError } from '../services/launch/cli-callback-authority.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
@@ -23,6 +23,7 @@ import { headerValue } from './browser-request-guard.js';
 import { beginSlowJson, readJsonBody, sendJson } from './json.js';
 import { sendHostArtifactFile } from './host-artifact-response.js';
 import type { ProductHttpContext } from './product-context.js';
+import { machineIdentity } from '../../../../services/mobile-relay/machine-routes.mjs';
 import {
   invokeHostSessionTool,
   isHostSessionTool
@@ -112,6 +113,22 @@ function diagnoseEnrollUnauthorized(
   logEnrollRejection(request, check.ok ? 'not_authorized' : check.reason, claimedHost ?? (check.ok ? undefined : check.hostId));
 }
 
+/** Lost-response retries per redeemed code; the window is the code's own expiry. */
+export const MAX_ENROLL_RECOVERIES = 3;
+const enrollRecoveries = new WeakMap<object, Map<string, { count: number; expiresAt: number }>>();
+
+function takeEnrollRecovery(ctx: ProductHttpContext, code: { joinCode: string; expiresAt: number }, now = Date.now()): boolean {
+  let counts = enrollRecoveries.get(ctx.joinCodes);
+  if (!counts) enrollRecoveries.set(ctx.joinCodes, counts = new Map());
+  for (const [key, entry] of counts) if (entry.expiresAt <= now) counts.delete(key);
+  const key = createHash('sha256').update(code.joinCode).digest('hex');
+  const entry = counts.get(key) ?? { count: 0, expiresAt: code.expiresAt };
+  if (entry.count >= MAX_ENROLL_RECOVERIES) return false;
+  entry.count += 1;
+  counts.set(key, entry);
+  return true;
+}
+
 async function handleHostEnroll(
   request: IncomingMessage,
   response: ServerResponse,
@@ -128,8 +145,10 @@ async function handleHostEnroll(
 
   const token = bearerToken(request.headers);
   const joinPeek = token ? ctx.joinCodes.peek(token) : null;
+  // Set by the Connect machine route class from its DB row; both capabilities (execution, peer.forward) arrive here.
   const connectHost = headerValue(request.headers, 'x-zcc-connect-machine-host');
-  const recovered = token && connectHost ? ctx.joinCodes.recovered(token) : null;
+  // An already-redeemed, unexpired code: a retry after the enroll response was lost (peek and recovered are exclusive).
+  const recovered = token && connectHost && !joinPeek ? ctx.joinCodes.recovered(token) : null;
   const loopback = Boolean(token && tokenMatches(token, ctx.enrollToken));
   if (!joinPeek && !recovered && !loopback) {
     diagnoseEnrollUnauthorized(request, ctx, token, connectHost);
@@ -174,11 +193,17 @@ async function handleHostEnroll(
     return true;
   }
 
+  // Deterministic per code so a retry after a lost response receives the same key; random for loopback enrollment.
   const hostKey = connectHost && token ? createHmac('sha256', token).update(`connect-host:${ctx.productInstanceId}`).digest('base64url') : generateHostKey();
   if (recovered) {
     const host = getHost(ctx.db, recovered.hostId);
+    // Replays return the existing identity only: no write, no new key, no capability change.
     if (!host || host.destroyedAt || !hostKeyMatches(hostKey, host.hostKeyHash)) {
       sendJson(response, 403, { error: 'enrollment no longer active' });
+      return true;
+    }
+    if (!takeEnrollRecovery(ctx, recovered)) {
+      sendJson(response, 403, { error: 'enrollment recovery limit reached' });
       return true;
     }
     sendJson(response, 201, HostEnrollResponseSchema.parse({ protocolVersion: HOST_RPC_PROTOCOL_VERSION, hostId: host.id, hostKey }));
@@ -190,7 +215,13 @@ async function handleHostEnroll(
     const hostId = join?.hostId ?? parsed.data.hostId;
     // Enrollment rotates credentials, not the user's machine display name.
     const existing = hostId ? getHost(ctx.db, hostId) : null;
+    // A forward-only code may only create a fresh forward-only machine; it never downgrades an executable one.
+    // Execution codes pass no capability, so an existing forward-only machine is never widened by re-enrollment.
+    if (join?.enrollmentCapability === 'peer.forward' && existing && existing.enrollmentCapability !== 'peer.forward') {
+      throw new Error('forward-only enrollment cannot replace an execution machine');
+    }
     return upsertHost(ctx.db, {
+      ...(join?.enrollmentCapability === 'peer.forward' ? { enrollmentCapability: 'peer.forward' as const } : {}),
       id: hostId,
       name: existing?.name ?? parsed.data.hostName,
       hostKeyHash: hashHostKey(hostKey),
@@ -209,7 +240,13 @@ async function handleHostEnroll(
   return true;
 }
 
+/** Callers still reading their body; the class pools below only know a callback's path once it is parsed. */
+/** Readers may hold both class pools' worth of slots, so neither class can be starved before its path is known. */
+const MAX_READING_CLI_CALLBACKS = CLI_CALLBACK_MAX_ACTIVE + CLI_CALLBACK_MAX_ACTIVE_NATIVE_TOOL;
+let readingCliCallbackRequests = 0;
 let activeCliCallbackRequests = 0;
+/** Reserved so long /mcp and question callbacks cannot starve the per-tool-call policy hook; each call is bounded by the 3s policy deadline, and the authority enforces the per-session budget. */
+let activeNativeToolCallbackRequests = 0;
 async function handleHostCliCallback(request: IncomingMessage, response: ServerResponse, ctx: ProductHttpContext): Promise<boolean> {
   const auth = authenticateHostCall(request, new URL(request.url ?? '/', 'http://127.0.0.1'), ctx);
   if ('error' in auth) { sendJson(response, auth.status, { error: auth.error }); return true; }
@@ -218,8 +255,9 @@ async function handleHostCliCallback(request: IncomingMessage, response: ServerR
   }
   if (request.method !== 'POST') { sendJson(response, 405, { error: 'method not allowed' }); return true; }
   if (!ctx.cliCallbacks) { sendJson(response, 503, { error: 'CLI callback owner is unavailable' }); return true; }
-  if (activeCliCallbackRequests >= 8) { sendJson(response, 429, { error: 'CLI callback capacity reached' }); return true; }
-  activeCliCallbackRequests++;
+  if (readingCliCallbackRequests >= MAX_READING_CLI_CALLBACKS) { sendJson(response, 429, { error: 'CLI callback capacity reached' }); return true; }
+  readingCliCallbackRequests++;
+  let reading = true, nativeTool: boolean | undefined;
   const controller = new AbortController(), onClose = () => controller.abort();
   response.once('close', onClose);
   const bodyTimer = setTimeout(() => request.destroy(), 15_000);
@@ -230,12 +268,18 @@ async function handleHostCliCallback(request: IncomingMessage, response: ServerR
     finally { clearTimeout(bodyTimer); }
     const parsed = CliCallbackRequestSchema.safeParse(body);
     if (!parsed.success) { sendJson(response, 400, { error: 'invalid callback request' }); return true; }
+    nativeTool = isCliNativeToolPath(parsed.data.path);
+    if (nativeTool ? activeNativeToolCallbackRequests >= CLI_CALLBACK_MAX_ACTIVE_NATIVE_TOOL : activeCliCallbackRequests >= CLI_CALLBACK_MAX_ACTIVE) { sendJson(response, 429, { error: 'CLI callback capacity reached' }); return true; }
+    readingCliCallbackRequests--; reading = false;
+    if (nativeTool) activeNativeToolCallbackRequests++; else activeCliCallbackRequests++;
     const result = await ctx.cliCallbacks.forward(auth.hostId, parsed.data, controller.signal);
     if (!response.destroyed) sendJson(response, 200, result);
   } catch (error) {
     if (!response.destroyed) sendJson(response, error instanceof CliCallbackError ? error.status : 502, { error: 'CLI callback unavailable or not authorized' });
   } finally {
-    clearTimeout(bodyTimer); response.off('close', onClose); controller.abort(); activeCliCallbackRequests--;
+    clearTimeout(bodyTimer); response.off('close', onClose); controller.abort();
+    if (reading) readingCliCallbackRequests--;
+    else if (nativeTool) activeNativeToolCallbackRequests--; else activeCliCallbackRequests--;
   }
   return true;
 }
@@ -251,14 +295,21 @@ function authenticateHostCall(
   if (hasBrowserOrigin(request)) {
     return { error: 'host call is not a browser origin', status: 403 };
   }
+  const machine = machineIdentity(request.headers);
   const hostId = headerValue(request.headers, 'x-zcc-host-id') ?? requestUrl.searchParams.get('hostId');
   const hostKey = bearerToken(request.headers) ?? requestUrl.searchParams.get('hostKey');
   if (!hostId || !hostKey) {
     return { error: 'unauthorized', status: 401 };
   }
+  if (machine && machine.hostId !== hostId) {
+    return { error: 'machine credential is bound to another host', status: 403 };
+  }
   const host = getHost(ctx.db, hostId);
   if (!host || host.destroyedAt || !hostKeyMatches(hostKey, host.hostKeyHash)) {
     return { error: 'unauthorized', status: 401 };
+  }
+  if (host.enrollmentCapability !== 'execution') {
+    return { error: 'host enrollment does not authorize execution', status: 403 };
   }
   return { hostId };
 }
@@ -518,6 +569,11 @@ export function handleHostInternalUpgrade(
     socket.destroy();
     return true;
   }
+  if (!connectSocketAllowed(request, ctx, hostId, host.enrollmentCapability)) {
+    socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+    socket.destroy();
+    return true;
+  }
 
   wss.handleUpgrade(request, socket, head, (ws: WebSocket) => {
     const timer = setTimeout(() => {
@@ -538,4 +594,15 @@ export function handleHostInternalUpgrade(
     });
   });
   return true;
+}
+
+/**
+ * A Connect-routed host socket must match its attested machine: it opens only its own host on this instance.
+ * A forward-only host may hold the socket (it receives peer.forward/peer.control) but never passes authenticateHostCall.
+ */
+function connectSocketAllowed(request: IncomingMessage, ctx: ProductHttpContext, hostId: string, capability: string | undefined): boolean {
+  const machine = machineIdentity(request.headers);
+  if (!machine) return !headerValue(request.headers, 'x-zcc-connect-machine-host');
+  return machine.hostId === hostId && machine.instanceId === ctx.productInstanceId
+    && (capability === 'execution' || capability === 'peer.forward');
 }

@@ -169,6 +169,10 @@ export const IPC = {
      *  rebuild the status/session lists (same render-storm guard as onIdleTriage). */
     onOverseerActivity: 'terminals:onOverseerActivity'
   },
+  apiErrorResume: {
+    /** Settings "Check an error": which rule would fire for a pasted error. */
+    check: 'apiErrorResume:check'
+  },
   overseer: {
     /** Recent Overseer decisions for the dry-run review pane (bounded by the
      *  audit ring's cap). Read-only diagnostic surface. */
@@ -528,6 +532,12 @@ export const IPC = {
   },
   commands: {
     list: 'commands:list'
+  },
+  /** Plugin deep links: `config`/`open` are renderer requests (main validates); `onLink` is a main push. */
+  deepLinks: {
+    config: 'deepLinks:config',
+    open: 'deepLinks:open',
+    onLink: 'deepLinks:onLink',
   },
   app: {
     performance: 'app:performance',

@@ -15,7 +15,7 @@ vi.mock('./services/threads/thread-reads.js', async original => ({
 }));
 vi.mock('./http/product-context.js', async original => ({
   ...await original<typeof import('./http/product-context.js')>(),
-  createProductHttpContext: () => ({ db: {}, hub: { emit() {}, subscribe: () => () => undefined }, config: { getConfig: () => ({}) } })
+  createProductHttpContext: () => ({ db: {}, hub: { emit() {}, subscribe: () => () => undefined }, config: { getConfig: () => ({}) }, dispose() {} })
 }));
 vi.mock('./http/product-plugins.js', async original => ({
   ...await original<typeof import('./http/product-plugins.js')>(),

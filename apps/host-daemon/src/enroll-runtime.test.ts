@@ -47,6 +47,22 @@ function closedConnection(): { ready: Promise<void>; close: () => Promise<void> 
 describe('startEnrolledHostDaemon', () => {
   afterEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it.each(['/trusted/independent-app', '   '])('selects host-owned local app directory %j independently of enrollment', async local => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-enroll-local-app-'));
+    vi.stubEnv('ZCC_LOCAL_PEER_APP_DATA_DIR', local);
+    vi.stubEnv('ZCC_DATA_DIR', '/trusted/default-app');
+    readHostAuth.mockReturnValue({ hostId: '11111111-1111-4111-8111-111111111111', hostKey: 'saved', serverUrl: 'https://remote.example/' });
+    startEnrolledHostConnection.mockImplementation(() => openConnection());
+    const daemon = await startEnrolledHostDaemon({ dataDir, serverUrl: 'https://remote.example/' });
+    expect(startEnrolledHostConnection).toHaveBeenCalledWith(expect.objectContaining({
+      dataDir, localPeerAppDataDir: local.trim() || '/trusted/default-app'
+    }));
+    expect(enrollDaemonHost).not.toHaveBeenCalled();
+    expect(writeHostAuth).not.toHaveBeenCalled();
+    await daemon.close();
   });
 
   it('re-enrolls with the loopback token when stored auth cannot open the hub', async () => {

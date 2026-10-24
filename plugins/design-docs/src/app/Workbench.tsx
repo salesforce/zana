@@ -1,34 +1,44 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { PopoverPicklist, type PopoverPicklistOption } from '@zana-ai/zcc-ui/popover-picklist';
 import {
+  ArrowLeft,
   Bot,
   ChevronDown,
   CircleDot,
   DraftingCompass,
   FolderOpen,
+  House,
   ListTree,
+  MoreHorizontal,
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
   Pin,
+  Pencil,
   Plus,
   Search,
   Sparkles,
+  Download,
+  Copy,
+  Trash2,
   X
 } from 'lucide-react';
 import { STATUS_LABELS, DOC_STATUSES, type DesignDocSummary, type DocStatus } from '../shared/contract.js';
 import { MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
 import { MAX_SUMMARY_LENGTH, MAX_TITLE_LENGTH } from '../shared/limits.js';
 import { draftDocAgent, showDocAgent } from './Agents.js';
-import { errorMessage, toast, useApi, type ProjectInfo, type TemplateInfo } from './api.js';
+import { defaultAgentProject, errorMessage, toast, useApi, type ProjectInfo, type TemplateInfo } from './api.js';
 import type { DocLocation } from './content.js';
 import { useDocActions } from './DocActions.js';
 import { buildSections, parseCollapsed, projectSwatch, toggleCollapsed, type ListSection } from './doc-sections.js';
 import { DocView } from './DocView.js';
 import { useDocs, useNow, usePersistentState, useProjects, useTemplates } from './hooks.js';
+import { SyncButton, usePeerSync, type PeerSync } from './PeerSettings.js';
+import { SettingsToggle, SettingsView } from './Settings.js';
 import { markSeen, parseSeen, unseenAgentEdit } from './seen.js';
-import { ContextMenu, contextMenuPoint, Dialog, IconButton, Spinner, StatusPill, TimeAgo } from './ui.js';
+import { ContextMenu, contextMenuPoint, Dialog, IconButton, MenuItem, Popover, Spinner, StatusPill, TimeAgo } from './ui.js';
+import { saveBytes } from './download.js';
 
 type StatusFilter = DocStatus | 'active' | 'all';
 const GLOBAL_ONLY = '__global__';
@@ -200,6 +210,9 @@ function DocList({
   onDeleted,
   onNew,
   onCollapse,
+  peerSync,
+  onOpenSettings,
+  onHome,
   headerActions
 }: {
   projectId: string | null;
@@ -210,6 +223,9 @@ function DocList({
   onDeleted(docId: string): void;
   onNew(): void;
   onCollapse(): void;
+  peerSync: PeerSync;
+  onOpenSettings(): void;
+  onHome(): void;
   headerActions?: ReactNode;
 }) {
   const [query, setQuery] = useState('');
@@ -287,9 +303,12 @@ function DocList({
           </span>
         ) : null}
         <span className="dd-spacer" />
-        <button type="button" className="btn primary dd-new" onClick={onNew}>
+        <IconButton icon={House} label="Home" onClick={onHome} />
+        <SettingsToggle open={false} onToggle={onOpenSettings} />
+        <SyncButton peerSync={peerSync} />
+         <button type="button" className="btn primary dd-head-btn dd-new" onClick={onNew}>
           <Plus size={13} aria-hidden /> New
-        </button>
+         </button>
         <IconButton icon={PanelLeftClose} label="Hide doc list" onClick={onCollapse} />
         {headerActions}
       </div>
@@ -420,13 +439,14 @@ export function NewDocDialog({
   const [busy, setBusy] = useState(false);
   const chosen = template ?? templates.data?.[0]?.id ?? null;
   const drafting = !!brief.trim();
-  const agentProject = projectId || defaultProjectId || projects[0]?.id || '';
+  const agentProject = projectId || defaultProjectId || defaultAgentProject(projects) || '';
 
   const create = async () => {
     if (!title.trim() || busy) return;
     setBusy(true);
+    let doc;
     try {
-      const doc = await api.create({
+      doc = await api.create({
         title: title.trim(),
         ...(summary.trim() ? { summary: summary.trim() } : {}),
         ...(chosen ? { template: chosen } : {}),
@@ -436,21 +456,29 @@ export function NewDocDialog({
           .filter(Boolean),
         projectId: projectId || null
       });
-      onCreated(doc.id);
-      if (drafting) {
-        if (!agentProject) {
-          toast('Doc created. Add a project to let an agent draft it.', 'error');
-        } else if (!draftDocAgent(navigate, doc, { prompt: draftingPrompt(brief), projectId: agentProject })) {
-          const result = await api.askAgent(doc.id, { prompt: draftingPrompt(brief), projectId: agentProject });
-          showDocAgent(navigate, doc, result.threadId);
-          toast(`An agent is drafting “${doc.title}”. Watch it fill in as it writes.`);
-        }
-      }
-      onClose();
     } catch (error) {
       toast(`Could not create the doc: ${errorMessage(error)}`, 'error');
       setBusy(false);
+      return;
     }
+    onCreated(doc.id);
+    if (drafting) {
+      if (!agentProject) {
+        toast('Doc created. Add a project to let an agent draft it.', 'error');
+      } else {
+        // The doc exists either way; only the drafting agent can fail from here.
+        try {
+          if (!draftDocAgent(navigate, doc, { prompt: draftingPrompt(brief), projectId: agentProject })) {
+            const result = await api.askAgent(doc.id, { prompt: draftingPrompt(brief), projectId: agentProject });
+            showDocAgent(navigate, doc, result.threadId);
+            toast(`An agent is drafting “${doc.title}”. Watch it fill in as it writes.`);
+          }
+        } catch (error) {
+          toast(`Doc created, but the agent could not start: ${errorMessage(error)}`, 'error');
+        }
+      }
+    }
+    onClose();
   };
 
   return (
@@ -540,7 +568,100 @@ export function NewDocDialog({
   );
 }
 
-function Landing({ templates, onNew }: { templates: TemplateInfo[] | null; onNew(template?: string): void }) {
+function TemplateManager({ templates, onNew, onEdit, onChanged }: { templates: TemplateInfo[] | null; onNew(template?: string): void; onEdit(template: TemplateInfo): void; onChanged(): void }) {
+  const api = useApi();
+  const input = useRef<HTMLInputElement | null>(null);
+  const [query, setQuery] = useState('');
+  const [more, setMore] = useState(false);
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const needle = query.trim().toLowerCase();
+  const filtered = (templates ?? []).filter((template) => `${template.label} ${template.description} ${template.files.join(' ')}`.toLowerCase().includes(needle));
+  const run = async (action: 'duplicate' | 'export' | 'delete', template: TemplateInfo) => {
+    try {
+      if (action === 'duplicate') await api.templateDuplicate(template.id);
+      else if (action === 'export') {
+        const bundle = await api.templatesExport([template.id]);
+        saveBytes(`${template.id}.design-doc-templates.json`, new TextEncoder().encode(bundle.bundleText), 'application/json');
+      } else await api.templateDelete(template.id);
+      onChanged();
+    } catch (error) {
+      toast(`Could not ${action} template: ${errorMessage(error)}`, 'error');
+    }
+  };
+  const createTemplate = () =>
+    api
+      .templateNew({ label: 'New template' })
+      .then((template) => {
+        onChanged();
+        onEdit({ id: template.id, key: template.id, docId: template.id, origin: 'user', entryPath: template.entryPath, label: template.title, description: template.summary, files: template.files.map((file) => file.path) });
+      })
+      .catch((error) => toast(`Could not create template: ${errorMessage(error)}`, 'error'));
+  const importTemplates = async (file: File | null) => {
+    if (!file) return;
+    try {
+      await api.templatesImport(await file.text());
+      onChanged();
+    } catch (error) {
+      toast(`Could not import templates: ${errorMessage(error)}`, 'error');
+    } finally {
+      if (input.current) input.current.value = '';
+    }
+  };
+  return (
+    <div className="dd-landing-start">
+      <div className="dd-template-heading">
+        <span className="dd-section-label">Start from a template</span>
+        <span className="dd-spacer" />
+        <button type="button" className="btn primary dd-head-btn" onClick={() => void createTemplate()}>
+          <Plus size={13} aria-hidden /> New template
+        </button>
+        <Popover
+          open={more}
+          onClose={() => setMore(false)}
+          className="dd-menu"
+          anchor={<IconButton icon={MoreHorizontal} label="Template actions" active={more} onClick={() => setMore(!more)} />}
+        >
+          <MenuItem icon={FolderOpen} label="Import" onSelect={() => { setMore(false); input.current?.click(); }} />
+          <MenuItem icon={Download} label="Export all" onSelect={() => { setMore(false); void api.templatesExport().then((bundle) => saveBytes('design-doc-templates.json', new TextEncoder().encode(bundle.bundleText), 'application/json')).catch((error) => toast(`Could not export templates: ${errorMessage(error)}`, 'error')); }} />
+          <MenuItem icon={Copy} label="Restore built-ins" onSelect={() => { setMore(false); void api.templatesRestoreBuiltins().then(onChanged).catch((error) => toast(`Could not restore built-ins: ${errorMessage(error)}`, 'error')); }} />
+        </Popover>
+      </div>
+      <input ref={input} type="file" accept="application/json,.json" hidden onChange={(event) => void importTemplates(event.target.files?.[0] ?? null)} />
+      <label className="dd-search dd-template-filter">
+        <Search size={13} aria-hidden />
+        <input value={query} placeholder="Filter templates" aria-label="Filter templates" onChange={(event) => setQuery(event.target.value)} />
+      </label>
+      {templates ? (
+        <div className="dd-templates" role="list">
+          {filtered.map((template) => (
+            <div key={template.id} className="dd-template-wrap" role="listitem">
+              <button type="button" className="dd-template" onClick={() => onNew(template.id)}>
+                <span className="dd-template-label">{template.label}</span>
+                <span className="dd-template-desc">{template.description}</span>
+                <span className="dd-template-files">{template.files.join(' · ')}</span>
+              </button>
+              <Popover
+                open={menuFor === template.id}
+                onClose={() => setMenuFor((current) => (current === template.id ? null : current))}
+                className="dd-menu"
+                anchor={<IconButton icon={MoreHorizontal} label={`Actions for ${template.label}`} size={13} active={menuFor === template.id} onClick={() => setMenuFor(menuFor === template.id ? null : template.id)} />}
+              >
+                <MenuItem icon={Pencil} label="Edit" onSelect={() => { setMenuFor(null); onEdit(template); }} />
+                <MenuItem icon={Copy} label="Duplicate" onSelect={() => { setMenuFor(null); void run('duplicate', template); }} />
+                <MenuItem icon={Download} label="Export" onSelect={() => { setMenuFor(null); void run('export', template); }} />
+                <MenuItem icon={Trash2} label="Delete" danger disabledReason={templates.length <= 1 ? 'Keep at least one template.' : undefined} onSelect={() => { setMenuFor(null); void run('delete', template); }} />
+              </Popover>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <Spinner />
+      )}
+    </div>
+  );
+}
+
+function Landing({ templates, onNew, onEdit, onChanged }: { templates: TemplateInfo[] | null; onNew(template?: string): void; onEdit(template: TemplateInfo): void; onChanged(): void }) {
   return (
     <div className="dd-landing">
       <div className="dd-landing-inner">
@@ -563,10 +684,7 @@ function Landing({ templates, onNew }: { templates: TemplateInfo[] | null; onNew
             <Bot size={13} aria-hidden /> Every save is versioned, so an agent's edit is always one click from undone.
           </li>
         </ul>
-        <div className="dd-landing-start">
-          <span className="dd-section-label">Start from a template</span>
-          {templates ? <TemplateCards templates={templates} selected={null} onSelect={(id) => onNew(id)} /> : <Spinner />}
-        </div>
+        <TemplateManager templates={templates} onNew={onNew} onEdit={onEdit} onChanged={onChanged} />
       </div>
     </div>
   );
@@ -594,7 +712,25 @@ export function Workbench({
   const templates = useTemplates();
   const [creating, setCreating] = useState<{ template: string | null } | null>(null);
   const [listOpen, setListOpen] = usePersistentState<boolean>('list-open', true);
+  const [view, setView] = useState<'docs' | 'settings'>('docs');
+  const [templateId, setTemplateId] = useState<string | null>(null);
+  const peerSync = usePeerSync();
   const projectList = projects.data ?? [];
+
+  if (view === 'settings') {
+    return (
+      <div className="dd-root dd-workbench">
+        <SettingsView
+          peer={peerSync.peer}
+          onBack={() => {
+            setView('docs');
+            peerSync.refresh();
+          }}
+          headerActions={headerActions}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="dd-root dd-workbench">
@@ -604,23 +740,36 @@ export function Workbench({
           showProjects={variant === 'global'}
           projects={projectList}
           activeId={location.docId}
-          onSelect={(docId) => onLocationChange({ docId, path: null })}
+          onSelect={(docId) => { setTemplateId(null); onLocationChange({ docId, path: null }); }}
           onDeleted={(docId) => {
             if (docId === location.docId) onLocationChange({ docId: null, path: null });
           }}
           onNew={() => setCreating({ template: null })}
           onCollapse={() => setListOpen(false)}
+          peerSync={peerSync}
+          onOpenSettings={() => setView('settings')}
+          onHome={() => { setTemplateId(null); onLocationChange({ docId: null, path: null }); }}
           headerActions={headerActions}
         />
       ) : (
         <nav className="dd-list-collapsed" aria-label="Design docs">
           <IconButton icon={PanelLeftOpen} label="Show doc list" onClick={() => setListOpen(true)} />
           <IconButton icon={Plus} label="New design doc" onClick={() => setCreating({ template: null })} />
+          <SyncButton peerSync={peerSync} compact />
           {headerActions}
         </nav>
       )}
       <main className="dd-main">
-        {location.docId ? (
+        {templateId ? (
+          <>
+            <div className="dd-template-bar">
+              <button type="button" className="btn dd-head-btn" onClick={() => { setTemplateId(null); templates.reload(); }}>
+                <ArrowLeft size={13} aria-hidden /> Back to templates
+              </button>
+            </div>
+            <DocView key={templateId} docId={templateId} path={null} layout="workbench" kind="template" onOpenPath={() => undefined} onDeleted={() => { setTemplateId(null); templates.reload(); }} />
+          </>
+        ) : location.docId ? (
           <DocView
             key={location.docId}
             docId={location.docId}
@@ -631,7 +780,12 @@ export function Workbench({
             onDeleted={() => onLocationChange({ docId: null, path: null })}
           />
         ) : (
-          <Landing templates={templates.data} onNew={(template) => setCreating({ template: template ?? null })} />
+          <Landing
+            templates={templates.data}
+            onNew={(template) => setCreating({ template: template ?? null })}
+            onEdit={(template) => setTemplateId(template.docId)}
+            onChanged={templates.reload}
+          />
         )}
       </main>
       {creating ? (

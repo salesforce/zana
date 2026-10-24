@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { act, cleanup } from '@testing-library/react';
-import { definePluginApp, useRpc, useWindowTitle, useZccContext, useZccNavigate } from '../app.js';
+import { definePluginApp, useRpc, useWindowTitle, useZccContext, useZccDeepLinks, useZccNavigate } from '../app.js';
 import { loadPluginApp, renderSlot } from './app-render.js';
 
 afterEach(() => {
@@ -240,5 +240,59 @@ describe('loadPluginApp + renderSlot', () => {
     expect(slot.inspection.windowTitle).toEqual({ title: 'Review publish' });
     act(() => slot.getByRole('button', { name: 'Toggle dialog' }).click());
     expect(slot.inspection.windowTitle).toEqual({ title: 'Agentforce · Orders' });
+  });
+});
+
+function LinkPanel() {
+  const links = useZccDeepLinks();
+  const [seen, setSeen] = useState<string>('none');
+  const [opened, setOpened] = useState('');
+  useEffect(() => links.on('join', (payload) => setSeen(String(payload))), [links]);
+  return (
+    <>
+      <output data-testid="base">{String(links.base())}</output>
+      <output data-testid="seen">{seen}</output>
+      <button type="button" onClick={() => void links.open('x://plugin/a/b').then((r) => setOpened(JSON.stringify(r)))}>
+        open
+      </button>
+      <output data-testid="opened">{opened}</output>
+    </>
+  );
+}
+
+describe('deep links in the test harness', () => {
+  it('reports the base, delivers emitted links to handlers, and records open calls', async () => {
+    const view = renderSlot({ component: LinkPanel }, {}, { deepLinkOpenResult: { ok: true, pluginId: 'a', route: 'b' } });
+    expect(view.getByTestId('base').textContent).toBe('zana-test://');
+    act(() => view.emitDeepLink('join', 'tok'));
+    expect(view.getByTestId('seen').textContent).toBe('tok');
+    act(() => view.emitDeepLink('join'));
+    expect(view.getByTestId('seen').textContent).toBe('null');
+    await act(async () => view.getByText('open').click());
+    expect(view.inspection.deepLinkOpenCalls).toEqual(['x://plugin/a/b']);
+    expect(view.getByTestId('opened').textContent).toBe('{"ok":true,"pluginId":"a","route":"b"}');
+  });
+
+  it('stops delivering after unmount and honours a null base', () => {
+    const view = renderSlot({ component: LinkPanel }, {}, { deepLinkBase: null });
+    expect(view.getByTestId('base').textContent).toBe('null');
+    view.lifecycle.unmount();
+    expect(() => view.emitDeepLink('join', 'late')).not.toThrow();
+  });
+
+  it('defaults open to unavailable', async () => {
+    const view = renderSlot({ component: LinkPanel }, {});
+    await act(async () => view.getByText('open').click());
+    expect(view.getByTestId('opened').textContent).toBe('{"ok":false,"reason":"unavailable"}');
+  });
+});
+
+describe('useZccDeepLinks without a host runtime', () => {
+  it('is inert so plugins can call it on older hosts', async () => {
+    delete (globalThis as { __ZCC_PLUGIN_RUNTIME__?: unknown }).__ZCC_PLUGIN_RUNTIME__;
+    const links = useZccDeepLinks();
+    expect(links.base()).toBeNull();
+    expect(links.on('join', () => undefined)()).toBeUndefined();
+    await expect(links.open('x')).resolves.toEqual({ ok: false, reason: 'unavailable' });
   });
 });

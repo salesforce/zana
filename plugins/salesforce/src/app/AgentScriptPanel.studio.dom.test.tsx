@@ -342,6 +342,34 @@ describe('AgentScriptPanel studio layout', () => {
     expect(el.querySelector('[data-testid="stub-org-tests"]')).toBeNull();
   });
 
+  it('a late editor ready re-sends the loaded agent without stealing focus from Tests', async () => {
+    // Mount with no initial path: a detached Studio window the user navigates by hand.
+    const el = await mount();
+    await ready(el);
+    // Open an agent from the explorer so a file is loaded (activePath set), with no agent tab in front yet.
+    const entry = [...el.querySelectorAll<HTMLElement>('[data-testid="salesforce-agent-script-explorer"] button')].find(n => n.textContent?.includes('QC'))!;
+    await act(async () => { fireEvent.click(entry); });
+    await flush();
+    const agentTab = () => [...el.querySelectorAll('.sf-etabs [role="tab"]')].find(tab => tab.querySelector('.sf-etab-name')?.textContent === 'Script');
+    // Move to the Tests target tab, as the user does before the editor settles.
+    const rail = el.querySelector('[aria-label="Studio activity"]')!;
+    await act(async () => { fireEvent.click(rail.querySelector('[aria-label="Tests"]')!); });
+    await flush();
+    const orgTab = () => [...el.querySelectorAll('.sf-etabs [role="tab"]')].find(tab => tab.querySelector('.sf-etab-name')?.textContent === 'Tests')!;
+    expect(orgTab().getAttribute('aria-selected')).toBe('true');
+    const iframe = el.querySelector('iframe')!;
+    (iframe.contentWindow!.postMessage as any).mockClear();
+    // A late editor ready must re-send the loaded file (so the editor is not left blank) but must not
+    // reopen/select its agent tab and steal focus back from Tests.
+    await ready(el);
+    const files = sent(el).filter((m: any) => m.type === 'setFile' && m.path === 'force-app/bots/QC.agent');
+    expect(files.length).toBeGreaterThan(0);
+    expect(orgTab().getAttribute('aria-selected')).toBe('true');
+    expect(agentTab()).toBeTruthy();
+    expect(agentTab()!.getAttribute('aria-selected')).not.toBe('true');
+    expect(el.querySelector('[data-testid="stub-org-tests"]')!.getAttribute('data-visible')).toBe('true');
+  });
+
   it('compact trace focus opens Preview', async () => {
     width = 500;
     const el = await mount('force-app/bots/QC.agent');

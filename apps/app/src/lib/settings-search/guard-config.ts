@@ -36,14 +36,20 @@ export const SECTION_SOURCES: Record<SearchSection, readonly string[]> = {
     'views/settings/RemoteMachineDefaultsList.tsx'
   ],
   connectivity: ['views/settings/ConnectivityView.tsx'],
+  peers: ['views/settings/PeersSettingsView.tsx'],
   phone: ['views/settings/PhoneSettingsView.tsx', 'views/settings/PhoneAccountConnection.tsx'],
   'remote-access': ['views/settings/RemoteAccessView.tsx', 'views/settings/SharedPreviews.tsx'],
-  agents: ['views/settings/AgentsSettingsView.tsx', 'views/settings/AgentGuidanceSettings.tsx', 'components/settings/OverseerRecentPane.tsx'],
+  agents: ['views/settings/AgentsSettingsView.tsx', 'views/settings/AgentGuidanceSettings.tsx', 'components/settings/OverseerRecentPane.tsx', 'components/settings/ApiErrorResumeSection.tsx'],
   personas: ['views/settings/PersonasView.tsx'],
   squads: ['views/settings/SquadsView.tsx'],
   usage: ['views/settings/UsageView.tsx'],
   experimental: ['views/settings/ExperimentalView.tsx'],
   performance: ['views/settings/PerformanceSettingsView.tsx'],
   about: ['views/settings/AboutView.tsx'],
-  project: ['views/settings/ProjectSettingsView.tsx', 'views/settings/ProjectSourcesSettings.tsx', 'components/settings/ScopeControl.tsx']
+  project: [
+    'views/settings/ProjectSettingsView.tsx',
+    'views/settings/HarnessRoutingEditor.tsx',
+    'views/settings/ProjectSourcesSettings.tsx',
+    'components/settings/ScopeControl.tsx'
+  ]
 };

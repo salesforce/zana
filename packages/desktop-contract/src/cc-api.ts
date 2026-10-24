@@ -225,6 +225,15 @@ export interface ThreadViewTarget {
 export interface CcApi {
   /** Isolated in-app browser overlay. Present only in the desktop preload. */
   browser: DesktopBrowserApi;
+  /** Plugin deep links. Present only in the desktop preload. */
+  deepLinks?: {
+    /** This build's link base (`<scheme>://`) and the schemes the in-app paste path accepts. */
+    config(): Promise<import('./deep-link.js').DeepLinkConfig>;
+    /** Ask main to validate a pasted link and route it. Main re-parses; the renderer is untrusted. */
+    open(raw: string): Promise<import('./deep-link.js').DeepLinkOpenResult>;
+    /** A validated link main wants routed to a plugin. */
+    onLink(cb: (delivery: import('./deep-link.js').DeepLinkDelivery) => void): () => void;
+  };
   startup: {
     state(): Promise<{ mode: 'ready' } | { mode: 'repair-required'; reason: 'harness-routing-migration' }>;
     retry(): Promise<{ mode: 'ready' } | { mode: 'repair-required'; reason: 'harness-routing-migration' }>;
@@ -1096,6 +1105,15 @@ export interface CcApi {
     /** Fires in EVERY window after any `config:set`, carrying the full new
      *  config, so each window re-applies its mirrored feature flags live. */
     onChanged(cb: (config: AppConfig) => void): () => void;
+  };
+  apiErrorResume: {
+    /** Which resume rule would fire for a pasted error; sends nothing. */
+    check(input: { text: string; rules: unknown }): Promise<{
+      ruleId: string | null;
+      message?: string;
+      delaySeconds?: number;
+      skipped: { ruleId: string; reason: string }[];
+    }>;
   };
   overseer: {
     /**

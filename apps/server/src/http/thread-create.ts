@@ -11,7 +11,7 @@ import {
   getEnvironment,
   getPrimaryHost,
   getThread,
-  listHosts,
+  listExecutionHosts,
   updateEnvironmentDiscovery,
   updateEnvironmentStatus,
   updateThreadStatus,
@@ -212,7 +212,7 @@ export async function createThreadFromRequest(
       project,
       remoteToolProxy,
       remoteDefaultPath: ctx.config.getConfig().remoteDefaultPath,
-      hosts: listHosts(ctx.db).map(toRemoteStartPathHost),
+      hosts: listExecutionHosts(ctx.db).map(toRemoteStartPathHost),
       probeHostHome: async () => {
         const listing = await ctx.hostHub.callHostOnlineRpc<{ directory: string }>({
           hostId,
@@ -432,7 +432,7 @@ async function startThreadOnHost(
                 args.project,
                 remoteToolProxy,
                 ctx.config.getConfig().remoteDefaultPath,
-                listHosts(ctx.db).map(toRemoteStartPathHost)
+                listExecutionHosts(ctx.db).map(toRemoteStartPathHost)
               )
             ),
             remoteToolProxy: true

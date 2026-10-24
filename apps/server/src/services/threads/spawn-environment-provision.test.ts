@@ -11,7 +11,7 @@ const db = vi.hoisted(() => ({
   findProjectEnvironmentByHostPath: vi.fn(() => null),
   getEnvironment: vi.fn(),
   getPrimaryHost: vi.fn(() => ({ id: 'host-1' })),
-  listHosts: vi.fn(() => []),
+  listExecutionHosts: vi.fn(() => []),
   updateEnvironmentDiscovery: vi.fn(),
   updateEnvironmentStatus: vi.fn()
 }));

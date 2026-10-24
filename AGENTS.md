@@ -33,6 +33,16 @@ If one is explicitly requested, put it under `.worktrees/<branch-name>` so repo 
 - Day-to-day changed-code verification: `pnpm verify:fast`. It runs typecheck, `vitest run --changed origin/main`, and source-text guard tests. Full CI remains merge authority.
 - Pre-push verifies feature branches in an isolated snapshot with typecheck, changed tests, and source-text guards. Protected refs and unsafe push shapes run `pnpm verify:full`. Policy: `docs/native-runtime-isolation.md`.
 
+### Optional TinyNod review and skips
+
+Guide: `docs/tinynod-local-review.md`. Opt-in is `git config zana.tinynod.enabled true` or `ZANA_TINYNOD_REVIEW=1`; the pre-push adapter (`scripts/tinynod-pre-push-review.mjs`) runs an advisory review when enabled. Setup, opt-in/out, reading results, and troubleshooting are in the guide.
+
+- When reporting a push or handoff, state the skip/review reason, base, head, and which checks ran (Zana verification, TinyNod). Include no secrets, config bodies, or prompt contents.
+- Never claim a change was reviewed by TinyNod when review was skipped, failed, timed out, or returned non-JSON; that is a warning, not a clean review.
+- Never use `TINYNOD_SKIP_HOOK` to hide findings. It skips TinyNod only; Zana verification still runs.
+- The full pre-hook skip is a separate permission. If used, list every skipped gate (Zana verification and TinyNod).
+- Never run `tinynod hooks install` or change global `core.hooksPath`; Zana owns `.githooks`.
+
 ## Product Design Rules
 
 - **A project has a fixed local or remote target.** Local projects browse their local checkout, remote projects their registered remote checkout. Explorer must not expose a Machine selector or a separate machine/path header, even when backend source mappings exist; thread explorers keep their recorded environment scope internally.
@@ -57,6 +67,7 @@ If one is explicitly requested, put it under `.worktrees/<branch-name>` so repo 
 | OpenCode discovery, filtering, launcher, model catalog | see doc | `apps/host-daemon/AGENTS.md` |
 | Packaged plugin runtime seams | `pnpm test:e2e -- e2e/packaged-provider-startup.spec.ts` | `apps/server/src/services/extensions/AGENTS.md` |
 | Plugin authoring loop | `pnpm test:e2e -- e2e/plugin-authoring-live.spec.ts` | `apps/server/src/services/extensions/AGENTS.md` |
+| Windows title bar overlay (caption button colours, `titleBarOverlay`, title bar `--bg-base` / `--text-muted` / `--titlebar-h`) | On Windows: `pnpm test:e2e -- e2e/windows-titlebar-overlay-theme.spec.ts` (skips on Linux CI) | `apps/desktop/src/window/titlebar-overlay.ts` |
 
 Live suites (`live:*`) need an attached app on `:8780`/`:8781`, an enrolled host-daemon, and a host shell (`unset ZCC_SESSION_ID`). Preflight skips with `console.warn`, so a verify that finishes in milliseconds is a false green. Keep them off `pnpm live:matrix`.
 

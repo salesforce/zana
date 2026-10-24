@@ -68,7 +68,12 @@
     "./cli-discovery": "./src/cli-discovery.ts",
     "./cli-callbacks": "./src/cli-callbacks.ts",
     "./cli-terminal": "./src/cli-terminal.ts",
-    "./previews": "./src/previews.ts"
+    "./previews": "./src/previews.ts",
+    "./rpc-error": {
+      "types": "./src/rpc-error.ts",
+      "source": "./src/rpc-error.ts",
+      "default": "./src/rpc-error.ts"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json"

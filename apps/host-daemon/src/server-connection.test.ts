@@ -13,7 +13,7 @@ const hostId = '11111111-1111-4111-8111-111111111111';
 const instanceId = '22222222-2222-4222-8222-222222222222';
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.unstubAllGlobals(); });
-async function fixture(connectCredential?: string) {
+async function fixture(connectCredential?: string, helloCapability?: 'execution' | 'peer.forward', productInstanceId?: string) {
   const dataDir = mkdtempSync(join(tmpdir(), 'zcc-host-reconnect-'));
   const server = createServer();
   const wss = new WebSocketServer({ noServer: true });
@@ -35,7 +35,8 @@ async function fixture(connectCredential?: string) {
         messages.push(message);
         if (message.type === 'host.hello') {
           hellos.push(message);
-          ws.send(JSON.stringify({ type: 'host.hello-ok', protocolVersion: HOST_RPC_PROTOCOL_VERSION, hostId, pluginHostGenerations: [{ pluginId: 'test', generation: 'current' }] }));
+          ws.send(JSON.stringify({ type: 'host.hello-ok', protocolVersion: HOST_RPC_PROTOCOL_VERSION, hostId,
+            enrollmentCapability: helloCapability, productInstanceId, pluginHostGenerations: [{ pluginId: 'test', generation: 'current' }] }));
         }
         if (message.type === 'host.ready') ws.send(JSON.stringify({ type: 'host.ready-ok', protocolVersion: HOST_RPC_PROTOCOL_VERSION, hostId, instanceId: message.instanceId }));
         if (message.type === 'host.event') ws.send(JSON.stringify({ type: 'host.event-ack', protocolVersion: HOST_RPC_PROTOCOL_VERSION, batchId: message.batchId, accepted: message.events.length, rejected: [] }));
@@ -53,9 +54,9 @@ async function fixture(connectCredential?: string) {
   const runtime = { dataDir, environments: new Map(), threads: new Map(), terminals: new Map(), provisionSignals: new Map(), lanes: new Map(),
     loadConfig: () => ({}), verifyProviders: async () => ({ providers: [] }), emit: () => {}, pluginHosts: { reconcileGenerations: reconcile } } as unknown as CommandRuntime;
   const changes: boolean[] = [];
-  const connect = () => {
+  const connect = (enrollmentCapability?: 'execution' | 'peer.forward', expectedRemoteInstanceId?: string) => {
     const connection = startEnrolledHostConnection({ serverUrl: `http://127.0.0.1:${(server.address() as any).port}/t/zcrs_abcdefghijklmnop`, hostId, instanceId,
-      hostKey: 'secret-machine-key', connectCredential, runtime, dataDir, onConnectionChange: value => changes.push(value) });
+      hostKey: 'secret-machine-key', connectCredential, runtime, dataDir, enrollmentCapability, expectedRemoteInstanceId, onConnectionChange: value => changes.push(value) });
     void connection.ready.catch(() => {}); cleanup.push(() => connection.close()); return connection;
   };
   return { runtime, connect, changes, hellos, reconcile, requests, messages, send: (message: unknown) => accepted.send(JSON.stringify(message)), get upgrades() { return upgrades; },
@@ -63,6 +64,39 @@ async function fixture(connectCredential?: string) {
 }
 
 describe('enrolled host with BB ws transport', () => {
+  it('authenticated hello narrows execution even without local capability metadata', async () => {
+    const f = await fixture(undefined, 'peer.forward'), connection = f.connect(); await connection.ready;
+    expect(f.reconcile).not.toHaveBeenCalled();
+    expect(f.messages.find(m => m.type === 'host.ready').runtime).toEqual({ threads: [], loadedEnvironments: [] });
+    f.send({ type: 'host-rpc.request', protocolVersion: HOST_RPC_PROTOCOL_VERSION, requestId: 'denied', command: { type: 'provider.status' } });
+    await vi.waitFor(() => expect(f.messages.find(m => m.requestId === 'denied')).toMatchObject({ ok: false, error: { code: 'capability_denied' } }));
+  });
+  it('replies invalid_request to a malformed peer.control request instead of dropping it', async () => {
+    const f = await fixture(), connection = f.connect(); await connection.ready;
+    f.send({ type: 'host-rpc.request', protocolVersion: HOST_RPC_PROTOCOL_VERSION, requestId: 'bad-control', command: { type: 'peer.control' } });
+    await vi.waitFor(() => expect(f.messages.find(m => m.requestId === 'bad-control')).toMatchObject({ ok: false, error: { code: 'invalid_request' } }));
+  });
+  it('closes an introduced link whose server identifies as a different app, before ready', async () => {
+    const expected = '33333333-3333-4333-8333-333333333333';
+    const wrong = await fixture(undefined, 'peer.forward', '44444444-4444-4444-8444-444444444444');
+    wrong.connect('peer.forward', expected);
+    await vi.waitFor(() => expect(wrong.hellos).toHaveLength(1));
+    await vi.waitFor(() => expect(wrong.changes.at(-1)).toBe(false));
+    expect(wrong.messages.some(m => m.type === 'host.ready')).toBe(false);
+    const right = await fixture(undefined, 'peer.forward', expected), connection = right.connect('peer.forward', expected);
+    await connection.ready;
+    expect(right.messages.some(m => m.type === 'host.ready')).toBe(true);
+  });
+  it('denies every execution command for a peer.forward enrollment before dispatch', async () => {
+    const f = await fixture(), connection = f.connect('peer.forward'); await connection.ready;
+    expect(f.reconcile).not.toHaveBeenCalled();
+    for (const type of ['provider.status', 'thread.start', 'host.read_file', 'terminal.start', 'plugin.host.call']) {
+      f.send({ type: 'host-rpc.request', protocolVersion: HOST_RPC_PROTOCOL_VERSION, requestId: type, command: { type } });
+      await vi.waitFor(() => expect(f.messages.find(m => m.requestId === type)).toMatchObject({ ok: false, error: { code: 'capability_denied' } }));
+    }
+    f.send({ type: 'host-rpc.request', protocolVersion: HOST_RPC_PROTOCOL_VERSION, requestId: 'forward', command: { type: 'peer.forward' } });
+    await vi.waitFor(() => expect(f.messages.find(m => m.requestId === 'forward')).toMatchObject({ ok: false, error: { code: 'unknown_command' } }));
+  });
   it.each([undefined, 'c'.repeat(43)])('reconnects after a failed upgrade with the same identity (Connect credential=%s)', async credential => {
     // The affected Node 22 native WebSocket never emits close for a failed
     // upgrade. Prove the production path never calls that implementation.

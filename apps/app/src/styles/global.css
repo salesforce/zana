@@ -17424,6 +17424,15 @@ body.resizing-col .explorer-resizer::after {
   white-space: nowrap;
 }
 
+.scheduler-pill--default {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent-gold);
+  border-color: color-mix(in srgb, var(--accent-gold) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent-gold) 12%, var(--bg-elevated));
+}
+
 .scheduler-pill--interval {
   color: var(--accent-blue);
   border-color: color-mix(in srgb, var(--accent-blue) 35%, var(--border));
@@ -32035,6 +32044,9 @@ body.resizing-col .library-split-resizer::after {
 
 :root[data-theme='light'] .scheduler-form-field select {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2357606a' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px;
 }
 
 /* A mouse click leaves the button focused, and the UA's default rectangular
@@ -38723,6 +38735,19 @@ body.split-frame-guard webview {
   gap: 4px;
   border-left: 1px solid var(--border);
   background: var(--bg-panel);
+}
+
+/* Phone/tablet: the rail floats over the page so plugin content keeps the full
+   screen width (a 36px column is a tenth of a phone). The launchers stay reachable. */
+.plugin-panel-host-layout.is-compact > .plugin-panel-host-launchers {
+  position: absolute;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 5;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.18);
 }
 
 .panel-agent-tab {

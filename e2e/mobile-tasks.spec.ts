@@ -49,6 +49,7 @@ test('Tasks mobile uses full-width list, projects, filters and details with a pr
       await page.setViewportSize({ width, height: 844 });
       await expect(panel.locator('.tasks-desktop-navigation')).toHaveCount(0);
       expect((await panel.boundingBox())!.width).toBeGreaterThanOrEqual(width - 2);
+      await expect(page.getByRole('toolbar', { name: 'Side panel' })).toBeVisible();
       expect(await panel.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
       expect((await panel.locator('.tasks-topbar').boundingBox())!.height).toBeLessThanOrEqual(64);
       await page.screenshot({ animations: 'disabled', path: testInfo.outputPath(`${width}-tasks-list.png`) });

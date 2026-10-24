@@ -83,6 +83,7 @@ import {
 } from './host-fs.js';
 import type { DesktopBrowserBroker } from './desktop-browser-broker.js';
 import type { DesktopBrowserCommand } from '@zana-ai/zcc-host-daemon-contract';
+import { PeerForwarder, type LocalPeerAppResolver } from './peer-forward.js';
 
 import type { PluginHostManager } from './plugin-host-manager.js';
 import type { MachineEnvironment } from './machine-environment.js';
@@ -225,6 +226,7 @@ export interface CommandRuntime {
   }) => Promise<ProviderHealthResult>;
   homeDir?: string;
   peerSsh: PeerDaemonSsh;
+  peerForwarder?: PeerForwarder;
   desktopBrowserBroker?: DesktopBrowserBroker;
   /** In-memory environment pushed by the server (host.environment.replace). */
   machineEnvironment?: MachineEnvironment;
@@ -291,6 +293,8 @@ export function createCommandRuntime(options: {
   peerSsh?: PeerDaemonSsh;
   desktopBrowserBroker?: DesktopBrowserBroker;
   machineEnvironment?: MachineEnvironment;
+  resolveLocalPeerApp?: LocalPeerAppResolver;
+  peerForwardFetch?: typeof fetch;
 }): CommandRuntime {
   const terminals = new Map<string, { cwd: string }>();
   const loadConfig = options.loadConfig ?? (() => ({ version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null }) as AppConfig);
@@ -331,6 +335,7 @@ export function createCommandRuntime(options: {
     providerHealth: options.providerHealth,
     homeDir: options.homeDir,
     peerSsh: options.peerSsh ?? createSystemPeerDaemonSsh(),
+    peerForwarder: new PeerForwarder({ resolveLocalPeerApp: options.resolveLocalPeerApp, fetchFn: options.peerForwardFetch }),
     desktopBrowserBroker: options.desktopBrowserBroker,
     machineEnvironment: options.machineEnvironment,
     verifyProviders: options.verifyProviders ?? (async () => {
@@ -907,6 +912,10 @@ export async function dispatchHostCommand(
       if (command.type === 'plugin.host.cancel') return runtime.pluginHosts.cancel(command);
       return runtime.pluginHosts.dispose(command);
     }
+    case 'peer.forward': {
+      if (!runtime.peerForwarder) throw new HostCommandError('peer_app_unavailable', 'trusted local peer app is unavailable');
+      return runtime.peerForwarder.forward(command);
+    }
     case 'terminal.start_cli': {
       const cwd = confineThreadCwd(command.root, command.cwd);
       if (!runtime.startCliTerminal) throw new HostCommandError('unsupported', 'CLI Agents are unavailable on this host');
@@ -1276,6 +1285,8 @@ export async function dispatchHostCommand(
     case 'desktop.browser.list_import_sources':
     case 'desktop.browser.import_cookies':
       return requestDesktopBrowser(runtime, command);
+    case 'peer.control':
+      throw new HostCommandError('capability_denied', 'peer control requires authenticated enrollment connection');
     default: {
       const exhaustive: never = command;
       throw new HostCommandError('unknown_command', `unsupported command ${(exhaustive as { type: string }).type}`);

@@ -3,31 +3,41 @@
  * user and announced on the realtime `changed` channel, exactly like agent
  * writes, so every open view refreshes.
  */
-import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
+import type { HarnessOverrideScope, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import { agentActionById, buildAgentPrompt, MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
 import { isDocStatus, type CommentStatus, type DocActor, type TextEdit } from '../shared/contract.js';
 import type { PageFile } from '../shared/frame-protocol.js';
 import { normalizeDocPath } from '../shared/paths.js';
 import { buildPublishPrompt, parsePublishTarget, PublishTargetError } from '../shared/publish.js';
-import { DESIGN_DOC_TEMPLATES } from '../shared/templates.js';
 import { asInput, optionalString, requiredString } from './operations.js';
 import { docPageReader, NO_KIT, renderPage, type KitReader } from './pages.js';
 import { parseRenderReport, type RenderReports } from './render-reports.js';
 import { siteFiles } from './site-files.js';
-import { DesignDocError, type DesignDocStore } from './store.js';
+import { DesignDocError, type DesignDocStore, type DocKind } from './store.js';
+import type { DesignDocPeerService } from './peer-service.js';
+import type { DesignDocPairing } from './pairing.js';
+import type { DesignDocBackups } from './backup.js';
+import { bundlePage } from './page-bundle.js';
+import { MAX_TEXT_FILE_BYTES } from '../shared/limits.js';
+import { fileKindOf } from '../shared/paths.js';
 
 export const UI_USER: DocActor = { kind: 'user', label: 'You', threadId: null };
 
 export interface RpcDeps {
   store: DesignDocStore;
   changed(docId: string): void;
-  sdk: Pick<ZccPluginApi['sdk'], 'threads' | 'projects'>;
+  sdk: Pick<ZccPluginApi['sdk'], 'threads' | 'projects' | 'peers' | 'harnessRouting'>;
+  peerSync?: DesignDocPeerService;
+  pairing?: DesignDocPairing;
   /** The bundled site kit behind `zcc-kit/` paths. */
   kit?: KitReader;
   /** Absolute URL of a doc page served standalone, for "Open in browser". */
   pageUrl?(docId: string, path: string): string;
   /** Where the panel's page runs are kept for agents. */
   reports?: RenderReports;
+  /** Full-database backups and the restore evidence recorded at startup. */
+  backups?: DesignDocBackups;
+  localPeerId?(): string | null;
 }
 
 function optionalNumber(input: Record<string, unknown>, key: string): number | undefined {
@@ -37,6 +47,13 @@ function optionalNumber(input: Record<string, unknown>, key: string): number | u
     throw new DesignDocError('invalid', `${key} must be an integer`);
   }
   return value;
+}
+
+// A missing kind means 'doc', so callers that predate templates keep working.
+function requiredKind(input: Record<string, unknown>): DocKind {
+  if (input.kind === undefined) return 'doc';
+  if (input.kind !== 'doc' && input.kind !== 'template') throw new DesignDocError('invalid', 'kind must be doc or template');
+  return input.kind;
 }
 
 function optionalStrings(input: Record<string, unknown>, key: string): string[] | undefined {
@@ -60,6 +77,18 @@ export function titleFromMarkdown(text: string, fallback = 'Design doc from chat
   return line.length > 80 ? `${line.slice(0, 79).trimEnd()}…` : line;
 }
 
+function requirePairing(deps: RpcDeps): DesignDocPairing {
+  if (!deps.pairing) throw new DesignDocError('invalid', 'database group setup is unavailable');
+  return deps.pairing;
+}
+
+/** Invitation RPCs take a closed set of keys, so a renderer cannot smuggle hosts, locators or credentials. */
+function onlyKeys(raw: unknown, allowed: string[]): Record<string, unknown> {
+  const input = asInput(raw);
+  if (Object.keys(input).some((key) => !allowed.includes(key))) throw new DesignDocError('invalid', `accepts only ${allowed.join(', ')}`);
+  return input;
+}
+
 /** The methods as plain functions so tests can call them without a host. */
 export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown) => unknown> {
   const { store, changed } = deps;
@@ -71,16 +100,160 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       throw new DesignDocError('invalid', `unknown project ${projectId}`);
     }
   };
+  /** The scope the renderer names for this plugin's harness override; a project must be registered. */
+  const harnessScope = async (raw: unknown): Promise<HarnessOverrideScope> => {
+    const input = onlyKeys(raw, ['kind', 'projectId']);
+    if (input.kind === 'global' || input.kind === 'default-project') {
+      if (input.projectId !== undefined) throw new DesignDocError('invalid', `${input.kind} scope takes no projectId`);
+      return { kind: input.kind };
+    }
+    if (input.kind !== 'project') throw new DesignDocError('invalid', 'scope.kind must be global, default-project or project');
+    const projectId = requiredString(input, 'projectId');
+    await requireProject(projectId);
+    return { kind: 'project', projectId };
+  };
+  /**
+   * Every Design Docs agent goes through here: it always runs on the project's
+   * AI harness and that harness's overrides (`harness: 'project-default'`); the
+   * renderer cannot pick a provider.
+   */
+  const spawnAgent = async (
+    args: Omit<Parameters<RpcDeps['sdk']['threads']['spawn']>[0], 'providerId' | 'harness'>
+  ) => deps.sdk.threads.spawn({ ...args, harness: 'project-default' });
 
   return {
-    templates: () => DESIGN_DOC_TEMPLATES.map(({ id, label, description, files }) => ({
+    templates: () => store.listTemplateRecords().map(({ id, label, description, files, entryPath, docId, origin }) => ({
       id,
+      key: id,
+      docId,
+      origin,
+      entryPath,
       label,
       description,
       files: files.map((file) => file.path)
     })),
 
-    projects: async () => (await deps.sdk.projects.list()).map(({ id, name }) => ({ id, name })),
+    templateNew: (raw) => { const doc = store.templateNew(raw, UI_USER); changed(doc.id); return doc; },
+    templateDuplicate: (raw) => { const doc = store.templateDuplicate(requiredString(asInput(raw), 'template'), UI_USER); changed(doc.id); return doc; },
+    templateFromDoc: (raw) => { const doc = store.templateFromDoc(requiredString(asInput(raw), 'doc'), UI_USER); changed(doc.id); return doc; },
+    templateUpdateMeta: (raw) => {
+      const { template, ...patch } = asInput(raw);
+      const doc = store.templateUpdateMeta(template, patch, UI_USER); changed(doc.id); return doc;
+    },
+    templateDelete: (raw) => {
+      const row = store.requireTemplate(requiredString(asInput(raw), 'template'));
+      store.templateDelete(row.id); changed(row.id); return { ok: true };
+    },
+    templatesRestoreBuiltins: () => { const templates = store.templatesRestoreBuiltins(); changed(''); return templates; },
+    templatesExport: (raw) => ({ bundleText: store.templatesExport(optionalStrings(asInput(raw), 'keys')) }),
+    templatesImport: (raw) => {
+      const docs = store.templatesImport(requiredString(asInput(raw), 'bundleText'), UI_USER);
+      for (const doc of docs) changed(doc.id);
+      return docs;
+    },
+
+    projects: async () => (await deps.sdk.projects.list()).map(({ id, name, quickAgent }) => ({ id, name, ...(quickAgent ? { quickAgent: true } : {}) })),
+
+    // This plugin's own harness overrides. The host binds the plugin id, validates on write and
+    // resolves them above the project/global chain for `harness: 'project-default'` spawns.
+    // A project's descriptors come from that project's host, so a remote project shows its own harnesses.
+    harnessDescriptors: async (raw) => {
+      const projectId = optionalString(onlyKeys(raw, ['projectId']), 'projectId');
+      if (projectId === undefined) return deps.sdk.harnessRouting.descriptors();
+      await requireProject(projectId);
+      return deps.sdk.harnessRouting.descriptors({ projectId });
+    },
+
+    harnessRouting: async (raw) => deps.sdk.harnessRouting.read(await harnessScope(raw)),
+
+    setHarnessRouting: async (raw) => {
+      const input = asInput(raw);
+      if (Object.keys(input).some((key) => key !== 'scope' && key !== 'value')) throw new DesignDocError('invalid', 'accepts only scope, value');
+      const scope = await harnessScope(input.scope);
+      const value = input.value ?? null;
+      if (value !== null && (typeof value !== 'object' || Array.isArray(value))) throw new DesignDocError('invalid', 'value must be an object or null');
+      await deps.sdk.harnessRouting.write(scope, value as never);
+      return deps.sdk.harnessRouting.read(scope);
+    },
+
+    backupDatabase: async () => {
+      if (!deps.backups?.available) throw new DesignDocError('invalid', 'database backup is unavailable');
+      return deps.backups.create(deps.localPeerId?.() ?? null);
+    },
+
+    backups: () => deps.backups?.list() ?? { backups: [], restores: [] },
+
+    // `connected` is what the Sync button counts: this computer plus every member with a live link.
+    peerStatus: async () => {
+      const local = deps.peerSync?.status() ?? null;
+      if (!local?.configured) return local ?? { configured: false, members: [] };
+      const connected = new Set(await deps.pairing?.connectedMembers().catch((error: unknown) => {
+        console.warn('[design-docs] connectedMembers failed; showing members as disconnected:', error instanceof Error ? error.message : error);
+        return [] as string[];
+      }) ?? []);
+      return { ...local, members: local.members.map((member) => ({ ...member, connected: member.replicaId === local.replicaId || connected.has(member.machineId) })) };
+    },
+
+    groupStatus: () => requirePairing(deps).status(),
+
+    // Never a roster: the only accepted key is the peer id.
+    enablePeer: (raw) => requirePairing(deps).enable(requiredString(onlyKeys(raw, ['peerId']), 'peerId')),
+
+    connections: () => requirePairing(deps).connections(),
+
+    useConnection: (raw) => requirePairing(deps).useConnection(requiredString(onlyKeys(raw, ['computerId']), 'computerId')),
+
+    stopUsingConnection: (raw) => requirePairing(deps).stopUsingConnection(requiredString(onlyKeys(raw, ['computerId']), 'computerId')),
+
+    repairPeer: (raw) => requirePairing(deps).repair(requiredString(onlyKeys(raw, ['peerId']), 'peerId')),
+
+    resetPeerSync: (raw) => requirePairing(deps).resetPeer(requiredString(onlyKeys(raw, ['peerId']), 'peerId')),
+
+    peersOutOfSync: async () => ({ outOfSync: await requirePairing(deps).outOfSync() }),
+
+    retryIntroductions: async () => {
+      const pairing = requirePairing(deps);
+      await pairing.retry(true);
+      return pairing.status();
+    },
+
+    removePeer: (raw) => requirePairing(deps).remove(requiredString(onlyKeys(raw, ['replicaId']), 'replicaId')),
+
+    syncNow: async () => {
+      if (!deps.peerSync) throw new DesignDocError('invalid', 'peer sync is unavailable');
+      const result = await deps.peerSync.syncNow(deps.sdk.peers);
+      // Peers re-check their out-of-sync notice once this side finished; not awaited, never fails the sync.
+      void deps.pairing?.notifyStateChanged().catch((error: unknown) => {
+        console.warn('[design-docs] peer state-change notification failed after sync:', error instanceof Error ? error.message : error);
+      });
+      return result;
+    },
+
+    peerConflicts: (raw) => {
+      const input = asInput(raw), doc = store.summary(requiredString(input, 'doc'));
+      return deps.peerSync?.conflicts(doc.id, optionalString(input, 'cursor')) ?? { remoteHeads: [], nextCursor: null };
+    },
+
+    peerConflictReview: (raw) => {
+      const input = asInput(raw), doc = store.summary(requiredString(input, 'doc'));
+      if (!deps.peerSync) throw new DesignDocError('invalid', 'peer sync is unavailable');
+      return deps.peerSync.conflictReview(doc.id, requiredString(input, 'remoteHead'));
+    },
+
+    peerConflictFile: (raw) => {
+      const input = asInput(raw), doc = store.summary(requiredString(input, 'doc'));
+      if (!deps.peerSync) throw new DesignDocError('invalid', 'peer sync is unavailable');
+      return deps.peerSync.conflictFile(doc.id, requiredString(input, 'remoteHead'), requiredString(input, 'path'));
+    },
+
+    resolvePeerConflict: (raw) => {
+      const input = asInput(raw), doc = store.summary(requiredString(input, 'doc'));
+      if (!deps.peerSync) throw new DesignDocError('invalid', 'peer sync is unavailable');
+      if (input.choice !== 'merge' && input.choice !== 'local' && input.choice !== 'remote') throw new DesignDocError('invalid', 'invalid peer resolution choice');
+      const head = deps.peerSync.resolveConflict({ docId: doc.id, expectedHead: requiredString(input, 'expectedHead'),
+        remoteHead: requiredString(input, 'remoteHead'), choice: input.choice }, UI_USER);
+      return { head };
+    },
 
     list: (raw) => {
       const input = asInput(raw);
@@ -97,7 +270,7 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       });
     },
 
-    get: (raw) => store.get(requiredString(asInput(raw), 'doc')),
+    get: (raw) => { const input = asInput(raw); return store.get(requiredString(input, 'doc'), requiredKind(input)); },
 
     create: async (raw) => {
       const input = asInput(raw);
@@ -122,6 +295,14 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
 
     update: async (raw) => {
       const input = asInput(raw);
+      if (input.entryPath !== undefined) {
+        const kind = requiredKind(input);
+        if (kind === 'template') {
+          if (Object.keys(input).some((key) => !['doc', 'kind', 'entryPath'].includes(key))) throw new DesignDocError('invalid', 'template entry update accepts only doc, kind, entryPath');
+          const doc = store.templateUpdateMeta(requiredString(input, 'doc'), { entryPath: input.entryPath }, UI_USER);
+          changed(doc.id); return doc;
+        }
+      }
       const status = optionalString(input, 'status');
       if (status !== undefined && !isDocStatus(status)) throw new DesignDocError('invalid', 'unknown status');
       const projectId = input.projectId;
@@ -141,6 +322,7 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
           status,
           tags: optionalStrings(input, 'tags'),
           entryPath: optionalString(input, 'entryPath'),
+          expectedHead: input.expectedHead === null ? null : optionalString(input, 'expectedHead'),
           projectId: projectId === undefined ? undefined : projectId || null,
           alternativeTo: alternativeTo === undefined ? undefined : alternativeTo || null
         },
@@ -160,7 +342,7 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
 
     remove: (raw) => {
       const doc = store.summary(requiredString(asInput(raw), 'doc'));
-      store.remove(doc.id);
+      store.remove(doc.id, UI_USER);
       changed(doc.id);
       return { ok: true };
     },
@@ -168,8 +350,18 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
     /** An HTML page bundled for the preview frame; `draft` renders unsaved edits. */
     renderPage: (raw) => {
       const input = asInput(raw);
+      const kind = requiredKind(input);
       const draft = input.draft;
       if (draft !== undefined && typeof draft !== 'string') throw new DesignDocError('invalid', 'draft must be a string');
+      if (kind === 'template') {
+        const doc = store.get(requiredString(input, 'doc'), kind);
+        const path = normalizeDocPath(optionalString(input, 'path') ?? doc.entryPath);
+        if (fileKindOf(path) !== 'html') throw new DesignDocError('invalid', `${path} is not an HTML page`);
+        if (draft !== undefined && Buffer.byteLength(draft) > MAX_TEXT_FILE_BYTES) throw new DesignDocError('limit', 'draft is too large');
+        const file = store.readFile(doc.id, path, kind);
+        const read = docPageReader(store, doc.id, deps.kit ?? NO_KIT, kind);
+        return { docId: doc.id, path, revision: file.revision, ...bundlePage({ entryPath: path, html: draft ?? file.content, read }) };
+      }
       return renderPage(store, deps.kit ?? NO_KIT, {
         doc: requiredString(input, 'doc'),
         path: optionalString(input, 'path'),
@@ -180,7 +372,8 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
     /** A file a rendered page fetches, with the site kit behind `zcc-kit/`; null when the doc has none. */
     readPageFile: (raw): PageFile | null => {
       const input = asInput(raw);
-      const doc = store.summary(requiredString(input, 'doc'));
+      const kind = requiredKind(input);
+      const doc = store.get(requiredString(input, 'doc'), kind);
       const requested = requiredString(input, 'path');
       let path: string;
       try {
@@ -188,7 +381,7 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       } catch {
         return null;
       }
-      const file = docPageReader(store, doc.id, deps.kit ?? NO_KIT)(path);
+      const file = docPageReader(store, doc.id, deps.kit ?? NO_KIT, kind)(path);
       return file ? { kind: file.kind, encoding: file.encoding, content: file.content } : null;
     },
 
@@ -220,7 +413,7 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
 
     readFile: (raw) => {
       const input = asInput(raw);
-      return store.readFile(requiredString(input, 'doc'), requiredString(input, 'path'));
+      return store.readFile(requiredString(input, 'doc'), requiredString(input, 'path'), requiredKind(input));
     },
 
     writeFile: (raw) => {
@@ -234,9 +427,11 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
           content,
           encoding: input.encoding === 'base64' ? 'base64' : undefined,
           baseRevision: optionalNumber(input, 'baseRevision'),
+          baseFileId: input.baseFileId === null ? null : optionalString(input, 'baseFileId'),
           note: optionalString(input, 'note')
         },
-        UI_USER
+        UI_USER,
+        requiredKind(input)
       );
       changed(result.docId);
       return result;
@@ -251,9 +446,11 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
           path: requiredString(input, 'path'),
           edits: input.edits as TextEdit[],
           baseRevision: optionalNumber(input, 'baseRevision'),
+          baseFileId: input.baseFileId === null ? null : optionalString(input, 'baseFileId'),
           note: optionalString(input, 'note')
         },
-        UI_USER
+        UI_USER,
+        requiredKind(input)
       );
       changed(result.docId);
       return result;
@@ -261,10 +458,12 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
 
     deleteFile: (raw) => {
       const input = asInput(raw);
-      const doc = store.summary(requiredString(input, 'doc'));
+      const kind = requiredKind(input);
+      const doc = store.get(requiredString(input, 'doc'), kind);
       store.deleteFile(doc.id, requiredString(input, 'path'), UI_USER, {
-        baseRevision: optionalNumber(input, 'baseRevision')
-      });
+        baseRevision: optionalNumber(input, 'baseRevision'),
+        baseFileId: input.baseFileId === null ? null : optionalString(input, 'baseFileId')
+      }, kind);
       changed(doc.id);
       return { ok: true };
     },
@@ -275,7 +474,9 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
         requiredString(input, 'doc'),
         requiredString(input, 'from'),
         requiredString(input, 'to'),
-        UI_USER
+        UI_USER,
+        { baseRevision: optionalNumber(input, 'baseRevision'), baseFileId: input.baseFileId === null ? null : optionalString(input, 'baseFileId') },
+        requiredKind(input)
       );
       changed(result.docId);
       return result;
@@ -286,19 +487,20 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       return store.history(requiredString(input, 'doc'), {
         path: optionalString(input, 'path'),
         limit: optionalNumber(input, 'limit')
-      });
+      }, requiredKind(input));
     },
 
     revision: (raw) => {
       const input = asInput(raw);
-      return store.revisionContent(requiredString(input, 'doc'), input.id);
+      return store.revisionContent(requiredString(input, 'doc'), input.id, requiredKind(input));
     },
 
     restore: (raw) => {
       const input = asInput(raw);
       const result = store.restoreRevision(requiredString(input, 'doc'), input.id, UI_USER, {
-        baseRevision: optionalNumber(input, 'baseRevision')
-      });
+        baseRevision: optionalNumber(input, 'baseRevision'),
+        baseFileId: input.baseFileId === null ? null : optionalString(input, 'baseFileId')
+      }, requiredKind(input));
       changed(result.docId);
       return result;
     },
@@ -355,15 +557,15 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       const text = requiredString(input, 'text');
       const thread = await deps.sdk.threads.get({ threadId });
       if (!thread) throw new Error(`Thread ${threadId} was not found.`);
-      const detail = store.create(
+      const detail = store.createImported(
         {
           title: optionalString(input, 'title')?.trim() || titleFromMarkdown(text),
           projectId: thread.projectId ?? null,
           files: [{ path: 'README.md', content: text }]
         },
-        UI_USER
+        UI_USER,
+        { id: threadId, title: thread.title?.trim() || 'Agent thread' }
       );
-      store.linkThread(detail.id, threadId, thread.title?.trim() || 'Agent thread', 'assistant');
       changed(detail.id);
       return store.summary(detail.id);
     },
@@ -386,12 +588,10 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       }
       if (!doc.projectId) await requireProject(projectId);
       const title = `${action ? action.label : 'Design doc'} · ${doc.title}`.slice(0, 120);
-      const providerId = optionalString(input, 'providerId');
-      const thread = await deps.sdk.threads.spawn({
+      const thread = await spawnAgent({
         projectId,
         prompt: buildAgentPrompt({ doc, action, prompt, path: optionalString(input, 'path') }),
         title,
-        ...(providerId ? { providerId } : {}),
         visibility: 'hidden',
         pluginMetadata: { designDocId: doc.id, ...(action ? { action: action.id } : {}), panelAgent: panelAgent(doc.id) }
       });
@@ -420,7 +620,7 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       }
       if (!doc.projectId) await requireProject(projectId);
       const title = `Publish · ${doc.title}`.slice(0, 120);
-      const thread = await deps.sdk.threads.spawn({
+      const thread = await spawnAgent({
         projectId,
         prompt: buildPublishPrompt({ doc, target }),
         title,

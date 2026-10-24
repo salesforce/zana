@@ -7,6 +7,7 @@ import { listMcpServers, setMcpServerEnabled } from '@zana-ai/zcc-server/service
 import { listPlugins, revealPlugin, setPluginEnabled } from '@zana-ai/zcc-server/services/extensions/plugins';
 import { wantsSecretsOmitted, withoutSecretValues } from '@zana-ai/zcc-server/plugins/plugin-settings-redaction';
 import type { Result } from '@zana-ai/zcc-domain/product';
+import { classifyExpectedRpcError, toRpcErrorEnvelope } from '@zana-ai/zcc-contracts/rpc-error';
 import {
   listPluginAppsFromProductServer,
   setPluginAppEnabledOnProductServer,
@@ -223,8 +224,16 @@ export function registerPluginsIpc(): void {
   ctx.safeHandle(
     IPC.pluginApps.callRpc,
     async (pluginId: string, method: string, args?: unknown) => {
-      if (ctx.runtimeSupervisor) return ctx.runtimeSupervisor.callPluginRpc(pluginId, method, args);
-      return callPluginRpcOnProductServer(pluginId, method, args);
+      try {
+        if (ctx.runtimeSupervisor) return await ctx.runtimeSupervisor.callPluginRpc(pluginId, method, args);
+        return await callPluginRpcOnProductServer(pluginId, method, args);
+      } catch (err) {
+        // Expected domain errors (validation guards etc.) resolve as an envelope so ipcMain does not
+        // log them as main-process failures; preload turns the envelope back into a clean rejection.
+        const expected = classifyExpectedRpcError(err);
+        if (expected) return toRpcErrorEnvelope(expected);
+        throw err;
+      }
     },
     (err) => {
       throw err;

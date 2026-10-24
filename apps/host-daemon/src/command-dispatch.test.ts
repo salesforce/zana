@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createCommandRuntime, dispatchHostCommand } from './command-dispatch.js';
@@ -55,6 +55,49 @@ describe('host command dispatch', () => {
       path: join(tmpdir(), 'zcc-missing-env', randomUUID())
     })).rejects.toMatchObject({ code: 'path_not_found' });
     expect(runtime.lanes.size).toBe(0);
+  });
+
+  it('forwards peer packets only to independently resolved local app and fails closed without it', async () => {
+    const fetchFn = vi.fn(async (url: string) => {
+      const response = new Response('{"ok":true}', { status: 200 });
+      Object.defineProperty(response, 'url', { value: url });
+      return response;
+    });
+    const runtime = createCommandRuntime({ resolveLocalPeerApp: () => 18780, peerForwardFetch: fetchFn as typeof fetch });
+    const command = {
+      protocolVersion: 2 as const, pairId: 'pair-a', senderId: 'peer-a', recipientId: 'peer-b',
+      pluginId: 'plugin-a', scope: 'opaque-repo-1', route: '/api/v1/peer/plugin-a/handshake', httpMethod: 'POST' as const,
+      payloadHash: createHash('sha256').update('{}').digest('hex'), signature: 'a'.repeat(43),
+      nonce: 'b'.repeat(16), issuedAt: Date.now(), epoch: 1,
+      type: 'peer.forward' as const, method: 'handshake', body: '{}', timeoutMs: 1_000
+    };
+    onTestFinished(() => runtime.peerForwarder!.close());
+    const { type: _type, method: _method, body: _body, timeoutMs: _timeout, ...envelope } = command;
+    await expect(dispatchHostCommand(runtime, command)).resolves.toEqual({ status: 200, body: '{"ok":true}' });
+    expect(fetchFn).toHaveBeenCalledWith('http://127.0.0.1:18780/api/v1/peer/plugin-a/handshake', expect.objectContaining({
+      method: 'POST', body: '{}', redirect: 'error', credentials: 'omit', headers: {
+        'content-type': 'application/json', 'x-zcc-peer-envelope': Buffer.from(JSON.stringify(envelope)).toString('base64url')
+      }
+    }));
+    await expect(dispatchHostCommand(createCommandRuntime({ peerForwardFetch: fetchFn as typeof fetch }), command))
+      .rejects.toMatchObject({ code: 'peer_app_unavailable' });
+    await expect(dispatchHostCommand(runtime, { ...command, method: '../escape' })).rejects.toMatchObject({ code: 'invalid_request' });
+    for (const patch of [{ protocolVersion: 1 }, { recipientId: command.senderId }, { pluginId: 'plugin-b' },
+      { method: 'apply' }, { route: '/api/v1/peer/plugin-b/handshake' }, { envelope }, { scope: undefined }]) {
+      await expect(dispatchHostCommand(runtime, { ...command, ...patch })).rejects.toMatchObject({ code: 'invalid_request' });
+    }
+    runtime.peerForwarder!.close();
+    await expect(dispatchHostCommand(runtime, command)).rejects.toMatchObject({ code: 'peer_forward_closed' });
+    expect(fetchFn).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed for peer.forward without a forwarder and rejects peer.control on the dispatch path', async () => {
+    const runtime = createCommandRuntime({});
+    delete (runtime as { peerForwarder?: unknown }).peerForwarder;
+    await expect(dispatchHostCommand(runtime, { type: 'peer.forward' } as never))
+      .rejects.toMatchObject({ code: 'peer_app_unavailable' });
+    await expect(dispatchHostCommand(runtime, { type: 'peer.control' } as never))
+      .rejects.toMatchObject({ code: 'capability_denied' });
   });
 
   it('starts a thread after unmanaged provision when the provider CLI is present', async () => {

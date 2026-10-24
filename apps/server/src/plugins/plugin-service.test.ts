@@ -163,6 +163,47 @@ describe('PluginService', () => {
     await expect(service.callRpc('evolving', 'ping', {})).resolves.toMatchObject({ ok: true });
   });
 
+  it('surfaces the manifest peers capability on the renderer snapshot only when declared', async () => {
+    const dataDir = root();
+    const peerDir = writePlugin(join(root(), 'peerful'), 'peerful', undefined, { peers: true });
+    const plainDir = writePlugin(join(root(), 'plain'), 'plain');
+    const service = createPluginService({ dataDir, bundledRoot: root() });
+    await service.install(peerDir);
+    await service.install(plainDir);
+    const rows = service.snapshot();
+    expect(rows.find((row) => row.id === 'peerful')?.peers).toBe(true);
+    expect(rows.find((row) => row.id === 'plain')?.peers).toBe(false);
+    expect(toPluginAppSnapshot(rows.find((row) => row.id === 'peerful')!)).toMatchObject({ peers: true });
+    expect(toPluginAppSnapshot(rows.find((row) => row.id === 'plain')!)).not.toHaveProperty('peers');
+  });
+
+  it('falls back to peers=false when the installed manifest becomes unreadable', async () => {
+    const peerDir = writePlugin(join(root(), 'peerful-broken'), 'peerful-broken', undefined, { peers: true });
+    const service = createService({ dataDir: root(), bundledRoot: root() });
+    await service.install(peerDir);
+    expect(service.snapshot()[0].peers).toBe(true);
+    writeFileSync(join(peerDir, 'package.json'), '{ not json');
+    const row = service.snapshot()[0];
+    expect(row.peers).toBe(false);
+    expect(row.projectTab).toBeUndefined();
+    expect(toPluginAppSnapshot(row)).not.toHaveProperty('peers');
+  });
+
+  it('dispatches peer requests to the registered handler and rejects unknown plugins or methods', async () => {
+    const peerDir = writePlugin(join(root(), 'peer-echo'), 'peer-echo', `export default function plugin(zcc) {
+      zcc.sdk.peers.handle('echo', (request) => ({ got: request.body, from: request.peerId }));
+    }\n`, { peers: true });
+    const service = createService({ dataDir: root(), bundledRoot: root() });
+    await service.install(peerDir);
+    const request = {
+      peerId: 'app-b', body: { n: 1 }, scope: 'repo', grantEpoch: 1,
+      signal: new AbortController().signal, commitSync: async (commit: () => unknown) => commit()
+    } as never;
+    await expect(service.dispatchPeer('peer-echo', 'echo', request)).resolves.toEqual({ got: { n: 1 }, from: 'app-b' });
+    await expect(service.dispatchPeer('peer-echo', 'missing', request)).rejects.toThrow('unknown peer peer-echo missing');
+    await expect(service.dispatchPeer('no-such-plugin', 'echo', request)).rejects.toThrow('unknown peer no-such-plugin echo');
+  });
+
   it('rebuilds a stale frontend on direct reload and keeps the generation on failure', async () => {
     const pluginDir = writePlugin(join(root(), 'freshness'), 'freshness', undefined, { app: './app.tsx' });
     const service = createPluginService({ dataDir: root(), bundledRoot: root() });

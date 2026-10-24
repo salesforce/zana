@@ -340,6 +340,30 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
     }
   });
 
+  it('forwards the project-default harness opt-in and rejects unknown harness modes', async () => {
+    const spawnThread = vi.fn(async () => ({ id: 'thr-default' }));
+    const handle = createPluginApi('demo', '/tmp', { spawnThread });
+    try {
+      await expect(handle.api.sdk.threads.spawn({ projectId: 'p', prompt: 'hi', harness: 'project-default' }))
+        .resolves.toEqual({ id: 'thr-default' });
+      expect(spawnThread).toHaveBeenLastCalledWith({ pluginId: 'demo', projectId: 'p', prompt: 'hi', harness: 'project-default' });
+      await handle.api.sdk.threads.spawn({ projectId: 'p', prompt: 'hi', providerId: ' codex ', harness: 'project-default' });
+      expect(spawnThread).toHaveBeenLastCalledWith({
+        pluginId: 'demo', projectId: 'p', prompt: 'hi', providerId: 'codex', harness: 'project-default'
+      });
+      await handle.api.sdk.threads.spawn({ projectId: 'p', prompt: 'hi', harness: null as never });
+      expect(spawnThread).toHaveBeenLastCalledWith({ pluginId: 'demo', projectId: 'p', prompt: 'hi' });
+      spawnThread.mockClear();
+      await expect(handle.api.sdk.threads.spawn({ projectId: 'p', prompt: 'hi', harness: 'first' as never }))
+        .rejects.toThrow("unknown harness mode: first; expected 'project-default'");
+      await expect(handle.api.sdk.threads.spawn({ projectId: 'p', prompt: 'hi', harness: 3 as never }))
+        .rejects.toThrow('unknown harness mode: number');
+      expect(spawnThread).not.toHaveBeenCalled();
+    } finally {
+      await handle.dispose();
+    }
+  });
+
   it('forwards worktree, host, and service tier choices after validating the environment', async () => {
     const spawnThread = vi.fn(async () => ({ id: 'thr-worker' }));
     const handle = createPluginApi('demo', '/tmp', { spawnThread });

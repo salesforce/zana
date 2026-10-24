@@ -6,7 +6,11 @@ import type {
   ProjectLaunchDefault,
   RemoteTransferResult
 } from '@zana-ai/zcc-domain/product';
-import { harnessFamilyOf } from '@zana-ai/zcc-domain/launch-provider';
+import {
+  harnessFamilyForThreadProviderId,
+  harnessFamilyOf,
+  threadProviderIdForHarnessFamily
+} from '@zana-ai/zcc-domain/launch-provider';
 import type { PromptTextMention } from '@zana-ai/zcc-domain/thread-runtime';
 import type { PluginComposerLaunchPatch } from '@zana-ai/zcc-plugin-sdk/app';
 import {
@@ -31,16 +35,6 @@ export const PROFILE_BY_FAMILY: Record<HarnessFamily, LaunchProfileId> = {
   afcode: 'afcode'
 };
 
-const THREAD_PROVIDER_BY_FAMILY: Record<HarnessFamily, string> = {
-  claude: 'claude-code',
-  cursor: 'acp-cursor',
-  codex: 'codex',
-  pi: 'pi',
-  opencode: 'acp-opencode',
-  grok: 'acp-grok',
-  mastracode: 'acp-mastracode',
-  afcode: 'acp-afcode'
-};
 
 export type CliAgentModelOption = CatalogModelPickerRow;
 
@@ -113,8 +107,7 @@ export function cliAgentFamilyIdsFromCatalog(
 }
 
 export function threadProviderIdForFamily(family: string): string | null {
-  if (family in THREAD_PROVIDER_BY_FAMILY) return THREAD_PROVIDER_BY_FAMILY[family as HarnessFamily];
-  return null;
+  return threadProviderIdForHarnessFamily(family);
 }
 
 export function threadPermissionMode(
@@ -125,10 +118,7 @@ export function threadPermissionMode(
 }
 
 export function familyForThreadProviderId(providerId: string): HarnessFamily | null {
-  for (const [family, id] of Object.entries(THREAD_PROVIDER_BY_FAMILY) as Array<[HarnessFamily, string]>) {
-    if (id === providerId) return family;
-  }
-  return null;
+  return harnessFamilyForThreadProviderId(providerId);
 }
 
 /** Project exact/persona pin, else Settings `defaultHarness`, as a thread provider id. */

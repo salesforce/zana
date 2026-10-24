@@ -186,11 +186,12 @@ it("removes orphaned storage after a scan, in the foreground or the background",
     (host) => host.maintenance.state !== "running",
   );
   expect(done.maintenance.state).toBe("completed");
-  await until(
+  // Trash directories are purged just after the maintenance state flips to completed.
+  const remaining = await until(
     async () => fs.readdir(rootOf(fixture)),
-    (entries) => !entries.some((entry) => entry.startsWith(".zcc-trash-")),
+    (names) => !names.some((name) => name.startsWith(".zcc-trash-")),
   );
-  expect(await fs.readdir(rootOf(fixture))).toEqual([uuid(1)]);
+  expect(remaining).toEqual([uuid(1)]);
 });
 
 it("clears large files and archived files, and one thread, when asked with --yes", async () => {

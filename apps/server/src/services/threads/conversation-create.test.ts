@@ -10,6 +10,7 @@ import {
   registerThreadProvider,
   holdThreadProviderStartup,
   trackThreadProviderStartup,
+  waitForPluginStartup,
   waitForThreadProvider
 } from './thread-provider-catalog.js';
 
@@ -322,6 +323,87 @@ describe('waitForThreadProvider', () => {
   });
 });
 
+describe('waitForPluginStartup', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    trackThreadProviderStartup(Promise.resolve());
+  });
+
+  it('waits past provider registration until plugin startup settles', async () => {
+    vi.useFakeTimers();
+    const release = holdThreadProviderStartup();
+    const handle = registerThreadProvider('provider-pi', {
+      id: 'pi',
+      displayName: 'Pi',
+      capabilities: { supportsServiceTier: false, fork: 'tip', supportsManualCompaction: false,
+        supportsThreadArchive: false, supportsThreadRename: false, permissionModes: ['full'] },
+      composerActions: []
+    });
+    try {
+      await waitForThreadProvider('pi');
+      let settled: boolean | undefined;
+      const waiting = waitForPluginStartup().then((value) => { settled = value; });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(settled).toBeUndefined();
+      release();
+      await waiting;
+      expect(settled).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      handle.unregister();
+    }
+  });
+
+  it.each([
+    ['resolved', () => Promise.resolve()],
+    ['rejected', () => Promise.reject(new Error('plugin startup failed'))]
+  ])('resolves true once startup has %s', async (_label, settle) => {
+    const startup = settle();
+    startup.catch(() => {});
+    trackThreadProviderStartup(startup);
+    await expect(waitForPluginStartup()).resolves.toBe(true);
+  });
+
+  it('resolves false after the wait bound when startup never settles', async () => {
+    vi.useFakeTimers();
+    trackThreadProviderStartup(new Promise(() => {}));
+    let settled: boolean | undefined;
+    const waiting = waitForPluginStartup(1_000).then((value) => { settled = value; });
+    await vi.advanceTimersByTimeAsync(999);
+    expect(settled).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    await waiting;
+    expect(settled).toBe(false);
+  });
+
+  it('spends the bound once per startup, so a hung activation does not delay every thread', async () => {
+    vi.useFakeTimers();
+    trackThreadProviderStartup(new Promise(() => {}));
+    const results: Array<[string, boolean]> = [];
+    const first = waitForPluginStartup(1_000).then((value) => { results.push(['first', value]); });
+    await vi.advanceTimersByTimeAsync(600);
+    // A later wait only gets the time left on the first wait's bound.
+    const second = waitForPluginStartup(1_000).then((value) => { results.push(['second', value]); });
+    await vi.advanceTimersByTimeAsync(400);
+    await Promise.all([first, second]);
+    expect(results).toEqual([['first', false], ['second', false]]);
+    // Once the bound has passed, waits return at once without arming a timer.
+    const late = waitForPluginStartup(1_000);
+    expect(vi.getTimerCount()).toBe(0);
+    await expect(late).resolves.toBe(false);
+    // A newly tracked startup gets a fresh bound.
+    const next = Promise.withResolvers<void>();
+    trackThreadProviderStartup(next.promise);
+    let settled: boolean | undefined;
+    const waiting = waitForPluginStartup(1_000).then((value) => { settled = value; });
+    await vi.advanceTimersByTimeAsync(999);
+    expect(settled).toBeUndefined();
+    next.resolve();
+    await waiting;
+    expect(settled).toBe(true);
+  });
+});
+
 describe('unmanaged environment reuse', () => {
   it('reattaches to the existing project/host/path environment instead of inserting a duplicate', () => {
     const source = readFileSync(new URL('./conversation-create.ts', import.meta.url), 'utf8');
@@ -381,7 +463,7 @@ describe('SSH remotes', () => {
     expect(source).toContain('dropCwd');
     expect(source).toContain('resolvePersonalTargetPathOnHost');
     expect(source).not.toContain('readRemoteToolProxySetting');
-    expect(source).toContain('hosts: listHosts(ctx.db).map(toRemoteStartPathHost)');
+    expect(source).toContain('hosts: listExecutionHosts(ctx.db).map(toRemoteStartPathHost)');
     expect(source).toContain('getPrimaryHost(ctx.db)');
     expect(source).toContain('threadLaunchRemote(');
   });

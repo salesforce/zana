@@ -31,6 +31,7 @@
 import { test, expect } from './fixtures/app.js';
 import { makeJobTeamCoordinatorBinary } from './sdk/harness.js';
 import { answerJobBlockerThroughUi } from './sdk/job-team-scenario.js';
+import { retryWhileToolPolicyNotReady } from './fixtures/tool-policy.js';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
@@ -60,7 +61,7 @@ test.use({
     FAKE_ACP_MODE_OPTIONS: 'build:Build,plan:Plan'
   }
 });
-test.setTimeout(120_000);
+test.setTimeout(210_000);
 
 test('Modern owner starts a durable Job Team through the host tool-call bridge and completes', async ({ app }) => {
   const { window, home } = app;
@@ -140,10 +141,17 @@ test('Modern owner starts a durable Job Team through the host tool-call bridge a
     // Submit the owner's execution_start through the SAME host tool-call bridge a
     // real ACP dynamic tool uses. From Node context (no browser Origin header),
     // authenticated with the daemon's own self-host credentials.
+    // Native tool policy fails closed until every enabled server plugin has
+    // activated and sealed; bundled plugins can finish after the provider
+    // catalog and owner thread are up. The deny precedes any tool side effect,
+    // so repeat the call while the gate itself reports not-ready.
     const rendererOrigin = new URL(window.url()).origin;
     const auth = JSON.parse(readFileSync(join(home, '.zcc', 'auth.json'), 'utf8')) as { hostId: string; hostKey: string };
-    const callTool = async () => {
-      const toolCall = await fetch(`${rendererOrigin}/internal/hosts/tool-call`, {
+    const launchRequestId = `e2e-modern-owner-job-${Date.now()}`;
+    type ToolCallReply = { status: number; body: { success?: boolean; contentItems?: Array<{ text?: string }> } };
+    const replyText = (reply: ToolCallReply) => (reply.body.contentItems ?? []).map((item) => item.text ?? '').join('\n');
+    const reply = await retryWhileToolPolicyNotReady<ToolCallReply>(async () => {
+      const response = await fetch(`${rendererOrigin}/internal/hosts/tool-call`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -160,7 +168,7 @@ test('Modern owner starts a durable Job Team through the host tool-call bridge a
           arguments: {
             version: 1,
             teamId: 'e2e-job-team',
-            launchRequestId: `e2e-modern-owner-job-${Date.now()}`,
+            launchRequestId,
             jobTitle: 'Modern durable job',
             summary: 'Full Job Team route started by a Modern owner.',
             workUnits: PLAN,
@@ -172,21 +180,21 @@ test('Modern owner starts a durable Job Team through the host tool-call bridge a
           }
         })
       });
-      const toolBody = await toolCall.json() as { success?: boolean; contentItems?: Array<{ text?: string }> };
-      return { status: toolCall.status, toolBody, toolText: (toolBody.contentItems ?? []).map((item) => item.text ?? '').join('\n') };
-    };
-    let tool = await callTool();
-    // Salesforce is installed by default; its plugin server can take a while to come up.
-    const policyDeadline = Date.now() + 90_000;
-    while (tool.toolText.includes('plugin tool policy not ready') && Date.now() < policyDeadline) {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      tool = await callTool();
-    }
+      const text = await response.text();
+      let body: ToolCallReply['body'];
+      try {
+        body = JSON.parse(text) as ToolCallReply['body'];
+      } catch {
+        body = { contentItems: [{ text }] };
+      }
+      return { status: response.status, body };
+    }, replyText);
+    const toolText = replyText(reply);
     // The regression gate: a "session MCP is not authorized for this live session"
     // failure surfaces here as HTTP 200 with success:false (or a non-200 identity
     // rejection). Either fails this assertion with the underlying message.
-    expect(tool.status, `tool-call HTTP ${tool.status}: ${tool.toolText}`).toBe(200);
-    expect(tool.toolBody.success, `execution_start failed: ${tool.toolText}\n${diagnostics.join('\n')}`).toBe(true);
+    expect(reply.status, `tool-call HTTP ${reply.status}: ${toolText}`).toBe(200);
+    expect(reply.body.success, `execution_start failed: ${toolText}\n${diagnostics.join('\n')}`).toBe(true);
 
     await expect.poll(async () => window.evaluate(async (projectId) => {
       const page = await window.cc.executionBoard.listProject(projectId);

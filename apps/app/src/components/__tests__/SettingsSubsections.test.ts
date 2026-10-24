@@ -154,7 +154,7 @@ describe('Settings subsection navigation', () => {
     expect(connectivity?.group).toBe('remote');
     expect(phone?.group).toBe('remote');
     const remoteIds = SETTINGS_SECTIONS.filter((section) => section.group === 'remote').map((section) => section.id);
-    expect(remoteIds).toEqual(['machines', 'connectivity', 'phone', 'remote-access']);
+    expect(remoteIds).toEqual(['machines', 'connectivity', 'phone', 'peers', 'remote-access']);
     expect(SETTINGS_SUBSECTIONS.connectivity).toEqual([
       { id: 'connectivity-remote', label: 'Remote SSH' }
     ]);
@@ -202,6 +202,7 @@ describe('Settings subsection navigation', () => {
       'scheduled',
       'agent-automation',
       'agent-heartbeat',
+      'api-error-resume',
       'auto-close-idle',
       'legacy-agent',
       'overseer',

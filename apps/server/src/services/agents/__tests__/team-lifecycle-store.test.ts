@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -187,6 +187,15 @@ describe('team lifecycle store', () => {
 
     const restarted = createTeamLifecycleStore({ filePath });
     expect(await restarted.get(claimed.record.id)).toMatchObject({ state: 'cancel-pending', workers: [{ process: 'authorized' }] });
+  }));
+
+  it('persists the launch-time orchestrator retention setting across restart', async () => fixture(async (filePath) => {
+    const initial = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
+    const claimed = await initial.claim({ ...claimInput('principal-a'), retainOrchestrator: true });
+    expect(claimed.record.retainOrchestrator).toBe(true);
+
+    const restarted = createTeamLifecycleStore({ filePath });
+    expect(await restarted.get(claimed.record.id)).toMatchObject({ retainOrchestrator: true });
   }));
 
   it('serializes concurrent same-principal request claims across store instances', async () => fixture(async (filePath) => {
@@ -715,6 +724,94 @@ describe('team lifecycle integration', () => {
     await integration.onSessionExit('session-1');
     expect(await store.get(claimed.record.id)).toMatchObject({ state: 'canceled', workers: [{ process: 'canceled', capacityReleased: true }] });
     expect(released).toEqual(['authorization-1']);
+  }));
+
+  it('retains only the named orchestrator when requested during completion cleanup', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
+    const input = claimInput('principal-a');
+    input.launchResult = {
+      ...input.launchResult,
+      orchestratorSessionId: 'orchestrator-session',
+      launched: 2,
+      workers: [...input.launchResult.workers, {
+        sessionId: 'orchestrator-session', cohortId: 'cohort-1', slotId: 'orchestrator', personaId: 'orchestrator',
+        projectId: 'project-1', authorizationId: 'authorization-orchestrator'
+      }]
+    };
+    input.workers = [...input.workers, {
+      sessionId: 'orchestrator-session', cohortId: 'cohort-1', slotId: 'orchestrator', personaId: 'orchestrator',
+      projectId: 'project-1', authorizationId: 'authorization-orchestrator', process: 'authorized',
+      attention: 'active', task: 'unknown', delivery: 'bound-at-spawn'
+    }];
+    input.capacity!.launched = 2;
+    const claimed = await store.claim(input);
+    await markClaimedWorkerRunning(store, claimed.record.id);
+    await markClaimedWorkerRunning(store, claimed.record.id, 'orchestrator');
+    await store.complete(claimed.record.id, { ok: true, value: claimed.record.launchResult });
+    const closed: string[] = [];
+    const integration = createTeamLifecycleIntegration({
+      store, isLiveSession: () => true, closeSession: async (sessionId) => { closed.push(sessionId); return true; }, releaseCapacity: () => undefined
+    });
+    integration.track((await store.get(claimed.record.id))!);
+
+    expect(await integration.cancelTeamLaunch('principal-a', 'request-1', { retainOrchestrator: true }))
+      .toMatchObject({ canceledSessionIds: ['session-1'] });
+    expect(closed).toEqual(['session-1']);
+    expect(await store.get(claimed.record.id)).toMatchObject({
+      workers: [{ sessionId: 'session-1', process: 'running' }, { sessionId: 'orchestrator-session', process: 'running' }]
+    });
+  }));
+
+  it('keeps retained orchestrator capacity held until its session exits', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
+    const input = claimInput('principal-a');
+    input.launchResult = {
+      ...input.launchResult,
+      orchestratorSessionId: 'orchestrator-session',
+      launched: 2,
+      workers: [...input.launchResult.workers, {
+        sessionId: 'orchestrator-session', cohortId: 'cohort-1', slotId: 'orchestrator', personaId: 'orchestrator',
+        projectId: 'project-1', authorizationId: 'authorization-orchestrator'
+      }]
+    };
+    input.workers = [...input.workers, {
+      sessionId: 'orchestrator-session', cohortId: 'cohort-1', slotId: 'orchestrator', personaId: 'orchestrator',
+      projectId: 'project-1', authorizationId: 'authorization-orchestrator', process: 'authorized',
+      attention: 'active', task: 'unknown', delivery: 'bound-at-spawn'
+    }];
+    input.capacity!.launched = 2;
+    const claimed = await store.claim(input);
+    await markClaimedWorkerRunning(store, claimed.record.id);
+    await markClaimedWorkerRunning(store, claimed.record.id, 'orchestrator');
+    await store.complete(claimed.record.id, { ok: true, value: claimed.record.launchResult });
+    const released: string[] = [];
+    const integration = createTeamLifecycleIntegration({
+      store, isLiveSession: () => true, closeSession: async () => true, releaseCapacity: (id) => { released.push(id); }
+    });
+    integration.track((await store.get(claimed.record.id))!);
+
+    await integration.cancelTeamLaunch('principal-a', 'request-1', { retainOrchestrator: true });
+    expect(released).not.toContain('authorization-orchestrator');
+    const exited = await store.updateWorker(claimed.record.id, 'orchestrator', { process: 'exited' });
+    expect(exited.capacityReleasedNow).toBe(true);
+  }));
+
+  it('closes all sessions when orchestrator retention lacks a named orchestrator', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
+    const claimed = await store.claim(claimInput('principal-a'));
+    await markClaimedWorkerRunning(store, claimed.record.id);
+    await store.complete(claimed.record.id, completedResult());
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const closed: string[] = [];
+    const integration = createTeamLifecycleIntegration({
+      store, isLiveSession: () => true, closeSession: async (sessionId) => { closed.push(sessionId); return true; }, releaseCapacity: () => undefined
+    });
+    integration.track((await store.get(claimed.record.id))!);
+
+    await integration.cancelTeamLaunch('principal-a', 'request-1', { retainOrchestrator: true });
+    expect(closed).toEqual(['session-1']);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('retainOrchestrator requested'));
+    warn.mockRestore();
   }));
 
   it('keeps post-spawn cancellation pending and retryable when remote termination fails', async () => fixture(async (filePath) => {

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
+import { parseRpcErrorEnvelope, rpcErrorFrom } from '@zana-ai/zcc-contracts/rpc-error';
 import type {
   CcApi,
   DesktopBrowserApi,
@@ -722,6 +723,9 @@ const api: CcApi = {
       return () => ipcRenderer.off(IPC.config.onChanged, handler);
     }
   },
+  apiErrorResume: {
+    check: (input) => ipcRenderer.invoke(IPC.apiErrorResume.check, input)
+  },
   overseer: {
     recent: (limit) => ipcRenderer.invoke(IPC.overseer.recent, limit)
   },
@@ -1029,7 +1033,14 @@ const api: CcApi = {
   pluginApps: {
     list: () => ipcRenderer.invoke(IPC.pluginApps.list),
     setEnabled: (id, enabled) => ipcRenderer.invoke(IPC.pluginApps.setEnabled, id, enabled),
-    callRpc: (pluginId, method, args) => ipcRenderer.invoke(IPC.pluginApps.callRpc, pluginId, method, args),
+    callRpc: async (pluginId, method, args) => {
+      const result = await ipcRenderer.invoke(IPC.pluginApps.callRpc, pluginId, method, args);
+      // Main resolves expected domain errors as an envelope (no main-process error log); surface
+      // them as a plain rejection with the bare message and optional `code`.
+      const expected = parseRpcErrorEnvelope(result);
+      if (expected) throw rpcErrorFrom(expected.message, expected.code);
+      return result;
+    },
     getSettings: (pluginId, options) => ipcRenderer.invoke(IPC.pluginApps.getSettings, pluginId, options),
     setSettings: (pluginId, values) => ipcRenderer.invoke(IPC.pluginApps.setSettings, pluginId, values),
     checkUpdates: () => ipcRenderer.invoke(IPC.pluginApps.checkUpdates),
@@ -1122,6 +1133,15 @@ const api: CcApi = {
   },
   commands: {
     list: (projectPath?: string) => ipcRenderer.invoke(IPC.commands.list, projectPath)
+  },
+  deepLinks: {
+    config: () => ipcRenderer.invoke(IPC.deepLinks.config),
+    open: (raw: string) => ipcRenderer.invoke(IPC.deepLinks.open, raw),
+    onLink: (cb) => {
+      const handler = (_e: unknown, delivery: Parameters<typeof cb>[0]) => cb(delivery);
+      ipcRenderer.on(IPC.deepLinks.onLink, handler);
+      return () => ipcRenderer.off(IPC.deepLinks.onLink, handler);
+    }
   },
   scheduler: {
     list: () => ipcRenderer.invoke(IPC.scheduler.list),

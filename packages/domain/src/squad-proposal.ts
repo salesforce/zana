@@ -56,6 +56,8 @@ export interface SquadProposalInput {
   sources?: string[];
   title?: string;
   summary?: string;
+  /** Request a completion Inbox notice for an agent-started Squad. */
+  completionInboxNotice?: boolean;
 }
 
 export interface SquadProposer {

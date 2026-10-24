@@ -177,6 +177,22 @@ describe('plugin-apps product-server fallback', () => {
     });
   });
 
+  it('attaches the domain code of a 4xx RPC failure and ignores codes on other failures', async () => {
+    const respond = (status: number, body: unknown) =>
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status })));
+    const base = 'http://127.0.0.1:8780/';
+    respond(400, { error: 'a design doc must keep at least one file', code: 'invalid' });
+    const expected = await callPluginRpcOnProductServer('docs', 'rm', undefined, base).catch((e) => e);
+    expect(expected).toMatchObject({ message: 'a design doc must keep at least one file', code: 'invalid' });
+    respond(404, { message: 'gone', error: 'ignored', code: 'not_found' });
+    await expect(callPluginRpcOnProductServer('docs', 'rm', undefined, base)).rejects.toMatchObject({ message: 'gone', code: 'not_found' });
+    respond(500, { error: 'crashed', code: 'invalid' });
+    const unexpected = await callPluginRpcOnProductServer('docs', 'rm', undefined, base).catch((e) => e);
+    expect(unexpected.message).toBe('crashed'); expect(unexpected).not.toHaveProperty('code');
+    respond(502, 'not json');
+    await expect(callPluginRpcOnProductServer('docs', 'rm', undefined, base)).rejects.toThrow('plugin host is unavailable');
+  });
+
   it('GETs and POSTs plugin settings', async () => {
     const snapshot = {
       descriptors: { token: { type: 'string', label: 'Token' } },

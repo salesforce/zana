@@ -43,10 +43,14 @@ package-manager process or a destructive “restore ABI” finally block.
 
 Pre-push runs from a detached snapshot of pushed commit. Inert prose changes
 skip checks. Feature branches reuse installed dependencies when dependency inputs
-are unchanged, typecheck, run related tests for source and unit-test changes, and
-run broad changed-test selection only for runner configuration changes. Every
-source-text guard test still runs. CI remains merge authority and always runs
-full unit and affected E2E suites.
+are unchanged, then typecheck and run related tests for source and unit-test
+changes concurrently (broad changed-test selection only for runner configuration
+changes). Every source-text guard test still runs. A force-push (rebase or
+squash) is measured against `origin/main`'s merge base like a new branch. A tree
+that already passed locally (same tree hash, same base) is not re-verified;
+stamps live in `.git/pre-push-verified`. Protected refs and unsafe push shapes
+run `full`. CI remains merge authority and always runs full unit and affected
+E2E suites.
 
 The snapshot is a cached clone when one is free. Each repository keeps up to two
 per Node ABI, platform, and architecture under the user cache directory

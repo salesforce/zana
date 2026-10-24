@@ -1,10 +1,11 @@
 // @vitest-environment happy-dom
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { collectTestPluginApp } from '@zana-ai/zcc-plugin-sdk/testing/app';
 import { UI_USER } from '../server/rpc.js';
 import type { DesignDocStore } from '../server/store.js';
 import { NavPanel, ProjectTab } from './slots.js';
+import { PEER_STATUS_POLL_MS } from './PeerSettings.js';
 import { projectOptions } from './Workbench.js';
 import { AGENT, createHarness, type Harness } from './test-harness.js';
 
@@ -44,21 +45,294 @@ describe('plugin app', () => {
     expect(app.messageDirectives.map((slot) => slot.id)).toEqual(['design-doc']);
     expect(app.threadPanelActions.map((slot) => slot.id)).toEqual(['design-doc']);
     expect(app.messageActions.map((slot) => slot.id)).toEqual(['save-design-doc']);
+    // Peers live inside the workbench, not on the host Plugins page.
+    expect(app.settingsSections).toEqual([]);
     module.injectStyles();
     expect(document.querySelectorAll('#design-docs-plugin-styles')).toHaveLength(1);
     expect(document.getElementById('design-docs-plugin-styles')!.textContent).toContain('.dd-root');
   });
 });
 
+function configuredPeers(syncNow: () => Promise<{ attempted: number; synced: number; blocked: number }>, replicas = ['a', 'b']) {
+  return { status: () => ({ configured: true, replicaId: 'r-a', members: replicas.map((name) => ({ replicaId: `r-${name}`, machineId: `app-${name}` })) }), syncNow } as never;
+}
+/** Which other computers the pairing layer reports as connected right now. */
+function connectedPairing(connected: () => string[]) {
+  return { connectedMembers: async () => connected(), notifyStateChanged: async () => undefined } as never;
+}
+
+describe('peers view', () => {
+  it('opens Peers inside the workbench and returns to the doc list', async () => {
+    const harness = createHarness();
+    seed(harness.store, { title: 'Payments API', projectId: 'p1' });
+    const before = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    await screen.findByText('Payments API');
+    const open = screen.getByRole('button', { name: 'Settings' });
+    expect(open.className).toContain('dd-head-btn');
+    expect(open.getAttribute('aria-pressed')).toBe('false');
+    expect(open.querySelector('svg')).toBeTruthy();
+    expect(open.getAttribute('title')).toBe('Design Docs settings: peers and agent');
+    fireEvent.click(open);
+
+    expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Peers' }).getAttribute('aria-current')).toBe('page');
+    const peers = screen.getByRole('region', { name: 'Database sync peers' });
+    expect(within(peers).queryByRole('link', { name: /Not listed/ })).toBeNull();
+    expect(screen.queryByText('Payments API')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New' })).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(`${window.location.pathname}${window.location.search}${window.location.hash}`).toBe(before);
+    expect(harness.navigateCalls).toEqual([]);
+
+    const back = screen.getByRole('button', { name: 'Back to design docs' });
+    expect(back.textContent).toContain('Design docs');
+    expect(back.getAttribute('title')).toBe('Back to design docs');
+    expect(back.getAttribute('aria-pressed')).toBe('true');
+    const peerReads = harness.rpcCalls.filter((call) => call.method === 'peerStatus').length;
+    fireEvent.click(back);
+    expect(await screen.findByText('Payments API')).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Database sync peers' })).toBeNull();
+    // Leaving the Peers view re-reads the group, which may have changed there.
+    await waitFor(() => expect(harness.rpcCalls.filter((call) => call.method === 'peerStatus').length).toBe(peerReads + 1));
+  });
+
+  it('lays settings out as header, grouped section rail and one section at a time', async () => {
+    const harness = createHarness();
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
+    expect(screen.getByText('Manage Design Docs sync, agents and publishing preferences.')).toBeTruthy();
+    const nav = screen.getByRole('navigation', { name: 'Settings sections' });
+    expect([...nav.querySelectorAll('.dd-nav-group-label')].map((el) => el.textContent)).toEqual(['SYNC', 'AGENTS']);
+    expect([...nav.querySelectorAll('button')].map((el) => el.textContent)).toEqual(['Peers', 'Agent']);
+    expect(nav.querySelectorAll('button svg')).toHaveLength(2);
+    // Default section: only Peers renders, under its own heading and description.
+    expect(screen.getByRole('heading', { name: 'Peers' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Database sync peers' })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Agent harness' })).toBeNull();
+    fireEvent.click(within(nav).getByRole('button', { name: 'Agent' }));
+    expect(screen.queryByRole('region', { name: 'Database sync peers' })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Agent harness' })).toBeTruthy();
+  });
+
+  it('falls back to Peers when the remembered section no longer exists', async () => {
+    localStorage.setItem('zcc.design-docs.settings-tab', JSON.stringify('bogus'));
+    const harness = createHarness();
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
+    expect(screen.getByRole('button', { name: 'Peers' }).getAttribute('aria-current')).toBe('page');
+  });
+
+  it('keeps project tab header actions in the Peers view', async () => {
+    const harness = createHarness();
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" headerActions={<button type="button">Split</button>} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
+    expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Split' })).toBeTruthy();
+  });
+
+  it('shows the syncing count on Sync, not on the plain Settings icon', async () => {
+    const harness = createHarness({ peerSync: configuredPeers(async () => ({ attempted: 0, synced: 0, blocked: 0 }), ['a', 'b', 'c']), pairing: connectedPairing(() => ['app-b']) });
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    const sync = await screen.findByRole('button', { name: 'Sync' });
+    expect(sync.textContent).toBe('2');
+    expect(sync.getAttribute('title')).toBe('2 computers syncing (including this one)');
+    const settings = screen.getByRole('button', { name: 'Settings' });
+    expect(settings.textContent).toBe('');
+    expect(settings.className).toContain('dd-head-icon');
+    expect(settings.getAttribute('title')).toBe('Design Docs settings: peers and agent');
+  });
+
+  it('hides Sync until a remote peer is connected, then counts every connected computer', async () => {
+    let connected: string[] = [];
+    const harness = createHarness({ peerSync: configuredPeers(async () => ({ attempted: 0, synced: 0, blocked: 0 }), ['a', 'b', 'c']), pairing: connectedPairing(() => connected) });
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Sync' })).toBeNull());
+    connected = ['app-b', 'app-c'];
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Back to design docs' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Sync' }).textContent).toBe('3'));
+  });
+
+  it('re-reads who is connected on a timer and keeps the last count when a re-read fails', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      let connected = ['app-b'];
+      const harness = createHarness({ peerSync: configuredPeers(async () => ({ attempted: 0, synced: 0, blocked: 0 })), pairing: connectedPairing(() => connected) });
+      harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+      expect((await screen.findByRole('button', { name: 'Sync' })).textContent).toBe('2');
+      connected = [];
+      await act(async () => { vi.advanceTimersByTime(PEER_STATUS_POLL_MS); });
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Sync' })).toBeNull());
+      harness.fail('peerStatus', 'offline');
+      await act(async () => { vi.advanceTimersByTime(PEER_STATUS_POLL_MS); });
+      expect(screen.queryByRole('button', { name: 'Sync' })).toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('syncs from the doc list header', async () => {
+    let finish!: (value: { attempted: number; synced: number; blocked: number }) => void;
+    const syncNow = vi.fn(() => new Promise<{ attempted: number; synced: number; blocked: number }>((resolve) => { finish = resolve; }));
+    const harness = createHarness({ peerSync: configuredPeers(syncNow), pairing: connectedPairing(() => ['app-b']) });
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    const sync = await screen.findByRole('button', { name: 'Sync' });
+    expect(sync.getAttribute('title')).toBe('2 computers syncing (including this one)');
+    fireEvent.click(sync);
+    expect((screen.getByRole('button', { name: 'Syncing' }) as HTMLButtonElement).disabled).toBe(true);
+    finish({ attempted: 2, synced: 2, blocked: 0 });
+    await screen.findByRole('button', { name: 'Sync' });
+    expect(harness.toasts.at(-1)).toEqual({ message: 'Synced 2 peers', kind: 'info' });
+    expect(syncNow).toHaveBeenCalledOnce();
+  });
+
+  it('syncs from the collapsed doc list, without a Peers entry there', async () => {
+    let finish!: (value: { attempted: number; synced: number; blocked: number }) => void;
+    const syncNow = vi.fn(() => new Promise<{ attempted: number; synced: number; blocked: number }>((resolve) => { finish = resolve; }));
+    const harness = createHarness({ peerSync: configuredPeers(syncNow), pairing: connectedPairing(() => ['app-b']) });
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    await screen.findByRole('button', { name: 'Sync' });
+    fireEvent.click(screen.getByRole('button', { name: 'Hide doc list' }));
+    const rail = screen.getByRole('navigation', { name: 'Design docs' });
+    expect(within(rail).queryByRole('button', { name: 'Settings' })).toBeNull();
+    const sync = within(rail).getByRole('button', { name: 'Sync peers: 2 computers syncing (including this one)' }) as HTMLButtonElement;
+    fireEvent.click(sync);
+    const busy = within(rail).getByRole('button', { name: 'Syncing peers: 2 computers syncing (including this one)' }) as HTMLButtonElement;
+    expect(busy.disabled).toBe(true);
+    // A second press while syncing is ignored.
+    fireEvent.click(busy);
+    finish({ attempted: 3, synced: 2, blocked: 1 });
+    await within(rail).findByRole('button', { name: /^Sync peers/ });
+    expect(harness.toasts.at(-1)).toEqual({ message: 'Synced 2/3; 1 blocked', kind: 'info' });
+    expect(syncNow).toHaveBeenCalledOnce();
+  });
+
+  it('reports a failed sync and hides Sync until a group is configured', async () => {
+    const harness = createHarness({ peerSync: configuredPeers(async () => { throw new Error('peer offline'); }), pairing: connectedPairing(() => ['app-b']) });
+    const view = harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Sync' }));
+    await waitFor(() => expect(harness.toasts.at(-1)).toEqual({ message: 'peer offline', kind: 'error' }));
+    view.unmount();
+
+    const bare = createHarness();
+    bare.fail('peerStatus', 'unavailable');
+    bare.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    expect(await screen.findByRole('button', { name: 'Settings' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Hide doc list' }));
+    expect(screen.queryByRole('button', { name: /Sync/ })).toBeNull();
+  });
+});
+
 describe('creating docs', () => {
+  it('manages templates on the landing page: filter, per-card actions, editor and back', async () => {
+    const harness = createHarness();
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    expect(await screen.findByText('Start from a template')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Templates' })).toBeNull();
+    expect(screen.getByRole('button', { name: /New template/ }).className).toContain('primary');
+    const filter = screen.getByRole('textbox', { name: 'Filter templates' });
+    fireEvent.change(filter, { target: { value: 'decision record' } });
+    expect(await screen.findByText('Decision record')).toBeTruthy();
+    expect(screen.queryByText('Product spec')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Decision record' }));
+    expect(screen.getByRole('menuitem', { name: 'Duplicate' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Export' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Back to templates' }));
+    expect(await screen.findByText('Start from a template')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Back to templates' })).toBeNull();
+  });
+
+  it('runs template actions from the landing page: duplicate, export, delete, import, export all, restore', async () => {
+    const names: string[] = [];
+    const urls = { createObjectURL: URL.createObjectURL, revokeObjectURL: URL.revokeObjectURL };
+    Object.assign(URL, { createObjectURL: () => 'blob:t', revokeObjectURL: vi.fn() });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { names.push(this.download); });
+    try {
+    const harness = createHarness();
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    expect(await screen.findByText('Start from a template')).toBeTruthy();
+    const count = () => harness.store.listTemplates().length;
+    const before = count();
+    const act1 = async (card: string, item: string) => {
+      fireEvent.click(await screen.findByRole('button', { name: `Actions for ${card}` }));
+      fireEvent.click(screen.getByRole('menuitem', { name: item }));
+    };
+    await act1('Decision record', 'Duplicate');
+    await waitFor(() => expect(count()).toBe(before + 1));
+    expect(await screen.findByText('Decision record (copy)')).toBeTruthy();
+    await act1('Decision record', 'Export');
+    await waitFor(() => expect(names).toContain('adr.design-doc-templates.json'));
+    await act1('Decision record (copy)', 'Delete');
+    await waitFor(() => expect(count()).toBe(before));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Template actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Export all' }));
+    await waitFor(() => expect(names).toContain('design-doc-templates.json'));
+
+    harness.store.templateDelete('adr');
+    fireEvent.click(screen.getByRole('button', { name: 'Template actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Restore built-ins' }));
+    await waitFor(() => expect(harness.store.templateByKey('adr')).not.toBeNull());
+
+    const bundle = harness.store.templatesExport(['blank']);
+    const upload = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File([bundle], 'bundle.json', { type: 'application/json' });
+    fireEvent.change(upload, { target: { files: [file] } });
+    await waitFor(() => expect(count()).toBe(before + 1));
+    fireEvent.change(upload, { target: { files: [] } });
+    fireEvent.change(upload, { target: { files: [new File(['not json'], 'bad.json')] } });
+    await waitFor(() => expect(harness.toasts.some((toast) => toast.message.startsWith('Could not import templates'))).toBe(true));
+    } finally {
+      click.mockRestore();
+      Object.assign(URL, urls);
+    }
+  });
+
+  it('disables Delete on the last remaining template', async () => {
+    const harness = createHarness();
+    for (const template of harness.store.listTemplates().slice(1)) harness.store.templateDelete(template.id);
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    const only = harness.store.listTemplates()[0]!;
+    fireEvent.click(await screen.findByRole('button', { name: `Actions for ${only.label}` }));
+    expect(screen.getByRole('menuitem', { name: 'Delete' }).hasAttribute('disabled') || screen.getByRole('menuitem', { name: 'Delete' }).getAttribute('aria-disabled') === 'true').toBe(true);
+  });
+
+  it('reports failed template actions with a toast', async () => {
+    const boom = async () => { throw new Error('boom'); };
+    const harness = createHarness({ rpcOverrides: { templateDuplicate: boom, templateNew: boom, templatesExport: boom, templatesRestoreBuiltins: boom } });
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Actions for Decision record' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Duplicate' }));
+    await waitFor(() => expect(harness.toasts.some((toast) => toast.message.startsWith('Could not duplicate template'))).toBe(true));
+    fireEvent.click(screen.getByRole('button', { name: /New template/ }));
+    await waitFor(() => expect(harness.toasts.some((toast) => toast.message.startsWith('Could not create template'))).toBe(true));
+    for (const [item, text] of [['Export all', 'Could not export templates'], ['Restore built-ins', 'Could not restore built-ins']] as const) {
+      fireEvent.click(screen.getByRole('button', { name: 'Template actions' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: item }));
+      await waitFor(() => expect(harness.toasts.some((toast) => toast.message.startsWith(text))).toBe(true));
+    }
+  });
+
+  it('Home returns from a template editor to the landing page', async () => {
+    const harness = createHarness();
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    fireEvent.click(await screen.findByRole('button', { name: /New template/ }));
+    expect(await screen.findByRole('button', { name: 'Back to templates' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Home' }));
+    expect(await screen.findByText('Design docs your agents work on with you')).toBeTruthy();
+  });
+
   it('starts on the landing page and creates a doc from a template', async () => {
     const harness = createHarness();
     harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
     expect(await screen.findByText('Design docs your agents work on with you')).toBeTruthy();
     expect(await screen.findByText('No design docs yet.')).toBeTruthy();
 
-    const landing = screen.getByText('Start from a template').parentElement!;
-    fireEvent.click(await within(landing).findByRole('radio', { name: /Decision record/ }));
+    const landing = screen.getByText('Start from a template').closest('.dd-landing-start') as HTMLElement;
+    fireEvent.click(await within(landing).findByRole('button', { name: /^Decision record/ }));
     const dialog = screen.getByRole('dialog', { name: 'New design doc' });
     expect((await within(dialog).findByRole('radio', { name: /Decision record/ })).getAttribute('aria-checked')).toBe('true');
     const create = within(dialog).getByRole('button', { name: 'Create' }) as HTMLButtonElement;
@@ -89,8 +363,11 @@ describe('creating docs', () => {
     fireEvent.submit(dialog.querySelector('form')!);
 
     await waitFor(() => expect(harness.spawn).toHaveBeenCalledTimes(1));
-    const [spawned] = harness.spawn.mock.calls[0] as unknown as [{ projectId: string; prompt: string; pluginMetadata: { designDocId: string } }];
+    const [spawned] = harness.spawn.mock.calls[0] as unknown as [{ projectId: string; prompt: string; harness?: string; providerId?: string; pluginMetadata: { designDocId: string } }];
     expect(spawned.projectId).toBe('p2');
+    // The default Agent setting follows the project's AI harness; it never picks a provider itself.
+    expect(spawned.harness).toBe('project-default');
+    expect(spawned).not.toHaveProperty('providerId');
     expect(spawned.prompt).toContain('Phones lose signal in tunnels.');
     const doc = harness.store.list({})[0]!;
     expect(spawned.pluginMetadata.designDocId).toBe(doc.id);
@@ -118,6 +395,37 @@ describe('creating docs', () => {
     const doc = harness.store.list({})[0]!;
     expect(doc.projectId).toBeNull();
     expect(harness.navigateCalls).toEqual([{ method: 'toPluginPanel', path: 'design-docs', options: { subPath: doc.id } }]);
+  });
+
+  it('says the doc was created when only the drafting agent fails to start', async () => {
+    const harness = createHarness();
+    harness.spawn.mockRejectedValueOnce(
+      new Error('No usable AI harness: Default harness unavailable. Choose an installed, enabled harness in Settings → AI Harness.')
+    );
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    const dialog = await newDocDialog();
+    fireEvent.change(within(dialog).getByPlaceholderText('e.g. Offline sync for the mobile app'), { target: { value: 'Tunnels' } });
+    fireEvent.change(within(dialog).getByPlaceholderText(/Describe the problem/), { target: { value: 'Signal drops.' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create & draft with agent' }));
+    await waitFor(() => expect(harness.toasts.at(-1)).toEqual({
+      message: 'Doc created, but the agent could not start: No usable AI harness: Default harness unavailable. '
+        + 'Choose an installed, enabled harness in Settings → AI Harness.',
+      kind: 'error'
+    }));
+    expect(harness.toasts.some((toast) => toast.message.startsWith('Could not create the doc'))).toBe(false);
+    expect(harness.store.list({}).map((doc) => doc.title)).toEqual(['Tunnels']);
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New design doc' })).toBeNull());
+  });
+
+  it('drafts a global doc in the Default Project rather than the first project', async () => {
+    const harness = createHarness({ projects: [{ id: 'p1', name: 'App' }, { id: 'quick', name: 'Default Project', quickAgent: true }] });
+    harness.render(<NavPanel pluginId="design-docs" subPath="" />);
+    const dialog = await newDocDialog();
+    fireEvent.change(within(dialog).getByPlaceholderText('e.g. Offline sync for the mobile app'), { target: { value: 'Glossary' } });
+    fireEvent.change(within(dialog).getByPlaceholderText(/Describe the problem/), { target: { value: 'Terms' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create & draft with agent' }));
+    await waitFor(() => expect(harness.spawn).toHaveBeenCalledTimes(1));
+    expect((harness.spawn.mock.calls[0] as unknown as [{ projectId: string }])[0].projectId).toBe('quick');
   });
 
   it('keeps the dialog open when creating fails, and closes on Cancel', async () => {
@@ -435,9 +743,11 @@ describe('doc header', () => {
     more();
     fireEvent.click(menuItem('Archive'));
     await waitFor(() => expect(harness.store.get(doc.id).status).toBe('archived'));
+    await waitFor(() => expect(screen.getByTitle('Change status').textContent).toBe('Archived'));
     more();
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Unarchive' }));
     await waitFor(() => expect(harness.store.get(doc.id).status).toBe('draft'));
+    await waitFor(() => expect(screen.getByTitle('Change status').textContent).toBe('Draft'));
 
     more();
     fireEvent.click(menuItem('Move to project…'));
@@ -457,6 +767,44 @@ describe('doc header', () => {
     expect(await screen.findByText('Design docs your agents work on with you')).toBeTruthy();
     expect(harness.store.find(doc.id)).toBeNull();
     expect(harness.toasts.at(-1)).toEqual({ message: 'Deleted “Lifecycle”', kind: 'info' });
+  });
+
+  it('says a delete also reaches paired computers only while in a sync group', async () => {
+    for (const configured of [true, false]) {
+      const harness = createHarness({ rpcOverrides: { peerStatus: async () => ({ configured, members: [] }) } });
+      const doc = seed(harness.store, { title: `Synced ${configured}`, projectId: 'p1' });
+      const view = openInProjectTab(harness, doc.id);
+      await screen.findByTitle('Edit title');
+      fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+      fireEvent.click(menuItem('Delete…'));
+      const confirm = screen.getByRole('dialog', { name: 'Delete design doc' });
+      if (configured) await waitFor(() => expect(confirm.textContent).toContain('It will also be deleted on your paired computers.'));
+      else {
+        await waitFor(() => expect(harness.rpcCalls.some((call) => call.method === 'peerStatus')).toBe(true));
+        expect(confirm.textContent).not.toContain('paired computers');
+      }
+      expect(confirm.textContent).toContain('This cannot be undone');
+      fireEvent.click(within(confirm).getByRole('button', { name: 'Delete' }));
+      await waitFor(() => expect(harness.store.find(doc.id)).toBeNull());
+      view.unmount();
+    }
+  });
+
+  it('keeps the delete confirm usable, with a conservative propagation warning, when sync status cannot be read', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const harness = createHarness({ rpcOverrides: { peerStatus: async () => { throw new Error('offline'); } } });
+    const doc = seed(harness.store, { title: 'No status', projectId: 'p1' });
+    openInProjectTab(harness, doc.id);
+    await screen.findByTitle('Edit title');
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    fireEvent.click(menuItem('Delete…'));
+    const confirm = screen.getByRole('dialog', { name: 'Delete design doc' });
+    await waitFor(() => expect(harness.rpcCalls.some((call) => call.method === 'peerStatus')).toBe(true));
+    await waitFor(() => expect(warn).toHaveBeenCalled());
+    expect(confirm.textContent).toContain('If this computer is paired with others, it will also be deleted on them.');
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(harness.store.find(doc.id)).toBeNull());
+    warn.mockRestore();
   });
 
   it('reports a failed delete and keeps the doc', async () => {

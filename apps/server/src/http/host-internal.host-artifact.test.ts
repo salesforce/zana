@@ -89,7 +89,7 @@ function ctxWithArtifact(artifact: {
     ...artifact,
     generation: 'g1'
   });
-  vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash' } as never);
+  vi.mocked(getHost).mockReturnValue({ id: 'host-1', hostKeyHash: 'hash', enrollmentCapability: 'execution' } as never);
   return {
     pluginHostArtifacts,
     config: { getConfig: () => ({}) },

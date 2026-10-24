@@ -60,6 +60,21 @@ describe('definePluginApp', () => {
     await expect(callPluginRpc('notes', 'ping')).rejects.toThrow(/plugin host is not available/);
   });
 
+  it('keeps the bare message and code of a host RPC rejection', async () => {
+    const { callPluginRpc } = await import('./app.js');
+    const g = globalThis as { __ZCC_PLUGIN_HOST__?: unknown };
+    const previous = g.__ZCC_PLUGIN_HOST__;
+    try {
+      const failure = Object.assign(new Error('a design doc must keep at least one file'), { code: 'invalid' });
+      g.__ZCC_PLUGIN_HOST__ = { callRpc: async () => { throw failure; } };
+      const caught = await callPluginRpc('docs', 'rm').catch((e: unknown) => e);
+      expect(caught).toBe(failure);
+      expect(caught).toMatchObject({ message: 'a design doc must keep at least one file', code: 'invalid' });
+    } finally {
+      g.__ZCC_PLUGIN_HOST__ = previous;
+    }
+  });
+
   it('asks the host for a Zana-drawn approval and fails closed without one', async () => {
     const { experimental_requestApproval } = await import('./app.js');
     const request = { binding: { action: 'agent.publish', target: 'org', targetLabel: 'dev', subject: 'Help' }, title: 'Publish' };

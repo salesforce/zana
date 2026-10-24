@@ -9,6 +9,7 @@ import { startEnrolledHostConnection, type EnrolledHostConnection } from './serv
 import { HostAuthenticationError, HOST_STARTUP_TIMEOUT_MS } from './server-socket.js';
 import { disposeHostFsWatcher } from './workspace-fs-watch.js';
 import { connectHostFetch, readConnectHostAccess } from './connect-access.js';
+import { resolveZccDataDir } from './host-config.js';
 
 export interface EnrolledHostDaemon {
   hostId: string;
@@ -82,6 +83,7 @@ async function openSession(options: {
     hostKey: options.hostKey,
     instanceId: options.instanceId,
     dataDir: options.dataDir,
+    localPeerAppDataDir: process.env.ZCC_LOCAL_PEER_APP_DATA_DIR?.trim() || resolveZccDataDir(),
     connectCredential: options.connectCredential,
     onConnectionChange: options.onConnectionChange,
     onSocketClose: options.onSocketClose,

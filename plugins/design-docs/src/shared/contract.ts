@@ -6,6 +6,9 @@ export const PLUGIN_NAME = 'Design Docs';
 /** Realtime channel published after any mutation; payload `{ docId }`. */
 export const CHANGED_CHANNEL = 'changed';
 
+/** Content-free nudge (payload `{}`): a paired peer's database state moved, so re-check the out-of-sync notice. */
+export const PEER_STATE_CHANNEL = 'peer-state';
+
 export const DOC_STATUSES = ['draft', 'review', 'approved', 'implemented', 'archived'] as const;
 export type DocStatus = (typeof DOC_STATUSES)[number];
 
@@ -54,6 +57,8 @@ export interface DesignDocSummary {
   /** Id of the doc this one is an alternative proposal to; it nests under it in the list. */
   alternativeTo: string | null;
   revision: number;
+  /** Immutable peer version observed by the reader; null before a head exists. */
+  head: string | null;
   createdAt: number;
   updatedAt: number;
   createdBy: DocActor;
@@ -61,6 +66,8 @@ export interface DesignDocSummary {
 }
 
 export interface DesignDocFileMeta {
+  /** Stable across rename; a replacement at the same path has a different id. */
+  fileId: string;
   path: string;
   kind: FileKind;
   size: number;
@@ -130,6 +137,28 @@ export interface TextEdit {
   oldText: string;
   newText: string;
   replaceAll?: boolean;
+}
+
+export type PeerResolutionChoice = 'merge' | 'local' | 'remote';
+export interface PeerConflictPage {
+  remoteHeads: string[];
+  nextCursor: string | null;
+}
+export interface PeerConflictReview {
+  localHead: string;
+  remoteHead: string;
+  baseHead: string | null;
+  conflicts: string[];
+  mergeAvailable: boolean;
+  local: { title: string; status: string; summary: string; paths: string[] };
+  remote: { title: string; status: string; summary: string; paths: string[] };
+}
+export interface PeerConflictFile {
+  localHead: string;
+  remoteHead: string;
+  local: { content: string; encoding: 'utf8' | 'base64' } | null;
+  remote: { content: string; encoding: 'utf8' | 'base64' } | null;
+  candidate: { content: string; encoding: 'utf8' | 'base64' } | null;
 }
 
 /** `::design-doc{id="…"}` — the chat card agents emit for a doc. */

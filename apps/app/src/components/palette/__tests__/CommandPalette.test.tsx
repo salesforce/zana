@@ -18,6 +18,7 @@ vi.mock('../../../lib/product-client.js', () => ({ product: {
   commands: { list: async () => h.commands }, fs: { walkFiles: async () => h.files },
   ssh: { listHosts: async () => [] },
   config: { get: async () => ({}), onChanged: () => () => {} },
+  pluginApps: { list: async () => [], onChanged: () => () => {} },
   hosts: { list: async () => [] },
   projectSettings: { get: async () => ({}), onChanged: () => () => {} }
 } }));

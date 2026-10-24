@@ -1,3 +1,4 @@
+import { getHost } from '@zana-ai/zcc-db';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -121,4 +122,69 @@ it('enrolls two hosts through the account tunnel with inner auth, callbacks, rec
   await expect(forward(first)(callbackRequest)).rejects.toThrow('(403)');
   expect(callbacks).toHaveLength(1);
   expect((await second.fetchFn(`${serverUrl}/internal/hosts/tool-call`, { method: 'POST', headers: { authorization: `Bearer ${second.enrolled.hostKey}`, 'content-type': 'application/json' }, body: '{}' })).status).toBe(400);
+}, 20_000);
+
+it('admits a forward-only founding host on the machine class: enroll and socket only, 403 on every execution path', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'zcc-connect-forward-'));
+  cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+  const product = await startProductServer({ dataDir: join(dir, 'product'), origins: { serverPort: 0 } });
+  cleanup.push(() => product.close());
+  const db = await openConnectDatabase(':memory:', { production: false }); await db.migrate();
+  cleanup.push(() => db.close());
+  const registry = createRegistry(db, { domain: 'connect.example.com', accountUrl: 'https://example.com' });
+  const registration = await registry.redeemComputerCode((await registry.createComputerCode('alice')).code, 'Shared Zana');
+  const principal = await registry.authenticateServer(registration.credential);
+  const gateway = createConnectGateway({ registry, db, sessionSecret: 'fixture', allowLocal: true, checkIntervalMs: 30 });
+  cleanup.push(() => gateway.close());
+  const publicServer = createServer((req, res) => {
+    req.headers.host = new URL(registration.serverUrl).host;
+    req.headers['x-forwarded-proto'] = 'https';
+    void gateway.handleHttp(req, res);
+  });
+  publicServer.on('upgrade', (req, socket, head) => {
+    req.headers.host = new URL(registration.serverUrl).host;
+    req.headers['x-forwarded-proto'] = 'https';
+    void gateway.handleUpgrade(req, socket, head);
+  });
+  await new Promise<void>(resolve => publicServer.listen(0, '127.0.0.1', resolve));
+  cleanup.push(() => new Promise<void>(resolve => { publicServer.closeAllConnections(); publicServer.close(() => resolve()); }));
+  const serverUrl = `http://127.0.0.1:${(publicServer.address() as import('node:net').AddressInfo).port}`;
+  const gatewayCredential = token();
+  const local = await startMobileGateway({ upstream: product.url, publicUrl: serverUrl, host: '127.0.0.1', port: 0, devices: new MobileDeviceStore(join(dir, 'devices.json')), connectGatewayCredential: gatewayCredential, connectInstanceId: product.ctx.productInstanceId });
+  cleanup.push(() => local.close());
+  const relay = connectRelay({ publicUrl: serverUrl, token: registration.credential, gatewayPort: local.port, gatewayCredential, productInstanceId: product.ctx.productInstanceId, allowLocal: true });
+  cleanup.push(() => relay.close());
+  await expect.poll(() => relay.state()).toBe('connected');
+
+  // Connect stores no capability: a forward-only join code rides the ordinary machine code path.
+  const forwardOnly = product.ctx.joinCodes.mintForwardOnly();
+  const invite = await registry.createMachineCode(principal, { instanceId: product.ctx.productInstanceId, hostId: forwardOnly.hostId, enrollToken: forwardOnly.joinCode, name: 'Zana peer link: Peer (sync only)' });
+  const grant = await registry.redeemMachineCode(invite.code, token());
+  const fetchFn = connectHostFetch(serverUrl, grant.credential);
+  const input = { serverUrl, token: grant.enrollToken, hostId: grant.hostId, instanceId: randomUUID(), hostName: 'Peer', fetchFn };
+  const enrolled = await enrollDaemonHost(input);
+  expect(enrolled.hostId).toBe(forwardOnly.hostId);
+  expect(await enrollDaemonHost(input)).toEqual(enrolled);
+  expect(getHost(product.ctx.db, enrolled.hostId)?.enrollmentCapability).toBe('peer.forward');
+
+  const connection = startEnrolledHostConnection({ serverUrl, hostId: enrolled.hostId, hostKey: enrolled.hostKey, connectCredential: grant.credential, runtime: runtime(join(dir, 'forward-host')) });
+  cleanup.push(() => connection.close());
+  await connection.ready;
+  expect(product.ctx.hostHub.connectedHostIds()).toEqual([enrolled.hostId]);
+
+  // The forward-only host never passes authenticateHostCall, nor the plugin host asset check.
+  const headers = { authorization: `Bearer ${enrolled.hostKey}`, 'x-zcc-host-id': enrolled.hostId, 'content-type': 'application/json' };
+  for (const path of ['/internal/hosts/tool-call', '/internal/hosts/cli-callback', '/internal/hosts/interactive-request', '/internal/hosts/interactive-request/interrupt']) {
+    expect((await fetchFn(`${serverUrl}${path}`, { method: 'POST', headers, body: '{}' })).status, path).toBe(403);
+  }
+  expect((await fetchFn(`${serverUrl}/internal/plugins/p/host/${'a'.repeat(64)}`, { headers })).status).toBe(403);
+
+  // An execution code for another host with this credential is refused (machine header is bound to this host).
+  const executionHost = product.ctx.joinCodes.mint();
+  expect((await fetchFn(`${serverUrl}/internal/hosts/enroll`, { method: 'POST', headers: { authorization: `Bearer ${executionHost.joinCode}`, 'content-type': 'application/json' }, body: '{}' })).status).toBeGreaterThanOrEqual(400);
+  expect(getHost(product.ctx.db, executionHost.hostId)).toBeFalsy();
+
+  // Revocation drops the live socket.
+  await registry.revokeMachine(principal, enrolled.hostId);
+  await expect.poll(() => product.ctx.hostHub.connectedHostIds()).toEqual([]);
 }, 20_000);

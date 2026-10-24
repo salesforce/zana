@@ -61,6 +61,7 @@ import { ModuleBackgroundHost } from './modules/ModuleBackgroundHost.js';
 import { useMergedModules } from './modules/index.js';
 import { initExtensionModules, reconcileExtensionModules } from './modules/loader.js';
 import { initPluginApps, reconcilePluginApps } from './plugins/plugin-app-loader.js';
+import { installDeepLinkBridge } from './plugins/plugin-deep-links.js';
 import { listNavPanels } from './plugins/plugin-slots.js';
 import {
   CORE_NAV_IDS,
@@ -493,7 +494,7 @@ function AppShell() {
       const projectId = ui.selectedProjectId;
       switch (event) {
         case 'app:openSettings':
-          ui.setNav(ui.nav === 'settings' ? 'home' : 'settings');
+          ui.toggleSettings();
           return;
         case 'app:toggleInbox':
           ui.setNav(ui.nav === 'inbox' ? 'home' : 'inbox');
@@ -569,6 +570,9 @@ function AppShell() {
     const offModelCatalogChanged = product.threads.onModelCatalogChanged(({ hostId, providerId }) => {
       refreshThreadProviderModelsFromPush(hostId, providerId);
     });
+    // Plugin deep links: main pushes validated (pluginId, route, payload); subscribe
+    // before the readiness ack below so a cold-start link is never sent to nobody.
+    const offDeepLinks = installDeepLinkBridge();
     // Main may be waiting to deliver a cold-start menu-bar Thread open. Ack only
     // after this listener exists and its ProductHub WebSocket can receive it.
     void waitForProductWsOpen()
@@ -615,6 +619,7 @@ function AppShell() {
       offOpenScheduler();
       offOpenAgents();
       offFocusInboxEntry();
+      offDeepLinks();
       offInboxSync();
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
@@ -954,9 +959,10 @@ function WalkthroughHost() {
 
 function ShortcutsHelpHost() {
   const open = useUi((s) => s.shortcutsOpen);
+  const ctrlVPasteEnabled = useData((s) => s.terminalCtrlVPasteEnabled);
   const close = () => useUi.getState().setShortcutsOpen(false);
   if (!open) return null;
-  return <ShortcutsHelp onClose={close} />;
+  return <ShortcutsHelp onClose={close} ctrlVPasteEnabled={ctrlVPasteEnabled} />;
 }
 
 function AgentModalHost() {

@@ -9,6 +9,17 @@ it('correlates asynchronous and synchronous request errors instead of dropping t
   await dispatchRuntimeMessage(request, reply, () => { throw 'offline'; });
   expect(reply.mock.lastCall?.[0].message).toBe('offline');
 });
+it('carries the code of expected domain errors across the boundary and omits it otherwise', async () => {
+  const reply = vi.fn();
+  await dispatchRuntimeMessage(request, reply, async () => { throw Object.assign(new Error('keep one file'), { code: 'invalid' }); });
+  expect(reply).toHaveBeenLastCalledWith({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: request.id, message: 'keep one file', code: 'invalid' });
+  await dispatchRuntimeMessage(request, reply, async () => { throw Object.assign(new Error('gone'), { status: 404 }); });
+  expect(reply.mock.lastCall?.[0]).toMatchObject({ message: 'gone', code: 'not_found' });
+  await dispatchRuntimeMessage(request, reply, async () => { throw Object.assign(new Error('disk'), { code: 'ENOSPC' }); });
+  expect(reply.mock.lastCall?.[0]).not.toHaveProperty('code');
+  await dispatchRuntimeMessage(request, reply, async () => { throw new Error(''); });
+  expect(reply.mock.lastCall?.[0].message).toBe('request failed');
+});
 it('rejects malformed messages, preserves successful replies, and bounds errors without request IDs', async () => {
   const reply = vi.fn(), handle = vi.fn();
   await dispatchRuntimeMessage({}, reply, handle); expect(handle).not.toHaveBeenCalled();

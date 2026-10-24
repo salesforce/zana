@@ -16,6 +16,7 @@ import {
   Keyboard,
   PenLine,
   Globe,
+  Link2,
   type LucideIcon
 } from 'lucide-react';
 import type { SettingsTab } from '@/store';
@@ -67,6 +68,7 @@ export const SETTINGS_SECTIONS: Array<{
   { id: 'machines', label: 'Machines', icon: Laptop, desc: 'Pair remote host daemons', group: 'remote' },
   { id: 'connectivity', label: 'Connectivity', icon: Network, desc: 'Unpaired SSH fallback', group: 'remote' },
   { id: 'phone', label: 'Mobile', icon: Smartphone, desc: 'Use Zana from your mobile browser', group: 'remote' },
+  { id: 'peers', label: 'Peers', icon: Link2, desc: 'Peers are linked computers that can be used by Plugins to communicate between the computers. They are different from Machines which describe Computers where Agents can be run. Connections will not be used until a Plugin is configured to use the Connection.', group: 'remote' },
   { id: 'remote-access', label: 'Remote access', icon: Globe, desc: 'Open this computer from any browser', group: 'remote' },
   { id: 'agents', label: 'Agents', icon: Bot, desc: 'Attention, automation, heartbeat & Overseer', group: 'agents' },
   { id: 'personas', label: 'Personas', icon: Drama, desc: 'Reusable launch profiles', group: 'agents' },
@@ -76,6 +78,11 @@ export const SETTINGS_SECTIONS: Array<{
   { id: 'performance', label: 'Performance', icon: BarChart3, desc: 'Host daemon resources, workload, and connection health', group: 'app' },
   { id: 'about', label: 'About', icon: Info, desc: 'Version, updates, credits & release notes', group: 'app' }
 ];
+
+/** The sections shown in the picker, minus any the current config/plugin set hides. */
+export function visibleSettingsSections(hidden: ReadonlySet<string>): typeof SETTINGS_SECTIONS {
+  return hidden.size === 0 ? SETTINGS_SECTIONS : SETTINGS_SECTIONS.filter((section) => !hidden.has(section.id));
+}
 
 /**
  * Anchor sub-sections per settings tab — the inner `<Section>` blocks the picker
@@ -100,6 +107,7 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
     { id: 'scheduled', label: 'Scheduled' },
     { id: 'agent-automation', label: 'Agent automation' },
     { id: 'agent-heartbeat', label: 'Agent heartbeat' },
+    { id: 'api-error-resume', label: 'Resume after API errors' },
     { id: 'auto-close-idle', label: 'Idle handling & follow-ups' },
     { id: 'legacy-agent', label: 'CLI Agent' },
     { id: 'overseer', label: 'Overseer' },
@@ -151,6 +159,9 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
   ],
   phone: [
     { id: 'phone', label: 'Mobile' }
+  ],
+  peers: [
+    { id: 'peers', label: 'Peer links' }
   ],
   inbox: [
     { id: 'inbox-general', label: 'Inbox' }

@@ -54,6 +54,16 @@ it('selects the Squad proposal specs for proposal, team and composer seams', () 
     expect(boundarySpecs([path])).toEqual(expect.arrayContaining(['e2e/squad-proposal-flow.spec.ts', 'e2e/job-team-launch-ui.spec.ts']));
     expect(boundarySpecs([path])).not.toContain('e2e/squad-direct-report.spec.ts');
   }
+  for (const path of [
+    'apps/host-daemon/src/harness/claude/hooks.ts',
+    'apps/host-daemon/src/harness/claude/interaction-hooks.ts',
+    'apps/server/src/services/followups/api-error-resume.ts',
+    'apps/desktop/src/api-error-resume-wiring.ts',
+    'apps/desktop/src/ipc/api-error-resume.ts',
+    'apps/app/src/components/settings/ApiErrorResumeSection.tsx'
+  ]) {
+    expect(boundarySpecs([path])).toContain('e2e/api-error-resume.spec.ts');
+  }
   // Unrelated Squad and launcher files must not pull in the slow proposal specs.
   for (const path of [
     'docs/readme.md',
@@ -205,6 +215,16 @@ it('runs the private production app suite only for affected paths and fails miss
   expect(io.execute).toHaveBeenCalledOnce();
   expect(io.log).toHaveBeenCalledWith('No Electron production boundary changed.');
   expect(runVerification(['--coverage', 'coverage.json'], {}, io)).toBe(0);
+});
+
+it('forwards a CI shard to the production app suite and rejects a malformed one', () => {
+  const io = { execute: vi.fn().mockReturnValue('+++ b/apps/app/src/App.tsx\n@@ -1 +1 @@'), read: vi.fn(), log: vi.fn(), error: vi.fn() };
+  expect(runVerification([], { CI_E2E_SHARD: '2/3' }, io)).toBe(0);
+  expect(io.execute.mock.calls[1][1]).toEqual(expect.arrayContaining(['e2e/smoke.spec.ts', '--shard=2/3', '--pass-with-no-tests']));
+  io.execute.mockClear();
+  expect(runVerification([], { CI_E2E_SHARD: '0/3' }, io)).toBe(1);
+  expect(io.error).toHaveBeenCalledWith('Invalid CI_E2E_SHARD: 0/3');
+  expect(io.execute).toHaveBeenCalledOnce();
 });
 
 it('allows type-only files while rejecting uncovered runtime TypeScript', () => {

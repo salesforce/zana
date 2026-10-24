@@ -543,6 +543,8 @@ export const RuntimeErrorSchema = z.object({
   type: z.literal('error'),
   protocolVersion: ServerRuntimeProtocolVersionSchema,
   message: z.string().min(1),
+  /** Present when the failure is an expected domain error (see rpc-error.ts). */
+  code: z.string().min(1).max(64).optional(),
   id: RequestIdSchema.optional()
 }).strict();
 export const RuntimeStoppedSchema = z.object({
@@ -617,6 +619,7 @@ export const PluginAppSnapshotSchema = z.object({
     blocked: z.object({ version: z.string().max(256), reasons: z.array(z.string().max(1024)).max(8) }).optional()
   }).strict().optional(),
   projectTab: PluginAppProjectTabSchema.optional(),
+  peers: z.boolean().optional(),
   skillNames: z.array(z.string().min(1).max(256)).max(64).optional(),
   mcpServers: z.array(z.object({
     name: z.string().min(1).max(256),

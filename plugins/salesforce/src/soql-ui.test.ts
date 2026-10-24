@@ -7,6 +7,7 @@ import {
   confirmExport,
   confirmLoadAll,
   emptyOrgMessage,
+  isBareCountQuery,
   orgChip,
   productionBanner
 } from '../src/app/soql/soql-explorer-logic.js';
@@ -118,5 +119,29 @@ describe('completions and chrome helpers', () => {
     expect(confirmExport(3)).toMatch(/3 records/);
     expect(productionBanner({ alias: 'x', kind: 'unknown' })).toMatch(/unknown/);
     expect(orgChip(null, 'fallback')).toBe('fallback');
+  });
+});
+
+describe('isBareCountQuery', () => {
+  it('detects a bare COUNT() regardless of case, spacing and leading comments', () => {
+    for (const soql of [
+      'SELECT COUNT() FROM Account',
+      'select count ( ) from Account where Industry = null',
+      'SELECT\n  COUNT()\nFROM Account',
+      'SELECT COUNT()FROM Account',
+      '-- note\nSELECT COUNT() FROM Account',
+      '# note\nSELECT COUNT() FROM Account'
+    ]) expect(isBareCountQuery(soql), soql).toBe(true);
+  });
+
+  it('rejects other queries, string literals, and empty input', () => {
+    for (const soql of [
+      'SELECT COUNT(Id) FROM Account',
+      'SELECT Id FROM Account',
+      "SELECT Id, Name FROM Account WHERE Name = 'COUNT()'",
+      '',
+      undefined,
+      null
+    ]) expect(isBareCountQuery(soql), String(soql)).toBe(false);
   });
 });

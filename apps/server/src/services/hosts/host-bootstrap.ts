@@ -2,7 +2,7 @@ import {
   findHostBySsh,
   getHost,
   getPrimaryHost,
-  listHosts,
+  listExecutionHosts,
   updateHostSshIdentity,
   type HostRow
 } from '@zana-ai/zcc-db';
@@ -611,7 +611,8 @@ export async function reconcileRemoteProjectBindings(ctx: ProductHttpContext): P
   const projects = ctx.projects.list();
   if (!projects.some((project) => project.remote)) return 0;
   const connectedIds = new Set(ctx.hostHub.connectedHostIds());
-  const peers = listHosts(ctx.db).filter((host) => !host.isPrimary && !host.destroyedAt);
+  // Plugin peer links are never execution machines, so they never take a project binding.
+  const peers = listExecutionHosts(ctx.db).filter((host) => !host.isPrimary && !host.destroyedAt);
   let bound = 0;
   for (const project of projects) {
     const remote = sshRemoteFromProject(project);

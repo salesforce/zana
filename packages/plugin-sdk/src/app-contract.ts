@@ -922,6 +922,53 @@ export interface ZccNavigate {
   openInWindow?(projectId: string, options?: ZccNavigateToProjectOptions): Promise<boolean>;
 }
 
+/** Why a pasted deep link was not routed. `unavailable` outside the desktop app and on older hosts. */
+export type ZccDeepLinkRejectReason =
+  | 'unavailable'
+  | 'not-a-string'
+  | 'too-long'
+  | 'control-characters'
+  | 'malformed'
+  | 'wrong-scheme'
+  | 'bad-plugin-id'
+  | 'bad-route'
+  | 'bad-query'
+  | 'bad-encoding'
+  | 'payload-too-long';
+
+export type ZccDeepLinkOpenResult =
+  | { ok: true; pluginId: string; route: string }
+  | { ok: false; reason: ZccDeepLinkRejectReason };
+
+/**
+ * Links of the form `<base>plugin/<pluginId>/<route>?d=<payload>`. A link never
+ * performs an action: the host routes `(route, payload)` to the plugin's handler
+ * and the plugin must show its own confirmation before acting. `payload` is an
+ * opaque, untrusted string (at most 4096 characters, no whitespace or control
+ * characters); treat it like any user-pasted input.
+ */
+export interface ZccDeepLinks {
+  /**
+   * The link prefix for this build: `zana://` when packaged, `zana-dev://` in
+   * `pnpm run dev`, null where links are not supported (E2E, web, older hosts).
+   * Build a link as `${base}plugin/${pluginId}/${route}?d=${encodeURIComponent(payload)}`.
+   */
+  base(): string | null;
+  /**
+   * Receive links for `route` (lowercase `[a-z0-9-]` segments joined by `/`,
+   * without leading or trailing slash). Links that arrived before a handler for
+   * the route was registered (for example the plugin view was not mounted yet)
+   * are queued by the host for a short time and delivered on registration, in
+   * order. Returns an unsubscribe function; call it on unmount.
+   */
+  on(route: string, handler: (payload: string | null) => void): () => void;
+  /**
+   * Validate and route a pasted link (any known scheme, for example from an
+   * "Open link" field). The host re-validates; the link may name any plugin.
+   */
+  open(rawLink: string): Promise<ZccDeepLinkOpenResult>;
+}
+
 /** A `'plugin-page'` thread-panel action to show in the page's side panel. */
 export interface ZccPanelToolOptions {
   actionId: string;
@@ -982,6 +1029,44 @@ export interface NewThreadComposerProps {
   onSubmit: (request: { projectId: string; providerId: string; input: unknown[] }) => void | Promise<void>;
 }
 
+export type HarnessRoutingEditorPatch = {
+  providerTargetId?: string;
+  modelTargetId?: string;
+  executionState?: 'plan' | 'interactive' | 'accept-edits' | 'autonomous';
+};
+
+/** Props for the host-rendered harness routing editor (same editor Core Project settings uses). */
+export interface HarnessRoutingEditorProps {
+  descriptors: readonly import('@zana-ai/zcc-domain/harness-adapter').HarnessAdapterDescriptor[];
+  value: import('@zana-ai/zcc-domain/product').HarnessModelRoutingV1 | undefined;
+  onChange(adapterId: import('@zana-ai/zcc-domain/product').HarnessFamily, patch: HarnessRoutingEditorPatch): void;
+  /** Label of the inherit option. Defaults to "Use global default". */
+  inheritLabel?: string;
+  /** Shows skeletons instead of rows while descriptors or the value load. */
+  loading?: boolean;
+  /** Optional harness picker above the rows; `''` is the inherit option. */
+  defaultHarness?: {
+    value: string;
+    onChange(adapterId: string): void;
+  };
+  /** Rendered above the rows, e.g. an error banner. */
+  notice?: ReactNode;
+  /** Row copy for what these settings apply to. Defaults to Zana's project-settings wording. */
+  rowCopy?: HarnessRoutingEditorRowCopy;
+}
+
+export interface HarnessRoutingEditorRowCopy {
+  /** Accessible name of a row's expand button, given the harness label. */
+  expandLabel(harnessLabel: string): string;
+  /** Line under the harness name. */
+  blurb: string;
+  /** Shown when a harness has no launch fields to set. */
+  empty: string;
+}
+
+/** A plugin's stored AI-harness override at one scope (see `zcc.sdk.harnessRouting`). */
+export type PluginHarnessOverride = import('@zana-ai/zcc-domain/product').PluginHarnessOverrideV1;
+
 export interface PluginRpcClient {
   call(method: string, args?: unknown): Promise<unknown>;
 }
@@ -1021,6 +1106,8 @@ export interface PluginSdkApp {
   useSettings(): PluginSettingsState;
   useZccContext(): ZccContext;
   useZccNavigate(): ZccNavigate;
+  /** Deep links for the calling plugin. Absent on hosts that predate them. */
+  useZccDeepLinks?(): ZccDeepLinks;
   useWindowTitle(title: ZccWindowTitle | null | undefined): void;
   useComposer(): PluginComposerApi;
   useComposerView(): ComposerView;
@@ -1040,6 +1127,7 @@ export interface PluginSdkApp {
   ThreadChat: ComponentType<ThreadChatProps>;
   Markdown: ComponentType<MarkdownProps>;
   experimental_NewThreadComposer: ComponentType<NewThreadComposerProps>;
+  experimental_HarnessRoutingEditor: ComponentType<HarnessRoutingEditorProps>;
   /** Host-only toast helper; not a public SDK export. */
   toast?(message: string, kind?: 'info' | 'error'): void;
 }

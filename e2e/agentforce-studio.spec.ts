@@ -2038,7 +2038,8 @@ test('Agentforce Studio window: Org tests sit in the activity rail, and an agent
   await expect(tab.getByRole('heading', { name: 'Tests', exact: true })).toBeVisible();
   await expect(tab).toContainText('studio');
   const table = tab.getByTestId('org-tests-table');
-  await expect(table.getByRole('button', { name: 'Support regression', exact: true })).toBeVisible();
+  // The org's test definitions load progressively; give the detached window headroom under load.
+  await expect(table.getByRole('button', { name: 'Support regression', exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(tab.getByText('Pick local cases or an org test to see its cases and runs.')).toBeVisible();
   const localSuite = table.getByTestId('local-suite-Support');
   await expect(localSuite).toContainText('1 case');

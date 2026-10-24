@@ -7,7 +7,7 @@ import { join, basename, dirname, isAbsolute } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import type { Project, ProjectRemote, AppConfig, ProjectSettings, OpenTarget, ProjectLaunchDefault, HarnessFamily } from '@zana-ai/zcc-domain/product';
-import { SESSION_MEMORY_DEFAULTS, AUTO_CLOSE_IDLE_DEFAULTS, THREAD_SESSION_RELEASE_DEFAULTS, COMPOSER_LAUNCH_SURFACES_REV, DEFAULT_PROJECT_DISPLAY_NAME } from '@zana-ai/zcc-domain/product';
+import { normalizeApiErrorResume, SESSION_MEMORY_DEFAULTS, AUTO_CLOSE_IDLE_DEFAULTS, THREAD_SESSION_RELEASE_DEFAULTS, COMPOSER_LAUNCH_SURFACES_REV, DEFAULT_PROJECT_DISPLAY_NAME } from '@zana-ai/zcc-domain/product';
 import { isTerminalThemeId } from '@zana-ai/zcc-domain/terminal-themes';
 import { PROJECT_COLORS, pickProjectColor } from '@zana-ai/zcc-domain/project-colors';
 import { registeredAdapters } from '@zana-ai/zcc-host-daemon/harness/registry';
@@ -1059,6 +1059,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.terminalClipboardWriteEnabled === 'boolean') {
     normalized.terminalClipboardWriteEnabled = input.terminalClipboardWriteEnabled;
   }
+  if (typeof input.terminalCtrlVPasteEnabled === 'boolean') {
+    normalized.terminalCtrlVPasteEnabled = input.terminalCtrlVPasteEnabled;
+  }
   if (typeof input.mobileGatewayEnabled === 'boolean') {
     normalized.mobileGatewayEnabled = input.mobileGatewayEnabled;
   }
@@ -1184,6 +1187,8 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
     // typed into a live session on every nudge.
     normalized.heartbeatMessage = input.heartbeatMessage.trim().slice(0, 1000);
   }
+  const apiErrorResume = normalizeApiErrorResume(input.apiErrorResume);
+  if (apiErrorResume) normalized.apiErrorResume = apiErrorResume;
   if (typeof input.remoteDefaultPath === 'string') {
     // Global fallback start path for remotes with no per-project remotePath.
     // Same sanitation as the per-project field (trim, control-char reject,

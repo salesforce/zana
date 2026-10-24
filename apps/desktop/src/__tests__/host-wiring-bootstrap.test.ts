@@ -43,7 +43,14 @@ const h = vi.hoisted(() => {
     runtimeOverride: {} as Record<string, (...a: any[]) => any>,
     controlPlaneDeps: undefined as any,
     browserManager: undefined as any,
-    runtimeStart: undefined as any
+    mobileStart: vi.fn(),
+    lastWin: undefined as any,
+    sent: [] as unknown[][],
+    winDestroyed: false,
+    contentsDestroyed: (() => false) as () => boolean,
+    runtimeStart: undefined as any,
+    nativeTheme: Object.assign(new EventEmitter(), { shouldUseDarkColors: false, shouldUseHighContrastColors: false }),
+    overlays: [] as unknown[]
   };
 });
 
@@ -68,7 +75,14 @@ vi.mock('electron', () => {
     constructor() {
       const fallback = { get: (target: Record<string, unknown>, key: string | symbol) =>
         key in target ? target[key as string] : loose() };
-      return new Proxy({ id: 1, webContents: new Proxy({ id: 2 }, fallback) }, fallback);
+      const win = new Proxy({
+        id: 1,
+        isDestroyed: () => h.winDestroyed,
+        setTitleBarOverlay: (options: unknown) => { h.overlays.push(options); },
+        webContents: new Proxy({ id: 2, isDestroyed: () => h.contentsDestroyed(), send: (...a: unknown[]) => { h.sent.push(a); } }, fallback)
+      }, fallback);
+      h.lastWin = win;
+      return win;
     }
   }
   const display = { id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1080 } };
@@ -87,7 +101,7 @@ vi.mock('electron', () => {
     powerMonitor: { on: () => {}, off: () => {} },
     powerSaveBlocker: loose(),
     session: loose(),
-    nativeTheme: { shouldUseDarkColors: false, on: () => {}, off: () => {} },
+    nativeTheme: h.nativeTheme,
     systemPreferences: loose(),
     Notification: class { static isSupported() { return false; } },
     clipboard: loose()
@@ -201,6 +215,9 @@ vi.mock('../runtime/runtime-supervisor.js', async importOriginal => {
     startRuntimeSupervisor: async () => { if (h.runtimeStart) return h.runtimeStart; throw new Error('no runtime in unit test'); }
   };
 });
+vi.mock('@zana-ai/zcc-server/mobile/manager', () => ({
+  MobileGatewayManager: class { start() { h.mobileStart(); return Promise.reject(new Error('port held')); } close() { return Promise.resolve(); } status() { return {}; } }
+}));
 vi.mock('../updater.js', () => ({ createUpdater: () => ({ start() {}, stop() {}, checkForUpdates: async () => {} }) }));
 vi.mock('../startup-dependency-doctor.js', () => ({ runStartupDependencyDoctor: async () => ({}) }));
 vi.mock('../test-tap.js', () => ({
@@ -215,6 +232,7 @@ for (const [klass, key] of [[GoalManager, 'goalDeps'], [FollowUpManager, 'follow
   (klass.prototype as any).setDeps = function (deps: unknown) { (h as any)[key] = deps; return original.call(this, deps); };
 }
 const host = await import('../host.js');
+const { IPC } = await import('@zana-ai/zcc-desktop-contract');
 const { store } = await import('@zana-ai/zcc-server/services/projects/store');
 const registry = await import('@zana-ai/zcc-host-daemon/harness/registry');
 const { mkdirSync, symlinkSync } = await import('node:fs');
@@ -246,12 +264,16 @@ describe('host bootstrap wiring', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.stubEnv('ELECTRON_RENDERER_URL', 'http://127.0.0.1:5173');
+    const realGetConfig = store.getConfig.bind(store);
+    const configSpy = vi.spyOn(store, 'getConfig').mockImplementation(() => ({ ...realGetConfig(), mobileGatewayEnabled: true }));
     try {
       h.ready!();
       await vi.waitFor(() => expect(h.controlPlaneDeps, JSON.stringify(vi.mocked(console.error).mock.calls)).toBeDefined(), { timeout: 20000 });
       expect(h.controlPlaneDeps.pluginCommands.cliContributions).toBeTypeOf('function');
       expect(h.controlPlaneDeps.pluginCommands.runCliCommand).toBeTypeOf('function');
-    } finally { vi.unstubAllEnvs(); }
+    } finally { vi.unstubAllEnvs(); configSpy.mockRestore(); }
+    expect(h.mobileStart).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(vi.mocked(console.error).mock.calls.some(call => String(call[0]).includes('mobileGateway.start'))).toBe(true));
     expect(h.ipcCtx.createInteractiveTerminal).toBe(host.createInteractiveTerminal);
     expect(h.ipcCtx.launchAuthorizedTerminal).toBeTypeOf('function');
     expect(h.goalDeps.runEvaluator).toBeTypeOf('function');
@@ -264,6 +286,29 @@ describe('host bootstrap wiring', () => {
     expect((await h.mcpDeps.registerProject(dir)).alreadyExisted).toBe(true);
     project = project.project;
   }, 30000);
+
+  it('re-colours the Windows caption buttons on a Theme change and an OS appearance change', () => {
+    const platform = process.platform;
+    const config = store.getConfig();
+    const theme = vi.spyOn(store, 'getConfig');
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    try {
+      h.overlays.length = 0;
+      theme.mockReturnValue({ ...config, theme: 'light' });
+      ctx().refreshTitleBarOverlays();
+      expect(h.overlays).toEqual([{ color: '#f6f8fa', symbolColor: '#57606a', height: 44 }]);
+      // Theme System: bootstrap's listener follows the OS.
+      theme.mockReturnValue({ ...config, theme: 'system' });
+      h.nativeTheme.shouldUseDarkColors = true;
+      h.nativeTheme.emit('updated');
+      expect(h.overlays.at(-1)).toEqual({ color: '#181818', symbolColor: '#8b949e', height: 44 });
+      expect(h.overlays).toHaveLength(2);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+      h.nativeTheme.shouldUseDarkColors = false;
+      theme.mockRestore();
+    }
+  });
 
   it('applies the browser ownership policy to navigation and redirects without exempting unrelated contents', () => {
     const owned = Object.assign(new h.EventEmitter(), { id: 101, setWindowOpenHandler: vi.fn() });
@@ -598,6 +643,17 @@ describe('host bootstrap wiring', () => {
     vi.mocked(c.personas.list).mockRestore();
   });
 
+  it('forwards the retain option from the exported cancel wrapper and the execution deps to the lifecycle store', async () => {
+    const seen: unknown[] = [];
+    h.lifecycleOverride.cancelTeamLaunch = async (_c: string, _id: string, opts?: unknown) => {
+      seen.push(opts);
+      return { ok: true, canceledSessionIds: [], pendingSessionIds: [], lifecycleState: 'cancelled' };
+    };
+    await host.cancelTeamLaunch('c', 'ok', { retainOrchestrator: true });
+    await host.cancelTeamLaunch('c', 'ok');
+    expect(seen).toEqual([{ retainOrchestrator: true }, undefined]);
+  });
+
   it('reports team launch lifecycle results through the exported wrappers', async () => {
     h.lifecycleOverride.cancelTeamLaunch = async (_c: string, id: string) => id === 'ok'
       ? { ok: true, canceledSessionIds: ['a'], pendingSessionIds: [], lifecycleState: 'cancelled' }
@@ -744,6 +800,87 @@ describe('host bootstrap wiring', () => {
     await hook(project.id, 'ov', JSON.stringify({ tool_name: 'Bash', tool_input: 'string-input' }));
   });
 
+  it('turns a StopFailure notify body into an API-error stop and cancels on new turns', async () => {
+    const hook = h.mcpDeps.onNotifyHook;
+    const stop = JSON.stringify({ hook_event_name: 'StopFailure', error: 'unknown', error_details: 'Provider anthropic not found' });
+    h.ptys.sessions.set('af1', sessionFixture({ id: 'af1', projectId: project.id, profile: 'claude' }));
+    h.ptys.sessions.set('af-exited', sessionFixture({ id: 'af-exited', projectId: project.id, profile: 'claude', status: 'exited' }));
+    const onStop = vi.spyOn(ctx().apiErrorResume, 'onApiErrorStop').mockResolvedValue(undefined);
+    const cancel = vi.spyOn(ctx().apiErrorResume, 'cancel');
+    const turnFinished = vi.spyOn(ctx().agentStatus, 'turnFinished');
+    const clearTools = vi.spyOn(ctx().agentStatus, 'clearToolsInFlight');
+    const schedulerDone = vi.spyOn(ctx().scheduler, 'onAgentFinished');
+    const goalsDone = vi.spyOn(ctx().goals, 'onAgentFinished');
+    try {
+      hook(project.id, 'af1', 'unblocked', stop);
+      expect(onStop).toHaveBeenCalledTimes(1);
+      expect(onStop).toHaveBeenCalledWith('af1', expect.objectContaining({ text: expect.stringContaining('Provider anthropic') }));
+      expect(turnFinished).toHaveBeenCalledWith('af1');
+      expect(clearTools).toHaveBeenCalledWith('af1');
+      // An errored turn is not a finished run: the scheduler and goals stay out of it.
+      expect(schedulerDone).not.toHaveBeenCalled();
+      expect(goalsDone).not.toHaveBeenCalled();
+      expect(cancel).not.toHaveBeenCalled();
+      hook('other-project', 'af1', 'unblocked', stop);
+      hook(project.id, 'af-exited', 'unblocked', stop);
+      // A body that isn't a StopFailure maps to no interaction event: nothing happens.
+      hook(project.id, 'af1', 'unblocked', JSON.stringify({ hook_event_name: 'Stop' }));
+      expect(onStop).toHaveBeenCalledTimes(1);
+      // Blocked on a person is not a new turn, so a pending resume stays armed.
+      hook(project.id, 'af1', 'blocked');
+      expect(cancel).not.toHaveBeenCalled();
+      // A new turn (no body) cancels a pending resume; so does a lifecycle Stop.
+      hook(project.id, 'af1', 'unblocked');
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(cancel).toHaveBeenLastCalledWith('af1');
+      h.mcpDeps.onStopHook(project.id, 'af1');
+      expect(cancel).toHaveBeenCalledTimes(2);
+      expect(cancel).toHaveBeenLastCalledWith('af1');
+      await settle();
+    } finally {
+      for (const spy of [onStop, cancel, turnFinished, clearTools, schedulerDone, goalsDone]) spy.mockRestore();
+    }
+  });
+
+  it('forgets resume state on pty exit and exposes the service to IPC', async () => {
+    const forget = vi.spyOn(ctx().apiErrorResume, 'forget');
+    try {
+      h.ptys.sessions.set('af2', sessionFixture({ id: 'af2' }));
+      h.ptys.emit('exit', 'af2', 0);
+      await settle();
+      expect(forget).toHaveBeenCalledWith('af2');
+    } finally {
+      forget.mockRestore();
+    }
+    expect(ctx().apiErrorResume.check).toBeTypeOf('function');
+    expect(await ctx().apiErrorResume.check('nothing', [])).toEqual({ ruleId: null, skipped: [] });
+  });
+
+  it('spares an agent that rested on an API error from auto-close until its next turn', async () => {
+    h.ptys.sessions.set('af3', sessionFixture({ id: 'af3', projectId: project.id, profile: 'claude' }));
+    const config = store.getConfig();
+    const cfg = vi.spyOn(store, 'getConfig').mockReturnValue({ ...config, autoCloseIdleEnabled: true });
+    try {
+      const eligible = () => (ctx().autoCloseIdle as any).eligible('af3') as boolean;
+      expect(eligible()).toBe(true);
+      await ctx().apiErrorResume.onApiErrorStop('af3', { error: 'x', text: 'y' });
+      expect(eligible()).toBe(false);
+      ctx().apiErrorResume.cancel('af3');
+      expect(eligible()).toBe(true);
+      // A favourite is spared on its own, keyed by its Claude session id.
+      h.ptys.sessions.set('af4', sessionFixture({ id: 'af4', projectId: project.id, profile: 'claude', claudeSessionId: 'cs-fav' }));
+      const favourites = ctx().favoriteAgentKeys;
+      ctx().favoriteAgentKeys = new Set(['cs-fav']);
+      try {
+        expect((ctx().autoCloseIdle as any).eligible('af4')).toBe(false);
+      } finally {
+        ctx().favoriteAgentKeys = favourites;
+      }
+    } finally {
+      cfg.mockRestore();
+    }
+  });
+
   it('renders AskUserQuestion hook payloads only when enabled and well formed', async () => {
     const hook = h.mcpDeps.onQuestionHook;
     h.ptys.sessions.set('q1', sessionFixture({ id: 'q1', projectId: project.id }));
@@ -809,6 +946,51 @@ describe('host bootstrap wiring', () => {
     await vi.waitFor(() => expect(logError).toHaveBeenCalledWith('execution.flushBlockerNotices', expect.objectContaining({ message: 'offline' })));
   });
 
+  it('routes OS deep links and second-instance argv to the deep link host', async () => {
+    const preventDefault = vi.fn();
+    const [openUrl] = h.appHandlers.get('open-url')!;
+    openUrl({ preventDefault }, 'zana-dev://plugin/design-docs/peer/join?d=abc');
+    openUrl({ preventDefault }, 'https://not-a-deep-link.example/');
+    expect(preventDefault).toHaveBeenCalledTimes(2);
+    const second = h.appHandlers.get('second-instance')!;
+    expect(second.length).toBeGreaterThan(0);
+    for (const handler of second) {
+      handler({}, ['app', 'zana-dev://plugin/design-docs/peer/join?d=def']);
+      handler({}, ['app', '--no-link']);
+    }
+    await settle();
+  });
+
+  it('delivers an armed deep link to the ready main window and logs delivery failures', async () => {
+    const errors = vi.mocked(console.error);
+    const link = 'zana-dev://plugin/design-docs/peer/join?d=ready';
+    const [openUrl] = h.appHandlers.get('open-url')!;
+    const deliveries = () => h.sent.filter(([channel, d]) => channel === IPC.deepLinks.onLink && (d as any).payload === 'ready');
+
+    // Ready window: link is sent to the renderer.
+    ctx().markRendererReady(h.lastWin);
+    h.sent.length = 0;
+    openUrl({ preventDefault: vi.fn() }, link);
+    await vi.waitFor(() => expect(deliveries()).toHaveLength(1));
+    expect(deliveries()[0][1]).toMatchObject({ pluginId: 'design-docs', route: 'peer/join' });
+
+    // Window dies between readiness and send.
+    const alive = h.contentsDestroyed;
+    h.contentsDestroyed = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
+    errors.mockClear();
+    openUrl({ preventDefault: vi.fn() }, link);
+    await vi.waitFor(() => expect(errors.mock.calls.some(c => String(c[0]).includes('deepLink.deliver'))).toBe(true));
+    expect(deliveries()).toHaveLength(1);
+
+    // Window never becomes ready.
+    h.contentsDestroyed = () => true;
+    errors.mockClear();
+    openUrl({ preventDefault: vi.fn() }, link);
+    await vi.waitFor(() => expect(errors.mock.calls.some(c => String(c[0]).includes('deepLink.deliver'))).toBe(true));
+    expect(deliveries()).toHaveLength(1);
+    h.contentsDestroyed = alive;
+  });
+
   it('quits without confirmation when configured and releases services and timers', async () => {
     const config = store.getConfig();
     vi.spyOn(store, 'getConfig').mockReturnValue({ ...config, confirmQuitOnLiveSessions: false });
@@ -816,6 +998,16 @@ describe('host bootstrap wiring', () => {
     beforeQuit({ preventDefault: vi.fn() });
     await settle();
     expect(() => beforeQuit({ preventDefault: vi.fn() })).not.toThrow();
+    // The caption-button theme listener is released.
+    const platform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    try {
+      h.overlays.length = 0;
+      h.nativeTheme.emit('updated');
+      expect(h.overlays).toEqual([]);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+    }
   });
 
   it('connects bulk plugin updates to the production supervisor', async () => {

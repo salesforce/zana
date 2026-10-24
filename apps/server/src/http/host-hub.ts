@@ -132,6 +132,7 @@ export function createHostHub(
     onNewHostInstance?: (hostId: string) => void;
     onHostConnected?: (hostId: string) => void;
     pluginHostGenerations?: () => Array<{ pluginId: string; generation: string }>;
+    productInstanceId?: string;
     onConversationEvent?: (input: {
       threadId: string;
       type: string;
@@ -316,6 +317,12 @@ export function createHostHub(
     session: ConnectedHostSession,
     batch: HostEventBatchMessage
   ): void {
+    const host = getHost(db, session.hostId);
+    if (!host || host.destroyedAt || host.enrollmentCapability !== 'execution') {
+      session.socket.close(4003, 'host enrollment does not authorize execution events');
+      detach(session.hostId, 'capability-denied');
+      return;
+    }
     if (batch.hostId !== session.hostId || batch.instanceId !== session.instanceId) {
       const ack = HostEventAckMessageSchema.parse({
         type: 'host.event-ack',
@@ -598,6 +605,10 @@ export function createHostHub(
     command: HostRpcCommand;
     timeoutMs?: number;
   }): Promise<T> {
+    const host = getHost(db, input.hostId);
+    if (!host || host.destroyedAt || (host.enrollmentCapability !== 'execution' && input.command.type !== 'peer.forward' && input.command.type !== 'peer.control')) {
+      throw new HostUnavailableError('host enrollment does not authorize command');
+    }
     const session = ensureHostSessionReady(input.hostId);
     const command = HostRpcCommandSchema.parse(input.command);
     const requestId = randomUUID();
@@ -655,6 +666,12 @@ export function createHostHub(
         socket.close(4002, 'Invalid host readiness');
         return;
       }
+      const host = getHost(db, hostId);
+      if (!host || host.destroyedAt || (host.enrollmentCapability !== 'execution' &&
+        (ready.data.runtime.threads.length > 0 || ready.data.runtime.loadedEnvironments.length > 0))) {
+        socket.close(4003, 'host enrollment does not authorize runtime recovery');
+        return;
+      }
       attach(socket, hostId, hello.data.instanceId, ready.data.runtime);
     };
     const timer = setTimeout(() => { cleanup(); socket.close(1013, 'Host readiness timed out'); }, 10_000);
@@ -663,11 +680,14 @@ export function createHostHub(
     socket.on('message', onReady);
     socket.on('close', cleanup);
     if (socket.readyState === socket.OPEN) {
+      const capability = getHost(db, hostId)?.enrollmentCapability;
       socket.send(JSON.stringify(HostHelloOkMessageSchema.parse({
         type: 'host.hello-ok',
         protocolVersion: HOST_RPC_PROTOCOL_VERSION,
         hostId,
-        pluginHostGenerations: options?.pluginHostGenerations?.() ?? []
+        ...(options?.productInstanceId ? { productInstanceId: options.productInstanceId,
+          enrollmentCapability: capability ?? 'peer.forward' } : {}),
+        pluginHostGenerations: capability === 'execution' ? options?.pluginHostGenerations?.() ?? [] : []
       })));
     }
     return true;

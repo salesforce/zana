@@ -3,6 +3,7 @@ import { makeWorkspaceStatus } from "./workspace-status.js";
 import type { WorkspaceResolutionFailure } from "@zana-ai/zcc-host-daemon-contract";
 import { describe, expect, it } from "vitest";
 import * as contract from "../src/index.js";
+import { peerLinkSchema } from "../src/api/hosts.js";
 import {
   TERMINAL_COLS_MAX,
   TERMINAL_DATA_MAX_BASE64_LENGTH,
@@ -1802,5 +1803,27 @@ describe("server-contract clients", () => {
         (reason) => reason.trim().length > 0,
       ),
     ).toBe(true);
+  });
+});
+
+describe("peer link use notes", () => {
+  const base = { hostId: "h", peerInstanceId: "p", peerName: "Ada", state: "linked", connected: true };
+  const use = { pluginId: "a", label: "A", scope: "s", since: 1 };
+  const parse = (note?: unknown) => peerLinkSchema.safeParse({ ...base, uses: [{ ...use, ...(note === undefined ? {} : { note }) }] });
+
+  it("accepts a link without a note and with a bounded note", () => {
+    expect(parse().success).toBe(true);
+    expect(parse({ state: "attention", label: "Sync not set up" }).success).toBe(true);
+    expect(parse({ state: "ok", label: "x".repeat(40), detail: "y".repeat(200) }).success).toBe(true);
+  });
+
+  it.each([
+    ["unknown state", { state: "bad", label: "x" }],
+    ["empty label", { state: "ok", label: "" }],
+    ["long label", { state: "ok", label: "x".repeat(41) }],
+    ["long detail", { state: "ok", label: "x", detail: "y".repeat(201) }],
+    ["extra key", { state: "ok", label: "x", html: "<b>" }],
+  ])("rejects %s", (_name, note) => {
+    expect(parse(note).success).toBe(false);
   });
 });

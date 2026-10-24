@@ -5,7 +5,9 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { Duplex } from 'node:stream';
 import type { WebSocketServer } from 'ws';
 import { handleProductHttp } from './product-api.js';
-import { createProductHttpContext, type ProductHttpContext } from './product-context.js';
+import { createProductHttpContext, type ProductHttpContext, type CreateProductHttpContextOptions } from './product-context.js';
+import { registerBoundLocalPeerApp } from './local-peer-app.js';
+import { createHttpRequestDrain } from './http-request-drain.js';
 import { createProductWebSocketServer, handleProductUpgrade } from './product-ws.js';
 import { createHostDaemonWebSocketServer, handleHostInternalHttp, handleHostInternalUpgrade } from './host-internal.js';
 import { handleInstallHttp } from './install-http.js';
@@ -30,6 +32,10 @@ export interface StartProductServerOptions {
   enrollToken?: string;
   /** Boot-only secret shared with trusted Electron main, never exposed by HTTP. */
   uiSendSecret?: string;
+  peerKeyProvider?: CreateProductHttpContextOptions['peerKeyProvider'];
+  enrolledPeerBridge?: CreateProductHttpContextOptions['enrolledPeerBridge'];
+  /** Test/E2E seams for invitation-founded peer links (Connect fetch, daemon connector); never set by production hosts. */
+  peerInvitationSeams?: Pick<CreateProductHttpContextOptions, 'peerInstallerConnector' | 'peerLinkConnect'>;
   /**
    * Optional extra handler used when this listener also serves renderer
    * assets. Return true when the request was fully handled.
@@ -39,7 +45,7 @@ export interface StartProductServerOptions {
 
 export async function startProductServer(options: StartProductServerOptions): Promise<ProductServer> {
   const hostName = options.host ?? '127.0.0.1';
-  if (hostName !== '127.0.0.1' && hostName !== '::1') {
+  if (hostName !== '127.0.0.1') {
     throw new Error('product HTTP is restricted to a loopback host');
   }
 
@@ -48,12 +54,15 @@ export async function startProductServer(options: StartProductServerOptions): Pr
     dataDir: options.dataDir,
     origins: { ...options.origins, serverPort: options.port ?? options.origins.serverPort },
     enrollToken: options.enrollToken,
-    uiSendSecret: options.uiSendSecret
+    uiSendSecret: options.uiSendSecret,
+    peerKeyProvider: options.peerKeyProvider,
+    enrolledPeerBridge: options.enrolledPeerBridge,
+    ...options.peerInvitationSeams
   });
   const wss = createProductWebSocketServer(ctx);
   const hostWss = createHostDaemonWebSocketServer();
 
-  const server = createServer(async (request, response) => {
+  const requests = createHttpRequestDrain(async (request, response) => {
     if (await handleHostInternalHttp(request, response, ctx)) return;
     if (await handleMainSquadRuntimeHttp(request, response, ctx)) return;
     if (await handleInstallHttp(request, response, ctx)) return;
@@ -64,55 +73,71 @@ export async function startProductServer(options: StartProductServerOptions): Pr
     if (options.fallback && (await options.fallback(request, response))) return;
     response.writeHead(404).end();
   });
+  const server = createServer(requests.handle);
 
   attachProductUpgrade(server, ctx, wss, hostWss);
 
-  await new Promise<void>((resolveListen, rejectListen) => {
-    server.once('error', rejectListen);
-    server.listen(options.port ?? 0, hostName, () => {
-      server.off('error', rejectListen);
-      resolveListen();
-    });
-  });
-
-  protectPreviewServer(server);
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    server.close();
-    throw new Error('Product HTTP did not bind a TCP address');
-  }
-
-  const boundPort = address.port;
-  ctx.origins.serverPort = boundPort;
-  // SSH reverse tunnels target this allowlist-only port. Without it, tunnel
-  // installs and reopens fail closed; they never expose serverPort.
+  let unregister: (() => Promise<void>) | undefined;
   let pairingForwarder: PairingForwarder | undefined;
-  try {
-    pairingForwarder = await startPairingForwarder(boundPort, {
-      productHost: hostName === '::1' ? '::1' : '127.0.0.1'
+  let closing: Promise<void> | undefined;
+  const close = () => closing ??= (async () => {
+    requests.dispose();
+    if (pairingForwarder && ctx.origins.pairingPort === pairingForwarder.port) delete ctx.origins.pairingPort;
+    const forwarderClosed = pairingForwarder?.close();
+    const contextStopped = ctx.dispose();
+    ctx.hostHub.close();
+    for (const socket of hostWss.clients) socket.terminate();
+    for (const socket of wss.clients) socket.terminate();
+    hostWss.close();
+    wss.close();
+    const stopped = new Promise<void>((resolveClose) => {
+      server.close(() => resolveClose());
+      server.closeAllConnections();
     });
-    ctx.origins.pairingPort = pairingForwarder.port;
-  } catch (error) {
-    console.warn(`[zcc] pairing forwarder failed to start: ${error instanceof Error ? error.message : String(error)}`);
-  }
-
-  return {
-    url: `http://${hostName}:${boundPort}/`,
-    port: boundPort,
-    ctx,
-    close: async () => {
-      if (ctx.origins.pairingPort === pairingForwarder?.port) delete ctx.origins.pairingPort;
-      await pairingForwarder?.close();
-      ctx.hostHub.close();
-      await ctx.dispose();
-      await new Promise<void>((resolveClose, rejectClose) => {
-        hostWss.close();
-        wss.close();
-        ctx.db.close();
-        server.close((error) => (error ? rejectClose(error) : resolveClose()));
-      });
+    try { await Promise.all([unregister?.(), forwarderClosed]); }
+    finally {
+      try { await stopped; await requests.whenIdle(); await contextStopped; await ctx.whenIdle(); }
+      finally { ctx.db.close(); }
     }
-  };
+  })();
+
+  try {
+    await new Promise<void>((resolveListen, rejectListen) => {
+      server.once('error', rejectListen);
+      server.listen(options.port ?? 0, hostName, () => {
+        server.off('error', rejectListen);
+        resolveListen();
+      });
+    });
+
+    protectPreviewServer(server);
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Product HTTP did not bind a TCP address');
+    }
+
+    const boundPort = address.port;
+    ctx.origins.serverPort = boundPort;
+    unregister = await registerBoundLocalPeerApp(server, ctx.dataDir, ctx.productInstanceId);
+    // SSH reverse tunnels target this allowlist-only port. Without it, tunnel
+    // installs and reopens fail closed; they never expose serverPort.
+    try {
+      pairingForwarder = await startPairingForwarder(boundPort, { productHost: hostName });
+      ctx.origins.pairingPort = pairingForwarder.port;
+    } catch (error) {
+      console.warn(`[zcc] pairing forwarder failed to start: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    return {
+      url: `http://${hostName}:${boundPort}/`,
+      port: boundPort,
+      ctx,
+      close
+    };
+  } catch (error) {
+    await close();
+    throw error;
+  }
 }
 
 export function attachProductUpgrade(

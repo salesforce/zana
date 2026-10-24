@@ -162,6 +162,7 @@ export function ExperimentalView({
           onChange={(v) => onUpdate({ menubarPopoverEnabled: v })}
         />
       </Section>
+
     </>
   );
 }

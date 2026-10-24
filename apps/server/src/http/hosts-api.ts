@@ -5,6 +5,9 @@ import {
   hostDirectoryQuerySchema,
   hostProviderCliInstallRequestSchema,
   hostBootstrapRequestSchema,
+  peerIntroductionDecisionRequestSchema,
+  removePeerLinkQuerySchema,
+  removePeerLinkUseQuerySchema,
   hostSshIdentityRequestSchema,
   hostPathsExistRequestSchema,
   hostPickFolderRequestSchema,
@@ -18,9 +21,10 @@ import {
   updateHostPermissionCeiling,
   updateHostSshIdentity
 } from '@zana-ai/zcc-db';
-import { readJsonBody, sendJson, beginNdjson } from './json.js';
+import { readJsonBody, sendJson, beginNdjson, rejectMobilePeerManagement } from './json.js';
 import type { ProductHttpContext } from './product-context.js';
 import { listPublicHosts, parseHostUpdate, toPublicHost } from '../services/hosts/host-public.js';
+import { forgetLeftover, listPeerLeftovers, listPeerLinks, pausePeerLink, peerLinkActivity, removePeerLink, removePeerLinkUse, repairPeerLink, resumePeerLink, type PeerLinkRemoval } from '../services/hosts/peer-link-view.js';
 import { relaunchLocalHostDaemon } from '../services/hosts/host-relaunch.js';
 import { HostUnavailableError } from './host-hub.js';
 import { bootstrapHostBySsh, bootstrapHostForProject, parseSshIdentity, reconcileRemoteProjectBindings, repairHost, type HostBootstrapEvent } from '../services/hosts/host-bootstrap.js';
@@ -53,11 +57,20 @@ function connectedSet(ctx: ProductHttpContext): Set<string> {
 
 const FOLDER_PICKER_TIMEOUT_MS = 10 * 60 * 1000;
 
+/** Execution hosts only: a plugin link is never addressable through the machine routes. */
 function requireHost(ctx: ProductHttpContext, id: string) {
   const row = getHost(ctx.db, id);
-  if (!row || row.destroyedAt) return null;
+  if (!row || row.destroyedAt || row.purpose.kind !== 'execution') return null;
   return row;
 }
+
+function sendPeerLinkRemoval(response: ServerResponse, result: PeerLinkRemoval): void {
+  if (result.status === 'ok') sendJson(response, 200, { ok: true as const, linkRemoved: result.linkRemoved });
+  else if (result.status === 'not-found') sendJson(response, 404, { error: 'peer link not found' });
+  else sendJson(response, 503, { error: 'Could not remove this link right now. Retry when your account connection is available.' });
+}
+
+const SAFE_DECISION_ERRORS = /^(peer introduction unavailable|introduction already decided|invalid introduction decision)$/;
 
 /**
  * Public `/api/v1/hosts` surface. Join codes do not create a host row.
@@ -70,6 +83,67 @@ export async function handleHostsApi(
   method: string,
   requestUrl: URL
 ): Promise<boolean> {
+  if (path === '/api/v1/peer-links' || path.startsWith('/api/v1/peer-links/')) {
+    if (rejectMobilePeerManagement(request, response)) return true;
+    if (path === '/api/v1/peer-links' && method === 'GET') {
+      sendJson(response, 200, listPeerLinks(ctx));
+      return true;
+    }
+    if (path === '/api/v1/peer-links/leftover' && method === 'GET') {
+      sendJson(response, 200, listPeerLeftovers(ctx));
+      return true;
+    }
+    const forgetParams = method === 'POST' ? routeParams(path, '/api/v1/peer-links/leftover/:computerId/forget') : null;
+    if (forgetParams) {
+      const result = await forgetLeftover(ctx, forgetParams.computerId!);
+      if (result.status === 'ok') sendJson(response, 200, { ok: true as const });
+      else sendJson(response, 404, { error: 'leftover not found' });
+      return true;
+    }
+    const pauseParams = method === 'POST' ? routeParams(path, '/api/v1/peer-links/:hostId/disconnect') : null;
+    const resumeParams = method === 'POST' ? routeParams(path, '/api/v1/peer-links/:hostId/reconnect') : null;
+    if (pauseParams || resumeParams) {
+      const result = pauseParams ? await pausePeerLink(ctx, pauseParams.hostId!) : await resumePeerLink(ctx, resumeParams!.hostId!);
+      if (result.status === 'ok') sendJson(response, 200, { ok: true as const, paused: result.paused });
+      else if (result.status === 'not-found') sendJson(response, 404, { error: 'peer link not found' });
+      else sendJson(response, 503, { error: 'Could not change this link right now. Try again.' });
+      return true;
+    }
+    const repairParams = method === 'POST' ? routeParams(path, '/api/v1/peer-links/:hostId/repair') : null;
+    if (repairParams) {
+      const result = await repairPeerLink(ctx, repairParams.hostId!);
+      if (result.status === 'ok') sendJson(response, 200, { ok: true as const });
+      else if (result.status === 'not-found') sendJson(response, 404, { error: 'peer link not found' });
+      else sendJson(response, 503, { error: 'Could not repair this link right now. Try again.' });
+      return true;
+    }
+    const useParams = method === 'DELETE' ? routeParams(path, '/api/v1/peer-links/:hostId/uses/:pluginId') : null;
+    if (useParams) {
+      const query = removePeerLinkUseQuerySchema.safeParse({ scope: requestUrl.searchParams.get('scope') ?? undefined });
+      if (!query.success) { sendJson(response, 400, { error: 'invalid peer link use' }); return true; }
+      sendPeerLinkRemoval(response, await removePeerLinkUse(ctx, useParams.hostId!, useParams.pluginId!, query.data.scope));
+      return true;
+    }
+    const activityParams = method === 'GET' ? routeParams(path, '/api/v1/peer-links/:hostId/activity') : null;
+    if (activityParams) {
+      const activity = peerLinkActivity(ctx, activityParams.hostId!);
+      if (activity) sendJson(response, 200, activity);
+      else sendJson(response, 404, { error: 'peer link not found' });
+      return true;
+    }
+    const linkParams = method === 'DELETE' ? routeParams(path, '/api/v1/peer-links/:hostId') : null;
+    if (linkParams) {
+      const query = removePeerLinkQuerySchema.safeParse({ force: requestUrl.searchParams.get('force') ?? undefined });
+      if (!query.success) { sendJson(response, 400, { error: 'invalid peer link removal' }); return true; }
+      const result = await removePeerLink(ctx, linkParams.hostId!, { force: query.data.force === '1' });
+      // A failed plugin handler stops before anything is removed: the owner picks Retry or Remove anyway.
+      if (result.status === 'hooks-failed') sendJson(response, 200, { ok: false as const, hookFailures: result.failures });
+      else sendPeerLinkRemoval(response, result);
+      return true;
+    }
+    sendJson(response, 404, { error: 'not found' });
+    return true;
+  }
   const performanceHost = routeParams(path, '/api/v1/hosts/:id/performance');
   if (performanceHost && method === 'GET') {
     if (!requireHost(ctx, performanceHost.id!)) {
@@ -122,6 +196,44 @@ export async function handleHostsApi(
     }
     const issued = ctx.joinCodes.mint();
     sendJson(response, 201, issued);
+    return true;
+  }
+
+  if (path === '/api/v1/peers/introductions' && method === 'GET') {
+    sendJson(response, 200, { introductions: await ctx.peerAuthority.receivedIntroductions() });
+    return true;
+  }
+
+  const introductionParams = method === 'POST' ? routeParams(path, '/api/v1/peers/introductions/:id/decision') : null;
+  if (introductionParams) {
+    if (rejectMobilePeerManagement(request, response)) return true;
+    let body: unknown;
+    try { body = await readJsonBody(request); } catch { sendJson(response, 400, { error: 'invalid JSON' }); return true; }
+    const parsed = peerIntroductionDecisionRequestSchema.safeParse(body);
+    if (!parsed.success) { sendJson(response, 400, { error: 'invalid introduction decision' }); return true; }
+    try {
+      const decided = await ctx.peerAuthority.decideIntroduction(introductionParams.id!, parsed.data.decision);
+      // Consent is the trigger: a bounded, tracked forward-only enrollment; failures stay visible in installations.
+      if (decided.status === 'approved') {
+        void ctx.peerInstaller?.enroll(decided.introductionId).catch(error => {
+          console.warn(`[zcc] peer enrollment after approval failed for introduction ${decided.introductionId}: ${error instanceof Error ? error.message : String(error)}`);
+        });
+      }
+      sendJson(response, 200, decided);
+    }
+    catch (error) {
+      const message = error instanceof Error && SAFE_DECISION_ERRORS.test(error.message) ? error.message : 'introduction unavailable';
+      sendJson(response, 409, { error: message });
+    }
+    return true;
+  }
+
+  if (path === '/api/v1/hosts/forward-join-codes' && method === 'POST') {
+    if (rejectMobilePeerManagement(request, response)) return true;
+    let body: unknown = {};
+    try { body = await readJsonBody(request); } catch { sendJson(response, 400, { error: 'invalid JSON' }); return true; }
+    if (!createHostJoinCodeRequestSchema.safeParse(body).success) { sendJson(response, 400, { error: 'invalid join-code request' }); return true; }
+    sendJson(response, 201, ctx.joinCodes.mintForwardOnly());
     return true;
   }
 
@@ -253,6 +365,10 @@ export async function handleHostsApi(
     const parsed = updateHostPermissionCeilingRequestSchema.safeParse(body);
     if (!parsed.success) {
       sendJson(response, 400, { error: 'invalid permission ceiling' });
+      return true;
+    }
+    if (!requireHost(ctx, ceiling.id)) {
+      sendJson(response, 404, { error: 'host not found' });
       return true;
     }
     const updated = updateHostPermissionCeiling(ctx.db, ceiling.id, parsed.data.maxPermissionMode);

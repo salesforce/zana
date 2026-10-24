@@ -334,3 +334,23 @@ describe('createFakePluginHost personas, teams, and admission/tool-policy hooks'
     })).resolves.toEqual({ action: 'deny', reason: 'no shells' });
 });
 });
+
+describe('createFakePluginHost storage.backupDatabase', () => {
+  it('validates, records metadata-only backups and honours abort', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'notes' });
+    const backup = await zcc.storage.backupDatabase({ name: 'nightly' });
+    expect(backup).toMatchObject({ backupId: 'fake-backup-1', name: 'nightly', path: '/fake-plugin-data/notes/backups/nightly.db' });
+    expect(harness.backups).toEqual([backup]);
+    await expect(zcc.storage.backupDatabase({ name: '../escape' })).rejects.toMatchObject({ code: 'invalid' });
+    const controller = new AbortController(); controller.abort();
+    await expect(zcc.storage.backupDatabase({ name: 'x', signal: controller.signal })).rejects.toMatchObject({ code: 'aborted' });
+  });
+
+  it('delegates to a supplied implementation', async () => {
+    const real = vi.fn(async () => ({ backupId: 'b', name: 'n', path: '/p', bytes: 1, sha256: 'f'.repeat(64), createdAt: 1 }));
+    const { zcc, harness } = createFakePluginHost({ backupDatabase: real });
+    await expect(zcc.storage.backupDatabase({ name: 'n' })).resolves.toMatchObject({ backupId: 'b' });
+    expect(real).toHaveBeenCalledWith({ name: 'n' });
+    expect(harness.backups).toHaveLength(1);
+  });
+});

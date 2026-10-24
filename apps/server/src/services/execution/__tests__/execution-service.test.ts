@@ -2808,7 +2808,33 @@ describe('SquadExecutionService', () => {
     expect(record?.finalSummary).toContain('# Execution completed');
     expect(record?.finalSummary).toContain('- A [COMPLETED]');
     expect(record?.finalSummary).not.toContain('done');
-    expect(cancelTeamLaunch).toHaveBeenCalledWith('owner', 'request-1');
+    expect(cancelTeamLaunch).toHaveBeenCalledWith('owner', 'request-1', { retainOrchestrator: false });
+  }));
+
+  it('auto-finalize posts the completion notice and honors retained orchestrator', async () => fixture(async (filePath) => {
+    const appendOnce = vi.fn(async () => ({ id: 'inbox-1' }));
+    const cancelTeamLaunch = vi.fn(async () => ({ ok: true as const, value: { canceledSessionIds: ['worker-1'], pendingSessionIds: [] } }));
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const service = new SquadExecutionService(deps(filePath, {
+      store, replyToSession: () => true, cancelTeamLaunch, inbox: { append: vi.fn(), appendOnce },
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+          { slotId: 'slot-1', personaId: 'worker', authorizationIdDigest: 'w1-d' }
+        ] } } }),
+      getTeamLaunch: async () => ({ retainOrchestrator: true, workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1' }] })
+    }));
+    await service.start('owner', 'project-1', { ...request, completionInboxNotice: true, coordinationMode: 'job-team', workUnits: [
+      { id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'] }
+    ] });
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    const worker = { ...coordinator, slotId: 'slot-1', role: 'worker' as const };
+    await service.dispatchReady(coordinator);
+    await service.completeWork(worker, 'a', 'done');
+    expect((await store.get('execution-1'))?.state).toBe('COMPLETED');
+    expect(appendOnce).toHaveBeenCalledTimes(1);
+    expect(appendOnce).toHaveBeenCalledWith(expect.objectContaining({ executionId: 'execution-1', dedupeKey: 'execution-1' }));
+    expect(cancelTeamLaunch).toHaveBeenCalledWith('owner', 'request-1', { retainOrchestrator: true });
   }));
 
   it('routes assignment pushes through deliverToWorker (idle-gated) when provided, bypassing raw replyToSession', async () => fixture(async (filePath) => {
@@ -3021,7 +3047,52 @@ describe('SquadExecutionService', () => {
     await service.start('session-1', 'project-1', request);
     await expect(service.completeByCoordinator('worker-1', 'project-1', 'execution-1', 'done')).resolves.toMatchObject({ ok: false, code: 'DENIED' });
     await expect(service.completeByCoordinator('coordinator', 'project-1', 'execution-1', 'done')).resolves.toMatchObject({ ok: true, value: { state: 'COMPLETED' } });
-    expect(cancelTeamLaunch).toHaveBeenCalledWith('session-1', 'request-1');
+    expect(cancelTeamLaunch).toHaveBeenCalledWith('session-1', 'request-1', { retainOrchestrator: false });
+  }));
+
+  it('posts one requested completion notice without a report target and preserves the orchestrator', async () => fixture(async (filePath) => {
+    const appendOnce = vi.fn(async () => ({ id: 'inbox-1' }));
+    const cancelTeamLaunch = vi.fn(async () => ({ ok: true, value: { canceledSessionIds: ['worker-1'], pendingSessionIds: [] } }));
+    const getTeamLaunch = vi.fn(async () => ({ orchestratorSessionId: 'coordinator', retainOrchestrator: true }));
+    const service = new SquadExecutionService(deps(filePath, {
+      inbox: { append: vi.fn(), appendOnce }, cancelTeamLaunch, getTeamLaunch
+    }));
+    await service.start('owner', 'project-1', { ...request, completionInboxNotice: true });
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+
+    await expect(service.completeByCoordinatorBinding(coordinator, 'execution-1', 'done')).resolves.toMatchObject({ ok: true });
+    expect(appendOnce).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'project-1', executionId: 'execution-1', dedupeKey: 'execution-1'
+    }));
+    expect(cancelTeamLaunch).toHaveBeenCalledWith('owner', 'request-1', { retainOrchestrator: true });
+  }));
+
+  it('skips completion notice for report targets and keeps teardown after inbox failure', async () => fixture(async (filePath) => {
+    const appendOnce = vi.fn(async () => { throw new Error('inbox offline'); });
+    const cancelTeamLaunch = vi.fn(async () => ({ ok: true, value: { canceledSessionIds: ['worker-1'], pendingSessionIds: [] } }));
+    const logError = vi.fn();
+    const service = new SquadExecutionService(deps(filePath, {
+      inbox: { append: vi.fn(), appendOnce }, cancelTeamLaunch, logError,
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator' })
+    }));
+    await service.start('owner', 'project-1', { ...request, completionInboxNotice: true }, {
+      reportTo: { kind: 'pty', id: 'owner', role: 'owner' }
+    });
+    const coordinator = { executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' as const };
+    await service.completeByCoordinatorBinding(coordinator, 'execution-1', 'done');
+    expect(appendOnce).not.toHaveBeenCalled();
+    expect(cancelTeamLaunch).toHaveBeenCalledWith('owner', 'request-1', { retainOrchestrator: false });
+
+    const retryFile = `${filePath}.retry`;
+    const retryCancel = vi.fn(async () => ({ ok: true, value: { canceledSessionIds: ['worker-1'], pendingSessionIds: [] } }));
+    const retry = new SquadExecutionService(deps(retryFile, {
+      inbox: { append: vi.fn(), appendOnce }, cancelTeamLaunch: retryCancel, logError,
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator' })
+    }));
+    await retry.start('owner', 'project-1', { ...request, launchRequestId: 'request-2', completionInboxNotice: true });
+    await retry.completeByCoordinatorBinding({ ...coordinator, executionId: 'execution-1' }, 'execution-1', 'done');
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('completion inbox append failed'), expect.any(Error));
+    expect(retryCancel).toHaveBeenCalledWith('owner', 'request-2', { retainOrchestrator: false });
   }));
 
   it('loads bounded artifacts for unbound coordinator completion', async () => fixture(async (filePath) => {

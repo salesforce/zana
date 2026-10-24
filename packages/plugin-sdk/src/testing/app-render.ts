@@ -14,6 +14,8 @@ import type {
   ThreadChatMessageReference,
   ThreadChatProps,
   ZccContext,
+  ZccDeepLinkOpenResult,
+  ZccDeepLinks,
   ZccNavigate,
   ZccPanelAgentOptions,
   ZccPanelToolOptions,
@@ -47,6 +49,10 @@ export interface RenderSlotOptions {
   realtimeConnectionState?: 'connecting' | 'connected' | 'reconnecting';
   /** Whether the page has a side panel to show agents in (`navigate.openPanelAgent`). Defaults to false. */
   panelAgent?: boolean;
+  /** `deepLinks.base()`. Defaults to `zana-test://`. */
+  deepLinkBase?: string | null;
+  /** What `deepLinks.open(raw)` resolves. Defaults to `unavailable`. */
+  deepLinkOpenResult?: ZccDeepLinkOpenResult;
   /**
    * Whether the page has a side panel for its tools (`navigate.openPanelTool`,
    * `useZccContext().sidePanel`). Defaults to false.
@@ -60,11 +66,15 @@ export interface RenderedSlot extends RenderResult {
     navigateCalls: NavigateCall[];
     /** The newest `useWindowTitle` value still mounted, or null. The fake records it on every surface. */
     readonly windowTitle: ZccWindowTitle | null;
+    /** Raw links passed to `deepLinks.open`. */
+    deepLinkOpenCalls: string[];
   };
   lifecycle: {
     unmount(): void;
   };
   emitRealtime(channel: string, payload?: unknown): void;
+  /** Deliver a deep link to the handlers registered with `deepLinks.on(route, …)`. */
+  emitDeepLink(route: string, payload?: string | null): void;
 }
 
 type PluginAppModule = { default?: unknown };
@@ -102,12 +112,31 @@ export function installTestPluginRuntime(options: RenderSlotOptions = {}): {
   rpcCalls: RpcCall[];
   navigateCalls: NavigateCall[];
   emitRealtime(channel: string, payload?: unknown): void;
+  emitDeepLink(route: string, payload?: string | null): void;
   windowTitle(): ZccWindowTitle | null;
+  deepLinkOpenCalls: string[];
 } {
   const rpcCalls: RpcCall[] = [];
   const navigateCalls: NavigateCall[] = [];
   let windowTitles: Array<{ token: symbol; title: ZccWindowTitle | null }> = [];
   const realtimeHandlers = new Map<string, (payload: unknown) => void>();
+  const deepLinkHandlers = new Map<string, Set<(payload: string | null) => void>>();
+  const deepLinkOpenCalls: string[] = [];
+  const deepLinks: ZccDeepLinks = {
+    base: () => (options.deepLinkBase === undefined ? 'zana-test://' : options.deepLinkBase),
+    on(route, handler) {
+      const set = deepLinkHandlers.get(route) ?? new Set();
+      set.add(handler);
+      deepLinkHandlers.set(route, set);
+      return () => {
+        set.delete(handler);
+      };
+    },
+    async open(rawLink) {
+      deepLinkOpenCalls.push(rawLink);
+      return options.deepLinkOpenResult ?? { ok: false, reason: 'unavailable' };
+    }
+  };
   const context: ZccContext = {
     projectId: options.context?.projectId ?? null,
     threadId: options.context?.threadId ?? null,
@@ -242,6 +271,9 @@ export function installTestPluginRuntime(options: RenderSlotOptions = {}): {
     useZccNavigate() {
       return navigate;
     },
+    useZccDeepLinks() {
+      return deepLinks;
+    },
     useWindowTitle(title) {
       const key = title ? JSON.stringify(title) : '';
       const slot = React.useRef<symbol | null>(null);
@@ -326,6 +358,10 @@ export function installTestPluginRuntime(options: RenderSlotOptions = {}): {
     emitRealtime(channel, payload) {
       realtimeHandlers.get(channel)?.(payload);
     },
+    emitDeepLink(route, payload = null) {
+      for (const handler of [...(deepLinkHandlers.get(route) ?? [])]) handler(payload);
+    },
+    deepLinkOpenCalls,
     windowTitle: () => [...windowTitles].reverse().find((entry) => entry.title)?.title ?? null
   };
 }
@@ -364,11 +400,13 @@ export function renderSlot<Props extends object>(
       navigateCalls: installed.navigateCalls,
       get windowTitle() {
         return installed.windowTitle();
-      }
+      },
+      deepLinkOpenCalls: installed.deepLinkOpenCalls
     },
     lifecycle: {
       unmount: result.unmount
     },
-    emitRealtime: installed.emitRealtime
+    emitRealtime: installed.emitRealtime,
+    emitDeepLink: installed.emitDeepLink
   };
 }

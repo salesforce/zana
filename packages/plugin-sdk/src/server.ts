@@ -20,6 +20,20 @@ import type {
   ProjectTabAvailabilityContract
 } from './contracts.js';
 
+import type { PluginDatabaseBackup, PluginDatabaseBackupOptions } from './database-backup.js';
+
+export {
+  PLUGIN_DATABASE_BACKUP_DEFAULT_MAX_BYTES,
+  PLUGIN_DATABASE_BACKUP_HARD_MAX_BYTES,
+  PLUGIN_DATABASE_BACKUP_MARKER_TABLE,
+  PLUGIN_DATABASE_BACKUP_NAME_PATTERN,
+  PLUGIN_DATABASE_BACKUP_RETENTION,
+  PluginDatabaseBackupError,
+  normalizePluginDatabaseBackupOptions,
+  type PluginDatabaseBackup,
+  type PluginDatabaseBackupOptions
+} from './database-backup.js';
+
 export {
   PLUGIN_AGENT_STATUS_LABEL_MAX_CHARS,
   parsePluginAgentToolPresentation,
@@ -101,6 +115,14 @@ export interface PluginDatabase {
 export interface PluginStorage {
   kv: PluginKvStorage;
   database(): PluginDatabase;
+  /**
+   * Consistent online copy of this plugin's own database (SQLite backup API),
+   * written atomically as a 0600 file under the plugin's data folder. Writes
+   * made while it runs are either fully in the copy or not at all. One backup
+   * runs at a time per plugin; later calls wait. The copy carries a
+   * `_zcc_backup` marker row (see PLUGIN_DATABASE_BACKUP_MARKER_TABLE).
+   */
+  backupDatabase(options: PluginDatabaseBackupOptions): Promise<PluginDatabaseBackup>;
 }
 
 export interface PluginRpc {
@@ -320,10 +342,29 @@ export interface PluginSdkThreadSendArgs {
   mode?: 'start' | 'auto' | 'steer' | 'queue-if-active' | 'steer-if-active';
 }
 
+/** How `threads.spawn` picks a harness when no `providerId` is given. */
+export type PluginSdkThreadSpawnHarness = 'project-default';
+
 export interface PluginSdkThreadSpawnArgs {
   projectId: string;
   prompt: string;
+  /**
+   * Exact thread provider id. Wins over `harness`; an unknown id rejects.
+   * With neither `providerId` nor `harness`, the host uses its first
+   * registered provider (legacy behaviour, kept for older plugins).
+   */
   providerId?: string;
+  /**
+   * `'project-default'`: run the project's effective AI harness, exactly as a
+   * new agent launch would (Settings → AI Harness global default, then the
+   * project's override), with the same AI-harness overrides (model, execution
+   * state, native role, Codex sandbox/approval) mapped onto the thread. An
+   * override the thread cannot honor rejects; explicit `model` /
+   * `permissionMode` still win. A yolo/unrestricted default also implies
+   * `permissionMode: 'full'` unless one is passed. Rejects with an actionable
+   * message when no usable harness resolves; never falls back silently.
+   */
+  harness?: PluginSdkThreadSpawnHarness;
   parentThreadId?: string;
   title?: string;
   model?: string;
@@ -588,6 +629,185 @@ export interface PluginSdkProjects {
   setIcon(args: { projectId: string; icon: ProjectIcon }): Promise<void>;
 }
 
+export interface PluginPeerRequest {
+  peerId: string;
+  body: unknown;
+  scope: string;
+  grantEpoch: number;
+  signal: AbortSignal;
+  /** Fence a synchronous transaction against revocation; callback must not await. */
+  commitSync<T>(commit: () => T extends PromiseLike<unknown> ? never : T): Promise<T>;
+}
+
+/** Pair-authorized app identities. Enrollment alone never grants plugin access. */
+export interface PluginPeerGrant {
+  id: string;
+  pairId: string;
+  proposalId: string;
+  scope: string;
+  grantEpoch: number;
+}
+
+export interface PluginEnrolledPeer {
+  id: string;
+  hostId: string;
+  name: string;
+  connected: boolean;
+}
+
+
+export type PluginInvitationState = 'open' | 'redeeming' | 'reserved' | 'consented' | 'connecting' | 'ready' | 'denied' | 'cancelled' | 'expired' | 'failed';
+export type PluginInvitationDecision = 'pending' | 'approved' | 'denied';
+/**
+ * Stable, secret-free failure codes. The `ssh_*` codes mean the secure shell (SSH) link between the two computers
+ * cannot be set up: Zana's connection service could not start on the inviting computer, it is unreachable, it refused the key or the
+ * forwarding, or its host key changed.
+ */
+export type PluginInvitationReason =
+  | 'invalid_invitation' | 'own_invitation' | 'wrong_plugin' | 'expired' | 'denied' | 'cancelled'
+  | 'already_redeemed' | 'already_connected' | 'attempt_limit' | 'identity_mismatch' | 'unreachable' | 'not_found' | 'capacity' | 'replay'
+  | 'stale_generation' | 'owner_proof_required' | 'not_ready' | 'fenced' | 'unavailable' | 'unknown_connection' | 'use_unavailable'
+  | 'ssh_remote_login_off' | 'ssh_unreachable' | 'ssh_auth_refused' | 'ssh_forwarding_refused' | 'ssh_host_key_mismatch';
+
+/** Redacted projection of one of this plugin's invitations. Never carries a token, key, locator or credential. */
+export interface PluginInvitationStatus {
+  invitationId: string;
+  role: 'inviter' | 'redeemer';
+  scope: string;
+  state: PluginInvitationState;
+  reason?: PluginInvitationReason;
+  localFingerprint: string;
+  /** The other computer once discovered; `fingerprint` is for out-of-band confirmation. */
+  peer?: { instanceId: string; name: string; fingerprint: string };
+  inviterDecision: PluginInvitationDecision;
+  redeemerDecision: PluginInvitationDecision;
+  pairingId?: string;
+  generation: number;
+  expiresAt: number;
+  consentExpiresAt?: number;
+}
+
+/** Transport state of one invitation-founded peer link. Secret-free. */
+export interface PluginPeerLink {
+  pairingId: string;
+  peerInstanceId: string;
+  /** The peer's display name from pairing. Absent on links made before names were kept: fall back to another label, never show the id. */
+  peerName?: string;
+  scope: string;
+  role: 'inviter' | 'redeemer';
+  phase: 'pending' | 'exchanged' | 'enrolled' | 'linked' | 'failed' | 'removed';
+  state: 'connected' | 'reconnecting' | 'disconnected';
+  reason?: 'ssh-down' | 'credential-expired' | 'peer-offline' | 'paused' | 'revoked';
+  failure?: 'expired' | 'fenced' | 'conflict' | 'unreachable';
+  retryInMs?: number;
+  /** @deprecated Never set: a link rides an SSH tunnel with a per-link key that has no expiry; it is rotated by `reconnectPeer`. */
+  credentialExpiresAt?: number;
+}
+
+/** `label` is 1-40 characters, `detail` at most 200; no control characters. `attention` renders amber. */
+export interface PluginPeerLinkNote {
+  state: 'ok' | 'attention';
+  label: string;
+  detail?: string;
+}
+
+/** Opaque id of a connected computer; stable for the life of the connection. */
+export type PeerComputerId = string;
+
+/** One computer connected to this one. Carries nothing about other plugins' uses, keys or addresses. */
+export interface PeerConnection {
+  computerId: PeerComputerId;
+  /** Display label only; two computers can share it. */
+  hostname: string;
+  state: 'connected' | 'reconnecting' | 'disconnected';
+  /** True once the owner approved this plugin's use of the connection. */
+  usedByThisPlugin: boolean;
+}
+
+/**
+ * Core-owned computer connections. A plugin sees every connected computer, asks to use one, and cleans up when one
+ * is being removed. Optional on older hosts. Failures use the fixed `PluginInvitationReason` codes.
+ */
+export interface PluginSdkPeerConnections {
+  /** Every connected computer, including ones no plugin uses yet. */
+  list(args?: { signal?: AbortSignal }): Promise<PeerConnection[]>;
+  /** Ask the owner to let this plugin use the connection. `pending` until both computers' owners have decided. */
+  requestUse(computerId: PeerComputerId, args?: { signal?: AbortSignal }): Promise<{ status: 'pending' | 'approved' | 'denied' }>;
+  /** Stop this plugin's use. A recent successful transfer gets a core-owned Stop anyway confirmation. The connection always stays; only the owner removes it in Settings. */
+  stopUsing(computerId: PeerComputerId, args?: { signal?: AbortSignal }): Promise<void>;
+  /** Called after any connection changes, with the current list. Returns the unsubscribe; released when the plugin stops. */
+  onChange(callback: (connections: PeerConnection[]) => void): () => void;
+  /**
+   * One handler per plugin. Runs when the owner removes a connection, in parallel with other plugins' handlers, and
+   * is given 5 seconds. A throw or timeout never blocks the removal: the owner is offered Retry or Remove anyway.
+   * Make the handler idempotent. Returns the unsubscribe.
+   */
+  onConnectionRemoving(handler: (computerId: PeerComputerId) => Promise<void>): () => void;
+  /** Short status (at most 200 characters) shown beside this plugin's use. `null` clears. In memory only. */
+  setStatus(computerId: PeerComputerId, note: string | null): void;
+}
+
+export interface PluginSdkPeers {
+  /** Core-owned connections. Absent on older hosts. */
+  connections?: PluginSdkPeerConnections;
+  localIdentity(): Promise<{ id: string }>;
+  /**
+   * This plugin's app-level storage epoch, held by core outside the plugin's data folder so restoring or copying
+   * that folder cannot roll it back. `null` when this host cannot provide the fence. Optional on older hosts.
+   */
+  storageEpoch?(): Promise<number | null>;
+  /** Compare-and-advance the storage epoch by one; rejects when `expected` is not current. Optional on older hosts. */
+  advanceStorageEpoch?(expected: number): Promise<number>;
+  /** Verified reachable app/host mappings, not plugin grants or credentials. */
+  enrolled(args?: { signal?: AbortSignal }): Promise<PluginEnrolledPeer[]>;
+  features(): Promise<{ lifecycle: boolean; introductions: boolean; installer: boolean; /** Absent on older hosts. */ invitations?: boolean }>;
+  /** Core verifies mutual execution enrollment. Domain consent remains the plugin's responsibility. */
+  enable(peerId: string, args: { scope: string; signal?: AbortSignal }): Promise<PluginPeerGrant>;
+  /** Releases this plugin scope's use of the peer's link. The link itself stays (zero uses is normal); the owner removes it in Settings. */
+  revoke(peerId: string, args: { scope: string }): Promise<void>;
+  /*
+   * Invitations: optional because older hosts lack them (test `typeof peers.createInvitation === 'function'`).
+   * Every call is bound to the calling plugin; a plugin only sees its own invitations and links. Errors carry fixed,
+   * secret-free messages. The token is returned once, by `createInvitation`, and never again.
+   */
+  /**
+   * Open a one-time invitation for `scope`, valid for 10 minutes. Refuses with an `ssh_*` reason when this computer
+   * cannot accept the SSH link (for example its connection service could not start). A second invitation between the same two apps is refused with `already_connected` while a link exists.
+   */
+  createInvitation?(args: { scope: string; signal?: AbortSignal }): Promise<{ invitationId: string; token: string; expiresAt: number; code: string }>;
+  /**
+   * Redeem a pasted token. `code` is the approval code the inviter's owner reads aloud; it unseals the invitation's
+   * bootstrap seed, so a token on its own cannot connect. Re-pasting the same token (with the same code) resumes the same attempt.
+   */
+  redeemInvitation?(args: { token: string; code: string; signal?: AbortSignal }): Promise<PluginInvitationStatus>;
+  /** `refresh` makes a redeemer poll the inviter now instead of waiting for backoff, at most once per 10 s per invitation (else the stored status). */
+  invitationStatus?(args: { invitationId: string; refresh?: boolean; signal?: AbortSignal }): Promise<PluginInvitationStatus>;
+  /** Newest first, bounded. */
+  listInvitations?(args?: { limit?: number; signal?: AbortSignal }): Promise<PluginInvitationStatus[]>;
+  /** The core-rendered approval sheet for a reserved invitation; pass it to `experimental_requestApproval`. */
+  invitationApproval?(args: { invitationId: string; signal?: AbortSignal }): Promise<PluginApprovalRequest>;
+  /** `approved` needs `ownerProof` (the single-use token from that sheet); `denied` needs none. */
+  decideInvitation?(args: { invitationId: string; decision: 'approved' | 'denied'; ownerProof?: string; signal?: AbortSignal }): Promise<PluginInvitationStatus>;
+  /** Owner cancel; no proof needed. Idempotent. */
+  cancelInvitation?(args: { invitationId: string; signal?: AbortSignal }): Promise<void>;
+  /** Transport state of this plugin's invitation-founded links, optionally for one peer. */
+  peerLinks?(args?: { peerId?: string; signal?: AbortSignal }): Promise<PluginPeerLink[]>;
+  /**
+   * Attach a short status to one of this plugin's peer links; core shows it beside this plugin's row in Settings → Peers.
+   * `note: null` clears it. Refused (`not_found`) unless this plugin owns a link to `peerId` in `scope`. In memory only:
+   * dropped when the plugin stops or the link/use goes, so re-report on every poll. Optional on older hosts.
+   */
+  setPeerLinkNote?(peerId: string, args: { scope: string; note: PluginPeerLinkNote | null; signal?: AbortSignal }): Promise<void>;
+  /** Rotate the link credential (a fresh forward-only join code over the live link) and reopen the link. Linked peers only. */
+  reconnectPeer?(peerId: string, args?: { signal?: AbortSignal }): Promise<PluginPeerLink[]>;
+  /** Queue a scoped introduction; does not install or enroll a daemon. Both peers need current grants. */
+  introduce(peerId: string, args: { sponsorPeerId: string; scope: string; signal?: AbortSignal }): Promise<{ introductionId: string; status: 'pending' | 'complete' | 'blocked' }>;
+  list(args?: { signal?: AbortSignal }): Promise<Array<{ id: string; name: string; scope: string; grantEpoch: number; connected: boolean }>>;
+  call(peerId: string, method: string, body: unknown, args?: { signal?: AbortSignal; timeoutMs?: number; scope?: string }): Promise<unknown>;
+  /** Register a private, pair-authenticated peer protocol method. */
+  handle(method: string, handler: (request: PluginPeerRequest) => unknown | Promise<unknown>): void;
+}
+
 export interface PluginSdk {
   experimental_promptHistory: {
     list(args: { scope: 'thread' | 'project' | 'all'; threadId?: string; projectId?: string; cursor?: string; query?: string }): Promise<{
@@ -598,8 +818,10 @@ export interface PluginSdk {
   system: { defaultHost(): Promise<{ id: string } | null> };
   /** Enrolled machine identity only; no host credentials or connection metadata. */
   hosts: {
+    /** Execution machines only (Settings → Machines). Forward-only peer links never appear here. */
     list(args?: { signal?: AbortSignal }): Promise<Array<{ id: string; name: string }>>;
   };
+  peers: PluginSdkPeers;
   threads: PluginSdkThreads;
   inbox: PluginSdkInbox;
   assistant: PluginSdkAssistant;
@@ -608,9 +830,45 @@ export interface PluginSdk {
   files: PluginSdkFiles;
   library: PluginSdkLibrary;
   providers: PluginSdkProviders;
+  /** This plugin's own AI-harness overrides; the host binds the plugin id. */
+  harnessRouting: PluginHarnessRoutingApi;
   experimental_desktopBrowsers: PluginSdkDesktopBrowsers;
   capabilities: PluginCapabilityIntrospection;
 }
+
+/** Renderer-safe per-family harness metadata (targets, profiles, availability). */
+export type HarnessRoutingDescriptor = import('@zana-ai/zcc-domain/harness-adapter').HarnessAdapterDescriptor;
+
+/**
+ * Where a plugin harness override lives. `default-project` is the built-in
+ * Default Project (where project-less work runs); the host resolves it.
+ */
+export type HarnessOverrideScope =
+  | { kind: 'global' }
+  | { kind: 'default-project' }
+  | { kind: 'project'; projectId: string };
+
+export type HarnessRoutingCheckResult = { ok: true } | { ok: false; reason: string };
+
+/**
+ * A plugin's AI-harness overrides, stored per scope under the plugin's own id
+ * and kept apart from Core's `harnessRouting`. `write` re-runs `check` and
+ * rejects an invalid value; `null` clears the scope.
+ */
+export interface PluginHarnessRoutingApi {
+  descriptors(input?: { projectId?: string; hostId?: string }): Promise<HarnessRoutingDescriptor[]>;
+  read(scope: HarnessOverrideScope): Promise<PluginHarnessOverride | null>;
+  write(scope: HarnessOverrideScope, value: PluginHarnessOverride | null): Promise<void>;
+  check(scope: HarnessOverrideScope, value: PluginHarnessOverride): Promise<HarnessRoutingCheckResult>;
+}
+
+/**
+ * One scope's override: per-harness rows (Core's routing shape) plus an
+ * optional `defaultHarness` that runs the plugin's agents on that harness
+ * instead of the project's default. Narrower scopes win per field: the
+ * harness choice and each harness row resolve independently.
+ */
+export type PluginHarnessOverride = import('@zana-ai/zcc-domain/product').PluginHarnessOverrideV1;
 
 export interface PluginSdkDesktopBrowserScope {
   hostId: string;
@@ -949,7 +1207,7 @@ export interface PluginAgents {
 }
 
 import type { JsonObject, JsonValue, ProviderFork } from '@zana-ai/zcc-domain/thread-runtime';
-import type { PluginApprovalBinding } from './approval-contract.js';
+import type { PluginApprovalBinding, PluginApprovalRequest } from './approval-contract.js';
 export type { PluginApprovalBinding, PluginApprovalRequest, PluginApprovalResult } from './approval-contract.js';
 import type { PluginServices } from './plugin-services.js';
 import type {

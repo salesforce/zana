@@ -50,6 +50,30 @@ The server validates environment choices and authorizes host/project access.
 Omit the environment to use the project's default. Provider model discovery
 accepts `hostId` and returns `modelLoadError` when discovery fails.
 
+Harness choice: pass `providerId` for an exact thread provider (an unknown id
+rejects), or `harness: "project-default"` to run the project's effective AI
+harness, resolved like a new agent launch (Settings → AI Harness global
+default, then the project's override). A yolo default also implies
+`permissionMode: "full"` unless you pass one. When no usable harness resolves
+(disabled, not installed, host offline, provider plugin not loaded) the spawn
+rejects with an actionable message; it never falls back. `providerId` wins when
+both are set. With neither, the host still uses its first registered provider —
+legacy behaviour kept for older plugins; new plugins should opt into
+`harness`. `sdk.providers.list()` reports `available: false` for a provider
+whose bridge failed or whose harness is not installed and enabled on the host.
+
+AI-harness overrides: a `harness: "project-default"` spawn also applies the
+resolved harness's overrides the way a new agent launch does — Settings → AI
+Harness, then the project's AI harness overrides — mapped onto the thread's
+model, permission mode, ACP session mode or `/plan`. Explicit `model` and
+`permissionMode` still win. An override the thread cannot apply rejects with an
+actionable message naming it; it is never dropped. Examples: a Codex
+sandbox/approval policy other than exactly `workspace-write` + `on-request` or
+`danger-full-access` + `never` (a half-set pair included), plan on a provider
+with neither a plan mode nor `/plan`, a project Claude Code permission mode, or
+PI provider/model/thinking defaults. A `providerId` spawn applies no harness
+overrides.
+
 `sdk.files.read` and `sdk.files.write` resolve an omitted `hostId` to the
 primary host and retain the host file service's path confinement.
 `sdk.environments.pullRequest({ environmentId })` returns `pullRequest` or

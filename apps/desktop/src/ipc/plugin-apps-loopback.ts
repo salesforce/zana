@@ -1,4 +1,5 @@
 import { PluginAppSnapshotSchema } from '@zana-ai/zcc-contracts/runtime';
+import { rpcErrorFrom } from '@zana-ai/zcc-contracts/rpc-error';
 import type { PluginAppEntry, Result } from '@zana-ai/zcc-domain/product';
 
 /** Loopback product server started by Turbo `@zana-ai/zcc-server#dev` (`listen.ts`). */
@@ -184,7 +185,18 @@ export async function callPluginRpcOnProductServer(
     }
   );
   if (!response.ok) {
-    throw new Error(await productServerError(response, 'plugin host is unavailable'));
+    let message = 'plugin host is unavailable';
+    let code: unknown;
+    try {
+      const failure = (await response.json()) as { error?: unknown; message?: unknown; code?: unknown };
+      if (typeof failure.message === 'string') message = failure.message;
+      else if (typeof failure.error === 'string') message = failure.error;
+      // Only 4xx bodies carry an expected domain code; a 5xx stays an unexpected failure.
+      if (response.status >= 400 && response.status < 500) code = failure.code;
+    } catch {
+      /* keep fallback message */
+    }
+    throw rpcErrorFrom(message, code);
   }
   const body = (await response.json()) as { value?: unknown };
   return body.value;

@@ -10,6 +10,8 @@ import { installTestPluginRuntime, type NavigateCall, type RpcCall } from '@zana
 import { RenderReports } from '../server/render-reports.js';
 import { createRpcHandlers } from '../server/rpc.js';
 import { DesignDocStore } from '../server/store.js';
+import type { DesignDocPairing } from '../server/pairing.js';
+import type { DesignDocPeerService } from '../server/peer-service.js';
 import { createTestDatabase } from '../server/test-db.js';
 import { CHANGED_CHANNEL, type DocActor } from '../shared/contract.js';
 
@@ -31,7 +33,10 @@ export interface Toast {
 }
 
 export interface HarnessOptions {
-  projects?: Array<{ id: string; name: string }>;
+  store?: DesignDocStore;
+  peerSync?: DesignDocPeerService;
+  pairing?: DesignDocPairing;
+  projects?: Array<{ id: string; name: string; quickAgent?: boolean }>;
   /** What `navigate.openThreadPanel` returns (false: no thread to attach to). */
   threadPanel?: boolean;
   /** Whether the page has a side panel for agents (`navigate.openPanelAgent`). */
@@ -39,6 +44,10 @@ export interface HarnessOptions {
   context?: { projectId?: string | null; threadId?: string | null };
   /** Serve standalone pages at this URL (`pageLink`); unset, the RPC refuses. */
   pageUrl?(docId: string, path: string): string;
+  /** `deepLinks.base()`; unset uses the SDK default, null models a build without links. */
+  deepLinkBase?: string | null;
+  /** Replace RPC methods on top of the real handlers (e.g. a stubbed pairing flow). */
+  rpcOverrides?: Record<string, (args?: any) => unknown>;
 }
 
 function escapeHtml(text: string): string {
@@ -62,6 +71,8 @@ export interface Harness {
   navigateCalls: NavigateCall[];
   toasts: Toast[];
   spawn: ReturnType<typeof vi.fn>;
+  /** The plugin's stored harness overrides by JSON scope (what `sdk.harnessRouting.write` kept). */
+  harnessStore: Map<string, unknown>;
   /** Make the next calls to `method` reject with `message`. */
   fail(method: string, message: string): void;
   restore(method: string): void;
@@ -71,10 +82,12 @@ export interface Harness {
   asAgent<T>(mutate: (store: DesignDocStore) => T): Promise<T>;
   render(element: ReactElement): RenderResult;
   call(method: string, args?: unknown): Promise<unknown>;
+  /** Deliver a deep link to the handlers the app registered with `deepLinks.on(route, …)`. */
+  emitDeepLink(route: string, payload?: string | null): void;
 }
 
 export function createHarness(options: HarnessOptions = {}): Harness {
-  const store = new DesignDocStore(createTestDatabase());
+  const store = options.store ?? new DesignDocStore(createTestDatabase());
   const reports = new RenderReports();
   const listeners = new Map<string, Set<(payload: unknown) => void>>();
   const emit = (payload: unknown, channel = CHANGED_CHANNEL) => {
@@ -83,7 +96,24 @@ export function createHarness(options: HarnessOptions = {}): Harness {
   const projects = options.projects ?? PROJECTS;
   let spawned = 0;
   const spawn = vi.fn(async () => ({ id: `thread-${++spawned}` }));
+  const harnessStore = new Map<string, unknown>();
   const sdk = {
+    harnessRouting: {
+      descriptors: async () => [{
+        id: 'claude',
+        label: 'Claude Code',
+        agentDefaultEligible: true,
+        availability: { enabled: true, installed: true },
+        configFiles: [],
+        targets: { providers: [], providerModelRelationship: 'none', models: [{ id: 'sonnet', label: 'Sonnet' }] }
+      }],
+      read: async (scope: unknown) => harnessStore.get(JSON.stringify(scope)) ?? null,
+      write: async (scope: unknown, value: unknown) => {
+        if (value === null) harnessStore.delete(JSON.stringify(scope));
+        else harnessStore.set(JSON.stringify(scope), value);
+      },
+      check: async () => ({ ok: true })
+    },
     threads: {
       spawn,
       get: async ({ threadId }: { threadId: string }) =>
@@ -91,7 +121,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     },
     projects: { list: async () => projects.map((project) => ({ ...project, path: `/work/${project.id}` })) }
   };
-  const handlers = createRpcHandlers({ store, changed: (docId) => emit({ docId }), sdk: sdk as never, pageUrl: options.pageUrl, reports });
+  const handlers = createRpcHandlers({ store, changed: (docId) => emit({ docId }), sdk: sdk as never, peerSync: options.peerSync, pairing: options.pairing, pageUrl: options.pageUrl, reports });
   const failures = new Map<string, string>();
   const rpc = Object.fromEntries(
     Object.entries(handlers).map(([name, handler]) => [
@@ -104,7 +134,8 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     ])
   );
 
-  const installed = installTestPluginRuntime({ rpc, context: options.context ?? {}, panelAgent: options.panelAgent });
+  Object.assign(rpc, options.rpcOverrides);
+  const installed = installTestPluginRuntime({ rpc, deepLinkBase: options.deepLinkBase, context: options.context ?? {}, panelAgent: options.panelAgent });
   const runtime = (globalThis as { __ZCC_PLUGIN_RUNTIME__?: Record<string, unknown> }).__ZCC_PLUGIN_RUNTIME__!;
   const toasts: Toast[] = [];
   runtime.toast = (message: string, kind: 'info' | 'error' = 'info') => {
@@ -150,6 +181,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     navigateCalls: installed.navigateCalls,
     toasts,
     spawn,
+    harnessStore,
     fail: (method, message) => failures.set(method, message),
     restore: (method) => failures.delete(method),
     emit: (payload, channel) => act(() => emit(payload, channel)),
@@ -162,6 +194,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
       return result;
     },
     render: (element) => render(element),
-    call: (method, args) => rpc[method]!(args ?? null) as Promise<unknown>
+    call: (method, args) => rpc[method]!(args ?? null) as Promise<unknown>,
+    emitDeepLink: (route, payload) => act(() => installed.emitDeepLink(route, payload))
   };
 }

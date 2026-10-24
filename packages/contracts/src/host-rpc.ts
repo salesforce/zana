@@ -91,7 +91,8 @@ import {
 // 44: host.environment.replace pushes plugin-contributed environment to a
 // non-primary machine daemon (held in daemon memory only, never persisted).
 // 45: provider-native capability discovery on the execution host.
-export const HOST_RPC_PROTOCOL_VERSION = 45;
+// 46: canonical v2 peer forwarding and encrypted control, combined with host environment forwarding.
+export const HOST_RPC_PROTOCOL_VERSION = 46;
 export const HOST_HEARTBEAT_INTERVAL_MS = 5_000;
 export const HOST_LEASE_TIMEOUT_MS = 30_000;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
@@ -130,6 +131,8 @@ export const HostRpcCommandTypeSchema = z.enum([
   'plugin.host.cancel',
   'plugin.host.dispose',
   'host.environment.replace',
+  'peer.forward',
+  'peer.control',
   'terminal.start',
   'terminal.start_cli',
   'terminal.input',
@@ -972,6 +975,45 @@ export const HostEnvironmentReplaceResultSchema = z.object({
 }).strict();
 export type HostEnvironmentReplaceResult = z.infer<typeof HostEnvironmentReplaceResultSchema>;
 
+export const PeerRequestEnvelopeSchema = z.object({
+  protocolVersion: z.literal(2),
+  pairId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
+  senderId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
+  recipientId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
+  pluginId: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/),
+  scope: z.string().min(1).max(1024).refine(value => new TextEncoder().encode(value).byteLength <= 1024 && !/[\u0000-\u001f\u007f\ud800-\udfff]/u.test(value)),
+  route: z.string().regex(/^\/api\/v1\/peer\/[a-z][a-z0-9-]{0,63}\/[a-z][a-z0-9-]{0,63}$/),
+  httpMethod: z.literal('POST'),
+  payloadHash: z.string().regex(/^[a-f0-9]{64}$/),
+  signature: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  nonce: z.string().regex(/^[A-Za-z0-9_-]{16,128}$/),
+  issuedAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  epoch: z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
+}).strict().refine(value => value.senderId !== value.recipientId && value.route.split('/')[4] === value.pluginId);
+
+export const PeerForwardCommandSchema = PeerRequestEnvelopeSchema.safeExtend({
+  type: z.literal('peer.forward'),
+  method: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/),
+  body: z.string().max(8 * 1024 * 1024),
+  timeoutMs: z.number().int().min(1).max(30_000)
+}).strict().refine(value => value.route === `/api/v1/peer/${value.pluginId}/${value.method}`);
+
+export const PEER_CONTROL_ROUTE = '/api/v1/peer-control';
+export const PEER_CONTROL_MAX_BYTES = 64 * 1024;
+const PeerControlIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
+export const PeerControlPacketSchema = z.object({
+  version: z.literal(1), senderId: PeerControlIdSchema, recipientId: PeerControlIdSchema,
+  senderHostId: UuidSchema, recipientHostId: UuidSchema,
+  route: z.literal(PEER_CONTROL_ROUTE), nonce: z.string().regex(/^[a-f0-9]{48}$/),
+  issuedAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  sealed: z.string().min(43).max(PEER_CONTROL_MAX_BYTES).regex(/^[A-Za-z0-9_-]+$/)
+}).strict().refine(value => value.senderId !== value.recipientId);
+export const PeerControlCommandSchema = z.object({
+  type: z.literal('peer.control'), packet: PeerControlPacketSchema,
+  timeoutMs: z.number().int().min(1).max(15_000)
+}).strict();
+export type PeerControlPacket = z.infer<typeof PeerControlPacketSchema>;
+
 export const PreviewReplaceCommandSchema = z.object({ type: z.literal('preview.replace'), epoch: z.string().uuid(), generation: z.number().int().nonnegative(), targets: z.array(z.object({ port: z.number().int().min(1024).max(65535), expiresAt: z.number().int() }).strict()).max(32) }).strict();
 
 export const HostRpcCommandSchema = z.union([
@@ -980,6 +1022,7 @@ export const HostRpcCommandSchema = z.union([
   z.object({ type: z.literal('host.git_history'), root: PathSchema, limit: z.number().int().min(1).max(100) }).strict(),
   PluginHostCallCommandSchema, PluginHostCancelCommandSchema, PluginHostDisposeCommandSchema,
   HostEnvironmentReplaceCommandSchema,
+  PeerForwardCommandSchema, PeerControlCommandSchema,
   HostGitFileCommandSchema,
   ProviderStatusCommandSchema,
   CliDiscoveryCommandSchema,
@@ -1551,6 +1594,8 @@ export const HostRpcResultSchemaByType = {
   'plugin.host.cancel': z.object({ cancelled: z.boolean() }).strict(),
   'plugin.host.dispose': z.object({ disposed: z.boolean() }).strict(),
   'host.environment.replace': HostEnvironmentReplaceResultSchema,
+  'peer.forward': z.object({ status: z.number().int().min(100).max(599), body: z.string().max(8 * 1024 * 1024) }).strict(),
+  'peer.control': z.object({ status: z.number().int().min(100).max(599), body: z.string().max(PEER_CONTROL_MAX_BYTES) }).strict(),
   'terminal.start': TerminalStartResultSchema,
   'terminal.start_cli': TerminalStartResultSchema,
   'terminal.input': TerminalInputResultSchema,
@@ -1650,6 +1695,8 @@ export const HostHelloOkMessageSchema = z.object({
   type: z.literal('host.hello-ok'),
   protocolVersion: ProtocolVersionSchema,
   hostId: UuidSchema,
+  productInstanceId: UuidSchema.optional(),
+  enrollmentCapability: z.enum(['execution', 'peer.forward']).optional(),
   heartbeatIntervalMs: z.number().int().min(1_000).max(30_000).default(HOST_HEARTBEAT_INTERVAL_MS),
   leaseTimeoutMs: z.number().int().min(30_000).max(120_000).default(HOST_LEASE_TIMEOUT_MS),
   pluginHostGenerations: z.array(z.object({ pluginId: z.string().min(1).max(200), generation: z.string().min(1).max(200) }).strict()).max(4096).default([])

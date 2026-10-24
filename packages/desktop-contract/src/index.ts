@@ -65,3 +65,28 @@ export type {
   DesktopBrowserImportSourceProfile,
   DesktopBrowserImportUnavailableReason
 } from './browser-import.js';
+export {
+  DEEP_LINK_DEV_SCHEME,
+  DEEP_LINK_KNOWN_SCHEMES,
+  DEEP_LINK_MAX_LENGTH,
+  DEEP_LINK_MAX_PAYLOAD_LENGTH,
+  DEEP_LINK_PAYLOAD_PARAM,
+  DEEP_LINK_PROD_SCHEME,
+  findDeepLinkInArgv,
+  formatDeepLink,
+  parseAnyDeepLink,
+  parseDeepLink,
+  resolveDeepLinkChannel
+} from './deep-link.js';
+export type {
+  AnyDeepLinkParseResult,
+  DeepLink,
+  DeepLinkChannel,
+  DeepLinkConfig,
+  DeepLinkDelivery,
+  DeepLinkOpenResult,
+  DeepLinkParseResult,
+  DeepLinkRejectReason,
+  ParseDeepLinkOptions,
+  ResolveDeepLinkChannelInput
+} from './deep-link.js';

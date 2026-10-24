@@ -89,6 +89,18 @@ describe('Publish', () => {
     expect((harness.spawn.mock.calls[0] as unknown as [Spawned])[0].projectId).toBe('p2');
   });
 
+  it('defaults a global doc to the Default Project', async () => {
+    const harness = createHarness({ projects: [{ id: 'p1', name: 'App' }, { id: 'quick', name: 'Default Project', quickAgent: true }] });
+    const doc = await siteDoc(harness, null);
+    harness.render(<PublishButton doc={doc} />);
+    openDialog();
+    const runIn = await screen.findByRole('combobox', { name: 'Run the agent in' });
+    await waitFor(() => expect((runIn as HTMLSelectElement).value).toBe('quick'));
+    fireEvent.click(publishButton());
+    await waitFor(() => expect(harness.spawn).toHaveBeenCalledTimes(1));
+    expect((harness.spawn.mock.calls[0] as unknown as [Spawned & { harness?: string }])[0]).toMatchObject({ projectId: 'quick', harness: 'project-default' });
+  });
+
   it('explains when there is nothing to publish', async () => {
     const harness = createHarness();
     const notes = await siteDoc(harness, 'p1', 'blank');

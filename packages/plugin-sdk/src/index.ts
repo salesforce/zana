@@ -82,6 +82,7 @@ export type {
   PluginSdkThreadListArgs,
   PluginSdkThreadSendArgs,
   PluginSdkThreadSpawnArgs,
+  PluginSdkThreadSpawnHarness,
   PluginSdkThreadOutput,
   PluginSdkExecutionOptions,
   PluginSdkEnvironment,
@@ -265,6 +266,7 @@ export {
   useSettings,
   useZccContext,
   useZccNavigate,
+  useZccDeepLinks,
   useWindowTitle,
   useComposer,
   useComposerView,
@@ -274,7 +276,8 @@ export {
   experimental_useSidebarThreadSplit,
   ThreadChat,
   Markdown,
-  experimental_NewThreadComposer
+  experimental_NewThreadComposer,
+  experimental_HarnessRoutingEditor
 } from './app.js';
 export type { PluginHostBridge } from './app.js';
 export {
@@ -290,5 +293,16 @@ export {
   threadPanelActionMatchesScope
 } from './app-contract.js';
 export { cronMatches, cronMinuteKey } from './cron.js';
+export {
+  PLUGIN_DATABASE_BACKUP_DEFAULT_MAX_BYTES,
+  PLUGIN_DATABASE_BACKUP_HARD_MAX_BYTES,
+  PLUGIN_DATABASE_BACKUP_MARKER_TABLE,
+  PLUGIN_DATABASE_BACKUP_NAME_PATTERN,
+  PLUGIN_DATABASE_BACKUP_RETENTION,
+  PluginDatabaseBackupError,
+  normalizePluginDatabaseBackupOptions,
+  type PluginDatabaseBackup,
+  type PluginDatabaseBackupOptions
+} from './database-backup.js';
 
 export { shimLegacyExtensionManifest, type LegacyExtensionJson } from './legacy-shim.js';

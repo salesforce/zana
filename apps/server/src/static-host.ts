@@ -5,6 +5,8 @@ import { createServer, type ServerResponse } from 'node:http';
 import { extname, resolve, sep } from 'node:path';
 import { handleProductHttp } from './http/product-api.js';
 import type { ProductHttpContext } from './http/product-context.js';
+import { registerBoundLocalPeerApp } from './http/local-peer-app.js';
+import { createHttpRequestDrain } from './http/http-request-drain.js';
 import { createProductWebSocketServer, handleProductUpgrade } from './http/product-ws.js';
 import { createHostDaemonWebSocketServer, handleHostInternalHttp, handleHostInternalUpgrade } from './http/host-internal.js';
 import { handleInstallHttp } from './http/install-http.js';
@@ -159,6 +161,9 @@ function withDocumentBase(html: string): string {
  * `product` is provided. Bind is loopback-only for any browser-facing surface.
  */
 export async function startStaticHost(options: StartStaticHostOptions): Promise<StaticHost> {
+  if (options.product && options.host && options.host !== '127.0.0.1') {
+    throw new Error('local peer app requires an IPv4 loopback host');
+  }
   if (options.browserBootstrap && options.host && options.host !== '127.0.0.1' && options.host !== '::1') {
     throw new Error('browser bootstrap is restricted to a loopback host');
   }
@@ -172,7 +177,7 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
   let expectedOrigin = '';
   const productWss = options.product ? createProductWebSocketServer(options.product) : null;
   const hostWss = options.product ? createHostDaemonWebSocketServer() : null;
-  const server = createServer(async (request, response) => {
+  const requests = createHttpRequestDrain(async (request, response) => {
     const requestUrl = new URL(request.url ?? '/', 'http://zcc.local');
     if (options.diagnostics && (requestUrl.pathname.startsWith('/api/') || requestUrl.pathname.startsWith('/internal/'))) {
       trackResponseStart(options.diagnostics, request, response);
@@ -298,6 +303,7 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
     response.once('close', () => stream.destroy());
     stream.on('error', () => response.destroy()).pipe(response);
   });
+  const server = createServer(requests.handle);
 
   if (options.product && (productWss || hostWss)) {
     server.on('upgrade', (request, socket, head) => {
@@ -312,60 +318,69 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
   }
 
   const preferredPort = options.port ?? 0;
-  try {
-    await listenLoopback(server, hostName, preferredPort);
-  } catch (error) {
-    if (preferredPort !== 0 && isAddrInUse(error)) {
-      console.warn(
-        `[zcc] preferred renderer port ${preferredPort} is in use; falling back to an ephemeral port`
-      );
-      await listenLoopback(server, hostName, 0);
-    } else {
-      throw error;
-    }
-  }
-
-  protectPreviewServer(server);
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    server.close();
-    throw new Error('Static host did not bind a TCP address');
-  }
-  const url = `http://${hostName}:${address.port}/`;
-  expectedOrigin = url.slice(0, -1);
+  let unregister: (() => Promise<void>) | undefined;
   let pairingForwarder: PairingForwarder | undefined;
-  if (options.product) {
-    try {
-      options.product.origins.serverPort = new URL(expectedOrigin).port
-        ? Number(new URL(expectedOrigin).port)
-        : options.product.origins.serverPort;
-    } catch {
-      /* keep the configured port */
+  let closing: Promise<void> | undefined;
+  const close = () => closing ??= (async () => {
+    requests.dispose();
+    if (options.product && pairingForwarder && options.product.origins.pairingPort === pairingForwarder.port) {
+      delete options.product.origins.pairingPort;
     }
-    // SSH reverse tunnels target this allowlist-only port. Without it, tunnel
-    // installs and reopens fail closed; they never expose serverPort.
+    const forwarderClosed = pairingForwarder?.close();
+    options.product?.dispose();
+    options.product?.hostHub.close();
+    for (const socket of hostWss?.clients ?? []) socket.terminate();
+    for (const socket of productWss?.clients ?? []) socket.terminate();
+    hostWss?.close();
+    productWss?.close();
+    const stopped = new Promise<void>((resolveClose) => {
+      server.close(() => resolveClose());
+      server.closeAllConnections();
+    });
+    try { await Promise.all([unregister?.(), forwarderClosed]); }
+    finally {
+      await stopped;
+      await requests.whenIdle();
+      await options.product?.whenIdle();
+    }
+  })();
+  try {
     try {
-      pairingForwarder = await startPairingForwarder(address.port, {
-        productHost: hostName === '::1' ? '::1' : '127.0.0.1'
-      });
-      options.product.origins.pairingPort = pairingForwarder.port;
+      await listenLoopback(server, hostName, preferredPort);
     } catch (error) {
-      console.warn(`[zcc] pairing forwarder failed to start: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-  return {
-    url,
-    close: async () => {
-      if (options.product && options.product.origins.pairingPort === pairingForwarder?.port) {
-        delete options.product.origins.pairingPort;
+      if (preferredPort !== 0 && isAddrInUse(error)) {
+        console.warn(
+          `[zcc] preferred renderer port ${preferredPort} is in use; falling back to an ephemeral port`
+        );
+        await listenLoopback(server, hostName, 0);
+      } else {
+        throw error;
       }
-      await pairingForwarder?.close();
-      await new Promise<void>((resolveClose, rejectClose) => {
-        options.product?.dispose();
-        hostWss?.close();
-        productWss?.close();
-        server.close((error) => (error ? rejectClose(error) : resolveClose()));
-      });
     }
-  };
+
+    protectPreviewServer(server);
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Static host did not bind a TCP address');
+    }
+    const url = `http://${hostName}:${address.port}/`;
+    expectedOrigin = url.slice(0, -1);
+    if (options.product) {
+      options.product.origins.serverPort = address.port;
+      unregister = await registerBoundLocalPeerApp(server, options.product.dataDir, options.product.productInstanceId);
+      // SSH reverse tunnels target this allowlist-only port. Without it, tunnel
+      // installs and reopens fail closed; they never expose serverPort.
+      try {
+        // A product-backed host is IPv4 loopback only (enforced above), so the forwarder targets it.
+        pairingForwarder = await startPairingForwarder(address.port, { productHost: '127.0.0.1' });
+        options.product.origins.pairingPort = pairingForwarder.port;
+      } catch (error) {
+        console.warn(`[zcc] pairing forwarder failed to start: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    return { url, close };
+  } catch (error) {
+    await close();
+    throw error;
+  }
 }

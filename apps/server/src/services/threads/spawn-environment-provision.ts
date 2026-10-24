@@ -4,7 +4,7 @@ import {
   findProjectEnvironmentByHostPath,
   getEnvironment,
   getPrimaryHost,
-  listHosts,
+  listExecutionHosts,
   updateEnvironmentDiscovery,
   updateEnvironmentStatus,
   type EnvironmentRow
@@ -187,7 +187,7 @@ export async function provisionProjectEnvironment(
       project,
       remoteToolProxy,
       remoteDefaultPath: ctx.config.getConfig().remoteDefaultPath,
-      hosts: listHosts(ctx.db).map(toRemoteStartPathHost),
+      hosts: listExecutionHosts(ctx.db).map(toRemoteStartPathHost),
       probeHostHome: async () => {
         const listing = await ctx.hostHub.callHostOnlineRpc<{ directory: string }>({
           hostId,

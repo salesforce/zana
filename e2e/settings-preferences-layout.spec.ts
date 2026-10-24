@@ -69,6 +69,25 @@ test('Settings presents grouped preferences and keeps search, persistence, and r
   await expect(win).toHaveURL(/\/inbox$/);
 });
 
+test('Peers settings are always listed in Settings, and the deep link opens the Peers page', async ({ app }) => {
+  const win = app.window;
+  await win.getByRole('link', { name: 'Settings', exact: true }).click();
+  await win.getByTestId('settings-nav-global').click();
+  await expect(win.getByTestId('settings-nav-machines')).toBeVisible();
+  // Peers is global: no Experimental opt-in and no peer-capable plugin is required.
+  await expect(win.getByTestId('settings-nav-peers')).toBeVisible();
+
+  await win.getByTestId('settings-nav-experimental').click();
+  await expect(win.getByRole('switch', { name: 'Show Peers in Settings' })).toHaveCount(0);
+
+  await win.evaluate(() => {
+    window.history.pushState({}, '', '/settings/peers');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  await expect(win.getByRole('heading', { name: 'Peers', exact: true, level: 3 })).toBeVisible();
+  await expect(win.getByTestId('settings-nav-peers')).toHaveAttribute('aria-current', 'page');
+});
+
 test('Inbox keeps readable titles, report markers, and keyboard selection in both themes', async ({ home }, testInfo) => {
   const projectDir = join(home, 'ui-demo');
   mkdirSync(projectDir, { recursive: true });
