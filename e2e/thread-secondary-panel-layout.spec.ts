@@ -1,8 +1,9 @@
 import { openThreadToolLauncher } from './fixtures/thread-tool-panel.js';
 import { test, expect } from './fixtures/app.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
 test('secondary panel tabs scroll without overlapping fixed controls in small windows', async ({ app }, testInfo) => {
-  const { window } = app;
+  const { window, electron } = app;
   const titles = ['browser-with-a-very-long-title-that-should-stay-compact.html', 'native-build-configuration.ts', 'deployment-notes.md', 'integration-results.md'];
   await window.evaluate((titles) => {
     localStorage.setItem('zcc.secondaryPanel.e2e-panel-layout', JSON.stringify({
@@ -36,7 +37,7 @@ test('secondary panel tabs scroll without overlapping fixed controls in small wi
         ));
       })).toBe(true);
     }
-    await window.screenshot({ path: testInfo.outputPath(`secondary-panel-${width}.png`), animations: 'disabled' });
+    await captureElectronScreenshot(electron, window, testInfo.outputPath(`secondary-panel-${width}.png`));
   }
 
   // Keyboard focus scrolls offscreen tabs into view; their close buttons stay reachable.
@@ -79,5 +80,5 @@ test('secondary panel tabs scroll without overlapping fixed controls in small wi
   await expect(tabs.locator('.thread-secondary-tab:not(.is-pinned)')).toHaveCount(2);
   await window.evaluate(() => window.cc.config.set({ theme: 'light' }));
   await expect(window.locator('html')).toHaveAttribute('data-theme', 'light');
-  await chrome.screenshot({ path: testInfo.outputPath('secondary-panel-header-light.png'), animations: 'disabled' });
+  await captureElectronScreenshot(electron, window, testInfo.outputPath('secondary-panel-header-light.png'));
 });
