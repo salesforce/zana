@@ -110,7 +110,7 @@ test('Browse fills wide screens with readable cards and adapts to smaller window
   await win.locator('.nav-item').filter({ hasText: 'Plugins' }).first().click();
   await win.getByTestId('extensions-nav-marketplace').click();
   const marketplace = win.locator('.ext-market');
-  const grid = win.locator('[data-plugin-shelf-grid]').first();
+  const grid = win.getByTestId('plugin-browse-grid').first();
   await expect(grid.locator('.ext-browse-card').first()).toBeVisible();
   const columnCounts: number[] = [];
 

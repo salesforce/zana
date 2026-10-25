@@ -384,7 +384,7 @@ type Fixtures = {
   /** Opt the marketplace channel ON (boots a signed HTTPS registry). */
   useRegistry: boolean;
   /**
-   * Hide first-party bundled plugins from Browse so remote-registry specs can
+   * Hide bundled plugins and default remote feeds so signed-registry specs can
    * assert exact row counts. Default off — production Browse is non-empty.
    */
   isolateBundledCatalog: boolean;
@@ -471,6 +471,9 @@ export const test = base.extend<Fixtures>({
       mkdirSync(empty, { recursive: true });
       env.ZCC_BUNDLED_PLUGINS_DIR = empty;
       env.ZCC_BUNDLED_EXTENSIONS_DIR = empty;
+      // The signed fixture registry is the entire catalog for these tests.
+      env.ZCC_OFFICIAL_MARKETPLACE_URL = 'off';
+      env.ZCC_INTERNAL_MARKETPLACE_SOURCE = 'off';
     }
 
     const handle = await launchApp(home, {

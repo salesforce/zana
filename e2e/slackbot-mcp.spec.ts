@@ -1,6 +1,6 @@
 import { preparePluginRuntime } from '../packages/plugin-build/src/prepare-plugin-runtime.js';
 import { fileURLToPath } from 'node:url';
-import { test, expect, launchApp } from './fixtures/app.js';
+import { test, expect, launchApp, closeApp } from './fixtures/app.js';
 import { createServer, request } from 'node:https';
 import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, appendFileSync, mkdirSync, readFileSync, writeFileSync, renameSync, symlinkSync, chmodSync } from 'node:fs';
@@ -162,7 +162,11 @@ test('Slackbot selective imports and plugin capabilities work through the real C
     const activityBegin = join(home, 'emoji-thinking.flag');
     const activityAdvance = join(home, 'emoji-working.flag');
     mkdirSync(activityBin);
-    const fakeAgent = readFileSync(resolve('plugins/provider-acp/src/bridge/fake-acp-agent.mjs'), 'utf8');
+    // Fixture commands apply to the user request. Plugin instructions may say
+    // 'changing', which would accidentally trigger the fake agent's 'hang' branch.
+    const fakeAgent = readFileSync(resolve('plugins/provider-acp/src/bridge/fake-acp-agent.mjs'), 'utf8')
+      .replace('const text = promptText(message.params?.prompt);',
+        'const text = promptText(message.params?.prompt).split("</system_instructions>").at(-1);');
     const hangBranch = '  } else if (text.includes("hang")) {';
     expect(fakeAgent).toContain(hangBranch);
     writeFileSync(activityAgent, fakeAgent.replace(hangBranch, `  } else if (text.includes("slack-emoji-phase")) {
@@ -722,6 +726,7 @@ ${hangBranch}`));
       await expect(win.getByTestId('thread-timeline')).toContainText(args.task, { timeout: 15_000 });
     });
   } finally {
-    await app?.electron.close(); await slack.close(); await gateway.close(); edge.closeAllConnections(); await new Promise<void>(resolve => edge.close(() => resolve())); await db.close();
+    if (app) await closeApp(app.electron);
+    await slack.close(); await gateway.close(); edge.closeAllConnections(); await new Promise<void>(resolve => edge.close(() => resolve())); await db.close();
   }
 });
