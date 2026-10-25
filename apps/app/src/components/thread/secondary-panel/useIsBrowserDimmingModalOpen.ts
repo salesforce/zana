@@ -1,6 +1,6 @@
 import { useLayoutEffect, useState, type RefObject } from 'react';
 
-const OVERLAY_SELECTOR = '[role="dialog"][aria-modal="true"], .consent-overlay, .modal-backdrop';
+const OVERLAY_SELECTOR = '[role="dialog"][aria-modal="true"], .consent-overlay, .modal-backdrop, .titlebar-threads-menu[open], .thread-tool-drag-shield, .thread-tool-menu';
 
 function isDisplayed(element: Element): boolean {
   const view = element.ownerDocument.defaultView;

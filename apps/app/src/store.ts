@@ -838,6 +838,8 @@ function mirroredConfigFlags(config: AppConfig) {
     overseerMode: config.overseerMode ?? 'off',
     catchUpSummaryEnabled: config.catchUpSummaryEnabled ?? false,
     classicSessionViewEnabled: config.classicSessionViewEnabled ?? false,
+    threadTabsEnabled: config.threadTabsEnabled ?? true,
+    dockableThreadToolsEnabled: config.dockableThreadToolsEnabled ?? true,
     catchUpSummaryDelaySeconds: config.catchUpSummaryDelaySeconds ?? 20,
     feedNoiseClassifierEnabled: config.feedNoiseClassifierEnabled ?? false,
     terminalClipboardWriteEnabled: config.terminalClipboardWriteEnabled ?? true,
@@ -1653,6 +1655,8 @@ interface DataState {
    *  and open CLI agents / threads as full pages (EXPERIMENTAL). Hydrated on init,
    *  kept live by the Settings toggle. Default off. */
   classicSessionViewEnabled: boolean;
+  threadTabsEnabled: boolean;
+  dockableThreadToolsEnabled: boolean;
   /** Mirror of AppConfig.catchUpSummaryDelaySeconds — idle/blocked dwell before
    *  the add-on fires. Hydrated on init. Default 20. Used by the card to compute
    *  the shimmer threshold. */
@@ -1763,6 +1767,8 @@ interface DataState {
   setFollowUpsEnabled: (on: boolean) => void;
   setCatchUpSummaryEnabled: (on: boolean) => void;
   setClassicSessionViewEnabled: (on: boolean) => void;
+  setThreadTabsEnabled: (on: boolean) => void;
+  setDockableThreadToolsEnabled: (on: boolean) => void;
   setCatchUpSummaryDelaySeconds: (seconds: number) => void;
   setFeedNoiseClassifierEnabled: (on: boolean) => void;
   setTerminalClipboardWriteEnabled: (on: boolean) => void;
@@ -2160,6 +2166,8 @@ export const useData = create<DataState>((set, get) => ({
   reviewerApprovalMode: 'ask',
   catchUpSummaryEnabled: false,
   classicSessionViewEnabled: false,
+  threadTabsEnabled: true,
+  dockableThreadToolsEnabled: true,
   catchUpSummaryDelaySeconds: 20,
   feedNoiseClassifierEnabled: false,
   terminalClipboardWriteEnabled: true,
@@ -2302,6 +2310,12 @@ export const useData = create<DataState>((set, get) => ({
     set({ catchUpSummaryEnabled: on });
   },
 
+  setDockableThreadToolsEnabled(on) {
+    set({ dockableThreadToolsEnabled: on });
+  },
+  setThreadTabsEnabled(on) {
+    set({ threadTabsEnabled: on });
+  },
   setClassicSessionViewEnabled(on) {
     set({ classicSessionViewEnabled: on });
   },

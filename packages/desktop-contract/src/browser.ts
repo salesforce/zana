@@ -137,6 +137,8 @@ export interface DesktopBrowserSetBoundsRequest {
 export interface DesktopBrowserSetVisibleRequest {
   tabId: string;
   visible: boolean;
+  /** Keep the last rendered page underneath a temporary renderer overlay. */
+  preserveSnapshot?: boolean;
 }
 
 export interface DesktopBrowserTabRef {
@@ -246,10 +248,12 @@ export function parseDesktopBrowserSetBoundsRequest(value: unknown): ParseResult
 }
 
 export function parseDesktopBrowserSetVisibleRequest(value: unknown): ParseResult<DesktopBrowserSetVisibleRequest> {
-  if (!isRecord(value) || extraKeys(value, ['tabId', 'visible'])) return { success: false };
+  if (!isRecord(value) || extraKeys(value, ['tabId', 'visible', 'preserveSnapshot'])) return { success: false };
   const tabId = parseBoundedString(value.tabId, DESKTOP_BROWSER_MAX_TITLE_LENGTH, 1);
   if (tabId === null || typeof value.visible !== 'boolean') return { success: false };
-  return { success: true, data: { tabId, visible: value.visible } };
+  if (value.preserveSnapshot !== undefined && typeof value.preserveSnapshot !== 'boolean') return { success: false };
+  return { success: true, data: { tabId, visible: value.visible,
+    ...(value.preserveSnapshot === undefined ? {} : { preserveSnapshot: value.preserveSnapshot }) } };
 }
 
 export function parseDesktopBrowserTabRef(value: unknown): ParseResult<DesktopBrowserTabRef> {

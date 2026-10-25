@@ -168,6 +168,12 @@ export function SettingsView() {
       if (typeof patch.catchUpSummaryEnabled === 'boolean') {
         useData.getState().setCatchUpSummaryEnabled(patch.catchUpSummaryEnabled);
       }
+      if (typeof patch.dockableThreadToolsEnabled === 'boolean') {
+        useData.getState().setDockableThreadToolsEnabled(patch.dockableThreadToolsEnabled);
+      }
+      if (typeof patch.threadTabsEnabled === 'boolean') {
+        useData.getState().setThreadTabsEnabled(patch.threadTabsEnabled);
+      }
       if (typeof patch.classicSessionViewEnabled === 'boolean') {
         useData.getState().setClassicSessionViewEnabled(patch.classicSessionViewEnabled);
       }

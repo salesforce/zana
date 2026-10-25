@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Menu, WebContentsView, session, type Session, type WebContents } from 'electron';
 import { captureDesktopBrowserPage } from './desktop-browser-capture.js';
+import { captureBrowserOverlaySnapshot } from './browser-overlay-snapshot.js';
 import {
   DESKTOP_BROWSER_MAX_SNAPSHOT_DATA_URL_LENGTH,
   DESKTOP_BROWSER_MAX_TITLE_LENGTH,
@@ -82,6 +83,7 @@ interface BrowserViewEntry {
   rendererRecoveryAttempts: number;
   rendererRecoveryState: 'healthy' | 'pending' | 'blocked';
   rendererRecoveryTimer: ReturnType<typeof setTimeout> | null;
+  cancelOverlaySnapshot: (() => void) | null;
   visible: boolean;
   automationTargetId: string | null;
   activeFindRequestId: number | null;
@@ -625,6 +627,7 @@ export function createDesktopBrowserViewManager(options?: {
       rendererRecoveryAttempts: 0,
       rendererRecoveryState: 'healthy',
       rendererRecoveryTimer: null,
+      cancelOverlaySnapshot: null,
       visible: false,
       automationTargetId: null,
       activeFindRequestId: null,
@@ -652,6 +655,8 @@ export function createDesktopBrowserViewManager(options?: {
   }
 
   function closeEntryWebContents(entry: BrowserViewEntry): void {
+    entry.cancelOverlaySnapshot?.();
+    entry.cancelOverlaySnapshot = null;
     const webContents = entry.webContents;
     if (webContents.isDestroyed()) return;
     webContents.removeListener('media-started-playing', entry.mediaStartedPlayingListener);
@@ -718,7 +723,23 @@ export function createDesktopBrowserViewManager(options?: {
     withEntry({ hostWindow: args.hostWindow, tabId: args.request.tabId }, (entry) => {
       const wasVisible = entry.visible;
       entry.visible = args.request.visible;
-      applyEntryVisibility(entry, args.hostWindow);
+      if (!args.request.visible && args.request.preserveSnapshot && wasVisible && !isHostResizing(args.hostWindow)) {
+        entry.cancelOverlaySnapshot?.();
+        entry.cancelOverlaySnapshot = captureBrowserOverlaySnapshot({
+          capture: () => entry.view.webContents.capturePage(),
+          publish: dataUrl => send(args.hostWindow, IPC.browser.snapshot, { tabId: args.request.tabId, dataUrl }),
+          hide: () => applyEntryVisibility(entry, args.hostWindow)
+        });
+      } else if (args.request.visible || !args.request.preserveSnapshot) {
+        if (entry.cancelOverlaySnapshot) {
+          entry.cancelOverlaySnapshot();
+          entry.cancelOverlaySnapshot = null;
+          if (!isHostResizing(args.hostWindow)) send(args.hostWindow, IPC.browser.snapshot, { tabId: args.request.tabId, dataUrl: null });
+        }
+        applyEntryVisibility(entry, args.hostWindow);
+      } else if (!entry.cancelOverlaySnapshot) {
+        applyEntryVisibility(entry, args.hostWindow);
+      }
       scheduleEntryRendererRecovery(entry, args.hostWindow, args.request.tabId);
       if (
         focusOnShow

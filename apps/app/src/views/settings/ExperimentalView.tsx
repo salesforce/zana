@@ -3,8 +3,8 @@ import { Section, Field, CheckboxField } from '@/components/settings/FormFields'
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 
 /**
- * Experimental settings — opt-in features still under evaluation. Each is OFF by
- * default and lives here (not Global) so it's clear they're not yet first-class.
+ * Experimental settings — features still under evaluation. Each declares its
+ * default here and lives outside Global while its behavior is being evaluated.
  * Add a feature's master toggle AND its dependent settings to this tab so the
  * whole experiment is configured in one place.
  */
@@ -32,8 +32,22 @@ export function ExperimentalView({
         searchId="experimental.experimental-features"
         anchorId="experimental-features"
         title="Experimental features"
-        help="Opt-in features under active evaluation. They’re off by default and may change or be removed. Enabling one reveals its own settings here."
+        help="Features under active evaluation. Defaults vary by feature; you can switch any experiment off. They may change or be removed."
       >
+        <CheckboxField
+          searchId="experimental.dockable-thread-tools"
+          label="Dockable thread tools"
+          help="Enabled by default on desktop. Drag tool tabs between the right panel and a resizable bottom panel. Each thread remembers its arrangement. Moving a terminal keeps its session running. Turn off to show all tools in the right panel."
+          checked={config.dockableThreadToolsEnabled ?? true}
+          onChange={(v) => onUpdate({ dockableThreadToolsEnabled: v })}
+        />
+        <CheckboxField
+          searchId="experimental.thread-tabs"
+          label="Thread tabs"
+          help="Enabled by default on desktop. Open threads in the main view and keep shortcuts across the title bar, with project names and live status. Closing a tab keeps the thread running. Turn off to restore inspector navigation (unless Classic session view is enabled)."
+          checked={config.threadTabsEnabled ?? true}
+          onChange={(v) => onUpdate({ threadTabsEnabled: v })}
+        />
         <CheckboxField
           searchId="experimental.goals"
           label="Goals"
@@ -51,7 +65,7 @@ export function ExperimentalView({
         <CheckboxField
           searchId="experimental.classic-session-view"
           label="Classic session view"
-          help="Skip the inspector overlay. Opening a CLI agent or thread — from the Agents canvas, favorites, a launch peek, or the menu bar — goes to the full session or thread page. Off by default: a click still peeks without leaving the current surface."
+          help="Skip the inspector overlay. Opening a CLI agent or thread — from the Agents canvas, favorites, a launch peek, or the menu bar — goes to the full session or thread page. Off by default. With Thread tabs enabled, threads already open in the main view; this option also applies to CLI agents."
           checked={config.classicSessionViewEnabled ?? false}
           onChange={(v) => onUpdate({ classicSessionViewEnabled: v })}
         />

@@ -9,7 +9,8 @@ import {
   type DesktopBrowserControlState,
   type DesktopBrowserFindInPageRequest,
   type DesktopBrowserFindResult,
-  type DesktopBrowserState
+  type DesktopBrowserState,
+  type DesktopBrowserSnapshot
 } from '@zana-ai/zcc-desktop-contract';
 import { BrowserTabContent } from './BrowserTabContent.js';
 import { createBrowserViewVisibilityCoordinator } from './browserViewVisibilityCoordinator.js';
@@ -46,6 +47,7 @@ function createHarness() {
   const stateListeners = new Set<(state: DesktopBrowserState) => void>();
   const findListeners = new Set<(result: DesktopBrowserFindResult) => void>();
   const controlListeners = new Set<(state: DesktopBrowserControlState) => void>();
+  const snapshotListeners = new Set<(snapshot: DesktopBrowserSnapshot) => void>();
   const findInPage = vi.fn<(request: DesktopBrowserFindInPageRequest) => void>();
   const stopFindInPage = vi.fn();
   const releaseControl = vi.fn(async () => ({ ok: true }));
@@ -72,6 +74,10 @@ function createHarness() {
       };
     },
     onOpenTab: () => () => undefined,
+    onSnapshot(listener) {
+      snapshotListeners.add(listener);
+      return () => { snapshotListeners.delete(listener); };
+    },
     onFindResult(listener) {
       findListeners.add(listener);
       return () => {
@@ -93,6 +99,9 @@ function createHarness() {
     focus,
     emitState(state: DesktopBrowserState) {
       for (const listener of stateListeners) listener(state);
+    },
+    emitSnapshot(snapshot: DesktopBrowserSnapshot) {
+      for (const listener of snapshotListeners) listener(snapshot);
     },
     emitFind(result: DesktopBrowserFindResult) {
       for (const listener of findListeners) listener(result);
@@ -287,7 +296,7 @@ describe('BrowserTabContent visibility', () => {
     const overlay = document.createElement('div');
     overlay.className = className;
     await act(async () => { document.body.append(overlay); });
-    expect(h.api.setVisible).toHaveBeenLastCalledWith({ tabId: 'browser:test', visible: false });
+    expect(h.api.setVisible).toHaveBeenLastCalledWith({ tabId: 'browser:test', visible: false, preserveSnapshot: true });
     expect(screen.queryByTestId('thread-browser-newtab')).toBeNull();
     await act(async () => { overlay.remove(); });
     expect(h.api.setVisible).toHaveBeenLastCalledWith({ tabId: 'browser:test', visible: true });
@@ -300,10 +309,42 @@ describe('BrowserTabContent visibility', () => {
     const { container } = render(<div className="modal-backdrop">{h.browser}<div data-testid="nested" /></div>);
     const nested = screen.getByTestId('nested');
     await act(async () => { nested.setAttribute('role', 'dialog'); nested.setAttribute('aria-modal', 'true'); });
-    expect(h.api.setVisible).toHaveBeenLastCalledWith({ tabId: 'browser:test', visible: false });
+    expect(h.api.setVisible).toHaveBeenLastCalledWith({ tabId: 'browser:test', visible: false, preserveSnapshot: true });
     await act(async () => { nested.hidden = true; });
     expect(h.api.setVisible).toHaveBeenLastCalledWith({ tabId: 'browser:test', visible: true });
     expect(container.querySelector('.thread-browser-newtab')).toBeNull();
+  });
+
+  it('hides under the open thread switcher and restores the same browser when closed', async () => {
+    const h = setup();
+    const view = render(<><details className="titlebar-threads-menu"><summary>Threads</summary></details>{h.browser}</>);
+    const menu = view.container.querySelector('details')!;
+    expect(h.api.setVisible).toHaveBeenLastCalledWith({ tabId: 'browser:test', visible: true });
+    await act(async () => { menu.open = true; });
+    expect(h.api.setVisible).toHaveBeenLastCalledWith({ tabId: 'browser:test', visible: false, preserveSnapshot: true });
+    await act(async () => { menu.open = false; });
+    expect(h.api.setVisible).toHaveBeenLastCalledWith({ tabId: 'browser:test', visible: true });
+    expect(h.api.attach).toHaveBeenCalledTimes(1);
+    expect(h.api.reload).not.toHaveBeenCalled();
+  });
+
+  it.each(['thread-tool-drag-shield', 'thread-tool-menu'])('releases the native browser under %s and restores the same page', async className => {
+    const h = setup();
+    render(h.browser);
+    const shield = document.createElement('div');
+    shield.className = className;
+    await act(async () => { document.body.append(shield); });
+    expect(h.api.setVisible).toHaveBeenLastCalledWith({ tabId: 'browser:test', visible: false, preserveSnapshot: true });
+    await act(async () => h.emitSnapshot({ tabId: 'other-browser', dataUrl: 'data:image/jpeg;base64,b3RoZXI=' }));
+    expect(document.querySelector('.thread-browser-snapshot')).toBeNull();
+    await act(async () => h.emitSnapshot({ tabId: 'browser:test', dataUrl: 'data:image/jpeg;base64,cGFnZQ==' }));
+    expect(document.querySelector('.thread-browser-snapshot')?.getAttribute('src')).toBe('data:image/jpeg;base64,cGFnZQ==');
+    await act(async () => { shield.remove(); });
+    expect(h.api.setVisible).toHaveBeenLastCalledWith({ tabId: 'browser:test', visible: true });
+    await act(async () => h.emitSnapshot({ tabId: 'browser:test', dataUrl: null }));
+    expect(document.querySelector('.thread-browser-snapshot')).toBeNull();
+    expect(h.api.attach).toHaveBeenCalledTimes(1);
+    expect(h.api.reload).not.toHaveBeenCalled();
   });
 
   it.each(['display:none', 'visibility:hidden'])('ignores a backdrop inside a %s ancestor', async (style) => {
@@ -317,7 +358,7 @@ describe('BrowserTabContent visibility', () => {
       await act(async () => {});
       expect(h.api.setVisible).toHaveBeenLastCalledWith({ tabId: 'browser:test', visible: true });
       await act(async () => { hiddenParent.removeAttribute('style'); });
-      expect(h.api.setVisible).toHaveBeenLastCalledWith({ tabId: 'browser:test', visible: false });
+      expect(h.api.setVisible).toHaveBeenLastCalledWith({ tabId: 'browser:test', visible: false, preserveSnapshot: true });
     } finally { hiddenParent.remove(); }
   });
 

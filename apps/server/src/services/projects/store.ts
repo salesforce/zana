@@ -1048,6 +1048,12 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.catchUpSummaryEnabled === 'boolean') {
     normalized.catchUpSummaryEnabled = input.catchUpSummaryEnabled;
   }
+  if (typeof input.threadTabsEnabled === 'boolean') {
+    normalized.threadTabsEnabled = input.threadTabsEnabled;
+  }
+  if (typeof input.dockableThreadToolsEnabled === 'boolean') {
+    normalized.dockableThreadToolsEnabled = input.dockableThreadToolsEnabled;
+  }
   if (typeof input.classicSessionViewEnabled === 'boolean') {
     normalized.classicSessionViewEnabled = input.classicSessionViewEnabled;
   }

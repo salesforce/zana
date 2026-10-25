@@ -31,6 +31,19 @@ function fakeBrowser(): DesktopBrowserApi & { visible: Record<string, boolean> }
 }
 
 describe('browserViewVisibilityCoordinator', () => {
+  it('preserves a snapshot only for temporary occlusion and only for the owning host', () => {
+    const desktop = fakeBrowser();
+    const visible = vi.spyOn(desktop, 'setVisible');
+    const pane = createBrowserViewVisibilityCoordinator(desktop);
+    const inspector = createBrowserViewVisibilityCoordinator(desktop);
+    pane.show('a', () => {}); inspector.show('a', () => {});
+    visible.mockClear(); pane.hide('a', true);
+    expect(visible).not.toHaveBeenCalled();
+    inspector.hide('a', true);
+    expect(visible).toHaveBeenLastCalledWith({ tabId: 'a', visible: false, preserveSnapshot: true });
+    inspector.show('a', () => {}); inspector.hide('a');
+    expect(visible).toHaveBeenLastCalledWith({ tabId: 'a', visible: false });
+  });
   it('hides the previous tab before showing the next', () => {
     const desktop = fakeBrowser();
     const coordinator = createBrowserViewVisibilityCoordinator(desktop);

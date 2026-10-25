@@ -548,6 +548,25 @@ describe('normalizeConfig — catch-up summary flags', () => {
     expect(normalizeConfig({ classicSessionViewEnabled: 1 }).classicSessionViewEnabled).toBeUndefined();
   });
 
+  it('accepts only boolean threadTabsEnabled values', () => {
+    expect(normalizeConfig({ threadTabsEnabled: true }).threadTabsEnabled).toBe(true);
+    expect(normalizeConfig({ threadTabsEnabled: false }).threadTabsEnabled).toBe(false);
+    for (const value of ['false', 0, null, {}, []]) {
+      // @ts-expect-error intentional bad input
+      expect(normalizeConfig({ threadTabsEnabled: value }).threadTabsEnabled).toBeUndefined();
+    }
+    expect(normalizeConfig({}).threadTabsEnabled).toBeUndefined();
+  });
+  it('accepts only boolean dockableThreadToolsEnabled values', () => {
+    expect(normalizeConfig({ dockableThreadToolsEnabled: true }).dockableThreadToolsEnabled).toBe(true);
+    expect(normalizeConfig({ dockableThreadToolsEnabled: false }).dockableThreadToolsEnabled).toBe(false);
+    for (const value of ['false', 0, null, {}, []]) {
+      // @ts-expect-error intentional bad input
+      expect(normalizeConfig({ dockableThreadToolsEnabled: value }).dockableThreadToolsEnabled).toBeUndefined();
+    }
+    expect(normalizeConfig({}).dockableThreadToolsEnabled).toBeUndefined();
+  });
+
   it('passes through a boolean heldQuestionsEnabled, drops non-booleans', () => {
     expect(normalizeConfig({ heldQuestionsEnabled: true }).heldQuestionsEnabled).toBe(true);
     expect(normalizeConfig({ heldQuestionsEnabled: false }).heldQuestionsEnabled).toBe(false);

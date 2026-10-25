@@ -166,11 +166,12 @@ export function useThreadComposerOptions(input: {
     void hostCatalog.ensure();
   }, [hostCatalog, input.hostPending]);
 
-  const providers = composerProvidersFromCatalog(
+  const providerLocked = Boolean(input.threadId || input.lockedProviderId);
+  const providers = useMemo(() => composerProvidersFromCatalog(
     catalog.providers,
-    Boolean(input.threadId || input.lockedProviderId),
+    providerLocked,
     providerId
-  );
+  ), [catalog.providers, providerLocked, providerId]);
   const rosterReady = catalog.providers.length > 0 || Boolean(input.threadId || input.lockedProviderId);
   const registeredProviderIds = catalog.providers.map((row) => row.id);
   const cached = catalog.byProvider[providerId];
