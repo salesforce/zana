@@ -160,3 +160,18 @@ test('Salesforce connection failure leaves the new project available to open', a
   expect(commands.filter(row => row.args[0] === 'project')).toHaveLength(1);
   expect(commands.filter(row => row.args[0] === 'config')).toHaveLength(1);
 });
+
+test('Salesforce sign-in terminal status survives a plugin reload without exposing credentials', async ({ app }) => {
+  const page = app.window;
+  expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(row => row.id === 'salesforce')?.status), { timeout: 30000 }).toMatch(/running|needs-configuration/);
+  const started: any = await page.evaluate(() => window.cc.pluginApps.callRpc('salesforce', 'orgs.login.start', { instance: 'sandbox', alias: 'fail-login' }));
+  expect(started).toMatchObject({ ok: true, jobId: expect.any(String) });
+  const read = () => page.evaluate(jobId => window.cc.pluginApps.callRpc('salesforce', 'orgs.login.status', { jobId }), started.jobId);
+  let status: any;
+  await expect.poll(async () => { status = await read(); return status.done; }).toBe(true);
+  expect(status.result).toMatchObject({ ok: false, error: expect.stringContaining('Sign-in did not finish') });
+  expect(await page.evaluate(() => window.cc.pluginApps.reload('salesforce'))).toMatchObject({ ok: true });
+  await expect.poll(read).toEqual(status);
+  expect(JSON.stringify(status)).not.toMatch(/PRIVATE|TOKEN/);
+});

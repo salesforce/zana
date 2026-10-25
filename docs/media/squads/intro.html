@@ -1,0 +1,218 @@
+<!doctype html>
+<!-- Squads opener, 1440 × 900. Deterministic: render(t) draws second t; intro.cjs captures it frame by frame.
+     Same visual language as the Zana demo opener: ten-tools montage → logo burst → wordmark → the app rises. -->
+<html><head><meta charset="utf-8">
+<style>
+  :root { --ink: #111827; --muted: #5b6475; --blue: #2563eb; --sans: -apple-system, "SF Pro Display", "Helvetica Neue", Arial, sans-serif; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1440px; height: 900px; overflow: hidden; font-family: var(--sans); color: var(--ink); background: #eef2f9; }
+  #bg { position: absolute; inset: 0; background: linear-gradient(160deg, #f4f7fc 0%, #e9eef8 55%, #eae8f8 100%); overflow: hidden; }
+  .glow { position: absolute; width: 700px; height: 700px; border-radius: 50%; filter: blur(90px); opacity: .55; }
+  #grid { position: absolute; inset: -100px; background-image: linear-gradient(rgba(37,99,235,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(37,99,235,.05) 1px, transparent 1px); background-size: 48px 48px; }
+
+  /* Scene A: one agent, every task in line */
+  .tool { position: absolute; left: 0; top: 0; border-radius: 10px; background: #fff; box-shadow: 0 18px 46px rgba(30,41,80,.22), 0 0 0 1px rgba(15,23,42,.08); color: #1d2433; }
+  .tool .bar { border-radius: 10px 10px 0 0; height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 10px; background: #f1f3f7; border-bottom: 1px solid #e1e5ec; font-size: 12px; font-weight: 600; color: #4a5568; }
+  .tool .dot { width: 9px; height: 9px; border-radius: 50%; }
+  .tool .bar span { margin-left: 6px; }
+  .tool.dark { background: #0f141c; color: #c8d3e6; } .tool.dark .bar { background: #1c222d; border-color: #2a3242; color: #a0aec0; }
+  .tool .body { padding: 12px 14px; font-size: 12.5px; }
+  .term { font-family: "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.75; }
+  .term .g { color: #7ee0a8; } .term .y { color: #ffdb9e; } .term .d { color: #6b7a90; }
+  .task h4 { font-size: 15px; font-weight: 800; margin: 2px 0 8px; }
+  .task .st { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 700; color: #8a5a00; background: #fff4d6; border-radius: 999px; padding: 4px 9px; }
+  .task .st.run { color: #0b6b3a; background: #dcf7e8; }
+  .ln2 { height: 7px; border-radius: 4px; background: #e3e7ee; margin: 8px 0; }
+  .prog { height: 7px; border-radius: 4px; background: #e3e7ee; margin: 12px 0 2px; overflow: hidden; } .prog i { display: block; height: 100%; width: 38%; background: #22c55e; border-radius: 4px; }
+  .badge { position: absolute; top: -10px; right: -10px; min-width: 28px; height: 28px; padding: 0 8px; border-radius: 14px; background: #ef4444; color: #fff; font-weight: 800; font-size: 13px; display: flex; align-items: center; justify-content: center; box-shadow: 0 5px 14px rgba(239,68,68,.4); }
+  .chipx { position: absolute; left: 0; top: 0; padding: 8px 14px; border-radius: 999px; background: #fff; box-shadow: 0 8px 22px rgba(30,41,80,.16), 0 0 0 1px rgba(15,23,42,.07); font-size: 15px; font-weight: 600; color: #374151; white-space: nowrap; }
+  #headline { position: absolute; left: 0; right: 0; top: 360px; text-align: center; font-weight: 800; letter-spacing: -0.035em; }
+  #headline .l1 { font-size: 48px; color: #374151; }
+  #headline .l2 { font-size: 104px; line-height: 1.05; }
+  #headline .l2 .w { background: linear-gradient(120deg, #3b82f6, #8b5cf6); -webkit-background-clip: text; background-clip: text; color: transparent; padding: 0 4px; }
+  #headline .w { display: inline-block; }
+  #headplate { position: absolute; left: 190px; right: 190px; top: 330px; height: 230px; border-radius: 30px; background: radial-gradient(ellipse at center, rgba(244,247,252,.96) 30%, rgba(244,247,252,0) 72%); }
+
+  #core { position: absolute; left: 720px; top: 450px; width: 165px; height: 165px; margin: -82px 0 0 -82px; border-radius: 40px; background: #172641; box-shadow: 0 24px 70px rgba(37,99,235,.45); }
+  #ring { position: absolute; left: 720px; top: 450px; width: 150px; height: 150px; margin: -75px 0 0 -75px; border-radius: 50%; border: 3px solid rgba(59,130,246,.75); }
+  #flash { position: absolute; inset: 0; background: radial-gradient(circle at 50% 50%, rgba(255,255,255,1), rgba(255,255,255,0) 60%); }
+
+  /* Scene C: Squads */
+  #logo { position: absolute; left: 720px; top: 300px; width: 150px; height: 150px; margin: -75px 0 0 -75px; filter: drop-shadow(0 18px 38px rgba(30,41,80,.32)); }
+  #wordmark { position: absolute; left: 0; right: 0; top: 398px; text-align: center; font-size: 116px; font-weight: 800; letter-spacing: -0.045em; line-height: 1.1; }
+  #wordmark span { display: inline-block; }
+  #tagline { position: absolute; left: 0; right: 0; top: 560px; text-align: center; font-size: 34px; font-weight: 600; letter-spacing: -0.01em; color: var(--blue); }
+  #subline { position: absolute; left: 0; right: 0; top: 614px; text-align: center; font-size: 22px; color: var(--muted); }
+  svg#links { position: absolute; inset: 0; width: 1440px; height: 900px; overflow: visible; }
+  svg#links path { fill: none; stroke: rgba(59,130,246,.45); stroke-width: 2; stroke-dasharray: 6 7; }
+  .member { position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 10px; padding: 9px 16px 9px 10px; border-radius: 999px; background: #fff; box-shadow: 0 10px 26px rgba(30,41,80,.16), 0 0 0 1px rgba(15,23,42,.07); font-size: 17px; font-weight: 700; color: #1f2937; white-space: nowrap; }
+  .member i { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-size: 14px; color: #fff; font-weight: 800; }
+  .member small { font-size: 13px; font-weight: 600; color: var(--muted); }
+
+  /* Scene D: the app rises */
+  #win { position: absolute; left: 0; top: 0; width: 1440px; height: 900px; transform-origin: 0 0; overflow: hidden; background: #111 center / cover no-repeat;
+         box-shadow: 0 2px 6px rgba(15,23,42,.08), 0 30px 80px rgba(30,41,80,.28), 0 0 0 1px rgba(15,23,42,.08); }
+
+  #caption { position: absolute; left: 50%; bottom: 36px; transform: translateX(-50%); padding: 11px 22px; border-radius: 13px; background: rgba(17,24,39,.78); color: #fff; font-size: 24px; line-height: 1.3; font-weight: 500; text-align: center; opacity: 0; width: max-content; max-width: 1100px; }
+  #white { position: absolute; inset: 0; background: #f4f7fc; pointer-events: none; }
+</style></head>
+<body>
+<div id="bg">
+  <div class="glow" id="glow1" style="background:#bfe3ff"></div><div class="glow" id="glow2" style="background:#d6ccff"></div>
+  <div id="grid"></div>
+</div>
+
+<div id="sceneA">
+  <div class="tool dark" id="w0" style="width:350px;height:210px">
+    <div class="bar"><i class="dot" style="background:#ff5f57"></i><i class="dot" style="background:#febc2e"></i><i class="dot" style="background:#28c840"></i><span>Agent — atlas-site</span></div>
+    <div class="body term">
+      <div><span class="g">✓</span> Plan the work</div>
+      <div><span class="y">▸</span> Home page <span class="d">· working</span></div>
+      <div class="d">· About page &nbsp;&nbsp;&nbsp;&nbsp;queued</div>
+      <div class="d">· Shared nav &nbsp;&nbsp;&nbsp;&nbsp;queued</div>
+      <div class="d">· Tests &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;queued</div>
+      <div class="d">· Review &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;queued</div>
+    </div><div class="badge">1 agent</div>
+  </div>
+  <div class="tool task" id="w1" style="width:330px;height:170px">
+    <div class="bar"><i class="dot" style="background:#ff5f57"></i><i class="dot" style="background:#febc2e"></i><i class="dot" style="background:#28c840"></i><span>Home page</span></div>
+    <div class="body"><h4>Build the Home page</h4><span class="st run">● Working</span><div class="prog"><i></i></div><div class="ln2" style="width:70%"></div></div>
+  </div>
+  <div class="tool task" id="w2" style="width:320px;height:170px">
+    <div class="bar"><i class="dot" style="background:#ff5f57"></i><i class="dot" style="background:#febc2e"></i><i class="dot" style="background:#28c840"></i><span>About page</span></div>
+    <div class="body"><h4>Build the About page</h4><span class="st">◷ Waiting</span><div class="ln2" style="width:88%"></div><div class="ln2" style="width:64%"></div></div>
+    <div class="badge">#2</div>
+  </div>
+  <div class="tool task" id="w3" style="width:310px;height:170px">
+    <div class="bar"><i class="dot" style="background:#ff5f57"></i><i class="dot" style="background:#febc2e"></i><i class="dot" style="background:#28c840"></i><span>Navigation</span></div>
+    <div class="body"><h4>Shared nav label</h4><span class="st">◷ Waiting</span><div class="ln2" style="width:80%"></div><div class="ln2" style="width:58%"></div></div>
+    <div class="badge">#3</div>
+  </div>
+  <div class="tool task" id="w4" style="width:300px;height:170px">
+    <div class="bar"><i class="dot" style="background:#ff5f57"></i><i class="dot" style="background:#febc2e"></i><i class="dot" style="background:#28c840"></i><span>Tests</span></div>
+    <div class="body"><h4>Write the tests</h4><span class="st">◷ Waiting</span><div class="ln2" style="width:90%"></div><div class="ln2" style="width:70%"></div></div>
+    <div class="badge">#4</div>
+  </div>
+  <div class="tool task" id="w5" style="width:320px;height:170px">
+    <div class="bar"><i class="dot" style="background:#ff5f57"></i><i class="dot" style="background:#febc2e"></i><i class="dot" style="background:#28c840"></i><span>Review</span></div>
+    <div class="body"><h4>Review its own work</h4><span class="st">◷ Waiting</span><div class="ln2" style="width:76%"></div><div class="ln2" style="width:52%"></div></div>
+    <div class="badge">#5</div>
+  </div>
+  <div class="chipx" id="c0">One at a time</div><div class="chipx" id="c1">Context 92% full</div><div class="chipx" id="c2">Waiting…</div><div class="chipx" id="c3">Self-review</div>
+  <div id="headplate"></div>
+  <div id="headline"><div class="l1"><span class="w">One</span> <span class="w">agent</span> <span class="w">used</span> <span class="w">to</span> <span class="w">do</span></div><div class="l2"><span class="w">everything.</span></div></div>
+</div>
+<div id="core"></div><div id="ring"></div><div id="flash"></div>
+
+<svg id="links"><path id="k0"/><path id="k1"/><path id="k2"/><path id="k3"/></svg>
+<div class="member" id="m0"><i style="background:#f5b83d;color:#241a00">♛</i>Orchestrator <small>plans</small></div>
+<div class="member" id="m1"><i style="background:#3b82f6">W</i>Worker <small>tab 1</small></div>
+<div class="member" id="m2"><i style="background:#3b82f6">W</i>Worker <small>tab 2</small></div>
+<div class="member" id="m3"><i style="background:#8b5cf6">R</i>Reviewer <small>checks</small></div>
+<img id="logo" src="../../../website/public/zana-mark.svg">
+<div id="wordmark"><span>S</span><span>q</span><span>u</span><span>a</span><span>d</span><span>s</span></div>
+<div id="tagline">A whole team of agents for one goal</div>
+<div id="subline">Plan · Build in parallel · Review · Ask you</div>
+
+<div id="win"></div>
+<div id="caption"></div>
+<div id="white"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const p = (t, s, e) => clamp((t - s) / (e - s));
+const lerp = (a, b, k) => a + (b - a) * k;
+const eOut = (x) => 1 - Math.pow(1 - clamp(x), 3);
+const eIO = (x) => { x = clamp(x); return x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; };
+const eBack = (x) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+const set = (el, o, tr) => { el.style.opacity = o; if (tr !== undefined) el.style.transform = tr; el.style.visibility = o <= 0.001 ? 'hidden' : 'visible'; };
+
+// ?app=<image> is the recording's first frame; the opener ends on it full screen.
+// ?vo=<seconds,seconds> are the measured clip lengths, so captions leave when the voice does.
+const params = new URLSearchParams(location.search);
+$('win').style.backgroundImage = `url("${params.get('app') || 'preview-catalogue.jpg'}")`;
+
+// Timeline (seconds). VO start times are where render.py places the spoken lines.
+const VO = [
+  [0.5, 3.4, 'One agent used to do everything, one task at a time.'],
+  [6.6, 1.6, 'Meet Squads in Zana.'],
+];
+(params.get('vo') || '').split(',').filter(Boolean).forEach((d, i) => { if (VO[i]) VO[i][1] = Number(d); });
+const DURATION = 11.0;
+window.TIMING = { VO, DURATION };
+
+const WIN = [
+  { id: 'w0', x: 278, y: 248, rot: -6, at: 0.15 }, { id: 'w1', x: 742, y: 200, rot: 3, at: 0.35 },
+  { id: 'w2', x: 1185, y: 285, rot: 7, at: 0.55 }, { id: 'w3', x: 248, y: 638, rot: 5, at: 0.75 },
+  { id: 'w4', x: 1200, y: 645, rot: -5, at: 0.95 }, { id: 'w5', x: 735, y: 720, rot: -3, at: 1.15 },
+  { id: 'c0', x: 540, y: 315, rot: -4, at: 1.5 }, { id: 'c1', x: 968, y: 330, rot: 5, at: 1.7 },
+  { id: 'c2', x: 480, y: 600, rot: 3, at: 1.9 }, { id: 'c3', x: 998, y: 615, rot: -6, at: 2.1 },
+];
+WIN.forEach((w) => { w.el = $(w.id); w.w = w.el.offsetWidth; w.h = w.el.offsetHeight; });
+// Squad members fan out from the logo.
+const MEM = [{ id: 'm0', x: 420, y: 250 }, { id: 'm1', x: 1020, y: 250 }, { id: 'm2', x: 1040, y: 345 }, { id: 'm3', x: 400, y: 345 }];
+MEM.forEach((m, i) => { m.el = $(m.id); m.w = m.el.offsetWidth; m.h = m.el.offsetHeight; m.at = 7.0 + i * 0.16; m.link = $('k' + i); });
+
+function render(t) {
+  $('glow1').style.transform = `translate(${-150 + Math.sin(t * 0.3) * 90}px, ${-230 + Math.cos(t * 0.25) * 60}px)`;
+  $('glow2').style.transform = `translate(${940 + Math.cos(t * 0.27) * 105}px, ${430 + Math.sin(t * 0.33) * 68}px)`;
+  $('grid').style.transform = `translate(${(t * 6) % 48}px, ${(t * 4) % 48}px)`;
+
+  // ---------- Scene A ----------
+  const conv = eIO(p(t, 4.5, 6.1));
+  WIN.forEach((w, i) => {
+    const pin = eBack(p(t, w.at, w.at + 0.55)), jit = p(t, 2.6, 4.4) * (1 - conv);
+    const dx = Math.sin(t * 0.8 + i) * 8 + Math.sin(t * 23 + i * 5) * 2.4 * jit, dy = Math.cos(t * 0.7 + i * 1.3) * 6 + Math.cos(t * 19 + i * 3) * 2.4 * jit;
+    const x = lerp(w.x + dx, 720, conv), y = lerp(w.y + dy, 450, conv);
+    const sc = lerp(0.6 + 0.4 * pin, 0.18, conv) * (w.id[0] === 'c' ? 1 : 0.94);
+    set(w.el, p(t, w.at, w.at + 0.25) * (1 - p(conv, 0.75, 1)), `translate(${x - w.w / 2}px, ${y - w.h / 2}px) rotate(${lerp(w.rot + Math.sin(t * 0.5 + i) * 1.2, 0, conv)}deg) scale(${sc})`);
+    const b = w.el.querySelector('.badge');
+    if (b) { const bs = eBack(p(t, 2.3 + i * 0.22, 2.7 + i * 0.22)); b.style.transform = `scale(${bs})`; b.style.opacity = bs > 0 ? 1 : 0; }
+  });
+  document.querySelectorAll('#headline .w').forEach((wd, i) => {
+    const s = i < 5 ? 0.55 + i * 0.13 : 1.6, k = eOut(p(t, s, s + 0.45));
+    wd.style.opacity = k; wd.style.transform = `translateY(${(1 - k) * 24}px) scale(${i >= 5 ? lerp(1.25, 1, k) : 1})`;
+  });
+  const hk = 1 - p(t, 4.3, 4.8);
+  set($('headline'), hk, `scale(${lerp(0.94, 1, hk)})`); set($('headplate'), hk * p(t, 0.4, 1));
+  const ck = eOut(p(t, 5.5, 6.2));
+  set($('core'), ck * (1 - p(t, 6.25, 6.45)), `scale(${lerp(0.2, 1, ck)}) rotate(${lerp(-25, 0, ck)}deg)`);
+  const rk = p(t, 6.15, 7.1); set($('ring'), (1 - rk) * (rk > 0 ? 1 : 0), `scale(${lerp(1, 9, eOut(rk))})`);
+  $('flash').style.opacity = p(t, 6.05, 6.2) * (1 - p(t, 6.2, 6.9)) * 0.9;
+
+  // ---------- Scene C: logo, Squads, the team ----------
+  const outC = eIO(p(t, 9.5, 10.3));
+  const lk = eBack(p(t, 6.15, 6.95));
+  set($('logo'), p(t, 6.15, 6.3) * (1 - outC), `translateY(${-outC * 90}px) scale(${lerp(0.55, 1, lk) * lerp(1, 0.6, outC)}) rotate(${lerp(-12, 0, lk)}deg)`);
+  document.querySelectorAll('#wordmark span').forEach((s, i) => { const k = eOut(p(t, 6.75 + i * 0.08, 7.25 + i * 0.08)); s.style.opacity = k; s.style.transform = `translateY(${(1 - k) * 40}px)`; });
+  set($('wordmark'), 1 - outC, `translateY(${-outC * 75}px)`);
+  const tk = eOut(p(t, 7.6, 8.2)); set($('tagline'), tk * (1 - outC), `translateY(${(1 - tk) * 18 - outC * 60}px)`);
+  const sk = eOut(p(t, 8.2, 8.8)); set($('subline'), sk * (1 - outC), `translateY(${(1 - sk) * 14 - outC * 52}px)`);
+  MEM.forEach((m) => {
+    const k = eBack(p(t, m.at, m.at + 0.55)), o = p(t, m.at, m.at + 0.2) * (1 - outC);
+    const x = lerp(720, m.x, eOut(p(t, m.at, m.at + 0.55))), y = lerp(300, m.y, eOut(p(t, m.at, m.at + 0.55))) - outC * 90;
+    set(m.el, o, `translate(${x - m.w / 2}px, ${y - m.h / 2}px) scale(${lerp(0.4, 1, k)})`);
+    const ex = x + (x < 720 ? m.w / 2 : -m.w / 2);
+    m.link.setAttribute('d', `M${720} ${300 - outC * 90} C ${(720 + ex) / 2} ${300 - outC * 90}, ${(720 + ex) / 2} ${y}, ${ex} ${y}`);
+    m.link.style.opacity = o * 0.9; m.link.style.strokeDashoffset = -t * 18;
+  });
+
+  // ---------- Scene D: the app rises and fills the frame ----------
+  const rise = eOut(p(t, 9.8, 10.6)), fill = eIO(p(t, 10.2, DURATION - 0.05));
+  const win = $('win');
+  if (rise <= 0) win.style.display = 'none';
+  else {
+    win.style.display = 'block'; win.style.opacity = clamp(rise * 1.6);
+    const sc = lerp(0.74, 1, fill), x = (1440 - 1440 * sc) / 2, y = (900 - 900 * sc) / 2 + (1 - rise) * 200;
+    win.style.transform = `translate(${x}px, ${y}px) scale(${sc})`;
+    win.style.borderRadius = `${lerp(16, 0, fill) / sc}px`;
+  }
+  const cap = $('caption'), v = VO.find(([a, d]) => t >= a - 0.1 && t < a + d + 0.35);
+  if (v) { if (cap.textContent !== v[2]) cap.textContent = v[2]; cap.style.opacity = p(t, v[0] - 0.1, v[0] + 0.12) * (1 - p(t, v[0] + v[1] + 0.15, v[0] + v[1] + 0.35)); } else cap.style.opacity = 0;
+  $('white').style.opacity = 1 - p(t, 0, 0.35);
+}
+window.render = render;
+render(0);
+</script>
+</body></html>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { ChevronLeft } from 'lucide-react';
+import { PluginInspector } from './PluginInspector.js';
 import type { MarketplaceEntry } from '@zana-ai/zcc-domain/product';
 import { product } from '../../lib/product-client.js';
 import { appNavigate } from '../../lib/app-navigate.js';
@@ -14,18 +14,20 @@ export function PluginBrowseSplit({
   pluginId: string | null;
   toolbarExtra?: ReactNode;
 }) {
-  const [entries, setEntries] = useState<MarketplaceEntry[]>([]);
+  const [entries, setEntries] = useState<MarketplaceEntry[] | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
   const [pending, setPending] = useState<MarketplaceEntry | null>(null);
-  const [busy, setBusy] = useState<string | undefined>();
-  const [error, setError] = useState<string | undefined>();
+  const [busy, setBusy] = useState<Record<string, string>>({});
+  const [error, setError] = useState<Record<string, string>>({});
 
   const refresh = useCallback(() => {
     product.extensions
       .marketplaceList()
       .then((res) => {
-        if (res.ok) setEntries(res.value);
+        if (res.ok) { setEntries(res.value); setCatalogError(null); }
+        else setCatalogError(res.message);
       })
-      .catch(() => {});
+      .catch((error) => setCatalogError(error instanceof Error ? error.message : 'Could not load plugin details'));
   }, []);
 
   useEffect(() => {
@@ -34,15 +36,15 @@ export function PluginBrowseSplit({
     return () => off();
   }, [refresh]);
 
-  const entry = pluginId ? (entries.find((row) => row.id === pluginId) ?? null) : null;
+  const entry = pluginId ? ((entries ?? []).find((row) => row.id === pluginId) ?? null) : null;
 
   const close = () => {
     appNavigate(getPluginBrowseRoutePath());
   };
 
   const install = (target: MarketplaceEntry) => {
-    setBusy(target.hasUpdate ? 'Updating…' : 'Installing…');
-    setError(undefined);
+    setBusy((current) => ({ ...current, [target.id]: target.hasUpdate ? 'Updating…' : 'Installing…' }));
+    setError((current) => ({ ...current, [target.id]: '' }));
     const source =
       target.source === 'bundled'
         ? ({ kind: 'bundled', id: target.id } as const)
@@ -51,59 +53,35 @@ export function PluginBrowseSplit({
       .install(source)
       .then((res) => {
         if (!res.ok) {
-          setError(res.message);
+          setError((current) => ({ ...current, [target.id]: res.message }));
           return;
         }
         appNavigate(getPluginDetailRoutePath(target.id, { view: 'installed' }));
       })
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setBusy(undefined));
+      .catch((err) => setError((current) => ({ ...current, [target.id]: err instanceof Error ? err.message : String(err) })))
+      .finally(() => setBusy((current) => { const next = { ...current }; delete next[target.id]; return next; }));
   };
 
-  if (pluginId) {
-    return (
-      <div className="ext-browse-split ext-browse-split--page" data-testid="plugin-browse-split">
-        <div className="ext-browse-detail-page" data-testid="plugin-browse-side-panel">
-          <button type="button" className="settings-btn ext-installed-back" onClick={close}>
-            <ChevronLeft size={14} />
-            Back to Browse
-          </button>
-          {entry ? (
-            <CatalogPluginDetail
-              entry={entry}
-              catalog={entries}
-              busy={busy}
-              error={error}
-              onInstall={(next) => setPending(next)}
-              onOpenPlugin={(next) => appNavigate(getPluginDetailRoutePath(next.id))}
-              onOpenAuthor={(author) =>
-                appNavigate(`${getPluginBrowseRoutePath()}?author=${encodeURIComponent(author)}`)
-              }
-            />
-          ) : (
-            <p className="settings-help settings-help--muted">Plugin not found.</p>
-          )}
-        </div>
-        {pending ? (
-          <PluginInstallConfirm
-            entry={pending}
-            onCancel={() => setPending(null)}
-            onConfirm={() => {
-              const target = pending;
-              setPending(null);
-              install(target);
-            }}
-          />
-        ) : null}
-      </div>
-    );
-  }
-
   return (
-    <div className="ext-browse-split" data-testid="plugin-browse-split">
-      <div className="ext-browse-split-main">
+    <div className={`ext-plugin-workbench${pluginId ? ' has-inspector' : ''}`} data-testid="plugin-browse-split">
+      <div className="ext-plugin-collection-main">
         <Marketplace toolbarExtra={toolbarExtra} />
       </div>
+      {pluginId ? <PluginInspector key={pluginId} label="Marketplace plugin" onClose={close}>
+        <div data-testid="plugin-browse-side-panel">
+          {entry ? <CatalogPluginDetail
+            entry={entry} catalog={entries ?? []} busy={busy[entry.id]} error={error[entry.id]}
+            onInstall={(next) => setPending(next)}
+            onManage={() => appNavigate(getPluginDetailRoutePath(entry.id, { view: 'installed' }))}
+            onOpenPlugin={(next) => appNavigate(getPluginDetailRoutePath(next.id))}
+            onOpenAuthor={(author) => appNavigate(`${getPluginBrowseRoutePath()}?author=${encodeURIComponent(author)}`)}
+          /> : catalogError ? <p role="alert" className="modal-error">{catalogError}</p>
+            : <p role="status" className="settings-help settings-help--muted">{entries === null ? 'Loading plugin details…' : 'Plugin not found.'}</p>}
+        </div>
+      </PluginInspector> : null}
+      {pending ? <PluginInstallConfirm entry={pending} onCancel={() => setPending(null)} onConfirm={() => {
+        const target = pending; setPending(null); install(target);
+      }} /> : null}
     </div>
   );
 }

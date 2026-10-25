@@ -1,12 +1,16 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { callPluginRpc, experimental_requestApproval, useRealtime } from '@zana-ai/zcc-plugin-sdk/app';
 import { STUDIO_CHANGED_CHANNEL, STUDIO_RPC, type CaseObserved, type CaseOutcome, type CaseResult, type ScenarioCase, type ScenarioSuite } from '../../../lib/studio-contract.js';
+import { parseExtraAssertions, actionCheckLabel, stateCheckLabel } from '../../../lib/scenario-assertions.js';
+import { SuiteComparisonView } from './SuiteComparisonView.js';
+import type { SuiteComparison } from '../../../lib/studio-contract.js';
 import { caseChecks, failureReason, type CheckState } from '../../../lib/case-checks.js';
 import { RELEASE_RPC, type ReleasePrepared } from '../../../lib/release-contract.js';
 import { FIX_LOOP_LIMITS, type FixLoop } from '../../../lib/fix-loop.js';
 import { declined, type Message } from './approval-notice.js';
 import { OrgTestsView } from './OrgTestsView.js';
 import { LocalSuiteDetail } from './LocalSuiteDetail.js';
+import { runSuiteJob, SuiteStoppedError } from './suite-job-rpc.js';
 import { SuiteRunProgress } from './SuiteRunProgress.js';
 import { SimulationsView, type SimulationsFocus } from './SimulationsView.js';
 
@@ -44,7 +48,7 @@ export interface TestsPaneProps {
 }
 
 type Suite = ScenarioSuite & { sha256?: string };
-interface Detail { caseId: string; outcome: CaseOutcome; notes: string[]; turns: Array<{ role: 'user' | 'agent'; text: string }>; observed?: CaseObserved; judge?: CaseOutcome }
+interface Detail { caseId: string; outcome: CaseOutcome; notes: string[]; turns: Array<{ role: 'user' | 'agent'; text: string }>; observed?: CaseObserved; judge?: CaseOutcome; deterministic?: CaseOutcome; setupBlocked?: boolean }
 type Filter = 'all' | 'fail' | 'pass';
 type TestsView = 'cases' | 'org' | 'simulations' | 'roleplay';
 type Notice = Message & { allowReads?: boolean };
@@ -53,7 +57,7 @@ type Reply = { ok?: boolean; code?: string; error?: string; summary?: string } &
 const SPEC_BYTES = 256_000;
 
 const STYLES = `
-.sf-tp { display: flex; flex-direction: column; gap: 10px; padding: 10px; color: var(--sf-text); font-size: 12px; min-height: 0; overflow: auto; flex: 1; }
+.sf-tp { container-type: inline-size; display: flex; flex-direction: column; gap: 10px; padding: 10px; color: var(--sf-text); font-size: 12px; min-height: 0; overflow: auto; flex: 1; }
 .sf-tp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sf-tp-head h2 { margin: 0; font-size: 13px; }
 .sf-tp-seg { display: inline-flex; border: 1px solid var(--sf-border); border-radius: 6px; overflow: hidden; }
@@ -77,6 +81,7 @@ const STYLES = `
 .sf-tp-chip.is-pinned { border-color: var(--sf-accent); color: var(--sf-accent); margin-left: 6px; }
 .sf-tp-detail { background: var(--sf-elevated); }
 .sf-tp-compare { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+@container (max-width: 600px) { .sf-tp-compare { grid-template-columns: minmax(0, 1fr); } }
 .sf-tp-compare h4 { margin: 0 0 4px; font-size: 11px; color: var(--sf-muted); }
 .sf-tp-compare ul { margin: 0; padding-left: 16px; }
 .sf-tp-turn { margin: 0 0 4px; white-space: pre-wrap; }
@@ -88,7 +93,8 @@ const STYLES = `
 .sf-tp-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; border: 1px solid var(--sf-border); border-radius: 8px; padding: 8px; }
 .sf-tp-form label { display: flex; flex-direction: column; gap: 2px; color: var(--sf-muted); }
 .sf-tp-form .is-wide { grid-column: 1 / -1; }
-.sf-tp-form input, .sf-tp-form textarea { font: inherit; color: var(--sf-text); background: var(--sf-sunken); border: 1px solid var(--sf-border); border-radius: 6px; padding: 3px 6px; }
+.sf-tp-form fieldset { min-width: 0; margin: 0; }
+.sf-tp-form input, .sf-tp-form textarea { min-width: 0; max-width: 100%; box-sizing: border-box; font: inherit; color: var(--sf-text); background: var(--sf-sunken); border: 1px solid var(--sf-border); border-radius: 6px; padding: 3px 6px; }
 .sf-tp-foot { color: var(--sf-muted); margin: 0; }
 .sf-tp-empty { color: var(--sf-muted); padding: 4px 2px; }
 .sf-tp-summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--sf-border); border-radius: 8px; }
@@ -120,6 +126,7 @@ const STYLES = `
 .sf-tp-run progress { flex: 1; min-width: 80px; accent-color: var(--sf-accent); }
 .sf-tp-run-case { font-weight: 600; overflow-wrap: anywhere; }
 .sf-tp-chip.is-running { color: var(--sf-accent); border-color: var(--sf-accent); }
+@container (max-width: 480px) { .sf-tp-form { grid-template-columns: minmax(0, 1fr); } .sf-tp-table { table-layout: fixed; } .sf-tp-table td, .sf-tp-table th { overflow-wrap: anywhere; } .sf-tp-chip { white-space: normal; } }
 `;
 /** Shared by the Org tests editor tab, which reuses the pane's tables, chips and buttons. */
 export const TESTS_PANE_STYLES = STYLES;
@@ -157,7 +164,7 @@ export function runSummary(cases: readonly ScenarioCase[], results: ScenarioSuit
 function evidenceOf(detail: Detail | undefined, saved: CaseResult | undefined): CaseResult | undefined {
   if (!detail) return saved;
   const reply = [...detail.turns].reverse().find(turn => turn.role === 'agent')?.text;
-  return { outcome: detail.outcome, runId: saved?.runId ?? '', at: saved?.at ?? Date.now(), notes: detail.notes, ...(detail.observed ? { observed: detail.observed } : {}), ...(detail.judge ? { judge: detail.judge } : {}), ...(reply ? { reply } : {}) };
+  return { outcome: detail.outcome, runId: saved?.runId ?? '', at: saved?.at ?? Date.now(), notes: detail.notes, ...(detail.deterministic || saved?.deterministic ? { deterministic: detail.deterministic ?? saved?.deterministic } : {}), ...(detail.setupBlocked ? { setupBlocked: true } : {}), ...(saved?.assertions ? { assertions: saved.assertions } : {}), ...(detail.observed ? { observed: detail.observed } : {}), ...(detail.judge ? { judge: detail.judge } : {}), ...(reply ? { reply } : {}) };
 }
 
 function Rubric({ text }: { text: string }) {
@@ -177,6 +184,9 @@ export function expectLines(expect: ScenarioCase['expect']): string[] {
     ...(expect.topic ? [`Topic ${expect.topic}`] : []),
     ...(expect.actions?.length ? [`Calls ${expect.actions.join(', ')}`] : []),
     ...(expect.contains?.length ? [`Mentions ${expect.contains.map(text => `"${text}"`).join(', ')}`] : []),
+    ...(expect.maxLatencyMs !== undefined ? [`Each response ≤ ${expect.maxLatencyMs} ms`] : []),
+    ...(expect.actionChecks?.map(actionCheckLabel) ?? []),
+    ...(expect.stateChecks?.map(stateCheckLabel) ?? []),
     ...(expect.criteria ? [expect.criteria] : [])
   ];
 }
@@ -195,7 +205,7 @@ export function fixLoopPrompt(loop: Pick<FixLoop, 'id' | 'budget' | 'caseIds'>, 
   return [
     `Make these failing Agentforce test cases pass: ${names.join(', ')}.`,
     `This is fix loop ${loop.id}. You have ${loop.budget} Simulate runs and may only change ${path}.`,
-    `For each attempt, call sf_workbench with action suites.run and input { "loopId": "${loop.id}", "agentPath": "${path}", "source": <the full candidate source> }, then follow the "next" it returns.`,
+    `For each attempt, call sf_workbench with action suites.run and input { "loopId": "${loop.id}", "agentPath": "${path}", "source": <the full candidate source> }, poll suites.result with the returned jobId until completed, then follow result.next. Use a stable requestId for each attempt so retries never spend another attempt.`,
     'Stop when every case passes or no attempts are left. Then propose your best candidate with ui.command editor.proposeEdit and say which cases still fail.',
     'Do not save, publish or activate anything.'
   ].join('\n');
@@ -212,11 +222,22 @@ export function TestsPane(props: TestsPaneProps) {
   const [details, setDetails] = useState<Record<string, Detail>>({});
   const [proposal, setProposal] = useState<Record<string, CaseOutcome>>({});
   const [loop, setLoop] = useState<FixLoop | null>(null);
+  const [activeJob, setActiveJob] = useState<string | null>(null);
+  const [prepared, setPrepared] = useState<string[]>([]);
+  const jobController = useRef(new AbortController());
+  useEffect(() => {
+    jobController.current = new AbortController();
+    setPrepared([]); setActiveJob(null);
+    return () => jobController.current.abort();
+  }, [path, projectId]);
   const [busy, setBusy] = useState<string | null>(null);
   const [startedAt, setStartedAt] = useState(0);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [comparison, setComparison] = useState<{ value: SuiteComparison; source: string; cases: string } | null>(null);
+  const comparisonTarget = useRef('');
+  comparisonTarget.current = JSON.stringify([projectId, path]);
   const [filter, setFilter] = useState<Filter>('all');
   const fileInput = useRef<HTMLInputElement>(null);
   const sequence = useRef(0);
@@ -236,6 +257,7 @@ export function TestsPane(props: TestsPaneProps) {
       if (!alive.current || seq !== sequence.current) return;
       if (listed.ok !== false && Array.isArray(listed.suites)) setSuite((listed.suites as Suite[])[0] ?? null);
       else setNotice({ tone: 'error', text: listed.error || 'Could not read the scenario suite.' });
+      if (listed.ok !== false) setActiveJob((listed.job as { jobId?: string } | null)?.jobId ?? null);
       if (latest.ok !== false) setLoop((latest.loop as FixLoop | null) ?? null);
     } catch (error) {
       if (alive.current && seq === sequence.current) setNotice({ tone: 'error', text: error instanceof Error ? error.message : String(error) });
@@ -244,7 +266,7 @@ export function TestsPane(props: TestsPaneProps) {
     }
   }, [path, rpc]);
 
-  useEffect(() => { setSuite(null); setLoop(null); setDetails({}); setProposal({}); setNotice(null); setExpanded(null); setAdding(false); setFilter('all'); setLoaded(false); }, [path, projectId]);
+  useEffect(() => { setBusy(null); setSuite(null); setLoop(null); setDetails({}); setProposal({}); setComparison(null); setNotice(null); setExpanded(null); setAdding(false); setFilter('all'); setLoaded(false); }, [path, projectId]);
   useEffect(() => { setProposal({}); }, [proposalSource]);
   useEffect(() => { if (visible) void load(); }, [visible, load]);
   useRealtime(STUDIO_CHANGED_CHANNEL, payload => {
@@ -258,7 +280,7 @@ export function TestsPane(props: TestsPaneProps) {
     }
   });
   // Reconcile after missed realtime messages, and recover a run when reopening Tests.
-  const hasRun = Boolean(suite?.progress || busy === 'simulate' || busy === 'proposal' || busy === 'eval' || busy === 'reads' || busy?.startsWith('case:'));
+  const hasRun = Boolean(activeJob || suite?.progress || busy === 'simulate' || busy === 'proposal' || busy === 'compare' || busy === 'eval' || busy === 'reads' || busy?.startsWith('case:'));
   useEffect(() => {
     if (!visible || !hasRun) return;
     const timer = setInterval(() => void load(), 2000);
@@ -267,22 +289,25 @@ export function TestsPane(props: TestsPaneProps) {
 
   /** Runs one step with the busy flag and an error notice; the step returns the notice to show, if any. */
   const perform = useCallback(async (key: string, work: () => Promise<Notice | null>) => {
+    const target = comparisonTarget.current;
     setBusy(key);
     setStartedAt(Date.now());
     setNotice(null);
     try {
       const next = await work();
-      if (alive.current && next) setNotice(next);
+      if (alive.current && target === comparisonTarget.current && next) setNotice(next);
     } catch (error) {
-      if (alive.current) setNotice({ tone: 'error', text: error instanceof Error ? error.message : String(error) });
+      if (alive.current && target === comparisonTarget.current) setNotice({ tone: error instanceof SuiteStoppedError ? 'muted' : 'error', text: error instanceof Error ? error.message : String(error) });
     } finally {
-      if (alive.current) setBusy(null);
+      if (alive.current && target === comparisonTarget.current) setBusy(null);
     }
   }, []);
 
+  const background = (args: Record<string, unknown>) => runSuiteJob(rpc, { ...args, preparedCaseIds: prepared }, jobController.current.signal, id => { if (alive.current) setActiveJob(id); });
+
   const simulate = (caseIds?: string[]) => perform(caseIds ? `case:${caseIds[0]}` : 'simulate', async () => {
     setDetails({});
-    const reply = await rpc(STUDIO_RPC.suiteRun, { path: suite?.path, source, engine: 'preview', startedByUser: true, ...(threadId ? { threadId } : {}), ...(caseIds ? { caseIds } : {}) });
+    const reply = await background({ path: suite?.path, source, engine: 'preview', startedByUser: true, ...(threadId ? { threadId } : {}), ...(caseIds ? { caseIds } : {}) });
     if (reply.ok === false || !reply.suite) return { tone: 'error', text: reply.error || 'The suite could not run.' };
     if (!alive.current) return null;
     setSuite(current => ({ ...(reply.suite as Suite), sha256: current?.sha256 ?? (reply.suite as Suite).sha256 }));
@@ -291,8 +316,18 @@ export function TestsPane(props: TestsPaneProps) {
     return null;
   });
 
+  const compare = () => perform('compare', async () => {
+    const target = comparisonTarget.current;
+    const snapshot = { source, cases: JSON.stringify(suite?.cases) };
+    const reply = await background({ compare: true, source, startedByUser: true, ...(threadId ? { threadId } : {}) });
+    if (!alive.current || target !== comparisonTarget.current) return null;
+    if (reply.ok === false || !reply.comparison) return { tone: 'error', text: reply.error || 'The comparison could not run.' };
+    setComparison({ value: reply.comparison as SuiteComparison, ...snapshot, cases: reply.suite ? JSON.stringify((reply.suite as ScenarioSuite).cases) : snapshot.cases });
+    return null;
+  });
+
   const runProposal = () => perform('proposal', async () => {
-    const reply = await rpc(STUDIO_RPC.suiteRun, { path: suite?.path, source: proposalSource, engine: 'preview', store: false, startedByUser: true, ...(threadId ? { threadId } : {}) });
+    const reply = await background({ path: suite?.path, source: proposalSource, engine: 'preview', store: false, startedByUser: true, ...(threadId ? { threadId } : {}) });
     if (reply.ok === false) return { tone: 'error', text: reply.error || 'The proposal could not run.' };
     const results = (reply.results ?? {}) as Record<string, { outcome: CaseOutcome }>;
     if (alive.current) setProposal(Object.fromEntries(Object.entries(results).map(([id, row]) => [id, row.outcome])));
@@ -335,12 +370,18 @@ export function TestsPane(props: TestsPaneProps) {
     const name = field('name');
     const utterances = field('utterances').split('\n').map(line => line.trim()).filter(Boolean);
     if (!name || !utterances.length) { setNotice({ tone: 'error', text: 'A case needs a name and at least one utterance.' }); return; }
+    let extras: ReturnType<typeof parseExtraAssertions>;
+    try { extras = parseExtraAssertions({ ...(field('latency') ? { maxLatencyMs: Number(field('latency')) } : {}), ...(field('actionChecks') ? { actionChecks: JSON.parse(field('actionChecks')) } : {}), ...(field('stateChecks') ? { stateChecks: JSON.parse(field('stateChecks')) } : {}) }); }
+    catch (error) { setNotice({ tone: 'error', text: error instanceof Error ? error.message : String(error) }); return; }
     const existing = suite?.cases ?? [];
     const next: ScenarioCase = {
       id: uniqueId(name, new Set(existing.map(c => c.id))), name, utterances,
+      ...(field('prerequisites') ? { prerequisites: field('prerequisites').split('\n').map(s => s.trim()).filter(Boolean) } : {}),
       expect: {
+        ...extras,
         ...(field('topic') ? { topic: field('topic') } : {}),
         ...(list(field('actions')).length ? { actions: list(field('actions')) } : {}),
+        ...(list(field('forbiddenActions')).length ? { forbiddenActions: list(field('forbiddenActions')) } : {}),
         ...(list(field('contains')).length ? { contains: list(field('contains')) } : {}),
         ...(field('criteria') ? { criteria: field('criteria') } : {})
       }
@@ -368,7 +409,7 @@ export function TestsPane(props: TestsPaneProps) {
     const reply = await rpc(STUDIO_RPC.suiteSpec);
     if (reply.ok === false) return { tone: 'error', text: reply.error || 'The eval spec could not be written.' };
     const multi = Array.isArray(reply.multiTurn) ? reply.multiTurn.length : 0;
-    return { tone: 'ok', text: `Wrote ${String(reply.specPath)}.${multi ? ` ${multi} multi-turn case${multi === 1 ? '' : 's'} run their first turn only.` : ''}` };
+    return { tone: 'ok', text: `Wrote ${String(reply.specPath)}.${multi ? ` ${multi} multi-turn case${multi === 1 ? ' replays its' : 's replay their'} final turn with recorded history; earlier replies are fixed context.` : ''}` };
   });
 
   const failing = suite ? suite.cases.filter(c => suite.lastResults?.[c.id]?.outcome === 'fail').map(c => c.id) : [];
@@ -417,7 +458,7 @@ export function TestsPane(props: TestsPaneProps) {
   const cases = suite?.cases ?? [];
   const showProposal = Boolean(proposalSource);
   const progress = suite?.progress;
-  const running = busy !== null || Boolean(progress);
+  const running = busy !== null || Boolean(progress) || Boolean(activeJob);
   const loopLive = loop?.status === 'running';
   const summary = runSummary(cases, suite?.lastResults);
   const liveResults = progress && progress.mode === 'simulate' ? progress.results : undefined;
@@ -458,6 +499,7 @@ export function TestsPane(props: TestsPaneProps) {
         </div>}
         <div className="sf-tp-bar" role="toolbar" aria-label="Test actions">
           <button type="button" className="sf-tp-btn is-primary" disabled={running || !cases.length || !source.trim()} onClick={() => void simulate()}>{busy === 'simulate' ? 'Running…' : 'Run all in Simulate'}</button>
+          <button type="button" className="sf-tp-btn" disabled={running || !cases.length || !source.trim()} title="Run the saved source and editor draft on the same cases. Results do not replace ordinary suite results." onClick={() => void compare()}>{busy === 'compare' ? 'Comparing…' : 'Compare saved vs draft'}</button>
           <button type="button" className="sf-tp-btn" disabled={running || !cases.length} onClick={() => void perform('eval', evaluate)}>{busy === 'eval' || busy === 'reads' ? 'Running org eval…' : 'Run org eval'}</button>
           {showProposal && <button type="button" className="sf-tp-btn" disabled={running || !cases.length} onClick={() => void runProposal()}>{busy === 'proposal' ? 'Running…' : 'Run with proposal'}</button>}
           <button type="button" className="sf-tp-btn" disabled={running} aria-expanded={adding} onClick={() => setAdding(open => !open)}>+ Case</button>
@@ -469,17 +511,25 @@ export function TestsPane(props: TestsPaneProps) {
             title={dirty ? 'Save first: the agent starts from the file on disk.' : !failing.length ? 'Run in Simulate first; the fix loop takes the failing cases.' : undefined}
             onClick={() => void startLoop()}>{failing.length ? `Make ${failing.length === 1 ? 'this' : 'these'} pass` : 'Make these pass'}</button>}
         </div>
+        {activeJob && <button type="button" className="sf-tp-btn" onClick={() => void rpc(STUDIO_RPC.suiteStop, { jobId: activeJob }).then(() => load())}>Stop suite</button>}
         {hasRun && <SuiteRunProgress progress={progress} cases={busy?.startsWith('case:') ? cases.filter(c => busy === `case:${c.id}`) : cases} startedAt={startedAt} orgEval={busy === 'eval' || busy === 'reads'} />}
         {notice && <div className={`sf-tp-message is-${notice.tone}`} role={notice.tone === 'error' ? 'alert' : 'status'}>
           <span>{notice.text}</span>
           {notice.allowReads && <button type="button" className="sf-tp-btn" disabled={running} onClick={() => void allowReads()}>Allow reads…</button>}
         </div>}
+        {comparison && <SuiteComparisonView comparison={comparison.value} cases={cases} stale={comparison.source !== source || comparison.cases !== JSON.stringify(suite?.cases)} />}
         {adding && <form className="sf-tp-form" aria-label="New test case" onSubmit={addCase}>
           <label>Name<input name="name" required maxLength={200} /></label>
           <label>Expected topic<input name="topic" maxLength={200} /></label>
           <label className="is-wide">Utterances, one per line<textarea name="utterances" rows={2} required /></label>
           <label>Expected actions, comma separated<input name="actions" /></label>
+          <label>Forbidden actions, comma separated (use * for all)<input name="forbiddenActions" /></label>
+          <label className="is-wide">Setup prerequisites, one per line<textarea name="prerequisites" rows={2} maxLength={5000} placeholder="Account context, saved address form, completed document generation…" /></label>
           <label>Reply mentions, comma separated<input name="contains" /></label>
+          <label>Maximum response latency (ms)<input name="latency" type="number" min={1} max={300000} /></label>
+          <label className="is-wide">Action field checks (JSON)<textarea name="actionChecks" rows={2} maxLength={8000} placeholder={'[{"action":"LookupOrder","side":"output","field":"status","operator":"equals","value":"Found"}]'} /></label>
+          <label className="is-wide">Final state checks (JSON)<textarea name="stateChecks" rows={2} maxLength={8000} placeholder={'[{"variable":"orderExists","value":false}]'} /></label>
+          <p className="is-wide sf-tp-foot">Action checks use equals, contains, less_than or greater_than. Missing or private evidence is Unclear. Latency and field checks run in Simulate.</p>
           <label className="is-wide">Criteria for the AI judge<input name="criteria" maxLength={4000} /></label>
           <div className="sf-tp-bar is-wide"><button type="submit" className="sf-tp-btn is-primary" disabled={running}>Add case</button>
             <button type="button" className="sf-tp-btn" onClick={() => setAdding(false)}>Cancel</button></div>
@@ -509,8 +559,8 @@ export function TestsPane(props: TestsPaneProps) {
             const saved = pending ? undefined : liveResults?.[c.id] ?? suite?.lastResults?.[c.id];
             const evidence = pending ? undefined : liveResults?.[c.id] ?? evidenceOf(details[c.id], saved);
             const checks = caseChecks(c.expect, evidence);
-            const assertions = checks.filter(check => check.kind === 'topic' || check.kind === 'action');
-            const rubric = [...(c.expect.contains?.length ? [`Mentions ${c.expect.contains.map(text => `"${text}"`).join(', ')}`] : []), ...(c.expect.criteria ? [c.expect.criteria] : [])].join(' · ');
+            const assertions = checks.filter(check => check.kind === 'topic' || check.kind === 'action' || check.kind === 'forbidden');
+            const rubric = [...(c.expect.maxLatencyMs !== undefined ? [`Responses ≤ ${c.expect.maxLatencyMs} ms`] : []), ...(c.expect.actionChecks?.map(actionCheckLabel) ?? []), ...(c.expect.stateChecks?.map(stateCheckLabel) ?? []), ...(c.expect.contains?.length ? [`Mentions ${c.expect.contains.map(text => `"${text}"`).join(', ')}`] : []), ...(c.expect.criteria ? [c.expect.criteria] : [])].join(' · ');
             const simulated = saved?.outcome;
             const multiTurn = c.utterances.length > 1;
             const reason = failureReason(evidence);
@@ -524,16 +574,18 @@ export function TestsPane(props: TestsPaneProps) {
                   <div className="sf-tp-sub">“{c.utterances[0]}”</div></td>
                 <td>
                   {assertions.length > 0 && <div className="sf-tp-checks">{assertions.map(check => <span key={`${check.kind}:${check.target}`} className={`sf-tp-check is-${check.state}`} title={check.actual}>
-                    {check.state === 'na' ? '' : `${MARK[check.state]} `}{check.kind === 'topic' ? `topic ${check.target}` : check.target}</span>)}</div>}
+                    {check.state === 'na' ? '' : `${MARK[check.state]} `}{check.kind === 'topic' ? `topic ${check.target}` : check.kind === 'forbidden' ? `Never ${check.target}` : check.target}</span>)}</div>}
                   <Rubric text={rubric} />
                   {!checks.length && <span className="sf-tp-sub">No checks</span>}
                 </td>
-                <td>{pending ? <span className={`sf-tp-chip${active ? ' is-running' : ''}`}>{active ? 'Running…' : 'Queued'}</span> : <Chip outcome={busy === `case:${c.id}` ? undefined : simulated} />}</td>
-                <td>{orgOutcome ? <Chip outcome={orgOutcome} title={multiTurn ? 'The org eval runs the first turn only.' : undefined} />
-                  : <span className="sf-tp-na" title={multiTurn ? 'The org eval runs the first turn only.' : 'Run org eval against the published agent.'}>Not run</span>}</td>
+                <td>{saved?.setupBlocked ? <span className="sf-tp-chip">Setup required</span> : pending ? <span className={`sf-tp-chip${active ? ' is-running' : ''}`}>{active ? 'Running…' : 'Queued'}</span> : <Chip outcome={busy === `case:${c.id}` ? undefined : simulated} />}{saved && <div className="sf-tp-sub">Checks: {saved.deterministic ?? 'not recorded'}<br />AI: {saved.judge ?? 'not evaluated'}</div>}</td>
+                <td>{orgOutcome ? <Chip outcome={orgOutcome} title={multiTurn ? suite?.lastEval?.historyReplay ? 'Final-turn replay with recorded history; earlier replies are fixed context. Use Simulate to rerun the entire conversation.' : 'Legacy evaluation tested only the opening message. Run a new evaluation to replay the final turn with history.' : undefined} />
+                  : <span className="sf-tp-na" title={multiTurn ? 'Final-turn replay with recorded history; earlier replies are fixed context. Use Simulate to rerun the entire conversation.' : 'Run org eval against the published agent.'}>Not run</span>}</td>
                 {showProposal && <td><Chip outcome={progress?.mode === 'proposal' ? progress.results[c.id]?.outcome : proposal[c.id]} /></td>}
               </tr>
               {open && <tr className="sf-tp-detail"><td colSpan={showProposal ? 5 : 4}>
+                {c.prerequisites?.length ? <div className="sf-tp-message is-muted"><strong>Setup required</strong><span>{c.prerequisites.join('; ')}</span><label><input type="checkbox" checked={prepared.includes(c.id)} onChange={e => setPrepared(ids => e.target.checked ? [...ids, c.id] : ids.filter(id => id !== c.id))} /> I prepared this case for this session</label><span>Message replay does not submit forms or complete asynchronous work. Simulated results do not prove live delivery.</span></div> : null}
+                {evidence && <p className="sf-tp-foot">Deterministic checks: {evidence.deterministic ?? 'not recorded'} · AI opinion: {evidence.judge ?? 'not evaluated'} · Trace: {evidence.observed?.traceComplete === false ? 'incomplete' : evidence.observed?.traced ? 'available' : 'unavailable'}</p>}
                 <div className="sf-tp-compare">
                   <div><h4>Expected</h4><div className="sf-tp-list">
                     {checks.length ? checks.map(check => <div key={`${check.kind}:${check.target}`} className="sf-tp-line"><span className="sf-tp-mark is-expect">•</span><span>{check.expected}</span></div>)
@@ -560,7 +612,7 @@ export function TestsPane(props: TestsPaneProps) {
           })}</tbody>
         </table>}
         {cases.length > 0 && !shown.length && <div className="sf-tp-empty">No {filter === 'fail' ? 'failing' : 'passing'} cases.</div>}
-        <p className="sf-tp-foot">Simulate runs the editor source{dirty ? ', including unsaved changes' : ''}. Org eval runs <code>sf agent test run-eval</code> against the agent published on the org; a pass counts as Release eval evidence.</p>
+        <p className="sf-tp-foot">Simulate runs the editor source{dirty ? ', including unsaved changes' : ''}. Org eval runs <code>sf agent test run-eval</code> against the agent published on the org. Multi-turn exports replay the final message with captured history; Simulate reruns all turns. A pass counts as Release eval evidence for the exported checks only.</p>
       </>}
       {view === 'org' && <OrgTestsView pluginId={pluginId} projectId={projectId} threadId={threadId} path={path} visible={visible} onAskAgent={onAskAgent} call={props.call} requestApproval={props.requestApproval} renderLocalSuite={renderLocalSuite} />}
       {simulationsView}

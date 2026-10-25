@@ -1,0 +1,62 @@
+[
+  {
+    "caption": "Squads: a team of agents that plan, split and deliver work together",
+    "ms": 5116
+  },
+  {
+    "caption": "Two ways to build one. The quickest: ask an agent",
+    "ms": 4596
+  },
+  {
+    "caption": "The agent writes the squad into your project",
+    "ms": 3204
+  },
+  {
+    "caption": "It shows up in Settings \u2192 Squads, ready to launch",
+    "ms": 2789
+  },
+  {
+    "caption": "Or build it yourself: New squad",
+    "ms": 4276
+  },
+  {
+    "caption": "Add one slot per role, each backed by a persona",
+    "ms": 4864
+  },
+  {
+    "caption": "Crown the orchestrator: it starts first, plans and delegates",
+    "ms": 4936
+  },
+  {
+    "caption": "Optional: opening prompt, default project, worktree and launch policy",
+    "ms": 5735
+  },
+  {
+    "caption": "Saved: your squad is in the catalogue, ready to launch",
+    "ms": 2765
+  },
+  {
+    "caption": "Launch: New agent \u2192 Squad, then describe the goal",
+    "ms": 4986
+  },
+  {
+    "caption": "The orchestrator plans; workers pick up tasks in parallel",
+    "ms": 4495
+  },
+  {
+    "caption": "Flow view shows who is working and how work hands off",
+    "ms": 3693
+  },
+  {
+    "caption": "When the squad needs a decision, it asks you in the Inbox",
+    "ms": 3656
+  },
+  {
+    "caption": "Answer once, and the squad finishes the job",
+    "ms": 2899
+  },
+  {
+    "caption": "Squads: ask an agent or build it yourself, then launch it for any goal",
+    "ms": 5231
+  }
+]

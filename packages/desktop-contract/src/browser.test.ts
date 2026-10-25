@@ -9,6 +9,7 @@ import {
   parseDesktopBrowserFindInPageRequest,
   parseDesktopBrowserFindResult,
   parseDesktopBrowserSetBoundsRequest,
+  parseDesktopBrowserSetVisibleRequest,
   parseDesktopBrowserScopedOpenTabRequest,
   parseDesktopBrowserState,
   parseDesktopBrowserStopFindInPageRequest,
@@ -63,6 +64,18 @@ describe('desktop browser bounds containment', () => {
 });
 
 describe('desktop browser IPC schemas', () => {
+  it('validates temporary browser snapshot requests without weakening visibility validation', () => {
+    const request = { tabId: 'browser', visible: false };
+    for (const preserveSnapshot of [true, false]) {
+      const value = { ...request, preserveSnapshot };
+      expect(parseDesktopBrowserSetVisibleRequest(value)).toEqual({ success: true, data: value });
+    }
+    expect(parseDesktopBrowserSetVisibleRequest(request)).toEqual({ success: true, data: request });
+    for (const value of [null, { ...request, preserveSnapshot: 'true' }, { ...request, visible: 0 },
+      { ...request, tabId: '' }, { ...request, unknown: true }]) {
+      expect(parseDesktopBrowserSetVisibleRequest(value)).toEqual({ success: false });
+    }
+  });
   it('accepts a well-formed attach request and rejects bad shapes', () => {
     expect(
       parseDesktopBrowserAttachRequest({

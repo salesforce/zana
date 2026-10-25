@@ -77,3 +77,16 @@ describe('official Flow frame', () => {
     expect(document.activeElement).toBe(button);
   });
 });
+
+it('resets the official viewer explicitly after a resize without losing its Flow snapshot', () => {
+  render(<FlowVisualization {...props} />);
+  const before = screen.getByTitle('Salesforce Flow visualizer') as HTMLIFrameElement;
+  request(before);
+  fireEvent.click(screen.getByRole('button', { name: 'Reset Flow view' }));
+  const after = screen.getByTitle('Salesforce Flow visualizer') as HTMLIFrameElement;
+  expect(after).not.toBe(before);
+  expect(screen.getByText('Drawing Flow…')).toBeTruthy();
+  const post = vi.spyOn(after.contentWindow!, 'postMessage').mockImplementation(() => {});
+  request(after);
+  expect(post).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ data: props.visualization.data }) }), '*');
+});

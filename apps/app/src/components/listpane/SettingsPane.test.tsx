@@ -37,11 +37,14 @@ vi.mock('../../lib/settings-search/snapshot.js', () => ({
   }
 }));
 vi.mock('../mobile-nav-context.js', () => ({ useMobileNavDismiss: () => h.dismiss }));
+vi.mock('../../lib/app-surface.js', () => ({ hasDesktopBridge: () => true }));
+vi.mock('../../views/settings/SharedInstancePicker.js', () => ({ SharedInstancePicker: () => <p>Instance picker opened</p> }));
 vi.mock('../../lib/product-client.js', () => ({
   product: { pluginApps: { list: h.pluginList, getSettings: async () => ({ descriptors: {}, values: {} }) } }
 }));
 
 import { SettingsPane, groupHitsByPage, shouldAutofocusSettingsSearch } from './SettingsPane.js';
+import { InstanceMenu } from '../InstanceMenu.js';
 import { ensureSettingsSearchProviders } from '../../lib/settings-search/runtime.js';
 import type { SettingsSearchHit } from '../../lib/settings-search/index.js';
 
@@ -55,8 +58,17 @@ function Hash() {
 }
 
 function mount() {
-  return render(<MemoryRouter initialEntries={['/settings/global']}><SettingsPane /><Location /><Hash /></MemoryRouter>);
+  return render(<MemoryRouter initialEntries={['/settings/global']}><InstanceMenu /><SettingsPane /><Location /><Hash /></MemoryRouter>);
 }
+
+it('opens another Zana from the Settings menu and search without mixing it into setup', async () => {
+  mount();
+  const search = screen.getByRole('combobox', { name: 'Search settings' });
+  fireEvent.change(search, { target: { value: 'Open another Zana' } });
+  fireEvent.click(screen.getAllByRole('option').find(option => option.textContent?.includes('Open another Zana'))!);
+  expect(await screen.findByRole('dialog', { name: 'Open another Zana' })).toBeTruthy();
+  expect(screen.getByText('Instance picker opened')).toBeTruthy();
+});
 
 beforeEach(() => {
   h.dismiss = null;

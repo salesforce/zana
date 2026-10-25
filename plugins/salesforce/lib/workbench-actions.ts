@@ -23,10 +23,10 @@ export const WORKBENCH_ACTIONS = {
   'files.list': ['agentFiles.list', 'local', 'List local Agentforce sources'],
   'files.read': ['agentFiles.read', 'local', 'Read local source and revision: path'],
   'files.write': ['agentFiles.write', 'local', 'Save local source: path, content, expectedSha256'],
-  'source.parse': ['agentScript.parse', 'local', 'Diagnostics, graph and actions: source'],
+  'source.parse': ['agentScript.parse', 'local', 'Diagnostics, graph and actions: source or confined path; optional expectedSha256 pins the saved revision'],
   'source.query': ['agentScript.query', 'local', 'Language service: source, query, line, column'],
   'actions.source': ['agentActions.source', 'conditional', 'Inspect Apex/Flow implementation: target, origin, candidate'],
-  'studio.start': ['agentLab.start', 'org', 'Preview/rehearsal of a source snapshot: source, engine, model, scenario; optional contextVariables [{name,type,value}] (linked names $Context.Name, external state names bare), or presetId with path to start from a saved context preset. Initial values are pinned to the run'],
+  'studio.start': ['agentLab.start', 'org', 'Preview/rehearsal of a source snapshot: source or confined path (optional expectedSha256), engine, model, scenario; optional contextVariables [{name,type,value}] (linked names $Context.Name, external state names bare), or presetId with path to start from a saved context preset. Initial values are pinned to the run'],
   'context.fields': ['agentPreview.context', 'local', 'Preview context a local agent accepts: path (or source). Returns fields: name, label, type, defaultValue, description, source (linked $Context.* names read a session field such as @MessagingSession.Id)'],
   'contextPresets.list': ['agentPreview.presets.list', 'local', 'Saved preview context presets of one agent and the selected org: path. Returns presets (id, name, revision, values, savedBy)'],
   'contextPresets.save': ['agentPreview.presets.save', 'local', 'Create or update a preview context preset the user sees in Preview: path, name (1-60), values [{name, value, type?}] (type defaults to the declared one; undeclared names become manual variables). Update with id and expectedRevision. 20 per agent and org. To show it, ui.command context.set {presetId}'],
@@ -55,7 +55,11 @@ export const WORKBENCH_ACTIONS = {
   'comments.update': ['studio.comments.update', 'local', 'Edit the body of your own open review comment: id, body'],
   'comments.delete': ['studio.comments.delete', 'local', 'Delete your own review comment: id'],
   'suites.list': ['studio.suites.list', 'local', 'List scenario suites and last results'],
-  'suites.run': ['studio.suites.run', 'org', 'Run a scenario suite in Simulate: agentPath; optional source (a candidate, else the saved file), caseIds, loopId. With loopId, each run spends one attempt of a fix loop the user started, runs only its cases and is not stored; follow the returned next'],
+  'suites.run': ['studio.suites.start', 'org', 'Start a background scenario suite in Simulate: agentPath; returns jobId immediately; poll suites.result and read result.next when completed; cancel with suites.stop; optional source (a candidate, else the saved file), caseIds, loopId. With loopId, each run spends one attempt of a fix loop the user started, runs only its cases and is not stored; follow the returned next'],
+  'suites.start': ['studio.suites.start', 'org', 'Start a background suite: same input as suites.run, optional requestId for retry deduplication. Returns jobId immediately; poll suites.result, cancel with suites.stop. Results survive view closure; retained for this plugin session.'],
+  'suites.result': ['studio.suites.result', 'local', 'Read background suite status and result: jobId. Missing/expired jobs are explicit; never rerun automatically.'],
+  'suites.stop': ['studio.suites.stop', 'local', 'Cancel background suite and close its active preview: jobId'],
+  'suites.compare': ['studio.suites.start', 'org', 'Compare the saved local agent against candidate source on the same complete scenario suite (at most 20 cases): agentPath, source. Both run in Simulate, with identical messages and context. Returns jobId immediately; poll suites.result for comparison with source hashes, reference and candidate results, replies, actions and maximum response latency. Does not save the candidate or replace ordinary results'],
   'simulations.start': ['studio.simulations.start', 'org', 'Simulation lab: run up to 12 AI role-play conversations against a local agent, 4 at a time. An AI customer plays each scenario, the agent answers in Simulate (engine preview, simulated actions; default) or rehearsal, and an AI judge grades the transcript against the criteria. Input: agentPath; optional source (a candidate, else the saved file), scenarios [{name?, persona, goal, opening, criteria, maxTurns 1-8}] (default: Happy path, Missing details, Stay in scope), repeats 1-3, parallel 1-4, contextVariables, model. Returns batchId at once; read simulations.result. To show it, ui.command simulations.open {batchId}. Verdicts are AI opinions, never release evidence'],
   'simulations.result': ['studio.simulations.get', 'local', 'Read a simulation batch: batchId; optional waitMs (at most 60000) waits for it to finish, transcripts false omits turns. Per lane: scenario, status (queued/running/pass/fail/inconclusive/error/stopped), verdict reason and evidence, transcript; next says what to do'],
   'simulations.list': ['studio.simulations.list', 'local', 'List simulation batches of this project, newest first, without transcripts: optional agentPath'],
@@ -80,9 +84,18 @@ export const isWorkbenchAction = (name: string): name is WorkbenchAction => Obje
 export const actionParameters = {
   type: 'object', properties: { action: { type: 'string', enum: workbenchActionNames }, input: { type: 'object', description: 'Action-specific fields; use capabilities for parameter descriptions.' } }, required: ['action'],
 };
-export function actionInput(value: unknown): Record<string, unknown> {
+export function actionInput(value: unknown, action?: string): Record<string, unknown> {
   if (value === undefined) return {};
-  if (!value || typeof value !== 'object' || Array.isArray(value) || JSON.stringify(value).length > 200_000) throw Error('Action input must be an object of at most 200,000 characters.');
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('Action input must be an object of at most 200,000 characters.');
+  const bounded = { ...value } as Record<string, unknown>;
+  // Source-bearing operations share the editor's 10 MB bound; unrelated input
+  // keeps the small envelope. Never grant this exception to arbitrary fields.
+  const field = action === 'files.write' ? 'content' : ['studio.start', 'source.parse', 'source.query', 'suites.run', 'suites.start', 'suites.compare', 'draft.create', 'simulations.start'].includes(action ?? '') ? 'source' : null;
+  if (field && typeof bounded[field] === 'string') {
+    if ((bounded[field] as string).length > 10 * 1024 * 1024) throw Error('Agent source exceeds 10 MB.');
+    delete bounded[field];
+  }
+  if (JSON.stringify(bounded).length > 200_000) throw Error('Action input must be an object of at most 200,000 characters.');
   // startedByUser marks a click in the Studio; an agent can never claim it.
   const { projectId: _project, threadId: _thread, orgAlias: _alias, startedByUser: _user, ...input } = value as Record<string, unknown>;
   return input;

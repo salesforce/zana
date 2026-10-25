@@ -1,8 +1,10 @@
+import { openThreadToolLauncher } from './fixtures/thread-tool-panel.js';
 import { test, expect } from './fixtures/app.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
 test('secondary panel tabs scroll without overlapping fixed controls in small windows', async ({ app }, testInfo) => {
-  const { window } = app;
-  const titles = ['supabase-adapter.ts', 'native-build-configuration.ts', 'deployment-notes.md', 'integration-results.md'];
+  const { window, electron } = app;
+  const titles = ['browser-with-a-very-long-title-that-should-stay-compact.html', 'native-build-configuration.ts', 'deployment-notes.md', 'integration-results.md'];
   await window.evaluate((titles) => {
     localStorage.setItem('zcc.secondaryPanel.e2e-panel-layout', JSON.stringify({
       version: 1, isOpen: true, isMaximized: false, widthPx: 352, activeId: 'tab-3',
@@ -35,7 +37,7 @@ test('secondary panel tabs scroll without overlapping fixed controls in small wi
         ));
       })).toBe(true);
     }
-    await window.screenshot({ path: testInfo.outputPath(`secondary-panel-${width}.png`), animations: 'disabled' });
+    await captureElectronScreenshot(electron, window, testInfo.outputPath(`secondary-panel-${width}.png`));
   }
 
   // Keyboard focus scrolls offscreen tabs into view; their close buttons stay reachable.
@@ -51,9 +53,20 @@ test('secondary panel tabs scroll without overlapping fixed controls in small wi
       return node.contains(document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2));
     })).toBe(true);
   }
-  await tabs.getByRole('button', { name: `Close ${titles[3]}`, exact: true }).click();
-  await expect(tabs.locator('.thread-secondary-tab')).toHaveCount(3);
-  await panel.getByTestId('thread-secondary-new-tab').click();
+  for (const title of titles.slice(1)) await tabs.getByRole('button', { name: `Close ${title}`, exact: true }).click();
+  await expect(tabs.locator('.thread-secondary-tab:not(.is-pinned)')).toHaveCount(1);
+  await expect(tabs.locator('.thread-secondary-tab.is-pinned')).toHaveCount(1);
+  const tabBounds = (await tabs.locator('.thread-secondary-tab:not(.is-pinned)').boundingBox())!;
+  const add = panel.getByTestId('thread-secondary-new-tab');
+  const addBounds = (await add.boundingBox())!;
+  expect(addBounds.x - tabBounds.x - tabBounds.width).toBeLessThanOrEqual(8);
+  await add.click();
+  await expect(window.getByRole('menuitem', { name: 'Terminal', exact: true })).toBeFocused();
+  await window.keyboard.press('End');
+  await expect(window.getByRole('menuitem', { name: 'More tools…' })).toBeFocused();
+  await window.keyboard.press('Escape');
+  await expect(add).toBeFocused();
+  await openThreadToolLauncher(panel);
   await expect(tabs.locator('.thread-secondary-tab.is-active')).toContainText('New Tab');
   await expect(panel.getByTestId('thread-new-tab-page')).toBeVisible();
   await panel.getByTestId('thread-secondary-maximize').click();
@@ -64,8 +77,8 @@ test('secondary panel tabs scroll without overlapping fixed controls in small wi
   await expect(panel).toHaveCount(0);
   await window.getByTestId('thread-secondary-show').click();
   await expect(panel).toBeVisible();
-  await expect(tabs.locator('.thread-secondary-tab')).toHaveCount(4);
+  await expect(tabs.locator('.thread-secondary-tab:not(.is-pinned)')).toHaveCount(2);
   await window.evaluate(() => window.cc.config.set({ theme: 'light' }));
   await expect(window.locator('html')).toHaveAttribute('data-theme', 'light');
-  await chrome.screenshot({ path: testInfo.outputPath('secondary-panel-header-light.png'), animations: 'disabled' });
+  await captureElectronScreenshot(electron, window, testInfo.outputPath('secondary-panel-header-light.png'));
 });

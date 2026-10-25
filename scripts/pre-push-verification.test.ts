@@ -2,8 +2,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { homedir, tmpdir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
-import { beforeEach, expect, it, vi } from 'vitest';
-import { acquireSnapshotSlot, changedPaths, configuredAliases, createPhaseTimer, githubRepository, parseTuples, runFastVerification, runFullVerification, runPrePush, selectPush, selectedTestFiles, snapshotCacheRoot, snapshotKey, spawnCommand, windowsPnpm, withSnapshot } from './pre-push-verification.mjs';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { acquireSnapshotSlot, changedPaths, configuredAliases, createPhaseTimer, githubRepository, parseTuples, prepareTinynodReview, runFastVerification, runFullVerification, runPrePush, runPrePushWithReview, selectPush, selectedTestFiles, snapshotCacheRoot, snapshotKey, spawnCommand, windowsPnpm, withSnapshot } from './pre-push-verification.mjs';
 
 // Spy on spawnSync while keeping real spawning, so tests can check what the hook starts.
 vi.mock('node:child_process', async (importOriginal) => {
@@ -25,6 +25,9 @@ const services = (paths: string[] = ['apps/server/src/index.ts']) => ({
 beforeEach(() => {
   vi.stubEnv('ZANA_PREPUSH_FRESH_SNAPSHOT', '1');
   vi.stubEnv('ZANA_PREPUSH_TIMING', '');
+  // The advisory tinynod review is opt-in; keep a developer's own setting out of these tests.
+  vi.stubEnv('TINYNOD_SKIP_HOOK', '1');
+  vi.stubEnv('ZANA_TINYNOD_REVIEW', '');
 });
 
 it('accepts only canonical GitHub remote spellings and configured aliases', () => {
@@ -313,8 +316,12 @@ it('resolves Windows pnpm to its exe or to the script its cmd shim runs, in PATH
     const npm = pnpmDirectory(root, 'npm', { 'pnpm.cmd': NPM_SHIM });
     const exe = pnpmDirectory(root, 'exe', { 'pnpm.exe': '' });
     const legacy = pnpmDirectory(root, 'legacy', { 'pnpm.cmd': '@"%~dp0\\node_modules\\pnpm\\bin\\pnpm.cjs" %*\r\n' });
+    // Real Corepack shim captured on Windows from `corepack enable` (%~dp0\node_modules\corepack\dist\pnpm.js):
+    const corepackShim = '@SETLOCAL\r\n@IF EXIST "%~dp0\\node.exe" (\r\n  "%~dp0\\node.exe"  "%~dp0\\node_modules\\corepack\\dist\\pnpm.js" %*\r\n) ELSE (\r\n  @SET PATHEXT=%PATHEXT:;.JS;=;%\r\n  node  "%~dp0\\node_modules\\corepack\\dist\\pnpm.js" %*\r\n)\r\n';
+    const corepack = pnpmDirectory(root, 'corepack', { 'pnpm.cmd': corepackShim });
     const unknown = pnpmDirectory(root, 'unknown', { 'pnpm.cmd': '@pnpm-launcher.exe %*\r\n' });
     expect(windowsPnpm(`${empty};"${npm}";${exe}`)).toEqual([process.execPath, join(npm, 'node_modules', 'pnpm', 'bin', 'pnpm.mjs')]);
+    expect(windowsPnpm(corepack)).toEqual([process.execPath, join(corepack, 'node_modules', 'corepack', 'dist', 'pnpm.js')]);
     expect(windowsPnpm(`${exe};${npm}`)).toEqual([join(exe, 'pnpm.exe')]);
     expect(windowsPnpm(`;${legacy}`)).toEqual([process.execPath, join(legacy, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')]);
     expect(windowsPnpm(unknown)).toEqual(['pnpm']);
@@ -878,4 +885,391 @@ it('restores a reused snapshot to exactly the pushed tree with real Git', () => 
     rmSync(root, { recursive: true, force: true });
     rmSync(cacheRoot, { recursive: true, force: true });
   }
+});
+
+// ---- Advisory tinynod review integration ----
+
+const REMOTE = 'https://github.com/salesforce/zana';
+const PUSH_INPUT = `${feature.localRef} ${OID} ${feature.remoteRef} ${BASE}\n`;
+
+function fakeAdapter(overrides: Record<string, unknown> = {}) {
+  const events: string[] = [];
+  const trees: string[] = [];
+  const review = { child: { pid: 4242 }, dir: '/tmp/none' };
+  const lock = { release: vi.fn(() => events.push('lock-released')) };
+  const cleanup = { setLock: vi.fn(), setChild: vi.fn(), track: vi.fn(), untrack: vi.fn(), cleanup: vi.fn(() => events.push('cleanup')), dispose: vi.fn() };
+  const adapter = {
+    resolveEnablement: vi.fn(() => ({ enabled: true, source: 'test' })),
+    deriveReviewTarget: vi.fn(() => ({ oid: OID, base: BASE })),
+    checkTinynodVersion: vi.fn(() => ({ ok: true, version: '2.5.0' })),
+    acquireReviewLock: vi.fn(() => lock),
+    installAbortCleanup: vi.fn(() => cleanup),
+    withRepoIdentityEnv: vi.fn((env: object) => ({ ...env, LOG_LEVEL: 'warn' })),
+    createReviewTree: vi.fn(() => { const tree = mkdtempSync(join(tmpdir(), 'tn-fake-tree-')); trees.push(tree); return tree; }),
+    startReview: vi.fn(() => { events.push('review-started'); return review; }),
+    finishReview: vi.fn(async () => ({ stdout: '' })),
+    classifyReview: vi.fn(() => ({ status: 'clean', message: 'no findings', findings: [] })),
+    ledgerEntryFor: vi.fn(() => null),
+    recordAndPruneHistory: vi.fn(),
+    ...overrides,
+  };
+  return { adapter, events, lock, cleanup, review, trees };
+}
+
+const withReview = (adapter: object) => (context: object) => prepareTinynodReview({ ...(context as Record<string, unknown>), adapter } as never);
+
+describe('prepareTinynodReview', () => {
+  const base = (adapter: object) => ({
+    tuples: [feature], selection: { action: 'fast', reason: 'r' }, root: process.cwd(), aliases: {},
+    checks: { remoteVerified: true, hasObject: () => true, mergeBase: () => BASE, isAncestor: () => true },
+    log: vi.fn(), error: vi.fn(), adapter,
+  });
+
+  it('stays silent when disabled, and warns about invalid settings', () => {
+    const { adapter } = fakeAdapter({ resolveEnablement: () => ({ enabled: false }) });
+    const context = base(adapter);
+    expect(prepareTinynodReview(context as never)).toBeNull();
+    expect(context.log).not.toHaveBeenCalled();
+    const warned = fakeAdapter({ resolveEnablement: () => ({ enabled: false, warning: 'invalid value' }) });
+    const second = base(warned.adapter);
+    expect(prepareTinynodReview(second as never)).toBeNull();
+    expect(second.error).toHaveBeenCalledWith('pre-push: tinynod review: invalid value');
+  });
+
+  it('reads git enablement from the developer root', () => {
+    const readGitEnablement = vi.fn(() => 'true');
+    const { adapter } = fakeAdapter({ readGitEnablement, resolveEnablement: ({ readConfig }: { readConfig: () => string }) => ({ enabled: readConfig() === 'true' }) });
+    const context = { ...base(adapter), root: process.cwd() };
+    expect(prepareTinynodReview(context as never)).not.toBeNull();
+    expect(readGitEnablement).toHaveBeenCalledWith(process.cwd(), expect.anything());
+  });
+
+  it('does nothing for an aborted selection', () => {
+    const { adapter } = fakeAdapter();
+    expect(prepareTinynodReview({ ...base(adapter), selection: { action: 'abort', reason: 'x' } } as never)).toBeNull();
+    expect(adapter.deriveReviewTarget).not.toHaveBeenCalled();
+  });
+
+  it('reports a docs-only push as skipped without a snapshot', () => {
+    const { adapter } = fakeAdapter();
+    const context = { ...base(adapter), selection: { action: 'skip', reason: 'verified inert prose only' } };
+    expect(prepareTinynodReview(context as never)).toBeNull();
+    expect(context.log).toHaveBeenCalledWith('pre-push: tinynod review skipped: docs-only push (no snapshot)');
+    const deletion = { ...base(adapter), selection: { action: 'skip', reason: 'ref deletion only' } };
+    prepareTinynodReview(deletion as never);
+    expect(deletion.log).toHaveBeenCalledWith('pre-push: tinynod review skipped: ref deletion only');
+  });
+
+  it.each([
+    ['no derivable target', { deriveReviewTarget: () => ({ skip: 'protected ref refs/heads/main' }) }, 'protected ref refs/heads/main'],
+    ['old tinynod', { checkTinynodVersion: () => ({ ok: false, reason: 'tinynod 2.4.0 is older than the required 2.5.0' }) }, 'older than the required'],
+    ['a busy lock', { acquireReviewLock: () => null }, 'another review is running'],
+  ])('skips with a reason for %s', (_name, overrides, text) => {
+    const { adapter } = fakeAdapter(overrides);
+    const context = base(adapter);
+    expect(prepareTinynodReview(context as never)).toBeNull();
+    expect(context.log).toHaveBeenCalledWith(expect.stringContaining(text));
+  });
+
+  it('never throws', () => {
+    const { adapter } = fakeAdapter({ deriveReviewTarget: () => { throw new Error('kaboom'); } });
+    const context = base(adapter);
+    expect(prepareTinynodReview(context as never)).toBeNull();
+    expect(context.error).toHaveBeenCalledWith(expect.stringContaining('kaboom'));
+  });
+
+  it('skips when there is no git common directory', () => {
+    const { adapter } = fakeAdapter();
+    const context = { ...base(adapter), root: join(tmpdir(), 'definitely-not-a-repo-xyz') };
+    expect(prepareTinynodReview(context as never)).toBeNull();
+    expect(context.log).toHaveBeenCalledWith(expect.stringContaining('no git common directory'));
+  });
+
+  it('maps the snapshot origin back to the developer remote for the review environment', () => {
+    const makeRepo = (origin: string) => {
+      const dir = mkdtempSync(join(tmpdir(), 'tn-origin-'));
+      execFileSync('git', ['init', '-q'], { cwd: dir });
+      execFileSync('git', ['remote', 'add', 'origin', origin], { cwd: dir });
+      return dir;
+    };
+    const developer = makeRepo('git@github.com:salesforce/zana.git');
+    const snapshot = makeRepo('/developer/checkout');
+    try {
+      const { adapter } = fakeAdapter({ createReviewTree: () => snapshot });
+      const session = prepareTinynodReview({ ...base(adapter), root: developer } as never);
+      session.start('/ignored-snapshot', OID);
+      expect(adapter.withRepoIdentityEnv).toHaveBeenLastCalledWith(expect.any(Object), {}, { developerOrigin: 'git@github.com:salesforce/zana.git', slotOrigin: '/developer/checkout' });
+    } finally {
+      rmSync(developer, { recursive: true, force: true });
+      rmSync(snapshot, { recursive: true, force: true });
+    }
+  });
+
+  it('starts at the exact target in a private tree with an explicit environment, once per target oid', () => {
+    const { adapter, events, trees } = fakeAdapter();
+    const context = base(adapter);
+    const session = prepareTinynodReview(context as never);
+    session.start('/snap', 'f'.repeat(40));
+    expect(adapter.startReview).not.toHaveBeenCalled();
+    session.start('/snap', OID);
+    expect(adapter.createReviewTree).toHaveBeenCalledWith(expect.objectContaining({ root: process.cwd(), oid: OID }));
+    expect(trees).toHaveLength(1);
+    expect(adapter.startReview).toHaveBeenCalledWith({ base: BASE, cwd: trees[0], env: expect.objectContaining({ LOG_LEVEL: 'warn' }) });
+    expect(context.log).toHaveBeenCalledWith(`pre-push: tinynod review started (base ${BASE.slice(0, 12)}, head ${OID.slice(0, 12)})`);
+    expect(events).toEqual(['review-started']);
+  });
+
+  it('runs the review outside the snapshot and removes its private tree when it finishes, aborts or restarts', async () => {
+    const finished = fakeAdapter();
+    const finishSession = prepareTinynodReview(base(finished.adapter) as never);
+    finishSession.start('/snap', OID);
+    expect(finished.adapter.startReview).not.toHaveBeenCalledWith(expect.objectContaining({ cwd: '/snap' }));
+    expect(existsSync(finished.trees[0])).toBe(true);
+    await finishSession.finish();
+    expect(existsSync(finished.trees[0])).toBe(false);
+
+    const aborted = fakeAdapter();
+    const abortSession = prepareTinynodReview(base(aborted.adapter) as never);
+    abortSession.start('/snap', OID);
+    abortSession.abort();
+    expect(existsSync(aborted.trees[0])).toBe(false);
+
+    const restarted = fakeAdapter();
+    const restartSession = prepareTinynodReview(base(restarted.adapter) as never);
+    restartSession.start('/snap-a', OID);
+    restartSession.start('/snap-b', OID);
+    expect(restarted.trees).toHaveLength(2);
+    expect(existsSync(restarted.trees[0])).toBe(false);
+    expect(existsSync(restarted.trees[1])).toBe(true);
+    await restartSession.finish();
+    expect(existsSync(restarted.trees[1])).toBe(false);
+  });
+
+  it('skips the review, not the push, when the private tree cannot be created', () => {
+    const { adapter } = fakeAdapter({ createReviewTree: () => { throw new Error('no space'); } });
+    const context = base(adapter);
+    const session = prepareTinynodReview(context as never);
+    expect(() => session.start('/snap', OID)).not.toThrow();
+    expect(adapter.startReview).not.toHaveBeenCalled();
+    expect(context.error).toHaveBeenCalledWith(expect.stringContaining('no space'));
+  });
+
+  it('does not throw on null findings', async () => {
+    const { adapter } = fakeAdapter({ classifyReview: () => ({ status: 'findings', message: '2 findings', findings: [null, 'text'] }) });
+    const context = base(adapter);
+    const session = prepareTinynodReview(context as never);
+    session.start('/snap', OID);
+    await session.finish();
+    expect(context.log).toHaveBeenCalledWith('  [unknown] null');
+  });
+
+  it('logs and carries on when the review cannot start', () => {
+    const { adapter } = fakeAdapter({ startReview: () => { throw new Error('no fds'); } });
+    const context = base(adapter);
+    const session = prepareTinynodReview(context as never);
+    expect(() => session.start('/snap', OID)).not.toThrow();
+    expect(context.error).toHaveBeenCalledWith(expect.stringContaining('no fds'));
+  });
+
+  it('replaces the first review when the same push verifies again', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tn-restart-'));
+    const reviews = [{ child: { pid: 2 ** 22 + 7 }, dir }, { child: { pid: 2 ** 22 + 8 }, dir: '/tmp/none' }];
+    const { adapter } = fakeAdapter({ startReview: vi.fn(() => reviews.shift()) });
+    const session = prepareTinynodReview(base(adapter) as never);
+    session.start('/snap-a', OID);
+    session.start('/snap-b', OID);
+    expect(adapter.startReview).toHaveBeenCalledTimes(2);
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  it('finish prints the advisory result and findings, records history, and releases everything', async () => {
+    const findings = Array.from({ length: 12 }, (_, index) => ({ severity: 'warning', filePath: `f${index}.ts`, lineNumber: index + 1, comment: `problem ${index}\nsecond line` }));
+    const { adapter, lock, cleanup } = fakeAdapter({
+      classifyReview: () => ({ status: 'findings', message: '12 findings', findings, payload: { historyPath: '/h' } }),
+      ledgerEntryFor: () => ({ file: '/h', at: 1 }),
+    });
+    const context = base(adapter);
+    const session = prepareTinynodReview(context as never);
+    session.start('/snap', OID);
+    await session.finish();
+    expect(context.log).toHaveBeenCalledWith('pre-push: tinynod review (advisory) findings: 12 findings');
+    expect(context.log).toHaveBeenCalledWith('  [warning] f0.ts:1 problem 0');
+    expect(context.log).toHaveBeenCalledWith('  ... 2 more');
+    expect(adapter.recordAndPruneHistory).toHaveBeenCalledWith(expect.objectContaining({ entry: { file: '/h', at: 1 } }));
+    expect(lock.release).toHaveBeenCalled();
+    expect(cleanup.dispose).toHaveBeenCalled();
+  });
+
+  it('reports warnings and tolerates findings without location or text', async () => {
+    const { adapter } = fakeAdapter({ classifyReview: () => ({ status: 'warning', message: 'review output too large', findings: [{}] }) });
+    const context = base(adapter);
+    const session = prepareTinynodReview(context as never);
+    session.start('/snap', OID);
+    await session.finish();
+    expect(context.log).toHaveBeenCalledWith('pre-push: tinynod review (advisory) warning: review output too large');
+    expect(context.log).toHaveBeenCalledWith('  [unknown]');
+  });
+
+  it('finish never throws and still releases the lock', async () => {
+    const { adapter, lock } = fakeAdapter({ finishReview: async () => { throw new Error('read failed'); } });
+    const context = base(adapter);
+    const session = prepareTinynodReview(context as never);
+    session.start('/snap', OID);
+    await expect(session.finish()).resolves.toBeUndefined();
+    expect(context.error).toHaveBeenCalledWith(expect.stringContaining('read failed'));
+    expect(lock.release).toHaveBeenCalled();
+  });
+
+  it('finish without a started review just releases the lock, and is idempotent', async () => {
+    const { adapter, lock } = fakeAdapter();
+    const session = prepareTinynodReview(base(adapter) as never);
+    await session.finish();
+    await session.finish();
+    session.abort();
+    expect(adapter.finishReview).not.toHaveBeenCalled();
+    expect(lock.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('abort kills the review, releases the lock, and disarms later work', async () => {
+    const { adapter, events, cleanup } = fakeAdapter();
+    const session = prepareTinynodReview(base(adapter) as never);
+    session.start('/snap', OID);
+    session.abort();
+    expect(events).toEqual(['review-started', 'cleanup', 'lock-released']);
+    expect(cleanup.dispose).toHaveBeenCalled();
+    session.start('/snap', OID);
+    expect(adapter.startReview).toHaveBeenCalledTimes(1);
+    await session.finish();
+    expect(adapter.finishReview).not.toHaveBeenCalled();
+  });
+});
+
+describe('runPrePush with the review seam', () => {
+  const common = { remoteUrl: REMOTE, run: () => ({ status: 1 }) };
+
+  it('does not prepare a review unless one is injected', () => {
+    const fastVerify = vi.fn();
+    expect(runPrePush({ ...common, input: PUSH_INPUT, log: vi.fn(), error: vi.fn(), select: () => ({ action: 'fast', reason: 'r', oid: OID, base: BASE, paths: [] }), fastVerify })).toBe(0);
+    expect(fastVerify).toHaveBeenCalledWith(expect.not.objectContaining({ review: expect.anything() }));
+  });
+
+  it('keeps the exit code when a session rejects while finishing', async () => {
+    const session = { start: vi.fn(), abort: vi.fn(), finish: vi.fn(async () => { throw new Error('boom'); }) };
+    const error = vi.fn();
+    const code = await runPrePushWithReview({ ...common, input: PUSH_INPUT, log: vi.fn(), error, select: () => ({ action: 'fast', reason: 'r', oid: OID, base: BASE, paths: [] }), fastVerify: vi.fn(), review: () => session });
+    expect(code).toBe(0);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('boom'));
+  });
+
+  it('passes verifiers the session only when a review exists, and keeps their other arguments', () => {
+    const fastVerify = vi.fn(); const verify = vi.fn();
+    const session = { start: vi.fn(), abort: vi.fn() };
+    const select = () => ({ action: 'fast', reason: 'r', oid: OID, base: BASE, paths: ['a.ts'] });
+    expect(runPrePush({ ...common, input: PUSH_INPUT, log: vi.fn(), error: vi.fn(), select, fastVerify, review: () => session })).toBe(0);
+    expect(fastVerify).toHaveBeenCalledWith({ oid: OID, base: BASE, paths: ['a.ts'], root: process.cwd(), log: expect.any(Function), run: expect.any(Function), review: session });
+    fastVerify.mockClear();
+    expect(runPrePush({ ...common, input: PUSH_INPUT, log: vi.fn(), error: vi.fn(), select, fastVerify, review: () => null })).toBe(0);
+    expect(fastVerify.mock.calls[0][0]).not.toHaveProperty('review');
+    expect(runPrePush({ ...common, input: PUSH_INPUT, log: vi.fn(), error: vi.fn(), select: () => ({ action: 'full', reason: 'r', oid: OID }), verify, review: () => session })).toBe(0);
+    expect(verify).toHaveBeenCalledWith(expect.objectContaining({ oid: OID, review: session }));
+  });
+
+  it('hands the review the derived checks, the verified-remote flag, and the unchanged stdin tuples', () => {
+    const review = vi.fn().mockReturnValue(null);
+    runPrePush({ ...common, input: `${PUSH_INPUT}`, log: vi.fn(), error: vi.fn(), select: () => ({ action: 'skip', reason: 'verified inert prose only' }), review });
+    const context = review.mock.calls[0][0];
+    expect(context.tuples).toEqual([feature]);
+    expect(context.checks.remoteVerified).toBe(true);
+    expect(typeof context.checks.hasObject).toBe('function');
+    review.mockClear();
+    runPrePush({ remoteUrl: 'https://example.com/other/repo', input: PUSH_INPUT, run: () => ({ status: 1 }), log: vi.fn(), error: vi.fn(), select: () => ({ action: 'skip', reason: 'r' }), review });
+    expect(review.mock.calls[0][0].checks.remoteVerified).toBe(false);
+  });
+
+  it('does not start a review for an aborted selection', () => {
+    const review = vi.fn();
+    expect(runPrePush({ ...common, input: 'broken', log: vi.fn(), error: vi.fn(), select: () => ({ action: 'abort', reason: 'bad' }), review })).toBe(1);
+    expect(review).not.toHaveBeenCalled();
+  });
+
+  it('aborts the review and still fails the push when mandatory verification fails', () => {
+    const session = { start: vi.fn(), abort: vi.fn() };
+    const error = vi.fn();
+    const fastVerify = vi.fn(({ review }) => { review.start('/snap', OID); throw new Error('verification failed: pnpm run typecheck'); });
+    expect(runPrePush({ ...common, input: PUSH_INPUT, log: vi.fn(), error, select: () => ({ action: 'fast', reason: 'r', oid: OID, base: BASE, paths: [] }), fastVerify, review: () => session })).toBe(1);
+    expect(session.abort).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith('pre-push: verification failed: pnpm run typecheck');
+  });
+});
+
+describe('runPrePushWithReview', () => {
+  const common = { remoteUrl: REMOTE, run: () => ({ status: 1 }), input: PUSH_INPUT };
+
+  it('finishes each started review after verification and returns the verification exit code', async () => {
+    const order: string[] = [];
+    const session = { start: vi.fn(), abort: vi.fn(), finish: vi.fn(async () => { order.push('finish'); }) };
+    const fastVerify = vi.fn(() => { order.push('verify'); });
+    const code = await runPrePushWithReview({ ...common, log: vi.fn(), error: vi.fn(), select: () => ({ action: 'fast', reason: 'r', oid: OID, base: BASE, paths: [] }), fastVerify, review: () => session });
+    expect(code).toBe(0);
+    expect(order).toEqual(['verify', 'finish']);
+  });
+
+  it('never lets review output change a passing exit code', async () => {
+    const session = { start: vi.fn(), abort: vi.fn(), finish: vi.fn(async () => undefined) };
+    expect(await runPrePushWithReview({ ...common, log: vi.fn(), error: vi.fn(), select: () => ({ action: 'skip', reason: 'r' }), review: () => session })).toBe(0);
+  });
+
+  it('does not wait on a review that was aborted by a failing verification', async () => {
+    const adapter = fakeAdapter();
+    const code = await runPrePushWithReview({ ...common, log: vi.fn(), error: vi.fn(), select: () => ({ action: 'fast', reason: 'r', oid: OID, base: BASE, paths: [] }), fastVerify: ({ review }: { review: { start: (s: string, o: string) => void } }) => { review.start('/snap', OID); throw new Error('nope'); }, review: withReview(adapter.adapter) });
+    expect(code).toBe(1);
+    expect(adapter.adapter.finishReview).not.toHaveBeenCalled();
+    expect(adapter.events).toEqual(['review-started', 'cleanup', 'lock-released']);
+  });
+
+  it('works with no review sessions and with the default review factory', async () => {
+    expect(await runPrePushWithReview({ ...common, log: vi.fn(), error: vi.fn(), select: () => ({ action: 'skip', reason: 'r' }) })).toBe(0);
+    expect(await runPrePushWithReview({ ...common, log: vi.fn(), error: vi.fn(), select: () => ({ action: 'skip', reason: 'r' }), review: () => null })).toBe(0);
+  });
+});
+
+describe('verifiers start the review inside the clean snapshot', () => {
+  it('starts it for fast and full verification with the pushed oid and a snapshot that is not the developer root', () => {
+    const root = mkdtempSync(join(tmpdir(), 'zana-review-root-'));
+    const run = vi.fn((command: string, args: string[], options?: { cwd?: string }) => {
+      if (command === 'fd') return { status: 0, stdout: '' };
+      if (command === 'git' && args[0] === 'clone') mkdirSync(join(args[args.length - 1], '.git'), { recursive: true });
+      return { status: 0, stdout: '' };
+    });
+    const review = { start: vi.fn() };
+    try {
+      runFastVerification({ oid: OID, base: BASE, paths: [], root, run: run as never, log: vi.fn(), review });
+      runFullVerification({ oid: OID, root, run: run as never, log: vi.fn(), review });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+    expect(review.start).toHaveBeenCalledTimes(2);
+    for (const [snapshot, oid] of review.start.mock.calls) {
+      expect(oid).toBe(OID);
+      expect(snapshot).not.toBe(root);
+      expect(snapshot).toContain('zana-pre-push-');
+    }
+    // Mandatory checks are unchanged by the review.
+    const commands = run.mock.calls.map(([command, args]) => `${command} ${(args as string[]).join(' ')}`);
+    expect(commands).toContain('pnpm run typecheck');
+    expect(commands).toContain('pnpm verify:full');
+  });
+
+  it('a failing mandatory check still throws with a review attached', () => {
+    const root = mkdtempSync(join(tmpdir(), 'zana-review-root-'));
+    const run = (command: string, args: string[]) => {
+      if (command === 'pnpm' && args[0] === 'run') return { status: 1 };
+      return { status: 0, stdout: '' };
+    };
+    try {
+      expect(() => runFastVerification({ oid: OID, base: BASE, paths: [], root, run: run as never, log: vi.fn(), review: { start: vi.fn() } })).toThrow();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

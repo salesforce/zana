@@ -1,3 +1,4 @@
+import { openThreadToolLauncher } from './fixtures/thread-tool-panel.js';
 import { createServer } from 'node:http';
 import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync, realpathSync, cpSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -63,6 +64,7 @@ const test = base.extend({
   launchEnv: async ({ home }, use) => {
     const requests: Array<{ path: string; host: string; body: Record<string, unknown> }> = [];
     let evalPolls = 0;
+    let comparisonCandidate = false;
     const server = createServer(async (req, res) => {
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
@@ -86,7 +88,7 @@ const test = base.extend({
       else if (path.endsWith('/limits')) result = { DailyApiRequests: { Max: 10000, Remaining: 9999 } };
       else if (path.includes('/actions/custom/apex/')) result = { inputs: [{ name: 'orderId', type: 'String', required: true }], outputs: [{ name: 'status', type: 'String' }] };
       else if (path.endsWith('/nameduser')) result = { access_token: 'PRIVATE_NAMED_JWT' };
-      else if (path.endsWith('/authoring/scripts')) result = { status: 'success', compiledArtifact: { globalConfiguration: { label: 'Support concierge' } } };
+      else if (path.endsWith('/authoring/scripts')) { comparisonCandidate = String(body.assets?.[0]?.content).includes('# comparison-candidate'); result = { status: 'success', compiledArtifact: { globalConfiguration: { label: 'Support concierge' } } }; }
       else if (path.endsWith('/preview/sessions')) result = { sessionId: 'remote-session', messages: [{ message: 'Hello! I’m your support concierge. How can I help today?' }] };
       else if (path.endsWith('/messages')) {
         const text = body.message.text;
@@ -97,7 +99,7 @@ const test = base.extend({
         }
         if (text === 'Fail this turn') { res.writeHead(503); res.end('{}'); return; }
         if (text === 'Wait for cancellation') { await new Promise(resolve => setTimeout(resolve, 8000)); }
-        result = { messages: [{ message: text === 'Long response' ? 'Complete response. '.repeat(1200) + 'END_OF_RESPONSE' : 'I can help you track an order or resolve an issue. Could you share your order number so I can find the right details?', planId: 'plan-e2e-1' }] };
+        result = { messages: [{ message: text === 'Comparison acceptance' ? comparisonCandidate ? 'comparison success' : 'comparison baseline' : text === 'Long response' ? 'Complete response. '.repeat(1200) + 'END_OF_RESPONSE' : 'I can help you track an order or resolve an issue. Could you share your order number so I can find the right details?', planId: 'plan-e2e-1' }] };
       } else if (path.endsWith('/chat-generations')) {
         const system = body.messages[0].content as string;
         const failedJudge = existsSync(join(home, 'simulation-judge-fail'));
@@ -304,7 +306,7 @@ async function openTool(studio: Locator, name: string) {
     await showSidePanel(page);
     const tab = sidePanelTab(page, name);
     if (await tab.count()) { await tab.click(); return; }
-    await sidePanel(page).getByTestId('thread-secondary-new-tab').click();
+    await openThreadToolLauncher(sidePanel(page));
     await sidePanel(page).getByTestId(`thread-new-tab-plugin-salesforce-studio-${PANEL_TOOL_IDS[name]}`).click();
     await expect(activeSidePanelTab(page)).toHaveText(name);
     return;
@@ -494,7 +496,7 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await expect(frame.locator('.sf-comment-glyph')).toHaveCount(0);
   // The host's own toggle opens the side panel beside the tab; its New Tab page lists only Actions and Comments.
   await showSidePanel(page);
-  await sidePanel(page).getByTestId('thread-secondary-new-tab').click();
+  await openThreadToolLauncher(sidePanel(page));
   await expect(sidePanel(page).getByTestId('thread-new-tab-plugin-salesforce-studio-actions')).toBeVisible();
   await expect(sidePanel(page).getByTestId('thread-new-tab-plugin-salesforce-studio-comments')).toBeVisible();
   for (const gone of ['graph', 'preview', 'test', 'release', 'org-preview', 'agents']) await expect(sidePanel(page).getByTestId(`thread-new-tab-plugin-salesforce-studio-${gone}`)).toHaveCount(0);
@@ -672,7 +674,7 @@ test('Thread Agent and Preview panels retain their agent when switching tabs, an
   await expect(page.getByTestId('thread-detail')).toBeVisible();
   await page.getByTestId('thread-secondary-show').click();
   const panel = page.getByTestId('thread-secondary-panel');
-  await panel.getByTestId('thread-secondary-new-tab').click();
+  await openThreadToolLauncher(panel);
   await panel.getByTestId('thread-new-tab-plugin-salesforce-preview').click();
   const preview = panel.getByTestId('salesforce-agentforce-preview');
   const picker = preview.getByRole('button', { name: 'Agentforce preview file', exact: true });
@@ -688,7 +690,7 @@ test('Thread Agent and Preview panels retain their agent when switching tabs, an
   await expect(picker).toContainText('Customer_Service_Agent_With_A_Long_Name');
 
   // The removed Playground thread panel is no longer offered; the read-only Agent panel is.
-  await panel.getByTestId('thread-secondary-new-tab').click();
+  await openThreadToolLauncher(panel);
   await expect(panel.getByTestId('thread-new-tab-plugin-salesforce-playground')).toHaveCount(0);
   for (const gone of ['graph', 'test', 'release', 'org-preview']) await expect(panel.getByTestId(`thread-new-tab-plugin-salesforce-studio-${gone}`)).toHaveCount(0);
   await expect(panel.getByTestId('thread-new-tab-plugin-salesforce-agent')).toBeVisible();
@@ -1165,6 +1167,13 @@ test('Salesforce Flow visualizer: official canvas, branches, details, themes and
   await app.electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 850));
   expect(await studioPanel(page).evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   await expect(flow.getByRole('button', { name: 'Collapse All', exact: true })).toBeVisible();
+  await page.getByRole('dialog', { name: 'Expanded Flow' }).getByRole('button', { name: 'Reset Flow view', exact: true }).click();
+  await expect(flow.getByText('Each order item', { exact: true })).toBeVisible();
+  await expect.poll(() => flow.locator('div[style*="will-change: transform"]').evaluate(el => {
+    const diagram = el.getBoundingClientRect(), canvas = el.parentElement!.getBoundingClientRect();
+    return diagram.left >= canvas.left - 2 && diagram.right <= canvas.right + 2
+      && diagram.top >= canvas.top - 2 && diagram.bottom <= canvas.bottom + 2;
+  }), { timeout: 10_000 }).toBe(true);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('flow-official-narrow-light.png'));
   // Focus a control inside the sandbox: Escape must cross the frame boundary.
   await flow.getByRole('button', { name: 'Zoom out', exact: true }).click();
@@ -1438,7 +1447,7 @@ test('Agentforce Studio: no-file entry points reach org agents, an explorer org 
   await expect(agentTabs(page).getByRole('tab')).toHaveCount(0);
   // The side panel's New Tab lists only Actions and Comments; views and org agents are Studio tabs.
   await showSidePanel(page);
-  await sidePanel(page).getByTestId('thread-secondary-new-tab').click();
+  await openThreadToolLauncher(sidePanel(page));
   await expect(sidePanel(page).getByTestId('thread-new-tab-plugin-salesforce-studio-actions')).toBeVisible();
   await expect(sidePanel(page).getByTestId('thread-new-tab-plugin-salesforce-studio-comments')).toBeVisible();
   for (const gone of ['graph', 'preview', 'test', 'release', 'org-preview', 'agents']) await expect(sidePanel(page).getByTestId(`thread-new-tab-plugin-salesforce-studio-${gone}`)).toHaveCount(0);
@@ -2256,7 +2265,7 @@ test('Agentforce Studio: two agents keep their own view tabs, and closing one mo
 
   // Cards in the Assistant rail beside the Studio open Studio tabs, not a thread side panel.
   await showSidePanel(page);
-  await sidePanel(page).getByTestId('thread-secondary-new-tab').click();
+  await openThreadToolLauncher(sidePanel(page));
   await sidePanel(page).getByTestId('thread-new-tab-agent').click();
   const composer = sidePanel(page).getByTestId('panel-agent-tab-composer');
   await composer.getByTestId('thread-command-input').fill('Review these\n::sf-agent{path="force-app/Support.agent"}\n::sf-preview{runId="rail-run-1" path="force-app/Orders.agent"}');
@@ -2369,4 +2378,150 @@ test('Agentforce simulations: live lanes stay with their agent, stop, verdicts a
   await expect(restored.getByLabel('Simulation batch', { exact: true }).locator('option')).toHaveCount(3);
   await expect(restored.getByLabel('1 of 1 pass')).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+
+test('Agentforce improvements: cache-safe discovery, source jumps, draft comparison and custom scenarios', async ({ app, home }, testInfo) => {
+  const page = app.window;
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const cache = join(home, 'dx/.pnpm-store');
+  mkdirSync(cache, { recursive: true });
+  for (let i = 0; i < 4100; i++) writeFileSync(join(cache, `cache${i}.txt`), 'cache');
+  expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  const trust = page.getByRole('button', { name: 'Install with full trust' });
+  if (await trust.isVisible().catch(() => false)) await trust.click();
+  await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'salesforce')?.status), { timeout: 30_000 }).toMatch(/running|needs-configuration/);
+  const projectId = await page.evaluate(async path => {
+    const added = await window.cc.projects.add(path); if (!added.ok) throw Error(added.message); return added.value.id;
+  }, join(home, 'dx'));
+  await page.evaluate(async id => {
+    await window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' });
+    history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
+  }, projectId);
+  await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
+  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  const studio = studioIn(page);
+  await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
+  const listed = await page.evaluate(projectId => window.cc.pluginApps.callRpc('salesforce', 'agentFiles.list', { projectId }), projectId);
+  expect(listed).toMatchObject({ ok: true, truncated: false, files: expect.arrayContaining([expect.objectContaining({ path: 'force-app/Support.agent' })]) });
+  const savedSource = readFileSync(join(home, 'dx/force-app/Support.agent'), 'utf8');
+  expect(await page.evaluate(projectId => window.cc.pluginApps.callRpc('salesforce', 'studio.suites.save', { projectId, agentPath: 'force-app/Support.agent', cases: [{ id: 'comparison', name: 'Comparison acceptance', utterances: ['Comparison acceptance'], expect: { contains: ['comparison success'], maxLatencyMs: 30000 } }] }), projectId)).toMatchObject({ ok: true });
+  const frame = page.frameLocator('iframe[title="Agentforce playground"]');
+  await expect(frame.getByTestId('agent-script-ide')).toBeVisible();
+  await frame.locator('.monaco-editor').click({ position: { x: 120, y: 45 } });
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowUp' : 'Control+Home');
+  await page.keyboard.insertText('# comparison-candidate\n');
+  await expect(studio.locator('.af-draft-state')).toContainText('Unsaved');
+  await openTool(studio, 'Tests');
+  const tests = viewPane(page, 'tests').getByTestId('studio-tests-pane');
+  await tests.getByRole('button', { name: 'Compare saved vs draft', exact: true }).click();
+  const comparison = tests.getByRole('region', { name: 'Saved source versus editor draft' });
+  await expect(comparison).toContainText('0/1 → 1/1 pass', { timeout: 30000 });
+  await expect(comparison).toContainText('1 improved · 0 regressed · 0 unclear');
+  await comparison.locator('summary').click();
+  await expect(comparison).toContainText('comparison baseline');
+  await expect(comparison).toContainText('comparison success');
+  expect(readFileSync(join(home, 'dx/force-app/Support.agent'), 'utf8')).toBe(savedSource);
+  expect(await page.evaluate(projectId => window.cc.pluginApps.callRpc('salesforce', 'studio.suites.list', { projectId, agentPath: 'force-app/Support.agent' }), projectId)).toMatchObject({ suites: [expect.not.objectContaining({ lastResults: expect.anything() })] });
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-comparison-dark.png'));
+  // A source comment link must reveal the visible Script, including keyboard activation.
+  expect(await page.evaluate(projectId => window.cc.pluginApps.callRpc('salesforce', 'studio.comments.add', { projectId, path: 'force-app/Support.agent', line: 3, endLine: 3, quote: '', body: 'Source jump regression' }), projectId)).toMatchObject({ ok: true });
+  await openTool(studio, 'Comments');
+  const jump = studio.getByRole('button', { name: 'Jump to line 3', exact: true });
+  await jump.focus(); await page.keyboard.press('Enter');
+  await expect(editorTabs(page).getByRole('tab', { name: /^Script/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(frame.locator('.view-lines')).toBeVisible();
+  await sidePanel(page).getByTestId('thread-secondary-hide').click();
+  await openTool(studio, 'Tests');
+  await tests.getByRole('button', { name: 'Simulations', exact: true }).click();
+  const simulations = tests.getByTestId('studio-simulations');
+  await simulations.locator('summary').filter({ hasText: 'Customize scenarios and context' }).click();
+  await simulations.getByLabel('Scenario 1 name', { exact: true }).fill('Custom return');
+  await simulations.getByLabel('Scenario 1 opening', { exact: true }).fill('What is the return policy?');
+  await simulations.getByLabel('Missing details', { exact: true }).uncheck();
+  await simulations.getByLabel('Stay in scope', { exact: true }).uncheck();
+  await simulations.getByRole('button', { name: 'Run 1 conversation', exact: true }).click();
+  await expect(simulations.getByTestId('simulation-summary')).toContainText('Done', { timeout: 30000 });
+  await simulations.getByRole('button', { name: /Custom return/ }).click();
+  await expect(simulations.getByRole('region', { name: 'Conversation Custom return' })).toContainText('What is the return policy?');
+  await app.electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(820, 900));
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+  await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click();
+  await expect(simulations).toBeVisible();
+  expect(await simulations.evaluate(el => el.getBoundingClientRect().width)).toBeGreaterThan(350);
+  expect(await simulations.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  expect(await studioPanel(page).evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-custom-scenarios-narrow-light.png'));
+  expect(errors).toEqual([]);
+});
+
+test('AgentScript Studio reliability: large snapshots, background recovery, setup and cancellation', async ({ app, home }, testInfo) => {
+  const page = app.window;
+  const projectRoot = join(home, 'dx');
+  const source = AGENT_SCRIPT_EXAMPLES[0].source + '\n# ' + 'large-source '.repeat(19500) + '\n';
+  writeFileSync(join(projectRoot, 'force-app/Large.agent'), source);
+  expect(source.length).toBeGreaterThan(234000);
+  expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'salesforce')?.status), { timeout: 30000 }).toMatch(/running|needs-configuration/);
+  const projectId = await page.evaluate(async path => { const added = await window.cc.projects.add(path); if (!added.ok) throw Error(added.message); return added.value.id; }, projectRoot);
+  await page.evaluate(async id => {
+    await window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' });
+    history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
+  }, projectId);
+  const action = (action: string, input: object = {}): Promise<any> => page.evaluate(async ({ projectId, action, input }) => {
+    const response = await fetch('/api/v1/plugins/salesforce/cli', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectId, argv: ['action', action, '--input', JSON.stringify(input), '--json'] }) });
+    const result = await response.json();
+    return JSON.parse(result.stdout);
+  }, { projectId, action, input });
+  expect(await action('source.parse', { source })).toMatchObject({ ok: true });
+  expect(await action('source.parse', { path: 'force-app/Large.agent' })).toMatchObject({ ok: true });
+  const preview = await action('studio.start', { path: 'force-app/Large.agent', engine: 'preview' });
+  expect(preview).toMatchObject({ ok: true, data: { id: expect.any(String) } });
+  await action('studio.end', { id: preview.data.id });
+  const posted = JSON.parse(readFileSync(join(home, 'sfap-requests.json'), 'utf8')).find((row: any) => row.path.endsWith('/authoring/scripts'));
+  expect(posted.body.assets[0].content).toContain('large-source '.repeat(1000));
+  expect(await action('files.read', { path: 'force-app/Deleted.agent' })).toMatchObject({ code: 'not_found', error: expect.stringContaining('Open another file') });
+  expect(await action('files.read', { path: '../Deleted.agent' })).toMatchObject({ code: 'path_refused' });
+  const cases = Array.from({ length: 25 }, (_, i) => ({ id: `c${i}`, name: `Case ${i}`, utterances: ['Find my order'], expect: { contains: ['order'] }, ...(i === 24 ? { prerequisites: ['Account selected', 'Address form saved'] } : {}) }));
+  expect(await page.evaluate(({ projectId, cases }) => window.cc.pluginApps.callRpc('salesforce', 'studio.suites.save', { projectId, agentPath: 'force-app/Large.agent', cases }), { projectId, cases })).toMatchObject({ ok: true });
+  const start = await action('suites.run', { agentPath: 'force-app/Large.agent', requestId: 'large-retry' });
+  expect(start).toMatchObject({ ok: true, status: 'running', jobId: expect.any(String) });
+  expect(await action('suites.start', { agentPath: 'force-app/Large.agent', requestId: 'large-retry' })).toMatchObject({ jobId: start.jobId });
+  let complete: any;
+  await expect.poll(async () => { complete = await action('suites.result', { jobId: start.jobId }); return complete.status; }, { timeout: 60000 }).toBe('completed');
+  expect(Object.keys(complete.result.results)).toHaveLength(25);
+  expect(complete.result.results.c23).toMatchObject({ outcome: 'pass', deterministic: 'pass' });
+  expect(complete.result.results.c24).toMatchObject({ setupBlocked: true, outcome: 'inconclusive' });
+  await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
+  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  const studio = studioIn(page);
+  await studio.getByTestId('salesforce-agent-script-file:force-app/Large.agent').click();
+  await openTool(studio, 'Tests');
+  const tests = viewPane(page, 'tests').getByTestId('studio-tests-pane');
+  await expect(tests.getByTestId('tests-row-c24')).toContainText('Setup required');
+  await tests.getByTestId('tests-row-c24').click();
+  await expect(tests.getByLabel('I prepared this case for this session')).toBeVisible();
+  await expect(tests).toContainText('AI opinion: not evaluated');
+  // A gated response proves Stop reaches the running session, not just the view.
+  const current: any = await action('suites.list');
+  expect(await page.evaluate(({ projectId, expectedSha256 }) => window.cc.pluginApps.callRpc('salesforce', 'studio.suites.save', { projectId, agentPath: 'force-app/Large.agent', expectedSha256, cases: [{ id: 'held', name: 'Held case', utterances: ['Suite progress first case'], expect: { contains: ['order'], forbiddenActions: ['SendSignature'], stateChecks: [{ variable: 'orderExists', value: false }] } }] }), { projectId, expectedSha256: current.suites.find((s: any) => s.id === 'Large').sha256 })).toMatchObject({ ok: true });
+  writeFileSync(join(home, 'suite-first'), 'hold');
+  await showScript(page); await openTool(studio, 'Tests');
+  await expect(tests.getByTestId('tests-row-held')).toBeVisible();
+  await tests.getByRole('button', { name: 'Run all in Simulate', exact: true }).click();
+  await expect(tests.getByRole('button', { name: 'Stop suite', exact: true })).toBeVisible();
+  await tests.getByRole('button', { name: 'Stop suite', exact: true }).click();
+  rmSync(join(home, 'suite-first'), { force: true });
+  expect(await page.evaluate(projectId => window.cc.pluginApps.callRpc('salesforce', 'studio.suites.spec', { projectId, agentPath: 'force-app/Large.agent' }), projectId)).toMatchObject({ ok: false, error: expect.stringContaining('Org export would lose those checks') });
+  await expect(tests.getByRole('status').filter({ hasText: 'Suite stopped' })).toBeVisible({ timeout: 15000 });
+  await expect(tests.getByRole('button', { name: 'Run all in Simulate', exact: true })).toBeEnabled();
+  await app.electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(820, 900));
+  await tests.getByRole('button', { name: '+ Case', exact: true }).click();
+  const form = tests.getByRole('form', { name: 'New test case' });
+  await expect(form.getByLabel('Setup prerequisites, one per line')).toBeVisible();
+  await expect(form.getByLabel('Final state checks (JSON)')).toBeVisible();
+  await expect.poll(() => form.evaluate(el => getComputedStyle(el).gridTemplateColumns.trim().split(/\s+/).length)).toBe(1);
+  expect(await form.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-reliable-tests-narrow.png'));
 });

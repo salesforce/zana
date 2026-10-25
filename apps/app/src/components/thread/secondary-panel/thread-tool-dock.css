@@ -1,0 +1,26 @@
+.thread-tool-main { display:flex; flex:1 1 auto; flex-direction:column; min-height:0; min-width:0; position:relative; overflow:hidden; }
+.thread-tool-main--legacy { display:contents; }
+.thread-detail-view.has-tool-dock .thread-tool-main > .thread-tool-bottom.thread-secondary-panel { position:relative; inset:auto; flex:0 1 var(--thread-tool-bottom-height,240px); width:100%; max-height:60%; min-height:120px; border-left:0; border-top:1px solid var(--border); box-shadow:none; z-index:auto; }
+.thread-detail-view.has-tool-dock .thread-tool-main > .thread-tool-bottom.is-collapsed { flex:0 0 36px; min-height:36px; }
+.thread-detail-view.has-tool-dock .thread-tool-main > .thread-tool-bottom.is-maximized { position:absolute; inset:0; max-height:none; height:100%; z-index:7; }
+.thread-tool-bottom-resizer { position:absolute; top:-4px; left:0; right:0; height:8px; cursor:row-resize; z-index:3; touch-action:none; }
+.thread-tool-bottom-resizer:hover { background:color-mix(in srgb,var(--accent-blue) 25%,transparent); }
+[data-tool-dock-side] .thread-secondary-tab { cursor:grab; }
+.thread-tool-drop-hint { display:flex; align-items:center; justify-content:space-between; flex:0 0 32px; padding:0 12px; font-size:11px; color:var(--text-muted); background:var(--bg-base); border-top:1px solid var(--border); }
+.thread-tool-drop-hint button { border:0; background:none; color:var(--accent-blue); cursor:pointer; font:inherit; }
+.thread-tool-drag-shield { position:fixed; inset:0; pointer-events:none; z-index:999; }
+.thread-tool-drag-target { position:absolute; inset:0; z-index:8; border:2px dashed var(--accent-blue); background:color-mix(in srgb,var(--accent-blue) 12%,transparent); display:flex; justify-content:center; align-items:center; color:var(--text-primary); pointer-events:none; font-size:12px; }
+.thread-tool-hidden-right-target { position:absolute; top:0; bottom:0; right:0; width:25%; z-index:8; display:grid; place-items:center; border:2px dashed var(--accent-blue); background:var(--bg-panel); color:var(--text-primary); }
+.thread-tool-drop-hint.is-dragging { min-height:90px; border:2px dashed var(--accent-blue); color:var(--accent-blue); }
+.thread-tool-main > .thread-detail-main { flex:1 1 auto; min-height:180px; overflow:hidden; }
+.thread-tool-bottom .thread-secondary-body[hidden] { display:none; }
+.terminal-session-portal { display:contents; }
+.terminal-session-portal > .term { position:relative; min-width:0; min-height:0; background:var(--bg-panel); overflow:hidden; }
+.terminal-session-portal.is-docked { display:grid; }
+.terminal-session-portal > .term.drop-over { outline:2px dashed var(--accent-blue); outline-offset:-4px; }
+/* Retain the two visible areas on desktop; compact navigation uses the existing drawer. */
+.thread-detail-view.has-tool-dock:not(.is-secondary-maximized) .thread-detail-split > .thread-secondary-panel { position:relative; inset:auto; width:auto; max-width:60%; box-shadow:none; }
+.thread-detail-view.is-secondary-maximized .thread-tool-main { display:none; }
+@media (max-width:1100px) {
+  .thread-detail-view.has-tool-dock:not(.is-secondary-maximized) .thread-detail-split > .thread-secondary-panel { max-width:45%; }
+}

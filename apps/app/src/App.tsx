@@ -11,6 +11,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import { Bell, Star } from 'lucide-react';
 import { HelpProvider } from './components/help/HelpProvider.js';
 import { HelpToggle } from './components/help/HelpToggle.js';
+import { InstanceMenu } from './components/InstanceMenu.js';
 import { Sidebar } from './components/Sidebar.js';
 import { MobileAgentNavigation } from './components/MobileAgentNavigation.js';
 import {
@@ -85,10 +86,12 @@ import {
 } from './store.js';
 import { useFavoriteCount } from './hooks/useAgentCards.js';
 import { useCompactLayout } from './hooks/useCompactLayout.js';
+import { useIsCompactViewport } from './hooks/useIsCompactViewport.js';
 import { focusInboxEntry } from './lib/inboxNavigation.js';
 import { projectDefaultLaunch } from './lib/launchProfile.js';
 import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
 import { ShellTitlebarTitle } from './components/TitlebarProjectButton.js';
+import { TitlebarThreadTabs } from './components/TitlebarThreadTabs.js';
 import { keepsProjectFocusRail, resolveShellLayout, shellTitlebarLabel } from './lib/shellLayout.js';
 import { installShortcuts } from './shortcuts.js';
 import { isLibraryPluginModule } from './lib/libraryPlugin.js';
@@ -224,6 +227,7 @@ export function App() {
 }
 
 function AppShell() {
+  const threadTabsEnabled = useData((s) => s.threadTabsEnabled);
   useRouteSync();
   useEffect(installAgentBoardMoves, []);
   const init = useData((s) => s.init);
@@ -494,7 +498,7 @@ function AppShell() {
       const projectId = ui.selectedProjectId;
       switch (event) {
         case 'app:openSettings':
-          ui.setNav(ui.nav === 'settings' ? 'home' : 'settings');
+          ui.toggleSettings();
           return;
         case 'app:toggleInbox':
           ui.setNav(ui.nav === 'inbox' ? 'home' : 'inbox');
@@ -758,11 +762,14 @@ function AppShell() {
         {mobileNavigation.isCompact && <MobileSettingsBack hidden={mobileNavigation.drawerOpen} />}
         {/* Keep portal targets mounted while independent viewport subscribers update. */}
         <div id={MOBILE_THREAD_TITLE_ID} className="mobile-thread-title-slot" />
-        <ShellTitlebarTitle
-          project={titlebarProject}
-          label={titlebarLabel}
-          compact={mobileNavigation.isCompact}
-        />
+        {threadTabsEnabled && !mobileNavigation.isCompact ? <TitlebarThreadTabs /> : (
+          <ShellTitlebarTitle
+            project={titlebarProject}
+            label={titlebarLabel}
+            compact={mobileNavigation.isCompact}
+          />
+        )}
+        <InstanceMenu />
         <HelpToggle />
         <button
           type="button"
@@ -959,9 +966,10 @@ function WalkthroughHost() {
 
 function ShortcutsHelpHost() {
   const open = useUi((s) => s.shortcutsOpen);
+  const ctrlVPasteEnabled = useData((s) => s.terminalCtrlVPasteEnabled);
   const close = () => useUi.getState().setShortcutsOpen(false);
   if (!open) return null;
-  return <ShortcutsHelp onClose={close} />;
+  return <ShortcutsHelp onClose={close} ctrlVPasteEnabled={ctrlVPasteEnabled} />;
 }
 
 function AgentModalHost() {
@@ -1006,7 +1014,9 @@ function AgentModalHost() {
 
 function ThreadModalHost() {
   const classicSessionViewEnabled = useData((s) => s.classicSessionViewEnabled);
-  const fullPageView = useCompactLayout() || classicSessionViewEnabled;
+  const threadTabsEnabled = useData((s) => s.threadTabsEnabled);
+  const isCompact = useIsCompactViewport();
+  const fullPageView = useCompactLayout() || classicSessionViewEnabled || (threadTabsEnabled && !isCompact);
   const threadModal = useUi((s) => s.threadModal);
   const navigate = useNavigate();
   const close = () => useUi.getState().closeThreadModal();

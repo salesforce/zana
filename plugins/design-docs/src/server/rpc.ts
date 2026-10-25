@@ -3,28 +3,30 @@
  * user and announced on the realtime `changed` channel, exactly like agent
  * writes, so every open view refreshes.
  */
-import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
+import type { HarnessOverrideScope, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import { agentActionById, buildAgentPrompt, MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
 import { isDocStatus, type CommentStatus, type DocActor, type TextEdit } from '../shared/contract.js';
 import type { PageFile } from '../shared/frame-protocol.js';
 import { normalizeDocPath } from '../shared/paths.js';
 import { buildPublishPrompt, parsePublishTarget, PublishTargetError } from '../shared/publish.js';
-import { DESIGN_DOC_TEMPLATES } from '../shared/templates.js';
 import { asInput, optionalString, requiredString } from './operations.js';
 import { docPageReader, NO_KIT, renderPage, type KitReader } from './pages.js';
 import { parseRenderReport, type RenderReports } from './render-reports.js';
 import { siteFiles } from './site-files.js';
-import { DesignDocError, type DesignDocStore } from './store.js';
+import { DesignDocError, type DesignDocStore, type DocKind } from './store.js';
 import type { DesignDocPeerService } from './peer-service.js';
 import type { DesignDocPairing } from './pairing.js';
 import type { DesignDocBackups } from './backup.js';
+import { bundlePage } from './page-bundle.js';
+import { MAX_TEXT_FILE_BYTES } from '../shared/limits.js';
+import { fileKindOf } from '../shared/paths.js';
 
 export const UI_USER: DocActor = { kind: 'user', label: 'You', threadId: null };
 
 export interface RpcDeps {
   store: DesignDocStore;
   changed(docId: string): void;
-  sdk: Pick<ZccPluginApi['sdk'], 'threads' | 'projects' | 'peers'>;
+  sdk: Pick<ZccPluginApi['sdk'], 'threads' | 'projects' | 'peers' | 'harnessRouting'>;
   peerSync?: DesignDocPeerService;
   pairing?: DesignDocPairing;
   /** The bundled site kit behind `zcc-kit/` paths. */
@@ -45,6 +47,13 @@ function optionalNumber(input: Record<string, unknown>, key: string): number | u
     throw new DesignDocError('invalid', `${key} must be an integer`);
   }
   return value;
+}
+
+// A missing kind means 'doc', so callers that predate templates keep working.
+function requiredKind(input: Record<string, unknown>): DocKind {
+  if (input.kind === undefined) return 'doc';
+  if (input.kind !== 'doc' && input.kind !== 'template') throw new DesignDocError('invalid', 'kind must be doc or template');
+  return input.kind;
 }
 
 function optionalStrings(input: Record<string, unknown>, key: string): string[] | undefined {
@@ -91,6 +100,18 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       throw new DesignDocError('invalid', `unknown project ${projectId}`);
     }
   };
+  /** The scope the renderer names for this plugin's harness override; a project must be registered. */
+  const harnessScope = async (raw: unknown): Promise<HarnessOverrideScope> => {
+    const input = onlyKeys(raw, ['kind', 'projectId']);
+    if (input.kind === 'global' || input.kind === 'default-project') {
+      if (input.projectId !== undefined) throw new DesignDocError('invalid', `${input.kind} scope takes no projectId`);
+      return { kind: input.kind };
+    }
+    if (input.kind !== 'project') throw new DesignDocError('invalid', 'scope.kind must be global, default-project or project');
+    const projectId = requiredString(input, 'projectId');
+    await requireProject(projectId);
+    return { kind: 'project', projectId };
+  };
   /**
    * Every Design Docs agent goes through here: it always runs on the project's
    * AI harness and that harness's overrides (`harness: 'project-default'`); the
@@ -101,14 +122,59 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
   ) => deps.sdk.threads.spawn({ ...args, harness: 'project-default' });
 
   return {
-    templates: () => DESIGN_DOC_TEMPLATES.map(({ id, label, description, files }) => ({
+    templates: () => store.listTemplateRecords().map(({ id, label, description, files, entryPath, docId, origin }) => ({
       id,
+      key: id,
+      docId,
+      origin,
+      entryPath,
       label,
       description,
       files: files.map((file) => file.path)
     })),
 
+    templateNew: (raw) => { const doc = store.templateNew(raw, UI_USER); changed(doc.id); return doc; },
+    templateDuplicate: (raw) => { const doc = store.templateDuplicate(requiredString(asInput(raw), 'template'), UI_USER); changed(doc.id); return doc; },
+    templateFromDoc: (raw) => { const doc = store.templateFromDoc(requiredString(asInput(raw), 'doc'), UI_USER); changed(doc.id); return doc; },
+    templateUpdateMeta: (raw) => {
+      const { template, ...patch } = asInput(raw);
+      const doc = store.templateUpdateMeta(template, patch, UI_USER); changed(doc.id); return doc;
+    },
+    templateDelete: (raw) => {
+      const row = store.requireTemplate(requiredString(asInput(raw), 'template'));
+      store.templateDelete(row.id); changed(row.id); return { ok: true };
+    },
+    templatesRestoreBuiltins: () => { const templates = store.templatesRestoreBuiltins(); changed(''); return templates; },
+    templatesExport: (raw) => ({ bundleText: store.templatesExport(optionalStrings(asInput(raw), 'keys')) }),
+    templatesImport: (raw) => {
+      const docs = store.templatesImport(requiredString(asInput(raw), 'bundleText'), UI_USER);
+      for (const doc of docs) changed(doc.id);
+      return docs;
+    },
+
     projects: async () => (await deps.sdk.projects.list()).map(({ id, name, quickAgent }) => ({ id, name, ...(quickAgent ? { quickAgent: true } : {}) })),
+
+    // This plugin's own harness overrides. The host binds the plugin id, validates on write and
+    // resolves them above the project/global chain for `harness: 'project-default'` spawns.
+    // A project's descriptors come from that project's host, so a remote project shows its own harnesses.
+    harnessDescriptors: async (raw) => {
+      const projectId = optionalString(onlyKeys(raw, ['projectId']), 'projectId');
+      if (projectId === undefined) return deps.sdk.harnessRouting.descriptors();
+      await requireProject(projectId);
+      return deps.sdk.harnessRouting.descriptors({ projectId });
+    },
+
+    harnessRouting: async (raw) => deps.sdk.harnessRouting.read(await harnessScope(raw)),
+
+    setHarnessRouting: async (raw) => {
+      const input = asInput(raw);
+      if (Object.keys(input).some((key) => key !== 'scope' && key !== 'value')) throw new DesignDocError('invalid', 'accepts only scope, value');
+      const scope = await harnessScope(input.scope);
+      const value = input.value ?? null;
+      if (value !== null && (typeof value !== 'object' || Array.isArray(value))) throw new DesignDocError('invalid', 'value must be an object or null');
+      await deps.sdk.harnessRouting.write(scope, value as never);
+      return deps.sdk.harnessRouting.read(scope);
+    },
 
     backupDatabase: async () => {
       if (!deps.backups?.available) throw new DesignDocError('invalid', 'database backup is unavailable');
@@ -204,7 +270,7 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       });
     },
 
-    get: (raw) => store.get(requiredString(asInput(raw), 'doc')),
+    get: (raw) => { const input = asInput(raw); return store.get(requiredString(input, 'doc'), requiredKind(input)); },
 
     create: async (raw) => {
       const input = asInput(raw);
@@ -229,6 +295,14 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
 
     update: async (raw) => {
       const input = asInput(raw);
+      if (input.entryPath !== undefined) {
+        const kind = requiredKind(input);
+        if (kind === 'template') {
+          if (Object.keys(input).some((key) => !['doc', 'kind', 'entryPath'].includes(key))) throw new DesignDocError('invalid', 'template entry update accepts only doc, kind, entryPath');
+          const doc = store.templateUpdateMeta(requiredString(input, 'doc'), { entryPath: input.entryPath }, UI_USER);
+          changed(doc.id); return doc;
+        }
+      }
       const status = optionalString(input, 'status');
       if (status !== undefined && !isDocStatus(status)) throw new DesignDocError('invalid', 'unknown status');
       const projectId = input.projectId;
@@ -276,8 +350,18 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
     /** An HTML page bundled for the preview frame; `draft` renders unsaved edits. */
     renderPage: (raw) => {
       const input = asInput(raw);
+      const kind = requiredKind(input);
       const draft = input.draft;
       if (draft !== undefined && typeof draft !== 'string') throw new DesignDocError('invalid', 'draft must be a string');
+      if (kind === 'template') {
+        const doc = store.get(requiredString(input, 'doc'), kind);
+        const path = normalizeDocPath(optionalString(input, 'path') ?? doc.entryPath);
+        if (fileKindOf(path) !== 'html') throw new DesignDocError('invalid', `${path} is not an HTML page`);
+        if (draft !== undefined && Buffer.byteLength(draft) > MAX_TEXT_FILE_BYTES) throw new DesignDocError('limit', 'draft is too large');
+        const file = store.readFile(doc.id, path, kind);
+        const read = docPageReader(store, doc.id, deps.kit ?? NO_KIT, kind);
+        return { docId: doc.id, path, revision: file.revision, ...bundlePage({ entryPath: path, html: draft ?? file.content, read }) };
+      }
       return renderPage(store, deps.kit ?? NO_KIT, {
         doc: requiredString(input, 'doc'),
         path: optionalString(input, 'path'),
@@ -288,7 +372,8 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
     /** A file a rendered page fetches, with the site kit behind `zcc-kit/`; null when the doc has none. */
     readPageFile: (raw): PageFile | null => {
       const input = asInput(raw);
-      const doc = store.summary(requiredString(input, 'doc'));
+      const kind = requiredKind(input);
+      const doc = store.get(requiredString(input, 'doc'), kind);
       const requested = requiredString(input, 'path');
       let path: string;
       try {
@@ -296,7 +381,7 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       } catch {
         return null;
       }
-      const file = docPageReader(store, doc.id, deps.kit ?? NO_KIT)(path);
+      const file = docPageReader(store, doc.id, deps.kit ?? NO_KIT, kind)(path);
       return file ? { kind: file.kind, encoding: file.encoding, content: file.content } : null;
     },
 
@@ -328,7 +413,7 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
 
     readFile: (raw) => {
       const input = asInput(raw);
-      return store.readFile(requiredString(input, 'doc'), requiredString(input, 'path'));
+      return store.readFile(requiredString(input, 'doc'), requiredString(input, 'path'), requiredKind(input));
     },
 
     writeFile: (raw) => {
@@ -345,7 +430,8 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
           baseFileId: input.baseFileId === null ? null : optionalString(input, 'baseFileId'),
           note: optionalString(input, 'note')
         },
-        UI_USER
+        UI_USER,
+        requiredKind(input)
       );
       changed(result.docId);
       return result;
@@ -363,7 +449,8 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
           baseFileId: input.baseFileId === null ? null : optionalString(input, 'baseFileId'),
           note: optionalString(input, 'note')
         },
-        UI_USER
+        UI_USER,
+        requiredKind(input)
       );
       changed(result.docId);
       return result;
@@ -371,11 +458,12 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
 
     deleteFile: (raw) => {
       const input = asInput(raw);
-      const doc = store.summary(requiredString(input, 'doc'));
+      const kind = requiredKind(input);
+      const doc = store.get(requiredString(input, 'doc'), kind);
       store.deleteFile(doc.id, requiredString(input, 'path'), UI_USER, {
         baseRevision: optionalNumber(input, 'baseRevision'),
         baseFileId: input.baseFileId === null ? null : optionalString(input, 'baseFileId')
-      });
+      }, kind);
       changed(doc.id);
       return { ok: true };
     },
@@ -387,7 +475,8 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
         requiredString(input, 'from'),
         requiredString(input, 'to'),
         UI_USER,
-        { baseRevision: optionalNumber(input, 'baseRevision'), baseFileId: input.baseFileId === null ? null : optionalString(input, 'baseFileId') }
+        { baseRevision: optionalNumber(input, 'baseRevision'), baseFileId: input.baseFileId === null ? null : optionalString(input, 'baseFileId') },
+        requiredKind(input)
       );
       changed(result.docId);
       return result;
@@ -398,12 +487,12 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       return store.history(requiredString(input, 'doc'), {
         path: optionalString(input, 'path'),
         limit: optionalNumber(input, 'limit')
-      });
+      }, requiredKind(input));
     },
 
     revision: (raw) => {
       const input = asInput(raw);
-      return store.revisionContent(requiredString(input, 'doc'), input.id);
+      return store.revisionContent(requiredString(input, 'doc'), input.id, requiredKind(input));
     },
 
     restore: (raw) => {
@@ -411,7 +500,7 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       const result = store.restoreRevision(requiredString(input, 'doc'), input.id, UI_USER, {
         baseRevision: optionalNumber(input, 'baseRevision'),
         baseFileId: input.baseFileId === null ? null : optionalString(input, 'baseFileId')
-      });
+      }, requiredKind(input));
       changed(result.docId);
       return result;
     },

@@ -8,6 +8,7 @@ const fixtures = vi.hoisted(() => ({
   compact: false, unread: 0, drawer: vi.fn(),
   pluginChanged: null as null | ((entries: unknown[]) => void),
   navigateFromMain: null as null | ((path: string) => void),
+  menuEvent: null as null | ((event: string) => void),
   recoverCatalogs: vi.fn(), recoverStale: vi.fn(), recoverAfterWake: vi.fn(), offWake: vi.fn(),
   onWake: null as null | (() => void), reconcilePlugins: vi.fn().mockResolvedValue(undefined),
   unsubscribePlugins: vi.fn()
@@ -19,6 +20,9 @@ vi.mock('./lib/product-client.js', () => ({ product: new Proxy({}, { get: (_targ
   } : String(surface) === 'terminals' && String(method) === 'onWake' ? (callback: () => void) => {
     fixtures.onWake = callback;
     return fixtures.offWake;
+  } : String(surface) === 'app' && String(method) === 'onMenuEvent' ? (callback: (event: string) => void) => {
+    fixtures.menuEvent = callback;
+    return () => {};
   } : String(surface) === 'windows' && String(method) === 'onNavigate' ? (callback: (path: string) => void) => {
     fixtures.navigateFromMain = callback;
     return () => {};
@@ -41,6 +45,7 @@ vi.mock('./shortcuts.js', () => ({ installShortcuts: () => () => {} }));
 vi.mock('./stores/agent-board-moves.js', () => ({ installAgentBoardMoves: () => () => {} }));
 vi.mock('./components/thread/secondary-panel/useThreadOpenFileSignal.js', () => ({ installThreadOpenFileSignals: () => () => {} }));
 vi.mock('./components/thread/secondary-panel/useThreadOpenTerminalSignal.js', () => ({ useCliAgentTerminalSignal: () => {} }));
+vi.mock('./components/ThreadModal.js', () => ({ ThreadModal: () => <div data-testid="thread-modal-shell" /> }));
 vi.mock('./modules/index.js', () => { const modules: never[] = []; return { useMergedModules: () => modules }; });
 vi.mock('./modules/loader.js', () => ({ initExtensionModules: async () => {}, reconcileExtensionModules: async () => {} }));
 vi.mock('./plugins/plugin-app-loader.js', () => ({ initPluginApps: async () => {}, reconcilePluginApps: fixtures.reconcilePlugins }));
@@ -82,8 +87,8 @@ const emptyComponents: Record<string, string[]> = {
   './plugins/PluginThemesHost.js': ['PluginThemesHost'],
   './modules/ModulePanelHost.js': ['ModulePanelHost'],
   './modules/ModuleBackgroundHost.js': ['ModuleBackgroundHost'],
-  ...Object.fromEntries(['CommandPalette', 'QuickOpen', 'ResumePicker', 'SearchPanel', 'ShortcutsHelp',
-    'AgentTerminalModal', 'ThreadModal', 'FavoriteAgentsDrawer', 'NotificationsDrawer', 'HostInstallDrawer',
+  ...Object.fromEntries(['CommandPalette', 'QuickOpen', 'ResumePicker', 'SearchPanel',
+    'AgentTerminalModal', 'FavoriteAgentsDrawer', 'NotificationsDrawer', 'HostInstallDrawer',
     'Walkthrough', 'Toaster', 'PendingLaunches', 'HostDialogs', 'UpdateBanner', 'SponsorNudge',
     'WhatsNewModal', 'ExtensionConsent', 'HashNavigationScroll'].map(name => [`./components/${name}.js`, [name]]))
 };
@@ -93,6 +98,10 @@ beforeAll(async () => {
   for (const [path, names] of Object.entries(emptyComponents)) {
     vi.doMock(path, () => Object.fromEntries(names.map(name => [name, ({ children }: any) => <>{children}</>])));
   }
+  vi.doMock('./components/TitlebarThreadTabs.js', () => ({ TitlebarThreadTabs: () => <div data-testid="thread-tabs-shell" /> }));
+  vi.doMock('./components/ShortcutsHelp.js', () => ({
+    ShortcutsHelp: ({ ctrlVPasteEnabled }: { ctrlVPasteEnabled?: boolean }) => <div data-testid="shortcuts-help">{String(ctrlVPasteEnabled)}</div>
+  }));
   store = await import('./store.js');
   store.useData.setState({ init: vi.fn().mockResolvedValue(undefined), projects: [], terminals: {} });
   App = (await import('./App.js')).App;
@@ -101,6 +110,40 @@ afterEach(() => {
   cleanup(); localStorage.clear(); fixtures.drawer.mockClear();
   fixtures.pluginChanged = null;
   fixtures.recoverCatalogs.mockClear(); fixtures.recoverStale.mockClear(); fixtures.recoverAfterWake.mockClear(); fixtures.offWake.mockClear(); fixtures.reconcilePlugins.mockClear(); fixtures.unsubscribePlugins.mockClear();
+});
+
+it('switches titlebar navigation live and retains compact chrome', () => {
+  fixtures.compact = false;
+  store.useData.setState({ threadTabsEnabled: true });
+  const view = render(<MemoryRouter><App /></MemoryRouter>);
+  expect(screen.getByTestId('thread-tabs-shell')).toBeTruthy();
+  act(() => store.useData.setState({ threadTabsEnabled: false }));
+  expect(screen.queryByTestId('thread-tabs-shell')).toBeNull();
+  act(() => store.useData.setState({ threadTabsEnabled: true }));
+  expect(screen.getByTestId('thread-tabs-shell')).toBeTruthy();
+  fixtures.compact = true;
+  view.rerender(<MemoryRouter><App /></MemoryRouter>);
+  expect(screen.queryByTestId('thread-tabs-shell')).toBeNull();
+  fixtures.compact = false;
+});
+
+it('promotes an existing thread inspector when thread tabs are enabled', async () => {
+  fixtures.compact = false;
+  const original = store.useUi.getState();
+  store.useData.setState({ threadTabsEnabled: false, classicSessionViewEnabled: false });
+  store.useUi.setState({ nav: 'agents', focusedProjectId: null, threadModal: { threadId: 'tabs-probe' } });
+  const view = render(<MemoryRouter initialEntries={['/agents']}><App /></MemoryRouter>);
+  try {
+    expect(screen.getByTestId('thread-modal-shell')).toBeTruthy();
+    await act(async () => store.useData.setState({ threadTabsEnabled: true }));
+    expect(screen.queryByTestId('thread-modal-shell')).toBeNull();
+    expect(store.useUi.getState().threadModal).toBeNull();
+    expect(screen.getByTestId('location').textContent).toBe('/threads/tabs-probe');
+  } finally {
+    view.unmount();
+    store.useUi.setState(original);
+    store.useData.setState({ threadTabsEnabled: true });
+  }
 });
 
 it('retries unavailable model catalogs on plugin changes and ignores late pushes after unmount', async () => {
@@ -117,6 +160,27 @@ it('retries unavailable model catalogs on plugin changes and ignores late pushes
   await act(async () => { notify([]); });
   expect(fixtures.recoverCatalogs).toHaveBeenCalledOnce();
   expect(fixtures.reconcilePlugins).toHaveBeenCalledOnce();
+});
+
+it('native menu items reach the same store actions as their shortcuts', async () => {
+  const actions = { toggleSettings: vi.fn(), setNav: vi.fn(), setPaletteOpen: vi.fn(), setShortcutsOpen: vi.fn() };
+  const original = store.useUi.getState();
+  store.useUi.setState({ ...actions, selectedProjectId: null, nav: 'home', shortcutsOpen: false });
+  const view = render(<MemoryRouter><App /></MemoryRouter>);
+  try {
+    act(() => {
+      for (const event of ['app:openSettings', 'app:toggleInbox', 'app:openPalette', 'app:openShortcuts',
+        'app:toggleProjectView', 'app:newClaudeTab', 'app:reopenTab', 'app:closeTab']) fixtures.menuEvent!(event);
+    });
+    // Settings… shares ⌘,'s toggle, so drilled in it opens Project settings too.
+    expect(actions.toggleSettings).toHaveBeenCalledOnce();
+    expect(actions.setNav).toHaveBeenCalledWith('inbox');
+    expect(actions.setPaletteOpen).toHaveBeenCalledWith(true);
+    expect(actions.setShortcutsOpen).toHaveBeenCalledWith(true);
+  } finally {
+    view.unmount();
+    store.useUi.setState(original);
+  }
 });
 
 it('recovers model catalogs when the window becomes visible or the machine wakes', async () => {
@@ -137,6 +201,20 @@ it('recovers model catalogs when the window becomes visible or the machine wakes
     expect(fixtures.recoverStale).toHaveBeenCalledOnce();
   } finally {
     visibility.mockRestore();
+  }
+});
+
+it('passes the live "Ctrl+V pastes" setting to the shortcuts help', () => {
+  fixtures.compact = false; fixtures.unread = 0;
+  store.useUi.setState({ shortcutsOpen: true });
+  store.useData.setState({ terminalCtrlVPasteEnabled: false });
+  try {
+    render(<MemoryRouter><App /></MemoryRouter>);
+    expect(screen.getByTestId('shortcuts-help').textContent).toBe('false');
+    act(() => { store.useData.setState({ terminalCtrlVPasteEnabled: true }); });
+    expect(screen.getByTestId('shortcuts-help').textContent).toBe('true');
+  } finally {
+    store.useUi.setState({ shortcutsOpen: false });
   }
 });
 

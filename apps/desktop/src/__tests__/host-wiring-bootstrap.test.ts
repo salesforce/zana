@@ -48,7 +48,9 @@ const h = vi.hoisted(() => {
     sent: [] as unknown[][],
     winDestroyed: false,
     contentsDestroyed: (() => false) as () => boolean,
-    runtimeStart: undefined as any
+    runtimeStart: undefined as any,
+    nativeTheme: Object.assign(new EventEmitter(), { shouldUseDarkColors: false, shouldUseHighContrastColors: false }),
+    overlays: [] as unknown[]
   };
 });
 
@@ -76,6 +78,7 @@ vi.mock('electron', () => {
       const win = new Proxy({
         id: 1,
         isDestroyed: () => h.winDestroyed,
+        setTitleBarOverlay: (options: unknown) => { h.overlays.push(options); },
         webContents: new Proxy({ id: 2, isDestroyed: () => h.contentsDestroyed(), send: (...a: unknown[]) => { h.sent.push(a); } }, fallback)
       }, fallback);
       h.lastWin = win;
@@ -98,7 +101,7 @@ vi.mock('electron', () => {
     powerMonitor: { on: () => {}, off: () => {} },
     powerSaveBlocker: loose(),
     session: loose(),
-    nativeTheme: { shouldUseDarkColors: false, on: () => {}, off: () => {} },
+    nativeTheme: h.nativeTheme,
     systemPreferences: loose(),
     Notification: class { static isSupported() { return false; } },
     clipboard: loose()
@@ -283,6 +286,29 @@ describe('host bootstrap wiring', () => {
     expect((await h.mcpDeps.registerProject(dir)).alreadyExisted).toBe(true);
     project = project.project;
   }, 30000);
+
+  it('re-colours the Windows caption buttons on a Theme change and an OS appearance change', () => {
+    const platform = process.platform;
+    const config = store.getConfig();
+    const theme = vi.spyOn(store, 'getConfig');
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    try {
+      h.overlays.length = 0;
+      theme.mockReturnValue({ ...config, theme: 'light' });
+      ctx().refreshTitleBarOverlays();
+      expect(h.overlays).toEqual([{ color: '#f6f8fa', symbolColor: '#57606a', height: 44 }]);
+      // Theme System: bootstrap's listener follows the OS.
+      theme.mockReturnValue({ ...config, theme: 'system' });
+      h.nativeTheme.shouldUseDarkColors = true;
+      h.nativeTheme.emit('updated');
+      expect(h.overlays.at(-1)).toEqual({ color: '#181818', symbolColor: '#8b949e', height: 44 });
+      expect(h.overlays).toHaveLength(2);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+      h.nativeTheme.shouldUseDarkColors = false;
+      theme.mockRestore();
+    }
+  });
 
   it('applies the browser ownership policy to navigation and redirects without exempting unrelated contents', () => {
     const owned = Object.assign(new h.EventEmitter(), { id: 101, setWindowOpenHandler: vi.fn() });
@@ -615,6 +641,17 @@ describe('host bootstrap wiring', () => {
     await Promise.resolve(tryIt(() => o.authorizePlanRegistration({ id: 'x' }, []))).catch(() => undefined);
     vi.mocked(c.teams.list).mockRestore();
     vi.mocked(c.personas.list).mockRestore();
+  });
+
+  it('forwards the retain option from the exported cancel wrapper and the execution deps to the lifecycle store', async () => {
+    const seen: unknown[] = [];
+    h.lifecycleOverride.cancelTeamLaunch = async (_c: string, _id: string, opts?: unknown) => {
+      seen.push(opts);
+      return { ok: true, canceledSessionIds: [], pendingSessionIds: [], lifecycleState: 'cancelled' };
+    };
+    await host.cancelTeamLaunch('c', 'ok', { retainOrchestrator: true });
+    await host.cancelTeamLaunch('c', 'ok');
+    expect(seen).toEqual([{ retainOrchestrator: true }, undefined]);
   });
 
   it('reports team launch lifecycle results through the exported wrappers', async () => {
@@ -961,6 +998,16 @@ describe('host bootstrap wiring', () => {
     beforeQuit({ preventDefault: vi.fn() });
     await settle();
     expect(() => beforeQuit({ preventDefault: vi.fn() })).not.toThrow();
+    // The caption-button theme listener is released.
+    const platform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    try {
+      h.overlays.length = 0;
+      h.nativeTheme.emit('updated');
+      expect(h.overlays).toEqual([]);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+    }
   });
 
   it('connects bulk plugin updates to the production supervisor', async () => {

@@ -11,12 +11,18 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('../lib/product-client.js', () => ({ product: { fs: { walkFiles: mocks.walkFiles } } }));
 vi.mock('../store.js', () => {
-  const state = {
+  const uiState = {
     setExplorerFile: mocks.setExplorerFile,
     setProjectView: mocks.setProjectView,
     recentFiles: {}
   };
-  return { useUi: (select: (s: typeof state) => unknown) => select(state) };
+  const dataState = {
+    explorerFileIconTheme: 'seti'
+  };
+  return {
+    useUi: (select: (s: typeof uiState) => unknown) => select(uiState),
+    useData: (select: (s: typeof dataState) => unknown) => select(dataState)
+  };
 });
 
 import { QuickOpen } from './QuickOpen.js';
@@ -64,7 +70,7 @@ describe('QuickOpen focus', () => {
     expect(document.activeElement).toBe(input);
     expect(input.value).toBe('readme');
     // The match is highlighted with <mark>, so compare the rows' text.
-    expect([...document.querySelectorAll('.palette-item')].map((row) => row.textContent)).toEqual(['README.md']);
+    expect([...document.querySelectorAll('.palette-item')].map((row) => row.querySelector('.palette-label')?.textContent)).toEqual(['README.md']);
   });
 
   it('focuses the input when files come from the cache', async () => {

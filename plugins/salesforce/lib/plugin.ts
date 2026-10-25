@@ -1,3 +1,4 @@
+import { OrgLoginHistory } from './org-login-history.js';
 import { join, relative } from 'node:path';
 import { ContextPresets, ContextPresetError, contextPresetStorage, registerContextPresets } from './preview-context-presets.js';
 import { CONTEXT_PRESETS_CHANGED } from './preview-context-preset-contract.js';
@@ -79,6 +80,7 @@ import {
   AgentFilesError,
   createAgentFile,
   listAgentFiles,
+  scanAgentFiles,
   readAgentFile,
   sha256Hex,
   writeAgentFile
@@ -426,6 +428,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   registerRpc('orgs.login', runOrgLogin);
   // Human sign-in outlives the desktop RPC deadline. Keep only bounded, public
   // results and poll with short requests; AsyncLocalStorage pins the owner scope.
+  const loginHistory = new OrgLoginHistory(zcc.storage.kv, () => deps.now());
   const loginJobs = new Map<string, { projectId: string | null; result?: Awaited<ReturnType<typeof runOrgLogin>> }>();
   zcc.onDispose(() => loginJobs.clear());
   registerRpc('orgs.login.start', args => {
@@ -436,14 +439,24 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     const loginId = randomUUID();
     const job: { projectId: string | null; result?: Awaited<ReturnType<typeof runOrgLogin>> } = { projectId: contexts.current()!.projectId };
     loginJobs.set(loginId, job);
-    void runOrgLogin(args).then(result => { job.result = result; }, () => {
-      job.result = { ok: false, code: 'login_failed', error: 'Sign-in could not finish. Refresh the org list, then retry.' };
-    });
-    return { ok: true, loginId };
+    const finish = async (result: Awaited<ReturnType<typeof runOrgLogin>>) => {
+      // Retain the public result before exposing completion, so a runtime reload
+      // between the two polls cannot lose a successful or cancelled sign-in.
+      try { await loginHistory.put(loginId, job.projectId, result); } catch { /* in-memory result still works */ }
+      job.result = result;
+    };
+    void runOrgLogin(args).then(finish, () => finish({ ok: false, code: 'login_failed', error: 'Sign-in could not finish. Refresh the org list, then retry.' }));
+    return { ok: true, loginId, jobId: loginId, projectId: job.projectId };
   });
-  registerRpc('orgs.login.status', args => {
-    const job = loginJobs.get(rpcString(args, 'loginId'));
-    if (!job || job.projectId !== contexts.current()!.projectId) return { ok: false, error: 'This sign-in is no longer available. Refresh your orgs, then retry.' };
+  registerRpc('orgs.login.status', async args => {
+    const id = rpcString(args, 'loginId') || rpcString(args, 'jobId');
+    const owner = contexts.current()!.projectId;
+    const job = loginJobs.get(id);
+    if (!job) {
+      const result = await loginHistory.get(id, owner);
+      if (result !== undefined) return { ok: true, done: true, result };
+    }
+    if (!job || job.projectId !== owner) return { ok: false, code: 'login_expired', error: 'This sign-in expired or Studio restarted before it finished. Refresh connected orgs to recover a completed sign-in, then retry if needed.' };
     return job.result ? { ok: true, done: true, result: job.result } : { ok: true, done: false };
   });
   registerRpc('project.generate', async (args) => {
@@ -560,8 +573,8 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       const resolved = await resolveAgentFilesRoot(args);
       const preview = rpcString(args, 'purpose') === 'preview';
       const child = preview && !isDxProject(resolved.root, deps.exists) ? dxProjectRoot({ ...await readSettings(), projectRoot: resolved.root }, deps) : undefined;
-      const files = listAgentFiles(child || resolved.root, deps, { ...resolved.options, bundlesOnly: preview });
-      return { ok: true, files: child ? files.map(file => ({ ...file, path: `${DRAFT_PROJECT}/${file.path}` })) : files };
+      const { files, truncated } = scanAgentFiles(child || resolved.root, deps, { ...resolved.options, bundlesOnly: preview });
+      return { ok: true, truncated, files: child ? files.map(file => ({ ...file, path: `${DRAFT_PROJECT}/${file.path}` })) : files };
     } catch (error) {
       return agentFilesFailure(error);
     }
@@ -791,7 +804,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       if (action === 'capabilities') return { ok: true, actions: actionCatalog(), toolkit: await toolkit.catalog() };
       if (!ctx.projectId) return { ok: false, code: 'project_required', error: 'Choose a registered project for Salesforce actions.' };
       if (!isWorkbenchAction(action)) return { ok: false, code: 'invalid_input', error: 'Unknown Salesforce action. Use capabilities.' };
-      const data = actionInput(input);
+      const data = actionInput(input, action);
       if (action === 'files.write' && (typeof data.expectedSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(data.expectedSha256))) throw Error('Read the file first and supply its expectedSha256 revision.');
       if (action === 'project.create') {
         if (typeof data.name !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]{0,79}$/.test(data.name)) throw Error('Choose a simple project name.');
@@ -800,6 +813,12 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       }
       // A full check of a large org exceeds the result cap; agents page with states and limit.
       if (action === 'sync.check' && data.limit === undefined) data.limit = 1000;
+      if (['studio.start', 'source.parse', 'source.query'].includes(action) && data.source === undefined && typeof data.path === 'string') {
+        const resolved = await resolveAgentFilesRoot({ projectId: ctx.projectId });
+        const file = readAgentFile(resolved.root, data.path, deps, resolved.options);
+        if (data.expectedSha256 !== undefined && data.expectedSha256 !== file.sha256) throw new AgentFilesError('sha_mismatch', 'The saved source changed. Read it again before starting.');
+        data.source = file.content;
+      }
       if (action === 'studio.start') await presetContext(data, ctx.projectId);
       if (action === 'ui.command') control.assertTarget(ctx.projectId, String(data.viewId), (await readSettings()).defaultOrg);
       const uiReadsOrg = action === 'ui.command' && uiCommandReadsOrg(data.command, data.input as Record<string, unknown> | undefined);
@@ -808,6 +827,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
         const { mediated } = await mediateOrgRead(ctx, sdk, `Salesforce ${action}`);
         if (!mediated.approved) return { ok: false, code: 'refused', error: `Operator ${mediated.reason} ${action}.` };
       }
+      if (action === 'suites.compare') data.compare = true;
       // ui.command names the thread that sent it, so the Studio can show who it follows.
       const result = action === 'ui.command'
         ? { ok: true, ...control.request(ctx.projectId, data, await commandSource(ctx)) }

@@ -30,6 +30,7 @@
     "build": "node scripts/build-electron.mjs",
     "build:all": "turbo run build",
     "preview": "electron-vite preview",
+    "gen:seti-icons": "node scripts/generate-seti-icons.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "verify:fast": "pnpm run typecheck && pnpm exec vitest run --changed origin/main && pnpm exec vitest run $(fd -e ts 'guard\\.test')",
     "verify:full": "pnpm run typecheck && pnpm exec vitest run && pnpm exec vitest run --config plugins/tasks/vitest.config.ts && pnpm --dir plugins/provider-pi exec vitest run --config vitest.config.ts && pnpm exec vitest run --config vitest.release-coverage.config.ts",

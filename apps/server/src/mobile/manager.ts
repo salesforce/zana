@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { CONNECT_ACCESS_REVOKED_MESSAGE } from '@zana-ai/zcc-domain/product';
 import { readProductInstanceId } from '../instance-identity.js';
 import { mobileDistribution } from './distribution.js';
 import type { MobileReadySession } from './readiness.js';
@@ -172,7 +173,7 @@ export class MobileGatewayManager {
     if (this.connections.read() !== connection) throw new Error('Connection changed. Refresh the address.');
     if (!Array.isArray(result.servers) || result.servers.length > 500) throw new Error('Invalid computer list');
     const server = result.servers.find(item => item?.id === connection.serverId);
-    if (!server || server.revoked) throw new Error('This computer is no longer linked. Sign in again.');
+    if (!server || server.revoked) throw new Error(CONNECT_ACCESS_REVOKED_MESSAGE);
     if (server.serverUrl !== connection.publicUrl) throw new Error('Invalid computer address');
     if (server.browserUrl == null) return null;
     if (typeof server.browserUrl !== 'string' || server.browserUrl.length > 2048) throw new Error('Invalid browser address');

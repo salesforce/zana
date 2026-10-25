@@ -1,6 +1,6 @@
 import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FileText } from 'lucide-react';
+import { FileIcon } from './FileIcon.js';
 import type { Project, WalkedFile } from '@zana-ai/zcc-domain/product';
 import { useUi } from '../store.js';
 import { fuzzyMatchPaths } from '../lib/fuzzy.js';
@@ -209,7 +209,7 @@ export function QuickOpen({ project, onClose }: Props) {
                 onClick={() => choose(r)}
               >
                 <span className="palette-icon">
-                  <FileText size={14} />
+                  <FileIcon name={r.file.rel} size={14} />
                 </span>
                 <span className="palette-label">{highlightMatches(r.file.rel, r.matchIdx)}</span>
               </button>

@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { DocActor } from '../shared/contract.js';
 import {
   LARGE_TEXT_FILE_BYTES,
   MAX_COMMENTS_PER_DOC,
   MAX_FILES_PER_DOC,
+  MAX_TEMPLATE_BUNDLE_BYTES,
   MAX_LARGE_TEXT_REVISIONS_PER_FILE,
   MAX_TEXT_FILE_BYTES,
   MAX_TEXT_REVISIONS_PER_FILE,
@@ -17,6 +18,161 @@ import { MAX_PEER_STORED_BYTES, MAX_PEER_STORED_VERSIONS } from '../shared/peer-
 
 const user: DocActor = { kind: 'user', label: 'You', threadId: null };
 const agent: DocActor = { kind: 'agent', label: 'Planner', threadId: 'thread-1' };
+
+describe('template kind isolation', () => {
+  it('bounds import/export bundles and stored template count', () => {
+    const db = createTestDatabase(), store = new DesignDocStore(db);
+    expect(() => store.templatesImport(' '.repeat(MAX_TEMPLATE_BUNDLE_BYTES + 1), user)).toThrow('too large');
+    const huge = 'x'.repeat(MAX_TEMPLATE_BUNDLE_BYTES);
+    const registry = store as unknown as { listTemplates(): unknown[] };
+    const original = registry.listTemplates;
+    registry.listTemplates = () => [{ id: 'key', label: huge }];
+    expect(() => store.templatesExport()).toThrow('too large');
+    registry.listTemplates = original;
+    const existing = store.listTemplates().length;
+    db.prepare(`WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x < ?)
+      INSERT INTO docs (id, slug, title, created_at, updated_at, created_by, updated_by, kind, template_key)
+      SELECT 'capacity-' || x, 'capacity-' || x, 'Private', 1, 1, '{}', '{}', 'template', 'capacity-' || x FROM n`).run(1000 - existing);
+    expect(() => store.templateNew({}, user)).toThrow('capacity reached');
+  });
+
+  it('lists template records in bulk and lets purge ignore the export size cap', () => {
+    const db = createTestDatabase(), store = new DesignDocStore(db);
+    const custom = store.templateNew({ label: 'Mine' }, user);
+    const records = store.listTemplateRecords();
+    expect(records.filter((record) => record.origin === 'builtin')).toHaveLength(7);
+    expect(records.find((record) => record.docId === custom.id)).toMatchObject({ origin: 'user', label: 'Mine' });
+    expect(records.every((record) => record.files.length > 0)).toBe(true);
+    const registry = store as unknown as { listTemplates(): unknown[] };
+    registry.listTemplates = () => [{ id: 'key', label: 'x'.repeat(MAX_TEMPLATE_BUNDLE_BYTES) }];
+    expect(() => store.templatesExport()).toThrow('too large');
+    const bundle = store.templatesExport(undefined, true);
+    expect(bundle.length).toBeGreaterThan(MAX_TEMPLATE_BUNDLE_BYTES);
+    registry.listTemplates = DesignDocStore.prototype.listTemplates.bind(store);
+    expect(() => store.purgeTemplates(bundle)).toThrow('changed during export');
+    store.purgeTemplates(store.templatesExport(undefined, true));
+    expect(store.listTemplates()).toEqual([]);
+  });
+
+  it('restores builtin origins without overwriting custom colliding keys and defaults to first remaining template', () => {
+    const db = createTestDatabase(), store = new DesignDocStore(db);
+    store.templateDelete('technical');
+    expect(store.create({ title: 'Fallback' }, user).files.length).toBeGreaterThan(0);
+    const custom = store.templateNew({ label: 'Custom' }, user);
+    db.prepare("UPDATE docs SET template_key = 'technical' WHERE id = ?").run(custom.id);
+    store.templatesRestoreBuiltins();
+    expect(store.templateByKey('technical')!.label).toBe('Custom');
+    expect(db.prepare("SELECT COUNT(*) AS n FROM docs WHERE kind = 'template' AND template_origin = 'builtin:technical'").get()).toEqual({ n: 1 });
+    store.templatesRestoreBuiltins();
+    expect(db.prepare("SELECT COUNT(*) AS n FROM docs WHERE kind = 'template' AND template_origin = 'builtin:technical'").get()).toEqual({ n: 1 });
+  });
+  it('manages, copies, restores and round-trips templates without doc or peer leakage', () => {
+    const db = createTestDatabase(), mutations: unknown[] = [];
+    const store = new DesignDocStore(db, { onMutation: (event) => mutations.push(event) });
+    const template = store.templateNew({ label: 'Custom', files: [{ path: 'README.md', content: '# {{title}}' }, { path: 'image.png', content: 'AAEC', encoding: 'base64' }] }, user);
+    expect(store.list()).toEqual([]);
+    expect(store.templateByKey(store.requireTemplate(template.id).template_key)!.label).toBe('Custom');
+    const copy = store.templateDuplicate(template.id, user);
+    expect(copy.title).toBe('Custom (copy)');
+    expect(store.templateDuplicate(template.id, user).title).toBe('Custom (copy 2)');
+    expect(store.templateUpdateMeta(copy.id, { label: 'Edited', description: 'description', entryPath: 'image.png' }, user).entryPath).toBe('image.png');
+    expect(() => store.templateUpdateMeta(copy.id, { status: 'approved' }, user)).toThrow('accepts only');
+    expect(() => store.templateUpdateMeta(copy.id, { entryPath: 'missing.md' }, user)).toThrow('entryPath');
+    expect(mutations).toEqual([]);
+    const bundle = store.templatesExport([store.requireTemplate(template.id).template_key!]);
+    const imported = store.templatesImport(bundle, user)[0]!;
+    expect(imported.title).toBe('Custom (copy)');
+    expect(store.readFile(imported.id, 'image.png', 'template').content).toBe('AAEC');
+    expect(store.requireTemplate(imported.id).template_key).not.toBe(store.requireTemplate(template.id).template_key);
+    const doc = store.create({ title: 'Source', files: [{ path: 'README.md', content: 'source' }] }, user);
+    const saved = store.templateFromDoc(doc.id, user);
+    expect(saved.title).toBe('Source (copy)');
+    expect(store.readFile(saved.id, 'README.md', 'template').content).toBe('source');
+    expect(() => store.templatesImport('bad', user)).toThrow('malformed');
+    expect(() => store.templatesImport(3, user)).toThrow('string');
+    expect(() => store.templatesImport('{}', user)).toThrow();
+    store.templateDelete('technical');
+    expect(store.templateByKey('technical')).toBeNull();
+    store.templatesRestoreBuiltins();
+    expect(store.templateByKey('technical')).not.toBeNull();
+    expect(store.templateByKey(store.requireTemplate(copy.id).template_key)!.label).toBe('Edited');
+    const all = store.templatesExport();
+    expect(() => store.purgeTemplates('stale')).toThrow('changed');
+    store.purgeTemplates(all);
+    expect(store.listTemplates()).toEqual([]);
+    expect(store.get(doc.id).title).toBe('Source');
+    const only = store.templateNew({}, user);
+    expect(() => store.templateDelete(only.id)).toThrow('last template');
+  });
+
+  it('rolls back an entire import when inserting any template fails', () => {
+    const db = createTestDatabase(), store = new DesignDocStore(db);
+    const before = store.listTemplates();
+    const bundle = { kind: 'zcc-design-doc-templates', version: 1, templates: ['one', 'two'].map((key) => ({
+      key, label: key, description: '', entryPath: 'README.md', files: [{ path: 'README.md', content: key }]
+    })) };
+    db.runScript("CREATE TRIGGER fail_second BEFORE INSERT ON docs WHEN NEW.template_key = 'two' BEGIN SELECT RAISE(ABORT, 'insert fault'); END");
+    expect(() => store.templatesImport(JSON.stringify(bundle), user)).toThrow('insert fault');
+    expect(store.listTemplates()).toEqual(before);
+  });
+
+  it('edits template files and revisions without linking agents or emitting mutations', () => {
+    const events: unknown[] = [], store = new DesignDocStore(createTestDatabase(), { onMutation: (event) => events.push(event) });
+    const template = store.templateNew({}, user);
+    store.writeFile(template.id, { path: 'README.md', content: 'old' }, agent, 'template');
+    const revision = store.history(template.id, {}, 'template')[0]!;
+    store.editFile(template.id, { path: 'README.md', edits: [{ oldText: 'old', newText: 'new' }] }, agent, 'template');
+    store.renameFile(template.id, 'README.md', 'renamed.md', agent, {}, 'template');
+    expect(store.get(template.id, 'template').entryPath).toBe('renamed.md');
+    store.restoreRevision(template.id, revision.id, user, {}, 'template');
+    expect(store.revisionContent(template.id, revision.id, 'template').content).toBe('old');
+    store.deleteFile(template.id, 'renamed.md', agent, {}, 'template');
+    expect(store.get(template.id, 'template').entryPath).toBe('README.md');
+    expect(store.get(template.id, 'template').threads).toEqual([]);
+    expect(events).toEqual([]);
+  });
+  it('hides templates from doc lookups, search, alternatives, files, comments and mutations', () => {
+    const db = createTestDatabase();
+    const mutations: unknown[] = [];
+    const store = new DesignDocStore(db, { onMutation: (event) => mutations.push(event) });
+    const template = store.create({ title: 'Private template', template: 'blank' }, user);
+    db.prepare("UPDATE docs SET kind = 'template', template_key = 'private' WHERE id = ?").run(template.id);
+    const doc = store.create({ title: 'Visible doc', template: 'blank' }, user);
+    db.prepare(`INSERT INTO doc_threads (doc_id, thread_id, title, role, last_activity_at)
+      VALUES (?, 'shared-thread', 'Private thread', 'author', 1)`).run(template.id);
+    store.linkThread(doc.id, 'shared-thread', 'Public thread', 'author');
+    expect(store.touchThread('shared-thread', 'Changed')).toEqual([doc.id]);
+    expect(db.prepare('SELECT title FROM doc_threads WHERE doc_id = ?').get(template.id)).toEqual({ title: 'Private thread' });
+    expect(store.forgetThread('shared-thread')).toEqual([doc.id]);
+    expect(db.prepare('SELECT title FROM doc_threads WHERE doc_id = ?').get(template.id)).toEqual({ title: 'Private thread' });
+    mutations.length = 0;
+    expect(store.list().map((row) => row.id)).toEqual([doc.id]);
+    expect(store.list({ query: 'Private' })).toEqual([]);
+    expect(store.find(template.id)).toBeNull();
+    expect(store.find(template.slug)).toBeNull();
+    expect(store.requireTemplate('private').id).toBe(template.id);
+    expect(store.requireTemplate(template.id).id).toBe(template.id);
+    expect(() => store.requireTemplate(doc.id)).toThrow('template');
+    expect(() => store.requireTemplate(null)).toThrow('template');
+    for (const action of [
+      () => store.get(template.id),
+      () => store.summary(template.id),
+      () => store.readFile(template.id, 'README.md'),
+      () => store.writeFile(template.id, { path: 'README.md', content: 'changed' }, user),
+      () => store.update(template.id, { title: 'Changed' }, user),
+      () => store.update(doc.id, { alternativeTo: template.id }, user),
+      () => store.setPinned(template.id, true),
+      () => store.addComment(template.id, { body: 'Comment' }, user),
+      () => store.linkThread(template.id, 'thread', 'Thread', 'author'),
+      () => store.remove(template.id)
+    ]) expect(action).toThrow('not found');
+    // Exercise the internal emission boundary independently of doc API authorization.
+    (store as unknown as { notifyMutation: (event: { docId: string; kind: string; payload: null }) => void })
+      .notifyMutation({ docId: template.id, kind: 'write', payload: null });
+    expect(mutations).toEqual([]);
+    expect(store.requireTemplate('private').title).toBe('Private template');
+  });
+});
 
 describe('DesignDocStore legacy migration repair', () => {
   const hashes = [
@@ -326,8 +482,8 @@ describe('DesignDocStore peer mutation boundary', () => {
     const observed = new DesignDocStore(other, { onMutation: () => { throw new Error('capture failed'); } });
     expect(() => observed.create({ title: 'Rollback', status: 'approved', template: 'blank' }, user)).toThrow('capture failed');
     expect(observed.list()).toEqual([]);
-    expect(other.prepare('SELECT * FROM doc_files').all()).toEqual([]);
-    expect(other.prepare('SELECT * FROM doc_revisions').all()).toEqual([]);
+    expect(other.prepare("SELECT f.* FROM doc_files f JOIN docs d ON d.id = f.doc_id WHERE d.kind = 'doc'").all()).toEqual([]);
+    expect(other.prepare("SELECT r.* FROM doc_revisions r JOIN docs d ON d.id = r.doc_id WHERE d.kind = 'doc'").all()).toEqual([]);
   });
 
   it('deletes paired doc dependents and records a scrubbed tombstone in the same transaction', () => {
@@ -421,6 +577,20 @@ describe('DesignDocStore — docs', () => {
     expect(store.readFile(doc.id, 'README.md').content).toContain('# Offline Sync');
     expect(store.readFile(doc.id, 'README.md').content).toContain('> Sync while offline');
     expect(store.history(doc.id)).toHaveLength(2);
+  });
+
+  it('seeds and reads the builtin registry from template rows', async () => {
+    const store = makeStore();
+    expect(store.listTemplates().map((template) => template.id)).toEqual(['technical', 'product', 'adr', 'api', 'report', 'html-design', 'blank']);
+    expect(store.templateByKey('technical')?.files.map((file) => file.path)).toEqual(['README.md', 'diagrams/architecture.mmd']);
+    const set = vi.fn();
+    const kv = { get: async () => undefined as boolean | undefined, set };
+    await store.seedBuiltinTemplates(kv);
+    expect(store.listTemplates()).toHaveLength(7);
+    expect(set).toHaveBeenCalledWith('templates.seed.v1', true);
+    (store as any).db.prepare("DELETE FROM docs WHERE kind = 'template' AND template_key = 'technical'").run();
+    await store.seedBuiltinTemplates({ get: async () => true, set });
+    expect(store.templateByKey('technical')).toBeNull();
   });
 
   it('creates from explicit files, picks a markdown entry, and rejects bad input', () => {

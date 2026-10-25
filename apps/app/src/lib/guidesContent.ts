@@ -120,7 +120,7 @@ handful of shortcuts that matter most day to day.
 
 - **⌘P** — command palette / project switcher.
 - **⌘⇧1…9** — jump straight to project 1–9; **⌘⇧]/[** to step through them.
-- **⌘I** — toggle the Inbox. **⌘J** — toggle the Scheduler. **⌘,** — Settings.
+- **⌘I** — toggle the Inbox. **⌘J** — toggle the Scheduler. **⌘,** — Settings (inside a project, its Project settings).
 - **⌘O** — show all agents (exits project focus).
 
 ## Tabs & terminals

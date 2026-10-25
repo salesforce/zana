@@ -414,6 +414,18 @@ describe('launchTeam structured path', () => {
     expect(replay.ok).toBe(true);
   });
 
+  it('snapshots the Team orchestrator retention setting into the lifecycle record', async () => {
+    h.teams[0].retainOrchestrator = true;
+    const req = structuredReq();
+    expect((await launchTeam('team1', 'p1', req as never)).ok).toBe(true);
+    const record = () => (JSON.parse(readFileSync(join(h.root, 'team-lifecycle.json'), 'utf8')) as { records: TeamLifecycleRecord[] })
+      .records.find((candidate) => candidate.launchRequestId === req.launchRequestId);
+    expect(record()).toMatchObject({ retainOrchestrator: true });
+
+    h.teams[0].retainOrchestrator = false;
+    expect(record()).toMatchObject({ retainOrchestrator: true });
+  });
+
   it('consumes preissued authorizations and rejects tampered / unknown ones', async () => {
     const callerPrincipalId = 'owner';
     const launchRequestId = reqId();

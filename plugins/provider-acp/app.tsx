@@ -6,13 +6,15 @@ import { definePluginApp } from "@zana-ai/zcc-plugin-sdk/app";
  * `branding.icon` SVG is fetched through `<img>`, a separate document where
  * `currentColor` is black — invisible on dark themes.
  */
-function CursorIcon({ className }: { className?: string }) {
+function CursorIcon({ className, size = 14 }: { className?: string; size?: number }) {
   return (
     <svg
       fill="currentColor"
       viewBox="0 0 24 24"
       xmlns="http://www.w3.org/2000/svg"
       className={className}
+      width={size}
+      height={size}
     >
       <title>Cursor</title>
       <path d="M11.503.131 1.891 5.678a.84.84 0 0 0-.42.726v11.188c0 .3.162.575.42.724l9.609 5.55a1 1 0 0 0 .998 0l9.61-5.55a.84.84 0 0 0 .42-.724V6.404a.84.84 0 0 0-.42-.726L12.497.131a1.01 1.01 0 0 0-.996 0M2.657 6.338h18.55c.263 0 .43.287.297.515L12.23 22.918c-.062.107-.229.064-.229-.06V12.335a.59.59 0 0 0-.295-.51l-9.11-5.257c-.109-.063-.064-.23.061-.23" />
@@ -20,13 +22,15 @@ function CursorIcon({ className }: { className?: string }) {
   );
 }
 
-function OpencodeIcon({ className }: { className?: string }) {
+function OpencodeIcon({ className, size = 14 }: { className?: string; size?: number }) {
   return (
     <svg
       viewBox="-72 -42 384 384"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       className={className}
+      width={size}
+      height={size}
     >
       <title>opencode</title>
       <path d="M180 240H60V120H180V240Z" fill="currentColor" fillOpacity={0.45} />
@@ -35,36 +39,36 @@ function OpencodeIcon({ className }: { className?: string }) {
   );
 }
 
-function HermesIcon({ className }: { className?: string }) {
+function HermesIcon({ className, size = 14 }: { className?: string; size?: number }) {
   return (
-    <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" className={className}>
+    <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" className={className} width={size} height={size}>
       <title>Hermes Agent</title>
       <path d="M12 3 5 7.5v9L12 21l7-4.5v-9zm0 2.2 4.8 3.1v6.4L12 17.8 7.2 14.7V8.3z" />
     </svg>
   );
 }
 
-function OmpIcon({ className }: { className?: string }) {
+function OmpIcon({ className, size = 14 }: { className?: string; size?: number }) {
   return (
-    <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" className={className}>
+    <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" className={className} width={size} height={size}>
       <title>OMP</title>
       <path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h10v2H4z" />
     </svg>
   );
 }
 
-function GrokIcon({ className }: { className?: string }) {
+function GrokIcon({ className, size = 14 }: { className?: string; size?: number }) {
   return (
-    <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" className={className}>
+    <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" className={className} width={size} height={size}>
       <title>Grok Build</title>
       <path d="M12 2 4 7v10l8 5 8-5V7zm0 2.3 5.5 3.4v6.6L12 17.7 6.5 14.3V7.7z" />
     </svg>
   );
 }
 
-function MastracodeIcon({ className }: { className?: string }) {
+function MastracodeIcon({ className, size = 14 }: { className?: string; size?: number }) {
   return (
-    <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" className={className}>
+    <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" className={className} width={size} height={size}>
       <title>Mastra Code</title>
       <path d="M3.5 19V5h4.1L12 13.4 16.4 5h4.1v14h-3.6V9.8L13.2 19h-2.4L7.1 9.8V19z" />
     </svg>

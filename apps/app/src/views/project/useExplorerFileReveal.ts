@@ -2,9 +2,8 @@ import type { FsEntry } from '@zana-ai/zcc-domain/product';
 import React, { useCallback, useLayoutEffect, useRef, useState } from 'react';
 
 interface ExplorerFileRevealOptions {
-  /** Lists one folder and stores it in the tree's `entries` state. */
-  fetchDir: (path: string) => Promise<FsEntry[]>;
-  entries: Map<string, FsEntry[]>;
+  /** Shared directory loader instance (e.g. from `useDirectoryLoader`). */
+  loadDir: (path: string, force?: boolean) => Promise<FsEntry[]>;
   setExpanded: React.Dispatch<React.SetStateAction<Map<string, boolean>>>;
   treeBodyRef: React.RefObject<HTMLDivElement | null>;
   /** The tree's current root; a walk for an older root stops. */
@@ -12,46 +11,13 @@ interface ExplorerFileRevealOptions {
   treeMode: string;
 }
 
-// Lazy folder loading plus "reveal the open file" for the Explorer tree, like
-// VS Code's reveal active file. `loadDir` lists a folder at most once (cached
-// or joined while in flight); `revealFile` walks down from the root through the
-// *listed* entries, expanding each ancestor folder, then the row scrolls into
-// the tree pane once it renders. Matching listed entries (instead of splicing
-// path strings) keeps Windows `\` paths working and stops at anything the
-// listing hides (denied folders like node_modules, the per-directory entry cap,
-// or a path outside the root), so the tree never expands a phantom folder.
-export function useExplorerFileReveal({ fetchDir, entries, setExpanded, treeBodyRef, activeRoot, treeMode }: ExplorerFileRevealOptions) {
-  // Listings by path: the committed `entries` plus any listing that resolved
-  // since the last render, so a folder is never listed twice in that window.
-  const entriesRef = useRef(entries);
-  entriesRef.current = entries;
-  // In-flight listings by path, so a reveal that walks a folder the mount or a
-  // click is already listing joins that request instead of listing it twice.
-  const pendingDirsRef = useRef(new Map<string, Promise<FsEntry[]>>());
-  const loadDir = useCallback(
-    (path: string, force = false): Promise<FsEntry[]> => {
-      if (!force) {
-        const cached = entriesRef.current.get(path);
-        if (cached) return Promise.resolve(cached);
-        const pending = pendingDirsRef.current.get(path);
-        if (pending) return pending;
-      }
-      const root = activeRoot.current;
-      const request: Promise<FsEntry[]> = fetchDir(path)
-        .then((list) => {
-          // fetchDir drops listings for a root the tree has left; match that.
-          if (activeRoot.current === root) entriesRef.current = new Map(entriesRef.current).set(path, list);
-          return list;
-        })
-        .finally(() => {
-          if (pendingDirsRef.current.get(path) === request) pendingDirsRef.current.delete(path);
-        });
-      pendingDirsRef.current.set(path, request);
-      return request;
-    },
-    [activeRoot, fetchDir]
-  );
-
+// "Reveal the open file" for the Explorer tree, like VS Code's reveal active file.
+// `revealFile` walks down from the root through the listed entries using `loadDir`,
+// expanding each ancestor folder, then the row scrolls into the tree pane once
+// it renders. Matching listed entries (instead of splicing path strings) keeps
+// Windows `\` paths working and stops at anything the listing hides (denied folders,
+// the per-directory entry cap, or a path outside the root).
+export function useExplorerFileReveal({ loadDir, setExpanded, treeBodyRef, activeRoot, treeMode }: ExplorerFileRevealOptions) {
   const loadDirRef = useRef(loadDir);
   loadDirRef.current = loadDir;
   const revealSeqRef = useRef(0);
@@ -59,6 +25,12 @@ export function useExplorerFileReveal({ fetchDir, entries, setExpanded, treeBody
   // Bumped when a walk finds its row, so the layout effect below runs even if
   // every ancestor was already expanded and loaded (no other state changed).
   const [, setRevealTick] = useState(0);
+
+  const cancelReveal = useCallback(() => {
+    revealSeqRef.current++;
+    pendingScrollRef.current = null;
+  }, []);
+
   // Each step is one capped listDir, and a newer open cancels an older walk.
   // The walk only ever descends into an entry that is a strict path prefix of
   // the target, so it ends within the target's segment count at any depth.
@@ -116,7 +88,7 @@ export function useExplorerFileReveal({ fetchDir, entries, setExpanded, treeBody
     body.scrollTop += box.top - view.top - (view.height - box.height) / 2;
   });
 
-  return { loadDir, revealFile };
+  return { revealFile, cancelReveal };
 }
 
 // Compare paths with `/` separators. Local Windows paths come back from listDir

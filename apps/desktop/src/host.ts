@@ -260,6 +260,7 @@ import {
 } from './window/thread-view-windows.js';
 import { createThreadViewHost } from './window/thread-view-host.js';
 import { findUnscopedWindow, isUnscopedRegistration } from './window/main-window-registry.js';
+import { createWindowsTitleBarOverlays } from './window/titlebar-overlay.js';
 import { registerPluginViewIpc, registerThreadViewIpc } from './ipc/windows.js';
 import { showApprovalSheet } from './window/approval-sheet.js';
 import { startPeerUsePrompts } from './ipc/peer-use-prompts.js';
@@ -910,6 +911,18 @@ function setActiveProjectSkillsWatcher(
  * thread may have no project, so it is never the unscoped main window either.
  */
 const windows = new Map<number, { win: BrowserWindow; projectId?: string; view?: PluginViewTarget; threadView?: ThreadViewTarget }>();
+// Windows caption buttons (minimize / maximize / close) follow the effective
+// theme: new windows take `current()`, open ones are re-coloured on a Theme
+// setting change (ipc/config.ts) and on OS appearance changes (`bind()`).
+const titleBarOverlays = createWindowsTitleBarOverlays({
+  get platform() { return process.platform; },
+  windows,
+  theme: resolveTheme,
+  // Lazy: host-loading unit tests mock electron without these.
+  electron: () => ({ nativeTheme, systemPreferences }),
+  logError: logMainError
+});
+let stopTitleBarOverlayTheme: (() => void) | null = null;
 const boundsControllers = new Map<number, ReturnType<typeof createBoundsStateController>>();
 const rendererReadiness = new RendererReadiness();
 
@@ -4973,18 +4986,20 @@ export async function goalExecutionSourcePaths(
   const policy = await resolveSourcePolicy(realpath, { projectRoot: home, home: userHome, ...opts });
   const rawCandidates: string[] = [];
   // 1. Quoted paths (preserves spaces in "C:\Program Files\..." or '/path with space/...')
-  for (const m of goal.matchAll(/["'`]((?:[A-Za-z]:[/\\]|\/)[^"'`]+)["'`]/g)) {
+  for (const m of goal.matchAll(/["'`]((?:[A-Za-z]:[/\\]|\/|~\/)[^"'`]+)["'`]/g)) {
     if (m[1]) rawCandidates.push(m[1]);
   }
   // 2. Unquoted paths
-  for (const m of goal.matchAll(/(?:^|[\s(])((?:[A-Za-z]:[/\\]|\/)[^\s`'"),;:]+)/g)) {
+  for (const m of goal.matchAll(/(?:^|[\s(])((?:[A-Za-z]:[/\\]|\/|~\/)[^\s`'"),;:]+)/g)) {
     if (m[1]) rawCandidates.push(m[1]);
   }
   // 3. `@path` mentions, as the composer writes a dropped, picked or typeahead file:
   // project-relative inside the project, absolute outside it. Same policy checks below.
   rawCandidates.push(...goalMentionPaths(goal, home));
   for (const match of rawCandidates) {
-    const raw = match.trim().replace(/^[`'"(]+|[`'"),;:]+$/g, '');
+    const trimmed = match.trim().replace(/^[`'"(]+|[`'"),;:]+$/g, '');
+    // A leading `~/` names the user's HOME, which the shell would have expanded.
+    const raw = trimmed.startsWith('~/') ? join(userHome, trimmed.slice(2)) : trimmed;
     const candidates = [raw];
     if (raw.endsWith('.')) candidates.push(raw.slice(0, -1));
     for (const candidate of candidates) {
@@ -5691,6 +5706,7 @@ export async function launchTeam(
   }, team.id) as Extract<LaunchPrincipal, { kind: 'team' }>;
   const claim = await teamLifecycle.claim({
     callerPrincipalId, launchRequestId, payloadDigest,
+    retainOrchestrator: team.retainOrchestrator === true,
     capacity: { principal: runPrincipal, launched: 0 }
   });
   if (claim.outcome === 'in-progress') {
@@ -6074,16 +6090,17 @@ export async function launchTeam(
 
 export async function cancelTeamLaunch(
   callerPrincipalId: string,
-  launchRequestId: string
+  launchRequestId: string,
+  opts?: { retainOrchestrator?: boolean }
 ): Promise<Result<CancelTeamLaunchResult>> {
   if (!callerPrincipalId.trim() || !launchRequestId.trim()) {
     return { ok: false, code: 'INVALID', message: 'callerPrincipalId and launchRequestId are required' };
   }
-  let canceled = await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId);
+  let canceled = await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId, opts);
   const record = await teamLifecycle.findRequest(callerPrincipalId, launchRequestId);
   if (record?.workers.some(worker => worker.transport === 'MODERN' && !worker.capacityReleased)) {
     await reconcileModernMembers([record]);
-    canceled = await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId);
+    canceled = await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId, opts);
   }
   return canceled.ok
     ? { ok: true, value: {
@@ -6260,10 +6277,10 @@ const squadProposalServiceDeps: SquadProposalServiceDeps = {
     // Counts every owned non-terminal run, however it was started, not only runs started through squad_launch.
     activeOwnedRuns: (sessionId, projectId) => executionStore.countActiveOwned(sessionId, projectId),
     executionState: async (executionId) => (await executionStore.get(executionId))?.state,
-    launch: async ({ team, project, goal, coordinationMode, title, summary, sourcePaths }, ctx) => {
+    launch: async ({ team, project, goal, coordinationMode, title, summary, completionInboxNotice, sourcePaths }, ctx) => {
       const sourceBases = squadSourceBases();
       return launchSquad(squadNowLaunchDeps, {
-        teamId: team.id, project, slots: expandTeamSlots(team), goal, coordinationMode, title, summary,
+        teamId: team.id, project, slots: expandTeamSlots(team), goal, coordinationMode, title, summary, completionInboxNotice,
         sourceCapabilityIds: [], sourcePaths,
         goalSources: await goalExecutionSourcePaths(goal, project.path, sourceBases.home, sourceBases)
       }, ctx);
@@ -6362,7 +6379,7 @@ const squadExecutionService = new SquadExecutionService({
     const result = await getTeamLaunch(callerPrincipalId, launchRequestId);
     return result.ok ? result.value : undefined;
   },
-  cancelTeamLaunch: async (callerPrincipalId, launchRequestId) => cancelTeamLaunch(callerPrincipalId, launchRequestId),
+  cancelTeamLaunch: async (callerPrincipalId, launchRequestId, opts) => cancelTeamLaunch(callerPrincipalId, launchRequestId, opts),
   revokeTeamAuthorizations: (authorizationIds) => {
     for (const id of authorizationIds) launchAuthorization.revoke(id);
   },
@@ -6706,6 +6723,7 @@ export async function startTeamJobFromUi(
   const sources: SquadSourceProvider | undefined = sourceContext ? { kind: 'window', windowId: sourceContext.windowId } : undefined;
   return withRenewedSources(() => withProposalLaunch(proposalLaunchDeps, proposalId, projectId, (proposal, reviewedSourcePaths) => launchSquad(squadLaunchDeps, {
     teamId, project, slots, goal: originalGoal, coordinationMode, title: originalJobTitle, summary: originalSummary,
+    completionInboxNotice: true,
     sourceCapabilityIds, goalSources: discoveredGoalSources, reviewedSourcePaths
   }, {
     sources,
@@ -6829,15 +6847,6 @@ function createMainTeamProductOps() {
 }
 
 /**
- * Geometry and theme for Windows Electron titleBarOverlay.
- * Must match the CSS tokens in apps/app/src/styles/global.css:
- * --titlebar-h (44px), --bg-base (#181818), --text-muted (#a1a1aa).
- */
-export const WINDOWS_TITLEBAR_HEIGHT = 44;
-export const WINDOWS_TITLEBAR_OVERLAY_BG = '#181818';
-export const WINDOWS_TITLEBAR_OVERLAY_SYMBOL = '#a1a1aa';
-
-/**
  * Open an app window. With no `projectId` it's the full, unscoped shell (the
  * default window opened at boot and on dock-reactivate). With a `projectId` the
  * renderer locks to that one project — see `windows:openProject` and the
@@ -6916,11 +6925,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
       : process.platform === 'win32'
       ? {
           titleBarStyle: 'hidden' as const,
-          titleBarOverlay: {
-            color: WINDOWS_TITLEBAR_OVERLAY_BG,
-            symbolColor: WINDOWS_TITLEBAR_OVERLAY_SYMBOL,
-            height: WINDOWS_TITLEBAR_HEIGHT
-          }
+          titleBarOverlay: titleBarOverlays.current()
         }
       : {
           titleBarStyle: 'hidden' as const
@@ -7771,6 +7776,7 @@ function registerIpc() {
     get ptys() { return ptys; },
     get quickPrompts() { return quickPrompts; },
     get readLiveSessionStats() { return readLiveSessionStats; },
+    get refreshTitleBarOverlays() { return titleBarOverlays.refresh; },
     get registerExtensionProject() { return registerExtensionProject; },
     get reportTeamTask() { return reportTeamTask; },
     get resolveTheme() { return resolveTheme; },
@@ -8110,6 +8116,8 @@ async function runStartupMigration(): Promise<StartupState> {
 }
 
 async function bootstrap() {
+  // Before any window (including the repair window) so none misses a flip.
+  stopTitleBarOverlayTheme ??= titleBarOverlays.bind();
   registerStartupStateIpc();
   await runStartupMigration();
 }
@@ -9740,6 +9748,8 @@ app.on('before-quit', (event) => {
   tray = null;
   menubar?.stop();
   menubar = null;
+  stopTitleBarOverlayTheme?.();
+  stopTitleBarOverlayTheme = null;
   templates.stop();
   quickPrompts.stop();
   promptRegistry.stop();

@@ -20,7 +20,7 @@ import {
  * The manifest's `branding.icon` SVG is fetched through `<img>`, a separate
  * document where `currentColor` is black — invisible on dark themes.
  */
-function PiIcon({ className }: { className?: string }) {
+function PiIcon({ className, size = 14 }: { className?: string; size?: number }) {
   return (
     <svg
       fill="currentColor"
@@ -28,6 +28,8 @@ function PiIcon({ className }: { className?: string }) {
       viewBox="100 100 600 600"
       xmlns="http://www.w3.org/2000/svg"
       className={className}
+      width={size}
+      height={size}
     >
       <title>Pi</title>
       <path

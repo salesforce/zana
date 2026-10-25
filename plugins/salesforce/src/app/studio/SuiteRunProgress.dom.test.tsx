@@ -8,6 +8,13 @@ afterEach(() => { cleanup(); vi.useRealTimers(); });
 const cases = [{ id: 'c', name: 'Refund request', utterances: ['hi'], expect: {} }];
 const progress: SuiteProgress = { id: 'r', mode: 'simulate', startedAt: 1000, caseIds: ['c'], completed: 0, currentCaseId: 'c', stage: 'starting', results: {} };
 
+it('identifies the source currently being compared', () => {
+  const view = render(<SuiteRunProgress cases={cases} progress={{ ...progress, mode: 'compare', comparisonPhase: 'reference' }} startedAt={0} />);
+  expect(screen.getByRole('status').textContent).toContain('Compare saved source · 0 of 1');
+  view.rerender(<SuiteRunProgress cases={cases} progress={{ ...progress, mode: 'compare', comparisonPhase: 'candidate' }} startedAt={0} />);
+  expect(screen.getByRole('status').textContent).toContain('Compare editor draft · 0 of 1');
+});
+
 it('shows real case counts and stage changes including a multi-turn conversation', () => {
   const view = render(<SuiteRunProgress cases={cases} progress={progress} startedAt={0} />);
   expect(screen.getByRole('status').textContent).toContain('Simulate · 0 of 1 cases complete');

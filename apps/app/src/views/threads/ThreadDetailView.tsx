@@ -3,7 +3,7 @@ import { ArchivedThreadBanner } from '../../components/history/ArchivedThreadBan
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
-import { PanelRight } from 'lucide-react';
+import { PanelBottom, PanelRight } from 'lucide-react';
 import type { ActiveThinking, ThreadTimelineGoal, ThreadTimelineModelFallback, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
 import { mergeTimelinePages, type ThreadContextWindowUsage, type TimelineRow } from '@zana-ai/zcc-server-contract';
 import { type TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
@@ -42,7 +42,8 @@ import {
   isOpenThreadEvent,
   useOpenPendingInteractions
 } from '../../components/thread/pending-interactions/useOpenPendingInteractions.js';
-import { ThreadSecondaryPanel } from '../../components/thread/secondary-panel/ThreadSecondaryPanel.js';
+import { ThreadSecondaryPanel, type ThreadPanelToolKind } from '../../components/thread/secondary-panel/ThreadSecondaryPanel.js';
+import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { useOptionalPaneContext, usePaneSecondaryPanelRegistration } from '../thread-detail/PaneContext.js';
 import { SplitPaneHeaderActions } from '../thread-detail/SplitPaneHeaderActions.js';
 import { ThreadInfoContent } from '../../components/thread/secondary-panel/ThreadInfoContent.js';
@@ -53,6 +54,10 @@ import { ThreadNewTabPage } from '../../components/thread/secondary-panel/Thread
 import { ThreadFilePreviewTab } from '../../components/thread/secondary-panel/ThreadFilePreviewTab.js';
 import { BrowserTabDeck } from '../../components/thread/secondary-panel/BrowserTabDeck.js';
 import { ThreadTerminalTab } from '../../components/thread/secondary-panel/ThreadTerminalTab.js';
+import { DockedTerminalTab } from '../../components/thread/secondary-panel/DockedTerminalTab.js';
+import { useThreadToolDock } from '../../components/thread/secondary-panel/useThreadToolDock.js';
+import { clampDockHeight, isDockPinnedView, resolveToolDock, type ToolDockSide } from '../../components/thread/secondary-panel/threadToolDock.js';
+import '../../components/thread/secondary-panel/thread-tool-dock.css';
 import { ThreadPluginTab } from '../../components/thread/secondary-panel/ThreadPluginTab.js';
 import { ThreadExplorerTab } from '../../components/thread/secondary-panel/ThreadExplorerTab.js';
 import { ThreadInboxTab } from '../../components/thread/secondary-panel/ThreadInboxTab.js';
@@ -71,7 +76,9 @@ import { useThreadOpenTerminalSignal } from '../../components/thread/secondary-p
 import { appendThreadRecentItem, tabInputFromRecentItem } from '../../components/thread/secondary-panel/threadRecentItems.js';
 import {
   activeClosableTab,
-  activePinnedView
+  activePinnedView,
+  uniqueTabSuffix,
+  type ThreadSecondaryPanelState
 } from '../../components/thread/secondary-panel/threadSecondaryPanelState.js';
 import { getDesktopBrowserApi } from '../../lib/desktop-browser.js';
 import { getBrowserUrlHost } from '../../lib/browser-url.js';
@@ -166,12 +173,57 @@ function ThreadDetailBody({
     modal,
     getContainerWidthPx: () => viewRef.current?.clientWidth ?? 0
   });
+  const dockEnabled = useData(s => s.dockableThreadToolsEnabled) === true && !compact && showSecondaryPanel;
+  const toolDock = useThreadToolDock(threadId, panel.state, dockEnabled);
+  const [draggedTool, setDraggedTool] = useState<string | null>(null);
+  useEffect(() => { setDraggedTool(null); }, [threadId, dockEnabled]);
+  const moveTool = (id: string, side: ToolDockSide) => {
+    toolDock.move(id, side);
+    if (side === 'right') {
+      if (isDockPinnedView(id)) panel.selectPin(id);
+      else panel.activateTab(id);
+    }
+    setDraggedTool(null);
+  };
+  const activateTool = (id: string) => {
+    if (dockEnabled && toolDock.dock.bottomIds.includes(id)) {
+      toolDock.update(current => ({ ...current, bottomActiveId: id, collapsed: false }));
+    } else if (dockEnabled) {
+      toolDock.update(current => ({ ...current, rightActiveId: id }));
+    }
+    if (isDockPinnedView(id)) panel.selectPin(id);
+    else panel.activateTab(id);
+  };
+  const addDockTab = (side: ToolDockSide) => {
+    const id = `new-tab:${uniqueTabSuffix(globalThis.crypto?.randomUUID?.bind(globalThis.crypto))}`;
+    if (side === 'bottom') toolDock.update(current => ({ ...current, bottomIds: [...current.bottomIds, id], bottomActiveId: id, collapsed: false }));
+    panel.addTab({ id, kind: 'new-tab', title: 'New Tab' });
+  };
+  const dockProps = (side: ToolDockSide) => dockEnabled ? {
+    side,
+    dragging: Boolean(draggedTool),
+    onMove: (id: string) => moveTool(id, side === 'right' ? 'bottom' : 'right'),
+    onDragStart: (event: import('react').DragEvent, id: string) => {
+      event.dataTransfer.setData('application/x-zcc-thread-tool', id);
+      event.dataTransfer.effectAllowed = 'move';
+      setDraggedTool(id);
+    },
+    onDragEnd: () => setDraggedTool(null),
+    onDragOver: (event: import('react').DragEvent) => { if (draggedTool) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; } },
+    onDrop: (event: import('react').DragEvent) => { if (draggedTool) { event.preventDefault(); moveTool(draggedTool, side); } },
+    ...(side === 'bottom' ? {
+      collapsed: toolDock.dock.collapsed,
+      onToggleCollapsed: () => toolDock.update(current => ({ ...current, collapsed: !current.collapsed, maximized: false })),
+      heightPx: toolDock.dock.heightPx,
+      onHeight: (height: number) => toolDock.update(current => ({ ...current, heightPx: clampDockHeight(height) }))
+    } : {})
+  } : undefined;
   useInAppBrowserPanel(threadId, panel);
   useDesktopBrowserReveal({
     threadId,
     isFocused: pane?.isFocused !== false,
     browserTabs: panel.state.tabs.filter((tab) => tab.kind === 'browser'),
-    activateTab: panel.activateTab,
+    activateTab: activateTool,
     addTab: (tab) => panel.addTab(tab)
   });
   const [title, setTitle] = useState('Agent');
@@ -560,10 +612,24 @@ function ThreadDetailBody({
 
   const openDiff = useCallback((path?: string | null) => {
     setDiffPath(path ?? null);
+    if (dockEnabled) toolDock.update(current => current.bottomIds.includes('diff')
+      ? { ...current, bottomActiveId: 'diff', collapsed: false }
+      : { ...current, rightActiveId: 'diff' });
     panel.selectPin('diff');
-  }, [panel]);
+  }, [panel, dockEnabled, toolDock.update]);
 
-  const startPanelTerminal = useCallback(async (command: string | null = null) => {
+  const appendDockTool = useCallback((side: ToolDockSide, input: { kind: 'terminal' | 'browser' | 'explorer'; title: string; sessionId?: string; url?: string }) => {
+    const id = `${input.kind}:${uniqueTabSuffix(globalThis.crypto?.randomUUID?.bind(globalThis.crypto))}`;
+    toolDock.update(current => side === 'bottom'
+      ? { ...current, bottomIds: [...current.bottomIds, id], bottomActiveId: id, collapsed: false }
+      : { ...current, rightActiveId: id });
+    // Direct additions append to their chosen dock, even if the other dock has
+    // a selected launcher. Only launches from that launcher consume its slot.
+    panel.selectPin('info');
+    panel.addTab({ ...input, id });
+  }, [panel, toolDock.update]);
+
+  const startPanelTerminal = useCallback(async (command: string | null = null, side?: ToolDockSide) => {
     if (!projectId) throw new Error('The thread project is still loading.');
     const created = await product.terminals.create({
       projectId,
@@ -577,11 +643,16 @@ function ThreadDetailBody({
       title: command?.slice(0, 200) ?? 'Terminal'
     });
     if (!created.ok) throw new Error(created.message ?? 'Could not open terminal');
-    panel.addTab({ kind: 'terminal', title: created.value.title, sessionId: created.value.id });
-  }, [cwd, panel, projectId, hostId, environmentId]);
+    const tab = { kind: 'terminal' as const, title: created.value.title, sessionId: created.value.id };
+    if (side) appendDockTool(side, tab);
+    else panel.addTab(tab);
+  }, [cwd, panel, projectId, hostId, environmentId, appendDockTool]);
 
-  const pin = activePinnedView(panel.state);
-  const closable = activeClosableTab(panel.state);
+  const addTool = (side: ToolDockSide, kind: ThreadPanelToolKind) => {
+    if (kind === 'terminal') void startPanelTerminal(null, side).catch(error => setLoadError(threadDetailLoadError(error)));
+    else appendDockTool(side, kind === 'browser' ? { kind, title: 'Browser', url: '' } : { kind, title: 'Explorer' });
+  };
+
   const panelOpen = hostedSecondary || !showSecondaryPanel ? false : panel.state.isOpen;
   const bounded = embedded || pane?.isBoundedPane === true;
   const planDocument = resolveThreadPlanDocument({
@@ -589,10 +660,14 @@ function ThreadDetailBody({
     pendingInteractions,
     durablePlan
   });
+  const dockPanels = resolveToolDock(toolDock.dock, panel.state, [
+    'info', ...(environmentId ? ['diff' as const] : []), ...(planDocument ? ['plan' as const] : [])
+  ]);
 
   const viewClass = [
     'thread-detail-view',
     bounded ? 'thread-detail-view--embedded' : '',
+    dockEnabled ? 'has-tool-dock' : '',
     modal ? 'thread-detail-view--modal' : '',
     pane?.isSplitPane ? 'thread-detail-view--split-pane' : '',
     pane?.isFocused === false ? 'is-pane-inactive' : '',
@@ -600,6 +675,9 @@ function ThreadDetailBody({
     !hostedSecondary && showSecondaryPanel && panel.state.isMaximized ? 'is-secondary-maximized' : ''
   ].filter(Boolean).join(' ');
 
+  const renderPanelBody = (state: ThreadSecondaryPanelState) => {
+  const pin = activePinnedView(state);
+  const closable = activeClosableTab(state);
   let panelBody = null;
   if (pin === 'info') {
     panelBody = (
@@ -625,7 +703,7 @@ function ThreadDetailBody({
         environmentId={environmentId}
         path={diffPath}
         embedded
-        onClose={() => panel.selectPin('info')}
+        onClose={() => activateTool('info')}
       />
     );
   } else if (closable?.kind === 'new-tab') {
@@ -682,7 +760,7 @@ function ThreadDetailBody({
   } else if (closable?.kind === 'browser') {
     panelBody = null;
   } else if (closable?.kind === 'terminal' && closable.sessionId && projectId) {
-    panelBody = <ThreadTerminalTab sessionId={closable.sessionId} projectId={projectId} />;
+    panelBody = dockEnabled ? <DockedTerminalTab sessionId={closable.sessionId} /> : <ThreadTerminalTab sessionId={closable.sessionId} projectId={projectId} />;
   } else if (closable?.kind === 'explorer') {
     panelBody = <ThreadExplorerTab projectId={projectId} scope={projectId && hostId ? { projectId, hostId, ...(environmentId ? { environmentId } : {}) } : undefined} checkoutPath={cwd ?? undefined} />;
   } else if (closable?.kind === 'inbox') {
@@ -721,26 +799,35 @@ function ThreadDetailBody({
     );
   }
 
-  const secondaryPanelNode: ReactNode = panel.state.isOpen ? (
+  return panelBody;
+  };
+  const renderToolPanel = (state: ThreadSecondaryPanelState, side: ToolDockSide) => {
+    const closable = activeClosableTab(state);
+    const pins = dockEnabled ? (side === 'right' ? dockPanels.rightPins : dockPanels.bottomPins) : ['info', 'diff', 'plan'];
+    return (
         <ThreadSecondaryPanel
-          state={panel.state}
-          showDiffPin={Boolean(environmentId)}
-          showPlanPin={Boolean(planDocument)}
-          onSelectInfo={() => panel.selectPin('info')}
-          onSelectDiff={() => panel.selectPin('diff')}
-          onSelectPlan={() => panel.selectPin('plan')}
-          onNewTab={panel.openNewTab}
+          state={state}
+          dock={dockProps(side)}
+          showInfoPin={pins.includes('info')}
+          showDiffPin={pins.includes('diff') && Boolean(environmentId)}
+          showPlanPin={pins.includes('plan') && Boolean(planDocument)}
+          onSelectInfo={() => activateTool('info')}
+          onSelectDiff={() => activateTool('diff')}
+          onSelectPlan={() => activateTool('plan')}
+          onNewTab={() => dockEnabled ? addDockTab(side) : panel.openNewTab()}
+          onAddTool={dockEnabled ? kind => addTool(side, kind) : undefined}
+          canAddBrowser={hasDesktopBridge()}
           onCloseTab={panel.closeTab}
-          onActivateTab={panel.activateTab}
-          onToggleMaximized={panel.toggleMaximized}
+          onActivateTab={activateTool}
+          onToggleMaximized={side === 'bottom' ? () => toolDock.update(current => ({ ...current, maximized: !current.maximized, collapsed: false })) : panel.toggleMaximized}
           onHide={panel.close}
           onResize={panel.setWidth}
         >
-          {panelBody}
+          {renderPanelBody(state)}
           <BrowserTabDeck
             browserTabs={panel.state.tabs.filter((tab) => tab.kind === 'browser')}
             activeBrowserTabId={closable?.kind === 'browser' ? closable.id : null}
-            canShowNativeBrowserView={panel.state.isOpen && (modal || hostedSecondary || pane?.isFocused !== false)}
+            canShowNativeBrowserView={state.isOpen && !(side === 'bottom' && (toolDock.dock.collapsed || panel.state.isMaximized)) && !draggedTool && (modal || hostedSecondary || pane?.isFocused !== false)}
             threadId={threadId}
             onUpdate={({ tabId, url, title: nextTitle }) => {
               const resolvedTitle = nextTitle && nextTitle.length > 0 ? nextTitle : getBrowserUrlHost(url) || 'Browser';
@@ -757,7 +844,9 @@ function ThreadDetailBody({
             }}
           />
         </ThreadSecondaryPanel>
-  ) : null;
+  );
+  };
+  const secondaryPanelNode: ReactNode = panel.state.isOpen ? renderToolPanel(dockEnabled ? dockPanels.right : panel.state, 'right') : null;
 
   usePaneSecondaryPanelRegistration(
     hostedSecondary
@@ -872,6 +961,7 @@ function ThreadDetailBody({
       style={panelOpen ? { ['--thread-secondary-width' as string]: `${panel.state.widthPx}px` } : undefined}
     >
       <div className="thread-detail-split">
+      <div className={dockEnabled ? "thread-tool-main" : "thread-tool-main--legacy"}>
       <div ref={mainRef} className="thread-detail-main">
         <header className="thread-detail-header" data-title-in-shell={Boolean(mobileTitleTarget) || undefined} data-controls-in-shell={Boolean(mobileControlsTarget) || undefined}>
           <ThreadDetailHeading
@@ -908,6 +998,12 @@ function ThreadDetailBody({
             <ThreadStatusBadge status={status} waitingOnUser={awaitingUser} thinking={thinking} />
             {!mobileControlsTarget && <PluginThreadHeaderActions threadId={threadId} projectId={projectId} />}
             <SplitPaneHeaderActions />
+            {dockEnabled ? <button type="button" className="icon-btn"
+              aria-label={dockPanels.bottom.isOpen && !toolDock.dock.collapsed ? 'Hide bottom panel' : 'Show bottom panel'}
+              title={dockPanels.bottom.isOpen && !toolDock.dock.collapsed ? 'Hide bottom panel' : 'Show bottom panel'}
+              aria-pressed={dockPanels.bottom.isOpen && !toolDock.dock.collapsed}
+              onClick={() => !dockPanels.bottom.isOpen ? addDockTab('bottom')
+                : toolDock.update(current => ({ ...current, collapsed: !current.collapsed, maximized: false }))}><PanelBottom size={14} /></button> : null}
             {!panel.state.isOpen && showSecondaryPanel ? (
               <button
                 type="button"
@@ -1011,7 +1107,7 @@ function ThreadDetailBody({
               <ThreadPromptModeCard
                 mode={promptMode}
                 isExitPending={planExitPending}
-                onOpenPlan={() => panel.selectPin('plan')}
+                onOpenPlan={() => activateTool('plan')}
                 onExitPlanMode={exitPlanMode}
               />
               <ThreadTodoCard
@@ -1048,6 +1144,16 @@ function ThreadDetailBody({
           </div>
         </div>
       </div>
+      {dockEnabled ? (dockPanels.bottom.isOpen ? renderToolPanel(dockPanels.bottom, 'bottom') : draggedTool ? <div
+        className="thread-tool-drop-hint is-dragging"
+        onDragOver={dockProps('bottom')?.onDragOver} onDrop={dockProps('bottom')?.onDrop}
+        data-testid="thread-bottom-drop-target">
+        <span>Dock below conversation</span>
+      </div> : null) : null}
+      </div>
+      {draggedTool ? <div className="thread-tool-drag-shield" aria-hidden="true" /> : null}
+      {dockEnabled && draggedTool && !panel.state.isOpen ? <div className="thread-tool-hidden-right-target"
+        onDragOver={dockProps('right')?.onDragOver} onDrop={dockProps('right')?.onDrop}>Dock in right panel</div> : null}
       {hostedSecondary || !showSecondaryPanel ? null : secondaryPanelNode}
       </div>
     </section>

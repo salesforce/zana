@@ -7,6 +7,7 @@ import {
   AgentFilesError,
   createAgentFile,
   listAgentFiles,
+  scanAgentFiles,
   readAgentFile,
   sha256Hex,
   writeAgentFile
@@ -143,4 +144,12 @@ describe('agent files confinement', () => {
     expect(readdirSync(outside)).toEqual([]);
   });
 
+});
+
+it('finds agents beyond cache files and pins an opened agent beyond the general scan budget', () => {
+  const files = { '/p/force-app/Bot.agent': 'start_agent welcome:', '/p/zzz/Open.agent': 'start_agent welcome:' };
+  const deps = memFs(files, { '/p': ['.pnpm-store', 'force-app', 'noise', 'zzz'], '/p/.pnpm-store': Array(5000).fill('cache'), '/p/force-app': ['Bot.agent'], '/p/noise': Array.from({ length: 21000 }, (_, i) => `file${i}`), '/p/zzz': ['Open.agent'] });
+  const scan = scanAgentFiles('/p', deps, { allowNonDx: true, priority: ['zzz/Open.agent', '../escape.agent'] });
+  expect(scan.truncated).toBe(true);
+  expect(scan.files.map(f => f.path)).toEqual(['force-app/Bot.agent', 'zzz/Open.agent']);
 });

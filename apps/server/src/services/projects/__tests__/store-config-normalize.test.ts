@@ -338,6 +338,46 @@ describe('normalizeConfig — auto-close-idle flags', () => {
     expect(out.autoCloseIdleMinutes).toBeUndefined();
   });
 
+  it('keeps known explorer minimap options and drops anything else', () => {
+    const out = normalizeConfig({
+      explorerMinimapEnabled: false,
+      explorerMinimapWidth: 'wide',
+      explorerMinimapRenderCharacters: false,
+      explorerMinimapVerticalSize: 'fit',
+      explorerMinimapSlider: 'always',
+      explorerMinimapSide: 'left'
+    });
+    expect(out).toMatchObject({
+      explorerMinimapEnabled: false,
+      explorerMinimapWidth: 'wide',
+      explorerMinimapRenderCharacters: false,
+      explorerMinimapVerticalSize: 'fit',
+      explorerMinimapSlider: 'always',
+      explorerMinimapSide: 'left'
+    });
+    const junk = normalizeConfig({
+      explorerMinimapEnabled: 'yes' as never,
+      explorerMinimapWidth: 'off' as never,
+      explorerMinimapRenderCharacters: 1 as never,
+      explorerMinimapVerticalSize: 'huge' as never,
+      explorerMinimapSlider: 3 as never,
+      explorerMinimapSide: 'top' as never
+    });
+    for (const key of ['explorerMinimapEnabled', 'explorerMinimapWidth', 'explorerMinimapRenderCharacters', 'explorerMinimapVerticalSize', 'explorerMinimapSlider', 'explorerMinimapSide'] as const) {
+      expect(junk[key]).toBeUndefined();
+    }
+    expect(normalizeConfig({}).explorerMinimapWidth).toBeUndefined();
+  });
+
+  it('keeps a known explorer file icon theme and drops anything else', () => {
+    for (const theme of ['seti', 'minimal', 'none'] as const) {
+      expect(normalizeConfig({ explorerFileIconTheme: theme }).explorerFileIconTheme).toBe(theme);
+    }
+    expect(normalizeConfig({ explorerFileIconTheme: 'material' as never }).explorerFileIconTheme).toBeUndefined();
+    expect(normalizeConfig({ explorerFileIconTheme: 3 as never }).explorerFileIconTheme).toBeUndefined();
+    expect(normalizeConfig({}).explorerFileIconTheme).toBeUndefined();
+  });
+
   it('keeps threadSessionReleaseMinutes in range, 0 as never, and drops junk', () => {
     expect(normalizeConfig({ threadSessionReleaseMinutes: 120.4 }).threadSessionReleaseMinutes).toBe(120);
     expect(normalizeConfig({ threadSessionReleaseMinutes: 0 }).threadSessionReleaseMinutes).toBe(0);
@@ -508,6 +548,25 @@ describe('normalizeConfig — catch-up summary flags', () => {
     expect(normalizeConfig({ classicSessionViewEnabled: 1 }).classicSessionViewEnabled).toBeUndefined();
   });
 
+  it('accepts only boolean threadTabsEnabled values', () => {
+    expect(normalizeConfig({ threadTabsEnabled: true }).threadTabsEnabled).toBe(true);
+    expect(normalizeConfig({ threadTabsEnabled: false }).threadTabsEnabled).toBe(false);
+    for (const value of ['false', 0, null, {}, []]) {
+      // @ts-expect-error intentional bad input
+      expect(normalizeConfig({ threadTabsEnabled: value }).threadTabsEnabled).toBeUndefined();
+    }
+    expect(normalizeConfig({}).threadTabsEnabled).toBeUndefined();
+  });
+  it('accepts only boolean dockableThreadToolsEnabled values', () => {
+    expect(normalizeConfig({ dockableThreadToolsEnabled: true }).dockableThreadToolsEnabled).toBe(true);
+    expect(normalizeConfig({ dockableThreadToolsEnabled: false }).dockableThreadToolsEnabled).toBe(false);
+    for (const value of ['false', 0, null, {}, []]) {
+      // @ts-expect-error intentional bad input
+      expect(normalizeConfig({ dockableThreadToolsEnabled: value }).dockableThreadToolsEnabled).toBeUndefined();
+    }
+    expect(normalizeConfig({}).dockableThreadToolsEnabled).toBeUndefined();
+  });
+
   it('passes through a boolean heldQuestionsEnabled, drops non-booleans', () => {
     expect(normalizeConfig({ heldQuestionsEnabled: true }).heldQuestionsEnabled).toBe(true);
     expect(normalizeConfig({ heldQuestionsEnabled: false }).heldQuestionsEnabled).toBe(false);
@@ -537,6 +596,14 @@ describe('normalizeConfig — catch-up summary flags', () => {
     expect(normalizeConfig({ feedNoiseClassifierEnabled: false }).feedNoiseClassifierEnabled).toBe(false);
     // @ts-expect-error intentional bad input
     expect(normalizeConfig({ feedNoiseClassifierEnabled: 'yes' }).feedNoiseClassifierEnabled).toBeUndefined();
+  });
+
+  it('passes through a boolean terminalCtrlVPasteEnabled, drops non-booleans and leaves it unset by default', () => {
+    expect(normalizeConfig({ terminalCtrlVPasteEnabled: true }).terminalCtrlVPasteEnabled).toBe(true);
+    expect(normalizeConfig({ terminalCtrlVPasteEnabled: false }).terminalCtrlVPasteEnabled).toBe(false);
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ terminalCtrlVPasteEnabled: 'yes' }).terminalCtrlVPasteEnabled).toBeUndefined();
+    expect(normalizeConfig({}).terminalCtrlVPasteEnabled).toBeUndefined();
   });
 
   it('passes through a boolean terminalClipboardWriteEnabled, drops non-booleans', () => {

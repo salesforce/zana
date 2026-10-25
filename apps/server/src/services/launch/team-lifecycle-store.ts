@@ -119,6 +119,8 @@ export interface TeamLifecycleRecord {
   callerPrincipalId: string;
   launchRequestId: string;
   payloadDigest: string;
+  /** Launch-time Team setting; later Team edits do not change this record. */
+  retainOrchestrator?: boolean;
   capacity?: TeamRunCapacity;
   launchResult: TeamLaunchResult;
   outcome:
@@ -135,13 +137,14 @@ export interface TeamLifecycleClaim {
   callerPrincipalId: string;
   launchRequestId: string;
   payloadDigest: string;
+  retainOrchestrator?: boolean;
   capacity?: TeamRunCapacity;
   launchResult: TeamLaunchResult;
   workers: Array<Omit<TeamLifecycleWorker, 'capacityReleased'>>;
 }
 
 export type TeamLifecycleClaimInput = Pick<TeamLifecycleClaim, 'callerPrincipalId' | 'launchRequestId' | 'payloadDigest'>
-  & Partial<Pick<TeamLifecycleClaim, 'launchResult' | 'workers' | 'capacity'>>;
+  & Partial<Pick<TeamLifecycleClaim, 'launchResult' | 'workers' | 'capacity' | 'retainOrchestrator'>>;
 
 export interface TeamRunCapacity {
   principal: Extract<LaunchPrincipal, { kind: 'team' }>;
@@ -915,7 +918,11 @@ export function createTeamLifecycleIntegration(opts: TeamLifecycleIntegrationOpt
         });
       });
     },
-    cancelTeamLaunch(callerPrincipalId: string, launchRequestId: string) {
+    cancelTeamLaunch(
+      callerPrincipalId: string,
+      launchRequestId: string,
+      cancelOpts?: { retainOrchestrator?: boolean }
+    ) {
       return serialize(async () => {
         const record = (await opts.store.list()).find((candidate) =>
           candidate.callerPrincipalId === callerPrincipalId && candidate.launchRequestId === launchRequestId
@@ -931,6 +938,11 @@ export function createTeamLifecycleIntegration(opts: TeamLifecycleIntegrationOpt
         }
         const canceled = await opts.store.fenceCancel(record.id);
         track(canceled);
+        const orchestratorSessionId = canceled.launchResult.orchestratorSessionId;
+        const retainOrchestrator = cancelOpts?.retainOrchestrator === true;
+        if (retainOrchestrator && orchestratorSessionId === undefined) {
+          console.warn('[team-lifecycle] retainOrchestrator requested without an orchestrator session; closing all sessions');
+        }
         for (const worker of canceled.workers) {
           if (canceled.releasedSlotIds.includes(worker.slotId)) opts.releaseCapacity(worker.authorizationId);
         }
@@ -938,6 +950,7 @@ export function createTeamLifecycleIntegration(opts: TeamLifecycleIntegrationOpt
         const pendingSessionIds: string[] = [];
         for (const worker of canceled.workers) {
           if (terminalProcesses.has(worker.process)) continue;
+          if (retainOrchestrator && worker.sessionId === orchestratorSessionId) continue;
           if (closeRequested.has(worker.sessionId)) continue;
           const isModern = (worker.transport ?? 'CLI') === 'MODERN';
           if (isModern) {
@@ -1074,6 +1087,7 @@ function boundedClaim(input: TeamLifecycleClaimInput): TeamLifecycleClaim {
     callerPrincipalId: boundedString(input.callerPrincipalId, 'caller principal id'),
     launchRequestId,
     payloadDigest: boundedString(input.payloadDigest, 'payload digest'),
+    ...(input.retainOrchestrator === undefined ? {} : { retainOrchestrator: input.retainOrchestrator }),
     ...(input.capacity ? { capacity: boundedCapacity(input.capacity) } : {}),
     launchResult,
     workers
@@ -1365,6 +1379,7 @@ function isRecord(value: unknown): value is TeamLifecycleRecord {
   const record = value as Partial<TeamLifecycleRecord>;
   return isBoundedString(record.id) && isBoundedString(record.callerPrincipalId)
     && isBoundedString(record.launchRequestId) && isBoundedString(record.payloadDigest)
+    && (record.retainOrchestrator === undefined || typeof record.retainOrchestrator === 'boolean')
     && isOutcome(record.outcome) && (record.capacity === undefined || isCapacity(record.capacity))
     && (record.state === 'active' || record.state === 'cancel-pending' || record.state === 'canceled')
     && Number.isInteger(record.revision) && typeof record.createdAt === 'number' && typeof record.updatedAt === 'number'

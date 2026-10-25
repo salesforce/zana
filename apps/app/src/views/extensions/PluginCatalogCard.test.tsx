@@ -47,7 +47,7 @@ describe('PluginCatalogCard', () => {
     expect(html).not.toContain('role="link"');
   });
 
-  it('shows a green Installed pill instead of a disabled button', () => {
+  it('offers Manage for installed plugins', () => {
     const html = renderToStaticMarkup(
       h(PluginCatalogCard, {
         entry: entry({ installed: true }),
@@ -55,7 +55,7 @@ describe('PluginCatalogCard', () => {
         onInstall: () => {}
       })
     );
-    expect(html).toContain('ext-browse-installed-pill');
-    expect(html).not.toContain('settings-btn');
+    expect(html).toContain('Manage');
+    expect(html).not.toContain('disabled=');
   });
 });

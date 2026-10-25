@@ -1,0 +1,67 @@
+/* Shared collection/inspector layout, scoped to the Plugins hub. */
+.extensions-panel .ext-hub-shell { max-width: none; container: plugin-hub / inline-size; }
+.ext-plugin-workbench { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; gap: 24px; overflow: hidden; }
+.ext-plugin-collection-main { flex: 1; min-width: 0; min-height: 0; overflow: auto; container: plugin-collection / inline-size; padding-bottom: 16px; }
+.ext-plugin-inspector { display: flex; flex-direction: column; flex: 0 0 390px; width: 390px; min-width: 0; min-height: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-panel); overflow: hidden; }
+.ext-plugin-inspector-chrome { display: flex; justify-content: space-between; align-items: center; padding: 8px 15px; border-bottom: 1px solid var(--border); font-size: 11px; color: var(--text-muted); }
+.ext-plugin-inspector-body { flex: 1; min-height: 0; overflow: auto; padding: 20px; overflow-wrap: anywhere; }
+.ext-plugin-inspector :is(.ext-hub-about, .ext-plugin-section, .settings-section) { padding: 0; border: 0; background: transparent; box-shadow: none; }
+.ext-plugin-inspector .ext-hub-about-header { flex-wrap: wrap; gap: 12px; }
+.ext-plugin-inspector .ext-hub-about-titles h3 { margin: 0; font-size: 20px; letter-spacing: -.3px; text-transform: none; color: var(--text-primary); }
+.ext-plugin-inspector .ext-plugin-table > div { grid-template-columns: 100px minmax(0, 1fr); }
+.ext-plugin-inspector .ext-plugin-meta-grid { grid-template-columns: 1fr; }
+.ext-plugin-inspector .ext-plugin-section { margin-top: 20px; }
+.ext-plugin-inspector .ext-plugin-overview-lead { margin-top: 18px; font-size: 12px; }
+.ext-plugin-inspector .ext-plugin-detail-stack { gap: 14px; }
+.ext-plugin-inspector [hidden] { display: none !important; }
+.ext-plugin-detail-tabs { display: flex; gap: 20px; border-bottom: 1px solid var(--border); margin: 22px 0 18px; }
+.ext-plugin-detail-tabs button { padding: 8px 0; color: var(--text-muted); border: 0; border-bottom: 2px solid transparent; background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
+.ext-plugin-detail-tabs button[aria-selected='true'] { color: var(--text-primary); border-color: var(--accent); }
+.ext-plugin-capabilities { display: flex; flex-wrap: wrap; gap: 4px; }
+.ext-plugin-capabilities > span { font-size: 9px; line-height: 1.5; color: var(--text-muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; background: var(--bg-panel); white-space: nowrap; }
+.ext-plugin-attention { display: flex; align-items: center; gap: 12px; border: 1px solid color-mix(in srgb, var(--accent-gold) 25%, var(--border)); background: color-mix(in srgb, var(--accent-gold) 7%, var(--bg-panel)); padding: 12px 15px; border-radius: 8px; margin-bottom: 22px; }
+.ext-plugin-attention > svg { color: var(--accent-gold); flex-shrink: 0; }
+.ext-plugin-attention > div { flex: 1; }
+.ext-plugin-attention strong { font-size: 12px; font-weight: 600; }
+.ext-plugin-attention p { font-size: 11px; color: var(--text-muted); margin: 3px 0 0; }
+.ext-plugin-attention .settings-btn { font-size: 11px; }
+.ext-plugin-current { text-align: center; padding: 40px 20px; color: var(--text-muted); }
+.ext-plugin-current > svg { color: var(--accent-green); }
+.ext-plugin-current h4 { color: var(--text-primary); font-size: 17px; margin: 12px 0 8px; }
+.ext-plugin-current p { font-size: 12px; }
+.ext-plugin-update-policies { border-top: 1px solid var(--border); margin-top: 24px; padding-top: 10px; }
+.ext-plugin-update-policies > div { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; font-size: 11px; color: var(--text-muted); }
+.ext-plugin-update-policies strong { font-weight: 500; }
+.ext-hub-browse-heading { display: flex; align-items: center; justify-content: space-between; }
+.ext-hub-browse-heading h3 { font-size: 29px; letter-spacing: -.8px; margin: 5px 0 7px; }
+.ext-hub-browse-heading p { margin: 0 0 8px; color: var(--text-muted); font-size: 12px; }
+.ext-hub-shell .ext-hub-tabs { gap: 26px; padding: 0; }
+.ext-hub-shell .ext-hub-tab { background: transparent; border: 0; padding: 11px 0 13px; border-radius: 0; font-size: 12px; }
+.ext-hub-shell .ext-hub-tab.active { border-bottom: 2px solid var(--text-primary); color: var(--text-primary); }
+.ext-hub-shell .ext-market { border: 0; padding-top: 0; }
+.ext-hub-shell .ext-browse-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.ext-hub-shell .ext-browse-card { min-height: 190px; border-radius: 9px; padding: 16px; display: flex; flex-direction: column; align-items: stretch; gap: 14px; }
+.ext-hub-shell .ext-browse-card-main { flex: 1; }
+.ext-hub-shell .ext-browse-card-open { align-items: flex-start; }
+.ext-hub-shell .ext-market-item-desc { font-size: 12px; line-height: 1.6; }
+.ext-hub-shell .ext-browse-card .ext-market-item-action { display: flex; justify-content: flex-end; margin: 0; }
+.ext-hub-shell .ext-browse-card .ext-plugin-capabilities { margin-top: 12px; }
+.ext-browse-collection-heading { display: flex; align-items: center; justify-content: space-between; margin: 20px 0 12px; }
+.ext-browse-collection-heading h3 { font-size: 12px; margin: 0; }
+.ext-browse-collection-heading span { color: var(--text-muted); margin-left: 7px; font-weight: 400; }
+.ext-browse-availability { display: flex; gap: 4px; }
+@container plugin-hub (max-width: 980px) {
+  .ext-plugin-workbench.has-inspector > .ext-plugin-collection-main { display: none; }
+  .ext-plugin-workbench.has-inspector .ext-plugin-inspector { flex: 1; width: auto; max-width: 720px; margin-inline: auto; }
+}
+@container plugin-hub (max-width: 600px) {
+  .ext-plugin-inspector-body { padding: 16px; }
+  .ext-plugin-attention { flex-wrap: wrap; }
+}
+.ext-browse-provenance[data-provenance='official'] { color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.ext-plugin-inspector .ext-catalog-detail-header { flex-wrap: wrap; gap: 10px; }
+.ext-plugin-inspector .ext-catalog-detail-lead { font-size: 12px; line-height: 1.65; color: var(--text-secondary); }
+.ext-plugin-inspector .ext-hub-about-head { flex-wrap: wrap; gap: 10px; }
+
+@container plugin-collection (max-width: 1000px) { .ext-hub-shell .ext-browse-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container plugin-collection (max-width: 600px) { .ext-hub-shell .ext-browse-grid { grid-template-columns: minmax(0, 1fr); } }

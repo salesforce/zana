@@ -31,10 +31,17 @@ export interface PluginSpawnProviderResolution {
 
 const SETTINGS_HINT = 'Choose an installed, enabled harness in Settings → AI Harness.';
 
+/** Where to fix a rejected AI-harness override: Zana's settings, or the spawning plugin's own. */
+export const AI_HARNESS_SETTINGS_HINT = 'Change it in Settings → AI Harness.';
+export const PLUGIN_AI_HARNESS_SETTINGS_HINT = "Change it in this plugin's AI Harness settings.";
+
 export class PluginSpawnHarnessError extends Error {
-  constructor(message: string) {
-    super(message);
+  /** The reason without the trailing settings hint, so callers can point elsewhere. */
+  readonly detail: string;
+  constructor(detail: string, hint?: string) {
+    super(hint ? `${detail} ${hint}` : detail);
     this.name = 'PluginSpawnHarnessError';
+    this.detail = detail;
   }
 }
 

@@ -7,9 +7,11 @@ import { protectPreviewServer } from '../../../services/mobile-relay/protected-p
 import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage } from 'node:http';
 import type { Socket } from 'node:net';
-import { CLI_CALLBACK_MAX_BODY_BYTES, CLI_CALLBACK_MAX_RESPONSE_BYTES, cliCallbackPaths, type CliCallbackGrant } from '@zana-ai/zcc-contracts/cli-callbacks';
+import { CLI_CALLBACK_MAX_BODY_BYTES, CLI_CALLBACK_MAX_RESPONSE_BYTES, cliCallbackPaths, isCliNativeToolPath, type CliCallbackGrant } from '@zana-ai/zcc-contracts/cli-callbacks';
 export { CLI_CALLBACK_MAX_BODY_BYTES, CLI_CALLBACK_MAX_RESPONSE_BYTES, cliCallbackPaths } from '@zana-ai/zcc-contracts/cli-callbacks';
 const MAX_ACTIVE_CALLBACKS = 8;
+/** Per proxy (one session), reserved so 15-minute /mcp and question callbacks cannot starve the per-tool-call policy hook. */
+const MAX_ACTIVE_NATIVE_TOOL_CALLBACKS = 8;
 const REQUEST_TIMEOUT_MS = 15 * 60_000;
 let activeCallbacks = 0;
 
@@ -43,7 +45,7 @@ export async function startCliCallbackProxy(options: {
   const paths = cliCallbackPaths(options.grant);
   const capabilityPrefix = `/${randomBytes(32).toString('hex')}`;
   const sockets = new Set<Socket>(), active = new Set<AbortController>();
-  let port = 0, closed = false;
+  let port = 0, closed = false, activeNativeToolCallbacks = 0;
   const server = createServer((request, response) => {
     const reject = (status: number) => { response.writeHead(status, { connection: 'close' }).end(); request.resume(); };
     if (closed || !allowedAuthority(request, port)) { reject(403); return; }
@@ -53,10 +55,11 @@ export async function startCliCallbackProxy(options: {
     if (!request.url?.startsWith(`${capabilityPrefix}/`)) { reject(403); return; }
     const path = request.url.slice(capabilityPrefix.length);
     if (!paths.has(path)) { reject(403); return; }
-    if (activeCallbacks >= MAX_ACTIVE_CALLBACKS) { reject(429); return; }
+    const nativeTool = isCliNativeToolPath(path);
+    if (nativeTool ? activeNativeToolCallbacks >= MAX_ACTIVE_NATIVE_TOOL_CALLBACKS : activeCallbacks >= MAX_ACTIVE_CALLBACKS) { reject(429); return; }
     const length = Number(request.headers['content-length'] ?? 0);
     if (!Number.isSafeInteger(length) || length < 0 || length > CLI_CALLBACK_MAX_BODY_BYTES) { reject(413); return; }
-    activeCallbacks++;
+    if (nativeTool) activeNativeToolCallbacks++; else activeCallbacks++;
     const controller = new AbortController(); active.add(controller);
     const aborted = new Promise<never>((_, reject) => controller.signal.addEventListener('abort', () => reject(new Error('callback aborted')), { once: true }));
     const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? REQUEST_TIMEOUT_MS);
@@ -86,7 +89,8 @@ export async function startCliCallbackProxy(options: {
         if (!controller.signal.aborted) response.writeHead(result.status, result.contentType ? { 'content-type': result.contentType } : {}).end(result.body);
       } catch { if (!response.headersSent && !response.destroyed) reject(controller.signal.aborted ? 504 : 502); }
       finally {
-        clearTimeout(timer); response.off('close', onClose); active.delete(controller); activeCallbacks--;
+        clearTimeout(timer); response.off('close', onClose); active.delete(controller);
+        if (nativeTool) activeNativeToolCallbacks--; else activeCallbacks--;
         // Also stop a caller's pending body/forward operation after a deadline.
         controller.abort();
         if (!request.complete) request.destroy();

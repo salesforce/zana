@@ -1,3 +1,4 @@
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 import { test, expect, launchApp } from './fixtures/app.js';
 import { createServer, request } from 'node:https';
 import { createServer as createDevServer } from 'node:http';
@@ -90,15 +91,18 @@ test('Connect enrolls through desktop IPC and serves authenticated phone traffic
     const bug = win.getByRole('button', { name: 'Report a bug', exact: true });
     await expect(bug).toBeVisible();
     expect(await bug.evaluate(element => element.nextElementSibling?.getAttribute('aria-label'))).toBe('Remote access');
-    await win.screenshot({ path: testInfo.outputPath('remote-access-shortcut.png') });
+    await captureElectronScreenshot(app.electron, win, testInfo.outputPath('remote-access-shortcut.png'));
     await win.getByRole('link', { name: 'Remote access', exact: true }).click();
     await expect(win.getByRole('heading', { name: 'Remote access', exact: true })).toBeVisible();
     await expect(win.getByRole('alert').filter({ hasText: 'Local-network connections are no longer supported' })).toBeVisible();
-    await expect(win.getByRole('link', { name: 'Get a connect code' })).toBeVisible();
-    await expect(win.getByRole('switch', { name: 'Remote access', exact: true })).toBeDisabled();
-    await win.screenshot({ path: testInfo.outputPath('remote-access-pairing.png') });
-    await win.getByText('Advanced connection settings', { exact: true }).click();
-    await win.getByLabel('Connect service').fill(origin);
+    await expect(win.getByRole('button', { name: 'Set up remote access' })).toBeVisible();
+    await expect(win.getByRole('switch', { name: 'Remote access', exact: true })).toHaveCount(0);
+    await win.getByText('Have a connect code?', { exact: true }).click();
+    const codeSetup = win.locator('.remote-access-pairing');
+    await expect(codeSetup.getByRole('link', { name: 'Get a connect code' })).toBeVisible();
+    await captureElectronScreenshot(app.electron, win, testInfo.outputPath('remote-access-pairing.png'));
+    await codeSetup.getByText('Advanced connection settings', { exact: true }).click();
+    await codeSetup.getByLabel('Connect service').fill(origin);
     const issued = await remote(`${origin}/api/connect/computer/reserve`, 'POST', { label: 'my-computer' }, { cookie: accountCookie, origin });
     expect(issued.status).toBe(200);
     await win.getByRole('textbox', { name: 'Connect code', exact: true }).fill(JSON.parse(issued.body).code);
@@ -115,14 +119,15 @@ test('Connect enrolls through desktop IPC and serves authenticated phone traffic
     const browserUrl = reservation.browserUrl;
     expect(await win.evaluate(() => window.cc.mobile.browserAddress())).toBe(browserUrl);
     await win.evaluate(() => window.dispatchEvent(new Event('focus')));
-    await expect(win.getByRole('link', { name: 'Open Zana', exact: true })).toHaveAttribute('href', browserUrl);
-    await win.getByRole('switch', { name: 'Remote access', exact: true }).click();
+    await expect(win.getByRole('link', { name: 'Open in browser', exact: true })).toHaveAttribute('href', browserUrl);
+    await win.getByRole('button', { name: 'Turn off', exact: true }).click();
+    await win.getByRole('dialog').getByRole('button', { name: 'Turn off', exact: true }).click();
     await expect.poll(() => win.evaluate(() => window.cc.mobile.status())).toMatchObject({ running: false });
-    await expect(win.getByRole('link', { name: 'Open Zana', exact: true })).toHaveCount(0);
-    await win.getByRole('switch', { name: 'Remote access', exact: true }).click();
+    await expect(win.getByRole('link', { name: 'Open in browser', exact: true })).toHaveCount(0);
+    await win.getByRole('button', { name: 'Turn on remote access', exact: true }).click();
     await expect.poll(() => win.evaluate(() => window.cc.mobile.status())).toMatchObject({ running: true, relayState: 'connected' });
-    await expect(win.getByRole('status').filter({ hasText: /^Connected$/ })).toBeVisible();
-    await win.screenshot({ path: testInfo.outputPath('remote-access-desktop.png') });
+    await expect(win.getByRole('status').filter({ hasText: /^On$/ })).toBeVisible();
+    await captureElectronScreenshot(app.electron, win, testInfo.outputPath('remote-access-desktop.png'));
     expect(browserUrl).toBe(`https://my-computer.zana.localhost:${port}`);
     expect(new URL(publicUrl).hostname).toMatch(/^s-[a-f0-9]{24}\.connect\.zana\.localhost$/);
     browser = await chromium.launch({ args: ['--host-resolver-rules=MAP *.zana.localhost 127.0.0.1'] });
@@ -161,6 +166,7 @@ test('Connect enrolls through desktop IPC and serves authenticated phone traffic
     await browserPage.screenshot({ path: testInfo.outputPath('connect-browser-address.png') });
     // Shared preview: real Settings → product service → outbound preview lane →
     // account login → HTTP assets + WebSocket HMR in a real browser.
+    await win.getByText('Share a web preview', { exact: true }).click();
     await win.getByLabel('Port', { exact: true }).fill(String(devPort));
     await win.getByRole('button', { name: 'Share preview', exact: true }).click();
     const sharedUrl = `https://my-computer--${devPort}.zana.localhost:${port}`;
@@ -200,11 +206,14 @@ test('Connect enrolls through desktop IPC and serves authenticated phone traffic
     const result = await gateway.dispatchPlugin({ accountId: 'fixture-owner', serverId: privateConfig.serverId, pluginId: 'connect-probe', payload: envelope, timeoutMs: 5000 });
     expect(result).toEqual({ status: 200, body: { accepted: true, echo: envelope } });
     await expect(gateway.dispatchPlugin({ accountId: 'another-owner', serverId: privateConfig.serverId, pluginId: 'connect-probe', payload: envelope })).rejects.toThrow('computer_offline');
-    await win.getByRole('link', { name: 'Add a phone', exact: true }).click();
-    await expect(win.getByRole('region', { name: 'Zana mobile app' }).getByText('Coming soon', { exact: true })).toBeVisible();
-    await expect(win.getByRole('region', { name: 'Use Zana in your mobile browser' })).toBeVisible();
+    await win.getByText('Use on your phone', { exact: true }).click();
+    const phoneGuide = win.getByRole('list', { name: 'Mobile browser setup' });
+    await expect(phoneGuide.getByRole('listitem')).toHaveCount(2);
+    await expect(phoneGuide).toContainText(browserUrl);
+    await expect(phoneGuide).toContainText('same GitHub account');
+    await expect(win.getByRole('link', { name: 'Add a phone', exact: true })).toHaveCount(0);
     await expect(win.getByRole('button', { name: 'Show pairing QR', exact: true })).not.toBeVisible();
-    await win.screenshot({ path: testInfo.outputPath('connect-phone-sign-in-desktop.png') });
+    await captureElectronScreenshot(app.electron, win, testInfo.outputPath('connect-phone-sign-in-desktop.png'));
     // Native GitHub flow: the browser's existing authenticated account approves
     // the phone; no QR or LAN gateway is used to acquire its credential.
     await db.query('INSERT INTO sessions(id,user_id,expires_at) VALUES($1,$2,$3)', ['browser-fixture', 'fixture-owner', Date.now() + 60_000]);
@@ -237,12 +246,59 @@ test('Connect enrolls through desktop IPC and serves authenticated phone traffic
     expect(await win.evaluate(id => window.cc.mobile.revoke(id), phone.deviceId)).toBe(true);
     expect((await closed)[0]).toBe(1008);
     expect((await remote(publicUrl, 'GET', undefined, { cookie })).status).toBe(401);
-    // Revoking from the account page must not trap desktop in a dead connection.
+    // Repair a revoked connection without silently enabling access that was off.
+    await win.getByRole('button', { name: 'Turn off', exact: true }).click();
+    await win.getByRole('dialog').getByRole('button', { name: 'Turn off', exact: true }).click();
+    await expect(win.getByRole('button', { name: 'Turn on remote access' })).toBeVisible();
     await registry.revoke('fixture-owner', 'server', privateConfig.serverId);
-    await win.getByRole('link', { name: 'Remote access', exact: true }).click();
-    await win.getByRole('button', { name: 'Disconnect…', exact: true }).click();
-    await win.getByRole('button', { name: 'Disconnect this computer', exact: true }).click();
-    await expect.poll(() => win.evaluate(() => window.cc.mobile.status())).toMatchObject({ running: false, connection: { mode: 'unconfigured' } });
+    await win.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(win.getByRole('button', { name: 'Sign in again', exact: true })).toBeVisible();
+    await expect(win.getByRole('link', { name: 'Choose address', exact: true })).toHaveCount(0);
+    await expect(win.getByRole('button', { name: 'Turn on remote access' })).toHaveCount(0);
+    await expect(win.getByRole('button', { name: 'Share preview', exact: true })).toBeDisabled();
+    await captureElectronScreenshot(app.electron, win, testInfo.outputPath('remote-access-revoked.png'));
+    await db.query('UPDATE sessions SET expires_at=$1 WHERE id=$2', [Date.now() + 180_000, 'browser-fixture']);
+    async function approveComputerSignIn() {
+      await expect(win.getByRole('status').filter({ hasText: 'Approve this computer' })).toBeVisible();
+      const approvalUrl = await app!.electron.evaluate(() => (globalThis as any).__connectApprovalUrl as string);
+      const code = new URL(approvalUrl).searchParams.get('code');
+      expect(code).toBeTruthy();
+      const approved = await remote(`${origin}/api/connect/device/approve`, 'POST', { code, approved: true }, { cookie: accountCookie, origin });
+      expect(approved.status).toBe(200);
+      await expect(win.getByRole('link', { name: 'Choose address', exact: true })).toBeVisible({ timeout: 15_000 });
+    }
+    async function claimBrowserAddress(label: string) {
+      const connection = JSON.parse(readFileSync(secretPath, 'utf8'));
+      const claimed = await remote(`${origin}/api/connect/address`, 'POST', { serverId: connection.serverId, label }, { cookie: accountCookie, origin });
+      expect(claimed.status).toBe(200);
+      await win.evaluate(() => window.dispatchEvent(new Event('focus')));
+    }
+    async function unlinkComputer() {
+      await win.getByText('Connection options', { exact: true }).click();
+      await win.getByRole('button', { name: 'Unlink this computer…', exact: true }).click();
+      await win.getByRole('dialog').getByRole('button', { name: 'Unlink computer', exact: true }).click();
+      await expect.poll(() => win.evaluate(() => window.cc.mobile.status())).toMatchObject({ running: false, connection: { mode: 'unconfigured' } });
+      await expect(win.getByRole('button', { name: 'Set up remote access' })).toBeVisible();
+    }
+    await win.getByRole('button', { name: 'Sign in again', exact: true }).click();
+    await approveComputerSignIn();
+    expect((await win.evaluate(() => window.cc.config.get())).mobileGatewayEnabled).toBe(false);
+    await claimBrowserAddress('repaired-computer');
+    await expect(win.getByRole('button', { name: 'Turn on remote access' })).toBeVisible();
+    await expect(win.getByText(`https://repaired-computer.zana.localhost:${port}`, { exact: true })).toBeVisible();
+    await win.getByRole('button', { name: 'Turn on remote access' }).click();
+    await expect.poll(() => win.evaluate(() => window.cc.mobile.status())).toMatchObject({ running: true, relayState: 'connected' });
+    await unlinkComputer();
+    // First-time browser setup enables access after approval through real IPC.
+    await win.getByText('Advanced connection settings', { exact: true }).first().click();
+    await win.getByLabel('Connect service', { exact: true }).first().fill(origin);
+    await win.getByRole('button', { name: 'Set up remote access' }).click();
+    await approveComputerSignIn();
+    expect((await win.evaluate(() => window.cc.config.get())).mobileGatewayEnabled).toBe(true);
+    await claimBrowserAddress('browser-setup');
+    await expect(win.getByRole('link', { name: 'Open in browser' })).toHaveAttribute('href', `https://browser-setup.zana.localhost:${port}`);
+    await captureElectronScreenshot(app.electron, win, testInfo.outputPath('remote-access-browser-setup.png'));
+    await unlinkComputer();
   } catch (error) {
     const page = browserContext?.pages()[0];
     if (page && !page.isClosed()) {

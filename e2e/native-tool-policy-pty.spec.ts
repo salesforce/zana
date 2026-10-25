@@ -11,6 +11,7 @@
  * hook port, read from the stub's per-session wiring file.
  */
 import { createServer } from 'node:net';
+import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -20,6 +21,7 @@ import type { Page } from '@playwright/test';
 import { NATIVE_TOOL_POLICY_INPUT_MAX_CHARS } from '../packages/contracts/src/runtime.js';
 import { test, expect, launchApp, closeApp } from './fixtures/app.js';
 import { buildPluginHost } from '../packages/plugin-build/src/build-plugin-host.js';
+import { cleanupTmuxEnvironment, isolateTmuxEnvironment } from './fixtures/tmux-isolation.js';
 
 const FIXTURE_DIR = fileURLToPath(new URL('./fixtures/plugins/platform-hooks-probe', import.meta.url));
 const MODEL_CLI = fileURLToPath(new URL('./fixtures/claude-model-cli.cjs', import.meta.url));
@@ -72,8 +74,11 @@ else {
   const relay = (entry) => entry.hooks.find((hook) => hook.command.includes('ZCC_NATIVETOOL_URL'));
   const entries = ((settings.hooks || {}).PreToolUse || []).filter(relay);
   const command = entries.length ? relay(entries[0]).command : '';
-  write(join(__dirname, 'wiring-' + decodeURIComponent(url.split('/').pop()) + '.json'), JSON.stringify({
-    url, matchers: entries.map((entry) => entry.matcher), count: entries.length, command
+  // Use the independently forwarded hook identity, not the native-tool URL under test.
+  const sessionId = decodeURIComponent(process.env.ZCC_HOOK_URL.split('/').pop());
+  write(join(__dirname, 'wiring-' + sessionId + '.json'), JSON.stringify({
+    url, matchers: entries.map((entry) => entry.matcher), count: entries.length, command,
+    tmux: process.env.TMUX, tmuxPane: process.env.TMUX_PANE
   }));
   console.log('Claude native tool policy probe ready');
   serveProbes(command);
@@ -104,7 +109,7 @@ serveProbes(relays[0]);
 interface ProbeResult { status: number | null; stdout: string; stderr: string; error: string | null }
 interface PolicyReply { hookSpecificOutput: { hookEventName: string; permissionDecision: string; permissionDecisionReason: string } }
 interface PolicyRow { invocationId: string; threadId: string; projectId: string; providerId: string; toolName: string; state: string }
-interface Wiring { url: string; count: number; matchers?: string[]; command: string }
+interface Wiring { url: string; count: number; matchers?: string[]; command: string; tmux?: string; tmuxPane?: string }
 
 const denyReason = (stdout: string) => (JSON.parse(stdout) as PolicyReply).hookSpecificOutput;
 
@@ -183,20 +188,24 @@ function probeApi(win: Page, stubDir: string, sessionId: string) {
 }
 
 /** Boot the private app with the probe plugin running and one main-owned PTY running the stub CLI. */
-async function launchProbe(home: string, profile: 'claude' | 'codex', stubSource: string) {
+async function launchProbe(home: string, profile: 'claude' | 'codex', stubSource: string, tmuxScope: 'off' | 'all' = 'off') {
   const stubDir = mkdtempSync(join(tmpdir(), `zcc-native-tool-${profile}-`));
   writeFileSync(join(stubDir, `${profile}-stub.cjs`), `#!${process.execPath}\n${stubSource}`, { mode: 0o700 });
   installProbePlugin(home);
   let app: Awaited<ReturnType<typeof launchApp>> | undefined;
   const shutdown = async () => {
-    if (app) await closeApp(app.electron);
-    rmSync(stubDir, { recursive: true, force: true });
+    try {
+      if (app) await closeApp(app.electron);
+    } finally {
+      await cleanupTmuxEnvironment(home);
+      rmSync(stubDir, { recursive: true, force: true });
+    }
   };
   try {
     // An explicit free port keeps the private product server off the default one.
     app = await launchApp(home, {
       env: { ZCC_SERVER_PORT: String(await freePort()) },
-      initialConfig: { sponsorPromptDismissed: true, [profile === 'claude' ? 'claudeBinary' : 'codexBinary']: join(stubDir, `${profile}-stub.cjs`) }
+      initialConfig: { sponsorPromptDismissed: true, tmuxScope, [profile === 'claude' ? 'claudeBinary' : 'codexBinary']: join(stubDir, `${profile}-stub.cjs`) }
     });
     let stderr = '';
     app.electron.process().stderr?.on('data', (chunk) => { stderr = (stderr + String(chunk)).slice(-16_000); });
@@ -210,7 +219,7 @@ async function launchProbe(home: string, profile: 'claude' | 'codex', stubSource
       }, session).catch(() => undefined);
       await shutdown();
     };
-    return { win, home, ...session, ...probeApi(win, stubDir, session.sessionId), cleanup, stderr: () => stderr };
+    return { win, home, stubDir, ...session, ...probeApi(win, stubDir, session.sessionId), cleanup, stderr: () => stderr };
   } catch (error) {
     await shutdown();
     throw error;
@@ -365,6 +374,56 @@ test('a local Claude PTY tool call without turn_id reaches the plugin policy thr
     await sizeLimitIsOnTheInput(probe, event);
     await failsClosedWithoutPlugins(probe, event);
   } finally {
+    await probe.cleanup();
+  }
+});
+
+// Private build: pnpm test:e2e -- e2e/native-tool-policy-pty.spec.ts -g 'two concurrent local tmux'
+test('two concurrent local tmux agents get their own native-tool endpoints', async ({ home }) => {
+  test.setTimeout(180_000);
+  test.skip(process.platform === 'win32', 'tmux is POSIX only');
+  // Fail rather than silently accept the product's no-tmux plain-PTY fallback.
+  execFileSync('tmux', ['-V'], { encoding: 'utf8', timeout: 3000, maxBuffer: 4096 });
+  const probe = await launchProbe(home, 'claude', CLAUDE_STUB, 'all');
+  let secondSessionId: string | undefined;
+  try {
+    // Keep A alive while B starts: the existing server retains A's global env.
+    const second = await startProbeSession(probe.win, home, 'claude', probe.stubDir);
+    secondSessionId = second.sessionId;
+    expect(second.sessionId).not.toBe(probe.sessionId);
+    const secondApi = probeApi(probe.win, probe.stubDir, second.sessionId);
+    for (const session of [probe, second]) {
+      expect(session.wiring).toMatchObject({ count: 1, matchers: [''] });
+      expect(new URL(session.wiring.url).pathname).toBe(`/hook/nativetool/${session.projectId}/${session.sessionId}`);
+    }
+    expect(second.wiring.url).not.toBe(probe.wiring.url);
+
+    // Real panes, same private socket and server PID, overlapping lifetimes.
+    const tmuxRoot = isolateTmuxEnvironment(home, process.env).TMUX_TMPDIR!;
+    for (const session of [probe, second]) {
+      expect(session.wiring.tmux, 'agent must run inside a real tmux pane').toBeTruthy();
+      expect(session.wiring.tmux!.split(',')[0]).toContain(`${tmuxRoot}/tmux-`);
+      expect(session.wiring.tmuxPane).toMatch(/^%\d+$/);
+    }
+    expect(second.wiring.tmux!.split(',').slice(0, 2)).toEqual(probe.wiring.tmux!.split(',').slice(0, 2));
+    expect(second.wiring.tmuxPane).not.toBe(probe.wiring.tmuxPane);
+
+    await probe.rpc('toolPolicyEventsClear');
+    const event = claudeEvents(probe);
+    const results = await Promise.all([
+      probe.probe('tmux-first', event('toolu_tmux_first', 'Bash', { command: 'pwd' })),
+      secondApi.probe('tmux-second', event('toolu_tmux_second', 'Bash', { command: 'pwd' }))
+    ]);
+    for (const result of results) {
+      expect(result, `${JSON.stringify(result)}\n${probe.stderr()}`).toMatchObject({ status: 0, stdout: '', error: null });
+      expect(result.stdout + result.stderr).not.toContain(NO_DECISION);
+    }
+    expect(await probe.rows()).toEqual(expect.arrayContaining([probe, second].map((session) => expect.objectContaining({
+      threadId: session.sessionId, projectId: session.projectId, providerId: 'claude-code', toolName: 'Bash', state: 'allowed'
+    }))));
+    expect(await probe.rows()).toHaveLength(2);
+  } finally {
+    if (secondSessionId) await probe.win.evaluate((id) => window.cc.terminals.close(id), secondSessionId).catch(() => undefined);
     await probe.cleanup();
   }
 });

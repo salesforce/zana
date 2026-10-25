@@ -28,6 +28,66 @@ function fixture(paired = true, maxHistoryBytes?: number) {
 }
 
 describe('immutable sync store', () => {
+  it('excludes templates from manual scans, capture, local mutations and capacity', () => {
+    const { sync, db, store } = fixture(false);
+    const template = store.create({ title: 'Template', template: 'blank' }, actor);
+    db.prepare("UPDATE docs SET kind = 'template', template_key = 'private' WHERE id = ?").run(template.id);
+    const doc = store.create({ title: 'Document', template: 'blank' }, actor);
+    const spy = sync as unknown as { capture(id: string): unknown };
+    expect(() => spy.capture(template.id)).toThrow('document missing');
+    sync.recordLocalMutation({ docId: template.id, kind: 'write', payload: null });
+    expect(sync.operations('repo-a')).toEqual([]);
+    sync.setGroup('repo-a', 'group-a', [
+      { replicaId: 'replica-a', machineId: 'machine-a', sponsorReplicaId: null, joinedAt: 1 },
+      { replicaId: 'replica-b', machineId: 'machine-b', sponsorReplicaId: null, joinedAt: 1 }
+    ]);
+    expect(sync.freezeManual().map((intent) => intent.docId)).toEqual([doc.id]);
+    expect(sync.prepareManual()).toBeNull();
+    expect(Object.keys(sync.manualConsent('replica-b')!.heads)).toEqual([doc.id]);
+    expect(sync.head('repo-a', template.id)).toBeNull();
+    expect(() => sync.recordLocalDeletion(template.id, actor)).toThrow('templates cannot');
+  });
+
+  it('refuses inbound template ids without storing operations or overwriting rows', () => {
+    const a = fixture(), b = fixture();
+    b.db.prepare("UPDATE sync_repositories SET replica_id = 'replica-b'").run();
+    const doc = a.store.create({ title: 'Inbound', template: 'blank', status: 'approved' }, actor);
+    const offer = a.service.createOffer(a.sync.readyIntents('repo-a')[0]!);
+    b.db.prepare(`INSERT INTO docs (id, slug, title, created_at, updated_at, created_by, updated_by, kind, template_key)
+      VALUES (?, 'internal-template', 'Private', 1, 1, ?, ?, 'template', 'private')`)
+      .run(doc.id, JSON.stringify(actor), JSON.stringify(actor));
+    expect(() => b.sync.apply(offer)).toThrow('templates cannot be peer-synced');
+    expect(b.sync.operations('repo-a')).toEqual([]);
+    expect(b.store.requireTemplate('private').title).toBe('Private');
+  });
+
+  it('does not let template count expand peer version capacity', () => {
+    const { sync, db, store } = fixture();
+    const doc = store.create({ title: 'Capacity', template: 'blank' }, actor);
+    db.prepare(`WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x < ?)
+      INSERT INTO docs (id, slug, title, created_at, updated_at, created_by, updated_by, kind)
+      SELECT 'template-' || x, 'template-' || x, 'Private', 1, 1, ?, ?, 'template' FROM n`)
+      .run(MAX_PEER_STORED_VERSIONS + 1, JSON.stringify(actor), JSON.stringify(actor));
+    db.prepare(`WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x < ?)
+      INSERT INTO sync_versions (repo_id, head_id, doc_id, payload_hash, closure_json, bytes)
+      SELECT 'repo-a', 'held-' || x, 'held', 'hash', '{}', 0 FROM n`).run(MAX_PEER_STORED_VERSIONS - 1);
+    expect(() => store.writeFile(doc.id, { path: 'README.md', content: 'changed' }, actor))
+      .toThrow('durable version capacity reached');
+    expect(sync.operations('repo-a')).toHaveLength(1);
+    expect(store.readFile(doc.id, 'README.md').content).not.toBe('changed');
+  });
+
+  it('treats inbound slug collisions with templates as forks, never SQL uniqueness failures', () => {
+    const a = fixture(), b = fixture();
+    b.db.prepare("UPDATE sync_repositories SET replica_id = 'replica-b'").run();
+    const doc = a.store.create({ title: 'Collision', template: 'blank', status: 'approved' }, actor);
+    const template = b.store.create({ title: 'Collision', template: 'blank' }, actor);
+    b.db.prepare("UPDATE docs SET kind = 'template', template_key = 'private' WHERE id = ?").run(template.id);
+    const offer = a.service.createOffer(a.sync.readyIntents('repo-a')[0]!);
+    expect(b.sync.apply(offer).stage).toBe('conflict');
+    expect(b.store.requireTemplate('private').slug).toBe(doc.slug);
+    expect(b.store.find(doc.id)).toBeNull();
+  });
   it('manual ACK accepts earlier incoming consent so bilateral peers can exchange either order', () => {
     const a = fixture(false), b = fixture(false);
     const left = a.store.create({ title: 'Left private', template: 'blank' }, actor);
@@ -87,7 +147,7 @@ describe('immutable sync store', () => {
       SELECT printf('doc-%05d', x), printf('doc-%05d', x), 'Paged manual', 1, 1, ?, ? FROM n`)
       .run(JSON.stringify(actor), JSON.stringify(actor));
     db.prepare(`INSERT INTO doc_files (doc_id, path, content, encoding, size, revision, updated_at, updated_by, sync_id)
-      SELECT id, 'README.md', '', 'utf8', 0, 1, 1, ?, 'file-' || id FROM docs`).run(JSON.stringify(actor));
+      SELECT id, 'README.md', '', 'utf8', 0, 1, 1, ?, 'file-' || id FROM docs WHERE kind = 'doc'`).run(JSON.stringify(actor));
     let cursor: string | null = '', total = 0;
     do {
       cursor = sync.prepareManual(cursor!);

@@ -233,3 +233,38 @@ describe('Agentforce lab trace', () => {
     expect((await lab.trace({ id: session.id, planId: 'plan1' })).available).toBe(true);
   });
 });
+
+it('grounds AI evaluation in server-owned, redacted action evidence', async () => {
+  const { lab, request, args } = setup();
+  const run = await lab.start(args);
+  await lab.send({ id: run.id, text: 'Check credit, do not apply it' });
+  const base = request.getMockImplementation()!;
+  request.mockImplementation(async (...input) => input[1].includes('/plans/') ? { host: 'test.api.salesforce.com', body: { plan: [{ type: 'FunctionStep', function: { name: 'Credit', input: { action: 'CHECK', token: 'PRIVATE_CREDENTIAL' }, output: { applied: false, eligible: true } } }] } } : input[1].endsWith('/chat-generations') ? { host: 'test.api.salesforce.com', body: { generationDetails: { generations: [{ content: '{"outcome":"pass","reason":"Read-only CHECK","evidence":["applied false"]}' }] } } } : base(...input));
+  await lab.evaluate({ id: run.id, runtimeEvidence: [{ label: 'FORGED' }] });
+  const payload = JSON.stringify(request.mock.calls.at(-1)?.[2]);
+  expect(payload).toContain('CHECK'); expect(payload).toContain('applied'); expect(payload).toContain('false');
+  expect(payload).toContain('authoritative');
+  expect(payload).not.toContain('PRIVATE_CREDENTIAL'); expect(payload).not.toContain('FORGED');
+});
+
+it('includes final state but marks evidence shortened to the judging budget incomplete', async () => {
+  const { lab, request, args } = setup();
+  const run = await lab.start(args);
+  await lab.send({ id: run.id, text: 'Check my order' });
+  vi.spyOn(lab, 'trace').mockResolvedValue({ runId: run.id, turn: 1, planId: 'plan1', available: true, steps: [
+    { kind: 'response', label: 'Do not use response text as an action' },
+    { kind: 'variable', label: 'orderExists', stateEvidence: { orderExists: false } },
+    ...Array.from({ length: 80 }, (_, i) => ({ kind: 'action' as const, label: `Check${i}`, actionEvidence: { input: { detail: 'x'.repeat(200) } } }))
+  ] });
+  const base = request.getMockImplementation()!;
+  request.mockImplementation(async (...input) => input[1].endsWith('/chat-generations') ? { host: 'test.api.salesforce.com', body: { generationDetails: { generations: [{ content: '{"outcome":"inconclusive","reason":"Trace shortened","evidence":["Incomplete action evidence"]}' }] } } } : base(...input));
+  await lab.evaluate({ id: run.id });
+  const payload = request.mock.calls.at(-1)![2] as { messages: Array<{ content: string }> };
+  const evidence = JSON.parse(payload.messages[1]!.content).runtimeEvidence[0];
+  expect(evidence).toMatchObject({ complete: false, reason: 'Runtime evidence shortened to the judging budget.' });
+  expect(evidence.steps[0]).toMatchObject({ kind: 'variable', state: { orderExists: false } });
+  expect(evidence.steps.length).toBeGreaterThan(1);
+  expect(evidence.steps.length).toBeLessThan(80);
+  expect(JSON.stringify(evidence.steps)).not.toContain('Do not use response text');
+  expect(JSON.stringify(evidence.steps).length).toBeLessThan(6100);
+});

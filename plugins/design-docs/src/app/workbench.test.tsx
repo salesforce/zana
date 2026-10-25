@@ -223,14 +223,116 @@ describe('peers view', () => {
 });
 
 describe('creating docs', () => {
+  it('manages templates on the landing page: filter, per-card actions, editor and back', async () => {
+    const harness = createHarness();
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    expect(await screen.findByText('Start from a template')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Templates' })).toBeNull();
+    expect(screen.getByRole('button', { name: /New template/ }).className).toContain('primary');
+    const filter = screen.getByRole('textbox', { name: 'Filter templates' });
+    fireEvent.change(filter, { target: { value: 'decision record' } });
+    expect(await screen.findByText('Decision record')).toBeTruthy();
+    expect(screen.queryByText('Product spec')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Decision record' }));
+    expect(screen.getByRole('menuitem', { name: 'Duplicate' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Export' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Back to templates' }));
+    expect(await screen.findByText('Start from a template')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Back to templates' })).toBeNull();
+  });
+
+  it('runs template actions from the landing page: duplicate, export, delete, import, export all, restore', async () => {
+    const names: string[] = [];
+    const urls = { createObjectURL: URL.createObjectURL, revokeObjectURL: URL.revokeObjectURL };
+    Object.assign(URL, { createObjectURL: () => 'blob:t', revokeObjectURL: vi.fn() });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { names.push(this.download); });
+    try {
+    const harness = createHarness();
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    expect(await screen.findByText('Start from a template')).toBeTruthy();
+    const count = () => harness.store.listTemplates().length;
+    const before = count();
+    const act1 = async (card: string, item: string) => {
+      fireEvent.click(await screen.findByRole('button', { name: `Actions for ${card}` }));
+      fireEvent.click(screen.getByRole('menuitem', { name: item }));
+    };
+    await act1('Decision record', 'Duplicate');
+    await waitFor(() => expect(count()).toBe(before + 1));
+    expect(await screen.findByText('Decision record (copy)')).toBeTruthy();
+    await act1('Decision record', 'Export');
+    await waitFor(() => expect(names).toContain('adr.design-doc-templates.json'));
+    await act1('Decision record (copy)', 'Delete');
+    await waitFor(() => expect(count()).toBe(before));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Template actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Export all' }));
+    await waitFor(() => expect(names).toContain('design-doc-templates.json'));
+
+    harness.store.templateDelete('adr');
+    fireEvent.click(screen.getByRole('button', { name: 'Template actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Restore built-ins' }));
+    await waitFor(() => expect(harness.store.templateByKey('adr')).not.toBeNull());
+
+    const bundle = harness.store.templatesExport(['blank']);
+    const upload = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File([bundle], 'bundle.json', { type: 'application/json' });
+    fireEvent.change(upload, { target: { files: [file] } });
+    await waitFor(() => expect(count()).toBe(before + 1));
+    fireEvent.change(upload, { target: { files: [] } });
+    fireEvent.change(upload, { target: { files: [new File(['not json'], 'bad.json')] } });
+    await waitFor(() => expect(harness.toasts.some((toast) => toast.message.startsWith('Could not import templates'))).toBe(true));
+    } finally {
+      click.mockRestore();
+      Object.assign(URL, urls);
+    }
+  });
+
+  it('disables Delete on the last remaining template', async () => {
+    const harness = createHarness();
+    for (const template of harness.store.listTemplates().slice(1)) harness.store.templateDelete(template.id);
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    const only = harness.store.listTemplates()[0]!;
+    fireEvent.click(await screen.findByRole('button', { name: `Actions for ${only.label}` }));
+    expect(screen.getByRole('menuitem', { name: 'Delete' }).hasAttribute('disabled') || screen.getByRole('menuitem', { name: 'Delete' }).getAttribute('aria-disabled') === 'true').toBe(true);
+  });
+
+  it('reports failed template actions with a toast', async () => {
+    const boom = async () => { throw new Error('boom'); };
+    const harness = createHarness({ rpcOverrides: { templateDuplicate: boom, templateNew: boom, templatesExport: boom, templatesRestoreBuiltins: boom } });
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Actions for Decision record' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Duplicate' }));
+    await waitFor(() => expect(harness.toasts.some((toast) => toast.message.startsWith('Could not duplicate template'))).toBe(true));
+    fireEvent.click(screen.getByRole('button', { name: /New template/ }));
+    await waitFor(() => expect(harness.toasts.some((toast) => toast.message.startsWith('Could not create template'))).toBe(true));
+    for (const [item, text] of [['Export all', 'Could not export templates'], ['Restore built-ins', 'Could not restore built-ins']] as const) {
+      fireEvent.click(screen.getByRole('button', { name: 'Template actions' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: item }));
+      await waitFor(() => expect(harness.toasts.some((toast) => toast.message.startsWith(text))).toBe(true));
+    }
+  });
+
+  it('Home returns from a template editor to the landing page', async () => {
+    const harness = createHarness();
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    fireEvent.click(await screen.findByRole('button', { name: /New template/ }));
+    expect(await screen.findByRole('button', { name: 'Back to templates' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Home' }));
+    expect(await screen.findByText('Design docs your agents work on with you')).toBeTruthy();
+  });
+
   it('starts on the landing page and creates a doc from a template', async () => {
     const harness = createHarness();
     harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
     expect(await screen.findByText('Design docs your agents work on with you')).toBeTruthy();
     expect(await screen.findByText('No design docs yet.')).toBeTruthy();
 
-    const landing = screen.getByText('Start from a template').parentElement!;
-    fireEvent.click(await within(landing).findByRole('radio', { name: /Decision record/ }));
+    const landing = screen.getByText('Start from a template').closest('.dd-landing-start') as HTMLElement;
+    fireEvent.click(await within(landing).findByRole('button', { name: /^Decision record/ }));
     const dialog = screen.getByRole('dialog', { name: 'New design doc' });
     expect((await within(dialog).findByRole('radio', { name: /Decision record/ })).getAttribute('aria-checked')).toBe('true');
     const create = within(dialog).getByRole('button', { name: 'Create' }) as HTMLButtonElement;

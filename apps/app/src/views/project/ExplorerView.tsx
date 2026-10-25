@@ -4,16 +4,14 @@ import { useHosts } from '../../hooks/useHosts.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { product } from '../../lib/product-client.js';
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-// Side-effect: wires up MonacoEnvironment (local workers) + loader.config. See
-// util/monacoSetup.ts — shared with LibraryView and the modal's DiffViewer.
-import '@/lib/monacoSetup';
 import type { FsEntry, GitBranch as GitBranchInfo, GitFileCode, GitShowResult, GitStatus, OpenTarget, FsReadResult, Project, Worktree } from '@zana-ai/zcc-domain/product';
 import { useData, useUi } from '@/store';
 import { PromptModal } from '@/components/PromptModal';
 import { useAiEnhanceSelection } from '@/components/AiEnhanceSelection';
-import { DelayedStencilList } from '@/components/ui/Skeleton';
 import { useFileDrop } from '@/hooks/useFileDrop';
 import { useMonacoTheme } from '@/hooks/useMonacoTheme';
+import { useDirectoryLoader } from '@/components/explorer/useDirectoryLoader';
+import { DirectoryLoading } from '@/components/explorer/DirectoryLoading';
 import { useExplorerFileReveal } from './useExplorerFileReveal.js';
 import {
   WorktreeMenu,
@@ -97,6 +95,7 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
   // the mutation / git / external-open affordances below are all gated off.
   const isRemote = !!project.remote;
   const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [remoteReady, setRemoteReady] = useState(!project.remote);
 
   // Worktree switcher: the Explorer's "view root" defaults to the project path
   // (the repo's main checkout) but can be flipped to any linked worktree of the
@@ -109,18 +108,25 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
   activeRoot.current = viewRoot;
   const [environments, setEnvironments] = useState<Awaited<ReturnType<typeof product.environments.list>>>([]);
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
-  const scope = useMemo(() => {
-    if (!baseScope) return undefined;
-    if (viewRoot === project.path) return baseScope;
+  const resolvedEnvironmentId = useMemo(() => {
+    if (!baseScope || viewRoot === project.path) return null;
     const environment = environments.find(row => row.path === viewRoot && row.hostId === baseScope.hostId);
     // Existing native Git worktrees retain main's established authorization.
     // This exception is available only in the primary desktop, never on a remote target.
-    if (!environment && nativeFiles && worktrees.some(row => row.path === viewRoot)) return undefined;
-    return { ...baseScope, environmentId: environment?.id ?? 'unregistered-checkout' };
-  }, [baseScope, viewRoot, project.path, environments, nativeFiles, worktrees]);
+    if (!environment && nativeFiles && worktrees.some(row => row.path === viewRoot)) return 'native';
+    return environment?.id ?? 'unregistered-checkout';
+  }, [baseScope?.hostId, viewRoot, project.path, environments, nativeFiles, worktrees]);
+  const scope = useMemo(() => {
+    if (!baseScope) return undefined;
+    if (viewRoot === project.path) return baseScope;
+    if (resolvedEnvironmentId === 'native') return undefined;
+    return { ...baseScope, environmentId: resolvedEnvironmentId ?? 'unregistered-checkout' };
+  }, [baseScope, viewRoot, project.path, resolvedEnvironmentId]);
   // All local branches of the repo (not just the ones bound to a worktree), so
   // the switcher can list every branch and badge which checkout it's on.
   const [branches, setBranches] = useState<GitBranchInfo[]>([]);
+  const [worktreesLoading, setWorktreesLoading] = useState(false);
+  const [worktreesError, setWorktreesError] = useState<string | null>(null);
   const [worktreeMenu, setWorktreeMenu] = useState(false);
   // Git status scoped to the active worktree. When viewing the main checkout we
   // reuse the store's status (kept fresh by terminal-close hooks etc.); for any
@@ -135,22 +141,31 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
   // stay in sync too.
   const reloadGitStatus = useCallback(() => {
     if (isRemote) return; // remote projects have no local git status
+    let cancelled = false;
     if (!scope && viewRoot === project.path) {
       useData.getState().loadGitStatus(project.id);
     } else {
       product.git.status(viewRoot, undefined, scope)
-        .then((s) => { if (activeRoot.current === viewRoot) setWorktreeGitStatus(s); })
+        .then((s) => { if (!cancelled && activeRoot.current === viewRoot) setWorktreeGitStatus(s); })
         .catch(() => {});
     }
+    return () => { cancelled = true; };
   }, [viewRoot, project.id, project.path, isRemote, scope]);
 
   // Re-enumerate the repo's worktrees + branches (after a remove, or a manual
-  // refresh). Best-effort; a non-repo just clears to empty.
+  // refresh). Failures stay local to the switcher, never the file tree.
   const reloadWorktrees = useCallback(() => {
     if (isRemote) return;
-    product.git.listWorktrees(project.path, nativeFiles && !baseScope?.environmentId ? undefined : baseScope)
+    let cancelled = false;
+    setWorktreesLoading(true);
+    setWorktreesError(null);
+    const failed = (error: unknown) => {
+      if (!cancelled) setWorktreesError(error instanceof Error ? error.message : 'Failed to load checkouts');
+    };
+    const trees = product.git.listWorktrees(project.path, nativeFiles && !baseScope?.environmentId ? undefined : baseScope)
       .then(async (list) => {
         const environments = await product.environments.list(project.id).catch(() => []);
+        if (cancelled) return;
         setEnvironments(environments);
         const extras: Worktree[] = environments
           .filter((row) => (!baseScope || row.hostId === baseScope.hostId) && row.path && row.status === 'ready' && row.workspaceProvisionType === 'managed-worktree')
@@ -165,11 +180,17 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
           }));
         setWorktrees(baseScope?.environmentId ? [] : [...list, ...extras]);
       })
-      .catch(() => setWorktrees([]));
-    product.git.listBranches(project.path, baseScope)
-      .then((list) => setBranches(baseScope?.environmentId ? [] : list))
-      .catch(() => setBranches([]));
+      .catch(error => { if (!cancelled) setWorktrees([]); failed(error); });
+    const refs = product.git.listBranches(project.path, baseScope)
+      .then((list) => { if (!cancelled) setBranches(baseScope?.environmentId ? [] : list); })
+      .catch(error => { if (!cancelled) setBranches([]); failed(error); });
+    void Promise.all([trees, refs]).finally(() => { if (!cancelled) setWorktreesLoading(false); });
+    return () => { cancelled = true; };
   }, [project.path, project.id, isRemote, baseScope, nativeFiles]);
+
+  useEffect(() => {
+    if (worktreeMenu) return reloadWorktrees();
+  }, [worktreeMenu, reloadWorktrees]);
 
   const handleRemoveWorktree = useCallback(
     async (wt: Worktree) => {
@@ -229,9 +250,13 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
   };
 
   const [expanded, setExpanded] = useState<Map<string, boolean>>(new Map());
-  const [entries, setEntries] = useState<Map<string, FsEntry[]>>(new Map());
-  const [directoryError, setDirectoryError] = useState<string | null>(null);
-  const [loading, setLoading] = useState<Set<string>>(new Set());
+  const expandedRef = useRef(expanded);
+  expandedRef.current = expanded;
+  const readDirectory = useCallback((path: string) => isRemote
+    ? product.fs.listDirRemote(project.id, path)
+    : product.fs.listDir(path, scope), [isRemote, project.id, scope]);
+  const { entries, loading, slow, errors, loadDir, reset: resetDirectories } = useDirectoryLoader(readDirectory);
+  const directoryError = errors.get(viewRoot);
   const [menu, setMenu] = useState<ContextMenu | null>(null);
   const [prompt, setPrompt] = useState<PromptState | null>(null);
   const [fileResult, setFileResult] = useState<FsReadResult | null>(null);
@@ -298,59 +323,33 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
     appliedGotoNonceRef.current = goto.nonce;
   }, [goto]);
 
-  const fetchDir = useCallback(
-    async (path: string): Promise<FsEntry[]> => {
-      setLoading((s) => {
-        const next = new Set(s);
-        next.add(path);
-        return next;
-      });
-      let list: FsEntry[] = [];
-      try {
-        if (path === viewRoot) setDirectoryError(null);
-        list = isRemote
-          ? await product.fs.listDirRemote(project.id, path)
-          : await product.fs.listDir(path, scope);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to list directory';
-        if (path === viewRoot && activeRoot.current === viewRoot) setDirectoryError(message);
-        pushToast(message, 'error');
-      }
-      if (activeRoot.current !== viewRoot) return list;
-      setEntries((s) => {
-        const next = new Map(s);
-        next.set(path, list);
-        return next;
-      });
-      setLoading((s) => {
-        const next = new Set(s);
-        next.delete(path);
-        return next;
-      });
-      return list;
-    },
-    [isRemote, project.id, pushToast, scope, viewRoot]
-  );
-
-  const { loadDir, revealFile } = useExplorerFileReveal({ fetchDir, entries, setExpanded, treeBodyRef, activeRoot, treeMode });
+  const { revealFile, cancelReveal } = useExplorerFileReveal({
+    loadDir,
+    setExpanded,
+    treeBodyRef,
+    activeRoot,
+    treeMode
+  });
 
   useEffect(() => {
     setExpanded(new Map());
-    setEntries(new Map());
-    setLoading(new Set());
     setMenu(null);
     setHeadResult(null);
     setWorktrees([]);
     setWorktreeMenu(false);
     setWorktreeGitStatus(null);
-    setRemoteError(null);
     editorRef.current = null;
     appliedGotoNonceRef.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.id]);
+
+  useEffect(() => {
     if (isRemote) {
       // Remote: resolve the browse root over ssh first, then seed the tree at
       // it. `project.path` is only a local placeholder, so we can't list it.
       let cancelled = false;
-      setViewRoot(project.path); // transient until the remote root resolves
+      setRemoteReady(false);
+      setRemoteError(null);
       product.fs.remoteRoot(project.id)
         .then((res) => {
           if (cancelled) return;
@@ -359,44 +358,43 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
             return;
           }
           setViewRoot(res.root);
-          loadDir(res.root, true);
+          setRemoteReady(true);
         })
         .catch((err) => {
           if (!cancelled) setRemoteError(err instanceof Error ? err.message : 'Could not reach the remote host');
         });
       return () => { cancelled = true; };
+    } else {
+      setViewRoot(project.path);
     }
-    setViewRoot(project.path);
-    loadDir(project.path, true);
-    reloadWorktrees();
-    reloadGitStatus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project.id]);
+  }, [project.id, project.path, isRemote]);
+
+  useEffect(() => {
+    resetDirectories();
+    if (isRemote && !remoteReady) return;
+    void loadDir(viewRoot);
+    for (const [dir, isOpen] of expandedRef.current.entries()) {
+      if (isOpen && dir !== viewRoot) void loadDir(dir);
+    }
+  }, [viewRoot, isRemote, remoteReady, loadDir, resetDirectories]);
 
   // When the view root changes (worktree switch), re-seed the tree at the new
   // root and load that checkout's git status. The open file belongs to the old
   // root, so close it — its path won't exist (or means something else) under
-  // the new tree. Skips the initial mount where viewRoot === project.path.
-  const prevViewRootRef = useRef(project.path);
+  // the new tree.
+  const prevViewRootRef = useRef<string | null>(null);
   useEffect(() => {
-    if (prevViewRootRef.current === viewRoot) return;
+    const isInitial = prevViewRootRef.current === null;
+    if (!isInitial && prevViewRootRef.current === viewRoot) return;
     prevViewRootRef.current = viewRoot;
-    setExpanded(new Map());
-    setEntries(new Map());
-    setLoading(new Set());
-    setMenu(null);
-    setExplorerFile(viewKey, undefined);
-    loadDir(viewRoot, true);
-    if (isRemote || (!scope && viewRoot === project.path)) {
-      // Remote projects have no local git status; worktree switching is local-only.
+    if (!isInitial) {
+      setExpanded(new Map());
+      setMenu(null);
+      setExplorerFile(viewKey, undefined);
       setWorktreeGitStatus(null);
-    } else {
-      product.git.status(viewRoot, undefined, scope)
-        .then((s) => { if (activeRoot.current === viewRoot) setWorktreeGitStatus(s); })
-        .catch(() => setWorktreeGitStatus(null));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewRoot]);
+    return reloadGitStatus();
+  }, [viewRoot, reloadGitStatus, viewKey, setExplorerFile]);
 
   // When the user changes file, drop any cached HEAD content. Diff mode
   // sticks across navigations so power-users can scan changes file by file.
@@ -433,9 +431,14 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
     };
   }, [diffMode, explorerFile, headResult, scope]);
 
-  // Reveal only when a file is opened (or the root changes), not on every tree
-  // load, so folders the user collapses afterwards stay collapsed.
-  useEffect(() => { if (explorerFile) void revealFile(explorerFile, viewRoot); }, [explorerFile, viewRoot, revealFile]);
+  useEffect(() => {
+    if (explorerFile && (!isRemote || remoteReady)) {
+      void revealFile(explorerFile, viewRoot);
+    }
+    return () => {
+      cancelReveal();
+    };
+  }, [explorerFile, viewRoot, revealFile, cancelReveal, isRemote, remoteReady]);
 
   // load file contents when explorerFile changes
   useEffect(() => {
@@ -443,6 +446,7 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
     setEditedContent(null);
     if (!explorerFile) {
       setFileResult(null);
+      setFileLoading(false);
       return;
     }
     setFileLoading(true);
@@ -561,7 +565,8 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
   // their identity changed every render, memo would be defeated and the WHOLE
   // tree would reconcile on every keystroke in the editor / git-decoration push.
   // So they must be stable. `toggleDir` reads `expanded` (only changes on a real
-  // toggle — a legitimate tree change) and the already-stable `loadDir`.
+  // toggle — a legitimate tree change); `loadDir` no longer changes when the
+  // directory cache updates.
   const toggleDir = useCallback(
     (entry: FsEntry) => {
       const isOpen = expanded.get(entry.path) === true;
@@ -611,11 +616,11 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
   );
 
   const refresh = useCallback(() => {
-    setEntries(new Map());
+    resetDirectories();
     setExpanded(new Map());
     loadDir(viewRoot, true);
     reloadGitStatus();
-  }, [viewRoot, loadDir, reloadGitStatus]);
+  }, [viewRoot, loadDir, reloadGitStatus, resetDirectories]);
 
   const discardFile = async (path: string) => {
     const code = gitFiles?.[path];
@@ -938,11 +943,17 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
           {...(isRemote ? treeDropHandlers : {})}
           title={isRemote ? 'Drop files here to upload to the remote host' : undefined}
         >
-          {directoryError ? <div className="tree-pane-empty" role="alert">{directoryError}</div> : isRemote && remoteError ? (
+          {directoryError ? (
+            <div className="tree-pane-empty">
+              <p role="alert">{directoryError}</p>
+            </div>
+          ) : isRemote && remoteError ? (
             <div className="tree-pane-empty">
               <p>Couldn’t browse remote host:</p>
-              <p style={{ color: 'var(--danger)' }}>{remoteError}</p>
+              <p role="alert" style={{ color: 'var(--danger)' }}>{remoteError}</p>
             </div>
+          ) : isRemote && !remoteReady ? (
+            <DirectoryLoading />
           ) : treeMode === 'changes' ? (
             changedFiles.length === 0 ? (
               <div className="tree-pane-empty">No changes.</div>
@@ -955,7 +966,7 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
               />
             )
           ) : rootList === undefined ? (
-            <DelayedStencilList label="Loading files" className="tree-loading" />
+            <DirectoryLoading label="Loading files" slow={slow.has(viewRoot)} />
           ) : rootList.length === 0 ? (
             <div className="tree-pane-empty">Empty directory.</div>
           ) : (
@@ -965,6 +976,8 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
               expanded={expanded}
               entries={entries}
               loading={loading}
+              slow={slow}
+              errors={errors}
               activeFile={explorerFile}
               gitFiles={gitFiles}
               dirtyDirs={dirtyDirs}
@@ -982,6 +995,8 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
             menu={
               worktreeMenu ? (
                 <WorktreeMenu
+                  loading={worktreesLoading}
+                  error={worktreesError}
                   project={project}
                   worktrees={worktrees}
                   branches={branches}

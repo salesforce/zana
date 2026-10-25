@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1764,7 +1764,10 @@ describe('listBundledPluginCatalog', () => {
 
   it('auto-installs plugin-guide from the repo plugins tree with a compiled app', async () => {
     const pluginsRoot = join(dirname(fileURLToPath(import.meta.url)), '../../../../plugins');
-    const service = createPluginService({ dataDir: root(), bundledRoot: pluginsRoot });
+    // Exercise the shipped guide without starting every bundled provider/service.
+    const bundledRoot = root();
+    cpSync(join(pluginsRoot, 'plugin-guide'), join(bundledRoot, 'plugin-guide'), { recursive: true });
+    const service = createPluginService({ dataDir: root(), bundledRoot });
     try {
       await service.start();
       const snap = service.snapshot().find((row) => row.id === 'plugin-guide');

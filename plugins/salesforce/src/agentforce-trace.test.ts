@@ -67,6 +67,7 @@ describe('normalizeTrace', () => {
     const trace = normalizeTrace({ plan }, opts);
     expect(trace.steps).toHaveLength(TRACE_LIMITS.steps);
     expect(trace.reason).toBe('Showing 200 of 450 steps.');
+    expect(trace.truncated).toBe(true);
     expect(trace.steps.every(s => (s.outputPreview?.length ?? 0) <= TRACE_LIMITS.preview)).toBe(true);
     expect(trace.steps[0]!.outputPreview!.endsWith('…')).toBe(true);
   });
@@ -150,4 +151,14 @@ subagent billing:
     expect(() => sourceLocations('topic ???:\n  actions:\n    x\n')).not.toThrow();
     expect(sourceLocations('start_agent:\n').topics).toEqual({ start_agent: 1 });
   });
+});
+
+it('retains bounded scalar variable updates for state checks and redacts private state', () => {
+  const trace = normalizeTrace({ plan: [{ type: 'VariableUpdateStep', data: { variable_updates: [
+    { variable_name: 'orderExists', variable_new_value: false },
+    { variable_name: 'status', variable_new_value: 'Pending Approval' },
+    { variable_name: 'contactEmail', variable_new_value: 'secret@example.com' },
+    { variable_name: 'token', variable_new_value: 'PRIVATE' },
+  ] } }] }, opts);
+  expect(trace.steps[0]?.stateEvidence).toEqual({ orderExists: false, status: 'Pending Approval' });
 });

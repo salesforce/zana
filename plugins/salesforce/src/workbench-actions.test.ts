@@ -392,3 +392,34 @@ it('never substitutes an API name for an explicit missing, conflicting or escape
   expect(await run({ action: 'eval.run', specPath: 'agentforce-drafts/missing.json' })).toMatchObject({ code: 'path_refused' });
   expect(exec.mock.calls.some(([args]) => args[0] === 'agent')).toBe(false);
 });
+
+it('supports a realistic large source through semantic actions and confined revision-pinned paths', async () => {
+  const { action, root } = await fixture(false, previewApi().transport);
+  const created = await action('draft.create', { name: 'Large', apiName: 'Large' });
+  const source = created.file.content + '\n# ' + 'x'.repeat(234_000) + '\n';
+  writeFileSync(join(root, created.file.path), source);
+  expect(await action('source.parse', { source })).toMatchObject({ ok: true });
+  expect(await action('source.parse', { path: created.file.path })).toMatchObject({ ok: true });
+  expect(await action('studio.start', { path: created.file.path, expectedSha256: '0'.repeat(64) })).toMatchObject({ ok: false, code: 'sha_mismatch' });
+  expect(await action('studio.start', { path: '../outside.agent' })).toMatchObject({ ok: false, code: 'path_refused' });
+  const run = await action('studio.start', { path: created.file.path, engine: 'preview' });
+  expect(run).toMatchObject({ ok: true, data: { sourceHash: expect.any(String) } });
+  await action('studio.end', { id: run.data.id });
+  expect(() => actionInput({ source }, 'source.parse')).not.toThrow();
+  expect(() => actionInput({ source })).toThrow('200,000');
+  expect(() => actionInput({ source: 'x'.repeat(10 * 1024 * 1024 + 1) }, 'studio.start')).toThrow('10 MB');
+  expect(() => actionInput({ source, other: 'x'.repeat(200001) }, 'studio.start')).toThrow('200,000');
+});
+
+it('returns background handles for public suite run and compare actions', async () => {
+  const { action, root } = await fixture(false, previewApi().transport);
+  const created = await action('draft.create', { name: 'Async', apiName: 'Async' });
+  mkdirSync(join(root, 'tests'));
+  writeFileSync(join(root, 'tests/Async.scenario.json'), JSON.stringify({ cases: [{ id: 'a', utterances: ['hello'], expect: { contains: ['Hello'] } }] }));
+  const run = await action('suites.run', { agentPath: created.file.path, requestId: 'attempt-1' });
+  expect(run).toMatchObject({ ok: true, status: 'running', jobId: expect.any(String) });
+  await vi.waitFor(async () => expect(await action('suites.result', { jobId: run.jobId })).toMatchObject({ status: 'completed', result: { results: { a: { outcome: 'pass' } } } }));
+  expect(await action('suites.run', { agentPath: created.file.path, requestId: 'attempt-1' })).toMatchObject({ jobId: run.jobId, status: 'completed' });
+  const compared = await action('suites.compare', { agentPath: created.file.path, source: created.file.content + '\n# candidate' });
+  await vi.waitFor(async () => expect(await action('suites.result', { jobId: compared.jobId })).toMatchObject({ status: 'completed', result: { comparison: { referenceHash: expect.any(String), candidateHash: expect.any(String) } } }));
+});

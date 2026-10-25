@@ -12,8 +12,10 @@ const harnessEffectiveDefault = vi.fn();
 const harnessVerifyBundle = vi.fn();
 const providers: Array<Record<string, any>> = [
   { id: 'fake', displayName: 'Fake', visibility: 'public', capabilities: { permissionModes: ['auto'] } },
-  { id: 'claude-code', displayName: 'Claude Code', visibility: 'public', capabilities: { permissionModes: ['auto', 'full'], supportsServiceTier: false } }
+  { id: 'claude-code', displayName: 'Claude Code', visibility: 'public', capabilities: { permissionModes: ['auto', 'full'], supportsServiceTier: false } },
+  { id: 'codex', displayName: 'Codex', visibility: 'public', capabilities: { permissionModes: ['auto', 'accept-edits', 'full'], supportsServiceTier: false } }
 ];
+const harnessVerify = vi.fn(async (): Promise<Array<{ family: string; installed: boolean; enabled: boolean }>> => []);
 
 vi.mock('../plugins/plugin-service.js', () => ({
   createPluginService: (options: Record<string, unknown>) => {
@@ -24,7 +26,7 @@ vi.mock('../plugins/plugin-service.js', () => ({
   toPluginAppSnapshot: () => ({})
 }));
 vi.mock('../services/threads/conversation-create.js', () => ({ createConversationFromRequest }));
-vi.mock('./harness-via-rpc.js', () => ({ harnessEffectiveDefault, harnessVerifyBundle }));
+vi.mock('./harness-via-rpc.js', () => ({ harnessEffectiveDefault, harnessVerify, harnessVerifyBundle }));
 vi.mock('../services/threads/thread-provider-catalog.js', () => ({
   listThreadProviders: () => providers,
   getThreadProvider: (id: string) => providers.find((row) => row.id === id),
@@ -36,15 +38,31 @@ vi.mock('../services/interactions/interaction-maintenance.js', () => ({ startInt
 const { createAttachedProductPluginService } = await import('./product-plugins.js');
 const { ThreadCreateError } = await import('./thread-create.js');
 
-function attach(projectSettings: Record<string, unknown> = {}, acpModes: Array<{ value: string; name: string }> = []) {
+interface PluginOverrides {
+  global?: Record<string, unknown>;
+  /** Keyed `${projectId}/${pluginId}`. */
+  project?: Record<string, unknown>;
+}
+
+function attach(
+  projectSettings: Record<string, unknown> = {},
+  acpModes: Array<{ value: string; name: string }> = [],
+  overrides: PluginOverrides = {}
+) {
   const ctx = {
     db: {},
     dataDir: '/tmp/zcc-spawn-test-missing',
     hostHub: { resolveHostId: (id?: string) => id ?? 'local' },
     modelCatalogs: { read: async () => ({ acpMode: { options: acpModes } }) },
-    config: { getConfig: () => ({}) },
-    toProjects: () => [{ id: 'p1', name: 'App', hostId: 'host-a' }],
-    projectSettings: { get: () => projectSettings },
+    config: {
+      getConfig: () => ({}),
+      getPluginHarnessRouting: (pluginId: string) => overrides.global?.[pluginId] ?? null
+    },
+    toProjects: () => [{ id: 'p1', name: 'App', hostId: 'host-a' }, { id: 'home', name: 'Home', quickAgent: true }],
+    projectSettings: {
+      get: () => projectSettings,
+      getPluginHarnessRouting: (id: string, pluginId: string) => overrides.project?.[`${id}/${pluginId}`] ?? null
+    },
     pendingInteractions: {}
   };
   createAttachedProductPluginService(ctx as never, { bundledRoot: '/bundled' });
@@ -103,7 +121,8 @@ describe('attached plugin service: threads.spawn provider resolution', () => {
     const service = attach();
     await expect(service.listProviders({})).resolves.toEqual([
       expect.objectContaining({ id: 'fake', available: true }),
-      expect.objectContaining({ id: 'claude-code', available: false })
+      expect.objectContaining({ id: 'claude-code', available: false }),
+      expect.objectContaining({ id: 'codex', available: true })
     ]);
   });
 
@@ -144,6 +163,73 @@ describe('attached plugin service: threads.spawn provider resolution', () => {
       createConversationFromRequest.mockRejectedValue(new ThreadCreateError(400, 'invalid-model', 'Unknown model x.'));
       await expect(plain.spawnThread({ projectId: 'p1', prompt: 'go', harness: 'project-default' }))
         .rejects.toThrow(/^Unknown model x\.$/);
+    });
+
+    it('a plugin override replaces the inherited project override; explicit args still win', async () => {
+      const plugin = { schemaVersion: 1, byAdapter: { claude: { modelTargetId: 'opus' } } };
+      const service = attach(modelOverride, [], { project: { 'home/plug': plugin } });
+      await service.spawnThread({ pluginId: 'plug', projectId: 'p1', prompt: 'go', harness: 'project-default' });
+      expect(lastRequest()).toMatchObject({ model: 'opus' });
+      await service.spawnThread({ pluginId: 'plug', projectId: 'p1', prompt: 'go', harness: 'project-default', model: 'haiku' });
+      expect(lastRequest()).toMatchObject({ model: 'haiku' });
+      // Another plugin's override is never applied.
+      await service.spawnThread({ pluginId: 'other', projectId: 'p1', prompt: 'go', harness: 'project-default' });
+      expect(lastRequest()).toMatchObject({ model: 'sonnet' });
+    });
+
+    describe("the plugin's own harness choice", () => {
+      const runsOn = (family: string, byAdapter: Record<string, unknown> = {}) => ({ schemaVersion: 1, byAdapter, defaultHarness: family });
+      beforeEach(() => {
+        harnessVerify.mockReset();
+        harnessVerify.mockResolvedValue([
+          { family: 'claude', installed: true, enabled: true },
+          { family: 'codex', installed: true, enabled: true }
+        ]);
+      });
+
+      it('spawns on the chosen harness, not the project default, with that harness row applied', async () => {
+        const service = attach(modelOverride, [], {
+          global: { plug: runsOn('codex', { codex: { modelTargetId: 'gpt-5.4' } }) }
+        });
+        await service.spawnThread({ pluginId: 'plug', projectId: 'p1', prompt: 'go', harness: 'project-default' });
+        expect(lastRequest()).toMatchObject({ providerId: 'codex', model: 'gpt-5.4' });
+        expect(harnessEffectiveDefault).not.toHaveBeenCalled();
+        expect(harnessVerify).toHaveBeenCalledWith(expect.anything(), 'host-a');
+        // Other plugins keep running on the project default harness.
+        await service.spawnThread({ pluginId: 'other', projectId: 'p1', prompt: 'go', harness: 'project-default' });
+        expect(lastRequest()).toMatchObject({ providerId: 'claude-code', model: 'sonnet' });
+      });
+
+      it("a project's choice wins over the plugin Default", async () => {
+        const service = attach({}, [], {
+          global: { plug: runsOn('codex') },
+          project: { 'p1/plug': runsOn('claude') }
+        });
+        await service.spawnThread({ pluginId: 'plug', projectId: 'p1', prompt: 'go', harness: 'project-default' });
+        expect(lastRequest()).toMatchObject({ providerId: 'claude-code' });
+        // A doc without a project skips the project tier and runs on the Default choice.
+        await service.spawnThread({ pluginId: 'plug', projectId: 'home', prompt: 'go', harness: 'project-default' });
+        expect(lastRequest()).toMatchObject({ providerId: 'codex' });
+        expect(harnessEffectiveDefault).not.toHaveBeenCalled();
+      });
+
+      it('fails closed when the chosen harness is not installed, never falling back to the project default', async () => {
+        harnessVerify.mockResolvedValue([{ family: 'codex', installed: false, enabled: true }]);
+        const service = attach({}, [], { global: { plug: runsOn('codex') } });
+        await expect(service.spawnThread({ pluginId: 'plug', projectId: 'p1', prompt: 'go', harness: 'project-default' }))
+          .rejects.toThrow("this plugin's harness (codex) is disabled or unavailable");
+        expect(createConversationFromRequest).not.toHaveBeenCalled();
+        expect(harnessEffectiveDefault).not.toHaveBeenCalled();
+      });
+    });
+
+    it('points a rejected plugin-override model at the plugin settings', async () => {
+      const plugin = { schemaVersion: 1, byAdapter: { claude: { modelTargetId: 'opus' } } };
+      createConversationFromRequest.mockRejectedValue(new ThreadCreateError(400, 'invalid-model', 'Unknown model opus.'));
+      const service = attach({}, [], { global: { plug: plugin } });
+      await expect(service.spawnThread({ pluginId: 'plug', projectId: 'p1', prompt: 'go', harness: 'project-default' })).rejects.toThrow(
+        "Unknown model opus. (from the plugin AI harness override). Change it in this plugin's AI Harness settings."
+      );
     });
 
     it('applies a plan execution state as the native plan session mode, else as /plan', async () => {

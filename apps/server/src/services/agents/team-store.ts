@@ -106,9 +106,11 @@ export function sanitizeTeam(raw: unknown): Team | null {
     initialPrompt: typeof r.initialPrompt === 'string' ? r.initialPrompt : undefined,
     worktreeIsolation: typeof r.worktreeIsolation === 'boolean' ? r.worktreeIsolation : undefined,
     routingEnforced: typeof r.routingEnforced === 'boolean' ? r.routingEnforced : undefined,
+    retainOrchestrator: typeof r.retainOrchestrator === 'boolean' ? r.retainOrchestrator : undefined,
     transport,
     defaultPlanning: r.defaultPlanning === 'infer' || r.defaultPlanning === 'provided' ? r.defaultPlanning : undefined,
-    launchApproval: isLaunchApproval(r.launchApproval) ? r.launchApproval : undefined
+    launchApproval: isLaunchApproval(r.launchApproval) ? r.launchApproval : undefined,
+    isDefault: r.isDefault === true ? true : undefined
   };
 }
 
@@ -409,6 +411,14 @@ export class TeamStore extends EventEmitter {
     if (!team) throw new Error('invalid team: missing name/slots or invalid field');
 
     writeJsonAtomic(join(dir, fileNameForId(team.id)), team);
+    // One default at a time: a newly flagged team un-flags every other user team.
+    if (team.isDefault) {
+      for (const other of this.cache) {
+        if (other.id === team.id || other.source !== 'user' || !other.isDefault) continue;
+        const { source: _source, isDefault: _isDefault, ...rest } = other;
+        writeJsonAtomic(join(dir, fileNameForId(other.id)), rest);
+      }
+    }
     this.refresh();
     return { ...team, source: 'user' };
   }

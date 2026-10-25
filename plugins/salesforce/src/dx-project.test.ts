@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isDxProject, listFilesRecursive, parsePackageDirectories, resolveUnderRoot, fingerprint } from '../lib/dx-project.js';
+import { isDxProject, scanFilesRecursive, listFilesRecursive, parsePackageDirectories, resolveUnderRoot, fingerprint } from '../lib/dx-project.js';
 import { shouldContributeConstitution } from '../lib/constitution.js';
 
 describe('DX project gating', () => {
@@ -34,5 +34,28 @@ describe('DX project gating', () => {
         realpath: (path) => path
       })
     ).toEqual(['/proj/force-app/A.cls']);
+  });
+});
+
+
+describe('bounded project discovery', () => {
+  it('enforces flat file limits and reports incomplete results', () => {
+    const deps = { realpath: (p: string) => p, stat: (_p: string) => 'file' as const, readdir: (_p: string) => ['a', 'b', 'c'] };
+    expect(scanFilesRecursive('/p', deps, 1)).toEqual({ files: ['/p/a'], truncated: true });
+    expect(scanFilesRecursive('/p', { ...deps, readdir: () => ['a'] }, 1)).toEqual({ files: ['/p/a'], truncated: false });
+  });
+  it('skips caches, prioritizes source, confines links and terminates cycles', () => {
+    const readdir = (p: string): string[] => p === '/p' ? ['.pnpm-store', 'aaa', 'force-app', 'escape', 'cycle'] : p === '/p/force-app' ? ['Bot.agent'] : p === '/p/aaa' ? ['noise.txt'] : [];
+    const deps = { realpath: (p: string) => p.endsWith('/escape') ? '/outside' : p.endsWith('/cycle') ? '/p' : p, readdir, stat: (p: string) => p.includes('.') ? 'file' as const : 'dir' as const };
+    expect(scanFilesRecursive('/p', deps, 1)).toEqual({ files: ['/p/force-app/Bot.agent'], truncated: true });
+    expect(scanFilesRecursive('/p', deps, 10, p => p.endsWith('.agent'))).toEqual({ files: ['/p/force-app/Bot.agent'], truncated: false });
+  });
+  it('bounds directories and examined entries even when no matching files exist', () => {
+    let calls = 0;
+    const dirs = scanFilesRecursive('/p', { realpath: p => p, stat: () => 'dir', readdir: p => { calls++; return p === '/p' ? Array.from({ length: 1002 }, (_, i) => `d${i}`) : []; } });
+    expect(dirs.truncated).toBe(true); expect(calls).toBe(1000);
+    const entries = scanFilesRecursive('/p', { realpath: p => p, stat: () => 'file', readdir: () => Array.from({ length: 20001 }, (_, i) => `f${i}`) }, 4000, () => false);
+    expect(entries).toEqual({ files: [], truncated: true });
+    expect(scanFilesRecursive('/p', { realpath: p => p, stat: () => 'missing', readdir: () => { throw Error('denied'); } }).files).toEqual([]);
   });
 });
