@@ -822,3 +822,43 @@ describe('resolved cards stay locked until they unmount', () => {
     await screen.findByText('Failed to answer question');
   });
 });
+
+describe('question panel key hint follows focus', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  function choiceQuestion(id: string, extra = false): PendingInteraction {
+    const questions = [{ id: 'pick', prompt: 'Pick one', multiSelect: false, allowFreeText: true,
+      options: [{ value: 'a', label: 'Alpha' }, { value: 'b', label: 'Beta' }] }];
+    if (extra) questions.push({ id: 'more', prompt: 'Anything else?', multiSelect: false, allowFreeText: true, options: [] });
+    return { ...commandInteraction(), id, resolution: null, payload: { kind: 'user_question', questions } } as PendingInteraction;
+  }
+  const hintKeys = () => [...screen.getByTestId('thread-pending-question-hint').querySelectorAll('kbd')].map((kbd) => kbd.textContent);
+  const hintText = () => screen.getByTestId('thread-pending-question-hint').textContent;
+
+  it('shows Ctrl+↵ off macOS until an option has focus, then plain ↵; drops digits in the free-text box', () => {
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('Win32');
+    render(<MemoryRouter><ThreadPendingInteractionBanner interaction={choiceQuestion('hint-focus')} threadId="hint-thread" /></MemoryRouter>);
+    expect(hintKeys()).toEqual(['1', '3', 'Ctrl', '↵']);
+    expect(hintText()).toContain('to submit');
+    fireEvent.focus(screen.getByRole('button', { name: 'Alpha' }));
+    expect(hintKeys()).toEqual(['1', '3', '↵']);
+    fireEvent.blur(screen.getByRole('button', { name: 'Alpha' }));
+    expect(hintKeys()).toEqual(['1', '3', 'Ctrl', '↵']);
+    fireEvent.click(screen.getByRole('button', { name: 'Other…' }));
+    fireEvent.focus(screen.getByRole('textbox'));
+    expect(hintKeys()).toEqual(['Ctrl', '↵']);
+    expect(hintText()).not.toContain('to choose');
+    fireEvent.focus(screen.getByTestId('thread-pending-question-submit'));
+    expect(hintKeys()).toEqual(['1', '3', 'Ctrl', '↵']);
+  });
+
+  it('uses ⌘↵ on macOS and says continue before the last question', () => {
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
+    render(<MemoryRouter><ThreadPendingInteractionBanner interaction={choiceQuestion('hint-mac', true)} threadId="hint-thread" /></MemoryRouter>);
+    expect(hintKeys()).toEqual(['1', '3', '⌘', '↵']);
+    expect(hintText()).toContain('to continue');
+  });
+});

@@ -33272,6 +33272,9 @@ textarea.ui-command-composer-input {
   font-size: 10.5px;
   text-align: center;
 }
+.thread-pending-question-hint kbd + kbd {
+  margin-left: 2px;
+}
 @container (max-width: 420px) {
   .thread-pending-question-hint {
     display: none;
@@ -34370,6 +34373,15 @@ textarea.ui-command-composer-input {
   border-radius: 8px;
   background: color-mix(in srgb, var(--danger, #e5484d) 12%, transparent);
   color: var(--danger, #e5484d);
+  font-size: 13px;
+}
+
+.thread-command-hint {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, #3b82f6) 10%, transparent);
+  color: var(--text-primary);
   font-size: 13px;
 }
 

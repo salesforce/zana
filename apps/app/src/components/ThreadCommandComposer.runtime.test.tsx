@@ -154,6 +154,23 @@ describe('Modern composer submission contracts', () => {
     expect(h.clear).not.toHaveBeenCalled();
     expect(h.text).toBe('Draft');
   });
+  it('announces why a keyboard send is blocked by an open question, and clears it once answered', async () => {
+    const view = render(composer({ sendBlocked: true, sendBlockedHint: 'Answer the question above first' }));
+    const status = screen.getByTestId('thread-command-blocked-status');
+    expect(status.getAttribute('role')).toBe('status');
+    expect(status.textContent).toBe('');
+    expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(true);
+    await act(async () => { h.fieldArgs!.onSubmit({ modifierEnter: true }); });
+    expect(status.textContent).toBe('Answer the question above first');
+    expect(h.send).not.toHaveBeenCalled();
+    expect(h.clear).not.toHaveBeenCalled();
+    view.rerender(composer({ sendBlocked: false }));
+    expect(screen.queryByTestId('thread-command-blocked-status')).toBeNull();
+    view.rerender(composer({ sendBlocked: true }));
+    expect(screen.getByTestId('thread-command-blocked-status').textContent).toBe('');
+    await act(async () => { h.fieldArgs!.onSubmit(); });
+    expect(screen.getByTestId('thread-command-blocked-status').textContent).toBe('Respond to the request above first');
+  });
   it.each([undefined, 'default', 'priority', 'unsupported'])('normalizes service tier %s against the live provider and sends restored attachments', async tier => {
     h.text = '';
     h.attachments = [{ type: 'localImage', path: '/tmp/restored.png' }];

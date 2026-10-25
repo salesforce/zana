@@ -93,6 +93,8 @@ export interface ThreadCommandComposerProps extends ComposerProjectSelectionProp
   inFlightRetry?: boolean;
   environmentLabel?: string;
   sendBlocked?: boolean;
+  /** Announced when a send is attempted while `sendBlocked`, e.g. "Answer the question above first". */
+  sendBlockedHint?: string;
   contextWindowUsage?: ThreadContextWindowUsage | null;
   providerId?: string;
   model?: string | null;
@@ -139,6 +141,7 @@ function ThreadComposerContent({
   inFlightRetry = false,
   environmentLabel,
   sendBlocked = false,
+  sendBlockedHint = 'Respond to the request above first',
   contextWindowUsage,
   providerId: lockedProviderId,
   model: initialModel,
@@ -248,6 +251,7 @@ function ThreadComposerContent({
   const [workspace, setWorkspace] = useComposerSetting<WorkspacePickerValue>(session, `modern.workspace.${projectId}`, () => defaultWorkspaceChoice(false));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [blockedHint, setBlockedHint] = useState<string | null>(null);
   const submitRef = useRef<(opts?: { modifierEnter?: boolean }) => void>(() => undefined);
   const promptHistoryRef = useRef<string[]>([]);
   const promptHistoryIndexRef = useRef(-1);
@@ -271,6 +275,10 @@ function ThreadComposerContent({
   const [pairingCommand, setPairingCommand] = useState<string | null>(null);
   const [sshPick, setSshPick] = useState<{ hostId: string; name: string } | null>(null);
   const hostProjectRef = useRef(selectedProject?.id);
+
+  useEffect(() => {
+    if (!sendBlocked) setBlockedHint(null);
+  }, [sendBlocked]);
 
   useEffect(() => {
     if (hostProjectRef.current !== selectedProject?.id) {
@@ -656,7 +664,12 @@ function ThreadComposerContent({
       }
       return;
     }
-    if (sendBlocked || hostSendBlocked || providerCliBlocked || followUpSubmitBlocked) return;
+    if (sendBlocked) {
+      // Say why the send did nothing; the draft and focus stay put.
+      setBlockedHint(sendBlockedHint);
+      return;
+    }
+    if (hostSendBlocked || providerCliBlocked || followUpSubmitBlocked) return;
     if (!serialized.text.trim() && field.images.length === 0 && field.restoredAttachments.length === 0) {
       setError('Enter a message first');
       field.focus();
@@ -776,6 +789,7 @@ function ThreadComposerContent({
     composerModeError,
     busy,
     sendBlocked,
+    sendBlockedHint,
     hostSendBlocked,
     providerCliBlocked,
     field,
@@ -937,6 +951,13 @@ function ThreadComposerContent({
       ) : null}
       {error ? (
         <p className="thread-command-error" data-testid="thread-command-error">{error}</p>
+      ) : null}
+      {/* Mounted for as long as sends are blocked, before any hint, so screen
+          readers announce the hint when it appears. */}
+      {sendBlocked ? (
+        <div role="status" data-testid="thread-command-blocked-status">
+          {blockedHint ? <p className="thread-command-hint">{blockedHint}</p> : null}
+        </div>
       ) : null}
       {options.selectionError && !error ? <p className="thread-command-error" role="status">{options.selectionError}</p> : null}
       {permissionSelectionError && !error ? <p className="thread-command-error" role="status">{permissionSelectionError}</p> : null}

@@ -68,7 +68,9 @@ const sections = (pasteRow: Row | null): Section[] => [
     rows: [
       { keys: ['⌘', 'F'], label: 'Search in the open thread (remappable in Settings → Shortcuts)' },
       { keys: ['Esc'], label: 'Close thread search' },
-      { keys: ['⌘', '↵'], label: 'Agent question: Next, or Submit on the last question' }
+      { keys: ['⌘', '↵'], label: 'Agent question: Next, or Submit on the last question' },
+      { keys: ['1–9'], label: 'Agent question: choose an option (focus in the panel)' },
+      { keys: ['↵'], label: 'Agent question: Next, or Submit, from a focused option' }
     ]
   },
   {

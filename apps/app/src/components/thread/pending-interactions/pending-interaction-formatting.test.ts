@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ApprovalPendingInteraction } from '@zana-ai/zcc-domain/thread-runtime';
+import type { ApprovalPendingInteraction, PendingInteraction } from '@zana-ai/zcc-domain/thread-runtime';
 import {
   approvalDecisionIndexForKey,
   approvalDecisionLabel,
@@ -8,6 +8,7 @@ import {
   buildPendingInteractionApprovalResolution,
   formatPendingInteractionSubjectDetailLines,
   initialApprovalDecisionIndex,
+  pendingInteractionSendBlockedHint,
   pendingInteractionSubjectDetails,
   shouldShowPendingInteractionReason,
   summarizePendingInteractionRequestedPermissions
@@ -308,5 +309,15 @@ describe('approval decision keyboard helpers', () => {
 
   it('uses one roving tab stop for decision buttons', () => {
     expect([0, 1, 2].map((index) => approvalDecisionTabIndex(index, 1))).toEqual([-1, 0, -1]);
+  });
+
+  it('names the question in the composer hint only when every open interaction is a question', () => {
+    const question = { ...commandInteraction(), payload: { kind: 'user_question', questions: [
+      { id: 'q', prompt: 'Pick one', multiSelect: false, allowFreeText: true }
+    ] } } as PendingInteraction;
+    expect(pendingInteractionSendBlockedHint([question])).toBe('Answer the question above first');
+    expect(pendingInteractionSendBlockedHint([question, commandInteraction()])).toBe('Respond to the request above first');
+    expect(pendingInteractionSendBlockedHint([commandInteraction()])).toBe('Respond to the request above first');
+    expect(pendingInteractionSendBlockedHint([])).toBe('Respond to the request above first');
   });
 });
