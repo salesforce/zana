@@ -52,7 +52,7 @@ const studioWindows = (electron: ElectronApplication) => electron.windows().filt
 /** BrowserWindows main still holds for the Salesforce view (Playwright can lag behind a close). */
 const liveStudioWindows = (electron: ElectronApplication) =>
   electron.evaluate(({ BrowserWindow }) =>
-    BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed() && w.webContents.getURL().includes('surface=plugin-view')).length);
+    BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed() && !w.webContents.isDestroyed() && w.webContents.getURL().includes('surface=plugin-view')).length);
 
 async function waitForStudio(electron: ElectronApplication): Promise<Page> {
   let studio: Page | undefined;

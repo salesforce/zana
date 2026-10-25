@@ -187,7 +187,7 @@ describe('ScenarioSuites.run', () => {
     s.lab.evaluate.mockResolvedValue({ verdict: { outcome: 'pass', reason: 'polite' } } as never);
     await s.suites.run(input);
     const saved = (await s.suites.list())[0]!.lastResults!;
-    expect(saved.other).toMatchObject({ outcome: 'fail', notes: ['Missing text: "missing text"'], observed: { traced: false } });
+    expect(saved.other).toMatchObject({ outcome: 'fail', notes: ['Missing text: "missing text"'], observed: { traced: true } });
     expect(saved.refund).toMatchObject({ outcome: 'pass', observed: { traced: true }, judge: 'pass' });
   });
   it('exposes live stages, turns and completed evidence through list without persisting progress', async () => {
@@ -195,13 +195,13 @@ describe('ScenarioSuites.run', () => {
     const snapshots: Array<NonNullable<Awaited<ReturnType<typeof s.suites.list>>[number]['progress']>> = [];
     const capture = async () => { snapshots.push((await s.suites.list())[0]!.progress!); };
     s.lab.start.mockImplementation((async () => { await capture(); return { id: 'r', turns: [] }; }) as never);
-    s.lab.send.mockImplementation((async () => { await capture(); return { turns: [{ role: 'agent', text: 'refund', planId: 'p' }] }; }) as never);
+    s.lab.send.mockImplementation((async () => { await capture(); return { turns: [{ role: 'user', text: 'q' }, { role: 'agent', text: 'refund', planId: 'p' }] }; }) as never);
     s.lab.trace.mockImplementation(async () => { await capture(); return { runId: 'r', turn: 1, available: true, steps: [] }; });
     s.lab.evaluate.mockImplementation((async () => { await capture(); return { verdict: { outcome: 'pass', reason: 'ok' } }; }) as never);
     await s.suites.run(input);
     expect(snapshots.map(p => [p.currentCaseId, p.stage, p.turn])).toEqual([
       ['refund', 'starting', 0], ['refund', 'conversation', 1], ['refund', 'trace', 1], ['refund', 'judging', 1],
-      ['other', 'starting', 0], ['other', 'conversation', 1], ['other', 'conversation', 2]
+      ['other', 'starting', 0], ['other', 'conversation', 1], ['other', 'conversation', 2], ['other', 'trace', 2]
     ]);
     expect(snapshots[0]).toMatchObject({ mode: 'simulate', completed: 0, caseIds: ['refund', 'other'], totalTurns: 1 });
     expect(snapshots[4]).toMatchObject({ completed: 1, totalTurns: 2, results: { refund: { outcome: 'fail', reply: 'refund' } } });
@@ -247,6 +247,7 @@ describe('ScenarioSuites.run', () => {
   });
   it('shows an indeterminate org eval and clears it on refusal and thrown failures', async () => {
     const s = store({ files });
+    s.files.set(`${ROOT}/tests/Bot.scenario.json`, JSON.stringify({ cases: [caseA, { id: 'other', utterances: ['hello'], expect: {} }] }));
     const agent = { agentPath: 'Bot.agent', apiName: 'Bot' };
     const refused = await s.suites.evaluate(agent, async () => {
       expect((await s.suites.list())[0]!.progress).toMatchObject({ mode: 'org-eval', stage: 'org-eval', caseIds: ['refund', 'other'], completed: 0 });
@@ -274,7 +275,7 @@ describe('ScenarioSuites.run', () => {
     expect(again.details).toHaveLength(1);
     expect(again.results.refund!.outcome).toBe('inconclusive');
     expect(again.results.other!.outcome).toBe('fail');
-    expect(s.lab.trace).toHaveBeenCalledTimes(1);
+    expect(s.lab.trace).toHaveBeenCalledTimes(2);
   });
   it('records errors per case, tolerates end/evaluate failures and refuses overlapping or empty runs', async () => {
     const s = store({ files });
@@ -323,7 +324,12 @@ describe('ScenarioSuites specs and org evals', () => {
   const suiteFile = `${ROOT}/tests/Bot.scenario.json`;
   const specFile = `${ROOT}/tests/Bot.eval.yaml`;
   const two = [caseA, { id: 'greet', name: 'Greet', utterances: ['Hi', 'Order?'], expect: { topic: 'Orders' } }];
-  const withSuite = () => store({ files: { [suiteFile]: JSON.stringify({ cases: two }) } });
+  const withSuite = () => {
+    const s = store({ files: { [suiteFile]: JSON.stringify({ cases: two }) } });
+    const c = parseScenarioCases(two)[1]!;
+    s.kv.set('studio:suites:p1', { Bot: { greet: { outcome: 'pass', runId: 'r', at: 1, sourceHash: sha256Hex('saved source'), caseHash: sha256Hex(JSON.stringify(c)), history: [{ role: 'user', message: 'Hi' }, { role: 'agent', message: 'Hello', topic: 'welcome' }] } } });
+    return s;
+  };
 
   it('imports a YAML spec into a new suite, then merges more cases with suffixed ids', async () => {
     const s = store();
@@ -409,7 +415,7 @@ describe('registerStudioPreview', () => {
     const kv = new Map<string, unknown>();
     const lab = { trace: vi.fn(async () => ({ runId: 'r', turn: 1, available: false, reason: 'Approximation', steps: [] })), start: vi.fn(), send: vi.fn(), evaluate: vi.fn(), end: vi.fn() };
     registerStudioPreview({
-      zcc: { storage: { kv: { get: async (k: string) => kv.get(k), set: async (k: string, v: unknown) => { kv.set(k, v); } } }, realtime: { publish: (...a: unknown[]) => published.push(a) } },
+      zcc: { onDispose: vi.fn(), storage: { kv: { get: async (k: string) => kv.get(k), set: async (k: string, v: unknown) => { kv.set(k, v); } } }, realtime: { publish: (...a: unknown[]) => published.push(a) } },
       registerRpc: (name: string, h: (args: unknown) => unknown) => handlers.set(name, async a => h(a)),
       contexts: { current: () => ({ projectId: 'p1', settings: { projectRoot: ROOT } }) },
       deps: { ...fake.deps, now: () => 5 }, lab
@@ -420,11 +426,11 @@ describe('registerStudioPreview', () => {
   it('registers trace, the suite, eval and fix-loop RPCs', async () => {
     const h = harness();
     expect([...h.handlers.keys()].sort()).toEqual([
-      STUDIO_RPC.suiteRun, STUDIO_RPC.suiteSave, STUDIO_RPC.suites, STUDIO_RPC.trace, STUDIO_RPC.suiteImport, STUDIO_RPC.suiteSpec,
-      STUDIO_RPC.suiteEval, STUDIO_RPC.loopStart, STUDIO_RPC.loopGet, STUDIO_RPC.loopStop
+      STUDIO_RPC.suiteRun, STUDIO_RPC.suiteStart, STUDIO_RPC.suiteResult, STUDIO_RPC.suiteStop, STUDIO_RPC.suiteSave, STUDIO_RPC.suites, STUDIO_RPC.trace, STUDIO_RPC.suiteImport, STUDIO_RPC.suiteSpec,
+      STUDIO_RPC.suiteEval, STUDIO_RPC.suiteCompare, STUDIO_RPC.loopStart, STUDIO_RPC.loopGet, STUDIO_RPC.loopStop
     ].sort());
     expect(await h.handlers.get(STUDIO_RPC.trace)!({ id: 'r' })).toMatchObject({ ok: true, data: { available: false } });
-    expect(await h.handlers.get(STUDIO_RPC.suites)!({})).toEqual({ ok: true, suites: [] });
+    expect(await h.handlers.get(STUDIO_RPC.suites)!({})).toMatchObject({ ok: true, suites: [] });
     const saved = await h.handlers.get(STUDIO_RPC.suiteSave)!({ agentPath: 'Bot.agent', cases: [caseA] }) as { ok: boolean; suite: { sha256: string; path: string } };
     expect(saved).toMatchObject({ ok: true, suite: { path: 'tests/Bot.scenario.json' } });
     expect(h.published).toEqual([[ 'sf.studio.changed', { projectId: 'p1', path: 'tests/Bot.scenario.json', kind: 'suites' } ]]);
@@ -463,6 +469,22 @@ describe('registerStudioPreview', () => {
       return { ...h, agent, runEval };
     }
     const reply = (h: ReturnType<typeof harness>, text: string) => h.lab.send.mockResolvedValue({ turns: [{ role: 'user', text: 'q' }, { role: 'agent', text }] } as never);
+
+    it('confines comparison references, validates candidates and forces an unsaved Simulate comparison', async () => {
+      const h = wired();
+      expect(await h.call(STUDIO_RPC.suiteCompare, { agentPath: '../outside.agent', source: 'draft' })).toMatchObject({ ok: false, code: 'not_found' });
+      for (const source of [undefined, '', ' ', 'x'.repeat(10 * 1024 * 1024 + 1)]) {
+        expect(await h.call(STUDIO_RPC.suiteCompare, { agentPath, source })).toMatchObject({ ok: false, code: 'invalid_input' });
+      }
+      expect(h.lab.start).not.toHaveBeenCalled();
+      reply(h, 'refund tracking');
+      expect(await h.call(STUDIO_RPC.suiteCompare, { agentPath, source: 'draft', referenceSource: 'forged', engine: 'live', store: true })).toMatchObject({ ok: true, comparison: { referenceHash: sha256Hex('config: disk'), candidateHash: sha256Hex('draft') } });
+      expect(h.lab.start.mock.calls.map(([args]) => args)).toEqual([
+        expect.objectContaining({ engine: 'preview', source: 'config: disk' }), expect.objectContaining({ engine: 'preview', source: 'config: disk' }),
+        expect.objectContaining({ engine: 'preview', source: 'draft' }), expect.objectContaining({ engine: 'preview', source: 'draft' }),
+      ]);
+      expect((await h.call(STUDIO_RPC.suites, { agentPath })).suites[0]).not.toHaveProperty('lastResults');
+    });
 
     it('imports a spec, writes it and runs the org eval with the agent API name', async () => {
       const h = wired();
@@ -548,4 +570,88 @@ describe('loopNext', () => {
     expect(loopNext(loop({ status: 'exhausted' }))).toContain('No attempts left (0 of 1 pass)');
     expect(loopNext(loop({ status: 'expired' }))).toBe('This fix loop is expired. Stop and report what you changed.');
   });
+});
+
+describe('comparison and faithful multi-turn evidence', () => {
+  it('runs identical cases and context on both sources without replacing ordinary results', async () => {
+    const s = store();
+    const c = { ...caseA, contextVariables: [{ name: 'locale', type: 'Text', value: 'fr' }] };
+    await s.suites.save({ agentPath: 'Bot.agent', cases: [c] });
+    await s.suites.run({ path: 'tests/Bot.scenario.json', source: 'saved', engine: 'preview' });
+    const before = structuredClone(s.kv.get('studio:suites:p1'));
+    const compared = await s.suites.run({ path: 'tests/Bot.scenario.json', source: 'draft', referenceSource: 'saved', engine: 'preview', store: false });
+    expect(compared.comparison).toMatchObject({ referenceHash: sha256Hex('saved'), candidateHash: sha256Hex('draft'), reference: { refund: { outcome: 'pass' } }, candidate: { refund: { outcome: 'pass' } } });
+    expect(s.lab.start.mock.calls.slice(-2).map(([args]) => args)).toMatchObject([{ source: 'saved', contextVariables: c.contextVariables }, { source: 'draft', contextVariables: c.contextVariables }]);
+    expect(s.kv.get('studio:suites:p1')).toEqual(before);
+    expect(s.lab.end).toHaveBeenCalledTimes(3);
+  });
+  it('captures complete history, exports the final message and rejects stale source/cases', async () => {
+    const s = store();
+    const c = { id: 'two', name: 'Two turns', utterances: ['Hi', 'Order?'], expect: { topic: 'refunds' } };
+    await s.suites.save({ agentPath: 'Bot.agent', cases: [c] });
+    const turns: Array<{ role: 'user' | 'agent'; text: string; planId?: string; latencyMs?: number }> = [{ role: 'agent', text: 'Welcome' }];
+    s.lab.send.mockImplementation((async ({ text }: { text: string }) => { turns.push({ role: 'user', text }, { role: 'agent', text: 'Hello', planId: `p${turns.length}`, latencyMs: 100 }); return { turns: [...turns] }; }) as never);
+    const result = await s.suites.run({ path: 'tests/Bot.scenario.json', source: 'saved', engine: 'preview' });
+    expect(result.results.two).toMatchObject({ latencyMs: 100, history: [{ role: 'user', message: 'Hi' }, { role: 'agent', message: 'Hello', topic: 'refunds' }] });
+    const written = await s.suites.writeSpec({ agentPath: 'Bot.agent', apiName: 'Bot', source: 'saved' });
+    expect(written.text).toContain('- utterance: "Order?"\n    conversationHistory:');
+    await expect(s.suites.writeSpec({ agentPath: 'Bot.agent', apiName: 'Bot', source: 'new' })).rejects.toThrow(/Complete conversation history/);
+    const suite = (await s.suites.list())[0]!;
+    await s.suites.save({ agentPath: 'Bot.agent', cases: [{ ...c, utterances: ['Different', 'Order?'] }], expectedSha256: suite.sha256 });
+    await expect(s.suites.writeSpec({ agentPath: 'Bot.agent', apiName: 'Bot', source: 'saved' })).rejects.toThrow(/Complete conversation history/);
+  });
+  it('grades assertion-only cases and saves the measured evidence', async () => {
+    const s = store();
+    s.lab.send.mockResolvedValue({ turns: [{ role: 'user', text: 'q' }, { role: 'agent', text: 'ok', latencyMs: 100, planId: 'p' }] } as never);
+    await s.suites.save({ agentPath: 'Bot.agent', cases: [{ ...caseA, expect: { maxLatencyMs: 200 } }] });
+    const run = await s.suites.run({ path: 'tests/Bot.scenario.json', source: 'saved', engine: 'preview' });
+    expect(run.results.refund).toMatchObject({ outcome: 'pass', latencyMs: 100, assertions: [{ outcome: 'pass', actual: '100 ms maximum' }] });
+    s.lab.send.mockResolvedValue({ turns: [{ role: 'user', text: 'q' }, { role: 'agent', text: 'ok', latencyMs: 500 }] } as never);
+    expect((await s.suites.run({ path: 'tests/Bot.scenario.json', source: 'saved', engine: 'preview' })).results.refund?.outcome).toBe('fail');
+  });
+  it('rejects comparisons that would silently omit cases', async () => {
+    const s = store();
+    await s.suites.save({ agentPath: 'Bot.agent', cases: Array.from({ length: 21 }, (_, i) => ({ ...caseA, id: `c${i}` })) });
+    await expect(s.suites.run({ path: 'tests/Bot.scenario.json', source: 'draft', referenceSource: 'saved', engine: 'preview' })).rejects.toThrow(/at most 20/);
+    expect(s.lab.start).not.toHaveBeenCalled();
+  });
+});
+
+it('separates missing setup from product failures and requires a prepared replay before org export', async () => {
+  const { suites, lab } = store();
+  const prepared = { ...caseA, prerequisites: ['Account context', 'Address form saved'] };
+  await suites.save({ agentPath: 'A.agent', cases: [prepared] });
+  const input = { path: 'tests/A.scenario.json', agentPath: 'A.agent', source: 'source', engine: 'preview' as const };
+  const blocked = await suites.run(input);
+  expect(blocked.results.refund).toMatchObject({ outcome: 'inconclusive', setupBlocked: true });
+  expect(lab.start).not.toHaveBeenCalled();
+  await expect(suites.writeSpec({ agentPath: 'A.agent', apiName: 'A', source: 'source' })).rejects.toThrow('Prepare');
+  const run = await suites.run({ ...input, preparedCaseIds: ['refund'] });
+  expect(run.results.refund).toMatchObject({ outcome: 'pass', deterministic: 'pass' });
+  expect(lab.start).toHaveBeenCalledOnce();
+  await expect(suites.writeSpec({ agentPath: 'A.agent', apiName: 'A', source: 'source' })).resolves.toHaveProperty('text');
+  await expect(suites.writeSpec({ agentPath: 'A.agent', apiName: 'A', source: 'edited' })).rejects.toThrow('Prepare');
+});
+
+it('does not accept an AI pass as proof of an unobserved lookup, or partial traces as action absence', () => {
+  const seen = { agentText: 'No master order exists', topics: [], actions: ['Revalidate_Site_Name'], traced: true, traceComplete: true };
+  expect(judgeCase({ actions: ['LookupOrder'], criteria: 'Verify order state' }, seen, { outcome: 'pass', reason: 'Claimed no order' }).outcome).toBe('fail');
+  expect(judgeCase({ forbiddenActions: ['SendSignature'] }, seen).outcome).toBe('pass');
+  expect(judgeCase({ forbiddenActions: ['SendSignature'] }, { ...seen, traceComplete: false }).outcome).toBe('inconclusive');
+  expect(judgeCase({ forbiddenActions: ['*'] }, { ...seen, traceComplete: false }).outcome).toBe('fail');
+});
+
+it('cancels the active session, saves completed cases and starts no remaining cases', async () => {
+  const controller = new AbortController();
+  let release!: () => void;
+  const h = store({ lab: { send: vi.fn(async () => { await new Promise<void>(resolve => { release = resolve; }); return { turns: [] }; }) } });
+  await h.suites.save({ agentPath: 'A.agent', cases: [caseA, { ...caseA, id: 'second' }] });
+  const running = h.suites.run({ path: 'tests/A.scenario.json', source: 'source', engine: 'preview', signal: controller.signal });
+  const failed = expect(running).rejects.toThrow();
+  await vi.waitFor(() => expect(h.lab.send).toHaveBeenCalledOnce());
+  controller.abort();
+  expect(h.lab.end).toHaveBeenCalledWith({ id: expect.any(String) });
+  release(); await failed;
+  expect(h.lab.start).toHaveBeenCalledOnce();
+  expect((await h.suites.list())[0]?.progress).toBeUndefined();
 });

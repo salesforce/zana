@@ -44,3 +44,13 @@ describe('failureReason', () => {
     expect(failureReason({ ...at, outcome: 'fail', notes: ['Action "X" not called.', 'AI: claimed it'] })).toBe('Action "X" not called. Judge: claimed it');
   });
 });
+
+it('never infers forbidden action absence from incomplete traces', () => {
+  const expectCase = { forbiddenActions: ['Send', '*'] };
+  expect(caseChecks(expectCase).map(c => c.state)).toEqual(['na', 'na']);
+  const base = { outcome: 'pass' as const, runId: 'r', at: 0, observed: { actions: [], topics: [], traced: true, traceComplete: false } };
+  expect(caseChecks(expectCase, base).map(c => c.state)).toEqual(['na', 'na']);
+  expect(caseChecks(expectCase, { ...base, observed: { ...base.observed, traceComplete: true } }).map(c => c.state)).toEqual(['ok', 'ok']);
+  expect(caseChecks(expectCase, { ...base, observed: { ...base.observed, actions: ['Send'] } }).map(c => c.state)).toEqual(['ko', 'ko']);
+  expect(caseChecks({ actions: ['Send'] }, base)[0]).toMatchObject({ state: 'na', actual: 'Incomplete runtime trace' });
+});

@@ -543,6 +543,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   }, [openTool]);
   const revealLine = useCallback((line: number) => {
     setSelectedActionId(null);
+    showScriptRef.current();
     if (compact) patch({ tool: 'code' });
     send.revealLine(line);
   }, [compact, patch, send]);

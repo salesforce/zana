@@ -102,6 +102,7 @@ export class SimulationBatches {
       }
     }
     const batch: SimulationBatch = {
+      ...(input.contextVariables?.length ? { contextVariables: structuredClone(input.contextVariables) } : {}),
       id, agentPath: input.agentPath, sourceHash: createHash('sha256').update(input.source).digest('hex'), candidate: input.candidate,
       engine: request.engine, ...(input.orgAlias ? { orgAlias: input.orgAlias } : {}), ...(input.model ? { model: input.model } : {}),
       parallel: Math.min(request.parallel, lanes.length),

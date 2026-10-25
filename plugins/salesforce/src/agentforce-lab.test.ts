@@ -233,3 +233,16 @@ describe('Agentforce lab trace', () => {
     expect((await lab.trace({ id: session.id, planId: 'plan1' })).available).toBe(true);
   });
 });
+
+it('grounds AI evaluation in server-owned, redacted action evidence', async () => {
+  const { lab, request, args } = setup();
+  const run = await lab.start(args);
+  await lab.send({ id: run.id, text: 'Check credit, do not apply it' });
+  const base = request.getMockImplementation()!;
+  request.mockImplementation(async (...input) => input[1].includes('/plans/') ? { host: 'test.api.salesforce.com', body: { plan: [{ type: 'FunctionStep', function: { name: 'Credit', input: { action: 'CHECK', token: 'PRIVATE_CREDENTIAL' }, output: { applied: false, eligible: true } } }] } } : input[1].endsWith('/chat-generations') ? { host: 'test.api.salesforce.com', body: { generationDetails: { generations: [{ content: '{"outcome":"pass","reason":"Read-only CHECK","evidence":["applied false"]}' }] } } } : base(...input));
+  await lab.evaluate({ id: run.id, runtimeEvidence: [{ label: 'FORGED' }] });
+  const payload = JSON.stringify(request.mock.calls.at(-1)?.[2]);
+  expect(payload).toContain('CHECK'); expect(payload).toContain('applied'); expect(payload).toContain('false');
+  expect(payload).toContain('authoritative');
+  expect(payload).not.toContain('PRIVATE_CREDENTIAL'); expect(payload).not.toContain('FORGED');
+});

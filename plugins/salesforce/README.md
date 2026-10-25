@@ -202,7 +202,7 @@ the Studio stays open. Editing after a run shows a stale-snapshot notice.
 agent tab also closes its local handles. Draft Preview has no documented remote
 DELETE contract: Salesforce owns remote expiry. Server handles expire after
 30 minutes of inactivity and do not survive a plugin restart. Export evidence
-before leaving; cross-run comparison is future work.
+before leaving. Tests offers a saved-source versus editor-draft comparison for scripted cases.
 
 The separate **Org preview** panel retains the CLI workflow for saved authoring
 bundles and published agents. Published agents always execute live actions and
@@ -250,12 +250,36 @@ The activity rail's **Tests** workbench lists **Local cases · Project** above *
 | Column | Runs | Notes |
 | --- | --- | --- |
 | Simulate | The editor source, unsaved changes included, through Salesforce Preview | Stored per case; expand a row for expected vs actual and the agent's turns |
-| Org eval | `sf agent test run-eval` against the agent published on the org | Per case when the CLI reports cases, else totals. Multi-turn cases run their first turn only. A pass is eval evidence for `sf_agent` Activate. Production and unknown orgs need **Allow reads…** (one `org.read` approval) first |
+| Org eval | `sf agent test run-eval` against the agent published on the org | Per case when the CLI reports cases, else totals. Multi-turn cases replay the final message with complete recorded history from a matching saved-source Simulate run; earlier replies are fixed context. Use Simulate to regenerate every turn. A pass is eval evidence for `sf_agent` Activate. Production and unknown orgs need **Allow reads…** (one `org.read` approval) first |
 | Proposal | An agent's pending proposal, in Simulate | Shown while a proposal is open. Results are not stored |
 
 While a suite runs, Tests shows the current case, conversation turn, stage, completed-case count and elapsed time. Rows move from Queued to Running to their result as each case finishes. Reopening Tests recovers an active run. Org eval shows elapsed time while waiting for Salesforce; its case results arrive at the end.
 
 **Import YAML / JSON** reads an `sf agent test` spec (`testCases`, `tests` or `utterances`, up to 256 KB) into the suite; ids that already exist get a `-2` suffix. **Write eval spec** writes `tests/<AgentName>.eval.yaml` from the suite.
+
+**Compare saved vs draft** runs the same cases and context on both source snapshots in Simulate. It shows improved, regressed and inconclusive cases, both replies, observed actions and maximum response latency. Progress identifies the source currently running. Results do not replace the usual suite results or save the draft. Changing source or cases marks the comparison stale. Comparisons cover at most 20 cases and use fresh responses; one trial does not establish statistical improvement.
+
+**Additional assertions.** Add case offers a maximum response latency (1–300000 ms, checked on every scripted reply) and up to ten action-field assertions as JSON:
+
+```json
+[{"action":"LookupOrder","side":"output","field":"status","operator":"equals","value":"Shipped"}]
+```
+
+Operators are `equals`, `contains`, `less_than` and `greater_than`. Every recorded invocation must pass. Only bounded, redacted scalar trace fields are available; unavailable, redacted or incomplete evidence is inconclusive. Context overrides, latency and action-field assertions stay in Simulate: org export refuses to silently drop these checks. Generated specs are capped at 256 KB. A matching captured history is required for multi-turn export, and only the exported final-turn checks become org evaluation evidence.
+
+**Custom simulation scenarios.** In Tests > Simulations, expand **Customize scenarios and context** to edit names, personas, goals, openings, success criteria and turn budgets, add/remove scenarios, or apply a saved typed context preset. Repeats are limited to 12 conversations total. A completed batch can restore its scenario definitions for another run; batches retain the context snapshot used during execution.
+
+**Source navigation and Flow.** Comment and trace source links visibly select Script, including keyboard activation. Agent discovery skips build/cache folders, prioritizes source directories, retains explicitly opened files and reports incomplete scans. The official Flow canvas has **Reset Flow view** to refit after resizing and reset pan, zoom and selection.
+
+### Repeatable sandbox smoke
+
+With the app running, select the sandbox in this registered project and run:
+
+```sh
+node scripts/agentforce-studio-smoke.mjs --org <sandbox-alias> --project <registered-project-id> --agent <project-relative-path.agent>
+```
+
+The command verifies the exact project and known sandbox target twice, reads and diagnoses the source, compiles it, runs two Simulate turns, retrieves a real runtime trace and closes its session. Missing prerequisites, transport failures and cleanup failures exit nonzero; they never count as skipped passes. It uses the installed plugin, so rebuild/restart Zana before using it to verify newly changed runtime code. No publish or activation is part of this smoke.
 
 **Make this pass** starts a bounded fix loop on the failing Simulate cases and hands them to a linked thread. The agent proposes edits with `ui.command editor.proposeEdit` and checks each candidate with `sf_workbench suites.run` and the `loopId`. Each run spends one attempt (3 by default, at most 5), covers only the loop's cases, runs in Simulate and is not stored. The loop ends when they pass, the budget is spent, you press Stop, it idles for 30 minutes or a new loop starts on the same file. A loop never saves, publishes or runs an org eval. Save first: the agent starts from the file on disk.
 
@@ -392,3 +416,13 @@ Workbench controls use explicit, short-lived view IDs. List `ui.views`, submit `
 Studio-specific `ui.command` verbs (Agentforce view): `editor.proposeEdit` (`path`, `expectedSha256`, `content` or `edits`, `summary`; the user accepts hunks and the result reports `accepted`, `rejected` or `partial`), `preview.start` and `preview.send` (`text`, `engine`: start or send in the selected engine), `trace.focus` (`runId`, `turn`, `step`), `graph.focus` (`node`) and `layout.set` (`compact`). `ui.result` accepts `waitMs` (up to 20 000) to wait for the acknowledgement instead of polling; proposals report their outcome through the same result once resolved.
 
 These are semantic workflow controls. Pixel-level gestures such as dragging graph nodes or resizing panes remain manual, and a closed workbench must be opened before it can acknowledge display commands. A view that targets another org is refused; align it with the project's selected org first. Existing running conversations may need a fresh turn/session to receive new tools.
+
+### Studio reliability and evidence
+
+Studio runs saved or editor snapshots up to 10 MB. Semantic `studio.start`, `source.parse` and `source.query` also accept a confined `path` and optional `expectedSha256` to pin the saved revision.
+
+`suites.run`, `suites.start` and `suites.compare` return a background `jobId` promptly. Poll `suites.result`; the completed payload is under `result`. Use `suites.stop` to cancel, and reuse the same `requestId` when retrying a start request. Handles survive closing the view for the current plugin session; after a restart, inspect saved suite results before launching another run. Runs cover up to 50 cases, comparisons up to 20. Completed ordinary cases are saved incrementally; candidate and comparison runs stay separate.
+
+Tests show deterministic checks separately from the AI opinion. `expect.forbiddenActions` rejects named actions (`["*"]` forbids all). Action field checks support string, numeric, Boolean and null equality. `expect.stateChecks: [{variable: "orderExists", value: false}]` checks final scalar variable updates from a complete trace. Missing, redacted or partial runtime traces leave action checks inconclusive; an AI pass never substitutes for required action evidence. The judge receives bounded, redacted runtime evidence alongside the transcript.
+
+Cases can declare `prerequisites: ["Account selected", "Address form saved"]`. They remain **Setup required** until the user confirms preparation for that view session. Message replay does not submit forms, load arbitrary replay JSON as mock configuration, or finish asynchronous backend work. Org replay export requires a prepared Simulate run matching the current case and source. Simulated signature output does not prove live delivery.

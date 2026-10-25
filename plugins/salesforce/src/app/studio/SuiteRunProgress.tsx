@@ -19,7 +19,7 @@ export function SuiteRunProgress({ progress, cases, startedAt, orgEval = false }
   const elapsed = Math.max(0, Math.floor((now - (progress?.startedAt ?? startedAt)) / 1000));
   const duration = elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
   const mode = progress?.mode ?? (orgEval ? 'org-eval' : 'simulate');
-  const label = mode === 'org-eval' ? 'Org eval' : mode === 'proposal' ? 'Proposal' : 'Simulate';
+  const label = mode === 'compare' ? `Compare ${progress?.comparisonPhase === 'reference' ? 'saved source' : 'editor draft'}` : mode === 'org-eval' ? 'Org eval' : mode === 'proposal' ? 'Proposal' : 'Simulate';
   const current = cases.find(c => c.id === progress?.currentCaseId);
   const total = progress?.caseIds.length ?? cases.length;
   const stage = progress ? STAGE[progress.stage] : 'Starting run';

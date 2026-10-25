@@ -76,7 +76,7 @@ export function TracePanel({ trace, loading, approximation, onRevealSource }: Tr
         );
         const cls = `sf-trace-row k-${step.kind}${nested ? ' is-nested' : ''}`;
         return source && onRevealSource
-          ? <button key={i} type="button" role="listitem" className={cls} onClick={() => onRevealSource(source.path, source.line)} title={`Reveal ${source.path}:${source.line}`}>{body}</button>
+          ? <div key={i} role="listitem"><button type="button" className={cls} onClick={() => onRevealSource(source.path, source.line)} title={`Reveal ${source.path}:${source.line}`}>{body}</button></div>
           : <div key={i} role="listitem" className={cls}>{body}</div>;
       })}
     </div>
