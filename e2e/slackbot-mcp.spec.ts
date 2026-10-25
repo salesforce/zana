@@ -13,6 +13,7 @@ import { createRegistry } from '../website/connect/registry.mjs';
 import { createConnectGateway } from '../website/connect/gateway.mjs';
 import { createSlackService } from '../website/slack/service.mjs';
 import { phonePortEnv } from './fixtures/phone-port.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
 // Exercise the bundled source by default; allow an explicit development override.
 const source = process.env.ZCC_SLACK_BRIDGE_DIR ?? fileURLToPath(new URL('../plugins/slack-bridge-2ff2', import.meta.url));
@@ -548,7 +549,7 @@ ${hangBranch}`));
         await browserPage.goto(preview.href);
         await expect(browserPage.locator('body')).toContainText('Reply with Slackbot');
         await expect(browserPage.getByRole('button', { name: 'Report', exact: true })).toBeVisible();
-        await browserPage.screenshot({ path: testInfo.outputPath('slack-task-summary.png'), fullPage: true });
+        await captureElectronScreenshot(app!.electron, browserPage, testInfo.outputPath('slack-task-summary.png'));
         await browserPage.getByRole('button', { name: 'Report', exact: true }).click();
         await expect(browserPage.locator('#result h2')).toHaveText('Release review');
         await browserPage.getByRole('button', { name: 'Sort by Duration (ms)' }).click();
@@ -558,7 +559,7 @@ ${hangBranch}`));
         await expect(browserPage.locator('.result-lane')).toHaveCount(3);
         await expect(browserPage.locator('#result img')).toHaveCount(0);
         await expect(browserPage.locator('#result code').first()).toContainText('</script><img');
-        await browserPage.screenshot({ path: testInfo.outputPath('slack-rich-result-panel.png'), fullPage: true });
+        await captureElectronScreenshot(app!.electron, browserPage, testInfo.outputPath('slack-rich-result-panel.png'));
         // Slack's default side panel is just above the old 540px breakpoint.
         // Its task lanes must stack before text becomes a few words per line.
         await browserPage.setViewportSize({ width: 551, height: 800 });
@@ -569,10 +570,10 @@ ${hangBranch}`));
         expect(laneRects[1].left).toBe(laneRects[0].left);
         expect(laneRects[1].top).toBeGreaterThan(laneRects[0].bottom);
         expect(laneRects[2].top).toBeGreaterThan(laneRects[1].bottom);
-        await browserPage.screenshot({ path: testInfo.outputPath('slack-rich-result-default-panel.png'), fullPage: true });
+        await captureElectronScreenshot(app!.electron, browserPage, testInfo.outputPath('slack-rich-result-default-panel.png'));
         await browserPage.setViewportSize({ width: 360, height: 800 });
         expect(await browserPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-        await browserPage.screenshot({ path: testInfo.outputPath('slack-rich-result-narrow.png'), fullPage: true });
+        await captureElectronScreenshot(app!.electron, browserPage, testInfo.outputPath('slack-rich-result-narrow.png'));
         expect(panelErrors).toEqual([]);
         const before = accountReads;
         maliciousPanel = true;
@@ -599,7 +600,7 @@ ${hangBranch}`));
         await expect(browserPage.locator('#result-nav')).toBeHidden();
         await expect(browserPage.locator('#connection')).toContainText('Access expired');
         await expect(browserPage.locator('.state')).toHaveCSS('color', 'rgb(81, 104, 120)');
-        await browserPage.screenshot({ path: testInfo.outputPath('slack-task-expired.png'), fullPage: true });
+        await captureElectronScreenshot(app!.electron, browserPage, testInfo.outputPath('slack-task-expired.png'));
       } finally {
         maliciousPanel = false;
         await app!.electron.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id)?.destroy(), previewWindowId);
