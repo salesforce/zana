@@ -1,7 +1,7 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { dirname, join, resolve } from 'node:path';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { AGENT_DOC_CHANNEL, AGENT_DOC_LEASE_TTL_MS, AGENT_DOC_RPC, type AgentDocChange } from '../lib/agent-doc-contract.js';
 import { sha256Hex } from '../lib/agent-files.js';
 import { AgentScriptDocumentStore, registerAgentScriptDocuments, type AgentDocIo, type AgentDocLimits } from '../lib/agent-script-document.js';
@@ -544,11 +544,15 @@ describe('buffer persistence', () => {
 describe('registerAgentScriptDocuments', () => {
   const dirs: string[] = [];
   afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+  // An empty root would resolve the fixture against process.cwd(); only seed files in a temp root this suite owns.
+  afterAll(() => { expect(existsSync(resolve(PATH))).toBe(false); });
   function setup(opts: { projectId?: string | null; root?: string } = {}) {
     const root = opts.root ?? mkdtempSync(join(tmpdir(), 'sf-agentdoc-'));
-    dirs.push(root);
-    const files: Record<string, string> = { [PATH]: 'a\nb\nc\n' };
-    for (const [path, content] of Object.entries(files)) { mkdirSync(dirname(join(root, path)), { recursive: true }); writeFileSync(join(root, path), content); }
+    if (root) {
+      dirs.push(root);
+      mkdirSync(dirname(join(root, PATH)), { recursive: true });
+      writeFileSync(join(root, PATH), 'a\nb\nc\n');
+    }
     const handlers = new Map<string, (args: unknown) => Promise<any>>();
     const published: Array<[string, unknown]> = [];
     const kvData = new Map<string, unknown>();
@@ -605,7 +609,7 @@ describe('registerAgentScriptDocuments', () => {
     expect(await h.call(AGENT_DOC_RPC.open, { path: 'missing.agent' })).toMatchObject({ ok: false, code: 'not_found' });
     expect(await h.call(AGENT_DOC_RPC.open, null)).toMatchObject({ ok: false, code: 'invalid_input' });
     const noRoot = setup({ root: '' });
-    expect(await noRoot.call(AGENT_DOC_RPC.open, { path: PATH })).toMatchObject({ ok: false });
+    expect(await noRoot.call(AGENT_DOC_RPC.open, { path: PATH })).toMatchObject({ ok: false, code: 'not_configured' });
     // A symlink-free path that escapes is refused by the safe-path check before any read.
     expect(await h.call(AGENT_DOC_RPC.open, { path: '../outside.agent' })).toMatchObject({ ok: false, code: 'invalid_input' });
   });
