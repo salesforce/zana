@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { phonePortEnv } from './fixtures/phone-port.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
 test('Remote access offers only Zana Connect and keeps a retired Heroku relay setup offline', async ({ home }, testInfo) => {
   const token = randomBytes(32).toString('base64url');
@@ -28,7 +29,7 @@ test('Remote access offers only Zana Connect and keeps a retired Heroku relay se
     await expect(win.getByRole('button', { name: 'Set up remote access' })).toBeVisible();
     await win.getByText('Have a connect code?', { exact: true }).click();
     await expect(win.getByRole('link', { name: 'Get a connect code' })).toBeVisible();
-    await win.screenshot({ path: testInfo.outputPath('phone-connect-only.png') });
+    await captureElectronScreenshot(app.electron, win, testInfo.outputPath('phone-connect-only.png'));
   } finally {
     await app.electron.close();
   }
