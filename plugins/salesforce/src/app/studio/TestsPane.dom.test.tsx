@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { TestsPane, expectLines, fixLoopPrompt, relativeTime, runSummary, type TestsPaneProps } from './TestsPane.js';
-import type { ScenarioSuite } from '../../../lib/studio-contract.js';
+import type { ScenarioCase, ScenarioSuite } from '../../../lib/studio-contract.js';
 import type { FixLoop } from '../../../lib/fix-loop.js';
 
 const PATH = 'force-app/main/default/aiAuthoringBundles/MyBot/MyBot.agent';
@@ -560,4 +560,47 @@ it('shows setup separately, passes explicit preparation and exposes recovered jo
   await act(async () => { realtime?.({ kind: 'suites', projectId: 'p1' }); });
   fireEvent.click(button('Stop suite'));
   await waitFor(() => expect(calls(call, 'studio.suites.stop')[0]).toMatchObject({ jobId: 'recovered' }));
+});
+
+it('saves and displays advanced checks and setup prerequisites without losing their scalar types', async () => {
+  const { call } = setup({}, { 'studio.suites.save': args => ({ ok: true, suite: suite({ cases: args.cases as ScenarioCase[] }) }) });
+  await screen.findByTestId('tests-table');
+  fireEvent.click(button('+ Case'));
+  const form = screen.getByRole('form', { name: 'New test case' });
+  for (const [label, value] of [
+    ['Name', 'Read-only credit'], ['Utterances, one per line', 'Check credit'],
+    ['Maximum response latency (ms)', '500'], ['Forbidden actions, comma separated (use * for all)', 'Send, Apply'],
+    ['Setup prerequisites, one per line', 'Account selected\n\n Address saved '],
+    ['Action field checks (JSON)', '[{"action":"Credit","side":"output","field":"applied","operator":"equals","value":false}]'],
+    ['Final state checks (JSON)', '[{"variable":"orderExists","value":false}]']
+  ]) fireEvent.change(within(form).getByLabelText(label!), { target: { value } });
+  fireEvent.submit(form);
+  await waitFor(() => expect(calls(call, 'studio.suites.save')).toHaveLength(1));
+  const added = (calls(call, 'studio.suites.save')[0]!.cases as ScenarioCase[]).at(-1)!;
+  expect(added).toMatchObject({ prerequisites: ['Account selected', 'Address saved'], expect: { maxLatencyMs: 500, forbiddenActions: ['Send', 'Apply'], actionChecks: [{ value: false }], stateChecks: [{ variable: 'orderExists', value: false }] } });
+  fireEvent.click(await screen.findByTestId(`tests-row-${added.id}`));
+  expect(screen.getByText('Each response ≤ 500 ms')).toBeTruthy();
+  expect(screen.getByText('Final orderExists equals false')).toBeTruthy();
+  expect(screen.getByText('Never calls Send')).toBeTruthy();
+  const prepared = screen.getByLabelText('I prepared this case for this session') as HTMLInputElement;
+  fireEvent.click(prepared); expect(prepared.checked).toBe(true);
+  fireEvent.click(prepared); expect(prepared.checked).toBe(false);
+});
+
+it.each([
+  { status: 'stopped', role: 'status', message: 'Suite stopped. Completed cases were saved. Remaining cases were not run.' },
+  { status: 'failed', role: 'alert', message: 'Preview connection lost' }
+])('distinguishes a $status background suite in the user feedback', async ({ status, role, message }) => {
+  const { call } = setup();
+  await screen.findByTestId('tests-table');
+  call.mockImplementation(async (_plugin, method) => {
+    if (method === 'studio.suites.start') return { ok: true, jobId: 'job-feedback' };
+    if (method === 'studio.suites.result') return { ok: true, status, ...(status === 'failed' ? { error: message } : {}) };
+    if (method === 'studio.suites.list') return { ok: true, suites: [suite()] };
+    return { ok: true, loop: null };
+  });
+  fireEvent.click(button('Run all in Simulate'));
+  await waitFor(() => expect(screen.getByRole(role)).toHaveProperty('textContent', message));
+  expect(button('Run all in Simulate').disabled).toBe(false);
+  if (status === 'stopped') expect(screen.queryByRole('alert')).toBeNull();
 });

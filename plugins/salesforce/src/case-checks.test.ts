@@ -54,3 +54,15 @@ it('never infers forbidden action absence from incomplete traces', () => {
   expect(caseChecks(expectCase, { ...base, observed: { ...base.observed, actions: ['Send'] } }).map(c => c.state)).toEqual(['ko', 'ko']);
   expect(caseChecks({ actions: ['Send'] }, base)[0]).toMatchObject({ state: 'na', actual: 'Incomplete runtime trace' });
 });
+
+it('renders deterministic assertion evidence without inventing results for missing checks', () => {
+  const checks = { maxLatencyMs: 500, actionChecks: [{ action: 'Credit', side: 'output' as const, field: 'applied', operator: 'equals' as const, value: false }], stateChecks: [{ variable: 'orderExists', value: false }] };
+  expect(caseChecks(checks).map(c => [c.kind, c.state, c.actual])).toEqual(Array.from({ length: 3 }, () => ['assertion', 'na', 'Not run']));
+  const labels = caseChecks(checks).map(c => c.expected);
+  expect(labels).toEqual(['Each response ≤ 500 ms', 'Credit output.applied equals false', 'Final orderExists equals false']);
+  const result: CaseResult = { ...at, outcome: 'inconclusive', assertions: [
+    { label: labels[0]!, outcome: 'pass', actual: '200 ms maximum' },
+    { label: labels[1]!, outcome: 'fail', actual: 'true' }
+  ] };
+  expect(caseChecks(checks, result).map(c => [c.state, c.actual])).toEqual([['ok', '200 ms maximum'], ['ko', 'true'], ['na', 'Not recorded']]);
+});
