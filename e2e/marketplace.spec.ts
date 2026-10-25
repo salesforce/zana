@@ -9,7 +9,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test, expect, launchApp } from './fixtures/app.js';
+import { test, expect, launchApp, closeApp } from './fixtures/app.js';
 import { startGitHttpServer } from './fixtures/git-http.js';
 import { MarketplacePage } from './fixtures/marketplace.js';
 
@@ -138,7 +138,7 @@ test.describe('marketplace — catalog sources from the on-disk store', () => {
       await market.openCatalogSources();
       await expect(market.catalogNames()).toHaveText(['Zana internal plugins', 'Zana Community']);
       await expect(handle.window.locator('.ext-market-item-source--official')).toHaveCount(2);
-      await handle.electron.close();
+      await closeApp(handle.electron);
       handle = await launch();
       const catalogs = await handle.window.evaluate(() => (
         window as unknown as { cc: { marketplaces: { list: () => Promise<Array<{ name: string; official: boolean; source: string }>> } } }
@@ -148,7 +148,7 @@ test.describe('marketplace — catalog sources from the on-disk store', () => {
         expect.objectContaining({ name: 'zana-community', official: true, source: 'git:https://github.com/salesforce/zana-marketplace' })
       ]);
     } finally {
-      await handle?.electron.close().catch(() => undefined);
+      if (handle) await closeApp(handle.electron);
       await git.close();
       rmSync(fixtureDir, { recursive: true, force: true });
     }
@@ -178,7 +178,7 @@ test.describe('marketplace — catalog sources from the on-disk store', () => {
       await market.openCatalogSources();
       await expect(market.catalogNames()).toHaveText(['Zana Community']);
     } finally {
-      await handle?.electron.close().catch(() => undefined);
+      if (handle) await closeApp(handle.electron);
       await git.close();
       rmSync(fixtureDir, { recursive: true, force: true });
     }
