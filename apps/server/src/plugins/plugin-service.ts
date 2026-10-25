@@ -23,10 +23,9 @@ import {
   parseMarketplaceSource
 } from './marketplace-source.js';
 import {
-  COMMUNITY_MARKETPLACE_SEED_TIMEOUT_MS,
-  DEFAULT_COMMUNITY_MARKETPLACE_SOURCE,
-  LEGACY_INTERNAL_MARKETPLACE_SOURCE,
+  DEFAULT_MARKETPLACE_SEED_TIMEOUT_MS,
   resolveCommunityMarketplaceSource,
+  resolveInternalMarketplaceSource,
   resolveOfficialMarketplaceUrl
 } from './default-marketplaces.js';
 import {
@@ -2103,8 +2102,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     }
   }
 
-  async function seedCommunityMarketplace(): Promise<void> {
-    const raw = resolveCommunityMarketplaceSource();
+  async function seedMarketplaceSource(raw: string | null): Promise<void> {
     if (!raw) return;
     let parsed;
     try {
@@ -2113,17 +2111,11 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       return;
     }
     const display = marketplaceSourceDisplay(parsed);
-    const replaceOfficialSources = marketplaceSourcesEqual(display, DEFAULT_COMMUNITY_MARKETPLACE_SOURCE)
-      ? [LEGACY_INTERNAL_MARKETPLACE_SOURCE]
-      : [];
-    const legacyExists = marketplaces.list().some((row) => row.official && replaceOfficialSources.some(
-      (source) => marketplaceSourcesEqual(row.source, source)
-    ));
     const existing = matchingMarketplace(display);
     if (existing?.cachedIndex) {
-      if (!existing.official || legacyExists) {
+      if (!existing.official) {
         try {
-          await marketplaces.add(existing.source, existing.cachedIndex, { official: true, replaceOfficialSources });
+          await marketplaces.add(existing.source, existing.cachedIndex, { official: true });
           await emitAppsChanged();
         } catch {
           /* fail-soft */
@@ -2133,32 +2125,30 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     }
     try {
       const index = await materializeMarketplaceIndex(parsed, fetchJson, {
-        timeoutMs: COMMUNITY_MARKETPLACE_SEED_TIMEOUT_MS,
+        timeoutMs: DEFAULT_MARKETPLACE_SEED_TIMEOUT_MS,
         nonInteractive: true
       });
-      await marketplaces.add(display, index, { official: true, replaceOfficialSources });
+      await marketplaces.add(display, index, { official: true });
       await emitAppsChanged();
     } catch {
-      /* Keep the previous catalog until a valid replacement is available. */
+      /* Unreachable catalogs must not prevent startup or affect other catalogs. */
     }
   }
 
   async function seedDefaultMarketplaces(): Promise<void> {
     await seedOfficialMarketplace();
-    const raw = resolveCommunityMarketplaceSource();
-    if (!raw) return;
-    let kind: ReturnType<typeof parseMarketplaceSource>['kind'] | undefined;
-    try {
-      kind = parseMarketplaceSource(raw).kind;
-    } catch {
-      return;
+    for (const raw of [resolveCommunityMarketplaceSource(), resolveInternalMarketplaceSource()]) {
+      if (!raw) continue;
+      let kind: ReturnType<typeof parseMarketplaceSource>['kind'];
+      try {
+        kind = parseMarketplaceSource(raw).kind;
+      } catch {
+        continue;
+      }
+      const pending = seedMarketplaceSource(raw);
+      if (kind === 'git') void pending;
+      else await pending;
     }
-    const pending = seedCommunityMarketplace();
-    if (kind === 'git') {
-      void pending;
-      return;
-    }
-    await pending;
   }
 
   async function retireRetiredFirstPartyPlugins(): Promise<void> {

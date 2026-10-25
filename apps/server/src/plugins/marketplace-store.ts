@@ -38,11 +38,7 @@ interface MarketplaceStoreDocument {
 
 export interface MarketplaceStore {
   list(): MarketplaceCatalogRow[];
-  add(source: string, index: MarketplaceIndex, opts?: {
-    official?: boolean;
-    /** Trusted startup migration only; never accepted from renderer/HTTP callers. */
-    replaceOfficialSources?: readonly string[];
-  }): Promise<MarketplaceCatalogRow>;
+  add(source: string, index: MarketplaceIndex, opts?: { official?: boolean }): Promise<MarketplaceCatalogRow>;
   refresh(source: string, index: MarketplaceIndex): Promise<MarketplaceCatalogRow>;
   recordRefreshError(source: string, error: string): Promise<MarketplaceCatalogRow | null>;
   remove(source: string): Promise<boolean>;
@@ -265,12 +261,7 @@ export function createMarketplaceStore(opts: { file: string }): MarketplaceStore
           cachedIndex: index,
           url: parsed.kind === 'https' ? display : undefined
         };
-        const retained = extra?.official === true && extra.replaceOfficialSources
-          ? document.catalogs.filter((item) => !item.official || !extra.replaceOfficialSources!.some(
-            (source) => marketplaceSourcesEqual(item.source, source)
-          ))
-          : document.catalogs;
-        const next = { ...document, catalogs: upsert({ ...document, catalogs: retained }, row), migrationNeeded: false };
+        const next = { ...document, catalogs: upsert(document, row), migrationNeeded: false };
         write(next);
         document = next;
         return row;
