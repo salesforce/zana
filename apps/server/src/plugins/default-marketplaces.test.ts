@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_INTERNAL_MARKETPLACE_SOURCE,
+  DEFAULT_COMMUNITY_MARKETPLACE_SOURCE,
   DEFAULT_OFFICIAL_MARKETPLACE_URL,
-  resolveInternalMarketplaceSource,
+  resolveCommunityMarketplaceSource,
   resolveOfficialMarketplaceUrl
 } from './default-marketplaces.js';
 
@@ -29,22 +29,29 @@ describe('resolveOfficialMarketplaceUrl', () => {
   });
 });
 
-describe('resolveInternalMarketplaceSource', () => {
-  it('defaults to the git.soma catalog when unset', () => {
-    expect(resolveInternalMarketplaceSource({})).toBe(DEFAULT_INTERNAL_MARKETPLACE_SOURCE);
-    expect(resolveInternalMarketplaceSource({ ZCC_INTERNAL_MARKETPLACE_SOURCE: '  ' })).toBe(
-      DEFAULT_INTERNAL_MARKETPLACE_SOURCE
+describe('resolveCommunityMarketplaceSource', () => {
+  it('prefers the community override and preserves legacy deployment overrides', () => {
+    expect(resolveCommunityMarketplaceSource({ ZCC_COMMUNITY_MARKETPLACE_SOURCE: ' path:/tmp/public ', ZCC_INTERNAL_MARKETPLACE_SOURCE: 'off' })).toBe('path:/tmp/public');
+    expect(resolveCommunityMarketplaceSource({ ZCC_COMMUNITY_MARKETPLACE_SOURCE: 'off', ZCC_INTERNAL_MARKETPLACE_SOURCE: 'path:/tmp/private' })).toBeNull();
+    expect(resolveCommunityMarketplaceSource({ ZCC_COMMUNITY_MARKETPLACE_SOURCE: '0' })).toBeNull();
+    expect(resolveCommunityMarketplaceSource({ ZCC_COMMUNITY_MARKETPLACE_SOURCE: ' ', ZCC_INTERNAL_MARKETPLACE_SOURCE: 'path:/tmp/private' })).toBe('path:/tmp/private');
+  });
+
+  it('defaults to the public GitHub catalog when unset', () => {
+    expect(resolveCommunityMarketplaceSource({})).toBe('git:https://github.com/salesforce/zana-marketplace.git');
+    expect(resolveCommunityMarketplaceSource({ ZCC_INTERNAL_MARKETPLACE_SOURCE: '  ' })).toBe(
+      DEFAULT_COMMUNITY_MARKETPLACE_SOURCE
     );
   });
 
   it('skips seeding when set to off or 0', () => {
-    expect(resolveInternalMarketplaceSource({ ZCC_INTERNAL_MARKETPLACE_SOURCE: 'off' })).toBeNull();
-    expect(resolveInternalMarketplaceSource({ ZCC_INTERNAL_MARKETPLACE_SOURCE: '0' })).toBeNull();
-    expect(resolveInternalMarketplaceSource({ ZCC_INTERNAL_MARKETPLACE_SOURCE: ' off ' })).toBeNull();
+    expect(resolveCommunityMarketplaceSource({ ZCC_INTERNAL_MARKETPLACE_SOURCE: 'off' })).toBeNull();
+    expect(resolveCommunityMarketplaceSource({ ZCC_INTERNAL_MARKETPLACE_SOURCE: '0' })).toBeNull();
+    expect(resolveCommunityMarketplaceSource({ ZCC_INTERNAL_MARKETPLACE_SOURCE: ' off ' })).toBeNull();
   });
 
   it('uses an explicit override', () => {
-    expect(resolveInternalMarketplaceSource({ ZCC_INTERNAL_MARKETPLACE_SOURCE: 'path:/tmp/cat' }))
+    expect(resolveCommunityMarketplaceSource({ ZCC_INTERNAL_MARKETPLACE_SOURCE: 'path:/tmp/cat' }))
       .toBe('path:/tmp/cat');
   });
 });

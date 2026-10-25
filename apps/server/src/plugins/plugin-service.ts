@@ -23,8 +23,10 @@ import {
   parseMarketplaceSource
 } from './marketplace-source.js';
 import {
-  INTERNAL_MARKETPLACE_SEED_TIMEOUT_MS,
-  resolveInternalMarketplaceSource,
+  COMMUNITY_MARKETPLACE_SEED_TIMEOUT_MS,
+  DEFAULT_COMMUNITY_MARKETPLACE_SOURCE,
+  LEGACY_INTERNAL_MARKETPLACE_SOURCE,
+  resolveCommunityMarketplaceSource,
   resolveOfficialMarketplaceUrl
 } from './default-marketplaces.js';
 import {
@@ -2101,8 +2103,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     }
   }
 
-  async function seedInternalMarketplace(): Promise<void> {
-    const raw = resolveInternalMarketplaceSource();
+  async function seedCommunityMarketplace(): Promise<void> {
+    const raw = resolveCommunityMarketplaceSource();
     if (!raw) return;
     let parsed;
     try {
@@ -2111,11 +2113,17 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       return;
     }
     const display = marketplaceSourceDisplay(parsed);
+    const replaceOfficialSources = marketplaceSourcesEqual(display, DEFAULT_COMMUNITY_MARKETPLACE_SOURCE)
+      ? [LEGACY_INTERNAL_MARKETPLACE_SOURCE]
+      : [];
+    const legacyExists = marketplaces.list().some((row) => row.official && replaceOfficialSources.some(
+      (source) => marketplaceSourcesEqual(row.source, source)
+    ));
     const existing = matchingMarketplace(display);
-    if (existing) {
-      if (!existing.official && existing.cachedIndex) {
+    if (existing?.cachedIndex) {
+      if (!existing.official || legacyExists) {
         try {
-          await marketplaces.add(existing.source, existing.cachedIndex, { official: true });
+          await marketplaces.add(existing.source, existing.cachedIndex, { official: true, replaceOfficialSources });
           await emitAppsChanged();
         } catch {
           /* fail-soft */
@@ -2125,19 +2133,19 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     }
     try {
       const index = await materializeMarketplaceIndex(parsed, fetchJson, {
-        timeoutMs: INTERNAL_MARKETPLACE_SEED_TIMEOUT_MS,
+        timeoutMs: COMMUNITY_MARKETPLACE_SEED_TIMEOUT_MS,
         nonInteractive: true
       });
-      await marketplaces.add(display, index, { official: true });
+      await marketplaces.add(display, index, { official: true, replaceOfficialSources });
       await emitAppsChanged();
     } catch {
-      /* fail-soft: unreachable git.soma must not persist lastError */
+      /* Keep the previous catalog until a valid replacement is available. */
     }
   }
 
   async function seedDefaultMarketplaces(): Promise<void> {
     await seedOfficialMarketplace();
-    const raw = resolveInternalMarketplaceSource();
+    const raw = resolveCommunityMarketplaceSource();
     if (!raw) return;
     let kind: ReturnType<typeof parseMarketplaceSource>['kind'] | undefined;
     try {
@@ -2145,7 +2153,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     } catch {
       return;
     }
-    const pending = seedInternalMarketplace();
+    const pending = seedCommunityMarketplace();
     if (kind === 'git') {
       void pending;
       return;

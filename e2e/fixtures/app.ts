@@ -296,6 +296,8 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
     ZCC_E2E_HOME: home,
     ZCC_DATA_DIR: dataDir,
     ZCC_EXTENSIONS_DIR: join(home, '.zcc', 'extensions'),
+    // Tests opt into a fixture catalog explicitly; do not clone the live community feed.
+    ZCC_COMMUNITY_MARKETPLACE_SOURCE: 'off',
     // Electron's unpackaged default is "0.0". The main process uses this only
     // in E2E so the smoke test observes the same version as package.json.
     ...(!packagedExecutable ? { ZCC_E2E_APP_VERSION: PACKAGE_VERSION } : {}),

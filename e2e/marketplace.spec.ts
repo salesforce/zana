@@ -47,6 +47,7 @@ test.describe('marketplace — signed registry configured', () => {
     // Bundled entries may coexist with the signed fixture catalog. The fixture
     // card itself proves configured registry discovery.
     await expect(market.rows()).not.toHaveCount(0);
+    await app.window.getByRole('textbox', { name: 'Search plugins' }).fill('E2E Dummy');
     const titleRow = market.row('E2E Dummy');
     await expect(titleRow).toBeVisible();
 
@@ -98,6 +99,60 @@ test.describe('marketplace — integrity gates (signed registry)', () => {
 });
 
 test.describe('marketplace — catalog sources from the on-disk store', () => {
+  test('replaces the former internal default with the public GitHub catalog and keeps it across restart', async ({ home }) => {
+    const fixtureDir = mkdtempSync(join(tmpdir(), 'zcc-community-default-'));
+    const git = await startGitHttpServer(fixtureDir, [{
+      repoName: 'community',
+      files: { 'marketplace.json': JSON.stringify({
+        schemaVersion: 1, name: 'zana-community', displayName: 'Zana Community',
+        plugins: [{ id: 'cloud-machines', displayName: 'Cloud Machines', description: 'Manage cloud computers',
+          author: { name: 'E2E' }, source: { git: { url: 'https://example.test/plugin.git', ref: 'v1.0.0' } } }]
+      }) }
+    }]);
+    mkdirSync(join(home, '.zcc', 'plugins'), { recursive: true });
+    writeFileSync(join(home, '.zcc', 'plugins', 'marketplaces.json'), JSON.stringify({ version: 3, catalogs: [{
+      source: 'git:https://git.soma.salesforce.com/chatbots/zana-internal-marketplace', sourceKind: 'git',
+      name: 'internal', displayName: 'Zana internal plugins', official: true,
+      cachedIndex: { schemaVersion: 1, name: 'internal', displayName: 'Zana internal plugins', plugins: [] }
+    }] }));
+    const env = {
+      ZCC_OFFICIAL_MARKETPLACE_URL: 'off', ZCC_COMMUNITY_MARKETPLACE_SOURCE: '', ZCC_INTERNAL_MARKETPLACE_SOURCE: '',
+      GIT_SSL_CAINFO: git.caCertPath,
+      // Route the production default through the fixture's Git web URL.
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: `url.${git.bareUrlFor('community')}.insteadOf`,
+      GIT_CONFIG_VALUE_0: 'https://github.com/salesforce/zana-marketplace.git'
+    };
+    const launch = () => launchApp(home, { caCertPath: git.caCertPath, env });
+    let handle: Awaited<ReturnType<typeof launchApp>> | undefined;
+    try {
+      handle = await launch();
+      const window = handle.window;
+      await expect.poll(() => window.evaluate(() => (
+        window as unknown as { cc: { marketplaces: { list: () => Promise<Array<{ name: string }>> } } }
+      ).cc.marketplaces.list()).then(rows => rows.map(row => row.name)), { timeout: 20_000 }).toEqual(['zana-community']);
+      const market = new MarketplacePage(handle.window);
+      await market.open();
+      await handle.window.getByRole('textbox', { name: 'Search plugins' }).fill('Cloud Machines');
+      await expect(market.row('Cloud Machines')).toBeVisible({ timeout: 20_000 });
+      await market.openCatalogSources();
+      await expect(market.catalogNames()).toHaveText(['Zana Community']);
+      await expect(handle.window.locator('.ext-market-item-source--official')).toHaveCount(1);
+      await handle.electron.close();
+      handle = await launch();
+      const catalogs = await handle.window.evaluate(() => (
+        window as unknown as { cc: { marketplaces: { list: () => Promise<Array<{ name: string; official: boolean; source: string }>> } } }
+      ).cc.marketplaces.list());
+      expect(catalogs).toEqual([expect.objectContaining({
+        name: 'zana-community', official: true, source: 'git:https://github.com/salesforce/zana-marketplace'
+      })]);
+    } finally {
+      await handle?.electron.close().catch(() => undefined);
+      await git.close();
+      rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  }, 90_000);
+
   test('lists seeded official catalogs in Catalog sources', async ({ home }) => {
     mkdirSync(join(home, '.zcc', 'plugins'), { recursive: true });
     writeFileSync(

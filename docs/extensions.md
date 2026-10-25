@@ -229,19 +229,27 @@ automatically at start (Official, not removable). Override or disable with
 `ZCC_OFFICIAL_MARKETPLACE_URL` (`off` / `0` skips it). See
 [`marketplace/README.md`](../marketplace/README.md).
 
-## Internal marketplace (Salesforce)
+## Community marketplace
 
-Salesforce-internal plugins are seeded automatically from git.soma at app
-start, beside the public official catalog. The catalog is Official (not
-removable). Clone requires VPN/SSO git access; if the repo is unreachable the
-seed is skipped and Browse does not show an error.
+Public community plugins are seeded automatically from
+[`salesforce/zana-marketplace`](https://github.com/salesforce/zana-marketplace)
+at app start, beside the first-party catalog. This default catalog is Official
+(not removable). Discovery runs in the background without corporate VPN/SSO;
+if the repository is unreachable, startup continues and the last good catalog
+remains available.
 
 ```bash
-zcc marketplace install <plugin-id>@internal
+zcc marketplace install <plugin-id>@zana-community
 ```
 
-Authoring and PR flow live in that repo's README. Override or disable the seed
-with `ZCC_INTERNAL_MARKETPLACE_SOURCE` (`off` / `0` skips it).
+On upgrade, the previous automatically seeded Salesforce-internal catalog is
+replaced after the public catalog has loaded successfully. Existing installed
+plugins, their settings, and manually added catalogs are preserved.
+
+Authoring and PR flow live in that repository's README. Override or disable the
+seed with `ZCC_COMMUNITY_MARKETPLACE_SOURCE` (`off` / `0` skips it).
+`ZCC_INTERNAL_MARKETPLACE_SOURCE` remains a fallback for existing deployment
+overrides; the community variable takes precedence when both are set.
 
 ## CLI
 

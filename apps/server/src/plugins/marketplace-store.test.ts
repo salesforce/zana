@@ -140,6 +140,32 @@ describe('marketplace store', () => {
     await expect(store.remove('https://example.test/official.json')).rejects.toThrow(/cannot be removed/);
   });
 
+  it('atomically replaces only specified official catalogs when a new default is added', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-mp-replace-'));
+    dirs.push(dataDir);
+    const file = marketplaceStorePath(dataDir);
+    const store = createMarketplaceStore({ file });
+    await store.add('git:https://example.test/old.git', INDEX, { official: true });
+    await store.add('git:https://example.test/manual.git', INDEX);
+    await store.add('https://example.test/other.json', INDEX, { official: true });
+    await Promise.all([
+      store.add('git:https://example.test/new.git', INDEX, {
+        official: true, replaceOfficialSources: ['git:https://example.test/old', 'git:https://example.test/manual']
+      }),
+      store.add('https://example.test/concurrent.json', INDEX)
+    ]);
+    expect(store.list().map(row => row.source)).toEqual([
+      'git:https://example.test/manual', 'https://example.test/other.json',
+      'git:https://example.test/new', 'https://example.test/concurrent.json'
+    ]);
+    expect(createMarketplaceStore({ file }).list()).toEqual(store.list());
+    await expect(store.remove('git:https://example.test/new')).rejects.toThrow(/cannot be removed/);
+    await store.add('https://example.test/untrusted.json', INDEX, {
+      replaceOfficialSources: ['https://example.test/other.json']
+    });
+    expect(store.list().some(row => row.source === 'https://example.test/other.json')).toBe(true);
+  });
+
   it('removes a user catalog', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-mp-rm-'));
     dirs.push(dataDir);
