@@ -42,7 +42,12 @@ writeFileSync(script, JSON.stringify({ match: 'Docs Squad', steps: [
 test.use({
   e2e: true,
   initialConfig: { sponsorPromptDismissed: true, teamJobLaunchEnabled: true, composerShowAutonomousTeam: true, autoRenameTabs: false, harnessOpenCodeEnabled: true },
-  launchEnv: { PATH: `${fixtureBin}${delimiter}${process.env.PATH ?? ''}`, FAKE_ACP_MODE_CONFIG: '1', FAKE_ACP_SCRIPT: script }
+  launchEnv: {
+    PATH: `${fixtureBin}${delimiter}${process.env.PATH ?? ''}`, FAKE_ACP_MODE_CONFIG: '1', FAKE_ACP_SCRIPT: script,
+    // Under xvfb the hidden E2E window is throttled to about one frame a second, and every
+    // pointer step waits for a frame, so the tour can't finish in time. Show it on Linux.
+    ...(process.platform === 'linux' ? { ZCC_E2E_VISIBLE: '1' } : {})
+  }
 });
 test.setTimeout(240_000);
 
