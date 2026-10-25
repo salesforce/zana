@@ -12160,7 +12160,7 @@ body.resizing-col .explorer-resizer::after {
   flex-direction: column;
   min-height: 0;
   min-width: 0;
-  background: var(--bg-base);
+  background: var(--bg-panel);
 }
 
 .explorer-viewer-empty {
@@ -12230,7 +12230,7 @@ body.resizing-col .explorer-resizer::after {
   height: 100%;
   overflow: auto;
   padding: 16px 28px;
-  background: var(--bg-base);
+  background: var(--bg-panel);
 }
 
 .explorer-md-preview .inbox-md {
@@ -13582,7 +13582,7 @@ body.resizing-col .explorer-resizer::after {
 .inbox-view {
   --inbox-list-min: 345px;
   grid-column: 2 / -1;
-  background: var(--bg-base);
+  background: var(--bg-panel);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -26217,7 +26217,7 @@ body.resizing-col .library-resizer::after {
   min-height: 0;
   overflow: auto;
   padding: 16px 28px;
-  background: var(--bg-base);
+  background: var(--bg-panel);
 }
 
 .library-md-editor .library-md-editor-surface,
