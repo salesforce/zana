@@ -8,7 +8,7 @@ import { retireDuplicateHostServiceLines, safeStopStandaloneDaemonLines } from '
 const run = promisify(execFile);
 describe('remote repair PID identity', () => {
   it('uses the same identity guard in the standalone installer', async () => {
-    const installer = await readFile(new URL('../../server/src/assets/install-machine.sh', import.meta.url), 'utf8');
+    const installer = (await readFile(new URL('../../server/src/assets/install-machine.sh', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
     expect(installer).toContain(safeStopStandaloneDaemonLines().join('\n'));
     expect(installer).toContain(retireDuplicateHostServiceLines().join('\n'));
     expect(installer).toContain('Environment=ZCC_HOST_SERVICE_MANAGED=1');

@@ -342,7 +342,7 @@ const FRONTEND_SLOT_PROP_FIELDS = {
 };
 
 describe('zcc-plugin-authoring skill', () => {
-  const skill = readFileSync(SKILL_PATH, 'utf8');
+  const skill = readFileSync(SKILL_PATH, 'utf8').replace(/\r\n/g, '\n');
 
   it('has frontmatter naming the skill after its directory', () => {
     expect(skill).toMatch(/^---\nname: zcc-plugin-authoring\n/);

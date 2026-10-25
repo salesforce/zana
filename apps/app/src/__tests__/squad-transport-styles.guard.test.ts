@@ -1,7 +1,7 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { readSourceText } from './helpers/source-text.js';
 
-const css = readFileSync(new URL('../styles/global.css', import.meta.url), 'utf8');
+const css = readSourceText(new URL('../styles/global.css', import.meta.url));
 
 function ruleBody(selector: string): string {
   const start = css.indexOf(selector);

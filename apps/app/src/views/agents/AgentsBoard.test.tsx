@@ -1,15 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 import type { ExecutionBoardProjection } from '@zana-ai/zcc-domain/product';
 import { mergeExecutionsPage } from './AgentsBoard';
+import { readSourceText } from '../../__tests__/helpers/source-text.js';
 
-const board = readFileSync(new URL('./AgentsBoard.tsx', import.meta.url), 'utf8');
-const view = readFileSync(new URL('./AgentsView.tsx', import.meta.url), 'utf8');
-const workspace = readFileSync(new URL('../project/ProjectModePane.tsx', import.meta.url), 'utf8');
-const app = readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8');
-const closeIdle = readFileSync(
-  new URL('../../components/CloseIdleAgentsDialog.tsx', import.meta.url),
-  'utf8'
+const board = readSourceText(new URL('./AgentsBoard.tsx', import.meta.url));
+const view = readSourceText(new URL('./AgentsView.tsx', import.meta.url));
+const workspace = readSourceText(new URL('../project/ProjectModePane.tsx', import.meta.url));
+const app = readSourceText(new URL('../../App.tsx', import.meta.url));
+const closeIdle = readSourceText(
+  new URL('../../components/CloseIdleAgentsDialog.tsx', import.meta.url)
 );
 
 describe('AgentsBoard', () => {
@@ -147,7 +146,7 @@ describe('AgentsBoard poll refresh — single-flight + guarded pagination', () =
   });
 });
 
-const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
 
 describe('AgentsBoard compact chrome contract', () => {
   it('keeps actions in a toolbar without a page title or live count', () => {
