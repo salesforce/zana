@@ -8,6 +8,8 @@
  * both OS appearances) and checks both against what the renderer then paints.
  * Electron doesn't report `additionalArguments` back, so the preload argument
  * is read from the renderer process's command line, which Linux (CI) exposes.
+ * Playwright emulates `prefers-color-scheme: light` in every window by default,
+ * so each case emulates the OS appearance it gives `nativeTheme`.
  */
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -31,13 +33,14 @@ test('new windows open on the background and data-theme of the effective theme',
 
   const appWindows = () => electron.windows().filter((w) => isAppRendererUrl(w.url()));
   /** Open the project window and return its page plus what main gave it. */
-  const openProjectWindow = async () => {
+  const openProjectWindow = async (colorScheme: 'light' | 'dark') => {
     await main.evaluate((pid) => window.cc.windows.openProject(pid), projectId);
     let page: Page | undefined;
     await expect.poll(() => {
       page = appWindows().find((w) => w !== main);
       return !!page;
     }, { timeout: 20_000 }).toBe(true);
+    await page!.emulateMedia({ colorScheme });
     await page!.waitForSelector('.titlebar', { timeout: 30_000 });
     // The project window is the newest BrowserWindow.
     const created = await electron.evaluate(({ BrowserWindow }) => {
@@ -61,11 +64,15 @@ test('new windows open on the background and data-theme of the effective theme',
       { theme: 'system', appearance: 'dark', expected: 'dark' }
     ] as const;
     for (const { theme, appearance, expected } of cases) {
+      // `themeSource` sets main's `shouldUseDarkColors`, but under Playwright the
+      // renderer's prefers-color-scheme stays light, so emulate the same appearance.
+      const colorScheme = appearance === 'dark' ? 'dark' : 'light';
       await electron.evaluate(({ nativeTheme }, value) => { nativeTheme.themeSource = value; }, appearance);
+      await main.emulateMedia({ colorScheme });
       await main.evaluate((value) => window.cc.config.set({ theme: value }), theme);
       await expect(main.locator('html')).toHaveAttribute('data-theme', expected);
 
-      const { page, created } = await openProjectWindow();
+      const { page, created } = await openProjectWindow(colorScheme);
       await expect(page.locator('html')).toHaveAttribute('data-theme', expected);
       const painted = hex(await page.locator('body').evaluate((body) => getComputedStyle(body).backgroundColor));
       const label = `theme=${theme} OS=${appearance}`;
