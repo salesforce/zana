@@ -1,3 +1,4 @@
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 import { test, expect, launchApp } from './fixtures/app.js';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -51,7 +52,7 @@ test('header switching, remote isolation, offline return and Dock return keep lo
       });
     }, rows);
     await summary.click();
-    await app.window.screenshot({ path: testInfo.outputPath('local-header-switcher.png') });
+    await captureElectronScreenshot(app.electron, app.window, testInfo.outputPath('local-header-switcher.png'));
     await app.window.getByRole('button', { name: 'Open another Zana…', exact: true }).click();
     await app.window.getByRole('region', { name: 'Zana instances' }).getByRole('listitem').filter({ hasText: 'Studio Mac' }).getByRole('button', { name: 'Open Zana' }).click();
     const studio = await sharedInstancePage(app, rows[0]!.browserUrl); await expect(studio.getByRole('heading', { name: 'Studio Mac' })).toBeVisible();

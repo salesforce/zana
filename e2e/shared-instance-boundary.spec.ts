@@ -1,3 +1,4 @@
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 import { test, expect, launchApp } from './fixtures/app.js';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -52,7 +53,7 @@ test('shared sign-in opens the system browser without a popup and refreshes inst
     await app.window.getByRole('option').filter({ hasText: 'Open another Zana' }).click();
     await expect(app.window.getByRole('dialog', { name: 'Open another Zana', exact: true })).toBeVisible();
     await expect(app.window.getByRole('region', { name: 'Zana instances' }).getByText('Browser signed-in instance')).toBeVisible();
-    await app.window.screenshot({ path: testInfo.outputPath('open-another-zana-from-settings.png') });
+    await captureElectronScreenshot(app.electron, app.window, testInfo.outputPath('open-another-zana-from-settings.png'));
     await app.window.evaluate(() => window.cc.sharedClient.signOut());
     expect(await app.electron.evaluate(({ session }) => session.fromPartition('persist:zcc-shared-account').cookies.get({ name: 'zcc_session' }))).toEqual([]);
   } finally { await app.electron.close(); }

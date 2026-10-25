@@ -1,3 +1,4 @@
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 import { test, expect } from './fixtures/app.js';
 
 // A previously configured TestFlight link must not create a second setup path.
@@ -18,7 +19,7 @@ test('old Mobile links lead to one Remote access setup', async ({ app }, testInf
   await expect(win.getByRole('button', { name: 'Show pairing QR', exact: true })).toHaveCount(0);
   const panel = win.locator('.settings-panel--preferences');
   await expect(panel.getByText(/TestFlight|Coming soon|USB|Waiting for Zana to open/)).toHaveCount(0);
-  await win.screenshot({ path: testInfo.outputPath('remote-access-unified-setup.png') });
+  await captureElectronScreenshot(app.electron, win, testInfo.outputPath('remote-access-unified-setup.png'));
   await win.getByText('Have a connect code?', { exact: true }).click();
   await expect(win.getByRole('link', { name: 'Get a connect code' })).toBeVisible();
   await expect(win.getByRole('textbox', { name: 'Connect code', exact: true })).toBeVisible();
