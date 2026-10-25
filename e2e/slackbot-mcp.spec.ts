@@ -1,6 +1,6 @@
 import { preparePluginRuntime } from '../packages/plugin-build/src/prepare-plugin-runtime.js';
 import { fileURLToPath } from 'node:url';
-import { test, expect, launchApp } from './fixtures/app.js';
+import { test, expect, launchApp, closeApp } from './fixtures/app.js';
 import { createServer, request } from 'node:https';
 import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, appendFileSync, mkdirSync, readFileSync, writeFileSync, renameSync, symlinkSync, chmodSync } from 'node:fs';
@@ -13,6 +13,7 @@ import { createRegistry } from '../website/connect/registry.mjs';
 import { createConnectGateway } from '../website/connect/gateway.mjs';
 import { createSlackService } from '../website/slack/service.mjs';
 import { phonePortEnv } from './fixtures/phone-port.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
 // Exercise the bundled source by default; allow an explicit development override.
 const source = process.env.ZCC_SLACK_BRIDGE_DIR ?? fileURLToPath(new URL('../plugins/slack-bridge-2ff2', import.meta.url));
@@ -162,7 +163,11 @@ test('Slackbot selective imports and plugin capabilities work through the real C
     const activityBegin = join(home, 'emoji-thinking.flag');
     const activityAdvance = join(home, 'emoji-working.flag');
     mkdirSync(activityBin);
-    const fakeAgent = readFileSync(resolve('plugins/provider-acp/src/bridge/fake-acp-agent.mjs'), 'utf8');
+    // Fixture commands apply to the user request. Plugin instructions may say
+    // 'changing', which would accidentally trigger the fake agent's 'hang' branch.
+    const fakeAgent = readFileSync(resolve('plugins/provider-acp/src/bridge/fake-acp-agent.mjs'), 'utf8')
+      .replace('const text = promptText(message.params?.prompt);',
+        'const text = promptText(message.params?.prompt).split("</system_instructions>").at(-1);');
     const hangBranch = '  } else if (text.includes("hang")) {';
     expect(fakeAgent).toContain(hangBranch);
     writeFileSync(activityAgent, fakeAgent.replace(hangBranch, `  } else if (text.includes("slack-emoji-phase")) {
@@ -261,6 +266,7 @@ ${hangBranch}`));
     // The renderer exposes the actual import controls and plugin enablement gate.
     await win.evaluate(() => { history.pushState({}, '', '/extensions/plugins/slack-bridge-2ff2?view=installed'); dispatchEvent(new PopStateEvent('popstate')); });
     await expect(win.getByRole('heading', { name: /^Zana for Slack$/i, level: 3 })).toBeVisible();
+    await win.getByRole('complementary', { name: 'Installed plugin' }).getByRole('tab', { name: 'Settings', exact: true }).click();
     await expect(win.getByRole('heading', { name: 'Connected Projects', exact: true })).toBeVisible();
     await win.getByLabel('Default Project for mentions', {exact:true}).selectOption(projectId);
     await expect.poll(async () => (await rpc('snapshot')).config.mentionDefaultProjectId).toBe(projectId);
@@ -543,7 +549,7 @@ ${hangBranch}`));
         await browserPage.goto(preview.href);
         await expect(browserPage.locator('body')).toContainText('Reply with Slackbot');
         await expect(browserPage.getByRole('button', { name: 'Report', exact: true })).toBeVisible();
-        await browserPage.screenshot({ path: testInfo.outputPath('slack-task-summary.png'), fullPage: true });
+        await captureElectronScreenshot(app!.electron, browserPage, testInfo.outputPath('slack-task-summary.png'));
         await browserPage.getByRole('button', { name: 'Report', exact: true }).click();
         await expect(browserPage.locator('#result h2')).toHaveText('Release review');
         await browserPage.getByRole('button', { name: 'Sort by Duration (ms)' }).click();
@@ -553,7 +559,7 @@ ${hangBranch}`));
         await expect(browserPage.locator('.result-lane')).toHaveCount(3);
         await expect(browserPage.locator('#result img')).toHaveCount(0);
         await expect(browserPage.locator('#result code').first()).toContainText('</script><img');
-        await browserPage.screenshot({ path: testInfo.outputPath('slack-rich-result-panel.png'), fullPage: true });
+        await captureElectronScreenshot(app!.electron, browserPage, testInfo.outputPath('slack-rich-result-panel.png'));
         // Slack's default side panel is just above the old 540px breakpoint.
         // Its task lanes must stack before text becomes a few words per line.
         await browserPage.setViewportSize({ width: 551, height: 800 });
@@ -564,10 +570,10 @@ ${hangBranch}`));
         expect(laneRects[1].left).toBe(laneRects[0].left);
         expect(laneRects[1].top).toBeGreaterThan(laneRects[0].bottom);
         expect(laneRects[2].top).toBeGreaterThan(laneRects[1].bottom);
-        await browserPage.screenshot({ path: testInfo.outputPath('slack-rich-result-default-panel.png'), fullPage: true });
+        await captureElectronScreenshot(app!.electron, browserPage, testInfo.outputPath('slack-rich-result-default-panel.png'));
         await browserPage.setViewportSize({ width: 360, height: 800 });
         expect(await browserPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-        await browserPage.screenshot({ path: testInfo.outputPath('slack-rich-result-narrow.png'), fullPage: true });
+        await captureElectronScreenshot(app!.electron, browserPage, testInfo.outputPath('slack-rich-result-narrow.png'));
         expect(panelErrors).toEqual([]);
         const before = accountReads;
         maliciousPanel = true;
@@ -594,7 +600,7 @@ ${hangBranch}`));
         await expect(browserPage.locator('#result-nav')).toBeHidden();
         await expect(browserPage.locator('#connection')).toContainText('Access expired');
         await expect(browserPage.locator('.state')).toHaveCSS('color', 'rgb(81, 104, 120)');
-        await browserPage.screenshot({ path: testInfo.outputPath('slack-task-expired.png'), fullPage: true });
+        await captureElectronScreenshot(app!.electron, browserPage, testInfo.outputPath('slack-task-expired.png'));
       } finally {
         maliciousPanel = false;
         await app!.electron.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id)?.destroy(), previewWindowId);
@@ -721,6 +727,7 @@ ${hangBranch}`));
       await expect(win.getByTestId('thread-timeline')).toContainText(args.task, { timeout: 15_000 });
     });
   } finally {
-    await app?.electron.close(); await slack.close(); await gateway.close(); edge.closeAllConnections(); await new Promise<void>(resolve => edge.close(() => resolve())); await db.close();
+    if (app) await closeApp(app.electron);
+    await slack.close(); await gateway.close(); edge.closeAllConnections(); await new Promise<void>(resolve => edge.close(() => resolve())); await db.close();
   }
 });

@@ -138,7 +138,7 @@ describe('Settings subsection navigation', () => {
     expect(panel).toContain("tab === 'browser'");
   });
 
-  it('groups Machines, Connectivity, and Phone under Remote', () => {
+  it('groups remote computers and access without a duplicate Mobile destination', () => {
     expect(SETTINGS_GROUPS.map((group) => group.id)).toEqual([
       'config',
       'remote',
@@ -152,9 +152,9 @@ describe('Settings subsection navigation', () => {
     const phone = SETTINGS_SECTIONS.find((section) => section.id === 'phone');
     expect(machines?.group).toBe('remote');
     expect(connectivity?.group).toBe('remote');
-    expect(phone?.group).toBe('remote');
+    expect(phone).toBeUndefined();
     const remoteIds = SETTINGS_SECTIONS.filter((section) => section.group === 'remote').map((section) => section.id);
-    expect(remoteIds).toEqual(['machines', 'connectivity', 'phone', 'peers', 'remote-access']);
+    expect(remoteIds).toEqual(['machines', 'connectivity', 'peers', 'remote-access']);
     expect(SETTINGS_SUBSECTIONS.connectivity).toEqual([
       { id: 'connectivity-remote', label: 'Remote SSH' }
     ]);

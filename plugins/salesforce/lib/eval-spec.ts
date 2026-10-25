@@ -3,7 +3,7 @@
  * spec format (one test case per scenario case); JSON or YAML specs import
  * back as scenario cases. Pure: no node imports, so the server and tests share it.
  */
-import type { ScenarioCase } from './studio-contract.js';
+import type { ConversationMessage, ScenarioCase } from './studio-contract.js';
 
 export const EVAL_SPEC_LIMITS = { bytes: 256_000, cases: 50 } as const;
 /** First line of a spec the Studio wrote. Only such files are overwritten. */
@@ -27,11 +27,12 @@ function outcomeText(expect: ScenarioCase['expect']): string {
 }
 
 /**
- * The `sf agent test` YAML for a suite. A test case holds one utterance, so a
- * multi-turn case exports its opening turn; `multiTurn` names those cases.
+ * Org evals replay a final utterance with recorded history. Earlier agent replies
+ * are fixed context; only Simulate reruns every response in the conversation.
  */
-export function suiteToEvalSpec(cases: readonly ScenarioCase[], meta: { apiName: string; name: string; from: string }): { text: string; multiTurn: string[] } {
+export function suiteToEvalSpec(cases: readonly ScenarioCase[], meta: { apiName: string; name: string; from: string }, replay: Record<string, ConversationMessage[]> = {}): { text: string; multiTurn: string[] } {
   if (cases.some(c => c.contextVariables?.length)) throw new EvalSpecError('This suite uses preview context overrides. Run it with Simulate; exporting to an org evaluation spec would lose those values.');
+  if (cases.some(c => c.expect.maxLatencyMs !== undefined || c.expect.actionChecks?.length || c.expect.forbiddenActions?.length || c.expect.stateChecks?.length)) throw new EvalSpecError('Latency and action-field assertions, forbidden actions and final-state checks currently run in Simulate. Org export would lose those checks.');
   const lines = [
     `${GENERATED_SPEC_MARKER} from ${meta.from}. Edits here are overwritten: change the scenario suite instead.`,
     `name: ${quote(meta.name)}`,
@@ -41,8 +42,19 @@ export function suiteToEvalSpec(cases: readonly ScenarioCase[], meta: { apiName:
   ];
   const multiTurn: string[] = [];
   for (const c of cases) {
-    if (c.utterances.length > 1) multiTurn.push(c.id);
-    lines.push(`  - utterance: ${quote(c.utterances[0] ?? '')}`);
+    if (c.utterances.length > 1) {
+      const history = replay[c.id];
+      if (!history || history.length !== (c.utterances.length - 1) * 2 || history.some((t, i) => t.role !== (i % 2 ? 'agent' : 'user') || !t.message || (t.role === 'agent' && !t.topic) || (t.role === 'user' && t.message !== c.utterances[i / 2]))) throw new EvalSpecError(`Run "${c.name}" in Simulate on the saved source first. Complete conversation history and topic evidence are required for a final-turn org replay.`);
+      multiTurn.push(c.id);
+    }
+    lines.push(`  - utterance: ${quote(c.utterances.at(-1) ?? '')}`);
+    if (c.utterances.length > 1) {
+      lines.push('    conversationHistory:');
+      for (const t of replay[c.id]!) {
+        lines.push(`      - role: ${t.role}`, `        message: ${quote(t.message)}`);
+        if (t.role === 'agent') lines.push(`        topic: ${quote(t.topic!)}`);
+      }
+    }
     if (c.expect.topic) lines.push(`    expectedTopic: ${quote(c.expect.topic)}`);
     if (c.expect.actions?.length) {
       lines.push('    expectedActions:');
@@ -51,7 +63,9 @@ export function suiteToEvalSpec(cases: readonly ScenarioCase[], meta: { apiName:
     const outcome = outcomeText(c.expect);
     if (outcome) lines.push(`    expectedOutcome: ${quote(outcome)}`);
   }
-  return { text: `${lines.join('\n')}\n`, multiTurn };
+  const text = `${lines.join('\n')}\n`;
+  if (new TextEncoder().encode(text).length > EVAL_SPEC_LIMITS.bytes) throw new EvalSpecError('The generated eval spec exceeds 256 KB. Split this suite before exporting.');
+  return { text, multiTurn };
 }
 
 // ---- A small YAML reader: block mappings and lists, plain/quoted scalars, flow lists, | and > blocks ----

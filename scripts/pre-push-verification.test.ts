@@ -316,8 +316,12 @@ it('resolves Windows pnpm to its exe or to the script its cmd shim runs, in PATH
     const npm = pnpmDirectory(root, 'npm', { 'pnpm.cmd': NPM_SHIM });
     const exe = pnpmDirectory(root, 'exe', { 'pnpm.exe': '' });
     const legacy = pnpmDirectory(root, 'legacy', { 'pnpm.cmd': '@"%~dp0\\node_modules\\pnpm\\bin\\pnpm.cjs" %*\r\n' });
+    // Real Corepack shim captured on Windows from `corepack enable` (%~dp0\node_modules\corepack\dist\pnpm.js):
+    const corepackShim = '@SETLOCAL\r\n@IF EXIST "%~dp0\\node.exe" (\r\n  "%~dp0\\node.exe"  "%~dp0\\node_modules\\corepack\\dist\\pnpm.js" %*\r\n) ELSE (\r\n  @SET PATHEXT=%PATHEXT:;.JS;=;%\r\n  node  "%~dp0\\node_modules\\corepack\\dist\\pnpm.js" %*\r\n)\r\n';
+    const corepack = pnpmDirectory(root, 'corepack', { 'pnpm.cmd': corepackShim });
     const unknown = pnpmDirectory(root, 'unknown', { 'pnpm.cmd': '@pnpm-launcher.exe %*\r\n' });
     expect(windowsPnpm(`${empty};"${npm}";${exe}`)).toEqual([process.execPath, join(npm, 'node_modules', 'pnpm', 'bin', 'pnpm.mjs')]);
+    expect(windowsPnpm(corepack)).toEqual([process.execPath, join(corepack, 'node_modules', 'corepack', 'dist', 'pnpm.js')]);
     expect(windowsPnpm(`${exe};${npm}`)).toEqual([join(exe, 'pnpm.exe')]);
     expect(windowsPnpm(`;${legacy}`)).toEqual([process.execPath, join(legacy, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')]);
     expect(windowsPnpm(unknown)).toEqual(['pnpm']);

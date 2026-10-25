@@ -1,6 +1,6 @@
 import { product } from '../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { ChevronRight, FileText, Folder, Globe, Slash, CornerDownLeft, Star } from 'lucide-react';
+import { ChevronRight, Folder, Globe, Slash, CornerDownLeft, Star } from 'lucide-react';
 import { useData, useScheduler, usePersonas, useUi, useFavoriteAgents, visibleTerminals } from '../store.js';
 import type { LaunchProfileId, WalkedFile, SlashCommand, SshHostEntry, Project, Persona } from '@zana-ai/zcc-domain/product';
 import { fuzzyMatchPaths, fuzzyScore } from '../lib/fuzzy.js';
@@ -27,6 +27,7 @@ import { PaletteFrame, paletteOptionProps } from './palette/PaletteFrame.js';
 import { favoritePaletteKeys } from './palette/favoriteItems.js';
 import { paneCommandsAvailable } from '../lib/split-layout/paneCommands.js';
 import { platformShortcut } from '../lib/platformShortcut.js';
+import { FileIcon } from './FileIcon.js';
 
 interface Props {
   onClose: () => void;
@@ -617,7 +618,7 @@ function renderFileRows(
       onMouseEnter={() => setActiveIdx(i)}
       onClick={() => chooseFile(r.file)}
     >
-      <span className="palette-icon"><FileText size={14} /></span>
+      <span className="palette-icon"><FileIcon name={r.file.rel} size={14} /></span>
       <span className="palette-label">{highlightMatches(r.file.rel, r.matchIdx)}</span>
     </button>
   ));

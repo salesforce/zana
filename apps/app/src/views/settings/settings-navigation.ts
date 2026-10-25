@@ -11,7 +11,6 @@ import {
   SquareArrowOutUpRight,
   Laptop,
   Network,
-  Smartphone,
   Inbox,
   Keyboard,
   PenLine,
@@ -65,9 +64,8 @@ export const SETTINGS_SECTIONS: Array<{
   { id: 'harness', label: 'AI Harness', icon: Bot, desc: 'Manage coding agents, model availability, and session defaults.', group: 'config' },
   { id: 'editor', label: 'Editor', icon: SquareArrowOutUpRight, desc: 'Open-in-editor & terminal buttons', group: 'config' },
   { id: 'prompts', label: 'Prompts', icon: Sparkles, desc: 'LLM micro-call prompts', group: 'config' },
-  { id: 'machines', label: 'Machines', icon: Laptop, desc: 'Pair remote host daemons', group: 'remote' },
+  { id: 'machines', label: 'Machines', icon: Laptop, desc: 'Computers that run projects and agents for this Zana', group: 'remote' },
   { id: 'connectivity', label: 'Connectivity', icon: Network, desc: 'Unpaired SSH fallback', group: 'remote' },
-  { id: 'phone', label: 'Mobile', icon: Smartphone, desc: 'Use Zana from your mobile browser', group: 'remote' },
   { id: 'peers', label: 'Peers', icon: Link2, desc: 'Peers are linked computers that can be used by Plugins to communicate between the computers. They are different from Machines which describe Computers where Agents can be run. Connections will not be used until a Plugin is configured to use the Connection.', group: 'remote' },
   { id: 'remote-access', label: 'Remote access', icon: Globe, desc: 'Open this computer from any browser', group: 'remote' },
   { id: 'agents', label: 'Agents', icon: Bot, desc: 'Attention, automation, heartbeat & Overseer', group: 'agents' },
@@ -158,7 +156,6 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
     { id: 'connectivity-remote', label: 'Remote SSH' }
   ],
   phone: [
-    { id: 'phone', label: 'Mobile' }
   ],
   peers: [
     { id: 'peers', label: 'Peer links' }

@@ -35,6 +35,7 @@ test('Slack is pre-installed and its compiled Configuration works without a sour
   await win.getByTestId('nav-extensions').click();
   await win.getByTestId('extensions-nav-installed').click();
   await win.getByTestId(`plugin-row-${id}`).getByRole('button', { name: 'Zana for Slack plugin details' }).click();
+  await win.getByRole('complementary', { name: 'Installed plugin' }).getByRole('tab', { name: 'Settings', exact: true }).click();
   await expect(win.getByRole('heading', { name: 'Configuration', exact: true })).toBeVisible();
   await expect(win.getByRole('heading', { name: 'Connect your Slack account' })).toBeVisible();
   await expect(win.getByLabel('Activation code', { exact: true })).toBeVisible();

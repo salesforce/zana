@@ -602,7 +602,7 @@ describe('registerAgentScriptDocuments', () => {
   });
   it('maps filesystem refusals to failures and tolerates junk args', async () => {
     const h = setup();
-    expect(await h.call(AGENT_DOC_RPC.open, { path: 'missing.agent' })).toMatchObject({ ok: false, code: 'path_refused' });
+    expect(await h.call(AGENT_DOC_RPC.open, { path: 'missing.agent' })).toMatchObject({ ok: false, code: 'not_found' });
     expect(await h.call(AGENT_DOC_RPC.open, null)).toMatchObject({ ok: false, code: 'invalid_input' });
     const noRoot = setup({ root: '' });
     expect(await noRoot.call(AGENT_DOC_RPC.open, { path: PATH })).toMatchObject({ ok: false });

@@ -70,30 +70,45 @@ export function compactError(status: number, json: unknown, text: string): strin
   return snippet || `Salesforce API error (${status})`;
 }
 
-export function listFilesRecursive(
+const SCAN_SKIP = new Set(['node_modules', '.git', '.sf', '.sfdx', '.pnpm-store', '.cache', '.next', 'coverage', 'out', 'out-dev', 'dist']);
+const sourceRank = (name: string) => /^(force-app|agentforce-drafts|src|main|default|aiAuthoringBundles)$/.test(name) ? 0 : name.startsWith('.') ? 2 : 1;
+
+/** Strictly bounded traversal, with relevant source before generated trees. Symlink cycles are visited once. */
+export function scanFilesRecursive(
   root: string,
   deps: Pick<SalesforceDeps, 'stat' | 'readdir' | 'realpath'>,
-  max = 4000
-): string[] {
+  max = 4000,
+  matches: (path: string) => boolean = () => true
+): { files: string[]; truncated: boolean } {
   const out: string[] = [];
+  const visited = new Set<string>();
+  let examined = 0;
+  let truncated = false;
   const walk = (dir: string) => {
-    if (out.length >= max) return;
+    if (visited.has(dir)) return;
+    if (visited.size >= 1000 || examined >= 20_000 || out.length >= max) { truncated = true; return; }
+    visited.add(dir);
     let entries: string[] = [];
     try {
-      entries = deps.readdir(dir);
+      entries = deps.readdir(dir).filter(name => !SCAN_SKIP.has(name)).sort((a, b) => sourceRank(a) - sourceRank(b) || a.localeCompare(b));
     } catch {
       return;
     }
     for (const name of entries) {
-      if (name === 'node_modules' || name === '.git' || name === '.sf' || name === '.sfdx') continue;
+      if (out.length >= max || examined >= 20_000) { truncated = true; break; }
+      examined++;
       const full = join(dir, name);
       const confined = resolveUnderRoot(root, full, deps.realpath);
       if (!confined) continue;
       const kind = deps.stat(confined);
       if (kind === 'dir') walk(confined);
-      else if (kind === 'file') out.push(confined);
+      else if (kind === 'file' && matches(confined)) out.push(confined);
     }
   };
   walk(root);
-  return out;
+  return { files: out, truncated };
+}
+
+export function listFilesRecursive(root: string, deps: Pick<SalesforceDeps, 'stat' | 'readdir' | 'realpath'>, max = 4000): string[] {
+  return scanFilesRecursive(root, deps, max).files;
 }

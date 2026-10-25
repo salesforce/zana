@@ -1,0 +1,1 @@
+Optionally, set an opening prompt, a project, worktrees, and launch approval.

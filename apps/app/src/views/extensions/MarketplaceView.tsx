@@ -45,20 +45,17 @@ import {
 } from '@/components/plugin/browse-hero/BrowseHeroCarousel';
 import { nextComposerRequestNonce } from '@/components/plugin/browse-hero/browse-hero-archetypes';
 import { CREATE_PLUGIN_PROMPT } from '@/lib/create-resource-prompts';
-import { getPluginDetailRoutePath } from '@/lib/route-paths';
+import { getPluginBrowseRoutePath, getPluginDetailRoutePath } from '@/lib/route-paths';
 import { filterMarketplaceEntries, type MarketplaceTag } from './marketplace-filter.js';
 import { catalogCountLabel, catalogErrorText, catalogKindLabel } from './marketplace-catalogs.js';
 import { reportHubInstallFailure } from './hub-install.js';
 import { useUi } from '@/store';
 import { PluginAuthorPage } from './PluginAuthorPage.js';
-import { PluginCatalogCard, PluginCatalogGrid } from './PluginCatalogCard.js';
+import { PluginCatalogGrid } from './PluginCatalogCard.js';
 import {
-  pluginBrowseShelves,
   pluginCategoryFilterId,
   pluginCategoryFilterOptions,
-  shelfPreviewEntries,
   sortPluginEntries,
-  type PluginBrowseShelf,
   type PluginBrowseSort
 } from './plugin-browse-discovery.js';
 
@@ -95,7 +92,9 @@ export function MarketplaceView({
   const [sort, setSort] = useState<PluginBrowseSort>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [categoryFilters, setCategoryFilters] = useState<string[]>([]);
-  const [expandedShelves, setExpandedShelves] = useState<Set<string>>(() => new Set());
+  const [showInstalled, setShowInstalled] = useState(false);
+  const [availability, setAvailability] = useState('all');
+  const [catalogsOpen, setCatalogsOpen] = useState(false);
   const [npmOpen, setNpmOpen] = useState(false);
   const [catalogs, setCatalogs] = useState<MarketplaceCatalogRow[] | null>(null);
   const [catalogSource, setCatalogSource] = useState('');
@@ -241,8 +240,9 @@ export function MarketplaceView({
 
   const filtered = useMemo(() => {
     if (!entries) return entries;
-    return filterMarketplaceEntries(entries, query, tag);
-  }, [entries, query, tag]);
+    return filterMarketplaceEntries(entries, query, tag).filter((entry) =>
+      availability === 'all' || entry.installed === (availability === 'installed'));
+  }, [entries, query, tag, availability]);
 
   const categoryOptions = useMemo(
     () => pluginCategoryFilterOptions(filtered ?? [], categoryFilters),
@@ -256,24 +256,22 @@ export function MarketplaceView({
     return filtered.filter((entry) => selected.has(pluginCategoryFilterId(entry)));
   }, [categoryFilters, filtered]);
 
-  const shelves = useMemo(() => pluginBrowseShelves(visibleEntries), [visibleEntries]);
-  const showGrid = query.trim().length > 0 || categoryFilters.length > 0 || sort === 'name';
   const gridEntries = useMemo(
     () => (sort === 'name' ? sortPluginEntries(visibleEntries, 'name', sortDir) : visibleEntries),
     [sort, sortDir, visibleEntries]
   );
 
   const openPlugin = (entry: MarketplaceEntry) => {
-    navigate(getPluginDetailRoutePath(entry.id));
+    navigate(getPluginDetailRoutePath(entry.id, entry.installed ? { view: 'installed' } : undefined));
   };
   const openAuthor = (author: string) => {
-    setSearchParams({ author });
+    navigate(`${getPluginBrowseRoutePath()}?author=${encodeURIComponent(author)}`);
   };
   const startCreate = () => {
     setPrompt(CREATE_PLUGIN_PROMPT);
     setComposing(true);
     setHeroRequest({ nonce: nextComposerRequestNonce(), seed: CREATE_PLUGIN_PROMPT });
-    setSearchParams({ view: 'create' });
+    navigate(`${getPluginBrowseRoutePath()}?view=create`);
   };
   const backToBrowse = () => {
     setComposing(false);
@@ -333,9 +331,9 @@ export function MarketplaceView({
 
   const createSplit = (
     <div className="ext-install-menu-wrap ext-install-split" ref={installMenuRef}>
-      <button type="button" className="settings-btn primary" onClick={startCreate}>
+      <button type="button" className="settings-btn primary" onClick={() => setInstallMenuOpen((v) => !v)} aria-expanded={installMenuOpen} aria-haspopup="menu">
         <Plus size={14} />
-        Create a plugin
+        Add plugin
       </button>
       <button
         type="button"
@@ -350,6 +348,7 @@ export function MarketplaceView({
       </button>
       {installMenuOpen && (
         <div className="ext-install-menu" role="menu" aria-label="Install from">
+          <button type="button" role="menuitem" className="ext-install-menu-item" onClick={() => { setInstallMenuOpen(false); startCreate(); }}><Plus size={14} />Create a plugin</button>
           <button
             type="button"
             role="menuitem"
@@ -413,71 +412,11 @@ export function MarketplaceView({
     </div>
   );
 
-  if (!hasDesktopBridge()) return <section className="settings-section ext-market" data-testid="desktop-plugin-install-notice">
-    <h3>Install plugins on the owner’s desktop</h3>
-    <p>Open Zana on the computer that owns this instance to install plugins. Supported installed plugins are shared with all connected clients.</p>
-  </section>;
+  const catalogsDialog = (
+    catalogsOpen ? <Modal title="Manage marketplaces" onClose={() => setCatalogsOpen(false)}>
+            <div className="ext-market-catalogs" data-testid="marketplace-catalogs">
 
-  if (authorKeyParam) {
-    return (
-      <section className="settings-section ext-market">
-        <div className="ext-market-scroller">
-          <PluginAuthorPage
-            authorKey={authorKeyParam}
-            entries={entries ?? []}
-            busy={busy}
-            errors={rowError}
-            onBack={backToBrowse}
-            onOpen={openPlugin}
-            onInstall={(entry) => setPendingConfirm(entry)}
-          />
-        </div>
-        {installMenus}
-        {confirmDialog}
-      </section>
-    );
-  }
-
-  return (
-    <section className="settings-section ext-market">
-      <div className="ext-market-toolbar">
-        <div className="settings-btn-row ext-market-toolbar-actions">
-          {createSplit}
-          {toolbarExtra}
-        </div>
-      </div>
-
-      <div className="ext-market-scroller">
-        <BrowseHeroCarousel
-          composing={composing}
-          prompt={prompt}
-          onPromptChange={setPrompt}
-          onComposingChange={onComposingChange}
-          openRequest={heroRequest}
-        />
-
-        {composing ? (
-          <>
-            <button type="button" className="settings-btn ext-browse-back-create" onClick={backToBrowse}>
-              Back to Browse
-            </button>
-            <BrowseArchetypeCards
-              onSelect={(next) => {
-                setPrompt(next);
-                setHeroRequest({ nonce: nextComposerRequestNonce(), seed: next });
-              }}
-            />
-          </>
-        ) : (
-          <>
-            <details className="ext-market-catalogs" data-testid="marketplace-catalogs">
-              <summary className="ext-market-catalogs-title">Catalog sources</summary>
-              <p className="settings-help">
-                Official plugins install offline from the app. Community catalogs are provenance-only —
-                refresh never runs plugin code. Add a manifest URL, a bare HTTPS repository URL,{' '}
-                <code>git:&lt;url&gt;[@ref]</code>, <code>git@host:owner/repository.git</code>, or{' '}
-                <code>path:&lt;dir&gt;</code>.
-              </p>
+              <p className="settings-help">Add a marketplace to discover more plugins. Refresh a source to check for new entries.</p>
               <div className="ext-market-catalogs-add">
                 <input
                   type="text"
@@ -553,7 +492,68 @@ export function MarketplaceView({
                   })}
                 </ul>
               )}
-            </details>
+            </div>
+            </Modal> : null
+  );
+
+  if (!hasDesktopBridge()) return <section className="settings-section ext-market" data-testid="desktop-plugin-install-notice">
+    <h3>Install plugins on the owner’s desktop</h3>
+    <p>Open Zana on the computer that owns this instance to install plugins. Supported installed plugins are shared with all connected clients.</p>
+  </section>;
+
+  if (authorKeyParam) {
+    return (
+      <section className="settings-section ext-market">
+        <div className="ext-market-scroller">
+          <PluginAuthorPage
+            authorKey={authorKeyParam}
+            entries={entries ?? []}
+            busy={busy}
+            errors={rowError}
+            onBack={backToBrowse}
+            onOpen={openPlugin}
+            onInstall={(entry) => setPendingConfirm(entry)}
+          />
+        </div>
+        {installMenus}
+        {confirmDialog}
+      </section>
+    );
+  }
+
+  return (
+    <section className="settings-section ext-market">
+      <div className="ext-market-toolbar">
+        <div className="settings-btn-row ext-market-toolbar-actions">
+          {createSplit}
+          <button type="button" className="settings-btn" onClick={() => setCatalogsOpen(true)}>Catalog sources</button>
+          {toolbarExtra}
+        </div>
+      </div>
+
+      <div className="ext-market-scroller">
+        {composing ? <BrowseHeroCarousel
+          composing={composing}
+          prompt={prompt}
+          onPromptChange={setPrompt}
+          onComposingChange={onComposingChange}
+          openRequest={heroRequest}
+        /> : null}
+
+        {composing ? (
+          <>
+            <button type="button" className="settings-btn ext-browse-back-create" onClick={backToBrowse}>
+              Back to Browse
+            </button>
+            <BrowseArchetypeCards
+              onSelect={(next) => {
+                setPrompt(next);
+                setHeroRequest({ nonce: nextComposerRequestNonce(), seed: next });
+              }}
+            />
+          </>
+        ) : (
+          <>
 
             {hasCatalog && (
               <div className="ext-browse-controls">
@@ -582,33 +582,12 @@ export function MarketplaceView({
                   </button>
                 </div>
                 <div className="settings-btn-row">
-                  <label className="ext-browse-category-select">
-                    <span className="sr-only">Filter by category</span>
-                    <select
-                      value={categoryFilters[0] ?? ''}
-                      aria-label="All categories"
-                      onChange={(event) => {
-                        const value = event.target.value;
-                        setCategoryFilters(value ? [value] : []);
-                      }}
-                    >
-                      <option value="">All categories</option>
-                      {categoryOptions
-                        .filter((option) => option.id !== 'all')
-                        .map((option) => (
-                          <option key={option.id} value={option.id}>
-                            {option.label}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    className={`settings-btn${sort === null ? ' is-active' : ''}`}
-                    onClick={() => setSort(null)}
-                  >
-                    Featured
-                  </button>
+                  <select className="ext-installed-publisher-filter" aria-label="Filter by marketplace" value={tag} onChange={(e) => setTag(e.target.value as MarketplaceTag | 'all')}>
+                    {MARKET_FILTERS.filter((filter) => filter.id !== 'update').map((filter) => <option key={filter.id} value={filter.id}>{filter.id === 'all' ? 'All marketplaces' : filter.label}</option>)}
+                  </select>
+                  <select className="ext-installed-publisher-filter" aria-label="Filter by availability" value={availability} onChange={(e) => setAvailability(e.target.value)}>
+                    <option value="all">All plugins</option><option value="available">Not installed</option><option value="installed">Installed</option>
+                  </select>
                   <button
                     type="button"
                     className={`settings-btn${sort === 'name' ? ' is-active' : ''}`}
@@ -629,17 +608,11 @@ export function MarketplaceView({
             )}
 
             {hasCatalog && (
-              <div className="ext-market-tags" role="group" aria-label="Filter by tag">
-                {MARKET_FILTERS.map((filter) => (
-                  <button
-                    key={filter.id}
-                    type="button"
-                    className={`ext-market-tag ${tag === filter.id ? 'is-active' : ''}`}
-                    onClick={() => setTag(filter.id)}
-                  >
-                    {filter.label}
-                  </button>
-                ))}
+              <div className="ext-market-tags" role="group" aria-label="Filter by category">
+                <button type="button" className={`ext-market-tag${categoryFilters.length === 0 ? ' is-active' : ''}`} aria-pressed={categoryFilters.length === 0} onClick={() => setCategoryFilters([])}>All categories</button>
+                {categoryOptions.filter((option) => option.id !== 'all').map((option) => <button key={option.id} type="button"
+                  className={`ext-market-tag${categoryFilters.includes(option.id) ? ' is-active' : ''}`} aria-pressed={categoryFilters.includes(option.id)}
+                  onClick={() => setCategoryFilters([option.id])}>{option.label}</button>)}
               </div>
             )}
 
@@ -659,95 +632,27 @@ export function MarketplaceView({
                   ? `No plugins match “${query.trim()}”.`
                   : 'No plugins match these filters.'}
               </p>
-            ) : showGrid ? (
-              <PluginCatalogGrid
-                entries={gridEntries}
-                showCategory
-                busy={busy}
-                errors={rowError}
-                onOpen={openPlugin}
-                onInstall={(entry) => setPendingConfirm(entry)}
-                onOpenAuthor={openAuthor}
-              />
-            ) : (
-              <div className="ext-browse-shelves" data-testid="plugin-browse-shelves">
-                {shelves.map((shelf) => (
-                  <BrowseShelf
-                    key={shelf.key}
-                    shelf={shelf}
-                    expanded={expandedShelves.has(shelf.key)}
-                    busy={busy}
-                    errors={rowError}
-                    onExpand={() =>
-                      setExpandedShelves((current) => new Set(current).add(shelf.key))
-                    }
-                    onOpen={openPlugin}
-                    onInstall={(entry) => setPendingConfirm(entry)}
-                    onOpenAuthor={openAuthor}
-                  />
-                ))}
-              </div>
-            )}
+            ) : <>
+              {[
+                { key: 'available', title: 'Available to install', rows: gridEntries.filter((entry) => !entry.installed) },
+                { key: 'installed', title: 'Already in your app', rows: gridEntries.filter((entry) => entry.installed) }
+              ].filter((group) => group.rows.length > 0).map((group) => <section key={group.key} aria-label={group.title}>
+                <header className="ext-browse-collection-heading"><h3>{group.title}<span>{group.rows.length}</span></h3>
+                  {group.key === 'installed' && group.rows.length > 6 ? <button type="button" className="settings-btn" onClick={() => setShowInstalled(!showInstalled)}>
+                    {showInstalled ? 'Show fewer' : `Show all ${group.rows.length}`}</button> : null}
+                </header>
+                <PluginCatalogGrid entries={group.key === 'installed' && !showInstalled && !query.trim() ? group.rows.slice(0, 6) : group.rows}
+                  showCategory busy={busy} errors={rowError} onOpen={openPlugin}
+                  onInstall={(entry) => setPendingConfirm(entry)} onOpenAuthor={openAuthor} />
+              </section>)}
+            </>}
+
           </>
         )}
       </div>
       {installMenus}
       {confirmDialog}
-    </section>
-  );
-}
-
-function BrowseShelf({
-  shelf,
-  expanded,
-  busy,
-  errors,
-  onExpand,
-  onOpen,
-  onInstall,
-  onOpenAuthor
-}: {
-  shelf: PluginBrowseShelf;
-  expanded: boolean;
-  busy: Record<string, string>;
-  errors: Record<string, string>;
-  onExpand: () => void;
-  onOpen: (entry: MarketplaceEntry) => void;
-  onInstall: (entry: MarketplaceEntry) => void;
-  onOpenAuthor: (author: string) => void;
-}) {
-  const visible = shelfPreviewEntries(shelf.entries, expanded);
-  return (
-    <section className="ext-browse-shelf" data-plugin-shelf>
-      <header className="ext-browse-shelf-head">
-        <span
-          className="ext-browse-shelf-dot"
-          data-category={shelf.category ?? 'uncategorized'}
-          aria-hidden="true"
-        />
-        <div>
-          <h3>{shelf.label}</h3>
-          {shelf.description ? <p className="settings-help">{shelf.description}</p> : null}
-        </div>
-        {visible.length < shelf.entries.length ? (
-          <button type="button" className="settings-btn" onClick={onExpand}>
-            See all
-          </button>
-        ) : null}
-      </header>
-      <div className="ext-browse-shelf-grid" data-plugin-shelf-grid>
-        {visible.map((entry) => (
-          <PluginCatalogCard
-            key={entry.id}
-            entry={entry}
-            busy={busy[entry.id]}
-            error={errors[entry.id]}
-            onOpen={() => onOpen(entry)}
-            onInstall={() => onInstall(entry)}
-            onOpenAuthor={onOpenAuthor}
-          />
-        ))}
-      </div>
+      {catalogsDialog}
     </section>
   );
 }

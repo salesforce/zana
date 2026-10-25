@@ -311,7 +311,8 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
     await expect(shellTitle).toHaveCount(0);
     await expect(threadHeader.getByRole('heading', { name: headerTitle, exact: true })).toBeVisible();
     await expect(threadHeader.getByTestId('thread-overflow-trigger')).toBeVisible();
-    await expect(phone.locator('.titlebar-title')).toBeVisible();
+    await expect(phone.getByTestId('titlebar-thread-tabs')).toBeVisible();
+    await expect(phone.getByRole('tablist', { name: 'Open threads' }).getByRole('tab', { selected: true })).toBeVisible();
     await expect(phone.getByTestId('thread-prompt-context')).toContainText('git: mobile-panel-theme');
     // The workspace status is host-backed and mounts for the first time on
     // desktop. Wait for the real dirty-workspace precondition before its UI.

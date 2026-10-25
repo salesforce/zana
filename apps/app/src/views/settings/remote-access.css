@@ -1,37 +1,75 @@
-.remote-access-card { display: flex; flex-direction: column; gap: 28px; padding: 8px 0 28px; }
-.remote-access-heading { display: flex; align-items: flex-start; gap: 18px; padding-bottom: 12px; }
-.remote-access-heading > svg { flex-shrink: 0; margin-top: 3px; }
-.remote-access-heading > div { flex: 1; min-width: 0; }
-.remote-access-heading > .opener-switch { flex-shrink: 0; margin-top: 8px; }
-.remote-access-card h1 { margin: 0 0 8px; font-size: 25px; font-weight: 650; letter-spacing: -.025em; }
-.remote-access-card h2 { margin: 0 0 6px; font-size: 18px; }
-.remote-access-card > .btn { align-self: flex-start; }
-.remote-access-card p { margin: 0; line-height: 1.6; }
-.remote-access-card [role='alert'] { color: var(--danger, #d33); }
-.remote-access-heading p, .remote-access-address > span, .remote-access-notice { color: var(--text-muted); }
-.remote-access-status { display: flex; align-items: center; gap: 8px; font-weight: 600; }
-.remote-access-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
-.remote-access-dot.connected, .remote-access-flash > svg { color: var(--success); }
-.remote-access-dot.connected { background: var(--success); }
-.remote-access-flash { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-elevated); }
-.remote-access-address, .remote-access-pairing { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
-.remote-access-address > code { font-size: 19px; overflow-wrap: anywhere; }
-.remote-access-address > a { align-self: flex-start; }
+.remote-access-card { display: flex; flex-direction: column; gap: 20px; padding: 8px 0 28px; max-width: 760px; margin: 0 auto; }
+.remote-access-heading { margin-bottom: 6px; }
+.remote-access-eyebrow { display: block; color: var(--text-muted); font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: .1em; margin-bottom: 9px; }
+.remote-access-card h1 { margin: 0 0 10px; font-size: 28px; font-weight: 650; letter-spacing: -.035em; }
+.remote-access-card h2 { margin: 0 0 10px; font-size: 19px; font-weight: 600; letter-spacing: -.02em; }
+.remote-access-card p { margin: 0; line-height: 1.7; }
+.remote-access-heading p { color: var(--text-muted); font-size: 13px; }
+.remote-access-card [role='alert'] { color: var(--danger, #c44); font-size: 13px; }
+.remote-access-connection { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.remote-access-computer { display: flex; align-items: center; gap: 12px; padding: 18px 22px; border-bottom: 1px solid var(--border); }
+.remote-access-computer-icon { width: 38px; height: 38px; display: grid; place-items: center; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 10px; color: var(--text-muted); flex-shrink: 0; }
+.remote-access-computer > div { flex: 1; min-width: 0; }
+.remote-access-computer strong { display: block; font-size: 13px; overflow-wrap: anywhere; }
+.remote-access-computer small { display: block; color: var(--text-muted); font-size: 11px; margin-top: 2px; }
+.remote-access-badge { display: inline-flex; align-items: center; gap: 6px; border-radius: 20px; padding: 4px 9px; font-size: 10px; font-weight: 600; color: var(--text-muted); background: var(--bg-elevated); white-space: nowrap; }
+.remote-access-badge > span { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.remote-access-badge.connected { color: var(--success, #24784c); background: color-mix(in srgb, var(--success, #24784c) 10%, transparent); }
+.remote-access-badge.attention { color: var(--warning, #9b711e); background: color-mix(in srgb, var(--warning, #9b711e) 10%, transparent); }
+.remote-access-body { padding: 25px; display: flex; flex-direction: column; gap: 16px; }
+.remote-access-body > .btn { align-self: flex-start; }
+.remote-access-body [data-settings-target='remote-access.connect-code'], .remote-access-body [data-settings-target='remote-access.browser-address'] { display: flex; flex-direction: column; gap: 14px; }
+.remote-access-body [data-settings-target] > .btn { align-self: flex-start; }
+.remote-access-card .btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; width: fit-content; font-size: 12px; min-height: 35px; }
+.remote-access-quiet { border: none; background: none; color: var(--text-muted); font-size: 11px; padding: 4px 0; cursor: pointer; white-space: nowrap; }
+.remote-access-quiet:hover { color: var(--text-primary); text-decoration: underline; }
+.remote-access-quiet:disabled { cursor: default; opacity: .5; }
+.remote-access-quiet.danger { color: var(--danger, #c44); }
+.remote-access-card .phone-account-connection { display: flex; flex-direction: column; align-items: flex-start; gap: 16px; }
+.remote-access-recovery { display: flex; flex-direction: column; gap: 14px; padding: 18px; border: 1px solid color-mix(in srgb, var(--warning, #9b711e) 25%, var(--border)); background: color-mix(in srgb, var(--warning, #9b711e) 5%, var(--bg-base)); border-radius: 8px; }
+.remote-access-recovery h2 { margin-bottom: 0; }
+.remote-access-recovery .settings-help { font-size: 11px; }
+.remote-access-address { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.remote-access-address > span { color: var(--text-muted); font-size: 11px; }
+.remote-access-address > code { font-size: 23px; font-weight: 500; letter-spacing: -.03em; overflow-wrap: anywhere; line-height: 1.5; }
+.remote-access-address.unavailable { padding: 13px 15px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px; color: var(--text-muted); gap: 4px; }
+.remote-access-address.unavailable > code { font-size: 16px; }
 .remote-access-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.remote-access-card .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
-.remote-access-steps { list-style: none; margin: 6px 0; padding: 0; display: grid; gap: 28px; }
-.remote-access-steps li { display: flex; align-items: flex-start; gap: 16px; }
-.remote-access-steps li > span { display: grid; place-items: center; width: 26px; height: 26px; flex: 0 0 26px; border-radius: 50%; background: var(--bg-elevated); color: var(--text-muted); font-weight: 600; }
-.remote-access-steps li > div { display: grid; gap: 14px; min-width: 0; flex: 1; }
+.remote-access-account { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 13px 22px; border-top: 1px solid var(--border); background: var(--bg-elevated); font-size: 11px; color: var(--text-muted); }
+.remote-access-account a { display: inline-flex; align-items: center; gap: 5px; color: var(--text-muted); }
+.remote-access-phone { border-top: 1px solid var(--border); padding-top: 18px; margin-top: 5px; font-size: 12px; }
+.remote-access-phone summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; color: var(--text-muted); }
+.remote-access-phone summary::-webkit-details-marker { display: none; }
+.remote-access-phone summary > svg:last-child { margin-left: auto; }
+.remote-access-phone[open] summary > svg:last-child { transform: rotate(90deg); }
+.remote-access-phone ol { padding-left: 22px; margin: 14px 0 0; line-height: 1.9; color: var(--text-muted); }
+.remote-access-phone strong { overflow-wrap: anywhere; }
+.remote-access-scope { display: flex; gap: 9px; color: var(--text-muted); font-size: 11px; }
+.remote-access-scope svg { flex-shrink: 0; margin-top: 2px; }
+.remote-access-options { color: var(--text-muted); font-size: 11px; }
+.remote-access-options > summary { cursor: pointer; margin-bottom: 9px; }
+.remote-access-options .settings-help { font-size: 11px; }
+.remote-access-options .remote-access-quiet { margin-top: 5px; }
+.remote-access-flash { display: flex; align-items: center; gap: 8px; color: var(--success); font-size: 12px; }
+.remote-access-pairing { display: flex; flex-direction: column; gap: 16px; margin-top: 16px; }
+.remote-access-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 20px; }
+.remote-access-steps li { display: flex; align-items: flex-start; gap: 12px; }
+.remote-access-steps li > span { display: grid; place-items: center; width: 24px; height: 24px; flex: 0 0 24px; border-radius: 50%; background: var(--bg-elevated); color: var(--text-muted); font-weight: 600; }
+.remote-access-steps li > div { display: grid; gap: 12px; min-width: 0; flex: 1; }
 .remote-access-steps .btn { justify-self: start; }
-.remote-access-code-form { display: flex; gap: 10px; max-width: 600px; }
-.remote-access-code-form input { min-width: 0; width: 100%; padding: 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg-input); color: var(--text-primary); font-family: var(--font-mono, monospace); font-size: 16px; }
-.remote-access-code-form .btn { padding: 10px 20px; }
-.remote-access-notice { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; }
+.remote-access-code-form { display: flex; gap: 10px; }
+.remote-access-code-form input { min-width: 0; width: 100%; padding: 10px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg-input); color: var(--text-primary); font-family: var(--font-mono, monospace); font-size: 14px; }
+.remote-access-notice { display: flex; align-items: flex-start; gap: 8px; color: var(--text-muted); font-size: 11px; }
 .remote-access-notice svg { flex-shrink: 0; margin-top: 2px; }
-.remote-access-advanced { color: var(--text-muted); font-size: 12px; }
-.remote-access-advanced summary { cursor: pointer; margin-bottom: 12px; }
-.remote-access-disconnect { border-top: 1px solid var(--border); padding-top: 16px; }
-.remote-access-disconnect p { margin-bottom: 12px; }
-.remote-access-disconnect .btn + .btn { margin-left: 8px; }
-@media (max-width: 520px) { .remote-access-code-form { flex-wrap: wrap; } }
+.remote-access-advanced { color: var(--text-muted); font-size: 11px; }
+.remote-access-advanced summary { cursor: pointer; }
+.remote-access-advanced .settings-field { margin-top: 14px; }
+@media (max-width: 600px) {
+  .remote-access-computer { padding: 15px; gap: 8px; flex-wrap: wrap; }
+  .remote-access-computer-icon { width: 32px; height: 32px; }
+  .remote-access-badge { font-size: 9px; }
+  .remote-access-body { padding: 19px 16px; }
+  .remote-access-address > code { font-size: 20px; }
+  .remote-access-account { padding: 12px 16px; }
+  .remote-access-code-form { flex-wrap: wrap; }
+}

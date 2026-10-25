@@ -210,6 +210,13 @@ successfully. Real org source permissions and API availability remain unverified
 The plugin pins `@salesforce/metadata-visualizer-web` 1.7.0 (BSD-3-Clause).
 `build-flow-visualizer.mjs` generates self-contained light/dark HTML assets and
 copies the package license. No CDN or external rendering service is used.
+`flow-visualizer-bundle.ts` makes one guarded adaptation to the pinned bundle:
+it omits `contentCenterX` so the SDK uses its full-layout centering fallback,
+instead of centering the main branch and clipping scheduled/fault branches.
+An unexpected or duplicate integration point fails the build and requires
+review on SDK upgrades. Reset Flow view remounts the immutable snapshot to
+recalculate fit at the current size. Electron verifies the diagram bounds stay
+inside the canvas after resizing and reset.
 The backend parses only the already-authorized local XML or org metadata
 snapshot through a read-only virtual filesystem. The SDK never receives disk
 access. Input is capped at 750 KB, depth 40 and 25,000 metadata tags; interactive
@@ -288,9 +295,15 @@ The Studio no longer has a Release tool, Publish button or version viewer (`Rele
 The **Tests** tool (`studio/TestsPane.tsx`) opens on the agent's case table. **Role-play** switches to the existing lab, mounted on first use and kept mounted after that so a running role-play survives the switch.
 
 - **Columns.** Simulate (the editor source, stored per case), Org eval (`sf agent test run-eval` on the published agent, per case when the CLI reports cases, else totals) and Proposal (an agent's pending proposal, run with `store: false`). A row expands into expected vs actual and the agent's turns, with Run in Simulate, Ask why and Remove.
-- **Specs.** `studio.suites.import` reads an `sf agent test` YAML or JSON spec into the suite (`lib/eval-spec.ts`, 256 KB cap, ids de-duplicated). `studio.suites.spec` writes `tests/<Agent>.eval.yaml`; multi-turn cases keep their first turn and are named in the reply. `studio.suites.eval` writes that spec, runs it and stores per-case outcomes when the CLI reports them. A pass is eval evidence for `sf_agent` Activate.
+- **Specs.** `studio.suites.import` reads an `sf agent test` YAML or JSON spec into the suite (`lib/eval-spec.ts`, 256 KB cap, ids de-duplicated). `studio.suites.spec` writes `tests/<Agent>.eval.yaml`; multi-turn cases replay their final turn with recorded alternating user/agent history and required topic evidence from a matching saved-source Simulate run. Earlier replies remain fixed context. Missing/stale history, unsupported local assertions and exports over 256 KB are refused. `studio.suites.eval` writes that spec, runs it and stores per-case outcomes when the CLI reports them. A pass is eval evidence for `sf_agent` Activate.
 - **Production and unknown orgs.** A headless eval there is refused. The pane offers **Allow reads…**, which takes one `org.read` approval from the release service (`release.prepare`/`release.run`) and retries.
 - **Pinned cases.** **Save as scenario** records `pinned: {runId, at}` on the new case. The table shows a Pinned chip naming the run.
 - **Fix loop.** **Make this pass** starts a loop (`lib/fix-loop.ts`) on the failing Simulate cases and opens a thread with the prompt from `fixLoopPrompt`. The agent proposes edits and runs `sf_workbench suites.run` with the `loopId`. The server claims the loop for that project and file, forces Simulate, runs only the loop's cases, never stores them, records the attempt and returns `next`. Budget 3 attempts by default (at most 5, 20 cases). A loop ends as `passed`, `exhausted`, `stopped` (Stop, or a new loop on the same file) or `expired` (30 idle minutes). The server keeps 8 loops. Changes reach the pane as `sf.studio.changed` with `kind: 'loop'`. The button waits for a save, because the agent starts from the file on disk. Agents cannot start a loop or an org eval.
 
-`e2e/agentforce-studio.spec.ts` imports a spec into the table before the role-play steps. It has not passed in a run yet, for the same sandbox reason.
+`e2e/agentforce-studio.spec.ts` covers spec import, role-play, official Flow reset, cache-safe discovery, keyboard source navigation, saved-source versus draft comparison, custom scenarios and narrow/light layouts through the built Electron boundary. See the README for the repeatable real-sandbox smoke command and current evaluation fidelity limits.
+
+## Evidence and background run contracts
+
+Semantic `suites.run`, `suites.start` and `suites.compare` return job handles; poll `suites.result` for the completed payload and fix-loop `result.next`. Use a stable `requestId` per logical attempt. `suites.stop` aborts the active session; ordinary completed case evidence is saved incrementally. Handles are bounded and owned by the current plugin session/project, while saved results survive reload. The native compatibility `studio.suites.run` callback remains for older clients; current UI and semantic actions use background jobs.
+
+Deterministic expectations include required/forbidden actions, scalar action inputs/outputs, final scalar variable state, reply text and response latency. Partial/missing trace evidence stays inconclusive. AI grading receives bounded redacted trace evidence and remains a separately labelled opinion. Cases with prerequisites are blocked until prepared for that view session; message replay does not silently configure historical reference fixtures or perform form/async setup.

@@ -5,28 +5,30 @@
  * A suite also exports to tests/<Agent>.eval.yaml for `sf agent test run-eval`, imports
  * JSON or YAML specs, and backs the bounded "Make these pass" fix loop.
  */
+import { SuiteJobs } from './suite-jobs.js';
 import { randomUUID } from 'node:crypto';
 import { basename, join } from 'node:path';
 import { AgentFilesError, sha256Hex } from './agent-files.js';
 import { resolveUnderRoot } from './dx-project.js';
 import { agentSuitePath } from './graph-coverage.js';
 import { EvalSpecError, GENERATED_SPEC_MARKER, evalSpecCases, suiteToEvalSpec } from './eval-spec.js';
+import { extraAssertions, parseExtraAssertions } from './scenario-assertions.js';
 import { parsePreviewContext } from './preview-context.js';
 import { FixLoopError, FixLoops, type FixLoop } from './fix-loop.js';
-import { STUDIO_CHANGED_CHANNEL, STUDIO_RPC, type CaseObserved, type CaseOutcome, type CaseResult, type ScenarioCase, type ScenarioSuite, type SuiteEval, type SuiteProgress, type TurnTrace } from './studio-contract.js';
+import { STUDIO_CHANGED_CHANNEL, STUDIO_RPC, type CaseObserved, type CaseOutcome, type CaseResult, type ScenarioCase, type ScenarioSuite, type SuiteComparison, type TraceStep, type SuiteEval, type SuiteProgress, type TurnTrace } from './studio-contract.js';
 import { rpcFailure, rpcString, type RpcFailure, type StudioServerContext } from './studio-server-context.js';
 import { labRecord, type LabEngine, type LabScenario } from './agentforce-lab-contract.js';
 import type { AgentforceLab } from './agentforce-lab.js';
 import type { SalesforceDeps } from './types.js';
 
-export const SUITE_LIMITS = { cases: 50, utterances: 8, text: 4000, runCases: 20, stored: 40, fileBytes: 256_000 } as const;
+export const SUITE_LIMITS = { cases: 50, utterances: 8, text: 4000, runCases: 50, comparisonCases: 20, stored: 40, fileBytes: 256_000 } as const;
 const SUITE_PATH = /^tests\/[A-Za-z0-9][A-Za-z0-9_.-]{0,100}\.scenario\.json$/;
 const SPEC_PATH = /^tests\/[A-Za-z0-9][A-Za-z0-9_.-]{0,100}\.eval\.yaml$/;
 const SUFFIX = '.scenario.json';
 type Outcome = CaseOutcome;
 export type SuiteResults = NonNullable<ScenarioSuite['lastResults']>;
 export interface SuiteEntry extends ScenarioSuite { sha256: string }
-export interface CaseRunDetail { caseId: string; outcome: Outcome; runId: string; at: number; notes: string[]; turns: Array<{ role: 'user' | 'agent'; text: string }>; observed?: CaseObserved; judge?: Outcome }
+export interface CaseRunDetail extends CaseResult { caseId: string; notes: string[]; turns: Array<{ role: 'user' | 'agent'; text: string }> }
 /** Per-case evidence kept in kv: up to 40 suites × 50 cases, so each entry stays a few KB. */
 export const EVIDENCE_LIMITS = { notes: 5, note: 240, reply: 480, names: 10, name: 100 } as const;
 
@@ -37,9 +39,15 @@ export function caseResult(detail: CaseRunDetail): CaseResult {
   return {
     outcome: detail.outcome, runId: detail.runId, at: detail.at,
     ...(detail.notes.length ? { notes: detail.notes.slice(0, EVIDENCE_LIMITS.notes).map(note => note.slice(0, EVIDENCE_LIMITS.note)) } : {}),
-    ...(detail.observed ? { observed: { topics: names(detail.observed.topics), actions: names(detail.observed.actions), traced: detail.observed.traced } } : {}),
+    ...(detail.observed ? { observed: { topics: names(detail.observed.topics), actions: names(detail.observed.actions), traced: detail.observed.traced, ...(detail.observed.traceComplete !== undefined ? { traceComplete: detail.observed.traceComplete } : {}) } } : {}),
     ...(reply ? { reply } : {}),
-    ...(detail.judge ? { judge: detail.judge } : {})
+    ...(detail.setupBlocked ? { setupBlocked: true } : {}),
+    ...(detail.deterministic ? { deterministic: detail.deterministic } : {}),
+    ...(detail.judge ? { judge: detail.judge } : {}),
+    ...(detail.sourceHash ? { sourceHash: detail.sourceHash, caseHash: detail.caseHash } : {}),
+    ...(detail.latencyMs !== undefined ? { latencyMs: detail.latencyMs } : {}),
+    ...(detail.assertions ? { assertions: detail.assertions } : {}),
+    ...(detail.history ? { history: detail.history } : {})
   };
 }
 
@@ -89,9 +97,10 @@ export function parseScenarioCase(value: unknown, index: number): ScenarioCase {
   return {
     id: text(row.id, 80).replace(/[^A-Za-z0-9_.-]/g, '_') || `case-${index + 1}`,
     ...(row.contextVariables !== undefined ? { contextVariables: parsePreviewContext(row.contextVariables) } : {}),
+    ...(Array.isArray(row.prerequisites) && row.prerequisites.length ? { prerequisites: strings(row.prerequisites, 10, 500) } : {}),
     name: text(row.name, 200) || `Case ${index + 1}`,
     utterances,
-    expect: { ...(topic ? { topic } : {}), ...(actions.length ? { actions } : {}), ...(contains.length ? { contains } : {}), ...(criteria ? { criteria } : {}) },
+    expect: { ...(topic ? { topic } : {}), ...(actions.length ? { actions } : {}), ...(Array.isArray(expect.forbiddenActions) ? { forbiddenActions: strings(expect.forbiddenActions, 20, 200) } : {}), ...(contains.length ? { contains } : {}), ...(criteria ? { criteria } : {}), ...parseExtraAssertions(expect) },
     ...(runId && Number.isFinite(pinned.at) ? { pinned: { runId, at: Number(pinned.at) } } : {})
   };
 }
@@ -104,7 +113,7 @@ export function parseScenarioCases(value: unknown): ScenarioCase[] {
 }
 
 /** Deterministic checks first; AI criteria only add a verdict. Topic/action expectations need a runtime trace. */
-export function judgeCase(expect: ScenarioCase['expect'], observed: { agentText: string; topics: string[]; actions: string[]; traced: boolean }, ai?: { outcome: Outcome; reason: string }): { outcome: Outcome; notes: string[] } {
+export function judgeCase(expect: ScenarioCase['expect'], observed: { agentText: string; topics: string[]; actions: string[]; traced: boolean; traceComplete?: boolean }, ai?: { outcome: Outcome; reason: string }): { outcome: Outcome; notes: string[] } {
   const notes: string[] = [];
   let outcome: Outcome = 'pass';
   const worsen = (next: Outcome) => { if (next === 'fail' || (next === 'inconclusive' && outcome === 'pass')) outcome = next; };
@@ -114,12 +123,17 @@ export function judgeCase(expect: ScenarioCase['expect'], observed: { agentText:
     checks++;
     if (!lower.includes(needle.toLowerCase())) { worsen('fail'); notes.push(`Missing text: "${needle}"`); }
   }
-  if (expect.topic || expect.actions?.length) {
-    if (!observed.traced) { worsen('inconclusive'); notes.push('Topic/action checks need a Simulate runtime trace.'); }
+  if (expect.topic || expect.actions?.length || expect.forbiddenActions?.length) {
+    if (!observed.traced || observed.traceComplete === false) { worsen('inconclusive'); notes.push('Topic/action checks need a Simulate runtime trace.'); }
     else {
       if (expect.topic) { checks++; if (!observed.topics.includes(expect.topic)) { worsen('fail'); notes.push(`Topic "${expect.topic}" not entered (saw ${observed.topics.join(', ') || 'none'}).`); } }
       for (const action of expect.actions ?? []) { checks++; if (!observed.actions.includes(action)) { worsen('fail'); notes.push(`Action "${action}" not called.`); } }
     }
+  }
+  for (const action of expect.forbiddenActions ?? []) {
+    checks++;
+    if (observed.traceComplete !== true) { worsen('inconclusive'); if (!notes.includes('Complete runtime trace required for forbidden actions.')) notes.push('Complete runtime trace required for forbidden actions.'); }
+    if (observed.actions.includes(action) || action === '*' && observed.actions.length) { worsen('fail'); notes.push(`Forbidden action "${action}" called.`); }
   }
   if (expect.criteria) {
     checks++;
@@ -249,11 +263,17 @@ export class ScenarioSuites {
   }
 
   /** Writes tests/<Agent>.eval.yaml from the agent's suite. A spec someone else wrote is never overwritten. */
-  async writeSpec(input: { agentPath: string; apiName: string }): Promise<{ suite: SuiteEntry; specPath: string; absolute: string; text: string; multiTurn: string[] }> {
+  async writeSpec(input: { agentPath: string; apiName: string; source?: string }): Promise<{ suite: SuiteEntry; specPath: string; absolute: string; text: string; multiTurn: string[] }> {
     const suite = (await this.list(input.agentPath))[0];
     if (!suite) throw new AgentFilesError('not_found', 'This agent has no scenario suite yet. Add a case first.');
+    const unprepared = suite.cases.filter(c => c.prerequisites?.length && (!suite.lastResults?.[c.id] || suite.lastResults[c.id]!.setupBlocked || suite.lastResults[c.id]!.caseHash !== sha256Hex(JSON.stringify(c)) || input.source && suite.lastResults[c.id]!.sourceHash !== sha256Hex(input.source)));
+    if (unprepared.length) throw new AgentFilesError('invalid_input', `Prepare and run these cases in Simulate before exporting an org replay: ${unprepared.map(c => c.name).join(', ')}.`);
     const specPath = specPathForSuite(suite.path);
-    const { text: spec, multiTurn } = suiteToEvalSpec(suite.cases, { apiName: input.apiName, name: suite.id, from: suite.path });
+    const replay = Object.fromEntries(suite.cases.flatMap(c => {
+      const result = suite.lastResults?.[c.id];
+      return result?.history && result.caseHash === sha256Hex(JSON.stringify(c)) && (!input.source || result.sourceHash === sha256Hex(input.source)) ? [[c.id, result.history]] : [];
+    }));
+    const { text: spec, multiTurn } = suiteToEvalSpec(suite.cases, { apiName: input.apiName, name: suite.id, from: suite.path }, replay);
     return this.serial(`file:${specPath}`, async () => {
       const absolute = confineSuitePath(this.o.root(), specPath, this.o.deps, 'spec');
       if (this.o.deps.stat(absolute) !== 'missing' && !(this.o.deps.readFile(absolute) ?? '').startsWith(GENERATED_SPEC_MARKER)) {
@@ -265,7 +285,7 @@ export class ScenarioSuites {
   }
 
   /** Runs the suite's spec against the org's published agent and keeps the outcome per case. One eval per project at a time. */
-  async evaluate(input: { agentPath: string; apiName: string }, runEval: (spec: { absolute: string; specPath: string; text: string }) => Promise<SuiteEvalReply>): Promise<{ suite: SuiteEntry; lastEval: SuiteEval; summary?: string } | RpcFailure> {
+  async evaluate(input: { agentPath: string; apiName: string; source?: string }, runEval: (spec: { absolute: string; specPath: string; text: string }) => Promise<SuiteEvalReply>): Promise<{ suite: SuiteEntry; lastEval: SuiteEval; summary?: string } | RpcFailure> {
     const lock = `eval:${this.o.project() || 'global'}`;
     if (this.running.has(lock)) throw new AgentFilesError('invalid_input', 'An org eval is already running for this project.');
     this.running.add(lock);
@@ -282,7 +302,7 @@ export class ScenarioSuites {
         ...(reply.data.botVersionId ? { botVersionId: reply.data.botVersionId } : {}),
         perCase: Boolean(outcomes),
         results: Object.fromEntries(suite.cases.map((c, index) => [c.id, { outcome: outcomes?.[index] ?? fallback }])),
-        multiTurn: written.multiTurn
+        multiTurn: written.multiTurn, historyReplay: true
       };
       await this.storeBounded(this.evalsKey(), () => this.evals(), suite.id, lastEval);
       this.o.changed?.({ path: suite.path, kind: 'suites' });
@@ -297,30 +317,48 @@ export class ScenarioSuites {
    * Sequential, one run per project, every case ends its lab session (the lab owns the 12-session / 50-call budgets).
    * `store: false` keeps the results out of the suite: a proposal or fix-loop candidate is not the file on disk.
    */
-  async run(input: { path: string; source: string; engine: LabEngine; model?: string; caseIds?: string[]; agentPath?: string; threadId?: string; store?: boolean; startedByUser?: boolean }): Promise<{ suite: SuiteEntry; results: SuiteResults; details: CaseRunDetail[] }> {
+  async run(input: { path: string; source: string; engine: LabEngine; model?: string; caseIds?: string[]; agentPath?: string; threadId?: string; store?: boolean; startedByUser?: boolean; referenceSource?: string; signal?: AbortSignal; preparedCaseIds?: string[] }): Promise<{ suite: SuiteEntry; results: SuiteResults; details: CaseRunDetail[]; comparison?: SuiteComparison }> {
     const lock = this.o.project() || 'global';
     if (this.running.has(lock)) throw new AgentFilesError('invalid_input', 'A suite is already running for this project.');
     this.running.add(lock);
     try {
       const suite = (await this.list()).find(s => s.path === input.path);
       if (!suite) throw new AgentFilesError('not_found', `Scenario suite not found: ${input.path}`);
+      if (input.referenceSource !== undefined && suite.cases.length > SUITE_LIMITS.comparisonCases) throw new AgentFilesError('invalid_input', `Comparisons support at most ${SUITE_LIMITS.comparisonCases} cases. Split this suite before comparing.`);
       const cases = suite.cases.filter(c => !input.caseIds?.length || input.caseIds.includes(c.id)).slice(0, SUITE_LIMITS.runCases);
       if (!cases.length) throw new AgentFilesError('invalid_input', 'No matching cases to run.');
-      const results: SuiteResults = input.store === false ? {} : { ...(suite.lastResults ?? {}) };
+      const results: SuiteResults = input.store === false || input.referenceSource !== undefined ? {} : { ...(suite.lastResults ?? {}) };
+      const reference: SuiteResults = {};
       const details: CaseRunDetail[] = [];
-      let progress: SuiteProgress = { id: randomUUID(), mode: input.store === false ? 'proposal' : 'simulate', startedAt: this.o.now(), caseIds: cases.map(c => c.id), completed: 0, stage: 'starting', results: {} };
+      let progress: SuiteProgress = { id: randomUUID(), mode: input.referenceSource !== undefined ? 'compare' : input.store === false ? 'proposal' : 'simulate', startedAt: this.o.now(), caseIds: cases.map(c => c.id), completed: 0, stage: 'starting', results: {} };
       const update = (patch: Partial<SuiteProgress>) => {
         progress = { ...progress, ...patch };
         this.updateProgress(lock, suite.path, progress);
       };
+      if (input.referenceSource !== undefined) {
+        update({ comparisonPhase: 'reference' });
+        for (const c of cases) {
+          input.signal?.throwIfAborted();
+          update({ currentCaseId: c.id, stage: 'starting', turn: 0, totalTurns: c.utterances.length });
+          reference[c.id] = caseResult(await this.runCase(c, { ...input, source: input.referenceSource }, update));
+          update({ completed: Object.keys(reference).length, results: { ...reference } });
+        }
+        update({ comparisonPhase: 'candidate', completed: 0, results: {} });
+      }
       for (const c of cases) {
+        input.signal?.throwIfAborted();
         update({ currentCaseId: c.id, stage: 'starting', turn: 0, totalTurns: c.utterances.length });
         const detail = await this.runCase(c, input, update);
         details.push(detail);
         results[c.id] = caseResult(detail);
+        if (input.store !== false && input.referenceSource === undefined) await this.storeResults(suite.id, results);
         update({ completed: details.length, results: { ...progress.results, [c.id]: results[c.id]! } });
       }
+      input.signal?.throwIfAborted();
       update({ stage: 'saving', currentCaseId: undefined });
+      if (input.referenceSource !== undefined) return { suite, results, details, comparison: {
+        referenceHash: sha256Hex(input.referenceSource), candidateHash: sha256Hex(input.source), suiteHash: sha256Hex(JSON.stringify(cases)), at: this.o.now(), reference, candidate: results
+      } };
       if (input.store === false) return { suite, results, details };
       await this.storeResults(suite.id, results);
       this.o.changed?.({ path: suite.path, kind: 'suites' });
@@ -331,32 +369,53 @@ export class ScenarioSuites {
     }
   }
 
-  private async runCase(c: ScenarioCase, input: { source: string; engine: LabEngine; model?: string; agentPath?: string; threadId?: string; startedByUser?: boolean }, update: (patch: Partial<SuiteProgress>) => void): Promise<CaseRunDetail> {
+  private async runCase(c: ScenarioCase, input: { source: string; engine: LabEngine; model?: string; agentPath?: string; threadId?: string; startedByUser?: boolean; signal?: AbortSignal; preparedCaseIds?: string[] }, update: (patch: Partial<SuiteProgress>) => void): Promise<CaseRunDetail> {
     const { lab } = this.o;
     const scenario: LabScenario = {
       persona: 'A scripted test customer.', goal: c.name, opening: c.utterances[0]!,
       criteria: c.expect.criteria ?? 'Respond helpfully and stay in scope.', maxTurns: Math.min(c.utterances.length, 8)
     };
     let id = '';
-    const detail: CaseRunDetail = { caseId: c.id, outcome: 'inconclusive', runId: '', at: this.o.now(), notes: [], turns: [] };
+    const detail: CaseRunDetail = { sourceHash: sha256Hex(input.source), caseHash: sha256Hex(JSON.stringify(c)), caseId: c.id, outcome: 'inconclusive', runId: '', at: this.o.now(), notes: [], turns: [] };
+    if (c.prerequisites?.length && !input.preparedCaseIds?.includes(c.id)) {
+      detail.setupBlocked = true;
+      detail.notes = [`Setup required: ${c.prerequisites.join('; ')}. Confirm setup before replay; this is not a product failure.`];
+      return detail;
+    }
+    const cancel = () => { if (id) { try { lab.end({ id }); } catch { /* expired */ } } };
+    input.signal?.addEventListener('abort', cancel, { once: true });
     try {
+      input.signal?.throwIfAborted();
       const started = await lab.start({ engine: input.engine, source: input.source, scenario, ...(c.contextVariables ? { contextVariables: c.contextVariables } : {}), ...(input.model ? { model: input.model } : {}), ...(input.threadId ? { threadId: input.threadId } : {}), ...(input.agentPath ? { path: input.agentPath } : {}), ...(input.startedByUser ? { startedByUser: true } : {}) });
       id = detail.runId = started.id;
+      input.signal?.throwIfAborted();
       let last = started;
       for (const [index, utterance] of c.utterances.slice(0, scenario.maxTurns).entries()) {
+        input.signal?.throwIfAborted();
         update({ stage: 'conversation', turn: index + 1 });
         last = await lab.send({ id, text: utterance });
       }
-      detail.turns = last.turns.map(t => ({ role: t.role, text: t.text }));
+      // A runtime may greet on start. Only replies to the scripted user turns
+      // have response latency and belong in the evaluation replay history.
+      const conversation = last.turns.slice(Math.max(0, last.turns.findIndex(t => t.role === 'user')));
+      detail.turns = conversation.map(t => ({ role: t.role, text: t.text }));
+      const responses = conversation.filter((t, index) => t.role === 'agent' && conversation[index - 1]?.role === 'user');
       const topics = new Set<string>(); const actions = new Set<string>();
       let traced = false;
-      if (input.engine === 'preview' && (c.expect.topic || c.expect.actions?.length)) {
+      let completeTrace = input.engine === 'preview';
+      const steps: TraceStep[] = [];
+      const topicByPlan = new Map<string, string>();
+      if (input.engine === 'preview') {
         update({ stage: 'trace' });
-        const plans = last.turns.filter(t => t.role === 'agent' && t.planId).map(t => t.planId!);
+        const plans = responses.filter(t => t.planId).map(t => t.planId!);
         for (const planId of plans) {
           const trace: TurnTrace = await lab.trace({ id, planId, ...(input.agentPath ? { path: input.agentPath } : {}) });
-          if (!trace.available) continue;
+          if (!trace.available) { completeTrace = false; continue; }
+          if (trace.truncated) completeTrace = false;
           traced = true;
+          steps.push(...trace.steps);
+          const topic = trace.steps.filter(s => s.kind === 'topic').at(-1)?.label;
+          if (topic && !trace.truncated) topicByPlan.set(planId, topic);
           for (const step of trace.steps) { if (step.kind === 'topic') topics.add(step.label); if (step.kind === 'action') actions.add(step.label); }
         }
       }
@@ -365,12 +424,29 @@ export class ScenarioSuites {
         update({ stage: 'judging' });
         try { const v = (await lab.evaluate({ id })).verdict; ai = { outcome: v.outcome, reason: v.reason }; } catch { /* leaves criteria inconclusive */ }
       }
-      detail.observed = { topics: [...topics], actions: [...actions], traced };
+      const agentTurns = responses;
+      if (agentTurns.some(t => !t.planId)) completeTrace = false;
+      const latencies = agentTurns.map(t => t.latencyMs);
+      if (latencies.length && latencies.every(n => typeof n === 'number' && Number.isFinite(n) && n >= 0)) detail.latencyMs = Math.max(...latencies as number[]);
+      const history = conversation.slice(0, -2).map(t => ({ role: t.role, message: t.text, ...(t.role === 'agent' && t.planId && topicByPlan.has(t.planId) ? { topic: topicByPlan.get(t.planId)! } : {}) }));
+      if (c.utterances.length > 1 && history.length === (c.utterances.length - 1) * 2 && history.every((t, i) => t.role === (i % 2 ? 'agent' : 'user') && t.message.length <= 4000 && (t.role === 'user' || t.topic)) && JSON.stringify(history).length <= 12000) detail.history = history;
+      detail.assertions = extraAssertions(c.expect, steps, latencies, completeTrace);
+      detail.observed = { topics: [...topics], actions: [...actions], traced, traceComplete: completeTrace && traced };
+      const deterministic = judgeCase({ ...c.expect, criteria: undefined }, { agentText: responses.map(t => t.text).join('\n'), topics: [...topics], actions: [...actions], traced, traceComplete: completeTrace && traced });
+      detail.deterministic = deterministic.outcome;
       if (ai) detail.judge = ai.outcome;
-      Object.assign(detail, judgeCase(c.expect, { agentText: last.turns.filter(t => t.role === 'agent').map(t => t.text).join('\n'), topics: [...topics], actions: [...actions], traced }, ai));
+      Object.assign(detail, judgeCase(c.expect, { agentText: responses.map(t => t.text).join('\n'), topics: [...topics], actions: [...actions], traced, traceComplete: completeTrace && traced }, ai));
+      if (detail.assertions.length && detail.notes.includes('No expectations to check.')) { detail.notes = detail.notes.filter(n => n !== 'No expectations to check.'); detail.outcome = 'pass'; }
+      if (detail.assertions.length && deterministic.notes.includes('No expectations to check.')) detail.deterministic = 'pass';
+      for (const assertion of detail.assertions) {
+        if (assertion.outcome === 'fail' || assertion.outcome === 'inconclusive' && detail.deterministic === 'pass') detail.deterministic = assertion.outcome;
+        if (assertion.outcome === 'fail' || assertion.outcome === 'inconclusive' && detail.outcome === 'pass') detail.outcome = assertion.outcome;
+        if (assertion.outcome !== 'pass') detail.notes.push(`${assertion.label}: ${assertion.actual}`);
+      }
     } catch (error) {
       detail.notes.push(error instanceof Error ? error.message : String(error));
     } finally {
+      input.signal?.removeEventListener('abort', cancel);
       if (id) { try { lab.end({ id }); } catch { /* already expired */ } }
     }
     detail.at = this.o.now();
@@ -420,6 +496,8 @@ export function registerStudioPreview(studio: StudioServerContext, options: Stud
     now: () => studio.deps.now(),
     changed: publish
   });
+  const jobs = new SuiteJobs(() => studio.deps.now());
+  studio.zcc.onDispose(() => jobs.dispose());
   const loops = new FixLoops({ now: () => studio.deps.now(), id: options.loopId ?? (() => randomUUID()) });
   const guard = async (work: () => Promise<unknown>) => {
     try { return await work(); } catch (error) { return failure(error); }
@@ -434,7 +512,7 @@ export function registerStudioPreview(studio: StudioServerContext, options: Stud
   const caseIdsOf = (value: unknown) => Array.isArray(value) ? value.filter((x): x is string => typeof x === 'string').slice(0, SUITE_LIMITS.cases) : undefined;
 
   studio.registerRpc(STUDIO_RPC.trace, args => guard(async () => ({ ok: true, data: await studio.lab.trace(args) })));
-  studio.registerRpc(STUDIO_RPC.suites, args => guard(async () => ({ ok: true, suites: await suites.list(rpcString(args, 'agentPath') || undefined) })));
+  studio.registerRpc(STUDIO_RPC.suites, args => guard(async () => ({ ok: true, suites: await suites.list(rpcString(args, 'agentPath') || undefined), job: jobs.latest(project()) })));
   studio.registerRpc(STUDIO_RPC.suiteSave, args => guard(async () => {
     const row = labRecord(args);
     return { ok: true, suite: await suites.save({ path: rpcString(args, 'path') || undefined, agentPath: rpcString(args, 'agentPath') || undefined, cases: row.cases, expectedSha256: rpcString(args, 'expectedSha256') || undefined }) };
@@ -447,18 +525,26 @@ export function registerStudioPreview(studio: StudioServerContext, options: Stud
   }));
   studio.registerRpc(STUDIO_RPC.suiteSpec, args => guard(async () => {
     const agentPath = rpcString(args, 'agentPath');
-    const { apiName } = await agentAt(agentPath);
-    const { specPath, multiTurn, text: spec } = await suites.writeSpec({ agentPath, apiName });
+    const { apiName, source } = await agentAt(agentPath);
+    const { specPath, multiTurn, text: spec } = await suites.writeSpec({ agentPath, apiName, source });
     return { ok: true, specPath, multiTurn, text: spec };
   }));
   studio.registerRpc(STUDIO_RPC.suiteEval, args => guard(async () => {
     if (!options.runEval) throw new AgentFilesError('not_configured', 'Org evals are not available here.');
     const agentPath = rpcString(args, 'agentPath');
-    const { apiName } = await agentAt(agentPath);
-    const result = await suites.evaluate({ agentPath, apiName }, spec => options.runEval!({ ...spec, apiName }));
+    const { apiName, source } = await agentAt(agentPath);
+    const result = await suites.evaluate({ agentPath, apiName, source }, spec => options.runEval!({ ...spec, apiName }));
     return 'ok' in result ? result : { ok: true, ...result };
   }));
-  studio.registerRpc(STUDIO_RPC.suiteRun, args => guard(async () => {
+  const compareSuite = (args: unknown, signal?: AbortSignal) => guard(async () => {
+    const agentPath = rpcString(args, 'agentPath');
+    const reference = await agentAt(agentPath);
+    const row = labRecord(args);
+    if (typeof row.source !== 'string' || !row.source.trim() || row.source.length > 10 * 1024 * 1024) throw new AgentFilesError('invalid_input', 'Provide the candidate editor source (at most 10 MB).');
+    return { ok: true, ...await suites.run({ path: suitePathForAgent(agentPath), agentPath, source: row.source, referenceSource: reference.source, signal, preparedCaseIds: caseIdsOf(row.preparedCaseIds), engine: 'preview', store: false, startedByUser: row.startedByUser === true, threadId: rpcString(args, 'threadId') || undefined }) };
+  });
+  studio.registerRpc(STUDIO_RPC.suiteCompare, args => compareSuite(args));
+  const runSuite = (args: unknown, signal?: AbortSignal) => guard(async () => {
     const row = labRecord(args);
     const agentPath = rpcString(args, 'agentPath');
     const loopId = rpcString(args, 'loopId');
@@ -473,6 +559,7 @@ export function registerStudioPreview(studio: StudioServerContext, options: Stud
       // A fix loop spends Simulate runs only, and never stores a candidate's results as the file's.
       engine: loop ? 'preview' : row.engine === 'rehearsal' ? 'rehearsal' : 'preview',
       model: rpcString(args, 'model') || undefined, agentPath: agentPath || undefined, threadId: rpcString(args, 'threadId') || undefined,
+      signal, preparedCaseIds: caseIdsOf(row.preparedCaseIds),
       caseIds: loop ? loop.caseIds : caseIdsOf(row.caseIds),
       store: loop ? false : row.store !== false,
       // A click on Run approves its own runs; a fix loop's attempts are agent-driven, so they still ask.
@@ -482,7 +569,18 @@ export function registerStudioPreview(studio: StudioServerContext, options: Stud
     const updated = loops.record(project(), loop.id, Object.fromEntries(Object.entries(run.results).map(([id, result]) => [id, result.outcome])));
     publish({ path: agentPath, kind: 'loop', loopId: loop.id });
     return { ok: true, ...run, loop: updated, next: loopNext(updated) };
+  });
+  studio.registerRpc(STUDIO_RPC.suiteRun, args => runSuite(args));
+  studio.registerRpc(STUDIO_RPC.suiteStart, args => guard(async () => {
+    const row = labRecord(args);
+    return { ok: true, ...jobs.start(project(), rpcString(args, 'requestId') || undefined, sha256Hex(JSON.stringify({ ...row, requestId: undefined })), async signal => {
+      const result = await (row.compare === true ? compareSuite(args, signal) : runSuite(args, signal));
+      if (result && typeof result === 'object' && 'ok' in result && result.ok === false) throw Error((result as RpcFailure).error);
+      return result;
+    }) };
   }));
+  studio.registerRpc(STUDIO_RPC.suiteResult, args => guard(async () => ({ ok: true, ...jobs.get(project(), rpcString(args, 'jobId')) })));
+  studio.registerRpc(STUDIO_RPC.suiteStop, args => guard(async () => ({ ok: true, ...jobs.stop(project(), rpcString(args, 'jobId')) })));
   studio.registerRpc(STUDIO_RPC.loopStart, args => guard(async () => {
     const agentPath = rpcString(args, 'agentPath');
     const suite = agentPath ? (await suites.list(agentPath))[0] : undefined;

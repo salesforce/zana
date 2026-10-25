@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { TestsPane, expectLines, fixLoopPrompt, relativeTime, runSummary, type TestsPaneProps } from './TestsPane.js';
-import type { ScenarioSuite } from '../../../lib/studio-contract.js';
+import type { ScenarioCase, ScenarioSuite } from '../../../lib/studio-contract.js';
 import type { FixLoop } from '../../../lib/fix-loop.js';
 
 const PATH = 'force-app/main/default/aiAuthoringBundles/MyBot/MyBot.agent';
@@ -38,7 +38,17 @@ function setup(overrides: Partial<TestsPaneProps> = {}, handlers: Record<string,
     'studio.loop.get': () => ({ ok: true, loop: null }),
     ...handlers
   };
+  const jobs = new Map<string, Promise<unknown>>();
   const call = vi.fn<Call>(async (_plugin, method, args) => {
+    const row = args as Record<string, unknown>;
+    if (method === 'studio.suites.start') {
+      const handler = table[row.compare ? 'studio.suites.compare' : 'studio.suites.run'];
+      const jobId = `j-${jobs.size}`;
+      jobs.set(jobId, Promise.resolve(handler?.(row) ?? { ok: false }));
+      return { ok: true, jobId };
+    }
+    if (method === 'studio.suites.result') return { ok: true, status: 'completed', result: await jobs.get(String(row.jobId)) };
+
     const handler = table[method];
     return handler ? handler(args as Record<string, unknown>) : { ok: false, error: `unexpected ${method}` };
   });
@@ -51,7 +61,7 @@ function setup(overrides: Partial<TestsPaneProps> = {}, handlers: Record<string,
   return { call, requestApproval, props, view, table };
 }
 const button = (name: RegExp | string) => screen.getByRole('button', { name }) as HTMLButtonElement;
-const calls = (call: ReturnType<typeof setup>['call'], method: string) => call.mock.calls.filter(([, m]) => m === method).map(([, , args]) => args as Record<string, unknown>);
+const calls = (call: ReturnType<typeof setup>['call'], method: string) => call.mock.calls.filter(([, m, args]) => method === 'studio.suites.run' ? m === 'studio.suites.start' && !(args as Record<string, unknown>).compare : method === 'studio.suites.compare' ? m === 'studio.suites.start' && (args as Record<string, unknown>).compare === true : m === method).map(([, , args]) => args as Record<string, unknown>);
 
 it('describes expectations and the fix-loop prompt', () => {
   expect(expectLines({ topic: 'T', actions: ['A', 'B'], contains: ['x'], criteria: 'Be kind.' })).toEqual(['Topic T', 'Calls A, B', 'Mentions "x"', 'Be kind.']);
@@ -82,7 +92,7 @@ it('lists the cases with pinned, multi-turn and expectation hints', async () => 
   const late = screen.getByTestId('tests-row-late');
   expect(within(late).getByText('“Where is it?”')).toBeTruthy();
   expect(within(late).getByText('2 turns')).toBeTruthy();
-  expect(within(late).getByText('Not run').getAttribute('title')).toBe('The org eval runs the first turn only.');
+  expect(within(late).getByText('Not run').getAttribute('title')).toBe('Final-turn replay with recorded history; earlier replies are fixed context. Use Simulate to rerun the entire conversation.');
   expect(within(refund).getByText('Not run').getAttribute('title')).toContain('published agent');
   expect(screen.queryByTestId('tests-summary')).toBeNull();
   expect(screen.getByText('tests/MyBot.scenario.json · 2 cases')).toBeTruthy();
@@ -109,14 +119,14 @@ it('runs all cases in Simulate, then one, and explains a failing row', async () 
   await screen.findByTestId('tests-table');
   fireEvent.click(button('Run all in Simulate'));
   await waitFor(() => expect(within(screen.getByTestId('tests-row-late')).getByText('Fail')).toBeTruthy());
-  expect(calls(call, 'studio.suites.run')[0]).toEqual({ projectId: 'p1', agentPath: PATH, path: 'tests/MyBot.scenario.json', source: 'config: editor', engine: 'preview', startedByUser: true, threadId: 't1' });
+  expect(calls(call, 'studio.suites.run')[0]).toMatchObject({ projectId: 'p1', agentPath: PATH, path: 'tests/MyBot.scenario.json', source: 'config: editor', engine: 'preview', startedByUser: true, threadId: 't1' });
   expect(within(screen.getByTestId('tests-row-late')).getByText('✗ Lookup')).toBeTruthy();
   expect(screen.getByTestId('tests-summary').textContent).toContain('1/2');
   fireEvent.click(screen.getByTestId('tests-row-late'));
   expect(screen.getByRole('note').textContent).toBe('Why it failed: Action "Lookup" not called.');
   expect(screen.getByText('Not called')).toBeTruthy();
   expect(screen.getByText('I cannot tell.')).toBeTruthy();
-  expect(screen.getAllByText('Gives a date.')).toHaveLength(2);
+  expect(screen.getByText('AI opinion: Gives a date.')).toBeTruthy();
   fireEvent.click(button('Fix this case'));
   expect(props.onAskAgent).toHaveBeenCalledWith(expect.stringContaining('Observed: Action "Lookup" not called.'));
   fireEvent.click(button('Re-run'));
@@ -191,13 +201,13 @@ it('polls active progress after missed realtime messages and stops polling when 
 });
 
 it('runs the org eval and shows per-case and totals-only results', async () => {
-  const evaluated = suite({ lastEval: { at: 3, org: 'dev', orgId: '00D1', passed: false, specPath: 'tests/MyBot.eval.yaml', perCase: true, results: { refund: { outcome: 'pass' }, late: { outcome: 'fail' } }, multiTurn: ['late'] } });
+  const evaluated = suite({ lastEval: { at: 3, org: 'dev', orgId: '00D1', passed: false, specPath: 'tests/MyBot.eval.yaml', perCase: true, historyReplay: true, results: { refund: { outcome: 'pass' }, late: { outcome: 'fail' } }, multiTurn: ['late'] } });
   const { call } = setup({}, { 'studio.suites.eval': () => ({ ok: true, summary: 'Eval failed (1 failure(s)) for v-1', suite: evaluated }) });
   await screen.findByTestId('tests-table');
   fireEvent.click(button('Run org eval'));
   expect(await screen.findByText('Eval failed (1 failure(s)) for v-1')).toBeTruthy();
   expect(calls(call, 'studio.suites.eval')[0]).toEqual({ projectId: 'p1', agentPath: PATH });
-  expect(within(screen.getByTestId('tests-row-late')).getByText('Fail').getAttribute('title')).toBe('The org eval runs the first turn only.');
+  expect(within(screen.getByTestId('tests-row-late')).getByText('Fail').getAttribute('title')).toBe('Final-turn replay with recorded history; earlier replies are fixed context. Use Simulate to rerun the entire conversation.');
   cleanup();
   setup({}, { 'studio.suites.list': () => ({ ok: true, suites: [suite({ lastEval: { ...evaluated.lastEval!, perCase: false } })] }) });
   expect(await screen.findByText('Org eval (totals)')).toBeTruthy();
@@ -337,7 +347,7 @@ it('writes the eval spec and names multi-turn cases', async () => {
   setup({}, { 'studio.suites.spec': () => reply });
   await screen.findByTestId('tests-table');
   fireEvent.click(button('Write eval spec'));
-  expect(await screen.findByText('Wrote tests/MyBot.eval.yaml. 1 multi-turn case run their first turn only.')).toBeTruthy();
+  expect(await screen.findByText('Wrote tests/MyBot.eval.yaml. 1 multi-turn case replays its final turn with recorded history; earlier replies are fixed context.')).toBeTruthy();
   reply = { ok: true, specPath: 'tests/MyBot.eval.yaml', multiTurn: [] };
   fireEvent.click(button('Write eval spec'));
   expect(await screen.findByText('Wrote tests/MyBot.eval.yaml.')).toBeTruthy();
@@ -500,4 +510,97 @@ it('summarises runs and formats relative times', () => {
   expect(relativeTime(now - 5 * 60_000, now)).toBe('5 min ago');
   expect(relativeTime(now - 3 * 3_600_000, now)).toBe('3 h ago');
   expect(relativeTime(now - 3 * 86_400_000, now)).toMatch(/Oct/);
+});
+
+it('compares immutable source snapshots and marks the result stale after editing', async () => {
+  const ref = { outcome: 'fail', runId: 'r1', at: 1, reply: 'No refund', latencyMs: 200, observed: { actions: ['Lookup'], topics: [], traced: true } };
+  const candidate = { ...ref, outcome: 'pass', runId: 'r2', reply: 'Refund offered', latencyMs: 150 };
+  const { call, props, view } = setup({}, { 'studio.suites.compare': () => ({ ok: true, comparison: { referenceHash: 'aaa', candidateHash: 'bbb', suiteHash: 'ccc', at: 1, reference: { refund: ref }, candidate: { refund: candidate } } }) });
+  await screen.findByTestId('tests-table');
+  fireEvent.click(button('Compare saved vs draft'));
+  expect(await screen.findByText('Saved source → Editor draft: 0/1 → 1/1 pass')).toBeTruthy();
+  expect(screen.getByText('1 improved · 0 regressed · 0 unclear')).toBeTruthy();
+  fireEvent.click(screen.getByText('Refund: fail → pass'));
+  expect(screen.getByText('No refund')).toBeTruthy(); expect(screen.getByText('Refund offered')).toBeTruthy();
+  expect(calls(call, 'studio.suites.compare')[0]).toMatchObject({ agentPath: PATH, source: props.source, startedByUser: true });
+  expect(calls(call, 'studio.suites.run')).toHaveLength(0);
+  view.rerender(<TestsPane {...props} source="changed draft" />);
+  expect(screen.getByText(/editor or cases changed after/)).toBeTruthy();
+});
+
+it('reports comparison failures and validates advanced case checks before saving', async () => {
+  const { call } = setup({}, { 'studio.suites.compare': () => ({ ok: false, error: 'Session unavailable' }) });
+  await screen.findByTestId('tests-table');
+  fireEvent.click(button('Compare saved vs draft'));
+  expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Session unavailable');
+  fireEvent.click(button('+ Case'));
+  const form = screen.getByRole('form', { name: 'New test case' });
+  fireEvent.change(within(form).getByLabelText('Name'), { target: { value: 'Latency' } });
+  fireEvent.change(within(form).getByLabelText('Utterances, one per line'), { target: { value: 'hello' } });
+  fireEvent.change(within(form).getByLabelText('Action field checks (JSON)'), { target: { value: 'not JSON' } });
+  fireEvent.submit(form);
+  expect(calls(call, 'studio.suites.save')).toHaveLength(0);
+  expect(screen.getByRole('alert').textContent).not.toBe('Session unavailable');
+});
+
+it('shows setup separately, passes explicit preparation and exposes recovered job cancellation', async () => {
+  const c = { id: 'setup', name: 'Historical replay', utterances: ['Continue'], prerequisites: ['Account selected'], expect: { forbiddenActions: ['Send'], criteria: 'Stay helpful' } };
+  const last = { outcome: 'inconclusive' as const, runId: '', at: 1, setupBlocked: true, deterministic: 'pass' as const, judge: 'fail' as const, observed: { traced: false, traceComplete: false, actions: [], topics: [] } };
+  const { call, table } = setup({}, { 'studio.suites.list': () => ({ ok: true, suites: [suite({ cases: [c], lastResults: { setup: last } })] }), 'studio.suites.run': () => ({ ok: true, suite: suite({ cases: [c] }) }) });
+  await screen.findByTestId('tests-table');
+  expect(within(screen.getByTestId('tests-row-setup')).getByText('Setup required')).toBeTruthy();
+  fireEvent.click(screen.getByTestId('tests-row-setup'));
+  expect(screen.getByText('Never calls Send')).toBeTruthy();
+  expect(screen.getByText(/Deterministic checks: pass · AI opinion: fail · Trace: incomplete/)).toBeTruthy();
+  fireEvent.click(screen.getByLabelText('I prepared this case for this session'));
+  fireEvent.click(button('Run all in Simulate'));
+  await waitFor(() => expect(calls(call, 'studio.suites.run')[0]).toMatchObject({ preparedCaseIds: ['setup'] }));
+  table['studio.suites.stop'] = () => ({ ok: true, status: 'stopped' });
+  table['studio.suites.list'] = () => ({ ok: true, suites: [suite({ cases: [c] })], job: { jobId: 'recovered' } });
+  await act(async () => { realtime?.({ kind: 'suites', projectId: 'p1' }); });
+  fireEvent.click(button('Stop suite'));
+  await waitFor(() => expect(calls(call, 'studio.suites.stop')[0]).toMatchObject({ jobId: 'recovered' }));
+});
+
+it('saves and displays advanced checks and setup prerequisites without losing their scalar types', async () => {
+  const { call } = setup({}, { 'studio.suites.save': args => ({ ok: true, suite: suite({ cases: args.cases as ScenarioCase[] }) }) });
+  await screen.findByTestId('tests-table');
+  fireEvent.click(button('+ Case'));
+  const form = screen.getByRole('form', { name: 'New test case' });
+  for (const [label, value] of [
+    ['Name', 'Read-only credit'], ['Utterances, one per line', 'Check credit'],
+    ['Maximum response latency (ms)', '500'], ['Forbidden actions, comma separated (use * for all)', 'Send, Apply'],
+    ['Setup prerequisites, one per line', 'Account selected\n\n Address saved '],
+    ['Action field checks (JSON)', '[{"action":"Credit","side":"output","field":"applied","operator":"equals","value":false}]'],
+    ['Final state checks (JSON)', '[{"variable":"orderExists","value":false}]']
+  ]) fireEvent.change(within(form).getByLabelText(label!), { target: { value } });
+  fireEvent.submit(form);
+  await waitFor(() => expect(calls(call, 'studio.suites.save')).toHaveLength(1));
+  const added = (calls(call, 'studio.suites.save')[0]!.cases as ScenarioCase[]).at(-1)!;
+  expect(added).toMatchObject({ prerequisites: ['Account selected', 'Address saved'], expect: { maxLatencyMs: 500, forbiddenActions: ['Send', 'Apply'], actionChecks: [{ value: false }], stateChecks: [{ variable: 'orderExists', value: false }] } });
+  fireEvent.click(await screen.findByTestId(`tests-row-${added.id}`));
+  expect(screen.getByText('Each response ≤ 500 ms')).toBeTruthy();
+  expect(screen.getByText('Final orderExists equals false')).toBeTruthy();
+  expect(screen.getByText('Never calls Send')).toBeTruthy();
+  const prepared = screen.getByLabelText('I prepared this case for this session') as HTMLInputElement;
+  fireEvent.click(prepared); expect(prepared.checked).toBe(true);
+  fireEvent.click(prepared); expect(prepared.checked).toBe(false);
+});
+
+it.each([
+  { status: 'stopped', role: 'status', message: 'Suite stopped. Completed cases were saved. Remaining cases were not run.' },
+  { status: 'failed', role: 'alert', message: 'Preview connection lost' }
+])('distinguishes a $status background suite in the user feedback', async ({ status, role, message }) => {
+  const { call } = setup();
+  await screen.findByTestId('tests-table');
+  call.mockImplementation(async (_plugin, method) => {
+    if (method === 'studio.suites.start') return { ok: true, jobId: 'job-feedback' };
+    if (method === 'studio.suites.result') return { ok: true, status, ...(status === 'failed' ? { error: message } : {}) };
+    if (method === 'studio.suites.list') return { ok: true, suites: [suite()] };
+    return { ok: true, loop: null };
+  });
+  fireEvent.click(button('Run all in Simulate'));
+  await waitFor(() => expect(screen.getByRole(role)).toHaveProperty('textContent', message));
+  expect(button('Run all in Simulate').disabled).toBe(false);
+  if (status === 'stopped') expect(screen.queryByRole('alert')).toBeNull();
 });

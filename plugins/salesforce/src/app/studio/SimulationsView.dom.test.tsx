@@ -7,9 +7,11 @@ import { simulationCounts, type SimulationBatch, type SimulationLane } from '../
 
 const PATH = 'force-app/main/default/aiAuthoringBundles/MyBot/MyBot.agent';
 let realtime: ((payload: unknown) => void) | null = null;
+let channels: Record<string, (payload: unknown) => void>;
 beforeEach(() => {
   realtime = null;
-  (globalThis as Record<string, unknown>).__ZCC_PLUGIN_RUNTIME__ = { useRealtime: (_c: string, h: (p: unknown) => void) => { realtime = h; } };
+  channels = {};
+  (globalThis as Record<string, unknown>).__ZCC_PLUGIN_RUNTIME__ = { useRealtime: (channel: string, h: (p: unknown) => void) => { channels[channel] = h; if (channel === 'sf.studio.changed') realtime = h; } };
 });
 afterEach(() => { cleanup(); delete (globalThis as Record<string, unknown>).__ZCC_PLUGIN_RUNTIME__; vi.restoreAllMocks(); });
 
@@ -218,4 +220,73 @@ it('ignores an old start response when the user has moved to another agent', asy
   expect(button(/Run \d+ conversations/).disabled).toBe(false);
   await act(async () => { finish({ ok: true, batch: batch('old', 'running', [lane('old', 'running')]) }); });
   expect(screen.queryByText('Lane old')).toBeNull();
+});
+
+it('edits scenarios, adds/removes custom cases, validates and applies a typed context preset', async () => {
+  const done = batch('custom', 'done', [lane('1', 'pass')]);
+  const { call, table } = setup({}, {
+    'agentPreview.presets.list': () => ({ ok: true, presets: [{ id: 'fr', name: 'French customer', revision: 2, values: [{ name: 'locale', type: 'Text', value: 'fr' }] }] }),
+    'studio.simulations.start': () => ({ ok: true, batch: done }),
+    'studio.simulations.list': () => ({ ok: true, batches: [] }),
+  });
+  await screen.findByText(/No simulations yet/);
+  await screen.findByRole('option', { name: 'French customer · revision 2' });
+  fireEvent.click(screen.getByText('Customize scenarios and context'));
+  fireEvent.change(screen.getByLabelText('Scenario 1 name'), { target: { value: 'Return policy' } });
+  fireEvent.change(screen.getByLabelText('Scenario 1 opening'), { target: { value: 'Can I return this?' } });
+  fireEvent.change(screen.getByLabelText('Simulation context preset'), { target: { value: 'fr' } });
+  fireEvent.click(button('Add scenario'));
+  fireEvent.click(button('Run 4 conversations'));
+  expect((await screen.findByRole('alert')).textContent).toContain('Persona');
+  expect(calls(call, 'studio.simulations.start')).toHaveLength(0);
+  fireEvent.click(button('Remove scenario 4'));
+  table['studio.simulations.list'] = () => ({ ok: true, batches: [done] });
+  table['studio.simulations.get'] = () => ({ ok: true, batch: done });
+  fireEvent.click(button('Run 3 conversations'));
+  await screen.findByText('Lane 1');
+  expect(calls(call, 'studio.simulations.start')[0]).toMatchObject({ scenarios: [expect.objectContaining({ name: 'Return policy', opening: 'Can I return this?' }), expect.anything(), expect.anything()], contextVariables: [{ name: 'locale', type: 'Text', value: 'fr' }] });
+  fireEvent.click(button('Use scenarios from this batch'));
+  expect((screen.getByLabelText('Scenario 1 name') as HTMLTextAreaElement).value).toBe('Lane 1');
+  expect(button('Run 1 conversation')).toBeTruthy();
+});
+
+it('explains conversation limits before starting any work', async () => {
+  setup();
+  await screen.findByText(/No simulations yet/);
+  fireEvent.click(screen.getByText('Customize scenarios and context'));
+  fireEvent.click(button('Add scenario'));
+  fireEvent.click(button('Add scenario'));
+  fireEvent.change(screen.getByLabelText('Repeats'), { target: { value: '3' } });
+  expect(screen.getByRole('alert').textContent).toContain('at most 12');
+  expect(button('Run 15 conversations').disabled).toBe(true);
+});
+
+it('keeps custom scenario identities distinct after deleting a middle scenario', async () => {
+  const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  setup();
+  await screen.findByText(/No simulations yet/);
+  fireEvent.click(screen.getByText('Customize scenarios and context'));
+  fireEvent.click(button('Add scenario'));
+  fireEvent.click(button('Add scenario'));
+  fireEvent.change(screen.getByLabelText('Scenario 5 name'), { target: { value: 'Keep me' } });
+  fireEvent.click(button('Remove scenario 4'));
+  fireEvent.click(button('Add scenario'));
+  fireEvent.change(screen.getByLabelText('Scenario 5 name'), { target: { value: 'New one' } });
+  expect((screen.getByLabelText('Scenario 4 name') as HTMLInputElement).value).toBe('Keep me');
+  expect((screen.getByLabelText('Scenario 5 name') as HTMLInputElement).value).toBe('New one');
+  expect(errors.mock.calls.flat().join(' ')).not.toContain('same key');
+});
+
+it('refreshes presets and clears selected context when this project changes org', async () => {
+  const { call } = setup({}, { 'agentPreview.presets.list': () => ({ ok: true, presets: [{ id: 'fr', name: 'French', revision: 1, values: [] }] }) });
+  await screen.findByRole('option', { name: 'French · revision 1' });
+  fireEvent.change(screen.getByLabelText('Simulation context preset'), { target: { value: 'fr' } });
+  const before = calls(call, 'agentPreview.presets.list').length;
+  await act(async () => { channels['context.changed']!({ projectId: 'other' }); });
+  expect(calls(call, 'agentPreview.presets.list')).toHaveLength(before);
+  await act(async () => { channels['context.changed']!({ projectId: 'p1' }); });
+  expect((screen.getByLabelText('Simulation context preset') as HTMLSelectElement).value).toBe('');
+  expect(calls(call, 'agentPreview.presets.list')).toHaveLength(before + 1);
+  await act(async () => { channels['salesforce.context-presets.changed']!({ projectId: 'p1' }); });
+  expect(calls(call, 'agentPreview.presets.list')).toHaveLength(before + 2);
 });

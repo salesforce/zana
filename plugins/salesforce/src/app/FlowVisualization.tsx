@@ -64,6 +64,7 @@ export function FlowVisualization({ visualization, error, model, pluginId, sourc
   const [theme, setTheme] = useState(readDocumentTheme);
   const [failed, setFailed] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [viewportVersion, setViewportVersion] = useState(0);
   const close = useCallback(() => setExpanded(false), []);
   // Stable callback: avoid tearing down the handshake on parent renders.
   const [fail] = useState(() => () => setFailed(true));
@@ -78,7 +79,8 @@ export function FlowVisualization({ visualization, error, model, pluginId, sourc
     <ActionFlowMap model={model} onOpenTarget={onOpenTarget} />
   </>;
   const canvas = <>
-    <OfficialFlowFrame key={theme} visualization={visualization} theme={theme} pluginId={pluginId} onFailure={fail} onClose={expanded ? close : undefined} />
+    <div className="af-flow-toolbar"><span>Pan to explore · reset after resizing</span><button title="Reset pan, zoom and selection to fit the current space" onClick={() => setViewportVersion(v => v + 1)}>Reset Flow view</button></div>
+    <OfficialFlowFrame key={`${theme}:${viewportVersion}`} visualization={visualization} theme={theme} pluginId={pluginId} onFailure={fail} onClose={expanded ? close : undefined} />
     {targets.length > 0 && <details className="af-flow-dependencies"><summary>Related implementations · {targets.length}</summary><div>
       {targets.map(target => <button key={target} className="af-target-link" onClick={() => onOpenTarget(target)}>Open {target} ↗</button>)}
     </div></details>}

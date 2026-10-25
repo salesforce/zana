@@ -2,6 +2,7 @@ import { test, expect, launchApp } from './fixtures/app.js';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { sharedInstancePage } from './fixtures/shared-instance.js';
 
 async function fakeAccount(app: Awaited<ReturnType<typeof launchApp>>, rows: Array<{ id: string; instanceId: string; name: string; browserUrl: string; live: boolean }>) {
   await app.electron.evaluate(({ session }, rows) => {
@@ -15,9 +16,8 @@ async function fakeAccount(app: Awaited<ReturnType<typeof launchApp>>, rows: Arr
   }, rows);
 }
 async function select(app: Awaited<ReturnType<typeof launchApp>>, id: string, name: string) {
-  const opened = app.electron.waitForEvent('window');
   await app.window.evaluate(id => window.cc.sharedClient.select(id), id);
-  const page = await opened; await expect(page.getByRole('heading', { name })).toBeVisible(); return page;
+  const page = await sharedInstancePage(app, `https://${name}-fixture.zana-ide.com`); await expect(page.getByRole('heading', { name })).toBeVisible(); return page;
 }
 
 test('shared instance switching keeps drafts separate and an expired account never restores local authority on restart', async ({ home }) => {

@@ -115,51 +115,19 @@
 .ext-installed-section-heading { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
 .ext-installed-section-heading h4 { margin: 0; font-size: 12px; font-weight: 600; }
 .ext-installed-section-count { color: var(--text-muted); font-size: 11px; font-weight: 400; }
-.ext-installed-collection .ext-installed-panel {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  align-items: stretch;
-  gap: 14px;
-  overflow: visible;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
+/* Rows keep identity, capabilities, source, health and controls in stable columns. */
+.ext-installed-collection .ext-installed-panel { display: flex; flex-direction: column; gap: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-panel); }
 .ext-installed-collection .ext-installed-panel .ext-installed-row {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  min-width: 0;
-  min-height: 164px;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--bg-panel);
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.015);
-  transition: border-color 140ms ease, box-shadow 140ms ease;
+  display: grid; grid-template-columns: minmax(180px, 1fr) 130px 110px 125px 32px 18px;
+  gap: 14px; align-items: center; min-width: 0; min-height: 72px; padding: 11px 16px;
+  border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent;
 }
-.ext-installed-collection .ext-installed-row:hover {
-  background: var(--bg-panel);
-  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.04);
-}
-.ext-installed-collection .ext-installed-row-open {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 12px;
-  padding: 17px 17px 13px;
-  border-radius: 12px 12px 0 0;
-}
-.ext-installed-card-heading { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.ext-installed-collection .ext-installed-icon {
-  width: 35px;
-  height: 35px;
-  border-radius: 10px;
-  color: var(--installed-icon-color);
-  background: color-mix(in srgb, var(--installed-icon-color) 12%, var(--bg-panel));
-}
+.ext-installed-collection .ext-installed-row:last-child { border-bottom: 0; }
+.ext-installed-collection .ext-installed-row:hover { background: var(--bg-base); }
+.ext-installed-collection .ext-installed-row.is-selected { background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel)); box-shadow: inset 3px 0 var(--accent); }
+.ext-installed-collection .ext-installed-row-open { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 0; }
+.ext-installed-row-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ext-installed-collection .ext-installed-icon { width: 36px; height: 36px; border-radius: 9px; color: var(--installed-icon-color); background: color-mix(in srgb, var(--installed-icon-color) 12%, var(--bg-panel)); }
 .ext-installed-icon--lavender { --installed-icon-color: #9b80c7; }
 .ext-installed-icon--blue { --installed-icon-color: #7095c6; }
 .ext-installed-icon--sand { --installed-icon-color: #ba945e; }
@@ -167,65 +135,21 @@
 .ext-installed-icon--rose { --installed-icon-color: #bc7e94; }
 .ext-installed-icon--slate { --installed-icon-color: #8594a9; }
 .ext-installed-icon img { width: 21px; height: 21px; object-fit: contain; }
-.ext-installed-icon:has(img) { background: color-mix(in srgb, var(--installed-icon-color) 10%, #fff); }
-.ext-installed-collection .ext-installed-row-title {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  font-size: 13px;
-  line-height: 1.4;
-}
-.ext-installed-collection .ext-installed-row-desc {
-  min-height: 2lh;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-}
-.ext-installed-collection .ext-installed-row.is-disabled .ext-installed-row-open { opacity: 0.65; }
-.ext-installed-collection .ext-installed-row.is-disabled:hover .ext-installed-row-open { opacity: 1; }
-.ext-installed-card-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  flex-wrap: wrap;
-  min-height: 42px;
-  padding: 9px 17px;
-  border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
-}
-.ext-installed-publisher { display: inline-flex; align-items: center; gap: 4px; color: var(--text-muted); font-size: 10px; }
-.ext-installed-collection .ext-installed-row-trailing { gap: 8px; flex-wrap: wrap; margin-left: auto; }
-.ext-installed-collection .ext-installed-update-signal {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  width: auto;
-  height: auto;
-  min-height: 22px;
-  padding: 2px 6px;
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--accent-gold) 12%, transparent);
-  color: var(--accent-gold);
-  font-size: 10px;
-}
-.ext-installed-collection .ext-installed-status,
-.ext-installed-collection .ext-installed-not-running { font-size: 10px; font-weight: 500; }
-.ext-installed-health-signal {
-  max-width: 150px;
-  padding: 2px 5px;
-  border: 0;
-  border-radius: 4px;
-  background: color-mix(in srgb, currentColor 9%, transparent);
-  cursor: pointer;
-  text-align: left;
-}
-.ext-installed-collection .ext-installed-switch,
-.ext-installed-collection .ext-installed-switch-ui,
-.ext-installed-collection .ext-installed-switch-spacer { width: 30px; height: 18px; }
+.ext-installed-collection .ext-installed-row-title { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ext-installed-collection .ext-installed-row-desc { font-size: 11px; line-height: 1.5; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ext-installed-collection .ext-installed-row.is-disabled .ext-installed-row-open { opacity: .65; }
+.ext-installed-source { font-size: 11px; color: var(--text-muted); }
+.ext-installed-collection .ext-installed-row-trailing { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
+.ext-installed-collection .ext-installed-update-signal { display: inline-flex; align-items: center; gap: 4px; width: auto; height: auto; padding: 3px 6px; border-radius: 4px; color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, transparent); font-size: 10px; }
+.ext-installed-collection :is(.ext-installed-status, .ext-installed-not-running, .ext-installed-runtime) { font-size: 10px; font-weight: 500; }
+.ext-installed-runtime { color: var(--text-muted); }
+.ext-installed-runtime.is-running::before { content: ''; display: inline-block; width: 5px; height: 5px; margin-right: 6px; vertical-align: 2px; border-radius: 50%; background: var(--accent-green, #2da44e); }
+.ext-installed-health-signal { padding: 3px 5px; border: 0; border-radius: 4px; background: color-mix(in srgb, currentColor 9%, transparent); cursor: pointer; text-align: left; }
+.ext-installed-collection :is(.ext-installed-switch, .ext-installed-switch-ui, .ext-installed-switch-spacer) { width: 30px; height: 18px; }
 .ext-installed-collection .ext-installed-switch-ui::after { width: 14px; height: 14px; }
 .ext-installed-collection .ext-installed-switch input:checked + .ext-installed-switch-ui::after { transform: translateX(12px); }
+.ext-installed-row-toggle { display: flex; align-items: center; }
+.ext-installed-chevron { width: 20px; height: 26px; }
 .ext-installed-agents { margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--border); }
 .ext-installed-group-toggle {
   display: flex;
@@ -251,17 +175,20 @@
 .ext-installed-empty { margin: 0; padding: 48px 16px; color: var(--text-secondary); text-align: center; font-size: 13px; }
 .ext-installed-collection :is(button, select):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .ext-installed-collection [hidden] { display: none !important; }
-@container installed-plugins (max-width: 880px) {
-  .ext-installed-collection .ext-installed-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .ext-installed-collection .ext-market-search { max-width: none; }
+@container plugin-collection (max-width: 950px) {
+  .ext-installed-collection .ext-installed-panel .ext-installed-row { grid-template-columns: minmax(160px, 1fr) 100px 115px 32px 18px; gap: 10px; }
+  .ext-installed-row > .ext-plugin-capabilities { display: none; }
 }
-@container installed-plugins (max-width: 560px) {
-  .ext-installed-collection .ext-installed-panel { grid-template-columns: minmax(0, 1fr); }
-  .ext-installed-collection .ext-market-search { flex-basis: 100%; }
+@container plugin-collection (max-width: 650px) {
+  .ext-installed-collection .ext-installed-panel .ext-installed-row { grid-template-columns: minmax(120px, 1fr) 100px 32px; gap: 8px; padding: 10px; }
+  .ext-installed-row > :is(.ext-installed-source, .ext-installed-chevron) { display: none; }
+}
+@container installed-plugins (max-width: 650px) {
+  .ext-installed-collection .ext-market-search { flex-basis: 100%; max-width: none; }
   .ext-installed-collection .ext-installed-toolbar { gap: 10px 5px; }
-  .ext-installed-publisher-filter { margin-left: auto; max-width: 125px; }
+  .ext-installed-publisher-filter { max-width: 130px; }
   .ext-installed-collection .ext-installed-header h3 { font-size: 25px; }
 }
-@media (prefers-reduced-motion: reduce) {
-  .ext-installed-collection :is(.ext-installed-row, .ext-installed-group-toggle > svg) { transition: none; }
-}
+.ext-installed-table-heading { display: grid; grid-template-columns: minmax(180px, 1fr) 130px 110px 125px 32px 18px; gap: 14px; padding: 9px 16px; border: 1px solid var(--border); border-bottom: 0; border-radius: 9px 9px 0 0; font-size: 10px; color: var(--text-muted); background: var(--bg-base); }
+.ext-installed-table-heading + .ext-installed-panel { border-radius: 0 0 9px 9px; }
+@container plugin-collection (max-width: 950px) { .ext-installed-table-heading { display: none; } }

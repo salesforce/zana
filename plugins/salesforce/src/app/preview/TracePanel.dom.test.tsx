@@ -49,6 +49,8 @@ describe('TracePanel', () => {
     expect(el.querySelectorAll('.sf-trace-bar').length).toBe(2);
     expect(el.querySelectorAll('.is-nested').length).toBe(2);
     const btn = el.querySelector('button.sf-trace-row') as HTMLButtonElement;
+    expect(btn.getAttribute('role')).toBeNull();
+    expect(btn.parentElement?.getAttribute('role')).toBe('listitem');
     expect(btn.textContent).toContain('L7');
     act(() => btn.click());
     expect(onReveal).toHaveBeenCalledWith('a.agent', 7);

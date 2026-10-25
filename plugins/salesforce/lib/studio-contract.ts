@@ -26,11 +26,20 @@ export type ProposalOutcome = { outcome: 'accepted' | 'rejected' | 'partial'; ac
 export interface TraceStep {
   kind: 'input' | 'llm' | 'tools' | 'topic' | 'action' | 'variable' | 'transition' | 'response' | 'delegate' | 'unknown';
   label: string; latencyMs?: number; inputPreview?: string; outputPreview?: string; source?: { path: string; line: number };
+  /** Bounded, redacted scalar fields. Missing evidence never counts as a passing assertion. */
+  stateEvidence?: Record<string, string | number | boolean | null>;
+  actionEvidence?: { input: Record<string, string | number | boolean | null>; output: Record<string, string | number | boolean | null> };
 }
-export interface TurnTrace { runId: string; turn: number; planId?: string; available: boolean; reason?: string; steps: TraceStep[] }
+export interface ActionAssertion { action: string; side: 'input' | 'output'; field: string; operator: 'equals' | 'contains' | 'less_than' | 'greater_than'; value: string | number | boolean | null }
+export interface StateAssertion { variable: string; value: string | number | boolean | null }
+export interface AssertionResult { label: string; outcome: CaseOutcome; actual: string }
+export interface ConversationMessage { role: 'user' | 'agent'; message: string; topic?: string }
+export interface TurnTrace { runId: string; turn: number; planId?: string; available: boolean; truncated?: boolean; reason?: string; steps: TraceStep[] }
 export interface ScenarioCase {
+  /** External forms, initial records or async completion that message replay cannot create. */
+  prerequisites?: string[];
   contextVariables?: import('./preview-context.js').PreviewContextVariable[];
-  id: string; name: string; utterances: string[]; expect: { topic?: string; actions?: string[]; contains?: string[]; criteria?: string };
+  id: string; name: string; utterances: string[]; expect: { topic?: string; actions?: string[]; forbiddenActions?: string[]; contains?: string[]; criteria?: string; maxLatencyMs?: number; actionChecks?: ActionAssertion[]; stateChecks?: StateAssertion[] };
   /** Set when the case was pinned from a Preview conversation. */
   pinned?: { runId: string; at: number };
 }
@@ -40,16 +49,25 @@ export interface SuiteEval {
   at: number; org: string; orgId: string; passed: boolean; specPath: string; botVersionId?: string;
   /** False when the CLI reported totals only, so cases carry no outcome. */
   perCase: boolean; results: Record<string, { outcome: CaseOutcome }>;
-  /** Cases with more than one utterance; the spec runs their opening turn. */
+  /** Cases with more than one utterance. New specs replay the final turn with recorded history. */
   multiTurn: string[];
+  /** Absent on older evaluations that tested only the opening message. */
+  historyReplay?: true;
 }
 /** What a Simulate run of one case saw. `traced` is false when no runtime trace was available, so topic/action checks could not run. */
-export interface CaseObserved { topics: string[]; actions: string[]; traced: boolean }
+export interface CaseObserved { topics: string[]; actions: string[]; traced: boolean; traceComplete?: boolean }
 /** A saved Simulate result. `notes`, `observed` and `reply` are the run's evidence, kept small so a Fail always says why. */
-export interface CaseResult { outcome: CaseOutcome; runId: string; at: number; notes?: string[]; observed?: CaseObserved; reply?: string; /** The AI judge's verdict on `criteria`, when it ran. */ judge?: CaseOutcome }
+export interface CaseResult { outcome: CaseOutcome; runId: string; at: number; notes?: string[]; observed?: CaseObserved; reply?: string; /** The AI judge's verdict on `criteria`, when it ran. */ judge?: CaseOutcome;
+  setupBlocked?: boolean; deterministic?: CaseOutcome;
+  latencyMs?: number; assertions?: AssertionResult[]; sourceHash?: string; caseHash?: string;
+  /** Complete preceding messages for a final-turn org replay. Omitted when evidence is incomplete or too large. */
+  history?: ConversationMessage[];
+}
+export interface SuiteComparison { referenceHash: string; candidateHash: string; suiteHash: string; at: number; reference: Record<string, CaseResult>; candidate: Record<string, CaseResult> }
 /** Ephemeral progress, scoped to the project and suite; never persisted as a test result. */
 export interface SuiteProgress {
-  id: string; mode: 'simulate' | 'proposal' | 'org-eval'; startedAt: number;
+  id: string; mode: 'simulate' | 'proposal' | 'compare' | 'org-eval'; startedAt: number;
+  comparisonPhase?: 'reference' | 'candidate';
   caseIds: string[]; completed: number; currentCaseId?: string;
   stage: 'starting' | 'conversation' | 'trace' | 'judging' | 'saving' | 'org-eval';
   turn?: number; totalTurns?: number; results: Record<string, CaseResult>;
@@ -80,7 +98,7 @@ export const STUDIO_RPC = {
   viewPublish: 'studio.view.publish', viewGet: 'studio.view.get', explorer: 'studio.explorer', lightningType: 'studio.lightningType', lwc: 'studio.lwc',
   comments: 'studio.comments.list', commentAdd: 'studio.comments.add', commentResolve: 'studio.comments.resolve',
   commentUpdate: 'studio.comments.update', commentDelete: 'studio.comments.delete',
-  trace: 'agentLab.trace', suites: 'studio.suites.list', suiteSave: 'studio.suites.save', suiteRun: 'studio.suites.run',
+  trace: 'agentLab.trace', suites: 'studio.suites.list', suiteSave: 'studio.suites.save', suiteRun: 'studio.suites.run', suiteStart: 'studio.suites.start', suiteResult: 'studio.suites.result', suiteStop: 'studio.suites.stop', suiteCompare: 'studio.suites.compare',
   suiteImport: 'studio.suites.import', suiteSpec: 'studio.suites.spec', suiteEval: 'studio.suites.eval',
   loopStart: 'studio.loop.start', loopStop: 'studio.loop.stop', loopGet: 'studio.loop.get',
   outcome: 'control.outcome',

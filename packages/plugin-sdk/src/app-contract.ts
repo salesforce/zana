@@ -581,7 +581,7 @@ export interface PluginProviderIconRegistration {
   pluginId: string;
   generation: number;
   providerId: string;
-  icon: ComponentType<{ className?: string }>;
+  icon: ComponentType<{ className?: string; size?: number }>;
 }
 
 export const PLUGIN_COMPOSER_SCOPE_KINDS = [
