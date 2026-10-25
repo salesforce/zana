@@ -1,8 +1,9 @@
 import { test, expect } from './fixtures/app.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
 test.use({ initialConfig: { theme: 'light', sponsorPromptDismissed: true } });
 
-test('installed plugin cards support search, grouping, status changes and details in built Electron', async ({ app }, testInfo) => {
+test('installed plugin rows support search, grouping, status changes and details in built Electron', async ({ app }, testInfo) => {
   const win = app.window;
   const browserWindow = await app.electron.browserWindow(win);
   await browserWindow.evaluate((window) => window.setContentSize(1440, 900));
@@ -15,7 +16,7 @@ test('installed plugin cards support search, grouping, status changes and detail
   const recording = !!process.env.ZCC_E2E_RECORD_VIDEO;
   const pause = async () => { if (recording) await win.waitForTimeout(1200); };
   await pause();
-  await win.screenshot({ path: testInfo.outputPath('plugins-cards.png') });
+  await captureElectronScreenshot(app.electron, win, testInfo.outputPath('plugins-rows.png'));
 
   const snapshot = await win.evaluate(() => window.cc.pluginApps.list());
   const agents = snapshot.filter((plugin) => plugin.collection === 'coding-agents');
@@ -54,10 +55,11 @@ test('installed plugin cards support search, grouping, status changes and detail
   await expect.poll(async () => (await win.evaluate(() => window.cc.pluginApps.list())).find((p) => p.id === ordinary.id)?.enabled).toBe(true);
   await statusFilters.getByRole('button', { name: 'All', exact: true }).click();
   await toolCard.getByRole('button', { name: `${ordinary.name} plugin details` }).click();
-  await expect(win.getByRole('button', { name: 'Back to installed' })).toBeVisible();
+  await expect(win.getByRole('complementary', { name: 'Installed plugin' })).toBeVisible();
+  await expect(toolCard).toBeVisible();
   await expect(win.locator('.ext-hub-about-titles')).toContainText(ordinary.name);
   await pause();
-  await win.getByRole('button', { name: 'Back to installed' }).click();
+  await win.getByRole('button', { name: 'Close plugin details' }).click();
   await expect(collection).toBeVisible();
 
   await collection.getByRole('navigation', { name: 'Plugin collections' }).getByRole('button', { name: /^Updates/ }).click();
@@ -72,11 +74,11 @@ test('installed plugin cards support search, grouping, status changes and detail
   await win.keyboard.press('Escape');
   await expect(win.getByRole('menu', { name: 'Add a plugin' })).toBeHidden();
   await expect(collection.getByRole('button', { name: 'Add plugin' })).toBeFocused();
-  await win.screenshot({ path: testInfo.outputPath('plugins-cards-final.png') });
+  await captureElectronScreenshot(app.electron, win, testInfo.outputPath('plugins-rows-final.png'));
   await pause();
 });
 
-test('card grid adapts to the content width in light and dark themes', async ({ app }) => {
+test('installed rows adapt their metadata columns to content width in light and dark themes', async ({ app }) => {
   const win = app.window;
   const browserWindow = await app.electron.browserWindow(win);
   // Exercise widths below the desktop's normal minimum, also used by remote views.
@@ -88,12 +90,18 @@ test('card grid adapts to the content width in light and dark themes', async ({ 
   await win.getByTestId('extensions-nav-installed').click();
   const grid = win.locator('.ext-installed-collection .ext-installed-panel').first();
   await expect(grid).toBeVisible();
-  const columns = () => grid.evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').length);
-  await expect.poll(columns).toBe(3);
+  const firstRow = grid.locator('.ext-installed-row').first();
+  const columns = () => firstRow.evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').length);
+  await expect.poll(columns).toBe(6);
+  await expect(firstRow.locator('.ext-plugin-capabilities')).toBeVisible();
+  await expect(firstRow.locator('.ext-installed-source')).toBeVisible();
   await browserWindow.evaluate((window) => window.setContentSize(1000, 900));
-  await expect.poll(columns).toBe(2);
+  await expect.poll(columns).toBe(5);
+  await expect(firstRow.locator('.ext-plugin-capabilities')).toBeHidden();
+  await expect(firstRow.locator('.ext-installed-source')).toBeVisible();
   await browserWindow.evaluate((window) => window.setContentSize(700, 900));
-  await expect.poll(columns).toBe(1);
+  await expect.poll(columns).toBe(3);
+  await expect(firstRow.locator('.ext-installed-source')).toBeHidden();
   expect(await win.locator('.ext-installed-collection').evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
   await win.evaluate(() => window.cc.config.set({ theme: 'dark' }));
   await expect(win.locator('html')).toHaveAttribute('data-theme', 'dark');
