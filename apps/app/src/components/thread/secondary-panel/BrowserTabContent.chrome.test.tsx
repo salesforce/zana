@@ -315,9 +315,9 @@ describe('BrowserTabContent visibility', () => {
     expect(container.querySelector('.thread-browser-newtab')).toBeNull();
   });
 
-  it('hides under the open thread switcher and restores the same browser when closed', async () => {
+  it.each(['titlebar-threads-menu', 'instance-menu'])('hides under the open %s and restores the same browser when closed', async className => {
     const h = setup();
-    const view = render(<><details className="titlebar-threads-menu"><summary>Threads</summary></details>{h.browser}</>);
+    const view = render(<><details className={className}><summary>Switcher</summary></details>{h.browser}</>);
     const menu = view.container.querySelector('details')!;
     expect(h.api.setVisible).toHaveBeenLastCalledWith({ tabId: 'browser:test', visible: true });
     await act(async () => { menu.open = true; });

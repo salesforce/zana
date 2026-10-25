@@ -11,6 +11,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import { Bell, Star } from 'lucide-react';
 import { HelpProvider } from './components/help/HelpProvider.js';
 import { HelpToggle } from './components/help/HelpToggle.js';
+import { InstanceMenu } from './components/InstanceMenu.js';
 import { Sidebar } from './components/Sidebar.js';
 import { MobileAgentNavigation } from './components/MobileAgentNavigation.js';
 import {
@@ -768,6 +769,7 @@ function AppShell() {
             compact={mobileNavigation.isCompact}
           />
         )}
+        <InstanceMenu />
         <HelpToggle />
         <button
           type="button"
