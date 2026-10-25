@@ -17,6 +17,8 @@ export class SharedInstanceChrome {
   private readonly state: SharedChromeState;
   private documentUrl = '';
   private closed = false;
+  private renderGeneration = 0;
+  private rendering = false;
   constructor(private readonly window: BrowserWindow, selected: SharedInstance | undefined, unavailable: boolean, private readonly actions: ChromeActions) {
     this.state = { selected, unavailable, expanded: false, picking: false, busy: false, needsSignIn: false, instances: [], message: '' };
     this.view.setBackgroundColor('#00000000');
@@ -33,9 +35,10 @@ export class SharedInstanceChrome {
     });
     this.view.webContents.on('will-redirect', event => event.preventDefault());
     this.view.webContents.on('will-attach-webview', event => event.preventDefault());
-    this.view.webContents.on('blur', this.collapse);
+    this.view.webContents.on('blur', this.onViewBlur);
     window.contentView.addChildView(this.view);
     window.on('resize', this.layout);
+    window.on('blur', this.collapse);
     window.once('closed', this.close);
     this.render();
   }
@@ -46,6 +49,9 @@ export class SharedInstanceChrome {
     const viewWidth = Math.min(this.state.expanded ? 340 : 164, Math.max(1, width - 108));
     this.view.setBounds({ x: Math.max(0, width - 100 - viewWidth), y: 0, width: viewWidth, height: this.state.expanded ? Math.min(620, height) : 32 });
   };
+  // Reloading the main-owned document can blur its old frame on Linux. Only
+  // dismiss a settled view; leaving the owning window still dismisses at once.
+  private onViewBlur = () => { if (!this.rendering) this.collapse(); };
   private collapse = () => {
     if (!this.state.expanded || this.closed) return;
     this.state.expanded = false;
@@ -55,7 +61,15 @@ export class SharedInstanceChrome {
     if (this.closed) return;
     this.layout();
     this.documentUrl = 'data:text/html;charset=utf-8,' + encodeURIComponent(sharedChromeHtml(this.state));
-    void this.view.webContents.loadURL(this.documentUrl).catch(() => {});
+    const generation = ++this.renderGeneration;
+    this.rendering = true;
+    void this.view.webContents.loadURL(this.documentUrl).then(() => {
+      if (this.closed || generation !== this.renderGeneration) return;
+      this.rendering = false;
+      if (this.state.expanded) this.view.webContents.focus();
+    }).catch(() => {
+      if (generation === this.renderGeneration) this.rendering = false;
+    });
   }
   private async command(value: string): Promise<void> {
     const url = new URL(value);
@@ -94,8 +108,9 @@ export class SharedInstanceChrome {
     if (this.closed) return;
     this.closed = true;
     this.window.removeListener('resize', this.layout);
+    this.window.removeListener('blur', this.collapse);
     this.window.removeListener('closed', this.close);
-    this.view.webContents.removeListener('blur', this.collapse);
+    this.view.webContents.removeListener('blur', this.onViewBlur);
     if (!this.window.isDestroyed()) this.window.contentView.removeChildView(this.view);
     if (!this.view.webContents.isDestroyed()) this.view.webContents.close();
   };

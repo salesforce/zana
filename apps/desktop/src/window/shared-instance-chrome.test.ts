@@ -11,6 +11,7 @@ vi.mock('electron', async () => {
       getURL() { return this.url; },
       async loadURL(url: string) { this.url = url; },
       isDestroyed() { return this.destroyed; },
+      focus: vi.fn(),
       close: vi.fn()
     });
     setBackgroundColor = vi.fn(); setBounds = vi.fn();
@@ -53,6 +54,7 @@ it('owns an isolated, preload-free view with bounded placement and releases it o
   expect(html()).toContain('aria-expanded="true"');
   win.emit('closed'); chrome.close();
   expect(win.listenerCount('resize')).toBe(0);
+  expect(win.listenerCount('blur')).toBe(0);
   expect(win.contentView.removeChildView).toHaveBeenCalledOnce();
   expect(view().webContents.close).toHaveBeenCalledOnce();
 });
@@ -128,4 +130,48 @@ it('escapes account text and error messages while keeping the chrome CSP strict'
   expect(sharedChromeHtml({ ...state, selected: undefined, busy: true })).toContain('Another Zana');
   expect(sharedChromeHtml({ ...state, expanded: false })).not.toContain('class="panel"');
   chrome.close(); view().webContents.destroyed = true; win.destroyed = true; chrome.close();
+});
+
+
+it('keeps an expanding menu through document-replacement blur and focuses its new frame', async () => {
+  const wc = view().webContents;
+  let finish!: () => void;
+  wc.loadURL = vi.fn((url: string) => {
+    wc.url = url;
+    wc.emit('blur');
+    return new Promise<void>(resolve => { finish = resolve; });
+  });
+  await command('zcc-instance://toggle');
+  expect(html()).toContain('aria-expanded="true"');
+  expect(wc.focus).not.toHaveBeenCalled();
+  finish(); await new Promise(resolve => setImmediate(resolve));
+  expect(wc.focus).toHaveBeenCalledOnce();
+  wc.emit('blur');
+  expect(html()).toContain('aria-expanded="false"');
+  finish(); await new Promise(resolve => setImmediate(resolve));
+});
+
+it('dismisses on window blur during a replacement and ignores stale or closed frame completions', async () => {
+  const wc = view().webContents;
+  const pending: Array<() => void> = [];
+  wc.loadURL = vi.fn((url: string) => {
+    wc.url = url;
+    return new Promise<void>(resolve => { pending.push(resolve); });
+  });
+  await command('zcc-instance://toggle');
+  win.emit('blur');
+  expect(html()).toContain('aria-expanded="false"');
+  pending[0]!(); await new Promise(resolve => setImmediate(resolve));
+  expect(wc.focus).not.toHaveBeenCalled();
+  chrome.close();
+  pending[1]!(); await new Promise(resolve => setImmediate(resolve));
+  expect(wc.focus).not.toHaveBeenCalled();
+});
+
+it('recovers its blur dismissal after a rejected document load', async () => {
+  const wc = view().webContents;
+  wc.loadURL = vi.fn(async (url: string) => { wc.url = url; throw new Error('load failed'); });
+  await command('zcc-instance://toggle');
+  wc.emit('blur');
+  expect(html()).toContain('aria-expanded="false"');
 });
