@@ -1,9 +1,11 @@
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 import { test, expect, launchApp } from './fixtures/app.js';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { sharedInstancePage } from './fixtures/shared-instance.js';
 
-test('shared sign-in opens the system browser without a popup and refreshes instances after approval', async ({ home }) => {
+test('shared sign-in opens the system browser without a popup and refreshes instances after approval', async ({ home }, testInfo) => {
   test.setTimeout(180_000);
   const app = await launchApp(home);
   const serverId = randomUUID(), instanceId = randomUUID();
@@ -31,18 +33,27 @@ test('shared sign-in opens the system browser without a popup and refreshes inst
         return new Response('Denied', { status: 403 });
       });
     }, { serverId, instanceId });
-    await app.window.getByRole('link', { name: 'Remote access', exact: true }).click();
-    await app.window.getByText('Open an existing Zana instead', { exact: true }).click();
-    const picker = app.window.getByRole('region', { name: 'Open a shared Zana' });
-    await picker.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await app.window.locator('.instance-menu > summary').click();
+    await app.window.getByRole('button', { name: 'Open another Zana…', exact: true }).click();
+    const picker = app.window.getByRole('region', { name: 'Zana instances' });
+    await picker.getByRole('button', { name: 'Sign in to browse Zanas', exact: true }).click();
     await expect(picker.getByRole('status')).toContainText('your browser');
     await expect.poll(() => app.electron.evaluate(() => (globalThis as any).__desktopSignIn.opened)).toEqual([`https://zana-ide.com/connect/?desktop=${'u'.repeat(22)}`]);
     expect(await app.electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map(win => win.id))).toEqual(windowIds);
     await app.electron.evaluate(() => { (globalThis as any).__desktopSignIn.approved = true; });
     await expect(picker.getByText('Browser signed-in instance')).toBeVisible({ timeout: 15_000 });
     await expect(picker.getByRole('status')).toHaveCount(0);
-    await expect(picker.getByRole('button', { name: 'Sign in', exact: true })).toBeEnabled();
+    await expect(picker.getByRole('button', { name: 'Sign in to browse Zanas', exact: true })).toHaveCount(0);
+    await expect(picker.getByRole('button', { name: 'Refresh instances', exact: true })).toBeEnabled();
     expect(await app.electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map(win => win.id))).toEqual(windowIds);
+    await app.window.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+    await app.window.getByRole('link', { name: 'Remote access', exact: true }).click();
+    await expect(app.window.locator('.instance-menu > summary')).toBeVisible();
+    await app.window.getByRole('combobox', { name: 'Search settings' }).fill('Open another Zana');
+    await app.window.getByRole('option').filter({ hasText: 'Open another Zana' }).click();
+    await expect(app.window.getByRole('dialog', { name: 'Open another Zana', exact: true })).toBeVisible();
+    await expect(app.window.getByRole('region', { name: 'Zana instances' }).getByText('Browser signed-in instance')).toBeVisible();
+    await captureElectronScreenshot(app.electron, app.window, testInfo.outputPath('open-another-zana-from-settings.png'));
     await app.window.evaluate(() => window.cc.sharedClient.signOut());
     expect(await app.electron.evaluate(({ session }) => session.fromPartition('persist:zcc-shared-account').cookies.get({ name: 'zcc_session' }))).toEqual([]);
   } finally { await app.electron.close(); }
@@ -66,9 +77,10 @@ test('shared desktop targets are account-selected, isolated from local IPC, and 
     const instances = await app.window.evaluate(() => window.cc.sharedClient.list());
     expect(instances).toEqual([{ id: serverId, instanceId, name: 'Shared fixture', url: 'https://shared-fixture.zana-ide.com', online: true }]);
     await expect(app.window.evaluate(() => window.cc.sharedClient.select('https://evil.example'))).rejects.toThrow('unavailable');
-    const opened = app.electron.waitForEvent('window');
-    await app.window.evaluate(id => window.cc.sharedClient.select(id), serverId);
-    const shared = await opened;
+    await app.window.locator('.instance-menu > summary').click();
+    await app.window.getByRole('button', { name: 'Open another Zana…', exact: true }).click();
+    await app.window.getByRole('region', { name: 'Zana instances' }).getByRole('button', { name: 'Open Zana', exact: true }).click();
+    const shared = await sharedInstancePage(app, 'https://shared-fixture.zana-ide.com');
     await expect(shared.getByRole('heading', { name: 'Shared fixture' })).toBeVisible();
     expect(await shared.evaluate(() => typeof window.cc)).toBe('undefined');
     expect(await shared.evaluate(() => typeof (window as any).require)).toBe('undefined');

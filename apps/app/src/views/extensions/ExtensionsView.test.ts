@@ -30,7 +30,7 @@ describe('ExtensionsView plugin catalogue', () => {
   it('mounts plugin settings sections on the plugin detail page', () => {
         expect(hub).toContain('PluginSettingsSections');
         expect(hub).toContain('<PluginSettingsSections pluginId={module.id} />');
-        expect(hub).toContain('<PluginDefinedSettings pluginId={module.id} />');
+        expect(hub).toContain('<PluginSettingsForm snap={settingsSnap}');
         expect(hub).toContain('PluginHubIncludes');
         expect(hub).toContain('id="plugin-configure"');
         expect(hub).toContain('ext-plugin-section--config');
@@ -71,8 +71,9 @@ describe('ExtensionsView plugin catalogue', () => {
 
   it('scrolls only the plugin list on Browse and Installed', () => {
     expect(marketplace).toContain('className="ext-market-scroller"');
-    expect(marketplace).toContain('plugin-browse-shelves');
-    expect(hub).toContain('className="ext-installed-scroller"');
+    expect(marketplace).toContain('Available to install');
+    expect(marketplace).toContain('Already in your app');
+    expect(hub).toContain('className="ext-installed-scroller ext-plugin-collection-main"');
     expect(hub).toContain('className="ext-installed-panel"');
     expect(css).toContain(
       '.ext-market {\n  display: flex;\n  flex-direction: column;\n  flex: 1;\n  min-height: 0;\n  overflow: hidden;'
@@ -82,13 +83,13 @@ describe('ExtensionsView plugin catalogue', () => {
     );
   });
 
-  it('uses one Add plugin menu and an adaptive card grid', () => {
+  it('uses one Add plugin menu and compact responsive rows', () => {
     expect(hub).toContain('Add plugin');
     expect(hub).toContain('aria-label="Add a plugin"');
     const collectionCss = readFileSync(new URL('./installed-plugin-collection.css', import.meta.url), 'utf8');
-    expect(collectionCss).toContain('grid-template-columns: repeat(3, minmax(0, 1fr))');
-    expect(collectionCss).toContain('@container installed-plugins (max-width: 880px)');
-    expect(collectionCss).toContain('@container installed-plugins (max-width: 560px)');
+    expect(collectionCss).toContain('.ext-installed-row.is-selected');
+    expect(collectionCss).toContain('@container plugin-collection (max-width: 950px)');
+    expect(collectionCss).toContain('@container plugin-collection (max-width: 650px)');
   });
 
   it('keeps primary button hover on the accent fill so the label stays readable', () => {
@@ -148,7 +149,7 @@ describe('ExtensionsView plugin catalogue', () => {
 
   it('opens plugin details from a card button, independently of footer actions', () => {
     expect(hub).toContain('className="ext-installed-row-open" onClick={onOpen}');
-    expect(hub).toContain('className="ext-installed-card-footer"');
+    expect(hub).toContain('className="ext-installed-row-toggle"');
     expect(hub).not.toContain('className="ext-installed-row-chevron"');
   });
 

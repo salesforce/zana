@@ -361,15 +361,17 @@ export function BrowserTabContent({
     && !isBrowserDimmingModalOpen;
 
   useLayoutEffect(() => {
+    return () => visibilityCoordinator?.hide(tabId);
+  }, [visibilityCoordinator, tabId]);
+
+  useLayoutEffect(() => {
     if (visibilityCoordinator === null) return;
     if (isViewVisible) {
       visibilityCoordinator.show(tabId, syncBounds);
-      return () => {
-        visibilityCoordinator.hide(tabId);
-      };
+    } else {
+      visibilityCoordinator.hide(tabId, canShowNativeBrowserView && hasPage && !hasPageLoadError && isBrowserDimmingModalOpen);
     }
-    visibilityCoordinator.hide(tabId);
-  }, [visibilityCoordinator, tabId, isViewVisible, syncBounds]);
+  }, [visibilityCoordinator, tabId, isViewVisible, syncBounds, canShowNativeBrowserView, hasPage, hasPageLoadError, isBrowserDimmingModalOpen]);
 
   const navigateToInput = useCallback((rawInput: string) => {
     const url = resolveBrowserAddressInput(rawInput);

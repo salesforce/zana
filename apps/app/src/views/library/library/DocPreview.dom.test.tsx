@@ -140,9 +140,12 @@ it('ignores a late save acknowledgement even after navigating away and back', as
 it('requires another review if the reviewed version also changed before a merged save', async () => {
   mocks.write.mockResolvedValueOnce({ ok: false, message: 'Changed again' } as any).mockResolvedValueOnce({ ok: false, message: 'Changed again' } as any);
   const view = render(<DocPreview doc={note} />); await view.findByRole('button', { name: 'Edit' });
-  fireEvent.click(view.getByRole('button', { name: 'Edit' })); fireEvent.click(view.getByRole('button', { name: 'Save' }));
-  await view.findByTestId('library-save-recovery'); fireEvent.click(view.getByRole('button', { name: 'Review latest version' }));
-  await view.findByRole('button', { name: 'Save merged draft' }); fireEvent.click(view.getByRole('button', { name: 'Save merged draft' }));
+  fireEvent.click(view.getByRole('button', { name: 'Edit' }));
+  await act(async () => { fireEvent.click(view.getByRole('button', { name: 'Save' })); });
+  await view.findByTestId('library-save-recovery');
+  await act(async () => { fireEvent.click(view.getByRole('button', { name: 'Review latest version' })); });
+  await view.findByRole('button', { name: 'Save merged draft' });
+  await act(async () => { fireEvent.click(view.getByRole('button', { name: 'Save merged draft' })); });
   await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(2));
   expect(view.queryByRole('button', { name: 'Save merged draft' })).toBeNull();
   expect((view.getByLabelText('Edit note') as HTMLTextAreaElement).value).toBe('# Saved note');

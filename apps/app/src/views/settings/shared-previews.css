@@ -8,3 +8,11 @@
 .shared-previews-list code { overflow-wrap: anywhere; }
 .shared-previews-list small { color: var(--text-muted); }
 .shared-preview-browser { height: 65vh; display: flex; flex-direction: column; min-height: 350px; }
+
+.shared-previews-setup > summary { cursor: pointer; list-style: none; display: flex; flex-direction: column; gap: 4px; padding: 2px 0; }
+.shared-previews-setup > summary::-webkit-details-marker { display: none; }
+.shared-previews-setup > summary h2 { font-size: 13px; font-weight: 600; margin: 0; }
+.shared-previews-setup > summary h2::after { content: '›'; float: right; color: var(--text-muted); }
+.shared-previews-setup[open] > summary h2::after { content: '⌄'; }
+.shared-previews-setup > summary > span { font-size: 11px; color: var(--text-muted); }
+.shared-previews-setup > p { margin: 16px 0; font-size: 12px; }

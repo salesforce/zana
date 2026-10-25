@@ -1,3 +1,4 @@
+import { openThreadToolLauncher } from './fixtures/thread-tool-panel.js';
 import { createServer } from 'node:http';
 import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync, realpathSync, cpSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -305,7 +306,7 @@ async function openTool(studio: Locator, name: string) {
     await showSidePanel(page);
     const tab = sidePanelTab(page, name);
     if (await tab.count()) { await tab.click(); return; }
-    await sidePanel(page).getByTestId('thread-secondary-new-tab').click();
+    await openThreadToolLauncher(sidePanel(page));
     await sidePanel(page).getByTestId(`thread-new-tab-plugin-salesforce-studio-${PANEL_TOOL_IDS[name]}`).click();
     await expect(activeSidePanelTab(page)).toHaveText(name);
     return;
@@ -495,7 +496,7 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await expect(frame.locator('.sf-comment-glyph')).toHaveCount(0);
   // The host's own toggle opens the side panel beside the tab; its New Tab page lists only Actions and Comments.
   await showSidePanel(page);
-  await sidePanel(page).getByTestId('thread-secondary-new-tab').click();
+  await openThreadToolLauncher(sidePanel(page));
   await expect(sidePanel(page).getByTestId('thread-new-tab-plugin-salesforce-studio-actions')).toBeVisible();
   await expect(sidePanel(page).getByTestId('thread-new-tab-plugin-salesforce-studio-comments')).toBeVisible();
   for (const gone of ['graph', 'preview', 'test', 'release', 'org-preview', 'agents']) await expect(sidePanel(page).getByTestId(`thread-new-tab-plugin-salesforce-studio-${gone}`)).toHaveCount(0);
@@ -673,7 +674,7 @@ test('Thread Agent and Preview panels retain their agent when switching tabs, an
   await expect(page.getByTestId('thread-detail')).toBeVisible();
   await page.getByTestId('thread-secondary-show').click();
   const panel = page.getByTestId('thread-secondary-panel');
-  await panel.getByTestId('thread-secondary-new-tab').click();
+  await openThreadToolLauncher(panel);
   await panel.getByTestId('thread-new-tab-plugin-salesforce-preview').click();
   const preview = panel.getByTestId('salesforce-agentforce-preview');
   const picker = preview.getByRole('button', { name: 'Agentforce preview file', exact: true });
@@ -689,7 +690,7 @@ test('Thread Agent and Preview panels retain their agent when switching tabs, an
   await expect(picker).toContainText('Customer_Service_Agent_With_A_Long_Name');
 
   // The removed Playground thread panel is no longer offered; the read-only Agent panel is.
-  await panel.getByTestId('thread-secondary-new-tab').click();
+  await openThreadToolLauncher(panel);
   await expect(panel.getByTestId('thread-new-tab-plugin-salesforce-playground')).toHaveCount(0);
   for (const gone of ['graph', 'test', 'release', 'org-preview']) await expect(panel.getByTestId(`thread-new-tab-plugin-salesforce-studio-${gone}`)).toHaveCount(0);
   await expect(panel.getByTestId('thread-new-tab-plugin-salesforce-agent')).toBeVisible();
@@ -1446,7 +1447,7 @@ test('Agentforce Studio: no-file entry points reach org agents, an explorer org 
   await expect(agentTabs(page).getByRole('tab')).toHaveCount(0);
   // The side panel's New Tab lists only Actions and Comments; views and org agents are Studio tabs.
   await showSidePanel(page);
-  await sidePanel(page).getByTestId('thread-secondary-new-tab').click();
+  await openThreadToolLauncher(sidePanel(page));
   await expect(sidePanel(page).getByTestId('thread-new-tab-plugin-salesforce-studio-actions')).toBeVisible();
   await expect(sidePanel(page).getByTestId('thread-new-tab-plugin-salesforce-studio-comments')).toBeVisible();
   for (const gone of ['graph', 'preview', 'test', 'release', 'org-preview', 'agents']) await expect(sidePanel(page).getByTestId(`thread-new-tab-plugin-salesforce-studio-${gone}`)).toHaveCount(0);
@@ -2264,7 +2265,7 @@ test('Agentforce Studio: two agents keep their own view tabs, and closing one mo
 
   // Cards in the Assistant rail beside the Studio open Studio tabs, not a thread side panel.
   await showSidePanel(page);
-  await sidePanel(page).getByTestId('thread-secondary-new-tab').click();
+  await openThreadToolLauncher(sidePanel(page));
   await sidePanel(page).getByTestId('thread-new-tab-agent').click();
   const composer = sidePanel(page).getByTestId('panel-agent-tab-composer');
   await composer.getByTestId('thread-command-input').fill('Review these\n::sf-agent{path="force-app/Support.agent"}\n::sf-preview{runId="rail-run-1" path="force-app/Orders.agent"}');

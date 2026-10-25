@@ -28,14 +28,13 @@ import {
   MoreHorizontal,
   TerminalSquare,
   Search,
-  ChevronLeft,
   ChevronDown,
   ArrowUpCircle,
   GitBranch
 } from 'lucide-react';
 import { EXTENSION_PERMISSIONS } from '@zana-ai/zcc-extension-sdk';
 import type { AppModule } from '@zana-ai/zcc-extension-sdk/renderer';
-import type { ExtensionEntry, MarketplaceEntry, PluginAppEntry } from '@zana-ai/zcc-domain/product';
+import type { ExtensionEntry, MarketplaceEntry, PluginAppEntry, PluginSettingsSnapshot } from '@zana-ai/zcc-domain/product';
 import { useMergedModules } from '@/modules';
 import { getHost } from '@/modules/ModulePanelHost';
 import { resolveIcon } from '@/lib/resolveIcon';
@@ -47,7 +46,9 @@ import { createPluginComposeNavigation } from '@/lib/compose-prompt-seed';
 import { CREATE_PLUGIN_PROMPT } from '@/lib/create-resource-prompts';
 import { requestComposerCommandsReload } from '@/lib/composer-commands-reload';
 import { InstallFromGitDialog } from '@/components/InstallFromGitDialog';
-import { PluginDefinedSettings } from '@/plugins/PluginDefinedSettings';
+import { installedSource } from './plugin-presentation.js';
+import { PluginInspector } from './PluginInspector.js';
+import { PluginSettingsForm } from '@/plugins/PluginDefinedSettings';
 import { PluginSettingsSections } from '@/plugins/PluginSettingsSections';
 import { listSettingsSections, subscribePluginSlots } from '@/plugins/plugin-slots';
 import { PluginHubIncludes } from './PluginHubIncludes.js';
@@ -107,6 +108,7 @@ export function ExtensionsHub({
   showTabs?: boolean;
 } = {}) {
   const compact = useCompactLayout();
+  const [updatesRequested, setUpdatesRequested] = useState(false);
   const [uncontrolledTab, setUncontrolledTab] = useState<HubTab>(initialTab);
   const tab = controlledTab ?? uncontrolledTab;
   const catalogPluginId = useUi((s) => (tab === 'marketplace' ? s.settingsExtensionId : null));
@@ -199,6 +201,7 @@ export function ExtensionsHub({
   };
 
   const selectTab = (next: HubTab) => {
+    setUpdatesRequested(false);
     if (controlledTab === undefined) setUncontrolledTab(next);
     onTabChange?.(next);
   };
@@ -245,12 +248,14 @@ export function ExtensionsHub({
 
   return (
     <div className={`ext-hub-shell${tab === 'installed' ? ' ext-hub-shell--installed' : ''}`}>
-      {showTabs && tab === 'marketplace' ? (
-        <div className="ext-hub-tabs" role="tablist" aria-label="Plugins">
+      {tab === 'marketplace' ? <header className="ext-hub-browse-heading"><div><h3>Plugins</h3><p>Manage your tools, skills, and integrations.</p></div>{maintenanceActions}</header> : null}
+      {tab === 'marketplace' ? (
+        <div className="ext-hub-tabs" role={showTabs ? "tablist" : "navigation"} aria-label={showTabs ? "Plugins" : "Plugin collections"}>
           <button
             type="button"
-            role="tab"
-            aria-selected={false}
+            role={showTabs ? "tab" : undefined}
+            aria-selected={showTabs ? false : undefined}
+            aria-pressed={showTabs ? undefined : false}
             className="ext-hub-tab"
             onClick={() => selectTab('installed')}
           >
@@ -258,15 +263,18 @@ export function ExtensionsHub({
           </button>
           <button
             type="button"
-            role="tab"
-            aria-selected={tab === 'marketplace'}
+            role={showTabs ? "tab" : undefined}
+            aria-selected={showTabs ? tab === 'marketplace' : undefined}
+            aria-pressed={showTabs ? undefined : tab === 'marketplace'}
             className={`ext-hub-tab ${tab === 'marketplace' ? 'active' : ''}`}
             onClick={() => selectTab('marketplace')}
           >
             Browse
           </button>
+          <button type="button" role={showTabs ? "tab" : undefined} aria-selected={showTabs ? false : undefined} aria-pressed={showTabs ? undefined : false} className="ext-hub-tab" onClick={() => {
+            selectTab('installed'); setUpdatesRequested(true);
+          }}>Updates</button>
           <span className="ext-hub-tabs-spacer" />
-          {!compact && maintenanceActions}
         </div>
       ) : null}
       {redeployNote && (
@@ -275,18 +283,18 @@ export function ExtensionsHub({
         </div>
       )}
       {tab === 'installed' ? (
-        <InstalledView toolbarExtra={maintenanceActions} mobileActions={maintenanceButtons} onBrowse={() => selectTab('marketplace')} />
+        <InstalledView defaultUpdates={updatesRequested} toolbarExtra={maintenanceActions} mobileActions={maintenanceButtons} onBrowse={() => selectTab('marketplace')} />
       ) : (
         <PluginBrowseSplit
           pluginId={catalogPluginId}
-          toolbarExtra={showTabs ? undefined : maintenanceActions}
         />
       )}
     </div>
   );
 }
 
-export function InstalledView({ toolbarExtra, mobileActions, onBrowse }: {
+export function InstalledView({ toolbarExtra, mobileActions, onBrowse, defaultUpdates = false }: {
+  defaultUpdates?: boolean;
   toolbarExtra?: ReactNode;
   mobileActions?: ReactNode;
   onBrowse?: () => void;
@@ -424,25 +432,13 @@ export function InstalledView({ toolbarExtra, mobileActions, onBrowse }: {
       Install from repository
     </button>
   </>;
-  if (active) {
-    return (
-      <section className="ext-installed ext-installed--detail">
-        <button
-          type="button"
-          className="settings-btn ext-installed-back"
-          onClick={() => setExtensionsTab('installed')}
-        >
-          <ChevronLeft size={14} />
-          Back to installed
-        </button>
-        <ExtensionDetail key={active.module.id} row={active} />
-      </section>
-    );
-  }
 
   return (
     <>
-      <InstalledPluginCollection rows={rows} onOpen={selectSettingsExtension} onBrowse={browsePlugins}
+      <InstalledPluginCollection rows={rows} selectedId={active?.module.id} defaultUpdates={defaultUpdates}
+        inspector={active ? <PluginInspector key={active.module.id} label="Installed plugin" onClose={() => setExtensionsTab('installed')}>
+          <ExtensionDetail row={active} />
+        </PluginInspector> : undefined} onOpen={selectSettingsExtension} onBrowse={browsePlugins}
         headerActions={!compact ? <>
           <div className="ext-install-menu-wrap" ref={newMenuRef}>
             <button type="button" className="settings-btn primary" aria-haspopup="menu"
@@ -596,6 +592,21 @@ function ExtensionDetail({ row }: { row: HubRow }) {
     listSettingsSections
   ).some((section) => section.pluginId === module.id);
   const [catalog, setCatalog] = useState<MarketplaceEntry[]>([]);
+  const location = useLocation();
+  const [detailTab, setDetailTab] = useState('overview');
+  const [settingsSnap, setSettingsSnap] = useState<PluginSettingsSnapshot | null>(null);
+  useEffect(() => {
+    if (!plugin) return;
+    let cancelled = false;
+    product.pluginApps.getSettings(module.id).then((snap) => {
+      if (!cancelled) setSettingsSnap(snap);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [module.id, plugin?.id]);
+  useEffect(() => {
+    if (location.hash === '#plugin-configure') setDetailTab('settings');
+  }, [location.hash, location.key]);
+  const hasSettings = (settingsSnap !== null && Object.keys(settingsSnap.descriptors).length > 0) || hasSlotSettings || !!SettingsPanel;
 
   useEffect(() => {
     product.extensions
@@ -611,25 +622,40 @@ function ExtensionDetail({ row }: { row: HubRow }) {
   // is still a new navigation (`key`), so both reveal again.
   const { search: locationSearch, hash: locationHash, key: locationKey } = useLocation();
   useEffect(() => {
-    if (locationHash !== '#plugin-configure') return;
+    if (detailTab !== 'settings') return;
     document.getElementById('plugin-configure')?.scrollIntoView({ block: 'start' });
     document.getElementById('plugin-configure')?.focus();
     // Opened from a Settings search result: flash and focus the matching field.
     const settingKey = new URLSearchParams(locationSearch).get(PLUGIN_SETTING_PARAM);
     if (!settingKey) return;
     return revealPluginSetting(settingKey);
-  }, [module.id, locationSearch, locationHash, locationKey]);
+  }, [module.id, locationSearch, locationHash, locationKey, detailTab]);
 
   const catalogEntry = catalog.find((item) => item.id === module.id) ?? null;
+  const detailTabs = ['overview', ...(hasSettings || detailTab === 'settings' ? ['settings'] : []), 'installation'];
 
   if (!hasDesktopBridge() && entry && !plugin) return <DesktopOnlyPlugin entry={entry} />;
 
   return (
     <>
-      <AboutCard row={row} />
-      {catalogEntry?.description || plugin?.description ? (
-        <PluginOverviewLead description={catalogEntry?.description || plugin?.description || ''} />
-      ) : null}
+<AboutCard row={row} installation={detailTab === 'installation'} onConfigure={() => setDetailTab('settings')} onManage={() => setDetailTab('installation')} />
+      {plugin?.description ? <PluginOverviewLead description={plugin.description} /> : null}
+      {module.loadError ? <p className="modal-error" role="alert">{module.loadError}</p> : null}
+      <nav className="ext-plugin-detail-tabs" role="tablist" aria-label="Plugin detail sections" onKeyDown={(event) => {
+        const direction = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+        if (!direction && event.key !== 'Home' && event.key !== 'End') return;
+        event.preventDefault();
+        const next = detailTabs[event.key === 'Home' ? 0 : event.key === 'End' ? detailTabs.length - 1 :
+          (detailTabs.indexOf(detailTab) + direction + detailTabs.length) % detailTabs.length]!;
+        setDetailTab(next);
+        document.getElementById(`plugin-detail-tab-${next}`)?.focus();
+      }}>
+        {detailTabs.map((tab) =>
+          <button key={tab} type="button" role="tab" tabIndex={detailTab === tab ? 0 : -1} aria-selected={detailTab === tab} aria-controls={`plugin-detail-${tab}`} id={`plugin-detail-tab-${tab}`}
+            onClick={() => setDetailTab(tab)}>{tab[0]!.toUpperCase() + tab.slice(1)}</button>)}
+      </nav>
+      <div id="plugin-detail-overview" role="tabpanel" aria-labelledby="plugin-detail-tab-overview" hidden={detailTab !== 'overview'}>
+      {!plugin?.description && catalogEntry?.description ? <PluginOverviewLead description={catalogEntry.description} /> : null}
       <div className="ext-plugin-detail-stack">
         {catalogEntry?.overview ? (
           <section className="ext-plugin-section" data-resource-detail-section="overview">
@@ -645,27 +671,28 @@ function ExtensionDetail({ row }: { row: HubRow }) {
             onOpen={(next) => appNavigate(getPluginDetailRoutePath(next.id))}
           />
         ) : null}
-        <section
-          className="ext-plugin-section ext-plugin-section--config"
-          id="plugin-configure"
-          tabIndex={-1}
-        >
-          <h3>Configuration</h3>
-          <PluginDefinedSettings pluginId={module.id} />
-          <PluginSettingsSections pluginId={module.id} />
-        </section>
+        {plugin ? <PluginHubIncludes plugin={plugin} /> : null}
+      </div>
+      </div>
+      <div id="plugin-detail-installation" role="tabpanel" aria-labelledby="plugin-detail-tab-installation" hidden={detailTab !== 'installation'}>
+        <section className="ext-plugin-section"><h3>Installed from</h3><p className="settings-help">{installedSource(row)}</p></section>
         <PluginReleaseSection
           version={entry?.manifest?.version ?? plugin?.npmResolvedVersion ?? undefined}
           delivery={pluginUpdateDelivery(plugin)}
         />
         {plugin ? <PluginUpdateDetails plugin={plugin} /> : null}
-        {plugin ? <PluginHubIncludes plugin={plugin} /> : entry ? <InstallConfirmationCard entry={entry} /> : null}
+        {entry ? <InstallConfirmationCard entry={entry} /> : null}
       </div>
-      {module.loadError ? (
-        <section className="settings-section">
-          <p className="modal-error">{module.loadError}</p>
+      <div id="plugin-detail-settings" role="tabpanel" aria-labelledby="plugin-detail-tab-settings" hidden={detailTab !== 'settings'}>
+        <section className="ext-plugin-section ext-plugin-section--config" id="plugin-configure" tabIndex={-1}>
+          <h3>Configuration</h3>
+          {settingsSnap ? <PluginSettingsForm snap={settingsSnap} onSave={async (key, value) => {
+            const next = await product.pluginApps.setSettings(module.id, { [key]: value });
+            setSettingsSnap(next);
+          }} /> : null}
+          <PluginSettingsSections pluginId={module.id} />
         </section>
-      ) : SettingsPanel && shouldMountHostSettings(row) && !hasSlotSettings ? (
+      {module.loadError ? null : SettingsPanel && shouldMountHostSettings(row) && !hasSlotSettings ? (
         <ErrorBoundary key={module.id}>
           <SettingsPanel host={getHost(module.id)} />
         </ErrorBoundary>
@@ -686,6 +713,7 @@ function ExtensionDetail({ row }: { row: HubRow }) {
           </p>
         </section>
       )}
+      </div>
     </>
   );
 }
@@ -838,7 +866,7 @@ function PermissionsCard({ entry }: { entry: ExtensionEntry }) {
 }
 
 /** Generic, core-owned header: title, provenance, version/status, enable + reveal. */
-function AboutCard({ row }: { row: HubRow }) {
+function AboutCard({ row, installation, onConfigure, onManage }: { row: HubRow; installation: boolean; onConfigure: () => void; onManage: () => void }) {
   const { module, entry, plugin } = row;
   const healthCopy = summarizePluginHealthDetail(plugin?.statusDetail);
   const Icon = resolveIcon(displayIcon(module.icon));
@@ -903,6 +931,7 @@ function AboutCard({ row }: { row: HubRow }) {
   const [sharing, setSharing] = useState(false);
 
   const focusConfigure = () => {
+    onConfigure();
     const el = document.getElementById('plugin-configure');
     el?.scrollIntoView({ block: 'start' });
     el?.focus();
@@ -981,7 +1010,9 @@ function AboutCard({ row }: { row: HubRow }) {
   };
 
   return (
-    <section className="settings-section ext-hub-about">
+    <section className="settings-section ext-hub-about" onKeyDown={(event) => {
+      if (event.key === 'Escape' && aboutMenuOpen) { event.stopPropagation(); setAboutMenuOpen(false); }
+    }}>
       <div className="ext-hub-about-head">
         <span className="ext-hub-about-icon-wrap">
           <Icon size={28} className="ext-hub-about-icon" />
@@ -1049,6 +1080,7 @@ function AboutCard({ row }: { row: HubRow }) {
                   role="menuitem"
                   onClick={() => {
                     setAboutMenuOpen(false);
+                    onManage();
                     setConfirmRemove(true);
                   }}
                 >
@@ -1059,6 +1091,7 @@ function AboutCard({ row }: { row: HubRow }) {
             ) : null}
           </div>
       </div>
+      <div hidden={!installation}>
       <div className="ext-hub-about-grid">
         <span className="ext-hub-about-key">Status</span>
         {plugin?.status === 'needs-configuration' ? (
@@ -1178,6 +1211,7 @@ function AboutCard({ row }: { row: HubRow }) {
           {localError && <p className="modal-error">{localError}</p>}
         </div>
       )}
+      </div>
       {/* Management footer — safe utility actions on the left, the destructive
           action pushed to the far right and separated by a hairline so it can't
           be hit by muscle memory. Confirm/Cancel replace Uninstall in place. */}
@@ -1192,7 +1226,7 @@ function AboutCard({ row }: { row: HubRow }) {
                   : 'Reload the plugin process without restarting the app.')}
             </span>
             {healthCopy.technical && healthCopy.technical !== healthCopy.summary ? (
-              <pre className="ext-plugin-health-detail">{healthCopy.technical}</pre>
+              <details><summary>Technical details</summary><pre className="ext-plugin-health-detail">{healthCopy.technical}</pre></details>
             ) : null}
           </div>
           <div className="ext-actions">
@@ -1218,7 +1252,7 @@ function AboutCard({ row }: { row: HubRow }) {
         </div>
       ) : null}
       {canToggle && (
-        <div className="ext-actions-footer">
+        <div className="ext-actions-footer" hidden={!installation}>
           <div className="ext-actions ext-actions--start">
             <button type="button" className="settings-btn" onClick={toggleEnabled}>
               <Power size={14} />

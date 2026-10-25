@@ -1,3 +1,4 @@
+import { openThreadToolLauncher } from './fixtures/thread-tool-panel.js';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ElectronApplication, Page, TestInfo } from '@playwright/test';
@@ -131,7 +132,7 @@ test('a plugin page opens an agent side panel from its launcher and New Tab', as
     await shot(app.electron, win, testInfo, `3c-agent-chat-${theme}`);
   }
 
-  await win.getByTestId('thread-secondary-new-tab').click();
+  await openThreadToolLauncher(win);
   await expect(win.getByTestId('thread-new-tab-agent')).toBeVisible();
   await shot(app.electron, win, testInfo, '4-new-tab-agent-entry');
   await win.getByTestId('thread-new-tab-agent').click();

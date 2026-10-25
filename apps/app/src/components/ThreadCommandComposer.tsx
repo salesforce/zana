@@ -413,7 +413,7 @@ function ThreadComposerContent({
     setComposerMode(entry.id);
     options.setAcpMode(entry.nativeValue);
   }, [composerModeEntriesForProvider, options]);
-  const provider = options.provider ?? fallbackProviderOption(options.providerId);
+  const provider = useMemo(() => options.provider ?? fallbackProviderOption(options.providerId), [options.provider, options.providerId]);
   const localCommands = useMemo(() => onRunTerminal ? [COMPOSER_TERMINAL_COMMAND] : [], [onRunTerminal]);
   const field = useComposerPromptField({
     ariaLabel: 'Message',

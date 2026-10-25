@@ -49,19 +49,19 @@ it('searches and automatically reveals coding-agent matches without suppressing 
   expect(screen.getByRole('status').textContent).toContain('No plugins match “missing”');
 });
 
-it('combines enabled/disabled, publisher and sorting filters', () => {
+it('combines enabled/disabled, source and sorting filters', () => {
   setup();
   const status = within(screen.getByRole('group', { name: 'Filter by status' }));
   fireEvent.click(status.getByRole('button', { name: 'Disabled', exact: true }));
   expect(screen.getByRole('button', { name: 'Beta' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Delta' })).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Alpha' })).toBeNull();
-  fireEvent.change(screen.getByLabelText('Filter by publisher'), { target: { value: 'local' } });
+  fireEvent.change(screen.getByLabelText('Filter by source'), { target: { value: 'Local folder' } });
   expect(screen.queryByRole('button', { name: 'Delta' })).toBeNull();
   fireEvent.click(status.getByRole('button', { name: 'Enabled', exact: true }));
   expect(screen.getByRole('status').textContent).toContain('No plugins match these filters');
   fireEvent.click(status.getByRole('button', { name: 'All', exact: true }));
-  fireEvent.change(screen.getByLabelText('Filter by publisher'), { target: { value: 'all' } });
+  fireEvent.change(screen.getByLabelText('Filter by source'), { target: { value: 'all' } });
   const sort = screen.getByRole('button', { name: 'Sort by name descending' });
   fireEvent.click(sort);
   expect(screen.getByRole('button', { name: 'Sort by name ascending' }).getAttribute('title')).toBe('Name Z–A');
@@ -84,16 +84,44 @@ it('shows updates across both groups and clears filters when switching collectio
 it('explains empty installations, current plugins, and a single enabled plugin', () => {
   const { rerender } = setup([]);
   expect(screen.getByRole('status').textContent).toContain('No plugins installed');
-  expect(screen.queryByLabelText('Filter by publisher')).toBeNull();
+  expect(screen.queryByLabelText('Filter by source')).toBeNull();
   rerender(<InstalledPluginCollection rows={buildHubRows([], [], [plugin('Only')])} onOpen={vi.fn()} onBrowse={vi.fn()} />);
   expect(screen.getByText('1 plugin enabled')).toBeTruthy();
   fireEvent.click(collectionButton('Updates'));
   expect(screen.getByRole('status').textContent).toContain('Check for updates from the More menu');
 });
 
-it('recovers when a publisher disappears after uninstall', () => {
+it('recovers when a source disappears after uninstall', () => {
   const { rerender } = setup();
-  fireEvent.change(screen.getByLabelText('Filter by publisher'), { target: { value: 'local' } });
+  fireEvent.change(screen.getByLabelText('Filter by source'), { target: { value: 'Local folder' } });
   rerender(<InstalledPluginCollection rows={buildHubRows([], [], [plugin('Only')])} onOpen={vi.fn()} onBrowse={vi.fn()} />);
   expect(screen.getByRole('button', { name: 'Only' })).toBeTruthy();
+});
+
+it('reviews unhealthy plugins without replacing descriptions, and clears the attention filter', () => {
+  setup(buildHubRows([], [], [plugin('Healthy'), plugin('Broken', { status: 'degraded' }), plugin('Agent', { status: 'needs-configuration', collection: 'coding-agents' })]));
+  expect(screen.getByText('2 plugins need attention')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Review 2' }));
+  expect(screen.queryByRole('button', { name: 'Healthy' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Agent' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Show all', exact: true }));
+  expect(screen.getByRole('button', { name: 'Healthy' })).toBeTruthy();
+});
+
+it('filters by capabilities and recovers when the last matching plugin is removed', () => {
+  const { rerender } = setup(buildHubRows([], [], [plugin('Skills', { skillNames: ['test'] }), plugin('Panel', { projectTab: {} })]));
+  fireEvent.change(screen.getByLabelText('Filter by capability'), { target: { value: 'Skills' } });
+  expect(screen.queryByRole('button', { name: 'Panel' })).toBeNull();
+  rerender(<InstalledPluginCollection rows={buildHubRows([], [], [plugin('Panel', { projectTab: {} })])} onOpen={vi.fn()} onBrowse={vi.fn()} />);
+  expect(screen.getByRole('button', { name: 'Panel' })).toBeTruthy();
+});
+
+it('opens directly to Updates and explains distinct update policies', () => {
+  render(<InstalledPluginCollection rows={buildHubRows([], [], [plugin('Local', { sourceKind: 'path' }), plugin('Bundled', { sourceKind: 'builtin' }), plugin('Remote', { sourceKind: 'git' })])}
+    onOpen={vi.fn()} onBrowse={vi.fn()} defaultUpdates inspector={<aside>Inspector</aside>} />);
+  expect(screen.getByRole('heading', { name: 'No pending updates' })).toBeTruthy();
+  expect(screen.getByText('Local development')).toBeTruthy();
+  expect(screen.getByText('Updates with Zana releases')).toBeTruthy();
+  expect(screen.getByText('Automatic checks; manual updates')).toBeTruthy();
+  expect(screen.getByText('Inspector')).toBeTruthy();
 });

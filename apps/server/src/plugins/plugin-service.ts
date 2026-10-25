@@ -23,7 +23,8 @@ import {
   parseMarketplaceSource
 } from './marketplace-source.js';
 import {
-  INTERNAL_MARKETPLACE_SEED_TIMEOUT_MS,
+  DEFAULT_MARKETPLACE_SEED_TIMEOUT_MS,
+  resolveCommunityMarketplaceSource,
   resolveInternalMarketplaceSource,
   resolveOfficialMarketplaceUrl
 } from './default-marketplaces.js';
@@ -2101,8 +2102,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     }
   }
 
-  async function seedInternalMarketplace(): Promise<void> {
-    const raw = resolveInternalMarketplaceSource();
+  async function seedMarketplaceSource(raw: string | null): Promise<void> {
     if (!raw) return;
     let parsed;
     try {
@@ -2112,8 +2112,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     }
     const display = marketplaceSourceDisplay(parsed);
     const existing = matchingMarketplace(display);
-    if (existing) {
-      if (!existing.official && existing.cachedIndex) {
+    if (existing?.cachedIndex) {
+      if (!existing.official) {
         try {
           await marketplaces.add(existing.source, existing.cachedIndex, { official: true });
           await emitAppsChanged();
@@ -2125,32 +2125,30 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     }
     try {
       const index = await materializeMarketplaceIndex(parsed, fetchJson, {
-        timeoutMs: INTERNAL_MARKETPLACE_SEED_TIMEOUT_MS,
+        timeoutMs: DEFAULT_MARKETPLACE_SEED_TIMEOUT_MS,
         nonInteractive: true
       });
       await marketplaces.add(display, index, { official: true });
       await emitAppsChanged();
     } catch {
-      /* fail-soft: unreachable git.soma must not persist lastError */
+      /* Unreachable catalogs must not prevent startup or affect other catalogs. */
     }
   }
 
   async function seedDefaultMarketplaces(): Promise<void> {
     await seedOfficialMarketplace();
-    const raw = resolveInternalMarketplaceSource();
-    if (!raw) return;
-    let kind: ReturnType<typeof parseMarketplaceSource>['kind'] | undefined;
-    try {
-      kind = parseMarketplaceSource(raw).kind;
-    } catch {
-      return;
+    for (const raw of [resolveCommunityMarketplaceSource(), resolveInternalMarketplaceSource()]) {
+      if (!raw) continue;
+      let kind: ReturnType<typeof parseMarketplaceSource>['kind'];
+      try {
+        kind = parseMarketplaceSource(raw).kind;
+      } catch {
+        continue;
+      }
+      const pending = seedMarketplaceSource(raw);
+      if (kind === 'git') void pending;
+      else await pending;
     }
-    const pending = seedInternalMarketplace();
-    if (kind === 'git') {
-      void pending;
-      return;
-    }
-    await pending;
   }
 
   async function retireRetiredFirstPartyPlugins(): Promise<void> {

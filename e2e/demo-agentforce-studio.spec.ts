@@ -1,3 +1,4 @@
+import { openThreadToolLauncher } from './fixtures/thread-tool-panel.js';
 import { createServer } from 'node:http';
 import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync, realpathSync, cpSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -304,7 +305,7 @@ async function openTool(studio: Locator, name: string) {
     await showSidePanel(page);
     const tab = sidePanelTab(page, name);
     if (await tab.count()) { await tab.click(); return; }
-    await sidePanel(page).getByTestId('thread-secondary-new-tab').click();
+    await openThreadToolLauncher(sidePanel(page));
     await sidePanel(page).getByTestId(`thread-new-tab-plugin-salesforce-studio-${PANEL_TOOL_IDS[name]}`).click();
     await expect(activeSidePanelTab(page)).toHaveText(name);
     return;

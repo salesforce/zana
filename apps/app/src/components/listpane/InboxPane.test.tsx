@@ -121,7 +121,7 @@ describe('InboxPane compact chrome contract', () => {
     expect(css).toContain('--inbox-list-min: 345px;');
     expect(css).toContain('min-width: var(--inbox-list-min, 345px);');
     expect(css).toContain(
-      '.inbox-view {\n  --inbox-list-min: 345px;\n  grid-column: 2 / -1;\n  background: var(--bg-base);\n  min-width: 0;\n  min-height: 0;\n  overflow: hidden;\n  display: grid;\n  grid-template-columns: max(var(--inbox-list-min), var(--col-list)) minmax(0, 1fr);\n'
+      '.inbox-view {\n  --inbox-list-min: 345px;\n  grid-column: 2 / -1;\n  background: var(--bg-panel);\n  min-width: 0;\n  min-height: 0;\n  overflow: hidden;\n  display: grid;\n  grid-template-columns: max(var(--inbox-list-min), var(--col-list)) minmax(0, 1fr);\n'
     );
     expect(css).toContain(
       'grid-template-columns: max(var(--inbox-list-min), var(--col-list)) minmax(0, 1fr);\n  /* Trap the inner list pane z-index so the Feed list cannot paint over the\n     left rail. The sidebar is a sibling stacking context at z-index 1; without\n     this, the list is later in the tree and wins. */\n  isolation: isolate;\n}'

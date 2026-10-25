@@ -24,3 +24,24 @@ it.each([false, true])('hydrates recovery and service-tier switches and persists
     expect(update).toHaveBeenCalledWith({ [key]: !enabled });
   }
 });
+
+
+it.each([undefined, true, false])('offers thread tabs, enabled by default: %s', enabled => {
+  const update = vi.fn();
+  render(<ExperimentalView config={{ ...base, threadTabsEnabled: enabled }} onConfigDraft={vi.fn()} onUpdate={update} />);
+  const toggle = screen.getByRole('switch', { name: 'Thread tabs' });
+  expect(toggle.getAttribute('aria-checked')).toBe(String(enabled ?? true));
+  fireEvent.click(toggle);
+  expect(update).toHaveBeenCalledWith({ threadTabsEnabled: !(enabled ?? true) });
+  expect(screen.getByText(/Closing a tab keeps the thread running/)).toBeTruthy();
+});
+
+it.each([undefined, true, false])('offers dockable thread tools, enabled by default: %s', enabled => {
+  const update = vi.fn();
+  render(<ExperimentalView config={{ ...base, dockableThreadToolsEnabled: enabled }} onConfigDraft={vi.fn()} onUpdate={update} />);
+  const toggle = screen.getByRole('switch', { name: 'Dockable thread tools' });
+  expect(toggle.getAttribute('aria-checked')).toBe(String(enabled ?? true));
+  fireEvent.click(toggle);
+  expect(update).toHaveBeenCalledWith({ dockableThreadToolsEnabled: !(enabled ?? true) });
+  expect(screen.getByText(/Moving a terminal keeps its session running/)).toBeTruthy();
+});

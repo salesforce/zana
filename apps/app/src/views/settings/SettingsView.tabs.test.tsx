@@ -110,6 +110,8 @@ it('applies config patches to the store and flashes Saved', async () => {
     followUpsEnabled: true,
     catchUpSummaryEnabled: true,
     classicSessionViewEnabled: true,
+    threadTabsEnabled: false,
+    dockableThreadToolsEnabled: false,
     catchUpSummaryDelaySeconds: 9,
     feedNoiseClassifierEnabled: true,
     terminalClipboardWriteEnabled: true,
@@ -137,7 +139,7 @@ it('applies config patches to the store and flashes Saved', async () => {
   const setters = [
     'setFontSize', 'setTerminalTheme', 'setInboxGuidanceEnabled', 'setTerminalWheelArrowsEnabled',
     'setHeartbeatEnabled', 'setGoalsEnabled', 'setCliRemoteToolProxyEnabled', 'setFollowUpsEnabled',
-    'setCatchUpSummaryEnabled', 'setClassicSessionViewEnabled', 'setCatchUpSummaryDelaySeconds',
+    'setCatchUpSummaryEnabled', 'setClassicSessionViewEnabled', 'setThreadTabsEnabled', 'setDockableThreadToolsEnabled', 'setCatchUpSummaryDelaySeconds',
     'setFeedNoiseClassifierEnabled', 'setTerminalClipboardWriteEnabled', 'setTerminalCtrlVPasteEnabled',
     'setStructuredQuestionsEnabled',
     'setWorktreeIsolationDefault', 'setAgentListNeedsYouFromTriage', 'setVoiceInputEnabled',
@@ -155,6 +157,8 @@ it('applies config patches to the store and flashes Saved', async () => {
   await act(async () => { await h.props.global.onUpdate(patch); });
   expect(h.setMock).toHaveBeenCalledWith(patch);
   for (const spy of spies) expect(spy).toHaveBeenCalledTimes(1);
+  expect(useData.getState().setThreadTabsEnabled).toHaveBeenCalledWith(false);
+  expect(useData.getState().setDockableThreadToolsEnabled).toHaveBeenCalledWith(false);
   expect(useData.getState().nativeAgentDiscoveryEnabled).toBe(true);
   expect(await screen.findByText('Saved')).toBeTruthy();
   // second save re-arms the timer path

@@ -229,19 +229,44 @@ automatically at start (Official, not removable). Override or disable with
 `ZCC_OFFICIAL_MARKETPLACE_URL` (`off` / `0` skips it). See
 [`marketplace/README.md`](../marketplace/README.md).
 
+## Community marketplace
+
+Public community plugins are seeded automatically from
+[`salesforce/zana-marketplace`](https://github.com/salesforce/zana-marketplace)
+at app start, alongside the first-party and Salesforce-internal catalogs.
+The public catalog requires no Salesforce account or corporate VPN/SSO.
+
+```bash
+zcc marketplace install <plugin-id>@zana-community
+```
+
+This default catalog is Official (not removable). Discovery runs in the
+background; if the repository is unreachable, startup continues and an existing
+cache remains available. Installed plugins, settings, and custom catalogs are
+preserved. Authoring and PR flow live in that repository's README.
+
+Override or disable this catalog independently with
+`ZCC_COMMUNITY_MARKETPLACE_SOURCE` (`off` / `0` skips it).
+
 ## Internal marketplace (Salesforce)
 
-Salesforce-internal plugins are seeded automatically from git.soma at app
-start, beside the public official catalog. The catalog is Official (not
-removable). Clone requires VPN/SSO git access; if the repo is unreachable the
-seed is skipped and Browse does not show an error.
+Salesforce-internal plugins remain seeded automatically from
+[`chatbots/zana-internal-marketplace`](https://git.soma.salesforce.com/chatbots/zana-internal-marketplace)
+on git.soma. Salesforce controls access through its existing Git authentication
+and employee access policies. Adding the public catalog does not grant access
+to the internal repository or replace an existing internal catalog.
+
+The internal catalog is Official (not removable). Discovery is bounded and
+non-interactive; if Git access is unavailable, it is skipped silently while the
+public catalog remains usable. An existing internal cache stays available.
 
 ```bash
 zcc marketplace install <plugin-id>@internal
 ```
 
-Authoring and PR flow live in that repo's README. Override or disable the seed
-with `ZCC_INTERNAL_MARKETPLACE_SOURCE` (`off` / `0` skips it).
+`ZCC_INTERNAL_MARKETPLACE_SOURCE` continues to override or disable only the
+internal catalog (`off` / `0` skips it). The public and internal variables are
+independent.
 
 ## CLI
 

@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   classicSessionViewEnabled: false,
+  threadTabsEnabled: false,
+  compact: false,
   nav: 'agents' as string,
   focusedProjectId: null as string | null,
   scopedProjectId: null as string | null,
@@ -12,7 +14,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('../store.js', () => ({
   useData: {
-    getState: () => ({ classicSessionViewEnabled: h.classicSessionViewEnabled })
+    getState: () => ({ classicSessionViewEnabled: h.classicSessionViewEnabled, threadTabsEnabled: h.threadTabsEnabled })
   },
   useUi: {
     getState: () => ({
@@ -24,6 +26,8 @@ vi.mock('../store.js', () => ({
     })
   }
 }));
+
+vi.mock('../hooks/useIsCompactViewport.js', () => ({ isCompactViewport: () => h.compact }));
 
 vi.mock('./windowScope.js', () => ({
   getScopedProjectId: () => h.scopedProjectId
@@ -75,6 +79,8 @@ describe('inspectRouteProjectId', () => {
 describe('inspectAgentSession', () => {
   beforeEach(() => {
     h.classicSessionViewEnabled = false;
+    h.threadTabsEnabled = false;
+    h.compact = false;
     h.nav = 'agents';
     h.focusedProjectId = null;
     h.scopedProjectId = null;
@@ -111,6 +117,8 @@ describe('inspectAgentSession', () => {
 describe('inspectThread', () => {
   beforeEach(() => {
     h.classicSessionViewEnabled = false;
+    h.threadTabsEnabled = false;
+    h.compact = false;
     h.nav = 'agents';
     h.focusedProjectId = null;
     h.scopedProjectId = null;
@@ -155,6 +163,8 @@ describe('inspectThread', () => {
 describe('threadOpenListener', () => {
   beforeEach(() => {
     h.classicSessionViewEnabled = false;
+    h.threadTabsEnabled = false;
+    h.compact = false;
     h.openThreadModal.mockClear();
     h.enterProjectFocus.mockClear();
   });
@@ -183,5 +193,43 @@ describe('threadOpenListener', () => {
       { type: 'thread-open', threadId: 't', projectId: 'p', terminal: true }, { type: 'thread-open', threadId: 1, projectId: 'p' }, { type: 'thread-open', threadId: 't' }]) listener(payload);
     expect(h.enterProjectFocus).not.toHaveBeenCalled();
     expect(h.openThreadModal).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('desktop thread tabs inspection', () => {
+  beforeEach(() => {
+    h.classicSessionViewEnabled = false;
+    h.threadTabsEnabled = true;
+    h.compact = false;
+    h.nav = 'agents';
+    h.focusedProjectId = null;
+    h.scopedProjectId = null;
+    h.openThreadModal.mockReset();
+    h.openAgentModal.mockReset();
+  });
+  it('opens a thread page while keeping CLI agents in their inspector', () => {
+    const navigate = vi.fn();
+    inspectThread('tabbed', 'p', navigate);
+    expect(navigate).toHaveBeenCalledWith('/threads/tabbed');
+    expect(h.openThreadModal).not.toHaveBeenCalled();
+    inspectAgentSession('cli', 'p', navigate);
+    expect(h.openAgentModal).toHaveBeenCalledWith('cli', 'p');
+  });
+  it('keeps the project rail when opening a tab from project view', () => {
+    h.nav = 'projects'; h.focusedProjectId = 'p';
+    const navigate = vi.fn();
+    inspectThread('tabbed', 'p', navigate);
+    expect(navigate).toHaveBeenCalledWith('/projects/p/threads/tabbed');
+  });
+  it('does not change compact inspection or override Classic session view', () => {
+    h.compact = true;
+    const navigate = vi.fn();
+    inspectThread('tabbed', 'p', navigate);
+    expect(h.openThreadModal).toHaveBeenCalledWith('tabbed');
+    expect(navigate).not.toHaveBeenCalled();
+    h.classicSessionViewEnabled = true;
+    inspectThread('tabbed', 'p', navigate);
+    expect(navigate).toHaveBeenCalledWith('/threads/tabbed');
   });
 });

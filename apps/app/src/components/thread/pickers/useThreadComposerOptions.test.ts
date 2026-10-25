@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  */
-import { createElement } from 'react';
+import { createElement, useEffect } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -127,6 +127,23 @@ describe('useThreadComposerOptions acpMode rehydration (rendered)', () => {
 
 describe('composer host cache subscriptions', () => {
   afterEach(() => { cleanup(); resetThreadModelCatalog(); });
+
+  it('does not reload commands on unrelated renders while a custom provider host is unavailable', () => {
+    resetThreadModelCatalog(async () => ({ providers: [], models: [], selectedOnlyModels: [], modelLoadError: null }) as never);
+    const reloadCommands = vi.fn();
+    const view = renderHook(({ providerId }) => {
+      const options = useThreadComposerOptions({ threadId: 'offline', lockedProviderId: providerId, hostPending: true });
+      useEffect(() => { reloadCommands(); }, [options.provider?.composerActions]);
+      return options;
+    }, { initialProps: { providerId: 'acp-custom' } });
+    expect(reloadCommands).toHaveBeenCalledOnce();
+    view.rerender({ providerId: 'acp-custom' });
+    view.rerender({ providerId: 'acp-custom' });
+    expect(reloadCommands).toHaveBeenCalledOnce();
+    view.rerender({ providerId: 'another-custom' });
+    expect(reloadCommands).toHaveBeenCalledTimes(2);
+    expect(view.result.current.provider?.id).toBe('another-custom');
+  });
 
   it('restores explicit model, reasoning and role instead of late thread defaults', async () => {
     resetThreadModelCatalog(async () => ({ providers: [], models: [], selectedOnlyModels: [], modelLoadError: null }) as never);
