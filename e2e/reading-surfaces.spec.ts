@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures/app.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
 test.use({ initialConfig: { sponsorPromptDismissed: true } });
 
@@ -60,7 +61,7 @@ for (const theme of ['light', 'dark'] as const) {
       await expectBackgrounds(page, surfaces, panel);
       const fade = await page.locator('.inbox-detail-dock').evaluate(el => getComputedStyle(el, '::before').backgroundImage);
       expect(fade).toContain(panel);
-      await page.screenshot({ path: testInfo.outputPath(`inbox-${theme}.png`) });
+      await captureElectronScreenshot(app.electron, page, testInfo.outputPath(`inbox-${theme}.png`));
     });
 
     const root = join(home, 'reading-surfaces');
@@ -86,7 +87,7 @@ for (const theme of ['light', 'dark'] as const) {
       await page.getByRole('button', { name: 'Edit', exact: true }).click();
       await expectBackgrounds(page, ['.library-md-editor'], panel);
       await expect(page.locator('.library-md-editor [contenteditable=true]')).toContainText('Library reading');
-      await page.screenshot({ path: testInfo.outputPath(`library-edit-${theme}.png`) });
+      await captureElectronScreenshot(app.electron, page, testInfo.outputPath(`library-edit-${theme}.png`));
       await page.getByRole('button', { name: 'Preview', exact: true }).click();
       await page.evaluate(() => {
         history.pushState({}, '', '/plugins/docs/panel');
@@ -108,7 +109,7 @@ for (const theme of ['light', 'dark'] as const) {
       await page.locator('.tree-row.file').filter({ hasText: 'README.md' }).click();
       await expectBackgrounds(page, ['.explorer-md-preview'], panel);
       await expect(page.getByRole('heading', { name: 'Explorer reading', exact: true })).toBeVisible();
-      await page.screenshot({ path: testInfo.outputPath(`explorer-${theme}.png`) });
+      await captureElectronScreenshot(app.electron, page, testInfo.outputPath(`explorer-${theme}.png`));
       await page.locator('.tree-row.file').filter({ hasText: 'example.json' }).click();
       await expect(page.locator('.explorer-viewer-monaco .monaco-editor')).toContainText('code editor');
       await expect(page.locator('.explorer-viewer-monaco .monaco-editor')).toHaveClass(new RegExp(theme === 'dark' ? 'vs-dark' : '\\bvs\\b'));
@@ -132,7 +133,7 @@ for (const theme of ['light', 'dark'] as const) {
       await expect(page.locator('.dd-prose')).toBeVisible();
       if (!await page.locator('.dd-rail').isVisible()) await page.getByRole('button', { name: 'Show comments & history' }).click();
       await expectBackgrounds(page, ['.dd-root', '.dd-list', '.dd-list-section', '.dd-tree', '.dd-rail'], panel);
-      await page.screenshot({ path: testInfo.outputPath(`design-docs-${theme}.png`) });
+      await captureElectronScreenshot(app.electron, page, testInfo.outputPath(`design-docs-${theme}.png`));
       await page.getByRole('button', { name: 'Hide doc list' }).click();
       await expectBackgrounds(page, ['.dd-list-collapsed'], panel);
       await page.getByRole('button', { name: 'Show doc list' }).click();
