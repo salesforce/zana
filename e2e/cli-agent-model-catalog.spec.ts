@@ -159,7 +159,7 @@ test('local project switches reuse models while remote discovery remains pending
     { id: remoteId, name: 'Remote first in store', path: '/remote', hostId: remoteHost },
     ...localProjects
   ]));
-  const app = await launchApp(home, { initialConfig: { lastProjectId: remoteId } });
+  const app = await launchApp(home, { initialConfig: { lastProjectId: remoteId, defaultHarness: 'claude' } });
   const { window } = app;
   let releaseRemote!: () => void;
   const remoteGate = new Promise<void>((resolve) => { releaseRemote = resolve; });
@@ -195,7 +195,16 @@ test('local project switches reuse models while remote discovery remains pending
       await window.getByRole('listbox', { name: 'Machine and project' }).getByRole('option', { name, exact: false }).click();
       await expect(project).toContainText(name);
     };
+    // Warm model rows can render before this project's own discovery finishes.
+    // Measure cache reuse only after its selected provider response has arrived.
+    const localCatalogReady = window.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname === '/api/v1/system/execution-options'
+        && url.searchParams.get('projectId') === 'composer-local-a'
+        && url.searchParams.get('providerId') === 'claude-code';
+    });
     await choose('Local A');
+    await localCatalogReady;
     await expect(model).toContainText('Local Model');
     const localRequestCount = () => requests.filter((query) => query.includes('composer-local-a')).length;
     const count = localRequestCount();
@@ -206,10 +215,10 @@ test('local project switches reuse models while remote discovery remains pending
     await expect(model.locator('[data-model-loading-placeholder]')).toHaveCount(0);
     await choose('Local A');
     await expect(model).toContainText('Local Model');
-    expect(localRequestCount()).toBe(count);
+    expect(localRequestCount(), JSON.stringify(requests)).toBe(count);
     await modal.getByRole('button', { name: 'Modern', exact: true }).click();
     await expect(modal.getByTestId('model-reasoning-picker-trigger')).toContainText('Local Model');
-    expect(localRequestCount()).toBe(count);
+    expect(localRequestCount(), JSON.stringify(requests)).toBe(count);
   } finally {
     releaseRemote();
     try { await window.unrouteAll({ behavior: 'wait' }); } finally { await app.electron.close(); }
