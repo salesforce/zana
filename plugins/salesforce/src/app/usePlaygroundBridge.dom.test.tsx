@@ -1,4 +1,5 @@
 /** @vitest-environment happy-dom */
+/** @vitest-environment-options {"settings":{"enableIframePageLoading":true}} */
 import { act, cleanup, render } from '@testing-library/react';
 import { type MutableRefObject } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';

@@ -1,5 +1,6 @@
 /**
  * @vitest-environment happy-dom
+ * @vitest-environment-options {"settings":{"enableIframePageLoading":true}}
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';

@@ -1,4 +1,5 @@
 /** @vitest-environment happy-dom */
+/** @vitest-environment-options {"settings":{"enableIframePageLoading":true}} */
 import { afterEach, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { AgentScriptGraphPanel } from './AgentScriptGraphPanel.js';
