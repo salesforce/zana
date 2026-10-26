@@ -354,7 +354,11 @@ describe('authored plan grant guards (squad-bugs)', () => {
     expect(allowedJoined()).not.toContain('Edit(');
   });
 
-  it.each(['relative/.zana/plan.md', '/tmp/a(b)/plan.md', '/tmp/a,b/plan.md'])('refuses an unsafe or relative path %s', (path) => {
+  it.each([
+    'relative/.zana/plan.md', '/tmp/a(b)/plan.md', '/tmp/a,b/plan.md',
+    '/tmp/project/*.md', '/tmp/project/plan?.md', '/tmp/project/[draft].md',
+    '/tmp/project/../outside.md', '/tmp/project/sub/../../outside.md'
+  ])('refuses an unsafe or relative path %s', (path) => {
     make({ ...BASE }, { coordinationMode: 'freeform', persona: { id: 'p', name: 'P' }, authoredPlanPaths: [path] } as Partial<Parameters<PtyManager['create']>[0]>);
     expect(allowedJoined()).not.toContain('Edit(');
   });
@@ -367,5 +371,21 @@ describe('authored plan grant guards (squad-bugs)', () => {
     expect(allowedJoined()).toContain('Edit(//tmp/proj1/.zana/execution-plan-x.md)');
     expect(allowedJoined()).not.toContain('relative/plan.md');
     expect(allowedJoined()).not.toContain('a(b)');
+  });
+
+  it('drops wildcard and traversal entries while keeping a safe sibling exact-file rule', () => {
+    make({ ...BASE }, {
+      coordinationMode: 'freeform', persona: { id: 'p', name: 'P' },
+      authoredPlanPaths: [
+        '/tmp/proj1/.zana/execution-plan-x.md', '/tmp/proj1/.zana/*.md',
+        '/tmp/proj1/.zana/plan?.md', '/tmp/proj1/.zana/[draft].md',
+        '/tmp/proj1/.zana/../outside.md'
+      ]
+    } as Partial<Parameters<PtyManager['create']>[0]>);
+    expect(allowedJoined()).toContain('Edit(//tmp/proj1/.zana/execution-plan-x.md)');
+    expect(allowedJoined()).not.toContain('*');
+    expect(allowedJoined()).not.toContain('?');
+    expect(allowedJoined()).not.toContain('[draft]');
+    expect(allowedJoined()).not.toContain('outside.md');
   });
 });

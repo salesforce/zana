@@ -938,6 +938,19 @@ describe('trusted registered target (squad-bugs B8)', () => {
     expect(deps.executionStore.setSquadWorktree).not.toHaveBeenCalled();
   });
 
+  it('uses persisted target conflicts when partial selector request omits worktree and disposition', async () => {
+    for (const request of [
+      { worktree: true, target: { kind: 'project-root' } },
+      { onComplete: 'delete', target: { kind: 'project-root' } }
+    ] as const) {
+      const { deps, runtime } = targetSetup();
+      const r = fresh({ kind: 'project-root' }, request);
+      serve(deps, r);
+      await expect(runtime.prepareSquadWorktree(r, { target: { kind: 'project-root' } })).rejects.toThrow('TARGET_UNAVAILABLE');
+      expect(deps.executionStore.setSquadWorktree).not.toHaveBeenCalled();
+    }
+  });
+
   it('never rebinds a generated worktree record to a user target, and refuses a racing bind', async () => {
     let s = targetSetup();
     let r = rec({ state: 'STARTING', request: { target: { kind: 'project-root' } } });
@@ -965,6 +978,16 @@ describe('trusted registered target (squad-bugs B8)', () => {
     await expect(s.runtime.prepareSquadWorktree(r, {})).rejects.toThrow('TARGET_UNAVAILABLE');
     await expect(s.runtime.revalidateUserTarget(rec())).rejects.toThrow('TARGET_UNAVAILABLE');
     await expect(s.runtime.revalidateUserTarget(userRecord(undefined, recorded))).rejects.toThrow('TARGET_UNAVAILABLE');
+  });
+
+  it('rejects a supplied selector that differs from durable user target before revalidation', async () => {
+    const { deps, runtime } = targetSetup();
+    const r = userRecord({ kind: 'worktree', branch: 'feat' }, {
+      path: USER_WT, branch: 'feat', ownership: 'user', targetKind: 'worktree'
+    });
+    serve(deps, r);
+    await expect(runtime.prepareSquadWorktree(r, { target: { kind: 'project-root' } })).rejects.toThrow('TARGET_UNAVAILABLE');
+    expect(deps.git.getGitStatus).not.toHaveBeenCalled();
   });
 
   it('terminal handling never push-guards, merges, or removes a user target', async () => {

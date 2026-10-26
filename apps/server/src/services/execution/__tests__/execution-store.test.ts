@@ -1641,6 +1641,52 @@ describe('execution store', () => {
       .rejects.toThrow('squad worktree already differs');
   }));
 
+  it('validates squad worktree strings and ownership shape on writes', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const claimed = await store.claim(request());
+    if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+    const id = claimed.record.id;
+    const version = claimed.record.stateVersion;
+    const oversized = 'x'.repeat(2_049);
+    for (const value of [
+      { path: '', branch: 'b' },
+      { path: '/r', branch: ' ' },
+      { path: oversized, branch: 'b' },
+      { path: '/r', branch: oversized },
+      { path: '/r', branch: 'b', baseBranch: oversized },
+      { path: '/r', branch: 'b', ownership: 'managed', targetKind: 'worktree' }
+    ] as any[]) {
+      await expect(store.setSquadWorktree(id, version, value)).rejects.toThrow();
+    }
+    await expect(store.setSquadWorktree(id, version, { path: '/r', branch: 'b', baseBranch: ' ' })).rejects.toThrow();
+  }));
+
+  it('rejects malformed persisted squad worktree records on load', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const claimed = await store.claim(request());
+    if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+    const prepared = await store.setSquadWorktree(claimed.record.id, claimed.record.stateVersion, {
+      path: '/repo/.worktrees/x', branch: 'zcc/x'
+    });
+    const invalidRecords = [
+      { path: '', branch: 'b' },
+      { path: '/r', branch: 'b'.repeat(2_049) },
+      { path: '/r', branch: 'b', baseBranch: ' ' },
+      { path: '/r', branch: 'b', ownership: 'other' },
+      { path: '/r', branch: 'b', ownership: 'user' },
+      { path: '/r', branch: 'b', ownership: 'managed', targetKind: 'worktree' }
+    ];
+    for (const squadWorktree of invalidRecords) {
+      const durable = JSON.parse(await readFile(filePath, 'utf8'));
+      durable.records[0].squadWorktree = squadWorktree;
+      await writeFile(filePath, JSON.stringify(durable));
+      await expect(createExecutionStore({ filePath }).get(prepared.id)).rejects.toThrow('corrupt execution store');
+      // Restore a valid file before the next case.
+      durable.records[0].squadWorktree = { path: '/repo/.worktrees/x', branch: 'zcc/x' };
+      await writeFile(filePath, JSON.stringify(durable));
+    }
+  }));
+
   it('refuses to persist an invalid target selector snapshot (B8)', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const base = request();

@@ -1577,7 +1577,9 @@ export class PtyManager extends EventEmitter {
     // Every path is checked on its own; an unsafe entry is dropped, never widened.
     const authoredPlanAllow = claudeJobTeamPolicy
       ? (opts.authoredPlanPaths ?? [])
-          .filter((path) => typeof path === 'string' && isAbsolute(path) && !/[(),]/.test(path))
+          .filter((path) => typeof path === 'string' && isAbsolute(path)
+            && !/[(),*?\[\]]/.test(path)
+            && !path.split(/[\\/]/).includes('..'))
           .map((path) => `Edit(/${path})`)
       : [];
     // Codex supports native MCP approval configuration via `-c`. Keep ordinary

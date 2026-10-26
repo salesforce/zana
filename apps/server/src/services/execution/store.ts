@@ -624,6 +624,19 @@ function validNoticeIntent(intent: unknown): intent is ExecutionNoticeIntent {
     && typeof value.createdAt === 'number' && typeof value.updatedAt === 'number';
 }
 
+function validSquadWorktree(value: unknown): value is SquadWorktreeRecord {
+  if (!value || typeof value !== 'object') return false;
+  const worktree = value as Partial<SquadWorktreeRecord>;
+  return hasOnlyKeys(value as Record<string, unknown>, ['path', 'branch', 'baseBranch', 'ownership', 'targetKind'])
+    && validString(worktree.path) && worktree.path.trim().length > 0
+    && validString(worktree.branch) && worktree.branch.trim().length > 0
+    && (worktree.baseBranch === undefined || validString(worktree.baseBranch) && worktree.baseBranch.trim().length > 0)
+    && (worktree.ownership === undefined || worktree.ownership === 'managed' || worktree.ownership === 'user')
+    && (worktree.ownership === 'user'
+      ? worktree.targetKind === 'project-root' || worktree.targetKind === 'worktree'
+      : worktree.targetKind === undefined);
+}
+
 function validRecord(value: unknown): value is ExecutionRecord {
   if (!value || typeof value !== 'object') return false;
   const record = value as Partial<ExecutionRecord>;
@@ -642,6 +655,7 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.authorizationContext === undefined || validAuthorizationContext(record.authorizationContext))
     && (record.authorizationContextDigest === undefined || validString(record.authorizationContextDigest))
     && (record.launchIntent === undefined || validLaunchIntent(record.launchIntent))
+    && (record.squadWorktree === undefined || validSquadWorktree(record.squadWorktree))
     && (record.policyResult === undefined || validPolicyResult(record.policyResult))
     && (record.effectiveOwnerPrincipalIds === undefined || Array.isArray(record.effectiveOwnerPrincipalIds) && record.effectiveOwnerPrincipalIds.every(validString))
     && (record.recoveryGeneration === undefined || Number.isInteger(record.recoveryGeneration) && record.recoveryGeneration >= 0)
@@ -1417,24 +1431,36 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
       if (!record) throw new Error('execution not found');
       if (record.stateVersion !== expectedStateVersion) throw new Error('stale execution state');
+      if (!squadWorktree || typeof squadWorktree !== 'object'
+        || !hasOnlyKeys(squadWorktree as unknown as Record<string, unknown>, ['path', 'branch', 'baseBranch', 'ownership', 'targetKind'])) {
+        throw new Error('invalid squad worktree record');
+      }
       const reattachingWorktree = record.squadWorktree !== undefined;
       const ownership = squadWorktree.ownership ?? 'managed';
       if (ownership !== 'managed' && ownership !== 'user') throw new Error('invalid squad worktree ownership');
       if (ownership === 'user' && squadWorktree.targetKind !== 'project-root' && squadWorktree.targetKind !== 'worktree') {
         throw new Error('invalid squad worktree target kind');
       }
+      if (ownership === 'managed' && squadWorktree.targetKind !== undefined) throw new Error('invalid squad worktree target kind');
+      const path = string(squadWorktree.path, 'squad worktree path');
+      const branch = string(squadWorktree.branch, 'squad worktree branch');
+      if (!path.trim() || !branch.trim()) throw new Error('invalid squad worktree record');
+      const baseBranch = squadWorktree.baseBranch === undefined
+        ? undefined
+        : string(squadWorktree.baseBranch, 'squad worktree base branch');
+      if (baseBranch !== undefined && !baseBranch.trim()) throw new Error('invalid squad worktree record');
       if (record.squadWorktree) {
-        if (record.squadWorktree.branch !== squadWorktree.branch
+        if (record.squadWorktree.branch !== branch
           || (record.squadWorktree.ownership ?? 'managed') !== ownership) {
           throw new Error('squad worktree already differs');
         }
-        if (record.squadWorktree.path === squadWorktree.path &&
-          (record.squadWorktree.baseBranch || !squadWorktree.baseBranch)) return clone(record);
+        if (record.squadWorktree.path === path &&
+          (record.squadWorktree.baseBranch || !baseBranch)) return clone(record);
       }
       record.squadWorktree = {
-        path: string(squadWorktree.path, 'squad worktree path'),
-        branch: string(squadWorktree.branch, 'squad worktree branch'),
-        ...(squadWorktree.baseBranch ? { baseBranch: string(squadWorktree.baseBranch, 'squad worktree base branch') } : {}),
+        path,
+        branch,
+        ...(baseBranch !== undefined ? { baseBranch } : {}),
         ...(ownership === 'user' ? { ownership, targetKind: squadWorktree.targetKind } : {})
       };
       record.stateVersion += 1;

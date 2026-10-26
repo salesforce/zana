@@ -37,6 +37,14 @@ const USER_TARGET_NOT_DELETED_MESSAGE = 'This Squad ran in your own checkout. Za
 /** Error message for any selected-target resolution failure; never falls back to a generated worktree. */
 export const TARGET_UNAVAILABLE = 'TARGET_UNAVAILABLE';
 
+function sameTargetSelector(
+  recorded: SquadExecutionTargetSelector | undefined,
+  supplied: SquadExecutionTargetSelector
+): boolean {
+  return recorded?.kind === supplied.kind
+    && (recorded.kind !== 'worktree' || supplied.kind === 'worktree' && recorded.branch === supplied.branch);
+}
+
 /**
  * Operator-facing launch denial: the launcher's own reason with control characters
  * stripped, whitespace collapsed and length capped, so it can be shown verbatim.
@@ -180,6 +188,7 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
     if (record.squadWorktree) {
       // A record that already owns a generated worktree can never switch to a user target.
       if (!isUserOwnedSquadWorktree(record.squadWorktree)) throw new Error(TARGET_UNAVAILABLE);
+      if (!sameTargetSelector(record.request.target, selector)) throw new Error(TARGET_UNAVAILABLE);
       await revalidateUserTarget(record);
       return record;
     }
@@ -203,7 +212,11 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
       const selector = request.target ?? record.request.target;
       if (selector !== undefined || isUserOwnedSquadWorktree(retainedWorktree)) {
         // Admission already applied this rule; repeat it so no caller can skip it.
-        const checked = validateSquadExecutionTarget({ target: selector, worktree: request.worktree, onComplete: request.onComplete });
+        const checked = validateSquadExecutionTarget({
+          target: selector,
+          worktree: request.worktree ?? record.request.worktree,
+          onComplete: request.onComplete ?? record.request.onComplete
+        });
         if (!checked.ok || !checked.target) throw new Error(TARGET_UNAVAILABLE);
         return bindUserTarget(record, project, checked.target);
       }
