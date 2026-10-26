@@ -1,4 +1,5 @@
 import { prepareThreadReads } from './services/threads/thread-reads.js';
+import { presentAppConfig } from './http/public-app-url.js';
 import { discoverProjectCli } from './services/launch/cli-discovery.js';
 import { createProductCliCallbackAuthority } from './services/launch/cli-callback-authority.js';
 import { projectFeed } from './services/feed/project-feed.js';
@@ -446,7 +447,8 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
       if (message.channel === 'config:onChanged' || message.channel === 'product:reset') {
         // Read the owner's config; the forwarded renderer snapshot is advisory.
         await productContext?.plugins?.refreshSafeMode();
-        if (productContext) productHub?.emit('config:changed', productContext.config.getConfig());
+        await productContext?.plugins?.refreshDevelopmentMode();
+        if (productContext) productHub?.emit('config:changed', presentAppConfig(productContext.config.getConfig()));
       }
       if (productHub) forwardRuntimeProductEvent(productHub, message.channel, message.args);
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: true });

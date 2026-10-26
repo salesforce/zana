@@ -24,7 +24,7 @@ export function assertBundledPluginInstall(args: {
   if (args.sourceKind === 'path' && args.development) return;
   throw new Error(
     `Plugin id "${args.id}" is reserved by a bundled plugin. Install "builtin:${definition.name}"; ` +
-    'official plugins update with Zana releases. Local development requires ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD=1 on the host.'
+    'official plugins update with Zana releases. Local development requires Bundled plugin development in Settings > Development, or ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD=1 on the host.'
   );
 }
 

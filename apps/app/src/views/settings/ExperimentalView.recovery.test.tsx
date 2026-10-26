@@ -10,6 +10,11 @@ const base = {
   lastProjectId: null, worktreeIsolationDefault: true
 } as AppConfig;
 
+it('keeps development controls on the dedicated Development page', () => {
+  render(<ExperimentalView config={base} onConfigDraft={vi.fn()} onUpdate={vi.fn()} />);
+  expect(screen.queryByRole('switch', { name: 'Bundled plugin development' })).toBeNull();
+});
+
 it.each([false, true])('hydrates recovery and service-tier switches and persists changes from %s', enabled => {
   const update = vi.fn();
   render(<ExperimentalView config={{ ...base, pluginSafeMode: enabled, providerServiceTiersDisabled: enabled }}

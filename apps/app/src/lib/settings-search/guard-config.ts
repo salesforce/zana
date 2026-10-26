@@ -44,6 +44,7 @@ export const SECTION_SOURCES: Record<SearchSection, readonly string[]> = {
   squads: ['views/settings/SquadsView.tsx'],
   usage: ['views/settings/UsageView.tsx'],
   experimental: ['views/settings/ExperimentalView.tsx'],
+  development: ['views/settings/DevelopmentView.tsx'],
   performance: ['views/settings/PerformanceSettingsView.tsx'],
   about: ['views/settings/AboutView.tsx'],
   project: [

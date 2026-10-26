@@ -36,6 +36,7 @@ vi.mock('@/views/settings/AgentsSettingsView', () => ({ AgentsTab: stub('agents'
 vi.mock('@/views/settings/HarnessView', () => ({ HarnessTab: stub('harness') }));
 vi.mock('@/views/settings/EditorView', () => ({ EditorTab: stub('editor') }));
 vi.mock('@/views/settings/ExperimentalView', () => ({ ExperimentalTab: stub('experimental') }));
+vi.mock('@/views/settings/DevelopmentView', () => ({ DevelopmentView: stub('development') }));
 vi.mock('@/views/settings/AboutView', () => ({ AboutTab: stub('about') }));
 vi.mock('@/views/settings/MachinesSettingsView', () => ({ MachinesTab: stub('machines') }));
 vi.mock('@/views/settings/ConnectivityView', () => ({ ConnectivityTab: stub('connectivity') }));
@@ -67,7 +68,7 @@ afterEach(cleanup);
 
 const TABS: SettingsTab[] = [
   'global', 'composer', 'keyboard', 'terminal', 'agents', 'prompts', 'harness', 'editor',
-  'personas', 'squads', 'usage', 'performance', 'experimental', 'about', 'machines',
+  'personas', 'squads', 'usage', 'performance', 'development', 'experimental', 'about', 'machines',
   'connectivity', 'remote-access', 'peers', 'phone', 'inbox', 'browser', 'project'
 ];
 
@@ -93,6 +94,19 @@ it('uses wide layout only for catalogue tabs', async () => {
   const second = mount();
   await screen.findByText('tab-about');
   expect(second.container.querySelector('.settings-inner--wide')).toBeNull();
+});
+
+it('saves Development settings as instance config in a centered page', async () => {
+  useUi.setState({ settingsTab: 'development', settingsAnchor: null });
+  const { container } = mount();
+  await screen.findByText('tab-development');
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Development');
+  expect(container.querySelector('.settings-inner--wide')).toBeNull();
+  expect(screen.queryByText('tab-scope')).toBeNull();
+  await act(async () => { await h.props.development.onUpdate({ pluginDevelopmentEnabled: true }); });
+  expect(h.setMock).toHaveBeenCalledWith({ pluginDevelopmentEnabled: true });
+  expect(h.props.development.config.pluginDevelopmentEnabled).toBe(true);
+  expect(screen.getByText('Saved')).toBeTruthy();
 });
 
 it('applies config patches to the store and flashes Saved', async () => {

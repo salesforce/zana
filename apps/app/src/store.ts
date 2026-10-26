@@ -201,6 +201,7 @@ export type SettingsTab =
   | 'squads'
   | 'usage'
   | 'performance'
+  | 'development'
   | 'experimental'
   | 'about'
   | 'machines'

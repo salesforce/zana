@@ -63,6 +63,12 @@ the host does not execute it. There is no runtime `registerMcpServer` API.
 
 ## Development and lifecycle
 
+To develop bundled plugins, enable **Settings → Development →
+Bundled plugin development**. The saved switch applies immediately, allowing local
+source overrides and watching installed bundled plugins for changes. Turning it
+off stops watching and blocks further overrides while currently loaded plugins
+keep running. Saved choices override the startup development flag.
+
 Use `zcc plugin dev` for the local edit → build → reload loop. It watches
 source changes, rebuilds the app bundle, and reloads the installed plugin.
 Path installs load their server entry from source; published packages declare

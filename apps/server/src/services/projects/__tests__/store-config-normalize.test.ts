@@ -16,6 +16,14 @@ const { normalizeConfig, normalizeProjectSettings, store } = await import('../st
 const { AUTO_CLOSE_IDLE_DEFAULTS, THREAD_SESSION_RELEASE_DEFAULTS } = await import('@zana-ai/zcc-domain/product');
 
 describe('normalizeConfig — provider tiers and plugin safe mode', () => {
+  it.each([true, false])('round-trips the bundled plugin development preference (%s)', enabled => {
+    store.setConfig({ pluginDevelopmentEnabled: enabled });
+    store.setConfig({ theme: 'dark' });
+    expect(store.getConfig().pluginDevelopmentEnabled).toBe(enabled);
+  });
+  it.each([undefined, 'true', 1, null])('rejects malformed plugin development preference (%s)', value => {
+    expect(normalizeConfig({ pluginDevelopmentEnabled: value as never })).not.toHaveProperty('pluginDevelopmentEnabled');
+  });
   it.each([true, false])('preserves explicitly configured booleans (%s)', value => {
     expect(normalizeConfig({ providerServiceTiersDisabled: value, pluginSafeMode: value })).toMatchObject({
       providerServiceTiersDisabled: value, pluginSafeMode: value

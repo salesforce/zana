@@ -18,6 +18,7 @@ import { AgentsTab } from '@/views/settings/AgentsSettingsView';
 import { HarnessTab } from '@/views/settings/HarnessView';
 import { EditorTab } from '@/views/settings/EditorView';
 import { ExperimentalTab } from '@/views/settings/ExperimentalView';
+import { DevelopmentView } from '@/views/settings/DevelopmentView';
 import { AboutTab } from '@/views/settings/AboutView';
 import { MachinesTab } from '@/views/settings/MachinesSettingsView';
 import { ConnectivityTab } from '@/views/settings/ConnectivityView';
@@ -315,6 +316,8 @@ export function SettingsView() {
           <UsagePanel />
         ) : tab === 'performance' ? (
           <PerformanceSettingsView />
+        ) : tab === 'development' ? (
+          <DevelopmentView config={config} onUpdate={update} />
         ) : tab === 'experimental' ? (
           <ExperimentalTab
             config={config}

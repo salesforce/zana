@@ -1059,6 +1059,7 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (typeof input.providerServiceTiersDisabled === 'boolean') normalized.providerServiceTiersDisabled = input.providerServiceTiersDisabled;
   if (typeof input.pluginSafeMode === 'boolean') normalized.pluginSafeMode = input.pluginSafeMode;
+  if (typeof input.pluginDevelopmentEnabled === 'boolean') normalized.pluginDevelopmentEnabled = input.pluginDevelopmentEnabled;
   if (typeof input.feedNoiseClassifierEnabled === 'boolean') {
     normalized.feedNoiseClassifierEnabled = input.feedNoiseClassifierEnabled;
   }

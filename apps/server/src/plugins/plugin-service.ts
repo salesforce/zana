@@ -166,6 +166,7 @@ export interface PluginService {
   remove(id: string): Promise<void>;
   reload(id: string): Promise<InstalledPluginRow>;
   refreshSafeMode(): Promise<void>;
+  refreshDevelopmentMode(): Promise<void>;
   reconcileBuiltins(): Promise<InstalledPluginRow[]>;
   start(): Promise<void>;
   /** Release the periodic catalog-update sweep. Safe to call more than once. */
@@ -460,7 +461,8 @@ export interface PluginServiceOptions {
   /**
    * When true, watch installed builtin plugin source dirs and rebuild+reload
    * on change. Also permits explicit local path installs of bundled identities.
-   * Gated by ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD at attach; remote
+   * Startup default from ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD at attach.
+   * The saved development setting takes precedence; remote
    * sources cannot replace bundled identities, including in development.
    */
   watchBuiltinPluginSources?: boolean;
@@ -476,6 +478,7 @@ export interface PluginServiceOptions {
     disabledBundledSkills?: string[];
     inAppAgentTerminalsEnabled?: boolean;
     pluginSafeMode?: boolean;
+    pluginDevelopmentEnabled?: boolean;
   };
 }
 
@@ -548,6 +551,7 @@ function resolveBundledDir(bundledRoot: string, name: string): string {
 }
 
 export function createPluginService(opts: PluginServiceOptions): PluginService {
+  const developmentEnabled = () => opts.getAppConfig?.().pluginDevelopmentEnabled ?? opts.watchBuiltinPluginSources === true;
   applyBundledPosthogApiKey();
   const store: PluginStore = createPluginStore({ file: pluginStorePath(opts.dataDir) });
   const uninstalled = createPluginUninstalledStore({ file: pluginUninstalledPath(opts.dataDir) });
@@ -589,7 +593,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     return result;
   }
   let updateSweep: { stop(): void } | null = null;
-  const builtinWatchers: Array<{ close(): void }> = [];
+  const builtinWatchers = new Map<string, { rootDir: string; loop: ReturnType<typeof createPluginDevLoop>; close(): void }>();
   const recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const recoveryAttempts = new Map<string, number>();
   const MAX_WATCHDOG_RECOVERY_ATTEMPTS = 3;
@@ -1330,7 +1334,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         rootDir: row.rootDir,
         hostEntry,
         sourceKind: row.sourceKind,
-        rebuildBuiltin: opts.watchBuiltinPluginSources === true,
+        rebuildBuiltin: developmentEnabled(),
         zccVersion: hostVersion,
         dataDir: opts.dataDir
       });
@@ -1507,7 +1511,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       const running = {
         ...classified,
         status: (configurationMessage ? 'needs-configuration' : 'running') as InstalledPluginRow['status'],
-        statusDetail: configurationMessage ?? bundledPluginSourceNotice(row, opts.watchBuiltinPluginSources === true)
+        statusDetail: configurationMessage ?? bundledPluginSourceNotice(row, developmentEnabled())
           ?? (row.lastActivationFailure ? `Update to ${row.lastActivationFailure.version} failed: ${row.lastActivationFailure.detail}` : null)
       };
       if (!isActive()) {
@@ -1842,7 +1846,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         id: manifest.id,
         sourceKind: materialized.sourceKind,
         source: materialized.display,
-        development: opts.watchBuiltinPluginSources === true
+        development: developmentEnabled()
       });
       if (expectedId && manifest.id !== expectedId) {
         throw new Error(`plugin identity changed during update: expected ${expectedId}, received ${manifest.id}`);
@@ -1871,7 +1875,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     if (materialized.sourceKind === 'builtin' && existing && existing.sourceKind !== 'builtin' &&
         (!existsSync(existing.rootDir) || realpathSync(existing.rootDir) !== realpathSync(materialized.rootDir)) &&
         !isLegacyExtensionJsonPluginRoot(existing.rootDir) &&
-        !(existing.sourceKind === 'path' && opts.watchBuiltinPluginSources === true)) {
+        !(existing.sourceKind === 'path' && developmentEnabled())) {
       throw new Error(`Migration required. ${bundledPluginSourceNotice(existing, false)}`);
     }
     const row: InstalledPluginRow = withToolPolicy({
@@ -2002,10 +2006,11 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
 
   function snapshot(): PluginUiSnapshot[] {
     return store.list().map((row) => {
-      const sourceNotice = bundledPluginSourceNotice(row, opts.watchBuiltinPluginSources === true);
-      const statusDetail = sourceNotice && row.statusDetail && !row.statusDetail.includes(sourceNotice)
-        ? `${row.statusDetail}\n${sourceNotice}`
-        : row.statusDetail ?? sourceNotice;
+      const sourceNotice = bundledPluginSourceNotice(row, developmentEnabled());
+      const storedDetail = row.statusDetail === bundledPluginSourceNotice(row, false) ? null : row.statusDetail;
+      const statusDetail = sourceNotice && storedDetail && !storedDetail.includes(sourceNotice)
+        ? `${storedDetail}\n${sourceNotice}`
+        : storedDetail ?? sourceNotice;
       let skillNames: string[] = [];
       let mcpServers: PluginUiMcpServer[] = [];
       let extra: Record<string, unknown> = {};
@@ -2215,9 +2220,16 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   }
 
   function startBuiltinSourceWatchers(): void {
-    if (!opts.watchBuiltinPluginSources) return;
-    for (const row of store.list()) {
-      if (row.sourceKind !== 'builtin' || !existsSync(row.rootDir)) continue;
+    const rows = stopped || !developmentEnabled() ? []
+      : store.list().filter(row => row.sourceKind === 'builtin' && existsSync(row.rootDir));
+    const roots = new Map(rows.map(row => [row.id, row.rootDir]));
+    for (const [id, watcher] of builtinWatchers) {
+      if (roots.get(id) === watcher.rootDir) continue;
+      watcher.close();
+      builtinWatchers.delete(id);
+    }
+    for (const row of rows) {
+      if (builtinWatchers.has(row.id)) continue;
       const rootDir = row.rootDir;
       const pluginId = row.id;
       const hasApp = Boolean(row.appEntry);
@@ -2242,18 +2254,20 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         },
         buildHost: async () => { await buildPluginHost(rootDir, hostVersion, await getPluginBuildToolchain(opts.dataDir)); },
         reloadPlugin: async () => {
-          await service.reload(pluginId);
+          if (developmentEnabled() && !stopped && builtinWatchers.get(pluginId)?.loop === loop) await service.reload(pluginId);
         },
         log: (line) => {
           console.info(`[plugins] ${line}`);
         }
       });
       const watcher = watch(rootDir, { recursive: true }, (_event, filename) => {
-        if (typeof filename === 'string' && filename.length > 0) {
+        if (developmentEnabled() && builtinWatchers.get(pluginId)?.loop === loop && typeof filename === 'string' && filename.length > 0) {
           loop.handleChange(relative(rootDir, join(rootDir, filename)));
         }
       });
-      builtinWatchers.push({
+      builtinWatchers.set(pluginId, {
+        rootDir,
+        loop,
         close() {
           loop.dispose();
           watcher.close();
@@ -2264,7 +2278,21 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
 
   let safeModeRefresh: Promise<void> = Promise.resolve();
   let appliedSafeMode = opts.getAppConfig?.().pluginSafeMode === true;
+  let developmentModeRefresh: Promise<void> = Promise.resolve();
+  let appliedDevelopmentMode = developmentEnabled();
   const service: PluginService = {
+    refreshDevelopmentMode() {
+      const refresh = developmentModeRefresh.then(async () => {
+        await waitForStartup();
+        const enabled = developmentEnabled();
+        if (enabled === appliedDevelopmentMode) return;
+        if (started) startBuiltinSourceWatchers();
+        appliedDevelopmentMode = enabled;
+        await emitAppsChanged();
+      });
+      developmentModeRefresh = refresh.catch(() => {});
+      return refresh;
+    },
     refreshSafeMode() {
       const refresh = safeModeRefresh.then(async () => {
         const safeMode = opts.getAppConfig?.().pluginSafeMode === true;
@@ -2311,6 +2339,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         return stamped;
       }
       const row = await installParsed(parsed, options?.enable !== false);
+      if (started) startBuiltinSourceWatchers();
       await emitAppsChanged();
       return row;
     },
@@ -2358,6 +2387,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       return withLifecycle(id, async () => {
       await disposeOne(id);
       const row = await store.remove(id);
+      if (started) startBuiltinSourceWatchers();
       live.delete(id);
       refreshToolPolicyInventory();
       await uninstalled.add(id);
@@ -2381,7 +2411,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       bumpLifecycleEpoch(id);
       const row = store.get(id);
       if (!row) throw new Error(`plugin not installed: ${id}`);
-      assertBundledPluginInstall({ id, sourceKind: row.sourceKind, source: row.source, development: opts.watchBuiltinPluginSources === true });
+      assertBundledPluginInstall({ id, sourceKind: row.sourceKind, source: row.source, development: developmentEnabled() });
       const epoch = lifecycleEpoch(id);
       const overrides = {
         provenance: row.provenance,
@@ -2395,6 +2425,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
             gitResolvedCommit: row.gitResolvedCommit, catalogMarketplace: row.catalogMarketplace, catalogEntryId: row.catalogEntryId }
         : await materialize(parsePluginSource(row.source));
       const next = await installFromMaterialized(source, row.enabled, overrides, id, epoch, pluginUpdateFingerprint(row, hostVersion, sdkVersion));
+      if (started) startBuiltinSourceWatchers();
       await emitCapabilities();
       await syncCliSkill();
       await emitAppsChanged();
@@ -2487,6 +2518,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         checkUpdates: () => service.checkUpdates()
       });
       startBuiltinSourceWatchers();
+      appliedDevelopmentMode = developmentEnabled();
       started = true;
       void checkInstalledUpdates(true).catch(() => undefined);
       })();
@@ -2506,7 +2538,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       for (const runtime of serverRuntimes) runtime.dispose();
       serverRuntimes.clear();
       for (const current of live.values()) void current.handle?.dispose().catch(() => {});
-      for (const watcher of builtinWatchers.splice(0)) watcher.close();
+      for (const watcher of builtinWatchers.values()) watcher.close();
+      builtinWatchers.clear();
       updateSweep?.stop();
       updateSweep = null;
     },

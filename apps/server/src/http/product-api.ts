@@ -647,8 +647,10 @@ export async function handleProductHttp(
     if (path === '/api/v1/config' && (method === 'PATCH' || method === 'POST')) {
       const patch = (await readJsonBody(request)) as Partial<AppConfig>;
       const previousSafeMode = ctx.config.getConfig().pluginSafeMode === true;
+      const previousDevelopmentMode = ctx.config.getConfig().pluginDevelopmentEnabled;
       const config = presentAppConfig(await setProductConfig(ctx, patch));
       if (previousSafeMode !== (config.pluginSafeMode === true)) await ctx.plugins?.refreshSafeMode();
+      if (previousDevelopmentMode !== config.pluginDevelopmentEnabled) await ctx.plugins?.refreshDevelopmentMode();
       ctx.hub.emit('config:changed', config);
       try {
         await ctx.plugins?.syncInjectedSkillRoots?.();

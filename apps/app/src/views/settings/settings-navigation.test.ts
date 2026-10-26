@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   SETTINGS_GROUPS,
   SETTINGS_SECTIONS,
+  SETTINGS_SUBSECTIONS,
   visibleSettingsSections
 } from '@/views/settings/settings-navigation';
 
@@ -63,6 +64,13 @@ describe('visibleSettingsSections', () => {
 });
 
 describe('settings catalogue invariants', () => {
+  it('places Development beside Performance and About in the App group', () => {
+    expect(SETTINGS_SECTIONS.filter(section => section.group === 'app').map(section => section.id))
+      .toEqual(['performance', 'development', 'about']);
+    expect(SETTINGS_SECTIONS.find(section => section.id === 'development')?.projectScoped).toBeUndefined();
+    expect(SETTINGS_SUBSECTIONS.development).toEqual([{ id: 'bundled-plugins', label: 'Bundled plugins' }]);
+  });
+
   it('declares a Peers section exactly once', () => {
     const peers = SETTINGS_SECTIONS.filter((s) => s.id === 'peers');
     expect(peers).toHaveLength(1);

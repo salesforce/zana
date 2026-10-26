@@ -19,7 +19,9 @@ For a bundled plugin change:
 Merging a plugin change, publishing an npm package, or refreshing a catalog
 does not replace bundled code on existing installations. Independent packages
 cannot claim a reserved bundled identity. Test bundled plugins from local source
-only through the host's explicit managed-development flag.
+with **Settings → Development → Bundled plugin development**
+enabled, or the host's startup development flag. Saved Settings choices take
+precedence over the startup flag.
 
 Independent Git/npm plugins can release separately. Publish a new npm version or
 Git release within the source selector users installed. Declare compatible

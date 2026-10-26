@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { test, expect, launchApp, closeApp } from './fixtures/app.js';
+import { stubNativeDialogs, stubOpenDialog } from './sdk/native-dialog.js';
 
 function writePlugin(root: string, version: string) {
   mkdirSync(root, { recursive: true });
@@ -24,6 +25,70 @@ function env(bundle: string) {
     ZCC_OFFICIAL_MARKETPLACE_URL: 'off', ZCC_INTERNAL_MARKETPLACE_SOURCE: 'off'
   };
 }
+
+test('Development settings are searchable, persist, and apply bundled source watching and local overrides immediately', async ({ home }) => {
+  test.setTimeout(180_000);
+  const bundle = join(home, 'development-bundle'), source = join(bundle, 'tasks'), local = join(home, 'local-tasks');
+  const writeSource = (version: string) => {
+    writePlugin(source, version);
+    const manifestPath = join(source, 'package.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    const entry = `./server-${version}.ts`;
+    writeFileSync(join(source, entry), readFileSync(join(source, `server-${version}.mjs`)));
+    manifest.zcc.server = entry;
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+  };
+  writeSource('1.0.0'); writePlugin(local, '9.0.0');
+  const options = { env: env(bundle), initialConfig: { sponsorPromptDismissed: true } };
+  const app = await launchApp(home, options);
+  try {
+    const win = app.window;
+    expect(await win.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'tasks' }))).toMatchObject({ ok: true });
+    await win.getByRole('link', { name: 'Settings', exact: true }).click();
+    await win.getByTestId('settings-nav-experimental').click();
+    await expect(win.getByRole('switch', { name: 'Bundled plugin development' })).toHaveCount(0);
+    await win.getByTestId('settings-nav-development').click();
+    await expect(win.getByRole('heading', { name: 'Development', exact: true })).toBeVisible();
+    await win.getByTestId('settings-nav-global').click();
+    const search = win.getByRole('combobox', { name: 'Search settings' });
+    await search.fill('hot reload');
+    await win.getByTestId('settings-result-development.plugin-development').click();
+    await expect(win).toHaveURL(/\/settings\/development/);
+    await expect(win.locator('[data-settings-target="development.plugin-development"]')).toHaveClass(/settings-search-flash/);
+    await search.fill('');
+    const toggle = win.getByRole('switch', { name: 'Bundled plugin development' });
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await toggle.click();
+    await expect.poll(() => win.evaluate(async () => (await window.cc.config.get()).pluginDevelopmentEnabled)).toBe(true);
+    writeSource('2.0.0');
+    await expect.poll(() => win.evaluate(() => window.cc.pluginApps.callRpc('tasks', 'read')), { timeout: 30_000 })
+      .toMatchObject({ version: '2.0.0' });
+    await toggle.click();
+    await expect.poll(() => win.evaluate(async () => (await window.cc.config.get()).pluginDevelopmentEnabled)).toBe(false);
+    writeSource('3.0.0');
+    // Allow the 300ms source debounce and IPC delivery to expose a leaked watcher.
+    await win.waitForTimeout(1_200);
+    expect(await win.evaluate(() => window.cc.pluginApps.callRpc('tasks', 'read'))).toMatchObject({ version: '2.0.0' });
+    await stubOpenDialog(app.electron, [[local], [local]]); await stubNativeDialogs(app.electron, [0, 0]);
+    const denied = await win.evaluate(() => window.cc.extensions.install({ kind: 'localDir' }));
+    expect(denied).toMatchObject({ ok: false });
+    expect(JSON.stringify(denied)).toContain('Settings > Development');
+    await toggle.click();
+    expect(await win.evaluate(() => window.cc.extensions.install({ kind: 'localDir' }))).toMatchObject({ ok: true });
+    await toggle.click();
+    await expect.poll(() => win.evaluate(() => window.cc.pluginApps.reload('tasks'))).toMatchObject({ ok: false });
+    expect(await win.evaluate(() => window.cc.pluginApps.callRpc('tasks', 'read'))).toMatchObject({ version: '9.0.0' });
+  } finally { await closeApp(app.electron); }
+  const restarted = await launchApp(home, { ...options, env: { ...env(bundle), ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD: '1' } });
+  try {
+    expect(await restarted.window.evaluate(async () => (await window.cc.config.get()).pluginDevelopmentEnabled)).toBe(false);
+    await restarted.window.getByRole('link', { name: 'Settings', exact: true }).click();
+    await restarted.window.getByTestId('settings-nav-development').click();
+    await expect(restarted.window.getByRole('switch', { name: 'Bundled plugin development' })).toHaveAttribute('aria-checked', 'false');
+    expect(await restarted.window.evaluate(() => window.cc.pluginApps.reload('tasks'))).toMatchObject({ ok: false });
+    expect(await restarted.window.evaluate(() => window.cc.pluginApps.callRpc('tasks', 'read'))).toMatchObject({ version: '9.0.0' });
+  } finally { await closeApp(restarted.electron); }
+});
 
 test('an app bundle upgrade refreshes installed metadata and preserves disabled state and data', async ({ home }) => {
   test.setTimeout(120_000);

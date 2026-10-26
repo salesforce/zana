@@ -72,9 +72,11 @@ source changes, rebuilds the app bundle, and reloads the installed plugin.
 Path installs load their server entry from source; published packages declare
 their built entry points.
 
-Developers overriding a bundled plugin from a local path must run a managed
-development host with `ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD=1`. This flag
-also enables bundled source watching. It never permits Git or npm packages to
+For local overrides of bundled plugins, enable **Settings → Development → Bundled plugin development**. This saved switch applies immediately
+and also enables bundled source watching. Disabling it stops watching and blocks
+further overrides while keeping currently loaded plugins running. The saved
+choice takes precedence over the startup default from
+`ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD=1`. Neither option permits Git or npm packages to
 replace bundled identities. Ordinary plugins with their own IDs need no flag.
 
 ## Updates

@@ -3512,19 +3512,21 @@ describe('async history and queue HTTP responsiveness', () => {
     }
   });
 
-  it('refreshes plugin safe mode only when the authoritative config flag changes', async () => {
+  it.each(['pluginSafeMode', 'pluginDevelopmentEnabled'] as const)('refreshes plugin policy only when %s changes', async key => {
     const dataDir = mkdtempSync(join(tmpdir(), 'safe-mode-config-http-'));
     server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
     const refreshSafeMode = vi.fn(async () => undefined);
+    const refreshDevelopmentMode = vi.fn(async () => undefined);
     const original = server.ctx.plugins;
-    server.ctx.plugins = { refreshSafeMode } as never;
+    server.ctx.plugins = { refreshSafeMode, refreshDevelopmentMode } as never;
     try {
       for (const [flag, expectedCalls] of [[true, 1], [true, 1], [false, 2]] as const) {
         const response = await fetch(`${server.url}api/v1/config`, { method: 'PATCH',
-          headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pluginSafeMode: flag }) });
+          headers: { 'content-type': 'application/json' }, body: JSON.stringify({ [key]: flag }) });
         expect(response.status).toBe(200);
-        expect((await response.json()).config.pluginSafeMode).toBe(flag);
-        expect(refreshSafeMode).toHaveBeenCalledTimes(expectedCalls);
+        expect((await response.json()).config[key]).toBe(flag);
+        expect(key === 'pluginSafeMode' ? refreshSafeMode : refreshDevelopmentMode).toHaveBeenCalledTimes(expectedCalls);
+        expect(key === 'pluginSafeMode' ? refreshDevelopmentMode : refreshSafeMode).not.toHaveBeenCalled();
       }
     } finally { server.ctx.plugins = original; }
   });

@@ -2403,6 +2403,8 @@ export interface AppConfig {
   feedNoiseClassifierEnabled?: boolean;
   /** Suspend installed non-bundled plugins without changing their enabled preference. */
   pluginSafeMode?: boolean;
+  /** Allow local bundled-plugin overrides and source watching. Saved choices override the startup flag. */
+  pluginDevelopmentEnabled?: boolean;
   /** Suppress non-default service tiers for this instance. */
   providerServiceTiersDisabled?: boolean;
   /**

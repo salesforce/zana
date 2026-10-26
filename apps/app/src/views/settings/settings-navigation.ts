@@ -6,6 +6,7 @@ import {
   Drama,
   Users,
   BarChart3,
+  Code2,
   Info,
   TerminalSquare,
   SquareArrowOutUpRight,
@@ -40,9 +41,7 @@ export const SETTINGS_GROUPS: Array<{ id: SettingsGroup; label: string }> = [
   { id: 'agents', label: 'Agents & Automation' },
   { id: 'catalogues', label: 'Catalogues' },
   { id: 'labs', label: 'Labs' },
-  // Trailing group: app-level meta (version, updates, credits, release notes) — not
-  // configuration/behaviour, so it sits apart from the config groups, like the
-  // Project group the picker appends after this loop.
+  // App maintenance, development, and version information.
   { id: 'app', label: 'App' }
 ];
 
@@ -74,6 +73,7 @@ export const SETTINGS_SECTIONS: Array<{
   { id: 'usage', label: 'Usage', icon: BarChart3, desc: 'Session activity rollup', group: 'catalogues' },
   { id: 'experimental', label: 'Experimental', icon: FlaskConical, desc: 'Opt-in features under evaluation', group: 'labs' },
   { id: 'performance', label: 'Performance', icon: BarChart3, desc: 'Host daemon resources, workload, and connection health', group: 'app' },
+  { id: 'development', label: 'Development', icon: Code2, desc: 'Develop and test bundled plugins', group: 'app' },
   { id: 'about', label: 'About', icon: Info, desc: 'Version, updates, credits & release notes', group: 'app' }
 ];
 
@@ -91,6 +91,9 @@ export function visibleSettingsSections(hidden: ReadonlySet<string>): typeof SET
  * blocks to target.
  */
 export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: string; label: string }>>> = {
+  development: [
+    { id: 'bundled-plugins', label: 'Bundled plugins' }
+  ],
   performance: [
     { id: 'performance-trends', label: 'Daemon trends' },
     { id: 'performance-work', label: 'Current work' },
