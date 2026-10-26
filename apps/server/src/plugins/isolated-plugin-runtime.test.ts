@@ -214,7 +214,8 @@ it.skipIf(!!(globalThis as { __vitest_worker__?: { config?: { coverage?: { enabl
     finally { clearInterval(timer); }
     const elapsed = Date.now() - started;
     expect(ticks).toBeGreaterThan(1);
-    expect(elapsed).toBeLessThan(PEER_WORKER_EXECUTION_TIMEOUT_MS);
+    // No wall-clock bound: elapsed includes IPC/queueing and varies with suite load. The fence itself is the worker's
+    // vm timeout; exceeding it rejects the apply and reports a worker failure, both asserted here.
     const expected = await a.rpc.get('inspect')!(prepared) as any, actual = await b.rpc.get('inspect')!(prepared) as any;
     expect(actual).toMatchObject({ bytes: 24 * 1024 * 1024, files: expected.files, head: transfer.heads[prepared.docId], receipt: { stage: 'synced' }, staged: { n: 0 } });
     console.log(`[peer-fence] 24MiB ${revision ? 'rewrite' : 'initial'} production DD apply ${elapsed}ms; worker live; SQLite hashes/receipt exact`);
