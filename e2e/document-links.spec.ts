@@ -59,8 +59,8 @@ test('Library and Explorer keep linked Markdown navigation inside built Electron
   writeFileSync(join(root, 'notes', 'a.md'), '# Explorer A\n\n[B](b.md#section-2)');
   writeFileSync(join(root, 'notes', 'b.md'), '# Explorer B\n\n[Back](a.md)\n\n## Section 2\n');
   await window.evaluate(id => { history.pushState({}, '', `/projects/${id}/explorer`); dispatchEvent(new PopStateEvent('popstate')); }, projectId);
-  await window.locator('.tree-row.dir').filter({ hasText: /^notes$/ }).click();
-  await window.locator('.tree-row.file').filter({ hasText: /^a\.md$/ }).click();
+  await window.locator('.tree-row.dir').getByTitle('notes', { exact: true }).click();
+  await window.locator('.tree-row.file').getByTitle('a.md', { exact: true }).click();
   const viewer = window.locator('.explorer-viewer');
   await expect(viewer.getByRole('heading', { name: 'Explorer A' })).toBeVisible();
   const appUrl = window.url();
