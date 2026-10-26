@@ -103,17 +103,21 @@ test('CLI Agent offers Opus 5.5 1M and launches its exact model id', async ({ ho
   });
   try {
     const { window } = app;
-    const catalog = await window.evaluate(async () => {
-      const response = await fetch('/api/v1/system/execution-options?providerId=claude-code&projectId=opus-project');
-      if (!response.ok) throw new Error(`Execution options: ${response.status}`);
-      return response.json();
-    });
-    expect(catalog.modelLoadError, JSON.stringify(catalog)).toBeNull();
-    expect(catalog.models).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'claude-opus-5-5[1m]', model: 'claude-opus-5-5[1m]', displayName: 'Opus 5.5 (1M)' }),
-      expect.objectContaining({ id: 'claude-opus-5-5', displayName: 'Opus 5.5' })
-    ]));
-    expect(catalog.models.some((row: { id: string }) => row.id === 'claude-opus-5[1m]')).toBe(false);
+    // The renderer can mount before bundled providers finish registering.
+    // Wait for the real catalog rather than treating first paint as readiness.
+    await expect(async () => {
+      const catalog = await window.evaluate(async () => {
+        const response = await fetch('/api/v1/system/execution-options?providerId=claude-code&projectId=opus-project');
+        if (!response.ok) throw new Error(`Execution options: ${response.status}`);
+        return response.json();
+      });
+      expect(catalog.modelLoadError, JSON.stringify(catalog)).toBeNull();
+      expect(catalog.models).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'claude-opus-5-5[1m]', model: 'claude-opus-5-5[1m]', displayName: 'Opus 5.5 (1M)' }),
+        expect.objectContaining({ id: 'claude-opus-5-5', displayName: 'Opus 5.5' })
+      ]));
+      expect(catalog.models.some((row: { id: string }) => row.id === 'claude-opus-5[1m]')).toBe(false);
+    }).toPass({ timeout: 30_000 });
 
     const modal = await openCliAgentLauncher(window);
     await modal.getByTestId('model-reasoning-picker-trigger').click();
