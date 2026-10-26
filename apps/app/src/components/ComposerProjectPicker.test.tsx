@@ -74,6 +74,31 @@ describe('composer machine and project picker', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Thread location — start a new thread elsewhere' }));
     expect(screen.getByRole('option', { name: /Current thread location/ }).getAttribute('aria-disabled')).toBe('true');
   });
+  it('keeps an unavailable recorded location disabled while allowing a new thread on the registered machine', () => {
+    const start = vi.fn();
+    const { change } = setup({ value: 'repo', hostId: 'removed-host', onStartNewThread: start });
+    fireEvent.click(screen.getByRole('button', { name: 'Thread location — start a new thread elsewhere' }));
+    const current = screen.getByRole('option', { name: 'Unavailable machine › API Current thread location' });
+    expect(current.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(current);
+    expect(start).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('option', { name: 'Devbox › API New thread on Devbox' }));
+    expect(start).toHaveBeenCalledWith({ projectId: 'repo', hostId: 'remote' });
+    expect(change).not.toHaveBeenCalled();
+  });
+  it('truncates a long machine name in the trigger and identifies offline new-thread choices', () => {
+    const name = 'Development machine with a very long name';
+    h.hosts = hosts.map(host => host.id === 'remote' ? { ...host, name, status: 'disconnected' } : host);
+    const start = vi.fn();
+    render(<ComposerProjectPicker projects={[scratch, repo]} value="repo" hostId="remote" onChange={vi.fn()} onStartNewThread={start} title="Recorded thread location" />);
+    const trigger = screen.getByRole('button', { name: 'Thread location — start a new thread elsewhere' });
+    expect(trigger.textContent).toContain(`${name.slice(0, 23)}… › API`);
+    expect(trigger.title).toBe('Recorded thread location');
+    fireEvent.click(trigger);
+    expect(screen.getByRole('option', { name: `${name} › API New thread on ${name} · Offline` })).toBeTruthy();
+    fireEvent.click(screen.getByRole('option', { name: `${name} › Default Project New thread on ${name} · Offline` }));
+    expect(start).toHaveBeenCalledWith({ projectId: 'default', hostId: 'remote' });
+  });
   it('adds a folder on the selected machine and chooses the new project', () => {
     const { change, hostChange } = setup({ value: 'repo', hostId: 'remote' }); open();
     fireEvent.click(screen.getByRole('button', { name: 'Add project on Devbox' }));
