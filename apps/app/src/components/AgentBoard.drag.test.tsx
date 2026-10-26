@@ -7,6 +7,7 @@ import type { ThreadListItem } from '../thread-store.js';
 
 const api = vi.hoisted(() => ({ write: vi.fn(), clearAgentBlocked: vi.fn(), stop: vi.fn(), archive: vi.fn(), close: vi.fn() }));
 const layout = vi.hoisted(() => ({ compact: false }));
+vi.mock('../hooks/useHosts.js', () => ({ useHosts: () => [] }));
 vi.mock('../hooks/useCompactLayout.js', () => ({ useCompactLayout: () => layout.compact }));
 vi.mock('../lib/product-client.js', () => ({ product: {
   terminals: { write: api.write, clearAgentBlocked: api.clearAgentBlocked },

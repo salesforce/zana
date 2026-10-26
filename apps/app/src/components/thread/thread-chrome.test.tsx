@@ -755,6 +755,22 @@ describe('expandable row and chips', () => {
     expect(html).not.toContain('data-testid="thread-detail-meta"');
   });
 
+  it('shows the execution machine beside the project even without a harness', () => {
+    for (const machineRemote of [true, false]) {
+      const html = renderToStaticMarkup(<ThreadDetailHeading title="Task" agent={{
+        providerId: null, model: null, projectName: 'Default Project', branchName: null,
+        machineName: 'Devbox', machineRemote
+      }} />);
+      expect(html).toContain('title="Machine: Devbox"');
+      expect(html).toContain('title="Project: Default Project"');
+      expect(html).toContain(machineRemote ? 'lucide-server' : 'lucide-laptop');
+    }
+    const html = renderToStaticMarkup(<ThreadDetailHeading title="Task" agent={{
+      providerId: null, model: null, projectName: null, branchName: null, machineName: 'Unavailable machine'
+    }} />);
+    expect(html).toContain('title="Machine: Unavailable machine"');
+  });
+
   it('keeps location chips when the harness is unknown', () => {
     const chipsOnly = renderToStaticMarkup(
       <ThreadDetailHeading

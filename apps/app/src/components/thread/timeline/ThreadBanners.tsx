@@ -1,6 +1,6 @@
 import { type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, Folder, GitBranch, ListTodo, Loader2, X } from 'lucide-react';
+import { ChevronDown, Folder, GitBranch, Laptop, ListTodo, Loader2, Server, X } from 'lucide-react';
 import type {
   ActiveThinking,
   ThreadTimelineGoal,
@@ -265,6 +265,8 @@ export type ThreadDetailHeadingAgent = {
   model: string | null;
   projectName: string | null;
   branchName: string | null;
+  machineName?: string;
+  machineRemote?: boolean;
 };
 
 export function ThreadDetailHeading({
@@ -312,10 +314,16 @@ function ThreadDetailMeta({ agent }: { agent: ThreadDetailHeadingAgent }) {
     threadDetailHarnessName(agent.providerId),
     agent.model ? humanThreadModelLabel(agent.model, agent.providerId ?? undefined) : null
   ].filter(Boolean).join(' · ');
-  if (!identity && !agent.projectName && !agent.branchName) return null;
+  if (!identity && !agent.projectName && !agent.branchName && !agent.machineName) return null;
   return (
     <div className="thread-detail-meta" data-testid="thread-detail-meta">
       {identity ? <span className="thread-detail-meta-identity" title={identity}>{identity}</span> : null}
+      {agent.machineName ? (
+        <span className="thread-detail-meta-chip" title={`Machine: ${agent.machineName}`}>
+          {agent.machineRemote ? <Server size={11} aria-hidden="true" /> : <Laptop size={11} aria-hidden="true" />}
+          <span>{agent.machineName}</span>
+        </span>
+      ) : null}
       {agent.projectName ? (
         <span className="thread-detail-meta-chip" title={`Project: ${agent.projectName}`}>
           <Folder size={11} aria-hidden="true" />

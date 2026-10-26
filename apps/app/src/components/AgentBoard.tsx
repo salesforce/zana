@@ -20,6 +20,8 @@ import { boardDropAction, boardItemKey, canSwipeClose } from '../lib/agent-board
 import { agentBoardMoves, closeBoardItem, useAgentBoardMoves } from '../stores/agent-board-moves.js';
 import { SwipeToCloseCard } from './SwipeToCloseCard.js';
 import { useCompactLayout } from '../hooks/useCompactLayout.js';
+import { useHosts } from '../hooks/useHosts.js';
+import { sessionLocation } from '../lib/session-location.js';
 import { MobileAgentBoard } from './MobileAgentBoard.js';
 import { isUnreadThread } from '../lib/unread-threads.js';
 import type { ThreadListItem } from '../thread-store.js';
@@ -757,6 +759,7 @@ interface AgentBoardLanesProps {
  */
 export function AgentBoardLanes({ cards, activeId, onInspect, showProject, executions, hasMoreExecutions, onLoadMoreExecutions, onDismissExecution, onCloseLaneAgents }: AgentBoardLanesProps) {
   const compact = useCompactLayout();
+  const hosts = useHosts();
   const personas = usePersonas((s) => s.personas);
   const teams = useTeams((s) => s.teams);
   // Idle-attention sensitivity (mirror of AppConfig, hydrated in the data
@@ -954,11 +957,13 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
     // on children, or still Working), so the parent never reads as plain at-rest.
     const subagents = !exited ? c.liveSubagents ?? 0 : 0;
     const persona = t.personaId ? personas.find((p) => p.id === t.personaId) : undefined;
+    const location = sessionLocation(c.modernThread?.hostId ?? t.hostId, projects.find(project => project.id === c.projectId), hosts);
     const subtitle = agentCardRuntimeLabel({
       profile: t.profile,
       personaName: persona?.name,
-      remote: Boolean(c.projectRemote),
-      remoteToolProxy: Boolean(t.remoteToolProxy)
+      remote: location.remote || Boolean(c.projectRemote),
+      remoteToolProxy: Boolean(t.remoteToolProxy),
+      machineName: location.machineName
     });
     // Idle-triage badge: only in the idle lane, only when the add-on classified
     // this idle spell to something actionable (awaiting-reply / done / paused).
@@ -1204,10 +1209,12 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
     grouped = false
   ) => {
     const project = projects.find((row) => row.id === item.projectId);
+    const location = sessionLocation(item.thread.hostId, project, hosts);
     const runtime = threadCardRuntimeLabel(
       item.thread,
-      Boolean(project?.remote && (!project.hostId || item.thread.hostId !== project.hostId)),
-      Boolean(project?.remote && project.hostId && item.thread.hostId === project.hostId)
+      location.remoteToolProxy,
+      location.remote,
+      location.machineName
     );
     const showProjectChip = threadCardShowsProject(Boolean(showProject), grouped);
     const unread = isUnreadThread(item.thread);
@@ -1332,8 +1339,8 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
     if (!lane) return null;
     if (lane.cards.length === 0) return <div className="agents-lane-empty" aria-hidden="true" />;
     if (!showProject) return lane.cards.map((item) => renderItem(item, lane.key));
-    return groupFleetByProject(lane.cards, projectOrder).map((group) => (
-      <div key={group.projectId} className="agents-lane-group">
+    return groupFleetByProject(lane.cards, projectOrder, projects, hosts).map((group) => (
+      <div key={group.key} className="agents-lane-group">
         <div className="agents-lane-group-head" title={group.projectName}>
           <span className="agents-lane-group-dot" style={group.projectColor ? { background: group.projectColor } : undefined} aria-hidden="true" />
           <span className="agents-lane-group-name">{group.projectName}</span>

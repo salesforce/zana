@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExecutionBoardProjection, TerminalSession } from '@zana-ai/zcc-domain/product';
 
+vi.mock('../hooks/useHosts.js', () => ({ useHosts: () => [] }));
 vi.mock('../hooks/useCompactLayout.js', () => ({ useCompactLayout: () => false }));
 vi.mock('../lib/product-client.js', () => ({ product: { terminals: {}, threads: { notificationLevel: () => Promise.reject(new Error('unavailable')) } } }));
 vi.mock('../lib/gitInfo.js', () => ({ useSessionGit: () => null }));

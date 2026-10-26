@@ -33,6 +33,8 @@ import { createThreadRefreshScheduler } from './thread-detail-refresh.js';
 import { getThreadRoutePath } from '../../lib/route-paths.js';
 import { useRouteState } from '../../hooks/useRouteState.js';
 import { useCompactLayout } from '../../hooks/useCompactLayout.js';
+import { useHosts } from '../../hooks/useHosts.js';
+import { sessionLocation } from '../../lib/session-location.js';
 import { pendingChildThreads, useThreads, type ThreadListItem } from '../../thread-store.js';
 import { useData } from '../../store.js';
 import { useThreadFindTarget } from '../../lib/use-thread-find-target.js';
@@ -233,6 +235,8 @@ function ThreadDetailBody({
   const [projectId, setProjectId] = useState<string | null>(null);
   const project = useData((s) => (projectId ? s.projects.find((row) => row.id === projectId) ?? null : null));
   const [hostId, setHostId] = useState<string | undefined>();
+  const hosts = useHosts();
+  const executionLocation = sessionLocation(hostId, project ?? undefined, hosts);
   const [environmentId, setEnvironmentId] = useState<string | null>(null);
   const [isWorktree, setIsWorktree] = useState(false);
   const [branchName, setBranchName] = useState<string | null>(null);
@@ -980,6 +984,8 @@ function ThreadDetailBody({
               providerId: threadProviderId,
               model: threadModel,
               projectName: project?.name ?? null,
+              machineName: executionLocation.machineName,
+              machineRemote: executionLocation.remote,
               branchName
             }}
           />

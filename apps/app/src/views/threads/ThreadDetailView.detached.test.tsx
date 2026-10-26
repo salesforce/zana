@@ -3,6 +3,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({ threads: [{ id: 't-1', projectId: 'p-1' }] as Array<{ id: string; projectId: string }> }));
+vi.mock('../../hooks/useHosts.js', () => ({ useHosts: () => [] }));
 vi.mock('../../components/thread/DetachedThread.js', () => ({
   useThreadDetached: () => true,
   DetachedThread: ({ threadId, projectId }: { threadId: string; projectId: string | null }) => (
