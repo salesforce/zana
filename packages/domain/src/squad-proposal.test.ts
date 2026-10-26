@@ -185,8 +185,9 @@ describe('shared Squad goal and summary limit', () => {
     });
 
   it('does not trim', () => {
-      expect(squadLaunchTextProblem({ goal: ' '.repeat(2049) })?.code).toBe('GOAL_TOO_LONG');
-    });
+    expect(squadLaunchTextProblem({ goal: ' '.repeat(2049) })?.code).toBe('GOAL_TOO_LONG');
+  });
+  });
 });
 
 describe('canAuthorAndRegisterPlan', () => {

@@ -205,9 +205,9 @@ export async function launchSquad(
     const built = await buildSquadStartRequest(deps, {
       teamId: input.teamId, projectId: project.id, projectName: project.name, launchRequestId,
       coordinationMode: input.coordinationMode, slots: input.slots, attended: ctx.sources?.kind === 'window',
-    goal: input.goal, title: input.title, summary: input.summary, completionInboxNotice: input.completionInboxNotice,
-    goal: input.goal, title: input.title, summary: input.summary, sourceBundle, goalSourceDescriptors: redactedGoalSources,
-    ...(targetCheck.target ? { target: targetCheck.target } : {})
+      goal: input.goal, title: input.title, summary: input.summary, completionInboxNotice: input.completionInboxNotice,
+      sourceBundle, goalSourceDescriptors: redactedGoalSources,
+      ...(targetCheck.target ? { target: targetCheck.target } : {})
     });
     if (!built.ok) return built.response;
     const result = owner.proposal || owner.reportTo
