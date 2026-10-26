@@ -129,7 +129,6 @@ test('Default Project discovers remote models and machine renames survive pairin
     expect(created.environmentId).toBeTruthy();
     await expect.poll(async () => (await api(`/threads/${threadId}`)).body.thread.status, { timeout: 60_000 }).toBe('idle');
     await expect(win.getByTestId('thread-detail-meta').getByTitle(`Machine: ${originalName}`, { exact: true })).toBeVisible();
-    await win.screenshot({ path: testInfo.outputPath('remote-default-header.png') });
     const localTask = await api('/threads', { projectId: scratch.value.id, providerId: 'fake', input: 'Local default task' });
     expect(localTask.status).toBe(201);
     const localThreadId = localTask.body.thread.id;
@@ -140,7 +139,6 @@ test('Default Project discovers remote models and machine renames survive pairin
     await expect(remoteDefault.locator('.agent-card-sub')).toContainText(`Remote · ${originalName}`);
     await expect(remoteDefault.locator('.agent-card.is-thread')).toHaveCount(1);
     await expect(win.locator('[data-board-column="idle"] .agents-lane-group')).toHaveCount(2);
-    await win.screenshot({ path: testInfo.outputPath('remote-default-board.png') });
     await navigate(`/threads/${threadId}`);
     await expect(win.getByRole('button', { name: 'Thread location — start a new thread elsewhere', exact: true })).toContainText('Default Project');
     await win.getByRole('button', { name: 'Thread location — start a new thread elsewhere', exact: true }).click();
