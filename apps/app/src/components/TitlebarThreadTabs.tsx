@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Plus, RotateCcw, X } from 'lucide-react';
+import { ChevronDown, LoaderCircle, MessageSquareText, Plus, RotateCcw, TriangleAlert, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useData } from '../store.js';
 import { onThreadArchived, useThreads } from '../thread-store.js';
@@ -107,19 +107,24 @@ export function TitlebarThreadTabs() {
           const active = route.threadId === thread.id;
           const state = threadStatusToAgentState(thread.status, thread.hasPendingInteraction, thread.activity);
           const status = thread.status === 'error' ? 'Error' : state === 'blocked' ? 'Needs you' : state === 'working' ? 'Working' : 'Idle';
+          const StatusIcon = status === 'Error' ? TriangleAlert : status === 'Needs you' ? MessageSquareText : status === 'Working' ? LoaderCircle : null;
           const unread = !active && (thread.maxSeq ?? 0) > (thread.lastReadSeq ?? 0);
           const title = thread.title || 'Untitled thread';
           return (
-            <div key={thread.id} className={`titlebar-thread ${active ? 'is-active' : ''}`}>
+            <div key={thread.id} className={`titlebar-thread ${active ? 'is-active' : ''} ${unread ? 'is-unread' : ''}`}>
               <button type="button" role="tab" aria-selected={active} tabIndex={active || (!visible.some(row => row.thread.id === route.threadId) && index === 0) ? 0 : -1}
                 title={`${title}\n${project.name} · ${status}${unread ? ' · Unread' : ''}`}
                 aria-label={`${title} — ${project.name}${unread ? ' — Unread' : ''}`} onClick={() => go(tab)}>
                 <ProviderIcon providerId={thread.providerId} size={15} />
                 <span className="titlebar-thread-copy"><span className="titlebar-thread-name">{title}</span>
-                  <span className="titlebar-thread-context"><i style={{ background: project.color || 'var(--text-dim)' }} />{project.name}</span>
+                  <span className="titlebar-thread-context">
+                    <span className="titlebar-thread-project">{project.name}</span>
+                    {unread && <span className="titlebar-thread-unread-label" aria-hidden="true"><span className="titlebar-thread-context-separator">/</span>New</span>}
+                  </span>
                 </span>
-                <span className={`titlebar-thread-status status-${status.toLowerCase().replace(' ', '-')}`} role="img" aria-label={status} />
-                {unread && <span className="titlebar-thread-unread" aria-hidden="true" />}
+                {StatusIcon && <span className={`titlebar-thread-status status-${status.toLowerCase().replace(' ', '-')}`} role="img" aria-label={status}>
+                  <StatusIcon size={12} aria-hidden="true" />
+                </span>}
               </button>
               <button type="button" className="titlebar-thread-close" aria-label={`Close tab: ${title}`} title="Close tab (keeps thread running)" onClick={() => close(thread.id)}><X size={12} /></button>
             </div>

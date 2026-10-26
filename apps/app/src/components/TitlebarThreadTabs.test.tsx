@@ -51,6 +51,40 @@ it('opens visited threads only, keeps stable order and project context, and upda
   expect(screen.getByRole('img', { name: 'Error' })).toBeTruthy();
 });
 
+it('uses distinct working, input and error icons while leaving idle tabs and project context quiet', () => {
+  mount(); visit('/threads/b');
+  expect(screen.queryByRole('img')).toBeNull();
+  expect(document.querySelector('.titlebar-thread-context i')).toBeNull();
+  expect(document.querySelector('.titlebar-thread-project')?.textContent).toBe('Project P');
+  act(() => useThreads.setState({ threads: [row('a', 'p', { status: 'active' }), row('b', 'q', { status: 'active', hasPendingInteraction: true })] }));
+  const working = screen.getByRole('img', { name: 'Working' });
+  const pending = screen.getByRole('img', { name: 'Needs you' });
+  expect(working.querySelector('svg.lucide-loader-circle')?.getAttribute('aria-hidden')).toBe('true');
+  expect(pending.querySelector('svg.lucide-message-square-text')).toBeTruthy();
+  // A failed thread takes precedence over any leftover pending interaction.
+  act(() => useThreads.setState({ threads: [row('a', 'p', { status: 'error', hasPendingInteraction: true }), row('b', 'q')] }));
+  expect(screen.getByRole('img', { name: 'Error' }).querySelector('svg.lucide-triangle-alert')).toBeTruthy();
+  expect(screen.queryByRole('img', { name: 'Working' })).toBeNull();
+  expect(screen.queryByRole('img', { name: 'Needs you' })).toBeNull();
+});
+
+it('shows unread with a title emphasis and New label, clearing both when selected or read elsewhere', () => {
+  mount(); visit('/threads/b');
+  act(() => useThreads.setState({ threads: [row('a', 'p', { maxSeq: 5, lastReadSeq: 2 }), row('b', 'q', { maxSeq: 5, lastReadSeq: 0 })] }));
+  const unread = screen.getByRole('tab', { name: 'Thread a — Project P — Unread' });
+  expect(unread.closest('.titlebar-thread')?.classList.contains('is-unread')).toBe(true);
+  expect(within(unread).getByText('New').getAttribute('aria-hidden')).toBe('true');
+  expect(screen.getByRole('tab', { name: 'Thread b — Project Q' }).querySelector('.titlebar-thread-unread-label')).toBeNull();
+  expect(document.querySelector('.titlebar-thread-unread')).toBeNull();
+  fireEvent.click(unread);
+  expect(screen.getByRole('tab', { name: 'Thread a — Project P' }).closest('.titlebar-thread')?.classList.contains('is-unread')).toBe(false);
+  expect(screen.getByRole('tab', { name: 'Thread a — Project P' }).querySelector('.titlebar-thread-unread-label')).toBeNull();
+  act(() => useThreads.setState({ threads: [row('a', 'p', { maxSeq: 5, lastReadSeq: 5 }), row('b', 'q', { maxSeq: 5, lastReadSeq: 5 })] }));
+  visit('/threads/b');
+  expect(document.querySelector('.titlebar-thread.is-unread')).toBeNull();
+  expect(screen.queryByText('New')).toBeNull();
+});
+
 it('closes shortcuts, selects adjacent tabs, reopens closed tabs and falls back after the last close', () => {
   mount(); visit('/threads/b'); visit('/threads/c');
   fireEvent.click(screen.getByRole('button', { name: 'Close tab: Thread b' }));

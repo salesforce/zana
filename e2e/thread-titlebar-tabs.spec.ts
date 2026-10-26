@@ -47,7 +47,24 @@ test('thread tabs: default, project context, drafts, close safety, settings, rel
   await expect(strip.getByRole('tab')).toHaveCount(2);
   await expect(strip.getByRole('tab', { name: /Navigation experiment/ })).toContainText('Interface');
   await expect(strip.getByRole('tab', { name: /Landing page/ })).toContainText('Website');
+  const firstTab = strip.getByRole('tab', { name: /Navigation experiment/ });
+  await expect(firstTab.getByRole('img', { name: 'Working' }).locator('svg.lucide-loader-circle')).toBeVisible();
+  await expect(strip.locator('.titlebar-thread-context i, .titlebar-thread-unread')).toHaveCount(0);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(firstTab.locator('.titlebar-thread-status svg')).toHaveCSS('animation-name', 'none');
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await expect(firstTab.locator('.titlebar-thread-status svg')).toHaveCSS('animation-name', 'titlebar-thread-spin');
+  await page.evaluate(async id => {
+    const response = await fetch(`/api/v1/threads/${id}/unread`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}'
+    });
+    if (!response.ok) throw new Error(await response.text());
+  }, first!.id);
+  await expect(firstTab.locator('.titlebar-thread-unread-label')).toHaveText('/New');
+  await expect(firstTab.locator('.titlebar-thread-name')).toHaveCSS('font-weight', '700');
   await strip.getByRole('tab', { name: /Navigation experiment/ }).click();
+  await expect(firstTab.locator('.titlebar-thread-unread-label')).toHaveCount(0);
+  await expect(firstTab.locator('.titlebar-thread-name')).toHaveCSS('font-weight', '500');
   await expect(input).toHaveText('Keep my unsent navigation notes');
   await expect(strip.getByRole('tab', { name: /Navigation experiment/ })).toHaveAttribute('aria-selected', 'true');
 
@@ -134,6 +151,7 @@ test('thread tabs: default, project context, drafts, close safety, settings, rel
   }, first!.projectId);
   for (const id of overflowIds) await route(page, `/threads/${id}`);
   await expect(strip.getByRole('tab', { name: /Overflow 3/ })).toBeInViewport();
+  await expect(strip.getByRole('tab', { name: /Overflow 3/ }).locator('.titlebar-thread-status')).toHaveCount(0);
   await strip.getByLabel('All open threads').click();
   await expect(strip.locator('.titlebar-threads-popover')).toBeInViewport();
   await strip.getByRole('textbox', { name: 'Find an open thread' }).fill('Landing');
