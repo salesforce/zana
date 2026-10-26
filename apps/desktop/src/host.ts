@@ -96,7 +96,7 @@ import { sanitizeExtraArgs } from '@zana-ai/zcc-domain/launch-sanitize';
 import { teamRunNamerInput } from './team-run-title.js';
 import { MANAGED_WORKTREE_DIR_NAME, PERSONAL_WORKSPACE_DIR_NAME, type MenubarThreadAgent } from '@zana-ai/zcc-domain';
 import { providerCapabilities, harnessFamilyOf, isClaudeProfile, isCodexProfile, isOpenCodeProfile, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
-import { canonicalThreadProviderId } from '@zana-ai/zcc-server/services/threads/thread-provider-catalog';
+import { canonicalThreadProviderId, getThreadProvider } from '@zana-ai/zcc-server/services/threads/thread-provider-catalog';
 import { EXTENSION_PROJECT_CATEGORY, store, scratchWorkspaceRoot, worktreeRoot, worktreeTargetDir } from '@zana-ai/zcc-server/services/projects/store';
 import { electronZccDataDir } from '@zana-ai/zcc-server/electron-data-dir';
 import { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
@@ -5721,14 +5721,15 @@ export async function launchTeam(
         const execution = resolveExecutionState(provider, input);
         if (execution.state === 'plan' || persona.permissionMode === 'plan') throw new Error('Modern squad plan-only execution is not supported');
         const unrestricted = provider.adapter.descriptor.profiles.find(candidate => candidate.id === profile)?.posture === 'unrestricted';
+        // Modern threads have no manual-approval mode. Map the portable default
+        // onto ACP's least-permissive interactive equivalent instead of rejecting
+        // an otherwise valid squad before it can launch.
+        const providerId = canonicalThreadProviderId(harnessFamilyOf(profile) ?? profile);
+        const wantsAuto = autonomous || execution.state === 'autonomous';
+        const supportsAuto = getThreadProvider(providerId)?.capabilities.permissionModes.includes('auto') === true;
         const permissionMode = unrestricted || persona.permissionMode === 'bypassPermissions' ? 'full' as const
-          : autonomous || execution.state === 'autonomous' ? 'auto' as const
-            : execution.state === 'accept-edits' || persona.permissionMode === 'acceptEdits' ? 'accept-edits' as const : undefined;
-        // Modern threads have no manual-approval mode; an unset mode would silently fall back to accept-edits.
-        if (permissionMode === undefined && (persona.permissionMode === 'default' || execution.state === 'interactive')) {
-          throw new Error('Modern squad manual-approval permission is not supported');
-        }
-        modernSlots.set(slot.slotId, { providerId: canonicalThreadProviderId(harnessFamilyOf(profile) ?? profile),
+          : wantsAuto && supportsAuto ? 'auto' as const : 'accept-edits' as const;
+        modernSlots.set(slot.slotId, { providerId,
           model: resolveModelTarget(provider, input).targetId, permissionMode, systemPrompt: persona.appendSystemPrompt });
       }
       const preflight = await squadRuntime().preflightSquadRuntime({ projectId: targetProjectId,

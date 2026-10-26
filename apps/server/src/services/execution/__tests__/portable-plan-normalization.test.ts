@@ -116,7 +116,10 @@ describe('portable plan execution class pinning', () => {
     ['EXPERT', 'high'],
     ['`Expert`', 'high'],
     ['Standard', 'medium'],
-    ['routine', 'low']
+    ['routine', 'low'],
+    ['builtin:squad-worker-low', 'low'],
+    ['builtin:squad-worker-medium', 'medium'],
+    ['builtin:squad-worker-high', 'high']
   ])('accepts %s', (value, level) => {
     const parsed = parsePortablePlan(withClass(value));
     expect(parsed.ok).toBe(true);

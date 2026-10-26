@@ -7,6 +7,7 @@ import type {
   SquadRuntimePreflightResult
 } from '@zana-ai/zcc-contracts/runtime';
 import type { TeamLifecycleRecord } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
+import { registerThreadProvider } from '@zana-ai/zcc-server/services/threads/thread-provider-catalog';
 
 /**
  * Drives host.ts `authorizeTeamLaunch` / `launchTeam` through their real paths with
@@ -187,8 +188,18 @@ mkdirSync(projectDir, { recursive: true });
 
 const persona = (id: string, extra: Record<string, unknown> = {}) => ({ id, name: id.toUpperCase(), baseProfile: 'claude', ...extra });
 let seq = 0;
+let threadProviderHandles: Array<{ unregister(): void }> = [];
 
 beforeEach(() => {
+  threadProviderHandles.forEach(handle => handle.unregister());
+  threadProviderHandles = [
+    registerThreadProvider('test', { id: 'claude-code', displayName: 'Claude Code',
+      capabilities: { supportsServiceTier: false, fork: 'none', supportsThreadArchive: false,
+        supportsThreadRename: false, permissionModes: ['accept-edits', 'auto', 'full'] }, composerActions: [] }),
+    registerThreadProvider('test', { id: 'acp-opencode', displayName: 'OpenCode',
+      capabilities: { supportsServiceTier: false, fork: 'none', supportsThreadArchive: false,
+        supportsThreadRename: false, permissionModes: ['accept-edits', 'full'] }, composerActions: [] })
+  ];
   seq += 1;
   h.projects = [{ id: 'p1', name: 'Proj', path: projectDir }];
   h.config = { version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null };
@@ -205,6 +216,7 @@ beforeEach(() => {
 });
 
 afterAll(() => {
+  threadProviderHandles.forEach(handle => handle.unregister());
   vi.unstubAllEnvs();
   rmSync(h.root, { recursive: true, force: true });
 });
@@ -644,11 +656,13 @@ describe('launchTeam Modern structured path', () => {
       });
       expect(request.prompt.trim()).not.toBe('');
       expect(request.model).toBeUndefined();
-      expect(request.permissionMode).toBeUndefined();
+      expect(request.permissionMode).toBe('accept-edits');
     }
     const preflights = h.runtime.preflightSquadRuntime.mock.calls.map(([request]) => request);
     expect(preflights.length).toBeGreaterThan(0);
     expect(new Set(preflights.flatMap((request) => request.providerIds))).toEqual(new Set(['claude-code', providerId]));
+    expect(preflights.flatMap((request) => request.selections.map(selection => selection.permissionMode)))
+      .toEqual(['accept-edits', 'accept-edits', 'accept-edits', 'accept-edits']);
     expect(Math.max(...h.runtime.preflightSquadRuntime.mock.invocationCallOrder))
       .toBeLessThan(h.runtime.createSquadMember.mock.invocationCallOrder[0]);
     const record = lifecycle(req.launchRequestId);
@@ -816,8 +830,7 @@ describe('launchTeam Modern structured path', () => {
       ['a remote project', () => { h.projects[0].remote = { host: 'ssh-box' }; h.projects[0].hostId = 'other-host'; }, {}, /requires a local project/],
       ['a native-recovery slot', () => {}, { nativeRecovery: true }, /cannot adopt CLI native recovery/],
       ['persona tool overrides', () => { h.personas[1] = persona('w1', { allowedTools: ['Bash'] }); }, {}, /tool or sandbox overrides/],
-      ['plan-only personas', () => { h.personas[1] = persona('w1', { permissionMode: 'plan' }); }, {}, /plan-only execution/],
-      ['manual-approval (default) personas', () => { h.personas[1] = persona('w1', { permissionMode: 'default' }); }, {}, /manual-approval permission is not supported/]
+      ['plan-only personas', () => { h.personas[1] = persona('w1', { permissionMode: 'plan' }); }, {}, /plan-only execution/]
     ] as const)('refuses %s before preflight or create', async (_label, arrange, slotExtra, message) => {
       arrange();
       const req = structuredReq();
@@ -852,16 +865,30 @@ describe('launchTeam Modern structured path', () => {
       const result = await launchTeam('team1', 'p1', structuredReq());
       expect(result.ok).toBe(true);
       expect(h.runtime.createSquadMember.mock.calls.map(([request]) => request.permissionMode))
-        .toEqual(['full', 'full', 'accept-edits', undefined]);
+        .toEqual(['full', 'full', 'accept-edits', 'accept-edits']);
       expect(h.runtime.preflightSquadRuntime.mock.calls[0][0].selections.map(selection => selection.permissionMode))
-        .toEqual(['full', 'full', 'accept-edits', undefined]);
+        .toEqual(['full', 'full', 'accept-edits', 'accept-edits']);
     });
 
-    it('runs autonomous freeform squads in auto mode', async () => {
+    it('launches default-permission Modern personas with accept-edits for ACP preflight and create', async () => {
+      h.personas = [persona('orch', { permissionMode: 'default' }), persona('w1', { permissionMode: 'default' }), persona('w2', { permissionMode: 'default' })];
+      const result = await launchTeam('team1', 'p1', structuredReq());
+      expect(result).toMatchObject({ ok: true, value: { launched: 4, failedSlots: [] } });
+      expect(h.runtime.preflightSquadRuntime.mock.calls[0][0].selections.map(selection => selection.permissionMode))
+        .toEqual(['accept-edits', 'accept-edits', 'accept-edits', 'accept-edits']);
+      expect(h.runtime.createSquadMember.mock.calls.map(([request]) => request.permissionMode))
+        .toEqual(['accept-edits', 'accept-edits', 'accept-edits', 'accept-edits']);
+    });
+
+    it('falls back to accept-edits for autonomous OpenCode slots before preflight and create', async () => {
       h.config.teamLaunchEnabled = true;
+      h.personas[2] = persona('w2', { baseProfile: 'opencode' });
       const result = await launchTeam('team1', 'p1', { ...structuredReq(), coordinationMode: 'freeform' } as never);
       expect(result.ok).toBe(true);
-      expect(new Set(h.runtime.createSquadMember.mock.calls.map(([request]) => request.permissionMode))).toEqual(new Set(['auto']));
+      expect(h.runtime.preflightSquadRuntime.mock.calls[0][0].selections.map(selection => selection.permissionMode))
+        .toEqual(['auto', 'auto', 'accept-edits', 'auto']);
+      expect(h.runtime.createSquadMember.mock.calls.map(([request]) => request.permissionMode))
+        .toEqual(['auto', 'auto', 'accept-edits', 'auto']);
     });
   });
 
