@@ -202,7 +202,17 @@ describe('machine project hierarchy', () => {
     h.hosts = [{ id: 'remote', name: 'Devbox', status: 'connected' }] as typeof h.hosts;
     h.projects = [{ ...project('api', 'API'), hostId: 'remote' }]; h.threads = []; h.terminals = {};
     renderList();
-    const openOverview = () => fireEvent.click(screen.getByRole('button', { name: 'Open Devbox projects' }));
+    const machine = screen.getByRole('button', { name: 'Devbox', exact: true });
+    h.toggleSection.mockClear();
+    fireEvent.click(machine);
+    expect(h.toggleSection).toHaveBeenCalledWith('sidebar:machine:remote');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    const openOverview = () => {
+      fireEvent.contextMenu(machine, { clientX: 120, clientY: 180 });
+      expect(screen.queryByRole('dialog')).toBeNull();
+      fireEvent.click(screen.getByRole('menuitem', { name: 'View projects' }));
+      expect(screen.queryByRole('menu', { name: 'Machine actions' })).toBeNull();
+    };
     openOverview();
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Devbox', exact: true })).getByRole('button', { name: 'Close', exact: true }));
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -255,7 +265,23 @@ describe('machine project hierarchy', () => {
     h.hosts = [{ id: 'remote', name: 'Empty box', status: 'disconnected' }] as typeof h.hosts;
     h.projects = [{ ...project('default', 'Default Project'), quickAgent: true }]; h.threads = []; h.terminals = {};
     renderList();
-    fireEvent.click(screen.getByRole('button', { name: 'Open Empty box projects' }));
+    const machine = screen.getByRole('button', { name: 'Empty box', exact: true });
+    for (const shortcut of [{ key: 'ContextMenu' }, { key: 'F10', shiftKey: true }]) {
+      fireEvent.keyDown(machine, shortcut);
+      expect(screen.getByRole('menuitem', { name: 'View projects' })).toBe(document.activeElement);
+      fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+      expect(screen.queryByRole('menu', { name: 'Machine actions' })).toBeNull();
+      expect(document.activeElement).toBe(machine);
+      expect(screen.queryByRole('dialog')).toBeNull();
+    }
+    fireEvent.contextMenu(machine);
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole('menu', { name: 'Machine actions' })).toBeNull();
+    fireEvent.contextMenu(machine);
+    fireEvent.keyDown(document.activeElement!, { key: 'Tab' });
+    expect(screen.queryByRole('menu', { name: 'Machine actions' })).toBeNull();
+    fireEvent.contextMenu(machine);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'View projects' }));
     const dialog = screen.getByRole('dialog', { name: 'Empty box' });
     expect(within(dialog).getByText('Ready to start')).toBeTruthy();
     expect(within(dialog).getByText('No threads')).toBeTruthy();

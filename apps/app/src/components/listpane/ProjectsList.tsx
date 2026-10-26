@@ -77,6 +77,8 @@ import {
 
 interface MenuState {
   projectId: string;
+  machineId?: string;
+  returnFocus?: HTMLElement;
   x: number;
   y: number;
   /** Trigger top; when set, place below the control and flip above only if needed. */
@@ -419,6 +421,14 @@ export function ProjectsList({
     setAgentMenu({ card: sessionToCard(session, project), ...clampMenuAnchor(e) });
   };
 
+  const openMachineMenu = (machineId: string, heading: HTMLElement, x: number, y: number) => {
+    setAgentMenu(null);
+    setThreadMenu(null);
+    setSidebarAddOpen(false);
+    setSidebarOrganizeOpen(false);
+    setMenu({ projectId: '', machineId, x, y, returnFocus: heading.querySelector<HTMLButtonElement>('.machine-project-name') ?? undefined });
+  };
+
   const commitRename = () => {
     if (renamingId) {
       const v = renameValue.trim();
@@ -581,7 +591,15 @@ export function ProjectsList({
       setMenu(null);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMenu(null);
+      if (e.key === 'Escape') {
+        if (menu.machineId) {
+          e.preventDefault();
+          e.stopPropagation();
+          menu.returnFocus?.focus();
+        }
+        setMenu(null);
+      }
+      if (menu.machineId && e.key === 'Tab') setMenu(null);
     };
     window.addEventListener('mousedown', onDown);
     window.addEventListener('keydown', onKey);
@@ -1316,11 +1334,23 @@ export function ProjectsList({
           >
             {railGroups.map((group) => (
               <div key={group.machine?.id ?? 'projects'} className={`project-rail-group${group.machine ? ' machine-project-group' : ''}`} data-machine-id={group.machine?.id}>
-                {group.machine && <div className="machine-project-heading">
+                {group.machine && <div className="machine-project-heading"
+                  onContextMenu={event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openMachineMenu(group.machine!.id, event.currentTarget, event.clientX, event.clientY);
+                  }}
+                  onKeyDown={event => {
+                    if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    openMachineMenu(group.machine!.id, event.currentTarget, rect.left, rect.bottom);
+                  }}>
                   <button type="button" className="machine-project-disclosure" aria-label={`${collapsedSections[`sidebar:machine:${group.machine.id}`] && !filter ? 'Expand' : 'Collapse'} ${group.machine.name}`} aria-expanded={!collapsedSections[`sidebar:machine:${group.machine.id}`] || Boolean(filter)} onClick={() => toggleSection(`sidebar:machine:${group.machine!.id}`)}>
                     <ChevronRight size={13} className={!collapsedSections[`sidebar:machine:${group.machine.id}`] || filter ? 'open' : ''} />
                   </button>
-                  <button type="button" className="machine-project-name" aria-label={`Open ${group.machine.name} projects`} onClick={() => setOverviewMachineId(group.machine!.id)}>
+                  <button type="button" className="machine-project-name" aria-label={group.machine.name} aria-expanded={!collapsedSections[`sidebar:machine:${group.machine.id}`] || Boolean(filter)} onClick={() => toggleSection(`sidebar:machine:${group.machine!.id}`)}>
                     {group.machine.primary ? <Laptop size={15} /> : <Server size={15} />}
                     <span>{group.machine.name}</span>
                     <span className={`machine-project-status${group.machine.host?.status === 'connected' ? ' online' : ''}`} title={group.machine.host?.status === 'connected' ? 'Online' : group.machine.host ? 'Offline' : group.machine.hostId ? 'Unavailable' : group.machine.remote ? 'Setup needed' : 'Local'} />
@@ -1353,10 +1383,18 @@ export function ProjectsList({
         <div
           ref={menuRef}
           className="project-menu"
+          role={menu.machineId ? 'menu' : undefined}
+          aria-label={menu.machineId ? 'Machine actions' : undefined}
           style={{ top: menu.y, left: menu.x }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          {!p && (
+          {menu.machineId && (
+            <button type="button" className="project-menu-item" role="menuitem" autoFocus onClick={() => { setOverviewMachineId(menu.machineId!); setMenu(null); }}>
+              <FolderOpen size={12} />
+              <span>View projects</span>
+            </button>
+          )}
+          {!p && !menu.machineId && (
             <button className="project-menu-item" onClick={() => { setMenu(null); void handleRefresh(); }}>
               <RefreshCw size={12} />
               <span>Refresh projects</span>

@@ -263,7 +263,7 @@ describe('workspace move up/down', () => {
   it('does not dismiss the project menu on mousedown inside it', () => {
     const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
     expect(source).toContain('if (menuRef.current?.contains(t)) return;');
-    expect(source).toContain("if (e.key === 'Escape') setMenu(null);");
+    expect(source).toMatch(/if \(e\.key === 'Escape'\) \{[\s\S]*?setMenu\(null\);/);
     expect(source).not.toContain('const close = () => setMenu(null);');
   });
 
