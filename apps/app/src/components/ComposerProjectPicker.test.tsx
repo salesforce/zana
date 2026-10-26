@@ -46,19 +46,20 @@ describe('composer machine and project picker', () => {
   });
   it('shows a combined location and searches project and machine names', () => {
     setup(); expect(screen.getByRole('button', { name: 'Machine and project' }).textContent).toContain('Default Project');
-    const list = open(); expect(within(list).getAllByRole('option')).toHaveLength(5);
+    const list = open(); expect(within(list).getAllByRole('option')).toHaveLength(1);
     fireEvent.change(screen.getByPlaceholderText('Search machines or projects…'), { target: { value: 'Devbox' } });
-    expect(within(list).getAllByRole('option')).toHaveLength(3); // two matches and the pinned Add project action
+    expect(within(list).getAllByRole('option')).toHaveLength(2); // global search includes both projects on Devbox
     fireEvent.change(screen.getByPlaceholderText('Search machines or projects…'), { target: { value: 'unmatched' } });
     expect(screen.getByText('No matching machines or projects')).toBeTruthy();
   });
   it('selects the whole location including a remote default and remembers the project', () => {
     const { change, hostChange } = setup(); open();
+    fireEvent.click(screen.getByRole('button', { name: 'Devbox Online 2' }));
     fireEvent.click(screen.getByRole('option', { name: 'Devbox › Default Project General tasks on Devbox' }));
     expect(change).toHaveBeenCalledWith('default'); expect(hostChange).toHaveBeenCalledWith('remote'); expect(h.remember).toHaveBeenCalledWith('default');
   });
   it('selects named projects only on their registered target', () => {
-    const { change, hostChange } = setup(); open(); fireEvent.click(screen.getByRole('option', { name: 'Devbox › API /api' }));
+    const { change, hostChange } = setup(); open(); fireEvent.click(screen.getByRole('button', { name: 'Devbox Online 2' })); fireEvent.click(screen.getByRole('option', { name: 'Devbox › API /api' }));
     expect(change).toHaveBeenCalledWith('repo'); expect(hostChange).toHaveBeenCalledWith('remote');
   });
   it('keeps an existing thread fixed and starts a new draft explicitly', () => {
@@ -75,7 +76,7 @@ describe('composer machine and project picker', () => {
   });
   it('adds a folder on the selected machine and chooses the new project', () => {
     const { change, hostChange } = setup({ value: 'repo', hostId: 'remote' }); open();
-    fireEvent.click(screen.getByRole('option', { name: 'Add project on Devbox' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add project on Devbox' }));
     expect(screen.getByRole('dialog', { name: 'Add on Devbox' })).toBeTruthy(); fireEvent.click(screen.getByText('Create'));
     expect(change).toHaveBeenCalledWith('created'); expect(hostChange).toHaveBeenCalledWith('remote');
   });
@@ -84,6 +85,9 @@ describe('composer machine and project picker', () => {
     cleanup(); const { change } = setup(); open(); fireEvent.keyDown(document, { key: 'Escape' }); expect(change).not.toHaveBeenCalled();
   });
   it('does not offer foreign default targets to callers that cannot pass a host', () => {
-    setup({ onHostChange: undefined }); const list = open(); expect(within(list).getAllByRole('option')).toHaveLength(3);
+    setup({ onHostChange: undefined }); const list = open();
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Devbox' } });
+    expect(within(list).getAllByRole('option')).toHaveLength(1);
+    expect(screen.queryByRole('option', { name: /Devbox › Default Project/ })).toBeNull();
   });
 });

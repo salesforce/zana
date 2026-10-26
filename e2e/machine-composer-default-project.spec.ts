@@ -80,6 +80,7 @@ test('Default Project discovers remote models and machine renames survive pairin
     const modal = win.getByTestId('launch-modal');
     await modal.getByRole('button', { name: 'Modern', exact: true }).click();
     await modal.getByRole('button', { name: 'Machine and project', exact: true }).click();
+    await win.getByRole('navigation', { name: 'Machines' }).getByTitle(originalName, { exact: true }).click();
     await win.getByRole('listbox', { name: 'Machine and project' }).getByRole('option', { name: `${originalName} › Default Project General tasks on ${originalName}`, exact: true }).click();
     await expect(modal.getByTestId('model-reasoning-picker-trigger')).toContainText('Fake Model', { timeout: 60_000 });
     console.log('[machine-composer] picker ready');

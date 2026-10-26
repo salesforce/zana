@@ -28,6 +28,7 @@ test('a project keeps its bound machine when the client roster omits it', async 
   await page.getByTestId('nav-home').click();
   const composer = page.locator('.thread-command-composer').first();
   await composer.getByRole('button', { name: 'Machine and project', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Machines' }).getByTitle('Unavailable machine', { exact: true }).click();
   await page.getByRole('listbox', { name: 'Machine and project' }).getByRole('option', { name: /Unavailable machine › bound-machine-project/ }).click();
   await expect(composer.getByRole('button', { name: 'Machine and project', exact: true })).toContainText('Unavailable machine');
   await composer.getByTestId('thread-command-input').fill('Keep this draft on its original machine');

@@ -112,7 +112,8 @@ test('mobile project selection scrolls and fits the keyboard; inbox videos play 
     await page.setViewportSize({ width: 1280, height: 900 });
     await trigger.click();
     await expect(page.getByRole('listbox', { name: 'Machine and project', exact: true })).toBeVisible();
-    await expect(page.getByRole('dialog', { name: 'Choose project' })).toHaveCount(0);
+    await expect(page.locator('.mobile-project-picker')).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: 'Choose project' })).toHaveClass('desktop-project-picker');
   } finally {
     await browser.close();
     await gateway.close();
