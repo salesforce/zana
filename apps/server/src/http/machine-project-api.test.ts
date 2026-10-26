@@ -44,6 +44,15 @@ it('registers the canonical remote folder and deduplicates aliases', async () =>
   expect((await again.json()).project.id).toBe(project.id);
   expect(server.ctx.projects.list()).toHaveLength(1);
 });
+it('preserves an explicitly selected primary machine as the registered target', async () => {
+  const path = join(root, 'local');
+  const first = await call('/projects', { path, hostId: primaryId });
+  expect(first.status).toBe(200);
+  const project = (await first.json()).project;
+  expect(project).toMatchObject({ path, hostId: primaryId });
+  const again = await call('/projects', { path, hostId: primaryId });
+  expect((await again.json()).project.id).toBe(project.id);
+});
 it('rejects missing folders, files, unknown machines and invalid remote paths', async () => {
   const file = join(root, 'remote', 'file'); writeFileSync(file, '');
   for (const body of [{ path: file, hostId }, { path: join(root, 'missing'), hostId }, { path: root, hostId: 'missing' }, { path: 'relative', hostId }]) {

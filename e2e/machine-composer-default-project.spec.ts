@@ -111,7 +111,7 @@ test('Default Project discovers remote models and machine renames survive pairin
     const input = composer.getByTestId('thread-command-input');
     await input.fill('Run a task on my remote machine');
     await composer.getByRole('button', { name: 'Machine and project', exact: true }).click();
-    await win.getByRole('option', { name: `${originalName} › api-service ${apiRoot}`, exact: true }).click();
+    await win.getByRole('option', { name: `${originalName} › api-service ${apiProject.body.project.path}`, exact: true }).click();
     await expect(input).toContainText('Run a task on my remote machine');
     await composer.getByRole('button', { name: 'Machine and project', exact: true }).click();
     await win.getByRole('option', { name: `${originalName} › Default Project General tasks on ${originalName}`, exact: true }).click();

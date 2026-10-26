@@ -601,8 +601,7 @@ export async function handleProductHttp(
         try { projectPath = await validatedProjectPath(ctx, body.path, hostId); }
         catch (error) { sendHostFailure(response, error); return true; }
       }
-      const persistHostId = hostId && !getHost(ctx.db, hostId)?.isPrimary ? hostId : undefined;
-      const project = await ctx.projects.add(projectPath, persistHostId ? { hostId: persistHostId } : undefined);
+      const project = await ctx.projects.add(projectPath, hostId ? { hostId } : undefined);
       void ctx.remoteProjectReconciler?.request();
       ctx.hub.emit('projects:changed', ctx.projects.list());
       sendJson(response, 200, { project });
