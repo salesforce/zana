@@ -1,0 +1,1 @@
+Add one slot per role. Here: an orchestrator, two workers, and a code reviewer.

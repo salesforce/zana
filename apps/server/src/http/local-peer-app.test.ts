@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, type Server } from 'node:http';
@@ -84,13 +84,20 @@ it('product instances register their own routes independently, restart identity 
   expect(await resolvePort(dirA)).toBe(restarted.port);
 });
 
-it('product bind and registration failures close resources without publishing', async () => {
+it('product bind failure closes without publishing; a registration failure keeps serving unpublished', async () => {
   const occupied = await listener(), dir = root();
   await expect(startProductServer({ dataDir: dir, port: (occupied.address() as { port: number }).port, origins: { serverPort: 0 } })).rejects.toMatchObject({ code: 'EADDRINUSE' });
   expect(await resolvePort(dir)).toBeNull();
-  mkdirSync(join(dir, 'peer-app'), { mode: 0o755 });
-  await expect(startProductServer({ dataDir: dir, origins: { serverPort: 0 } })).rejects.toThrow('untrusted local peer app registration directory');
-  chmodSync(join(dir, 'peer-app'), 0o700);
+  // A file is never a trusted registration directory, on any platform.
+  writeFileSync(join(dir, 'peer-app'), '');
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const unpublished = await startProductServer({ dataDir: dir, origins: { serverPort: 0 } });
+  expect(warn).toHaveBeenCalledWith('[zcc] local peer app registration failed: untrusted local peer app registration directory');
+  warn.mockRestore();
+  expect((await fetch(`${unpublished.url}api/v1/health`)).status).toBe(200);
+  expect(await resolvePort(dir)).toBeNull();
+  await unpublished.close();
+  rmSync(join(dir, 'peer-app'));
   const product = await startProductServer({ dataDir: dir, origins: { serverPort: 0 } }); products.push(product);
   expect(await resolvePort(dir)).toBe(product.port);
 });
@@ -118,14 +125,18 @@ it('static listener without product never publishes, product rejects public and 
   }
 });
 
-it('static registration failure retires context and allows clean retry with fresh context', async () => {
+it('static registration failure keeps serving unpublished; a restart with a fresh context publishes', async () => {
   const dir = root(), renderer = root(); writeFileSync(join(renderer, 'index.html'), '<main>test</main>');
-  mkdirSync(join(dir, 'peer-app'), { mode: 0o755 });
+  writeFileSync(join(dir, 'peer-app'), '');
   const product = createProductHttpContext({ dataDir: dir, origins: { serverPort: 0 } }); contexts.push(product);
-  await expect(startStaticHost({ rootDir: renderer, product })).rejects.toThrow('untrusted local peer app registration directory');
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const unpublished = await startStaticHost({ rootDir: renderer, product });
+  expect(warn).toHaveBeenCalledWith('[zcc] local peer app registration failed: untrusted local peer app registration directory');
+  warn.mockRestore();
+  expect((await fetch(`${unpublished.url}api/v1/health`)).status).toBe(200);
   expect(await resolvePort(dir)).toBeNull();
-  await expect(product.peerPairs.grant('pair')).rejects.toThrow('disposed');
-  chmodSync(join(dir, 'peer-app'), 0o700);
+  await unpublished.close();
+  rmSync(join(dir, 'peer-app'));
   const next = createProductHttpContext({ dataDir: dir, origins: { serverPort: 0 } }); contexts.push(next);
   const host = await startStaticHost({ rootDir: renderer, product: next }); hosts.push(host);
   expect(await resolvePort(dir)).toBe(Number(new URL(host.url).port));

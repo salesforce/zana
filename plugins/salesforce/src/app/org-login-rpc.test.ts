@@ -50,3 +50,9 @@ describe('browser login polling', () => {
     await expect(signInWithBrowser(call, {}, new AbortController().signal)).rejects.toThrow('No longer available');
   });
 });
+
+it('pins status polling to the project that owns the sign-in', async () => {
+  const call = vi.fn().mockResolvedValueOnce({ ok: true, loginId: 'id', projectId: 'original' }).mockResolvedValueOnce({ ok: true, done: true, result: { ok: true } });
+  await signInWithBrowser(call, {}, new AbortController().signal);
+  expect(call.mock.calls[1]).toEqual(['orgs.login.status', { projectId: 'original', loginId: 'id' }]);
+});

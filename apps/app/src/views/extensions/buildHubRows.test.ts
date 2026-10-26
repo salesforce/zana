@@ -159,7 +159,7 @@ describe('Extensions hub More menu', () => {
     expect(source).toContain('pluginAvailableVersion');
     expect(source).toContain('applyHubPluginUpdate');
     expect(
-      source.split('toolbarExtra={showTabs ? undefined : maintenanceActions}').length - 1
+      source.split('ext-hub-browse-heading').length - 1
     ).toBe(1);
     expect(source).toContain('toolbarExtra={maintenanceActions}');
     expect(source).not.toContain('ext-hub-top-actions');

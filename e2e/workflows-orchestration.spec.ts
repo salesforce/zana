@@ -1,3 +1,4 @@
+import { openThreadToolLauncher } from './fixtures/thread-tool-panel.js';
 /**
  * Built-Electron production boundary for durable Workflows:
  * install the official plugin, run a named script that fans out hidden fake
@@ -314,7 +315,7 @@ test('workflows install, fan-out hidden fake workers, resume cache, and stop fro
 
     await window.getByTestId('thread-secondary-show').click();
     await expect(window.getByTestId('thread-secondary-panel')).toBeVisible();
-    await window.getByTestId('thread-secondary-new-tab').click();
+    await openThreadToolLauncher(window);
     const panelAction = window.getByTestId('thread-new-tab-plugin-workflows-workflow-run');
     await expect(panelAction).toBeVisible({ timeout: 15_000 });
     await panelAction.click();

@@ -1,3 +1,4 @@
+import { openThreadToolLauncher } from './fixtures/thread-tool-panel.js';
 import { createServer } from 'node:http';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, delimiter } from 'node:path';
@@ -52,7 +53,7 @@ const studioWindows = (electron: ElectronApplication) => electron.windows().filt
 /** BrowserWindows main still holds for the Salesforce view (Playwright can lag behind a close). */
 const liveStudioWindows = (electron: ElectronApplication) =>
   electron.evaluate(({ BrowserWindow }) =>
-    BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed() && w.webContents.getURL().includes('surface=plugin-view')).length);
+    BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed() && !w.webContents.isDestroyed() && w.webContents.getURL().includes('surface=plugin-view')).length);
 
 async function waitForStudio(electron: ElectronApplication): Promise<Page> {
   let studio: Page | undefined;
@@ -227,7 +228,7 @@ test('Salesforce Studio window: one owner, status card, cross-window org sync an
   await captureElectronScreenshot(electron, studio, testInfo.outputPath('salesforce-detached-preview.png'));
   if (!await sidePanel.isVisible()) await studio.getByTestId('plugin-panel-secondary-show').click();
   await expect(sidePanel).toBeVisible();
-  await sidePanel.getByTestId('thread-secondary-new-tab').click();
+  await openThreadToolLauncher(sidePanel);
   await expect(sidePanel.getByTestId('thread-new-tab-plugin-salesforce-studio-actions')).toBeVisible();
   await expect(sidePanel.getByTestId('thread-new-tab-plugin-salesforce-studio-graph')).toHaveCount(0);
   // The window has no app shell, yet its Agent composer keeps the desktop toolbar.

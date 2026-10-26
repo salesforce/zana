@@ -289,6 +289,7 @@ describe('AgentScriptPanel control verbs and compact side panel', () => {
     expect(el.textContent).toContain('Act One');
     await act(async () => { await exec('preview.start', {}); });
     await click(el.querySelector('[data-testid="reveal-same"]'));
+    expect(el.querySelector('[aria-label="Open files"] [role="tab"][aria-selected="true"]')?.textContent).toContain('Script');
     expect(sent(el).some((m: any) => m.type === 'revealLine' && m.line === 3)).toBe(true);
     rpc.mockClear();
     await click(el.querySelector('[data-testid="reveal-other"]'));

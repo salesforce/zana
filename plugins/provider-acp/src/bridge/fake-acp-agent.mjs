@@ -59,6 +59,11 @@
  * - FAKE_ACP_AUTH_METHODS    → comma-separated auth method ids to advertise;
  *                              session creation requires authenticate first
  * - FAKE_ACP_WRITE_PATH      → target path for the "write-file" prompt
+ * - FAKE_ACP_SCRIPT          → JSON reply played when a prompt contains its
+ *                              `match`: { match, steps: [{ say } | { pause } |
+ *                              { write: { path, content, title? } }] }; `say`
+ *                              streams word by word, `write` is a client fs
+ *                              write (relative paths resolve against the cwd)
  * - FAKE_ACP_LAUNCH_LOG      → append one line per process launch (used to
  *                              count model-discovery spawns in cache/TTL tests)
  * - FAKE_ACP_PROMPT_LOG      → append one JSON-encoded prompt text per request
@@ -74,7 +79,8 @@
  */
 
 import { createInterface } from "node:readline";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 const failLoad = process.env.FAKE_ACP_FAIL_LOAD === "1";
 const loadSession = process.env.FAKE_ACP_LOAD_SESSION === "1" || failLoad;
@@ -388,6 +394,49 @@ function promptText(prompt) {
   return command?.slice(prefix.length) ?? "fixture ready";
 }
 
+function scriptedSteps(text) {
+  const file = process.env.FAKE_ACP_SCRIPT;
+  if (!file || !existsSync(file)) return null;
+  const script = JSON.parse(readFileSync(file, "utf8"));
+  return text.includes(script.match) ? script.steps : null;
+}
+
+async function playScript(steps) {
+  let writes = 0;
+  for (const step of steps) {
+    if (step.pause) await sleep(step.pause);
+    if (step.say) {
+      for (const word of step.say.split(/(?<= )/)) {
+        notifyUpdate(messageChunk(word));
+        await sleep(step.wordMs ?? 30);
+      }
+    }
+    if (step.write) {
+      const toolCallId = `script-write-${++writes}`;
+      const path = resolve(step.write.path);
+      notifyUpdate({
+        sessionUpdate: "tool_call",
+        toolCallId,
+        title: step.write.title ?? `Write ${step.write.path}`,
+        kind: "edit",
+        status: "in_progress",
+        locations: [{ path }],
+      });
+      let status = "completed";
+      try {
+        await requestClient("fs/write_text_file", {
+          sessionId: activeSessionId,
+          path,
+          content: step.write.content,
+        });
+      } catch {
+        status = "failed";
+      }
+      notifyUpdate({ sessionUpdate: "tool_call_update", toolCallId, status });
+    }
+  }
+}
+
 function captureMcpServers(message) {
   currentMcpServers = Array.isArray(message.params?.mcpServers)
     ? message.params.mcpServers
@@ -414,7 +463,10 @@ async function handlePrompt(message) {
     return;
   }
 
-  if (process.env.FAKE_ACP_REPLAY_INSTRUCTION_ECHO === "1") {
+  const script = scriptedSteps(text);
+  if (script) {
+    await playScript(script);
+  } else if (process.env.FAKE_ACP_REPLAY_INSTRUCTION_ECHO === "1") {
     notifyUpdate(messageChunk(text));
     notifyUpdate(messageChunk("Hi."));
   } else if (text === "/compact") {

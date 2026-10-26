@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
@@ -2818,6 +2819,32 @@ describe("acp bridge", () => {
         changes: [expect.objectContaining({ path: targetPath, kind: "add" })],
       }),
     );
+  });
+
+  it("plays a scripted reply: streamed text, then a client fs write", async () => {
+    const targetPath = join(workspaceDir, ".zcc", "teams", "docs-squad.json");
+    const scriptPath = join(workspaceDir, "script.json");
+    writeFileSync(scriptPath, JSON.stringify({
+      match: "Docs Squad",
+      steps: [
+        { say: "Setting it up now. ", wordMs: 0 },
+        { write: { path: targetPath, content: "{}\n" } },
+        { say: "Done.", wordMs: 0 },
+      ],
+    }));
+    const { providerThreadId } = await startThread({
+      permissionMode: "accept-edits",
+      permissionEscalation: "ask",
+      envVars: { FAKE_ACP_SCRIPT: scriptPath },
+    });
+    const turnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "Set up a Docs Squad", mentions: [] }],
+    });
+    await waitForResponse(turnId);
+    await waitForTurnCompleted();
+
+    expect(agentMessageTexts().join("")).toContain("Setting it up now. Done.");
+    expect(readFileSync(targetPath, "utf8")).toBe("{}\n");
   });
 
   it("denies client fs writes outside the workspace in accept-edits mode", async () => {

@@ -1,67 +1,74 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import './installed-plugin-collection.css';
-import { ArrowDownAZ, ArrowUpAZ, ChevronRight, Search } from 'lucide-react';
+import { ArrowDownAZ, ArrowUpAZ, AlertTriangle, CheckCircle2, ChevronRight, Search } from 'lucide-react';
 import { InstalledPluginCard } from './InstalledPluginCard.js';
 import {
-  filterInstalledRows, installedPublisher, rowEnabled,
-  type HubRow, type InstalledPublisherFilter
+  filterInstalledRows, rowEnabled, type HubRow
 } from './installed-plugins.js';
 import { filterCollectionRows, groupInstalledRows, type InstalledStatusFilter } from './installed-collection.js';
+import { installedCapabilities, installedSource } from './plugin-presentation.js';
+import { installedRuntimeStatus } from './installed-row-status.js';
+import { pluginUpdateDelivery } from './PluginUpdateDetails.js';
 import { pluginAvailableVersion } from './plugin-row-update.js';
 
-const PUBLISHERS: { id: InstalledPublisherFilter; label: string }[] = [
-  { id: 'all', label: 'All publishers' },
-  { id: 'official', label: 'Official' },
-  { id: 'local', label: 'Local' },
-  { id: 'community', label: 'Community' },
-  { id: 'user', label: 'User' }
-];
 const STATUS_FILTERS: { id: InstalledStatusFilter; label: string }[] = [
   { id: 'all', label: 'All' }, { id: 'enabled', label: 'Enabled' }, { id: 'disabled', label: 'Disabled' }
 ];
 
-export function InstalledPluginCollection({ rows, onOpen, onBrowse, headerActions, mobileHeader }: {
+export function InstalledPluginCollection({ rows, onOpen, onBrowse, headerActions, mobileHeader, inspector, selectedId, defaultUpdates = false }: {
   rows: HubRow[];
   onOpen: (id: string) => void;
   onBrowse: () => void;
   headerActions?: ReactNode;
   mobileHeader?: ReactNode;
+  inspector?: ReactNode;
+  selectedId?: string | null;
+  defaultUpdates?: boolean;
 }) {
   const [query, setQuery] = useState('');
-  const [publisher, setPublisher] = useState<InstalledPublisherFilter>('all');
+  const [source, setSource] = useState('all');
+  const [capability, setCapability] = useState('all');
+  const [issuesOnly, setIssuesOnly] = useState(false);
   const [status, setStatus] = useState<InstalledStatusFilter>('all');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
-  const [updatesOnly, setUpdatesOnly] = useState(false);
+  const [updatesOnly, setUpdatesOnly] = useState(defaultUpdates);
   const [agentsExpanded, setAgentsExpanded] = useState(false);
   const agentsId = useId();
-  const publishers = new Set(rows.map(installedPublisher));
-  const offeredPublishers = PUBLISHERS.filter((p) => p.id === 'all' || publishers.has(p.id));
-  const selectedPublisher = offeredPublishers.some((p) => p.id === publisher) ? publisher : 'all';
+  const sources = [...new Set(rows.map(installedSource))].sort();
+  const selectedSource = sources.includes(source) ? source : 'all';
+  const capabilities = [...new Set(rows.flatMap(installedCapabilities))].sort();
+  const selectedCapability = capabilities.includes(capability) ? capability : 'all';
+  const attentionCount = rows.filter((row) => installedRuntimeStatus(row) !== null).length;
   const visible = useMemo(() => filterCollectionRows(
-    filterInstalledRows(rows, query, selectedPublisher, sortDir), status, updatesOnly
-  ), [rows, query, selectedPublisher, sortDir, status, updatesOnly]);
+    filterInstalledRows(rows, query, 'all', sortDir), status, updatesOnly
+  ).filter((row) => (selectedSource === 'all' || installedSource(row) === selectedSource) &&
+    (selectedCapability === 'all' || installedCapabilities(row).includes(selectedCapability)) &&
+    (!issuesOnly || installedRuntimeStatus(row) !== null)),
+  [rows, query, selectedSource, sortDir, status, updatesOnly, selectedCapability, issuesOnly]);
   const { tools, agents } = groupInstalledRows(visible);
   const enabledCount = rows.filter(rowEnabled).length;
   const updateCount = rows.filter((row) => pluginAvailableVersion(row) !== null).length;
   // A collapsed category must never hide a search/filter result.
   useEffect(() => {
-    if (query.trim() || status !== 'all' || selectedPublisher !== 'all' || updatesOnly) setAgentsExpanded(true);
-  }, [query, status, selectedPublisher, updatesOnly]);
+    if (query.trim() || status !== 'all' || selectedSource !== 'all' || capability !== 'all' || issuesOnly || updatesOnly) setAgentsExpanded(true);
+  }, [query, status, selectedSource, updatesOnly, capability, issuesOnly]);
   const showAgents = agentsExpanded;
 
   const selectCollection = (updates: boolean) => {
     setUpdatesOnly(updates);
     setQuery('');
     setStatus('all');
-    setPublisher('all');
+    setSource('all');
+    setCapability('all');
+    setIssuesOnly(false);
   };
-  const renderCard = (row: HubRow) => <InstalledPluginCard key={row.module.id} row={row} onOpen={() => onOpen(row.module.id)} />;
+  const renderCard = (row: HubRow) => <InstalledPluginCard key={row.module.id} row={row} selected={row.module.id === selectedId} onOpen={() => onOpen(row.module.id)} />;
 
   return (
     <section className="ext-installed ext-installed-collection">
       {mobileHeader}
       <header className="ext-installed-header">
-        <div><h3>Plugins</h3><p className="settings-help">Your tools, ready when you need them.</p></div>
+        <div><h3>Plugins</h3><p className="settings-help">Manage your tools, skills, and integrations.</p></div>
         <div className="ext-installed-header-actions">{headerActions}</div>
       </header>
       <nav className="ext-installed-collection-tabs" aria-label="Plugin collections">
@@ -81,20 +88,32 @@ export function InstalledPluginCollection({ rows, onOpen, onBrowse, headerAction
           {STATUS_FILTERS.map((filter) => <button key={filter.id} type="button" aria-pressed={status === filter.id}
             className={status === filter.id ? 'is-active' : ''} onClick={() => setStatus(filter.id)}>{filter.label}</button>)}
         </div>
-        {offeredPublishers.length > 1 ? (
-          <select className="ext-installed-publisher-filter" aria-label="Filter by publisher" value={selectedPublisher}
-            onChange={(e) => setPublisher(e.target.value as InstalledPublisherFilter)}>
-            {offeredPublishers.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-          </select>
-        ) : null}
+        {capabilities.length > 0 ? <select className="ext-installed-publisher-filter" aria-label="Filter by capability" value={selectedCapability}
+          onChange={(e) => setCapability(e.target.value)}>
+          <option value="all">All capabilities</option>{capabilities.map((item) => <option key={item}>{item}</option>)}
+        </select> : null}
+        {sources.length > 1 ? <select className="ext-installed-publisher-filter" aria-label="Filter by source" value={selectedSource}
+          onChange={(e) => setSource(e.target.value)}>
+          <option value="all">All sources</option>{sources.map((item) => <option key={item}>{item}</option>)}
+        </select> : null}
         <button type="button" className="ext-installed-sort" title={sortDir === 'asc' ? 'Name A–Z' : 'Name Z–A'}
           aria-label={`Sort by name ${sortDir === 'asc' ? 'descending' : 'ascending'}`}
           onClick={() => setSortDir((dir) => dir === 'asc' ? 'desc' : 'asc')}>
           {sortDir === 'asc' ? <ArrowUpAZ size={14} /> : <ArrowDownAZ size={14} />} Name
         </button>
       </div>
-      <div className="ext-installed-scroller">
-        {visible.length === 0 ? (
+      <div className={`ext-plugin-workbench${inspector ? ' has-inspector' : ''}`}>
+      <div className="ext-installed-scroller ext-plugin-collection-main">
+        {!updatesOnly && attentionCount > 0 ? <div className="ext-plugin-attention">
+          <AlertTriangle size={19} aria-hidden="true" /><div><strong>{attentionCount} {attentionCount === 1 ? 'plugin needs' : 'plugins need'} attention</strong>
+          <p>Review runtime issues and configuration requests.</p></div>
+          <button type="button" className="settings-btn" aria-pressed={issuesOnly} onClick={() => {
+            setIssuesOnly(!issuesOnly); setQuery(''); setStatus('all'); setSource('all'); setCapability('all');
+          }}>{issuesOnly ? 'Show all' : `Review ${attentionCount}`}</button>
+        </div> : null}
+        {updatesOnly && updateCount === 0 ? <div className="ext-plugin-current" role="status"><CheckCircle2 size={30} />
+          <h4>No pending updates</h4><p>Check for updates from the More menu to refresh your sources.</p></div> : null}
+        {visible.length === 0 && !(updatesOnly && updateCount === 0) ? (
           <p className="ext-installed-empty" role="status">
             {rows.length === 0 ? 'No plugins installed. Browse plugins or add your own.'
               : query.trim() ? `No plugins match “${query.trim()}”.`
@@ -102,9 +121,10 @@ export function InstalledPluginCollection({ rows, onOpen, onBrowse, headerAction
               : 'No plugins match these filters.'}
           </p>
         ) : <>
-          {tools.length > 0 ? <section aria-label={updatesOnly ? 'Plugin updates' : 'Your everyday tools'}>
-            <div className="ext-installed-section-heading"><h4>{updatesOnly ? 'Ready for a refresh' : 'Your everyday tools'}</h4>
+          {tools.length > 0 ? <section aria-label={updatesOnly ? 'Plugin updates' : 'Tools & integrations'}>
+            <div className="ext-installed-section-heading"><h4>{updatesOnly ? 'Ready for a refresh' : 'Tools & integrations'}</h4>
               <span className="ext-installed-section-count">{tools.length}</span></div>
+            <div className="ext-installed-table-heading" aria-hidden="true"><span>Plugin</span><span>What it adds</span><span>Installed from</span><span>Status</span><span /><span /></div>
             <div className="ext-installed-panel" role="list" aria-label="Installed plugins">{tools.map(renderCard)}</div>
           </section> : null}
           {agents.length > 0 ? <section className="ext-installed-agents" aria-label="Coding agents">
@@ -120,10 +140,16 @@ export function InstalledPluginCollection({ rows, onOpen, onBrowse, headerAction
             </div>
           </section> : null}
         </>}
+        {updatesOnly ? <section className="ext-plugin-update-policies" aria-label="Update delivery">
+          {[...new Set(rows.map((row) => pluginUpdateDelivery(row.plugin)))].map((delivery) => <div key={delivery}><strong>{delivery}</strong>
+            <span>{rows.filter((row) => pluginUpdateDelivery(row.plugin) === delivery).length} plugins</span></div>)}
+        </section> : null}
         <footer className="ext-installed-collection-footer">
           <span>{enabledCount} {enabledCount === 1 ? 'plugin' : 'plugins'} enabled</span>
           <span aria-live="polite">{visible.length} of {rows.length} plugins</span>
         </footer>
+      </div>
+      {inspector}
       </div>
     </section>
   );

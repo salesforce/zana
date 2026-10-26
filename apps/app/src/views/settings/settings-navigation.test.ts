@@ -80,3 +80,9 @@ describe('settings catalogue invariants', () => {
     }
   });
 });
+
+
+it('keeps phone access inside Remote access rather than a duplicate Mobile destination', () => {
+  expect(SETTINGS_SECTIONS.some(section => section.id === 'phone')).toBe(false);
+  expect(SETTINGS_SECTIONS.find(section => section.id === 'machines')?.desc).toContain('run projects and agents');
+});

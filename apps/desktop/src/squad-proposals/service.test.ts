@@ -5,6 +5,7 @@ import { join, relative } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Persona, Team } from '@zana-ai/zcc-domain/product';
 import { ExecutionSourceError } from '@zana-ai/zcc-server/services/execution/source-registry';
+import { squadGoalTooLongMessage, squadSummaryTooLongMessage } from '@zana-ai/zcc-domain/squad-proposal';
 import { InboxActionOperatorError } from '../inbox-actions/registry.js';
 import { createSquadProposalStore } from './store.js';
 import { confineSource, goalMentionPaths, goalPathNotAllowed, goalPathTokens, sourceScope, type SquadProposalFs, type SquadSourceScope } from './sources.js';
@@ -261,6 +262,10 @@ describe('propose', () => {
       expect(code(await run(bad))).toBe('INVALID');
     }
     expect(code(await svc.service.propose(route, null as never))).toBe('INVALID');
+    expect(await run({ goal: 'x'.repeat(2049) })).toEqual({ ok: false, code: 'INVALID', message: squadGoalTooLongMessage(2049) });
+    expect(await run({ summary: 'x'.repeat(2049) })).toEqual({ ok: false, code: 'INVALID', message: squadSummaryTooLongMessage(2049) });
+
+    expect(await run({ summary: 5 as never })).toEqual({ ok: false, code: 'INVALID', message: 'summary must be text.' });
 
     projectOk = false;
     expect(code(await run())).toBe('NOT_FOUND');

@@ -37,7 +37,7 @@
     "@earendil-works/pi-ai": "0.84.0",
     "@earendil-works/pi-coding-agent": "0.84.0",
     "@modelcontextprotocol/sdk": "^1.32.0",
-    "zod": "^4.3.6"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@zana-ai/zcc-plugin-build": "workspace:*",

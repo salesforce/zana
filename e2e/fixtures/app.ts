@@ -44,7 +44,7 @@ import { fileURLToPath } from 'node:url';
 import { startLocalRegistry, type LocalRegistry, type DummyExtensionSpec } from './registry.js';
 import { EventRecorder } from '../sdk/events.js';
 import { linuxCiElectronArgs, linuxCiElectronEnv } from './linux-electron-launch.js';
-import { isolatedClaudePath, writeAppConfig } from './app-config.js';
+import { dropInheritedKeychainEnv, isolatedClaudePath, isolatedKeychainEnv, writeAppConfig } from './app-config.js';
 import { isolateTmuxEnvironment, cleanupTmuxEnvironment } from './tmux-isolation.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -294,8 +294,14 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
     HOME: preserveHome ? homedir() : home,
     ...(process.platform === 'win32' ? { USERPROFILE: home } : {}),
     ZCC_E2E_HOME: home,
+    // No login keychain in an isolated HOME: keep Salesforce keys in <home>/.sfdx
+    // instead of letting macOS pop a "Keychain Not Found" dialog.
+    ...isolatedKeychainEnv(preserveHome),
     ZCC_DATA_DIR: dataDir,
     ZCC_EXTENSIONS_DIR: join(home, '.zcc', 'extensions'),
+    // Tests opt into fixture catalogs explicitly; do not clone live defaults.
+    ZCC_COMMUNITY_MARKETPLACE_SOURCE: 'off',
+    ZCC_INTERNAL_MARKETPLACE_SOURCE: 'off',
     // Electron's unpackaged default is "0.0". The main process uses this only
     // in E2E so the smoke test observes the same version as package.json.
     ...(!packagedExecutable ? { ZCC_E2E_APP_VERSION: PACKAGE_VERSION } : {}),
@@ -314,6 +320,7 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
   if (!opts.env?.ZCC_SERVER_URL) delete env.ZCC_SERVER_URL;
   if (!opts.env?.ZCC_HOST_ENROLL_TOKEN) delete env.ZCC_HOST_ENROLL_TOKEN;
   if (packagedExecutable) delete env.ZCC_E2E_APP_VERSION;
+  dropInheritedKeychainEnv(env, preserveHome, opts.env);
   if (opts.caCertPath) env.NODE_EXTRA_CA_CERTS = opts.caCertPath;
 
   const app = await electron.launch({
@@ -384,7 +391,7 @@ type Fixtures = {
   /** Opt the marketplace channel ON (boots a signed HTTPS registry). */
   useRegistry: boolean;
   /**
-   * Hide first-party bundled plugins from Browse so remote-registry specs can
+   * Hide bundled plugins and default remote feeds so signed-registry specs can
    * assert exact row counts. Default off — production Browse is non-empty.
    */
   isolateBundledCatalog: boolean;
@@ -471,6 +478,9 @@ export const test = base.extend<Fixtures>({
       mkdirSync(empty, { recursive: true });
       env.ZCC_BUNDLED_PLUGINS_DIR = empty;
       env.ZCC_BUNDLED_EXTENSIONS_DIR = empty;
+      // The signed fixture registry is the entire catalog for these tests.
+      env.ZCC_OFFICIAL_MARKETPLACE_URL = 'off';
+      env.ZCC_INTERNAL_MARKETPLACE_SOURCE = 'off';
     }
 
     const handle = await launchApp(home, {

@@ -1,6 +1,7 @@
 import type { MarketplaceEntry } from '@zana-ai/zcc-domain/product';
 import { AlertTriangle, ArrowUpCircle, CheckCircle2, Download } from 'lucide-react';
 import type { ReactElement, ReactNode } from 'react';
+import { catalogCapabilities } from './plugin-presentation.js';
 import { resolveIcon } from '../../lib/resolveIcon.js';
 
 export function marketplaceProvenance(entry: MarketplaceEntry): 'official' | 'community' {
@@ -80,14 +81,15 @@ export function PluginCatalogCard({
           <span className="ext-browse-card-body">
             <span className="ext-market-item-head">
               <span className="ext-market-item-title">{entry.title}</span>
-              {provenance === 'community' ? (
+              {(
                 <span
-                  className="ext-market-item-source ext-market-item-source--community"
-                  title="From a configured plugin catalog"
+                  className="ext-market-item-source ext-browse-provenance"
+                  data-provenance={provenance}
+                  title={provenance === 'official' ? 'Official plugin' : 'From a configured plugin catalog'}
                 >
-                  Community
+                  {provenance === 'official' ? 'Official' : 'Community'}
                 </span>
-              ) : null}
+              )}
               {entry.hasUpdate && (
                 <span className="ext-market-item-source ext-market-item-source--update">Update</span>
               )}
@@ -96,6 +98,7 @@ export function PluginCatalogCard({
             {showCategory && entry.category ? (
               <span className="ext-browse-category-pill">{entry.category}</span>
             ) : null}
+            <span className="ext-plugin-capabilities">{catalogCapabilities(entry).map((cap) => <span key={cap}>{cap}</span>)}</span>
             {error ? <span className="modal-error">{error}</span> : null}
           </span>
         </button>
@@ -118,10 +121,7 @@ export function PluginCatalogCard({
       </div>
       <div className="ext-market-item-action">
         {action.label === 'Installed' && !entry.hasUpdate ? (
-          <span className="ext-browse-installed-pill">
-            {action.icon}
-            Installed
-          </span>
+          <button type="button" className="settings-btn" onClick={onOpen}>{action.icon} Manage</button>
         ) : (
           <button
             type="button"

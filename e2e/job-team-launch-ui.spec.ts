@@ -26,6 +26,8 @@
 import { test, expect } from './fixtures/app.js';
 import { makeJobTeamCoordinatorBinary } from './sdk/harness.js';
 import { answerJobBlockerThroughUi } from './sdk/job-team-scenario.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
+import type { Page } from '@playwright/test';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -240,6 +242,143 @@ test(`launching a ${coordinationMode} Team with ${profile} through the real UI c
 });
 }
 }
+
+interface GoalLimitScenario {
+  projectId: string;
+  projectName: string;
+  executions(): Promise<Array<{ executionId: string; objectiveLength: number }>>;
+  cleanup(): Promise<void>;
+}
+
+/** A temporary Project plus an orchestrator-led Team that runs on the fake coordinator binary. */
+async function provisionGoalLimitScenario(window: Page): Promise<GoalLimitScenario> {
+  const agent = makeJobTeamCoordinatorBinary();
+  const projectDir = mkdtempSync(join(tmpdir(), 'zcc-job-team-limit-'));
+  let projectId: string | null = null;
+  // Best-effort on every path: a closed page must not skip the folder and binary cleanup.
+  const cleanup = async () => {
+    if (projectId) {
+      try {
+        await window.evaluate(async (pid) => {
+          try {
+            const sessions = (await window.cc.terminals.list?.(pid)) as Array<{ id: string }> | undefined;
+            for (const s of Array.isArray(sessions) ? sessions : []) {
+              try { await window.cc.terminals.close(s.id); } catch { /* best-effort */ }
+            }
+          } catch { /* best-effort */ }
+          try { await window.cc.projects.remove(pid); } catch { /* best-effort */ }
+        }, projectId);
+      } catch { /* best-effort */ }
+    }
+    try { rmSync(projectDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    try { agent.cleanup(); } catch { /* best-effort */ }
+  };
+  try {
+    await window.evaluate(({ bin }) => window.cc.config.set({
+      teamJobLaunchEnabled: true, sponsorPromptDismissed: true, claudeBinary: bin, codexBinary: bin,
+      trustZccToolsEnabled: false, tmuxScope: 'off', defaultHarness: 'claude'
+    }), { bin: agent.path });
+    for (const [id, name] of [['e2e-orchestrator', 'E2E Orchestrator'], ['e2e-worker', 'E2E Worker']] as const) {
+      await window.evaluate(({ id, name }) => window.cc.personas.save({
+        id, name, description: 'Persona for the goal-limit spec', baseProfile: 'claude', permissionMode: 'default', systemPrompt: ''
+      }), { id, name });
+    }
+    await window.evaluate(() => window.cc.teams.save({
+      id: 'e2e-job-team', name: 'E2E Job Team', description: 'Durable job team under test',
+      slots: [{ personaId: 'e2e-worker', quantity: 2 }], orchestratorPersonaId: 'e2e-orchestrator'
+    }));
+    projectId = await window.evaluate(async (path) => {
+      const res = await window.cc.projects.add(path);
+      return ((res && 'ok' in res ? (res as { value: { id: string } }).value : res) as { id: string }).id;
+    }, projectDir);
+    expect(projectId).toBeTruthy();
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+  const id = projectId!;
+  return {
+    projectId: id,
+    projectName: basename(projectDir),
+    executions: () => window.evaluate(async (pid) => {
+      const page = await window.cc.executionBoard.listProject(pid);
+      return page.executions.map((execution) => ({ executionId: execution.executionId, objectiveLength: execution.objective?.length ?? 0 }));
+    }, id),
+    cleanup
+  };
+}
+
+/**
+ * Open the Squad composer with `goal`, the scenario's Team and Project, and "Infer plan
+ * from goal". "Plan provided in goal" would park a prose goal for plan correction, so a
+ * disabled Launch afterwards can only come from the goal limit.
+ */
+async function openSquadComposerWithGoal(window: Page, scenario: GoalLimitScenario, goal: string) {
+  await window.locator('[data-testid="nav-agents"]').click();
+  await window.locator('[data-testid="agents-board-new-thread"]').first().click();
+  const modal = window.locator('[data-testid="launch-modal"]');
+  await expect(modal).toBeVisible();
+  await modal.locator('.launch-segmented').getByRole('button', { name: 'Squad', exact: true }).click();
+  const goalField = modal.getByTestId('team-command-input');
+  await goalField.click();
+  await goalField.fill(goal);
+  const teamPicker = modal.getByLabel('Squad', { exact: true });
+  await teamPicker.click();
+  await window.getByRole('listbox', { name: 'Squad' }).getByRole('option', { name: 'E2E Job Team' }).click();
+  await expect(teamPicker).toContainText('E2E Job Team');
+  const projectPicker = modal.getByRole('button', { name: 'Project', exact: true });
+  await projectPicker.click();
+  await window.getByRole('listbox', { name: 'Project' }).getByRole('option', { name: scenario.projectName, exact: true }).click();
+  await expect(projectPicker).toContainText(scenario.projectName);
+  await modal.getByLabel('Squad planning').click();
+  await window.getByRole('option', { name: 'Infer plan from goal', exact: true }).click();
+  return { modal, goalField, send: modal.getByTestId('team-command-send') };
+}
+
+/**
+ * The Squad composer enforces the 2,048-character goal limit before anything is
+ * sent: it names the limit, shows the count, disables Launch, ignores the launch
+ * shortcut, and launches exactly at the limit (#441).
+ */
+test('the Squad composer blocks a 2,049-character goal and launches at 2,048', async ({ app }, testInfo) => {
+  const { window } = app;
+  const scenario = await provisionGoalLimitScenario(window);
+  try {
+    const { modal, goalField, send } = await openSquadComposerWithGoal(window, scenario, 'x'.repeat(2049));
+    await expect(modal.getByTestId('team-goal-limit-message')).toHaveText(
+      'The goal is too long for a Squad (2,049 of 2,048 characters). Move details into an attached plan or source.'
+    );
+    await expect(modal.getByTestId('team-goal-count')).toHaveText('2,049 / 2,048');
+    await expect(send).toBeDisabled();
+
+    // The refused shortcut launches nothing and leaves the goal as it was. The
+    // editor's hard-break shortcut used to add a hidden line break here, which a
+    // later Backspace then removed instead of a character.
+    await goalField.press('ControlOrMeta+Enter');
+    await expect(modal).toBeVisible();
+    await expect(goalField.locator('br')).toHaveCount(0);
+    expect(await scenario.executions()).toEqual([]);
+
+    const shot = testInfo.outputPath('goal-limit.png');
+    await captureElectronScreenshot(app.electron, window, shot);
+    await testInfo.attach('goal-limit', { path: shot, contentType: 'image/png' });
+
+    // Set a goal exactly at the limit through the input pipeline. A scripted
+    // Backspace is unreliable here: sent straight after a click, it can reach
+    // ProseMirror before the click's selection does and edit nothing.
+    await goalField.fill('x'.repeat(2048));
+    await expect(modal.getByTestId('team-goal-count')).toHaveText('2,048 / 2,048');
+    await expect(modal.getByTestId('team-goal-limit-message')).toHaveCount(0);
+    await expect(send).toBeEnabled({ timeout: 15_000 });
+    await send.click();
+
+    await expect(modal).toBeHidden();
+    await expect.poll(async () => (await scenario.executions()).length, { timeout: 15_000, intervals: [500] }).toBe(1);
+    expect((await scenario.executions())[0].objectiveLength).toBe(2048);
+  } finally {
+    await scenario.cleanup();
+  }
+});
 
 /**
  * "Plan provided in goal" FAST PATH (ramp a): a structured launch whose goal

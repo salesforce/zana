@@ -67,6 +67,22 @@ export function valuePreview(value: unknown): string | undefined {
   return clip(joined);
 }
 
+/** Scalar assertion evidence uses the same privacy rules as the visible digest; never expose raw action payloads. */
+export function actionEvidence(value: unknown): Record<string, string | number | boolean | null> {
+  const out: Record<string, string | number | boolean | null> = Object.create(null);
+  let visited = 0;
+  const walk = (raw: unknown, path: string, depth: number) => {
+    if (++visited > 100 || Object.keys(out).length >= TRACE_LIMITS.fields || depth > 3 || shouldRedactPath(path)) return;
+    if (raw && typeof raw === 'object') {
+      for (const [key, child] of Object.entries(raw).slice(0, 12)) walk(child, Array.isArray(raw) ? `${path}[${key}]` : path ? `${path}.${key}` : key, depth + 1);
+    } else if (raw === null || typeof raw === 'boolean' || typeof raw === 'number' && Number.isFinite(raw) || typeof raw === 'string' && raw.length <= 200 && redactText(raw) === raw) {
+      out[path] = raw as string | number | boolean | null;
+    }
+  };
+  walk(value, '', 0);
+  return out;
+}
+
 function epoch(value: unknown): number | undefined {
   const n = num(value);
   if (n !== undefined) return n;
@@ -108,12 +124,13 @@ export function normalizeTrace(raw: unknown, opts: NormalizeTraceOptions): TurnT
     return line && opts.path ? { path: opts.path, line } : undefined;
   };
   const steps: TraceStep[] = [];
+  let truncated = false;
   for (const row of rows) {
-    if (steps.length >= TRACE_LIMITS.steps) break;
+    if (steps.length >= TRACE_LIMITS.steps) { truncated = true; break; }
     const step = convert(row, at);
     if (step) steps.push({ ...step, ...(latency(row) !== undefined ? { latencyMs: latency(row) } : {}) });
   }
-  return { ...base, available: true, ...(rows.length > steps.length ? { reason: `Showing ${steps.length} of ${rows.length} steps.` } : {}), steps };
+  return { ...base, available: true, ...(truncated ? { truncated: true } : {}), ...(rows.length > steps.length ? { reason: `Showing ${steps.length} of ${rows.length} steps.` } : {}), steps };
 }
 
 function convert(step: Row, at: (kind: 'topics' | 'actions', name: string | undefined) => TraceStep['source']): TraceStep | null {
@@ -153,7 +170,7 @@ function convert(step: Row, at: (kind: 'topics' | 'actions', name: string | unde
     case 'FunctionCallStep': {
       const fn = rec(step.function);
       const name = str(fn.name) ?? 'action';
-      return withSource({ kind: 'action', label: name, inputPreview: valuePreview(fn.input), outputPreview: valuePreview(fn.output) }, at('actions', name));
+      return withSource({ kind: 'action', label: name, inputPreview: valuePreview(fn.input), outputPreview: valuePreview(fn.output), actionEvidence: { input: actionEvidence(fn.input), output: actionEvidence(fn.output) } }, at('actions', name));
     }
     case 'VariableUpdateStep': {
       const updates = (Array.isArray(data.variable_updates) ? data.variable_updates : []).map(rec).filter(u => !isInternal(str(u.variable_name)));
@@ -163,6 +180,7 @@ function convert(step: Row, at: (kind: 'topics' | 'actions', name: string | unde
       const old = 'variable_old_value' in first ? first.variable_old_value : first.variable_past_value;
       const mask = shouldRedactPath(name);
       return {
+        stateEvidence: actionEvidence(Object.fromEntries(updates.map(u => [str(u.variable_name)!, u.variable_new_value]))),
         kind: 'variable', label: updates.length > 1 ? `${name} (+${updates.length - 1})` : name,
         inputPreview: mask ? MASK : textPreview(old, 80), outputPreview: mask ? MASK : textPreview(first.variable_new_value, 80)
       };

@@ -6,7 +6,7 @@
  * project context (never from renderer input).
  */
 import { join } from 'node:path';
-import { listAgentFiles, readAgentFile, type AgentFileListItem } from './agent-files.js';
+import { scanAgentFiles, readAgentFile, type AgentFileListItem } from './agent-files.js';
 import { indexProjectActions, projectActionCandidates, type ProjectActionIndex } from './action-source.js';
 import { parseActionTarget } from './agent-action-model.js';
 import { OrgAgentService } from './org-agent-service.js';
@@ -60,7 +60,7 @@ function scenarioNodes(root: string, deps: SalesforceDeps): { nodes: ExplorerNod
 export function buildLocalExplorer(root: string, deps: SalesforceDeps, focus = '', expand: readonly string[] = []): ExplorerResult {
   let truncated = false;
   let agents: AgentFileListItem[];
-  try { agents = listAgentFiles(root, deps, { allowNonDx: true }); } catch { return { nodes: [], truncated: false }; }
+  try { const scan = scanAgentFiles(root, deps, { allowNonDx: true, priority: [focus, ...expand] }); agents = scan.files; truncated = scan.truncated; } catch { return { nodes: [], truncated: false }; }
   const priority = [focus, ...expand.slice(0, EXPLORER_LIMITS.expand)].filter(Boolean);
   const rank = (path: string) => { const at = priority.indexOf(path); return at >= 0 ? at : priority.length + (path.startsWith(HISTORY_PREFIX) ? 1 : 0); };
   agents = agents.map((agent, order) => ({ agent, order, rank: rank(agent.path) })).sort((a, b) => a.rank - b.rank || a.order - b.order).map(row => row.agent);

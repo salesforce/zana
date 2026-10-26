@@ -15,7 +15,7 @@
   position: sticky;
   top: 0;
   z-index: 1;
-  background: var(--bg-base);
+  background: var(--bg-panel);
   gap: 8px;
   margin: 0 -28px;
   padding: 18px 28px;
@@ -167,7 +167,7 @@
   position: sticky;
   bottom: 0;
   z-index: 1;
-  background: var(--bg-base);
+  background: var(--bg-panel);
   border-top: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
   margin: 22px -28px 0;
   padding: 10px 28px 12px;
@@ -180,7 +180,7 @@
   right: 0;
   bottom: 100%;
   height: 24px;
-  background: linear-gradient(to bottom, transparent, var(--bg-base));
+  background: linear-gradient(to bottom, transparent, var(--bg-panel));
   pointer-events: none;
 }
 

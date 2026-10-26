@@ -372,7 +372,7 @@ ${e.summary}`:e.title}function Bl({doc:e,active:t,alternative:r=!1,projectName:o
   width: 296px;
   min-height: 0;
   border-right: 1px solid var(--border);
-  background: var(--bg-base);
+  background: var(--bg-panel);
 }
 .dd-list-head, .dd-picker-head {
   display: flex;
@@ -395,7 +395,7 @@ ${e.summary}`:e.title}function Bl({doc:e,active:t,alternative:r=!1,projectName:o
   gap: 4px;
   padding: 8px 0;
   border-right: 1px solid var(--border);
-  background: var(--bg-base);
+  background: var(--bg-panel);
 }
 .dd-head-btn {
   display: inline-flex;
@@ -514,7 +514,7 @@ ${e.summary}`:e.title}function Bl({doc:e,active:t,alternative:r=!1,projectName:o
   width: 100%;
   padding: 6px 6px 4px;
   border: 0;
-  background: var(--bg-base);
+  background: var(--bg-panel);
   color: var(--text-dim);
   font-size: 11px;
   font-weight: 600;
@@ -673,7 +673,7 @@ textarea.dd-doc-summary { display: block; }
 .dd-ask-options { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 
 /* \u2500\u2500 File tree \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */
-.dd-tree { display: flex; flex-direction: column; flex: 0 0 220px; width: 220px; min-height: 0; border-right: 1px solid var(--border); background: var(--bg-base); }
+.dd-tree { display: flex; flex-direction: column; flex: 0 0 220px; width: 220px; min-height: 0; border-right: 1px solid var(--border); background: var(--bg-panel); }
 .dd-tree-head { display: flex; align-items: center; gap: 4px; height: 36px; padding: 0 6px 0 12px; border-bottom: 1px solid var(--border); }
 .dd-tree-count { color: var(--text-dim); font-size: 11px; }
 .dd-tree-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 4px 4px 12px; }
@@ -863,7 +863,7 @@ textarea.dd-doc-summary { display: block; }
 .dd-diff-gap { margin: 4px 0; padding: 2px 16px 2px 28px; background: var(--bg-base); color: var(--text-dim); font-size: 11.5px; }
 
 /* \u2500\u2500 Rail \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */
-.dd-rail { display: flex; flex-direction: column; flex: 0 0 320px; width: 320px; min-height: 0; border-left: 1px solid var(--border); background: var(--bg-base); }
+.dd-rail { display: flex; flex-direction: column; flex: 0 0 320px; width: 320px; min-height: 0; border-left: 1px solid var(--border); background: var(--bg-panel); }
 .dd-rail-floating .dd-rail { position: absolute; top: 0; right: 0; bottom: 0; z-index: 15; width: min(340px, 100%); box-shadow: -12px 0 32px rgba(0, 0, 0, 0.25); }
 .dd-rail-tabs { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; height: 36px; padding: 0 6px; border-bottom: 1px solid var(--border); }
 .dd-rail-tab {

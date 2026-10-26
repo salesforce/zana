@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-const state = vi.hoisted(() => ({ dir: '', windows: [] as any[], fetch: vi.fn(), clear: vi.fn(), close: vi.fn(), login: vi.fn(), cookie: vi.fn(), external: vi.fn(), permissions: [] as Function[], menus: [] as any[], failLoad: false }));
+const state = vi.hoisted(() => ({ dir: '', windows: [] as any[], fetch: vi.fn(), clear: vi.fn(), close: vi.fn(), login: vi.fn(), cookie: vi.fn(), external: vi.fn(), permissions: [] as Function[], menus: [] as any[], failLoad: false, chrome: [] as any[], dock: vi.fn(), quit: vi.fn() }));
+vi.mock('./shared-instance-chrome.js', () => ({ SharedInstanceChrome: class { unavailable = vi.fn(); constructor(...args: unknown[]) { state.chrome.push({ args, instance: this }); } } }));
 vi.mock('./shared-sign-in.js', () => ({ SHARED_ACCOUNT: 'https://zana-ide.com', signInWithBrowser: state.login }));
 vi.mock('@zana-ai/zcc-server/electron-data-dir', () => ({ electronZccDataDir: () => state.dir }));
 vi.mock('electron', () => {
@@ -14,6 +15,7 @@ vi.mock('electron', () => {
     emit(name: string, ...args: unknown[]) { for (const fn of this.listeners.get(name) ?? []) fn(...args); }
   }
   return {
+    app: { dock: { setMenu: state.dock }, quit: state.quit },
     BrowserWindow: class extends Emitter {
       options: any; destroyed = false; url = ''; visible = true; menu: any;
       webContents = Object.assign(new Emitter(), { id: state.windows.length + 1 });
@@ -37,7 +39,7 @@ let show: ReturnType<typeof vi.fn>, hide: ReturnType<typeof vi.fn>;
 const serverId = randomUUID(), instanceId = randomUUID();
 const account = { servers: [{ id: serverId, instanceId, name: 'Shared', browserUrl: 'https://owned.zana-ide.com', live: true }] };
 beforeEach(() => {
-  state.dir = mkdtempSync(join(tmpdir(), 'shared-client-')); state.windows = []; state.menus = []; state.permissions = []; state.failLoad = false;
+  state.dir = mkdtempSync(join(tmpdir(), 'shared-client-')); state.windows = []; state.menus = []; state.chrome = []; state.permissions = []; state.failLoad = false; state.dock.mockClear(); state.quit.mockClear();
   state.fetch.mockReset().mockImplementation(async () => Response.json(account)); state.clear.mockReset(); state.close.mockReset();
   state.login.mockReset().mockResolvedValue({ cookieValue: 'account-session', expiresAt: Date.now() + 60_000 }); state.cookie.mockReset(); state.external.mockReset();
   show = vi.fn(); hide = vi.fn(); client = new SharedClient(show, hide);
@@ -98,7 +100,7 @@ it('keeps recovery menu actions in the shared context and denies local OS permis
   const permission = vi.fn(); state.permissions[1]!(null, 'media', permission); expect(permission).toHaveBeenCalledWith(false);
   menu.template[0].submenu.find((row: any) => row.label === 'Reload shared instance').click();
   expect(win.url).toBe('https://owned.zana-ide.com');
-  menu.template[0].submenu.find((row: any) => row.label === 'Return to local Zana').click();
+  menu.template[0].submenu.find((row: any) => row.label === 'Return to this computer').click();
   expect(show).toHaveBeenCalled();
   await client.select(serverId);
   state.windows.at(-1).menu.template[0].submenu.find((row: any) => row.label === 'Sign out of shared access').click();
@@ -106,15 +108,34 @@ it('keeps recovery menu actions in the shared context and denies local OS permis
   await client.signOut();
   writeSharedTarget(join(state.dir, 'shared-target.json'), { kind: 'connect', serverId, instanceId });
   state.fetch.mockResolvedValueOnce(new Response('', { status: 401 })); await client.restore();
-  const notice = state.windows.at(-1), actions = state.menus.at(-1);
+  const notice = state.windows.at(-1), actions = state.menus.findLast(menu => menu.template.some((row: any) => row.label === 'Sign in'));
   notice.webContents.emit('context-menu'); expect(actions.popup).toHaveBeenCalled();
   actions.template.find((row: any) => row.label === 'Sign in').click();
   expect(state.login).toHaveBeenCalledOnce();
   await vi.waitFor(() => expect(state.windows.at(-1).url).toBe('https://owned.zana-ide.com'));
   actions.template.find((row: any) => row.label === 'Retry shared instance').click();
   await vi.waitFor(() => expect(state.windows.at(-1).url).toBe('https://owned.zana-ide.com'));
-  actions.template.find((row: any) => row.label === 'Return to local Zana').click();
+  actions.template.find((row: any) => row.label === 'Return to this computer').click();
   expect(client.target()).toEqual({ kind: 'local' });
+});
+it('exposes matching desktop chrome and Dock actions without granting a product preload', async () => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+  try {
+    await client.select(serverId);
+    const chrome = state.chrome.at(-1);
+    expect(chrome.args[1]).toMatchObject({ name: 'Shared' });
+    const actions = chrome.args[3];
+    expect(await actions.list()).toHaveLength(1);
+    await actions.signIn(); await actions.select(serverId);
+    actions.quit(); expect(state.quit).toHaveBeenCalledOnce();
+    const dock = state.dock.mock.calls.at(-1)![0];
+    dock.template.find((row: any) => row.label === 'Quit Zana').click();
+    expect(state.quit).toHaveBeenCalledTimes(2);
+    dock.template.find((row: any) => row.label === 'Return to this computer').click();
+    expect(state.dock.mock.calls.at(-1)![0].template).toEqual([]);
+    await client.select(serverId); await state.chrome.at(-1).args[3].retry();
+    state.chrome.at(-1).args[3].local(); expect(client.target()).toEqual({ kind: 'local' });
+  } finally { vi.restoreAllMocks(); }
 });
 it('serializes sign-out, refuses selection during it and closes connections even if storage clearing fails', async () => {
   await client.select(serverId);

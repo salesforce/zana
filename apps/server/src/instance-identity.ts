@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { constants, closeSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { posixPermissions } from '@zana-ai/zcc-host-daemon/posix-permissions';
 
-/** Ownership and mode bits are only meaningful on POSIX; Windows keeps the symlink, size, file-type and content checks. */
-const posixPermissions = (): boolean => process.platform !== 'win32' && typeof process.getuid === 'function';
 const NO_FOLLOW = (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 
 /** Stable product identity, independent of a daemon's per-connection instanceId. */
@@ -39,7 +38,8 @@ export function readProductInstanceId(dataDir: string): string {
   const temporary = `${file}.${randomUUID()}.tmp`;
   try {
     writeFileSync(temporary, JSON.stringify({ id: randomUUID() }) + '\n', { flag: 'wx', mode: 0o600 });
-    const handle = openSync(temporary, constants.O_RDONLY);
+    // Windows refuses to fsync a read-only handle (EPERM).
+    const handle = openSync(temporary, constants.O_RDWR);
     try { fsyncSync(handle); } finally { closeSync(handle); }
     // Publish a complete file without overwriting another process's winner.
     try { linkSync(temporary, file); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }

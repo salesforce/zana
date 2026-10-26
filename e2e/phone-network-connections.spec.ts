@@ -3,8 +3,9 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { phonePortEnv } from './fixtures/phone-port.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
-test('Phone access offers only Zana Connect and keeps a retired Heroku relay setup offline', async ({ home }, testInfo) => {
+test('Remote access offers only Zana Connect and keeps a retired Heroku relay setup offline', async ({ home }, testInfo) => {
   const token = randomBytes(32).toString('base64url');
   const saved = join(home, '.zcc/mobile/connection.json');
   mkdirSync(join(home, '.zcc/mobile'), { recursive: true });
@@ -22,13 +23,13 @@ test('Phone access offers only Zana Connect and keeps a retired Heroku relay set
     expect(JSON.stringify(await win.evaluate(() => window.cc.config.get()))).not.toContain(token);
     expect(await win.evaluate(() => 'configure' in window.cc.mobile)).toBe(false);
     expect(readFileSync(saved, 'utf8')).toBe(legacy);
-    await win.getByRole('link', { name: 'Settings', exact: true }).click();
-    await win.getByTestId('settings-nav-phone').click();
+    await win.getByRole('link', { name: 'Remote access', exact: true }).click();
     await expect(win.getByLabel('Connection method')).toHaveCount(0);
     await expect(win.getByRole('button', { name: 'Show pairing QR' })).toHaveCount(0);
-    await win.getByRole('link', { name: 'Set up my domain' }).click();
+    await expect(win.getByRole('button', { name: 'Set up remote access' })).toBeVisible();
+    await win.getByText('Have a connect code?', { exact: true }).click();
     await expect(win.getByRole('link', { name: 'Get a connect code' })).toBeVisible();
-    await win.screenshot({ path: testInfo.outputPath('phone-connect-only.png') });
+    await captureElectronScreenshot(app.electron, win, testInfo.outputPath('phone-connect-only.png'));
   } finally {
     await app.electron.close();
   }

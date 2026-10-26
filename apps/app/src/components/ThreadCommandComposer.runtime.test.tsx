@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import type { PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import { ThreadCommandComposer, type ThreadCommandComposerProps } from './ThreadCommandComposer.js';
@@ -19,13 +19,14 @@ const h = vi.hoisted(() => {
     images: [] as Array<{ id: string; name: string }>,
     attachments: [] as PromptInput[],
     editor: { isDestroyed: false },
-    fieldArgs: null as null | { onSubmit: (options?: { modifierEnter?: boolean }) => void },
+    fieldArgs: null as null | { onSubmit: (options?: { modifierEnter?: boolean }) => void; slashCatalog?: { composerActions?: string[] } },
+    reloadCommands: vi.fn(),
     voiceArgs: null as null | { onTranscript: (text: string) => void; ownerKey?: string },
     frozenSend: null as null | ((text: string) => Promise<void>),
     voice: { state: 'idle', stream: null, canRetry: false, isSupported: true, available: true, canStart: true,
       stop: vi.fn(), retry: vi.fn(), start: vi.fn(), cancel: vi.fn() },
     options: {
-      providerId: 'codex', provider, providers: [provider], registeredProviderIds: ['codex'],
+      providerId: 'codex', provider: provider as typeof provider | undefined, providers: [provider], registeredProviderIds: ['codex'],
       providerOptions: [], model: 'model-a', reasoningLevel: 'high', acpMode: undefined as string | undefined,
       selectionError: undefined as string | undefined, catalogSettled: true,
       rosterReady: true, serviceTierOptions: undefined as undefined | Array<{ id: string; label: string }>,
@@ -79,6 +80,7 @@ vi.mock('./composer/use-composer-provider-cli.js', () => ({ useComposerProviderC
 vi.mock('./composer/useMobileComposerExpansion.js', () => ({ useMobileComposerExpansion: () => undefined }));
 vi.mock('./composer/use-composer-prompt-field.js', () => ({
   useComposerPromptField: (args: typeof h.fieldArgs) => {
+    useEffect(() => { h.reloadCommands(); }, [args?.slashCatalog?.composerActions]);
     h.fieldArgs = args;
     return { editor: h.editor, text: h.text, images: h.images, restoredAttachments: h.attachments,
       serialize: () => ({ text: h.text, mentions: [] }), clear: h.clear, insertText: h.insertText,
@@ -123,6 +125,7 @@ beforeEach(() => {
   h.text = 'Draft'; h.images = []; h.attachments = []; h.editor.isDestroyed = false;
   h.voice.state = 'idle'; h.voice.canRetry = false; h.frozenSend = null;
   h.options.provider = { id: 'codex', displayName: 'Codex', permissionModes: ['full'], composerActions: ['plan'] };
+  h.options.providerId = 'codex';
   h.options.providers = [h.options.provider];
   h.permissionError = undefined; h.options.selectionError = undefined; h.options.catalogSettled = true;
   h.options.rosterReady = true; h.options.serviceTierOptions = undefined; h.options.registeredProviderIds = ['codex'];
@@ -146,6 +149,22 @@ async function transcribeAndSend(text = 'Spoken words') {
 }
 
 describe('Modern composer submission contracts', () => {
+  it('keeps an unavailable custom provider catalogue stable until discovery recovers', () => {
+    h.options.providerId = 'acp-custom';
+    h.options.provider = undefined;
+    h.options.providers = [];
+    const view = render(composer());
+    expect(h.reloadCommands).toHaveBeenCalledOnce();
+    view.rerender(composer({ status: 'running' }));
+    view.rerender(composer({ status: 'idle' }));
+    expect(h.reloadCommands).toHaveBeenCalledOnce();
+    h.options.provider = { id: 'acp-custom', displayName: 'Custom', permissionModes: ['full'], composerActions: ['plan'] };
+    view.rerender(composer());
+    expect(h.reloadCommands).toHaveBeenCalledTimes(2);
+    h.options.providerId = 'another-custom'; h.options.provider = undefined;
+    view.rerender(composer());
+    expect(h.reloadCommands).toHaveBeenCalledTimes(3);
+  });
   it('keeps a failed submission intact and reports its error', async () => {
     h.send.mockRejectedValueOnce(new Error('Send rejected'));
     render(composer());
@@ -153,6 +172,23 @@ describe('Modern composer submission contracts', () => {
     await waitFor(() => expect(screen.getByTestId('thread-command-error').textContent).toBe('Send rejected'));
     expect(h.clear).not.toHaveBeenCalled();
     expect(h.text).toBe('Draft');
+  });
+  it('announces why a keyboard send is blocked by an open question, and clears it once answered', async () => {
+    const view = render(composer({ sendBlocked: true, sendBlockedHint: 'Answer the question above first' }));
+    const status = screen.getByTestId('thread-command-blocked-status');
+    expect(status.getAttribute('role')).toBe('status');
+    expect(status.textContent).toBe('');
+    expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(true);
+    await act(async () => { h.fieldArgs!.onSubmit({ modifierEnter: true }); });
+    expect(status.textContent).toBe('Answer the question above first');
+    expect(h.send).not.toHaveBeenCalled();
+    expect(h.clear).not.toHaveBeenCalled();
+    view.rerender(composer({ sendBlocked: false }));
+    expect(screen.queryByTestId('thread-command-blocked-status')).toBeNull();
+    view.rerender(composer({ sendBlocked: true }));
+    expect(screen.getByTestId('thread-command-blocked-status').textContent).toBe('');
+    await act(async () => { h.fieldArgs!.onSubmit(); });
+    expect(screen.getByTestId('thread-command-blocked-status').textContent).toBe('Respond to the request above first');
   });
   it.each([undefined, 'default', 'priority', 'unsupported'])('normalizes service tier %s against the live provider and sends restored attachments', async tier => {
     h.text = '';

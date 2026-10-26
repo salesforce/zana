@@ -11,6 +11,7 @@ import type { WorkflowPolicyResultV1 } from './policy-result.js';
 import { EXECUTION_FAILURE_CODES, isDurableCoordination } from '@zana-ai/zcc-domain/product';
 import type { ExecutionFailureCode, ExecutionSourceSnapshot, TeamLaunchAuthorizationContextV1 } from '@zana-ai/zcc-domain/product';
 import type { SquadBundleWorkflowMetadataV1, TeamLaunchAuthorizationInputSlot, TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
+import { SQUAD_GOAL_MAX_CHARS, SQUAD_SUMMARY_MAX_CHARS, squadStoredFieldTooLong } from '@zana-ai/zcc-domain/squad-proposal';
 import { MAX_TEAM_INITIAL_TASK_BYTES } from '../launch/team-lifecycle-store.js';
 import { normalizeExecutionPlan } from '../launch/preflight.js';
 import type { ExecutionDatabase } from '@zana-ai/zcc-db';
@@ -1262,6 +1263,9 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   async function claim(input: ExecutionClaimInput) {
     if (input.launchKind !== undefined && input.launchKind !== 'team') throw new Error('invalid execution launch kind');
     const request = normalizeRequest(input.request);
+    if (typeof input.summary === 'string' && input.summary.length > SQUAD_SUMMARY_MAX_CHARS) {
+      throw new Error(squadStoredFieldTooLong('summary', input.summary.length));
+    }
     const workUnits = input.workUnits === undefined ? undefined : normalizePlan(input.workUnits, isDurableCoordination(input.coordinationMode));
     if (input.launchKind !== undefined && input.launchKind !== request.launchKind) {
       throw new Error('execution launch kind disagrees with request snapshot');
@@ -3227,6 +3231,10 @@ function failActiveDeliveries(record: ExecutionRecord, blockerId: string, reason
 }
 
 function normalizeRequest(input: ExecutionRequestSnapshotV1): ExecutionRequestSnapshotV1 {
+  const objective = (input as { objective?: unknown } | null | undefined)?.objective;
+  if (typeof objective === 'string' && objective.length > SQUAD_GOAL_MAX_CHARS) {
+    throw new Error(squadStoredFieldTooLong('goal', objective.length));
+  }
   if (!validRequestSnapshot(input)) throw new Error('invalid execution request snapshot');
   return { ...clone(input), launchKind: input.launchKind ?? 'team' };
 }

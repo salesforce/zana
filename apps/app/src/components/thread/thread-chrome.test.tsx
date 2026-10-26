@@ -791,7 +791,7 @@ describe('expandable row and chips', () => {
   it('opens the secondary panel Diff pin from Review', () => {
     const source = readFileSync(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)), 'utf8');
     expect(source).toContain("selectPin('diff')");
-    expect(source).toContain("selectPin('plan')");
+    expect(source).toContain("onOpenPlan={() => activateTool('plan')}");
     expect(source).toContain('<ThreadPlanPanel');
     expect(source).not.toContain('shouldAutoOpenThreadPlanPanel');
     expect(source).toContain('showPlanPin');

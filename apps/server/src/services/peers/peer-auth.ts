@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
 import { constants } from 'node:fs';
 import { lstat, mkdir, open, opendir, realpath, rename, rm } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
+import { posixPermissions } from '@zana-ai/zcc-host-daemon/posix-permissions';
 
 export const PEER_PROTOCOL_VERSION = 2;
 export const MAX_PEER_BODY_BYTES = 8 * 1024 * 1024;
@@ -202,8 +203,8 @@ export class PrivatePeerStorage<T> {
 
   private async checkDirectory(): Promise<void> {
     const info = await lstat(this.directory);
-    if (!info.isDirectory() || info.isSymbolicLink() || (info.mode & 0o7777) !== 0o700 ||
-      !process.getuid || info.uid !== process.getuid() || await realpath(this.directory) !== this.directory) {
+    if (!info.isDirectory() || info.isSymbolicLink() || posixPermissions() && ((info.mode & 0o7777) !== 0o700 || info.uid !== process.getuid!()) ||
+      await realpath(this.directory) !== this.directory) {
       throw new Error('unsafe peer storage directory');
     }
   }
@@ -247,7 +248,7 @@ export class PrivatePeerStorage<T> {
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw new Error('unsafe peer storage file'); }
     try {
       const info = await handle.stat();
-      if (!info.isFile() || info.nlink !== 1 || (info.mode & 0o7777) !== 0o600 || info.uid !== process.getuid!() || info.size > MAX_PEER_STORE_BYTES) {
+      if (!info.isFile() || info.nlink !== 1 || info.size > MAX_PEER_STORE_BYTES || posixPermissions() && ((info.mode & 0o7777) !== 0o600 || info.uid !== process.getuid!())) {
         throw new Error('unsafe peer storage file');
       }
       const bytes = Buffer.alloc(info.size + 1);
@@ -275,8 +276,11 @@ export class PrivatePeerStorage<T> {
         const marker = await open(this.marker, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
         try { await marker.writeFile('v2'); await marker.sync(); } finally { await marker.close(); }
       }
-      const directory = await open(this.directory, constants.O_RDONLY);
-      try { await directory.sync(); } finally { await directory.close(); }
+      // Directories cannot be fsynced on Windows (EPERM); the snapshot and marker files were already synced.
+      if (process.platform !== 'win32') {
+        const directory = await open(this.directory, constants.O_RDONLY);
+        try { await directory.sync(); } finally { await directory.close(); }
+      }
     } finally { await rm(temp, { force: true }); }
   }
 }

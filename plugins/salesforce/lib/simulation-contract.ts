@@ -62,6 +62,7 @@ export interface SimulationLane {
 export interface SimulationCounts { total: number; pass: number; fail: number; inconclusive: number; error: number; stopped: number; running: number; queued: number }
 
 export interface SimulationBatch {
+  contextVariables?: import('./preview-context.js').PreviewContextVariable[];
   id: string;
   agentPath: string;
   /** sha256 of the source the lanes ran: a candidate differs from the saved file. */

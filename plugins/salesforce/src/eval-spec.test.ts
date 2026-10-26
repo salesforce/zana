@@ -4,30 +4,37 @@ import { parseEvalSpec } from '../lib/agent.js';
 import { parseScenarioCases } from '../lib/scenario-suites.js';
 import type { ScenarioCase } from '../lib/studio-contract.js';
 
+const replay = { greet: [{ role: 'user' as const, message: 'Hi' }, { role: 'agent' as const, message: 'Hello', topic: 'welcome' }] };
 const cases: ScenarioCase[] = [
   { id: 'refund', name: 'Refund', utterances: ['I want a "refund"'], expect: { topic: 'Billing', actions: ['IssueRefund', 'LogCase'], contains: ['refund'], criteria: 'Offers a refund.' } },
   { id: 'greet', name: 'Greet', utterances: ['Hi', 'Where is my order?'], expect: {} }
 ];
 
 describe('suiteToEvalSpec', () => {
+  it('refuses oversized generated history before any file is written', () => {
+    const large = Array.from({ length: 50 }, (_, i) => ({ ...cases[1]!, id: `c${i}` }));
+    const histories = Object.fromEntries(large.map(c => [c.id, [{ role: 'user' as const, message: 'Hi' }, { role: 'agent' as const, message: '😀'.repeat(3000), topic: 'welcome' }]]));
+    expect(() => suiteToEvalSpec(large, { apiName: 'Bot', name: 'Bot', from: 'x' }, histories)).toThrow(/exceeds 256 KB/);
+  });
   it('writes the sf agent test YAML and names multi-turn cases', () => {
-    const { text, multiTurn } = suiteToEvalSpec(cases, { apiName: 'MyBot', name: 'MyBot', from: 'tests/MyBot.scenario.json' });
+    const { text, multiTurn } = suiteToEvalSpec(cases, { apiName: 'MyBot', name: 'MyBot', from: 'tests/MyBot.scenario.json' }, replay);
     expect(text.startsWith(`${GENERATED_SPEC_MARKER} from tests/MyBot.scenario.json.`)).toBe(true);
     expect(text).toContain('subjectType: AGENT\nsubjectName: "MyBot"\ntestCases:\n  - utterance: "I want a \\"refund\\""\n    expectedTopic: "Billing"\n    expectedActions:\n      - "IssueRefund"\n      - "LogCase"\n');
     expect(text).toContain('expectedOutcome: "Offers a refund. The reply mentions \\"refund\\"."');
-    expect(text).toContain('  - utterance: "Hi"\n');
+    expect(text).toContain('  - utterance: "Where is my order?"\n    conversationHistory:');
+    expect(text).toContain('        topic: "welcome"');
     expect(multiTurn).toEqual(['greet']);
     expect(parseEvalSpec(text)).toEqual({ ok: true, format: 'yaml', testCount: 2 });
   });
 
   it('round-trips through the importer', () => {
-    const { text } = suiteToEvalSpec(cases, { apiName: 'MyBot', name: 'MyBot', from: 'x' });
+    const { text } = suiteToEvalSpec(cases, { apiName: 'MyBot', name: 'MyBot', from: 'x' }, replay);
     const back = parseScenarioCases(evalSpecCases(text));
     expect(back[0]).toEqual({
       id: 'i-want-a-refund', name: 'I want a "refund"', utterances: ['I want a "refund"'],
       expect: { topic: 'Billing', actions: ['IssueRefund', 'LogCase'], criteria: 'Offers a refund. The reply mentions "refund".' }
     });
-    expect(back[1]).toMatchObject({ id: 'hi', utterances: ['Hi'], expect: {} });
+    expect(back[1]).toMatchObject({ id: 'hi', utterances: ['Hi', 'Where is my order?'], expect: {} });
   });
 });
 
@@ -113,4 +120,19 @@ describe('evalCaseOutcomes', () => {
     expect(evalCaseOutcomes({ success: true, passedCount: 1 }, 1)).toBeNull();
     expect(evalCaseOutcomes(null, 1)).toBeNull();
   });
+});
+
+it('refuses lossy or incomplete org exports', () => {
+  const meta = { apiName: 'Bot', name: 'Bot', from: 'x' };
+  expect(() => suiteToEvalSpec(cases, meta)).toThrow(/Complete conversation history/);
+  expect(() => suiteToEvalSpec(cases, meta, { greet: [{ role: 'user', message: 'Hi' }, { role: 'agent', message: 'Hello' }] })).toThrow(/Complete conversation history/);
+  expect(() => suiteToEvalSpec([{ ...cases[0]!, contextVariables: [{ name: 'locale', type: 'Text', value: 'fr' }] }], meta)).toThrow(/context overrides/);
+  expect(() => suiteToEvalSpec([{ ...cases[0]!, expect: { maxLatencyMs: 500 } }], meta)).toThrow(/lose those checks/);
+});
+
+it('refuses org exports that would silently discard forbidden-action or final-state checks', () => {
+  const meta = { apiName: 'MyBot', name: 'MyBot', from: 'tests/MyBot.scenario.json' };
+  for (const expectCase of [{ forbiddenActions: ['SendSignature'] }, { stateChecks: [{ variable: 'orderExists', value: false }] }]) {
+    expect(() => suiteToEvalSpec([{ ...cases[0]!, expect: expectCase }], meta)).toThrow('Org export would lose those checks');
+  }
 });

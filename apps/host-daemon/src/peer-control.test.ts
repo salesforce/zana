@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { chmod, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, link, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +10,13 @@ import { PeerControlForwarder } from './peer-control.js';
 
 const cleanup: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.restoreAllMocks(); });
+/** Windows: no process.getuid, uid 0, and synthetic modes (directories 0o777/0o666, writable files 0o666). */
+function simulateWindows(): void {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  const getuid = Object.getOwnPropertyDescriptor(process, 'getuid');
+  Object.defineProperty(process, 'getuid', { value: undefined, configurable: true });
+  cleanup.push(() => { if (getuid) Object.defineProperty(process, 'getuid', getuid); else delete (process as { getuid?: unknown }).getuid; });
+}
 async function fixture(handler?: (req: IncomingMessage, res: ServerResponse) => void) {
   const dir = await realpath(await mkdtemp(join(tmpdir(), 'peer-control-daemon-')));
   cleanup.push(() => rm(dir, { recursive: true, force: true }));
@@ -32,6 +39,22 @@ async function fixture(handler?: (req: IncomingMessage, res: ServerResponse) => 
     nonce: 'c'.repeat(48), issuedAt: Date.now(), sealed: 's'.repeat(43) } };
   return { dir, port, paths, localId, remoteId, hostId, peer, command };
 }
+
+it('reads the enrollment token under Windows-reported modes but still rejects a hard-linked token', async () => {
+  simulateWindows();
+  const f = await fixture((_req, res) => res.end('{}'));
+  await chmod(f.dir, 0o777);
+  await chmod(join(f.dir, 'peer-app'), 0o777);
+  await chmod(join(f.dir, 'host-enroll.token'), 0o666);
+  await expect(f.peer.forward(f.command)).resolves.toEqual({ status: 200, body: '{}' });
+  expect(f.paths).toContain(PEER_CONTROL_ROUTE);
+  await link(join(f.dir, 'host-enroll.token'), join(f.dir, 'token-copy'));
+  f.paths.length = 0;
+  vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  await expect(f.peer.forward(f.command)).rejects.toMatchObject({ code: 'peer_control_failed' });
+  expect(console.warn).toHaveBeenCalledWith('[peer-control] forward failed: unsafe local app token');
+  expect(f.paths).toEqual([]);
+});
 
 it('uses only registered loopback routes, preserves >8192 bytes, never sends plaintext credentials', async () => {
   const bodies: string[] = [], headers: IncomingMessage['headers'][] = [];
