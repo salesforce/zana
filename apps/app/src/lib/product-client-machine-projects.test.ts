@@ -4,6 +4,13 @@ const h = vi.hoisted(() => ({ api: vi.fn(), fetch: vi.fn() }));
 vi.mock('./fetch-with-app-surface.js', async original => ({ ...await original<object>(), apiJson: h.api, fetchWithAppSurface: h.fetch }));
 import { product } from './product-client.js';
 afterEach(() => { vi.resetAllMocks(); delete (window as any).cc; });
+it('uses the server default clone destination without a desktop bridge or selected machine', async () => {
+  delete (window as any).cc;
+  h.api.mockResolvedValueOnce({ path: '/server/checkouts' });
+  expect(await product.projects.cloneRoot()).toBe('/server/checkouts');
+  expect(h.api).toHaveBeenCalledWith('/projects/clone-root');
+});
+
 it('uses HTTP and forwards the selected machine for clones and destination previews', async () => {
   const localRoot = vi.fn().mockResolvedValue('/local'), localAdd = vi.fn();
   (window as any).cc = { projects: { cloneRoot: localRoot, add: localAdd } };

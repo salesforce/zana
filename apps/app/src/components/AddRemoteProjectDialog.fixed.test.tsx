@@ -7,6 +7,13 @@ vi.mock('../lib/product-client.js', () => ({ product: { ssh: { listHosts: h.list
 vi.mock('../lib/app-surface.js', () => ({ hasDesktopBridge: () => false }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 describe('fixed SSH machine', () => {
+  it('explains when SSH discovery is unavailable for an unbound machine', async () => {
+    render(<AddRemoteProjectDialog onSubmit={vi.fn()} onSuccess={vi.fn()} onClose={vi.fn()} />);
+    expect(await screen.findByText('SSH binding not loaded — quit (⌘Q) and relaunch the app.')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Add', exact: true }) as HTMLButtonElement).disabled).toBe(true);
+    expect(h.list).not.toHaveBeenCalled();
+  });
+
   it('keeps the SSH identity without discovering hosts again and adds another checkout', async () => {
     const onSubmit = vi.fn().mockResolvedValue({ id: 'created' }), onSuccess = vi.fn(), onClose = vi.fn();
     render(<AddRemoteProjectDialog fixedTarget={{ host: 'dev', user: 'alice', proxyJump: 'bastion' }} onSubmit={onSubmit} onSuccess={onSuccess} onClose={onClose} />);

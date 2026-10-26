@@ -41,6 +41,27 @@ describe('AddLocalProjectDialog folder-path placeholder', () => {
 
 
 describe('fixed machine project creation', () => {
+  it('uses the native browser on the primary machine, including cancellation and failed browsing', async () => {
+    mocks.hosts = [host('/Users/me')];
+    const onBrowse = vi.fn().mockResolvedValueOnce('/native/project').mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(new Error('Picker unavailable')).mockRejectedValueOnce('unavailable');
+    const onSubmit = vi.fn().mockRejectedValueOnce('denied');
+    render(<AddLocalProjectDialog fixedHostId="local" onBrowse={onBrowse} onSubmit={onSubmit} onClose={vi.fn()} />);
+    const browse = screen.getByRole('button', { name: 'Browse for folder' });
+    fireEvent.click(browse);
+    await waitFor(() => expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe('/native/project'));
+    fireEvent.click(browse);
+    await waitFor(() => expect(onBrowse).toHaveBeenCalledTimes(2));
+    expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe('/native/project');
+    fireEvent.click(browse);
+    await waitFor(() => expect(screen.getByText('Picker unavailable')).toBeTruthy());
+    fireEvent.click(browse);
+    await waitFor(() => expect(screen.getByText('Could not browse folders')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Add project', exact: true }));
+    await waitFor(() => expect(screen.getByText('Could not add project')).toBeTruthy());
+    expect(onSubmit).toHaveBeenCalledWith('/native/project', undefined);
+  });
+
   it('browses the remote filesystem, survives roster refresh and submits the fixed target', async () => {
     const remote = { ...host('/home/me'), id: 'remote', isPrimary: false, name: 'Devbox' };
     mocks.hosts = [host('/Users/me'), remote];

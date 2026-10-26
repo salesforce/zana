@@ -54,7 +54,9 @@ const GOAL = 'Build the Atlas site: a Home page and an About page, with a shared
 async function tap(page: Page, target: Locator): Promise<void> {
   await target.scrollIntoViewIfNeeded();
   const box = await target.boundingBox();
-  if (box) await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 14 });
+  // Hidden Linux windows can throttle each animated move to one frame per second.
+  // The visible cursor animation is needed only for a demo recording.
+  if (box && process.env.ZCC_E2E_RECORD_VIDEO) await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 14 });
   await page.waitForTimeout(120);
   await target.click();
 }

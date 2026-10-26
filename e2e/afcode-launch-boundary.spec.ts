@@ -14,7 +14,11 @@ test.use({
   e2e: true,
   // Assert the PTY byte stream, independent of a developer's tmux screen settings.
   initialConfig: { tmuxScope: 'off', defaultHarness: 'claude' },
-  launchEnv: { PATH: `${fileURLToPath(new URL('./fixtures/bin', import.meta.url))}${delimiter}${process.env.PATH ?? ''}` }
+  launchEnv: {
+    PATH: `${fileURLToPath(new URL('./fixtures/bin', import.meta.url))}${delimiter}${process.env.PATH ?? ''}`,
+    // This boundary intentionally installs the checked-out provider directory.
+    ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD: '1'
+  }
 });
 test.setTimeout(180_000);
 test.beforeAll(async () => { await buildPluginHost(pluginPath, '2.1.2'); });

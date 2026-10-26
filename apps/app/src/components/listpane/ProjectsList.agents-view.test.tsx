@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project, TerminalSession } from '@zana-ai/zcc-domain/product';
@@ -11,6 +11,8 @@ const h = vi.hoisted(() => ({
   terminals: {} as Record<string, TerminalSession[]>,
   threads: [] as ThreadListItem[],
   hideIdleProjects: false,
+  enterProjectFocus: vi.fn(), selectProject: vi.fn(), toggleSection: vi.fn(),
+  addProjectByPath: vi.fn(async () => ({ id: 'added' })),
   noActions: [] as never[]
 }));
 
@@ -18,11 +20,13 @@ vi.mock('../../hooks/useHosts.js', () => ({ useHosts: () => h.hosts }));
 
 vi.mock('../../store.js', () => ({
   useData: (select: (state: unknown) => unknown) => select({
-    projects: h.projects, terminals: h.terminals, projectNavigationOrganization: 'sessions', loadProjects: vi.fn()
+    projects: h.projects, terminals: h.terminals, projectNavigationOrganization: 'sessions', loadProjects: vi.fn(),
+    addProjectByPath: h.addProjectByPath
   }),
   useUi: (select: (state: unknown) => unknown) => select({
     selectedProjectId: null, focusedProjectId: null, selectedTabId: {}, unread: {}, projectExpanded: {},
-    hideIdleProjects: h.hideIdleProjects, collapsedSections: {}
+    hideIdleProjects: h.hideIdleProjects, collapsedSections: {}, enterProjectFocus: h.enterProjectFocus,
+    selectProject: h.selectProject, toggleSection: h.toggleSection
   }),
   useAgentStatus: (select: (state: unknown) => unknown) => select({ byId: {} }),
   useSubagents: (select: (state: unknown) => unknown) => select({ byId: {} }),
@@ -194,6 +198,40 @@ describe('ProjectsList agents-only view', () => {
 
 
 describe('machine project hierarchy', () => {
+  it('opens projects and new threads from the overview, and completes machine-scoped folder registration', async () => {
+    h.hosts = [{ id: 'remote', name: 'Devbox', status: 'connected' }] as typeof h.hosts;
+    h.projects = [{ ...project('api', 'API'), hostId: 'remote' }]; h.threads = []; h.terminals = {};
+    renderList();
+    const openOverview = () => fireEvent.click(screen.getByRole('button', { name: 'Open Devbox projects' }));
+    openOverview();
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Devbox', exact: true })).getByRole('button', { name: 'Close', exact: true }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    openOverview();
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Devbox', exact: true })).getByRole('button', { name: 'API', exact: true }));
+    expect(h.enterProjectFocus).toHaveBeenCalledWith('api');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    openOverview();
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Devbox', exact: true })).getByRole('button', { name: 'New thread', exact: true }));
+    expect(screen.getByTestId('location').textContent).toBe('/threads/new');
+    openOverview();
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Devbox', exact: true })).getByRole('button', { name: 'Add project', exact: true }));
+    expect(screen.getByRole('dialog', { name: 'Add project on Devbox' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add project on Devbox', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: /Open existing folder/ }));
+    fireEvent.change(within(screen.getByRole('dialog', { name: 'Add project on Devbox' })).getByRole('textbox'), { target: { value: '/srv/another' } });
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Add project on Devbox' })).getByRole('button', { name: 'Add project', exact: true }));
+    await waitFor(() => expect(h.addProjectByPath).toHaveBeenCalledWith('/srv/another', { hostId: 'remote' }));
+    expect(h.selectProject).toHaveBeenCalledWith('added');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    const remote = document.querySelector('[data-machine-id="remote"]') as HTMLElement;
+    fireEvent.click(within(remote).getByRole('button', { name: 'Add project', exact: true }));
+    expect(screen.getByRole('dialog', { name: 'Add project on Devbox' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
+    fireEvent.click(within(remote).getByRole('button', { name: 'Collapse Devbox' }));
+    expect(h.toggleSection).toHaveBeenCalledWith('sidebar:machine:remote');
+  });
+
   it('nests only the host-owned threads below each default and searches machines', () => {
     h.hosts = [{ id: 'local', name: 'Laptop', isPrimary: true, status: 'connected' }, { id: 'remote', name: 'Devbox', status: 'connected' }] as typeof h.hosts;
     h.projects = [{ ...project('default', 'Default Project'), quickAgent: true }, { ...project('api', 'API'), hostId: 'remote' }];
