@@ -14,6 +14,7 @@ import { ComposerDraftProvider } from './composer/ComposerDraft.js';
 const h = vi.hoisted(() => {
   const provider = { id: 'codex', displayName: 'Codex', permissionModes: ['full'], composerActions: ['plan'] };
   return {
+    compact: false,
     foreignLocation: false,
     locationProps: null as any,
     extraProjects: [] as Project[],
@@ -68,7 +69,7 @@ vi.mock('../lib/product-client.js', () => ({ product: {
 vi.mock('../hooks/useHosts.js', () => ({ defaultHostId: () => 'host1', useHosts: () => h.hosts }));
 vi.mock('../hooks/useRouteState.js', () => ({ useRouteState: () => ({ isProjectFocused: false }) }));
 vi.mock('../hooks/usePublicAppUrl.js', () => ({ usePublicAppUrl: () => null }));
-vi.mock('../hooks/useCompactLayout.js', () => ({ useCompactLayout: () => false }));
+vi.mock('../hooks/useCompactLayout.js', () => ({ useCompactLayout: () => h.compact }));
 vi.mock('../lib/use-boolean-preference.js', () => ({ useBooleanPreference: () => [h.navigateOnCreate] }));
 vi.mock('../lib/prompt-attachments.js', () => ({ persistComposerImages: h.persistImages }));
 vi.mock('./composer-host-status.js', () => ({
@@ -125,6 +126,7 @@ vi.mock('./thread/pickers/ComposerSendModePicker.js', () => ({ ComposerSendModeP
 beforeEach(() => {
   resetComposerSessions();
   vi.clearAllMocks();
+  h.compact = false;
   h.extraProjects = []; h.locationProps = null; h.foreignLocation = false;
   h.text = 'Draft'; h.images = []; h.attachments = []; h.editor.isDestroyed = false;
   h.voice.state = 'idle'; h.voice.canRetry = false; h.frozenSend = null;
@@ -654,6 +656,16 @@ describe('Modern composer terminal command and navigation', () => {
 
 
 describe('machine and project selection', () => {
+  it('keeps existing-thread machine metadata in mobile controls instead of duplicating the desktop picker', () => {
+    h.hosts = [{ id: 'host1', name: 'Build machine' }];
+    const view = render(composer());
+    expect(screen.getByTestId('thread-env-label')).toBeTruthy();
+    h.compact = true;
+    view.rerender(composer());
+    expect(screen.queryByTestId('thread-env-label')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Composer options' }));
+    expect(screen.getByRole('group', { name: 'Additional composer controls' }).textContent).toContain('Build machine');
+  });
   it('launches an explicitly seeded remote default after host roster refresh', async () => {
     h.project.quickAgent = true; h.threads = []; h.foreignLocation = true;
     const view = render(composer({ project: undefined, threadId: undefined, composerProjectId: 'p1', initialHostId: 'remote' }));

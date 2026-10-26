@@ -1096,7 +1096,7 @@ function ThreadComposerContent({
         <div className="thread-command-composer-meta-start">
           {threadId ? (
             <>
-              {!fixedRunTarget && <span data-testid="thread-env-label" className="thread-command-env"><ComposerProjectPicker
+              {!fixedRunTarget && !compact && <span data-testid="thread-env-label" className="thread-command-env"><ComposerProjectPicker
                 projects={projects}
                 value={currentThread?.projectId ?? projectId}
                 hostId={currentThread?.hostId ?? catalogHostId}

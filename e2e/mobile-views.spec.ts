@@ -5,7 +5,7 @@ import { chromium, type Page, type Route } from '@playwright/test';
 import { test, expect } from './fixtures/app.js';
 import { startMobileGateway } from '../apps/server/src/mobile/gateway.js';
 
-test.use({ initialConfig: { sponsorPromptDismissed: true, agentsBoardView: 'flow', classicSessionViewEnabled: false, inboxGrouping: 'time', voiceInputEnabled: true }, launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
+test.use({ initialConfig: { sponsorPromptDismissed: true, agentsBoardView: 'flow', classicSessionViewEnabled: false, threadTabsEnabled: false, inboxGrouping: 'time', voiceInputEnabled: true }, launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
 
 test.beforeEach(async ({ home }) => {
   const project = join(home, 'responsive-project');

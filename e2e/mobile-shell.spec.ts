@@ -710,7 +710,13 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
       const actions = phone.locator('.thread-command-secondary-actions');
       const meter = phone.getByTestId('thread-context-window');
       await expect(options).toBeVisible();
-      await expect(options.locator('.thread-command-location')).toHaveText('Local');
+      const machineName = await app.window.evaluate(async () => {
+        const response = await fetch('/api/v1/hosts');
+        const hosts = await response.json() as Array<{ isPrimary: boolean; name: string }>;
+        return hosts.find(host => host.isPrimary)?.name;
+      });
+      expect(machineName).toBeTruthy();
+      await expect(options.locator('.thread-command-location')).toHaveText(machineName!);
       await expect(phone.getByTestId('thread-env-label')).toHaveCount(0);
       await expect(meter).toContainText('47%');
       await expect(actions.getByRole('button', { name: 'Start voice input', exact: true })).toBeVisible();
