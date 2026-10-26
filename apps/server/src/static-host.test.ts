@@ -8,10 +8,15 @@ import WebSocket from 'ws';
 import { HOST_RPC_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/host-rpc';
 import { startStaticHost, type StaticHost } from './static-host.js';
 import { startPairingForwarder } from './http/pairing-forwarder.js';
+import { registerBoundLocalPeerApp } from './http/local-peer-app.js';
 
 vi.mock('./http/pairing-forwarder.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./http/pairing-forwarder.js')>();
   return { ...actual, startPairingForwarder: vi.fn(actual.startPairingForwarder) };
+});
+vi.mock('./http/local-peer-app.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./http/local-peer-app.js')>();
+  return { ...actual, registerBoundLocalPeerApp: vi.fn(actual.registerBoundLocalPeerApp) };
 });
 
 let host: StaticHost | null = null;
@@ -308,6 +313,30 @@ describe('startStaticHost', () => {
     expect(product.origins.pairingPort).toBeUndefined();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('pairing forwarder failed to start: bind failed'));
     await expect(fetch(`${host.url}api/v1/health`).then((response) => response.status)).resolves.toBe(200);
+    warn.mockRestore();
+    product.hostHub.close();
+    product.db.close();
+  });
+
+  it.each([
+    [new Error('untrusted local peer app directory'), 'untrusted local peer app directory'],
+    ['plain failure', 'plain failure']
+  ])('keeps serving when local peer app registration rejects (%s)', async (failure, message) => {
+    // Windows reported every data directory as group-writable, so this rejection took the whole server down.
+    vi.mocked(registerBoundLocalPeerApp).mockRejectedValueOnce(failure);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const root = mkdtempSync(join(tmpdir(), 'zcc-static-host-'));
+    writeFileSync(join(root, 'index.html'), '<main>zana</main>');
+    const { createProductHttpContext } = await import('./http/product-context.js');
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-static-product-'));
+    const product = createProductHttpContext({ dataDir, origins: { serverPort: 0 } });
+    host = await startStaticHost({ rootDir: root, product });
+
+    expect(warn).toHaveBeenCalledWith(`[zcc] local peer app registration failed: ${message}`);
+    await expect(fetch(`${host.url}api/v1/health`).then((response) => response.status)).resolves.toBe(200);
+    expect(product.origins.pairingPort).toBeGreaterThan(0);
+    await host.close();
+    host = null;
     warn.mockRestore();
     product.hostHub.close();
     product.db.close();

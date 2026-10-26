@@ -6,6 +6,7 @@ import type { ExecutionRequestV1, SquadExecutionService } from '@zana-ai/zcc-ser
 import { ExecutionSourceError, type createExecutionSourceRegistry, type ExecutionSourcePathDescriptor } from '@zana-ai/zcc-server/services/execution/source-registry';
 import { resolveSourcePolicy, type SourcePolicy } from '@zana-ai/zcc-server/services/execution/source-policy';
 import type { ExecutionRecord, ExecutionReportTarget } from '@zana-ai/zcc-server/services/execution/store';
+import { squadGoalTooLongMessage, squadLaunchTextProblem } from '@zana-ai/zcc-domain/squad-proposal';
 import { PlanCorrectionService } from './plan-correction/service.js';
 import { gateInvalidProvidedPlan, splitProposedGoalSources, teamJobFailureResponse, type ProvidedPlanGateDeps } from './team-launch-support.js';
 import { planNormalizationNote, resolveSquadPlan } from './team-trigger-semantics.js';
@@ -261,9 +262,18 @@ async function buildSquadStartRequest(deps: SquadLaunchDeps, args: {
 }): Promise<{ ok: true; request: ExecutionRequestV1 } | { ok: false; response: TeamJobLaunchResponse }> {
   const { sourceBundle, launchRequestId } = args;
   const capturedPathDescriptors = [...(sourceBundle?.pathDescriptors ?? []), ...args.goalSourceDescriptors];
-  const sanitizedGoal = (redactCapturedExecutionSourcePaths(args.goal, capturedPathDescriptors) ?? args.goal).slice(0, 4_000);
+  const sanitizedGoal = redactCapturedExecutionSourcePaths(args.goal, capturedPathDescriptors) ?? args.goal;
   const sanitizedExplicitTitle = redactCapturedExecutionSourcePaths(args.title, capturedPathDescriptors)?.slice(0, 256) || undefined;
-  const sanitizedSummary = redactCapturedExecutionSourcePaths(args.summary, capturedPathDescriptors)?.slice(0, 4_000) || undefined;
+  const sanitizedSummary = redactCapturedExecutionSourcePaths(args.summary, capturedPathDescriptors) || undefined;
+  // Measure the redacted text the store receives; refuse it rather than cut it.
+  const textProblem = squadLaunchTextProblem({ goal: sanitizedGoal, summary: sanitizedSummary });
+  if (textProblem) {
+    // The composer counts the raw goal; say so when redaction is what pushed it over.
+    const message = textProblem.code === 'GOAL_TOO_LONG' && sanitizedGoal.length !== args.goal.length
+      ? squadGoalTooLongMessage(sanitizedGoal.length, { afterSourceNames: true })
+      : textProblem.message;
+    return { ok: false, response: { ok: false, code: textProblem.code, message } };
+  }
   const sourceMetadata = sourceBundle?.sources.map(({ extractedText: _content, ...metadata }) => metadata);
   // One resolver for interactive and triggered launches: "Plan provided in goal"
   // (structured) must yield a complete durable DAG or park for plan correction;

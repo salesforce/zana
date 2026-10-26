@@ -313,6 +313,13 @@ export function useComposerPromptField({
             return true;
           }
         }
+        // Cmd/Ctrl+Enter submits through the composer chrome (handleChromeKeyDown).
+        // Claim it here so the editor's hard-break shortcut does not also insert a
+        // line break, which stayed in the prompt whenever the submit was refused.
+        if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.isComposing) {
+          event.preventDefault();
+          return true;
+        }
         if (
           event.key === 'Enter'
           && !event.shiftKey

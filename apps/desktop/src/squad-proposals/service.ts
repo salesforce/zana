@@ -5,6 +5,8 @@ import {
   SQUAD_PROPOSAL_LIMITS,
   personaCanWriteFiles,
   planningToCoordinationMode,
+  squadGoalTooLongMessage,
+  squadSummaryTooLongMessage,
   type LaunchApproval,
   type SquadLaunchNowErrorCode,
   type SquadLaunchNowResult,
@@ -149,10 +151,11 @@ function validateInput(input: SquadProposalInput): string | undefined {
   if (!input || typeof input !== 'object') return 'Proposal input is required.';
   if (typeof input.teamId !== 'string' || !input.teamId.trim()) return 'teamId is required.';
   if (typeof input.goal !== 'string' || !input.goal.trim()) return 'goal is required.';
-  if (input.goal.length > L.goalChars) return `goal must be at most ${L.goalChars} characters.`;
+  if (input.goal.length > L.goalChars) return squadGoalTooLongMessage(input.goal.length);
   if (input.planning !== undefined && input.planning !== 'infer' && input.planning !== 'provided') return "planning must be 'infer' or 'provided'.";
   if (input.title !== undefined && (typeof input.title !== 'string' || input.title.length > L.titleChars)) return `title must be at most ${L.titleChars} characters.`;
-  if (input.summary !== undefined && (typeof input.summary !== 'string' || input.summary.length > L.summaryChars)) return `summary must be at most ${L.summaryChars} characters.`;
+  if (input.summary !== undefined && typeof input.summary !== 'string') return 'summary must be text.';
+  if (input.summary !== undefined && input.summary.length > L.summaryChars) return squadSummaryTooLongMessage(input.summary.length);
   if (input.completionInboxNotice !== undefined && typeof input.completionInboxNotice !== 'boolean') return 'completionInboxNotice must be a boolean.';
   if (input.sources !== undefined) {
     if (!Array.isArray(input.sources)) return 'sources must be a list of paths.';

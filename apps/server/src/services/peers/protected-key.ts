@@ -4,6 +4,7 @@ import { link, lstat, mkdir, open, opendir, realpath, unlink } from 'node:fs/pro
 import { join } from 'node:path';
 import { peerKeyReasonSuffix, serializePeerStorage, type PeerKeyProvider } from './peer-auth.js';
 import { SERVER_RUNTIME_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/runtime';
+import { posixPermissions } from '@zana-ai/zcc-host-daemon/posix-permissions';
 
 /** Injected by trusted host composition, never by HTTP or plugin code. */
 export interface PeerCryptoProvider {
@@ -48,11 +49,11 @@ export function createProtectedPeerKeyProvider(dataDir: string, cryptoProvider?:
         if (backend === 'basic_text' || backend === 'unknown' || (process.platform === 'linux' &&
           !['gnome_libsecret', 'kwallet', 'kwallet5', 'kwallet6'].includes(backend ?? ''))) return fail('insecure-backend');
         const baseInfo = await lstat(base);
-        if (!baseInfo.isDirectory() || baseInfo.uid !== process.getuid?.() || (baseInfo.mode & 0o022) !== 0) fail('storage-permissions');
+        if (!baseInfo.isDirectory() || posixPermissions() && (baseInfo.uid !== process.getuid!() || (baseInfo.mode & 0o022) !== 0)) fail('storage-permissions');
         const directory = join(base, 'peer-key');
         await mkdir(directory, { mode: 0o700 }).catch(error => { if (error.code !== 'EEXIST') throw error; });
         const info = await lstat(directory);
-        if (!info.isDirectory() || info.uid !== baseInfo.uid || (info.mode & 0o7777) !== 0o700) fail('storage-permissions');
+        if (!info.isDirectory() || posixPermissions() && (info.uid !== baseInfo.uid || (info.mode & 0o7777) !== 0o700)) fail('storage-permissions');
         const entries = await opendir(directory), stale: string[] = [];
         let count = 0;
         for await (const entry of entries) {
@@ -69,8 +70,8 @@ export function createProtectedPeerKeyProvider(dataDir: string, cryptoProvider?:
           catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
           try {
             const metadata = await handle.stat();
-            if (!metadata.isFile() || metadata.nlink !== 1 || metadata.uid !== baseInfo.uid ||
-              (metadata.mode & 0o7777) !== 0o600 || metadata.size < 1 || metadata.size > MAX_KEY_FILE_BYTES) fail('storage-permissions');
+            if (!metadata.isFile() || metadata.nlink !== 1 || metadata.size < 1 || metadata.size > MAX_KEY_FILE_BYTES ||
+              posixPermissions() && (metadata.uid !== baseInfo.uid || (metadata.mode & 0o7777) !== 0o600)) fail('storage-permissions');
             const bytes = Buffer.alloc(MAX_KEY_FILE_BYTES + 1);
             let length = 0;
             while (length < bytes.length) {
@@ -98,8 +99,11 @@ export function createProtectedPeerKeyProvider(dataDir: string, cryptoProvider?:
             // Publish without replacing another host process's complete key.
             await link(temporary, path).catch(error => { if (error.code !== 'EEXIST') throw error; });
           } finally { await unlink(temporary).catch(() => {}); }
-          const handle = await open(directory, constants.O_RDONLY);
-          try { await handle.sync(); } finally { await handle.close(); }
+          // Directories cannot be fsynced on Windows (EPERM); the key file itself was already synced.
+          if (process.platform !== 'win32') {
+            const handle = await open(directory, constants.O_RDONLY);
+            try { await handle.sync(); } finally { await handle.close(); }
+          }
           sealed = await read();
         }
         if (!sealed) return fail('key-missing');
@@ -130,7 +134,7 @@ export async function readDevPeerKeyFile(path: string): Promise<Buffer | null> {
   catch { return null; }
   try {
     const info = await handle.stat();
-    if (!info.isFile() || info.nlink !== 1 || info.uid !== process.getuid?.() || (info.mode & 0o077) !== 0 || info.size > 128) return null;
+    if (!info.isFile() || info.nlink !== 1 || info.size > 128 || posixPermissions() && (info.uid !== process.getuid!() || (info.mode & 0o077) !== 0)) return null;
     const text = (await handle.readFile('utf8')).trim();
     if (!/^[A-Za-z0-9_-]{43}$/.test(text)) return null;
     const key = Buffer.from(text, 'base64url');

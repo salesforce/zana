@@ -92,6 +92,7 @@ Host github.com-work-public
   detection, independent runtime copies surviving source-output deletion, cleanup.
 - `scripts/e2e-artifacts.test.ts`: completed-run retention preserves active traces.
 - `scripts/e2e-app-config.test.ts` and `e2e/credential-isolation.spec.ts`: isolated test homes never discover a real Claude CLI for background micro-calls; explicit fake and live-test configuration is preserved.
+- `scripts/e2e-app-config.test.ts`: isolated test homes keep Salesforce keys out of the macOS keychain (`SF_USE_GENERIC_UNIX_KEYCHAIN`), so `@salesforce/core` never opens a "Keychain Not Found" prompt; a preserved real HOME keeps its keychain.
 - `packages/db/src/native-binding.test.ts`: runtime/dependency selection and real SQL.
 - `e2e/runtime-isolation.spec.ts`: built Electron opens Library, reloads, and reads
   its document while both native preparation commands run; test home and installed

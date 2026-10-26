@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import { squadGoalTooLongMessage, squadSummaryTooLongMessage } from '@zana-ai/zcc-domain/squad-proposal';
 import { AUTONOMOUS_DEFAULTS } from '@zana-ai/zcc-server/services/agents/autonomous-run-supervisor';
 import { ExecutionSourceError, createExecutionSourceRegistry, type ExecutionSourcePathDescriptor } from '@zana-ai/zcc-server/services/execution/source-registry';
 import { resolveSourcePolicy } from '@zana-ai/zcc-server/services/execution/source-policy';
@@ -196,6 +197,53 @@ describe('launchSquad', () => {
     expect(deps.inboxStore.append).toHaveBeenCalledTimes(1);
     expect(deps.planCorrectionLaunchBinding.beginLaunch).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled();
+  });
+
+  describe('goal and summary limits', () => {
+    const launch = (deps: SquadLaunchDeps, input: Partial<SquadLaunchInput>) =>
+      launchSquad(deps, makeInput(input), { sources: { kind: 'window', windowId: 7 }, owner: { principalId: 'interactive:local' } });
+
+    it('rejects a 2,049-character goal by name, without starting, parking a plan correction, and removes the snapshot', async () => {
+      const { deps, start } = makeDeps({ snapshotSources: vi.fn(async () => ({ ok: true as const, sourceBundle: bundle() })) });
+      const result = await launch(deps, { goal: 'g'.repeat(2049), coordinationMode: 'structured' });
+      expect(result).toEqual({ ok: false, code: 'GOAL_TOO_LONG', message: squadGoalTooLongMessage(2049) });
+      expect(start).not.toHaveBeenCalled();
+      expect(deps.inboxStore.append).not.toHaveBeenCalled();
+      expect(deps.planCorrectionLaunchBinding.beginLaunch).not.toHaveBeenCalled();
+      expect(deps.removeSnapshot).toHaveBeenCalledTimes(1);
+    });
+
+    it('starts a 2,048-character goal without cutting it', async () => {
+      const { deps, start } = makeDeps();
+      const result = await launch(deps, { goal: 'g'.repeat(2048) });
+      expect(result.ok).toBe(true);
+      expect((start.mock.calls[0]?.[2] as Record<string, any>).objective).toHaveLength(2048);
+    });
+
+    it('rejects a 5,000-character goal instead of truncating it', async () => {
+      const { deps, start } = makeDeps();
+      const result = await launch(deps, { goal: 'g'.repeat(5000) });
+      expect(result).toEqual({ ok: false, code: 'GOAL_TOO_LONG', message: squadGoalTooLongMessage(5000) });
+      expect(start).not.toHaveBeenCalled();
+    });
+
+    it('measures the goal after captured paths are redacted to a longer placeholder', async () => {
+      const goal = `/repo/notes.md${'g'.repeat(2026)}`;
+      expect(goal).toHaveLength(2040);
+      const redactedLength = `[captured execution source: notes.md]${'g'.repeat(2026)}`.length;
+      expect(redactedLength).toBeGreaterThan(2048);
+      const { deps, start } = makeDeps({ snapshotSources: vi.fn(async () => ({ ok: true as const, sourceBundle: bundle() })) });
+      const result = await launch(deps, { goal });
+      expect(result).toEqual({ ok: false, code: 'GOAL_TOO_LONG', message: squadGoalTooLongMessage(redactedLength, { afterSourceNames: true }) });
+      expect(start).not.toHaveBeenCalled();
+    });
+
+    it('rejects a 2,049-character summary by name', async () => {
+      const { deps, start } = makeDeps();
+      const result = await launch(deps, { summary: 's'.repeat(2049) });
+      expect(result).toEqual({ ok: false, code: 'SUMMARY_TOO_LONG', message: squadSummaryTooLongMessage(2049) });
+      expect(start).not.toHaveBeenCalled();
+    });
   });
 
   it('returns a snapshot refusal without starting', async () => {

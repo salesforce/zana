@@ -37,6 +37,7 @@ import { pendingChildThreads, useThreads, type ThreadListItem } from '../../thre
 import { useData } from '../../store.js';
 import { useThreadFindTarget } from '../../lib/use-thread-find-target.js';
 import { ThreadPendingInteractionBanner } from '../../components/thread/pending-interactions/ThreadPendingInteractionBanner.js';
+import { pendingInteractionSendBlockedHint } from '../../components/thread/pending-interactions/pending-interaction-formatting.js';
 import { ChildThreadPendingBanners } from '../../components/thread/pending-interactions/ChildThreadPendingBanners.js';
 import {
   isOpenThreadEvent,
@@ -1127,6 +1128,7 @@ function ThreadDetailBody({
                 status={status}
                 inFlightRetry={inFlightRetry}
                 sendBlocked={pendingInteractions.length > 0}
+                sendBlockedHint={pendingInteractionSendBlockedHint(pendingInteractions)}
                 environmentLabel={isWorktree ? 'Worktree' : 'Local'}
                 contextWindowUsage={contextWindow}
                 providerId={threadProviderId ?? undefined}

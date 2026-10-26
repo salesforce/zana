@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type FocusEvent, type FormEvent, type KeyboardEvent } from 'react';
 import { Check } from 'lucide-react';
-import { platformShortcut } from '../../../lib/platformShortcut.js';
+import { platformKey, platformShortcut } from '../../../lib/platformShortcut.js';
 import type { PendingInteractionUserAnswer, PendingInteractionUserQuestionQuestion } from '@zana-ai/zcc-domain/thread-runtime';
 import { loadQuestionDraft, saveQuestionDraft, clearQuestionDraft, questionDraftKey } from './question-drafts.js';
 import { PendingInteractionShell } from './PendingInteractionShell.js';
@@ -21,6 +21,16 @@ import {
 
 // The primary button's chord; both modifiers work on every platform, as in Inbox.
 const PRIMARY_KEYSHORTCUTS = 'Control+Enter Meta+Enter';
+
+// Where focus sits in the panel decides which keys work: plain Enter only
+// advances from an option, and digits type into the free-text box.
+type PanelFocus = 'option' | 'text' | 'other';
+
+function panelFocusOf(target: EventTarget | null): PanelFocus {
+  if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) return 'text';
+  if (target instanceof HTMLElement && target.closest('.thread-pending-option')) return 'option';
+  return 'other';
+}
 
 function InlineText({ text }: { text: string }) {
   if (!text.includes('`')) return <>{text}</>;
@@ -116,6 +126,7 @@ export function QuestionInteractionBanner({
   const current = questions[Math.min(currentIndex, Math.max(total - 1, 0))] ?? null;
   const disabled = busy || resolving;
   const formRef = useRef<HTMLFormElement>(null);
+  const [panelFocus, setPanelFocus] = useState<PanelFocus>('other');
   const refocusAfterMove = useRef(false);
   useEffect(() => {
     // A move can unmount the focused control; keep focus in the panel so the
@@ -214,7 +225,14 @@ export function QuestionInteractionBanner({
       sourceThread={sourceThread}
       errorMessage={error}
     >
-      <form ref={formRef} className="thread-pending-question-form" onSubmit={submit} onKeyDown={onFormKeyDown}>
+      <form
+        ref={formRef}
+        className="thread-pending-question-form"
+        onSubmit={submit}
+        onKeyDown={onFormKeyDown}
+        onFocus={(event: FocusEvent<HTMLFormElement>) => setPanelFocus(panelFocusOf(event.target))}
+        onBlur={() => setPanelFocus('other')}
+      >
         {total > 1 ? (
           <div className="thread-pending-question-steps">
             <div className="thread-pending-question-step-list">
@@ -289,8 +307,9 @@ export function QuestionInteractionBanner({
         ) : null}
         <div className="thread-pending-banner-actions">
           {choiceCount > 1 ? (
-            <span className="thread-pending-question-hint" aria-hidden="true">
-              <kbd>1</kbd>–<kbd>{Math.min(choiceCount, 9)}</kbd> to choose · <kbd>↵</kbd> to {isLast ? 'submit' : 'continue'}
+            <span className="thread-pending-question-hint" data-testid="thread-pending-question-hint" aria-hidden="true">
+              {panelFocus === 'text' ? null : <><kbd>1</kbd>–<kbd>{Math.min(choiceCount, 9)}</kbd> to choose · </>}
+              {panelFocus === 'option' ? <kbd>↵</kbd> : <><kbd>{platformKey('⌘')}</kbd><kbd>↵</kbd></>} to {isLast ? 'submit' : 'continue'}
             </span>
           ) : null}
           {onCancel ? (

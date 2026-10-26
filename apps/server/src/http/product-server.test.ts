@@ -1,10 +1,16 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SQUAD_RUNTIME_OPERATION_PATH } from '@zana-ai/zcc-contracts/runtime';
 import { NATIVE_TOOL_POLICY_PROOF_HEADER, signNativeToolPolicyRequest } from './native-tool-policy-proof.js';
+import { registerBoundLocalPeerApp } from './local-peer-app.js';
 import { startProductServer, type ProductServer } from './product-server.js';
+
+vi.mock('./local-peer-app.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./local-peer-app.js')>();
+  return { ...actual, registerBoundLocalPeerApp: vi.fn(actual.registerBoundLocalPeerApp) };
+});
 
 let server: ProductServer | undefined;
 let dataDir: string | undefined;
@@ -34,6 +40,28 @@ describe('startProductServer squad runtime route', () => {
     const malformed = await post(body, signNativeToolPolicyRequest(secret, body));
     expect(malformed.status).toBe(400);
     expect(await malformed.json()).toEqual({ error: 'invalid squad runtime operation' });
+  });
+});
+
+describe('startProductServer local peer app registration', () => {
+  it.each([
+    [new Error('untrusted local peer app directory'), 'untrusted local peer app directory'],
+    ['plain failure', 'plain failure']
+  ])('keeps listening and answering the API when registration rejects (%s)', async (failure, message) => {
+    // Windows reported every data directory as group-writable, so this rejection took the whole server down.
+    vi.mocked(registerBoundLocalPeerApp).mockRejectedValueOnce(failure);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-server-'));
+      server = await startProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+      expect(warn).toHaveBeenCalledWith(`[zcc] local peer app registration failed: ${message}`);
+      const health = await fetch(`http://127.0.0.1:${server.port}/api/v1/health`);
+      expect(health.status).toBe(200);
+      expect(await health.json()).toEqual({ ok: true });
+      expect(server.ctx.origins.pairingPort).toBeGreaterThan(0);
+      await server.close();
+      server = undefined;
+    } finally { warn.mockRestore(); }
   });
 });
 

@@ -1,4 +1,6 @@
 import { isDurableCoordination, isRestfulAgentState, type AgentState, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SessionStats, type SquadBundleWorkflowMetadataV1, type TeamAvailabilityUnknown, type TeamCoordinationMode, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput, type TeamRequirementFailure } from '@zana-ai/zcc-domain/product';
+import { squadLaunchTextProblem } from '@zana-ai/zcc-domain/squad-proposal';
+import { fitRecoveryObjective } from './recovery-objective.js';
 import { createHash } from 'node:crypto';
 import { launchDigest } from '../launch/digest.js';
 import { EXECUTION_RETENTION_MS, KICKOFF_FAILURE_BLOCK_THRESHOLD, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
@@ -614,6 +616,8 @@ export class ExecutionService {
     if (this.deps.isRegisteredProject && !this.deps.isRegisteredProject(projectId)) {
       return { ok: false, code: 'UNKNOWN_PROJECT', message: 'owner project is not registered' };
     }
+    const textProblem = squadLaunchTextProblem({ goal: request.objective, summary: request.summary?.trim() || undefined });
+    if (textProblem) return { ok: false, code: textProblem.code, message: textProblem.message };
     let resolvedModels: ResolvedModelSnapshotV1[];
     try {
       resolvedModels = (await this.withResolvedRouteFacts(projectId, request)).resolvedModels ?? [];
@@ -2331,18 +2335,23 @@ export class ExecutionService {
       .map((blocker) => `- ${blocker.question}${blocker.options?.length ? ` Options: ${blocker.options.join(' | ')}` : ''}`)
       .join('\n')
       .slice(0, 8_192);
+    const recoveryText = {
+      objective: reserved.request.objective,
+      header: 'Recovery run: completed read-only work must not be repeated.',
+      sections: [completedContext ? `Verified completed outputs:\n${completedContext}` : 'No completed unit outputs were retained.'],
+      pinnedSection: unresolvedBlockers
+        ? `Unresolved human input from the timed-out run:\n${unresolvedBlockers}\nAsk this again with execution.work.block before continuing; do not assume an answer or contact canceled workers.`
+        : undefined,
+      sourceExecutionId: reserved.id
+    };
     const request: ExecutionRequestV1 = {
       ...reserved.request,
       teamId: reserved.teamId,
       launchRequestId: reserved.successorLaunchRequestId!,
-      objective: [
-        reserved.request.objective,
-        'Recovery run: completed read-only work must not be repeated.',
-        completedContext ? `Verified completed outputs:\n${completedContext}` : 'No completed unit outputs were retained.',
-        unresolvedBlockers
-          ? `Unresolved human input from the timed-out run:\n${unresolvedBlockers}\nAsk this again with execution.work.block before continuing; do not assume an answer or contact canceled workers.`
-          : undefined
-      ].filter(Boolean).join('\n\n'),
+      // A bounded preview: the full outputs and open questions stay in the source
+      // execution's record. Members cannot read that record, so a shortened
+      // preview is lossy for the successor's coordinator by design.
+      objective: fitRecoveryObjective(recoveryText),
       workUnits: unfinished.map(({ state: _state, assignedSlotId: _assigned, attempt: _attempt, failureCode: _code, failure: _failure, result: _result, history: _history, ...unit }) => ({
         ...unit,
         dependencies: unit.dependencies.filter((dependency) => !completedIds.has(dependency))

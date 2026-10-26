@@ -11,7 +11,8 @@ import type {
 } from '@zana-ai/zcc-domain/thread-runtime';
 import {
   isApprovalPendingInteractionPayload,
-  isPluginExtensionInteractionRequestPayload
+  isPluginExtensionInteractionRequestPayload,
+  isUserQuestionPendingInteractionPayload
 } from '@zana-ai/zcc-domain/thread-runtime';
 
 type PendingInteractionPermissionSummaryProfile =
@@ -287,4 +288,14 @@ export function approvalDecisionIndexForKey(
 
 export function approvalDecisionTabIndex(index: number, activeIndex: number): 0 | -1 {
   return index === activeIndex ? 0 : -1;
+}
+
+/**
+ * What the composer says when a send is blocked by open interactions: name the
+ * question when every banner above it is one, else stay generic.
+ */
+export function pendingInteractionSendBlockedHint(interactions: readonly PendingInteraction[]): string {
+  const allQuestions = interactions.length > 0
+    && interactions.every((interaction) => isUserQuestionPendingInteractionPayload(interaction.payload));
+  return allQuestions ? 'Answer the question above first' : 'Respond to the request above first';
 }
