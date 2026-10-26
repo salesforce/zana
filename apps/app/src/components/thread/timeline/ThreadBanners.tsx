@@ -1,6 +1,6 @@
 import { type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, Folder, GitBranch, Laptop, ListTodo, Loader2, Server, X } from 'lucide-react';
+import { ChevronDown, ListTodo, Loader2, X } from 'lucide-react';
 import type {
   ActiveThinking,
   ThreadTimelineGoal,
@@ -9,8 +9,6 @@ import type {
 } from '@zana-ai/zcc-domain/thread-runtime';
 import type { TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
 import { ThreadTodoChecklist } from '../thread-todo-checklist.js';
-import { fallbackProviderOption } from '../pickers/fallback-models.js';
-import { humanThreadModelLabel } from '../pickers/thread-execution-labels.js';
 import {
   showOngoingThreadWork,
   threadStatusLabel,
@@ -260,15 +258,6 @@ export function ThreadDetailActions({ target, children }: { target?: HTMLElement
   return target ? createPortal(actions, target) : actions;
 }
 
-export type ThreadDetailHeadingAgent = {
-  providerId: string | null;
-  model: string | null;
-  projectName: string | null;
-  branchName: string | null;
-  machineName?: string;
-  machineRemote?: boolean;
-};
-
 export function ThreadDetailHeading({
   title,
   titleTarget,
@@ -276,7 +265,8 @@ export function ThreadDetailHeading({
   overflow,
   onPointerDown,
   draggable,
-  agent
+  status,
+  metadata
 }: {
   title: string;
   titleTarget?: HTMLElement | null;
@@ -284,58 +274,22 @@ export function ThreadDetailHeading({
   overflow?: ReactNode;
   onPointerDown?: (event: PointerEvent<HTMLDivElement>) => void;
   draggable?: boolean;
-  agent?: ThreadDetailHeadingAgent;
+  status?: ReactNode;
+  metadata?: ReactNode;
 }) {
   const heading = <h1 title={title}>{title}</h1>;
-  // The phone shell owns a single-row title, so identity stays desktop-only.
-  const identity = agent && !titleTarget ? agent : null;
   return (
     <div
       className={`thread-detail-heading${draggable ? ' split-pane-drag-handle' : ''}`}
       onPointerDown={onPointerDown}
     >
-      {titleTarget ? createPortal(heading, titleTarget) : identity ? (
+      {titleTarget ? createPortal(heading, titleTarget) : metadata ? (
         <div className="thread-detail-title-block">
-          {heading}
-          <ThreadDetailMeta agent={identity} />
+          <div className="thread-detail-title-row">{heading}{status}</div>
+          {metadata}
         </div>
-      ) : heading}
+      ) : <>{heading}{status}</>}
       {overflowTarget ? createPortal(overflow, overflowTarget) : overflow}
-    </div>
-  );
-}
-
-function threadDetailHarnessName(providerId: string | null): string | null {
-  return providerId ? fallbackProviderOption(providerId).displayName : null;
-}
-
-function ThreadDetailMeta({ agent }: { agent: ThreadDetailHeadingAgent }) {
-  const identity = [
-    threadDetailHarnessName(agent.providerId),
-    agent.model ? humanThreadModelLabel(agent.model, agent.providerId ?? undefined) : null
-  ].filter(Boolean).join(' · ');
-  if (!identity && !agent.projectName && !agent.branchName && !agent.machineName) return null;
-  return (
-    <div className="thread-detail-meta" data-testid="thread-detail-meta">
-      {identity ? <span className="thread-detail-meta-identity" title={identity}>{identity}</span> : null}
-      {agent.machineName ? (
-        <span className="thread-detail-meta-chip" title={`Machine: ${agent.machineName}`}>
-          {agent.machineRemote ? <Server size={11} aria-hidden="true" /> : <Laptop size={11} aria-hidden="true" />}
-          <span>{agent.machineName}</span>
-        </span>
-      ) : null}
-      {agent.projectName ? (
-        <span className="thread-detail-meta-chip" title={`Project: ${agent.projectName}`}>
-          <Folder size={11} aria-hidden="true" />
-          <span>{agent.projectName}</span>
-        </span>
-      ) : null}
-      {agent.branchName ? (
-        <span className="thread-detail-meta-chip" title={`Branch: ${agent.branchName}`}>
-          <GitBranch size={11} aria-hidden="true" />
-          <span>{agent.branchName}</span>
-        </span>
-      ) : null}
     </div>
   );
 }

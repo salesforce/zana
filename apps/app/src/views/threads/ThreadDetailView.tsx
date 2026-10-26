@@ -9,7 +9,7 @@ import { mergeTimelinePages, type ThreadContextWindowUsage, type TimelineRow } f
 import { type TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
 import { product } from '../../lib/product-client.js';
 import { ThreadCommandComposer } from '../../components/ThreadCommandComposer.js';
-import { useMobileThreadActionsTarget, useMobileThreadControlsTarget, useMobileThreadTitleTarget } from '../../components/useMobileThreadTitleTarget.js';
+import { useMobileThreadControlsTarget, useMobileThreadTitleTarget } from '../../components/useMobileThreadTitleTarget.js';
 import { ThreadTimeline } from '../../components/thread/ThreadTimeline.js';
 import { ThreadDiffPanel } from '../../components/thread/ThreadDiffPanel.js';
 import { ThreadWorkspaceBanner } from '../../components/thread/ThreadWorkspaceBanner.js';
@@ -19,6 +19,7 @@ import {
   timelineRowsAwaitUser
 } from '../../components/thread/thread-timeline-model.js';
 import { ThreadDetailActions, ThreadDetailHeading, ThreadPromptModeCard, ThreadStatusBadge, ThreadTodoCard } from '../../components/thread/timeline/ThreadBanners.js';
+import { ThreadDetailContext } from '../../components/thread/ThreadDetailContext.js';
 import {
   BackgroundCommandsCard,
   ModelFallbackCard,
@@ -166,7 +167,6 @@ function ThreadDetailBody({
   const mobileHeaderInShell = !modal && pane?.isFocused !== false
     && (mobileTitleInShell || (!embedded && route.threadId === threadId));
   const mobileTitleTarget = useMobileThreadTitleTarget(mobileHeaderInShell);
-  const mobileActionsTarget = useMobileThreadActionsTarget(mobileHeaderInShell);
   const mobileControlsTarget = useMobileThreadControlsTarget(mobileHeaderInShell);
   const compact = useCompactLayout();
   const hostedSecondary = pane?.secondaryPanelHost != null;
@@ -968,26 +968,25 @@ function ThreadDetailBody({
       <div className="thread-detail-split">
       <div className={dockEnabled ? "thread-tool-main" : "thread-tool-main--legacy"}>
       <div ref={mainRef} className="thread-detail-main">
-        <header className="thread-detail-header" data-title-in-shell={Boolean(mobileTitleTarget) || undefined} data-controls-in-shell={Boolean(mobileControlsTarget) || undefined}>
+        <header className="thread-detail-header thread-detail-header--balanced" data-title-in-shell={Boolean(mobileTitleTarget) || undefined} data-controls-in-shell={Boolean(mobileControlsTarget) || undefined}>
           <ThreadDetailHeading
             title={title}
             titleTarget={mobileTitleTarget}
-            overflowTarget={mobileActionsTarget}
             draggable={Boolean(pane?.beginPaneDrag)}
             onPointerDown={
               pane?.beginPaneDrag
                 ? (event) => pane.beginPaneDrag?.(event, title)
                 : undefined
             }
-            overflow={mobileControlsTarget ? null : overflow}
-            agent={{
+            status={!mobileControlsTarget ? <ThreadStatusBadge status={status} waitingOnUser={awaitingUser} thinking={thinking} /> : null}
+            metadata={!mobileControlsTarget && <ThreadDetailContext key={threadId} agent={{
               providerId: threadProviderId,
               model: threadModel,
               projectName: project?.name ?? null,
               machineName: executionLocation.machineName,
               machineRemote: executionLocation.remote,
               branchName
-            }}
+            }} />}
           />
           <ThreadDetailActions target={mobileControlsTarget}>
             {(!mobileControlsTarget || mobileSearchOpen) && <ThreadDetailSearch
@@ -1002,7 +1001,7 @@ function ThreadDetailBody({
               matchCount={searchActive && !search.pending ? search.matches.length : undefined}
               partial={searchActive && search.partial}
             />}
-            <ThreadStatusBadge status={status} waitingOnUser={awaitingUser} thinking={thinking} />
+            {mobileControlsTarget && <ThreadStatusBadge status={status} waitingOnUser={awaitingUser} thinking={thinking} />}
             {!mobileControlsTarget && <PluginThreadHeaderActions threadId={threadId} projectId={projectId} />}
             <SplitPaneHeaderActions />
             {dockEnabled ? <button type="button" className="icon-btn"
@@ -1023,7 +1022,7 @@ function ThreadDetailBody({
                 <PanelRight size={14} />
               </button>
             ) : null}
-            {mobileControlsTarget ? overflow : null}
+            {overflow}
           </ThreadDetailActions>
         </header>
         <div className="thread-detail-body">

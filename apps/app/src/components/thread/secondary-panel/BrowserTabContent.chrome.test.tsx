@@ -328,7 +328,7 @@ describe('BrowserTabContent visibility', () => {
     expect(h.api.reload).not.toHaveBeenCalled();
   });
 
-  it.each(['thread-tool-drag-shield', 'thread-tool-menu'])('releases the native browser under %s and restores the same page', async className => {
+  it.each(['thread-tool-drag-shield', 'thread-tool-menu', 'thread-context-popover'])('releases the native browser under %s and restores the same page', async className => {
     const h = setup();
     render(h.browser);
     const shield = document.createElement('div');

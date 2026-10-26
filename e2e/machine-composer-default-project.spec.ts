@@ -135,7 +135,9 @@ test('Default Project discovers remote models and machine renames survive pairin
     expect(created.hostId).toBe(grant.hostId);
     expect(created.environmentId).toBeTruthy();
     await expect.poll(async () => (await api(`/threads/${threadId}`)).body.thread.status, { timeout: 60_000 }).toBe('idle');
+    await win.getByRole('button', { name: 'Thread context', exact: true }).click();
     await expect(win.getByTestId('thread-detail-meta').getByTitle(`Machine: ${originalName}`, { exact: true })).toBeVisible();
+    await win.getByRole('button', { name: 'Close thread context', exact: true }).click();
     const localTask = await api('/threads', { projectId: scratch.value.id, providerId: 'fake', input: 'Local default task' });
     expect(localTask.status).toBe(201);
     const localThreadId = localTask.body.thread.id;
