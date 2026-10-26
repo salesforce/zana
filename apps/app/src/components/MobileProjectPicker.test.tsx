@@ -15,6 +15,10 @@ it('opens without focusing search, filters descriptions, and selects a project w
   const onChange = vi.fn();
   render(<MobileProjectPicker ariaLabel="Project" value="one" options={options} onChange={onChange} />);
   const trigger = screen.getByRole('button', { name: 'Project', exact: true });
+  // Keep the composer layout stable until the click lands; focus can resize it.
+  const press = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+  fireEvent(trigger, press);
+  expect(press.defaultPrevented).toBe(true);
   fireEvent.click(trigger);
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close project picker' }));
   expect(screen.getByRole('button', { name: 'First project' }).getAttribute('aria-pressed')).toBe('true');

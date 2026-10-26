@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createSqliteDatabase } from '../packages/db/src/sqlite.js';
 import { test, expect } from './fixtures/app.js';
+import { stubNativeDialogs } from './sdk/native-dialog.js';
 
 test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { tmuxScope: 'off', sponsorPromptDismissed: true } });
 
@@ -137,6 +138,7 @@ test('durable retry sweep sends safe failures and leaves ambiguous sends for man
   const queue = window.getByTestId('thread-queued-messages');
   await expect(queue).toContainText('Manual recovery only');
   await expect(timeline).not.toContainText('Response to: Manual recovery only');
+  await stubNativeDialogs(app.electron, [1]);
   await queue.getByRole('button', { name: 'Send now', exact: true }).click();
   await expect(timeline).toContainText('Response to: Manual recovery only');
   await expect(queue).toHaveCount(0);

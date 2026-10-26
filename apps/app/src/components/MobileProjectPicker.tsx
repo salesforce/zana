@@ -32,6 +32,7 @@ export function MobileProjectPicker({ value, options, onChange, placeholder, dis
   return <>
     <button type="button" className="launch-model-picker-trigger" disabled={disabled} title={title}
       aria-label={ariaLabel} aria-haspopup="dialog" aria-expanded={open}
+      onMouseDown={event => event.preventDefault()}
       onClick={event => { event.currentTarget.focus(); setOpen(true); }}>
       {triggerIcon}<span>{selected?.label ?? placeholder}</span><ChevronDown size={14} aria-hidden="true" />
     </button>
