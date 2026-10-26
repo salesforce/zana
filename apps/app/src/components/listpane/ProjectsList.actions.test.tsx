@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import type { PluginProjectMenuActionRegistration } from '@zana-ai/zcc-plugin-sdk';
@@ -81,6 +81,11 @@ function openMenu(projectName: string) {
 
 function renderList(placement: 'sidebar' | 'pane' = 'sidebar') {
   render(<MemoryRouter><ProjectsList placement={placement} /></MemoryRouter>);
+}
+
+function LocationProbe() {
+  const location = useLocation();
+  return <output data-testid="location">{location.pathname}{location.search}</output>;
 }
 
 afterEach(() => {
@@ -226,8 +231,28 @@ describe('machine project context menu', () => {
     openMachineProjectMenu('First');
     expect(document.querySelector('.project-menu')).not.toBeNull();
 
+    fireEvent.keyDown(window, { key: 'Enter' });
+    expect(document.querySelector('.project-menu')).not.toBeNull();
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(document.querySelector('.project-menu')).toBeNull();
+  });
+
+  it('shows the empty projects state', () => {
+    h.projects = [];
+    renderList();
+
+    expect(document.querySelector('.list-empty')?.textContent).toContain('No projects yet.');
+  });
+
+  it('shows no-match state when sidebar filter removes every machine group', () => {
+    h.hosts = [{ id: 'remote', name: 'Devbox', status: 'connected' }] as typeof h.hosts;
+    h.projects = [
+      { id: 'p1', name: 'First', path: '/tmp/first', createdAt: 1, lastActiveAt: 1, hostId: 'remote' }
+    ] as Project[];
+    renderList();
+    fireEvent.change(screen.getByPlaceholderText('Filter machines or projects'), { target: { value: 'missing' } });
+
+    expect(screen.getByRole('status').textContent).toContain('No machines or projects match');
   });
 
   it('keeps ordinary project menu fallback in pane placement', () => {
@@ -241,5 +266,27 @@ describe('machine project context menu', () => {
 
     expect(screen.getByRole('button', { name: 'Rename' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Move down' }).hasAttribute('disabled')).toBe(false);
+  });
+
+  it('routes projected Default Project row and New agent to its machine without opening row menu', () => {
+    h.hosts = [{ id: 'remote', name: 'Devbox', status: 'connected' }] as typeof h.hosts;
+    h.projects = [
+      { id: 'default', name: 'Default Project', path: '/tmp/default', quickAgent: true, createdAt: 1, lastActiveAt: 1 }
+    ] as Project[];
+    render(<MemoryRouter><ProjectsList placement="sidebar" /><LocationProbe /></MemoryRouter>);
+
+    const remoteGroup = document.querySelector('[data-machine-id="remote"]');
+    expect(remoteGroup).not.toBeNull();
+    const openDefault = within(remoteGroup as HTMLElement).getByRole('button', { name: 'Open Default Project' });
+    const row = openDefault.closest('.project-item');
+    expect(row).not.toBeNull();
+    fireEvent.contextMenu(row!, { button: 2, clientX: 40, clientY: 50 });
+    expect(document.querySelector('.project-menu')).toBeNull();
+
+    fireEvent.click(openDefault);
+    expect(screen.getByTestId('location').textContent).toBe('/threads/new?locationProject=default&host=remote');
+    fireEvent.click(within(remoteGroup as HTMLElement).getByRole('button', { name: 'New agent in Default Project' }));
+    expect(screen.getByTestId('location').textContent).toBe('/threads/new?locationProject=default&host=remote');
+    expect(h.setLauncherOpen).not.toHaveBeenCalled();
   });
 });
