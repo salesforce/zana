@@ -29,6 +29,43 @@ const installedClaude = {
 };
 
 describe('host command dispatch', () => {
+  it('inspects and registers machine folders through RPC and retains their identity after restart', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'zcc-catalogue-dispatch-')));
+    onTestFinished(() => rmSync(root, { recursive: true, force: true }));
+    const folder = join(root, 'project'); mkdirSync(folder);
+    const dataDir = join(root, 'data');
+    const runtime = createCommandRuntime({ dataDir });
+    await expect(dispatchHostCommand(runtime, { type: 'host.inspect_directories', paths: [folder, join(root, 'missing')] }))
+      .resolves.toEqual({ directories: [
+        { requestedPath: folder, path: folder, status: 'ready' },
+        { requestedPath: join(root, 'missing'), path: null, status: 'missing' }
+      ] });
+    const command = { type: 'project.catalogue.register' as const, projects: [{ path: folder, name: 'My project' }] };
+    const registered = await dispatchHostCommand(runtime, command) as { projects: Array<{ id: string; path: string; name: string }> };
+    expect(registered.projects).toEqual([{ id: expect.any(String), path: folder, name: 'My project' }]);
+    await expect(dispatchHostCommand(runtime, command)).resolves.toEqual(registered);
+    const restarted = createCommandRuntime({ dataDir });
+    await expect(dispatchHostCommand(restarted, { type: 'project.catalogue.list', offset: 0, limit: 100 }))
+      .resolves.toMatchObject({ projects: registered.projects, nextOffset: null });
+    await expect(dispatchHostCommand(restarted, { type: 'project.catalogue.register', projects: [{ path: join(root, 'missing') }] }))
+      .rejects.toThrow('Project folder is unavailable');
+  });
+
+  it('publishes successful clones in the machine catalogue and preserves them when another clone fails', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'zcc-clone-catalogue-dispatch-')));
+    onTestFinished(() => rmSync(root, { recursive: true, force: true }));
+    const source = join(root, 'source.git');
+    expect(spawnSync('git', ['init', '--bare', source]).status).toBe(0);
+    const runtime = createCommandRuntime({ dataDir: join(root, 'data') });
+    const command = { type: 'project.clone' as const, remoteUrl: source, projectSlug: 'cloned' };
+    const cloned = await dispatchHostCommand(runtime, command) as { path: string };
+    expect(cloned.path).toBe(join(root, 'data', 'checkouts', 'cloned'));
+    const catalogue = await dispatchHostCommand(runtime, { type: 'project.catalogue.list', offset: 0, limit: 100 });
+    expect(catalogue).toMatchObject({ projects: [{ path: cloned.path, name: 'cloned' }] });
+    await expect(dispatchHostCommand(runtime, command)).rejects.toMatchObject({ code: 'clone_target_exists' });
+    await expect(dispatchHostCommand(runtime, { type: 'project.catalogue.list', offset: 0, limit: 100 })).resolves.toEqual(catalogue);
+  });
+
   it('dispatches native skill discovery with author restrictions and rejects an unconfined relative cwd', async () => {
     const project = mkdtempSync(join(tmpdir(), 'zcc-native-dispatch-'));
     onTestFinished(() => rmSync(project, { recursive: true, force: true }));
