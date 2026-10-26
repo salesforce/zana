@@ -393,7 +393,7 @@ test('New worktree lands under ~/.zcc/worktrees and typing reaches the host PTY'
     await expect(srcRow).toBeVisible({ timeout: 15_000 });
     await srcRow.click({ button: 'right' });
     await window.getByText('Open shell here').click();
-    await expect(window.getByRole('tab', { name: /shell/i })).toBeVisible({ timeout: 20_000 });
+    await expect(window.getByRole('tab', { name: /^Terminal/ })).toBeVisible({ timeout: 20_000 });
     const shellTerm = window.locator('.term .xterm').last();
     await expect(shellTerm).toBeVisible({ timeout: 20_000 });
     await shellTerm.click();
