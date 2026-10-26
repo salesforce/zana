@@ -27,9 +27,9 @@ test('a project keeps its bound machine when the client roster omits it', async 
   await page.reload();
   await page.getByTestId('nav-home').click();
   const composer = page.locator('.thread-command-composer').first();
-  await composer.getByRole('button', { name: 'Project', exact: true }).click();
-  await page.getByRole('listbox', { name: 'Project' }).getByRole('option', { name: /^bound-machine-project\b/ }).click();
-  await expect(composer.getByRole('button', { name: 'Machine', exact: true })).toContainText('Machine unavailable');
+  await composer.getByRole('button', { name: 'Machine and project', exact: true }).click();
+  await page.getByRole('listbox', { name: 'Machine and project' }).getByRole('option', { name: /Unavailable machine › bound-machine-project/ }).click();
+  await expect(composer.getByRole('button', { name: 'Machine and project', exact: true })).toContainText('Unavailable machine');
   await composer.getByTestId('thread-command-input').fill('Keep this draft on its original machine');
   await expect(composer.getByTestId('thread-command-send')).toBeDisabled();
   await expect(composer.getByTestId('thread-command-input')).toContainText('Keep this draft on its original machine');

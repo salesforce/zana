@@ -19,6 +19,15 @@ function open(onClone = vi.fn()) {
 }
 
 describe('Git import dialog', () => {
+  it('shows a Windows destination from the fixed remote machine', async () => {
+    mocks.cloneRoot.mockResolvedValueOnce('C:\\repos');
+    mocks.onCloneProgress.mockReturnValue(mocks.off);
+    render(<AddGitProjectDialog fixedHostId="remote" fixedMachineName="Dev PC" onClone={vi.fn()} onSuccess={vi.fn()} onClose={vi.fn()} />);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Repository URL' }), { target: { value: 'owner/repo' } });
+    expect(await screen.findByText('C:\\repos\\repo')).toBeTruthy();
+    expect(screen.getByText('Dev PC')).toBeTruthy();
+    expect(mocks.cloneRoot).toHaveBeenCalledWith('remote');
+  });
   it('keeps inputs, shows account recovery and collapsed details, and supports retry', async () => {
     const onClone = vi.fn().mockResolvedValueOnce({ ok: false, code: 'CLONE_FAILED',
       message: 'remote: Repository not found.\nfatal: Authentication failed' });

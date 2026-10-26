@@ -6,12 +6,15 @@ import type { Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 import type { ThreadListItem } from '../../thread-store.js';
 
 const h = vi.hoisted(() => ({
+  hosts: [] as import('@zana-ai/zcc-domain/thread-runtime').Host[],
   projects: [] as Project[],
   terminals: {} as Record<string, TerminalSession[]>,
   threads: [] as ThreadListItem[],
   hideIdleProjects: false,
   noActions: [] as never[]
 }));
+
+vi.mock('../../hooks/useHosts.js', () => ({ useHosts: () => h.hosts }));
 
 vi.mock('../../store.js', () => ({
   useData: (select: (state: unknown) => unknown) => select({
@@ -90,6 +93,7 @@ function chooseView(label: 'Projects' | 'Agents only') {
 
 beforeEach(() => {
   localStorage.clear();
+  h.hosts = [];
   h.hideIdleProjects = false;
   h.projects = [project('p1', 'local-core'), project('p2', 'zana-builder'), project('p3', 'empty-one')];
   h.threads = [
@@ -106,7 +110,7 @@ describe('ProjectsList agents-only view', () => {
     renderList();
     expect(screen.getByRole('button', { name: 'Open local-core' })).toBeTruthy();
     expect(screen.queryByRole('list', { name: 'Agents' })).toBeNull();
-    expect(screen.getByPlaceholderText('Filter projects')).toBeTruthy();
+    expect(screen.getByPlaceholderText('Filter machines or projects')).toBeTruthy();
   });
 
   it('hides project rows and lists every session newest-first, tagged with its project', () => {
@@ -185,5 +189,37 @@ describe('ProjectsList agents-only view', () => {
     chooseView('Projects');
     expect(screen.queryByRole('list', { name: 'Agents' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Open zana-builder' })).toBeTruthy();
+  });
+});
+
+
+describe('machine project hierarchy', () => {
+  it('nests only the host-owned threads below each default and searches machines', () => {
+    h.hosts = [{ id: 'local', name: 'Laptop', isPrimary: true, status: 'connected' }, { id: 'remote', name: 'Devbox', status: 'connected' }] as typeof h.hosts;
+    h.projects = [{ ...project('default', 'Default Project'), quickAgent: true }, { ...project('api', 'API'), hostId: 'remote' }];
+    h.threads = [{ ...thread('local-thread', 'default', 'Local task', 2), hostId: 'local' }, { ...thread('remote-thread', 'default', 'Remote task', 3), hostId: 'remote' }];
+    h.terminals = {};
+    renderList();
+    const remote = document.querySelector('[data-machine-id="remote"]') as HTMLElement;
+    const local = document.querySelector('[data-machine-id="local"]') as HTMLElement;
+    expect(within(remote).getByRole('button', { name: 'Open Default Project' }).getAttribute('aria-disabled')).toBeNull();
+    expect(within(remote).getByRole('button', { name: 'Remote task' })).toBeTruthy();
+    expect(within(remote).queryByRole('button', { name: 'Local task' })).toBeNull();
+    expect(within(local).getByRole('button', { name: 'Local task' })).toBeTruthy();
+    expect(within(local).queryByRole('button', { name: 'Open API' })).toBeNull();
+    fireEvent.click(within(remote).getByRole('button', { name: 'Open Default Project' }));
+    expect(screen.getByTestId('location').textContent).toBe('/threads/new');
+    fireEvent.change(screen.getByPlaceholderText('Filter machines or projects'), { target: { value: 'Devbox' } });
+    expect(document.querySelector('[data-machine-id="local"]')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Open API' })).toBeTruthy();
+  });
+  it('opens the machine overview even when it only has a default project', () => {
+    h.hosts = [{ id: 'remote', name: 'Empty box', status: 'disconnected' }] as typeof h.hosts;
+    h.projects = [{ ...project('default', 'Default Project'), quickAgent: true }]; h.threads = []; h.terminals = {};
+    renderList();
+    fireEvent.click(screen.getByRole('button', { name: 'Open Empty box projects' }));
+    const dialog = screen.getByRole('dialog', { name: 'Empty box' });
+    expect(within(dialog).getByText('Ready to start')).toBeTruthy();
+    expect(within(dialog).getByText('No threads')).toBeTruthy();
   });
 });

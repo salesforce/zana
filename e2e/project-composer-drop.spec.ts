@@ -43,7 +43,7 @@ test('projects drag into Modern and CLI composers while rail reordering still wo
   await expect(modern.locator('.prompt-mention-pill')).toHaveText('Project: Drop Alpha');
 
   // Filtering disables sorting, but must not disable mentioning a project.
-  await rail.getByRole('textbox', { name: 'Filter projects' }).fill('Drop Beta');
+  await rail.getByRole('textbox', { name: 'Filter machines or projects' }).fill('Drop Beta');
   await window.getByRole('group', { name: 'Launch mode' }).getByRole('button', { name: 'CLI Agent', exact: true }).click();
   const cli = window.getByTestId('legacy-agent-command-input');
   await expect(cli.locator('.prompt-mention-pill')).toHaveText('Project: Drop Alpha');

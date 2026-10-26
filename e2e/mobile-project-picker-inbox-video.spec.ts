@@ -41,7 +41,7 @@ test('mobile project selection scrolls and fits the keyboard; inbox videos play 
     expect((await context.request.post(`${serverUrl}/_mobile/session`, { headers: { authorization: `Bearer ${credential.credential}` } })).ok()).toBe(true);
     const page = await context.newPage();
     await page.goto(`${serverUrl}/threads/new`);
-    const trigger = page.getByRole('button', { name: 'Project', exact: true });
+    const trigger = page.getByRole('button', { name: 'Machine and project', exact: true });
     for (const width of [320, 390, 820]) {
       await page.setViewportSize({ width, height: 844 });
       await trigger.tap();
@@ -110,7 +110,7 @@ test('mobile project selection scrolls and fits the keyboard; inbox videos play 
     await page.goto(`${serverUrl}/threads/new`);
     await page.setViewportSize({ width: 1280, height: 900 });
     await trigger.click();
-    await expect(page.getByRole('listbox', { name: 'Project', exact: true })).toBeVisible();
+    await expect(page.getByRole('listbox', { name: 'Machine and project', exact: true })).toBeVisible();
     await expect(page.getByRole('dialog', { name: 'Choose project' })).toHaveCount(0);
   } finally {
     await browser.close();

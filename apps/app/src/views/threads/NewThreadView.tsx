@@ -21,6 +21,8 @@ export function NewThreadView({ project: projectProp }: { project?: Project } = 
   const [search] = useSearchParams();
   const seed = composePromptSeedFrom({ searchParams: search, state: location.state });
   const projectId = projectProp?.id ?? routeProjectId ?? search.get('project');
+  const locationProjectId = search.get('locationProject') ?? undefined;
+  const initialHostId = search.get('host') ?? undefined;
   const projects = useData((s) => s.projects);
   const project = useMemo(
     () => projectProp ?? (projectId ? projects.find((row) => row.id === projectId) : undefined),
@@ -33,7 +35,10 @@ export function NewThreadView({ project: projectProp }: { project?: Project } = 
       <div className="new-thread-view-inner">
         <h1 className="new-thread-view-heading">New agent</h1>
         <HomeAgentComposer
-          draftScope="new-thread"
+          key={`${locationProjectId ?? ''}:${initialHostId ?? ''}`}
+          draftScope={locationProjectId || initialHostId ? `new-thread:${locationProjectId ?? ''}:${initialHostId ?? ''}` : 'new-thread'}
+          composerProjectId={locationProjectId}
+          initialHostId={initialHostId}
           project={project}
           initialText={seed.initialText}
           autoFocus={seed.focusPrompt}

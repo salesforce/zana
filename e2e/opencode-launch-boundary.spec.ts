@@ -33,11 +33,11 @@ test.use({
 });
 
 async function selectTargetProject(window: Page, modal: Locator, projectName: string) {
-  const trigger = modal.getByRole('button', { name: 'Project' });
+  const trigger = modal.getByRole('button', { name: 'Machine and project' });
   await trigger.click();
   await window
-    .getByRole('listbox', { name: 'Project' })
-    .getByRole('option', { name: projectName, exact: true })
+    .getByRole('listbox', { name: 'Machine and project' })
+    .getByRole('option', { name: projectName, exact: false })
     .click();
   await expect(trigger).toContainText(projectName);
 }
@@ -77,7 +77,7 @@ async function selectRole(window: Page, modal: Locator, value: string, timeout =
   await menu.getByText('Refresh roles', { exact: true }).click();
   await expect(menu).toBeVisible({ timeout });
   const label = `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
-  await menu.getByRole('option', { name: label, exact: true }).click({ timeout });
+  await menu.getByRole('option', { name: label, exact: false }).click({ timeout });
 }
 
 const fixtureOpenCode = join(fixtureBin, 'opencode');

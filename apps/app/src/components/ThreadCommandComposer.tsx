@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { ArrowUp, Folder, Laptop, Loader2, Minimize2, Paperclip, Square } from 'lucide-react';
+import { ArrowUp, Laptop, Loader2, Minimize2, Paperclip, Square } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import type { ThreadContextWindowUsage } from '@zana-ai/zcc-server-contract';
@@ -8,6 +8,7 @@ import { runHostInstallWithDrawer } from '../lib/host-install-run.js';
 import { copyText } from '../lib/copy-text.js';
 import { useData, useUi } from '../store.js';
 import { useThreads } from '../thread-store.js';
+import { newThreadLocationPath } from '../lib/machine-projects.js';
 import { getThreadRoutePath } from '../lib/route-paths.js';
 import { useRouteState } from '../hooks/useRouteState.js';
 import {
@@ -16,19 +17,14 @@ import {
   ComposerToolbar
 } from './ui/CommandComposer.js';
 import { EnvironmentPicker, defaultWorkspaceChoice, type WorkspacePickerValue } from './EnvironmentPicker.js';
-import { HostMachinePicker } from './HostMachinePicker.js';
 import { HostSshIdentityDialog } from './HostSshIdentityDialog.js';
 import { ComposerHostActionChip } from './ComposerHostActionChip.js';
-import { ComposerRemoteHostBadge } from './ComposerRemoteHostBadge.js';
 import {
   bootstrapOutcome,
   composerBootstrapErrorMessage,
-  composerHostsForProject,
-  composerRemoteHostBadge,
   isForeignExecutionHost,
   resolveComposerHostAction,
-  shouldBlockComposerSend,
-  shouldShowHostPicker
+  shouldBlockComposerSend
 } from './composer-host-status.js';
 import { defaultHostId, useHosts } from '../hooks/useHosts.js';
 import { usePublicAppUrl } from '../hooks/usePublicAppUrl.js';
@@ -87,6 +83,8 @@ export type ThreadSendMode = 'start' | 'auto' | 'steer' | 'queue-if-active' | 's
 
 export interface ThreadCommandComposerProps extends ComposerProjectSelectionProps {
   project?: Project;
+  /** Explicit target for a new draft, including a machine-specific Default Project. */
+  initialHostId?: string;
   threadId?: string;
   status?: string;
   /** Provider is retrying a transient error; keep Stop available even if status is `error`. */
@@ -132,6 +130,7 @@ export function ThreadCommandComposer(props: ThreadCommandComposerProps) {
 
 function ThreadComposerContent({
   project: pinnedProject,
+  initialHostId,
   composerProjectId,
   onComposerProjectIdChange,
   threadId,
@@ -187,7 +186,7 @@ function ThreadComposerContent({
   const hosts = useHosts();
   const threads = useThreads((s) => s.threads);
   const currentThread = threadId ? threads.find((row) => row.id === threadId) : undefined;
-  const [hostId, setHostId] = useComposerSetting(session, 'modern.hostId', () => defaultHostId(hosts, pinnedProject));
+  const [hostId, setHostId] = useComposerSetting(session, 'modern.hostId', () => initialHostId ?? defaultHostId(hosts, selectedProject));
   // A thread's catalogue scope (project + host + environment) must come from one record;
   // the composer project can still be the preferred fallback while the thread view loads.
   const scopeProject = currentThread?.projectId
@@ -256,10 +255,6 @@ function ThreadComposerContent({
     key: string;
     preventDefault?: () => void;
   }) => boolean>(() => false);
-  const pickerHosts = useMemo(
-    () => composerHostsForProject(hosts, selectedProject),
-    [hosts, selectedProject]
-  );
   const publicAppUrl = usePublicAppUrl();
   const displayStatus = currentThread?.runtime?.displayStatus ?? status ?? 'idle';
   const submitMode = resolveThreadSubmitMode({
@@ -271,15 +266,19 @@ function ThreadComposerContent({
   const [pairingCommand, setPairingCommand] = useState<string | null>(null);
   const [sshPick, setSshPick] = useState<{ hostId: string; name: string } | null>(null);
   const hostProjectRef = useRef(selectedProject?.id);
+  const pickedLocationProjectRef = useRef(initialHostId ? projectId : null);
 
   useEffect(() => {
     if (hostProjectRef.current !== selectedProject?.id) {
       hostProjectRef.current = selectedProject?.id;
-      setHostId(defaultHostId(hosts, selectedProject));
+      if (pickedLocationProjectRef.current !== selectedProject?.id) setHostId(defaultHostId(hosts, selectedProject));
+      pickedLocationProjectRef.current = null;
     } else if (selectedProject?.remote) {
       // A remote project has exactly one execution machine: its binding. Follow a
       // rebind (machine re-enrolled, project reconciled) instead of keeping the old host.
       setHostId(current => selectedProject.hostId ?? current);
+    } else if (selectedProject && !selectedProject.quickAgent) {
+      setHostId(defaultHostId(hosts, selectedProject));
     } else {
       // Status refreshes must not silently move an unsent prompt to another host.
       setHostId(current => current ?? defaultHostId(hosts, selectedProject));
@@ -301,13 +300,6 @@ function ThreadComposerContent({
     [currentThread?.hostId, hostId, hosts, publicAppUrl, selectedProject]
   );
   const hostSendBlocked = shouldBlockComposerSend(hostAction, selectedProject);
-  const showHostPicker = shouldShowHostPicker(hosts, selectedProject);
-  const remoteHostBadge = composerRemoteHostBadge({
-    project: selectedProject,
-    host: selectedProject?.hostId
-      ? hosts.find((row) => row.id === selectedProject.hostId)
-      : undefined
-  });
   const foreignHost = isForeignExecutionHost(selectedProject, hosts, hostId);
 
   useEffect(() => {
@@ -416,9 +408,12 @@ function ThreadComposerContent({
     hostId: catalogHostId,
     hostConnected: catalogHostConnected,
     environmentId: currentThread?.environmentId ?? undefined,
-    projectId: currentThread?.projectId ?? projectId,
+    // A remote default gets its personal folder when the thread is created.
+    // Until then it has no checkout for file mentions or native commands.
+    projectId: scopeProject?.quickAgent && foreignHost && !currentThread?.environmentId
+      ? '' : currentThread?.projectId ?? projectId,
     threadId,
-    projectRoot: scopeProject?.path,
+    projectRoot: foreignHost ? currentThread?.cwd ?? undefined : scopeProject?.path,
     projects,
     disabled: busy,
     autoFocus: autoFocus && !compact,
@@ -876,22 +871,6 @@ function ThreadComposerContent({
           <EnvironmentPicker hostId={hostId} projectId={projectId} value={workspace} onChange={setWorkspace} />
         </div>
       )}
-      {showHostPicker && pickerHosts.length > 0 && (
-        <div className="composer-run-setting">
-          <span className="composer-run-setting-label">Machine</span>
-          <div className="thread-command-chip">
-            <Laptop size={14} aria-hidden="true" />
-            <HostMachinePicker
-              hosts={pickerHosts}
-              project={selectedProject}
-              value={hostId}
-              onChange={setHostId}
-              includeDisconnected
-              alwaysShow
-            />
-          </div>
-        </div>
-      )}
       {compact && selectedProject?.remote && <p className="mobile-run-settings-hint">This project uses its connected remote machine.</p>}
     </ComposerRunSettings>
   ) : undefined;
@@ -991,7 +970,7 @@ function ThreadComposerContent({
             permission={compact ? permissionPicker : undefined}
             location={compact ? (threadId ? <span className="thread-command-location">
               <Laptop size={14} aria-hidden="true" />
-              {remoteHostBadge ? <ComposerRemoteHostBadge {...remoteHostBadge} /> : (environmentLabel ?? 'Local')}
+              {runMachine?.name ?? environmentLabel ?? 'Machine unavailable'}
             </span> : runSettings) : undefined}
             mode={
               <ComposerModePicker
@@ -1096,12 +1075,15 @@ function ThreadComposerContent({
         <div className="thread-command-composer-meta-start">
           {threadId ? (
             <>
-              {!compact && <span className="thread-command-chip thread-command-env" data-testid="thread-env-label">
-                <Laptop size={14} aria-hidden="true" />
-                {remoteHostBadge
-                  ? <ComposerRemoteHostBadge {...remoteHostBadge} />
-                  : (environmentLabel ?? 'Local')}
-              </span>}
+              {!fixedRunTarget && <span data-testid="thread-env-label" className="thread-command-env"><ComposerProjectPicker
+                projects={projects}
+                value={currentThread?.projectId ?? projectId}
+                hostId={currentThread?.hostId ?? catalogHostId}
+                onChange={() => undefined}
+                onStartNewThread={location => navigate(newThreadLocationPath(location), {
+                  state: { initialPrompt: field.text, focusPrompt: true }
+                })}
+              /></span>}
               <ComposerHostActionChip
                 action={hostAction}
                 busyLabel={hostBusy}
@@ -1115,19 +1097,19 @@ function ThreadComposerContent({
           ) : (
             <>
               {!fixedRunTarget && (
-              <div className="thread-command-project">
-                <span className="thread-command-project-label">Project</span>
-                <div className="thread-command-chip">
-                  <Folder size={14} aria-hidden="true" />
-                  <ComposerProjectPicker
-                    projects={projects}
-                    value={projectId}
-                    onChange={setProjectId}
-                    disabled={Boolean(pinnedProject)}
-                    title={pinnedProject ? 'Locked to this project' : undefined}
-                  />
-                </div>
-              </div>
+              <div className="thread-command-project"><ComposerProjectPicker
+                projects={projects}
+                value={projectId}
+                hostId={hostId}
+                onChange={next => {
+                  pickedLocationProjectRef.current = next;
+                  setError(null);
+                  setProjectId(next);
+                }}
+                onHostChange={setHostId}
+                disabled={Boolean(pinnedProject)}
+                title={pinnedProject ? 'Locked to this project' : undefined}
+              /></div>
               )}
               {!compact && runSettings}
               <ComposerHostActionChip
@@ -1139,7 +1121,6 @@ function ThreadComposerContent({
                   ? () => void copyText(pairingCommand)
                   : undefined}
               />
-              {remoteHostBadge ? <ComposerRemoteHostBadge {...remoteHostBadge} /> : null}
             </>
           )}
         </div>

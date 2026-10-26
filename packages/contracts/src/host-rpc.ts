@@ -1,3 +1,4 @@
+import { machineProjectPageSchema, machineProjectRegisterSchema, machineProjectSchema } from './machine-projects.js';
 import { CliDiscoveryCommandSchema, CliDiscoveryResultSchema } from './cli-discovery.js';
 import { CliTerminalStartCommandSchema } from './cli-terminal.js';
 import { z } from 'zod';
@@ -92,7 +93,9 @@ import {
 // non-primary machine daemon (held in daemon memory only, never persisted).
 // 45: provider-native capability discovery on the execution host.
 // 46: canonical v2 peer forwarding and encrypted control, combined with host environment forwarding.
-export const HOST_RPC_PROTOCOL_VERSION = 46;
+// 47: bounded directory inspection for remote project registration and availability.
+// 48: durable machine project catalogue publication and bounded registration.
+export const HOST_RPC_PROTOCOL_VERSION = 48;
 export const HOST_HEARTBEAT_INTERVAL_MS = 5_000;
 export const HOST_LEASE_TIMEOUT_MS = 30_000;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
@@ -151,6 +154,7 @@ export const HostRpcCommandTypeSchema = z.enum([
   'host.remove_path',
   'host.browse_directory',
   'host.paths_exist',
+  'host.inspect_directories',
   'host.list_paths',
   'host.read_path',
   'host.file_metadata',
@@ -171,6 +175,8 @@ export const HostRpcCommandTypeSchema = z.enum([
   'workspace.processes.kill',
   'project.clone',
   'project.clone_default_path',
+  'project.catalogue.list',
+  'project.catalogue.register',
   'codex.voice.transcribe',
   'codex.voice.status',
   'codex.inference.complete',
@@ -633,6 +639,11 @@ export const HostPathsExistCommandSchema = z.object({
   paths: z.array(PathSchema).min(1).max(200)
 }).strict();
 
+export const HostInspectDirectoriesCommandSchema = z.object({
+  type: z.literal('host.inspect_directories'),
+  paths: z.array(PathSchema).min(1).max(100)
+}).strict();
+
 export const HostListPathsCommandSchema = z.object({
   type: z.literal('host.list_paths'),
   path: PathSchema,
@@ -749,6 +760,14 @@ export const ProjectCloneCommandSchema = z.object({
   remoteUrl: z.string().min(1).max(2048),
   projectSlug: z.string().min(1).max(120),
   targetPath: PathSchema.optional()
+}).strict();
+
+export const ProjectCatalogueListCommandSchema = z.object({
+  type: z.literal('project.catalogue.list'), offset: z.number().int().min(0).max(999).default(0),
+  limit: z.number().int().min(1).max(100).default(100)
+}).strict();
+export const ProjectCatalogueRegisterCommandSchema = z.object({
+  type: z.literal('project.catalogue.register'), projects: z.array(machineProjectRegisterSchema).min(1).max(100)
 }).strict();
 
 export const ProjectCloneDefaultPathCommandSchema = z.object({
@@ -1060,6 +1079,7 @@ export const HostRpcCommandSchema = z.union([
   HostSnapshotPathCommandSchema,
   HostRemovePathCommandSchema,
   HostBrowseDirectoryCommandSchema,
+  HostInspectDirectoriesCommandSchema,
   HostPathsExistCommandSchema,
   HostListPathsCommandSchema,
   HostReadPathCommandSchema,
@@ -1081,6 +1101,8 @@ export const HostRpcCommandSchema = z.union([
   WorkspaceProcessesKillCommandSchema,
   ProjectCloneCommandSchema,
   ProjectCloneDefaultPathCommandSchema,
+  ProjectCatalogueListCommandSchema,
+  ProjectCatalogueRegisterCommandSchema,
   CodexVoiceTranscribeCommandSchema,
   CodexVoiceStatusCommandSchema,
   CodexInferenceCompleteCommandSchema,
@@ -1376,6 +1398,15 @@ export const HostPathsExistResultSchema = z.object({
 }).strict();
 export type HostPathsExistResult = z.infer<typeof HostPathsExistResultSchema>;
 
+export const HostInspectDirectoriesResultSchema = z.object({
+  directories: z.array(z.object({
+    requestedPath: PathSchema,
+    path: PathSchema.nullable(),
+    status: z.enum(['ready', 'missing', 'inaccessible', 'not-directory'])
+  }).strict()).max(100)
+}).strict();
+export type HostInspectDirectoriesResult = z.infer<typeof HostInspectDirectoriesResultSchema>;
+
 export const HostPathEntryKindSchema = z.enum(['file', 'directory']);
 export type HostPathEntryKind = z.infer<typeof HostPathEntryKindSchema>;
 
@@ -1614,6 +1645,7 @@ export const HostRpcResultSchemaByType = {
   'host.remove_path': HostPathMutationResultSchema,
   'host.browse_directory': HostBrowseDirectoryResultSchema,
   'host.paths_exist': HostPathsExistResultSchema,
+  'host.inspect_directories': HostInspectDirectoriesResultSchema,
   'host.list_paths': HostListPathsResultSchema,
   'host.read_path': HostReadPathResultSchema,
   'host.file_metadata': HostFileMetadataResultSchema,
@@ -1634,6 +1666,8 @@ export const HostRpcResultSchemaByType = {
   'workspace.processes.kill': WorkspaceProcessesKillResultSchema,
   'project.clone': ProjectCloneResultSchema,
   'project.clone_default_path': ProjectCloneDefaultPathResultSchema,
+  'project.catalogue.list': machineProjectPageSchema,
+  'project.catalogue.register': z.object({ projects: z.array(machineProjectSchema).max(100) }).strict(),
   'codex.voice.transcribe': CodexVoiceTranscribeResultSchema,
   'codex.voice.status': CodexVoiceStatusResultSchema,
   'codex.inference.complete': CodexInferenceCompleteResultSchema,
@@ -1770,6 +1804,7 @@ export const HostEventKindSchema = z.enum([
   'terminal.exited',
   'environment.provision.progress',
   'project.clone.progress',
+  'project.catalogue.changed',
   'desktop.browser.changed',
   'plugin.host.worker-exited',
   'plugin.host.signal'

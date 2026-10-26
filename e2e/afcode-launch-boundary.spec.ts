@@ -128,8 +128,8 @@ test('afcode CLI adapter delivers input, retains large output and opens its resu
       providerId: 'acp-afcode', byProvider: {}
     })));
     await window.getByTestId('agents-board-new-thread').first().click();
-    await modal.getByRole('button', { name: 'Project', exact: true }).click();
-    await window.getByRole('listbox', { name: 'Project' }).getByRole('option', { name: basename(projectPath), exact: true }).click();
+    await modal.getByRole('button', { name: 'Machine and project', exact: true }).click();
+    await window.getByRole('listbox', { name: 'Machine and project' }).getByRole('option', { name: basename(projectPath), exact: false }).click();
     const modelPicker = modal.getByTestId('model-reasoning-picker-trigger');
     await modelPicker.click();
     await expect(window.getByTestId('model-reasoning-provider-acp-afcode')).toHaveAttribute('aria-selected', 'true');
@@ -178,8 +178,8 @@ test('CLI Agent afcode tab launches afcode instead of remembered Claude', async 
     await window.getByTestId('agents-board-new-thread').first().click();
     const modal = window.getByTestId('launch-modal');
     await modal.getByRole('button', { name: 'CLI Agent', exact: true }).click();
-    await modal.getByRole('button', { name: 'Project', exact: true }).click();
-    await window.getByRole('listbox', { name: 'Project' }).getByRole('option', { name: basename(projectPath), exact: true }).click();
+    await modal.getByRole('button', { name: 'Machine and project', exact: true }).click();
+    await window.getByRole('listbox', { name: 'Machine and project' }).getByRole('option', { name: basename(projectPath), exact: false }).click();
     const modelPicker = modal.getByTestId('model-reasoning-picker-trigger');
     await modelPicker.click();
     const afcodeTab = window.getByTestId('model-reasoning-provider-acp-afcode');

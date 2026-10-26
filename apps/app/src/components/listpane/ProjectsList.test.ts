@@ -98,7 +98,7 @@ describe('project-row workspace actions', () => {
     const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
     const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
     expect(source).toContain(
-      '{projectDot}\n                    {projectMeta}\n                  </button>\n                  {favoriteStar}\n                  {treeChevron}'
+      '{projectDot}\n                    {projectMeta}\n                  </button>\n                  {!projectedDefault && favoriteStar}\n                  {treeChevron}'
     );
     expect(source).toContain('className="project-rename"');
     const renameIdx = source.indexOf('className="project-rename"');
@@ -134,7 +134,7 @@ describe('project-row compact chrome', () => {
     expect(source).not.toContain('GripVertical');
     expect(source).not.toContain('project-reorder-handle');
     expect(source).toContain('<div className={labelClass} {...listeners}>');
-    expect(source).toContain('{...attributes}');
+    expect(source).toContain('{...(sortable ? attributes : {})}');
     expect(source).toContain('project-label--sortable');
     expect(source).toContain('consumeProjectClick()');
     expect(source).toContain('suppressPostDragClick()');
@@ -235,7 +235,7 @@ describe('sidebar workspace header menus', () => {
     expect(addMenu).toContain('launchCreateProjectAction(action)');
     const organizeBlock = source.slice(
       source.indexOf('aria-label="Organize projects"'),
-      source.indexOf('aria-label="Add project"')
+      source.indexOf('aria-label="Add machine or project"')
     );
     expect(organizeBlock).toContain('headerMenuActions');
     expect(organizeBlock).not.toContain('createProjectActions');
@@ -295,7 +295,7 @@ describe('nested live threads', () => {
     expect(source).toContain('railThreadsByProject.get(p.id)');
     expect(source).toContain('liveList.length === 0 && railThreads.length === 0');
     expect(source).toContain('projectRailTerminals(terminals[p.id]).length > 0');
-    expect(source).toContain('disclosure.isExpanded(p.id, projectHasNestableSessions(p))');
+    expect(source).toContain('disclosure.isExpanded(disclosureId, liveList.length + railThreads.length > 0)');
     expect(rows).toContain('!session.scheduled && <AgentDeleteQuickAction');
     expect(source).toContain('pinDefaultProjectFirst(pinFavoriteProjectsFirst(sorted))');
     expect(source).not.toContain('p.id === selectedId && projectHasNestableSessions(p)');

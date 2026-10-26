@@ -90,12 +90,13 @@ describe('enrolled host with BB ws transport', () => {
   it('denies every execution command for a peer.forward enrollment before dispatch', async () => {
     const f = await fixture(), connection = f.connect('peer.forward'); await connection.ready;
     expect(f.reconcile).not.toHaveBeenCalled();
-    for (const type of ['provider.status', 'thread.start', 'host.read_file', 'terminal.start', 'plugin.host.call']) {
+    for (const type of ['provider.status', 'thread.start', 'host.read_file', 'terminal.start', 'plugin.host.call', 'project.catalogue.list', 'project.catalogue.register']) {
       f.send({ type: 'host-rpc.request', protocolVersion: HOST_RPC_PROTOCOL_VERSION, requestId: type, command: { type } });
       await vi.waitFor(() => expect(f.messages.find(m => m.requestId === type)).toMatchObject({ ok: false, error: { code: 'capability_denied' } }));
     }
     f.send({ type: 'host-rpc.request', protocolVersion: HOST_RPC_PROTOCOL_VERSION, requestId: 'forward', command: { type: 'peer.forward' } });
     await vi.waitFor(() => expect(f.messages.find(m => m.requestId === 'forward')).toMatchObject({ ok: false, error: { code: 'unknown_command' } }));
+    expect(f.messages.filter(m => m.type === 'host.event').flatMap(m => m.events).some(event => event.kind === 'project.catalogue.changed')).toBe(false);
   });
   it.each([undefined, 'c'.repeat(43)])('reconnects after a failed upgrade with the same identity (Connect credential=%s)', async credential => {
     // The affected Node 22 native WebSocket never emits close for a failed
@@ -136,7 +137,8 @@ describe('enrolled host with BB ws transport', () => {
     await vi.waitFor(() => expect(f.changes.at(-1)).toBe(true), { timeout: 8000 });
     await connection.sink.flush();
     const events = f.messages.filter(m => m.type === 'host.event').flatMap(m => m.events);
-    expect(events.map(event => event.payload.data)).toEqual(['before ready', 'while offline']);
+    expect(events.filter(event => event.kind === 'terminal.output').map(event => event.payload.data)).toEqual(['before ready', 'while offline']);
+    expect(events.some(event => event.kind === 'project.catalogue.changed')).toBe(true);
   }, 12000);
   it('holds server-pushed environment only while the session is open', async () => {
     const f = await fixture();

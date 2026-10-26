@@ -54,11 +54,12 @@ describe('startEnrolledHostDaemon', () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-enroll-local-app-'));
     vi.stubEnv('ZCC_LOCAL_PEER_APP_DATA_DIR', local);
     vi.stubEnv('ZCC_DATA_DIR', '/trusted/default-app');
+    vi.stubEnv('ZCC_PROJECT_CATALOGUE_DATA_DIR', '/trusted/projects');
     readHostAuth.mockReturnValue({ hostId: '11111111-1111-4111-8111-111111111111', hostKey: 'saved', serverUrl: 'https://remote.example/' });
     startEnrolledHostConnection.mockImplementation(() => openConnection());
     const daemon = await startEnrolledHostDaemon({ dataDir, serverUrl: 'https://remote.example/' });
     expect(startEnrolledHostConnection).toHaveBeenCalledWith(expect.objectContaining({
-      dataDir, localPeerAppDataDir: local.trim() || '/trusted/default-app'
+      dataDir, localPeerAppDataDir: local.trim() || '/trusted/default-app', localProjectDataDir: '/trusted/projects'
     }));
     expect(enrollDaemonHost).not.toHaveBeenCalled();
     expect(writeHostAuth).not.toHaveBeenCalled();

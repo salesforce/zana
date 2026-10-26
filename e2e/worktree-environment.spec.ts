@@ -211,7 +211,7 @@ async function openWorktreeLauncher(window: Page, projectName: string, prompt: s
   // launching row seeds the project picker via selectProject (no workspace
   // redirect); assert the chip shows this project after CLI Agent is selected.
   await modal.getByRole('button', { name: 'CLI Agent' }).click();
-  await expect(modal.getByRole('button', { name: 'Project', exact: true })).toContainText(projectName);
+  await expect(modal.getByRole('button', { name: 'Machine and project', exact: true })).toContainText(projectName);
   const instruction = modal.getByTestId('legacy-agent-command-input');
   await instruction.click();
   await instruction.fill(prompt);
@@ -221,7 +221,7 @@ async function openWorktreeLauncher(window: Page, projectName: string, prompt: s
   await workspace.click();
   await window
     .getByRole('listbox', { name: 'Workspace' })
-    .getByRole('option', { name: 'New worktree', exact: true })
+    .getByRole('option', { name: 'New worktree', exact: false })
     .click();
   await expect(workspace).toContainText('New worktree');
   // Harness auto-resolves from the configured default (claude → fake binary);

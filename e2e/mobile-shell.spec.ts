@@ -474,7 +474,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
       await expect(drawer.getByRole('list', { name: 'Sessions in mobile-project' })).toBeVisible();
       const menuScroll = drawer.locator('.mobile-tools-section');
       const search = drawer.locator('.mobile-sticky-search');
-      const filter = drawer.getByPlaceholder('Filter projects');
+      const filter = drawer.getByPlaceholder('Filter machines or projects');
       await expect(filter).toBeVisible();
       await menuScroll.evaluate(element => { element.scrollTop = 250; });
       const menuTop = (await menuScroll.boundingBox())!.y;
@@ -491,7 +491,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
       await expect(drawer.getByRole('button', { name: 'Project actions for scroll-project-18', exact: true })).toBeVisible();
       await expect(drawer.getByRole('button', { name: 'Project actions for scroll-project-17', exact: true })).toHaveCount(0);
       await filter.fill('no-such-mobile-project');
-      await expect(drawer.getByRole('status')).toContainText('No projects match');
+      await expect(drawer.getByRole('status')).toContainText('No machines or projects match');
       await drawer.getByRole('button', { name: 'Clear filter', exact: true }).click();
       await menuScroll.evaluate(element => { element.scrollTop = 0; });
       const collapseProject = drawer.getByRole('button', { name: /Collapse sessions for mobile-project/ });

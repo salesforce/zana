@@ -175,12 +175,15 @@ it('binds plugin identity and exact scope for revoke/introduction, delivers intr
 
 it.each(['abort', 'dispose'] as const)('cancels in-flight %s before activation and prevents late lifecycle work', async mode => {
   const { a, handle, peerId } = await pair();
-  const call = vi.spyOn(a.server.ctx.hostHub, 'callHostOnlineRpc').mockImplementation(() => new Promise(() => {}));
+  const hub = a.server.ctx.hostHub;
+  const original = hub.callHostOnlineRpc.bind(hub);
+  const call = vi.spyOn(hub, 'callHostOnlineRpc').mockImplementation(input =>
+    input.command.type === 'peer.control' ? new Promise(() => {}) : original(input));
   const controller = new AbortController();
   const pending = expect(handle.api.sdk.peers.enable(peerId, { scope, signal: controller.signal })).rejects.toThrow(mode === 'abort' ? 'caller cancelled' : 'stale');
   // waitFor defaults to a 1s window; under full parallel-suite load the enable() round-trip can take
   // longer to reach the spied call, so give these spy gates explicit headroom.
-  await vi.waitFor(() => expect(call).toHaveBeenCalled(), { timeout: 15_000 });
+  await vi.waitFor(() => expect(call.mock.calls.some(([input]) => input.command.type === 'peer.control')).toBe(true), { timeout: 15_000 });
   if (mode === 'abort') controller.abort(new Error('caller cancelled')); else await handle.dispose();
   await pending;
   expect(await a.server.ctx.peerAuthority.proposals('test-plugin', peerId, scope)).toEqual([]);

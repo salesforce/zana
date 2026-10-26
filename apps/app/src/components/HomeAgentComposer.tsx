@@ -52,7 +52,7 @@ function HomeComposerContent({ allowLegacyAgent = false, project, ...props }: Ho
     ? walkthroughHomeMode
     : preferred;
   const showLaunchSwitcher = Boolean(walkthroughHomeMode) || visibleLaunchModeCount(available) > 1;
-  const [composerProjectId, setComposerProjectId] = useComposerSetting(session, 'projectId', project?.id ?? '');
+  const [composerProjectId, setComposerProjectId] = useComposerSetting(session, 'projectId', project?.id ?? props.composerProjectId ?? '');
   useEffect(() => {
     if (project?.id) setComposerProjectId(project.id);
   }, [project?.id]);

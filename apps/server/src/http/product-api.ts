@@ -18,6 +18,7 @@ import { projectSources } from '@zana-ai/zcc-domain/project';
 import { projectConfigCompatibility } from '@zana-ai/zcc-domain/harness-config-compatibility';
 import { getPrimaryHost, countConversationThreadsForQuit } from '@zana-ai/zcc-db';
 import { handleProjectSourcesApi } from './project-sources-api.js';
+import { handleMachineProjectApi, validatedProjectPath } from './machine-project-api.js';
 import { handleNotificationsApi } from './notifications-api.js';
 import { handleNativeToolPolicyApi } from './native-tool-policy-api.js';
 import { resolveProjectHost } from './project-host.js';
@@ -30,7 +31,7 @@ import { readPluginHttpBody, PluginHttpBodyTooLarge } from './plugin-http-body.j
 import { handlePeerApi } from './peer-api.js';
 import { conversationHistoryAsync } from '../services/threads/conversation-history.js';
 import { randomUUID } from 'node:crypto';
-import { isAbsolute, join, relative, sep, posix } from 'node:path';
+import { isAbsolute, join, relative, sep, posix, win32 } from 'node:path';
 import { homedir } from 'node:os';
 import { realpathSync, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -576,6 +577,7 @@ export async function handleProductHttp(
 
     if (await handleSharedProductApi(request, response, ctx, path, method)) return true;
     if (await handleProjectSourcesApi(request, response, ctx, path, method)) return true;
+    if (await handleMachineProjectApi(request, response, ctx, path, method)) return true;
     if (await handleNotificationsApi(request, response, ctx, path, method, requestUrl)) return true;
     if (await handleNativeToolPolicyApi(request, response, ctx, path, method)) return true;
 
@@ -585,13 +587,22 @@ export async function handleProductHttp(
     }
 
     if (path === '/api/v1/projects' && method === 'POST') {
-      const body = (await readJsonBody(request)) as { path?: unknown; hostId?: unknown };
-      if (typeof body.path !== 'string' || body.path.length === 0) {
+      const body = (await readJsonBody(request)) as { path?: unknown; hostId?: unknown } | null;
+      if (!body || typeof body.path !== 'string' || body.path.length === 0 || body.path.length > 4096 || /[\x00-\x1f]/.test(body.path)) {
         sendJson(response, 400, { error: 'path is required' });
         return true;
       }
+      if (body.hostId !== undefined && (typeof body.hostId !== 'string' || !body.hostId)) {
+        sendJson(response, 400, { error: 'Choose a registered machine' }); return true;
+      }
       const hostId = typeof body.hostId === 'string' && body.hostId.length > 0 ? body.hostId : undefined;
-      const project = await ctx.projects.add(body.path, hostId ? { hostId } : undefined);
+      let projectPath = body.path;
+      if (hostId) {
+        try { projectPath = await validatedProjectPath(ctx, body.path, hostId); }
+        catch (error) { sendHostFailure(response, error); return true; }
+      }
+      const persistHostId = hostId && !getHost(ctx.db, hostId)?.isPrimary ? hostId : undefined;
+      const project = await ctx.projects.add(projectPath, persistHostId ? { hostId: persistHostId } : undefined);
       void ctx.remoteProjectReconciler?.request();
       ctx.hub.emit('projects:changed', ctx.projects.list());
       sendJson(response, 200, { project });
@@ -2984,7 +2995,15 @@ export async function handleProductHttp(
     }
 
     if (path === '/api/v1/projects/clone-root' && method === 'GET') {
-      sendJson(response, 200, { path: resolveCloneRoot(ctx) });
+      const selectedHostId = requestUrl.searchParams.get('hostId');
+      if (selectedHostId && selectedHostId !== getPrimaryHost(ctx.db)?.id) {
+        try {
+          const hostId = resolveProjectHost(ctx, selectedHostId);
+          const result = await ctx.hostHub.callHostOnlineRpc<{ path: string }>({ hostId,
+            command: { type: 'project.clone_default_path', projectSlug: 'project' } });
+          sendJson(response, 200, { path: (win32.isAbsolute(result.path) ? win32 : posix).dirname(result.path) });
+        } catch (error) { sendHostFailure(response, error); }
+      } else sendJson(response, 200, { path: resolveCloneRoot(ctx) });
       return true;
     }
 
@@ -3008,22 +3027,23 @@ export async function handleProductHttp(
         // another daemon must neither make local imports ambiguous nor move
         // that local destination onto the remaining remote when primary is off.
         const hostId = resolveProjectHost(ctx, typeof body.hostId === 'string' && body.hostId ? body.hostId : undefined);
-        const targetPath = typeof body.targetPath === 'string' && isAbsolute(body.targetPath)
-          ? body.targetPath
-          : join(resolveCloneRoot(ctx), slug);
+        const host = getHost(ctx.db, hostId);
+        // A remote's default is resolved by that daemon, never by joining the
+        // primary machine's clone root onto a remote command.
+        const targetPath = typeof body.targetPath === 'string' && (isAbsolute(body.targetPath) || win32.isAbsolute(body.targetPath))
+          ? body.targetPath : host?.isPrimary ? join(resolveCloneRoot(ctx), slug) : undefined;
         const cloned = await ctx.hostHub.callHostOnlineRpc<{ path: string; gitRemoteUrl: string | null }>({
           hostId,
           command: {
             type: 'project.clone',
             remoteUrl: normalized.cloneUrl,
             projectSlug: slug,
-            targetPath
+            ...(targetPath ? { targetPath } : {})
           },
           timeoutMs: 20 * 60 * 1000
         });
         // Absent hostId means primary (this machine). Match local folder add:
         // only persist hostId for non-primary enrolled hosts.
-        const host = getHost(ctx.db, hostId);
         const persistHostId = host && !host.isPrimary ? hostId : undefined;
         const project = await ctx.projects.add(
           cloned.path,

@@ -14,7 +14,7 @@
  *     → launcher modal (data-testid="launch-modal")
  *         → Job Team mode button
  *         → goal editor (data-testid="team-command-input")
- *         → Team picklist (aria-label="Team") + Project picklist (aria-label="Project")
+ *         → Team picklist (aria-label="Team") + location picklist (aria-label="Machine and project")
  *         → inferred canonical title / Summary optional field
  *         → Launch team (data-testid="team-command-send")
  *     → Agents board shows the titled durable job
@@ -132,11 +132,11 @@ test(`launching a ${coordinationMode} Team with ${profile} through the real UI c
     await expect(teamPicker).toContainText('E2E Job Team');
 
     // 5. Pick the target project through the composer's Project picklist.
-    const projectPicker = modal.getByRole('button', { name: 'Project', exact: true });
+    const projectPicker = modal.getByRole('button', { name: 'Machine and project', exact: true });
     await projectPicker.click();
     await window
-      .getByRole('listbox', { name: 'Project' })
-      .getByRole('option', { name: projectName, exact: true })
+      .getByRole('listbox', { name: 'Machine and project' })
+      .getByRole('option', { name: projectName, exact: false })
       .click();
     await expect(projectPicker).toContainText(projectName);
 
@@ -353,9 +353,9 @@ test(`a structured Team seeds a provided portable plan pre-launch with ${profile
     await window.getByRole('listbox', { name: 'Squad' }).getByRole('option', { name: 'E2E Job Team' }).click();
     await expect(teamPicker).toContainText('E2E Job Team');
 
-    const projectPicker = modal.getByRole('button', { name: 'Project', exact: true });
+    const projectPicker = modal.getByRole('button', { name: 'Machine and project', exact: true });
     await projectPicker.click();
-    await window.getByRole('listbox', { name: 'Project' }).getByRole('option', { name: projectName, exact: true }).click();
+    await window.getByRole('listbox', { name: 'Machine and project' }).getByRole('option', { name: projectName, exact: false }).click();
     await expect(projectPicker).toContainText(projectName);
 
     await modal.getByLabel('Squad planning').click();

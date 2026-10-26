@@ -83,7 +83,7 @@ test('CLI Agent starts a durable Job Team, surfaces its question, and completes'
     await instruction.click();
     await instruction.fill('E2E start Job Team');
     await expect(instruction).toContainText('E2E start Job Team');
-    await expect(modal.getByRole('button', { name: 'Project', exact: true })).toContainText(projectName);
+    await expect(modal.getByRole('button', { name: 'Machine and project', exact: true })).toContainText(projectName);
     const send = modal.getByTestId('legacy-agent-command-send');
     await expect(send).toBeEnabled({ timeout: 15_000 });
     await send.click();

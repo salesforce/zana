@@ -5,6 +5,8 @@ import type { CloneProjectResult } from '@zana-ai/zcc-domain/product';
 import { explainGitCloneError, type GitCloneError } from '../lib/git-clone-error.js';
 
 interface AddGitProjectDialogProps {
+  fixedHostId?: string;
+  fixedMachineName?: string;
   onClose: () => void;
   /** Clone + register. Resolves to the result so the dialog can branch on
    *  DEST_EXISTS / failures inline. */
@@ -46,7 +48,7 @@ function deriveName(url: string): string {
  * lines stream into the footer while the clone runs. Mirrors
  * AddRemoteProjectDialog's structure so the two add-flows feel consistent.
  */
-export function AddGitProjectDialog({ onClose, onClone, onSuccess }: AddGitProjectDialogProps) {
+export function AddGitProjectDialog({ onClose, onClone, onSuccess, fixedHostId, fixedMachineName }: AddGitProjectDialogProps) {
   const [url, setUrl] = useState('');
   const [name, setName] = useState('');
   // The user can edit the name; once they do, stop auto-deriving from the URL.
@@ -57,8 +59,10 @@ export function AddGitProjectDialog({ onClose, onClone, onSuccess }: AddGitProje
   const [progress, setProgress] = useState<string | null>(null);
 
   useEffect(() => {
-    product.projects.cloneRoot().then(setCloneRoot).catch(() => {});
-  }, []);
+    let cancelled = false;
+    product.projects.cloneRoot(fixedHostId).then(root => { if (!cancelled) setCloneRoot(root); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [fixedHostId]);
 
   // Stream clone progress into the footer line.
   useEffect(() => {
@@ -76,7 +80,7 @@ export function AddGitProjectDialog({ onClose, onClone, onSuccess }: AddGitProje
 
   const derived = useMemo(() => deriveName(url), [url]);
   const effectiveName = nameTouched ? name : derived;
-  const destPreview = cloneRoot && effectiveName ? `${cloneRoot}/${effectiveName}` : null;
+  const destPreview = cloneRoot && effectiveName ? `${cloneRoot.replace(/[\\/]$/, '')}${cloneRoot.includes('\\') ? '\\' : '/'}${effectiveName}` : null;
 
   const urlRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
@@ -135,6 +139,7 @@ export function AddGitProjectDialog({ onClose, onClone, onSuccess }: AddGitProje
             Paste a repository URL to clone and add it as a project. Uses your Git
             credentials (SSH keys or credential helper). Private repositories need an account with access.
           </div>
+          {fixedMachineName && <p className="modal-hint">Machine: <strong>{fixedMachineName}</strong></p>}
 
           <label className="remote-form-row git-url-row">
             <span>Repository URL</span>

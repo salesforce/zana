@@ -73,6 +73,11 @@
       "types": "./src/rpc-error.ts",
       "source": "./src/rpc-error.ts",
       "default": "./src/rpc-error.ts"
+    },
+    "./machine-projects": {
+      "types": "./src/machine-projects.ts",
+      "source": "./src/machine-projects.ts",
+      "default": "./src/machine-projects.ts"
     }
   },
   "scripts": {

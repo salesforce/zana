@@ -62,7 +62,7 @@ async function tap(page: Page, target: Locator): Promise<void> {
 async function pick(page: Page, picker: Locator, listbox: string, option: string): Promise<void> {
   await tap(page, picker);
   await page.waitForTimeout(250);
-  await tap(page, page.getByRole('listbox', { name: listbox }).getByRole('option', { name: new RegExp(`^${option.replace(/[()]/g, '\\$&')}(?:\\s|$)`) }).first());
+  await tap(page, page.getByRole('listbox', { name: listbox }).getByRole('option', { name: new RegExp(`${listbox === 'Machine and project' ? '› ' : '^'}${option.replace(/[()]/g, '\\$&')}(?:\\s|$)`) }).first());
 }
 
 test('demo: define and launch a Squad', async ({ app }) => {
@@ -151,7 +151,7 @@ test('demo: define and launch a Squad', async ({ app }) => {
     await tap(page, harness);
     await tap(page, page.getByTestId('model-reasoning-provider-acp-opencode'));
     await tap(page, harness);
-    await pick(page, launcher.getByRole('button', { name: 'Project', exact: true }), 'Project', 'atlas-site');
+    await pick(page, launcher.getByRole('button', { name: 'Machine and project', exact: true }), 'Machine and project', 'atlas-site');
     const request = launcher.locator('textarea, [contenteditable="true"]').first();
     await request.click();
     await request.pressSequentially(REQUEST, { delay: 28 });
@@ -224,7 +224,7 @@ test('demo: define and launch a Squad', async ({ app }) => {
     await goal.click();
     await goal.pressSequentially(GOAL, { delay: 5 });
     await pick(page, modal.getByLabel('Squad', { exact: true }), 'Squad', 'Web Squad');
-    await pick(page, modal.getByRole('button', { name: 'Project', exact: true }), 'Project', 'atlas-site');
+    await pick(page, modal.getByRole('button', { name: 'Machine and project', exact: true }), 'Machine and project', 'atlas-site');
     await expect(modal.getByLabel('Squad planning')).toContainText('Infer plan from goal');
     const send = modal.getByTestId('team-command-send');
     await expect(send).toBeEnabled({ timeout: 15_000 });

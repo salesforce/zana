@@ -68,11 +68,11 @@ test('launching agent after pasting absolute path works', { timeout: 60_000 }, a
     // An absolute path must not leave the typeahead menu open (it would swallow Enter).
     await expect(modal.getByTestId('composer-typeahead-menu')).toHaveCount(0);
 
-    const targetProject = modal.getByRole('button', { name: 'Project' });
+    const targetProject = modal.getByRole('button', { name: 'Machine and project' });
     await targetProject.click();
     await window
-      .getByRole('listbox', { name: 'Project' })
-      .getByRole('option', { name: projectName, exact: true })
+      .getByRole('listbox', { name: 'Machine and project' })
+      .getByRole('option', { name: projectName, exact: false })
       .click();
     await expect(targetProject).toContainText(projectName);
 

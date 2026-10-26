@@ -1,4 +1,6 @@
+import { ProjectCatalogue } from './project-catalogue.js';
 import { listHostCommands } from "./native-root-scan.js";
+import { inspectDirectories } from './inspect-directories.js';
 import { discoverCliOnHost } from './cli-discovery.js';
 import type { CliTerminalStartCommand } from '@zana-ai/zcc-contracts/cli-terminal';
 import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
@@ -158,6 +160,7 @@ export type ThreadArchiveInput = {
 };
 
 export interface CommandRuntime {
+  projectCatalogue?: ProjectCatalogue;
   previewTunnel?: import('./preview-tunnel.js').HostPreviewTunnel;
   pluginHosts?: PluginHostManager;
   dataDir: string;
@@ -1054,6 +1057,8 @@ export async function dispatchHostCommand(
       return browseHostDirectory(command);
     case 'host.paths_exist':
       return checkHostPathsExist(command);
+    case 'host.inspect_directories':
+      return inspectDirectories(command.paths);
     case 'host.list_paths':
       return listHostPaths(command);
     case 'host.read_path':
@@ -1170,11 +1175,15 @@ export async function dispatchHostCommand(
       });
       return { killed };
     }
+    case 'project.catalogue.list':
+      return (runtime.projectCatalogue ??= new ProjectCatalogue(runtime.dataDir, undefined)).page(command.offset, command.limit);
+    case 'project.catalogue.register':
+      return { projects: await (runtime.projectCatalogue ??= new ProjectCatalogue(runtime.dataDir, undefined)).register(command.projects) };
     case 'project.clone_default_path':
       return { path: await resolveCloneDefaultPath(runtime.dataDir, command.projectSlug) };
     case 'project.clone':
       try {
-        return await cloneProject({
+        const cloned = await cloneProject({
           dataDir: runtime.dataDir,
           projectSlug: command.projectSlug,
           remoteUrl: command.remoteUrl,
@@ -1183,6 +1192,8 @@ export async function dispatchHostCommand(
             runtime.emit({ kind: 'project.clone.progress', payload: { text } });
           }
         });
+        await (runtime.projectCatalogue ??= new ProjectCatalogue(runtime.dataDir, undefined)).register([{ path: cloned.path }]);
+        return cloned;
       } catch (error) {
         mapWorkspaceError(error);
       }

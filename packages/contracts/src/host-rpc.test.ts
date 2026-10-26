@@ -36,7 +36,7 @@ const peerCommand = {
 describe('peer.forward v2 contract', () => {
   it('round-trips the flat command and envelope with separate protocol versions', () => {
     const { type: _type, method: _method, body: _body, timeoutMs: _timeout, ...envelope } = peerCommand;
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(46);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(48);
     expect(PeerRequestEnvelopeSchema.parse(envelope)).toEqual(envelope);
     expect(PeerForwardCommandSchema.parse(peerCommand)).toEqual(peerCommand);
     expect(HostRpcCommandSchema.parse(peerCommand)).toEqual(peerCommand);
@@ -195,7 +195,7 @@ describe('host-rpc contract', () => {
       callId: 'call-1', method: 'echo', input: {}, timeoutMs: 1000,
       projectRoot: '/registered/project'
     };
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(46);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(48);
     expect(HostRpcRequestMessageSchema.parse({
       type: 'host-rpc.request', protocolVersion: HOST_RPC_PROTOCOL_VERSION,
       requestId: 'r1', command
@@ -945,7 +945,7 @@ describe('host-rpc contract', () => {
   });
 
   it('parses desktop.browser commands, results, and a non-UUID thread payload', () => {
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(46);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(48);
     expect(HostRpcCommandSchema.parse({
       type: 'desktop.browser.list_instances'
     }).type).toBe('desktop.browser.list_instances');
@@ -1004,7 +1004,7 @@ describe('host.environment.replace', () => {
   const entry = { name: 'GH_TOKEN', value: 'token-value' };
 
   it('retains protocol 44 environment forwarding in the combined protocol and parses a bounded, strict entry list', () => {
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(46);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(48);
     const command = {
       type: 'host.environment.replace',
       entries: [

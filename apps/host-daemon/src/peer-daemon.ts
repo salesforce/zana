@@ -226,7 +226,7 @@ export function peerRestartCommand(serverHost: string): string {
     '  join_bin="$data_dir/runtime/join.mjs"',
     ...peerNodeSelectionLines().map(line => `  ${line}`),
     '  export PATH="$(dirname "$node_bin"):$PATH"',
-    '  ZCC_DATA_DIR="$data_dir" "$node_bin" "$join_bin" restart',
+    '  ZCC_DATA_DIR="$data_dir" ZCC_PROJECT_CATALOGUE_DATA_DIR="$HOME/.zcc" "$node_bin" "$join_bin" restart',
     'fi'
   ].join('\n');
 }
@@ -345,6 +345,7 @@ export function peerInstallServiceCommand(input: {
     `join_code=${shQuote(input.joinCode)}`,
     `server_url=${shQuote(input.serverUrl)}`,
     'export ZCC_DATA_DIR="$data_dir" ZCC_SERVER_URL="$server_url"',
+    'export ZCC_PROJECT_CATALOGUE_DATA_DIR="$HOME/.zcc"',
     `export ZCC_HOST_ENROLLMENT_PROVENANCE=${input.provenance === 'tunnel' ? 'tunnel' : 'non-tunnel'}`,
     ...(input.replaceEnrollment ? ['export ZCC_HOST_REPLACE_ENROLLMENT=1'] : []),
     // Marks where this attempt's output begins so the primary reads only its lines.
@@ -379,6 +380,7 @@ export function peerInstallServiceCommand(input: {
     '  printf "%s\\n" "<string>--auto-update</string></array>" >> "$plist"',
     '  printf "%s\\n" "<key>EnvironmentVariables</key><dict>" >> "$plist"',
     '  printf "%s\\n" "<key>ZCC_DATA_DIR</key><string>$data_dir</string>" >> "$plist"',
+    '  printf "%s\\n" "<key>ZCC_PROJECT_CATALOGUE_DATA_DIR</key><string>$ZCC_PROJECT_CATALOGUE_DATA_DIR</string>" >> "$plist"',
     '  printf "%s\\n" "<key>ZCC_SERVER_URL</key><string>$server_url</string>" >> "$plist"',
     '  printf "%s\\n" "<key>ZCC_HOST_ENROLLMENT_PROVENANCE</key><string>$ZCC_HOST_ENROLLMENT_PROVENANCE</string>" >> "$plist"',
     '  printf "%s\\n" "<key>ZCC_HOST_SERVICE_MANAGED</key><string>1</string>" >> "$plist"',
@@ -398,6 +400,7 @@ export function peerInstallServiceCommand(input: {
     '  printf "%s\\n" "[Service]" >> "$unit"',
     '  printf "%s\\n" "ExecStart=$node_bin $join_bin join --host-id $host_id --server-url $server_url --host-daemon-port $port --auto-update" >> "$unit"',
     '  printf "%s\\n" "Environment=ZCC_DATA_DIR=$data_dir" >> "$unit"',
+    '  printf "%s\\n" "Environment=ZCC_PROJECT_CATALOGUE_DATA_DIR=$ZCC_PROJECT_CATALOGUE_DATA_DIR" >> "$unit"',
     '  printf "%s\\n" "Environment=ZCC_SERVER_URL=$server_url" >> "$unit"',
     '  printf "%s\\n" "Environment=ZCC_HOST_ENROLLMENT_PROVENANCE=$ZCC_HOST_ENROLLMENT_PROVENANCE" >> "$unit"',
     '  printf "%s\\n" "Environment=ZCC_HOST_SERVICE_MANAGED=1" >> "$unit"',

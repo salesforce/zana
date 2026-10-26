@@ -31,7 +31,7 @@ test('a project chat icon overrides another project selection and retained launc
   await expect(page).toHaveURL(/\/$/);
   const previousUrl = page.url();
   const launcher = page.getByTestId('launch-modal');
-  const project = launcher.getByRole('button', { name: 'Project', exact: true });
+  const project = launcher.getByRole('button', { name: 'Machine and project', exact: true });
   for (let attempt = 0; attempt < 2; attempt++) {
     const icon = page.getByRole('button', { name: `New agent in ${names[1]}`, exact: true });
     await icon.locator('..').hover();
@@ -46,7 +46,7 @@ test('a project chat icon overrides another project selection and retained launc
     // A deliberate picker change must not become the default next time this
     // project's icon is clicked, even when its draft is retained.
     await project.click();
-    await page.getByRole('option', { name: names[0], exact: true }).click();
+    await page.getByRole('option', { name: names[0], exact: false }).click();
     await expect(project).toContainText(names[0]);
     await page.keyboard.press('Escape');
     await expect(launcher).toBeHidden();
@@ -77,7 +77,7 @@ test('project New Chat keeps the current project selected across views and proje
     await expect(launcher).toBeVisible();
     for (const mode of ['Modern', 'CLI Agent']) {
       await launcher.getByRole('button', { name: mode, exact: true }).click();
-      const project = launcher.getByRole('button', { name: 'Project', exact: true });
+      const project = launcher.getByRole('button', { name: 'Machine and project', exact: true });
       await expect(project).toContainText(projectName);
       await expect(project).toBeDisabled();
     }

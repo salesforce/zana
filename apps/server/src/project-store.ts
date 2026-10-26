@@ -1,7 +1,7 @@
 import { isProjectIcon, type ProjectIcon } from '@zana-ai/zcc-domain';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, win32 } from 'node:path';
 import { atomicDurableWrite, createSerializedTransactionQueue } from './durable-store.js';
 
 /**
@@ -168,7 +168,7 @@ function canonicalProjectPath(path: string): string {
 }
 
 function canonicalStoredLocalPath(project: ProjectRecord): string | null {
-  if ('remote' in project) return null;
+  if ('remote' in project || project.hostId) return null;
   try {
     return canonicalProjectPath(project.path);
   } catch {
@@ -281,7 +281,7 @@ export function createProjectStore({ projectsFile, remotePlaceholderRoot }: Proj
       return queue.run(async () => {
         const remoteHost = Boolean(options?.hostId);
         const canonicalPath = remoteHost
-          ? (isAbsolute(path) ? path : (() => { throw new Error('project path must be absolute'); })())
+          ? (isAbsolute(path) || win32.isAbsolute(path) ? path : (() => { throw new Error('project path must be absolute'); })())
           : canonicalProjectPath(path);
 
         const { file, hash } = readSnapshot();
@@ -303,7 +303,7 @@ export function createProjectStore({ projectsFile, remotePlaceholderRoot }: Proj
           return existing;
         }
 
-        const displayName = ext ? `Ext: ${ext.title}`.slice(0, 256) : (basename(canonicalPath) || canonicalPath);
+        const displayName = ext ? `Ext: ${ext.title}`.slice(0, 256) : ((remoteHost && win32.isAbsolute(canonicalPath) ? win32.basename(canonicalPath) : basename(canonicalPath)) || canonicalPath);
         const taken = new Set(projects.map((p) => p.tag).filter((t): t is string => !!t));
         const tag = pickTag(ext ? (basename(canonicalPath) || canonicalPath) : displayName, taken);
         const color = pickProjectColor(projects.map((p) => p.color));

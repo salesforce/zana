@@ -75,6 +75,9 @@ async function startServer(
     enrollToken,
     origins: { serverPort: 0, devAppPort: 5173 }
   });
+  // These fixtures implement only the RPCs under test; catalogue synchronization
+  // has its own daemon/server integration and built-app coverage.
+  await server.ctx.machineProjectSync?.dispose();
   server.ctx.pluginHostArtifacts.set('test', {
     path: '/tmp/host.js',
     digest: 'a'.repeat(64),

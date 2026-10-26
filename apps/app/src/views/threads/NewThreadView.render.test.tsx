@@ -38,6 +38,11 @@ describe('NewThreadView', () => {
     expect(composer.props).toMatchObject({ draftScope: 'new-thread', project: undefined });
   });
 
+  it('seeds an unpinned machine location in an isolated retained draft', () => {
+    renderAt('/threads/new?locationProject=p2&host=remote');
+    expect(composer.props).toMatchObject({ composerProjectId: 'p2', initialHostId: 'remote', project: undefined, draftScope: 'new-thread:p2:remote' });
+  });
+
   it('resolves the project from the route, the query string, or an explicit prop', () => {
     renderAt('/projects/p2/threads/new');
     expect(composer.props?.project).toMatchObject({ id: 'p2' });

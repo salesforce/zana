@@ -41,6 +41,13 @@ function mockSsh(handler: (cmd: string) => { code: number; stdout?: string; stde
 }
 
 describe('peer-daemon commands', () => {
+  it('preserves the local project source for initial install and managed service restarts', () => {
+    const script = peerInstallServiceCommand({ serverHost: 'box', hostId: 'host', joinCode: 'zcde_fixture', serverUrl: 'https://example.test' });
+    expect(script).toContain('export ZCC_PROJECT_CATALOGUE_DATA_DIR="$HOME/.zcc"');
+    expect(script).toContain('<key>ZCC_PROJECT_CATALOGUE_DATA_DIR</key>');
+    expect(script).toContain('Environment=ZCC_PROJECT_CATALOGUE_DATA_DIR=');
+    expect(peerRestartCommand('box')).toContain('ZCC_PROJECT_CATALOGUE_DATA_DIR="$HOME/.zcc"');
+  });
   it('bounds SSH logs and timeout, handles spawn errors and duplicate close', async () => {
     const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn() });
     const ssh = createSystemPeerDaemonSsh((() => child) as never);

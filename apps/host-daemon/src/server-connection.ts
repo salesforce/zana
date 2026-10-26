@@ -1,3 +1,4 @@
+import { ProjectCatalogue } from './project-catalogue.js';
 import { HostPreviewTunnel } from './preview-tunnel.js';
 import { randomUUID } from 'node:crypto';
 import {
@@ -54,6 +55,7 @@ export function startEnrolledHostConnection(options: {
   dataDir?: string;
   /** Local app authority, independent of the enrollment server and its daemon data dir. */
   localPeerAppDataDir?: string;
+  localProjectDataDir?: string;
   /** Introduced link: the server must identify as this app or the connection closes before any registration. */
   expectedRemoteInstanceId?: string;
   resolveLocalPeerApp?: LocalPeerAppResolver;
@@ -231,6 +233,9 @@ export function startEnrolledHostConnection(options: {
     sink.emit(event);
   };
 
+  const projectCatalogue = runtime.projectCatalogue ??= new ProjectCatalogue(runtime.dataDir, options.localProjectDataDir ?? options.localPeerAppDataDir ?? runtime.dataDir,
+    revision => runtime.emit({ kind: 'project.catalogue.changed', payload: { revision } }));
+
   const brokerTask = !options.runtime && options.dataDir
     ? startDesktopBrowserBroker({
       dataDir: options.dataDir,
@@ -284,7 +289,13 @@ export function startEnrolledHostConnection(options: {
       desktopBrowserBroker?.setConnected(connected);
       previewTunnel.setConnected(connected);
       options.onConnectionChange?.(connected);
-      if (connected) void sink.flush();
+      if (connected) {
+        if (enrollmentCapability === 'execution') {
+          projectCatalogue.start();
+          void projectCatalogue.refresh().then(() => runtime.emit({ kind: 'project.catalogue.changed', payload: {} })).catch(() => {});
+        }
+        void sink.flush();
+      }
     },
     onSocketClose: options.onSocketClose,
     onMessage: (parsed, reply) => {
@@ -336,6 +347,7 @@ export function startEnrolledHostConnection(options: {
     await pluginHosts.shutdown();
     adapter?.dispose();
     enrolledPty?.dispose();
+    await projectCatalogue.close();
     await sink.dispose();
     const broker = desktopBrowserBroker ?? await brokerTask;
     desktopBrowserBroker = null;

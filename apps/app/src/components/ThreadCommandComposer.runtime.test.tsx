@@ -14,12 +14,15 @@ import { ComposerDraftProvider } from './composer/ComposerDraft.js';
 const h = vi.hoisted(() => {
   const provider = { id: 'codex', displayName: 'Codex', permissionModes: ['full'], composerActions: ['plan'] };
   return {
+    foreignLocation: false,
+    locationProps: null as any,
+    extraProjects: [] as Project[],
     project: { id: 'p1', name: 'Project', path: '/tmp/project' } as Project,
     text: 'Draft',
     images: [] as Array<{ id: string; name: string }>,
     attachments: [] as PromptInput[],
     editor: { isDestroyed: false },
-    fieldArgs: null as null | { onSubmit: (options?: { modifierEnter?: boolean }) => void; slashCatalog?: { composerActions?: string[] } },
+    fieldArgs: null as null | { onSubmit: (options?: { modifierEnter?: boolean }) => void; projectId?: string; projectRoot?: string; slashCatalog?: { composerActions?: string[] } },
     reloadCommands: vi.fn(),
     voiceArgs: null as null | { onTranscript: (text: string) => void; ownerKey?: string },
     frozenSend: null as null | ((text: string) => Promise<void>),
@@ -50,7 +53,7 @@ const h = vi.hoisted(() => {
 });
 
 vi.mock('../store.js', () => ({
-  useData: (select: (state: unknown) => unknown) => select({ projects: [h.project], lastProjectId: 'p1',
+  useData: (select: (state: unknown) => unknown) => select({ projects: [h.project, ...h.extraProjects], lastProjectId: 'p1',
     loadProjects: h.loadProjects, defaultHarness: 'codex', composerSendMode: 'queue-if-active',
     setComposerSendMode: h.rememberSendMode, nativeAgentDiscoveryEnabled: false }),
   useUi: Object.assign((select: (state: unknown) => unknown) => select({ selectedProjectId: 'p1' }),
@@ -71,7 +74,7 @@ vi.mock('../lib/prompt-attachments.js', () => ({ persistComposerImages: h.persis
 vi.mock('./composer-host-status.js', () => ({
   composerHostsForProject: () => [], resolveComposerHostAction: () => h.hostAction,
   shouldBlockComposerSend: () => h.hostBlocked, shouldShowHostPicker: () => false,
-  composerRemoteHostBadge: () => null, isForeignExecutionHost: () => false,
+  composerRemoteHostBadge: () => null, isForeignExecutionHost: () => h.foreignLocation,
   bootstrapOutcome: vi.fn(), composerBootstrapErrorMessage: vi.fn()
 }));
 vi.mock('./thread/pickers/useThreadComposerOptions.js', () => ({ useThreadComposerOptions: () => h.options }));
@@ -108,7 +111,7 @@ vi.mock('./ComposerHostActionChip.js', () => ({ ComposerHostActionChip: ({ onAct
     {pairingCommand ? <span data-testid="pairing">{pairingCommand}</span> : null}
     {onCopyPairing ? <button onClick={onCopyPairing}>copy</button> : null}</> }));
 vi.mock('./ComposerRemoteHostBadge.js', () => ({ ComposerRemoteHostBadge: () => null }));
-vi.mock('./ComposerProjectPicker.js', () => ({ ComposerProjectPicker: () => null }));
+vi.mock('./ComposerProjectPicker.js', () => ({ ComposerProjectPicker: (props: any) => { h.locationProps = props; return null; } }));
 vi.mock('./thread/ThreadContextMeter.js', () => ({ ThreadContextMeter: () => null }));
 vi.mock('./ui/PopoverPicklist.js', () => ({ PopoverPicklist: () => null }));
 vi.mock('./thread/pickers/ComposerModePicker.js', () => ({ ComposerModePicker: ({ onChange, value }: { onChange: (mode: string) => void; value: string }) =>
@@ -122,6 +125,7 @@ vi.mock('./thread/pickers/ComposerSendModePicker.js', () => ({ ComposerSendModeP
 beforeEach(() => {
   resetComposerSessions();
   vi.clearAllMocks();
+  h.extraProjects = []; h.locationProps = null; h.foreignLocation = false;
   h.text = 'Draft'; h.images = []; h.attachments = []; h.editor.isDestroyed = false;
   h.voice.state = 'idle'; h.voice.canRetry = false; h.frozenSend = null;
   h.options.provider = { id: 'codex', displayName: 'Codex', permissionModes: ['full'], composerActions: ['plan'] };
@@ -628,5 +632,35 @@ describe('Modern composer terminal command and navigation', () => {
     await act(async () => { release({ ok: true, value: { id: 'created' } }); });
     expect(h.upsert).toHaveBeenCalledWith({ id: 'created' });
     expect(onCreated).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('machine and project selection', () => {
+  it('launches an explicitly seeded remote default after host roster refresh', async () => {
+    h.project.quickAgent = true; h.threads = []; h.foreignLocation = true;
+    const view = render(composer({ project: undefined, threadId: undefined, composerProjectId: 'p1', initialHostId: 'remote' }));
+    expect(h.locationProps.hostId).toBe('remote');
+    expect(h.fieldArgs?.projectId).toBe('');
+    expect(h.fieldArgs?.projectRoot).toBeUndefined();
+    h.hosts = [{ id: 'host1' }, { id: 'remote' }];
+    view.rerender(composer({ project: undefined, threadId: undefined, composerProjectId: 'p1', initialHostId: 'remote' }));
+    expect(h.locationProps.hostId).toBe('remote');
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(h.create).toHaveBeenCalled());
+    expect((h.create.mock.calls as unknown[][])[0][0]).toEqual(expect.objectContaining({ projectId: 'p1', hostId: 'remote' }));
+  });
+  it('preserves the chosen host and draft while changing named and default projects', async () => {
+    h.project.quickAgent = true; h.threads = [];
+    h.extraProjects = [{ id: 'api', name: 'API', path: '/api', hostId: 'remote' } as Project];
+    render(composer({ project: undefined, threadId: undefined }));
+    act(() => { h.locationProps.onHostChange('remote'); h.locationProps.onChange('api'); });
+    expect(h.locationProps.value).toBe('api'); expect(h.locationProps.hostId).toBe('remote');
+    act(() => { h.locationProps.onHostChange('remote'); h.locationProps.onChange('p1'); });
+    expect(h.locationProps.value).toBe('p1'); expect(h.locationProps.hostId).toBe('remote');
+    expect(h.clear).not.toHaveBeenCalled(); expect(h.text).toBe('Draft');
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(h.create).toHaveBeenCalled());
+    expect((h.create.mock.calls as unknown[][])[0][0]).toEqual(expect.objectContaining({ projectId: 'p1', hostId: 'remote' }));
   });
 });

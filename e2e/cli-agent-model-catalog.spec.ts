@@ -183,12 +183,12 @@ test('local project switches reuse models while remote discovery remains pending
       window.dispatchEvent(new PopStateEvent('popstate'));
     });
     const modal = await openCliAgentLauncher(window);
-    const project = modal.getByRole('button', { name: 'Project', exact: true });
+    const project = modal.getByRole('button', { name: 'Machine and project', exact: true });
     const model = modal.getByTestId('model-reasoning-picker-trigger');
     await expect(project).not.toContainText('Remote first in store');
     const choose = async (name: string) => {
       await project.click();
-      await window.getByRole('listbox', { name: 'Project' }).getByRole('option', { name, exact: false }).click();
+      await window.getByRole('listbox', { name: 'Machine and project' }).getByRole('option', { name, exact: false }).click();
       await expect(project).toContainText(name);
     };
     await choose('Local A');

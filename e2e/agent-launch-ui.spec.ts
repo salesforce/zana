@@ -293,11 +293,11 @@ for (const row of CLI_CASES) {
       await expect(instruction).toContainText('read /Users/test/project/zcc-smoke-check.md and report');
       await expect(modal.getByTestId('composer-typeahead-menu')).toHaveCount(0);
 
-      const targetProject = modal.getByRole('button', { name: 'Project' });
+      const targetProject = modal.getByRole('button', { name: 'Machine and project' });
       await targetProject.click();
       await window
-        .getByRole('listbox', { name: 'Project' })
-        .getByRole('option', { name: projectName, exact: true })
+        .getByRole('listbox', { name: 'Machine and project' })
+        .getByRole('option', { name: projectName, exact: false })
         .click();
       await expect(targetProject).toContainText(projectName);
 
@@ -418,11 +418,11 @@ for (const row of PLAN_FAMILIES) {
       await instruction.fill('draft a plan for the smoke check');
       await expect(instruction).toContainText('draft a plan for the smoke check');
 
-      const targetProject = modal.getByRole('button', { name: 'Project' });
+      const targetProject = modal.getByRole('button', { name: 'Machine and project' });
       await targetProject.click();
       await window
-        .getByRole('listbox', { name: 'Project' })
-        .getByRole('option', { name: projectName, exact: true })
+        .getByRole('listbox', { name: 'Machine and project' })
+        .getByRole('option', { name: projectName, exact: false })
         .click();
       await expect(targetProject).toContainText(projectName);
 
@@ -509,11 +509,11 @@ test('launching a remembered Codex CLI Agent without re-clicking the harness tab
     await instruction.fill('read /Users/test/project/zcc-smoke-check.md and report');
     await expect(instruction).toContainText('read /Users/test/project/zcc-smoke-check.md and report');
 
-    const targetProject = modal.getByRole('button', { name: 'Project' });
+    const targetProject = modal.getByRole('button', { name: 'Machine and project' });
     await targetProject.click();
     await window
-      .getByRole('listbox', { name: 'Project' })
-      .getByRole('option', { name: projectName, exact: true })
+      .getByRole('listbox', { name: 'Machine and project' })
+      .getByRole('option', { name: projectName, exact: false })
       .click();
     await expect(targetProject).toContainText(projectName);
 

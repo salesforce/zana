@@ -193,12 +193,12 @@ function httpProduct(): Pick<
       },
       pickDirectory: async () => null,
       addRemote: async () => ({ ok: false, code: 'unavailable', message: 'remote projects require the desktop app' }),
-      clone: async (input: { url: string; name?: string }) => {
+      clone: async (input: { url: string; name?: string; hostId?: string }) => {
         try {
           const response = await fetchWithAppSurface('/api/v1/projects/clone', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ url: input.url, name: input.name })
+            body: JSON.stringify({ url: input.url, name: input.name, hostId: input.hostId })
           });
           const body = await response.json() as {
             ok?: boolean;
@@ -230,9 +230,9 @@ function httpProduct(): Pick<
           : payload;
         if (typeof text === 'string') cb(text);
       }),
-      cloneRoot: async () => {
+      cloneRoot: async (hostId?: string) => {
         try {
-          const body = await apiJson<{ path: string }>('/projects/clone-root');
+          const body = await apiJson<{ path: string }>(`/projects/clone-root${hostId ? `?hostId=${encodeURIComponent(hostId)}` : ''}`);
           return body.path;
         } catch {
           return '';
@@ -1581,7 +1581,8 @@ function wrapDesktopProjects(desktop: CcApi['projects']): CcApi['projects'] {
     },
     clone: http.clone,
     onCloneProgress: http.onCloneProgress,
-    cloneRoot: async () => {
+    cloneRoot: async (hostId?: string) => {
+      if (hostId) return http.cloneRoot(hostId);
       const fromDesktop = await desktop.cloneRoot().catch(() => '');
       if (fromDesktop) return fromDesktop;
       return http.cloneRoot();

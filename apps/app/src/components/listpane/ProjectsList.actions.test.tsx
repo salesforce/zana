@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   setLauncherOpen: vi.fn()
 }));
 
+vi.mock('../../hooks/useHosts.js', () => ({ useHosts: () => [] }));
 vi.mock('../../store.js', () => ({
   useData: (select: (state: unknown) => unknown) => select({ projects: h.projects, terminals: {}, projectNavigationOrganization: 'sessions', loadProjects: h.loadProjects }),
   useUi: (select: (state: unknown) => unknown) => select({

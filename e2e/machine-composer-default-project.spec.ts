@@ -1,13 +1,15 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { HOST_RPC_PROTOCOL_VERSION } from '../packages/contracts/src/host-rpc.js';
 import { test, expect, launchApp } from './fixtures/app.js';
 
-test('Default Project discovers remote models and machine renames survive pairing', async ({ home }) => {
-  test.setTimeout(180_000);
+test('Default Project discovers remote models and machine renames survive pairing', async ({ home }, testInfo) => {
+  test.setTimeout(300_000);
   const emptyCatalog = join(home, 'empty-catalog'); mkdirSync(emptyCatalog);
   const app = await launchApp(home, { env: {
     ZCC_FAKE_PROVIDER: '1', ZCC_BUNDLED_PLUGINS_DIR: emptyCatalog, ZCC_BUNDLED_EXTENSIONS_DIR: emptyCatalog
@@ -26,7 +28,7 @@ test('Default Project discovers remote models and machine renames survive pairin
   }, path);
   let child: ChildProcess | undefined;
   async function stopDaemon() {
-    if (!child?.pid || child.exitCode !== null) return;
+    if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
     const exited = new Promise<void>(resolve => child!.once('close', () => resolve()));
     try { process.kill(-child.pid, 'SIGTERM'); } catch { child.kill('SIGTERM'); }
     const timer = setTimeout(() => { try { process.kill(-child!.pid!, 'SIGKILL'); } catch {} }, 2000);
@@ -45,6 +47,11 @@ test('Default Project discovers remote models and machine renames survive pairin
     writeFileSync(archive, Buffer.from(await artifact.arrayBuffer()), { mode: 0o600 });
     const unpack = join(home, 'packed-daemon'); mkdirSync(unpack);
     expect(spawnSync('tar', ['-xzf', archive, '-C', unpack]).status).toBe(0);
+    // The downloadable daemon excludes test executables. Supply the existing
+    // fake provider and its loader only inside this isolated test fixture.
+    copyFileSync(fileURLToPath(new URL('../packages/agent-runtime/src/test/fake-provider-script.ts', import.meta.url)), join(unpack, 'fake-provider-script.ts'));
+    mkdirSync(join(unpack, 'node_modules'), { recursive: true });
+    symlinkSync(dirname(createRequire(import.meta.url).resolve('tsx/package.json')), join(unpack, 'node_modules', 'tsx'), 'dir');
     const socket = createServer();
     await new Promise<void>(resolve => socket.listen(0, '127.0.0.1', resolve));
     const port = (socket.address() as { port: number }).port;
@@ -72,14 +79,60 @@ test('Default Project discovers remote models and machine renames survive pairin
     else await win.getByTestId('agents-board-new-thread').first().click();
     const modal = win.getByTestId('launch-modal');
     await modal.getByRole('button', { name: 'Modern', exact: true }).click();
-    await modal.getByRole('button', { name: 'Project', exact: true }).click();
-    await win.getByRole('listbox', { name: 'Project' }).getByRole('option', { name: 'Default Project', exact: true }).click();
-    await modal.getByRole('button', { name: 'Machine', exact: true }).click();
-    await win.getByRole('listbox', { name: 'Machine' }).getByRole('option', { name: `${originalName.split('.')[0]} Online`, exact: true }).click();
+    await modal.getByRole('button', { name: 'Machine and project', exact: true }).click();
+    await win.getByRole('listbox', { name: 'Machine and project' }).getByRole('option', { name: `${originalName} › Default Project General tasks on ${originalName}`, exact: true }).click();
     await expect(modal.getByTestId('model-reasoning-picker-trigger')).toContainText('Fake Model', { timeout: 60_000 });
     console.log('[machine-composer] picker ready');
     await win.locator('.palette-backdrop').click({ position: { x: 5, y: 5 } });
     await expect(modal).toHaveCount(0);
+
+    // A real enrolled machine owns multiple independent folders and a default.
+    const apiRoot = join(machineHome, 'api-service'), webRoot = join(machineHome, 'web-client');
+    mkdirSync(apiRoot); mkdirSync(webRoot);
+    const apiProject = await api('/projects', { path: apiRoot, hostId: grant.hostId });
+    const webProject = await api('/projects', { path: webRoot, hostId: grant.hostId });
+    expect(apiProject.status).toBe(200); expect(webProject.status).toBe(200);
+    await win.reload();
+    const remoteGroup = win.locator(`[data-machine-id="${grant.hostId}"]`);
+    await expect(remoteGroup.getByRole('button', { name: 'Open api-service', exact: true })).toBeVisible();
+    await expect(remoteGroup.getByRole('button', { name: 'Open web-client', exact: true })).toBeVisible();
+    await expect(remoteGroup.getByRole('button', { name: 'Open Default Project', exact: true })).toBeVisible();
+    await remoteGroup.getByRole('button', { name: `Collapse ${originalName}`, exact: true }).click();
+    await expect(remoteGroup.getByRole('button', { name: 'Open api-service', exact: true })).toHaveCount(0);
+    await remoteGroup.getByRole('button', { name: `Expand ${originalName}`, exact: true }).click();
+    await remoteGroup.getByRole('button', { name: `Open ${originalName} projects`, exact: true }).click();
+    const overview = win.getByRole('dialog', { name: originalName, exact: true });
+    await expect(overview.getByRole('button', { name: 'api-service', exact: true })).toBeVisible();
+    await win.screenshot({ path: testInfo.outputPath('machine-project-overview.png') });
+    await overview.getByRole('button', { name: 'Close', exact: true }).click();
+
+    await remoteGroup.getByRole('button', { name: 'Open Default Project', exact: true }).click();
+    const composer = win.locator('.new-thread-view .thread-command-composer');
+    const input = composer.getByTestId('thread-command-input');
+    await input.fill('Run a task on my remote machine');
+    await composer.getByRole('button', { name: 'Machine and project', exact: true }).click();
+    await win.getByRole('option', { name: `${originalName} › api-service ${apiRoot}`, exact: true }).click();
+    await expect(input).toContainText('Run a task on my remote machine');
+    await composer.getByRole('button', { name: 'Machine and project', exact: true }).click();
+    await win.getByRole('option', { name: `${originalName} › Default Project General tasks on ${originalName}`, exact: true }).click();
+    await expect(input).toContainText('Run a task on my remote machine');
+    await expect(composer.getByTestId('model-reasoning-picker-trigger')).toContainText('Fake Model', { timeout: 60_000 });
+    await expect(composer.getByTestId('thread-command-error')).toHaveCount(0);
+    await win.screenshot({ path: testInfo.outputPath('machine-project-composer.png') });
+    await expect(composer.getByTestId('thread-command-send')).toBeEnabled();
+    await composer.getByTestId('thread-command-send').click();
+    await expect(win).toHaveURL(/\/threads\/[^/?]+$/, { timeout: 60_000 });
+    const threadId = new URL(win.url()).pathname.split('/').at(-1)!;
+    const created = (await api(`/threads/${threadId}`)).body.thread;
+    expect(created.projectId).toBe(scratch.value.id);
+    expect(created.hostId).toBe(grant.hostId);
+    expect(created.environmentId).toBeTruthy();
+    await expect.poll(async () => (await api(`/threads/${threadId}`)).body.thread.status, { timeout: 60_000 }).toBe('idle');
+    await expect(win.getByRole('button', { name: 'Thread location — start a new thread elsewhere', exact: true })).toContainText('Default Project');
+    await win.getByRole('button', { name: 'Thread location — start a new thread elsewhere', exact: true }).click();
+    await win.getByRole('option', { name: `${originalName} › api-service New thread on ${originalName}`, exact: true }).click();
+    await expect(win).toHaveURL(/locationProject=/);
+    await expect(win.getByRole('button', { name: 'Machine and project', exact: true })).toContainText('api-service');
 
     await navigate('/settings/machines');
     const card = win.locator('.machine-card').filter({ has: win.getByTestId(`machine-workspace-${grant.hostId}`) });

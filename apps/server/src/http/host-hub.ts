@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import type { WebSocket } from 'ws';
@@ -131,6 +132,7 @@ export function createHostHub(
   options?: {
     onNewHostInstance?: (hostId: string) => void;
     onHostConnected?: (hostId: string) => void;
+    onProjectCatalogueChanged?: (hostId: string) => void;
     pluginHostGenerations?: () => Array<{ pluginId: string; generation: string }>;
     productInstanceId?: string;
     onConversationEvent?: (input: {
@@ -365,6 +367,13 @@ export function createHostHub(
           afterCommit.push(() => options?.onPluginHostEvent?.(notice));
           accepted++; return;
         }
+        if (event.kind === 'project.catalogue.changed') {
+          if (!z.object({ revision: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict().safeParse(event.payload).success) {
+            rejected.push({ index, reason: 'invalid_payload' }); return;
+          }
+          afterCommit.push(() => options?.onProjectCatalogueChanged?.(session.hostId));
+          accepted++; return;
+        }
         if (event.kind === 'project.clone.progress') {
           accepted += 1;
           committedHub.emit('projects:cloneProgress', event.payload);
@@ -575,6 +584,7 @@ export function createHostHub(
         && event.kind !== 'terminal.output'
         && event.kind !== 'terminal.exited'
         && event.kind !== 'project.clone.progress'
+        && event.kind !== 'project.catalogue.changed'
         && event.kind !== 'desktop.browser.changed'
         && !rejected.some((row) => row.index === index)
       ));

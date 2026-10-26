@@ -55,7 +55,7 @@ test('Salesforce project creation logs in before creating a connected DX project
   expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
   await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(row => row.id === 'salesforce')?.status), { timeout: 30_000 }).toMatch(/running|needs-configuration/);
   await page.evaluate(() => { history.pushState({}, '', '/projects'); window.dispatchEvent(new PopStateEvent('popstate')); });
-  await page.getByRole('button', { name: 'Add project', exact: true }).click();
+  await page.getByRole('button', { name: 'Add machine or project', exact: true }).click();
   await page.getByRole('button', { name: 'Salesforce project', exact: true }).click();
   const wizard = page.getByTestId('salesforce-create-project');
   await expect(wizard).toBeVisible();
@@ -133,7 +133,7 @@ test('Salesforce connection failure leaves the new project available to open', a
   expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
   await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(row => row.id === 'salesforce')?.status), { timeout: 30_000 }).toMatch(/running|needs-configuration/);
   await page.evaluate(() => { history.pushState({}, '', '/projects'); window.dispatchEvent(new PopStateEvent('popstate')); });
-  await page.getByRole('button', { name: 'Add project', exact: true }).click();
+  await page.getByRole('button', { name: 'Add machine or project', exact: true }).click();
   await page.getByRole('button', { name: 'Salesforce project', exact: true }).click();
   const wizard = page.getByTestId('salesforce-create-project');
   await wizard.getByRole('button', { name: 'Use a connected org', exact: true }).click();

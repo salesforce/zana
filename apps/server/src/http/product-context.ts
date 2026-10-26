@@ -1,3 +1,4 @@
+import { createMachineProjectSync, type MachineProjectSync } from '../services/hosts/machine-project-sync.js';
 import { closeThreadReads } from '../services/threads/thread-reads.js';
 import { closeQueuedMessages } from '../services/threads/queued-messages.js';
 import { previewService, disposePreviews } from '../services/previews/preview-service.js';
@@ -118,6 +119,7 @@ export interface ProductHttpContext {
   /** Per-project settings (Settings → Project), read from disk on every call. */
   projectSettings: Pick<ProjectSettingsStore, 'get' | 'getPluginHarnessRouting' | 'setPluginHarnessRouting'>;
   remoteProjectReconciler?: CoalescedReconciler;
+  machineProjectSync?: MachineProjectSync;
   config: ReturnType<typeof createConfigStore>;
   inbox: IInboxStore;
   inboxRead: IInboxReadStore;
@@ -276,6 +278,7 @@ export function createProductHttpContext(
       );
       restartedHosts.add(hostId);
     },
+    onProjectCatalogueChanged: hostId => { void ctx?.machineProjectSync?.request(hostId); },
     onHostConnected: (hostId) => {
       const timer = disconnectHealTimers.get(hostId);
       if (timer) {
@@ -287,6 +290,7 @@ export function createProductHttpContext(
       ctx.peerLinks?.onInboundConnected(hostId);
       if (getHost(db, hostId)?.enrollmentCapability !== 'execution') return;
       void ctx.remoteProjectReconciler?.request();
+      void ctx.machineProjectSync?.request(hostId);
       tunnelReopener.hostConnected(hostId);
       ctx.remoteEnvironment.hostConnected(hostId);
       void reconcileStoppingConversationThreadsOnHostConnect(ctx, hostId).catch(() => undefined);
@@ -668,7 +672,7 @@ export function createProductHttpContext(
       ctx.peerControlReplay.dispose();
       ctx.pluginStorageEpochs?.dispose();
       options.peerKeyProvider?.dispose?.();
-      const reconcilerStopped = remoteProjectReconciler.dispose();
+      const reconcilerStopped = Promise.all([remoteProjectReconciler.dispose(), ctx.machineProjectSync?.dispose()]).then(() => undefined);
       closeThreadReads(dataDir); closeQueuedMessages(dataDir);
       disposePreviews(ctx);
       disposeEnvironmentRetireTimers(ctx);
@@ -697,6 +701,7 @@ export function createProductHttpContext(
       await Promise.all([ctx.peerPairs.whenIdle(), ctx.peerChannels.whenIdle(), ctx.peerControlReplay.whenIdle(), ctx.pluginStorageEpochs?.whenIdle()]);
     }
   };
+  ctx.machineProjectSync = createMachineProjectSync(ctx);
   previewService(ctx);
   const stopHistoryMaintenance = startConversationHistoryMaintenance(db);
   const stopRetries = startDeferredRetryLoop(async () => {
