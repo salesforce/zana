@@ -8,7 +8,7 @@
 }
 .titlebar-threads-strip { display: flex; align-items: center; gap: 4px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .titlebar-threads-strip::-webkit-scrollbar { display: none; }
-.titlebar-thread { position: relative; display: flex; flex: 0 0 190px; min-width: 0; height: calc(var(--titlebar-h) - 8px); border: 1px solid transparent; border-radius: 7px; }
+.titlebar-thread { -webkit-app-region: no-drag; position: relative; display: flex; flex: 0 0 190px; min-width: 0; height: calc(var(--titlebar-h) - 8px); border: 1px solid transparent; border-radius: 7px; }
 .titlebar-thread:hover { background: var(--bg-hover); }
 .titlebar-thread.is-active { background: var(--bg-panel); border-color: var(--border); box-shadow: 0 1px 3px #0000000a; }
 .titlebar-thread > button, .titlebar-threads-action, .titlebar-threads-popover { -webkit-app-region: no-drag; }
@@ -50,3 +50,10 @@
 .titlebar-threads-results small { display: block; color: var(--text-muted); margin-top: 3px; }
 .titlebar-threads-reopen { border-top: 1px solid var(--border); border-radius: 0; color: var(--text-muted); }
 .titlebar-threads button:focus-visible, .titlebar-threads summary:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
+.titlebar-thread-context-menu { -webkit-app-region: no-drag; position: fixed; z-index: 10050; box-sizing: border-box; width: min(252px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow-y: auto; padding: 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-panel); color: var(--text-primary); box-shadow: 0 8px 28px #0003; }
+.titlebar-thread-menu-note { padding: 5px 8px 7px; font-size: 10px; color: var(--text-muted); }
+.titlebar-thread-menu-separator { border-top: 1px solid var(--border); margin: 4px 0; }
+.titlebar-thread-context-menu button { width: 100%; padding: 8px; border: 0; border-radius: 4px; background: none; color: inherit; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.titlebar-thread-context-menu button:hover:not(:disabled), .titlebar-thread-context-menu button:focus { background: var(--bg-hover); }
+.titlebar-thread-context-menu button:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
+.titlebar-thread-context-menu button:disabled { color: var(--text-dim); cursor: default; }

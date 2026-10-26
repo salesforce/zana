@@ -1,28 +1,37 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown, LoaderCircle, MessageSquareText, Plus, RotateCcw, TriangleAlert, X } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
-import { useData } from '../store.js';
-import { onThreadArchived, useThreads } from '../thread-store.js';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { useData, useUi } from '../store.js';
+import { onThreadArchived, useThreads, type ThreadListItem } from '../thread-store.js';
 import { useRouteState } from '../hooks/useRouteState.js';
 import { getAgentsRoutePath, getNewThreadRoutePath, getProjectRoutePath, getThreadRoutePath } from '../lib/route-paths.js';
 import { getScopedProjectId } from '../lib/windowScope.js';
 import { closeThreadTab, openThreadTab, readThreadTabs, saveThreadTabs, type ThreadTab } from '../lib/thread-tabs.js';
 import { threadStatusToAgentState } from './thread/thread-timeline-model.js';
 import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
+import { copyTextOrFail } from '../lib/copy-text.js';
+import { product } from '../lib/product-client.js';
+import { withRunningProcessWarning } from '../lib/thread-running-processes.js';
+import { ThreadTabContextMenu } from './ThreadTabContextMenu.js';
 import './TitlebarThreadTabs.css';
 
 export function TitlebarThreadTabs() {
   const route = useRouteState();
+  const location = useLocation();
   const navigate = useNavigate();
   const scope = getScopedProjectId();
   const threads = useThreads(s => s.threads);
   const projects = useData(s => s.projects);
   const [tabs, setTabs] = useState(() => readThreadTabs(sessionStorage, scope));
   const [query, setQuery] = useState('');
+  const [contextMenu, setContextMenu] = useState<{ threadId: string; x: number; y: number; anchor: HTMLElement } | null>(null);
+  const dismissContextMenu = useCallback(() => setContextMenu(null), []);
   const [menuPosition, setMenuPosition] = useState({ left: 8, top: 44 });
   const strip = useRef<HTMLDivElement>(null);
   const menu = useRef<HTMLDetailsElement>(null);
   const fallback = scope ? getProjectRoutePath(scope) : getAgentsRoutePath();
+  const activeThreadId = useRef(route.threadId);
+  activeThreadId.current = route.threadId;
 
   useEffect(() => { void useThreads.getState().load(); }, []);
   useEffect(() => {
@@ -63,10 +72,11 @@ export function TitlebarThreadTabs() {
   useEffect(() => {
     strip.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
   }, [route.threadId, tabs.open]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (menu.current) menu.current.open = false;
+    setContextMenu(null);
     setQuery('');
-  }, [route.threadId]);
+  }, [location]);
 
   const visible = tabs.open.flatMap(tab => {
     const thread = threads.find(row => row.id === tab.threadId);
@@ -88,6 +98,32 @@ export function TitlebarThreadTabs() {
       if (neighbor) go(neighbor.tab);
       else navigate(fallback);
     }
+  };
+  const closeMany = (ids: string[]) => {
+    const targets = new Set(ids);
+    const activeIndex = visible.findIndex(row => row.tab.threadId === route.threadId);
+    const neighbor = visible.slice(activeIndex + 1).find(row => !targets.has(row.tab.threadId))
+      ?? visible.slice(0, activeIndex).reverse().find(row => !targets.has(row.tab.threadId));
+    setTabs(state => ids.reduce((next, id) => closeThreadTab(next, id), state));
+    if (route.threadId && targets.has(route.threadId)) {
+      if (neighbor) go(neighbor.tab);
+      else navigate(fallback);
+    }
+  };
+  const contextRow = visible.find(row => row.tab.threadId === contextMenu?.threadId);
+  const contextIndex = visible.findIndex(row => row === contextRow);
+  const reopen = () => { if (lastClosed) { setTabs(state => openThreadTab(state, lastClosed)); go(lastClosed); } };
+  const archive = (thread: ThreadListItem) => {
+    const current = useThreads.getState().threads.find(row => row.id === thread.id) ?? thread;
+    if (!window.confirm(withRunningProcessWarning(`Archive “${current.title || 'Untitled thread'}”?`, current))) return;
+    const failed = () => useUi.getState().pushToast('Could not archive thread', 'error');
+    void product.threads.archive(thread.id).then(result => {
+      if (!result.ok) { failed(); return; }
+      useThreads.getState().remove(thread.id);
+      setTabs(state => closeThreadTab(state, thread.id, false));
+      // The user may have switched threads while the request was pending.
+      if (activeThreadId.current === thread.id) navigate(fallback);
+    }, failed);
   };
 
   return (
@@ -111,8 +147,23 @@ export function TitlebarThreadTabs() {
           const unread = !active && (thread.maxSeq ?? 0) > (thread.lastReadSeq ?? 0);
           const title = thread.title || 'Untitled thread';
           return (
-            <div key={thread.id} className={`titlebar-thread ${active ? 'is-active' : ''} ${unread ? 'is-unread' : ''}`}>
+            <div key={thread.id} className={`titlebar-thread ${active ? 'is-active' : ''} ${unread ? 'is-unread' : ''}`}
+              onContextMenu={event => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (menu.current) menu.current.open = false;
+                const anchor = event.currentTarget.querySelector<HTMLButtonElement>('[role="tab"]')!;
+                setContextMenu({ threadId: thread.id, x: event.clientX, y: event.clientY, anchor });
+              }}>
               <button type="button" role="tab" aria-selected={active} tabIndex={active || (!visible.some(row => row.thread.id === route.threadId) && index === 0) ? 0 : -1}
+                aria-haspopup="menu" aria-expanded={contextMenu?.threadId === thread.id}
+                onKeyDown={event => {
+                  if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+                  event.preventDefault();
+                  if (menu.current) menu.current.open = false;
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  setContextMenu({ threadId: thread.id, x: rect.left, y: rect.bottom, anchor: event.currentTarget });
+                }}
                 title={`${title}\n${project.name} · ${status}${unread ? ' · Unread' : ''}`}
                 aria-label={`${title} — ${project.name}${unread ? ' — Unread' : ''}`} onClick={() => go(tab)}>
                 <ProviderIcon providerId={thread.providerId} size={15} />
@@ -135,6 +186,7 @@ export function TitlebarThreadTabs() {
       <button type="button" className="titlebar-threads-action" aria-label="New thread" title="New thread" onClick={() => navigate(getNewThreadRoutePath(scope ?? route.focusedProjectId ?? undefined))}><Plus size={16} /></button>
       <details className="titlebar-threads-menu" ref={menu} onToggle={event => {
         if (event.currentTarget.open) {
+          dismissContextMenu();
           const rect = event.currentTarget.getBoundingClientRect();
           setMenuPosition({ left: Math.max(8, Math.min(rect.right - 330, window.innerWidth - 338)), top: rect.bottom + 4 });
           event.currentTarget.querySelector('input')?.focus();
@@ -150,9 +202,25 @@ export function TitlebarThreadTabs() {
               </button>
             ))}
           </div>
-          {lastClosed && <button type="button" className="titlebar-threads-reopen" onClick={() => { setTabs(state => openThreadTab(state, lastClosed)); go(lastClosed); }}><RotateCcw size={13} />Reopen closed tab</button>}
+          {lastClosed && <button type="button" className="titlebar-threads-reopen" onClick={reopen}><RotateCcw size={13} />Reopen closed tab</button>}
         </div>
       </details>
+      {contextMenu && contextRow && <ThreadTabContextMenu {...contextMenu} onClose={dismissContextMenu} items={[
+        { label: 'Copy thread link', run: () => {
+          const path = getThreadRoutePath(contextRow.tab.threadId, scope ?? (contextRow.tab.projectScoped ? contextRow.tab.projectId : null));
+          void copyTextOrFail(new URL(path, window.location.origin).href).then(
+            () => useUi.getState().pushToast('Thread link copied'),
+            () => useUi.getState().pushToast('Could not copy thread link', 'error')
+          );
+        } },
+        { label: 'Open project', run: () => navigate(getProjectRoutePath(contextRow.project.id)) },
+        { label: 'Close tab', separatorBefore: true, run: () => close(contextRow.thread.id) },
+        { label: 'Close other tabs', disabled: visible.length < 2, run: () => closeMany(visible.filter(row => row !== contextRow).map(row => row.thread.id)) },
+        { label: 'Close tabs to the right', disabled: contextIndex === visible.length - 1, run: () => closeMany(visible.slice(contextIndex + 1).map(row => row.thread.id)) },
+        { label: 'Close all tabs', run: () => closeMany(visible.map(row => row.thread.id)) },
+        { label: 'Reopen closed tab', separatorBefore: true, disabled: !lastClosed, run: reopen },
+        { label: 'Archive', separatorBefore: true, run: () => archive(contextRow.thread) }
+      ]} />}
     </div>
   );
 }

@@ -161,6 +161,99 @@ test('thread tabs: default, project context, drafts, close safety, settings, rel
   expect(errors).toEqual([]);
 });
 
+test('thread tab context actions keep work running and support keyboard access', async ({ app }, testInfo) => {
+  const { window: page, electron, home } = app;
+  await dismissConsentOverlays(page);
+  const roots = ['Context Alpha', 'Context Beta', 'Context Gamma'].map(title => ({ title, path: join(home, title) }));
+  roots.forEach(root => mkdirSync(root.path));
+  const rows = await page.evaluate(async roots => {
+    const rows: Array<{ id: string; projectId: string }> = [];
+    for (const root of roots) {
+      const project = await window.cc.projects.add(root.path);
+      if (!project.ok) throw new Error(project.message);
+      const response = await fetch('/api/v1/threads', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectId: project.value.id, providerId: 'fake', title: root.title, input: 'delay:60000 context menu safety' }) });
+      if (!response.ok) throw new Error(await response.text());
+      rows.push((await response.json()).thread);
+    }
+    return rows;
+  }, roots);
+  const strip = page.getByTestId('titlebar-thread-tabs');
+  for (const [index, row] of rows.entries()) {
+    await route(page, `/threads/${row.id}`);
+    await expect(strip.getByRole('tab')).toHaveCount(index + 1);
+  }
+  const alpha = strip.getByRole('tab', { name: /Context Alpha/ });
+  const menu = page.getByRole('menu', { name: 'Thread tab actions' });
+  await alpha.click({ button: 'right' });
+  await expect(menu).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/threads/${rows[2]!.id}$`));
+  await expect(menu).toBeInViewport();
+  await expect(menu).toHaveCSS('-webkit-app-region', 'no-drag');
+  await expect(menu.getByRole('menuitem', { name: 'Reopen closed tab' })).toBeDisabled();
+  await page.getByTestId('thread-detail').first().dispatchEvent('scroll');
+  await expect(menu).toBeVisible();
+  await menu.getByRole('menuitem', { name: 'Copy thread link' }).click();
+  await expect.poll(() => electron.evaluate(({ clipboard }) => clipboard.readText())).toContain(`/threads/${rows[0]!.id}`);
+  await alpha.focus(); await alpha.press('Shift+F10');
+  await expect(menu).toBeVisible();
+  await page.keyboard.press('End');
+  await expect(menu.getByRole('menuitem', { name: 'Archive', exact: true })).toBeFocused();
+  await page.keyboard.press('Escape'); await expect(alpha).toBeFocused();
+  await expect(menu).toBeHidden();
+  const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+  await alpha.evaluate((element, viewport) => element.dispatchEvent(new MouseEvent('contextmenu', {
+    bubbles: true, cancelable: true, clientX: viewport.width - 1, clientY: viewport.height - 1
+  })), viewport);
+  await expect(menu).toBeVisible();
+  // Use the same CSS coordinates as the mouse event and menu placement.
+  const bounds = await menu.evaluate(element => {
+    const rect = element.getBoundingClientRect();
+    return { right: rect.right, bottom: rect.bottom, height: rect.height, style: element.getAttribute('style'), scrollY };
+  });
+  expect(bounds.right, JSON.stringify(bounds)).toBeLessThanOrEqual(viewport.width - 7);
+  expect(bounds.bottom, JSON.stringify(bounds)).toBeLessThanOrEqual(viewport.height - 7);
+  await page.keyboard.press('Escape');
+  await alpha.click({ button: 'right' });
+  await expect(menu).toBeVisible();
+  await menu.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await captureElectronScreenshot(electron, page, testInfo.outputPath('thread-tab-context-menu.png'));
+  await menu.getByRole('menuitem', { name: 'Close tabs to the right' }).click();
+  await expect(strip.getByRole('tab')).toHaveCount(1);
+  await expect(page).toHaveURL(new RegExp(`/threads/${rows[0]!.id}$`));
+  const running = await page.evaluate(async ids => Promise.all(ids.map(async id => (await (await fetch(`/api/v1/threads/${id}`)).json()).thread)), rows.map(row => row.id));
+  for (const thread of running) { expect(thread.archivedAt).toBeNull(); expect(thread.status).toBe('active'); }
+  await alpha.click({ button: 'right' });
+  await menu.getByRole('menuitem', { name: 'Reopen closed tab' }).click();
+  await expect(strip.getByRole('tab')).toHaveCount(2);
+  await expect(page).toHaveURL(new RegExp(`/threads/${rows[2]!.id}$`));
+  await alpha.click({ button: 'right' });
+  await menu.getByRole('menuitem', { name: 'Close other tabs' }).click();
+  await expect(strip.getByRole('tab')).toHaveCount(1);
+  await expect(page).toHaveURL(new RegExp(`/threads/${rows[0]!.id}$`));
+  await expect(alpha).toHaveAttribute('aria-selected', 'true');
+  await alpha.click({ button: 'right' });
+  await menu.getByRole('menuitem', { name: 'Open project', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${rows[0]!.projectId}$`));
+  await expect(alpha).toHaveAttribute('aria-selected', 'false');
+  await alpha.click({ button: 'right' });
+  await menu.getByRole('menuitem', { name: 'Close all tabs' }).click();
+  await expect(strip.getByRole('tab')).toHaveCount(0);
+  await strip.getByLabel('All open threads').click();
+  await strip.getByRole('button', { name: 'Reopen closed tab' }).click();
+  await expect(alpha).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/threads/${rows[0]!.id}$`));
+  page.once('dialog', dialog => dialog.accept());
+  await alpha.click({ button: 'right' });
+  await menu.getByRole('menuitem', { name: 'Archive', exact: true }).click();
+  await expect(strip.getByRole('tab')).toHaveCount(0);
+  await expect(page).toHaveURL(/\/agents$/);
+  await expect.poll(() => page.evaluate(async id => Boolean((await (await fetch(`/api/v1/threads/${id}`)).json()).thread.archivedAt), rows[0]!.id)).toBe(true);
+  await strip.getByLabel('All open threads').click();
+  await strip.getByRole('button', { name: 'Reopen closed tab' }).click();
+  await expect(alpha).toHaveCount(0);
+  await expect(strip.getByRole('tab', { name: /Context Gamma/ })).toBeVisible();
+});
+
 test('the thread switcher appears above native browser content and restores the same page', async ({ app }) => {
   const { window: page, electron } = app;
   await dismissConsentOverlays(page);
@@ -200,6 +293,11 @@ test('the thread switcher appears above native browser content and restores the 
     const strip = page.getByTestId('titlebar-thread-tabs');
     await strip.getByLabel('All open threads').click();
     await expect(strip.getByRole('textbox', { name: 'Find an open thread' })).toBeVisible();
+    await expect.poll(nativeState).toMatchObject({ visible: false, marker: before!.marker });
+    await page.keyboard.press('Escape');
+    await expect.poll(nativeState).toMatchObject({ visible: true, marker: before!.marker });
+    await strip.getByRole('tab', { name: /Browser tab/ }).click({ button: 'right' });
+    await expect(page.getByRole('menu', { name: 'Thread tab actions' })).toBeVisible();
     await expect.poll(nativeState).toMatchObject({ visible: false, marker: before!.marker });
     await page.keyboard.press('Escape');
     await expect.poll(nativeState).toMatchObject({ visible: true, marker: before!.marker });
