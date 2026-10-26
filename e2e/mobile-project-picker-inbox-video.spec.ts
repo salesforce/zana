@@ -65,8 +65,8 @@ test('mobile project selection scrolls and fits the keyboard; inbox videos play 
       await page.setViewportSize({ width, height: 360 });
       const search = dialog.getByRole('searchbox', { name: 'Search projects' });
       await search.fill('Project 34');
-      const project = dialog.getByRole('button', { name: 'Project 34 with a longer name', exact: true });
-      for (const control of [dialog, search, project, dialog.getByRole('button', { name: 'New project', exact: true }), dialog.getByRole('button', { name: "Don't work in a project", exact: true })]) {
+      const project = dialog.getByRole('button', { name: /Project 34 with a longer name/ });
+      for (const control of [dialog, search, project, dialog.getByRole('button', { name: /^Add project on / })]) {
         const bounds = (await control.boundingBox())!;
         expect(bounds.x).toBeGreaterThanOrEqual(0);
         expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);

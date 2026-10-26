@@ -8,6 +8,8 @@ import { AddMachineProjectDialog } from './AddMachineProjectDialog.js';
 import { composerProjectLabel, isScratchWorkspaceProject } from './composer-project-default.js';
 import './listpane/machine-projects.css';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
+import { MobileProjectPicker } from './MobileProjectPicker.js';
+import { useCompactLayout } from '../hooks/useCompactLayout.js';
 
 const ADD_PROJECT = 'add-machine-project';
 
@@ -25,6 +27,8 @@ export function ComposerProjectPicker({
   disabled?: boolean;
   title?: string;
 }) {
+  const compact = useCompactLayout();
+  const Picker = compact ? MobileProjectPicker : PopoverPicklist;
   const hosts = useHosts();
   const rememberLastProjectId = useData(s => s.rememberLastProjectId);
   const [adding, setAdding] = useState<MachineProjectGroup | null>(null);
@@ -47,7 +51,7 @@ export function ComposerProjectPicker({
   const recordedHost = onStartNewThread ? hosts.find(host => host.id === hostId) : undefined;
   const recordedName = recordedHost ? groups.find(row => row.hostId === recordedHost.id)?.name ?? recordedHost.name : undefined;
   return <>
-    <PopoverPicklist
+    <Picker
       ariaLabel={onStartNewThread ? 'Thread location — start a new thread elsewhere' : 'Machine and project'}
       value={selectedValue}
       placeholder={`${group?.name ?? 'Machine'} › ${project ? composerProjectLabel(project) : 'Default Project'}`}
@@ -67,7 +71,7 @@ export function ComposerProjectPicker({
           value: choice.value,
           label: `${choice.group.name} › ${composerProjectLabel(choice.project)}`,
           compactLabel: `${choice.group.name.length > 24 ? `${choice.group.name.slice(0, 23)}…` : choice.group.name} › ${composerProjectLabel(choice.project)}`,
-          content: <span className="composer-project-picker-option"><span className="sr-only">{choice.group.name} › </span>{isScratchWorkspaceProject(choice.project) ? <Home size={14} aria-hidden="true" /> : null}{composerProjectLabel(choice.project)}</span>,
+          content: <span className="composer-project-picker-option"><span className={compact ? undefined : 'sr-only'}>{choice.group.name} › </span>{isScratchWorkspaceProject(choice.project) ? <Home size={14} aria-hidden="true" /> : null}{composerProjectLabel(choice.project)}</span>,
           description: onStartNewThread
             ? `New thread on ${choice.group.name}${choice.group.host?.status === 'disconnected' ? ' · Offline' : ''}`
             : isScratchWorkspaceProject(choice.project) ? `General tasks on ${choice.group.name}` : choice.project.remote?.remotePath ?? choice.project.path,
