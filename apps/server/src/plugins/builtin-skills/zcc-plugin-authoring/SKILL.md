@@ -8,6 +8,11 @@ description: Extend Zana itself by writing a plugin — panel, CLI command, skil
 ZCC grows by plugins. Core is the runtime (threads, hosts, auth, confinement).
 A new user-facing capability is a plugin unless it cannot be granted even scoped.
 
+For meaningful plugin UI changes, use `zana-ui-proposals` to show an interactive
+mock early, with meaningful alternatives or a Current / Proposed comparison.
+Apply it proactively even when the user has not asked for a mockup. Keep trivial
+fixes lightweight and honor explicit requests to implement directly.
+
 Start from **Plugins → New plugin**, Browse **Create a plugin**, or the composer
 **Plugin** action. All seed the same prompt. Send it as an ordinary project
 thread — not a dedicated Extensions project. Then:

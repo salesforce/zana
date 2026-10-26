@@ -39,6 +39,7 @@ describe('remote interaction surface', () => {
     db.close(); db = openDatabase(join(dir, 'db.sqlite')); ctx.db = db;
     const packed = await packConversationSessionTooling(ctx, { threadId: child.id, projectId: 'p1' });
     expect(packed.instructions).toContain('interacting through Chat');
+    expect(packed.instructions).toContain('zana-ui-proposals');
     expect(packed.instructions).not.toContain('side panel by default');
     expect(packed.dynamicTools?.map(x => x.name)).not.toContain('preview_file');
     expect(packed.dynamicTools?.map(x => x.name)).not.toContain('run_in_terminal');

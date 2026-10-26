@@ -25,6 +25,10 @@ describe('builtinSkillsRootPath', () => {
     expect(existsSync(join(root, 'zcc-cli', 'SKILL.md'))).toBe(true);
     expect(existsSync(join(root, 'zcc-inbox', 'SKILL.md'))).toBe(true);
     expect(existsSync(join(root, 'zcc-preview', 'SKILL.md'))).toBe(true);
+    expect(discoverSkillsInRoot(root)).toContainEqual({
+      name: 'zana-ui-proposals',
+      description: expect.stringContaining('interactive UI proposals')
+    });
     const browser = readFileSync(join(root, 'zcc-browser', 'SKILL.md'), 'utf8');
     expect(browser).toMatch(/^---\nname: zcc-browser\n/);
     expect(browser).toContain('zcc browser create');
@@ -89,21 +93,21 @@ describe('selectBuiltinSkillDirectoryRoots', () => {
     })).toEqual([]);
   });
 
-  it('stages only enabled skills when some are opted out', () => {
+  it.each(['zcc-cli', 'zana-ui-proposals'])('stages only enabled skills when %s is opted out', (disabledSkill) => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-injected-partial-'));
     dirs.push(dataDir);
     const roots = selectBuiltinSkillDirectoryRoots({
       dataDir,
-      disabledBundledSkills: ['zcc-cli']
+      disabledBundledSkills: [disabledSkill]
     });
     expect(roots).toHaveLength(1);
     expect(roots[0]).not.toBe(builtinSkillsRootPath());
     expect(existsSync(join(roots[0]!, 'zcc-inbox', 'SKILL.md'))).toBe(true);
-    expect(existsSync(join(roots[0]!, 'zcc-cli', 'SKILL.md'))).toBe(false);
+    expect(existsSync(join(roots[0]!, disabledSkill, 'SKILL.md'))).toBe(false);
     writeInjectedSkillRootManifest(dataDir, roots);
     const manifest = JSON.parse(readFileSync(join(dataDir, 'injected-skill-roots.json'), 'utf8'));
     expect(manifest.builtinSkillTargets).toContain(realpathSync(join(builtinSkillsRootPath(), 'zcc-inbox')));
-    expect(manifest.builtinSkillTargets).not.toContain(realpathSync(join(builtinSkillsRootPath(), 'zcc-cli')));
+    expect(manifest.builtinSkillTargets).not.toContain(realpathSync(join(builtinSkillsRootPath(), disabledSkill)));
   });
 
   it('lists the same slugs as BUNDLED_PRODUCT_SKILL_IDS', async () => {
