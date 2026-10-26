@@ -25,7 +25,11 @@ vi.mock('../../lib/product-client.js', () => ({ product: { library: { search: st
 vi.mock('../../components/AgentLauncher', () => ({ AgentLauncher: () => null }));
 vi.mock('../../components/PromptModal', () => ({ PromptModal: () => null }));
 vi.mock('../../lib/inspect-session', () => ({ inspectAgentSession: vi.fn() }));
-vi.mock('./library/DocPreview.js', () => ({ DocPreview: ({ doc }: { doc: LibraryDoc }) => <article>{doc.title} content</article> }));
+vi.mock('./library/DocPreview.js', () => ({ DocPreview: ({ doc, fragment, onOpenDocument }: any) => <>
+  <article>{doc.title} content{fragment ? ` ${fragment}` : ''}</article>
+  <button onClick={() => onOpenDocument({ path: 'other.md', fragment: 'section-2' })}>Open linked document</button>
+  <button onClick={() => onOpenDocument({ path: 'missing.md', fragment: '' })}>Open missing document</button>
+</> }));
 const project = { id: 'p', name: 'My project', path: '/project' } as Project;
 const note = { id: 'a', title: 'Readable note', kind: 'md', relPath: 'notes/reading.md', scope: 'global', createdAt: 1, updatedAt: 1 } as LibraryDoc;
 afterEach(cleanup);
@@ -89,6 +93,18 @@ for (const kind of ['global', 'project'] as const) {
       const view = render(element({ scope: 'global', relPath: 'missing.md' }));
       expect(view.getByText('No documents yet')).toBeTruthy();
       expect(view.container.querySelector('.library-view')?.getAttribute('data-mobile-pane')).toBe('documents');
+    });
+
+    it('follows a document link and forwards its heading without losing the library surface', () => {
+      const view = render(element({ scope: 'global', relPath: note.relPath }));
+      fireEvent.click(view.getByRole('button', { name: 'Back to documents' }));
+      fireEvent.change(view.getByRole('textbox'), { target: { value: 'Readable' } });
+      fireEvent.click(view.getByRole('button', { name: 'reading.md' }));
+      fireEvent.click(view.getByRole('button', { name: 'Open linked document' }));
+      expect(view.getByRole('article').textContent).toContain('Other content section-2');
+      fireEvent.click(view.getByRole('button', { name: 'Open missing document' }));
+      expect(state.ui.pushToast).toHaveBeenCalledWith('Linked document was not found in this library', 'error');
+      expect(view.getByRole('article').textContent).toContain('Other content section-2');
     });
   });
 }

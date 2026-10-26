@@ -59,8 +59,8 @@ it('waits for slow child directories and reports failures without blocking sibli
 });
 
 it('renders markdown links and tables in the independent preview', async () => {
-  render(<Suspense><MarkdownPreview content={'[Docs](https://example.com)\n\n| Name |\n| --- |\n| Value |'} /></Suspense>);
-  expect(screen.getByRole('link', { name: 'Docs' }).getAttribute('rel')).toBe('noreferrer');
+  render(<Suspense><MarkdownPreview documentPath="/repo/notes.md" content={'[Docs](https://example.com)\n\n| Name |\n| --- |\n| Value |'} /></Suspense>);
+  expect(screen.getByRole('link', { name: 'Docs' }).getAttribute('href')).toBe('https://example.com');
   expect(screen.getByRole('table')).toBeTruthy();
 });
 

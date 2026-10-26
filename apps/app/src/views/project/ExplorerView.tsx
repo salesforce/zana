@@ -13,6 +13,7 @@ import { useMonacoTheme } from '@/hooks/useMonacoTheme';
 import { useDirectoryLoader } from '@/components/explorer/useDirectoryLoader';
 import { DirectoryLoading } from '@/components/explorer/DirectoryLoading';
 import { useExplorerFileReveal } from './useExplorerFileReveal.js';
+import type { DocumentLink } from '../../components/document-links.js';
 import {
   WorktreeMenu,
   ExplorerGitFooter,
@@ -269,6 +270,7 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
   // Markdown files open as a rendered preview by default; the user can flip to
   // the Monaco editor to make edits. Resets per file (see effect below).
   const [previewMode, setPreviewMode] = useState(false);
+  const [linkedDocument, setLinkedDocument] = useState<DocumentLink>();
   // Image files are binary (so `fileResult.binary` is true) but we render them
   // instead of the "binary file" placeholder. The data URL is fetched lazily
   // per file via the confine-checked `readDataUrl` IPC. Local projects only —
@@ -1047,6 +1049,14 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
         isRemote={isRemote}
         nativeFiles={nativeFiles}
         isMarkdown={isMarkdown}
+        fragment={linkedDocument && linkedDocument.path === explorerFile ? linkedDocument.fragment : undefined}
+        onOpenDocument={link => {
+          const { editedContent: edited, fileContent } = fileClickStateRef.current;
+          if (edited !== null && edited !== fileContent && !window.confirm('Discard unsaved changes?')) return;
+          setLinkedDocument(link);
+          setExplorerFile(viewKey, link.path);
+          setDiffMode(false);
+        }}
         onContentChange={setEditedContent}
         onEditorMount={(ed, monaco) => {
           editorRef.current = ed as unknown as typeof editorRef.current;

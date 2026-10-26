@@ -9,6 +9,7 @@ import { StencilLines } from '../ui/Skeleton.js';
 import { platformShortcut } from '../../lib/platformShortcut.js';
 import { MinimapContextMenu } from './MinimapContextMenu.js';
 import { useMonacoMinimap } from './useMonacoMinimap.js';
+import type { DocumentLink } from '../document-links.js';
 
 const Editor = lazy(() => import('./ExplorerEditor.js'));
 const MarkdownPreview = lazy(() => import('./MarkdownPreview.js'));
@@ -41,6 +42,8 @@ interface FileViewerProps {
   onSave: () => void;
   onTogglePreview: () => void;
   onToggleDiff: () => void;
+  onOpenDocument?: (link: DocumentLink) => void;
+  fragment?: string;
 }
 
 function formatBytes(n: number) {
@@ -89,7 +92,9 @@ export function FileViewer({
   aiEnhanceModal,
   onSave,
   onTogglePreview,
-  onToggleDiff
+  onToggleDiff,
+  onOpenDocument,
+  fragment
 }: FileViewerProps) {
   const {
     minimap,
@@ -240,7 +245,7 @@ export function FileViewer({
       <div className="explorer-viewer-monaco" ref={handleMonacoRef}>
         <ViewerBoundary key={showPreview ? 'preview' : showDiff ? 'diff' : 'editor'} resetKey={explorerFile}>
           {showPreview ? (
-            <MarkdownPreview content={editedContent ?? fileResult.content ?? ''} />
+            <MarkdownPreview content={editedContent ?? fileResult.content ?? ''} documentPath={explorerFile} fragment={fragment} onOpenDocument={onOpenDocument} />
           ) : showDiff ? (
             headLoading || !headResult ? (
               <div className="explorer-viewer-empty">
