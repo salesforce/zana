@@ -4,6 +4,9 @@ import { projectDefaultLaunch, type ProjectDefaultLaunch } from './lib/launchPro
 import { cliAgentDeleteConfirm, cliAgentRestartConfirm } from './components/agentCardActions.js';
 import { shortcutForCommand } from './lib/keyboard-shortcut-settings.js';
 import { openThreadFind } from './lib/thread-find.js';
+import { appNavigate } from './lib/app-navigate.js';
+import { getNewThreadRoutePath } from './lib/route-paths.js';
+import { getScopedProjectId } from './lib/windowScope.js';
 
 /** The project's one-click "+" default: a pinned persona (on its baseProfile)
  *  or the profile default. Shared with TabBar / the menu so ⌘T agrees. */
@@ -77,12 +80,14 @@ export function installShortcuts(): () => void {
       ui.toggleSettings();
       return;
     }
-    // cmd+n — New Chat (Home composer in the user's default launch mode).
+    // cmd+n — New Chat in the current project, or Home outside project focus.
     // Remappable in Settings → Shortcuts. Distinct from cmd+t, which still
     // spawns a CLI terminal tab in the selected project.
     if (shortcutForCommand('thread.new', e)) {
       e.preventDefault();
-      ui.setNav('home');
+      const chatProjectId = getScopedProjectId() ?? ui.focusedProjectId;
+      if (chatProjectId) appNavigate(getNewThreadRoutePath(chatProjectId));
+      else ui.setNav('home');
       return;
     }
     // cmd+f — search in the thread the user is in. Remappable in Settings →

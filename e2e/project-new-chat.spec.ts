@@ -53,7 +53,7 @@ test('a project chat icon overrides another project selection and retained launc
   }
 });
 
-test('project New Chat keeps the current project selected across views and project windows', async ({ app }) => {
+test('project New Chat navigates to the full-page composer across views and project windows', async ({ app }, testInfo) => {
   const { window, home, electron } = app;
   await dismissConsentOverlays(window);
   const projectName = 'Project Chat Target';
@@ -72,18 +72,20 @@ test('project New Chat keeps the current project selected across views and proje
     const rail = page.locator('.project-scoped-nav');
     const previousUrl = page.url();
     await rail.getByRole('link', { name: 'New Chat', exact: true }).click();
-    const launcher = page.getByTestId('launch-modal');
-    await expect(launcher).toHaveCount(1);
-    await expect(launcher).toBeVisible();
+    const composer = page.getByTestId('new-thread-view');
+    await expect(composer).toBeVisible();
+    await expect(page.getByTestId('launch-modal')).toHaveCount(0);
+    await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/threads/new`));
+    await expect(rail.getByTestId('project-nav-home')).toHaveClass(/active/);
+    await expect(rail.getByTestId('project-nav-agents')).not.toHaveClass(/\bactive\b/);
     for (const mode of ['Modern', 'CLI Agent']) {
-      await launcher.getByRole('button', { name: mode, exact: true }).click();
-      const project = launcher.getByRole('button', { name: 'Machine and project', exact: true });
+      await composer.getByRole('button', { name: mode, exact: true }).click();
+      const project = composer.getByRole('button', { name: 'Machine and project', exact: true });
       await expect(project).toContainText(projectName);
       await expect(project).toBeDisabled();
     }
+    await page.getByRole('button', { name: 'Go back', exact: true }).click();
     await expect(page).toHaveURL(previousUrl);
-    await page.keyboard.press('Escape');
-    await expect(launcher).toHaveCount(0);
   }
 
   const rail = window.locator('.project-scoped-nav');
@@ -93,6 +95,25 @@ test('project New Chat keeps the current project selected across views and proje
   }
   await rail.getByRole('link', { name: 'Settings', exact: true }).click();
   await checkNewChat(window);
+
+  // The collapsed action and keyboard shortcut keep the same project context.
+  await window.getByRole('button', { name: 'Collapse sidebar', exact: true }).click();
+  await window.getByTestId('sidebar-collapsed-new-chat').click();
+  await expect(window.getByTestId('new-thread-view')).toBeVisible();
+  await expect(window).toHaveURL(new RegExp(`/projects/${projectId}/threads/new`));
+  await window.getByRole('button', { name: 'Expand sidebar', exact: true }).click();
+  await rail.getByTestId('project-nav-terminals').click();
+  await window.keyboard.press(process.platform === 'darwin' ? 'Meta+n' : 'Control+n');
+  await expect(window).toHaveURL(new RegExp(`/projects/${projectId}/threads/new`));
+  await expect(window.getByTestId('launch-modal')).toHaveCount(0);
+  await window.screenshot({ path: testInfo.outputPath('project-new-chat.png') });
+
+  // Navigation retains this project's draft and keeps it separate from Home.
+  const editor = window.getByTestId('new-thread-view').getByTestId('legacy-agent-command-input');
+  await editor.fill('Project draft survives navigation');
+  await rail.getByTestId('project-nav-terminals').click();
+  await rail.getByTestId('project-nav-home').click();
+  await expect(editor).toHaveText('Project draft survives navigation');
 
   await window.evaluate((id) => window.cc.windows.openProject(id), projectId);
   let projectWindow: Page | undefined;

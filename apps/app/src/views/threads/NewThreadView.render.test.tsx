@@ -35,7 +35,7 @@ describe('NewThreadView', () => {
   it('gives the create surface its own draft scope so Home and plugin drafts stay separate', () => {
     renderAt('/threads/new');
     expect(screen.getByTestId('composer')).toBeTruthy();
-    expect(composer.props).toMatchObject({ draftScope: 'new-thread', project: undefined });
+    expect(composer.props).toMatchObject({ draftScope: 'new-thread', project: undefined, allowLegacyAgent: false });
   });
 
   it('seeds an unpinned machine location in an isolated retained draft', () => {
@@ -45,7 +45,7 @@ describe('NewThreadView', () => {
 
   it('resolves the project from the route, the query string, or an explicit prop', () => {
     renderAt('/projects/p2/threads/new');
-    expect(composer.props?.project).toMatchObject({ id: 'p2' });
+    expect(composer.props).toMatchObject({ project: { id: 'p2' }, allowLegacyAgent: true });
     expect(screen.getByTestId('actions').textContent).toBe('p2');
     cleanup();
     renderAt('/threads/new?project=p1');

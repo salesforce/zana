@@ -16,7 +16,7 @@ import { useShallow } from 'zustand/react/shallow';
 export { parseHomeLauncherPreferences } from './home-launcher-preferences.js';
 
 export interface HomeAgentComposerProps extends ThreadCommandComposerProps {
-  /** New Chat (`nav === 'home'`) only — New Thread stays on the HTTP thread path. */
+  /** Offer CLI Agent and Squad alongside Modern on New Chat surfaces. */
   allowLegacyAgent?: boolean;
   draftScope?: string;
 }
