@@ -3,12 +3,19 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
-import { runPortableCommand } from "../src/index.js";
+import { afterEach, expect, it, vi } from "vitest";
+
+const shutdownSignals = ["SIGTERM", "SIGINT"] as const;
+const previousShutdownListeners = new Map(shutdownSignals.map(signal => [signal, new Set(process.listeners(signal))]));
+const { runPortableCommand } = await import("../src/index.js");
+const commandCleanupListeners = new Map(shutdownSignals.map(signal => [
+  signal, process.listeners(signal).filter(listener => !previousShutdownListeners.get(signal)!.has(listener)),
+]));
 
 const dirs: string[] = [];
 const pidFiles: string[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const file of pidFiles.splice(0)) {
     if (!existsSync(file)) continue;
     for (const pid of JSON.parse(readFileSync(file, "utf8")) as number[]) {
@@ -128,6 +135,42 @@ process.stdin.once('data', () => process.exit(23));
     expect(await exited).toEqual([23, null]);
   } finally { if (owner.exitCode === null) owner.kill("SIGKILL"); }
 });
+
+it.runIf(process.platform !== "win32").each(shutdownSignals)(
+  "cleans owned probes on %s and delegates to the owner or the default signal action", async signal => {
+    const listeners = commandCleanupListeners.get(signal)!;
+    expect(listeners).toHaveLength(1);
+    const cleanup = listeners[0]!;
+    const originalKill = process.kill.bind(process);
+    const kill = vi.spyOn(process, "kill").mockImplementation((pid, receivedSignal) =>
+      pid === process.pid ? true : originalKill(pid, receivedSignal));
+    const removeListener = vi.spyOn(process, "removeListener").mockReturnValue(process);
+    const getListeners = vi.spyOn(process, "listeners");
+
+    for (const hasOwnerHandler of [true, false]) {
+      const fixture = commandTreeFixture("timeout");
+      const operation = runPortableCommand(process.execPath, [fixture.wrapper], { timeout: 5000 });
+      const settled = operation.catch(error => error);
+      await expect.poll(() => existsSync(fixture.pids), { timeout: 5000 }).toBe(true);
+      getListeners.mockReturnValue(hasOwnerHandler ? [cleanup, () => {}] : [cleanup]);
+
+      cleanup(signal);
+
+      expect(await settled).toMatchObject({ signal: "SIGKILL" });
+      await expectFixtureGone(fixture.pids);
+      if (hasOwnerHandler) {
+        expect(removeListener).not.toHaveBeenCalledWith(signal, cleanup);
+        expect(kill).not.toHaveBeenCalledWith(process.pid, signal);
+      } else {
+        expect(removeListener).toHaveBeenCalledWith(signal, cleanup);
+        expect(kill).toHaveBeenCalledWith(process.pid, signal);
+        const removal = removeListener.mock.calls.findIndex(([event, listener]) => event === signal && listener === cleanup);
+        const reraised = kill.mock.calls.findIndex(([pid, receivedSignal]) => pid === process.pid && receivedSignal === signal);
+        expect(removeListener.mock.invocationCallOrder[removal]).toBeLessThan(kill.mock.invocationCallOrder[reraised]!);
+      }
+    }
+  },
+);
 
 it("does not accumulate shutdown listeners across bundled copies or completed and failed probes", async () => {
   const signals = ["exit", "SIGTERM", "SIGINT"] as const;
