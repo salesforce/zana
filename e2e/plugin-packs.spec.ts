@@ -75,7 +75,9 @@ test('pack review preserves existing plugins, retries partial installs, and neve
     ZCC_OFFICIAL_MARKETPLACE_URL: 'off', ZCC_INTERNAL_MARKETPLACE_SOURCE: 'off',
     ZCC_COMMUNITY_MARKETPLACE_SOURCE: 'off', ZCC_SKIP_PLUGIN_NPM: '1',
     ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD: '0',
-    ZCC_BUNDLED_PLUGINS_DIR: emptyBundled, ZCC_BUNDLED_EXTENSIONS_DIR: emptyBundled
+    ZCC_BUNDLED_PLUGINS_DIR: emptyBundled, ZCC_BUNDLED_EXTENSIONS_DIR: emptyBundled,
+    // Linux/Xvfb hidden windows throttle the compositor used by screenshot capture.
+    ...(process.platform === 'linux' ? { ZCC_E2E_VISIBLE: '1' } : {})
   };
   let app: Awaited<ReturnType<typeof launchApp>> | undefined;
   try {
