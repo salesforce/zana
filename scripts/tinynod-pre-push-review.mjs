@@ -13,6 +13,7 @@ import { dirname, join, sep } from 'node:path';
 const ZERO_OID = /^0+$/;
 const MIN_VERSION = [2, 5, 0];
 const VERSION_TIMEOUT_MS = 5_000;
+const GATEWAY_TIMEOUT_MS = 15_000;
 const REVIEW_BUDGET_MS = 300_000;
 const KILL_GRACE_MS = 10_000;
 const POLL_MS = 100;
@@ -29,6 +30,7 @@ const ABANDONED_MS = 60_000;
 const FOREIGN_LOCK_MS = 24 * 60 * 60_000;
 const ABORT_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'];
 const GIT_ROUTING = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_PREFIX'];
+const DEVBAR = '/Applications/devbar.app/Contents/MacOS/devbar';
 
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on']);
 const FALSE_VALUES = new Set(['0', 'false', 'no', 'off']);
@@ -273,6 +275,29 @@ export function checkTinynodVersion({ run = spawnSync, command = 'tinynod', env 
   const version = match.slice(1).map(Number);
   if (!versionAtLeast(version, MIN_VERSION)) return { ok: false, reason: `tinynod ${version.join('.')} is older than the required ${minimum}` };
   return { ok: true, version: version.join('.') };
+}
+
+function commandSucceeded(result) {
+  return result?.status === 0 && !result?.error;
+}
+
+/**
+ * TinyNod cannot execute Claude's apiKeyHelper. When opted in, repair an
+ * expired DevBar-minted token before review, then prove gateway access once.
+ */
+export function ensureTinynodGateway({ run = spawnSync, command = 'tinynod', devbar = DEVBAR, env = process.env } = {}) {
+  const options = { encoding: 'utf8', timeout: GATEWAY_TIMEOUT_MS, env };
+  if (commandSucceeded(run(command, ['models'], options))) return { ok: true, refreshed: false };
+  const token = run(devbar, ['auth', 'claude'], options);
+  const value = String(token?.stdout ?? '').trim();
+  if (!commandSucceeded(token) || !value) return { ok: false, reason: 'TinyNod gateway unavailable and DevBar token refresh failed' };
+  if (!commandSucceeded(run(command, ['config', 'set', 'ai.apiKey', value], options))) {
+    return { ok: false, reason: 'TinyNod gateway unavailable and refreshed token could not be stored' };
+  }
+  if (!commandSucceeded(run(command, ['models'], options))) {
+    return { ok: false, reason: 'TinyNod gateway unavailable after token refresh' };
+  }
+  return { ok: true, refreshed: true };
 }
 
 /**

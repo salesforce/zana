@@ -902,6 +902,7 @@ function fakeAdapter(overrides: Record<string, unknown> = {}) {
     resolveEnablement: vi.fn(() => ({ enabled: true, source: 'test' })),
     deriveReviewTarget: vi.fn(() => ({ oid: OID, base: BASE })),
     checkTinynodVersion: vi.fn(() => ({ ok: true, version: '2.5.0' })),
+    ensureTinynodGateway: vi.fn(() => ({ ok: true, refreshed: false })),
     acquireReviewLock: vi.fn(() => lock),
     installAbortCleanup: vi.fn(() => cleanup),
     withRepoIdentityEnv: vi.fn((env: object) => ({ ...env, LOG_LEVEL: 'warn' })),
@@ -969,6 +970,13 @@ describe('prepareTinynodReview', () => {
     const context = base(adapter);
     expect(prepareTinynodReview(context as never)).toBeNull();
     expect(context.log).toHaveBeenCalledWith(expect.stringContaining(text));
+  });
+
+  it('refreshes TinyNod credentials before the enabled review', () => {
+    const { adapter } = fakeAdapter({ ensureTinynodGateway: () => ({ ok: true, refreshed: true }) });
+    const context = base(adapter);
+    expect(prepareTinynodReview(context as never)).not.toBeNull();
+    expect(context.log).toHaveBeenCalledWith('pre-push: tinynod review: refreshed DevBar gateway token');
   });
 
   it('never throws', () => {
