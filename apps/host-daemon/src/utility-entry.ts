@@ -1,4 +1,5 @@
 import { installRuntimeLog } from '@zana-ai/zcc-process-utils';
+import { shutdownPortableCommands } from '@zana-ai/zcc-agent-process-utils';
 import { startHostDaemon } from './daemon.js';
 import { createLocalPtyTerminalManager } from './local-pty-host.js';
 import { startEnrolledHostDaemon, type EnrolledHostDaemon } from './enroll-runtime.js';
@@ -126,6 +127,9 @@ parentPort.on('message', async ({ data }) => {
     }
   }
   if (message.type === 'stop' && message.protocolVersion === SERVER_RUNTIME_PROTOCOL_VERSION) {
+    // Electron's utility-process kill deadline cannot run Node exit hooks.
+    // Cancel detached probes before any potentially slow daemon cleanup.
+    shutdownPortableCommands();
     await enrolled?.close();
     enrolled = null;
     await close?.();

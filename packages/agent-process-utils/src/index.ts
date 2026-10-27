@@ -158,6 +158,8 @@ export function spawnPortableOutputProcess(
 
 interface PortableCommandCleanupState {
   children: Set<PortableChildProcess>;
+  aborters: Map<PortableChildProcess, (error: Error) => void>;
+  closed: boolean;
 }
 
 // A plugin artifact may bundle another copy of this module. One process-wide
@@ -167,7 +169,7 @@ const portableCommandGlobal = globalThis as typeof globalThis & {
   [portableCommandCleanupKey]?: PortableCommandCleanupState;
 };
 const portableCommandCleanup = portableCommandGlobal[portableCommandCleanupKey] ?? (() => {
-  const state: PortableCommandCleanupState = { children: new Set() };
+  const state: PortableCommandCleanupState = { children: new Set(), aborters: new Map(), closed: false };
   portableCommandGlobal[portableCommandCleanupKey] = state;
   const cleanup = () => {
     for (const child of state.children) terminatePortableCommandTree(child);
@@ -195,12 +197,21 @@ function terminatePortableCommandTree(child: PortableChildProcess): void {
   try { killProcessGroup({ child, signal: "SIGKILL" }); } catch { /* Already gone. */ }
 }
 
+/** Final owner shutdown: reap current probes and deny work resumed during teardown. */
+export function shutdownPortableCommands(): void {
+  portableCommandCleanup.closed = true;
+  for (const abort of portableCommandCleanup.aborters.values()) abort(new Error("Portable commands are shutting down"));
+  portableCommandCleanup.aborters.clear();
+  portableCommandCleanup.children.clear();
+}
+
 /** Bounded, owned CLI probes, including npm .cmd shims on Windows. */
 export function runPortableCommand(
   command: string,
   args: readonly string[],
   options: { timeout: number; maxBuffer?: number; env?: NodeJS.ProcessEnv; cwd?: string },
 ): Promise<{ stdout: string; stderr: string }> {
+  if (portableCommandCleanup.closed) return Promise.reject(new Error("Portable commands are shutting down"));
   return new Promise((resolve, reject) => {
     const child = spawnPortableOutputProcess({ command, args: [...args], env: options.env, cwd: options.cwd, detached: supportsProcessGroups() });
     portableCommandCleanup.children.add(child);
@@ -221,6 +232,7 @@ export function runPortableCommand(
       child.stderr.destroy();
       finish(error);
     };
+    portableCommandCleanup.aborters.set(child, abort);
     const timer = setTimeout(() => {
       abort(Object.assign(new Error(`Command timed out after ${options.timeout}ms`), { killed: true }));
     }, options.timeout);
@@ -242,6 +254,7 @@ export function runPortableCommand(
     child.once("exit", () => terminatePortableCommandTree(child));
     child.on("close", (code, signal) => {
       portableCommandCleanup.children.delete(child);
+      portableCommandCleanup.aborters.delete(child);
       finish(code === 0 ? undefined : Object.assign(
         new Error(stderr.trim() || `Command exited with code ${code}, signal ${signal}`), { code, signal, stdout, stderr },
       ));

@@ -21,6 +21,7 @@ test.use({
 });
 
 type Launch = { identity: string; args: string[]; cwd: string; home: string; context?: string };
+type ProbeLaunch = { pid: number; parentPid: number; command: string; childPid?: number; startedAt: number };
 function launches(home: string): Launch[] {
   const path = join(home, 'acp-launches.jsonl');
   return existsSync(path) ? readFileSync(path, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];
@@ -33,12 +34,16 @@ function probePids(home: string): number[] {
   }) : [];
 }
 
+function probeLaunches(home: string): ProbeLaunch[] {
+  const file = join(home, 'probe-launches.jsonl');
+  return existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).flatMap(line => {
+    try { return [JSON.parse(line) as ProbeLaunch]; } catch { return []; }
+  }) : [];
+}
+
 function probeProcessTable(home: string): string {
   if (process.platform === 'win32') return 'POSIX process table is unavailable';
-  const launchesFile = join(home, 'probe-launches.jsonl');
-  const parentPids = existsSync(launchesFile) ? readFileSync(launchesFile, 'utf8').trim().split('\n').filter(Boolean).flatMap(line => {
-    try { return [JSON.parse(line).parentPid]; } catch { return []; }
-  }) : [];
+  const parentPids = probeLaunches(home).map(row => row.parentPid);
   const pids = [...new Set([...probePids(home), ...parentPids])].filter(pid => Number.isSafeInteger(pid) && pid > 0).slice(-128);
   if (!pids.length) return 'No fixture process PIDs recorded';
   try {
@@ -227,18 +232,26 @@ if (process.argv.includes('--version')) {
   const previousPids = new Set(probePids(app.home));
   const shutdownProbe = join(app.home, 'shutdown-probe');
   writeFileSync(shutdownProbe, readFileSync(hanging), { mode: 0o700 });
-  const shutdownProvider = { id: 'acp-shutdown-probe', displayName: 'Shutdown fixture', command: shutdownProbe, args: ['acp'] };
-  await app.window.evaluate(custom => window.cc.pluginApps.setSettings('provider-acp', { customAgents: JSON.stringify([custom]) }), shutdownProvider);
-  await waitForThreadProvider(app.window, shutdownProvider.id);
-  await app.window.evaluate(({ projectId, providerId }) => {
-    void fetch(`/api/v1/system/execution-options?providerId=${providerId}&projectId=${projectId}&refresh=1`).catch(() => undefined);
-  }, { projectId: project.id, providerId: shutdownProvider.id });
+  await app.window.evaluate(binary => window.cc.config.set({ harnesses: { byId: { opencode: { binary, enabled: true } } } }), shutdownProbe);
+  await app.window.evaluate(projectId => {
+    void fetch(`/api/v1/system/execution-options?providerId=acp-opencode&projectId=${projectId}&refresh=1`).catch(() => undefined);
+  }, project.id);
+  let shutdownLaunch: ProbeLaunch | undefined;
   let shutdownProcesses: ReturnType<typeof fixtureProcessState>[] = [];
   await expect.poll(() => {
-    shutdownProcesses = probePids(app.home).filter(pid => !previousPids.has(pid)).map(pid => fixtureProcessState(pid));
-    return shutdownProcesses.some(row => row.running);
+    for (const launch of probeLaunches(app.home)) {
+      if (launch.command !== shutdownProbe || previousPids.has(launch.pid)) continue;
+      const pids = launch.childPid === undefined ? [launch.pid] : [launch.pid, launch.childPid];
+      const states = pids.map(pid => fixtureProcessState(pid));
+      if (states.length === (process.platform === 'win32' ? 1 : 2) && states.every(row => row.running)) {
+        shutdownLaunch = launch;
+        shutdownProcesses = states;
+        return true;
+      }
+    }
+    return false;
   }, { timeout: 10_000 }).toBe(true);
-  await testInfo.attach('active-probe-before-shutdown', { body: JSON.stringify(shutdownProcesses, null, 2), contentType: 'application/json' });
+  await testInfo.attach('active-probe-before-shutdown', { body: JSON.stringify({ launch: shutdownLaunch, processes: shutdownProcesses }, null, 2), contentType: 'application/json' });
   await testInfo.attach('probe-process-table-before-shutdown', { body: probeProcessTable(app.home), contentType: 'text/plain' });
   await closeApp(app.electron);
   await expect.poll(() => probePids(app.home).map(pid => fixtureProcessState(pid)).filter(row => row.running), { timeout: 10_000 }).toEqual([]);

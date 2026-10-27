@@ -1,7 +1,8 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { SERVER_RUNTIME_PROTOCOL_VERSION as protocolVersion } from '@zana-ai/zcc-contracts/runtime';
-const deps = vi.hoisted(() => ({ start: vi.fn(), enroll: vi.fn(), manager: vi.fn(), log: vi.fn(), path: vi.fn() }));
+const deps = vi.hoisted(() => ({ start: vi.fn(), enroll: vi.fn(), manager: vi.fn(), log: vi.fn(), path: vi.fn(), shutdownCommands: vi.fn() }));
 vi.mock('@zana-ai/zcc-process-utils', () => ({ installRuntimeLog: deps.log }));
+vi.mock('@zana-ai/zcc-agent-process-utils', () => ({ shutdownPortableCommands: deps.shutdownCommands }));
 vi.mock('./daemon.js', () => ({ startHostDaemon: deps.start }));
 vi.mock('./local-pty-host.js', () => ({ createLocalPtyTerminalManager: deps.manager }));
 vi.mock('./enroll-runtime.js', () => ({ startEnrolledHostDaemon: deps.enroll }));
@@ -56,6 +57,32 @@ it('starts private terminal transport and releases it on stop and process exit',
   process.listeners('exit').find(listener => !originalExitListeners.includes(listener))!(0); expect(managerClose).toHaveBeenCalledOnce();
   vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
   await f.send({ type: 'stop', protocolVersion }); expect(close).toHaveBeenCalledOnce();
+});
+it('reaps probes before waiting on enrollment cleanup, only for an authenticated final stop', async () => {
+  const f = await fixture();
+  let release!: () => void;
+  const blocked = new Promise<void>(resolve => { release = resolve; });
+  const close = vi.fn(() => blocked);
+  deps.enroll.mockResolvedValue({ hostId: 'host', close });
+  const enroll = { type: 'enroll', protocolVersion, serverUrl: 'http://127.0.0.1:1', token: 'fixture', dataDir: '/fixture' };
+  await f.send(enroll);
+  await f.send({ type: 'stop', protocolVersion: 0 });
+  expect(deps.shutdownCommands).not.toHaveBeenCalled();
+  expect(close).not.toHaveBeenCalled();
+  // Relaunch keeps the utility process usable and must not permanently close
+  // its command gate. This enrollment has nothing to drain yet.
+  close.mockResolvedValueOnce(undefined);
+  await f.send({ ...enroll, type: 'relaunch' });
+  expect(deps.shutdownCommands).not.toHaveBeenCalled();
+  vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+  const stopped = f.send({ type: 'stop', protocolVersion });
+  expect(deps.shutdownCommands).toHaveBeenCalledOnce();
+  expect(close).toHaveBeenCalledTimes(2);
+  expect(deps.shutdownCommands.mock.invocationCallOrder[0]).toBeLessThan(close.mock.invocationCallOrder[1]!);
+  expect(process.exit).not.toHaveBeenCalled();
+  release();
+  await stopped;
+  expect(process.exit).toHaveBeenCalledWith(0);
 });
 it.each([new Error('start failed'), 'start failed'])('reports private startup failure (%s)', async error => {
   const f = await fixture(); deps.manager.mockReturnValue({ close: vi.fn() }); deps.start.mockRejectedValue(error);
