@@ -84,7 +84,7 @@ it.runIf(process.platform !== "win32").each(["timeout", "overflow", "success", "
   },
 );
 
-it.runIf(process.platform !== "win32")("reaps in-flight command trees when their owning process exits", async () => {
+it.runIf(process.platform !== "win32").each(["exit", "SIGTERM", "SIGINT"] as const)("reaps in-flight command trees when their owner receives %s", async (shutdown) => {
   const fixture = commandTreeFixture("timeout");
   const utilityUrl = new URL("../src/index.ts", import.meta.url).href;
   const owner = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), "--input-type=module", "-e", `
@@ -97,19 +97,46 @@ process.stdin.once('data', () => process.exit(0));
   try {
     await expect.poll(() => existsSync(fixture.pids) || stderr, { timeout: 5000 }).toBe(true);
     const exited = once(owner, "exit");
-    owner.stdin!.end("exit");
-    await exited;
+    if (shutdown === "exit") owner.stdin!.end("exit");
+    else owner.kill(shutdown);
+    expect(await exited).toEqual(shutdown === "exit" ? [0, null] : [null, shutdown]);
     await expectFixtureGone(fixture.pids);
   } finally { if (owner.exitCode === null) owner.kill("SIGKILL"); }
 });
 
-it("does not accumulate exit listeners across completed or failed probes", async () => {
-  const before = process.listenerCount("exit");
+it.runIf(process.platform !== "win32")("preserves an owner's existing once signal handler without terminating it", async () => {
+  const fixture = commandTreeFixture("timeout");
+  const utilityUrl = new URL("../src/index.ts", import.meta.url).href;
+  const owner = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), "--input-type=module", "-e", `
+process.once('SIGTERM', () => process.stdout.write('handled'));
+const { runPortableCommand } = await import(${JSON.stringify(utilityUrl)});
+void runPortableCommand(process.execPath, [${JSON.stringify(fixture.wrapper)}], { timeout: 60000 }).catch(() => {});
+process.stdin.once('data', () => process.exit(23));
+`], { stdio: ["pipe", "pipe", "pipe"] });
+  let stderr = "";
+  owner.stderr!.on("data", chunk => { stderr += String(chunk); });
+  try {
+    await expect.poll(() => existsSync(fixture.pids) || stderr, { timeout: 5000 }).toBe(true);
+    const handled = once(owner.stdout!, "data");
+    owner.kill("SIGTERM");
+    expect(String((await handled)[0])).toBe("handled");
+    await expectFixtureGone(fixture.pids);
+    expect(owner.exitCode).toBeNull();
+    expect(owner.signalCode).toBeNull();
+    const exited = once(owner, "exit");
+    owner.stdin!.end("exit");
+    expect(await exited).toEqual([23, null]);
+  } finally { if (owner.exitCode === null) owner.kill("SIGKILL"); }
+});
+
+it("does not accumulate shutdown listeners across bundled copies or completed and failed probes", async () => {
+  const signals = ["exit", "SIGTERM", "SIGINT"] as const;
+  const before = signals.map(signal => process.listenerCount(signal));
   const bundledCopy = await import(`${new URL("../src/index.ts", import.meta.url).href}?portable-command-copy`);
   await bundledCopy.runPortableCommand(process.execPath, ["-e", "process.exit(0)"], { timeout: 1000 });
   await runPortableCommand(process.execPath, ["-e", "process.exit(0)"], { timeout: 1000 });
   await expect(runPortableCommand("zcc-missing-cleanup-test", [], { timeout: 1000 })).rejects.toThrow();
-  expect(process.listenerCount("exit")).toBe(before);
+  expect(signals.map(signal => process.listenerCount(signal))).toEqual(before);
 });
 
 it.runIf(process.platform === "win32")("runs npm-style cmd shims from PATH with spaces", async () => {

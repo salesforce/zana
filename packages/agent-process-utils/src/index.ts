@@ -169,10 +169,25 @@ const portableCommandGlobal = globalThis as typeof globalThis & {
 const portableCommandCleanup = portableCommandGlobal[portableCommandCleanupKey] ?? (() => {
   const state: PortableCommandCleanupState = { children: new Set() };
   portableCommandGlobal[portableCommandCleanupKey] = state;
-  process.once("exit", () => {
+  const cleanup = () => {
     for (const child of state.children) terminatePortableCommandTree(child);
     state.children.clear();
-  });
+  };
+  process.once("exit", cleanup);
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    const onSignal = () => {
+      // The default signal action skips Node's exit event. Reap our detached
+      // probes, then retain either the owner's handler or its default action.
+      const hasOwnerHandler = process.listeners(signal).some((listener) => listener !== onSignal);
+      cleanup();
+      if (!hasOwnerHandler) {
+        process.removeListener(signal, onSignal);
+        process.kill(process.pid, signal);
+      }
+    };
+    // Run before an owner's once handler can remove itself or exit the process.
+    process.prependListener(signal, onSignal);
+  }
   return state;
 })();
 

@@ -1,7 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { closeApp, test, expect } from './fixtures/app.js';
 import { waitForThreadProvider } from './fixtures/thread-providers.js';
+import { fixtureProcessState } from './fixtures/process-state.js';
 
 test.use({
   initialConfig: { sponsorPromptDismissed: true, providerBridgeRecordingEnabled: true },
@@ -31,8 +33,22 @@ function probePids(home: string): number[] {
   }) : [];
 }
 
-function isRunning(pid: number): boolean {
-  try { process.kill(pid, 0); return true; } catch { return false; }
+function probeProcessTable(home: string): string {
+  if (process.platform === 'win32') return 'POSIX process table is unavailable';
+  const launchesFile = join(home, 'probe-launches.jsonl');
+  const parentPids = existsSync(launchesFile) ? readFileSync(launchesFile, 'utf8').trim().split('\n').filter(Boolean).flatMap(line => {
+    try { return [JSON.parse(line).parentPid]; } catch { return []; }
+  }) : [];
+  const pids = [...new Set([...probePids(home), ...parentPids])].filter(pid => Number.isSafeInteger(pid) && pid > 0).slice(-128);
+  if (!pids.length) return 'No fixture process PIDs recorded';
+  try {
+    return execFileSync('ps', ['-p', pids.join(','), '-o', 'pid=,ppid=,pgid=,stat=,comm='], {
+      encoding: 'utf8', timeout: 1_000, maxBuffer: 64 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch (error) {
+    const stdout = (error as { stdout?: unknown }).stdout;
+    return typeof stdout === 'string' && stdout.trim() ? stdout : 'No fixture process table rows available';
+  }
 }
 
 function healthMessages(home: string, command?: string): Array<{ status: string; installedVersion?: string; statusMessage?: string }> {
@@ -49,18 +65,21 @@ function healthMessages(home: string, command?: string): Array<{ status: string;
     && (command === undefined || message.params.providerOptions?.acpLaunchSpec?.command === command))
     .map(({ run, message }) => `${run}:${message.id}`));
   return records.filter(({ run, message }) => message.result?.health && requests.has(`${run}:${message.id}`))
-    .sort((a, b) => a.ts - b.ts).map(({ message }) => message.result.health);
+    .sort((a, b) => a.ts - b.ts).map(({ message }) => {
+      const { status, installedVersion, statusMessage } = message.result.health;
+      return { status, installedVersion, statusMessage };
+    });
 }
 
 test.afterEach(async ({ app }, testInfo) => {
   try {
+    await testInfo.attach('probe-process-states', { body: JSON.stringify(probePids(app.home).map(pid => fixtureProcessState(pid)), null, 2), contentType: 'application/json' });
+    await testInfo.attach('probe-process-table', { body: probeProcessTable(app.home), contentType: 'text/plain' });
     if (testInfo.status === testInfo.expectedStatus) return;
+    const probeLaunches = join(app.home, 'probe-launches.jsonl');
+    if (existsSync(probeLaunches)) await testInfo.attach('fixture-probe-launches', { path: probeLaunches, contentType: 'application/x-ndjson' });
     await testInfo.attach('launches-on-failure', { body: JSON.stringify(launches(app.home), null, 2), contentType: 'application/json' });
-    const root = join(app.home, 'acp-health-recordings', '_process');
-    for (const name of ['runtime→bridge.ndjson', 'bridge→runtime.ndjson', 'provider→bridge.ndjson']) {
-      const file = join(root, name);
-      if (existsSync(file)) await testInfo.attach(name, { path: file, contentType: 'application/x-ndjson' });
-    }
+    await testInfo.attach('fixture-health-on-failure', { body: JSON.stringify(healthMessages(app.home), null, 2), contentType: 'application/json' });
   } finally {
     // These are exclusively PIDs created by the sandbox's hanging probe fixture.
     for (const pid of probePids(app.home)) {
@@ -154,7 +173,7 @@ test('ACP uses native executable settings across health, large discovery, sessio
   await testInfo.attach('launches', { body: JSON.stringify(invoked, null, 2), contentType: 'application/json' });
 });
 
-test('broken, missing and timed-out ACP executables never report healthy and expose launch failures', async ({ app }) => {
+test('broken, missing and timed-out ACP executables never report healthy and expose launch failures', async ({ app }, testInfo) => {
   test.setTimeout(180_000);
   await waitForThreadProvider(app.window, 'acp-opencode');
   const projectPath = join(app.home, 'failure-project');
@@ -183,6 +202,7 @@ if (process.argv.includes('--version')) {
   const { appendFileSync } = await import('node:fs');
   const child = process.platform === 'win32' ? undefined : spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'inherit' });
   appendFileSync(${JSON.stringify(join(app.home, 'probe-pids.jsonl'))}, JSON.stringify(child ? [process.pid, child.pid] : [process.pid]) + '\\n');
+  appendFileSync(${JSON.stringify(join(app.home, 'probe-launches.jsonl'))}, JSON.stringify({ pid: process.pid, parentPid: process.ppid, command: process.argv[1], childPid: child?.pid, startedAt: Date.now() }) + '\\n');
   setInterval(() => {}, 1000);
 } else { console.error('startup dependency is unavailable'); process.exit(127); }
 `, { mode: 0o700 });
@@ -204,7 +224,7 @@ if (process.argv.includes('--version')) {
   }
   // Close the real app while another probe is still running. Losing a parent's
   // JS timeout must not leave its wrapper or descendants alive after shutdown.
-  const previousPids = probePids(app.home).length;
+  const previousPids = new Set(probePids(app.home));
   const shutdownProbe = join(app.home, 'shutdown-probe');
   writeFileSync(shutdownProbe, readFileSync(hanging), { mode: 0o700 });
   const shutdownProvider = { id: 'acp-shutdown-probe', displayName: 'Shutdown fixture', command: shutdownProbe, args: ['acp'] };
@@ -213,7 +233,13 @@ if (process.argv.includes('--version')) {
   await app.window.evaluate(({ projectId, providerId }) => {
     void fetch(`/api/v1/system/execution-options?providerId=${providerId}&projectId=${projectId}&refresh=1`).catch(() => undefined);
   }, { projectId: project.id, providerId: shutdownProvider.id });
-  await expect.poll(() => probePids(app.home).length, { timeout: 10_000 }).toBeGreaterThan(previousPids);
+  let shutdownProcesses: ReturnType<typeof fixtureProcessState>[] = [];
+  await expect.poll(() => {
+    shutdownProcesses = probePids(app.home).filter(pid => !previousPids.has(pid)).map(pid => fixtureProcessState(pid));
+    return shutdownProcesses.some(row => row.running);
+  }, { timeout: 10_000 }).toBe(true);
+  await testInfo.attach('active-probe-before-shutdown', { body: JSON.stringify(shutdownProcesses, null, 2), contentType: 'application/json' });
+  await testInfo.attach('probe-process-table-before-shutdown', { body: probeProcessTable(app.home), contentType: 'text/plain' });
   await closeApp(app.electron);
-  await expect.poll(() => probePids(app.home).filter(isRunning), { timeout: 10_000 }).toEqual([]);
+  await expect.poll(() => probePids(app.home).map(pid => fixtureProcessState(pid)).filter(row => row.running), { timeout: 10_000 }).toEqual([]);
 });
