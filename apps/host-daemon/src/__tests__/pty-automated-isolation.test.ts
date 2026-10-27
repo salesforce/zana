@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,9 +10,14 @@ interface Spawn {
   exit: () => void;
 }
 const spawned: Spawn[] = [];
+const spawnControl = { failNext: false };
 
 vi.mock('node-pty', () => ({
   spawn: (command: string, args: string[], opts: { env?: Record<string, string> }) => {
+    if (spawnControl.failNext) {
+      spawnControl.failNext = false;
+      throw new Error('spawn failed');
+    }
     let onExit: (event: { exitCode: number }) => void = () => undefined;
     spawned.push({
       command,
@@ -117,6 +122,13 @@ describe('PtyManager.create — unattended Claude config isolation', () => {
       expect(existsSync(join(claudeHome, 'projects'))).toBe(true);
     }
   );
+
+  it('releases the config dir when the spawn throws', () => {
+    spawnControl.failNext = true;
+    expect(() => create(new PtyManager(), { scheduled: true })).toThrow('spawn failed');
+    const parent = join(dataDir, 'claude-automated-config');
+    expect(existsSync(parent) ? readdirSync(parent) : []).toEqual([]);
+  });
 
   it('does not isolate an interactive claude run', () => {
     create(new PtyManager());

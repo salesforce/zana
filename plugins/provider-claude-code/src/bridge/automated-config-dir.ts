@@ -38,12 +38,14 @@ export function automatedConfigParent(dataDir: string): string {
 /**
  * Create (or reuse) the `0700` per-owner `CLAUDE_CONFIG_DIR` leaf under the Zana
  * data dir. The same owner id always maps to the same leaf, so resume reuses it.
+ * Returns null (leaf removed) when the isolated dir could not authenticate —
+ * e.g. an OAuth-only user — so the caller takes the interactive path.
  */
 export function createAutomatedConfigDir(
   dataDir: string,
   ownerId: string,
   seed: AutomatedSeedOptions = {},
-): string {
+): string | null {
   const parent = automatedConfigParent(dataDir);
   const leaf = join(parent, safeSegment(ownerId));
   assertInside(parent, leaf);
@@ -52,6 +54,10 @@ export function createAutomatedConfigDir(
   mkdirSync(leaf, { recursive: true, mode: 0o700 });
   chmodSync(leaf, 0o700);
   seedAutomatedConfigDir(leaf, seed);
+  if (!automatedConfigCanAuthenticate(leaf, seed.env)) {
+    removeAutomatedConfigDir(dataDir, leaf);
+    return null;
+  }
   return leaf;
 }
 
@@ -156,6 +162,47 @@ export function seedAutomatedConfigDir(
     JSON.stringify({ hasCompletedOnboarding: true }),
   );
   return "seeded";
+}
+
+const AUTH_ENV_KEY = /^(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_USE_[A-Z_]+)$/;
+
+function envCarriesAuth(env: Record<string, unknown> | undefined): boolean {
+  if (!env) return false;
+  return Object.entries(env).some(
+    ([key, value]) => AUTH_ENV_KEY.test(key) && typeof value === "string" && value !== "",
+  );
+}
+
+/**
+ * Whether an isolated config dir can authenticate without the user's real one.
+ * OAuth/subscription login state (keychain entry, `.credentials.json`,
+ * `oauthAccount`) is keyed to the config dir and is deliberately not copied, so
+ * an OAuth-only user would start every automated session logged out. Only a
+ * credential helper, cloud-provider auth, or an API key (seeded or inherited
+ * from the process env) survives the relocation.
+ */
+export function automatedConfigCanAuthenticate(
+  leaf: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (envCarriesAuth(env)) return true;
+  try {
+    const seeded = JSON.parse(readFileSync(join(leaf, "settings.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
+    if (
+      ["apiKeyHelper", "awsAuthRefresh", "awsCredentialExport"].some(
+        (key) => typeof seeded[key] === "string",
+      )
+    ) {
+      return true;
+    }
+    const seededEnv = seeded.env;
+    return typeof seededEnv === "object" && seededEnv !== null && envCarriesAuth(seededEnv as Record<string, unknown>);
+  } catch {
+    return false;
+  }
 }
 
 export function removeAutomatedConfigDir(dataDir: string, leaf: string): void {

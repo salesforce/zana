@@ -5,8 +5,18 @@ import { homedir, tmpdir } from 'node:os';
 // Automated launches create a per-run Claude config dir under the Zana data dir;
 // keep those out of the real user's ~/.zcc.
 const goldenDataDir = mkdtempSync(join(tmpdir(), 'pty-golden-'));
+// Isolation only applies when the isolated dir can authenticate, so pin an API
+// key to keep the snapshot independent of the machine's real Claude login.
+const priorEnv = { ZCC_DATA_DIR: process.env.ZCC_DATA_DIR, ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY };
 process.env.ZCC_DATA_DIR = goldenDataDir;
-afterAll(() => rmSync(goldenDataDir, { recursive: true, force: true }));
+process.env.ANTHROPIC_API_KEY = 'golden-test-key';
+afterAll(() => {
+  rmSync(goldenDataDir, { recursive: true, force: true });
+  for (const [key, value] of Object.entries(priorEnv)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+});
 
 /**
  * GOLDEN-ARGV REGRESSION NET for the harness-seam extraction.

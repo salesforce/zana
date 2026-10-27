@@ -3024,6 +3024,7 @@ describe("bridge", () => {
       "HOME",
       "ZCC_DATA_DIR",
       "CLAUDE_CONFIG_DIR",
+      "ANTHROPIC_API_KEY",
     ] as const;
     let saved: Record<string, string | undefined>;
     let dataDir: string;
@@ -3034,6 +3035,8 @@ describe("bridge", () => {
       process.env.HOME = "/Users/test-bb";
       process.env.ZCC_DATA_DIR = dataDir;
       delete process.env.CLAUDE_CONFIG_DIR;
+      // Isolation only applies when the isolated dir can authenticate.
+      process.env.ANTHROPIC_API_KEY = "test-key";
     });
 
     afterEach(() => {
@@ -3143,6 +3146,61 @@ describe("bridge", () => {
       } finally {
         bridge.restore();
         rmSync(sourceDir, { recursive: true, force: true });
+      }
+    });
+
+    it("falls back to the interactive config when the home has only OAuth login state", async () => {
+      const sourceDir = mkdtempSync(join(tmpdir(), "zcc-oauth-claude-"));
+      writeFileSync(
+        join(sourceDir, ".claude.json"),
+        JSON.stringify({ oauthAccount: { emailAddress: "a@b.c" } }),
+      );
+      process.env.CLAUDE_CONFIG_DIR = sourceDir;
+      const savedAuth = Object.fromEntries(
+        Object.entries(process.env).filter(([key]) =>
+          /^(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_USE_[A-Z_]+)$/.test(key),
+        ),
+      );
+      for (const key of Object.keys(savedAuth)) delete process.env[key];
+      const bridge = createBridgeJsonRpcTestHarness(handleLine);
+      queryMock.mockImplementation(() => createControlledClaudeQuery());
+      try {
+        bridge.sendRequest(1, "thread/start", startRequest("thread-oauth", "automated"));
+        await bridge.waitForResponse(1);
+
+        const queryOptions = getLatestQueryOptions();
+        expect(queryOptions.env?.CLAUDE_CONFIG_DIR).toBe(sourceDir);
+        expect(queryOptions.settingSources).toEqual(["user", "project", "local"]);
+        expect(existsSync(join(dataDir, "claude-automated-config", "thread-oauth"))).toBe(false);
+        expect(readTelemetry()[0]).toMatchObject({
+          sessionKind: "interactive",
+          admission: "fallback-interactive",
+          isolatedConfig: false,
+        });
+      } finally {
+        bridge.restore();
+        Object.assign(process.env, savedAuth);
+        rmSync(sourceDir, { recursive: true, force: true });
+      }
+    });
+
+    it("starts the session interactively when the config dir cannot be created", async () => {
+      // A data dir that is a regular file makes every mkdir under it fail.
+      const blocker = join(dataDir, "not-a-dir");
+      writeFileSync(blocker, "x");
+      process.env.ZCC_DATA_DIR = blocker;
+      const bridge = createBridgeJsonRpcTestHarness(handleLine);
+      queryMock.mockImplementation(() => createControlledClaudeQuery());
+      try {
+        bridge.sendRequest(1, "thread/start", startRequest("thread-mkdir-fails", "automated"));
+        const response = await bridge.waitForResponse(1);
+
+        expect(response).not.toHaveProperty("error");
+        const queryOptions = getLatestQueryOptions();
+        expect(queryOptions.settingSources).toEqual(["user", "project", "local"]);
+        expect(queryOptions.env?.CLAUDE_CONFIG_DIR).toBeUndefined();
+      } finally {
+        bridge.restore();
       }
     });
 

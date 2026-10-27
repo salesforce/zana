@@ -24,16 +24,22 @@ describe("automated config dir lifecycle", () => {
   let dataDir: string;
   let sourceDir: string;
   let priorConfigDir: string | undefined;
+  let priorApiKey: string | undefined;
   beforeEach(() => {
     dataDir = mkdtempSync(join(tmpdir(), "zcc-cfgdir-"));
     sourceDir = mkdtempSync(join(tmpdir(), "zcc-cfgsrc-"));
     // Keep the lifecycle tests off the developer's real ~/.claude.
     priorConfigDir = process.env.CLAUDE_CONFIG_DIR;
     process.env.CLAUDE_CONFIG_DIR = sourceDir;
+    // Isolation only applies when the isolated dir can authenticate.
+    priorApiKey = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "test-key";
   });
   afterEach(() => {
     if (priorConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
     else process.env.CLAUDE_CONFIG_DIR = priorConfigDir;
+    if (priorApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = priorApiKey;
     rmSync(dataDir, { recursive: true, force: true });
     rmSync(sourceDir, { recursive: true, force: true });
   });
@@ -43,6 +49,36 @@ describe("automated config dir lifecycle", () => {
     expect(leaf).toBe(join(automatedConfigParent(dataDir), "thread-1"));
     expect(statSync(leaf).mode & 0o777).toBe(0o700);
     expect(statSync(automatedConfigParent(dataDir)).mode & 0o777).toBe(0o700);
+  });
+
+  describe("authentication gate", () => {
+    it("returns null and removes the leaf for an OAuth-only home", () => {
+      writeFileSync(join(sourceDir, "settings.json"), JSON.stringify({ hooks: {} }));
+      writeFileSync(
+        join(sourceDir, ".claude.json"),
+        JSON.stringify({ oauthAccount: { emailAddress: "a@b.c" } }),
+      );
+      expect(createAutomatedConfigDir(dataDir, "oauth", { sourceConfigDir: sourceDir, env: {} })).toBeNull();
+      expect(existsSync(join(automatedConfigParent(dataDir), "oauth"))).toBe(false);
+    });
+
+    it.each([
+      ["apiKeyHelper", { apiKeyHelper: "h" }],
+      ["awsCredentialExport", { awsCredentialExport: "e" }],
+      ["seeded ANTHROPIC_API_KEY", { env: { ANTHROPIC_API_KEY: "k" } }],
+      ["seeded CLAUDE_CODE_USE_VERTEX", { env: { CLAUDE_CODE_USE_VERTEX: "1" } }],
+    ])("keeps the leaf when settings carry %s", (_label, settings) => {
+      writeFileSync(join(sourceDir, "settings.json"), JSON.stringify(settings));
+      expect(createAutomatedConfigDir(dataDir, "a", { sourceConfigDir: sourceDir, env: {} })).not.toBeNull();
+    });
+
+    it("ignores empty env credentials", () => {
+      expect(
+        createAutomatedConfigDir(dataDir, "b", {
+          env: { CLAUDE_CONFIG_DIR: sourceDir, ANTHROPIC_API_KEY: "" },
+        }),
+      ).toBeNull();
+    });
   });
 
   it("reuses the same leaf for the same owner and a new one after delete", () => {
@@ -165,7 +201,8 @@ describe("automated config dir projects link", () => {
       writeFileSync(join(sourceDir, "projects", "keep.jsonl"), "x");
       const leaf = createAutomatedConfigDir(dataDir, "thread-1", {
         sourceConfigDir: sourceDir,
-      });
+        env: { ANTHROPIC_API_KEY: "test-key" },
+      })!;
       expect(lstatSync(join(leaf, "projects")).isSymbolicLink()).toBe(true);
       removeAutomatedConfigDir(dataDir, leaf);
       expect(existsSync(leaf)).toBe(false);

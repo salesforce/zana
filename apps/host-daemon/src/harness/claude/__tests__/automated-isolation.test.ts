@@ -21,6 +21,8 @@ import {
 import { createAutomatedConfigDir } from '../../../../../../plugins/provider-claude-code/src/bridge/automated-config-dir.js';
 
 describe('automated claude isolation', () => {
+  // Isolation only applies when the isolated dir can authenticate.
+  const authEnv = { ANTHROPIC_API_KEY: 'test-key' };
   let dataDir: string;
   let sourceDir: string;
   beforeEach(() => {
@@ -44,8 +46,29 @@ describe('automated claude isolation', () => {
       expect(lstatSync(join(plan.configDir, 'projects')).isSymbolicLink()).toBe(true);
     });
 
-    it('still isolates (no settings) when the real settings are missing', () => {
-      const plan = planAutomatedClaudeLaunch({ ownerId: 's1', env: {}, dataDir, sourceConfigDir: sourceDir })!;
+    it('falls back to a null plan and removes the leaf for an OAuth-only home', () => {
+      writeFileSync(join(sourceDir, 'settings.json'), JSON.stringify({ hooks: { a: 1 }, env: { OTEL_X: '1' } }));
+      writeFileSync(join(sourceDir, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@b.c' } }));
+      expect(planAutomatedClaudeLaunch({ ownerId: 'oauth', env: {}, dataDir, sourceConfigDir: sourceDir })).toBeNull();
+      expect(existsSync(join(dataDir, 'claude-automated-config', 'oauth'))).toBe(false);
+    });
+
+    it('falls back to a null plan when the real settings are missing and no env auth is set', () => {
+      expect(planAutomatedClaudeLaunch({ ownerId: 's1', env: {}, dataDir, sourceConfigDir: sourceDir })).toBeNull();
+    });
+
+    it.each([
+      ['apiKeyHelper', { apiKeyHelper: 'h' }],
+      ['awsAuthRefresh', { awsAuthRefresh: 'r' }],
+      ['seeded ANTHROPIC_AUTH_TOKEN', { env: { ANTHROPIC_AUTH_TOKEN: 't' } }],
+      ['seeded CLAUDE_CODE_USE_BEDROCK', { env: { CLAUDE_CODE_USE_BEDROCK: '1' } }]
+    ])('keeps isolation when settings carry %s', (_label, settings) => {
+      writeFileSync(join(sourceDir, 'settings.json'), JSON.stringify(settings));
+      expect(planAutomatedClaudeLaunch({ ownerId: 'a', env: {}, dataDir, sourceConfigDir: sourceDir })).not.toBeNull();
+    });
+
+    it('still isolates (no settings) when the real settings are missing but env auth exists', () => {
+      const plan = planAutomatedClaudeLaunch({ ownerId: 's1', env: authEnv, dataDir, sourceConfigDir: sourceDir })!;
       expect(existsSync(join(plan.configDir, 'settings.json'))).toBe(false);
     });
 
@@ -61,7 +84,7 @@ describe('automated claude isolation', () => {
     });
 
     it('sanitizes path separators in the owner id', () => {
-      const plan = planAutomatedClaudeLaunch({ ownerId: '../../x', env: {}, dataDir, sourceConfigDir: sourceDir })!;
+      const plan = planAutomatedClaudeLaunch({ ownerId: '../../x', env: authEnv, dataDir, sourceConfigDir: sourceDir })!;
       expect(plan.configDir.startsWith(join(dataDir, 'claude-automated-config'))).toBe(true);
     });
   });
@@ -70,7 +93,7 @@ describe('automated claude isolation', () => {
     it('removes the leaf without following the projects symlink', () => {
       mkdirSync(join(sourceDir, 'projects'), { recursive: true });
       writeFileSync(join(sourceDir, 'projects', 'keep.jsonl'), 'x');
-      const plan = planAutomatedClaudeLaunch({ ownerId: 's1', env: {}, dataDir, sourceConfigDir: sourceDir })!;
+      const plan = planAutomatedClaudeLaunch({ ownerId: 's1', env: authEnv, dataDir, sourceConfigDir: sourceDir })!;
       removeAutomatedConfigDir(dataDir, plan.configDir);
       expect(existsSync(plan.configDir)).toBe(false);
       expect(existsSync(join(sourceDir, 'projects', 'keep.jsonl'))).toBe(true);
@@ -81,9 +104,9 @@ describe('automated claude isolation', () => {
     });
 
     it('sweeps expired unowned leaves, keeping live and fresh ones', () => {
-      const old = planAutomatedClaudeLaunch({ ownerId: 'old', env: {}, dataDir, sourceConfigDir: sourceDir })!;
-      const live = planAutomatedClaudeLaunch({ ownerId: 'live', env: {}, dataDir, sourceConfigDir: sourceDir })!;
-      const fresh = planAutomatedClaudeLaunch({ ownerId: 'fresh', env: {}, dataDir, sourceConfigDir: sourceDir })!;
+      const old = planAutomatedClaudeLaunch({ ownerId: 'old', env: authEnv, dataDir, sourceConfigDir: sourceDir })!;
+      const live = planAutomatedClaudeLaunch({ ownerId: 'live', env: authEnv, dataDir, sourceConfigDir: sourceDir })!;
+      const fresh = planAutomatedClaudeLaunch({ ownerId: 'fresh', env: authEnv, dataDir, sourceConfigDir: sourceDir })!;
       const past = new Date(Date.now() - 10_000);
       utimesSync(old.configDir, past, past);
       utimesSync(live.configDir, past, past);
@@ -131,7 +154,7 @@ describe('automated claude isolation', () => {
         env: { ANTHROPIC_BASE_URL: 'u', AWS_REGION: 'r', OTEL_X: '1', NODE_EXTRA_CA_CERTS: '/ca' }
       })
     );
-    const plan = planAutomatedClaudeLaunch({ ownerId: 's1', env: {}, dataDir, sourceConfigDir: sourceDir })!;
+    const plan = planAutomatedClaudeLaunch({ ownerId: 's1', env: authEnv, dataDir, sourceConfigDir: sourceDir })!;
     const bridgeData = mkdtempSync(join(tmpdir(), 'zcc-iso-bridge-'));
     try {
       const bridgeLeaf = createAutomatedConfigDir(bridgeData, 's1', { sourceConfigDir: sourceDir });

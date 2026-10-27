@@ -124,6 +124,7 @@ import {
 import {
   createAutomatedConfigDir,
   removeAutomatedConfigDir,
+  sweepAutomatedConfigDirs,
 } from "./automated-config-dir.js";
 import {
   type ClaudeSessionAdmission,
@@ -1825,6 +1826,25 @@ async function closeClaudeThreadSession(
   }
 }
 
+/** Leaves untouched this long and not owned by a live thread are swept. */
+const AUTOMATED_CONFIG_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+let automatedConfigSwept = false;
+
+/** Once per process: remove config dirs left by crashed bridges. */
+function sweepStaleAutomatedConfigDirsOnce(dataDir: string): void {
+  if (automatedConfigSwept) return;
+  automatedConfigSwept = true;
+  try {
+    sweepAutomatedConfigDirs({
+      dataDir,
+      liveOwnerIds: new Set(threadAttachments.keys()),
+      ttlMs: AUTOMATED_CONFIG_TTL_MS,
+    });
+  } catch {
+    // best effort: retried on the next process
+  }
+}
+
 function beginSessionIsolation(args: {
   params: SessionConstructionParams;
   threadId: string;
@@ -1833,13 +1853,27 @@ function beginSessionIsolation(args: {
   const requested: unknown =
     args.params.sessionKind ?? args.previous?.requestedKind;
   const dataDir = resolveBridgeDataDir();
-  const { kind, admission } = normalizeClaudeSessionKind({
+  const normalized = normalizeClaudeSessionKind({
     requested,
   });
-  const configDir =
-    kind === "automated"
-      ? createAutomatedConfigDir(dataDir, args.threadId)
-      : null;
+  let { kind, admission } = normalized;
+  let configDir: string | null = null;
+  if (kind === "automated") {
+    sweepStaleAutomatedConfigDirsOnce(dataDir);
+    try {
+      configDir = createAutomatedConfigDir(dataDir, args.threadId);
+    } catch (error) {
+      // Rollback is the interactive path: a preparation failure must never
+      // fail the session.
+      console.error(
+        `[claude-bridge] automated config dir unavailable (${(error as NodeJS.ErrnoException).code ?? "error"}); using interactive config`,
+      );
+    }
+    if (configDir === null) {
+      kind = "interactive";
+      admission = "fallback-interactive";
+    }
+  }
   return {
     requestedKind: requested === "automated" ? "automated" : "interactive",
     kind,

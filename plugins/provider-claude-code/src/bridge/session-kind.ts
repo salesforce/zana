@@ -4,7 +4,9 @@ import { join } from "node:path";
 export type ClaudeSessionKind = "interactive" | "automated";
 export type ClaudeSessionAdmission =
   | "applied"
-  | "default-interactive";
+  | "default-interactive"
+  /** Automated was requested but the isolated config dir could not be prepared or cannot authenticate. */
+  | "fallback-interactive";
 
 const DEFAULT_DATA_DIR_NAME = ".zcc";
 

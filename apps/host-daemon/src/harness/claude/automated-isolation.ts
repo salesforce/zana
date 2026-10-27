@@ -24,7 +24,7 @@ import { resolveZccDataDir } from '../../host-config.js';
  *
  * The provider bridge applies the same policy to SDK threads
  * (`plugins/provider-claude-code/src/bridge/automated-config-dir.ts`); the two
- * seeds are held byte-identical by `automated-isolation.parity.test.ts`.
+ * seeds are held byte-identical by the parity case in `__tests__/automated-isolation.test.ts`.
  */
 export const AUTOMATED_CONFIG_PARENT = 'claude-automated-config';
 /** Leaves untouched this long and not owned by a live session are swept. */
@@ -135,6 +135,32 @@ function seedLeaf(leaf: string, sourceDir: string): 'seeded' | 'none' {
   return 'seeded';
 }
 
+const AUTH_ENV_KEY = /^(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_USE_[A-Z_]+)$/;
+
+function envCarriesAuth(env: Record<string, unknown> | undefined): boolean {
+  if (!env) return false;
+  return Object.entries(env).some(([key, value]) => AUTH_ENV_KEY.test(key) && typeof value === 'string' && value !== '');
+}
+
+/**
+ * Whether an isolated config dir can authenticate without the user's real one.
+ * OAuth/subscription login state (keychain entry, `.credentials.json`,
+ * `oauthAccount`) is keyed to the config dir and is deliberately not copied, so
+ * only a credential helper, cloud-provider auth, or an API key (seeded or
+ * inherited from the process env) survives the relocation.
+ */
+export function automatedConfigCanAuthenticate(leaf: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (envCarriesAuth(env)) return true;
+  try {
+    const seeded = JSON.parse(readFileSync(join(leaf, 'settings.json'), 'utf8')) as Record<string, unknown>;
+    if (['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport'].some((key) => typeof seeded[key] === 'string')) return true;
+    const seededEnv = seeded.env;
+    return typeof seededEnv === 'object' && seededEnv !== null && envCarriesAuth(seededEnv as Record<string, unknown>);
+  } catch {
+    return false;
+  }
+}
+
 export function removeAutomatedConfigDir(dataDir: string, leaf: string): void {
   const parent = join(resolve(dataDir), AUTOMATED_CONFIG_PARENT);
   const resolved = resolve(leaf);
@@ -193,6 +219,12 @@ export function planAutomatedClaudeLaunch(input: AutomatedClaudeLaunchInput): Au
       input.sourceConfigDir ??
       (env.CLAUDE_CONFIG_DIR ? resolve(env.CLAUDE_CONFIG_DIR) : join(homedir(), '.claude'));
     seedLeaf(leaf, sourceDir);
+    if (!automatedConfigCanAuthenticate(leaf, env)) {
+      // OAuth/subscription login state is keyed to the config dir and is not
+      // carried over: launch exactly as before rather than logged out.
+      removeAutomatedConfigDir(dataDir, leaf);
+      return null;
+    }
     return {
       configDir: leaf,
       args: ['--setting-sources', 'user'],

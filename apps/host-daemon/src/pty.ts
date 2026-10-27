@@ -860,7 +860,25 @@ export class PtyManager extends EventEmitter {
     }
   }
 
-  create(opts: {
+  /**
+   * Spawn a local session. A throw before the PTY exists never reaches
+   * {@link finalizeExit}, so any automated config dir registered during the
+   * failed call is released here instead of leaking for the process lifetime.
+   */
+  create(opts: Parameters<PtyManager['createUnguarded']>[0]): TerminalSession {
+    const before = new Set(this.automatedConfigDirs.keys());
+    try {
+      return this.createUnguarded(opts);
+    } catch (error) {
+      for (const id of [...this.automatedConfigDirs.keys()]) {
+        if (!before.has(id) && !this.live.has(id)) this.releaseAutomatedConfigDir(id);
+      }
+      throw error;
+    }
+  }
+
+  /** @internal Use {@link create}; this is its unguarded body. */
+  createUnguarded(opts: {
     /** Main coordinator-owned identity, allocated before authorization/commit. */
     preallocatedSessionId?: string;
     projectId: string;
