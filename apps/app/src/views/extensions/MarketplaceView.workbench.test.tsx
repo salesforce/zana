@@ -20,6 +20,18 @@ function Location() { return <output data-testid="location">{useLocation().pathn
 const setup = () => render(<MemoryRouter><MarketplaceView /><Location /></MemoryRouter>);
 beforeEach(() => { vi.clearAllMocks(); api.list.mockResolvedValue({ ok: true, value: data }); api.catalogs.mockResolvedValue([]); api.install.mockResolvedValue({ ok: true }); useUi.setState({ pushToast: api.toast }); });
 afterEach(cleanup);
+it('treats a malformed catalogue list as empty and keeps plugin discovery usable', async () => {
+  api.catalogs.mockResolvedValue({ catalogs: [] });
+  setup();
+  await screen.findByText('Useful tool');
+  fireEvent.click(screen.getByRole('button', { name: 'Catalog sources' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Manage marketplaces' });
+  expect(within(dialog).queryByRole('list')).toBeNull();
+  expect(within(dialog).getByLabelText('Marketplace catalog source')).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Close', exact: true }));
+  expect(screen.getByTestId('plugin-card-Available')).toBeTruthy();
+});
+
 it('puts available plugins first, caps installed previews, and routes Manage to installed details', async () => {
   setup();
   await screen.findByRole('heading', { name: 'Available to install 1' });

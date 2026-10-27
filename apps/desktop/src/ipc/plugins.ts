@@ -8,6 +8,7 @@ import { listPlugins, revealPlugin, setPluginEnabled } from '@zana-ai/zcc-server
 import { wantsSecretsOmitted, withoutSecretValues } from '@zana-ai/zcc-server/plugins/plugin-settings-redaction';
 import type { Result } from '@zana-ai/zcc-domain/product';
 import { classifyExpectedRpcError, toRpcErrorEnvelope } from '@zana-ai/zcc-contracts/rpc-error';
+import { registerPluginPacksIpc } from './plugin-packs.js';
 import {
   listPluginAppsFromProductServer,
   setPluginAppEnabledOnProductServer,
@@ -22,6 +23,7 @@ import {
 } from './plugin-apps-loopback.js';
 
 export function registerPluginsIpc(): void {
+  registerPluginPacksIpc();
   
   ctx.safeHandle(
     IPC.mcp.list,

@@ -31,6 +31,19 @@ it('selects required ownership boundaries, deduplicates specs and leaves docs al
   expect(boundarySpecs(['apps/app/src/App.tsx'])).toEqual([...new Set(boundarySpecs(['apps/app/src/App.tsx']))].sort());
 });
 
+it('checks the built peer data boundary when large document transfer or its worker fence changes', () => {
+  for (const path of [
+    'plugins/design-docs/src/server/sync-store.ts',
+    'plugins/design-docs/src/server/peer-protocol.ts',
+    'apps/server/src/plugins/isolated-plugin-runtime.ts',
+    'apps/server/src/plugins/isolated-plugin-runtime.test.ts',
+    'e2e/fixtures/peer-design-docs-worker.ts'
+  ]) {
+    expect(boundarySpecs([path])).toContain('e2e/peer-data-boundary.spec.ts');
+  }
+  expect(boundarySpecs(['docs/readme.md'])).not.toContain('e2e/peer-data-boundary.spec.ts');
+});
+
 it('selects the Squad proposal specs for proposal, team and composer seams', () => {
   for (const path of [
     'apps/desktop/src/squad-proposals/service.ts',

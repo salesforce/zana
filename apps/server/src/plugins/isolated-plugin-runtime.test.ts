@@ -183,7 +183,7 @@ it('interrupts endless synchronous commit off server thread and rolls back', asy
 });
 
 // V8 coverage instrumentation (CI) slows the worker past the fixed 5s execution cap and inflates its heap past the
-// 256MB cap on 24MiB payloads; the uninstrumented run and e2e/peer-data-boundary exercise this same fence.
+// 256MB cap on 24MiB payloads; uninstrumented CI/release runs and e2e/peer-data-boundary exercise this same fence.
 it.skipIf(!!(globalThis as { __vitest_worker__?: { config?: { coverage?: { enabled?: boolean } } } }).__vitest_worker__?.config?.coverage?.enabled)('applies and rewrites supported 24MiB Design Docs through production worker fence', async () => {
   expect(PEER_WORKER_EXECUTION_TIMEOUT_MS).toBe(5000);
   expect(PEER_WORKER_COMMIT_TIMEOUT_MS).toBe(10000);
@@ -191,34 +191,61 @@ it.skipIf(!!(globalThis as { __vitest_worker__?: { config?: { coverage?: { enabl
   const source = `export { default } from ${JSON.stringify(entry)};`;
   // Sender fixture generation is not the commit under test; coverage adds heavy hashing overhead.
   const a = await fixture(source, { heartbeatTimeoutMs: 10_000 }), b = await fixture(source);
-  await Promise.all([a.runtime.started, b.runtime.started]);
-  const members = ['a', 'b'].map(name => ({ replicaId: `replica-${name}`, machineId: `machine-${name}`, sponsorReplicaId: null, joinedAt: 1 }));
-  for (const [f, replicaId] of [[a, 'replica-a'], [b, 'replica-b']] as const) await f.rpc.get('configure')!({ scope: 'repo', replicaId, members });
-  const pairs = new PairStore(join(await realpath(b.dir), 'pairs'), { localInstanceId: 'local', keyProvider: { getKey: async () => Buffer.alloc(32, 1) } });
-  cleanups.push(async () => pairs.dispose());
-  await pairs.create({ pairId: 'pair', localInstanceId: 'local', remoteInstanceId: 'remote', targetHostId: 'host', pluginId: 'isolation-test', scope: 'repo', proposalId: 'proposal', epoch: 1 });
-  const { transferQuery } = await import('../../../../plugins/design-docs/src/server/peer-protocol');
-  for (let revision = 0; revision < 2; revision++) {
-    const prepared = await a.rpc.get('prepare')!({ grantEpoch: 1 }) as any, transfer = prepared.transfer, query = transferQuery(transfer);
-    const dispatch = async (method: string, body: unknown) => {
-      const lease = (await pairs.acquireGrant('pair', 1, 'isolation-test', 'repo'))!, lifetime = new AbortController();
-      try { return await b.handle.peerHandlers.get(method)!({ peerId: 'machine-a', body, scope: 'repo', grantEpoch: 1, signal: lease.signal,
-        commitSync: createPluginPeerCommit(lease, lease.signal, lifetime.signal) }); }
-      finally { lifetime.abort(); lease.release(); }
-    };
-    await dispatch('transfer', transfer);
-    const missing = await dispatch('missing', query) as any;
-    for (const chunk of missing.chunks) await dispatch('chunk', await a.rpc.get('chunk')!({ transfer, ...chunk }));
-    let ticks = 0; const timer = setInterval(() => ticks++, 10), started = Date.now();
-    try { expect(await dispatch('apply', query)).toMatchObject({ stage: 'synced', heads: transfer.heads, appliedHeads: transfer.heads }); }
-    finally { clearInterval(timer); }
-    const elapsed = Date.now() - started;
-    expect(ticks).toBeGreaterThan(1);
-    // No wall-clock bound: elapsed includes IPC/queueing and varies with suite load. The fence itself is the worker's
-    // vm timeout; exceeding it rejects the apply and reports a worker failure, both asserted here.
-    const expected = await a.rpc.get('inspect')!(prepared) as any, actual = await b.rpc.get('inspect')!(prepared) as any;
-    expect(actual).toMatchObject({ bytes: 24 * 1024 * 1024, files: expected.files, head: transfer.heads[prepared.docId], receipt: { stage: 'synced' }, staged: { n: 0 } });
-    console.log(`[peer-fence] 24MiB ${revision ? 'rewrite' : 'initial'} production DD apply ${elapsed}ms; worker live; SQLite hashes/receipt exact`);
+  let phase = 'sender/receiver startup';
+  try {
+    await Promise.all([a.runtime.started, b.runtime.started]);
+    const members = ['a', 'b'].map(name => ({ replicaId: `replica-${name}`, machineId: `machine-${name}`, sponsorReplicaId: null, joinedAt: 1 }));
+    for (const [f, replicaId, role] of [[a, 'replica-a', 'sender'], [b, 'replica-b', 'receiver']] as const) {
+      phase = `${role} configure`;
+      await f.rpc.get('configure')!({ scope: 'repo', replicaId, members });
+    }
+    phase = 'receiver pair setup';
+    const pairs = new PairStore(join(await realpath(b.dir), 'pairs'), { localInstanceId: 'local', keyProvider: { getKey: async () => Buffer.alloc(32, 1) } });
+    cleanups.push(async () => pairs.dispose());
+    await pairs.create({ pairId: 'pair', localInstanceId: 'local', remoteInstanceId: 'remote', targetHostId: 'host', pluginId: 'isolation-test', scope: 'repo', proposalId: 'proposal', epoch: 1 });
+    const { transferQuery } = await import('../../../../plugins/design-docs/src/server/peer-protocol');
+    for (let revision = 0; revision < 2; revision++) {
+      const revisionLabel = revision ? 'rewrite' : 'initial';
+      phase = `${revisionLabel} sender prepare`;
+      const prepared = await a.rpc.get('prepare')!({ grantEpoch: 1 }) as any, transfer = prepared.transfer, query = transferQuery(transfer);
+      // No sender receipt ACK: rewrite must retain prior ancestry for catch-up.
+      if (revision) expect(transfer.versions.length).toBeGreaterThan(1);
+      const dispatch = async (method: string, body: unknown) => {
+        const lease = (await pairs.acquireGrant('pair', 1, 'isolation-test', 'repo'))!, lifetime = new AbortController();
+        try { return await b.handle.peerHandlers.get(method)!({ peerId: 'machine-a', body, scope: 'repo', grantEpoch: 1, signal: lease.signal,
+          commitSync: createPluginPeerCommit(lease, lease.signal, lifetime.signal) }); }
+        finally { lifetime.abort(); lease.release(); }
+      };
+      phase = `${revisionLabel} receiver transfer`;
+      await dispatch('transfer', transfer);
+      phase = `${revisionLabel} receiver missing`;
+      const missing = await dispatch('missing', query) as any;
+      for (const [index, chunk] of missing.chunks.entries()) {
+        phase = `${revisionLabel} sender chunk ${index + 1}/${missing.chunks.length}`;
+        const body = await a.rpc.get('chunk')!({ transfer, ...chunk });
+        phase = `${revisionLabel} receiver chunk ${index + 1}/${missing.chunks.length}`;
+        await dispatch('chunk', body);
+      }
+      phase = `${revisionLabel} receiver apply`;
+      let ticks = 0; const timer = setInterval(() => ticks++, 10), started = Date.now();
+      try { expect(await dispatch('apply', query)).toMatchObject({ stage: 'synced', heads: transfer.heads, appliedHeads: transfer.heads }); }
+      finally { clearInterval(timer); }
+      const elapsed = Date.now() - started;
+      expect(ticks).toBeGreaterThan(1);
+      // No wall-clock bound: elapsed includes IPC/queueing and varies with suite load. The fence itself is the worker's
+      // vm timeout; exceeding it rejects the apply and reports a worker failure, both asserted here.
+      phase = `${revisionLabel} sender inspect`;
+      const expected = await a.rpc.get('inspect')!(prepared) as any;
+      phase = `${revisionLabel} receiver inspect`;
+      const actual = await b.rpc.get('inspect')!(prepared) as any;
+      phase = `${revisionLabel} receiver validation`;
+      expect(actual).toMatchObject({ bytes: 24 * 1024 * 1024, files: expected.files, head: transfer.heads[prepared.docId], receipt: { stage: 'synced' }, staged: { n: 0 } });
+      console.log(`[peer-fence] 24MiB ${revisionLabel} production DD apply ${elapsed}ms; worker live; SQLite hashes/receipt exact`);
+    }
+    phase = 'sender/receiver final health';
+    expect(a.failure).not.toHaveBeenCalled(); expect(b.failure).not.toHaveBeenCalled();
+  } catch (error) {
+    const failures = (f: typeof a) => f.failure.mock.calls.map(([failure]) => failure instanceof Error ? failure.message : String(failure)).join('; ') || 'none';
+    throw new Error(`[peer-fence] ${phase}; sender failures: ${failures(a)}; receiver failures: ${failures(b)}`, { cause: error });
   }
-  expect(a.failure).not.toHaveBeenCalled(); expect(b.failure).not.toHaveBeenCalled();
 }, 120_000);

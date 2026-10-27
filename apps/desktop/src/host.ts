@@ -7781,16 +7781,6 @@ export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown
 
 function registerIpc() {
   safeHandleFromWindow(IPC.uiSend, sendQueuedMessageNow, err => { throw err; });
-  // A plugin asking to use a connection: core pushes the owed approval, main draws and signs the sheet (once, at init).
-  /* v8 ignore next -- started at built-Electron boot; startPeerUsePrompts is unit-tested */
-  stopPeerUsePrompts ??= startPeerUsePrompts({
-    secret: ensureProductServerCredential,
-    serverUrl: () => productServerUrl(),
-    listApps: () => runtimeSupervisor ? runtimeSupervisor.listPluginApps() : listPluginAppsFromProductServer(),
-    showSheet: (parent, view) => showApprovalSheet(parent, view, (options) => new BrowserWindow(options)),
-    pickParent: () => BrowserWindow.getFocusedWindow() ?? mainWindow(),
-    log: (message, error) => logMainError(message, error ?? 'peer use')
-  }).stop;
   // Plugin buttons with no thread (release actions) get a sheet main draws and signs.
   /* v8 ignore next -- registered at built-Electron boot; createPluginApprovalHandler is unit-tested */
   safeHandleFromWindow(IPC.pluginApprovals.request, createPluginApprovalHandler({
@@ -9448,6 +9438,18 @@ async function bootstrapNormal() {
     normalBootstrapStarted = false;
     throw error;
   }
+  // Subscribe only after the supervised origin exists. A healthy stream at the
+  // legacy :8780 fallback could belong to another running app and never reconnect.
+  // A plugin asking to use a connection: core pushes the owed approval, main draws and signs the sheet (once, at init).
+  /* v8 ignore next -- started at built-Electron boot; startPeerUsePrompts is unit-tested */
+  stopPeerUsePrompts ??= startPeerUsePrompts({
+    secret: ensureProductServerCredential,
+    serverUrl: () => productServerUrl(),
+    listApps: () => runtimeSupervisor ? runtimeSupervisor.listPluginApps() : listPluginAppsFromProductServer(),
+    showSheet: (parent, view) => showApprovalSheet(parent, view, (options) => new BrowserWindow(options)),
+    pickParent: () => BrowserWindow.getFocusedWindow() ?? mainWindow(),
+    log: (message, error) => logMainError(message, error ?? 'peer use')
+  }).stop;
   // Start the Zana Mobile gateway if the user has enabled phone access. It must
   // start only after ensureRendererStaticHost() has called
   // setProductionRendererOrigin(): the gateway resolves its loopback upstream

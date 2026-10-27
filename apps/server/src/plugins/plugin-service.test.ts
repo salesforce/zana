@@ -1116,12 +1116,13 @@ describe('PluginService', () => {
     delete process.env.ZCC_OFFICIAL_MARKETPLACE_URL;
     try {
       const { DEFAULT_OFFICIAL_MARKETPLACE_URL } = await import('./default-marketplaces.js');
-      let fetched: string | undefined;
+      const fetched: string[] = [];
       const service = createPluginService({
         dataDir: root(),
         bundledRoot: root(),
         fetchJson: async (url) => {
-          fetched = url;
+          fetched.push(url);
+          if (url.endsWith('/packs.json')) return { schemaVersion: 1, packs: [] };
           return {
             schemaVersion: 1,
             name: 'official',
@@ -1131,7 +1132,10 @@ describe('PluginService', () => {
         }
       });
       await service.start();
-      expect(fetched).toBe(DEFAULT_OFFICIAL_MARKETPLACE_URL);
+      expect(fetched).toEqual([
+        DEFAULT_OFFICIAL_MARKETPLACE_URL,
+        new URL('packs.json', DEFAULT_OFFICIAL_MARKETPLACE_URL).toString()
+      ]);
       const catalogs = service.listMarketplaces();
       expect(catalogs).toHaveLength(1);
       expect(catalogs[0]?.official).toBe(true);

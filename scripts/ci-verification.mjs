@@ -35,6 +35,7 @@ export function boundarySpecs(paths) {
     // #416: a Squad engineer that stops on an API error is nudged, restarted, then handed to the user.
     if (/services\/execution\/(worker-api-error-recovery|service|store|projection)\.ts|squad-worker-restart|worker-api-error-recovery-wiring|api-error-resume-wiring|harness\/claude\/interaction-hooks|ExecutionJobDetails/.test(path)) add('job-team-api-error-recovery');
     if (/build-plugin-(app|server)\.ts/.test(path)) add('plugin-authoring-live');
+    if (/plugins\/design-docs\/src\/server\/(sync-store|peer-protocol)|(?:^|\/)isolated-plugin-runtime|e2e\/fixtures\/peer-design-docs-worker/.test(path)) add('peer-data-boundary');
     if (/opencode/.test(path)) add('opencode-launch-boundary');
     if (/desktop-browser/.test(path)) add('desktop-browser-broker');
     if (/mobile-relay|mobile\/|mobile-/.test(path)) add('mobile-shell', 'mobile-relay-upload');

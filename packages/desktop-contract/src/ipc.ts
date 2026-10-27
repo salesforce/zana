@@ -410,6 +410,13 @@ export const IPC = {
   marketplaces: {
     list: 'marketplaces:list'
   },
+  pluginPacks: {
+    list: 'pluginPacks:list',
+    plan: 'pluginPacks:plan',
+    install: 'pluginPacks:install',
+    listInstalled: 'pluginPacks:listInstalled',
+    forget: 'pluginPacks:forget'
+  },
   /**
    * Runtime extensions under `~/.zcc/extensions/<id>/`. Mirrors the
    * `plugins:` shape. `readRendererEntry` returns the extension's renderer

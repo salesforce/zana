@@ -52,6 +52,7 @@ import { reportHubInstallFailure } from './hub-install.js';
 import { useUi } from '@/store';
 import { PluginAuthorPage } from './PluginAuthorPage.js';
 import { PluginCatalogGrid } from './PluginCatalogCard.js';
+import { PluginPacksCollection } from './PluginPacksCollection.js';
 import {
   pluginCategoryFilterId,
   pluginCategoryFilterOptions,
@@ -97,6 +98,7 @@ export function MarketplaceView({
   const [catalogsOpen, setCatalogsOpen] = useState(false);
   const [npmOpen, setNpmOpen] = useState(false);
   const [catalogs, setCatalogs] = useState<MarketplaceCatalogRow[] | null>(null);
+  const [catalogRevision, setCatalogRevision] = useState(0);
   const [catalogSource, setCatalogSource] = useState('');
   const [catalogBusy, setCatalogBusy] = useState<string | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -142,7 +144,7 @@ export function MarketplaceView({
   const refreshCatalogs = useCallback(() => {
     product.marketplaces
       .list()
-      .then((rows) => setCatalogs(Array.isArray(rows) ? rows : []))
+      .then((rows) => { setCatalogs(Array.isArray(rows) ? rows : []); setCatalogRevision((revision) => revision + 1); })
       .catch(() => setCatalogs([]));
   }, []);
 
@@ -615,6 +617,8 @@ export function MarketplaceView({
                   onClick={() => setCategoryFilters([option.id])}>{option.label}</button>)}
               </div>
             )}
+
+            <PluginPacksCollection mode="browse" query={query} catalogRevision={catalogRevision} />
 
             {error && <p className="modal-error">{error}</p>}
 

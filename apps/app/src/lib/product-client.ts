@@ -144,6 +144,7 @@ function httpProduct(): Pick<
   | 'voice'
   | 'hosts'
   | 'marketplaces'
+  | 'pluginPacks'
   | 'cliSkills'
 > {
   let terminalRosterRead: Promise<{ sessions: TerminalSession[] }> | undefined;
@@ -1132,6 +1133,13 @@ function httpProduct(): Pick<
         method: 'POST',
         body: JSON.stringify(input)
       })
+    },
+    pluginPacks: {
+      list: () => apiJson('/plugin-packs'),
+      listInstalled: () => apiJson('/plugin-packs/installed'),
+      plan: (identity) => apiJson('/plugin-packs/plan', { method: 'POST', body: JSON.stringify(identity) }),
+      install: (request) => apiJson('/plugin-packs/install', { method: 'POST', body: JSON.stringify(request) }),
+      forget: (identity) => apiJson('/plugin-packs/forget', { method: 'POST', body: JSON.stringify(identity) })
     },
     pluginApps: {
       list: async () => {

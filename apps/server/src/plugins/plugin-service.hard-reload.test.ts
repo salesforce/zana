@@ -1,11 +1,12 @@
-import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createPluginService, type PluginServiceOptions } from './plugin-service.js';
-import { pluginStorePath } from './plugin-store.js';
+import { createPluginStore, pluginStorePath } from './plugin-store.js';
+import { createPluginActivationStore } from './plugin-activation-store.js';
 
 const roots: string[] = [], services: ReturnType<typeof createPluginService>[] = [];
 function root() { const path = mkdtempSync(join(tmpdir(), 'plugin-service-recovery-')); roots.push(path); return path; }
@@ -184,4 +185,52 @@ it('relinquishes recovery overrides when the app version changes', async () => {
   await next.start();
   expect(next.get('tasks')?.rootDir).toBe(join(bundledRoot, 'tasks'));
   expect(next.get('tasks')?.bundledRecoveryVersion).toBeUndefined();
+});
+
+it.each(['previous', 'candidate', 'unmarked candidate', 'unresolved candidate', 'retargeted candidate'] as const)('blocks an interrupted bundled %s generation while an unattributed journal is damaged', async selected => {
+  const { service, dataDir, bundledRoot, opts } = fixture();
+  plugin(join(bundledRoot, 'tasks')); await service.install('builtin:tasks');
+  await service.callRpc('tasks', 'save', {});
+  expect((await finish(service)).restored).toEqual(['tasks']);
+  plugin(join(bundledRoot, 'docs'), 'docs'); await service.install('builtin:docs');
+  const previous = service.get('tasks')!;
+  const candidate = { ...previous, rootDir: join(dataDir, 'plugins/generations', randomUUID(), 'builtin') };
+  if (selected === 'unmarked candidate' || selected === 'unresolved candidate') delete candidate.bundledRecoveryVersion;
+  plugin(candidate.rootDir);
+  const marker = join(dataDir, 'unrecovered-code-ran');
+  writeFileSync(join((selected === 'previous' ? previous : candidate).rootDir, 'server.mjs'),
+    `import { writeFileSync } from 'node:fs';\n${good.replace('export default zcc => {', `export default zcc => { writeFileSync(${JSON.stringify(marker)}, 'unsafe');`)}`);
+  const activations = createPluginActivationStore(dataDir);
+  const journal = await activations.prepare(previous, candidate, 0);
+  const savedRoot = selected === 'retargeted candidate' ? join(root(), 'retargeted-runtime') : `${candidate.rootDir}-saved`;
+  if (selected === 'unresolved candidate' || selected === 'retargeted candidate') {
+    renameSync(candidate.rootDir, savedRoot);
+    symlinkSync(selected === 'retargeted candidate' ? savedRoot : join(dataDir, 'missing-runtime'), candidate.rootDir);
+  }
+  const damaged = join(dataDir, 'plugin-activations', randomUUID()); mkdirSync(damaged);
+  writeFileSync(join(damaged, 'journal.json'), 'broken');
+  await createPluginStore({ file: pluginStorePath(dataDir) }).upsert(selected === 'previous' ? previous : candidate);
+  writeFileSync(join(dataDir, 'plugins/tasks/kv.json'), JSON.stringify({ value: 'interrupted' }));
+  service.stop();
+  const restarted = createPluginService(opts); services.push(restarted); await restarted.start();
+  expect(restarted.get('tasks')).toMatchObject({ status: 'degraded', statusDetail: expect.stringContaining('Repair the journal directory') });
+  expect(existsSync(marker)).toBe(false);
+  expect(restarted.agentContributions().find(row => row.id === 'tasks')).toMatchObject({ enabled: false, skillsRootPaths: [], mcpServers: [] });
+  expect(restarted.get('docs')?.status).toBe('running');
+  expect(restarted.agentContributions().find(row => row.id === 'docs')?.enabled).toBe(true);
+  await expect(restarted.callRpc('docs', 'read', {})).resolves.toMatchObject({ clean: true });
+  for (const action of ['enable', 'disable', 'reload', 'remove'] as const) {
+    await expect(restarted[action]('tasks')).rejects.toThrow('Repair the journal directory');
+  }
+  await expect(restarted.setSettings('tasks', { name: 'unsafe' })).rejects.toThrow('Repair the journal directory');
+  expect(JSON.parse(readFileSync(join(dataDir, 'plugins/tasks/kv.json'), 'utf8')).value).toBe('interrupted');
+  expect(existsSync(join(dataDir, 'plugin-activations', journal.id, 'journal.json'))).toBe(true);
+  expect(readFileSync(join(damaged, 'journal.json'), 'utf8')).toBe('broken');
+  if (selected === 'unresolved candidate' || selected === 'retargeted candidate') {
+    rmSync(candidate.rootDir); renameSync(savedRoot, candidate.rootDir);
+  }
+  rmSync(damaged, { recursive: true });
+  await restarted.reload('tasks');
+  await expect(restarted.callRpc('tasks', 'read', {})).resolves.toMatchObject({ saved: 'preserved', clean: true });
+  expect(await activations.list()).toEqual([]);
 });

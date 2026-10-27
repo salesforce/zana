@@ -467,6 +467,18 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
     if (message.operation === 'plugins-list') {
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: plugins?.list() ?? [] });
     }
+    if (message.operation === 'plugin-packs-list' || message.operation === 'plugin-packs-installed' ||
+        message.operation === 'plugin-packs-plan' || message.operation === 'plugin-packs-install' ||
+        message.operation === 'plugin-packs-forget') {
+      if (!plugins) throw new Error('plugin host is unavailable');
+      const packs = plugins.pluginPacks;
+      const value = message.operation === 'plugin-packs-list' ? packs.list()
+        : message.operation === 'plugin-packs-installed' ? packs.listInstalled()
+        : message.operation === 'plugin-packs-plan' ? await packs.plan(message.identity)
+        : message.operation === 'plugin-packs-install' ? await packs.install(message.request)
+        : await packs.forget(message.identity);
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value });
+    }
     if (message.operation === 'plugins-install') {
       if (!plugins) {
         parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, message: 'plugin host is unavailable' });

@@ -33,6 +33,14 @@ describe('runtime supervisor', () => {
       message: 'This session does not run a packaged host daemon'
     });
     await expect(runtime.listProjects()).resolves.toEqual([]);
+    const packIdentity = { marketplaceSource: 'https://catalog.test/marketplace.json', packId: 'team-tools' };
+    await expect(runtime.listPluginPacks()).resolves.toEqual([]);
+    await expect(runtime.listInstalledPluginPacks()).resolves.toEqual([]);
+    await expect(runtime.planPluginPack(packIdentity)).rejects.toThrow('plugin host is unavailable');
+    await expect(runtime.installPluginPack({
+      identity: packIdentity, planId: randomUUID(), pluginIds: ['team-search']
+    })).rejects.toThrow('plugin host is unavailable');
+    await expect(runtime.forgetPluginPack(packIdentity)).rejects.toThrow('plugin host is unavailable');
     await expect(runtime.updateAllPlugins()).rejects.toThrow('plugin host is unavailable');
     await expect(runtime.projectMetadata({ action: 'list', kind: 'followups', projectId: 'p' })).rejects.toThrow('requires the product runtime');
     await expect(runtime.libraryAgent({ action: 'list', projectId: 'p' })).rejects.toThrow('requires the product runtime');

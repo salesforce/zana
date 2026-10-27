@@ -2,6 +2,7 @@ import { listNativeCapabilities } from "../services/skills/native-capabilities.j
 import { normalizePortableAttachments } from '../services/projects/portable-attachments.js';
 import { withoutSecretValues } from '../plugins/plugin-settings-redaction.js';
 import { handlePreviewsApi } from './previews-api.js';
+import { handlePluginPacksApi } from './product-plugin-packs.js';
 import { libraryDocumentOperation } from '../services/library/library-documents.js';
 import { classifyExpectedRpcError } from '@zana-ai/zcc-contracts/rpc-error';
 import { LibraryDocumentRequestSchema, LIBRARY_DOCUMENT_BODY_LIMIT } from '@zana-ai/zcc-contracts/library-documents';
@@ -527,6 +528,7 @@ export async function handleProductHttp(
 
   try {
     if (await handlePreviewsApi(request, response, ctx, path, method)) return true;
+    if (await handlePluginPacksApi(request, response, ctx.plugins?.pluginPacks, path, method)) return true;
     if (await handleScopedLinkApi(request, response, ctx, path, method)) return true;
     if (await handlePeerInstallerApi(request, response, ctx, path, method)) return true;
     if (await handlePeerApi(request, response, ctx, path, method)) return true;

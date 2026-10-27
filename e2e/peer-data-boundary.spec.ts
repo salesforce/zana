@@ -1,5 +1,6 @@
 import { _electron, type ElectronApplication } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
+import { createServer as createHttpServer } from 'node:http';
 import { createServer } from 'node:net';
 import { createRequire } from 'node:module';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -321,7 +322,20 @@ test('core-connected apps carry more than 8192 bytes of UTF-8 both ways through 
   const sshd = await startPrivateSshd([join(home, 'app-a', '.ssh', 'authorized_keys'), join(home, 'app-b', '.ssh', 'authorized_keys')]);
   const peers = createPeerApps(home);
   const prelaunch = (isolatedHome: string) => installProbePlugin(isolatedHome, source);
+  let legacyPromptRequests = 0;
+  // Keep the old fallback healthy: an early subscription would stay on the
+  // wrong app forever. If a real app owns this port, leave it untouched.
+  const legacyServer = createHttpServer((request, response) => {
+    if (request.url !== '/api/v1/peer-uses/prompts') { response.writeHead(404).end(); return; }
+    legacyPromptRequests++;
+    response.writeHead(200, { 'content-type': 'application/x-ndjson' });
+    response.write('{"prompts":[]}\n');
+  });
   try {
+    await new Promise<void>((resolve, reject) => {
+      legacyServer.once('error', (error: NodeJS.ErrnoException) => error.code === 'EADDRINUSE' ? resolve() : reject(error));
+      legacyServer.listen(8780, '127.0.0.1', resolve);
+    });
     const a = await peers.launch('app-a', { initialConfig: corePeerConfig, prelaunch, env: { ZCC_E2E_PEER_SSH_ENDPOINT: sshd.endpoint() } });
     const b = await peers.launch('app-b', { initialConfig: corePeerConfig, prelaunch });
     await pairComputers(a, b);
@@ -351,8 +365,16 @@ test('core-connected apps carry more than 8192 bytes of UTF-8 both ways through 
     await expect(window.getByTestId('peer-link')).toHaveCount(0, { timeout: 30_000 });
     expect(await probeRpc<string[]>(a, 'removing')).toEqual([target.computerId]);
     await expect(probeRpc(a, 'echo', { computerId: target.computerId, text })).rejects.toThrow();
+    expect(legacyPromptRequests, 'approval subscriptions must use the supervised app origin').toBe(0);
   } finally {
-    await peers.dispose();
-    await sshd.dispose();
+    try {
+      await peers.dispose();
+      await sshd.dispose();
+    } finally {
+      if (legacyServer.listening) {
+        legacyServer.closeAllConnections();
+        await new Promise<void>((resolve, reject) => legacyServer.close(error => error ? reject(error) : resolve()));
+      }
+    }
   }
 });

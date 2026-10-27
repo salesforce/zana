@@ -6,6 +6,7 @@ import { LibraryDocumentRequestSchema } from './library-documents.js';
 import { SHARED_PRODUCT_EVENTS } from './shared-product.js';
 import { z } from 'zod';
 import { ProjectIdSchema, SessionIdSchema, PROJECT_ICONS } from '@zana-ai/zcc-domain';
+import { pluginPackIdentitySchema, pluginPackInstallRequestSchema } from '@zana-ai/zcc-domain';
 import { TerminalRequestCommandSchema, TerminalHostEventSchema } from './terminal-execution.js';
 import { ProjectSettingsPatchSchema } from './project-settings.js';
 import { ProjectMetadataRequestSchema, ProjectCatalogRequestSchema } from './project-metadata-records.js';
@@ -25,7 +26,7 @@ export const PRODUCT_EVENT_SNAPSHOT_CHANNELS: ReadonlySet<string> = new Set([
   'config:onChanged', 'scheduler:onChanged', 'scheduler:groups:onChanged', 'scheduler:onTemplatesChanged', 'goals:onChanged',
   'followups:onChanged', 'personas:onChanged', 'teams:onChanged', 'quickPrompts:onChanged', 'extensions:onChanged'
 ]);
-export const SERVER_RUNTIME_PROTOCOL_VERSION = 16;
+export const SERVER_RUNTIME_PROTOCOL_VERSION = 17;
 const ServerRuntimeProtocolVersionSchema = z.literal(SERVER_RUNTIME_PROTOCOL_VERSION);
 const RequestIdSchema = z.string().uuid();
 const DeadlineSchema = z.string().datetime();
@@ -408,6 +409,24 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('plugins-list')
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugin-packs-list')
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugin-packs-installed')
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugin-packs-plan'),
+    identity: pluginPackIdentitySchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugin-packs-install'),
+    request: pluginPackInstallRequestSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugin-packs-forget'),
+    identity: pluginPackIdentitySchema
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('plugins-install'),

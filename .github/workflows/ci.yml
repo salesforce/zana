@@ -138,6 +138,11 @@ jobs:
       - name: Release package coverage
         run: pnpm exec vitest run --config vitest.release-coverage.config.ts --coverage --coverage.reportOnFailure --coverage.reporter=json --coverage.reportsDirectory=coverage/release
 
+      # Coverage overhead exceeds the production worker's fixed heap/fence
+      # budgets, so its full-size rewrite regression runs without instrumentation.
+      - name: Large document worker fence without coverage
+        run: pnpm exec vitest run apps/server/src/plugins/isolated-plugin-runtime.test.ts -t 'applies and rewrites supported 24MiB' --reporter=verbose
+
       - name: Upload coverage reports
         if: always()
         uses: actions/upload-artifact@v7

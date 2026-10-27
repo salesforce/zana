@@ -9,7 +9,6 @@ import {
 import type { TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
 import { product } from '../../../lib/product-client.js';
 import { handleHttpLinkClick } from '../../../lib/in-app-browser-link-preference.js';
-import { loadWorkspaceMeta } from '../secondary-panel/threadSecondaryPanelLogic.js';
 import { formatWorkingElapsed } from '../thread-timeline-model.js';
 import { useUi } from '../../../store.js';
 import { nextTurnItemText, queuedMessagePreview } from './queued-message-text.js';
@@ -570,6 +569,69 @@ function withStopStates(
 
 const PROMPT_CONTEXT_POLL_MS = 3_000;
 
+export function useLivePromptContext({
+  threadId,
+  environmentId,
+  branchName
+}: {
+  threadId?: string;
+  environmentId?: string | null;
+  branchName?: string | null;
+}) {
+  const [context, setContext] = useState<{
+    threadId: string | undefined;
+    environmentId: string;
+    // Undefined means no successful live read; null is an authoritative detached/non-repo result.
+    branch: string | null | undefined;
+    pullRequest: GitHostPullRequest | null;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!environmentId) {
+      setContext(null);
+      return;
+    }
+    setContext({ threadId, environmentId, branch: undefined, pullRequest: null });
+    let cancelled = false;
+    let statusPending = false;
+    let prPending = false;
+    const refresh = () => {
+      // Independent single-flight reads keep a slow PR from blocking branch updates
+      // or accumulating requests. Shared status caching still coalesces other surfaces.
+      if (!statusPending) {
+        statusPending = true;
+        void product.environments.status(environmentId).then((status) => {
+          if (!cancelled) setContext((current) => current && { ...current, branch: status.branchName });
+        }).catch((err: unknown) => {
+          // A transport failure is not a detached checkout: retain the last live branch.
+          console.error('Failed to fetch environment status:', err);
+        }).finally(() => { statusPending = false; });
+      }
+      if (!prPending) {
+        prPending = true;
+        void product.environments.pullRequest(environmentId).then(({ pullRequest }) => {
+          if (!cancelled) setContext((current) => current && { ...current, pullRequest });
+        }).catch((err: unknown) => {
+          console.error('Failed to fetch pull request metadata:', err);
+          if (!cancelled) setContext((current) => current && { ...current, pullRequest: null });
+        }).finally(() => { prPending = false; });
+      }
+    };
+    refresh();
+    const timer = window.setInterval(refresh, PROMPT_CONTEXT_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [threadId, environmentId]);
+
+  const live = context?.threadId === threadId && context?.environmentId === environmentId ? context : null;
+  const displayedBranch = live?.branch !== undefined ? live.branch : branchName;
+  const pullRequest = live?.pullRequest ?? null;
+
+  return { displayedBranch, pullRequest };
+}
+
 export function PromptContextBanner({
   threadId,
   branchName,
@@ -587,34 +649,9 @@ export function PromptContextBanner({
   childCount?: number;
   environmentId?: string | null;
 }) {
-  const [pullRequest, setPullRequest] = useState<GitHostPullRequest | null>(null);
-
-  useEffect(() => {
-    if (!environmentId) {
-      setPullRequest(null);
-      return;
-    }
-    let cancelled = false;
-    const refresh = () => {
-      void loadWorkspaceMeta(
-        product.environments.status,
-        product.environments.pullRequest,
-        environmentId
-      ).then(({ pullRequest: nextPr }) => {
-        if (cancelled) return;
-        setPullRequest((nextPr as GitHostPullRequest | null) ?? null);
-      });
-    };
-    refresh();
-    const timer = window.setInterval(refresh, PROMPT_CONTEXT_POLL_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [environmentId]);
-
+  const { displayedBranch, pullRequest } = useLivePromptContext({ threadId, environmentId, branchName });
   const bits = [
-    branchName ? `git: ${branchName}` : null,
+    displayedBranch ? `git: ${displayedBranch}` : null,
     isWorktree ? 'worktree' : null,
     originKind === 'fork' ? 'fork' : parentThreadId ? 'child thread' : null,
     childCount && childCount > 0 ? `${childCount} child ${childCount === 1 ? 'agent' : 'agents'}` : null
@@ -629,10 +666,10 @@ export function PromptContextBanner({
           href={pullRequest.url}
           target="_blank"
           rel="noreferrer"
-            onClick={(event) => {
-              if (event.shiftKey || event.altKey) return;
-              if (handleHttpLinkClick(pullRequest.url, { event, ownerId: threadId })) event.preventDefault();
-            }}
+          onClick={(event) => {
+            if (event.shiftKey || event.altKey) return;
+            if (handleHttpLinkClick(pullRequest.url, { event, ownerId: threadId })) event.preventDefault();
+          }}
         >
           PR #{pullRequest.number}
         </a>

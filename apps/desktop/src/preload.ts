@@ -443,6 +443,13 @@ const api: CcApi = {
     },
     remove: async () => ({ ok: true as const })
   },
+  pluginPacks: {
+    list: () => ipcRenderer.invoke(IPC.pluginPacks.list),
+    plan: (identity) => ipcRenderer.invoke(IPC.pluginPacks.plan, identity),
+    install: (request) => ipcRenderer.invoke(IPC.pluginPacks.install, request),
+    listInstalled: () => ipcRenderer.invoke(IPC.pluginPacks.listInstalled),
+    forget: (identity) => ipcRenderer.invoke(IPC.pluginPacks.forget, identity)
+  },
   cliSkills: {
     status: async () => ({ machines: [] }),
     install: async () => ({ results: [] })
