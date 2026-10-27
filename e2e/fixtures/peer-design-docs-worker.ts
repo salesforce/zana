@@ -22,11 +22,12 @@ export default function setup(api: ZccPluginApi): void {
     return service.status();
   });
   api.rpc.method('prepare', async (args: any) => {
-    const files = Array.from({ length: 12 }, (_, index) => index === 11 ? {
-      path: 'asset.png', content: Buffer.alloc(2 * 1024 * 1024, 255).toString('base64'), encoding: 'base64' as const
-    } : { path: index === 0 ? 'README.md' : `file-${index}.md`, content: String.fromCharCode(65 + index).repeat(2 * 1024 * 1024) });
-    if (!docId) docId = store.create({ title: 'Maximum worker fence', status: 'approved', files }, actor).id;
-    else store.writeFile(docId, { path: 'README.md', content: 'Z'.repeat(2 * 1024 * 1024) }, actor);
+    if (!docId) {
+      const files = Array.from({ length: 12 }, (_, index) => index === 11 ? {
+        path: 'asset.png', content: Buffer.alloc(2 * 1024 * 1024, 255).toString('base64'), encoding: 'base64' as const
+      } : { path: index === 0 ? 'README.md' : `file-${index}.md`, content: String.fromCharCode(65 + index).repeat(2 * 1024 * 1024) });
+      docId = store.create({ title: 'Maximum worker fence', status: 'approved', files }, actor).id;
+    } else store.writeFile(docId, { path: 'README.md', content: 'Z'.repeat(2 * 1024 * 1024) }, actor);
     // Let overdue heartbeat timers run between completed fixture transactions.
     await yieldTimers(0);
     const local = sync.localRepository()!;

@@ -1083,6 +1083,9 @@ export class DesignDocSyncStore {
   /** Assembles, hash-verifies and validates every staged closure; reads only. */
   private hydrateTransfer(transfer: PeerTransfer, query: PeerReceiptQuery): { versions: PeerVersion[]; used: number } {
     const used = new Set<string>(), verified = new Set<string>();
+    // Files, history and ancestor versions often share a blob. Reuse only immutable decoded strings within this
+    // hydration; each reference still passes its metadata checks and contributes to the closure byte limit below.
+    const decoded = new Map<string, string>();
     const blob = (hash: string): Buffer => {
       const descriptor = transfer.blobs.find((blob) => blob.hash === hash);
       if (!descriptor) throw new PeerProtocolError('invalid', 'manifest references unoffered blob');
@@ -1115,8 +1118,14 @@ export class DesignDocSyncStore {
             !['utf8', 'base64'].includes(String(metadata.encoding))) throw new PeerProtocolError('invalid', 'manifest file blob size or encoding mismatch');
           hydratedBytes += descriptor.bytes * (metadata.encoding === 'base64' ? 4 / 3 : 1);
           if (hydratedBytes > MAX_PEER_CLOSURE_BYTES) throw new PeerProtocolError('limit', 'hydrated closure exceeds frozen cap');
-          const content = blob(hash);
-          return { ...metadata, content: metadata.encoding === 'base64' ? content.toString('base64') : new TextDecoder('utf-8', { fatal: true }).decode(content) };
+          const key = `${hash}:${metadata.encoding}`;
+          let content = decoded.get(key);
+          if (content === undefined) {
+            const bytes = blob(hash);
+            content = metadata.encoding === 'base64' ? bytes.toString('base64') : new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+            decoded.set(key, content);
+          }
+          return { ...metadata, content };
         });
       };
       const closure = validatedClosure({ ...manifest, files: hydrate(manifest.files), history: hydrate(manifest.history) });
