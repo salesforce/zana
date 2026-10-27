@@ -861,8 +861,8 @@ test('Preview context: Context tab, setup, typed snapshots and restart work in b
   await expect(workbench.getByRole('alert')).toContainText('Enter a number');
   await expect(workbench.getByRole('button', { name: 'Save as…', exact: true })).toBeDisabled();
   await workbench.getByTestId('pw-start').click();
-  await expect(workbench.getByRole('dialog').getByRole('button', { name: 'Start preview', exact: true })).toBeDisabled();
-  await workbench.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Start preview', exact: true })).toBeDisabled();
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
   await workbench.getByLabel('Context preset', { exact: true }).selectOption('');
   await expect(workbench.getByLabel('retryCount value', { exact: true })).toHaveValue('');
   await workbench.getByRole('button', { name: 'Undo', exact: true }).click();
@@ -878,8 +878,11 @@ test('Preview context: Context tab, setup, typed snapshots and restart work in b
   await page.keyboard.press('Escape');
   await expect(workbench.getByRole('button', { name: 'Set Session to null', exact: true })).toBeHidden();
   await workbench.getByTestId('pw-start').click();
-  const setup = workbench.getByRole('dialog', { name: 'Start a conversation' });
+  const setup = page.getByRole('dialog', { name: 'Start a conversation' });
   await expect(setup).toBeVisible();
+  // The dim must sit above the whole window (sidebar + titlebar), not just the plugin panel.
+  const probes = await page.evaluate(() => [[12, 300], [window.innerWidth - 12, 12]].map(([x, y]) => document.elementFromPoint(x, y)?.closest('.sf-context-backdrop') !== null));
+  expect(probes).toEqual([true, true]);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-context-setup.png'));
   await setup.getByRole('button', { name: 'Cancel', exact: true }).click();
   expect(existsSync(join(home, 'sfap-requests.json')) && readFileSync(join(home, 'sfap-requests.json'), 'utf8').includes('/preview/sessions')).toBe(false);
@@ -902,7 +905,7 @@ test('Preview context: Context tab, setup, typed snapshots and restart work in b
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-context-narrow.png'));
   await app.electron.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setSize(size[0], size[1]), originalSize);
   await workbench.getByRole('button', { name: 'Review & restart', exact: true }).click();
-  await workbench.getByRole('dialog').getByRole('button', { name: 'Restart preview', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Restart preview', exact: true }).click();
   await expect(workbench.getByRole('log')).toContainText('support concierge');
   await workbench.getByRole('button', { name: 'End', exact: true }).click();
   // Exercise the real Electron child-process boundary too. Only this private fixture CLI runs.
@@ -910,7 +913,7 @@ test('Preview context: Context tab, setup, typed snapshots and restart work in b
   writeFileSync(join(home, 'dx', toolbarFile), saved.replace('config:\n', 'config:\n    default_agent_user: "fixture@example.com"\n'));
   await workbench.getByRole('button', { name: 'Live', exact: true }).click();
   await workbench.getByTestId('pw-start').click();
-  await workbench.getByRole('dialog').getByRole('button', { name: 'Start preview', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Start preview', exact: true }).click();
   await expect(workbench.getByRole('button', { name: 'End', exact: true })).toBeVisible();
   await workbench.getByLabel('Preview message', { exact: true }).fill('Large fixture response');
   await workbench.getByRole('button', { name: 'Send preview message', exact: true }).click();
@@ -919,7 +922,7 @@ test('Preview context: Context tab, setup, typed snapshots and restart work in b
   await openTool(studio, 'Org preview');
   const orgPreview = viewPane(page, 'org-preview').getByTestId('salesforce-agentforce-preview');
   await orgPreview.getByTestId('salesforce-agentforce-preview-start').click();
-  const orgSetup = orgPreview.getByRole('dialog');
+  const orgSetup = page.getByRole('dialog');
   await expect(orgSetup).toBeVisible();
   await expect(orgSetup.getByRole('option', { name: 'Unverified customer', exact: true })).toBeAttached();
   await orgSetup.getByLabel('Context preset', { exact: true }).selectOption(presetId);

@@ -62,3 +62,13 @@ Why: Repo-local CLI test can hide missing packaged dependencies.
 Guard: `packages/cli/src/__tests__/bundled-bin.test.ts` and `e2e/plugin-authoring-live.spec.ts` copies CLI outside repo, verifies create/install, UI↔CLI, reload/persistence, broken builds, failed backend replacements in Electron.
 
 When changing: Run both bundled-bin unit test and live E2E for authoring-loop changes; verify `--once` returns nonzero on failure.
+
+## Plugin modals and full-window overlays
+
+Rule: Portal any full-window overlay (modal backdrop, dialog, popover) to `document.body`; never render `position: fixed; inset: 0` in place.
+
+Why: Plugin panels mount inside `.split-workspace` (`z-index: 0`, a stacking context). An in-place backdrop is trapped in it, so the sidebar and titlebar paint above it and stay undimmed regardless of its `z-index`. The host doesn't expose ReactDOM to disk bundles; see `plugins/design-docs/src/app/portal.ts`. Body-portaled content loses panel-scoped CSS variables, so add the overlay root to that plugin's token selector.
+
+Guard: `apps/app/src/__tests__/plugin-fullscreen-overlay-portal.guard.test.ts` fails a plugin that styles a full-window fixed overlay but has no portal helper.
+
+When changing: A plugin-level check, not per-file; verify the dim covers the sidebar and titlebar in the built app.

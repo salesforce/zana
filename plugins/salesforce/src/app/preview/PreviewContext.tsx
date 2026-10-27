@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { Braces, Ellipsis, Link2, MessageSquare, Plus, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
 import { CONTEXT_TYPES, parsePreviewContext, type ContextType, type PreviewContextField, type PreviewContextVariable } from '../../../lib/preview-context.js';
 
@@ -181,12 +182,12 @@ export function PreviewContextSetup({ context, busy, running, error, onStart, on
     if (event.shiftKey && document.activeElement === controls[0]) { event.preventDefault(); controls.at(-1)?.focus(); }
     else if (!event.shiftKey && document.activeElement === controls.at(-1)) { event.preventDefault(); controls[0]?.focus(); }
   };
-  return <div className="sf-context-backdrop"><div ref={element} tabIndex={-1} className="sf-context-dialog" role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} onKeyDown={key}>
+  return createPortal(<div className="sf-context-backdrop"><div ref={element} tabIndex={-1} className="sf-context-dialog" role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} onKeyDown={key}>
     <header><div><span className="sf-context-eyebrow"><SlidersHorizontal size={13} aria-hidden="true" />Preview setup</span><h3 id={`${id}-title`}>{running ? 'Restart with new context' : 'Start a conversation'}</h3></div><button type="button" aria-label="Close preview setup" disabled={busy} onClick={onClose}><X size={16} aria-hidden="true" /></button></header>
     <p className="sf-context-dialog-intro">{running ? 'Restarting ends the current conversation. Review the values for your next run.' : 'Review the starting context. You can leave variables unset to use their defaults.'}</p>
     <div className="sf-context-dialog-body"><fieldset disabled={busy}><PreviewContextEditor context={context} dialog /></fieldset>{error && <p className="sf-context-error" role="alert">{error}</p>}</div>
     <footer><span>{context.count} {context.count === 1 ? 'override' : 'overrides'}</span><button type="button" disabled={busy} onClick={onClose}>Cancel</button><button type="button" className="is-primary" disabled={busy || context.loading || Boolean(context.error)} onClick={onStart}>{busy ? 'Starting…' : running ? 'Restart preview' : 'Start preview'}</button></footer>
-  </div></div>;
+  </div></div>, document.body);
 }
 
 export const PREVIEW_CONTEXT_STYLES = `

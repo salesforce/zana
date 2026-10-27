@@ -70,7 +70,7 @@ async function mount(props: Partial<PreviewWorkbenchProps> = {}) {
   return host;
 }
 const btn = (el: HTMLElement, text: string) => {
-  const all = [...el.querySelectorAll('button')].filter(b => b.textContent?.trim().startsWith(text));
+  const all = [...el.querySelectorAll('button'), ...document.querySelectorAll('.sf-context-backdrop button')].filter(b => b.textContent?.trim().startsWith(text));
   return (text === 'trace' ? all[all.length - 1] : all[0]) as HTMLButtonElement;
 };
 const click = async (b: HTMLElement | undefined) => { expect(b).toBeTruthy(); await act(async () => { b!.click(); }); await flush(); };
@@ -88,23 +88,23 @@ describe('PreviewWorkbench', () => {
     handlers['agentPreview.context'] = () => ({ ok: true, fields: [{ name: 'verified', label: 'Verified', type: 'Boolean' }] });
     const el = await mount();
     await click(btn(el, 'Start'));
-    expect(el.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
     expect(methods()).not.toContain('agentLab.start');
-    await click(el.querySelector('[aria-label="Set Verified"]') as HTMLElement);
+    await click(document.querySelector('[aria-label="Set Verified"]') as HTMLElement);
     await click(btn(el, 'Start preview'));
     expect(calls.find(c => c.method === 'agentLab.start')?.args.contextVariables).toEqual([{ name: 'verified', type: 'Boolean', value: false }]);
     await typeAndSend(el, 'hello');
     await click(btn(el, 'Context'));
-    await click(el.querySelector('[aria-label="Set Verified to null"]') as HTMLElement);
+    await click(document.querySelector('[aria-label="Set Verified to null"]') as HTMLElement);
     expect(el.textContent).toContain('keeps its original context');
     await click(btn(el, 'Review & restart'));
     await click(btn(el, 'Cancel'));
     expect(methods()).not.toContain('agentLab.end');
     await click(btn(el, 'Conversation'));
     await click(btn(el, 'Save as scenario'));
-    const nameInput = el.querySelector('form[aria-label="Save as scenario"] input') as HTMLInputElement;
+    const nameInput = document.querySelector('form[aria-label="Save as scenario"] input') as HTMLInputElement;
     await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(nameInput, 'With context'); nameInput.dispatchEvent(new Event('input', { bubbles: true })); });
-    await act(async () => (el.querySelector('form[aria-label="Save as scenario"]') as HTMLFormElement).requestSubmit()); await flush();
+    await act(async () => (document.querySelector('form[aria-label="Save as scenario"]') as HTMLFormElement).requestSubmit()); await flush();
     expect((calls.find(c => c.method === 'studio.suites.save')!.args.cases as Array<Record<string, unknown>>).at(-1)!.contextVariables).toEqual([{ name: 'verified', type: 'Boolean', value: false }]);
     await click(btn(el, 'Context')); await click(btn(el, 'Review & restart')); await click(btn(el, 'Restart preview'));
     expect(calls.filter(c => c.method === 'agentLab.start').at(-1)!.args.contextVariables).toEqual([{ name: 'verified', type: 'Boolean', value: null }]);
@@ -115,15 +115,15 @@ describe('PreviewWorkbench', () => {
     expect(calls.find(c => c.method === 'agentPreview.start')?.args.contextVariables).toEqual(contextVariables);
     await click(btn(el, 'Context'));
     expect(el.textContent).toContain('Applied to this run');
-    expect((el.querySelector('.sf-context-value > input') as HTMLInputElement).value).toBe('0');
+    expect((document.querySelector('.sf-context-value > input') as HTMLInputElement).value).toBe('0');
   });
   it('blocks incomplete context for Codex starts and keeps explicit Codex values independent of preset provenance', async () => {
     const preset = { id: 'p', name: 'Saved preset', revision: 1, updatedAt: 1, values: [{ name: 'count', type: 'Number', value: 0 }], fields: [{ name: 'count', label: 'Count', type: 'Number', declared: true }] };
     handlers['agentPreview.presets.list'] = () => ({ ok: true, scopeKey: 'scope', presets: [preset] });
     handlers['agentPreview.context'] = () => ({ ok: true, fields: [{ name: 'count', label: 'Count', type: 'Number' }] });
     const el = await mount(); await click(btn(el, 'Context'));
-    await act(async () => fireEvent.change(el.querySelector('[aria-label="Context preset"]')!, { target: { value: 'p' } }));
-    await act(async () => fireEvent.change(el.querySelector('[aria-label="Count value"]')!, { target: { value: '-' } }));
+    await act(async () => fireEvent.change(document.querySelector('[aria-label="Context preset"]')!, { target: { value: 'p' } }));
+    await act(async () => fireEvent.change(document.querySelector('[aria-label="Count value"]')!, { target: { value: '-' } }));
     const props = { pluginId: 'salesforce', projectId: 'proj-1', source: 'agent_label: x', fileLabel: 'A.agent', path: 'force-app/A.agent' };
     await act(async () => root!.render(createElement(PreviewWorkbench, { ...props, command: { seq: 1, type: 'start' } }))); await flush();
     expect(methods()).not.toContain('agentLab.start');
@@ -132,8 +132,8 @@ describe('PreviewWorkbench', () => {
     await act(async () => root!.render(createElement(PreviewWorkbench, { ...props, command: { seq: 2, type: 'start', contextVariables } }))); await flush();
     expect(calls.find(c => c.method === 'agentLab.start')!.args.contextVariables).toEqual(contextVariables);
     await click(btn(el, 'Context'));
-    expect(el.querySelector('.sf-context-preset-provenance')).toBeNull();
-    expect((el.querySelector('[aria-label="Count value"]') as HTMLInputElement).value).toBe('3');
+    expect(document.querySelector('.sf-context-preset-provenance')).toBeNull();
+    expect((document.querySelector('[aria-label="Count value"]') as HTMLInputElement).value).toBe('3');
   });
   it('fills the Context tab from an agent, tags its values until edited, and starts from its preset', async () => {
     const preset = { id: 'p', name: 'Agent preset', revision: 1, updatedAt: 1, savedBy: 'agent' as const, values: [{ name: 'count', type: 'Number' as const, value: 4 }], fields: [{ name: 'count', label: 'Count', type: 'Number' as const, declared: true }] };
@@ -144,18 +144,18 @@ describe('PreviewWorkbench', () => {
     const render = async (command: PreviewWorkbenchProps['command']) => { await act(async () => root!.render(createElement(PreviewWorkbench, { ...props, command }))); await flush(); };
     await render({ seq: 1, type: 'context', contextVariables: [{ name: 'count', type: 'Number', value: 2 }, { name: 'extra', type: 'Text', value: 'x' }] });
     expect(methods()).not.toContain('agentLab.start');
-    expect((el.querySelector('[aria-label="Count value"]') as HTMLInputElement).value).toBe('2');
+    expect((document.querySelector('[aria-label="Count value"]') as HTMLInputElement).value).toBe('2');
     expect(el.querySelectorAll('.sf-context-agent')).toHaveLength(2);
     await render({ seq: 2, type: 'context', contextVariables: [{ name: 'verified', type: 'Boolean', value: true }], merge: true });
-    expect((el.querySelector('[aria-label="Count value"]') as HTMLInputElement).value).toBe('2');
+    expect((document.querySelector('[aria-label="Count value"]') as HTMLInputElement).value).toBe('2');
     expect(el.querySelectorAll('.sf-context-agent')).toHaveLength(3);
-    await act(async () => fireEvent.change(el.querySelector('[aria-label="Count value"]')!, { target: { value: '5' } }));
+    await act(async () => fireEvent.change(document.querySelector('[aria-label="Count value"]')!, { target: { value: '5' } }));
     expect(el.querySelectorAll('.sf-context-agent')).toHaveLength(2);
     await render({ seq: 3, type: 'context', contextVariables: [{ name: 'verified', type: 'Boolean', value: false }] });
-    expect((el.querySelector('[aria-label="Count value"]') as HTMLInputElement).value).toBe('');
+    expect((document.querySelector('[aria-label="Count value"]') as HTMLInputElement).value).toBe('');
     expect(el.querySelectorAll('.sf-context-agent')).toHaveLength(1);
     await render({ seq: 4, type: 'context', preset });
-    expect((el.querySelector('[aria-label="Count value"]') as HTMLInputElement).value).toBe('4');
+    expect((document.querySelector('[aria-label="Count value"]') as HTMLInputElement).value).toBe('4');
     // An agent's preset save reaches the picker through realtime, tagged as the agent's.
     handlers['agentPreview.presets.list'] = () => ({ ok: true, scopeKey: 'scope', presets: [preset] });
     const lists = calls.filter(c => c.method === 'agentPreview.presets.list').length;
@@ -163,20 +163,20 @@ describe('PreviewWorkbench', () => {
     expect(calls.filter(c => c.method === 'agentPreview.presets.list').length).toBe(lists);
     await act(async () => { presetsRealtime?.({ projectId: 'proj-1' }); }); await flush();
     expect(calls.filter(c => c.method === 'agentPreview.presets.list').length).toBe(lists + 1);
-    expect(el.querySelector('[aria-label="Context preset"]')?.textContent).toContain('Agent preset · by agent');
+    expect(document.querySelector('[aria-label="Context preset"]')?.textContent).toContain('Agent preset · by agent');
     await render({ seq: 5, type: 'start', preset });
     expect(calls.find(c => c.method === 'agentLab.start')!.args.contextVariables).toEqual(preset.values);
     await click(btn(el, 'Context'));
-    expect(el.querySelector('.sf-context-preset-provenance')?.textContent).toContain('Agent preset');
+    expect(document.querySelector('.sf-context-preset-provenance')?.textContent).toContain('Agent preset');
   });
   it('keeps the existing session and context when a reviewed restart cannot end it', async () => {
     const contextVariables = [{ name: 'count', type: 'Number' as const, value: 0 }];
     const el = await mount({ engine: 'live', command: { seq: 10, type: 'start', engine: 'live', contextVariables } });
     handlers['agentPreview.end'] = () => ({ ok: false, error: 'End failed' });
     await click(btn(el, 'Context'));
-    await click(el.querySelector('[aria-label="Set count to null"]') as HTMLElement);
+    await click(document.querySelector('[aria-label="Set count to null"]') as HTMLElement);
     await click(btn(el, 'Review & restart')); await click(btn(el, 'Restart preview'));
-    expect(el.querySelector('[role="dialog"]')?.textContent).toContain('End failed');
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('End failed');
     expect(calls.filter(c => c.method === 'agentPreview.start')).toHaveLength(1);
     await click(btn(el, 'Cancel')); expect(btn(el, 'End')).toBeTruthy();
     handlers['agentPreview.end'] = () => ({ ok: true });
@@ -240,7 +240,7 @@ describe('PreviewWorkbench', () => {
     handlers['agentLab.send'] = () => snap([{ role: 'user', text: 'a' }, { role: 'agent', text: 'One', planId: 'p1' }, { role: 'user', text: 'b' }, { role: 'agent', text: 'Two', planId: 'p2' }]);
     const el = await mount();
     await click(btn(el, 'Start')); await typeAndSend(el, 'b');
-    const traceButtons = () => [...el.querySelectorAll('button')].filter(b => b.textContent?.startsWith('trace')) as HTMLButtonElement[];
+    const traceButtons = () => [...el.querySelectorAll('button'), ...document.querySelectorAll('.sf-context-backdrop button')].filter(b => b.textContent?.startsWith('trace')) as HTMLButtonElement[];
     await click(traceButtons()[0]);
     expect(el.textContent).toContain('Orders');
     await click(btn(el, 'End'));
@@ -321,7 +321,7 @@ describe('PreviewWorkbench', () => {
     const el = await mount();
     await click(btn(el, 'Start')); await typeAndSend(el, 'hello'); await click(btn(el, 'trace'));
     await click(btn(el, 'Save as scenario'));
-    const form = el.querySelector('form[aria-label="Save as scenario"]') as HTMLFormElement;
+    const form = document.querySelector('form[aria-label="Save as scenario"]') as HTMLFormElement;
     const name = form.querySelector('input') as HTMLInputElement;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
     await act(async () => { setter.call(name, 'My flow'); name.dispatchEvent(new Event('input', { bubbles: true })); });
@@ -331,7 +331,7 @@ describe('PreviewWorkbench', () => {
     const cases = save.args.cases as Array<{ name: string; utterances: string[]; expect: { topic?: string } }>;
     expect(cases).toHaveLength(3);
     expect(cases[2]).toMatchObject({ name: 'My flow', utterances: ['hello'], expect: { topic: 'Orders' } });
-    expect(el.querySelector('form[aria-label="Save as scenario"]')).toBeNull();
+    expect(document.querySelector('form[aria-label="Save as scenario"]')).toBeNull();
   });
 
   it('surfaces save conflicts', async () => {
@@ -339,7 +339,7 @@ describe('PreviewWorkbench', () => {
     const el = await mount();
     await click(btn(el, 'Start')); await typeAndSend(el, 'hello');
     await click(btn(el, 'Save as scenario'));
-    const form = el.querySelector('form[aria-label="Save as scenario"]') as HTMLFormElement;
+    const form = document.querySelector('form[aria-label="Save as scenario"]') as HTMLFormElement;
     const name = form.querySelector('input') as HTMLInputElement;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
     await act(async () => { setter.call(name, 'x'); name.dispatchEvent(new Event('input', { bubbles: true })); });
@@ -354,7 +354,7 @@ describe('PreviewWorkbench', () => {
     handlers['agentLab.send'] = () => ({ ok: true, data: { id: 'sess-2', turns: [{ role: 'user', text: 'hello' }, { role: 'agent', text: 'Different', planId: 'p9' }] } });
     await click(btn(el, 'Start')); await typeAndSend(el, 'hello');
     await click(btn(el, 'Compare runs'));
-    expect(el.querySelector('[aria-label="Compare runs"]')).toBeTruthy();
+    expect(document.querySelector('[aria-label="Compare runs"]')).toBeTruthy();
     expect(el.textContent).toContain('differs');
     expect(el.querySelector('[data-testid=cmp-a]')?.textContent).toContain('Different');
     const select = el.querySelector('select[aria-label="Run B"]') as HTMLSelectElement;
@@ -362,7 +362,7 @@ describe('PreviewWorkbench', () => {
     await click(btn(el, 'Export run'));
     expect((URL.createObjectURL as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
     await click(btn(el, 'Compare runs'));
-    expect(el.querySelector('[aria-label="Compare runs"]')).toBeNull();
+    expect(document.querySelector('[aria-label="Compare runs"]')).toBeNull();
   });
 
   it('warns when the script changes during a run', async () => {
@@ -613,7 +613,7 @@ describe('PreviewWorkbench failure paths and edge cases', () => {
   async function startAndSave(el: HTMLElement, name: string, criteria = '') {
     await click(btn(el, 'Start')); await typeAndSend(el, 'hello');
     await click(btn(el, 'Save as scenario'));
-    const form = el.querySelector('form[aria-label="Save as scenario"]') as HTMLFormElement;
+    const form = document.querySelector('form[aria-label="Save as scenario"]') as HTMLFormElement;
     const inputs = form.querySelectorAll('input');
     expect((form.querySelector('button[type=submit]') as HTMLButtonElement).disabled).toBe(true);
     await setInput(inputs[0] as HTMLInputElement, name);
@@ -630,7 +630,7 @@ describe('PreviewWorkbench failure paths and edge cases', () => {
     const cases = save.args.cases as Array<{ name: string }>;
     expect(cases).toHaveLength(1);
     expect(JSON.stringify(cases[0])).toContain('Greets the user');
-    expect(el.querySelector('form[aria-label="Save as scenario"]')).toBeNull();
+    expect(document.querySelector('form[aria-label="Save as scenario"]')).toBeNull();
   });
 
   it('keeps the save form open and reports an error when saving fails', async () => {
@@ -638,9 +638,9 @@ describe('PreviewWorkbench failure paths and edge cases', () => {
     const el = await mount();
     await startAndSave(el, 'Nope');
     expect(alertText(el)).toContain('The scenario could not be saved.');
-    expect(el.querySelector('form[aria-label="Save as scenario"]')).toBeTruthy();
+    expect(document.querySelector('form[aria-label="Save as scenario"]')).toBeTruthy();
     handlers['studio.suites.save'] = () => { throw new Error('disk full'); };
-    await act(async () => { (el.querySelector('form[aria-label="Save as scenario"]') as HTMLFormElement).requestSubmit(); }); await flush();
+    await act(async () => { (document.querySelector('form[aria-label="Save as scenario"]') as HTMLFormElement).requestSubmit(); }); await flush();
     expect(alertText(el)).toContain('disk full');
   });
 
@@ -650,9 +650,9 @@ describe('PreviewWorkbench failure paths and edge cases', () => {
     expect(btn(el, 'Save as scenario').disabled).toBe(true);
     await rerender({ path: 'force-app/A.agent' });
     await click(btn(el, 'Save as scenario'));
-    expect(el.querySelector('form[aria-label="Save as scenario"]')).toBeTruthy();
+    expect(document.querySelector('form[aria-label="Save as scenario"]')).toBeTruthy();
     await click(btn(el, 'Save as scenario'));
-    expect(el.querySelector('form[aria-label="Save as scenario"]')).toBeNull();
+    expect(document.querySelector('form[aria-label="Save as scenario"]')).toBeNull();
   });
 
   it('does not fetch a trace for rehearse runs, and degrades on thrown trace errors', async () => {
