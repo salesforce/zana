@@ -314,7 +314,7 @@ ${hangBranch}`));
     await expect.poll(async () => (await tool('zana_list_projects')).body.result.structuredContent.error).toBe('functionality_disabled');
     await expect(accessSection.getByRole('switch', { name: 'Allow Start new jobs' })).toBeDisabled();
     await accessSection.getByRole('switch', { name: 'Allow Browse Projects' }).click();
-    await expect.poll(async () => (await tool('zana_list_projects')).body.result.structuredContent.projects.length).toBeGreaterThan(0);
+    await expect.poll(async () => (await tool('zana_list_projects')).body.result.structuredContent.projects?.length ?? 0).toBeGreaterThan(0);
     await accessSection.scrollIntoViewIfNeeded();
     const started = await tool('zana_launch_job', args);
     expect(started.body.result.structuredContent).toMatchObject({ state: 'queued', harness: 'acp-opencode', model: 'fake/default' });
