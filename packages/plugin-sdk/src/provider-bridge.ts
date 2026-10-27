@@ -34,6 +34,19 @@
  * bundles it.
  */
 
+export {
+  confinedConfigParent as experimental_confinedConfigParent,
+  createConfinedConfigLeaf as experimental_createConfinedConfigLeaf,
+  linkProjects as experimental_linkProjects,
+  removeConfinedConfigLeaf as experimental_removeConfinedConfigLeaf,
+  sweepConfinedConfigLeaves as experimental_sweepConfinedConfigLeaves,
+  writeAtomic0600 as experimental_writeAtomic0600,
+} from './automated-config-lifecycle.js';
+export type {
+  ConfinedConfigLeafInput,
+  SweepConfinedConfigLeavesInput,
+} from './automated-config-lifecycle.js';
+
 // ---------------------------------------------------------------------------
 // 1. The bridge entry contract
 // ---------------------------------------------------------------------------

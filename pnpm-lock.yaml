@@ -390,6 +390,9 @@ importers:
       '@zana-ai/zcc-path-confine':
         specifier: workspace:*
         version: link:../../packages/path-confine
+      '@zana-ai/zcc-plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
       '@zana-ai/zcc-process-utils':
         specifier: workspace:*
         version: link:../../packages/process-utils

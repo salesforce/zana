@@ -1,16 +1,30 @@
-import { describe, expect, it } from 'vitest';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, utimesSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   approvalInteractionOutcomeSchema,
   experimental_buildBridgeToolCallContent,
+  experimental_createConfinedConfigLeaf,
+  experimental_linkProjects,
   experimental_planStepsPresentation,
   experimental_recordProviderChildIo,
   experimental_runPortableCommand,
+  experimental_removeConfinedConfigLeaf,
+  experimental_sweepConfinedConfigLeaves,
+  experimental_writeAtomic0600,
   experimental_spawnPortablePipedProcess,
   experimental_spawnPortableProcess,
   isApprovalInteractionOutcome,
   planStepsPresentation,
   userQuestionInteractionOutcomeSchema
 } from './provider-bridge.js';
+
+let lifecycleDir: string | undefined;
+afterEach(() => {
+  if (lifecycleDir) rmSync(lifecycleDir, { recursive: true, force: true });
+  lifecycleDir = undefined;
+});
 
 describe('provider-bridge facade', () => {
   it('lets provider hosts run bounded probes through the public SDK', async () => {
@@ -50,5 +64,79 @@ describe('provider-bridge facade', () => {
       suppress: true,
       title: 'Ship'
     });
+  });
+
+  it('owns confined config leaf lifecycle for provider hosts and daemon consumers', () => {
+    lifecycleDir = mkdtempSync(join(tmpdir(), 'zcc-sdk-config-'));
+    const sourceProjects = join(lifecycleDir, 'source-projects');
+    const old = experimental_createConfinedConfigLeaf({
+      dataDir: lifecycleDir,
+      parentName: 'automated-config',
+      ownerId: 'old',
+    });
+    const live = experimental_createConfinedConfigLeaf({
+      dataDir: lifecycleDir,
+      parentName: 'automated-config',
+      ownerId: 'live',
+    });
+    experimental_writeAtomic0600(join(old, 'settings.json'), '{}');
+    expect(statSync(join(old, 'settings.json')).mode & 0o777).toBe(0o600);
+    experimental_linkProjects(sourceProjects, join(old, 'projects'));
+    expect(lstatSync(join(old, 'projects')).isSymbolicLink()).toBe(true);
+    const past = new Date(Date.now() - 10_000);
+    utimesSync(old, past, past);
+    utimesSync(live, past, past);
+
+    expect(
+      experimental_sweepConfinedConfigLeaves({
+        dataDir: lifecycleDir,
+        parentName: 'automated-config',
+        liveOwnerIds: new Set(['live']),
+        ttlMs: 5_000,
+      }),
+    ).toEqual(['old']);
+    expect(existsSync(old)).toBe(false);
+    expect(existsSync(live)).toBe(true);
+    expect(existsSync(sourceProjects)).toBe(true);
+  });
+
+  it('rejects unsafe owner ids and removal outside the configured parent', () => {
+    lifecycleDir = mkdtempSync(join(tmpdir(), 'zcc-sdk-config-'));
+    expect(() =>
+      experimental_createConfinedConfigLeaf({
+        dataDir: lifecycleDir!,
+        parentName: 'automated-config',
+        ownerId: '..',
+      }),
+    ).toThrow(/invalid/);
+    expect(() =>
+      experimental_removeConfinedConfigLeaf(lifecycleDir!, 'automated-config', lifecycleDir!),
+    ).toThrow(/escapes/);
+  });
+
+  it('rejects a symlinked lifecycle parent or leaf', () => {
+    lifecycleDir = mkdtempSync(join(tmpdir(), 'zcc-sdk-config-'));
+    const parent = join(lifecycleDir, 'automated-config');
+    const target = join(lifecycleDir, 'target');
+    mkdirSync(target);
+    symlinkSync(target, parent, 'dir');
+    expect(() =>
+      experimental_createConfinedConfigLeaf({
+        dataDir: lifecycleDir!,
+        parentName: 'automated-config',
+        ownerId: 'owner',
+      }),
+    ).toThrow(/symlink/);
+
+    rmSync(parent);
+    mkdirSync(parent);
+    symlinkSync(target, join(parent, 'owner'), 'dir');
+    expect(() =>
+      experimental_createConfinedConfigLeaf({
+        dataDir: lifecycleDir!,
+        parentName: 'automated-config',
+        ownerId: 'owner',
+      }),
+    ).toThrow(/symlink/);
   });
 });

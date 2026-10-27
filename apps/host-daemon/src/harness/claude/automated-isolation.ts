@@ -1,18 +1,16 @@
 import {
-  chmodSync,
   existsSync,
-  lstatSync,
-  mkdirSync,
   readFileSync,
-  readdirSync,
-  renameSync,
-  rmSync,
-  statSync,
-  symlinkSync,
-  writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import {
+  experimental_createConfinedConfigLeaf as createConfinedConfigLeaf,
+  experimental_linkProjects as linkProjects,
+  experimental_removeConfinedConfigLeaf as removeConfinedConfigLeaf,
+  experimental_sweepConfinedConfigLeaves as sweepConfinedConfigLeaves,
+  experimental_writeAtomic0600 as writeAtomic0600,
+} from '@zana-ai/zcc-plugin-sdk/provider-bridge';
 import { resolveZccDataDir } from '../../host-config.js';
 
 /**
@@ -61,27 +59,6 @@ export interface AutomatedClaudeLaunchInput {
   now?: number;
 }
 
-function assertInside(parent: string, child: string): void {
-  const rel = relative(parent, child);
-  if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-    throw new Error('automated Claude config dir escapes the Zana data dir');
-  }
-}
-
-function safeSegment(value: string): string {
-  const cleaned = value.replace(/[^A-Za-z0-9._-]/g, '_');
-  if (cleaned === '' || cleaned === '.' || cleaned === '..') {
-    throw new Error('invalid automated Claude config dir owner id');
-  }
-  return cleaned;
-}
-
-function writeAtomic0600(path: string, body: string): void {
-  const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-  writeFileSync(tmp, body, { mode: 0o600 });
-  renameSync(tmp, path);
-}
-
 /** Builds the generated settings from the user's real ones; null when there is nothing to carry. */
 export function buildSeedSettings(source: unknown): Record<string, unknown> | null {
   if (typeof source !== 'object' || source === null || Array.isArray(source)) return null;
@@ -101,21 +78,6 @@ export function buildSeedSettings(source: unknown): Record<string, unknown> | nu
     if (Object.keys(picked).length > 0) generated.env = picked;
   }
   return Object.keys(generated).length > 0 ? generated : null;
-}
-
-/** Point `linkPath` at the real projects dir; never throws, never conjures a missing Claude home. */
-function linkProjects(realProjects: string, linkPath: string): void {
-  try {
-    mkdirSync(realProjects, { recursive: true });
-    lstatSync(linkPath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return;
-    try {
-      symlinkSync(realProjects, linkPath, 'dir');
-    } catch {
-      // best-effort: claude recreates a local projects dir
-    }
-  }
 }
 
 /**
@@ -191,10 +153,7 @@ export function automatedConfigCanAuthenticate(leaf: string, env: NodeJS.Process
 }
 
 export function removeAutomatedConfigDir(dataDir: string, leaf: string): void {
-  const parent = join(resolve(dataDir), AUTOMATED_CONFIG_PARENT);
-  const resolved = resolve(leaf);
-  assertInside(parent, resolved);
-  rmSync(resolved, { recursive: true, force: true });
+  removeConfinedConfigLeaf(dataDir, AUTOMATED_CONFIG_PARENT, leaf);
 }
 
 /** Deletes leaves older than `ttlMs` that no live session owns. Best effort. */
@@ -204,28 +163,14 @@ export function sweepStaleAutomatedConfigDirs(args: {
   ttlMs?: number;
   now?: number;
 }): string[] {
-  const parent = join(resolve(args.dataDir), AUTOMATED_CONFIG_PARENT);
   const ttl = args.ttlMs ?? AUTOMATED_CONFIG_TTL_MS;
-  const now = args.now ?? Date.now();
-  const removed: string[] = [];
-  let names: string[];
-  try {
-    names = readdirSync(parent);
-  } catch {
-    return removed;
-  }
-  for (const name of names) {
-    if (args.liveOwnerIds.has(name)) continue;
-    const leaf = join(parent, name);
-    try {
-      if (now - statSync(leaf).mtimeMs <= ttl) continue;
-      removeAutomatedConfigDir(args.dataDir, leaf);
-      removed.push(name);
-    } catch {
-      /* retried on the next sweep */
-    }
-  }
-  return removed;
+  return sweepConfinedConfigLeaves({
+    dataDir: args.dataDir,
+    parentName: AUTOMATED_CONFIG_PARENT,
+    liveOwnerIds: args.liveOwnerIds,
+    ttlMs: ttl,
+    now: args.now,
+  });
 }
 
 /**
@@ -237,13 +182,7 @@ export function planAutomatedClaudeLaunch(input: AutomatedClaudeLaunchInput): Au
   const env = input.env ?? process.env;
   const dataDir = input.dataDir ?? resolveZccDataDir(env);
   try {
-    const parent = join(resolve(dataDir), AUTOMATED_CONFIG_PARENT);
-    const leaf = join(parent, safeSegment(input.ownerId));
-    assertInside(parent, leaf);
-    mkdirSync(parent, { recursive: true, mode: 0o700 });
-    chmodSync(parent, 0o700);
-    mkdirSync(leaf, { recursive: true, mode: 0o700 });
-    chmodSync(leaf, 0o700);
+    const leaf = createConfinedConfigLeaf({ dataDir, ownerId: input.ownerId, parentName: AUTOMATED_CONFIG_PARENT });
     const sourceDir =
       input.sourceConfigDir ??
       (env.CLAUDE_CONFIG_DIR ? resolve(env.CLAUDE_CONFIG_DIR) : join(homedir(), '.claude'));

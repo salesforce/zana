@@ -156,11 +156,13 @@ interface ControlledClaudeQuery {
 }
 
 interface ClaudeQueryCallOptions {
+  allowedTools?: string[];
   canUseTool?: CanUseTool;
   env?: Record<string, string | undefined>;
   extraArgs?: Record<string, string | null>;
   hooks?: BridgeSessionHooks;
   model?: string;
+  mcpServers?: Record<string, unknown>;
   permissionMode?: ClaudePermissionMode;
   resume?: string;
   sandbox?: BridgeSessionOptions["sandbox"];
