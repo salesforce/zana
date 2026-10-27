@@ -34,7 +34,8 @@ function commandTreeFixture(mode: "timeout" | "overflow" | "success" | "nonzero"
   writeFileSync(wrapper, `
 const { spawn } = require('node:child_process');
 const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'inherit' });
-require('node:fs').writeFileSync(${JSON.stringify(pids)}, JSON.stringify([process.pid, child.pid]));
+require('node:fs').writeFileSync(${JSON.stringify(`${pids}.tmp`)}, JSON.stringify([process.pid, child.pid]));
+require('node:fs').renameSync(${JSON.stringify(`${pids}.tmp`)}, ${JSON.stringify(pids)});
 ${mode === "success" ? "process.stdout.write('complete-output'); process.exit(0);"
     : mode === "nonzero" ? "process.stderr.write('wrapper failed'); process.exit(7);"
     : mode === "overflow" ? "process.stdout.write('x'.repeat(10000)); setInterval(() => {}, 1000);"

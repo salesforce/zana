@@ -16,13 +16,14 @@ it.runIf(process.platform !== "win32")("reaps owned groups, settles blocked prob
   const lateMarker = join(directory, "late-marker");
   writeFileSync(wrapper, `
 const child = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'inherit' });
-require('node:fs').writeFileSync(process.argv[2], JSON.stringify([process.pid, child.pid]));
+require('node:fs').writeFileSync(process.argv[2] + '.tmp', JSON.stringify([process.pid, child.pid]));
+require('node:fs').renameSync(process.argv[2] + '.tmp', process.argv[2]);
 setInterval(() => {}, 1000);
 `);
   const bundled = await import(`${new URL("../src/index.ts", import.meta.url).href}?shutdown-copy`);
   let settled = 0;
   const operations = [runPortableCommand, bundled.runPortableCommand].map((run, index) =>
-    run(process.execPath, [wrapper, pidFiles[index]!], { timeout: 60_000 }).catch(error => {
+    run(process.execPath, [wrapper, pidFiles[index]!], { timeout: 60_000 }).catch((error: unknown) => {
       settled += 1;
       return error;
     }));
