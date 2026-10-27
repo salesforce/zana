@@ -100,7 +100,7 @@ describe('provider-bridge facade', () => {
     expect(existsSync(sourceProjects)).toBe(true);
   });
 
-  it('rejects unsafe owner ids and removal outside the configured parent', () => {
+  it('rejects unsafe owner ids, parent names, and removal outside the configured parent', () => {
     lifecycleDir = mkdtempSync(join(tmpdir(), 'zcc-sdk-config-'));
     expect(() =>
       experimental_createConfinedConfigLeaf({
@@ -112,6 +112,13 @@ describe('provider-bridge facade', () => {
     expect(() =>
       experimental_removeConfinedConfigLeaf(lifecycleDir!, 'automated-config', lifecycleDir!),
     ).toThrow(/escapes/);
+    expect(() =>
+      experimental_createConfinedConfigLeaf({
+        dataDir: lifecycleDir!,
+        parentName: '../outside',
+        ownerId: 'owner',
+      }),
+    ).toThrow(/parent name/);
   });
 
   it('rejects a symlinked lifecycle parent or leaf', () => {
@@ -138,5 +145,20 @@ describe('provider-bridge facade', () => {
         ownerId: 'owner',
       }),
     ).toThrow(/symlink/);
+  });
+
+  it('removes a stale symlinked leaf without following its target', () => {
+    lifecycleDir = mkdtempSync(join(tmpdir(), 'zcc-sdk-config-'));
+    const parent = join(lifecycleDir, 'automated-config');
+    const target = join(lifecycleDir, 'target');
+    const leaf = join(parent, 'stale');
+    mkdirSync(parent);
+    mkdirSync(target);
+    symlinkSync(target, leaf, 'dir');
+
+    experimental_removeConfinedConfigLeaf(lifecycleDir, 'automated-config', leaf);
+
+    expect(existsSync(leaf)).toBe(false);
+    expect(existsSync(target)).toBe(true);
   });
 });

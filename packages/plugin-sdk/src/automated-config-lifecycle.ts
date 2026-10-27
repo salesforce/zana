@@ -7,9 +7,10 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 export interface ConfinedConfigLeafInput {
   dataDir: string;
@@ -28,26 +29,38 @@ export interface SweepConfinedConfigLeavesInput {
 function assertInside(parent: string, child: string): void {
   const rel = relative(parent, child);
   if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-    throw new Error('automated Claude config dir escapes the Zana data dir');
+    throw new Error('automated config dir escapes the data dir');
   }
 }
 
 function assertNotSymlink(path: string): void {
   if (lstatSync(path).isSymbolicLink()) {
-    throw new Error('automated Claude config dir must not be a symlink');
+    throw new Error('automated config dir must not be a symlink');
   }
 }
 
 function safeSegment(value: string): string {
   const cleaned = value.replace(/[^A-Za-z0-9._-]/g, '_');
   if (cleaned === '' || cleaned === '.' || cleaned === '..') {
-    throw new Error('invalid automated Claude config dir owner id');
+    throw new Error('invalid automated config dir owner id');
   }
   return cleaned;
 }
 
 export function confinedConfigParent(dataDir: string, parentName: string): string {
-  return join(resolve(dataDir), parentName);
+  if (
+    parentName === '' ||
+    parentName === '.' ||
+    parentName === '..' ||
+    parentName !== basename(parentName) ||
+    parentName.includes('\\')
+  ) {
+    throw new Error('invalid automated config dir parent name');
+  }
+  const root = resolve(dataDir);
+  const parent = join(root, parentName);
+  assertInside(root, parent);
+  return parent;
 }
 
 export function createConfinedConfigLeaf(input: ConfinedConfigLeafInput): string {
@@ -100,7 +113,10 @@ export function removeConfinedConfigLeaf(dataDir: string, parentName: string, le
     throw error;
   }
   try {
-    assertNotSymlink(resolved);
+    if (lstatSync(resolved).isSymbolicLink()) {
+      unlinkSync(resolved);
+      return;
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
