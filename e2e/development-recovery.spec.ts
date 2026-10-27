@@ -38,7 +38,8 @@ test('core Development recovery restores a corrupt provider, preserves plugin st
   const address = server.address() as { port: number };
   const env = { ZCC_BUNDLED_PLUGINS_DIR: broken, ZCC_PLUGIN_RECOVERY_URL: `http://127.0.0.1:${address.port}/plugin-recovery-${process.platform}-${process.arch}.json`,
     ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD: '0', ZCC_OFFICIAL_MARKETPLACE_URL: 'off', ZCC_INTERNAL_MARKETPLACE_SOURCE: 'off', ZCC_COMMUNITY_MARKETPLACE_SOURCE: 'off', NODE_PATH: '' };
-  const options = { env, initialConfig: { sponsorPromptDismissed: true, pluginDevelopmentEnabled: true } };
+  // These source-free release artifacts recover without compiling or fetching a toolchain.
+  const options = { env, initialConfig: { sponsorPromptDismissed: true, pluginDevelopmentEnabled: false } };
   let app: Awaited<ReturnType<typeof launchApp>> | undefined;
   try {
     app = await launchApp(home, options);
