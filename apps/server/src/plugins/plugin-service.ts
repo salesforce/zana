@@ -904,8 +904,16 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
 
   function activationRecoveryDetail(row: InstalledPluginRow | undefined): string | undefined {
     if (!row) return undefined;
-    return activationRecoveryBlocked.get(row.id) ??
-      ((row.sourceKind === 'git' || row.sourceKind === 'npm') ? activationRecoveryUnattributed : undefined);
+    const blocked = activationRecoveryBlocked.get(row.id);
+    if (blocked || !activationRecoveryUnattributed) return blocked;
+    if (row.sourceKind === 'git' || row.sourceKind === 'npm' || row.bundledRecoveryVersion) return activationRecoveryUnattributed;
+    // Recovered bundled runtimes share managed journal ownership with updates.
+    try {
+      return isManagedGeneration(opts.dataDir, row.rootDir) ? activationRecoveryUnattributed : undefined;
+    } catch {
+      // An unresolved runtime cannot establish that it is outside recovery.
+      return activationRecoveryUnattributed;
+    }
   }
 
   function closeUpdateAdmission(row: InstalledPluginRow): () => void {
@@ -2624,6 +2632,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         if (isRetiredFirstPartyPluginId(row.id)) continue;
         const definition = bundledPluginById(row.id);
         if (!definition) continue;
+        if (activationRecoveryDetail(row)) continue;
         if (row.bundledRecoveryVersion === hostVersion && isManagedGeneration(opts.dataDir, row.rootDir)) continue;
         try {
           const materialized = await materialize({ kind: 'builtin', name: definition.name });
