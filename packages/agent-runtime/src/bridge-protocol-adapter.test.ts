@@ -627,3 +627,20 @@ describe("buildCommandPlan lifecycle commands", () => {
     });
   });
 });
+
+describe("sessionKind wire forwarding", () => {
+  const base = { threadId: "t1", cwd: "/w", options: fullModeOptions, instructionMode: "append" as const };
+
+  it.each([
+    ["thread/start", {}],
+    ["thread/resume", { providerThreadId: "p1" }],
+    ["thread/fork", { sourceProviderThreadId: "p1" }],
+  ] as const)("%s carries sessionKind only when set", (type, extra) => {
+    const adapter = makeAdapter();
+    completeHandshake(adapter, { fork: "checkpoint" });
+    const withKind = adapter.buildCommandPlan({ type, ...base, ...extra, sessionKind: "automated" } as never);
+    expect(withKind).toMatchObject({ kind: "request", params: { sessionKind: "automated" } });
+    const without = adapter.buildCommandPlan({ type, ...base, ...extra } as never);
+    expect((without as { params: Record<string, unknown> }).params).not.toHaveProperty("sessionKind");
+  });
+});

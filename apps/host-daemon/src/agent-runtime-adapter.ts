@@ -57,6 +57,17 @@ export const DEFAULT_THREAD_EXECUTION_OPTIONS: RuntimeThreadExecutionOptions = {
   permissionEscalation: null
 };
 
+/**
+ * A thread start is an unattended worker when it is headless, scheduled, or an
+ * autonomous team run. Only the Claude Code bridge acts on the resulting
+ * `sessionKind`; other bridges ignore it.
+ */
+export function isAutomatedThreadStart(
+  input: Pick<ThreadWorkInput, 'headless' | 'scheduled' | 'autonomous'>
+): boolean {
+  return Boolean(input.headless || input.scheduled || input.autonomous);
+}
+
 export function mergeSessionTooling(input: {
   remoteProxy: boolean;
   dynamicTools?: DynamicTool[];
@@ -489,6 +500,7 @@ export function createAgentRuntimeAdapter(options: {
             }
           } : {}),
           ...(input.bridgeLaunch ? { bridgeLaunch: await resolveLaunch(input.bridgeLaunch) } : {}),
+          ...(isAutomatedThreadStart(input) ? { sessionKind: 'automated' as const } : {}),
           ...mergeSessionTooling({
             remoteProxy,
             dynamicTools: input.dynamicTools,

@@ -1,4 +1,12 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+
+// Automated launches create a per-run Claude config dir under the Zana data dir;
+// keep those out of the real user's ~/.zcc.
+const goldenDataDir = mkdtempSync(join(tmpdir(), 'pty-golden-'));
+process.env.ZCC_DATA_DIR = goldenDataDir;
+afterAll(() => rmSync(goldenDataDir, { recursive: true, force: true }));
 
 /**
  * GOLDEN-ARGV REGRESSION NET for the harness-seam extraction.
@@ -90,7 +98,6 @@ vi.mock('../harness/claude/binary-identity.js', () => ({
 }));
 
 import { PtyManager, applyHeapCeiling } from '../pty.js';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type {
   AppConfig,

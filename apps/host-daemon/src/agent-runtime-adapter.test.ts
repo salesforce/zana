@@ -11,6 +11,7 @@ import {
 } from '@zana-ai/zcc-agent-runtime/test';
 import {
   createAgentRuntimeAdapter,
+  isAutomatedThreadStart,
   mapRuntimeThreadEvent,
   mergeSessionTooling,
   resolveRuntimeBridgeLaunch,
@@ -1527,5 +1528,18 @@ describe('mapRuntimeThreadEvent', () => {
       status: 'completed'
     } as ThreadEvent;
     expect(mapRuntimeThreadEvent(event).kind).toBe('turn.completed');
+  });
+});
+
+describe('isAutomatedThreadStart', () => {
+  it('is true for headless, scheduled, or autonomous starts', () => {
+    expect(isAutomatedThreadStart({ headless: true })).toBe(true);
+    expect(isAutomatedThreadStart({ scheduled: true })).toBe(true);
+    expect(isAutomatedThreadStart({ autonomous: true })).toBe(true);
+  });
+
+  it('is false for interactive starts', () => {
+    expect(isAutomatedThreadStart({})).toBe(false);
+    expect(isAutomatedThreadStart({ headless: false, scheduled: false, autonomous: false })).toBe(false);
   });
 });

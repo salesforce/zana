@@ -43,6 +43,8 @@ export interface SdkSessionOptions {
   plugins?: Options["plugins"];
   thinking?: Options["thinking"];
   settings?: Options["settings"];
+  /** Defaults to the full user/project/local cascade; automated sessions pass `[]`. */
+  settingSources?: Options["settingSources"];
   extraArgs?: Options["extraArgs"];
   recordThreadId?: () => string;
 }
@@ -293,7 +295,11 @@ export class SdkSession {
           }
         : {}),
       includePartialMessages: true,
-      settingSources: ["user", "project", "local"],
+      settingSources: this.options.settingSources ?? [
+        "user",
+        "project",
+        "local",
+      ],
       persistSession: true,
       env,
       stderr: onStderr,
