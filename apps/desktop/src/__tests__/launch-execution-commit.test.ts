@@ -7,9 +7,9 @@ const binding = { scope: 'local' as const, evidenceDigest: 'ev-1', consentReserv
 describe('compareCommitExecution', () => {
   it('accepts an unchanged binding and pin', () => {
     expect(compareCommitExecution(
-      { decision: 'allowed', ...binding, modelPin: pin('llmgw/gpt-7-luna') },
+      { decision: 'allowed', ...binding, modelPin: pin('fixture-provider/gpt-7-luna') },
       binding,
-      { modelPin: pin('llmgw/gpt-7-luna') }
+      { modelPin: pin('fixture-provider/gpt-7-luna') }
     )).toEqual({ ok: true });
     expect(compareCommitExecution({ decision: 'allowed', scope: 'local' }, { scope: 'local' }, {})).toEqual({ ok: true });
   });
@@ -21,9 +21,9 @@ describe('compareCommitExecution', () => {
   });
 
   it.each([
-    ['re-resolved to a different id', pin('llmgw/gpt-8-luna'), pin('llmgw/gpt-7-luna')],
-    ['pin appeared', pin('llmgw/gpt-7-luna'), undefined],
-    ['pin disappeared', undefined, pin('llmgw/gpt-7-luna')]
+    ['re-resolved to a different id', pin('fixture-provider/gpt-8-luna'), pin('fixture-provider/gpt-7-luna')],
+    ['pin appeared', pin('fixture-provider/gpt-7-luna'), undefined],
+    ['pin disappeared', undefined, pin('fixture-provider/gpt-7-luna')]
   ])('refuses a model pin that %s at commit', (_label, current, authorized) => {
     expect(compareCommitExecution(
       { decision: 'allowed', ...binding, modelPin: current },

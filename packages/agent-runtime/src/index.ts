@@ -1,5 +1,6 @@
 export { createAgentRuntime, AgentRuntimeRecoveryError } from "./runtime.js";
 export { fingerprintAcpLaunchSpec } from "./acp-launch-spec-fingerprint.js";
+export { resolveBuiltInAcpLaunchSpec } from "./acp-launch-specs.js";
 export { bridgeLaunchProcessKey } from "./bridge-launch-process-key.js";
 export {
   createProviderForId,

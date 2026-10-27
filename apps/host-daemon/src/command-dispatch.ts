@@ -6,6 +6,7 @@ import type { CliTerminalStartCommand } from '@zana-ai/zcc-contracts/cli-termina
 import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { realpath, stat as asyncStat, opendir, open } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
+import { homedir } from 'node:os';
 import { resolveZccDataDir } from './host-config.js';
 import { isWithin, resolveContainedReal } from '@zana-ai/zcc-path-confine';
 import type {
@@ -53,7 +54,7 @@ import {
 } from '@zana-ai/zcc-host-workspace';
 import { probeExtraAcpAgents } from './extra-acp-agent-probes.js';
 import { verifyHarnesses } from './harness/harness-verify.js';
-import { registrationFor, invalidateHarnessModelCatalog } from './harness/registry.js';
+import { registrationFor, invalidateHarnessModelCatalog, discoverHarnessModelInventories } from './harness/registry.js';
 import { HostCommandError } from './host-command-error.js';
 import { readConfinedFileRange } from './read-file-range.js';
 import { transcribeCodexVoice } from './codex-voice-transcribe.js';
@@ -600,8 +601,13 @@ export async function dispatchHostCommand(
   switch (command.type) {
     case 'provider.cli_discovery':
       return discoverCliOnHost(command, runtime.loadConfig());
-    case 'provider.status':
-      return runtime.verifyProviders();
+    case 'provider.status': {
+      const status = await runtime.verifyProviders();
+      if (!command.includeModelInventory) return status;
+      return { ...status, modelInventories: await discoverHarnessModelInventories(status.providers, {
+        cwd: homedir(), config: runtime.loadConfig()
+      }) };
+    }
     case 'provider.agent_descriptors': {
       const profile = parseProfile(command.profile);
       if (!profile) {

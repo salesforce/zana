@@ -7,6 +7,7 @@ import type { HostBridgeLaunch, HostEventEnvelope, ProviderHealthResult, Provide
 import type { HostDaemonAcpLaunchSpec } from '@zana-ai/zcc-host-daemon-contract';
 import {
   createAgentRuntime,
+  resolveBuiltInAcpLaunchSpec,
   type AgentRuntime,
   type AgentRuntimeBridgeLaunch,
   type AgentRuntimeOptions
@@ -189,6 +190,7 @@ function toRuntimeBridgeLaunch(
   return {
     pluginId: launch.pluginId,
     ...(launch.envPassthrough ? { envPassthrough: launch.envPassthrough } : {}),
+    ...(launch.providerOptions ? { providerOptions: launch.providerOptions } : {}),
     dataDir,
     source,
     capabilities: {
@@ -316,6 +318,15 @@ export function createAgentRuntimeAdapter(options: {
     });
   }
 
+  function effectiveAcpLaunchSpec(providerId: string, bridgeLaunch?: HostBridgeLaunch, providerOptions?: Record<string, unknown>): HostDaemonAcpLaunchSpec | undefined {
+    const explicit = acpLaunchSpecFromProviderOptions(providerOptions)
+      ?? acpLaunchSpecFromProviderOptions(bridgeLaunch?.providerOptions);
+    if (explicit !== undefined) return explicit;
+    const nativeBinaries = Object.fromEntries(Object.entries(options.loadConfig?.().harnesses?.byId ?? {})
+      .map(([id, value]) => [id, value.binary]));
+    return resolveBuiltInAcpLaunchSpec(providerId, nativeBinaries);
+  }
+
   function environmentHasThreads(environmentId: string): boolean {
     for (const location of threadLocation.values()) {
       if (location.environmentId === environmentId) return true;
@@ -408,7 +419,8 @@ export function createAgentRuntimeAdapter(options: {
       bridgeLaunch: HostBridgeLaunch;
       cwd?: string;
     }): Promise<ProviderListModelsResult> {
-      return modelDiscovery.run(JSON.stringify(input), async () => {
+      const acpLaunchSpec = effectiveAcpLaunchSpec(input.providerId, input.bridgeLaunch);
+      return modelDiscovery.run(JSON.stringify({ ...input, acpLaunchSpec }), async () => {
         syncProviderBridgeRecording();
         const workspaceCwd = input.cwd ?? join(storageRoot, 'model-list', input.providerId);
         if (!input.cwd) mkdirSync(workspaceCwd, { recursive: true });
@@ -418,6 +430,7 @@ export function createAgentRuntimeAdapter(options: {
           const listed = await runtime.listModels({
             providerId: input.providerId,
             bridgeLaunch: await resolveLaunch(input.bridgeLaunch),
+            ...(acpLaunchSpec === undefined ? {} : { acpLaunchSpec }),
             ...(input.cwd ? { cwd: input.cwd } : {})
           });
           return {
@@ -436,18 +449,31 @@ export function createAgentRuntimeAdapter(options: {
       bridgeLaunch: HostBridgeLaunch;
       cwd?: string;
     }): Promise<ProviderHealthResult> {
-      syncProviderBridgeRecording();
-      const workspaceCwd = input.cwd ?? join(storageRoot, 'provider-health', input.providerId);
-      if (!input.cwd) mkdirSync(workspaceCwd, { recursive: true });
-      const runtime = runtimeFor(`provider-health:${input.providerId}`, workspaceCwd, false);
-      return runtime.providerHealth({
-        providerId: input.providerId,
-        bridgeLaunch: await resolveLaunch(input.bridgeLaunch),
-        ...(input.cwd ? { cwd: input.cwd } : {})
+      const acpLaunchSpec = effectiveAcpLaunchSpec(input.providerId, input.bridgeLaunch);
+      return modelDiscovery.run(JSON.stringify({ operation: 'health', ...input, acpLaunchSpec }), async () => {
+        syncProviderBridgeRecording();
+        const workspaceCwd = input.cwd ?? join(storageRoot, 'provider-health', input.providerId);
+        if (!input.cwd) mkdirSync(workspaceCwd, { recursive: true });
+        // Health owns no threads. Release its bridge after every check rather
+        // than retaining an idle process for each changed executable setting.
+        const runtime = createEnvironmentRuntime(workspaceCwd);
+        discoveryRuntimes.add(runtime);
+        try {
+          return await runtime.providerHealth({
+            providerId: input.providerId,
+            ...(acpLaunchSpec === undefined ? {} : { acpLaunchSpec }),
+            bridgeLaunch: await resolveLaunch(input.bridgeLaunch),
+            ...(input.cwd ? { cwd: input.cwd } : {})
+          });
+        } finally {
+          try { await runtime.shutdown(); } catch { /* Preserve the health result or its actionable failure. */ }
+          discoveryRuntimes.delete(runtime);
+        }
       });
     },
     async startWork(input: ThreadWorkInput) {
       syncProviderBridgeRecording();
+      const acpLaunchSpec = effectiveAcpLaunchSpec(input.providerId, input.bridgeLaunch, input.providerOptions);
       const runtime = runtimeFor(input.environmentId, input.cwd);
       threadLocation.set(input.threadId, { environmentId: input.environmentId, cwd: input.cwd, status: 'active' });
       const remoteProxy = usesRemoteToolProxy(input);
@@ -477,8 +503,8 @@ export function createAgentRuntimeAdapter(options: {
             claudeCodePermissionMode: input.claudeCodePermissionMode,
             providerOptions: input.providerOptions
           }),
-          ...(acpLaunchSpecFromProviderOptions(input.providerOptions)
-            ? { acpLaunchSpec: acpLaunchSpecFromProviderOptions(input.providerOptions) }
+          ...(acpLaunchSpec !== undefined
+            ? { acpLaunchSpec }
             : {}),
           ...(input.providerThreadId ? {
             fork: {
@@ -539,6 +565,7 @@ export function createAgentRuntimeAdapter(options: {
     },
     async resumeWork(input: ThreadResumeInput) {
       syncProviderBridgeRecording();
+      const acpLaunchSpec = effectiveAcpLaunchSpec(input.providerId, input.bridgeLaunch, input.providerOptions);
       const runtime = runtimeFor(input.environmentId, input.cwd);
       threadLocation.set(input.threadId, { environmentId: input.environmentId, cwd: input.cwd, status: 'active' });
       try {
@@ -558,8 +585,8 @@ export function createAgentRuntimeAdapter(options: {
             claudeCodePermissionMode: input.claudeCodePermissionMode,
             providerOptions: input.providerOptions
           }),
-          ...(acpLaunchSpecFromProviderOptions(input.providerOptions)
-            ? { acpLaunchSpec: acpLaunchSpecFromProviderOptions(input.providerOptions) }
+          ...(acpLaunchSpec !== undefined
+            ? { acpLaunchSpec }
             : {}),
           ...(input.bridgeLaunch ? { bridgeLaunch: await resolveLaunch(input.bridgeLaunch) } : {}),
           ...mergeSessionTooling({

@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { CURSOR_ACP_MAINTENANCE, __testing } from "./provider-maintenance.js";
+import { describe, expect, it, vi } from "vitest";
+import path from "node:path";
+import { CURSOR_ACP_MAINTENANCE, getAcpProviderHealth, __testing } from "./provider-maintenance.js";
 
 function cursorMissingInstallationStatus() {
   return {
@@ -23,6 +24,34 @@ function cursorMissingInstallationStatus() {
 }
 
 describe("ACP provider maintenance", () => {
+  it("passes the executable launch context into account maintenance", async () => {
+    const readAccount = vi.fn(async () => ({ email: "alternate@example.com" }));
+    const context = { cwd: process.cwd(), env: { HOME: "/alternate-home" } };
+    const result = await getAcpProviderHealth({
+      command: process.execPath,
+      maintenance: { ...CURSOR_ACP_MAINTENANCE, readAccount },
+      ...context,
+    });
+    expect(result).toMatchObject({ health: { status: "ready", accountEmail: "alternate@example.com" } });
+    expect(readAccount).toHaveBeenCalledWith(context);
+  });
+
+  it("resolves Cursor credential and account paths in the supplied launch environment", () => {
+    const env = { HOME: "/alternate-home", USERPROFILE: "/alternate-home" };
+    const auth = process.platform === "win32"
+      ? path.join(env.HOME, "AppData", "Roaming", "Cursor", "auth.json")
+      : process.platform === "darwin"
+        ? path.join(env.HOME, ".cursor", "auth.json")
+        : path.join(env.HOME, ".config", "cursor", "auth.json");
+    const state = process.platform === "win32"
+      ? path.join(env.HOME, "AppData", "Roaming", "Cursor", "User", "globalStorage", "state.vscdb")
+      : process.platform === "darwin"
+        ? path.join(env.HOME, "Library", "Application Support", "Cursor", "User", "globalStorage", "state.vscdb")
+        : path.join(env.HOME, ".config", "Cursor", "User", "globalStorage", "state.vscdb");
+    expect(__testing.cursorAuthFilePath(env)).toBe(auth);
+    expect(__testing.cursorStateDatabasePath(env)).toBe(state);
+  });
+
   it("normalizes Cursor plan and spend limits without reading daemon state", () => {
     expect(
       __testing.normalizeUsage(

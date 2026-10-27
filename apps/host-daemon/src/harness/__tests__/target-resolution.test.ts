@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { providerFor } from '../registry.js';
+import { withLiveModelTargets } from '../launch-provider.js';
 import { isLiveListedModelTargetId, resolveModelTarget, resolveRoleTarget } from '../target-resolution.js';
 
 const config = (): AppConfig => ({
@@ -14,6 +15,25 @@ const config = (): AppConfig => ({
 
 describe('target-resolution main authorization', () => {
   const opencode = providerFor('opencode');
+  const authorizedHigh = { adapterId: 'opencode', level: 'high' as const, targetId: 'fixture-provider/gpt-6.1-sol' };
+
+  it.each(['local', 'remote'] as const)('uses a native role model before unsupported inherited tiers on %s launches', scope => {
+    expect(resolveModelTarget(opencode, {
+      config: { ...config(), harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelLevel: 'medium' } } } },
+      profile: 'opencode', scope, extraArgs: [],
+      persona: { id: 'p', name: 'P', modelLevel: 'high' },
+      projectSettings: { modelLevel: 'low' },
+      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { roleTargetId: 'reviewer', modelLevel: 'extra-high' } } }
+    })).toMatchObject({ source: 'native-default', structuredSelected: false, contribution: {} });
+  });
+
+  it('retains native role collision validation before discarding an unused model tier', () => {
+    expect(() => resolveModelTarget(opencode, {
+      config: config(), profile: 'opencode', scope: 'local', extraArgs: ['--agent', 'another-role'],
+      persona: { id: 'p', name: 'P', modelLevel: 'low' },
+      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { roleTargetId: 'reviewer' } } }
+    })).toThrow('Structured role selection conflicts with raw role arguments');
+  });
 
   it.each(['local', 'remote'] as const)('treats ACP Agent default as native model selection on %s launches', (scope) => {
     const resolved = resolveModelTarget(opencode, {
@@ -32,7 +52,7 @@ describe('target-resolution main authorization', () => {
 
   it('keeps raw model arguments available when ACP Agent default is selected', () => {
     const resolved = resolveModelTarget(opencode, {
-      config: config(), profile: 'opencode', extraArgs: ['--model', 'llmgw/custom'], scope: 'remote',
+      config: config(), profile: 'opencode', extraArgs: ['--model', 'fixture-provider/custom'], scope: 'remote',
       perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'acp-default' } } }
     });
     expect(resolved).toMatchObject({ structuredSelected: false, rawOverride: true, contribution: {} });
@@ -42,18 +62,19 @@ describe('target-resolution main authorization', () => {
   it('resolves model routing through Agent > Persona > Project > Global precedence', () => {
     const global = {
       schemaVersion: 1 as const,
-      byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-6-luna' } }
+      byAdapter: { opencode: { modelTargetId: 'fixture-provider/gpt-6-luna' } }
     };
     const project = {
       schemaVersion: 1 as const,
-      byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-terra-1M' } }
+      byAdapter: { opencode: { modelTargetId: 'fixture-provider/gpt-5.6-terra-1M' } }
     };
     const persona = { id: 'p', name: 'P', modelLevel: 'high' as const };
     const agent = {
       schemaVersion: 1 as const,
-      byAdapter: { opencode: { modelTargetId: 'llmgw/gemini-3.5-flash' } }
+      byAdapter: { opencode: { modelTargetId: 'fixture-provider/gemini-3.5-flash' } }
     };
     const resolve = (overrides: Record<string, unknown> = {}) => resolveModelTarget(opencode, {
+      authorizedModel: authorizedHigh,
       config: { ...config(), harnessRouting: global },
       profile: 'opencode',
       extraArgs: [],
@@ -61,15 +82,15 @@ describe('target-resolution main authorization', () => {
       ...overrides
     });
 
-    expect(resolve()).toMatchObject({ source: 'global', targetId: 'llmgw/gpt-6-luna' });
+    expect(resolve()).toMatchObject({ source: 'global', targetId: 'fixture-provider/gpt-6-luna' });
     expect(resolve({ projectSettings: { harnessRouting: project } })).toMatchObject({
-      source: 'project', targetId: 'llmgw/gpt-5.6-terra-1M'
+      source: 'project', targetId: 'fixture-provider/gpt-5.6-terra-1M'
     });
     expect(resolve({ projectSettings: { harnessRouting: project }, persona })).toMatchObject({
-      source: 'persona', targetId: 'llmgw/gpt-6.1-sol'
+      source: 'persona', targetId: 'fixture-provider/gpt-6.1-sol'
     });
     expect(resolve({ projectSettings: { harnessRouting: project }, persona, perTabRouting: agent })).toMatchObject({
-      source: 'per-tab', targetId: 'llmgw/gemini-3.5-flash'
+      source: 'per-tab', targetId: 'fixture-provider/gemini-3.5-flash'
     });
   });
 
@@ -86,14 +107,14 @@ describe('target-resolution main authorization', () => {
         modelLevel: 'low',
         harnessRouting: {
           schemaVersion: 1,
-          byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-6.1-sol' } }
+          byAdapter: { opencode: { modelTargetId: 'fixture-provider/gpt-6.1-sol' } }
         }
       }
     });
 
     expect(resolved).toMatchObject({
       source: 'persona',
-      targetId: 'llmgw/gpt-6.1-sol',
+      targetId: 'fixture-provider/gpt-6.1-sol',
       structuredSelected: true
     });
   });
@@ -113,10 +134,10 @@ describe('target-resolution main authorization', () => {
       config: config(),
       profile: 'opencode',
       extraArgs: [],
-      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-terra-1M' } } },
+      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'fixture-provider/gpt-5.6-terra-1M' } } },
       scope: 'remote'
     });
-    expect(resolved.contribution.args).toEqual(['--model', 'llmgw/gpt-5.6-terra-1M']);
+    expect(resolved.contribution.args).toEqual(['--model', 'fixture-provider/gpt-5.6-terra-1M']);
   });
 
   it('only emits native arguments from a trusted catalog target', () => {
@@ -124,10 +145,10 @@ describe('target-resolution main authorization', () => {
       config: config(),
       profile: 'opencode',
       extraArgs: [],
-      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-terra-1M' } } },
+      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'fixture-provider/gpt-5.6-terra-1M' } } },
       scope: 'local'
     });
-    expect(resolved.contribution.args).toEqual(['--model', 'llmgw/gpt-5.6-terra-1M']);
+    expect(resolved.contribution.args).toEqual(['--model', 'fixture-provider/gpt-5.6-terra-1M']);
   });
 
   it('accepts a well-formed snapshot-ABSENT model for a live-listing provider (drift deferred to preflight)', () => {
@@ -138,11 +159,11 @@ describe('target-resolution main authorization', () => {
       config: config(),
       profile: 'opencode',
       extraArgs: [],
-      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-6.0-nova-1M' } } },
+      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: 'fixture-provider/gpt-6.0-nova-1M' } } },
       scope: 'local'
     });
-    expect(resolved).toMatchObject({ targetId: 'llmgw/gpt-6.0-nova-1M', structuredSelected: true });
-    expect(resolved.contribution.args).toEqual(['--model', 'llmgw/gpt-6.0-nova-1M']);
+    expect(resolved).toMatchObject({ targetId: 'fixture-provider/gpt-6.0-nova-1M', structuredSelected: true });
+    expect(resolved.contribution.args).toEqual(['--model', 'fixture-provider/gpt-6.0-nova-1M']);
   });
 
   it('accepts a well-formed [1m] Claude thread-catalog id', () => {
@@ -230,24 +251,68 @@ describe('target-resolution main authorization', () => {
   });
 
   it('validates provider target as a filter over the effective combined model target', () => {
-    expect(() => resolveModelTarget(opencode, {
+    const provider = withLiveModelTargets(opencode, ['fixture-provider/gpt-6.1-sol', 'other-provider/model']);
+    expect(() => resolveModelTarget(provider, {
       config: config(), profile: 'opencode', extraArgs: [], scope: 'local',
       perTabRouting: {
         schemaVersion: 1,
         byAdapter: {
-          opencode: { providerTargetId: 'google', modelTargetId: 'llmgw/gpt-6.1-sol' }
+          opencode: { providerTargetId: 'other-provider', modelTargetId: 'fixture-provider/gpt-6.1-sol' }
         }
       }
     })).toThrow('model target does not belong to selected provider');
   });
 
+  it.each(['local', 'remote'] as const)('accepts an exact dynamic provider/model namespace for %s argv resolution', scope => {
+    expect(resolveModelTarget(opencode, {
+      config: config(), profile: 'opencode', extraArgs: [], scope,
+      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: {
+        providerTargetId: 'new-install-provider', modelTargetId: 'new-install-provider/model-v2'
+      } } }
+    })).toMatchObject({ providerTargetId: 'new-install-provider', targetId: 'new-install-provider/model-v2',
+      contribution: { args: ['--model', 'new-install-provider/model-v2'] } });
+  });
+
+  it.each([
+    ['fixture-provider', undefined],
+    ['fixture-provider', 'acp-default'],
+    ['fixture-provider', 'other-provider/model'],
+    ['fixture-provider', 'fixture-provider/'],
+    ['fixture-provider', 'fixture-provider/model with spaces'],
+    ['fixture-provider', '--model'],
+    ['fixture-provider/nested', 'fixture-provider/nested/model'],
+    ['-flag', '-flag/model']
+  ])('rejects an invalid dynamic provider/model pair (%s, %s)', (providerTargetId, modelTargetId) => {
+    expect(() => resolveModelTarget(opencode, {
+      config: config(), profile: 'opencode', extraArgs: [], scope: 'local',
+      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: { providerTargetId, modelTargetId } } }
+    })).toThrow();
+  });
+
+  it.each(['new-provider/model', 'acp-default'])('does not infer unknown providers for noncombined adapters (%s)', modelTargetId => {
+    expect(() => resolveModelTarget(providerFor('claude'), {
+      config: config(), profile: 'claude', extraArgs: [], scope: 'local',
+      perTabRouting: { schemaVersion: 1, byAdapter: { claude: { providerTargetId: 'new-provider', modelTargetId } } }
+    })).toThrow('Unknown provider target');
+  });
+
+  it('does not accept an incomplete dynamic model through a known provider', () => {
+    expect(() => resolveModelTarget(withLiveModelTargets(opencode, ['fixture-provider/model']), {
+      config: config(), profile: 'opencode', extraArgs: [], scope: 'local',
+      perTabRouting: { schemaVersion: 1, byAdapter: { opencode: {
+        providerTargetId: 'fixture-provider', modelTargetId: 'fixture-provider/'
+      } } }
+    })).toThrow('requires a concrete compatible model target');
+  });
+
   it('resolves provider routing through Agent > Persona > Project > Global precedence', () => {
-    const resolved = resolveModelTarget(opencode, {
+    const provider = withLiveModelTargets(opencode, ['global-provider/model', 'project-provider/model', 'persona-provider/model']);
+    const resolved = resolveModelTarget(provider, {
       config: {
         ...config(),
         harnessRouting: {
           schemaVersion: 1,
-          byAdapter: { opencode: { providerTargetId: 'google', modelTargetId: 'llmgw/gemini-3.5-flash' } }
+          byAdapter: { opencode: { providerTargetId: 'global-provider', modelTargetId: 'global-provider/model' } }
         }
       },
       profile: 'opencode',
@@ -256,7 +321,7 @@ describe('target-resolution main authorization', () => {
       projectSettings: {
         harnessRouting: {
           schemaVersion: 1,
-          byAdapter: { opencode: { providerTargetId: 'xai', modelTargetId: 'llmgw/grok-4.6' } }
+          byAdapter: { opencode: { providerTargetId: 'project-provider', modelTargetId: 'project-provider/model' } }
         }
       },
       persona: {
@@ -265,33 +330,35 @@ describe('target-resolution main authorization', () => {
         baseProfile: 'opencode',
         harnessRouting: {
           schemaVersion: 1,
-          byAdapter: { opencode: { providerTargetId: 'openai', modelTargetId: 'llmgw/gpt-6.1-sol' } }
+          byAdapter: { opencode: { providerTargetId: 'persona-provider', modelTargetId: 'persona-provider/model' } }
         }
       }
     });
 
     expect(resolved).toMatchObject({
       source: 'persona',
-      providerTargetId: 'openai',
-      targetId: 'llmgw/gpt-6.1-sol'
+      providerTargetId: 'persona-provider',
+      targetId: 'persona-provider/model'
     });
   });
 
   it('requires a concrete compatible model for combined provider/model selection', () => {
-    expect(() => resolveModelTarget(opencode, {
+    const provider = withLiveModelTargets(opencode, ['fixture-provider/model']);
+    expect(() => resolveModelTarget(provider, {
       config: config(),
       profile: 'opencode',
       extraArgs: [],
       scope: 'local',
       perTabRouting: {
         schemaVersion: 1,
-        byAdapter: { opencode: { providerTargetId: 'openai' } }
+        byAdapter: { opencode: { providerTargetId: 'fixture-provider' } }
       }
     })).toThrow('requires a concrete compatible model target');
   });
 
   it('uses persona model level instead of an obsolete exact persona target', () => {
     const resolved = resolveModelTarget(opencode, {
+      authorizedModel: authorizedHigh,
       config: config(),
       profile: 'opencode',
       extraArgs: [],
@@ -301,17 +368,18 @@ describe('target-resolution main authorization', () => {
         modelLevel: 'high',
         harnessRouting: {
           schemaVersion: 1,
-          byAdapter: { opencode: { modelTargetId: 'llmgw/gemini-3.1-pro-preview' } }
+          byAdapter: { opencode: { modelTargetId: 'fixture-provider/gemini-3.1-pro-preview' } }
         }
       },
       scope: 'local'
     });
-    expect(resolved.targetId).toBe('llmgw/gpt-6.1-sol');
-    expect(resolved.contribution.args).toEqual(['--model', 'llmgw/gpt-6.1-sol']);
+    expect(resolved.targetId).toBe('fixture-provider/gpt-6.1-sol');
+    expect(resolved.contribution.args).toEqual(['--model', 'fixture-provider/gpt-6.1-sol']);
   });
 
   it('maps one portable project model level through the selected harness', () => {
     const resolved = resolveModelTarget(opencode, {
+      authorizedModel: authorizedHigh,
       config: config(),
       profile: 'opencode',
       extraArgs: [],
@@ -319,13 +387,16 @@ describe('target-resolution main authorization', () => {
       scope: 'local'
     });
     expect(resolved.source).toBe('project');
-    expect(resolved.targetId).toBe('llmgw/gpt-6.1-sol');
+    expect(resolved.targetId).toBe('fixture-provider/gpt-6.1-sol');
   });
 
   it.each([
     ['cursor', 'low'],
     ['cursor', 'extra-high'],
     ['opencode', 'extra-high'],
+    ['opencode', 'low'],
+    ['opencode', 'medium'],
+    ['opencode', 'high'],
     ['pi', 'low'],
     ['pi', 'medium'],
     ['pi', 'high'],
@@ -352,22 +423,23 @@ describe('target-resolution main authorization', () => {
         modelLevel: 'low',
         harnessRouting: {
           schemaVersion: 1,
-          byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-6.1-sol' } }
+          byAdapter: { opencode: { modelTargetId: 'fixture-provider/gpt-6.1-sol' } }
         }
       },
       scope: 'local'
     });
-    expect(resolved.targetId).toBe('llmgw/gpt-6.1-sol');
+    expect(resolved.targetId).toBe('fixture-provider/gpt-6.1-sol');
   });
 
   it('prefers portable persona model over project model', () => {
     const resolved = resolveModelTarget(opencode, {
+      authorizedModel: authorizedHigh,
       config: config(), profile: 'opencode', extraArgs: [], scope: 'local',
       projectSettings: { modelLevel: 'low' },
       persona: { id: 'p', name: 'P', modelLevel: 'high' }
     });
     expect(resolved.source).toBe('persona');
-    expect(resolved.targetId).toBe('llmgw/gpt-6.1-sol');
+    expect(resolved.targetId).toBe('fixture-provider/gpt-6.1-sol');
   });
 
   it('keeps neutral legacy concrete Persona and Project models on Claude/Codex adapters', () => {

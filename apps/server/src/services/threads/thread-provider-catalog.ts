@@ -237,6 +237,7 @@ export function bridgeLaunchForProvider(
   if (isDaemonBundledProvider(provider.id)) {
     return {
       pluginId: provider.pluginId,
+      ...(provider.experimental_bridgeOptions ? { providerOptions: { ...provider.experimental_bridgeOptions } } : {}),
       ...(provider.env ? { envPassthrough: [...provider.env.passthrough] } : {}),
       source: { kind: 'daemon-bundled', id: provider.id },
       capabilities: launchCapabilities(provider)
@@ -250,6 +251,7 @@ export function bridgeLaunchForProvider(
   }
   return {
     pluginId: provider.pluginId,
+    ...(provider.experimental_bridgeOptions ? { providerOptions: { ...provider.experimental_bridgeOptions } } : {}),
     ...(provider.env ? { envPassthrough: [...provider.env.passthrough] } : {}),
     source: {
       kind: 'artifact',

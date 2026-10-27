@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import type { Project, AppConfig, ProjectSettings, Persona, Team } from '@zana-ai/zcc-domain/product';
+import { providerFor } from '@zana-ai/zcc-host-daemon/harness/registry';
 
 /**
  * Test plan #7 — launchTeam resolves slots, opens Σ quantity tabs through the
@@ -326,7 +327,7 @@ describe('launchTeam', () => {
 
   it('routes a neutral Team Persona through global harness default', async () => {
     const personaId = 'neutral-worker';
-    PERSONAS.push({ id: personaId, name: 'Neutral Worker', modelLevel: 'medium' });
+    PERSONAS.push({ id: personaId, name: 'Neutral Worker' });
     CONFIG.defaultHarness = 'opencode';
     CONFIG.harnessOpenCodeEnabled = true;
     try {
@@ -368,6 +369,9 @@ describe('launchTeam', () => {
   });
 
   it('preserves unsupported legacy Persona facets during structured OpenCode Team launch', async () => {
+    // Inventory is a trusted launch-time probe, independent of installed CLIs.
+    const discoverModels = vi.spyOn(providerFor('opencode'), 'discoverModelTargets')
+      .mockResolvedValue(['fixture-provider/fixture-model']);
     PERSONAS.push({
       id: 'opencode-structured-worker',
       name: 'OpenCode Structured Worker',
@@ -377,8 +381,8 @@ describe('launchTeam', () => {
         schemaVersion: 1,
         byAdapter: {
           opencode: {
-            providerTargetId: 'openai',
-            modelTargetId: 'llmgw/gpt-5.6-terra-1M',
+            providerTargetId: 'fixture-provider',
+            modelTargetId: 'fixture-provider/fixture-model',
             executionState: 'autonomous'
           }
         }
@@ -413,12 +417,26 @@ describe('launchTeam', () => {
         }))
       });
 
-      expect(result).toMatchObject({ ok: true, value: { launched: 1 } });
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, value: { launched: 1 } });
       expect(createCalls[0]?.opts).toMatchObject({
         profile: 'opencode',
-        extraArgs: ['--prompt', 'Inspect this project.']
+        extraArgs: ['--prompt', 'Inspect this project.'],
+        persona: {
+          appendSystemPrompt: 'Existing Persona instructions.',
+          harnessRouting: {
+            schemaVersion: 1,
+            byAdapter: {
+              opencode: {
+                providerTargetId: 'fixture-provider',
+                modelTargetId: 'fixture-provider/fixture-model'
+              }
+            }
+          }
+        }
       });
+      expect(discoverModels).toHaveBeenCalledWith({ cwd: realpathSync(PROJECT.path), config: CONFIG });
     } finally {
+      discoverModels.mockRestore();
       delete CONFIG.harnessOpenCodeEnabled;
       PERSONAS.pop();
     }

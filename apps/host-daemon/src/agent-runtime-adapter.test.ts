@@ -1106,6 +1106,47 @@ describe('agent runtime thread adapter', () => {
     adapter.dispose();
   });
 
+  it('uses the current host native binary for ACP health, models, start and resume', async () => {
+    let binary = '/host/bin/opencode';
+    const captured: Record<string, unknown>[] = [];
+    const bridgeLaunch = {
+      pluginId: 'provider-fixture', source: { kind: 'daemon-bundled' as const, id: 'fake' },
+      capabilities: { supportsServiceTier: false, permissionModes: ['full'], supportsThreadArchive: false, supportsThreadRename: false, fork: 'tip' }
+    };
+    const adapter = createAgentRuntimeAdapter({
+      dataDir: cwd, emit: () => {},
+      loadConfig: () => ({ version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null,
+        harnesses: { byId: { opencode: { binary } } } }),
+      createRuntime: options => {
+        const runtime = createAgentRuntimeWithAdapters({ ...options, adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath }) });
+        vi.spyOn(runtime, 'providerHealth').mockImplementation(async input => { captured.push(input); return { supported: false }; });
+        vi.spyOn(runtime, 'listModels').mockImplementation(async input => { captured.push(input); return { models: [], selectedOnlyModels: [] }; });
+        vi.spyOn(runtime, 'startThread').mockImplementation(async input => { captured.push(input); return { providerThreadId: 'provider-thread' }; });
+        vi.spyOn(runtime, 'resumeThread').mockImplementation(async input => { captured.push(input); return { providerThreadId: 'provider-resumed' }; });
+        return runtime;
+      }
+    });
+    try {
+      await adapter.providerHealth({ providerId: 'acp-opencode', bridgeLaunch, cwd });
+      await adapter.listModels({ providerId: 'acp-opencode', bridgeLaunch, cwd });
+      await adapter.startWork({ providerId: 'acp-opencode', bridgeLaunch, cwd, threadId: 'thread-one', environmentId: 'env-one', projectId: 'project', input: [] });
+      await adapter.resumeWork({ providerId: 'acp-opencode', bridgeLaunch, cwd, threadId: 'thread-two', environmentId: 'env-one', projectId: 'project', providerThreadId: 'provider-thread' });
+      expect(captured).toHaveLength(4);
+      for (const input of captured) expect(input.acpLaunchSpec).toMatchObject({ command: binary, args: ['acp'] });
+      binary = '/host/updated/opencode';
+      await adapter.providerHealth({ providerId: 'acp-opencode', bridgeLaunch, cwd });
+      expect(captured.at(-1)?.acpLaunchSpec).toMatchObject({ command: binary });
+      expect(captured[0]?.acpLaunchSpec).toMatchObject({ command: '/host/bin/opencode' });
+      const declaration = { displayName: 'Explicit', command: '/declaration/bin/custom', args: ['serve'], env: { MODE: 'custom' } };
+      await adapter.providerHealth({ providerId: 'acp-opencode', bridgeLaunch: { ...bridgeLaunch, providerOptions: { acpLaunchSpec: declaration } }, cwd });
+      expect(captured.at(-1)?.acpLaunchSpec).toEqual(declaration);
+      const explicit = { ...declaration, command: '/command/bin/custom' };
+      await adapter.startWork({ providerId: 'acp-opencode', bridgeLaunch: { ...bridgeLaunch, providerOptions: { acpLaunchSpec: declaration } },
+        providerOptions: { acpLaunchSpec: explicit }, cwd, threadId: 'thread-three', environmentId: 'env-one', projectId: 'project', input: [] });
+      expect(captured.at(-1)?.acpLaunchSpec).toEqual(explicit);
+    } finally { adapter.dispose(); }
+  });
+
   it('lists fake provider models through AgentRuntime', async () => {
     const adapter = createAgentRuntimeAdapter({
       emit: () => undefined,
@@ -1133,6 +1174,49 @@ describe('agent runtime thread adapter', () => {
     expect(listed.models.length).toBeGreaterThan(0);
     expect(listed.models[0]?.model).toBeTruthy();
     adapter.dispose();
+  });
+
+  it.each([
+    { healthFails: false, cleanupFails: false },
+    { healthFails: true, cleanupFails: false },
+    { healthFails: false, cleanupFails: true },
+    { healthFails: true, cleanupFails: true }
+  ])('releases one-shot health runtimes without hiding the outcome: %j', async ({ healthFails, cleanupFails }) => {
+    const shutdowns: ReturnType<typeof vi.fn>[] = [];
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      createRuntime: options => {
+        const runtime = createAgentRuntimeWithAdapters({ ...options, adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath }) });
+        vi.spyOn(runtime, 'providerHealth').mockImplementation(async () => {
+          if (healthFails) throw new Error('actionable health failure');
+          return { supported: false };
+        });
+        const shutdown = vi.spyOn(runtime, 'shutdown').mockImplementation(async () => {
+          if (cleanupFails) throw new Error('cleanup failed');
+        });
+        shutdowns.push(shutdown);
+        return runtime;
+      }
+    });
+    const input = {
+      providerId: 'fake', cwd,
+      bridgeLaunch: {
+        pluginId: 'provider-fake', source: { kind: 'daemon-bundled' as const, id: 'fake' },
+        capabilities: { supportsServiceTier: false, permissionModes: ['full'], supportsThreadArchive: false, supportsThreadRename: false, fork: 'checkpoint' }
+      }
+    };
+    try {
+      for (let check = 0; check < 2; check += 1) {
+        if (healthFails) await expect(adapter.providerHealth(input)).rejects.toThrow('actionable health failure');
+        else await expect(adapter.providerHealth(input)).resolves.toEqual({ supported: false });
+      }
+      expect(shutdowns).toHaveLength(2);
+      for (const shutdown of shutdowns) expect(shutdown).toHaveBeenCalledTimes(1);
+      expect(adapter.listLoadedEnvironments()).toEqual([]);
+    } finally { adapter.dispose(); }
+    // Completed health checks are no longer retained in the dispose tracker.
+    for (const shutdown of shutdowns) expect(shutdown).toHaveBeenCalledTimes(1);
   });
 
   it('reports unsupported health for the fake provider through AgentRuntime', async () => {

@@ -22,3 +22,4 @@ export type {
 } from "./wire.js";
 
 export type { AgentModelCatalog } from "./bridge/model-catalog.js";
+export { getAcpLaunchHealth } from "./bridge/launch-health.js";

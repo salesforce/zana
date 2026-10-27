@@ -2651,11 +2651,13 @@ async function handleModelList(
 
 function decodeLaunchSpec(
   providerOptions: Record<string, unknown> | undefined,
+  cwd?: string,
 ): AcpLaunchSpec | null {
   const launchSpec = acpLaunchSpecSchema.safeParse(
     providerOptions?.["acpLaunchSpec"],
   );
-  return launchSpec.success ? launchSpec.data : null;
+  if (!launchSpec.success) return null;
+  return launchSpec.data.cwd === undefined && cwd ? { ...launchSpec.data, cwd } : launchSpec.data;
 }
 
 const acpProviderOptionsSchema = z
@@ -2746,7 +2748,7 @@ async function handleRequest(
       await handleModelList(
         request.id,
         buildAcpModelListParams(
-          decodeLaunchSpec(request.params.providerOptions),
+          decodeLaunchSpec(request.params.providerOptions, request.params.cwd),
           modelPicker,
         ),
         decodeDialectId(request.params.providerOptions),
@@ -2764,6 +2766,8 @@ async function handleRequest(
             launchSpec,
           ),
           command: launchSpec?.command ?? null,
+          ...(launchSpec?.cwd ?? request.params.cwd ? { cwd: launchSpec?.cwd ?? request.params.cwd } : {}),
+          ...(launchSpec?.env === undefined ? {} : { env: launchSpec.env }),
         }),
       );
       return;

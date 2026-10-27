@@ -46,6 +46,7 @@ import { EventRecorder } from '../sdk/events.js';
 import { linuxCiElectronArgs, linuxCiElectronEnv } from './linux-electron-launch.js';
 import { dropInheritedKeychainEnv, isolatedClaudePath, isolatedKeychainEnv, writeAppConfig } from './app-config.js';
 import { isolateTmuxEnvironment, cleanupTmuxEnvironment } from './tmux-isolation.js';
+import { seedOpenCodeAuthState } from './opencode-auth.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const MAIN_ENTRY = join(process.env.ZCC_E2E_APP_ROOT || REPO_ROOT, 'out/main/index.js');
@@ -129,65 +130,7 @@ export function seedClaudeAuthState(home: string): boolean {
   return true;
 }
 
-/** Seed real OpenCode config/auth while keeping ZCC state in the sandbox HOME. */
-export function seedOpenCodeAuthState(home: string): boolean {
-  const realHome = homedir();
-  let seeded = false;
-  for (const [source, destination] of [
-    [join(realHome, '.config', 'opencode'), join(home, '.config', 'opencode')],
-    [join(realHome, '.local', 'share', 'opencode'), join(home, '.local', 'share', 'opencode')]
-  ]) {
-    if (!existsSync(source)) continue;
-    try {
-      mkdirSync(join(destination, '..'), { recursive: true });
-      cpSync(source, destination, { recursive: true });
-      seeded = true;
-    } catch {
-      /* best-effort — caller's live test will expose unusable auth */
-    }
-  }
-  for (const name of ['.devbar', '.aisuite']) {
-    const source = join(realHome, name);
-    if (!existsSync(source)) continue;
-    try {
-      if (name === '.aisuite') {
-        cpSync(source, join(home, name), { recursive: true });
-      } else {
-        // Only the live daemon socket is needed (see seedClaudeAuthState) —
-        // never symlink the whole `.devbar` dir into the sandbox.
-        const sock = join(source, 'devbar.sock');
-        if (existsSync(sock)) {
-          mkdirSync(join(home, name), { recursive: true, mode: 0o700 });
-          symlinkSync(sock, join(home, name, 'devbar.sock'));
-        }
-      }
-    } catch {
-      /* best-effort — absent when auth does not use these helpers */
-    }
-  }
-  const gatewayKey = join(realHome, '.config', 'opencode', '.llmgw-key');
-  if (existsSync(gatewayKey)) {
-    try {
-      mkdirSync(join(home, '.config', 'opencode'), { recursive: true });
-      copyFileSync(gatewayKey, join(home, '.config', 'opencode', '.llmgw-key'));
-    } catch {
-      /* best-effort — plugin credential command may remain available */
-    }
-  }
-  // Sandbox uses copied OpenCode's file-backed provider config. Its AI Suite
-  // provider plugin shells to a HOME-scoped credential manager and cannot read
-  // developer auth under isolated HOME, despite the copied key being valid.
-  try {
-    rmSync(join(home, '.config', 'opencode', 'plugins', 'aisuite_provider.js'), { force: true });
-    // Live provider E2E needs developer auth, not developer MCP/tool injection.
-    // Leaving sync enabled floods the model catalog and lets it route a
-    // session-local MCP call through AI Suite's Python proxy instead.
-    rmSync(join(home, '.config', 'opencode', 'plugins', 'aisuite_sync.js'), { force: true });
-  } catch {
-    /* best-effort — absent when OpenCode is not managed by AI Suite */
-  }
-  return seeded;
-}
+export { seedOpenCodeAuthState } from './opencode-auth.js';
 
 /**
  * Pre-accept claude's per-folder "Is this a project you trust?" dialog for `dir`

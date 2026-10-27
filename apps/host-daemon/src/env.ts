@@ -26,8 +26,7 @@ import { fileURLToPath } from 'node:url';
  * Dotfile-managed CLI installers (asdf, volta, cargo, bun, deno, most vendor
  * installers, …) drop a `bin/` or native `local/` dir inside a `~/.<tool>/`
  * home. We don't special-case any one vendor — instead scan the top level of
- * the home dir for those shapes once, so a tool we've never heard of (today:
- * AI Suite's `~/.aisuite/bin`, native `~/.<tool>/local`) is picked up for free.
+ * the home dir for those shapes once, so an unfamiliar installer is discovered without vendor-specific paths.
  * Bounded to a single non-recursive `readdir` — cheap, and never throws (a
  * permission error / missing home dir degrades to no extra dirs).
  */

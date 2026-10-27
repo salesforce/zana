@@ -164,9 +164,8 @@ export function buildSessionDigestOpenCode(
 
 // Per-million-token USD rates, keyed by a substring of the model id. Same
 // disclaimer as the other two readers' tables: a rough in-UI guide, not
-// billing truth. OpenCode sessions in this codebase route through `aisuite`/
-// `llmgw` proxies fronting a mix of OpenAI/Anthropic/Google models, so this
-// table matches on the underlying model family regardless of provider prefix.
+// billing truth. OpenCode sessions can use proxies fronting multiple model
+// providers, so this table matches on model family regardless of provider prefix.
 const OPENCODE_MODEL_RATES: Array<{ match: string; in: number; out: number }> = [
   { match: 'opus', in: 5, out: 25 },
   { match: 'sonnet', in: 3, out: 15 },

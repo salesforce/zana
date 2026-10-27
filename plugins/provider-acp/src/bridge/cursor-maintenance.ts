@@ -20,6 +20,7 @@ import {
   experimental_resolveExecutablePath as resolveExecutablePath,
   experimental_versionFrom as versionFrom,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
+import { getGenericAcpProviderHealth } from "./acp-health.js";
 
 const execFileAsync = promisify(execFile);
 const CURSOR_EXECUTABLE = "cursor-agent";
@@ -179,13 +180,21 @@ export async function readCursorAuthCredentials(
 
 export async function getCursorProviderHealth(
   deps: CursorMaintenanceDeps = {},
+  launch: { command: string | null; cwd?: string; env?: Record<string, string> } = { command: CURSOR_EXECUTABLE },
 ): Promise<ProviderHealthResult> {
-  if ((await resolveExecutablePath(CURSOR_EXECUTABLE)) === null) {
-    return healthResult("not_installed");
-  }
-  const version = await readCliVersion(CURSOR_EXECUTABLE);
+  const launchHealth = await getGenericAcpProviderHealth(launch);
+  if (!launchHealth.supported || launchHealth.health.status !== "ready") return launchHealth;
+  const version = launchHealth.health.installedVersion;
   try {
-    const credentials = await readCursorAuthCredentials(deps);
+    const configuredHome = process.platform === "win32"
+      ? launch.env?.USERPROFILE ?? launch.env?.HOME
+      : launch.env?.HOME;
+    const credentials = await readCursorAuthCredentials({
+      ...deps,
+      ...(deps.homeDir === undefined && configuredHome !== undefined
+        ? { homeDir: configuredHome }
+        : {}),
+    });
     if (credentials === null) {
       return healthResult("unauthenticated", { installedVersion: version });
     }

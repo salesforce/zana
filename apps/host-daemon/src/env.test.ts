@@ -43,7 +43,7 @@ describe('augmentPath', () => {
   });
 
   describe('dotfile-installer `~/.<tool>/bin` and `~/.<tool>/local` discovery', () => {
-    // Real dotfile-installer dirs (asdf, volta, cargo, AI Suite, …) live directly
+    // Real dotfile-installer dirs (asdf, volta, cargo, …) live directly
     // under the real homedir(), which we can't control in a unit test — so we
     // seed one, assert it's picked up, then remove it. Skipped dirs a prior run
     // may have left behind are tolerated by using a unique, unlikely name.

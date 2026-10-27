@@ -79,14 +79,6 @@ import { isLiveListedModelTargetId, resolveExecutionState, resolveModelTarget, r
 const OPENCODE_MIN_VERSION = '1.18.0';
 const OPENCODE_REVIEWED_AT = '2026-10-13';
 const OPENCODE_VERIFIED_SCOPES = ['local', 'remote'] as const;
-const OPENCODE_MODEL_IDS = [
-  'llmgw/gpt-6-luna',
-  'llmgw/gpt-5.6-terra-1M',
-  'llmgw/gpt-6.1-sol',
-  'llmgw/gemini-3.1-pro-preview',
-  'llmgw/gemini-3.5-flash',
-  'llmgw/grok-4.6'
-] as const;
 const openCodeEvidence = (id: string, observed: string, scope: 'local' | 'remote' = 'local') => ({
   id,
   versionRange: OPENCODE_MIN_VERSION,
@@ -97,9 +89,7 @@ const openCodeEvidence = (id: string, observed: string, scope: 'local' | 'remote
 });
 
 const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
-  // Release-maintained snapshot: refresh from `opencode models` whenever a ZCC
-  // version changes its supported OpenCode CLI or provider account inventory.
-  // Keep catalog, level mapping, and opencode-provider.test.ts in sync.
+  // Model inventories belong to each installation and are discovered per launch.
   descriptor: {
     id: 'opencode', label: 'OpenCode', agentDefaultEligible: true, terminalEligible: false, defaultProfileId: 'opencode',
     profiles: [{ id: 'opencode', posture: 'default' }, { id: 'opencode-resume', posture: 'resume' }, { id: 'opencode-yolo', posture: 'unrestricted' }],
@@ -121,31 +111,11 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
         { id: 'build', label: 'Build', executionStates: ['accept-edits', 'autonomous'], scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
         { id: 'plan', label: 'Plan', executionStates: ['plan'], scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION }
       ],
-      // One opencode provider namespace (`llmgw/…`) serves every model; the
-      // `provider` field groups by underlying vendor for the picker/provider
-      // filter only — it never reconstructs the `--model` id (the full id ships).
-      providers: [
-        { id: 'openai', label: 'OpenAI' },
-        { id: 'google', label: 'Google' },
-        { id: 'xai', label: 'xAI' }
-      ],
+      providers: [],
       providerModelRelationship: 'combined-provider-model',
-      models: [
-        { id: 'llmgw/gpt-6-luna', label: 'Luna', provider: 'openai', level: 'low', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'llmgw/gpt-5.6-terra-1M', label: 'Terra', provider: 'openai', level: 'medium', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'llmgw/gpt-6.1-sol', label: 'Sol', provider: 'openai', level: 'high', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'llmgw/gemini-3.1-pro-preview', label: 'Gemini Pro', provider: 'google', level: 'medium', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'llmgw/gemini-3.5-flash', label: 'Gemini Flash', provider: 'google', level: 'low', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION },
-        { id: 'llmgw/grok-4.6', label: 'Grok', provider: 'xai', level: 'medium', scope: [...OPENCODE_VERIFIED_SCOPES], evidenceVersion: OPENCODE_MIN_VERSION }
-      ],
-      // Reviewed gateway ladder: Luna / Terra / Sol span the three tiers.
-      // gemini + grok stay catalog-selectable but off the default ladder.
-      modelLevelMapping: {
-        low: 'llmgw/gpt-6-luna',
-        medium: 'llmgw/gpt-5.6-terra-1M',
-        high: 'llmgw/gpt-6.1-sol',
-        'extra-high': undefined
-      },
+      models: [],
+      // Opaque model IDs do not establish portable capability levels.
+      modelLevelMapping: { low: undefined, medium: undefined, high: undefined, 'extra-high': undefined },
       executionStateMapping: {
         plan: 'plan',
         interactive: 'default',
@@ -182,10 +152,6 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
     }
   },
   evidence: [
-    ...OPENCODE_MODEL_IDS.flatMap((id) => [
-      openCodeEvidence(id, 'Model appears in opencode models and --model accepts provider/model IDs.'),
-      openCodeEvidence(id, 'Remote login-shell command binds --model provider/model IDs.', 'remote')
-    ]),
     openCodeEvidence('build', 'Built-in build role appears in effective opencode agent list output.'),
     openCodeEvidence('build', 'Remote login-shell command binds --agent build.', 'remote'),
     openCodeEvidence('plan', 'Built-in plan role appears in effective opencode agent list output.'),
@@ -496,41 +462,6 @@ function discoverOpenCodeModels(context: { cwd: string; config: AppConfig }): Pr
   return modelDiscoveryCache.discover(JSON.stringify([command, context.cwd]), () => runOpenCodeModelDiscovery(command, context.cwd));
 }
 
-function openCodeProviderFor(id: string): 'openai' | 'google' | 'xai' {
-  if (/gemini/i.test(id)) return 'google';
-  if (/grok/i.test(id)) return 'xai';
-  return 'openai';
-}
-
-const OPENCODE_LEVEL_TERMS = { low: 'luna', medium: 'terra', high: 'sol' } as const;
-const openCodeIdOrder = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
-
-/**
- * Map portable levels onto a LIVE inventory, independent of gateway list order.
- * Per tier: the curated snapshot id wins whenever the gateway still serves it;
- * otherwise the tier's family term (luna/terra/sol) picks among live ids in a
- * deterministic order (highest version first, by numeric collation, then id) so
- * the same inventory always yields the same mapping however `opencode models`
- * orders it. A tier with neither stays unmapped (resolution reports it).
- */
-export function openCodeModelLevelMapping(liveIds: readonly string[]): Readonly<Record<ModelLevel, string | undefined>> {
-  const live = new Set(liveIds);
-  const ordered = [...live].sort((a, b) => openCodeIdOrder.compare(b, a) || (a < b ? 1 : a > b ? -1 : 0));
-  const curated = OPENCODE_ADAPTER.descriptor.targets!.modelLevelMapping;
-  const pick = (level: keyof typeof OPENCODE_LEVEL_TERMS) => {
-    const snapshot = curated[level];
-    if (snapshot && live.has(snapshot)) return snapshot;
-    const term = new RegExp(`(?:^|[-_/])${OPENCODE_LEVEL_TERMS[level]}(?:[-_/]|$)`, 'i');
-    return ordered.find((id) => term.test(id));
-  };
-  return {
-    low: pick('low'),
-    medium: pick('medium'),
-    high: pick('high'),
-    'extra-high': undefined
-  };
-}
-
 /**
  * Pane commands that mean the OpenCode agent is RUNNING. The CLI is an npm
  * (`opencode-ai`) node binary, so a remote tmux pane running it reports either
@@ -571,8 +502,8 @@ export class OpenCodeProvider extends BaseLaunchProvider {
   readonly id = 'opencode';
 
   /**
-   * The shared (registry singleton) adapter is ALWAYS the reviewed static
-   * snapshot. A live inventory is launch-scoped: see {@link liveModelAdapter}
+   * The shared (registry singleton) adapter has no installation-specific models.
+   * A live inventory is launch-scoped: see {@link liveModelAdapter}
    * and `withLiveModelTargets` — it is never stored on this instance, so
    * concurrent launches for different projects cannot see each other's
    * inventory.
@@ -582,10 +513,10 @@ export class OpenCodeProvider extends BaseLaunchProvider {
   }
 
   liveModelAdapter(ids: readonly string[]): TrustedHarnessAdapter {
-    const discovered: HarnessModelTarget[] = [...new Set(ids)].map((id) => ({
+    const discovered: HarnessModelTarget[] = parseOpenCodeModelIds(ids.join('\n')).map((id) => ({
       id,
       label: id,
-      provider: openCodeProviderFor(id),
+      provider: id.slice(0, id.indexOf('/')),
       scope: [...OPENCODE_VERIFIED_SCOPES]
     }));
     if (!discovered.length) return OPENCODE_ADAPTER;
@@ -603,7 +534,7 @@ export class OpenCodeProvider extends BaseLaunchProvider {
         targets: {
           ...OPENCODE_ADAPTER.descriptor.targets!,
           models,
-          modelLevelMapping: openCodeModelLevelMapping(models.map(({ id }) => id))
+          providers: [...new Set(models.map(({ provider }) => provider!))].map((id) => ({ id, label: id }))
         }
       }
     };
@@ -612,8 +543,8 @@ export class OpenCodeProvider extends BaseLaunchProvider {
   readonly acceptsDynamicRoleTargets = true;
   // An OpenCode `--agent <role>` pins the agent's own model; a forced catalog
   // `--model` overrides that pin and dies with ProviderModelNotFoundError (dead
-  // session / exit 64) on any install whose provider inventory differs from the
-  // shipped snapshot. So a resolved native role suppresses the injected model.
+  // session / exit 64) when the configured agent uses a different model.
+  // A resolved native role therefore suppresses the injected model.
   readonly nativeRolePinsModel = true;
   // OpenCode's remote pane runs a nameable agent binary (opencode/node), distinct
   // from the `bash -lic` wrapper shell that survives when the agent exits — so
@@ -696,11 +627,9 @@ export class OpenCodeProvider extends BaseLaunchProvider {
 
   /**
    * Live model inventory (`opencode models`) for preflight validation against
-   * gateway drift. Returns `undefined` on ANY probe failure (CLI missing,
-   * timeout, non-zero exit, empty parse) so the caller falls back to the static
-   * snapshot rather than blocking a launch on a transient probe error — an empty
-   * live list would otherwise reject every model. A non-empty result is the
-   * authoritative set the gateway currently exposes.
+   * installation changes. Returns `undefined` on probe failure (CLI missing,
+   * timeout, non-zero exit, empty parse). No installation-specific fallback
+   * models are invented. A non-empty result is the authoritative installed set.
    *
    * Pure with respect to this (shared) provider: the result is returned, never
    * stored here. Callers scope it to one launch via `withLiveModelTargets`.
@@ -937,7 +866,7 @@ export class OpenCodeProvider extends BaseLaunchProvider {
     // outer `env KEY=… bash -lic` prefix. `bash -lic` re-sources the remote user's
     // login+interactive profile AFTER an outer `env` seeds the value but BEFORE
     // `exec opencode` — so on a box whose profile configures opencode (the
-    // Salesforce AI-Suite global `~/.config/opencode`) the injected value was
+    // global `~/.config/opencode`) the injected value was
     // clobbered and the worker booted with the box's MCP set (mcp-adaptor) but
     // WITHOUT zcc-inbox. With no zcc-inbox server it has NO `execution.work.*`
     // tools, so it can never heartbeat/complete and churns to a kickoff block

@@ -86,7 +86,7 @@ describe('buildSessionDigestOpenCode', () => {
 
 describe('buildSessionStatsOpenCode', () => {
   const sessionRow = {
-    model: JSON.stringify({ id: 'gpt-5.6-sol', providerID: 'aisuite', variant: 'default' }),
+    model: JSON.stringify({ id: 'gpt-5.6-sol', providerID: 'custom-provider', variant: 'default' }),
     cost: 0.42,
     tokens_input: 1000,
     tokens_output: 500,

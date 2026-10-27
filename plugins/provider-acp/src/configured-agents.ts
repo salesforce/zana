@@ -26,6 +26,7 @@ export interface CustomAcpAgentConfig {
   command: string;
   args: string[];
   env: Record<string, string>;
+  cwd?: string;
 }
 
 const PROVIDER_ID_PATTERN = /^[a-z][a-z0-9-]*$/u;
@@ -75,7 +76,11 @@ export function parseCustomAcpAgents(raw: PluginSettingValue | undefined): {
     const command = typeof entry.command === 'string' ? entry.command.trim() : '';
     const args = stringArray(entry.args);
     const env = stringMap(entry.env);
-    if (!id || !PROVIDER_ID_PATTERN.test(id) || !displayName || !command || args === null || env === null) {
+    const cwd = entry.cwd;
+    if (!id || !PROVIDER_ID_PATTERN.test(id) || !displayName || !command || /[\0\r\n]/u.test(command)
+      || args === null || args.some(arg => arg.includes('\0')) || env === null
+      || Object.entries(env).some(([key, value]) => !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) || value.includes('\0'))
+      || (cwd !== undefined && (typeof cwd !== 'string' || !cwd.trim() || cwd.includes('\0')))) {
       continue;
     }
     if (
@@ -86,7 +91,7 @@ export function parseCustomAcpAgents(raw: PluginSettingValue | undefined): {
       continue;
     }
     seen.add(id);
-    agents.push({ id, displayName, command, args, env });
+    agents.push({ id, displayName, command, args, env, ...(cwd === undefined ? {} : { cwd: cwd as string }) });
   }
   return { agents, rejectedIds };
 }
@@ -94,10 +99,18 @@ export function parseCustomAcpAgents(raw: PluginSettingValue | undefined): {
 export function customAcpProviderDeclaration(
   agent: CustomAcpAgentConfig
 ): PluginProviderDeclaration {
+  const acpLaunchSpec = {
+    displayName: agent.displayName,
+    command: agent.command,
+    args: agent.args,
+    env: agent.env,
+    ...(agent.cwd === undefined ? {} : { cwd: agent.cwd }),
+  };
   return {
     id: agent.id,
     displayName: agent.displayName,
     visibility: 'installed',
+    experimental_bridgeOptions: { acpLaunchSpec },
     capabilities: {
       supportsServiceTier: false,
       supportsNativeUserQuestion: false,
@@ -111,12 +124,7 @@ export function customAcpProviderDeclaration(
     composerActions: [],
     deriveProviderOptions() {
       return {
-        acpLaunchSpec: {
-          displayName: agent.displayName,
-          command: agent.command,
-          args: agent.args,
-          env: agent.env
-        }
+        acpLaunchSpec,
       };
     }
   };
@@ -141,7 +149,7 @@ export const ACP_CUSTOM_AGENTS_SETTING = {
     multiline: true as const,
     label: 'Custom ACP agents',
     description:
-      'JSON array of { id, displayName, command, args?, env? }. Ids must be unique and cannot reuse built-in providers.',
+      'JSON array of { id, displayName, command, args?, env?, cwd? }. Ids must be unique and cannot reuse built-in providers.',
     default: '[]'
   }
 };

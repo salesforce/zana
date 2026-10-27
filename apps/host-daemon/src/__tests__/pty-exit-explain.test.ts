@@ -60,7 +60,7 @@ const CONFIG: AppConfig = {
 };
 
 const MODEL_GONE =
-  'Error: ProviderModelNotFoundError: model llmgw/aisuite-old not found on provider';
+  'Error: ProviderModelNotFoundError: model fixture-provider/legacy-provider-old not found on provider';
 
 describe('PtyManager.finalizeExit — provider exit explanation', () => {
   beforeEach(() => {

@@ -149,7 +149,7 @@ describe('createConfigStore', () => {
       harnessRouting: {
         schemaVersion: 1,
         byAdapter: {
-          opencode: { modelTargetId: 'aisuite/old' },
+          opencode: { modelTargetId: 'legacy-provider/old' },
           claude: { modelTargetId: 'keep-claude' }
         }
       }
@@ -162,7 +162,7 @@ describe('createConfigStore', () => {
       harnessRouting: {
         schemaVersion: 1 as const,
         byAdapter: {
-          opencode: { modelTargetId: 'llmgw/old' },
+          opencode: { modelTargetId: 'fixture-provider/old' },
           claude: { modelTargetId: 'keep-claude' }
         }
       }
@@ -170,14 +170,14 @@ describe('createConfigStore', () => {
     expect(config.replaceConfig(next, first.hash)).toMatchObject({
       theme: 'light',
       defaultHarness: 'claude',
-      harnessRouting: { byAdapter: { opencode: { modelTargetId: 'llmgw/old' } } }
+      harnessRouting: { byAdapter: { opencode: { modelTargetId: 'fixture-provider/old' } } }
     });
     expect(JSON.parse(readFileSync(configFile, 'utf8')) as AppConfig).toMatchObject({
       theme: 'light',
       defaultHarness: 'claude',
       harnessRouting: {
         byAdapter: {
-          opencode: { modelTargetId: 'llmgw/old' },
+          opencode: { modelTargetId: 'fixture-provider/old' },
           claude: { modelTargetId: 'keep-claude' }
         }
       }

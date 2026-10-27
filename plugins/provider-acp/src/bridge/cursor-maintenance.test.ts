@@ -1,11 +1,31 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { join } from "node:path";
 import {
   isCursorLaunchCommand,
+  getCursorProviderHealth,
   normalizeCursorUsage,
   readCursorAuthCredentials,
 } from "./cursor-maintenance.js";
 
 describe("Cursor ACP maintenance", () => {
+  it("checks the configured Cursor command before reading account credentials", async () => {
+    const readAuthFile = vi.fn();
+    const result = await getCursorProviderHealth({ readAuthFile }, { command: "/missing/configured-cursor" });
+    expect(result).toMatchObject({ health: { status: "not_installed" } });
+    expect(readAuthFile).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, "/injected-home"])("reads auth from the launch HOME, preserving injected home %s", async (homeDir) => {
+    const readAuthFile = vi.fn(async () => JSON.stringify({ accessToken: "tok", email: "alternate@example.com" }));
+    const readKeychain = vi.fn(async () => null);
+    const result = await getCursorProviderHealth(
+      { homeDir, readAuthFile, readKeychain },
+      { command: process.execPath, env: { HOME: "/alternate-home", USERPROFILE: "/alternate-home" } },
+    );
+    expect(result).toMatchObject({ health: { status: "ready", accountEmail: "alternate@example.com" } });
+    expect(readAuthFile).toHaveBeenCalledWith(join(homeDir ?? "/alternate-home", ".cursor", "auth.json"));
+    expect(readKeychain).not.toHaveBeenCalled();
+  });
   it("normalizes dashboard windows and rejects malformed usage", () => {
     expect(
       normalizeCursorUsage(

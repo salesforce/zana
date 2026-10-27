@@ -624,6 +624,26 @@ describe("acp bridge", () => {
     });
   });
 
+  it("checks the configured executable with its own cwd and environment", async () => {
+    const command = join(workspaceDir, "health-wrapper");
+    writeFileSync(command, '#!/bin/sh\n[ "$PWD" = "$EXPECTED_CWD" ] && [ "$AGENT_READY" = "yes" ] || exit 42\necho 1.2.3\n');
+    chmodSync(command, 0o755);
+    const configuredCwd = await import("node:fs/promises").then(fs => fs.realpath(workspaceDir));
+    const providerOptions = { acpLaunchSpec: {
+      displayName: "Custom", command, args: ["acp"], cwd: configuredCwd,
+      env: { EXPECTED_CWD: configuredCwd, AGENT_READY: "yes" },
+    } };
+    const health = await waitForResponse(sendRequest("provider/health", {
+      providerId: "acp-opencode", cwd: "/ignored-request-cwd", providerOptions,
+    }));
+    expect(health.result).toMatchObject({ health: { status: "ready", installedVersion: "1.2.3" } });
+    writeFileSync(command, '#!/bin/sh\necho "missing wrapper dependency" >&2\nexit 127\n');
+    const broken = await waitForResponse(sendRequest("provider/health", {
+      providerId: "acp-opencode", providerOptions,
+    }));
+    expect(broken.result).toMatchObject({ health: { status: "unknown", statusMessage: expect.stringContaining("missing wrapper dependency") } });
+  });
+
   it("acknowledges thread/discard without a live session", async () => {
     const response = await waitForResponse(
       sendRequest("thread/discard", {

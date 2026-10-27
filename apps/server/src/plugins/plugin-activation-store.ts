@@ -26,6 +26,10 @@ export interface PluginActivationJournal {
   previous: InstalledPluginRow; candidate: InstalledPluginRow; createdAt: number;
   files: Array<{ path: string; size: number; digest: string }>;
 }
+export interface PluginActivationScan {
+  journals: PluginActivationJournal[];
+  issues: Array<{ entry: string; detail: string }>;
+}
 
 async function info(path: string) {
   try { return await lstat(path); }
@@ -101,6 +105,34 @@ export function createPluginActivationStore(dataDir: string) {
     atomicDurableWrite(join(dir, 'journal.json'), bytes);
     flushDirectory(root);
   }
+  async function scan(): Promise<PluginActivationScan> {
+    const result: PluginActivationScan = { journals: [], issues: [] };
+    if (!await info(root)) return result;
+    await directory(root);
+    let count = 0;
+    for await (const entry of await opendir(root)) {
+      // Finder/Explorer metadata is inert only when it is a regular file. Never
+      // follow a same-named symlink or treat a directory as harmless metadata.
+      if (entry.isFile() && ['.DS_Store', 'Thumbs.db', 'desktop.ini'].includes(entry.name)) continue;
+      if (++count > 256) {
+        result.issues.push({ entry: '.', detail: 'Too many pending plugin activations; recovery requires attention' });
+        break;
+      }
+      try {
+        if (!uuid.test(entry.name) || !entry.isDirectory()) throw new Error('Unexpected plugin activation entry');
+        const dir = transactionDir(entry.name), file = join(dir, 'journal.json'), stats = await info(file);
+        if (!stats) { await rm(dir, { recursive: true, force: true }); continue; } // Snapshotting cannot have activated code yet.
+        if (!stats.isFile() || stats.isSymbolicLink() || stats.size > 1_048_576) throw new Error('Invalid plugin activation journal file');
+        const journal = validate(JSON.parse(await readFile(file, 'utf8')));
+        if (journal.id !== entry.name) throw new Error('Activation directory and journal disagree');
+        result.journals.push(journal);
+      } catch (error) {
+        // Retain damaged evidence and continue examining independent journals.
+        result.issues.push({ entry: entry.name, detail: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    return result;
+  }
   return {
     async prepare(previous: InstalledPluginRow, candidate: InstalledPluginRow, now: number): Promise<PluginActivationJournal> {
       const journal: PluginActivationJournal = { version: 1, id: randomUUID(), phase: 'activating', previous, candidate, createdAt: now, files: [] };
@@ -153,22 +185,11 @@ export function createPluginActivationStore(dataDir: string) {
       } catch (error) { await rm(dir, { recursive: true, force: true }); throw error; }
     },
     async list(): Promise<PluginActivationJournal[]> {
-      if (!await info(root)) return [];
-      await directory(root);
-      const entries = await opendir(root), journals: PluginActivationJournal[] = [];
-      let count = 0;
-      for await (const entry of entries) {
-        if (++count > 256) throw new Error('Too many pending plugin activations; recovery requires attention');
-        if (!uuid.test(entry.name) || !entry.isDirectory()) throw new Error('Unexpected plugin activation entry');
-        const dir = transactionDir(entry.name), file = join(dir, 'journal.json'), stats = await info(file);
-        if (!stats) { await rm(dir, { recursive: true, force: true }); continue; } // A crash during snapshotting cannot have activated code.
-        if (!stats.isFile() || stats.isSymbolicLink() || stats.size > 1_048_576) throw new Error('Invalid plugin activation journal file');
-        const journal = validate(JSON.parse(await readFile(file, 'utf8')));
-        if (journal.id !== entry.name) throw new Error('Activation directory and journal disagree');
-        journals.push(journal);
-      }
-      return journals;
+      const result = await scan();
+      if (result.issues.length) throw new Error(result.issues[0]!.detail);
+      return result.journals;
     },
+    scan,
     async phase(journal: PluginActivationJournal, phase: PluginActivationJournal['phase']) {
       const next = { ...journal, phase }; await write(next); return next;
     },

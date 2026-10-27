@@ -9,8 +9,8 @@ import {
 describe('stripOpeningPrompt', () => {
   it('removes OpenCode --prompt forms so restore cannot replay the original task', () => {
     expect(stripOpeningPrompt(['--prompt', 'launch a team'])).toBeUndefined();
-    expect(stripOpeningPrompt(['--model', 'aisuite/gpt', '--prompt=launch a team'])).toEqual([
-      '--model', 'aisuite/gpt'
+    expect(stripOpeningPrompt(['--model', 'legacy-provider/gpt', '--prompt=launch a team'])).toEqual([
+      '--model', 'legacy-provider/gpt'
     ]);
   });
 

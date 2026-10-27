@@ -2865,7 +2865,7 @@ function decodeLaunchProfile(
     return null;
   }
   const profile = acpProfileFromLaunchSpec(launchSpec.data, ACP_CANONICAL_PROVIDER_ID);
-  return cwd ? { ...profile, cwd } : profile;
+  return profile.cwd === undefined && cwd ? { ...profile, cwd } : profile;
 }
 
 const acpProviderOptionsSchema = z
@@ -2951,10 +2951,16 @@ async function handleAcpProviderMaintenance(
     }
   >,
 ): Promise<unknown> {
+  const profile = decodeLaunchProfile(request.params.providerOptions, request.params.cwd);
+  const launch = {
+    command: profile?.agentCommand.command ?? null,
+    ...(profile?.cwd === undefined ? {} : { cwd: profile.cwd }),
+    ...(profile?.env === undefined ? {} : { env: profile.env }),
+  };
   if (isCursorMaintenanceTarget(request.params)) {
     switch (request.method) {
       case "provider/health":
-        return getCursorProviderHealth();
+        return getCursorProviderHealth({}, launch);
       case "provider/usage":
         return getCursorProviderUsage();
       case "provider/installation/status":
@@ -2964,9 +2970,7 @@ async function handleAcpProviderMaintenance(
     }
   }
   if (request.method === "provider/health") {
-    return getGenericAcpProviderHealth(
-      decodeLaunchProfile(request.params.providerOptions)?.agentCommand.command ?? null,
-    );
+    return getGenericAcpProviderHealth(launch);
   }
   return { supported: false };
 }

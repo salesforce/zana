@@ -124,7 +124,7 @@ describe('LegacyAgentHomeComposer', () => {
 
   it('drops the forced catalog model when a native OpenCode role is picked', () => {
     const source = readFileSync(new URL('../LegacyAgentHomeComposer.tsx', import.meta.url), 'utf8');
-    // A native agent pins its own model; forcing an `aisuite/*` catalog `--model`
+    // A native agent pins its own model; forcing an `legacy-provider/*` catalog `--model`
     // alongside `--agent <role>` breaks with ProviderModelNotFoundError on any
     // install whose provider inventory differs from the shipped snapshot. Role and
     // forced model are therefore mutually exclusive — the role wins, no model.

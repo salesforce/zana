@@ -16,15 +16,13 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+const liveModel = process.env.ZCC_LIVE_OPENCODE_MODEL?.trim();
+
 test.use({
   e2e: true,
   seedOpenCodeAuth: true,
   initialConfig: {
     harnessOpenCodeEnabled: true,
-    harnessRouting: {
-      schemaVersion: 1,
-      byAdapter: { opencode: { modelTargetId: 'llmgw/claude-sonnet-5' } }
-    },
     teamJobLaunchEnabled: true,
     teamLaunchEnabled: true
   }
@@ -34,9 +32,9 @@ test.setTimeout(10 * 60_000);
 
 test('real Modern OpenCode thread completes a durable Job Team through its advertised dynamic tool', async ({ app }) => {
   test.skip(
-    process.env.ZCC_LIVE_OPENCODE !== '1',
+    process.env.ZCC_LIVE_OPENCODE !== '1' || !liveModel,
     'LIVE-ONLY opt-in check, not a CI signal: requires ZCC_LIVE_OPENCODE=1 plus an installed, ' +
-      'authenticated OpenCode CLI (real model spend). Deterministic always-on coverage of this ' +
+      'authenticated OpenCode CLI and ZCC_LIVE_OPENCODE_MODEL (real model spend). Deterministic always-on coverage of this ' +
       'same Modern path lives in e2e/modern-owner-job-team-run.spec.ts.'
   );
   const { window, home } = app;
@@ -78,18 +76,18 @@ test('real Modern OpenCode thread completes a durable Job Team through its adver
       return result.value.id;
     }, projectDir);
 
-    const threadId = await window.evaluate(async ({ projectId }) => {
+    const threadId = await window.evaluate(async ({ projectId, model }) => {
       const response = await fetch('/api/v1/threads', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          projectId, providerId: 'acp-opencode', model: 'llmgw/claude-sonnet-5', permissionMode: 'full',
+          projectId, providerId: 'acp-opencode', model, permissionMode: 'full',
           input: 'Call zcc_execution_start immediately with exactly this JSON: {"version":1,"teamId":"e2e-modern-team","launchRequestId":"live-modern-job-team-1","jobTitle":"Modern durable job","summary":"Full Job Team route started by a Modern owner.","slots":[{"initialTask":"Coordinate the durable execution."},{"initialTask":"Run assigned work from the durable execution."},{"initialTask":"Run assigned work from the durable execution."}]}. Do not inspect files, explain, or simulate the call.'
         })
       });
       const body = await response.json();
       if (!response.ok || !body?.ok) throw new Error(JSON.stringify(body));
       return body.value.id as string;
-    }, { projectId });
+    }, { projectId, model: liveModel! });
 
     const executionId = await expect.poll(() => {
       const file = join(home, 'electron-user-data', 'squad-executions.json');

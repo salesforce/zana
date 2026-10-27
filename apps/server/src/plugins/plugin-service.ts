@@ -576,6 +576,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   const activations = createPluginActivationStore(opts.dataDir);
   const activating = new Map<string, { failure?: Error; unsafeWriters?: boolean }>();
   const recoveryBlocked = new Set<string>();
+  const activationRecoveryBlocked = new Map<string, string>();
+  let activationRecoveryUnattributed: string | undefined;
   const updatingPlugins = new Set<string>();
   const activationInterrupts = new Map<string, () => void>();
   let recovering: Promise<void> | undefined;
@@ -585,6 +587,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     const result = previous.then(() => {
       if (stopped) throw new Error('plugin service is stopped');
       if (recoveryBlocked.has(id)) throw new Error('Plugin recovery requires a restart before further changes');
+      const recoveryDetail = activationRecoveryDetail(store.get(id));
+      if (recoveryDetail) throw new Error(recoveryDetail);
       return action();
     });
     const tail = result.then(() => undefined, () => undefined);
@@ -601,6 +605,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   const WATCHDOG_RECOVERY_BASE_DELAY_MS = 1_000;
   let lifecycleGeneration = 0;
   let starting: Promise<void> | null = null;
+  let startupFailed = false;
   let stopped = false;
   let started = false;
   const servicesRegistry = createPluginServicesRegistry();
@@ -801,6 +806,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   };
 
   async function waitForStartup(): Promise<void> {
+    if (startupFailed && !stopped) await service.start();
     if (starting) await starting;
     await ensureActivationRecovery();
     if (stopped) throw new Error('plugin service is stopped');
@@ -811,33 +817,86 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     if (generation && !store.list().some(row => managedGenerationDirectory(opts.dataDir, row.rootDir) === generation)) removeManagedGeneration(opts.dataDir, root);
   }
   function ensureActivationRecovery(): Promise<void> {
-    return recovering ??= (async () => {
-      for (let journal of await activations.list()) {
-        const current = store.get(journal.previous.id);
-        if (journal.phase === 'committed' || journal.phase === 'restored') {
-          removeUnreferencedGeneration(journal.phase === 'committed' ? journal.previous.rootDir : journal.candidate.rootDir);
-          await activations.finish(journal);
-          continue;
-        }
-        // An acknowledged removal or a different installation supersedes recovery.
-        if (!current || current.installedAt !== journal.previous.installedAt) {
+    if (recovering) return recovering;
+    let retry = false;
+    // Recovery must never restore files while an update is running. The same
+    // queue serializes promotion, and the shared promise coalesces callers.
+    recovering = promotionQueue.run(async () => {
+      const blocked = new Map<string, string>();
+      let unattributed: string | undefined;
+      let scan: Awaited<ReturnType<typeof activations.scan>>;
+      try { scan = await activations.scan(); }
+      catch (error) {
+        scan = { journals: [], issues: [{ entry: '.', detail: error instanceof Error ? error.message : String(error) }] };
+      }
+      if (scan.issues.length) {
+        const issue = scan.issues[0]!;
+        unattributed = `Plugin activation recovery requires attention at plugin-activations/${issue.entry}: ${issue.detail}. Repair the journal directory, then retry Enable or Reload.`;
+        if (unattributed !== activationRecoveryUnattributed) console.error(`[plugins] ${unattributed}`);
+        retry = true;
+      }
+      const journalCounts = new Map<string, number>();
+      for (const journal of scan.journals) journalCounts.set(journal.previous.id, (journalCounts.get(journal.previous.id) ?? 0) + 1);
+      for (let journal of scan.issues.length ? [] : scan.journals) {
+        const id = journal.previous.id;
+        // A failed quiescence proof is only safe to retry in a fresh process.
+        if (recoveryBlocked.has(id)) continue;
+        try {
+          if (journalCounts.get(id)! > 1) throw new Error('Multiple pending activation journals for this plugin; recovery order cannot be established');
+          const current = store.get(journal.previous.id);
+          if (journal.phase === 'committed' || journal.phase === 'restored') {
+            removeUnreferencedGeneration(journal.phase === 'committed' ? journal.previous.rootDir : journal.candidate.rootDir);
+            await activations.finish(journal);
+            continue;
+          }
+          // An acknowledged removal or a different installation supersedes recovery.
+          if (!current || current.installedAt !== journal.previous.installedAt) {
+            removeUnreferencedGeneration(journal.candidate.rootDir);
+            await activations.finish(journal);
+            continue;
+          }
+          if (![journal.previous.rootDir, journal.candidate.rootDir].includes(current.rootDir)) throw new Error('Plugin registration changed outside its pending activation; recovery requires attention');
+          journal = await activations.phase(journal, 'restoring');
+          await activations.restore(journal);
+          await store.upsert({ ...journal.previous, enabled: current.enabled,
+            toolPolicy: current.toolPolicy === 'true' ? 'true' : journal.previous.toolPolicy,
+            lastActivationFailure: { version: journal.candidate.version, at: now(), detail: 'Interrupted update recovered; previous plugin-owned state restored.' } });
+          journal = await activations.phase(journal, 'restored');
           removeUnreferencedGeneration(journal.candidate.rootDir);
           await activations.finish(journal);
-          continue;
+        } catch (error) {
+          const detail = `Plugin activation recovery requires attention at plugin-activations/${journal.id}: ${error instanceof Error ? error.message : String(error)}. Repair the recovery snapshot, then retry Enable or Reload.`;
+          blocked.set(id, detail);
+          if (activationRecoveryBlocked.get(id) !== detail) console.error(`[plugins] ${id}: ${detail}`);
+          retry = true;
         }
-        if (![journal.previous.rootDir, journal.candidate.rootDir].includes(current.rootDir)) throw new Error('Plugin registration changed outside its pending activation; recovery requires attention');
-        journal = await activations.phase(journal, 'restoring');
-        await activations.restore(journal);
-        await store.upsert({ ...journal.previous, enabled: current.enabled,
-          toolPolicy: current.toolPolicy === 'true' ? 'true' : journal.previous.toolPolicy,
-          lastActivationFailure: { version: journal.candidate.version, at: now(), detail: 'Interrupted update recovered; previous plugin-owned state restored.' } });
-        journal = await activations.phase(journal, 'restored');
-        removeUnreferencedGeneration(journal.candidate.rootDir);
-        await activations.finish(journal);
       }
-      await activations.pruneGenerations(store.list().map(row => row.rootDir));
+      // Unknown/damaged journals may own generations absent from registration.
+      // Keep them all until recovery can prove which generations are obsolete.
+      if (!retry && !recoveryBlocked.size) {
+        try { await activations.pruneGenerations(store.list().map(row => row.rootDir)); }
+        catch (error) {
+          unattributed = `Plugin activation recovery requires attention in plugins/generations: ${error instanceof Error ? error.message : String(error)}. Repair the generation directory, then retry Enable or Reload.`;
+          if (unattributed !== activationRecoveryUnattributed) console.error(`[plugins] ${unattributed}`);
+          retry = true;
+        }
+      }
+      // Publish a complete pass atomically: existing blocks remain in force
+      // during every await, including a concurrent management request.
+      activationRecoveryBlocked.clear();
+      for (const [id, detail] of blocked) activationRecoveryBlocked.set(id, detail);
+      activationRecoveryUnattributed = unattributed;
       refreshToolPolicyInventory();
-    })();
+    }).finally(() => { if (retry) recovering = undefined; });
+    const attempt = recovering;
+    void attempt.catch(() => { if (recovering === attempt) recovering = undefined; });
+    return attempt;
+  }
+
+  function activationRecoveryDetail(row: InstalledPluginRow | undefined): string | undefined {
+    if (!row) return undefined;
+    return activationRecoveryBlocked.get(row.id) ??
+      ((row.sourceKind === 'git' || row.sourceKind === 'npm') ? activationRecoveryUnattributed : undefined);
   }
 
   function closeUpdateAdmission(row: InstalledPluginRow): () => void {
@@ -907,6 +966,9 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
 
   function agentContributions(): PluginAgentContribution[] {
     return store.list().map((row) => {
+      const unavailable = { id: row.id, enabled: false, rootDir: row.rootDir,
+        skillsRootPaths: [], skillNames: [], mcpServers: [], extra: {} };
+      if (activationRecoveryDetail(row) || recoveryBlocked.has(row.id)) return unavailable;
       try {
         const manifest = loadManifestFromDir(row.rootDir);
         return {
@@ -922,15 +984,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
           extra: manifest.extra
         };
       } catch {
-        return {
-          id: row.id,
-          enabled: false,
-          rootDir: row.rootDir,
-          skillsRootPaths: [],
-          skillNames: [],
-          mcpServers: [],
-          extra: {}
-        };
+        return unavailable;
       }
     });
   }
@@ -1143,7 +1197,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       ];
       for (const root of directoryRoots) owners[root] = BUILTIN_SKILL_OWNER;
       for (const row of store.list()) {
-        if (!row.enabled) continue;
+        if (!row.enabled || activationRecoveryDetail(row) || recoveryBlocked.has(row.id)) continue;
         try {
           const manifest = loadManifestFromDir(row.rootDir);
           const roots = collectPluginSkillDirectoryRoots({
@@ -1235,6 +1289,15 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
 
   async function loadOne(row: InstalledPluginRow, isActive: () => boolean = () => !stopped): Promise<void> {
     if (!isActive()) return;
+    const recoveryDetail = activationRecoveryDetail(row);
+    if (recoveryDetail) {
+      await disposeOne(row.id);
+      const degraded = { ...row, status: 'degraded' as const, statusDetail: recoveryDetail };
+      live.set(row.id, { row: degraded, handle: null, rpc: new Map() });
+      await store.upsert(degraded);
+      refreshToolPolicyInventory();
+      return;
+    }
     let declared: boolean | undefined;
     try {
       declared = loadManifestFromDir(row.rootDir).toolPolicy;
@@ -2520,8 +2583,11 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       startBuiltinSourceWatchers();
       appliedDevelopmentMode = developmentEnabled();
       started = true;
+      startupFailed = false;
       void checkInstalledUpdates(true).catch(() => undefined);
       })();
+      const attempt = starting;
+      void attempt.catch(() => { if (starting === attempt) { starting = null; startupFailed = true; } });
       trackThreadProviderStartup(starting);
       return starting;
     },

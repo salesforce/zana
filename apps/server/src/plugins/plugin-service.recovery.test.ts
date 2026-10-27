@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -164,15 +164,99 @@ it.each([false, true])('fails closed when host teardown cannot prove quiescence 
   expect(JSON.parse(readFileSync(join(f.dataDir, 'plugins/sample/kv.json'), 'utf8')).saved).toBe(candidateFails ? 'after' : 'before');
 });
 
-it('keeps a damaged recovery pending and refuses to run code on startup', async () => {
+it('isolates damaged recovery, starts unrelated code and retries a repaired snapshot without restarting', async () => {
   const f = fixture(); const previous = await f.subject.install('git:https://example.test/sample', { enable: false });
+  const unrelated = join(root(), 'unrelated'); plugin(unrelated, '1.0.0');
+  const manifest = JSON.parse(readFileSync(join(unrelated, 'package.json'), 'utf8')); manifest.name = 'zcc-plugin-unrelated';
+  writeFileSync(join(unrelated, 'package.json'), JSON.stringify(manifest)); await f.subject.install(unrelated);
   const owned = join(f.dataDir, 'plugins/sample'); mkdirSync(owned); writeFileSync(join(owned, 'kv.json'), 'before');
   const candidate = { ...previous, version: '2.0.0', rootDir: join(f.dataDir, 'plugins/generations', randomUUID(), 'git') }; plugin(candidate.rootDir, '2.0.0');
   const transactions = createPluginActivationStore(f.dataDir); const journal = await transactions.prepare(previous, candidate, 0);
+  const otherRoot = join(f.dataDir, 'plugins/generations', randomUUID(), 'git'); plugin(otherRoot, '1.0.0');
+  const otherManifest = JSON.parse(readFileSync(join(otherRoot, 'package.json'), 'utf8')); otherManifest.name = 'zcc-plugin-independent';
+  writeFileSync(join(otherRoot, 'package.json'), JSON.stringify(otherManifest));
+  const independent = { ...previous, id: 'independent', rootDir: otherRoot, enabled: true };
+  await createPluginStore({ file: pluginStorePath(f.dataDir) }).upsert(independent);
   writeFileSync(join(f.dataDir, 'plugin-activations', journal.id, 'snapshot/kv.json'), 'tampered');
   writeFileSync(join(owned, 'kv.json'), 'live'); f.subject.stop();
-  const next = fixture({ dataDir: f.dataDir }); await expect(next.subject.start()).rejects.toThrow('damaged');
+  const next = fixture({ dataDir: f.dataDir }); await next.subject.start();
+  expect(next.subject.get('sample')).toMatchObject({ status: 'degraded', statusDetail: expect.stringContaining('snapshot is damaged') });
+  expect(next.subject.agentContributions().find(row => row.id === 'sample')).toMatchObject({ enabled: false, skillsRootPaths: [], mcpServers: [] });
+  expect(next.subject.get('unrelated')?.status).toBe('running');
+  expect(next.subject.get('independent')?.status).toBe('running');
+  await expect(next.subject.enable('sample')).rejects.toThrow('Repair the recovery snapshot');
+  const concurrent = await Promise.allSettled([next.subject.enable('sample'), next.subject.reload('unrelated'), next.subject.enable('sample')]);
+  expect(concurrent.map(result => result.status)).toEqual(['rejected', 'fulfilled', 'rejected']);
   expect(readFileSync(join(owned, 'kv.json'), 'utf8')).toBe('live'); expect(await transactions.list()).toHaveLength(1);
+  writeFileSync(join(f.dataDir, 'plugin-activations', journal.id, 'snapshot/kv.json'), 'before');
+  await next.subject.reload('sample');
+  expect(next.subject.get('sample')).toMatchObject({ version: '1.0.0', enabled: false });
+  expect(readFileSync(join(owned, 'kv.json'), 'utf8')).toBe('before'); expect(await transactions.list()).toEqual([]);
+});
+
+it('starts and toggles plugins in the presence of harmless OS metadata', async () => {
+  const f = fixture(); await f.subject.install('git:https://example.test/sample'); f.subject.stop();
+  mkdirSync(join(f.dataDir, 'plugin-activations'), { recursive: true }); writeFileSync(join(f.dataDir, 'plugin-activations/.DS_Store'), 'Finder');
+  const next = fixture({ dataDir: f.dataDir }); await next.subject.start();
+  expect(next.subject.get('sample')?.status).toBe('running');
+  await next.subject.disable('sample'); await next.subject.enable('sample'); await next.subject.reload('sample');
+  expect(await next.rpc('read')).toMatchObject({ version: '1.0.0' });
+});
+
+it('preserves unknown journals, blocks managed code, and recovers after journal repair', async () => {
+  const f = fixture(); const previous = await f.subject.install('git:https://example.test/sample', { enable: false });
+  const candidate = { ...previous, version: '2.0.0', rootDir: join(f.dataDir, 'plugins/generations', randomUUID(), 'git') }; plugin(candidate.rootDir, '2.0.0', 'throw Error("must never run");');
+  const transactions = createPluginActivationStore(f.dataDir), journal = await transactions.prepare(previous, candidate, 0);
+  const file = join(f.dataDir, 'plugin-activations', journal.id, 'journal.json'); writeFileSync(file, 'broken');
+  await createPluginStore({ file: pluginStorePath(f.dataDir) }).upsert({ ...candidate, enabled: true }); f.subject.stop();
+  const next = fixture({ dataDir: f.dataDir }); await next.subject.start();
+  expect(next.subject.get('sample')).toMatchObject({ status: 'degraded', statusDetail: expect.stringContaining(journal.id) });
+  expect(next.subject.agentContributions().find(row => row.id === 'sample')?.enabled).toBe(false);
+  expect(existsSync(candidate.rootDir)).toBe(true); expect(readFileSync(file, 'utf8')).toBe('broken');
+  await expect(next.subject.reload('sample')).rejects.toThrow('Repair the journal directory');
+  writeFileSync(file, JSON.stringify(journal));
+  await next.subject.enable('sample'); expect(next.subject.get('sample')?.status).toBe('running');
+  expect(await transactions.list()).toEqual([]); expect(existsSync(candidate.rootDir)).toBe(false);
+});
+
+it('contains an unsafe generation directory and retries after its repair', async () => {
+  const f = fixture(); await f.subject.install('git:https://example.test/sample', { enable: false }); f.subject.stop();
+  const generations = join(f.dataDir, 'plugins/generations'), saved = join(f.dataDir, 'saved-generations');
+  renameSync(generations, saved); symlinkSync(saved, generations);
+  const next = fixture({ dataDir: f.dataDir }); await next.subject.start();
+  expect(next.subject.get('sample')?.statusDetail).toContain('plugins/generations');
+  rmSync(generations); renameSync(saved, generations);
+  await next.subject.start(); await next.subject.enable('sample');
+  expect(await next.rpc('read')).toMatchObject({ version: '1.0.0' });
+});
+
+it('retries a failed startup through management after a transient dependency is repaired', async () => {
+  const f = fixture(); await f.subject.install('git:https://example.test/sample', { enable: false }); f.subject.stop();
+  let fail = false;
+  const next = fixture({ dataDir: f.dataDir, getAppConfig: () => { if (fail) throw Error('temporary config unavailable'); return {}; } });
+  fail = true; await expect(next.subject.start()).rejects.toThrow('temporary config unavailable');
+  fail = false; await next.subject.enable('sample');
+  expect(next.subject.get('sample')?.status).toBe('running');
+});
+
+it('contains activation-directory symlinks and retries after their removal', async () => {
+  const f = fixture(); await f.subject.install('git:https://example.test/sample', { enable: false }); f.subject.stop();
+  const outside = root(), activations = join(f.dataDir, 'plugin-activations'); symlinkSync(outside, activations);
+  writeFileSync(join(outside, 'untouched'), 'private');
+  const next = fixture({ dataDir: f.dataDir }); await next.subject.start();
+  expect(next.subject.get('sample')?.statusDetail).toContain('must not be a symlink');
+  expect(readFileSync(join(outside, 'untouched'), 'utf8')).toBe('private');
+  rmSync(activations); await next.subject.enable('sample'); expect(next.subject.get('sample')?.status).toBe('running');
+});
+
+it('refuses ambiguous recovery ordering for multiple journals belonging to one plugin', async () => {
+  const f = fixture(); const previous = await f.subject.install('git:https://example.test/sample', { enable: false });
+  const candidate = { ...previous, version: '2.0.0', rootDir: join(f.dataDir, 'plugins/generations', randomUUID(), 'git') }; plugin(candidate.rootDir, '2.0.0');
+  const transactions = createPluginActivationStore(f.dataDir);
+  await transactions.prepare(previous, candidate, 0); await transactions.prepare(previous, candidate, 1); f.subject.stop();
+  const next = fixture({ dataDir: f.dataDir }); await next.subject.start();
+  expect(next.subject.get('sample')?.statusDetail).toContain('Multiple pending'); expect(await transactions.list()).toHaveLength(2);
+  expect(existsSync(candidate.rootDir)).toBe(true);
 });
 
 it.each(['activating', 'restoring'] as const)('recovers an interrupted %s transaction before running any plugin code', async phase => {

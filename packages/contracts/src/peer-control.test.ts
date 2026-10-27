@@ -7,7 +7,7 @@ const packet = { version: 1, senderId: 'app-a', recipientId: 'app-b', senderHost
   route: PEER_CONTROL_ROUTE, nonce: 'c'.repeat(48), issuedAt: 1_000_000, sealed: 's'.repeat(43) };
 const command = { type: 'peer.control', packet, timeoutMs: 15_000 };
 it('core control uses the combined host protocol without changing canonical peer.forward v2', () => {
-  expect(HOST_RPC_PROTOCOL_VERSION).toBe(48);
+  expect(HOST_RPC_PROTOCOL_VERSION).toBe(49);
   expect(PeerControlCommandSchema.parse(command)).toEqual(command);
   expect(HostRpcCommandSchema.parse(command)).toEqual(command);
   expect(HostRpcRequestMessageSchema.parse({ type: 'host-rpc.request', protocolVersion: HOST_RPC_PROTOCOL_VERSION, requestId: 'control', command }).command).toEqual(command);

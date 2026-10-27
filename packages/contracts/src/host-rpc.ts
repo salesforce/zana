@@ -95,7 +95,8 @@ import {
 // 46: canonical v2 peer forwarding and encrypted control, combined with host environment forwarding.
 // 47: bounded directory inspection for remote project registration and availability.
 // 48: durable machine project catalogue publication and bounded registration.
-export const HOST_RPC_PROTOCOL_VERSION = 48;
+// 49: provider bridge JSON options and opt-in host-owned live model inventories.
+export const HOST_RPC_PROTOCOL_VERSION = 49;
 export const HOST_HEARTBEAT_INTERVAL_MS = 5_000;
 export const HOST_LEASE_TIMEOUT_MS = 30_000;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
@@ -212,7 +213,8 @@ export const workspaceContextSchema = z.object({
 export type WorkspaceContext = z.infer<typeof workspaceContextSchema>;
 
 export const ProviderStatusCommandSchema = z.object({
-  type: z.literal('provider.status')
+  type: z.literal('provider.status'),
+  includeModelInventory: z.boolean().optional()
 }).strict();
 
 export const ProviderAgentDescriptorsCommandSchema = z.object({
@@ -308,6 +310,9 @@ const threadLaunchCohortSchema = z.object({
 
 export const HostBridgeLaunchSchema = z.object({
   pluginId: z.string().min(1),
+  providerOptions: z.record(z.string().max(100), jsonValueSchema)
+    .refine(value => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 256 * 1024,
+      'Provider bridge options exceed the size limit').optional(),
   envPassthrough: z.array(z.string().regex(/^[A-Z_][A-Z0-9_]*$/)).max(32).optional(),
   source: z.discriminatedUnion('kind', [
     z.object({
@@ -1147,6 +1152,10 @@ const ProviderStatusEntrySchema = z.object({
 
 export const ProviderStatusResultSchema = z.object({
   providers: z.array(ProviderStatusEntrySchema),
+  modelInventories: z.array(z.object({
+    family: z.string().min(1).max(128),
+    models: z.array(z.string().min(1).max(512)).max(10_000)
+  }).strict()).max(32).optional(),
   extraInstalledAgents: z.array(z.object({
     providerId: z.string().min(1),
     installed: z.boolean()

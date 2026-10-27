@@ -2,9 +2,32 @@ import { describe, expect, it } from "vitest";
 import {
   BUILT_IN_ACP_LAUNCH_SPECS,
   BUILT_IN_ACP_MODEL_PICKER,
+  resolveBuiltInAcpLaunchSpec,
 } from "./acp-launch-specs.js";
 
 describe("BUILT_IN_ACP_LAUNCH_SPECS", () => {
+  it.each([
+    ["acp-cursor", "cursor"], ["acp-opencode", "opencode"],
+    ["acp-grok", "grok"], ["acp-mastracode", "mastracode"],
+  ])("uses the explicitly related native harness binary for %s", (providerId, harnessId) => {
+    const original = BUILT_IN_ACP_LAUNCH_SPECS[providerId]!;
+    expect(resolveBuiltInAcpLaunchSpec(providerId, { [harnessId]: "/custom/bin/agent with spaces" })).toEqual({ ...original, command: "/custom/bin/agent with spaces" });
+    expect(BUILT_IN_ACP_LAUNCH_SPECS[providerId]).toBe(original);
+    expect(original.command).not.toBe("/custom/bin/agent with spaces");
+  });
+
+  it("keeps unrelated/native-less ACP agents and unknown providers independent", () => {
+    expect(resolveBuiltInAcpLaunchSpec("acp-omp", { omp: "custom" })).toBe(BUILT_IN_ACP_LAUNCH_SPECS["acp-omp"]);
+    expect(resolveBuiltInAcpLaunchSpec("acp-opencode", { grok: "custom" })).toBe(BUILT_IN_ACP_LAUNCH_SPECS["acp-opencode"]);
+    expect(resolveBuiltInAcpLaunchSpec("acp-opencode", { opencode: "  " })).toBe(BUILT_IN_ACP_LAUNCH_SPECS["acp-opencode"]);
+    expect(resolveBuiltInAcpLaunchSpec("custom", { custom: "binary" })).toBeUndefined();
+    expect(resolveBuiltInAcpLaunchSpec("constructor")).toBeUndefined();
+  });
+
+  it.each(["bad\0command", "bad\ncommand", "bad\rcommand"])("rejects malformed configured executable %j", command => {
+    expect(() => resolveBuiltInAcpLaunchSpec("acp-opencode", { opencode: command })).toThrow("Invalid executable configured");
+  });
+
   it("discovers Cursor models through the parameterized ACP picker, not --list-models", () => {
     expect(BUILT_IN_ACP_LAUNCH_SPECS["acp-cursor"]).not.toHaveProperty(
       "modelCli",

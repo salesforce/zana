@@ -88,6 +88,36 @@ function expectBridgeSpawn(
 }
 
 describe("provider registry", () => {
+  it("carries declaration-owned ACP command, dialect and model options to health and discovery", () => {
+    const providerOptions = {
+      acpLaunchSpec: { ...dynamicAcpLaunchSpec },
+      acpDialect: "generic",
+      parameterizedModelPicker: false,
+      primaryModels: ["custom-model"],
+    };
+    const provider = createProviderForId("acp-cursor", {
+      additionalWorkspaceWriteRoots: [],
+      bridgeLaunch: { ...ACP_BRIDGE_LAUNCH, providerOptions },
+    });
+    for (const type of ["provider/health", "model/list"] as const) {
+      expect(provider.buildCommandPlan({ type, cwd: "/project" })).toMatchObject({
+        params: { providerOptions },
+      });
+    }
+  });
+
+  it("keeps an explicit per-command launch spec above the declaration and default", () => {
+    const explicit = { ...dynamicAcpLaunchSpec, command: "/explicit/agent" };
+    const provider = createProviderForId("acp-opencode", {
+      additionalWorkspaceWriteRoots: [],
+      acpLaunchSpec: explicit,
+      bridgeLaunch: { ...ACP_BRIDGE_LAUNCH, providerOptions: { acpLaunchSpec: { ...dynamicAcpLaunchSpec } } },
+    });
+    expect(provider.buildCommandPlan({ type: "provider/health" })).toMatchObject({
+      params: { providerOptions: { acpLaunchSpec: explicit } },
+    });
+  });
+
   it("carries environment write roots to the acp bridge via provider options", () => {
     const provider = createProviderForId("acp-cursor", {
       additionalWorkspaceWriteRoots: ["/extra-root"],

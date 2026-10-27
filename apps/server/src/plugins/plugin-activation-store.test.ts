@@ -100,6 +100,36 @@ it('rejects corrupted journals, unexpected entries and journal symlinks', async 
   await writeFile(join(f.dir, 'plugin-activations/unexpected'), ''); await expect(f.store.list()).rejects.toThrow('Unexpected');
 });
 
+it('ignores only regular OS metadata while scanning every independent journal', async () => {
+  const f = await fixture(); const journal = await f.store.prepare(f.previous, f.candidate, 0);
+  const root = join(f.dir, 'plugin-activations');
+  for (const name of ['.DS_Store', 'Thumbs.db', 'desktop.ini']) await writeFile(join(root, name), 'metadata');
+  expect(await f.store.scan()).toEqual({ journals: [journal], issues: [] });
+  expect(await f.store.list()).toEqual([journal]);
+  const bad = randomUUID(); await mkdir(join(root, bad)); await writeFile(join(root, bad, 'journal.json'), 'broken');
+  const result = await f.store.scan();
+  expect(result.journals).toEqual([journal]); expect(result.issues).toEqual([{ entry: bad, detail: expect.any(String) }]);
+  expect(await readFile(join(root, bad, 'journal.json'), 'utf8')).toBe('broken');
+});
+
+it.each(['directory', 'symlink'] as const)('does not ignore %s disguised as OS metadata', async mode => {
+  const f = await fixture(); const root = join(f.dir, 'plugin-activations'); await mkdir(root);
+  if (mode === 'directory') await mkdir(join(root, '.DS_Store'));
+  else await symlink(f.owned, join(root, '.DS_Store'));
+  expect((await f.store.scan()).issues).toEqual([{ entry: '.DS_Store', detail: 'Unexpected plugin activation entry' }]);
+});
+
+it('bounds directory scanning and reports overflow without discarding remaining evidence', async () => {
+  const f = await fixture(); const root = join(f.dir, 'plugin-activations'); await mkdir(root);
+  await Promise.all(Array.from({ length: 257 }, async () => {
+    const dir = join(root, randomUUID()); await mkdir(dir); await writeFile(join(dir, 'journal.json'), 'broken');
+  }));
+  const result = await f.store.scan();
+  expect(result.issues).toHaveLength(257);
+  expect(result.issues.at(-1)?.detail).toContain('Too many pending');
+  expect(await readdir(root)).toHaveLength(257);
+});
+
 it('collects orphan managed generations while preserving registered subdirectories and foreign folders', async () => {
   const f = await fixture(); const generations = join(f.dir, 'plugins/generations');
   await mkdir(join(generations, 'foreign')); await symlink(f.previous.rootDir, join(generations, randomUUID()));

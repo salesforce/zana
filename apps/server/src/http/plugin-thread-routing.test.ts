@@ -176,7 +176,7 @@ describe('resolvePluginThreadRouting — resolver failures', () => {
 describe('resolvePluginThreadRouting — native role', () => {
   it('applies a role that is a session mode and lets an OpenCode role pin the model', async () => {
     const acpModeOptions = vi.fn(async () => [{ value: 'build', name: 'Build' }, { value: 'plan', name: 'Plan' }]);
-    const config = { harnessRouting: routing('opencode', { modelTargetId: 'llmgw/gpt-5.6-sol-1M' }) } as unknown as AppConfig;
+    const config = { harnessRouting: routing('opencode', { modelTargetId: 'fixture-provider/gpt-5.6-sol-1M' }) } as unknown as AppConfig;
     await expect(resolvePluginThreadRouting(input({
       family: 'opencode', config, acpModeOptions, projectSettings: proj(routing('opencode', { roleTargetId: 'build' }))
     }))).resolves.toEqual({
@@ -189,16 +189,16 @@ describe('resolvePluginThreadRouting — native role', () => {
   it('applies the model alongside the role when the role does not pin it', async () => {
     const provider = variant('opencode', { nativeRolePinsModel: false });
     const projectSettings = {
-      harnessRouting: routing('opencode', { roleTargetId: 'build', modelTargetId: 'llmgw/gpt-5.6-luna-1M' })
+      harnessRouting: routing('opencode', { roleTargetId: 'build', modelTargetId: 'fixture-provider/gpt-5.6-luna-1M' })
     } as unknown as ProjectSettings;
     await expect(resolvePluginThreadRouting(input({
       family: 'opencode', provider, projectSettings, acpModeOptions: async () => [{ value: 'build' }]
     }))).resolves.toEqual({
       acpMode: 'build',
-      model: 'llmgw/gpt-5.6-luna-1M',
+      model: 'fixture-provider/gpt-5.6-luna-1M',
       applied: [
         { field: 'role', value: 'build', source: 'project' },
-        { field: 'model', value: 'llmgw/gpt-5.6-luna-1M', source: 'project' }
+        { field: 'model', value: 'fixture-provider/gpt-5.6-luna-1M', source: 'project' }
       ]
     });
   });

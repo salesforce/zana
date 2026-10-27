@@ -665,8 +665,7 @@ export function LegacyAgentHomeComposer({
       // A picked OpenCode native agent pins its OWN model. Forcing a catalog
       // `--model` alongside `--agent <role>` overrides that pin and dies with
       // ProviderModelNotFoundError on any install whose provider inventory
-      // differs from the static `aisuite/*` snapshot (e.g. an `llmgw`-backed
-      // setup) — the exit-64 dead-session bug. So a native role and a forced
+      // differs from a previously discovered model catalogue. A native role and a forced
       // model are mutually exclusive here: the role wins and carries no model.
       const adapterEntry = validRoleId
         ? { roleTargetId: validRoleId }

@@ -100,7 +100,7 @@ async function enableOpenCode(window: Page) {
   await expect(ok).toHaveAttribute('title', /1\.18\.10/, { timeout: 20_000 });
 }
 
-test('launches a directly-launchable OpenCode role validated by preflight discovery', async ({ app }) => {
+test('launches a directly-launchable OpenCode role despite an inherited unsupported model tier', async ({ app }) => {
   const { window } = app;
   const projectDir = mkdtempSync(join(tmpdir(), 'zcc-opencode-launch-ok-'));
   const projectName = basename(projectDir);
@@ -113,6 +113,11 @@ test('launches a directly-launchable OpenCode role validated by preflight discov
       if (!result.ok) throw new Error(result.message);
       return result.value.id;
     }, projectDir);
+    await window.evaluate(async (id) => {
+      await window.cc.projectSettings.set(id, { modelLevel: 'medium' });
+    }, projectId);
+    expect(await window.evaluate((id) => window.cc.projectSettings.get(id), projectId))
+      .toMatchObject({ modelLevel: 'medium' });
 
     await goToAgents(window);
     const modal = await openLegacyAgentLauncher(window);
@@ -123,9 +128,9 @@ test('launches a directly-launchable OpenCode role validated by preflight discov
     // in `agent list`, so preflight discovery resolves it and the launch spawns.
     // The composer auto-defaults a catalog `--model`, which the fixture rejects
     // whenever it co-occurs with `--agent` (ProviderModelNotFoundError → exit 64).
-    // A successful launch here
-    // therefore PROVES the composer dropped the forced model once a native role
-    // was picked — the native agent pins its own model.
+    // The project also carries an unsupported portable medium tier. A successful
+    // launch proves preflight ignores that unused tier before model resolution,
+    // and argv assembly drops the forced model: the native role owns its model.
     await selectRole(window, modal, 'reviewer');
     await expect(modal.locator('[data-testid="composer-mode-picker-trigger"]')).toContainText('Reviewer');
 
@@ -196,9 +201,9 @@ test(`${surface} model picker reload invalidates the launch inventory and preser
   let projectId: string | undefined;
   const sessions: string[] = [];
   // > 32 KiB and the selected id is LAST: a truncated Electron capture fails the launch.
-  const inventory = (last: string) => [...Array.from({ length: 1_500 }, (_, i) => `llmgw/catalog-fixture-model-${i}`), last].join('\n') + '\n';
+  const inventory = (last: string) => [...Array.from({ length: 1_500 }, (_, i) => `fixture-provider/catalog-fixture-model-${i}`), last].join('\n') + '\n';
   try {
-    writeFileSync(join(projectDir, '.zcc-model-list'), inventory('llmgw/recovery-old'));
+    writeFileSync(join(projectDir, '.zcc-model-list'), inventory('fixture-provider/recovery-old'));
     writeFileSync(join(projectDir, '.zcc-acp-model-count'), '6');
     await enableOpenCode(window);
     projectId = await window.evaluate(async (path) => {
@@ -208,11 +213,19 @@ test(`${surface} model picker reload invalidates the launch inventory and preser
     }, projectDir);
     const launch = (model: string) => window.evaluate(async ({ projectId, model }) => {
       return window.cc.terminals.create({ projectId, profile: 'opencode', cols: 100, rows: 30,
-        harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTargetId: model } } } });
+        // Settings persists the namespace alongside its concrete model. Neither
+        // selection is part of the shared adapter's static catalog.
+        harnessRouting: { schemaVersion: 1, byAdapter: { opencode: {
+          providerTargetId: 'fixture-provider', modelTargetId: model
+        } } } });
     }, { projectId: projectId!, model });
-    const first = await launch('llmgw/recovery-old');
+    const first = await launch('fixture-provider/recovery-old');
     expect(first, JSON.stringify(first)).toMatchObject({ ok: true });
-    if (first.ok) sessions.push(first.value.id);
+    if (first.ok) {
+      sessions.push(first.value.id);
+      await expect.poll(() => window.evaluate(id => window.cc.terminals.backlog(id), first.value.id))
+        .toContain('⠉ opencode');
+    }
     await goToAgents(window);
     const modal = await openLegacyAgentLauncher(window);
     await selectTargetProject(window, modal, basename(projectDir));
@@ -225,7 +238,7 @@ test(`${surface} model picker reload invalidates the launch inventory and preser
     await expect(window.getByTestId('model-reasoning-model-fake/gen-5')).toBeVisible();
     await search.fill('Fake Gen 6');
     await expect(window.getByText('No matching models', { exact: true })).toBeVisible();
-    writeFileSync(join(projectDir, '.zcc-model-list'), inventory('llmgw/recovery-new'));
+    writeFileSync(join(projectDir, '.zcc-model-list'), inventory('fixture-provider/recovery-new'));
     writeFileSync(join(projectDir, '.zcc-acp-model-count'), '7');
     const refreshResponse = window.waitForResponse(response => {
       const url = new URL(response.url());
@@ -242,10 +255,14 @@ test(`${surface} model picker reload invalidates the launch inventory and preser
     await expect(window.getByTestId('model-reasoning-model-fake/gen-6')).toBeVisible();
     await window.screenshot({ path: testInfo.outputPath('model-picker-reload.png') });
     await trigger.click();
-    const fresh = await launch('llmgw/recovery-new');
+    const fresh = await launch('fixture-provider/recovery-new');
     expect(fresh, JSON.stringify(fresh)).toMatchObject({ ok: true });
-    if (fresh.ok) sessions.push(fresh.value.id);
-    const obsolete = await launch('llmgw/recovery-old');
+    if (fresh.ok) {
+      sessions.push(fresh.value.id);
+      await expect.poll(() => window.evaluate(id => window.cc.terminals.backlog(id), fresh.value.id))
+        .toContain('⠉ opencode');
+    }
+    const obsolete = await launch('fixture-provider/recovery-old');
     expect(obsolete.ok).toBe(false);
     expect(JSON.stringify(obsolete)).toContain('model target unavailable');
   } finally {

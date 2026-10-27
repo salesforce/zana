@@ -451,11 +451,11 @@ describe('harness settings containers', () => {
     expect(normalizeConfig({
       harnessRouting: {
         schemaVersion: 1,
-        byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-terra-1M' } }
+        byAdapter: { opencode: { modelTargetId: 'fixture-provider/gpt-5.6-terra-1M' } }
       }
     }).harnessRouting).toEqual({
       schemaVersion: 1,
-      byAdapter: { opencode: { modelTargetId: 'llmgw/gpt-5.6-terra-1M' } }
+      byAdapter: { opencode: { modelTargetId: 'fixture-provider/gpt-5.6-terra-1M' } }
     });
   });
 

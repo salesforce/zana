@@ -210,7 +210,7 @@ async function preflightStructuredRouting(
   if (model.targetId && model.structuredSelected) {
     const snapshotTarget = provider.adapter.descriptor.targets?.models.find(({ id }) => id === model.targetId);
     // The static model catalog is a release-maintained snapshot that DRIFTS when
-    // the gateway renames models (aisuite/* → llmgw/*): a snapshot id can be GONE
+    // the installed provider renames models: a snapshot id can be GONE
     // (its spawn dies with ProviderModelNotFoundError / exit 64) and a valid NEW id
     // can be ABSENT from the snapshot. So the LIVE gateway inventory is
     // authoritative when the provider can probe it — it decides yes/no for BOTH
