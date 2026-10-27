@@ -58,6 +58,7 @@ import { PluginUpdateDetails, pluginUpdateDelivery } from './PluginUpdateDetails
 import { PluginMoreFromAuthor, PluginOverviewLead, PluginReleaseSection, PluginDetailsSection } from './CatalogPluginDetail.js';
 import { PluginOverviewMarkdown } from './PluginOverviewMarkdown.js';
 import { InstalledPluginCollection } from './InstalledPluginCollection.js';
+import { PluginPacksCollection } from './PluginPacksCollection.js';
 import { summarizePluginHealthDetail } from './plugin-health.js';
 import { useUi } from '@/store';
 import {
@@ -438,6 +439,7 @@ export function InstalledView({ toolbarExtra, mobileActions, onBrowse, defaultUp
       <div className="ext-plugin-collection-page" hidden={!!active}>
       <InstalledPluginCollection rows={rows} selectedId={active?.module.id} defaultUpdates={defaultUpdates}
         onOpen={selectSettingsExtension} onBrowse={browsePlugins}
+        packs={<PluginPacksCollection mode="installed" />}
         headerActions={!compact ? <>
           <div className="ext-install-menu-wrap" ref={newMenuRef}>
             <button type="button" className="settings-btn primary" aria-haspopup="menu"

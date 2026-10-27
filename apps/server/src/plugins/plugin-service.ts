@@ -19,7 +19,6 @@ import {
 import {
   marketplaceSourceDisplay,
   marketplaceSourcesEqual,
-  materializeMarketplaceIndex,
   materializeMarketplaceSource,
   parseMarketplaceSource
 } from './marketplace-source.js';
@@ -140,6 +139,7 @@ import { assertBundledPluginInstall, bundledPluginById, bundledPluginSourceNotic
 import { buildPluginApp, buildPluginServer, buildPluginHost, getPluginBuildToolchain, createPluginDevLoop } from '@zana-ai/zcc-plugin-build';
 import { createPluginServicesRegistry } from '@zana-ai/zcc-plugin-sdk/server';
 import { createSerializedTransactionQueue } from '../durable-store.js';
+import { createPluginPackService, type PluginPackService } from './plugin-packs.js';
 import type { PluginRecoveryState } from '@zana-ai/zcc-domain/product';
 import { copyRecoveryRollbackRuntime, createOfficialPluginRecovery } from './plugin-recovery-runtime.js';
 
@@ -159,6 +159,7 @@ export interface PluginUpdateRow {
 }
 
 export interface PluginService {
+  readonly pluginPacks: PluginPackService;
   emitHostEvent(event: import('./plugin-api.js').PluginHostEvent): Promise<void>;
   list(): InstalledPluginRow[];
   get(id: string): InstalledPluginRow | undefined;
@@ -2196,15 +2197,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   async function seedOfficialMarketplace(): Promise<void> {
     const url = resolveOfficialMarketplaceUrl();
     if (!url) return;
-    if (matchingMarketplace(url)) return;
-    try {
-      const parsed = parseMarketplaceSource(url);
-      const index = await materializeMarketplaceIndex(parsed, fetchJson);
-      await marketplaces.add(marketplaceSourceDisplay(parsed), index, { official: true });
-      await emitAppsChanged();
-    } catch {
-      /* fail-soft: bundled Browse still works offline */
-    }
+    await seedMarketplaceSource(url);
   }
 
   async function seedMarketplaceSource(raw: string | null): Promise<void> {
@@ -2226,14 +2219,20 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
           /* fail-soft */
         }
       }
-      return;
+      // Undefined means an older cache has never attempted sidecar discovery.
+      // Null records a completed attempt for a catalogue without packs.
+      if (existing.cachedPacks !== undefined) return;
     }
     try {
-      const index = await materializeMarketplaceIndex(parsed, fetchJson, {
+      const materialized = await materializeMarketplaceSource(parsed, fetchJson, {
         timeoutMs: DEFAULT_MARKETPLACE_SEED_TIMEOUT_MS,
-        nonInteractive: true
+        nonInteractive: true,
+        includePacks: true
       });
-      await marketplaces.add(display, index, { official: true });
+      // Discover packs on upgrade without silently replacing the cached plugin index.
+      await marketplaces.add(existing?.source ?? display, existing?.cachedIndex ?? materialized.index, {
+        official: true, packs: materialized.packs, packsError: materialized.packsError
+      });
       await emitAppsChanged();
     } catch {
       /* Unreachable catalogs must not prevent startup or affect other catalogs. */
@@ -2380,7 +2379,35 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
   let appliedSafeMode = opts.getAppConfig?.().pluginSafeMode === true;
   let developmentModeRefresh: Promise<void> = Promise.resolve();
   let appliedDevelopmentMode = developmentEnabled();
+  const pluginPacks = createPluginPackService({
+    dataDir: opts.dataDir,
+    catalogs: () => marketplaces.list(),
+    installed: () => store.list(),
+    now,
+    async installMember({ entry, marketplaceName, pluginId }) {
+      await ensureActivationRecovery();
+      if (stopped) throw new Error('plugin service is stopped');
+      const existing = store.get(pluginId);
+      if (existing) return existing;
+      const materialized = await materializeMarketplaceEntry(entry);
+      // Keep normal remote-install race protection: expectedId is update-only.
+      try {
+        const manifest = loadManifestFromDir(materialized.rootDir);
+        if (manifest.id !== pluginId) throw new Error(`Pack member identity mismatch: expected ${pluginId}, received ${manifest.id}`);
+      } catch (error) {
+        removeUnreferencedGeneration(materialized.rootDir);
+        throw error;
+      }
+      const row = await installFromMaterialized(materialized, true, {
+        provenance: 'catalog', catalogMarketplace: marketplaceName, catalogEntryId: pluginId
+      });
+      await emitAppsChanged();
+      return row;
+    }
+  });
+
   const service: PluginService = {
+    pluginPacks,
     recoveryStatus: () => structuredClone(recoveryState),
     async hardReload() {
       await waitForStartup();
@@ -2907,15 +2934,17 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     listMarketplaces: () => marketplaces.list(),
     async addMarketplace(source, extra) {
       const parsed = parseMarketplaceSource(source);
-      const materialized = await materializeMarketplaceSource(parsed, fetchJson);
-      return marketplaces.add(marketplaceSourceDisplay(materialized.source), materialized.index, extra);
+      const materialized = await materializeMarketplaceSource(parsed, fetchJson, { includePacks: true });
+      return marketplaces.add(marketplaceSourceDisplay(materialized.source), materialized.index, {
+        ...extra, packs: materialized.packs, packsError: materialized.packsError
+      });
     },
     async refreshMarketplace(source) {
       const parsed = parseMarketplaceSource(source);
       const display = marketplaceSourceDisplay(parsed);
       try {
-        const materialized = await materializeMarketplaceSource(parsed, fetchJson);
-        return marketplaces.refresh(marketplaceSourceDisplay(materialized.source), materialized.index);
+        const materialized = await materializeMarketplaceSource(parsed, fetchJson, { includePacks: true });
+        return marketplaces.refresh(marketplaceSourceDisplay(materialized.source), materialized.index, materialized);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const row = await marketplaces.recordRefreshError(display, message);

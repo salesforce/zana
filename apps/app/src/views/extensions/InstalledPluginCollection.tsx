@@ -15,11 +15,12 @@ const STATUS_FILTERS: { id: InstalledStatusFilter; label: string }[] = [
   { id: 'all', label: 'All' }, { id: 'enabled', label: 'Enabled' }, { id: 'disabled', label: 'Disabled' }
 ];
 
-export function InstalledPluginCollection({ rows, onOpen, onBrowse, headerActions, mobileHeader, selectedId, defaultUpdates = false }: {
+export function InstalledPluginCollection({ rows, onOpen, onBrowse, headerActions, packs, mobileHeader, selectedId, defaultUpdates = false }: {
   rows: HubRow[];
   onOpen: (id: string) => void;
   onBrowse: () => void;
   headerActions?: ReactNode;
+  packs?: ReactNode;
   mobileHeader?: ReactNode;
   selectedId?: string | null;
   defaultUpdates?: boolean;
@@ -103,6 +104,7 @@ export function InstalledPluginCollection({ rows, onOpen, onBrowse, headerAction
       </div>
       <div className="ext-plugin-workbench">
       <div className="ext-installed-scroller ext-plugin-collection-main">
+        {!updatesOnly ? packs : null}
         {!updatesOnly && attentionCount > 0 ? <div className="ext-plugin-attention">
           <AlertTriangle size={19} aria-hidden="true" /><div><strong>{attentionCount} {attentionCount === 1 ? 'plugin needs' : 'plugins need'} attention</strong>
           <p>Review runtime issues and configuration requests.</p></div>

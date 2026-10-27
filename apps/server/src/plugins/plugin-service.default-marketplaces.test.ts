@@ -10,7 +10,7 @@ import type { MarketplaceIndex } from './marketplace.js';
 const fetchCatalog = vi.hoisted(() => vi.fn());
 vi.mock('./marketplace-source.js', async importOriginal => ({
   ...await importOriginal<typeof import('./marketplace-source.js')>(),
-  materializeMarketplaceIndex: fetchCatalog
+  materializeMarketplaceSource: async (...args: unknown[]) => ({ index: await fetchCatalog(...args), packs: null, packsError: null })
 }));
 
 const PUBLIC: MarketplaceIndex = { schemaVersion: 1, name: 'zana-community', displayName: 'Zana Community', plugins: [] };
@@ -49,7 +49,7 @@ describe('independent default marketplaces', () => {
     expect(value.listMarketplaces().map(row => row.name).sort()).toEqual(['internal', 'zana-community']);
     expect(value.listMarketplaces().every(row => row.official && row.lastError === null)).toBe(true);
     for (const url of ['https://github.com/salesforce/zana-marketplace.git', 'https://git.soma.salesforce.com/chatbots/zana-internal-marketplace.git']) {
-      expect(fetchCatalog).toHaveBeenCalledWith({ kind: 'git', url, ref: 'HEAD' }, expect.any(Function), { timeoutMs: 8_000, nonInteractive: true });
+      expect(fetchCatalog).toHaveBeenCalledWith({ kind: 'git', url, ref: 'HEAD' }, expect.any(Function), { timeoutMs: 8_000, nonInteractive: true, includePacks: true });
     }
     expect(fetchCatalog).toHaveBeenCalledTimes(2);
   });
@@ -70,9 +70,9 @@ describe('independent default marketplaces', () => {
 
   it('preserves the internal cache, custom catalogs and installed plugins while promoting the cached public catalog', async () => {
     const { dataDir, store, file } = setup();
-    const internal = await store.add(DEFAULT_INTERNAL_MARKETPLACE_SOURCE, PRIVATE, { official: true });
-    await store.add(DEFAULT_COMMUNITY_MARKETPLACE_SOURCE, PUBLIC);
-    const custom = await store.add('https://example.test/custom.json', PRIVATE, { official: true });
+    const internal = await store.add(DEFAULT_INTERNAL_MARKETPLACE_SOURCE, PRIVATE, { official: true, packs: null });
+    await store.add(DEFAULT_COMMUNITY_MARKETPLACE_SOURCE, PUBLIC, { packs: null });
+    const custom = await store.add('https://example.test/custom.json', PRIVATE, { official: true, packs: null });
     const pluginDir = join(dataDir, 'private-tool');
     mkdirSync(pluginDir);
     writeFileSync(join(pluginDir, 'package.json'), JSON.stringify({ name: 'zcc-plugin-private-tool', version: '1.0.0',
@@ -133,7 +133,7 @@ describe('independent default marketplaces', () => {
 
   it('refetches an existing public row without usable cache and preserves the internal cache', async () => {
     const { dataDir, store, file } = setup();
-    const internal = await store.add(DEFAULT_INTERNAL_MARKETPLACE_SOURCE, PRIVATE, { official: true });
+    const internal = await store.add(DEFAULT_INTERNAL_MARKETPLACE_SOURCE, PRIVATE, { official: true, packs: null });
     const document = JSON.parse(readFileSync(file, 'utf8'));
     document.catalogs.push({ source: DEFAULT_COMMUNITY_MARKETPLACE_SOURCE, official: true });
     writeFileSync(file, JSON.stringify(document));

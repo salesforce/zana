@@ -2,6 +2,7 @@ import type { ThreadHistoryQuery, ThreadHistoryPage, ConversationTranscript } fr
 import type { DesktopBrowserApi } from './browser.js';
 import type { SquadLaunchPrefill, SquadProposalErrorCode } from '@zana-ai/zcc-domain/squad-proposal';
 import type { MarketplaceCatalogRow } from '@zana-ai/zcc-domain';
+import type { PluginPackCatalogEntry, PluginPackIdentity, PluginPackInstallation, PluginPackInstallRequest, PluginPackPlan } from '@zana-ai/zcc-domain';
 import type { CloseFollowupFailure } from '@zana-ai/zcc-domain/product';
 import type { OwnNotificationLevel, ThreadNotificationState } from '@zana-ai/zcc-domain';
 import type {
@@ -1652,6 +1653,14 @@ export interface CcApi {
     add(source: string): Promise<MarketplaceCatalogRow>;
     refresh(source: string): Promise<MarketplaceCatalogRow>;
     remove(source: string): Promise<{ ok: true }>;
+  };
+  /** Reviewed installation groups; the host resolves every member source. */
+  pluginPacks: {
+    list(): Promise<PluginPackCatalogEntry[]>;
+    plan(identity: PluginPackIdentity): Promise<PluginPackPlan>;
+    install(request: PluginPackInstallRequest): Promise<PluginPackInstallation>;
+    listInstalled(): Promise<PluginPackInstallation[]>;
+    forget(identity: PluginPackIdentity): Promise<boolean>;
   };
   cliSkills: {
     status(hostIds?: string[]): Promise<{

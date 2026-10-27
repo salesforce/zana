@@ -82,6 +82,7 @@ export {
   type MarketplaceEntry,
   type MarketplaceCatalogRow
 } from './plugin-marketplace.js';
+export * from './plugin-pack.js';
 export {
   MARKETPLACE_OVERVIEW_MAX_CHARS,
   normalizePluginOverviewText,
