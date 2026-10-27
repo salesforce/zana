@@ -171,9 +171,11 @@ describe('conversationTimeline', () => {
     expect(timeline.rows).toEqual([]);
   });
 
-  it('offers Preview for attachment reads only when the thread has a project', () => {
+  it.each([
+    ['/data/attachments/proj-1/shot.png', false],
+    ['/data/artifacts/run/shot.png', true]
+  ])('offers Preview for authorized local reads of %s', (attachment, withoutProject) => {
     const threadId = '11111111-1111-4111-8111-111111111111';
-    const attachment = '/data/attachments/proj-1/shot.png';
     const readIntent = (projectId: string | null) => {
       vi.mocked(getConversationThread).mockReturnValueOnce({
         id: threadId,
@@ -225,7 +227,12 @@ describe('conversationTimeline', () => {
 
     expect(readIntent('proj-1')).toMatchObject({ type: 'read', path: attachment });
     expect(readIntent('proj-1')).not.toHaveProperty('previewable');
-    expect(readIntent(null)).toMatchObject({ type: 'read', path: attachment, previewable: false });
+    if (withoutProject) {
+      expect(readIntent(null)).toMatchObject({ type: 'read', path: attachment });
+      expect(readIntent(null)).not.toHaveProperty('previewable');
+    } else {
+      expect(readIntent(null)).toMatchObject({ type: 'read', path: attachment, previewable: false });
+    }
   });
 
   it('projects a latest window that dropped turn/started instead of failing the timeline', () => {

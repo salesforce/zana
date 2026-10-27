@@ -50,6 +50,7 @@ export function reconcileBundledPluginMetadata(
   assertBundledPluginInstall({ id: manifest.id, sourceKind: 'builtin', source: row.source, development: false });
   if (manifest.id !== row.id) throw new Error(`bundled plugin identity changed: expected ${row.id}, received ${manifest.id}`);
   const patch = {
+    bundledRecoveryVersion: undefined,
     rootDir,
     version: manifest.version,
     name: manifest.name,

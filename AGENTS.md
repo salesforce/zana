@@ -18,7 +18,7 @@ If one is explicitly requested, put it under `.worktrees/<branch-name>` so repo 
 5. **Keep heavy, unbounded work off the main event loop** — bound/`LIMIT`/paginate growing reads; an accumulating store needs a retention cap.
 6. **Core never names a specific extension in logic.** Concrete ids appear only in the `MAIN_MODULES` (empty) / `APP_MODULES` (`docs`) registration. The `'zana'` module-id literal must not appear anywhere in `apps/app/src/**` code; `apps/app/src/__tests__/rule6-zana-literal.guard.test.ts` fails on any bare `'zana'`/`"zana"` token in comment-stripped renderer code. The registration site is guarded by `apps/server/src/services/extensions/__tests__/core-extension-separation.guard.test.ts`.
 7. **Promotion to a built-in is deliberate and bounded** — only when the broker can't grant the capability even scoped, and the trusted version (`builtinExec`/`builtinFetch`) is no weaker than its broker-gated twin (redirects, body cap, timeout).
-8. **New or modified code needs at least 80% test coverage**, covering meaningful branches and failure paths. For Electron main/renderer seams, also add or update the built-Electron E2E test. Before completion, run the focused tests plus any verification trigger below.
+8. **New or modified code needs at least 80% test coverage**, covering meaningful branches and failure paths. For Electron main/renderer seams, also add or update the built-Electron E2E test. Before completion, run the focused tests plus any matching command in the Verification triggers section (`docs/live-zana-verification.md`).
 9. **PR monitoring means diagnose and repair.** Watch checks until complete. On failure, use `gh run view <run-id> --job <job-id> --log-failed`; for external checks, `gh api repos/<owner>/<repo>/commits/<sha>/check-runs` then `gh api repos/<owner>/<repo>/check-runs/<id>/annotations` for file, line, rule, and remediation. Fix, verify locally, push, repeat until every required check passes.
 
 ## Native runtime and test isolation
@@ -59,18 +59,7 @@ Guide: `docs/tinynod-local-review.md`. Opt-in is `git config zana.tinynod.enable
 
 ## Verification triggers
 
-| Change touches | Run | Details |
-| --- | --- | --- |
-| Job Team owner-launch surfaces (Team UI, CLI Agent owner, Modern ACP owner) | `pnpm run test:e2e:jobteam` | `docs/job-team-e2e.md` |
-| Thread / CLI Agent spawn, mode, reasoning, stop, plugin catalog injection: `acpMode`, `reasoningLevel`, `permissionMode`, `/api/v1/cli-agents`, `term.create`, `harnessRouting` / `executionState` / `modelLevel` / native roles, host-daemon harness providers, `PtyManager.create()`, Control SDK launch/wait, plugin session instructions, `zcc thread` / `zcc agent` | `pnpm live:mode-reasoning` then `pnpm live:memory` | `docs/control-sdk.md` |
-| Memory CLI, catalog injection (`contributeInstructions`), scope isolation, `zcc memory` | `pnpm live:memory` | `docs/control-sdk.md` |
-| BrowserView leases, loopback CDP, capture, cookie import-source redaction, `zcc browser` / `experimental_desktopBrowsers` | `pnpm live:browser` | `docs/control-sdk.md` |
-| OpenCode discovery, filtering, launcher, model catalog | see doc | `apps/host-daemon/AGENTS.md` |
-| Packaged plugin runtime seams | `pnpm test:e2e -- e2e/packaged-provider-startup.spec.ts` | `apps/server/src/services/extensions/AGENTS.md` |
-| Plugin authoring loop | `pnpm test:e2e -- e2e/plugin-authoring-live.spec.ts` | `apps/server/src/services/extensions/AGENTS.md` |
-| Windows title bar overlay (caption button colours, `titleBarOverlay`, title bar `--bg-base` / `--text-muted` / `--titlebar-h`) | On Windows: `pnpm test:e2e -- e2e/windows-titlebar-overlay-theme.spec.ts` (skips on Linux CI) | `apps/desktop/src/window/titlebar-overlay.ts` |
-
-Live suites (`live:*`) need an attached app on `:8780`/`:8781`, an enrolled host-daemon, and a host shell (`unset ZCC_SESSION_ID`). Preflight skips with `console.warn`, so a verify that finishes in milliseconds is a false green. Keep them off `pnpm live:matrix`.
+Triggers: Job Team launch surfaces; thread/CLI Agent lifecycle and configuration (spawn, stop, mode, reasoning, permissions, plugin catalog injection: `PtyManager.create()`, `term.create`, `/api/v1/cli-agents`, `acpMode` / `reasoningLevel` / `permissionMode`, `harnessRouting`, `zcc thread` / `zcc agent`); memory CLI (`contributeInstructions`, `zcc memory`); BrowserView / `zcc browser`; OpenCode discovery; packaged plugin runtime and plugin authoring; Windows title bar overlay (`titleBarOverlay`, `--bg-base` / `--titlebar-h`). Touching any of these requires reading [docs/live-zana-verification.md](docs/live-zana-verification.md) for the exact command before claiming verification.
 
 ## Coupling index
 

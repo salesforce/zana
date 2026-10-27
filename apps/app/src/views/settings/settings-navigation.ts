@@ -73,7 +73,7 @@ export const SETTINGS_SECTIONS: Array<{
   { id: 'usage', label: 'Usage', icon: BarChart3, desc: 'Session activity rollup', group: 'catalogues' },
   { id: 'experimental', label: 'Experimental', icon: FlaskConical, desc: 'Opt-in features under evaluation', group: 'labs' },
   { id: 'performance', label: 'Performance', icon: BarChart3, desc: 'Host daemon resources, workload, and connection health', group: 'app' },
-  { id: 'development', label: 'Development', icon: Code2, desc: 'Develop and test bundled plugins', group: 'app' },
+  { id: 'development', label: 'Development', icon: Code2, desc: 'Develop plugins and recover the runtime', group: 'app' },
   { id: 'about', label: 'About', icon: Info, desc: 'Version, updates, credits & release notes', group: 'app' }
 ];
 
@@ -92,6 +92,7 @@ export function visibleSettingsSections(hidden: ReadonlySet<string>): typeof SET
  */
 export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: string; label: string }>>> = {
   development: [
+    { id: 'recovery', label: 'Recovery' },
     { id: 'bundled-plugins', label: 'Bundled plugins' }
   ],
   performance: [

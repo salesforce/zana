@@ -33,7 +33,7 @@
  * No third-party deps (node builtins + the platform CLI only), matching
  * scripts/publish-extension.mjs.
  */
-import { readFileSync, existsSync, copyFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, copyFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -67,7 +67,7 @@ const ymlText = readFileSync(feedPath, 'utf-8');
 const artifacts = [...ymlText.matchAll(/^\s*-?\s*url:\s*(\S+)\s*$/gim)]
   .map((m) => m[1].trim())
   .filter((u) => u && !/^https?:/i.test(u)); // relative artifact filenames only
-const files = [FEED, ...new Set(artifacts)];
+const files = [FEED, ...new Set(artifacts), ...readdirSync(DIST).filter(name => /^plugin-recovery-[a-zA-Z0-9._-]+\.json(?:\.gz)?$/.test(name))];
 
 for (const f of files) {
   if (!existsSync(join(DIST, f))) die(`feed references ${f} but it is missing from dist/`);

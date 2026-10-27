@@ -2722,6 +2722,24 @@ describe('product HTTP plugins', () => {
     await expect((await request()).json()).resolves.toEqual({ ok: true, value });
   });
 
+  it('runs core recovery without plugin RPC and exposes progress', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-recovery-'));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    const start = () => fetch(`${server.url}api/v1/plugin-apps/hard-reload`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    const status = () => fetch(`${server.url}api/v1/plugin-apps/recovery`);
+    server.ctx.plugins = undefined;
+    expect((await start()).status).toBe(503);
+    expect((await status()).status).toBe(503);
+    const value = { phase: 'running', total: 1, current: 'provider-codex', restored: [], failed: [], skipped: [] };
+    const hardReload = vi.fn(async () => value);
+    server.ctx.plugins = { hardReload, recoveryStatus: () => value } as never;
+    const response = await start();
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toEqual(value);
+    expect(hardReload).toHaveBeenCalledExactlyOnceWith();
+    await expect((await status()).json()).resolves.toEqual(value);
+  });
+
   it('adds, lists, refreshes, and removes marketplace catalogs', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-mp-'));
     server = await startTestProductServer({

@@ -125,7 +125,7 @@ describe('CLI session workspace previews', () => {
   const resolveHostId = vi.fn();
   const projects = vi.fn();
   const ctx = {
-    db: {}, toProjects: projects,
+    db: {}, dataDir: '/data', toProjects: projects,
     hostHub: { resolveHostId, callHostOnlineRpc: read }
   } as unknown as ProductHttpContext;
 
@@ -207,7 +207,7 @@ describe('CLI session workspace previews', () => {
   });
 });
 
-describe('uploaded attachment previews', () => {
+describe.each(['attachments', 'artifacts'] as const)('%s previews', (kind) => {
   it.each([['photo.bmp', 'image/bmp'], ['photo.AVIF', 'image/avif']])('recognizes the accepted %s image format', (path, mime) => {
     expect(imageContentType(path)).toBe(mime);
   });
@@ -217,8 +217,8 @@ describe('uploaded attachment previews', () => {
   const hostRead = vi.fn(async () => ({ content: 'checkout file', encoding: 'utf8' }));
 
   beforeEach(async () => {
-    dataDir = await mkdtemp(join(tmpdir(), 'thread-attachment-preview-'));
-    root = join(dataDir, 'attachments', 'p1');
+    dataDir = await mkdtemp(join(tmpdir(), 'thread-local-preview-'));
+    root = kind === 'attachments' ? join(dataDir, kind, 'p1') : join(dataDir, kind);
     await mkdir(root, { recursive: true });
     vi.mocked(getConversationThread).mockReturnValue({
       id: 't1', projectId: 'p1', environmentId: 'e1', hostId: 'remote-host'
@@ -232,7 +232,7 @@ describe('uploaded attachment previews', () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  it('reads an uploaded image even when the remote environment is unavailable', async () => {
+  it('reads a local image even when the remote environment is unavailable', async () => {
     const path = join(root, 'pasted.png');
     const bytes = Buffer.from([137, 80, 78, 71, 0, 255]);
     await writeFile(path, bytes);
@@ -244,7 +244,7 @@ describe('uploaded attachment previews', () => {
     expect(hostRead).not.toHaveBeenCalled();
   });
 
-  it('reads uploaded text but keeps relative paths scoped to the host checkout', async () => {
+  it('reads local text but keeps relative paths scoped to the host checkout', async () => {
     const path = join(root, 'notes.txt');
     await writeFile(path, 'Uploaded notes');
     expect(await readThreadHostFile(ctx, 't1', path)).toMatchObject({
@@ -256,7 +256,7 @@ describe('uploaded attachment previews', () => {
     });
   });
 
-  it('reads uploaded PDF bytes without decoding them as text', async () => {
+  it('reads local PDF bytes without decoding them as text', async () => {
     const path = join(root, 'report.PDF');
     const bytes = Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.from([255, 128, 0])]);
     await writeFile(path, bytes);
@@ -266,10 +266,12 @@ describe('uploaded attachment previews', () => {
     expect(hostRead).not.toHaveBeenCalled();
   });
 
-  it('rejects another project, sibling-prefix paths and traversal outside the attachment root', async () => {
+  it('rejects another project, sibling-prefix paths and traversal outside the local root', async () => {
     for (const candidate of [
       join(dataDir, 'attachments', 'p2', 'private.png'),
       join(dataDir, 'attachments', 'p1-other', 'private.png'),
+      join(dataDir, 'artifacts-other', 'private.png'),
+      join(dataDir, 'config.json'),
       `${root}/../../secret.png`,
       root
     ]) {
@@ -304,4 +306,39 @@ describe('uploaded attachment previews', () => {
     const file = await readThreadHostFile(ctx, 't1', path);
     expect(Buffer.from(file.content, 'base64')).toHaveLength(IMAGE_READ_MAX_BYTES);
   });
+
+  if (kind === 'artifacts') {
+    it('reads generated images for registered CLI sessions outside the project', async () => {
+      const path = join(root, 'data-org-test-20261027', 'B-quote-method-desktop.png');
+      await mkdir(join(root, 'data-org-test-20261027'));
+      await writeFile(path, Buffer.from([137, 80, 78, 71, 255]));
+      vi.mocked(getConversationThread).mockReturnValue(null);
+      ctx.toProjects = () => [{ id: 'p1', path: '/project' }] as never;
+      expect(await readThreadHostFile(ctx, 'cli-session', path, 'p1')).toMatchObject({
+        path, relPath: 'data-org-test-20261027/B-quote-method-desktop.png',
+        encoding: 'base64', contentType: 'image/png'
+      });
+      expect(hostRead).not.toHaveBeenCalled();
+    });
+
+    it('keeps artifact access behind thread or project registration', async () => {
+      const path = join(root, 'shot.png');
+      await writeFile(path, 'image');
+      vi.mocked(getConversationThread).mockReturnValue(null);
+      ctx.toProjects = () => [];
+      await expect(readThreadHostFile(ctx, 'unknown', path, 'missing'))
+        .rejects.toMatchObject({ status: 404, code: 'unknown-thread' });
+      expect(hostRead).not.toHaveBeenCalled();
+    });
+
+    it('reads artifacts for a registered conversation without a project or environment', async () => {
+      const path = join(root, 'shot.png');
+      await writeFile(path, Buffer.from([137, 80, 78, 71]));
+      vi.mocked(getConversationThread).mockReturnValue({ id: 't1' } as never);
+      expect(await readThreadHostFile(ctx, 't1', path)).toMatchObject({
+        encoding: 'base64', contentType: 'image/png'
+      });
+      expect(hostRead).not.toHaveBeenCalled();
+    });
+  }
 });

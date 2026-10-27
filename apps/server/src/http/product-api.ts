@@ -3100,6 +3100,17 @@ export async function handleProductHttp(
       return true;
     }
 
+    if (path === '/api/v1/plugin-apps/recovery' && method === 'GET') {
+      if (!ctx.plugins) { sendJson(response, 503, { error: 'plugin host is unavailable' }); return true; }
+      sendJson(response, 200, ctx.plugins.recoveryStatus());
+      return true;
+    }
+    if (path === '/api/v1/plugin-apps/hard-reload' && method === 'POST') {
+      if (!ctx.plugins) { sendJson(response, 503, { error: 'plugin host is unavailable' }); return true; }
+      sendJson(response, 202, await ctx.plugins.hardReload());
+      return true;
+    }
+
     const pluginAppEnable = routeParams(path, '/api/v1/plugin-apps/:id/enable');
     if (pluginAppEnable && method === 'POST') {
       await handlePluginAppEnabled(response, ctx, pluginAppEnable.id, true);

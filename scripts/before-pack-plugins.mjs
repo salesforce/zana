@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tsImport } from 'tsx/esm/api';
+import { writePluginRecoveryArtifacts } from './plugin-recovery-artifacts.mjs';
 
 // electron-builder invokes this for every packaging path, including --dir.
 export default async function beforePack(context) {
@@ -22,6 +23,9 @@ export default async function beforePack(context) {
     const destination = join(root, 'out', 'packaged-plugins');
     rmSync(destination, { recursive: true, force: true });
     renameSync(stage, destination);
+    await writePluginRecoveryArtifacts(destination, join(root, 'dist'), version,
+      context.electronPlatformName ?? process.platform,
+      ['ia32', 'x64', 'arm', 'arm64', 'universal'][context.arch] ?? process.arch);
   } finally {
     rmSync(stage, { recursive: true, force: true });
   }

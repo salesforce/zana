@@ -68,7 +68,8 @@ describe('SidebarTriggerOverlay', () => {
     expect(markup).toContain('aria-label="New Chat"');
     const source = readFileSync(new URL('../SidebarTriggerOverlay.tsx', import.meta.url), 'utf8');
     expect(source).toContain('setPaletteOpen(true)');
-    expect(source).toContain('getNewThreadRoutePath()');
+    expect(source).toContain('getNewThreadRoutePath(projectId)');
+    expect(source).toContain('getRootRoutePath()');
     expect(source).toContain('useEnsureThreads()');
   });
 

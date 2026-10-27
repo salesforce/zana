@@ -17,6 +17,7 @@ export function boundarySpecs(paths) {
     if (/^(apps\/|packages\/|plugins\/|e2e\/|scripts\/.*(electron|e2e|build)|electron\.vite|package\.json|pnpm-lock)/.test(path)) add('smoke');
     if (/threads|thread-view|agent-runtime|provider-bridge|provider-(acp|codex)|host-hub|control-sdk/.test(path)) add('thread-plan-ux', 'thread-refresh-progress', 'provider-bridge-framing', 'thread-loading');
     if (/plugin-host-artifact|plugin-service|build-plugin-host|prepare-plugin-runtime|before-pack-plugins|provider-(acp|codex|claude-code)|electron-builder|release\.yml/.test(path)) add('packaged-provider-startup');
+    if (/plugin-recovery|plugin-service|DevelopmentView|before-pack-plugins|release\.yml/.test(path)) add('development-recovery');
     if (/conversation-(pruning|output|history-maintenance)/.test(path)) add('thread-history-pruning');
     if (/inbox|feed-categories/.test(path)) add('inbox-read-persistence');
     if (/plugins\/tasks\//.test(path)) add('tasks-bb-parity', 'mobile-tasks');

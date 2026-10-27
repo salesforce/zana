@@ -1368,6 +1368,12 @@ export type { PeerLeftover, PeerLeftoverListResponse };
  * Core Peers hub: plugin links and the uses that justify them. Owner gestures only;
  * the server re-validates every request, so this client carries no authority.
  */
+/** Core recovery must remain usable when plugin UI and providers are broken. */
+export const pluginRecovery = {
+  status: () => apiJson<import('@zana-ai/zcc-domain/product').PluginRecoveryState>('/plugin-apps/recovery'),
+  start: () => apiJson<import('@zana-ai/zcc-domain/product').PluginRecoveryState>('/plugin-apps/hard-reload', { method: 'POST', body: '{}' })
+};
+
 export const peerLinks = {
   list: async (): Promise<PeerLinkListResponse> => apiJson<PeerLinkListResponse>('/peer-links'),
   removeUse: async (hostId: string, pluginId: string, scope?: string): Promise<RemovePeerLinkResponse> =>

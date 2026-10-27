@@ -22,6 +22,7 @@ const { uiState, dataState } = vi.hoisted(() => ({
     toggleSettings: vi.fn(),
     exitProjectFocus: vi.fn(),
     selectedProjectId: 'p1' as string | undefined,
+    focusedProjectId: null as string | null,
     selectedTabId: {} as Record<string, string>,
     setResumeOpen: vi.fn(),
     setFindOpen: vi.fn()
@@ -47,6 +48,9 @@ const { openThreadFindMock } = vi.hoisted(() => ({
   openThreadFindMock: vi.fn((_event: KeyboardEvent) => false)
 }));
 vi.mock('../lib/thread-find', () => ({ openThreadFind: openThreadFindMock }));
+const chat = vi.hoisted(() => ({ scopedProjectId: null as string | null, navigate: vi.fn() }));
+vi.mock('../lib/windowScope', () => ({ getScopedProjectId: () => chat.scopedProjectId }));
+vi.mock('../lib/app-navigate', () => ({ appNavigate: chat.navigate }));
 vi.mock('../lib/launchProfile', () => ({
   projectDefaultLaunch: () => ({ profile: 'claude' })
 }));
@@ -119,6 +123,9 @@ describe('shortcuts: round-trip and dashboard chords', () => {
     kb = installKeyboardHarness();
     uninstall = installShortcuts();
     uiState.nav = 'home';
+    uiState.focusedProjectId = null;
+    chat.scopedProjectId = null;
+    chat.navigate.mockClear();
     uiState.agentModal = null;
     uiState.threadModal = null;
     uiState.setNav.mockClear();
@@ -160,6 +167,22 @@ describe('shortcuts: round-trip and dashboard chords', () => {
     const { preventDefault } = kb.press('n', { meta: true });
     expect(uiState.setNav).toHaveBeenCalledWith('home');
     expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(chat.navigate).not.toHaveBeenCalled();
+  });
+
+  it('⌘N keeps project focus even when another project was selected', () => {
+    uiState.focusedProjectId = 'focused/project';
+    kb.press('n', { meta: true });
+    expect(chat.navigate).toHaveBeenCalledWith('/projects/focused%2Fproject/threads/new');
+    expect(uiState.setNav).not.toHaveBeenCalled();
+  });
+
+  it('⌘N honors a dedicated project window before soft project focus', () => {
+    uiState.focusedProjectId = 'other';
+    chat.scopedProjectId = 'locked';
+    kb.press('n', { meta: true });
+    expect(chat.navigate).toHaveBeenCalledWith('/projects/locked/threads/new');
+    expect(uiState.setNav).not.toHaveBeenCalled();
   });
 
   it('⌘R does not open the Claude resume picker', () => {
