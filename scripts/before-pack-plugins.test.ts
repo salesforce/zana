@@ -23,6 +23,12 @@ it('replaces the entire runtime catalog, skips non-plugins and aborts packaging 
   expect(readdirSync(runtime)).toEqual(['fixture']);
   expect(existsSync(join(runtime, 'fixture/server.mjs'))).toBe(true);
   const previous = readFileSync(join(runtime, 'fixture/server.mjs'), 'utf8');
+  const nativeIndex = JSON.parse(readFileSync(join(root, 'dist', `plugin-recovery-${process.platform}-${process.arch}.json`), 'utf8'));
+  expect(nativeIndex).toMatchObject({ zccVersion: '2.3.1', plugins: [{ id: 'fixture' }] });
+  expect(existsSync(join(root, 'dist', nativeIndex.plugins[0].file))).toBe(true);
+  await beforePack({ packager: { projectDir: root }, electronPlatformName: 'win32', arch: 1 });
+  const windowsIndex = JSON.parse(readFileSync(join(root, 'dist/plugin-recovery-win32-x64.json'), 'utf8'));
+  expect(windowsIndex.plugins[0].file).toBe('plugin-recovery-2.3.1-win32-x64-fixture.json.gz');
   writeFileSync(join(source, 'server.mjs'), 'import "missing-build-dependency";');
   await expect(beforePack({ packager: { projectDir: root } })).rejects.toThrow('Could not resolve');
   expect(readFileSync(join(runtime, 'fixture/server.mjs'), 'utf8')).toBe(previous);
