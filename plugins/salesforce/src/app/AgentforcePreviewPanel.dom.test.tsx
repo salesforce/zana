@@ -186,10 +186,10 @@ describe('AgentforcePreviewPanel', () => {
     const el = await mount();
     const click = async (node: Element | null) => { expect(node).toBeTruthy(); await act(async () => (node as HTMLElement).click()); };
     await click(el.querySelector('[data-testid="salesforce-agentforce-preview-start"]'));
-    expect(el.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
     expect(rpc.mock.calls.some(call => call[1] === 'agentLab.start')).toBe(false);
-    await click(el.querySelector('[role="dialog"] [aria-label="Set Verified"]'));
-    const button = (name: string) => [...el.querySelectorAll('button')].find(b => b.textContent === name)!;
+    await click(document.querySelector('[role="dialog"] [aria-label="Set Verified"]'));
+    const button = (name: string) => [...el.querySelectorAll('button'), ...document.querySelectorAll('.sf-context-backdrop button')].find(b => b.textContent === name)!;
     await click(button('Start preview'));
     const contextVariables = [{ name: 'verified', type: 'Boolean', value: false }];
     expect(rpc.mock.calls.find(call => call[1] === 'agentLab.start')![2]).toMatchObject({ contextVariables });
@@ -202,7 +202,7 @@ describe('AgentforcePreviewPanel', () => {
     await click(button('Review & restart')); await click(button('Restart preview'));
     expect(rpc.mock.calls.filter(call => call[1] === 'agentLab.start').at(-1)![2]).toMatchObject({ contextVariables: [{ name: 'verified', type: 'Boolean', value: null }] });
     const published = await mount({ apiName: 'Published' });
-    const publishedButton = (name: string) => [...published.querySelectorAll('button')].find(b => b.textContent === name || b.getAttribute('aria-label') === name)!;
+    const publishedButton = (name: string) => [...published.querySelectorAll('button'), ...document.querySelectorAll('.sf-context-backdrop button')].find(b => b.textContent === name || b.getAttribute('aria-label') === name)!;
     await click(publishedButton('Context 0'));
     await click(publishedButton('+ Add variable'));
     await act(async () => {
@@ -215,7 +215,7 @@ describe('AgentforcePreviewPanel', () => {
     await click(publishedButton('Add'));
     await click(published.querySelector('[aria-label="Set verified"]'));
     await act(async () => (published.querySelector('[data-testid="salesforce-agentforce-preview-start"]') as HTMLElement).click());
-    await act(async () => ([...published.querySelectorAll('button')].find(b => b.textContent === 'Start preview') as HTMLElement).click());
+    await act(async () => ([...published.querySelectorAll('button'), ...document.querySelectorAll('.sf-context-backdrop button')].find(b => b.textContent === 'Start preview') as HTMLElement).click());
     expect(rpc.mock.calls.find(call => call[1] === 'agentPreview.start')![2]).toMatchObject({ contextVariables });
     await act(async () => nodes.pop()!.unmount());
     const ended = rpc.mock.calls.filter(call => call[1] === 'agentPreview.end').at(-1)![2]!;
