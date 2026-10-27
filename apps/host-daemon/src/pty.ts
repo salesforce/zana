@@ -522,8 +522,8 @@ export class PtyManager extends EventEmitter {
   private automatedConfigSwept = false;
 
   /** Prepare an unattended Claude run's isolated config dir (null = launch unchanged). Also sweeps stale leaves once per process. */
-  private planAutomatedClaude(sessionId: string): ReturnType<typeof planAutomatedClaudeLaunch> {
-    const plan = planAutomatedClaudeLaunch({ ownerId: sessionId });
+  private planAutomatedClaude(sessionId: string, cwd: string): ReturnType<typeof planAutomatedClaudeLaunch> {
+    const plan = planAutomatedClaudeLaunch({ ownerId: sessionId, cwd });
     if (!plan) return null;
     this.automatedConfigDirs.set(sessionId, plan.configDir);
     if (!this.automatedConfigSwept) {
@@ -1187,7 +1187,7 @@ export class PtyManager extends EventEmitter {
       caps.injectsClaudeMcpConfig &&
       (opts.headless || opts.scheduled || opts.autonomous) &&
       (!opts.environment || opts.environment === 'local' || opts.environment === 'runtime-host')
-        ? this.planAutomatedClaude(sessionId)
+        ? this.planAutomatedClaude(sessionId, opts.cwd)
         : null;
     // The per-session zcc-inbox MCP server URL, with the project + session
     // identity baked into the path so callbacks (inbox_push, hooks) can stamp the

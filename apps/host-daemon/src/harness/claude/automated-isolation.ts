@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { resolveZccDataDir } from '../../host-config.js';
 
 /**
@@ -56,6 +56,8 @@ export interface AutomatedClaudeLaunchInput {
   dataDir?: string;
   /** Directory holding the user's real settings.json. Defaults to `$CLAUDE_CONFIG_DIR` or `~/.claude`. */
   sourceConfigDir?: string;
+  /** Launch cwd. Its workspace-trust acceptance is carried over so the TUI does not stop on the trust dialog. */
+  cwd?: string;
   now?: number;
 }
 
@@ -116,7 +118,30 @@ function linkProjects(realProjects: string, linkPath: string): void {
   }
 }
 
-function seedLeaf(leaf: string, sourceDir: string): 'seeded' | 'none' {
+/**
+ * Claude keys workspace trust to the config dir, so a fresh isolated dir would
+ * stop an unattended TUI on "Do you trust this folder?". Carry over only a
+ * decision the user already made (the cwd or an ancestor accepted in their real
+ * `.claude.json`); never grant trust that was not there.
+ */
+function trustedProjects(sourceDir: string, env: NodeJS.ProcessEnv, cwd: string | undefined): Record<string, unknown> | null {
+  if (!cwd) return null;
+  const file = env.CLAUDE_CONFIG_DIR ? join(sourceDir, '.claude.json') : join(homedir(), '.claude.json');
+  let projects: unknown;
+  try {
+    projects = (JSON.parse(readFileSync(file, 'utf8')) as { projects?: unknown }).projects;
+  } catch {
+    return null;
+  }
+  if (typeof projects !== 'object' || projects === null) return null;
+  const record = projects as Record<string, { hasTrustDialogAccepted?: unknown } | undefined>;
+  for (let dir = resolve(cwd); ; dir = dirname(dir)) {
+    if (record[dir]?.hasTrustDialogAccepted === true) return { [resolve(cwd)]: { hasTrustDialogAccepted: true } };
+    if (dirname(dir) === dir) return null;
+  }
+}
+
+function seedLeaf(leaf: string, sourceDir: string, env: NodeJS.ProcessEnv, cwd?: string): 'seeded' | 'none' {
   // Transcripts keep landing in the real projects dir, so transcript-derived
   // features and `--resume` are unaffected by the relocated config dir.
   const realProjects = join(sourceDir, 'projects');
@@ -131,7 +156,11 @@ function seedLeaf(leaf: string, sourceDir: string): 'seeded' | 'none' {
   const generated = buildSeedSettings(source);
   if (!generated) return 'none';
   writeAtomic0600(join(leaf, 'settings.json'), JSON.stringify(generated));
-  writeAtomic0600(join(leaf, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true }));
+  const projects = trustedProjects(sourceDir, env, cwd);
+  writeAtomic0600(
+    join(leaf, '.claude.json'),
+    JSON.stringify({ hasCompletedOnboarding: true, ...(projects ? { projects } : {}) })
+  );
   return 'seeded';
 }
 
@@ -218,7 +247,7 @@ export function planAutomatedClaudeLaunch(input: AutomatedClaudeLaunchInput): Au
     const sourceDir =
       input.sourceConfigDir ??
       (env.CLAUDE_CONFIG_DIR ? resolve(env.CLAUDE_CONFIG_DIR) : join(homedir(), '.claude'));
-    seedLeaf(leaf, sourceDir);
+    seedLeaf(leaf, sourceDir, env, input.cwd);
     if (!automatedConfigCanAuthenticate(leaf, env)) {
       // OAuth/subscription login state is keyed to the config dir and is not
       // carried over: launch exactly as before rather than logged out.

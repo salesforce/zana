@@ -89,6 +89,67 @@ describe('automated claude isolation', () => {
     });
   });
 
+  describe('workspace trust', () => {
+    const plan = (cwd: string) =>
+      planAutomatedClaudeLaunch({
+        ownerId: 't1',
+        env: { ...authEnv, CLAUDE_CONFIG_DIR: sourceDir },
+        dataDir,
+        sourceConfigDir: sourceDir,
+        cwd
+      })!;
+    const seededProjects = (configDir: string) =>
+      JSON.parse(readFileSync(join(configDir, '.claude.json'), 'utf8')).projects;
+
+    beforeEach(() => {
+      writeFileSync(join(sourceDir, 'settings.json'), JSON.stringify({ apiKeyHelper: 'h' }));
+    });
+
+    it('carries over trust the user already accepted for the cwd', () => {
+      writeFileSync(
+        join(sourceDir, '.claude.json'),
+        JSON.stringify({ projects: { '/work/app': { hasTrustDialogAccepted: true, allowedTools: ['x'] } } })
+      );
+      expect(seededProjects(plan('/work/app').configDir)).toEqual({ '/work/app': { hasTrustDialogAccepted: true } });
+    });
+
+    it('carries over trust accepted for an ancestor of the cwd', () => {
+      writeFileSync(
+        join(sourceDir, '.claude.json'),
+        JSON.stringify({ projects: { '/work': { hasTrustDialogAccepted: true } } })
+      );
+      expect(seededProjects(plan('/work/app/sub').configDir)).toEqual({
+        '/work/app/sub': { hasTrustDialogAccepted: true }
+      });
+    });
+
+    it.each([
+      ['an untrusted project', { projects: { '/work/app': { hasTrustDialogAccepted: false } } }],
+      ['a different project', { projects: { '/other': { hasTrustDialogAccepted: true } } }],
+      ['no projects map', {}],
+      ['a non-object projects map', { projects: 'x' }]
+    ])('never grants trust for %s', (_label, source) => {
+      writeFileSync(join(sourceDir, '.claude.json'), JSON.stringify(source));
+      expect(seededProjects(plan('/work/app').configDir)).toBeUndefined();
+    });
+
+    it('seeds no trust when the real .claude.json is missing or unreadable', () => {
+      expect(seededProjects(plan('/work/app').configDir)).toBeUndefined();
+      writeFileSync(join(sourceDir, '.claude.json'), '{not json');
+      rmSync(join(dataDir, 'claude-automated-config'), { recursive: true, force: true });
+      expect(seededProjects(plan('/work/app').configDir)).toBeUndefined();
+    });
+
+    it('seeds no trust when no cwd is given', () => {
+      writeFileSync(
+        join(sourceDir, '.claude.json'),
+        JSON.stringify({ projects: { '/work/app': { hasTrustDialogAccepted: true } } })
+      );
+      const p = planAutomatedClaudeLaunch({ ownerId: 't2', env: { ...authEnv, CLAUDE_CONFIG_DIR: sourceDir }, dataDir, sourceConfigDir: sourceDir })!;
+      expect(seededProjects(p.configDir)).toBeUndefined();
+    });
+  });
+
   describe('remove and sweep', () => {
     it('removes the leaf without following the projects symlink', () => {
       mkdirSync(join(sourceDir, 'projects'), { recursive: true });
