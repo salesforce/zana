@@ -44,10 +44,11 @@ it('reveals the ?setting row when the plugin page opens on #plugin-configure', a
   expect(document.querySelector('[data-plugin-setting-key="mode"]')!.classList.contains('settings-search-flash')).toBe(false);
 });
 
-it('scrolls to the configure section but reveals no row without a ?setting key', async () => {
+it('focuses configuration without scrolling the page tabs away', async () => {
   open('/extensions/plugins/test#plugin-configure');
   await screen.findByLabelText('Relay');
-  expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+  expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+  expect(document.activeElement?.id).toBe('plugin-configure');
   expect(document.querySelector('.settings-search-flash')).toBeNull();
 });
 

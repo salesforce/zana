@@ -218,6 +218,9 @@ export interface EnsureProviderArgs {
   providerId: string;
 }
 
+/** Whether a session is human-driven or an unattended worker. */
+export type AgentSessionKind = "interactive" | "automated";
+
 export interface StartThreadArgs {
   /** Immutable skill catalog selected for this session. */
   skillRoots?: readonly AgentRuntimeSkillRoot[];
@@ -235,6 +238,8 @@ export interface StartThreadArgs {
   dynamicTools?: DynamicTool[];
   disallowedTools?: readonly string[];
   instructionMode?: InstructionMode;
+  /** Only the Claude Code bridge acts on it; absent means interactive. */
+  sessionKind?: AgentSessionKind;
   /** JSON Schema constraining the session's structured output. Session-level
    *  structured output is claude-code only (SDK `outputFormat` is fixed at
    *  query creation); other adapters reject it. Absent means no structured
@@ -293,6 +298,8 @@ export interface ResumeThreadArgs {
   dynamicTools?: DynamicTool[];
   disallowedTools?: readonly string[];
   instructionMode?: InstructionMode;
+  /** Only the Claude Code bridge acts on it; absent means interactive. */
+  sessionKind?: AgentSessionKind;
 }
 
 export interface ResumeThreadResult {

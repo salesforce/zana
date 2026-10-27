@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { PluginInspector } from './PluginInspector.js';
+import { PluginDetailPage } from './PluginDetailPage.js';
 import type { MarketplaceEntry } from '@zana-ai/zcc-domain/product';
 import { product } from '../../lib/product-client.js';
 import { appNavigate } from '../../lib/app-navigate.js';
@@ -63,11 +63,11 @@ export function PluginBrowseSplit({
   };
 
   return (
-    <div className={`ext-plugin-workbench${pluginId ? ' has-inspector' : ''}`} data-testid="plugin-browse-split">
-      <div className="ext-plugin-collection-main">
+    <div className="ext-plugin-workbench" data-testid="plugin-browse-split">
+      <div className="ext-plugin-collection-main" hidden={!!pluginId}>
         <Marketplace toolbarExtra={toolbarExtra} />
       </div>
-      {pluginId ? <PluginInspector key={pluginId} label="Marketplace plugin" onClose={close}>
+      {pluginId ? <PluginDetailPage key={pluginId} label="Marketplace plugin" onBack={close}>
         <div data-testid="plugin-browse-side-panel">
           {entry ? <CatalogPluginDetail
             entry={entry} catalog={entries ?? []} busy={busy[entry.id]} error={error[entry.id]}
@@ -78,7 +78,7 @@ export function PluginBrowseSplit({
           /> : catalogError ? <p role="alert" className="modal-error">{catalogError}</p>
             : <p role="status" className="settings-help settings-help--muted">{entries === null ? 'Loading plugin details…' : 'Plugin not found.'}</p>}
         </div>
-      </PluginInspector> : null}
+      </PluginDetailPage> : null}
       {pending ? <PluginInstallConfirm entry={pending} onCancel={() => setPending(null)} onConfirm={() => {
         const target = pending; setPending(null); install(target);
       }} /> : null}

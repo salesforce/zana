@@ -24,7 +24,7 @@ test.use({
   }
 });
 
-test('Slack is pre-installed and its compiled Configuration works without a source checkout', async ({ app }) => {
+test('Slack is pre-installed and its compiled settings work without a source checkout', async ({ app }) => {
   const win = app.window;
   const row = () => win.evaluate(async id => (await window.cc.pluginApps.list()).find(p => p.id === id), id);
   await expect.poll(row).toMatchObject({ id, enabled: true, status: 'running', sourceKind: 'builtin' });
@@ -35,8 +35,8 @@ test('Slack is pre-installed and its compiled Configuration works without a sour
   await win.getByTestId('nav-extensions').click();
   await win.getByTestId('extensions-nav-installed').click();
   await win.getByTestId(`plugin-row-${id}`).getByRole('button', { name: 'Zana for Slack plugin details' }).click();
-  await win.getByRole('complementary', { name: 'Installed plugin' }).getByRole('tab', { name: 'Settings', exact: true }).click();
-  await expect(win.getByRole('heading', { name: 'Configuration', exact: true })).toBeVisible();
+  await win.getByRole('region', { name: 'Installed plugin' }).getByRole('tab', { name: 'Settings', exact: true }).click();
+  await expect(win.getByRole('navigation', { name: 'Plugin settings areas' })).toHaveCount(0);
   await expect(win.getByRole('heading', { name: 'Connect your Slack account' })).toBeVisible();
   await expect(win.getByLabel('Activation code', { exact: true })).toBeVisible();
   // Optional sharing controls appear after account linking; no report access is granted by installation.

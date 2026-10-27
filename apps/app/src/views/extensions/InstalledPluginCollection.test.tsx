@@ -118,10 +118,9 @@ it('filters by capabilities and recovers when the last matching plugin is remove
 
 it('opens directly to Updates and explains distinct update policies', () => {
   render(<InstalledPluginCollection rows={buildHubRows([], [], [plugin('Local', { sourceKind: 'path' }), plugin('Bundled', { sourceKind: 'builtin' }), plugin('Remote', { sourceKind: 'git' })])}
-    onOpen={vi.fn()} onBrowse={vi.fn()} defaultUpdates inspector={<aside>Inspector</aside>} />);
+    onOpen={vi.fn()} onBrowse={vi.fn()} defaultUpdates />);
   expect(screen.getByRole('heading', { name: 'No pending updates' })).toBeTruthy();
   expect(screen.getByText('Local development')).toBeTruthy();
   expect(screen.getByText('Updates with Zana releases')).toBeTruthy();
   expect(screen.getByText('Automatic checks; manual updates')).toBeTruthy();
-  expect(screen.getByText('Inspector')).toBeTruthy();
 });

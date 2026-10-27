@@ -308,6 +308,9 @@ export function createBridgeProtocolAdapter(
                 ? { disallowedTools: command.disallowedTools }
                 : {}),
               instructionMode: command.instructionMode,
+              ...(command.sessionKind !== undefined
+                ? { sessionKind: command.sessionKind }
+                : {}),
             },
           };
         case "thread/resume":
@@ -329,6 +332,9 @@ export function createBridgeProtocolAdapter(
                 ? { disallowedTools: command.disallowedTools }
                 : {}),
               instructionMode: command.instructionMode,
+              ...(command.sessionKind !== undefined
+                ? { sessionKind: command.sessionKind }
+                : {}),
             },
           };
         case "thread/fork": {
@@ -375,6 +381,9 @@ export function createBridgeProtocolAdapter(
                 ? { disallowedTools: command.disallowedTools }
                 : {}),
               instructionMode: command.instructionMode,
+              ...(command.sessionKind !== undefined
+                ? { sessionKind: command.sessionKind }
+                : {}),
             },
           };
         }

@@ -47,7 +47,7 @@ import { CREATE_PLUGIN_PROMPT } from '@/lib/create-resource-prompts';
 import { requestComposerCommandsReload } from '@/lib/composer-commands-reload';
 import { InstallFromGitDialog } from '@/components/InstallFromGitDialog';
 import { installedSource } from './plugin-presentation.js';
-import { PluginInspector } from './PluginInspector.js';
+import { PluginDetailPage } from './PluginDetailPage.js';
 import { PluginSettingsForm } from '@/plugins/PluginDefinedSettings';
 import { PluginSettingsSections } from '@/plugins/PluginSettingsSections';
 import { listSettingsSections, subscribePluginSlots } from '@/plugins/plugin-slots';
@@ -248,8 +248,8 @@ export function ExtensionsHub({
 
   return (
     <div className={`ext-hub-shell${tab === 'installed' ? ' ext-hub-shell--installed' : ''}`}>
-      {tab === 'marketplace' ? <header className="ext-hub-browse-heading"><div><h3>Plugins</h3><p>Manage your tools, skills, and integrations.</p></div>{maintenanceActions}</header> : null}
-      {tab === 'marketplace' ? (
+      {tab === 'marketplace' && !catalogPluginId ? <header className="ext-hub-browse-heading"><div><h3>Plugins</h3><p>Manage your tools, skills, and integrations.</p></div>{maintenanceActions}</header> : null}
+      {tab === 'marketplace' && !catalogPluginId ? (
         <div className="ext-hub-tabs" role={showTabs ? "tablist" : "navigation"} aria-label={showTabs ? "Plugins" : "Plugin collections"}>
           <button
             type="button"
@@ -435,10 +435,9 @@ export function InstalledView({ toolbarExtra, mobileActions, onBrowse, defaultUp
 
   return (
     <>
+      <div className="ext-plugin-collection-page" hidden={!!active}>
       <InstalledPluginCollection rows={rows} selectedId={active?.module.id} defaultUpdates={defaultUpdates}
-        inspector={active ? <PluginInspector key={active.module.id} label="Installed plugin" onClose={() => setExtensionsTab('installed')}>
-          <ExtensionDetail row={active} />
-        </PluginInspector> : undefined} onOpen={selectSettingsExtension} onBrowse={browsePlugins}
+        onOpen={selectSettingsExtension} onBrowse={browsePlugins}
         headerActions={!compact ? <>
           <div className="ext-install-menu-wrap" ref={newMenuRef}>
             <button type="button" className="settings-btn primary" aria-haspopup="menu"
@@ -455,6 +454,10 @@ export function InstalledView({ toolbarExtra, mobileActions, onBrowse, defaultUp
           {mobileActions}
         </MobilePageHeader>}
       />
+      </div>
+      {active ? <PluginDetailPage key={active.module.id} label="Installed plugin" onBack={() => setExtensionsTab('installed')}>
+        <ExtensionDetail row={active} />
+      </PluginDetailPage> : null}
       {openExisting && <InstallFromGitDialog mode="open" onClose={() => setOpenExisting(false)} />}
       {installGit && <InstallFromGitDialog onClose={() => setInstallGit(false)} />}
     </>
@@ -586,11 +589,13 @@ function rowStatus(
 function ExtensionDetail({ row }: { row: HubRow }) {
   const { module, entry, plugin } = row;
   const SettingsPanel = hostSettingsPanelOf(row);
-  const hasSlotSettings = useSyncExternalStore(
+  const slotSettings = useSyncExternalStore(
     subscribePluginSlots,
     listSettingsSections,
     listSettingsSections
-  ).some((section) => section.pluginId === module.id);
+  ).filter((section) => section.pluginId === module.id);
+  const hasSlotSettings = slotSettings.length > 0;
+  const [settingsArea, setSettingsArea] = useState<'plugin' | 'configuration'>('plugin');
   const [catalog, setCatalog] = useState<MarketplaceEntry[]>([]);
   const location = useLocation();
   const [detailTab, setDetailTab] = useState('overview');
@@ -604,9 +609,16 @@ function ExtensionDetail({ row }: { row: HubRow }) {
     return () => { cancelled = true; };
   }, [module.id, plugin?.id]);
   useEffect(() => {
-    if (location.hash === '#plugin-configure') setDetailTab('settings');
+    if (location.hash === '#plugin-configure') {
+      setDetailTab('settings');
+      setSettingsArea('configuration');
+    }
   }, [location.hash, location.key]);
-  const hasSettings = (settingsSnap !== null && Object.keys(settingsSnap.descriptors).length > 0) || hasSlotSettings || !!SettingsPanel;
+  const hasConfiguration = settingsSnap !== null && Object.keys(settingsSnap.descriptors).length > 0;
+  const hasPluginSettings = hasSlotSettings || !!SettingsPanel;
+  const hasSettings = hasConfiguration || hasPluginSettings;
+  const activeSettingsArea = hasPluginSettings && (!hasConfiguration || settingsArea === 'plugin') ? 'plugin' : 'configuration';
+  const configure = () => { setSettingsArea('configuration'); setDetailTab('settings'); };
 
   useEffect(() => {
     product.extensions
@@ -623,13 +635,15 @@ function ExtensionDetail({ row }: { row: HubRow }) {
   const { search: locationSearch, hash: locationHash, key: locationKey } = useLocation();
   useEffect(() => {
     if (detailTab !== 'settings') return;
-    document.getElementById('plugin-configure')?.scrollIntoView({ block: 'start' });
-    document.getElementById('plugin-configure')?.focus();
+    const scroller = document.getElementById('plugin-detail-settings')?.closest('.ext-plugin-detail-page-body');
+    if (scroller) scroller.scrollTop = 0;
+    if (activeSettingsArea !== 'configuration') return;
+    document.getElementById('plugin-configure')?.focus({ preventScroll: true });
     // Opened from a Settings search result: flash and focus the matching field.
     const settingKey = new URLSearchParams(locationSearch).get(PLUGIN_SETTING_PARAM);
     if (!settingKey) return;
     return revealPluginSetting(settingKey);
-  }, [module.id, locationSearch, locationHash, locationKey, detailTab]);
+  }, [module.id, locationSearch, locationHash, locationKey, detailTab, activeSettingsArea]);
 
   const catalogEntry = catalog.find((item) => item.id === module.id) ?? null;
   const detailTabs = ['overview', ...(hasSettings || detailTab === 'settings' ? ['settings'] : []), 'installation'];
@@ -638,7 +652,7 @@ function ExtensionDetail({ row }: { row: HubRow }) {
 
   return (
     <>
-<AboutCard row={row} installation={detailTab === 'installation'} onConfigure={() => setDetailTab('settings')} onManage={() => setDetailTab('installation')} />
+      <AboutCard row={row} installation={detailTab === 'installation'} onConfigure={configure} onManage={() => setDetailTab('installation')} />
       {plugin?.description ? <PluginOverviewLead description={plugin.description} /> : null}
       {module.loadError ? <p className="modal-error" role="alert">{module.loadError}</p> : null}
       <nav className="ext-plugin-detail-tabs" role="tablist" aria-label="Plugin detail sections" onKeyDown={(event) => {
@@ -684,14 +698,22 @@ function ExtensionDetail({ row }: { row: HubRow }) {
         {entry ? <InstallConfirmationCard entry={entry} /> : null}
       </div>
       <div id="plugin-detail-settings" role="tabpanel" aria-labelledby="plugin-detail-tab-settings" hidden={detailTab !== 'settings'}>
-        <section className="ext-plugin-section ext-plugin-section--config" id="plugin-configure" tabIndex={-1}>
+        {hasConfiguration && hasPluginSettings ? <nav className="ext-plugin-settings-areas" aria-label="Plugin settings areas">
+          <button type="button" aria-pressed={activeSettingsArea === 'plugin'} onClick={() => setSettingsArea('plugin')}>
+            {slotSettings.length === 1 && slotSettings[0]?.title ? slotSettings[0].title : 'Plugin settings'}
+          </button>
+          <button type="button" aria-pressed={activeSettingsArea === 'configuration'} onClick={() => setSettingsArea('configuration')}>Configuration</button>
+        </nav> : null}
+        <section className="ext-plugin-section ext-plugin-section--config" id="plugin-configure" tabIndex={-1}
+          hidden={activeSettingsArea !== 'configuration'}>
           <h3>Configuration</h3>
           {settingsSnap ? <PluginSettingsForm snap={settingsSnap} onSave={async (key, value) => {
             const next = await product.pluginApps.setSettings(module.id, { [key]: value });
             setSettingsSnap(next);
           }} /> : null}
-          <PluginSettingsSections pluginId={module.id} />
         </section>
+        <div hidden={activeSettingsArea !== 'plugin'}>
+          <PluginSettingsSections pluginId={module.id} />
       {module.loadError ? null : SettingsPanel && shouldMountHostSettings(row) && !hasSlotSettings ? (
         <ErrorBoundary key={module.id}>
           <SettingsPanel host={getHost(module.id)} />
@@ -713,6 +735,7 @@ function ExtensionDetail({ row }: { row: HubRow }) {
           </p>
         </section>
       )}
+        </div>
       </div>
     </>
   );
@@ -933,8 +956,7 @@ function AboutCard({ row, installation, onConfigure, onManage }: { row: HubRow; 
   const focusConfigure = () => {
     onConfigure();
     const el = document.getElementById('plugin-configure');
-    el?.scrollIntoView({ block: 'start' });
-    el?.focus();
+    el?.focus({ preventScroll: true });
   };
 
   const reloadPlugin = async () => {

@@ -173,6 +173,7 @@ interface BuildClaudeSessionParamsArgs {
   dynamicTools?: readonly DynamicTool[] | undefined;
   disallowedTools?: readonly string[] | undefined;
   skillRoots?: readonly ClaudeCodeSkillRoot[] | undefined;
+  sessionKind?: "interactive" | "automated" | undefined;
 }
 
 export function buildClaudeSessionParams(
@@ -182,7 +183,7 @@ export function buildClaudeSessionParams(
     args.options.providerOptions ?? {},
   );
   const config = buildClaudeCodeConfig(args.options.envVars);
-  return buildInternalSessionParams({
+  const internal = buildInternalSessionParams({
     additionalWorkspaceWriteRoots:
       providerOptions.additionalWorkspaceWriteRoots ?? [],
     cwd: args.cwd,
@@ -201,6 +202,9 @@ export function buildClaudeSessionParams(
       providerSubagentsEnabled: providerOptions.providerSubagentsEnabled,
     },
   });
+  return args.sessionKind === undefined
+    ? internal
+    : { ...internal, sessionKind: args.sessionKind };
 }
 
 /** Claude's SDK treats a leading `/plan` as an interactive slash command. */
