@@ -979,6 +979,13 @@ describe('prepareTinynodReview', () => {
     expect(context.log).toHaveBeenCalledWith('pre-push: tinynod review: refreshed DevBar gateway token');
   });
 
+  it('skips the advisory review when the TinyNod gateway remains unavailable', () => {
+    const { adapter } = fakeAdapter({ ensureTinynodGateway: () => ({ ok: false, reason: 'gateway unavailable' }) });
+    const context = base(adapter);
+    expect(prepareTinynodReview(context as never)).toBeNull();
+    expect(context.log).toHaveBeenCalledWith('pre-push: tinynod review skipped: gateway unavailable');
+  });
+
   it('never throws', () => {
     const { adapter } = fakeAdapter({ deriveReviewTarget: () => { throw new Error('kaboom'); } });
     const context = base(adapter);
