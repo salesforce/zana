@@ -37,6 +37,7 @@ describe('fixed SSH machine', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add', exact: true }));
     await waitFor(() => expect(screen.getByText('Could not add remote project')).toBeTruthy());
     expect(onSuccess).not.toHaveBeenCalled();
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Add', exact: true }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.keyDown(window, { key: 'Escape' }); expect(onClose).toHaveBeenCalledOnce();
   });
 });
