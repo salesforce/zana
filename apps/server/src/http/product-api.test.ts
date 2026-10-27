@@ -2257,6 +2257,40 @@ describe('product HTTP plugin side-panel conversations', () => {
 });
 
 describe('product HTTP plugins', () => {
+  it('routes plugin packs through the shared Origin and mutation content-type guards', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-packs-'));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    const identity = { marketplaceSource: 'path:/catalog', packId: 'starter' };
+    const list = vi.fn(() => [{ identity }]);
+    const plan = vi.fn(async () => ({ identity, planId: 'review' }));
+    server.ctx.plugins = { pluginPacks: { list, plan } } as never;
+    const url = `${server.url}api/v1/plugin-packs`;
+    const listed = await fetch(url);
+    expect(listed.status).toBe(200);
+    await expect(listed.json()).resolves.toEqual([{ identity }]);
+    expect(list).toHaveBeenCalledOnce();
+
+    const hostile = await fetch(`${url}/plan`, {
+      method: 'POST', headers: { Origin: 'https://evil.example', 'content-type': 'application/json' }, body: JSON.stringify(identity)
+    });
+    expect(hostile.status).toBe(403);
+    const nonJson = await fetch(`${url}/plan`, {
+      method: 'POST', headers: { Origin: 'http://127.0.0.1:5173', 'content-type': 'text/plain' }, body: JSON.stringify(identity)
+    });
+    expect(nonJson.status).toBe(415);
+    expect(plan).not.toHaveBeenCalled();
+
+    const reviewed = await fetch(`${url}/plan`, {
+      method: 'POST', headers: { Origin: 'http://127.0.0.1:5173', 'content-type': 'application/json' }, body: JSON.stringify(identity)
+    });
+    expect(reviewed.status).toBe(200);
+    await expect(reviewed.json()).resolves.toEqual({ identity, planId: 'review' });
+    expect(plan).toHaveBeenCalledWith(identity);
+
+    server.ctx.plugins = undefined as never;
+    expect((await fetch(url)).status).toBe(503);
+  });
+
   it('lists contributions and dispatches plugin CLI and HTTP', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugins-'));
     server = await startTestProductServer({

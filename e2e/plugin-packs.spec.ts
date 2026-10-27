@@ -113,7 +113,8 @@ test('pack review preserves existing plugins, retries partial installs, and neve
     expect(geometry.right).toBeLessThanOrEqual(geometry.width);
     expect(geometry.top).toBeGreaterThanOrEqual(0);
     expect(geometry.bottom).toBeLessThanOrEqual(geometry.height);
-    await review.screenshot({ path: test.info().outputPath('pack-review.png') });
+    // Viewport artifacts avoid locator-screenshot stability waits; layout is asserted above.
+    await win.screenshot({ path: test.info().outputPath('pack-review.png'), animations: 'disabled' });
     await review.getByRole('button', { name: 'Install selected plugins', exact: true }).click();
 
     // A real manifest validation failure is visible; successful members remain installed and the optional stays out.
@@ -150,7 +151,7 @@ test('pack review preserves existing plugins, retries partial installs, and neve
     await win.getByTestId('extensions-nav-installed').click();
     const remembered = win.getByRole('region', { name: 'Installed plugin packs', exact: true });
     await expect(remembered.getByTestId(`plugin-pack-${PACK_ID}`)).toBeVisible();
-    await remembered.screenshot({ path: test.info().outputPath('installed-pack.png') });
+    await win.screenshot({ path: test.info().outputPath('installed-pack.png'), animations: 'disabled' });
     expect(installed(home).map(row => row.id).sort()).toEqual(['pack-existing', 'pack-retry', 'pack-tools']);
     expect(installed(home).find(row => row.id === 'pack-existing')).toMatchObject({ version: '1.0.0', enabled: false });
     expect(installed(home).find(row => row.id === 'pack-tools')).toMatchObject({ version: '1.0.0' });
