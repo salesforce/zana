@@ -27,7 +27,13 @@ test('installed plugin rows support search, grouping, status changes and details
   await toggleGroup.click();
   const agentCards = collection.getByRole('list', { name: 'Installed coding agents' });
   await expect(agentCards).toBeVisible();
-  await expect(agentCards.locator('.ext-installed-row')).toHaveCount(agents.length);
+  // Providers register asynchronously; compare the live catalogue with the UI.
+  await expect.poll(async () => {
+    const expected = await win.evaluate(async () => (await window.cc.pluginApps.list())
+      .filter(plugin => plugin.collection === 'coding-agents').map(plugin => `plugin-row-${plugin.id}`));
+    const actual = await agentCards.locator('.ext-installed-row').evaluateAll(rows => rows.map(row => row.getAttribute('data-testid')));
+    return { missing: expected.filter(id => !actual.includes(id)), unexpected: actual.filter(id => !expected.includes(id!)) };
+  }).toEqual({ missing: [], unexpected: [] });
   await pause();
 
   const search = win.getByLabel('Search installed plugins');
