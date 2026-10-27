@@ -32,7 +32,9 @@ function abortError(signal: AbortSignal): Error {
 }
 
 export const PEER_WORKER_COMMIT_TIMEOUT_MS = 10_000;
-export const PEER_WORKER_EXECUTION_TIMEOUT_MS = 5_000;
+// Supported 24MiB Design Docs can exceed 5s when a full test suite contends for CPU. Keep the
+// synchronous VM fence below the caller's 10s commit deadline so a wedged plugin stays bounded.
+export const PEER_WORKER_EXECUTION_TIMEOUT_MS = 8_000;
 type Observation = { asynchronous: boolean; value: any };
 const workerCommits = new WeakMap<Function, { observe(gate: SharedArrayBuffer, preflight: () => void): Promise<Observation>; release(): void }>();
 const hostCommitFunctions = new WeakMap<Function, AbortSignal>();

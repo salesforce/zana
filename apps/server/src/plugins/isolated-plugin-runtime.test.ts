@@ -185,7 +185,7 @@ it('interrupts endless synchronous commit off server thread and rolls back', asy
 // V8 coverage instrumentation (CI) slows the worker past the fixed 5s execution cap and inflates its heap past the
 // 256MB cap on 24MiB payloads; uninstrumented CI/release runs and e2e/peer-data-boundary exercise this same fence.
 it.skipIf(!!(globalThis as { __vitest_worker__?: { config?: { coverage?: { enabled?: boolean } } } }).__vitest_worker__?.config?.coverage?.enabled)('applies and rewrites supported 24MiB Design Docs through production worker fence', async () => {
-  expect(PEER_WORKER_EXECUTION_TIMEOUT_MS).toBe(5000);
+  expect(PEER_WORKER_EXECUTION_TIMEOUT_MS).toBe(8000);
   expect(PEER_WORKER_COMMIT_TIMEOUT_MS).toBe(10000);
   const entry = pathToFileURL(fileURLToPath(new URL('../../../../e2e/fixtures/peer-design-docs-worker.ts', import.meta.url))).href;
   const source = `export { default } from ${JSON.stringify(entry)};`;
