@@ -80,7 +80,7 @@ test('Google Analytics auto-installs, tracks visible use, disconnects, and respe
     // User-facing disconnect goes through the real Settings form and IPC.
     await win.evaluate(() => { history.pushState({}, '', '/extensions/plugins/google-analytics?view=installed'); window.dispatchEvent(new PopStateEvent('popstate')); });
     await win.clock.runFor(1100);
-    await win.getByRole('complementary', { name: 'Installed plugin' }).getByRole('tab', { name: 'Settings', exact: true }).click();
+    await win.getByRole('region', { name: 'Installed plugin' }).getByRole('tab', { name: 'Settings', exact: true }).click();
     const disconnect = win.getByRole('switch', { name: 'Connect Google Analytics', exact: true });
     await expect(disconnect).toBeVisible();
     await disconnect.click();

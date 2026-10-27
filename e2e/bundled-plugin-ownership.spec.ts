@@ -177,7 +177,7 @@ test('an older independent installation remains usable and shows migration guida
     await win.getByTestId('nav-extensions').click();
     await win.getByTestId('extensions-nav-installed').click();
     await win.getByTestId('plugin-row-tasks').getByRole('button', { name: 'Bundled tasks 3.0.0 plugin details' }).click();
-    await win.getByRole('complementary', { name: 'Installed plugin' }).getByRole('tab', { name: 'Installation', exact: true }).click();
+    await win.getByRole('region', { name: 'Installed plugin' }).getByRole('tab', { name: 'Installation', exact: true }).click();
     await expect(win.getByTestId('plugin-health')).toContainText('remote updates are blocked');
     await expect(win.getByTestId('plugin-health')).toContainText('Back up and migrate');
     await expect(win.getByText('Migration required before updating', { exact: true })).toBeVisible();

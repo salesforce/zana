@@ -55,11 +55,11 @@ test('installed plugin rows support search, grouping, status changes and details
   await expect.poll(async () => (await win.evaluate(() => window.cc.pluginApps.list())).find((p) => p.id === ordinary.id)?.enabled).toBe(true);
   await statusFilters.getByRole('button', { name: 'All', exact: true }).click();
   await toolCard.getByRole('button', { name: `${ordinary.name} plugin details` }).click();
-  await expect(win.getByRole('complementary', { name: 'Installed plugin' })).toBeVisible();
-  await expect(toolCard).toBeVisible();
+  await expect(win.getByRole('region', { name: 'Installed plugin' })).toBeVisible();
+  await expect(toolCard).toBeHidden();
   await expect(win.locator('.ext-hub-about-titles')).toContainText(ordinary.name);
   await pause();
-  await win.getByRole('button', { name: 'Close plugin details' }).click();
+  await win.getByRole('button', { name: 'Back to Plugins' }).click();
   await expect(collection).toBeVisible();
 
   await collection.getByRole('navigation', { name: 'Plugin collections' }).getByRole('button', { name: /^Updates/ }).click();

@@ -9401,6 +9401,7 @@ body.resizing-col .ext-hub-resizer::before {
   display: none;
 }
 .ext-plugin-settings-panel {
+  container: plugin-settings / inline-size;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -9474,9 +9475,10 @@ body.resizing-col .ext-hub-resizer::before {
   padding: 8px 10px;
   color: var(--text-primary);
 }
+.plugin-setting-row[data-control-placement='inline'] > .plugin-setting-control { width: 100%; }
 .plugin-setting-row[data-control-placement='inline'] input,
 .plugin-setting-row[data-control-placement='inline'] select {
-  width: 16rem;
+  width: 100%;
   max-width: 100%;
   background: var(--bg-base);
   border: 1px solid var(--border);
@@ -9485,7 +9487,7 @@ body.resizing-col .ext-hub-resizer::before {
   font-size: 13px;
   color: var(--text-primary);
 }
-@media (min-width: 640px) {
+@container plugin-settings (min-width: 600px) {
   .plugin-setting-row[data-control-placement='inline'] {
     flex-direction: row;
     justify-content: space-between;
@@ -9496,7 +9498,8 @@ body.resizing-col .ext-hub-resizer::before {
     align-items: flex-start;
   }
   .plugin-setting-row[data-control-placement='inline'] > .plugin-setting-control {
-    flex: 0 0 auto;
+    flex: 0 0 16rem;
+    width: 16rem;
   }
 }
 .ext-plugin-overview {

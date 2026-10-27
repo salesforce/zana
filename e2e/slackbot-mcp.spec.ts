@@ -266,7 +266,7 @@ ${hangBranch}`));
     // The renderer exposes the actual import controls and plugin enablement gate.
     await win.evaluate(() => { history.pushState({}, '', '/extensions/plugins/slack-bridge-2ff2?view=installed'); dispatchEvent(new PopStateEvent('popstate')); });
     await expect(win.getByRole('heading', { name: /^Zana for Slack$/i, level: 3 })).toBeVisible();
-    await win.getByRole('complementary', { name: 'Installed plugin' }).getByRole('tab', { name: 'Settings', exact: true }).click();
+    await win.getByRole('region', { name: 'Installed plugin' }).getByRole('tab', { name: 'Settings', exact: true }).click();
     await expect(win.getByRole('heading', { name: 'Connected Projects', exact: true })).toBeVisible();
     await win.getByLabel('Default Project for mentions', {exact:true}).selectOption(projectId);
     await expect.poll(async () => (await rpc('snapshot')).config.mentionDefaultProjectId).toBe(projectId);

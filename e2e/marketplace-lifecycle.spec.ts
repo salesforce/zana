@@ -97,7 +97,7 @@ test.describe('marketplace lifecycle — install and uninstall', () => {
     await expect(app.window.locator('.ext-hub-about')).toBeVisible();
 
     // === Phase 4: Uninstall from the installed detail ===
-    await app.window.getByRole('complementary', { name: 'Installed plugin' }).getByRole('tab', { name: 'Installation', exact: true }).click();
+    await app.window.getByRole('region', { name: 'Installed plugin' }).getByRole('tab', { name: 'Installation', exact: true }).click();
     await app.window.getByTitle('Uninstall this plugin').click();
     await app.window.getByRole('button', { name: 'Confirm remove' }).click();
 

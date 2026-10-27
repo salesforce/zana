@@ -79,7 +79,7 @@ test('independent Git/npm checks persist and manual UI/CLI updates preserve inte
     await expect.poll(() => win.evaluate(async () => (await window.cc.pluginApps.list()).filter(row => row.id.startsWith('remote-')).map(row => row.availableVersion))).toEqual(['1.1.0', '1.1.0']);
     await win.getByTestId('nav-extensions').click(); await win.getByTestId('extensions-nav-installed').click();
     await win.getByTestId('plugin-row-remote-git').getByRole('button', { name: 'Independent remote-git plugin details' }).click();
-    await win.getByRole('complementary', { name: 'Installed plugin' }).getByRole('tab', { name: 'Installation', exact: true }).click();
+    await win.getByRole('region', { name: 'Installed plugin' }).getByRole('tab', { name: 'Installation', exact: true }).click();
     await expect(win.getByTestId('plugin-update-status')).toContainText('1.1.0');
     await expect(win.getByText('Automatic checks; manual updates', { exact: true })).toBeVisible();
     expect(await win.evaluate(() => window.cc.pluginApps.applyUpdate('remote-git'))).toMatchObject({ ok: true });

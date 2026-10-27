@@ -12,17 +12,19 @@ const entry = (id: string, over: Partial<MarketplaceEntry> = {}): MarketplaceEnt
 const renderSplit = (pluginId: string | null) => <MemoryRouter><PluginBrowseSplit pluginId={pluginId} /></MemoryRouter>;
 beforeEach(() => { vi.clearAllMocks(); api.list.mockResolvedValue({ ok: true, value: [entry('Alpha'), entry('Beta', { source: 'marketplace' })] }); api.install.mockResolvedValue({ ok: true }); });
 afterEach(cleanup);
-it('keeps the collection mounted while opening and closing the inspector, with real deep links', async () => {
+it('opens a full detail page while preserving the hidden collection and its search', async () => {
   const view = render(renderSplit(null));
   fireEvent.change(screen.getByLabelText('Collection search'), { target: { value: 'kept' } });
   view.rerender(renderSplit('Alpha'));
   await screen.findByRole('heading', { name: 'Alpha' });
   expect((screen.getByLabelText('Collection search') as HTMLInputElement).value).toBe('kept');
+  expect(screen.getByLabelText('Collection search').closest('[hidden]')).toBeTruthy();
+  expect(screen.getByRole('region', { name: 'Marketplace plugin' })).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'By Ada' }));
   expect(api.navigate).toHaveBeenLastCalledWith(expect.stringContaining('author=Ada'));
   fireEvent.click(screen.getByRole('button', { name: 'Beta plugin details' }));
   expect(api.navigate).toHaveBeenLastCalledWith(expect.stringContaining('Beta'));
-  fireEvent.click(screen.getByRole('button', { name: 'Close plugin details' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Back to Plugins' }));
   expect(api.navigate).toHaveBeenLastCalledWith('/extensions/plugins/browse');
   view.unmount(); expect(api.off).toHaveBeenCalledOnce();
 });
