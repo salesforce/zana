@@ -13,6 +13,8 @@ import { createPluginWorkerBridge, PEER_WORKER_COMMIT_TIMEOUT_MS } from './plugi
  * hardware), so the budget keeps several-fold headroom for slower machines and CI runners.
  */
 export const PLUGIN_HEARTBEAT_TIMEOUT_MS = 5_000;
+// A 24MiB paired document needs multiple transient closure/hash copies during a rewrite.
+export const PLUGIN_WORKER_MAX_OLD_GENERATION_SIZE_MB = 384;
 
 let active = 0;
 function workerEntry(): string {
@@ -38,7 +40,7 @@ export function createIsolatedPluginRuntime(options: {
   // Encode without exposing filesystem access or authority from a caller's free text.
   // The proxy binds each function to this already authenticated API instance.
   let bridge!: ReturnType<typeof createPluginWorkerBridge>;
-  const worker = new Worker(entry, { execArgv, workerData: {}, resourceLimits: { maxOldGenerationSizeMb: 256, stackSizeMb: 4 } });
+  const worker = new Worker(entry, { execArgv, workerData: {}, resourceLimits: { maxOldGenerationSizeMb: PLUGIN_WORKER_MAX_OLD_GENERATION_SIZE_MB, stackSizeMb: 4 } });
   active++;
   // One worker termination is shared by the bridge's commit fence and runtime disposal.
   let workerTermination: Promise<number> | undefined;

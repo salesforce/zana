@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createPluginApi } from './plugin-api';
-import { createIsolatedPluginRuntime, resolvePluginWorkerExecArgv } from './isolated-plugin-runtime';
+import { createIsolatedPluginRuntime, PLUGIN_WORKER_MAX_OLD_GENERATION_SIZE_MB, resolvePluginWorkerExecArgv } from './isolated-plugin-runtime';
 import { createPluginPeerCommit, PEER_WORKER_COMMIT_TIMEOUT_MS, PEER_WORKER_EXECUTION_TIMEOUT_MS } from './plugin-worker-bridge';
 import { PairStore } from '../services/peers/pair-store';
 const cleanups: (() => Promise<unknown>)[] = [];
@@ -182,11 +182,12 @@ it('interrupts endless synchronous commit off server thread and rolls back', asy
   await expect(f.pairs.revoke('pair')).resolves.toBeUndefined();
 });
 
-// V8 coverage instrumentation (CI) slows the worker past the fixed 5s execution cap and inflates its heap past the
-// 256MB cap on 24MiB payloads; uninstrumented CI/release runs and e2e/peer-data-boundary exercise this same fence.
+// V8 coverage instrumentation inflates worker heap use for 24MiB payloads; the uninstrumented run and
+// uninstrumented CI/release runs and e2e/peer-data-boundary exercise this same fence.
 it.skipIf(!!(globalThis as { __vitest_worker__?: { config?: { coverage?: { enabled?: boolean } } } }).__vitest_worker__?.config?.coverage?.enabled)('applies and rewrites supported 24MiB Design Docs through production worker fence', async () => {
   expect(PEER_WORKER_EXECUTION_TIMEOUT_MS).toBe(8000);
   expect(PEER_WORKER_COMMIT_TIMEOUT_MS).toBe(10000);
+  expect(PLUGIN_WORKER_MAX_OLD_GENERATION_SIZE_MB).toBe(384);
   const entry = pathToFileURL(fileURLToPath(new URL('../../../../e2e/fixtures/peer-design-docs-worker.ts', import.meta.url))).href;
   const source = `export { default } from ${JSON.stringify(entry)};`;
   // Sender fixture generation is not the commit under test; coverage adds heavy hashing overhead.
