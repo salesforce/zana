@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type ClaudeSessionKindTelemetry,
   toTelemetryRecord,
+  flushSessionKindTelemetry,
   writeSessionKindTelemetry,
 } from "../session-kind-telemetry.js";
 
@@ -33,8 +34,8 @@ describe("session-kind telemetry", () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it("writes a 0600 JSONL record with null tokens when usage is absent", () => {
-    expect(writeSessionKindTelemetry(dataDir, base)).toBe(true);
+  it("writes a 0600 JSONL record with null tokens when usage is absent", async () => {
+    expect(await writeSessionKindTelemetry(dataDir, base)).toBe(true);
     const file = join(dataDir, "diagnostics", "claude-session-kind.jsonl");
     expect(statSync(file).mode & 0o777).toBe(0o600);
     const record = JSON.parse(readFileSync(file, "utf8").trim());
@@ -65,14 +66,14 @@ describe("session-kind telemetry", () => {
     expect(record["settingSources"]).toEqual(["user"]);
   });
 
-  it("stops appending once the size cap is reached", () => {
-    expect(writeSessionKindTelemetry(dataDir, base, 50)).toBe(true);
-    expect(writeSessionKindTelemetry(dataDir, base, 50)).toBe(false);
+  it("stops appending once the size cap is reached", async () => {
+    expect(await writeSessionKindTelemetry(dataDir, base, 50)).toBe(true);
+    expect(await writeSessionKindTelemetry(dataDir, base, 50)).toBe(false);
     const file = join(dataDir, "diagnostics", "claude-session-kind.jsonl");
     expect(readFileSync(file, "utf8").trim().split("\n")).toHaveLength(1);
   });
 
-  it("never throws when the data dir is unwritable", () => {
-    expect(writeSessionKindTelemetry("/dev/null/nope", base)).toBe(false);
+  it("never throws when the data dir is unwritable", async () => {
+    expect(await writeSessionKindTelemetry("/dev/null/nope", base)).toBe(false);
   });
 });

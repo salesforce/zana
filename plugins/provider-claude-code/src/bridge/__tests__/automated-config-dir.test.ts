@@ -45,7 +45,7 @@ describe("automated config dir lifecycle", () => {
   });
 
   it("creates 0700 parent and leaf under the data dir", () => {
-    const leaf = createAutomatedConfigDir(dataDir, "thread-1");
+    const leaf = createAutomatedConfigDir(dataDir, "thread-1")!;
     expect(leaf).toBe(join(automatedConfigParent(dataDir), "thread-1"));
     expect(statSync(leaf).mode & 0o777).toBe(0o700);
     expect(statSync(automatedConfigParent(dataDir)).mode & 0o777).toBe(0o700);
@@ -82,7 +82,7 @@ describe("automated config dir lifecycle", () => {
   });
 
   it("reuses the same leaf for the same owner and a new one after delete", () => {
-    const first = createAutomatedConfigDir(dataDir, "thread-1");
+    const first = createAutomatedConfigDir(dataDir, "thread-1")!;
     expect(createAutomatedConfigDir(dataDir, "thread-1")).toBe(first);
     removeAutomatedConfigDir(dataDir, first);
     expect(existsSync(first)).toBe(false);
@@ -91,7 +91,7 @@ describe("automated config dir lifecycle", () => {
   });
 
   it("sanitizes owner ids so a path cannot escape the parent", () => {
-    const leaf = createAutomatedConfigDir(dataDir, "../../etc");
+    const leaf = createAutomatedConfigDir(dataDir, "../../etc")!;
     expect(leaf.startsWith(`${automatedConfigParent(dataDir)}/`)).toBe(true);
     expect(() => createAutomatedConfigDir(dataDir, "..")).toThrow(/invalid/);
     expect(() => createAutomatedConfigDir(dataDir, "")).toThrow(/invalid/);
@@ -121,7 +121,7 @@ describe("automated config dir lifecycle", () => {
         },
       }),
     );
-    const leaf = createAutomatedConfigDir(dataDir, "thread-1");
+    const leaf = createAutomatedConfigDir(dataDir, "thread-1")!;
     const seeded = JSON.parse(readFileSync(join(leaf, "settings.json"), "utf8"));
     expect(seeded).toEqual({
       apiKeyHelper: "/bin/helper",
@@ -138,7 +138,7 @@ describe("automated config dir lifecycle", () => {
   });
 
   it("seeds nothing when the source settings are missing, invalid or carry no auth keys", () => {
-    const leaf = createAutomatedConfigDir(dataDir, "thread-1");
+    const leaf = createAutomatedConfigDir(dataDir, "thread-1")!;
     expect(seedAutomatedConfigDir(leaf)).toBe("none");
     writeFileSync(join(sourceDir, "settings.json"), "{not json");
     expect(seedAutomatedConfigDir(leaf)).toBe("none");
@@ -155,7 +155,7 @@ describe("automated config dir lifecycle", () => {
   it("honours explicit seed options over the process env", () => {
     const other = mkdtempSync(join(tmpdir(), "zcc-cfgsrc2-"));
     writeFileSync(join(other, "settings.json"), JSON.stringify({ apiKeyHelper: "h2" }));
-    const leaf = createAutomatedConfigDir(dataDir, "thread-2", { sourceConfigDir: other });
+    const leaf = createAutomatedConfigDir(dataDir, "thread-2", { sourceConfigDir: other })!;
     expect(JSON.parse(readFileSync(join(leaf, "settings.json"), "utf8"))).toEqual({
       apiKeyHelper: "h2",
     });
@@ -164,9 +164,9 @@ describe("automated config dir lifecycle", () => {
 
   it("sweeps expired unowned leaves and keeps live or fresh ones", () => {
     const now = Date.now();
-    const old = createAutomatedConfigDir(dataDir, "old");
-    const live = createAutomatedConfigDir(dataDir, "live");
-    const fresh = createAutomatedConfigDir(dataDir, "fresh");
+    const old = createAutomatedConfigDir(dataDir, "old")!;
+    const live = createAutomatedConfigDir(dataDir, "live")!;
+    const fresh = createAutomatedConfigDir(dataDir, "fresh")!;
     const past = new Date(now - 10_000);
     utimesSync(old, past, past);
     utimesSync(live, past, past);

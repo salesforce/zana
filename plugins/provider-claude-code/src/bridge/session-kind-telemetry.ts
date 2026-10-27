@@ -1,4 +1,4 @@
-import { appendFileSync, chmodSync, mkdirSync, statSync } from "node:fs";
+import { appendFile, chmod, mkdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type {
   ClaudeSessionAdmission,
@@ -53,27 +53,48 @@ export function toTelemetryRecord(
   };
 }
 
-/** Append-only JSONL, `0600`, capped; stops appending once the cap is reached. */
-export function writeSessionKindTelemetry(
+let writeQueue: Promise<unknown> = Promise.resolve();
+
+/** Resolves once every telemetry write queued so far has settled. */
+export function flushSessionKindTelemetry(): Promise<void> {
+  return writeQueue.then(() => undefined);
+}
+
+async function appendRecord(
   dataDir: string,
   record: ClaudeSessionKindTelemetry,
-  maxBytes: number = SESSION_KIND_TELEMETRY_MAX_BYTES,
-): boolean {
+  maxBytes: number,
+): Promise<boolean> {
   try {
     const dir = join(dataDir, "diagnostics");
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    await mkdir(dir, { recursive: true, mode: 0o700 });
     const file = join(dir, "claude-session-kind.jsonl");
     try {
-      if (statSync(file).size >= maxBytes) return false;
+      if ((await stat(file)).size >= maxBytes) return false;
     } catch {
       // first write
     }
-    appendFileSync(file, `${JSON.stringify(toTelemetryRecord(record))}\n`, {
+    await appendFile(file, `${JSON.stringify(toTelemetryRecord(record))}\n`, {
       mode: 0o600,
     });
-    chmodSync(file, 0o600);
+    await chmod(file, 0o600);
     return true;
   } catch {
     return false;
   }
+}
+
+/**
+ * Append-only JSONL, `0600`, capped; stops appending once the cap is reached.
+ * Async so the bridge event loop never blocks on disk; writes are serialized
+ * so start/end records keep their order. Never rejects.
+ */
+export function writeSessionKindTelemetry(
+  dataDir: string,
+  record: ClaudeSessionKindTelemetry,
+  maxBytes: number = SESSION_KIND_TELEMETRY_MAX_BYTES,
+): Promise<boolean> {
+  const result = writeQueue.then(() => appendRecord(dataDir, record, maxBytes));
+  writeQueue = result;
+  return result;
 }

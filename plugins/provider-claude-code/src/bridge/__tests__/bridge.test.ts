@@ -60,6 +60,7 @@ import {
   experimental_createBridgeJsonRpcTestHarness as createBridgeJsonRpcTestHarness,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge/testing";
 import { BRIDGE_JSON_RPC_ERRORS } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
+import { flushSessionKindTelemetry } from "../session-kind-telemetry.js";
 import type { BridgeJsonRpcOutputMessage } from "@zana-ai/zcc-plugin-sdk/provider-bridge/testing";
 
 import {
@@ -3071,7 +3072,8 @@ describe("bridge", () => {
       };
     }
 
-    function readTelemetry(): Array<Record<string, unknown>> {
+    async function readTelemetry(): Promise<Array<Record<string, unknown>>> {
+      await flushSessionKindTelemetry();
       const file = join(dataDir, "diagnostics", "claude-session-kind.jsonl");
       if (!existsSync(file)) return [];
       return readFileSync(file, "utf8")
@@ -3096,7 +3098,7 @@ describe("bridge", () => {
         expect(queryOptions.mcpServers).toBeDefined();
         expect(queryOptions.hooks).toBeDefined();
 
-        const [start] = readTelemetry();
+        const [start] = await readTelemetry();
         expect(start).toMatchObject({
           event: "start",
           sessionKind: "automated",
@@ -3113,7 +3115,7 @@ describe("bridge", () => {
         });
         await bridge.waitForResponse(2);
         expect(existsSync(configDir)).toBe(false);
-        expect(readTelemetry().at(-1)).toMatchObject({ event: "end" });
+        expect((await readTelemetry()).at(-1)).toMatchObject({ event: "end" });
       } finally {
         bridge.restore();
       }
@@ -3142,7 +3144,7 @@ describe("bridge", () => {
         expect(JSON.parse(readFileSync(join(configDir, "settings.json"), "utf8"))).toEqual({
           apiKeyHelper: "/bin/helper",
         });
-        expect(readTelemetry()[0]).toMatchObject({ settingSources: ["user"] });
+        expect((await readTelemetry())[0]).toMatchObject({ settingSources: ["user"] });
       } finally {
         bridge.restore();
         rmSync(sourceDir, { recursive: true, force: true });
@@ -3172,7 +3174,7 @@ describe("bridge", () => {
         expect(queryOptions.env?.CLAUDE_CONFIG_DIR).toBe(sourceDir);
         expect(queryOptions.settingSources).toEqual(["user", "project", "local"]);
         expect(existsSync(join(dataDir, "claude-automated-config", "thread-oauth"))).toBe(false);
-        expect(readTelemetry()[0]).toMatchObject({
+        expect((await readTelemetry())[0]).toMatchObject({
           sessionKind: "interactive",
           admission: "fallback-interactive",
           isolatedConfig: false,
@@ -3215,7 +3217,7 @@ describe("bridge", () => {
         expect(queryOptions.env?.CLAUDE_CONFIG_DIR).toBeUndefined();
         expect(queryOptions.settingSources).toEqual(["user", "project", "local"]);
         expect(existsSync(join(dataDir, "claude-automated-config"))).toBe(false);
-        expect(readTelemetry()[0]).toMatchObject({
+        expect((await readTelemetry())[0]).toMatchObject({
           sessionKind: "interactive",
           admission: "default-interactive",
           isolatedConfig: false,

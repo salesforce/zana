@@ -1896,7 +1896,7 @@ function recordSessionKindTelemetry(
   sessionOptions: SdkSessionOptions,
   dynamicToolCount: number,
 ): void {
-  writeSessionKindTelemetry(isolation.dataDir, {
+  void writeSessionKindTelemetry(isolation.dataDir, {
     event,
     sessionKind: isolation.kind,
     admission: isolation.admission,
