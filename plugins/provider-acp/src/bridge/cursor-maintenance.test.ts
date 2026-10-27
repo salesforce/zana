@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { join } from "node:path";
+import * as acpHealth from "./acp-health.js";
 import {
   isCursorLaunchCommand,
   getCursorProviderHealth,
@@ -25,6 +26,30 @@ describe("Cursor ACP maintenance", () => {
     expect(result).toMatchObject({ health: { status: "ready", accountEmail: "alternate@example.com" } });
     expect(readAuthFile).toHaveBeenCalledWith(join(homeDir ?? "/alternate-home", ".cursor", "auth.json"));
     expect(readKeychain).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { env: { HOME: "/launch-home", USERPROFILE: "/launch-profile" }, expectedHome: "/launch-profile" },
+    { env: { HOME: "/launch-home" }, expectedHome: "/launch-home" },
+  ])("uses Windows launch home precedence: $expectedHome", async ({ env, expectedHome }) => {
+    // The executable probe is independent of Windows credential path selection.
+    const ready = await acpHealth.getGenericAcpProviderHealth({ command: process.execPath });
+    const probe = vi.spyOn(acpHealth, "getGenericAcpProviderHealth").mockResolvedValue(ready);
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const readAuthFile = vi.fn(async () => JSON.stringify({ accessToken: "fixture-token", email: "configured@example.com" }));
+    Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+    try {
+      const result = await getCursorProviderHealth(
+        { readAuthFile, readKeychain: async () => null },
+        { command: "configured-cursor-agent", env },
+      );
+      expect(result).toMatchObject({ health: { status: "ready", accountEmail: "configured@example.com" } });
+      expect(readAuthFile).toHaveBeenCalledWith(join(expectedHome, ".cursor", "auth.json"));
+      expect(probe).toHaveBeenCalledWith({ command: "configured-cursor-agent", env });
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+      probe.mockRestore();
+    }
   });
   it("normalizes dashboard windows and rejects malformed usage", () => {
     expect(

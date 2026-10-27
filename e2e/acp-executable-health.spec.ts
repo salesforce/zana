@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, join } from 'node:path';
-import { test, expect } from './fixtures/app.js';
+import { closeApp, test, expect } from './fixtures/app.js';
 import { waitForThreadProvider } from './fixtures/thread-providers.js';
 
 test.use({
@@ -24,6 +24,17 @@ function launches(home: string): Launch[] {
   return existsSync(path) ? readFileSync(path, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];
 }
 
+function probePids(home: string): number[] {
+  const file = join(home, 'probe-pids.jsonl');
+  return existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).flatMap(line => {
+    try { return JSON.parse(line) as number[]; } catch { return []; }
+  }) : [];
+}
+
+function isRunning(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
 function healthMessages(home: string, command?: string): Array<{ status: string; installedVersion?: string; statusMessage?: string }> {
   const root = join(home, 'acp-health-recordings');
   if (!existsSync(root)) return [];
@@ -42,12 +53,19 @@ function healthMessages(home: string, command?: string): Array<{ status: string;
 }
 
 test.afterEach(async ({ app }, testInfo) => {
-  if (testInfo.status === testInfo.expectedStatus) return;
-  await testInfo.attach('launches-on-failure', { body: JSON.stringify(launches(app.home), null, 2), contentType: 'application/json' });
-  const root = join(app.home, 'acp-health-recordings', '_process');
-  for (const name of ['runtime→bridge.ndjson', 'bridge→runtime.ndjson', 'provider→bridge.ndjson']) {
-    const file = join(root, name);
-    if (existsSync(file)) await testInfo.attach(name, { path: file, contentType: 'application/x-ndjson' });
+  try {
+    if (testInfo.status === testInfo.expectedStatus) return;
+    await testInfo.attach('launches-on-failure', { body: JSON.stringify(launches(app.home), null, 2), contentType: 'application/json' });
+    const root = join(app.home, 'acp-health-recordings', '_process');
+    for (const name of ['runtime→bridge.ndjson', 'bridge→runtime.ndjson', 'provider→bridge.ndjson']) {
+      const file = join(root, name);
+      if (existsSync(file)) await testInfo.attach(name, { path: file, contentType: 'application/x-ndjson' });
+    }
+  } finally {
+    // These are exclusively PIDs created by the sandbox's hanging probe fixture.
+    for (const pid of probePids(app.home)) {
+      try { process.kill(pid, 'SIGKILL'); } catch { /* Already reaped. */ }
+    }
   }
 });
 
@@ -159,7 +177,15 @@ test('broken, missing and timed-out ACP executables never report healthy and exp
   await check(join(app.home, 'shadow-bin', 'opencode'), 'unknown', 'shadow wrapper dependency is missing');
   await check(join(app.home, 'missing-agent'), 'not_installed', 'missing-agent');
   const hanging = join(app.home, 'hanging-agent');
-  writeFileSync(hanging, `#!${process.execPath}\nif (process.argv.includes('--version')) setInterval(() => {}, 1000); else { console.error('startup dependency is unavailable'); process.exit(127); }\n`, { mode: 0o700 });
+  writeFileSync(hanging, `#!${process.execPath}\n
+if (process.argv.includes('--version')) {
+  const { spawn } = await import('node:child_process');
+  const { appendFileSync } = await import('node:fs');
+  const child = process.platform === 'win32' ? undefined : spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'inherit' });
+  appendFileSync(${JSON.stringify(join(app.home, 'probe-pids.jsonl'))}, JSON.stringify(child ? [process.pid, child.pid] : [process.pid]) + '\\n');
+  setInterval(() => {}, 1000);
+} else { console.error('startup dependency is unavailable'); process.exit(127); }
+`, { mode: 0o700 });
   await check(hanging, 'unknown', 'timed out');
   const created = await app.window.evaluate(async projectId => {
     const response = await fetch('/api/v1/threads', { method: 'POST', headers: { 'content-type': 'application/json' },
@@ -176,4 +202,18 @@ test('broken, missing and timed-out ACP executables never report healthy and exp
     expect(created.status).toBeGreaterThanOrEqual(400);
     expect(JSON.stringify(created.body)).toContain('startup dependency is unavailable');
   }
+  // Close the real app while another probe is still running. Losing a parent's
+  // JS timeout must not leave its wrapper or descendants alive after shutdown.
+  const previousPids = probePids(app.home).length;
+  const shutdownProbe = join(app.home, 'shutdown-probe');
+  writeFileSync(shutdownProbe, readFileSync(hanging), { mode: 0o700 });
+  const shutdownProvider = { id: 'acp-shutdown-probe', displayName: 'Shutdown fixture', command: shutdownProbe, args: ['acp'] };
+  await app.window.evaluate(custom => window.cc.pluginApps.setSettings('provider-acp', { customAgents: JSON.stringify([custom]) }), shutdownProvider);
+  await waitForThreadProvider(app.window, shutdownProvider.id);
+  await app.window.evaluate(({ projectId, providerId }) => {
+    void fetch(`/api/v1/system/execution-options?providerId=${providerId}&projectId=${projectId}&refresh=1`).catch(() => undefined);
+  }, { projectId: project.id, providerId: shutdownProvider.id });
+  await expect.poll(() => probePids(app.home).length, { timeout: 10_000 }).toBeGreaterThan(previousPids);
+  await closeApp(app.electron);
+  await expect.poll(() => probePids(app.home).filter(isRunning), { timeout: 10_000 }).toEqual([]);
 });

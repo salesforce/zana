@@ -156,14 +156,39 @@ export function spawnPortableOutputProcess(
   return child;
 }
 
-/** Bounded CLI probes, including npm .cmd shims on Windows. */
+interface PortableCommandCleanupState {
+  children: Set<PortableChildProcess>;
+}
+
+// A plugin artifact may bundle another copy of this module. One process-wide
+// registry keeps one exit subscription and only commands this helper owns.
+const portableCommandCleanupKey = Symbol.for("zcc.portable-command-cleanup.v1");
+const portableCommandGlobal = globalThis as typeof globalThis & {
+  [portableCommandCleanupKey]?: PortableCommandCleanupState;
+};
+const portableCommandCleanup = portableCommandGlobal[portableCommandCleanupKey] ?? (() => {
+  const state: PortableCommandCleanupState = { children: new Set() };
+  portableCommandGlobal[portableCommandCleanupKey] = state;
+  process.once("exit", () => {
+    for (const child of state.children) terminatePortableCommandTree(child);
+    state.children.clear();
+  });
+  return state;
+})();
+
+function terminatePortableCommandTree(child: PortableChildProcess): void {
+  try { killProcessGroup({ child, signal: "SIGKILL" }); } catch { /* Already gone. */ }
+}
+
+/** Bounded, owned CLI probes, including npm .cmd shims on Windows. */
 export function runPortableCommand(
   command: string,
   args: readonly string[],
   options: { timeout: number; maxBuffer?: number; env?: NodeJS.ProcessEnv; cwd?: string },
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawnPortableOutputProcess({ command, args: [...args], env: options.env, cwd: options.cwd });
+    const child = spawnPortableOutputProcess({ command, args: [...args], env: options.env, cwd: options.cwd, detached: supportsProcessGroups() });
+    portableCommandCleanup.children.add(child);
     let stdout = "";
     let stderr = "";
     let bytes = 0;
@@ -175,16 +200,20 @@ export function runPortableCommand(
       if (error) reject(error);
       else resolve({ stdout, stderr });
     };
+    const abort = (error: Error) => {
+      terminatePortableCommandTree(child);
+      child.stdout.destroy();
+      child.stderr.destroy();
+      finish(error);
+    };
     const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      finish(Object.assign(new Error(`Command timed out after ${options.timeout}ms`), { killed: true }));
+      abort(Object.assign(new Error(`Command timed out after ${options.timeout}ms`), { killed: true }));
     }, options.timeout);
     const collect = (stream: "stdout" | "stderr", text: string) => {
       if (done) return;
       bytes += Buffer.byteLength(text);
       if (bytes > (options.maxBuffer ?? 1024 * 1024)) {
-        child.kill("SIGKILL");
-        finish(new Error("Command output exceeded its byte limit"));
+        abort(new Error("Command output exceeded its byte limit"));
         return;
       }
       if (stream === "stdout") stdout += text;
@@ -192,8 +221,12 @@ export function runPortableCommand(
     };
     child.stdout.setEncoding("utf8").on("data", (text: string) => collect("stdout", text));
     child.stderr.setEncoding("utf8").on("data", (text: string) => collect("stderr", text));
-    child.on("error", finish);
+    child.on("error", abort);
+    // A successful wrapper may exit while its child still holds our pipes.
+    // Kill that owned group now so close can drain and no descendant survives.
+    child.once("exit", () => terminatePortableCommandTree(child));
     child.on("close", (code, signal) => {
+      portableCommandCleanup.children.delete(child);
       finish(code === 0 ? undefined : Object.assign(
         new Error(stderr.trim() || `Command exited with code ${code}, signal ${signal}`), { code, signal, stdout, stderr },
       ));

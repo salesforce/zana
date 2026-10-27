@@ -3032,11 +3032,21 @@ if (process.argv.includes("--mcp-stdio")) {
   runAcpDynamicToolMcpServer();
 }
 
+let bridgeStopping = false;
+function shutdownBridge(): void {
+  if (bridgeStopping) return;
+  bridgeStopping = true;
+  const deadline = setTimeout(() => process.exit(0), 4000);
+  deadline.unref();
+  void stopAllSessions().catch(() => undefined).finally(() => {
+    clearTimeout(deadline);
+    process.exit(0);
+  });
+}
+
 export const experimental_providerBridge = experimental_defineProviderBridge({
   handleLine,
-  onClose: () => {
-    void stopAllSessions().finally(() => {
-      process.exit(0);
-    });
-  },
+  onClose: shutdownBridge,
+  onSigterm: shutdownBridge,
+  onSigint: shutdownBridge,
 });

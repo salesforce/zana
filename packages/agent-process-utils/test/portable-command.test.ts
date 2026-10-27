@@ -1,11 +1,50 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { runPortableCommand } from "../src/index.js";
 
 const dirs: string[] = [];
-afterEach(() => dirs.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true })));
+const pidFiles: string[] = [];
+afterEach(() => {
+  for (const file of pidFiles.splice(0)) {
+    if (!existsSync(file)) continue;
+    for (const pid of JSON.parse(readFileSync(file, "utf8")) as number[]) {
+      try { process.kill(pid, "SIGKILL"); } catch { /* Fixture already reaped. */ }
+    }
+  }
+  dirs.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true }));
+});
+
+function commandTreeFixture(mode: "timeout" | "overflow" | "success" | "nonzero") {
+  const cwd = mkdtempSync(join(tmpdir(), "portable-tree-"));
+  dirs.push(cwd);
+  const pids = join(cwd, "pids.json");
+  pidFiles.push(pids);
+  const wrapper = join(cwd, "wrapper.cjs");
+  writeFileSync(wrapper, `
+const { spawn } = require('node:child_process');
+const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'inherit' });
+require('node:fs').writeFileSync(${JSON.stringify(pids)}, JSON.stringify([process.pid, child.pid]));
+${mode === "success" ? "process.stdout.write('complete-output'); process.exit(0);"
+    : mode === "nonzero" ? "process.stderr.write('wrapper failed'); process.exit(7);"
+    : mode === "overflow" ? "process.stdout.write('x'.repeat(10000)); setInterval(() => {}, 1000);"
+    : "setInterval(() => {}, 1000);"}
+`);
+  return { wrapper, pids };
+}
+
+function isAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+async function expectFixtureGone(file: string) {
+  expect(existsSync(file)).toBe(true);
+  const pids = JSON.parse(readFileSync(file, "utf8")) as number[];
+  await expect.poll(() => pids.every(pid => !isAlive(pid)), { timeout: 5000 }).toBe(true);
+}
 
 it("preserves large UTF-8 output, literal args, cwd and env", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "portable command "));
@@ -33,6 +72,44 @@ it("settles a timed-out command and caps combined stdout/stderr", async () => {
     .rejects.toMatchObject({ killed: true });
   await expect(runPortableCommand(process.execPath, ["-e", 'process.stdout.write("a".repeat(100));process.stderr.write("b".repeat(100))'], { timeout: 5000, maxBuffer: 150 }))
     .rejects.toThrow("byte limit");
+});
+
+it.runIf(process.platform !== "win32").each(["timeout", "overflow", "success", "nonzero"] as const)(
+  "reaps wrapper descendants after %s, including inherited output pipes", async mode => {
+    const fixture = commandTreeFixture(mode);
+    const operation = runPortableCommand(process.execPath, [fixture.wrapper], { timeout: 1000, maxBuffer: 1000 });
+    if (mode === "success") await expect(operation).resolves.toEqual({ stdout: "complete-output", stderr: "" });
+    else await expect(operation).rejects.toThrow(mode === "timeout" ? "timed out" : mode === "overflow" ? "byte limit" : "wrapper failed");
+    await expectFixtureGone(fixture.pids);
+  },
+);
+
+it.runIf(process.platform !== "win32")("reaps in-flight command trees when their owning process exits", async () => {
+  const fixture = commandTreeFixture("timeout");
+  const utilityUrl = new URL("../src/index.ts", import.meta.url).href;
+  const owner = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), "--input-type=module", "-e", `
+const { runPortableCommand } = await import(${JSON.stringify(utilityUrl)});
+void runPortableCommand(process.execPath, [${JSON.stringify(fixture.wrapper)}], { timeout: 60000 }).catch(() => {});
+process.stdin.once('data', () => process.exit(0));
+`], { stdio: ["pipe", "ignore", "pipe"] });
+  let stderr = "";
+  owner.stderr!.on("data", chunk => { stderr += String(chunk); });
+  try {
+    await expect.poll(() => existsSync(fixture.pids) || stderr, { timeout: 5000 }).toBe(true);
+    const exited = once(owner, "exit");
+    owner.stdin!.end("exit");
+    await exited;
+    await expectFixtureGone(fixture.pids);
+  } finally { if (owner.exitCode === null) owner.kill("SIGKILL"); }
+});
+
+it("does not accumulate exit listeners across completed or failed probes", async () => {
+  const before = process.listenerCount("exit");
+  const bundledCopy = await import(`${new URL("../src/index.ts", import.meta.url).href}?portable-command-copy`);
+  await bundledCopy.runPortableCommand(process.execPath, ["-e", "process.exit(0)"], { timeout: 1000 });
+  await runPortableCommand(process.execPath, ["-e", "process.exit(0)"], { timeout: 1000 });
+  await expect(runPortableCommand("zcc-missing-cleanup-test", [], { timeout: 1000 })).rejects.toThrow();
+  expect(process.listenerCount("exit")).toBe(before);
 });
 
 it.runIf(process.platform === "win32")("runs npm-style cmd shims from PATH with spaces", async () => {

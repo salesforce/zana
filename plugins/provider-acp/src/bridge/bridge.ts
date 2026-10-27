@@ -3290,13 +3290,23 @@ if (process.argv.includes("--mcp-stdio")) {
   runAcpDynamicToolMcpServer();
 }
 
+let bridgeStopping = false;
+function shutdownBridge(): void {
+  if (bridgeStopping) return;
+  bridgeStopping = true;
+  // Exit through Node's lifecycle so owned in-flight CLI probes are reaped.
+  // Keep a wedged MCP connection below the host's five-second kill deadline.
+  const deadline = setTimeout(() => process.exit(0), 4000);
+  deadline.unref();
+  void stopAllSessions().catch(() => undefined).finally(() => {
+    clearTimeout(deadline);
+    process.exit(0);
+  });
+}
+
 export const experimental_providerBridge = experimental_defineProviderBridge({
   handleLine,
-  onClose: () => {
-    // Stdin close is a process shutdown boundary; cancel and reap the agent
-    // subprocesses before the bridge exits so none outlive the daemon.
-    void stopAllSessions().finally(() => {
-      process.exit(0);
-    });
-  },
+  onClose: shutdownBridge,
+  onSigterm: shutdownBridge,
+  onSigint: shutdownBridge,
 });
