@@ -2,9 +2,18 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 const http = vi.hoisted(() => ({ apiJson: vi.fn(async () => ({ descriptors: {}, values: {} })) }));
 vi.mock('./fetch-with-app-surface.js', async (orig) => ({ ...(await orig<object>()), apiJson: http.apiJson }));
-import { product } from './product-client';
+import { pluginRecovery, product } from './product-client';
 
 beforeEach(() => { http.apiJson.mockClear(); });
+
+it('uses core recovery routes even when the desktop plugin bridge is broken', async () => {
+  window.cc = { pluginApps: { reload: () => { throw new Error('broken'); } } } as never;
+  await pluginRecovery.status();
+  expect(http.apiJson).toHaveBeenLastCalledWith('/plugin-apps/recovery');
+  await pluginRecovery.start();
+  expect(http.apiJson).toHaveBeenLastCalledWith('/plugin-apps/hard-reload', { method: 'POST', body: '{}' });
+  delete (window as { cc?: unknown }).cc;
+});
 
 it('asks the settings route to omit secrets only when requested', async () => {
   await product.pluginApps.getSettings('p/1', { omitSecrets: true });

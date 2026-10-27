@@ -4,6 +4,12 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { boundarySpecs, changedLines, codeLines, coverageFailures, runVerification, mergeCoverage } from './ci-verification.mjs';
 
+it('checks recovery through the built app whenever its UI, service or distribution changes', () => {
+  for (const path of ['apps/app/src/views/settings/DevelopmentView.tsx', 'apps/server/src/plugins/plugin-recovery-runtime.ts', 'apps/server/src/plugins/plugin-service.ts', 'scripts/plugin-recovery-artifacts.mjs', 'scripts/before-pack-plugins.mjs', '.github/workflows/release.yml']) {
+    expect(boundarySpecs([path])).toContain('e2e/development-recovery.spec.ts');
+  }
+});
+
 it('selects required ownership boundaries, deduplicates specs and leaves docs alone', () => {
   expect(boundarySpecs(['docs/readme.md'])).toEqual([]);
   expect(boundarySpecs(['apps/server/src/services/threads/conversation-history-maintenance.ts', 'plugins/tasks/views/list/data.ts', 'apps/app/src/monacoSetup.ts', 'apps/host-daemon/src/pty.ts', 'apps/desktop/src/desktop-browser-broker.ts', 'services/mobile-relay/server.mjs', 'apps/server/src/services/inbox/inbox-store.ts', 'apps/server/src/services/execution-service.ts', 'scripts/ci-verification.mjs'])).toEqual(expect.arrayContaining([

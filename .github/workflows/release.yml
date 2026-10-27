@@ -324,6 +324,8 @@ jobs:
             dist/*.zip
             dist/*.blockmap
             dist/latest-mac-${{ matrix.arch }}.yml
+            dist/plugin-recovery-*.json
+            dist/plugin-recovery-*.json.gz
           if-no-files-found: error
 
   build-windows:
@@ -409,6 +411,8 @@ jobs:
             dist/*.exe
             dist/*.blockmap
             dist/latest.yml
+            dist/plugin-recovery-*.json
+            dist/plugin-recovery-*.json.gz
           if-no-files-found: error
 
   release:
@@ -432,6 +436,7 @@ jobs:
           cp artifacts/release-arm64/*.dmg artifacts/release-arm64/*.zip artifacts/release-arm64/*.blockmap merged/
           cp artifacts/release-x64/*.dmg artifacts/release-x64/*.zip artifacts/release-x64/*.blockmap merged/
           cp artifacts/release-windows-x64/*.exe artifacts/release-windows-x64/*.blockmap artifacts/release-windows-x64/latest.yml merged/
+          cp artifacts/release-arm64/plugin-recovery-* artifacts/release-x64/plugin-recovery-* artifacts/release-windows-x64/plugin-recovery-* merged/
           node scripts/merge-latest-mac-yml.mjs \
             artifacts/release-arm64/latest-mac-arm64.yml \
             artifacts/release-x64/latest-mac-x64.yml \
@@ -458,6 +463,8 @@ jobs:
             merged/latest-mac.yml
             merged/*.exe
             merged/latest.yml
+            merged/plugin-recovery-*.json
+            merged/plugin-recovery-*.json.gz
           # Use the same curated notes as the in-app What's New view.
           body_path: docs/releases/${{ steps.meta.outputs.title }}.md
           fail_on_unmatched_files: true

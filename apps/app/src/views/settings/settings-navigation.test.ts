@@ -68,7 +68,10 @@ describe('settings catalogue invariants', () => {
     expect(SETTINGS_SECTIONS.filter(section => section.group === 'app').map(section => section.id))
       .toEqual(['performance', 'development', 'about']);
     expect(SETTINGS_SECTIONS.find(section => section.id === 'development')?.projectScoped).toBeUndefined();
-    expect(SETTINGS_SUBSECTIONS.development).toEqual([{ id: 'bundled-plugins', label: 'Bundled plugins' }]);
+    expect(SETTINGS_SUBSECTIONS.development).toEqual([
+      { id: 'recovery', label: 'Recovery' },
+      { id: 'bundled-plugins', label: 'Bundled plugins' }
+    ]);
   });
 
   it('declares a Peers section exactly once', () => {

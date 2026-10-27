@@ -24,3 +24,9 @@ it.each(['developer mode', 'hot reload', 'local override', 'reserved plugin', 's
 it('removes development results from Experimental', () => {
   expect(experimental.some(row => row.id.includes('development'))).toBe(false);
 });
+
+it.each([['host daemon', 'development.restart-daemon'], ['hard plugin reload', 'development.hard-plugin-reload'], ['corrupted', 'development.hard-plugin-reload']])('finds recovery through %s', (query, id) => {
+  const hit = searchSettings(query, { config: {} as AppConfig }, { entries }).find(row => row.entry.id === id)!;
+  expect(hit).toBeDefined();
+  expect(hit.entry.anchor).toBe('recovery');
+});
