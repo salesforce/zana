@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  */
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mermaidRender = vi.hoisted(() =>
@@ -98,5 +98,16 @@ describe('MarkdownContent mermaid remounts', () => {
     expect(frame.classList.contains('is-sized')).toBe(false);
     expect(frame.getAttribute('style')).toBeNull();
     expect(container.querySelector('.inbox-mermaid-toolbar')).toBeNull();
+  });
+
+  it('switches between source and the sized diagram without losing the layout', async () => {
+    const { container, getByRole } = render(<MarkdownContent text={SOURCE} exportable />);
+    await waitFor(() => expect(container.querySelector('.inbox-mermaid-frame')).toBeTruthy());
+    fireEvent.click(getByRole('button', { name: 'Source', exact: true }));
+    expect(container.querySelector('.inbox-mermaid-frame')).toBeNull();
+    expect(container.querySelector('.inbox-mermaid-source')?.textContent).toBe('graph TD; A-->B');
+    fireEvent.click(getByRole('button', { name: 'Diagram', exact: true }));
+    expect(container.querySelector('.inbox-mermaid-source')).toBeNull();
+    expect(container.querySelector<HTMLElement>('.inbox-mermaid-frame')?.style.aspectRatio).toBe('20 / 10');
   });
 });
