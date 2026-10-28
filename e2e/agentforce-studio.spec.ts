@@ -1281,9 +1281,8 @@ test('Agentforce Studio: Lightning Types, collapsible explorer sections and a hi
   await explorer.getByRole('button', { name: 'Hide explorer' }).click();
   await expect(explorer).toHaveCount(0);
   // Hiding the focused explorer button leaves focus on the document body.
-  // Focus Studio explicitly so this exercises its shortcut, not the app sidebar.
-  await studio.locator('.sf-as-body.sf-studio').focus();
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+B' : 'Control+B');
+  // Use Studio's Ctrl+B variant: macOS reserves Cmd+B for the native project-view menu.
+  await studio.locator('.sf-as-body.sf-studio').press('Control+b');
   await expect(explorer).toBeVisible();
 });
 
@@ -2409,8 +2408,8 @@ test('Agentforce simulations: live lanes stay with their agent, stop, verdicts a
   const failedId = await simulations.getByLabel('Simulation batch', { exact: true }).locator('option').nth(1).getAttribute('value');
   await simulations.getByLabel('Simulation batch', { exact: true }).selectOption(failedId!);
   await expect(simulations.getByLabel('0 of 1 pass')).toBeVisible();
+  // Reload preserves the project route; its navigation is ready without reopening the project.
   await page.reload();
-  await page.getByRole('button', { name: 'Open dx', exact: true }).click();
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
   await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
   await showAllAgents(studio);
