@@ -1641,11 +1641,18 @@ export interface PluginStatusApi {
   /**
    * Mark this plugin `needs-configuration` (with a message shown in
    * `zcc plugin list` and the UI) instead of failing — e.g. a factory or
-   * service that finds no API key configured. Cleared on the next load;
-   * saving settings does not auto-reload in V1, so ask the user to
-   * `zcc plugin reload <id>` after configuring.
+   * service that finds no API key configured. Callable from the factory or
+   * at any later point; the Plugins hub updates without a reload. The status
+   * resets on the next load.
    */
   needsConfiguration(message: string): void;
+  /**
+   * Clear a `needs-configuration` status this plugin set, e.g. once the user
+   * finishes signing in. The plugin returns to `running` without a reload.
+   * A no-op when the plugin is not marked, or when core marked it for a
+   * missing required plugin.
+   */
+  configured(): void;
 }
 
 /**

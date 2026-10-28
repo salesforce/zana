@@ -471,7 +471,7 @@ export type PluginSdkInbox = PluginSdk['inbox'];
         resolve(itemId: string): { context: string } | Promise<{ context: string }>;
       }): void;
     };
-    readonly status: { needsConfiguration(message: string): void };
+    readonly status: { needsConfiguration(message: string): void; configured(): void };
     readonly sdk: {
       system: { defaultHost(): Promise<{ id: string } | null> };
       threads: {

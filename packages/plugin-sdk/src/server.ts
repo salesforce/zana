@@ -1316,6 +1316,7 @@ export interface PluginUi {
 
 export interface PluginStatusApi {
   needsConfiguration(message: string): void;
+  configured(): void;
 }
 
 export interface ZccPluginApi {

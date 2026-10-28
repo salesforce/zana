@@ -2163,6 +2163,87 @@ describe('plugin services registry', () => {
   });
 });
 
+describe('plugin-reported status', () => {
+  const statusPlugin = (id: string, extra?: Record<string, unknown>) => writePlugin(
+    join(root(), id),
+    id,
+    `export default function plugin(zcc) {
+      zcc.status.needsConfiguration('Sign in first.');
+      zcc.rpc.method('signIn', () => { zcc.status.configured(); return true; });
+      zcc.rpc.method('signOut', (args) => { zcc.status.needsConfiguration(args?.message ?? 'Signed out.'); return true; });
+    }\n`,
+    extra
+  );
+
+  it('marks and clears needs-configuration live without a reload', async () => {
+    const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+    await service.install(statusPlugin('status-live'));
+    expect(service.get('status-live')).toMatchObject({ status: 'needs-configuration', statusDetail: 'Sign in first.' });
+
+    await service.callRpc('status-live', 'signIn', {});
+    await vi.waitFor(() => expect(service.get('status-live')).toMatchObject({ status: 'running', statusDetail: null }));
+
+    await service.callRpc('status-live', 'signOut', { message: `  ${'x'.repeat(600)}  ` });
+    await vi.waitFor(() => expect(service.status('status-live')).toBe('needs-configuration'));
+    expect(service.get('status-live')?.statusDetail).toHaveLength(500);
+
+    await service.callRpc('status-live', 'signOut', { message: '   ' });
+    await vi.waitFor(() => expect(service.get('status-live')?.statusDetail).toBe('This plugin needs configuration.'));
+
+    // The status resets with the next load.
+    await service.callRpc('status-live', 'signIn', {});
+    await vi.waitFor(() => expect(service.status('status-live')).toBe('running'));
+    await service.reload('status-live');
+    expect(service.get('status-live')).toMatchObject({ status: 'needs-configuration', statusDetail: 'Sign in first.' });
+  });
+
+  it('ignores status calls once the plugin is disabled', async () => {
+    const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+    await service.install(writePlugin(join(root(), 'status-late'), 'status-late', `export default function plugin(zcc) {
+      zcc.rpc.method('later', () => { setTimeout(() => zcc.status.needsConfiguration('Too late.'), 20); return true; });
+    }\n`));
+    await service.callRpc('status-late', 'later', {});
+    await service.disable('status-late');
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(service.get('status-late')).toMatchObject({ status: 'disabled' });
+  });
+
+  it('keeps a missing required plugin ahead of plugin-reported status, then restores it', async () => {
+    const dataDir = root();
+    const bundled = root();
+    writePlugin(join(bundled, 'docs'), 'docs');
+    const setup = createPluginService({ dataDir, bundledRoot: bundled });
+    await setup.install(writePlugin(join(root(), 'status-needs'), 'status-needs', `export default function plugin(zcc) {
+      zcc.rpc.method('signOut', () => { zcc.status.needsConfiguration('Signed out.'); return true; });
+    }\n`, { requires: ['absent'] }));
+    setup.stop();
+    const service = createPluginService({ dataDir, bundledRoot: bundled });
+    await service.start();
+    expect(service.get('status-needs')?.statusDetail).toBe('needs plugin: absent');
+    await service.callRpc('status-needs', 'signOut', {});
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(service.get('status-needs')).toMatchObject({ status: 'needs-configuration', statusDetail: 'needs plugin: absent' });
+
+    await service.install(writePlugin(join(root(), 'absent'), 'absent'));
+    await vi.waitFor(() => expect(service.get('status-needs')).toMatchObject({ status: 'needs-configuration', statusDetail: 'Signed out.' }));
+  });
+
+  it('does not let configured() clear a core tool-name conflict', async () => {
+    const service = createPluginService({ dataDir: root(), bundledRoot: root() });
+    const tool = `zcc.agents.registerTool({ name: 'shared_status_tool', description: 'x', parameters: { type: 'object' }, execute: async () => null });`;
+    await service.install(writePlugin(join(root(), 'tool-owner'), 'tool-owner', `export default function plugin(zcc) { ${tool} }\n`));
+    await service.install(writePlugin(join(root(), 'tool-second'), 'tool-second', `export default function plugin(zcc) {
+      ${tool}
+      zcc.rpc.method('signIn', () => { zcc.status.configured(); return true; });
+    }\n`));
+    expect(service.get('tool-second')?.statusDetail).toMatch(/already registered by plugin "tool-owner"/);
+    await service.callRpc('tool-second', 'signIn', {});
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(service.get('tool-second')).toMatchObject({ status: 'needs-configuration' });
+    expect(service.get('tool-second')?.statusDetail).toMatch(/already registered/);
+  });
+});
+
 describe('isolated plugin service return semantics', () => {
   it('preserves sync values and unsubscribe handles and supports async methods', async () => {
     const provider = writePlugin(join(root(), 'provider'), 'sync-provider', `export default api => {

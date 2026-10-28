@@ -19,7 +19,7 @@ Handed to `export default function plugin(zcc)`.
 | `agents.contributeInstructions` / `contributeSkills` / `registerTool` / `configure` | Agent capabilities. `registerTool` takes Zod or JSON Schema `parameters` (parsed on invoke). `configure` sees thread / project / environment / host / provider / `origin` / frozen `pluginMetadata` |
 | `ui.requestInput` | Host prompt |
 | `ui.experimental_consumeApproval` | Verify and burn a host-signed approval token (see `approvals`) |
-| `status.needsConfiguration` | Degraded-until-configured |
+| `status.needsConfiguration` / `configured` | Mark the plugin "Needs configuration" in the Plugins hub (e.g. until the user signs in), and clear it once set up; both apply live without a reload |
 | `sdk.threads` / `sdk.files` / `sdk.environments` / `sdk.providers` | Product SDK: attributed spawn with host, environment and service tier; thread metadata; confined host file read/write; environment PR lookup; provider models discovered on the selected host |
 | `sdk.system.defaultHost()` | Primary enrolled host ID, or `null` when none is configured |
 | `http.route` | Authenticated plugin HTTP routes; request `headers` and bounded `rawBody` preserve uploaded bytes; response `body` accepts a string or `Uint8Array` |

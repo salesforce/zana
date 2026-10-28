@@ -496,6 +496,8 @@ interface LivePlugin {
   handle: Awaited<ReturnType<typeof createPluginApi>> | null;
   rpc: Map<string, (args: unknown) => unknown | Promise<unknown>>;
   isBusy?: () => boolean;
+  /** Latest `zcc.status` message from this load; null once the plugin calls `configured()`. */
+  pluginStatus?: string | null;
 }
 
 function readJson(path: string): unknown {
@@ -975,7 +977,12 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         live.set(id, { ...current, row: next });
         await store.upsert(next);
       } else if (existingMissing) {
-        const next = { ...current.row, status: 'running' as const, statusDetail: null };
+        const pluginStatus = current.pluginStatus ?? null;
+        const next = {
+          ...current.row,
+          status: pluginStatus ? 'needs-configuration' as const : 'running' as const,
+          statusDetail: pluginStatus
+        };
         live.set(id, { ...current, row: next });
         await store.upsert(next);
       }
@@ -1013,6 +1020,52 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     } catch {
       /* capability sync is best-effort and must not wedge plugin lifecycle */
     }
+  }
+
+  function boundedStatusMessage(message: string): string {
+    const trimmed = message.trim();
+    return (trimmed.length > 500 ? `${trimmed.slice(0, 499)}…` : trimmed) || 'This plugin needs configuration.';
+  }
+
+  function runningStatusDetail(row: InstalledPluginRow): string | null {
+    return bundledPluginSourceNotice(row, developmentEnabled())
+      ?? (row.lastActivationFailure ? `Update to ${row.lastActivationFailure.version} failed: ${row.lastActivationFailure.detail}` : null);
+  }
+
+  /** Apply a `zcc.status` change to a plugin that is already live. */
+  async function applyPluginStatus(
+    id: string,
+    handle: LivePlugin['handle'],
+    coreMessage: string | null,
+    pluginMessage: string | null
+  ): Promise<void> {
+    if (!live.has(id) || live.get(id)?.handle !== handle) return;
+    const epoch = lifecycleEpoch(id);
+    await withLifecycle(id, async () => {
+      const current = live.get(id);
+      if (!current || !isCurrent(id, epoch, handle)) return;
+      const { status, statusDetail } = current.row;
+      // A missing required plugin keeps its detail; resolving it restores this message.
+      if (isMissingPluginDetail(statusDetail)) {
+        live.set(id, { ...current, pluginStatus: pluginMessage });
+        return;
+      }
+      if (status !== 'running' && status !== 'needs-configuration') return;
+      const message = coreMessage ?? pluginMessage;
+      const next = {
+        ...current.row,
+        status: (message ? 'needs-configuration' : 'running') as InstalledPluginRow['status'],
+        statusDetail: message ?? runningStatusDetail(current.row)
+      };
+      if (next.status === status && next.statusDetail === statusDetail) {
+        live.set(id, { ...current, pluginStatus: pluginMessage });
+        return;
+      }
+      live.set(id, { ...current, row: next, pluginStatus: pluginMessage });
+      await store.upsert(next);
+      if (!isCurrent(id, epoch, handle)) return;
+      await emitAppsChanged();
+    });
   }
 
   async function emitAppsChanged(): Promise<void> {
@@ -1429,6 +1482,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       hostArtifactProblem = detail;
     }
     let configurationMessage: string | null = null;
+    let pluginStatusMessage: string | null = null;
     let activationFailure: Error | null = null;
     let runtime: ReturnType<typeof createIsolatedPluginRuntime> | undefined;
     const handle = createPluginApi(row.id, join(kvRoot, row.id), {
@@ -1492,6 +1546,13 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       dataDir: opts.dataDir,
       onNeedsConfiguration: (message) => {
         configurationMessage = message;
+      },
+      onPluginStatus: (message) => {
+        pluginStatusMessage = message === null ? null : boundedStatusMessage(message);
+        // Before the load commits, the activation path below reads the latest
+        // message. After that, apply it to the live row.
+        void applyPluginStatus(row.id, handle, configurationMessage, pluginStatusMessage)
+          .catch(error => console.error('Plugin status update failed', error));
       },
       services: servicesRegistry,
       isAgentToolNameTaken: (name) => {
@@ -1591,9 +1652,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       };
       const running = {
         ...classified,
-        status: (configurationMessage ? 'needs-configuration' : 'running') as InstalledPluginRow['status'],
-        statusDetail: configurationMessage ?? bundledPluginSourceNotice(row, developmentEnabled())
-          ?? (row.lastActivationFailure ? `Update to ${row.lastActivationFailure.version} failed: ${row.lastActivationFailure.detail}` : null)
+        status: (configurationMessage ?? pluginStatusMessage ? 'needs-configuration' : 'running') as InstalledPluginRow['status'],
+        statusDetail: configurationMessage ?? pluginStatusMessage ?? runningStatusDetail(row)
       };
       if (!isActive()) {
         await handle.dispose();
@@ -1613,7 +1673,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       if (activationFailure) throw activationFailure;
       toolPolicySealed.add(row.id);
       pendingToolPolicy.delete(row.id);
-      live.set(row.id, { row: running, handle, rpc, isBusy: runtime?.isBusy });
+      live.set(row.id, { row: running, handle, rpc, isBusy: runtime?.isBusy, pluginStatus: pluginStatusMessage });
       refreshToolPolicyInventory();
       cancelRecovery(row.id);
       if (hostArtifact) hostArtifacts.set(row.id, hostArtifact);
