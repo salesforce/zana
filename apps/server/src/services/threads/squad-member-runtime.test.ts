@@ -147,6 +147,14 @@ describe('trusted Modern member runtime', () => {
     await vi.waitFor(() => expect(commands.find(command => command.type === 'thread.start')).toMatchObject({ automatedSkillIds }));
   });
 
+  it('persists the squad execution id for a member', async () => {
+    const executionId = '44444444-4444-4444-8444-444444444444';
+    await createSquadMemberConversation(ctx, { ...member, executionId });
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({
+      squadExecution: executionId
+    });
+  });
+
   it('persists and sends an empty automated skill selection by default', async () => {
     await createSquadMemberConversation(ctx, member);
     expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({ automatedSkillIds: [] });

@@ -138,6 +138,39 @@ describe('injected skill roots', () => {
       .toThrow('Unknown automated skill id');
   });
 
+  it('rejects automated selections with more than 64 ids or duplicate ids', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-automated-selection-'));
+    dirs.push(dataDir);
+    expect(() => resolveAutomatedSkillSelection(dataDir, {
+      skillIds: Array.from({ length: 65 }, (_, index) => `zcc:built-in/skill-${index}`)
+    })).toThrow('Too many automated skill ids');
+    expect(() => resolveAutomatedSkillSelection(dataDir, {
+      skillIds: ['zcc:built-in/duplicate', 'zcc:built-in/duplicate']
+    })).toThrow('Automated skill ids must be unique');
+  });
+
+  it('uses string root owners and ignores non-string owners', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-root-owners-'));
+    dirs.push(dataDir);
+    const custom = join(dataDir, 'custom');
+    const fallback = join(dataDir, 'fallback');
+    mkdirSync(join(custom, 'owned'), { recursive: true });
+    mkdirSync(join(fallback, 'default'), { recursive: true });
+    writeFileSync(join(custom, 'owned', 'SKILL.md'), '---\nname: owned\n---\n');
+    writeFileSync(join(fallback, 'default', 'SKILL.md'), '---\nname: default\n---\n');
+    writeFileSync(join(dataDir, 'injected-skill-roots.json'), JSON.stringify({
+      directoryRoots: [custom, fallback],
+      rootOwners: { [custom]: 'custom-owner', [fallback]: 7 }
+    }));
+
+    expect(resolveAutomatedSkillSelection(dataDir, {
+      skillIds: ['zcc:custom-owner/owned', 'zcc:built-in/default']
+    })).toEqual(new Map([
+      [custom, new Set(['owned'])],
+      [fallback, new Set(['default'])]
+    ]));
+  });
+
   it('skips a symlink when no builtin allowlist is supplied', () => {
     const root = mkdtempSync(join(tmpdir(), 'zcc-untrusted-symlink-'));
     const target = mkdtempSync(join(tmpdir(), 'zcc-untrusted-target-'));
