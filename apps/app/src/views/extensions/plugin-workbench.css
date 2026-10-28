@@ -32,6 +32,9 @@
 .ext-plugin-attention strong { font-size: 12px; font-weight: 600; }
 .ext-plugin-attention p { font-size: 11px; color: var(--text-muted); margin: 3px 0 0; }
 .ext-plugin-attention .settings-btn { font-size: 11px; }
+.ext-plugin-reload-result { margin: -8px 0 22px; font-size: 12px; overflow-wrap: anywhere; }
+.ext-plugin-reload-result p { margin: 0; }
+.ext-plugin-reload-result ul { margin: 6px 0 0; padding-left: 20px; color: var(--text-secondary); }
 .ext-plugin-current { text-align: center; padding: 40px 20px; color: var(--text-muted); }
 .ext-plugin-current > svg { color: var(--accent-green); }
 .ext-plugin-current h4 { color: var(--text-primary); font-size: 17px; margin: 12px 0 8px; }

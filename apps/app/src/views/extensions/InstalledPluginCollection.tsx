@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import './installed-plugin-collection.css';
-import { ArrowDownAZ, ArrowUpAZ, AlertTriangle, CheckCircle2, ChevronRight, Search } from 'lucide-react';
+import { ArrowDownAZ, ArrowUpAZ, CheckCircle2, ChevronRight, Search } from 'lucide-react';
+import { PluginAttention } from './PluginAttention.js';
 import { InstalledPluginCard } from './InstalledPluginCard.js';
 import {
   filterInstalledRows, rowEnabled, type HubRow
@@ -38,7 +39,6 @@ export function InstalledPluginCollection({ rows, onOpen, onBrowse, headerAction
   const selectedSource = sources.includes(source) ? source : 'all';
   const capabilities = [...new Set(rows.flatMap(installedCapabilities))].sort();
   const selectedCapability = capabilities.includes(capability) ? capability : 'all';
-  const attentionCount = rows.filter((row) => installedRuntimeStatus(row) !== null).length;
   const visible = useMemo(() => filterCollectionRows(
     filterInstalledRows(rows, query, 'all', sortDir), status, updatesOnly
   ).filter((row) => (selectedSource === 'all' || installedSource(row) === selectedSource) &&
@@ -105,13 +105,9 @@ export function InstalledPluginCollection({ rows, onOpen, onBrowse, headerAction
       <div className="ext-plugin-workbench">
       <div className="ext-installed-scroller ext-plugin-collection-main">
         {!updatesOnly ? packs : null}
-        {!updatesOnly && attentionCount > 0 ? <div className="ext-plugin-attention">
-          <AlertTriangle size={19} aria-hidden="true" /><div><strong>{attentionCount} {attentionCount === 1 ? 'plugin needs' : 'plugins need'} attention</strong>
-          <p>Review runtime issues and configuration requests.</p></div>
-          <button type="button" className="settings-btn" aria-pressed={issuesOnly} onClick={() => {
+        <div hidden={updatesOnly}><PluginAttention rows={rows} issuesOnly={issuesOnly} onReview={() => {
             setIssuesOnly(!issuesOnly); setQuery(''); setStatus('all'); setSource('all'); setCapability('all');
-          }}>{issuesOnly ? 'Show all' : `Review ${attentionCount}`}</button>
-        </div> : null}
+          }} /></div>
         {updatesOnly && updateCount === 0 ? <div className="ext-plugin-current" role="status"><CheckCircle2 size={30} />
           <h4>No pending updates</h4><p>Check for updates from the More menu to refresh your sources.</p></div> : null}
         {visible.length === 0 && !(updatesOnly && updateCount === 0) ? (
