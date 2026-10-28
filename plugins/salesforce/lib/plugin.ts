@@ -104,6 +104,7 @@ import { OrgSyncService } from './org-sync.js';
 import { registerOrgSync } from './org-sync-rpc.js';
 import { listHubProjects } from './hub-projects.js';
 import { parseOrgLoginInput } from './org-login.js';
+import { isBareCountQuery } from './soql-count.js';
 import { applyLimit, parseSoqlInput, previewRecords, searchSObjects } from './soql.js';
 import { SoqlExplorer } from './soql-explorer.js';
 import {
@@ -1202,12 +1203,16 @@ async function runSoql(
       };
     }
     if (parsed.plan.action === 'query.validate') {
+      // A bare COUNT() runs as written, so its only limit is the one in the query.
+      const bareCount = isBareCountQuery(parsed.plan.query);
       return {
         ok: true,
         summary: parsed.plan.allRows
           ? 'Query parsed; ALL ROWS / unbounded execution requires confirmation.'
-          : `Query parsed. Bounded run will use LIMIT ${parsed.plan.limit}.`,
-        data: { allRows: parsed.plan.allRows, limit: parsed.plan.limit, unbounded: parsed.plan.unbounded }
+          : bareCount
+            ? 'Query parsed. A bare COUNT() runs as written, with no added LIMIT.'
+            : `Query parsed. Bounded run will use LIMIT ${parsed.plan.limit}.`,
+        data: { allRows: parsed.plan.allRows, limit: bareCount ? parsed.plan.queryLimit : parsed.plan.limit, unbounded: parsed.plan.unbounded }
       };
     }
 
@@ -1233,7 +1238,9 @@ async function runSoql(
     const artifactId = await artifacts.put('soql-query', payload);
     return {
       ok: true,
-      summary: `${payload.totalSize ?? records.length} row(s); showing ${records.length}`,
+      summary: isBareCountQuery(query) && Number.isFinite(payload.totalSize)
+        ? `Count: ${payload.totalSize}`
+        : `${payload.totalSize ?? records.length} row(s); showing ${records.length}`,
       data: { totalSize: payload.totalSize, records },
       artifactId
     };

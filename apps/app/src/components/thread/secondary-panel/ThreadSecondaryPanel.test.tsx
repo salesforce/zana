@@ -230,7 +230,7 @@ describe('ThreadSecondaryPanel chrome', () => {
     const html = renderToStaticMarkup(
       <ThreadSecondaryPanel
         state={openSecondaryPanel(emptySecondaryPanelState())}
-        footer={<button type="button">Delete</button>}
+        footer={<button type="button">Archive</button>}
         onSelectInfo={noop}
         onSelectDiff={noop}
         onNewTab={noop}
@@ -244,7 +244,7 @@ describe('ThreadSecondaryPanel chrome', () => {
       </ThreadSecondaryPanel>
     );
     expect(html).toContain('data-testid="thread-secondary-footer"');
-    expect(html).toContain('Delete');
+    expect(html).toContain('Archive');
   });
 
   it('hides inspector actions while Diff is showing', () => {
@@ -252,7 +252,7 @@ describe('ThreadSecondaryPanel chrome', () => {
       <ThreadSecondaryPanel
         state={selectPinnedView(emptySecondaryPanelState(), 'diff')}
         showDiffPin
-        footer={<button type="button">Delete</button>}
+        footer={<button type="button">Archive</button>}
         onSelectInfo={noop}
         onSelectDiff={noop}
         onNewTab={noop}
@@ -266,7 +266,7 @@ describe('ThreadSecondaryPanel chrome', () => {
       </ThreadSecondaryPanel>
     );
     expect(html).not.toContain('data-testid="thread-secondary-footer"');
-    expect(html).not.toContain('Delete');
+    expect(html).not.toContain('Archive');
   });
 
   it('renders closable New Tab pills', () => {

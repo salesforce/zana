@@ -15,7 +15,8 @@ const idleSurfacesToNeedsYou = vi.fn((..._args: unknown[]) => false);
 const dataState = {
   catchUpSummaryEnabled: true,
   idleAttentionSensitivity: 'medium',
-  closingFollowupIds: new Set<string>()
+  closingFollowupIds: new Set<string>(),
+  projects: [{ id: 'p1' }] as Array<{ id: string; remote?: unknown }>
 };
 
 vi.mock('../lib/product-client.js', () => ({
@@ -37,8 +38,17 @@ vi.mock('../store.js', () => ({
 vi.mock('./agentCardActions.js', () => ({
   canCloseWithFollowup: (...args: unknown[]) => canCloseWithFollowup(...args),
   closeAgentWithFollowup: (...args: unknown[]) => closeAgentWithFollowup(...args),
-  cliAgentRemoveLabel: (exited: boolean) => (exited ? 'Dismiss' : 'Delete'),
-  cliAgentDeleteConfirm: (title: string) => `Delete “${title}”? The process will be terminated.`
+  cliAgentKeepsHistory: (s: { profile: string }, project?: { remote?: unknown }) =>
+    !!project && !project.remote && s.profile !== 'mastracode' && s.profile !== 'shell',
+  cliAgentArchives: (s: { status: string; profile: string }) => s.status !== 'exited' && s.profile !== 'shell',
+  cliAgentRemoveLabel: (s: { status: string; profile: string }) =>
+    s.status === 'exited' ? 'Dismiss' : s.profile === 'shell' ? 'Delete' : 'Archive',
+  cliAgentRemoveTitle: (s: { status: string; profile: string }, _surface: string, keeps: boolean) =>
+    s.profile === 'shell' ? "Terminate the agent's process and close this view" : `archive-title:${keeps}`,
+  cliAgentRemoveConfirm: (s: { title: string; profile: string }, keeps: boolean) =>
+    s.profile === 'shell'
+      ? `Delete “${s.title}”? The process will be terminated.`
+      : `Archive “${s.title}”? ${keeps ? 'History' : 'Neutral'}`
 }));
 
 vi.mock('./AgentBoard.js', () => ({
@@ -87,7 +97,7 @@ describe('AgentSessionActions', () => {
 
   it('offers close, follow-up, and summarize on a live Claude session', () => {
     render(<AgentSessionActions session={session()} projectId="p1" state="idle" />);
-    expect(screen.getByText('Delete')).toBeTruthy();
+    expect(screen.getByText('Archive')).toBeTruthy();
     expect(screen.getByText('Close with follow-up')).toBeTruthy();
     expect(screen.getByText('Summarize to inbox')).toBeTruthy();
   });
@@ -109,7 +119,7 @@ describe('AgentSessionActions', () => {
     canCloseWithFollowup.mockReturnValue(false);
     dataState.catchUpSummaryEnabled = false;
     render(<AgentSessionActions session={session()} projectId="p1" state="idle" />);
-    expect(screen.getByText('Delete')).toBeTruthy();
+    expect(screen.getByText('Archive')).toBeTruthy();
     expect(screen.queryByText('Close with follow-up')).toBeNull();
     expect(screen.queryByText('Summarize to inbox')).toBeNull();
   });
@@ -152,18 +162,45 @@ describe('AgentSessionActions', () => {
         onSessionClosed={onSessionClosed}
       />
     );
-    fireEvent.click(screen.getByText('Delete'));
+    expect(screen.getByText('Archive').closest('button')?.title).toBe('archive-title:true');
+    fireEvent.click(screen.getByText('Archive'));
     expect(window.confirm).toHaveBeenCalledWith(
-      'Delete “PTY agent”? The process will be terminated.'
+      'Archive “PTY agent”? History'
     );
     expect(closeTerminal).toHaveBeenCalledWith('s1', 'p1');
     expect(onSessionClosed).toHaveBeenCalled();
   });
 
+  it('passes a neutral History flag for a remote project', () => {
+    dataState.projects = [{ id: 'p1', remote: { host: 'h' } }];
+    try {
+      render(<AgentSessionActions session={session()} projectId="p1" state="idle" />);
+      expect(screen.getByText('Archive').closest('button')?.title).toBe('archive-title:false');
+      fireEvent.click(screen.getByText('Archive'));
+      expect(window.confirm).toHaveBeenCalledWith('Archive “PTY agent”? Neutral');
+    } finally {
+      dataState.projects = [{ id: 'p1' }];
+    }
+  });
+
+  it('keeps Delete and its confirm for a plain shell', () => {
+    vi.mocked(window.confirm).mockReturnValue(true);
+    render(
+      <AgentSessionActions session={session({ profile: 'shell' })} projectId="p1" state="idle" />
+    );
+    expect(screen.queryByText('Archive')).toBeNull();
+    expect(screen.getByText('Delete').closest('button')?.title).toBe(
+      "Terminate the agent's process and close this view"
+    );
+    fireEvent.click(screen.getByText('Delete'));
+    expect(window.confirm).toHaveBeenCalledWith('Delete “PTY agent”? The process will be terminated.');
+    expect(closeTerminal).toHaveBeenCalledWith('s1', 'p1');
+  });
+
   it('does not terminate when the confirm is cancelled', () => {
     vi.mocked(window.confirm).mockReturnValue(false);
     render(<AgentSessionActions session={session()} projectId="p1" state="idle" />);
-    fireEvent.click(screen.getByText('Delete'));
+    fireEvent.click(screen.getByText('Archive'));
     expect(closeTerminal).not.toHaveBeenCalled();
   });
 
@@ -206,6 +243,7 @@ describe('AgentSessionActions', () => {
       <AgentSessionActions session={session({ status: 'exited' })} projectId="p1" state="done" />
     );
     expect(screen.queryByText('Delete')).toBeNull();
+    expect(screen.queryByText('Archive')).toBeNull();
     expect(screen.queryByText('Close with follow-up')).toBeNull();
     expect(screen.getByText('Summarize to inbox')).toBeTruthy();
   });

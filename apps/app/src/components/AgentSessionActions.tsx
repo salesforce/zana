@@ -1,19 +1,22 @@
 import { useState } from 'react';
-import { BellOff, Inbox, Loader2, MailCheck, Trash2 } from 'lucide-react';
+import { Archive, BellOff, Inbox, Loader2, MailCheck, Trash2 } from 'lucide-react';
 import { product } from '../lib/product-client.js';
 import type { AgentState, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { isClaudeProfile } from '../lib/launchProfile.js';
 import { useData, useIdleTriage } from '../store.js';
 import {
   canCloseWithFollowup,
-  cliAgentDeleteConfirm,
+  cliAgentArchives,
+  cliAgentKeepsHistory,
+  cliAgentRemoveConfirm,
   cliAgentRemoveLabel,
+  cliAgentRemoveTitle,
   closeAgentWithFollowup
 } from './agentCardActions.js';
 import { idleSurfacesToNeedsYou } from './AgentBoard.js';
 
 /**
- * Shared CLI-agent footer actions (mark idle / delete / summarize). Used by the
+ * Shared CLI-agent footer actions (mark idle / archive / summarize). Used by the
  * inspector modal and the routed session page so those controls stay one path.
  */
 export function AgentSessionActions({
@@ -28,6 +31,9 @@ export function AgentSessionActions({
   onSessionClosed?: () => void;
 }) {
   const exited = session.status === 'exited';
+  const keepsHistory = useData((s) =>
+    cliAgentKeepsHistory(session, s.projects.find((p) => p.id === projectId))
+  );
   const summaryEnabled = useData((s) => s.catchUpSummaryEnabled);
   const canSummarize = summaryEnabled && isClaudeProfile(session.profile);
   const [summarizing, setSummarizing] = useState(false);
@@ -47,7 +53,7 @@ export function AgentSessionActions({
   };
 
   const deleteAgent = () => {
-    if (!window.confirm(cliAgentDeleteConfirm(session.title))) return;
+    if (!window.confirm(cliAgentRemoveConfirm(session, keepsHistory))) return;
     void useData.getState().closeTerminal(session.id, projectId);
     onSessionClosed?.();
   };
@@ -85,9 +91,10 @@ export function AgentSessionActions({
           type="button"
           className="agent-monitor-action danger"
           onClick={deleteAgent}
-          title="Terminate the agent's process and close this view"
+          title={cliAgentRemoveTitle(session, 'modal', keepsHistory)}
         >
-          <Trash2 size={13} /> {cliAgentRemoveLabel(exited)}
+          {cliAgentArchives(session) ? <Archive size={13} /> : <Trash2 size={13} />}{' '}
+          {cliAgentRemoveLabel(session)}
         </button>
       )}
       {!exited && canCloseWithFollowup(session) && (

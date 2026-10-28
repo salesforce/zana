@@ -205,6 +205,26 @@ export const THREAD_PROVIDER_ID_BY_HARNESS_FAMILY = Object.freeze({
   afcode: 'acp-afcode'
 } as const satisfies Record<HarnessFamily, string>);
 
+/**
+ * Harness families whose native conversations the host lists in History (each
+ * has a `createHistoryAdapter` registration in the host daemon). Mastra Code
+ * and Agentforce Code have none. A host-daemon test keeps this in sync.
+ */
+export const HARNESS_FAMILIES_WITH_NATIVE_HISTORY: readonly HarnessFamily[] = Object.freeze([
+  'claude',
+  'cursor',
+  'codex',
+  'pi',
+  'opencode',
+  'grok'
+]);
+
+/** True when History can list this profile's conversations (any posture of a supported harness). */
+export function profileHasNativeHistory(p: LaunchProfileId): boolean {
+  const family = harnessFamilyOf(p);
+  return family !== null && HARNESS_FAMILIES_WITH_NATIVE_HISTORY.includes(family);
+}
+
 /** Thread provider id for a harness family, or `null` for an unknown family. */
 export function threadProviderIdForHarnessFamily(family: string): string | null {
   return Object.prototype.hasOwnProperty.call(THREAD_PROVIDER_ID_BY_HARNESS_FAMILY, family)

@@ -48,9 +48,9 @@ describe('AgentMonitor thread selection', () => {
     expect(source.indexOf('Close with follow-up')).toBeLessThan(source.indexOf("summarizing ? 'Summarizing…' : 'Summarize'"));
   });
 
-  it('labels live remove as Delete and restart without Kill', () => {
+  it('labels live remove through the shared helper and restart without Kill', () => {
     const source = readFileSync(new URL('./AgentMonitor.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('cliAgentRemoveLabel(exited)');
+    expect(source).toContain('cliAgentRemoveLabel(card.session)');
     expect(source).toContain('cliAgentRestartLiveTitle()');
     expect(source).not.toContain("'Kill'");
     expect(source).not.toContain('Kill and');

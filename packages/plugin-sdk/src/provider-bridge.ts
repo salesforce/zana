@@ -235,6 +235,13 @@ export {
 } from "@zana-ai/zcc-agent-process-utils";
 
 /**
+ * A bridge that links folders it does not own (a user's skills folder, say)
+ * removes those links with this, never a recursive `rmSync`: on Windows,
+ * Electron's `rmSync` walks a directory junction and empties its target.
+ */
+export { removeUnlessRealDirectory as experimental_removeUnlessRealDirectory } from "@zana-ai/zcc-agent-process-utils";
+
+/**
  * The ACP launch spec: the one core wire shape a bridge parses directly. It
  * arrives as provider-scoped static options (opaque to the runtime, meaningful
  * only to the bridge that declares the ACP tier), so its schema has to be

@@ -112,6 +112,21 @@ afterEach(() => {
   fixtures.recoverCatalogs.mockClear(); fixtures.recoverStale.mockClear(); fixtures.recoverAfterWake.mockClear(); fixtures.offWake.mockClear(); fixtures.reconcilePlugins.mockClear(); fixtures.unsubscribePlugins.mockClear();
 });
 
+it('keeps a project focus until the project list has loaded, then drops a removed one', () => {
+  const original = store.useUi.getState();
+  store.useData.setState({ projects: [], configLoaded: false });
+  store.useUi.setState({ focusedProjectId: 'p-removed' });
+  try {
+    render(<MemoryRouter><App /></MemoryRouter>);
+    expect(store.useUi.getState().focusedProjectId).toBe('p-removed');
+    act(() => store.useData.setState({ configLoaded: true }));
+    expect(store.useUi.getState().focusedProjectId).toBeNull();
+  } finally {
+    store.useUi.setState({ focusedProjectId: original.focusedProjectId, nav: original.nav });
+    store.useData.setState({ configLoaded: false });
+  }
+});
+
 it('switches titlebar navigation live and retains compact chrome', () => {
   fixtures.compact = false;
   store.useData.setState({ threadTabsEnabled: true });

@@ -1,7 +1,7 @@
 import { useData, useUi, usePersonas, sortProjectsForDisplay } from './store.js';
 import { getActiveTerminalId, getTerminal } from './lib/findRegistry.js';
 import { projectDefaultLaunch, type ProjectDefaultLaunch } from './lib/launchProfile.js';
-import { cliAgentDeleteConfirm, cliAgentRestartConfirm } from './components/agentCardActions.js';
+import { cliAgentKeepsHistoryIn, cliAgentRemoveConfirm, cliAgentRestartConfirm } from './components/agentCardActions.js';
 import { shortcutForCommand } from './lib/keyboard-shortcut-settings.js';
 import { openThreadFind } from './lib/thread-find.js';
 import { appNavigate } from './lib/app-navigate.js';
@@ -222,9 +222,10 @@ export function installShortcuts(): () => void {
       }).catch(() => {});
       return;
     }
-    // cmd+shift+w — DELETE the current tab: terminate the process and remove
-    // it. The keyboard counterpart to right-click → Delete (⌘W only hides, so
-    // without this there'd be no keyboard path to actually end a process).
+    // cmd+shift+w — ARCHIVE the current tab (Delete for a plain shell):
+    // terminate the process and remove it. The keyboard counterpart to
+    // right-click → Archive (⌘W only hides, so without this there'd be no
+    // keyboard path to actually end a process).
     // Confirm for a live session so a stray chord can't kill a running agent;
     // an exited tombstone is dismissed without a prompt. ⌘⇧T reopens.
     if ((e.key === 'W' || (e.key === 'w' && e.shiftKey)) && e.shiftKey) {
@@ -235,7 +236,7 @@ export function installShortcuts(): () => void {
       if (
         active &&
         active.status !== 'exited' &&
-        !window.confirm(cliAgentDeleteConfirm(active.title))
+        !window.confirm(cliAgentRemoveConfirm(active, cliAgentKeepsHistoryIn(active, projectId)))
       ) {
         return;
       }
@@ -245,7 +246,7 @@ export function installShortcuts(): () => void {
     // cmd+w — hide the current tab (does NOT kill the process). A live session
     // detaches to the background, resumable from the + menu or ⌘⇧T; an exited
     // tombstone is just dismissed. Terminating a process is only ever via the
-    // tab's right-click → Delete. Non-destructive, so no confirm.
+    // tab's right-click → Archive / Delete. Non-destructive, so no confirm.
     if (e.key === 'w' && !e.shiftKey) {
       if (!projectId || !activeTabId) return;
       e.preventDefault();

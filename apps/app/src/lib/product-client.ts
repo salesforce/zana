@@ -421,6 +421,7 @@ function httpProduct(): Pick<
       runNow: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
       queryRuns: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
       retryRuns: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
+      resumeRun: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
       dismissRuns: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
       reconcile: async (): ReturnType<CcApi['scheduler']['reconcile']> => ({ ok: false, code: 'unavailable', message: 'Worker recovery requires the instance owner to be connected' }),
       listTemplates: async () => [],

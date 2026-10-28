@@ -486,7 +486,7 @@ export function activePinnedView(state: ThreadSecondaryPanelState): PinnedSecond
   return null;
 }
 
-/** Inspector lifecycle actions (Delete / summarize) belong on Info, not Diff. */
+/** Inspector lifecycle actions (Archive / summarize) belong on Info, not Diff. */
 export function secondaryPanelShowsInspectorFooter(state: ThreadSecondaryPanelState): boolean {
   return activePinnedView(state) === 'info';
 }

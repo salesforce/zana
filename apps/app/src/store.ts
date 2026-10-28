@@ -746,10 +746,12 @@ export function applySidebarWidth(px: number) {
 
 /** Concrete dark/light the app should paint for a stored tri-state `theme`.
  *  'system' (WARP-A2) follows the OS `prefers-color-scheme`; anything else
- *  pins. Exported so the xterm-palette mirror resolves identically. */
+ *  pins. An unset theme is dark, the config default, as in `applyTheme` and
+ *  main's `resolveThemeSetting`. Exported so the xterm-palette mirror resolves
+ *  identically. */
 export function resolveTheme(theme: AppConfig['theme'] | undefined): 'dark' | 'light' {
+  if (theme === undefined || theme === 'dark') return 'dark';
   if (theme === 'light') return 'light';
-  if (theme === 'dark') return 'dark';
   // 'system' (or an unknown value): follow the OS, defaulting to dark when
   // matchMedia is unavailable (headless/test), matching the historical default.
   return typeof window !== 'undefined' &&
@@ -2013,8 +2015,8 @@ let stopClientRecovery: (() => void) | undefined;
  * scheduler creates them this way; the user also produces them by hiding a
  * tab — the tab's X button, ⌘W, ⌘⇧W, and middle-click all route to
  * `hideTerminal`. Terminating a process (and removing the tab) happens only
- * via the tab's right-click → Delete or the project-list row's X — see
- * `closeTerminal`.
+ * via the tab's right-click → Archive (Delete for a plain shell) or the
+ * project-list row's X — see `closeTerminal`.
  */
 export function visibleTerminals(list: TerminalSession[] | undefined): TerminalSession[] {
   return (list ?? []).filter((t) => !t.headless);

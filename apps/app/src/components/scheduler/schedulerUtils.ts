@@ -68,7 +68,7 @@ export function missedRunChoices(cadence: 'interval' | 'cron', includeOriginal: 
       : {
           value: 'original',
           title: 'Run once, skip when busy',
-          hint: 'Run once for the latest missed time, but skip it when too many runs are going. Resuming a paused schedule also runs the time it missed.'
+          hint: 'Run once for the latest missed time, but skip it when too many runs are going. Turning a schedule back on also runs the time it missed.'
         });
   }
   return choices;
@@ -179,15 +179,24 @@ export function pickLiveRun(
   return finishedOpen;
 }
 
+/**
+ * Whether a run's pty/thread is still open: listed for its project and `running` or `starting`.
+ * The one rule for "this run is open" on the Overview, the schedule row and the info panel.
+ */
+export function isSessionAlive(
+  sessions: ReadonlyArray<Pick<TerminalSession, 'id' | 'status'>> | undefined,
+  sessionId: string | undefined
+): boolean {
+  return !!sessionId && (sessions ?? []).some((s) => s.id === sessionId && (s.status === 'running' || s.status === 'starting'));
+}
+
 /** Alive pty/thread id for a schedule, or null when nothing is running. */
 export function liveSessionIdForTask(
   task: Pick<ScheduledTask, 'projectId' | 'status'>,
   terminals: Record<string, Array<Pick<TerminalSession, 'id' | 'status'>> | undefined>
 ): string | null {
-  const list = terminals[task.projectId] ?? [];
-  const isAlive = (sessionId: string) =>
-    list.some((s) => s.id === sessionId && (s.status === 'running' || s.status === 'starting'));
-  return pickLiveRun(task.status.runs ?? [], isAlive)?.sessionId ?? null;
+  const list = terminals[task.projectId];
+  return pickLiveRun(task.status.runs ?? [], (sessionId) => isSessionAlive(list, sessionId))?.sessionId ?? null;
 }
 
 export function formatRelative(d: Date): string {

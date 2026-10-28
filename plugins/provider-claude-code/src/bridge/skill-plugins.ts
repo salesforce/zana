@@ -1,10 +1,10 @@
+import { experimental_removeUnlessRealDirectory } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import { createHash } from "node:crypto";
 import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readlinkSync,
-  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -82,12 +82,24 @@ export function ensureClaudeSkillPlugin(args: {
     current = null;
   }
   if (current !== args.root.path) {
-    rmSync(skillsLink, { recursive: true, force: true });
+    removeSkillsLink(skillsLink);
     // A junction needs no Developer Mode or admin rights on Windows, where a
     // "dir" symlink fails with EPERM; other platforms ignore the type.
     symlinkSync(args.root.path, skillsLink, "junction");
   }
   return pluginPath;
+}
+
+/**
+ * Remove the `skills` link before re-pointing it, as a link only. Never a
+ * recursive delete: on Windows the link is a junction into a real user folder
+ * (`~/.claude/skills`), and Electron's `rmSync` walks a junction as a plain
+ * directory and empties it. A real directory here is not ours, so refuse it.
+ */
+function removeSkillsLink(skillsLink: string): void {
+  if (!experimental_removeUnlessRealDirectory(skillsLink)) {
+    throw new Error(`refusing to replace a real directory at ${skillsLink}`);
+  }
 }
 
 export function createClaudeSkillPluginsRoot(baseDir = tmpdir()): string {

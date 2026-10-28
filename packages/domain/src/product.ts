@@ -3883,6 +3883,21 @@ export interface ScheduleCatchUp { mode: 'once' | 'skip' | 'all'; max?: number }
 /** Opt-in auto-retry policy for failed runs. */
 export interface ScheduleRetryPolicy { attempts: number; delayMinutes: number }
 
+/**
+ * The agent conversation a scheduled run started, so the run can be reopened
+ * later. Written by the scheduler at launch from the session it spawned.
+ * `id` is absent until a harness that detects its id after launch (Codex,
+ * OpenCode) has been resolved. Validated before use: project schedule files
+ * are editable.
+ */
+export interface ScheduleRunConversation {
+  profile: LaunchProfileId;
+  id?: string;
+  cwd: string;
+  /** ISO-8601 time the run's session was created. */
+  startedAt: string;
+}
+
 export interface ScheduleRun {
   /** Durable spawn reservation; pending launches must never be replayed. */
   launchState?: 'pending' | 'running' | 'failed';
@@ -3955,6 +3970,8 @@ export interface ScheduleRun {
   resolvedBy?: string;
   /** ISO time the user dismissed this problem. */
   dismissedAt?: string;
+  /** The agent conversation this run started; absent for runs that cannot be reopened. */
+  conversation?: ScheduleRunConversation;
 }
 
 export interface ScheduleStatus {

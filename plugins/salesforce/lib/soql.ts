@@ -5,6 +5,7 @@ import {
   QUERY_SAMPLE_LIMIT,
   type EnvelopeKind
 } from './types.js';
+import { isBareCountQuery } from './soql-count.js';
 
 export type SoqlAction = 'schema.search' | 'schema.describe' | 'query.validate' | 'query.sample' | 'query.run' | 'query.export';
 
@@ -22,6 +23,8 @@ export interface SoqlPlan {
   sobject?: string;
   term?: string;
   limit: number;
+  /** The LIMIT written in the query itself, or null. */
+  queryLimit: number | null;
   allRows: boolean;
   unbounded: boolean;
   envelope?: EnvelopeKind;
@@ -54,12 +57,13 @@ export function parseSoqlInput(input: unknown): { ok: true; plan: SoqlPlan } | {
   if (query) {
     const inspection = inspectSoql(query);
     if (!inspection.ok) return inspection;
+    const bareCount = isBareCountQuery(inspection.normalized);
     const defaultLimit = action === 'query.sample' ? QUERY_SAMPLE_LIMIT : QUERY_RUN_MAX_LIMIT;
     const limit = clampLimit(requestedLimit ?? inspection.limit ?? defaultLimit, action);
     const unbounded =
       action === 'query.export'
       || inspection.allRows
-      || (action !== 'query.sample'
+      || ((action !== 'query.sample' || bareCount)
         && (inspection.limit === null || (inspection.limit ?? 0) > QUERY_RUN_MAX_LIMIT))
       || (requestedLimit !== undefined && requestedLimit > QUERY_RUN_MAX_LIMIT);
     const envelope: EnvelopeKind | undefined =
@@ -76,6 +80,7 @@ export function parseSoqlInput(input: unknown): { ok: true; plan: SoqlPlan } | {
         sobject,
         term,
         limit,
+        queryLimit: inspection.limit,
         allRows: inspection.allRows,
         unbounded: Boolean(envelope),
         envelope
@@ -90,6 +95,7 @@ export function parseSoqlInput(input: unknown): { ok: true; plan: SoqlPlan } | {
       sobject,
       term,
       limit: action === 'schema.search' ? Math.min(25, Math.max(1, requestedLimit ?? 25)) : QUERY_SAMPLE_LIMIT,
+      queryLimit: null,
       allRows: false,
       unbounded: false
     }
@@ -137,8 +143,10 @@ export function inspectSoql(query: string): { ok: true; normalized: string; limi
   return { ok: true, normalized: withoutComments, limit, allRows };
 }
 
+/** A LIMIT caps a bare COUNT() itself, so it runs as written. */
 export function applyLimit(query: string, limit: number): string {
   const stripped = query.replace(/\s*;\s*$/, '');
+  if (isBareCountQuery(stripped)) return stripped;
   if (/\bLIMIT\s+\d+\b/i.test(stripped)) {
     return stripped.replace(/\bLIMIT\s+\d+\b/i, `LIMIT ${limit}`);
   }

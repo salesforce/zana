@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEve
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
+  Archive,
   ArrowLeft,
   Bot,
   Calendar,
@@ -28,7 +29,10 @@ import {
   AgentCardMenu,
   clampMenuAnchor,
   canCloseWithFollowup,
+  cliAgentArchives,
+  cliAgentKeepsHistory,
   cliAgentRemoveLabel,
+  cliAgentRemoveTitle,
   cliAgentRestartLiveTitle,
   closeAgentWithFollowup
 } from './agentCardActions.js';
@@ -459,7 +463,7 @@ function AgentMonitorRow({ item, laneKey, active, showProject, onSelect, onConte
             <span className="agent-monitor-row-harness"><Calendar size={11} aria-hidden="true" /></span>
             {project}
             <FleetKindChip kind="schedule" />
-            <span className="agent-monitor-row-dur">{item.task.enabled ? 'Armed' : 'Paused'}</span>
+            <span className="agent-monitor-row-dur">{item.task.enabled ? 'Armed' : 'Off'}</span>
           </span>
         </span>
       </button>
@@ -730,11 +734,10 @@ function AgentMonitorSession({
         type="button"
         className="agent-monitor-action danger"
         onClick={() => actions.remove(card)}
-        title={
-          exited ? 'Dismiss this finished agent' : 'Terminate this agent and remove it from the board'
-        }
+        title={cliAgentRemoveTitle(card.session, 'board', cliAgentKeepsHistory(card.session, project))}
       >
-        <Trash2 size={13} /> {cliAgentRemoveLabel(exited)}
+        {cliAgentArchives(card.session) ? <Archive size={13} /> : <Trash2 size={13} />}{' '}
+        {cliAgentRemoveLabel(card.session)}
       </button>
     </>
   );

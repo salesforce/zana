@@ -711,6 +711,7 @@ export const IPC = {
     runNow: 'scheduler:runNow',
     queryRuns: 'scheduler:queryRuns',
     retryRuns: 'scheduler:retryRuns',
+    resumeRun: 'scheduler:resumeRun',
     dismissRuns: 'scheduler:dismissRuns',
     reconcile: 'scheduler:reconcile',
     onChanged: 'scheduler:onChanged',

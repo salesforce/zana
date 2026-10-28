@@ -1,5 +1,4 @@
 import type { PublicOrgView } from '../../../lib/types.js';
-import { stripSoqlComments } from '../../../lib/strip-soql-comments.js';
 
 export function emptyOrgMessage(): string {
   return 'No target org. Pick a CLI-connected org on the Salesforce tab, or set defaultOrg / SF_TARGET_ORG.';
@@ -37,7 +36,4 @@ export function confirmExport(count: number): string {
   return `Export ${count} record${count === 1 ? '' : 's'} from this result set?`;
 }
 
-/** Salesforce returns a bare `COUNT()` only in `totalSize`, with no records. */
-export function isBareCountQuery(soql: string | null | undefined): boolean {
-  return /^\s*select\s+count\s*\(\s*\)\s*from\b/i.test(stripSoqlComments(soql ?? ''));
-}
+export { isBareCountQuery } from '../../../lib/soql-count.js';

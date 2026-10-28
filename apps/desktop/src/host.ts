@@ -264,6 +264,7 @@ import {
 import { createThreadViewHost } from './window/thread-view-host.js';
 import { findUnscopedWindow, isUnscopedRegistration } from './window/main-window-registry.js';
 import { createWindowsTitleBarOverlays } from './window/titlebar-overlay.js';
+import { resolveThemeSetting, windowThemeOptions } from './window/window-theme.js';
 import { registerPluginViewIpc, registerThreadViewIpc } from './ipc/windows.js';
 import { showApprovalSheet } from './window/approval-sheet.js';
 import { startPeerUsePrompts } from './ipc/peer-use-prompts.js';
@@ -589,14 +590,11 @@ export function logMainError(context: string, err: unknown) {
 
 /**
  * Resolve the stored tri-state `theme` to a concrete 'dark' | 'light' for
- * main-owned surfaces (tray, menubar popover) that can't read the renderer's
- * CSS cascade. 'system' follows the OS via electron `nativeTheme` (WARP-A2).
+ * main-owned surfaces (tray, menubar popover, a new window's background) that
+ * can't read the renderer's CSS cascade. 'system' follows the OS via electron `nativeTheme` (WARP-A2).
  */
 function resolveTheme(): 'dark' | 'light' {
-  const t = store.getConfig().theme;
-  if (t === 'light') return 'light';
-  if (t === 'dark') return 'dark';
-  return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+  return resolveThemeSetting(store.getConfig().theme, () => nativeTheme.shouldUseDarkColors);
 }
 
 /** Resolve `projectPath` (passed by the renderer) to listSkills options. */
@@ -7022,6 +7020,9 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
     Object.assign(viewGeometry.options, cascadeThreadViewPosition({ x: viewGeometry.options.x, y: viewGeometry.options.y }, occupied));
   }
 
+  // Every window kind opens in the effective theme's background, and its
+  // preload seeds `<html data-theme>`, so a light window doesn't flash dark.
+  const windowTheme = windowThemeOptions(resolveTheme, logMainError);
   const win = new BrowserWindow({
     ...(viewGeometry
       ? viewGeometry.options
@@ -7036,7 +7037,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
         }),
     title: 'Zana',
     icon: productIconImage(),
-    backgroundColor: '#181818',
+    backgroundColor: windowTheme.backgroundColor,
     // E2E ONLY: never auto-show the window. Playwright drives the renderer over
     // CDP, so a hidden window still runs and is fully controllable, but a shown
     // one repeatedly steals macOS focus from the developer during a local run.
@@ -7066,10 +7067,11 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
       sandbox: true,
       webviewTag: true,
       zoomFactor: DEFAULT_RENDERER_ZOOM_FACTOR,
-      // The sandboxed preload can't reliably read process.env, so pass the e2e
-      // flag as an argv token it CAN read (process.argv). Only present when the
-      // tap is enabled; gates the window.__zccTest bridge in preload.
-      ...(E2E_TAP_ENABLED ? { additionalArguments: ['--zcc-e2e'] } : {})
+      // The sandboxed preload can't reliably read process.env, so pass argv
+      // tokens it CAN read (process.argv): the theme it seeds before first
+      // paint, and the e2e flag. The e2e flag is only present when the tap is
+      // enabled; it gates the window.__zccTest bridge in preload.
+      additionalArguments: [windowTheme.themeArg, ...(E2E_TAP_ENABLED ? ['--zcc-e2e'] : [])]
     }
   });
 
