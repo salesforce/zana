@@ -216,7 +216,7 @@ export const MarkdownContent = memo(function MarkdownContent({
     ({ node: _node, ...props }: { children?: ReactNode; node?: unknown }) => {
       const mermaid = extractMermaid(props.children);
       if (mermaid !== null) {
-        return <MermaidDiagram code={mermaid} theme={mermaidTheme} exportable={exportable} />;
+        return <MermaidDiagram code={mermaid} theme={mermaidTheme} exportable={exportable || Boolean(threadId)} />;
       }
       const highlighted = highlightFencedPre(props.children);
       if (highlighted) {
@@ -231,7 +231,7 @@ export const MarkdownContent = memo(function MarkdownContent({
       }
       return withCodeCopy(copyableCode, props.children, <pre {...props} />);
     },
-    [copyableCode, exportable, mermaidTheme]
+    [copyableCode, exportable, mermaidTheme, threadId]
   );
   const renderImage = useCallback((props: { src?: string | Blob; alt?: string; title?: string }) => {
     const raw = typeof props.src === 'string' ? props.src : '';

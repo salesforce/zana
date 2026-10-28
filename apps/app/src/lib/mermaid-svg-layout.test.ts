@@ -9,8 +9,9 @@ const FLOWCHART = [
 
 describe('mermaidSvgLayout', () => {
   it('pins the viewBox aspect ratio and drops percentage/inline sizing', () => {
-    const { svg, aspectRatio } = mermaidSvgLayout(FLOWCHART);
+    const { svg, aspectRatio, intrinsicWidth } = mermaidSvgLayout(FLOWCHART);
     expect(aspectRatio).toBe('1248 / 412');
+    expect(intrinsicWidth).toBe(1248);
     expect(svg).not.toMatch(/\bwidth="100%"/);
     expect(svg).not.toMatch(/\bheight="/);
     expect(svg).not.toMatch(/max-width/);
@@ -29,14 +30,35 @@ describe('mermaidSvgLayout', () => {
   });
 
   it('returns null aspect ratio when viewBox is missing', () => {
-    const { svg, aspectRatio } = mermaidSvgLayout('<svg width="100%" height="40"></svg>');
+    const { svg, aspectRatio, intrinsicWidth } = mermaidSvgLayout('<svg width="100%" height="40"></svg>');
     expect(aspectRatio).toBeNull();
+    expect(intrinsicWidth).toBeNull();
     expect(svg).not.toMatch(/\bwidth="/);
     expect(svg).not.toMatch(/\bheight="/);
   });
 
   it('reads a comma-separated viewBox', () => {
-    expect(mermaidSvgLayout('<svg viewBox="0,0,20,10"></svg>').aspectRatio).toBe('20 / 10');
+    expect(mermaidSvgLayout('<svg viewBox="0,0,20,10"></svg>')).toMatchObject({
+      aspectRatio: '20 / 10', intrinsicWidth: 20
+    });
+  });
+
+  it('retains fractional natural dimensions and negative origins', () => {
+    expect(mermaidSvgLayout('<svg viewBox="-10 -20 160.5 2400.25"></svg>')).toMatchObject({
+      aspectRatio: '160.5 / 2400.25', intrinsicWidth: 160.5
+    });
+  });
+
+  it.each(['0 0 0 10', '0 0 20 -10', '0 0 Infinity 10', '0 0 20 NaN', '0 0 20', '0 0 20 10 5'])('ignores invalid dimensions: %s', (viewBox) => {
+    expect(mermaidSvgLayout(`<svg viewBox="${viewBox}"></svg>`)).toMatchObject({
+      aspectRatio: null, intrinsicWidth: null
+    });
+  });
+
+  it('leaves non-SVG fallback content alone', () => {
+    expect(mermaidSvgLayout('No diagram')).toEqual({
+      svg: 'No diagram', aspectRatio: null, intrinsicWidth: null
+    });
   });
 
   it('is idempotent across repeated calls', () => {

@@ -36249,6 +36249,14 @@ body.split-frame-guard webview {
   box-sizing: border-box;
 }
 
+/* Keep small graphs at their natural scale and tall flows within the chat.
+   The SVG fits the bounded frame without cropping; Expand keeps details readable. */
+.thread-timeline-row .inbox-mermaid-frame.is-sized {
+  max-width: var(--mermaid-intrinsic-width);
+  max-height: min(480px, 60vh);
+  margin-inline: auto;
+}
+
 .thread-timeline-work {
   border-radius: 8px;
   padding: 6px 8px;

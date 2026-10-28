@@ -77,4 +77,26 @@ describe('MarkdownContent mermaid remounts', () => {
     });
     expect(mermaidRender).toHaveBeenCalledTimes(1);
   });
+
+  it('exposes natural width for a tall diagram without fixing its rendered width', async () => {
+    mermaidRender.mockResolvedValueOnce({ svg: '<svg width="100%" viewBox="0 0 180 2400"><g></g></svg>' });
+    const { container, getByRole } = render(<MarkdownContent text={SOURCE} threadId="thread-1" />);
+    await waitFor(() => expect(container.querySelector('.inbox-mermaid-frame')).toBeTruthy());
+    const frame = container.querySelector<HTMLElement>('.inbox-mermaid-frame')!;
+    expect(frame.classList.contains('is-sized')).toBe(true);
+    expect(frame.style.aspectRatio).toBe('180 / 2400');
+    expect(frame.style.getPropertyValue('--mermaid-intrinsic-width')).toBe('180px');
+    expect(frame.querySelector('svg')?.hasAttribute('width')).toBe(false);
+    expect(getByRole('button', { name: 'Open diagram in full screen' })).toBeTruthy();
+  });
+
+  it('keeps the unsized fallback when the SVG has no usable viewBox', async () => {
+    mermaidRender.mockResolvedValueOnce({ svg: '<svg width="100%" height="40"><g></g></svg>' });
+    const { container } = render(<MarkdownContent text={SOURCE} />);
+    await waitFor(() => expect(container.querySelector('.inbox-mermaid-frame')).toBeTruthy());
+    const frame = container.querySelector<HTMLElement>('.inbox-mermaid-frame')!;
+    expect(frame.classList.contains('is-sized')).toBe(false);
+    expect(frame.getAttribute('style')).toBeNull();
+    expect(container.querySelector('.inbox-mermaid-toolbar')).toBeNull();
+  });
 });
