@@ -51,7 +51,7 @@ describe('phone connection configuration', () => {
     expect(statSync(file).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(file, 'utf8')).relayToken).toBe(token);
     expect(JSON.stringify(store.view())).not.toContain(token);
-    expect(new MobileConnectionStore(file).view()).toEqual({ mode: 'connect', publicUrl: 'https://one.connect.example', hasRelayToken: true, accountUrl: 'https://account.example' });
+    expect(new MobileConnectionStore(file).view()).toEqual({ mode: 'connect', publicUrl: 'https://one.connect.example', hasRelayToken: true, accountUrl: 'https://account.example', serverId: 'computer-1' });
     await store.write({ mode: 'unconfigured' }); expect(new MobileConnectionStore(file).view().hasRelayToken).toBe(false);
   });
   it('reports malformed and oversized private files without echoing their contents', () => {

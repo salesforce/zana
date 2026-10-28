@@ -9,5 +9,7 @@ export async function sharedInstancePage(app: Awaited<ReturnType<typeof launchAp
 export async function sharedChromePage(app: Awaited<ReturnType<typeof launchApp>>) {
   const isChrome = (url: string) => url.startsWith('data:text/html') && decodeURIComponent(url).includes('<title>Zana switcher</title>');
   await expect.poll(() => app.electron.windows().some(page => isChrome(page.url()))).toBe(true);
-  return app.electron.windows().find(page => isChrome(page.url()))!;
+  // The destroyed window's view can remain in Playwright's page list until
+  // its CDP close event arrives. Direct handoffs can finish before that event.
+  return app.electron.windows().filter(page => isChrome(page.url())).at(-1)!;
 }

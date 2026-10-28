@@ -1,0 +1,12 @@
+.setup { margin: 24px 0; padding: 28px; border: 1px solid var(--border); border-radius: 14px; background: var(--bg-panel); }
+.setup h2 { font-size: 22px; margin: 24px 0 12px; }
+.setup p { line-height: 1.7; }
+.setup code { display: block; overflow-wrap: anywhere; margin: 20px 0; font-size: 18px; }
+.eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; overflow-wrap: anywhere; }
+.progress { list-style: none; display: flex; flex-wrap: wrap; gap: 16px 24px; margin: 24px 0; padding: 0; font-size: 13px; }
+.progress li { display: flex; align-items: center; gap: 7px; opacity: .65; }
+.progress li > span { display: grid; place-items: center; width: 23px; height: 23px; border: 1px solid currentColor; border-radius: 50%; font-size: 11px; }
+.progress li[aria-current='step'] { color: var(--accent); font-weight: 600; opacity: 1; }
+.progress li.complete { color: #278353; opacity: 1; }
+.actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px; }
+@media (max-width: 600px) { .setup { padding: 20px; } .progress { gap: 16px; } }

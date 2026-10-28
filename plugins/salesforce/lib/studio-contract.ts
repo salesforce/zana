@@ -58,6 +58,9 @@ export interface SuiteEval {
 export interface CaseObserved { topics: string[]; actions: string[]; traced: boolean; traceComplete?: boolean }
 /** A saved Simulate result. `notes`, `observed` and `reply` are the run's evidence, kept small so a Fail always says why. */
 export interface CaseResult { outcome: CaseOutcome; runId: string; at: number; notes?: string[]; observed?: CaseObserved; reply?: string; /** The AI judge's verdict on `criteria`, when it ran. */ judge?: CaseOutcome;
+  /** Bounded recorded messages, independent of the expiring live preview session. */
+  conversation?: ConversationMessage[];
+  conversationTruncated?: boolean;
   setupBlocked?: boolean; deterministic?: CaseOutcome;
   latencyMs?: number; assertions?: AssertionResult[]; sourceHash?: string; caseHash?: string;
   /** Complete preceding messages for a final-turn org replay. Omitted when evidence is incomplete or too large. */

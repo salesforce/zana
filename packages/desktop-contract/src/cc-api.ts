@@ -488,7 +488,7 @@ export interface CcApi {
       boundLan: boolean;
       /** Last start failure (e.g. port in use), else null. */
       error: string | null;
-      connection?: { mode: 'unconfigured' | 'connect'; publicUrl?: string; hasRelayToken: boolean; accountUrl?: string };
+      connection?: { mode: 'unconfigured' | 'connect'; publicUrl?: string; hasRelayToken: boolean; accountUrl?: string; serverId?: string };
       relayState?: 'connecting' | 'connected' | 'reconnecting' | 'stopped';
       distribution?: { testFlightUrl: string | null };
       readySessions?: Array<{ id: string; label: string; platform: 'ios' | 'android'; appVersion: string; lastSeenAt: number }>;

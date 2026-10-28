@@ -3,7 +3,7 @@
  */
 import React, { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
-import { fireEvent, waitFor } from '@testing-library/react';
+import { fireEvent, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PLAYGROUND_BRIDGE_SOURCE } from './playground-bridge.js';
 
@@ -80,6 +80,29 @@ afterEach(() => { nodes.splice(0).forEach(fn => fn()); vi.restoreAllMocks(); del
 
 const openReferences = async (root: ParentNode) => { const btn = [...root.querySelectorAll('.sf-as-explorer-foot button')][0]; expect(btn).toBeTruthy(); await act(async () => { fireEvent.click(btn!); }); };
 describe('AgentScriptPanel studio layout', () => {
+  it('wires current-case failure counts, saved evidence and Open Tests into the footer', async () => {
+    rpc.mockImplementation(async (plugin, method, args) => method === 'studio.suites.list' ? {
+      ok: true, suites: [{ id: 'QC', path: 'tests/QC.scenario.json',
+        cases: ['fail', 'pass', 'pending'].map(id => ({ id, name: `Footer ${id}`, utterances: ['Hello'], expect: { contains: ['evidence'] } })),
+        lastResults: { fail: { outcome: 'fail', runId: '', at: 1, reply: 'Hello', notes: ['Missing text: "evidence"'] }, pass: { outcome: 'pass', runId: '', at: 1, reply: 'Here is the evidence' }, removed: { outcome: 'fail', runId: '', at: 1 } }
+      }]
+    } : baseRpc(plugin, method, args));
+    try {
+      const el = await mount('force-app/bots/QC.agent');
+      await ready(el);
+      await act(async () => { fireEvent.click(within(el).getByRole('tab', { name: 'Tests 1', exact: true })); });
+      const footer = within(el.querySelector<HTMLElement>('[aria-label="Saved scenario results"]')!);
+      expect(footer.getByText('1 failed')).toBeTruthy();
+      expect(el.querySelector('.sf-footer-tests-summary')!.textContent).toContain('1 not run');
+      const suite = el.querySelector<HTMLDetailsElement>('.sf-footer-tests details')!;
+      await act(async () => { suite.open = true; fireEvent(suite, new Event('toggle')); });
+      await act(async () => { fireEvent.click(footer.getByRole('button', { name: 'Footer fail', exact: true })); });
+      expect(footer.getByRole('region', { name: 'Details for Footer fail' }).textContent).toContain('Actual: Not in the reply');
+      await act(async () => { fireEvent.click(footer.getByRole('button', { name: 'Open Tests', exact: true })); });
+      expect(within(el).getByTestId('studio-view-tests').style.display).not.toBe('none');
+    } finally { rpc.mockImplementation(baseRpc); }
+  });
+
   it('renders the wide IDE layout and keeps the iframe across tier changes', async () => {
     const el = await mount('force-app/bots/QC.agent');
     const root = el.querySelector('.sf-studio')!;

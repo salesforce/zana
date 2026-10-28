@@ -10,8 +10,8 @@ afterEach(cleanup);
 it('restores an existing browser session without asking to sign in again', async () => {
   const opened = vi.fn(); render(<SharedInstancePicker onOpened={opened} />);
   await screen.findByText('My Zana');
-  expect(screen.queryByRole('button', { name: 'Sign in to browse Zanas' })).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Open Zana' }));
+  expect(screen.queryByRole('button', { name: 'Sign in to find your computers' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Open computer' }));
   await waitFor(() => expect(client.select).toHaveBeenCalledWith('owned'));
   expect(opened).toHaveBeenCalledOnce();
 });
@@ -20,9 +20,9 @@ it('shows one scoped sign-in action after an expired session and loads instances
   let complete!: () => void;
   client.signIn.mockImplementation(() => new Promise<void>(resolve => { complete = resolve; }));
   render(<SharedInstancePicker />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Sign in to browse Zanas' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Sign in to find your computers' }));
   expect(screen.getByRole('status').textContent).toContain('your browser');
-  expect(screen.queryByRole('button', { name: 'Refresh instances' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Refresh computers' })).toBeNull();
   expect(screen.queryByRole('alert')).toBeNull();
   await act(async () => complete()); await screen.findByText('My Zana');
   expect(client.list).toHaveBeenCalledTimes(2);
@@ -33,20 +33,20 @@ it('reports errors, supports retry, and explains an empty account', async () => 
   render(<SharedInstancePicker />);
   expect((await screen.findByRole('alert')).textContent).toBe('Connect unavailable');
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
-  await screen.findByText(/No Zana instances found/);
+  await screen.findByText(/No computers found/);
   expect(screen.queryByRole('alert')).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh instances' })); await screen.findByText('My Zana');
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh computers' })); await screen.findByText('My Zana');
 });
 it('reports sign-in and selection failures and prevents opening offline instances', async () => {
   client.list.mockRejectedValueOnce(new Error('Sign in to your Zana account')).mockResolvedValue([owned, { ...owned, id: 'offline', name: 'Offline Zana', online: false }]);
   client.signIn.mockRejectedValueOnce('unavailable').mockResolvedValueOnce(undefined);
   client.select.mockRejectedValueOnce(new Error('Instance is unavailable'));
   render(<SharedInstancePicker />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Sign in to browse Zanas' }));
-  expect((await screen.findByRole('alert')).textContent).toBe('Could not open another Zana. Try again.');
-  fireEvent.click(screen.getByRole('button', { name: 'Sign in to browse Zanas' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Sign in to find your computers' }));
+  expect((await screen.findByRole('alert')).textContent).toBe('Could not open this computer. Try again.');
+  fireEvent.click(screen.getByRole('button', { name: 'Sign in to find your computers' }));
   await screen.findByText('Offline Zana');
-  const buttons = screen.getAllByRole('button', { name: 'Open Zana' }) as HTMLButtonElement[];
+  const buttons = screen.getAllByRole('button', { name: 'Open computer' }) as HTMLButtonElement[];
   expect(buttons[1].disabled).toBe(true);
   fireEvent.click(buttons[0]); await screen.findByText('Instance is unavailable');
 });
@@ -58,7 +58,7 @@ it('ignores a list or sign-in result after the picker closes', async () => {
   let signedIn!: () => void;
   client.signIn.mockImplementationOnce(() => new Promise<void>(resolve => { signedIn = resolve; }));
   const second = render(<SharedInstancePicker />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Sign in to browse Zanas' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Sign in to find your computers' }));
   second.unmount(); await act(async () => signedIn());
   expect(client.list).toHaveBeenCalledTimes(2);
 });

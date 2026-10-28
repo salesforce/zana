@@ -185,8 +185,7 @@ describe('AgentScriptPanel beside the host side panel', () => {
     expect(el.querySelector('[data-testid="studio-target-view"]')).toBeNull();
     expect(navigate.openPanelTool).not.toHaveBeenCalled();
     // The tab is kept with the layout.
-    const layoutKey = Object.keys(localStorage).find(key => key.startsWith('salesforce:studio:') && !key.includes(':split:'))!;
-    expect(readStudioLayout(layoutKey).tabs).toEqual(expect.arrayContaining([{ id: 'org-agents', kind: 'org', label: 'Org agents', target: 'agents' }]));
+    expect(readStudioLayout('salesforce:studio:proj-1').tabs).toEqual(expect.arrayContaining([{ id: 'org-agents', kind: 'org', label: 'Org agents', target: 'agents' }]));
     // Closing the tab unmounts the list.
     await act(async () => { fireEvent.click(el.querySelector('[aria-label="Close Org agents"]')!); });
     expect(el.querySelector('[data-testid="studio-org-agents-view"]')).toBeNull();

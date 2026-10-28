@@ -6,9 +6,16 @@ import { sharedInstancePage } from './fixtures/shared-instance.js';
 
 async function fakeAccount(app: Awaited<ReturnType<typeof launchApp>>, rows: Array<{ id: string; instanceId: string; name: string; browserUrl: string; live: boolean }>) {
   await app.electron.evaluate(({ session }, rows) => {
-    session.fromPartition('persist:zcc-shared-account').protocol.handle('https', request => {
+    session.fromPartition('persist:zcc-shared-account').protocol.handle('https', async request => {
       const url = new URL(request.url);
       if (url.hostname === 'zana-ide.com' && url.pathname === '/api/connect/account') return Response.json({ servers: rows });
+      if (url.hostname === 'zana-ide.com' && url.pathname === '/api/connect/browser/open/') {
+        const { serverId } = await request.json();
+        const selected = rows.find(row => row.id === serverId);
+        if (!selected || !selected.live) return new Response('Unavailable', { status: 403 });
+        return Response.json({ location: `${selected.browserUrl}/_connect/login?intent=1790000000000.${'i'.repeat(43)}` });
+      }
+      if (url.pathname === '/_connect/login') return new Response(null, { status: 303, headers: { location: url.origin + '/' } });
       const row = rows.find(row => row.browserUrl === url.origin);
       if (!row) return new Response('Denied', { status: 403 });
       return new Response(`<!doctype html><title>${row.name}</title><h1>${row.name}</h1><textarea aria-label="Draft"></textarea><script>const field=document.querySelector('textarea');field.value=localStorage.getItem('draft')||'';field.oninput=()=>localStorage.setItem('draft',field.value)</script>`, { headers: { 'content-type': 'text/html' } });

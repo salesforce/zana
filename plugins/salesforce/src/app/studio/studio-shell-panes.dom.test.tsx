@@ -127,6 +127,19 @@ describe('useSuites helpers', () => {
 });
 
 describe('useSuites', () => {
+  it('refreshes progress and discards a response from the previous project', async () => {
+    let finishOld!: (value: unknown) => void;
+    rpc.mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve; }));
+    rpc.mockResolvedValue({ ok: true, suites: [suite({ id: 'new-project' })] });
+    const { result, rerender } = renderHook(({ projectId }) => useSuites('salesforce', projectId), { initialProps: { projectId: 'old' } });
+    rerender({ projectId: 'new' });
+    await waitFor(() => expect(result.current[0]?.id).toBe('new-project'));
+    await act(async () => finishOld({ ok: true, suites: [suite({ id: 'old-project' })] }));
+    expect(result.current[0]?.id).toBe('new-project');
+    rpc.mockResolvedValue({ ok: true, suites: [suite({ id: 'progress-update' })] });
+    await act(async () => { realtime?.({ kind: 'suite-progress', projectId: 'new' }); });
+    await waitFor(() => expect(result.current[0]?.id).toBe('progress-update'));
+  });
   it('loads, refreshes on suites changes and tolerates failures', async () => {
     rpc.mockResolvedValue({ ok: true, suites: [suite()] });
     const { result } = renderHook(() => useSuites('salesforce', 'p1'));
@@ -157,16 +170,16 @@ describe('BottomTests', () => {
     fireEvent.click(screen.getByText('Open Tests'));
     expect(onOpenTests).toHaveBeenCalledTimes(1);
     rerender(<BottomTests onOpenTests={onOpenTests} suites={[
-      suite({ lastResults: { a: res('pass'), b: res('fail') } }),
+      suite({ lastResults: { c1: res('fail') } }),
       suite({ id: 's2', path: 'tests/b.scenario.json', cases: [], lastResults: { a: res('pass') } }),
       suite({ id: 's3', path: 'tests/c.scenario.json' })
     ]} />);
-    expect(screen.getByText('1/2 passing')).toBeTruthy();
-    expect(screen.getByText('1/1 passing')).toBeTruthy();
-    expect(screen.getByText('not run')).toBeTruthy();
-    expect(screen.getByText('a.scenario.json · 1 case')).toBeTruthy();
-    expect(screen.getByText('b.scenario.json · 0 cases')).toBeTruthy();
-    fireEvent.click(screen.getByText('a.scenario.json · 1 case'));
+    expect(screen.getByText('0 passed · 1 failed')).toBeTruthy();
+    expect(screen.getByText('0 passed · 1 not run')).toBeTruthy();
+    const summaries = [...document.querySelectorAll('summary')];
+    expect(summaries[0].textContent).toContain('a.scenario.json · 1 case');
+    expect(summaries[1].textContent).toContain('b.scenario.json · 0 cases');
+    fireEvent.click(screen.getByText('Open Tests'));
     expect(onOpenTests).toHaveBeenCalledTimes(2);
   });
 });
