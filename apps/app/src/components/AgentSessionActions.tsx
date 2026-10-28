@@ -6,6 +6,7 @@ import { isClaudeProfile } from '../lib/launchProfile.js';
 import { useData, useIdleTriage } from '../store.js';
 import {
   canCloseWithFollowup,
+  closeFollowupTitle,
   cliAgentArchives,
   cliAgentKeepsHistory,
   cliAgentRemoveConfirm,
@@ -38,6 +39,7 @@ export function AgentSessionActions({
   const canSummarize = summaryEnabled && isClaudeProfile(session.profile);
   const [summarizing, setSummarizing] = useState(false);
   const closingWithFollowup = useData((s) => s.closingFollowupIds.has(session.id));
+  const wrapUpClose = useData((s) => s.closeWrapUpEnabled);
   const triageVerdict = useIdleTriage((s) => s.byId[session.id]);
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
   const surfacingForAttention =
@@ -103,10 +105,10 @@ export function AgentSessionActions({
           className="agent-monitor-action"
           onClick={() => void closeWithFollowup()}
           disabled={closingWithFollowup}
-          title="Close the agent, summarising its work to your inbox and filing a follow-up if it left something unfinished"
+          title={closeFollowupTitle(wrapUpClose)}
         >
           {closingWithFollowup ? <Loader2 size={13} className="spin" /> : <MailCheck size={13} />}
-          {closingWithFollowup ? 'Closing…' : 'Close with follow-up'}
+          {closingWithFollowup ? (wrapUpClose ? 'Wrapping up…' : 'Closing…') : 'Close with follow-up'}
         </button>
       )}
       {canSummarize && (

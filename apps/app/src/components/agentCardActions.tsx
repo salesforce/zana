@@ -106,6 +106,19 @@ export function cliAgentKeepsHistory(
   );
 }
 
+/** Close with follow-up tooltip when it closes straight away (today's behaviour). */
+export const CLOSE_FOLLOWUP_TITLE =
+  'Close the agent, summarising its work to your inbox and filing a follow-up if it left something unfinished';
+
+/** Close with follow-up tooltip when "Wrap up before closing" is on. */
+export const CLOSE_FOLLOWUP_WRAP_UP_TITLE =
+  'Ask the agent to wrap up, then close it with a summary in your inbox and a follow-up if work is left';
+
+/** The Close with follow-up tooltip for the current "Wrap up before closing" setting. */
+export function closeFollowupTitle(wrapUp: boolean): string {
+  return wrapUp ? CLOSE_FOLLOWUP_WRAP_UP_TITLE : CLOSE_FOLLOWUP_TITLE;
+}
+
 /** {@link cliAgentKeepsHistory} for event handlers, resolving the project from the store by id. */
 export function cliAgentKeepsHistoryIn(
   session: Pick<TerminalSession, 'status' | 'profile'>,
@@ -183,7 +196,7 @@ export function cliAgentRestartConfirm(title: string): string {
 
 /**
  * Confirm, then fold a work summary (+ follow-up if unfinished) and close.
- * Returns false if the user cancelled. Callers that hide the control behind
+ * Returns false if the user cancelled or the agent stayed open. Callers that hide the control behind
  * {@link canCloseWithFollowup} still go through this so confirm copy and the
  * store call stay in one place.
  */
@@ -192,11 +205,17 @@ export async function closeAgentWithFollowup(
   projectId: string
 ): Promise<boolean> {
   if (useData.getState().closingFollowupIds.has(session.id)) return false;
-  if (!globalThis.confirm(`Close “${session.title}” and file a follow-up if work is left?`)) {
+  const wrapUp = useData.getState().closeWrapUpEnabled;
+  const prompt = wrapUp
+    ? `Close “${session.title}” with follow-up? The agent first saves what it learnt and tidies up, then closes with a summary in your inbox. If it asks you something, it stays open.`
+    : `Close “${session.title}” and file a follow-up if work is left?`;
+  if (!globalThis.confirm(prompt)) {
     return false;
   }
-  await useData.getState().closeIdleAgents(projectId, [session.id], true, { force: true });
-  return true;
+  const res = await useData.getState().closeIdleAgents(projectId, [session.id], true, { force: true });
+  // With the wrap-up on, only a real close counts: not one that stayed open (it asked something, was
+  // typed in, or timed out), nor one whose close itself failed. Off keeps today's answer.
+  return wrapUp ? res?.closed === 1 : true;
 }
 
 /**
@@ -361,6 +380,7 @@ export function AgentCardMenu({ menu, setMenu, actions }: AgentCardMenuProps) {
   // triaged card isn't stuck nagging — gate on the same predicate the lane uses.
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
   const closingWithFollowup = useData((s) => s.closingFollowupIds.has(card.session.id));
+  const wrapUpClose = useData((s) => s.closeWrapUpEnabled);
   const needsYou = !exited && (card.state === 'blocked' || cardNeedsAttention(card, sensitivity));
   const pluginSlots = useSyncExternalStore(subscribePluginSlots, listAgentCardActions, listAgentCardActions);
   const pluginCtx = { sessionId: card.session.id, projectId: card.projectId };
@@ -451,9 +471,9 @@ export function AgentCardMenu({ menu, setMenu, actions }: AgentCardMenuProps) {
             setMenu(null);
             actions.closeWithFollowup(card);
           }}
-          title="Close the agent, summarising its work to your inbox and filing a follow-up if it left something unfinished"
+          title={closeFollowupTitle(wrapUpClose)}
         >
-          {closingWithFollowup ? 'Closing…' : 'Close with follow-up'}
+          {closingWithFollowup ? (wrapUpClose ? 'Wrapping up…' : 'Closing…') : 'Close with follow-up'}
         </button>
       )}
       {pluginActions.length > 0 ? <div className="tab-context-sep" /> : null}

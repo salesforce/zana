@@ -884,6 +884,112 @@ describe('host bootstrap wiring', () => {
     expect(await ctx().apiErrorResume.check('nothing', [])).toEqual({ ruleId: null, skipped: [] });
   });
 
+  it('feeds agent status to the wrap-up service, forgets it on exit and exposes it to IPC', async () => {
+    const observe = vi.spyOn(ctx().wrapUpClose, 'observe');
+    const forget = vi.spyOn(ctx().wrapUpClose, 'forget');
+    try {
+      h.ptys.sessions.set('wu1', sessionFixture({ id: 'wu1', projectId: project.id, profile: 'claude' }));
+      ctx().agentStatus.emit('status', 'wu1', 'working', 1);
+      expect(observe).toHaveBeenCalledWith('wu1', 'working');
+      h.ptys.emit('exit', 'wu1', 0);
+      await settle();
+      expect(forget).toHaveBeenCalledWith('wu1');
+    } finally {
+      observe.mockRestore();
+      forget.mockRestore();
+    }
+    expect(ctx().wrapUpClose.run).toBeTypeOf('function');
+  });
+
+  it('spares an agent from auto-close while it is wrapping up', async () => {
+    h.ptys.sessions.set('wu2', sessionFixture({ id: 'wu2', projectId: project.id, profile: 'claude' }));
+    const config = store.getConfig();
+    const cfg = vi.spyOn(store, 'getConfig').mockReturnValue({ ...config, autoCloseIdleEnabled: true });
+    const wrapping = vi.spyOn(ctx().wrapUpClose, 'isWrappingUp').mockReturnValue(true);
+    try {
+      const eligible = () => (ctx().autoCloseIdle as any).eligible('wu2') as boolean;
+      expect(eligible()).toBe(false);
+      wrapping.mockReturnValue(false);
+      expect(eligible()).toBe(true);
+    } finally {
+      wrapping.mockRestore();
+      cfg.mockRestore();
+    }
+  });
+
+  it('keeps heartbeat nudges away from an agent while it is wrapping up', async () => {
+    h.ptys.sessions.set('wu3', sessionFixture({ id: 'wu3', projectId: project.id, profile: 'claude', heartbeat: true } as never));
+    const config = store.getConfig();
+    const cfg = vi.spyOn(store, 'getConfig').mockReturnValue({ ...config, heartbeatEnabled: true });
+    const wrapping = vi.spyOn(ctx().wrapUpClose, 'isWrappingUp').mockReturnValue(true);
+    try {
+      const eligible = () => (ctx().heartbeat as any).eligible('wu3') as boolean;
+      expect(eligible()).toBe(false);
+      wrapping.mockReturnValue(false);
+      expect(eligible()).toBe(true);
+    } finally {
+      wrapping.mockRestore();
+      cfg.mockRestore();
+    }
+  });
+
+  it('tells the wrap-up service when an API error ends a Claude turn', async () => {
+    h.ptys.sessions.set('wu5', sessionFixture({ id: 'wu5', projectId: project.id, profile: 'claude' }));
+    const failed = vi.spyOn(ctx().wrapUpClose, 'onTurnFailed');
+    try {
+      const body = JSON.stringify({ hook_event_name: 'StopFailure', error: 'rate_limit', error_details: '429 slow down' });
+      h.mcpDeps.onNotifyHook(project.id, 'wu5', 'unblocked', body);
+      expect(failed).toHaveBeenCalledWith('wu5');
+      await settle();
+    } finally {
+      failed.mockRestore();
+    }
+  });
+
+  it('holds peer messages and mail for an agent while it wraps up', async () => {
+    h.ptys.sessions.set('wu6', sessionFixture({ id: 'wu6', projectId: project.id, profile: 'claude' }));
+    const reply = vi.fn(() => true);
+    h.ptys.reply = reply;
+    const wrapping = vi.spyOn(ctx().wrapUpClose, 'isWrappingUp').mockReturnValue(true);
+    const pull = vi.spyOn(h.mcpDeps.agentMessageLog, 'pull');
+    try {
+      expect(h.mcpDeps.injectToSession('wu6', 'hello')).toBe(false);
+      expect(reply).not.toHaveBeenCalled();
+      ctx().agentStatus.emit('status', 'wu6', 'working', 1);
+      ctx().agentStatus.emit('status', 'wu6', 'idle', 2);
+      expect(pull).not.toHaveBeenCalledWith('wu6');
+      wrapping.mockReturnValue(false);
+      expect(h.mcpDeps.injectToSession('wu6', 'hello')).toBe(true);
+      expect(reply).toHaveBeenCalledWith('wu6', 'hello');
+      ctx().agentStatus.emit('status', 'wu6', 'working', 3);
+      ctx().agentStatus.emit('status', 'wu6', 'idle', 4);
+      expect(pull).toHaveBeenCalledWith('wu6');
+      await settle();
+    } finally {
+      pull.mockRestore();
+      wrapping.mockRestore();
+      delete (h.ptys as { reply?: unknown }).reply;
+    }
+  });
+
+  it('tells the wrap-up service when a Claude turn starts and stops', async () => {
+    h.ptys.sessions.set('wu4', sessionFixture({ id: 'wu4', projectId: project.id, profile: 'claude' }));
+    const started = vi.spyOn(ctx().wrapUpClose, 'onTurnStarted');
+    const finished = vi.spyOn(ctx().wrapUpClose, 'onTurnFinished');
+    try {
+      h.mcpDeps.onNotifyHook(project.id, 'wu4', 'unblocked');
+      expect(started).toHaveBeenCalledWith('wu4');
+      h.mcpDeps.onNotifyHook(project.id, 'wu4', 'blocked');
+      expect(started).toHaveBeenCalledTimes(1);
+      h.mcpDeps.onStopHook(project.id, 'wu4');
+      expect(finished).toHaveBeenCalledWith('wu4');
+      await settle();
+    } finally {
+      started.mockRestore();
+      finished.mockRestore();
+    }
+  });
+
   describe('Squad worker API-error recovery routing', () => {
     const workerCohort = { executionId: 'e-api', role: 'worker', slotId: 'sl-api', cohortId: 'c-api', teamId: 't', teamName: 'T' };
     const stopBody = JSON.stringify({ hook_event_name: 'StopFailure', error: 'rate_limit', error_details: '429 slow down' });

@@ -1,4 +1,4 @@
-import { EXPLORER_FILE_ICON_THEME_DEFAULT, EXPLORER_MINIMAP_DEFAULTS, isAgentsViewId, resolveExplorerFileIconTheme, resolveExplorerMinimap, type AgentsViewId, type ExplorerFileIconTheme, type ExplorerMinimapConfig, type ExplorerMinimapPrefs } from '@zana-ai/zcc-domain/product';
+import { EXPLORER_FILE_ICON_THEME_DEFAULT, EXPLORER_MINIMAP_DEFAULTS, isAgentsViewId, resolveExplorerFileIconTheme, resolveExplorerMinimap, type AgentsViewId, type CloseFollowupKeptOpen, type ExplorerFileIconTheme, type ExplorerMinimapConfig, type ExplorerMinimapPrefs } from '@zana-ai/zcc-domain/product';
 import { subscribeClientRecovery } from './lib/client-recovery.js';
 import { create } from 'zustand';
 import type {
@@ -840,6 +840,7 @@ function mirroredConfigFlags(config: AppConfig) {
     autoCloseIdleEnabled: config.autoCloseIdleEnabled ?? false,
     overseerMode: config.overseerMode ?? 'off',
     catchUpSummaryEnabled: config.catchUpSummaryEnabled ?? false,
+    closeWrapUpEnabled: config.closeWrapUpEnabled ?? false,
     classicSessionViewEnabled: config.classicSessionViewEnabled ?? false,
     threadTabsEnabled: config.threadTabsEnabled ?? true,
     dockableThreadToolsEnabled: config.dockableThreadToolsEnabled ?? true,
@@ -1654,6 +1655,10 @@ interface DataState {
    *  in the agent modal (EXPERIMENTAL). Hydrated on init, kept live by the Settings
    *  toggle. Default off. */
   catchUpSummaryEnabled: boolean;
+  /** Mirror of AppConfig.closeWrapUpEnabled — Close with follow-up first asks the
+   *  agent to wrap up (EXPERIMENTAL). Hydrated on init, kept live by the Settings
+   *  toggle. Default off. */
+  closeWrapUpEnabled: boolean;
   /** Mirror of AppConfig.classicSessionViewEnabled — skip the inspector overlay
    *  and open CLI agents / threads as full pages (EXPERIMENTAL). Hydrated on init,
    *  kept live by the Settings toggle. Default off. */
@@ -1769,6 +1774,7 @@ interface DataState {
   setCliRemoteToolProxyEnabled: (on: boolean) => void;
   setFollowUpsEnabled: (on: boolean) => void;
   setCatchUpSummaryEnabled: (on: boolean) => void;
+  setCloseWrapUpEnabled: (on: boolean) => void;
   setClassicSessionViewEnabled: (on: boolean) => void;
   setThreadTabsEnabled: (on: boolean) => void;
   setDockableThreadToolsEnabled: (on: boolean) => void;
@@ -1942,7 +1948,7 @@ interface DataState {
      sessionIds: string[],
      summarize: boolean,
      opts?: { force?: boolean }
-   ) => Promise<{ closed: number; summarized: number; followedUp: number }>;
+   ) => Promise<{ closed: number; summarized: number; followedUp: number; keptOpen?: CloseFollowupKeptOpen[] }>;
   /**
    * READ-ONLY companion to {@link closeIdleAgents}: fold the given idle agents'
    * work into ONE inbox entry and leave every agent RUNNING (the Agents board's
@@ -2168,6 +2174,7 @@ export const useData = create<DataState>((set, get) => ({
   overseerMode: 'off',
   reviewerApprovalMode: 'ask',
   catchUpSummaryEnabled: false,
+  closeWrapUpEnabled: false,
   classicSessionViewEnabled: false,
   threadTabsEnabled: true,
   dockableThreadToolsEnabled: true,
@@ -2311,6 +2318,9 @@ export const useData = create<DataState>((set, get) => ({
 
   setCatchUpSummaryEnabled(on) {
     set({ catchUpSummaryEnabled: on });
+  },
+  setCloseWrapUpEnabled(on) {
+    set({ closeWrapUpEnabled: on });
   },
 
   setDockableThreadToolsEnabled(on) {
@@ -3619,11 +3629,13 @@ export const useData = create<DataState>((set, get) => ({
         return { closingFollowupIds: next };
       });
     };
+    const wrapUp = get().closeWrapUpEnabled;
     return runCloseIdleAgents({
       projectId,
       sessionIds,
       summarize,
       force: opts?.force === true,
+      wrapUp,
       deps: {
         statusById: useAgentStatus.getState().byId,
         alreadyClosingIds: get().closingFollowupIds,
@@ -3644,13 +3656,17 @@ export const useData = create<DataState>((set, get) => ({
         pushErrorToast: (err) => {
           pushErrorToast(errorMessage(err, 'Failed to summarize agents'));
         },
-        pushClosedToast: (closed, summarized, followedUp, failures) => {
+        pushClosedToast: (closed, summarized, followedUp, failures, keptOpen) => {
           useUi
             .getState()
-            .pushToast(closedToastMessage(closed, summarized, followedUp, failures), summarized > 0 ? 'info' : 'error');
+            .pushToast(
+              closedToastMessage(closed, summarized, followedUp, failures, keptOpen),
+              // Kept-open agents are a deliberate outcome, not an error.
+              summarized > 0 || (closed === 0 && (keptOpen?.length ?? 0) > 0) ? 'info' : 'error'
+            );
         },
         pushProgressToast: (count) =>
-          useUi.getState().pushToast(closeFollowupProgressMessage(count), 'info', { persist: true }),
+          useUi.getState().pushToast(closeFollowupProgressMessage(count, wrapUp), 'info', { persist: true }),
         dismissProgressToast: (id) => useUi.getState().dismissToast(id)
       }
     });

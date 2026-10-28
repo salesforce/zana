@@ -14,6 +14,7 @@ const canCloseWithFollowup = vi.fn((..._args: unknown[]) => true);
 const idleSurfacesToNeedsYou = vi.fn((..._args: unknown[]) => false);
 const dataState = {
   catchUpSummaryEnabled: true,
+  closeWrapUpEnabled: false,
   idleAttentionSensitivity: 'medium',
   closingFollowupIds: new Set<string>(),
   projects: [{ id: 'p1' }] as Array<{ id: string; remote?: unknown }>
@@ -38,6 +39,10 @@ vi.mock('../store.js', () => ({
 vi.mock('./agentCardActions.js', () => ({
   canCloseWithFollowup: (...args: unknown[]) => canCloseWithFollowup(...args),
   closeAgentWithFollowup: (...args: unknown[]) => closeAgentWithFollowup(...args),
+  closeFollowupTitle: (wrapUp: boolean) =>
+    wrapUp
+      ? 'Ask the agent to wrap up, then close it with a summary in your inbox and a follow-up if work is left'
+      : 'Close the agent, summarising its work to your inbox and filing a follow-up if it left something unfinished',
   cliAgentKeepsHistory: (s: { profile: string }, project?: { remote?: unknown }) =>
     !!project && !project.remote && s.profile !== 'mastracode' && s.profile !== 'shell',
   cliAgentArchives: (s: { status: string; profile: string }) => s.status !== 'exited' && s.profile !== 'shell',
@@ -93,6 +98,7 @@ describe('AgentSessionActions', () => {
     idleSurfacesToNeedsYou.mockReturnValue(false);
     dataState.catchUpSummaryEnabled = true;
     dataState.closingFollowupIds = new Set();
+    dataState.closeWrapUpEnabled = false;
   });
 
   it('offers close, follow-up, and summarize on a live Claude session', () => {
@@ -100,6 +106,33 @@ describe('AgentSessionActions', () => {
     expect(screen.getByText('Archive')).toBeTruthy();
     expect(screen.getByText('Close with follow-up')).toBeTruthy();
     expect(screen.getByText('Summarize to inbox')).toBeTruthy();
+  });
+
+  it('labels and explains Close with follow-up per the wrap-up setting', () => {
+    const tip = (name: string) => (screen.getByRole('button', { name }) as HTMLButtonElement).title;
+    render(<AgentSessionActions session={session()} projectId="p1" state="idle" />);
+    expect(tip('Close with follow-up')).toBe('Close the agent, summarising its work to your inbox and filing a follow-up if it left something unfinished');
+    cleanup();
+    dataState.closeWrapUpEnabled = true;
+    render(<AgentSessionActions session={session()} projectId="p1" state="idle" />);
+    expect(tip('Close with follow-up')).toBe('Ask the agent to wrap up, then close it with a summary in your inbox and a follow-up if work is left');
+    cleanup();
+    dataState.closingFollowupIds = new Set(['s1']);
+    render(<AgentSessionActions session={session()} projectId="p1" state="idle" />);
+    expect(screen.getByText('Wrapping up…')).toBeTruthy();
+    expect(screen.queryByText('Closing…')).toBeNull();
+  });
+
+  it('does not close the modal for an agent that stayed open', async () => {
+    const onSessionClosed = vi.fn();
+    closeAgentWithFollowup.mockResolvedValue(false);
+    render(<AgentSessionActions session={session()} projectId="p1" state="idle" onSessionClosed={onSessionClosed} />);
+    fireEvent.click(screen.getByText('Close with follow-up'));
+    await waitFor(() => expect(closeAgentWithFollowup).toHaveBeenCalled());
+    expect(onSessionClosed).not.toHaveBeenCalled();
+    closeAgentWithFollowup.mockResolvedValue(true);
+    fireEvent.click(screen.getByText('Close with follow-up'));
+    await waitFor(() => expect(onSessionClosed).toHaveBeenCalledTimes(1));
   });
 
   it('shows Mark as Idle when the agent is blocked', () => {

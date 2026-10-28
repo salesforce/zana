@@ -87,5 +87,13 @@ it('reaps probes before waiting on enrollment cleanup, only for an authenticated
 it.each([new Error('start failed'), 'start failed'])('reports private startup failure (%s)', async error => {
   const f = await fixture(); deps.manager.mockReturnValue({ close: vi.fn() }); deps.start.mockRejectedValue(error);
   await f.send({ type: 'start', protocolVersion, token: 'fixture', signingKey: 'fixture', hostId: 'private' });
-  expect(deps.path).toHaveBeenCalled(); expect(f.postMessage).toHaveBeenLastCalledWith({ type: 'error', protocolVersion, message: 'start failed' });
+  expect(f.postMessage).toHaveBeenLastCalledWith({ type: 'error', protocolVersion, message: 'start failed' });
+});
+it('keeps the inherited PATH when a start message carries no path, so a launchd-started app is never re-probed as a terminal launch', async () => {
+  const f = await fixture(); deps.manager.mockReturnValue({ close: vi.fn() }); deps.start.mockResolvedValue({ url: 'http://127.0.0.1:2', close: vi.fn() });
+  vi.stubEnv('PATH', '/opt/homebrew/bin:/usr/bin:/bin');
+  await f.send({ type: 'start', protocolVersion, token: 'fixture', signingKey: 'fixture', hostId: 'private' });
+  expect(deps.path).not.toHaveBeenCalled(); expect(process.env.PATH).toBe('/opt/homebrew/bin:/usr/bin:/bin');
+  await f.send({ type: 'start', protocolVersion, token: 'fixture', signingKey: 'fixture', hostId: 'private', path: '' });
+  expect(deps.path).not.toHaveBeenCalled(); expect(process.env.PATH).toBe('/opt/homebrew/bin:/usr/bin:/bin');
 });

@@ -29,6 +29,7 @@ import {
   AgentCardMenu,
   clampMenuAnchor,
   canCloseWithFollowup,
+  closeFollowupTitle,
   cliAgentArchives,
   cliAgentKeepsHistory,
   cliAgentRemoveLabel,
@@ -646,6 +647,7 @@ function AgentMonitorSession({
   const canFollowupClose = canCloseWithFollowup(t);
   const [summarizing, setSummarizing] = useState(false);
   const closingWithFollowup = useData((s) => s.closingFollowupIds.has(t.id));
+  const wrapUpClose = useData((s) => s.closeWrapUpEnabled);
   const summarize = async () => {
     if (summarizing) return;
     setSummarizing(true);
@@ -704,10 +706,10 @@ function AgentMonitorSession({
           className="agent-monitor-action"
           onClick={closeWithFollowup}
           disabled={closingWithFollowup}
-          title="Close the agent, summarising its work to your inbox and filing a follow-up if it left something unfinished"
+          title={closeFollowupTitle(wrapUpClose)}
         >
           {closingWithFollowup ? <Loader2 size={13} className="spin" /> : <MailCheck size={13} />}
-          {closingWithFollowup ? 'Closing…' : 'Close with follow-up'}
+          {closingWithFollowup ? (wrapUpClose ? 'Wrapping up…' : 'Closing…') : 'Close with follow-up'}
         </button>
       )}
       {canSummarize && (

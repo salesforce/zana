@@ -349,6 +349,7 @@ import { ContentScreen, type ContentScreenEvent, buildWarningText } from './wind
 import { HeartbeatService } from '@zana-ai/zcc-server/services/followups/heartbeat';
 import { createApiErrorResume } from './api-error-resume-wiring.js';
 import { createWorkerApiErrorRecovery, routeApiErrorStop, workerApiErrorRecoveryEnabled } from './worker-api-error-recovery-wiring.js';
+import { createWrapUpClose } from './wrap-up-close-wiring.js';
 import { LocalExtensionWatcher } from '@zana-ai/zcc-server/services/extensions/local-extension-watcher';
 import { AutonomousRunSupervisor, AUTONOMOUS_DEFAULTS } from '@zana-ai/zcc-server/services/agents/autonomous-run-supervisor';
 import { AutoCloseIdleService } from '@zana-ai/zcc-server/services/followups/auto-close-idle';
@@ -1997,7 +1998,8 @@ const heartbeat = new HeartbeatService({
   isEnabled: () => store.getConfig().heartbeatEnabled === true,
   getSession: (sessionId) => {
     const s = ptys.getSession(sessionId);
-    return s
+    // An agent that is wrapping up belongs to that close: no nudge, armed or new, may type into it.
+    return s && !wrapUpClose.isWrappingUp(sessionId)
       ? {
           heartbeat: s.heartbeat,
           scheduled: s.scheduled,
@@ -2244,7 +2246,7 @@ const autoCloseIdle = new AutoCloseIdleService({
     const s = ptys.getSession(sessionId);
     if (!s) return false;
     // An agent that rests on an API error hasn't finished; spare it until its next turn.
-    return favoriteAgentKeys.has(s.claudeSessionId ?? sessionId) || apiErrorResume.restedOnApiError(sessionId);
+    return favoriteAgentKeys.has(s.claudeSessionId ?? sessionId) || apiErrorResume.restedOnApiError(sessionId) || wrapUpClose.isWrappingUp(sessionId);
   },
   now: () => Date.now(),
   // Expected close ⇒ exit code 0 (this was the app's decision, not a crash).
@@ -2279,8 +2281,10 @@ const autoCloseIdle = new AutoCloseIdleService({
  * off the same resolved-state edge as idle-triage/heartbeat below.
  */
 const mailDrain = new AgentMailDrainService({
-  pending: (sessionId) =>
-    agentMessageLog.pull(sessionId).map((m) => ({ id: m.id, fromHandle: m.fromHandle })),
+  // Queued peer mail waits while the agent wraps up, and is delivered later if it stays open.
+  pending: (sessionId) => wrapUpClose.isWrappingUp(sessionId)
+    ? []
+    : agentMessageLog.pull(sessionId).map((m) => ({ id: m.id, fromHandle: m.fromHandle })),
   reply: (sessionId, text) => ptys.reply(sessionId, text)
 });
   const executionDeliveryDrain = new ExecutionDeliveryDrainService({
@@ -2429,6 +2433,8 @@ const closeSummary = new CloseSummaryService({
     }
   }
 });
+/** "Wrap up before closing" (Experimental): asks resting Claude agents to wrap up before Close with follow-up. */
+const wrapUpClose = createWrapUpClose({ store, ptys, agentStatus, closeSummary, providerCapabilities, isRemoteSession: isTrueSshRemoteSession, suppressesInteractiveBlocked });
 /** Backs the Inbox "AI Summary" card — reads main's own inbox store (the source
  *  of truth, not the renderer's filtered view) and runs the
  *  `builtin:inbox-summary` micro-call to distill a standup-style digest, whole
@@ -7396,6 +7402,7 @@ function wireBridgeListeners() {
     heartbeat.remove(sessionId);
     apiErrorResume.forget(sessionId);
     workerApiErrorRecovery.forget(sessionId);
+    wrapUpClose.forget(sessionId);
     // Drop a session that exits while working so a dead pty can't pin the Mac
     // awake; releases (after grace) if it was the last working agent.
     keepAwake.remove(sessionId);
@@ -7547,6 +7554,7 @@ function wireBridgeListeners() {
     workerInjector.onState(sessionId, state);
     squadProposalNotifier.onState(sessionId, state);
     squadExecutionService.observeCoordinatorState(sessionId, state);
+    wrapUpClose.observe(sessionId, state);
     const session = ptys.getSession(sessionId);
     if (session) captureNativeRecoverySnapshot(session);
     if (state === 'idle' && session) {
@@ -7824,6 +7832,7 @@ function registerIpc() {
     get catchUpSummary() { return catchUpSummary; },
     get cloneAndRegisterProject() { return cloneAndRegisterProject; },
     get closeSummary() { return closeSummary; },
+    get wrapUpClose() { return wrapUpClose; },
     get conversationHistory() { return conversationHistory; },
     get createInteractiveTerminal() { return createInteractiveTerminal; },
     get createLocalExtension() { return createLocalExtension; },
@@ -8729,6 +8738,7 @@ async function bootstrapNormal() {
        // A lifecycle Stop is the authoritative end of an interactive turn. The
        // tracker keeps fallback behaviour for harnesses that never send one.
        agentStatus.turnFinished(sessionId);
+       wrapUpClose.onTurnFinished(sessionId);
        apiErrorResume.cancel(sessionId);
        void scheduler.onAgentFinished(sessionId).catch(error => logMainError('scheduler Stop', error));
       // A goal worker finishing its turn is the trigger to evaluate + branch
@@ -8754,6 +8764,8 @@ async function bootstrapNormal() {
         else if (event?.kind === 'resolved') agentStatus.inputResolved(sessionId, event.keys);
         else if (event?.kind === 'interrupted') agentStatus.turnFinished(sessionId);
         else if (event?.kind === 'api-error-stop') {
+          // A wrap-up turn that an API error ended is not finished: it stays open, with an inbox note.
+          wrapUpClose.onTurnFailed(sessionId);
           routeApiErrorStop({ service: apiErrorResume, recovery: workerApiErrorRecovery, enabled: () => workerApiErrorRecoveryEnabled(store.getConfig()), agentStatus, logMainError }, sessionId, session, event);
         }
         return;
@@ -8777,6 +8789,7 @@ async function bootstrapNormal() {
         apiErrorResume.cancel(sessionId);
         workerApiErrorRecovery.onTurnStarted(sessionId, agentStatus.get(sessionId));
         agentStatus.turnStarted(sessionId);
+        wrapUpClose.onTurnStarted(sessionId);
       }
       // Diagnostic: confirms the hook reached the main process. The emit to the
       // renderer is debounced (~250ms), so the red/grey dot is the real proof
@@ -9053,7 +9066,8 @@ async function bootstrapNormal() {
     // Phase 1 messaging: agent_send audits to the message log (never the user
     // inbox) and injects into the target pty via reply() when it's idle.
     agentMessageLog,
-    injectToSession: (sessionId: string, text: string) => ptys.reply(sessionId, text),
+    // A peer's message must not type into an agent that is wrapping up: it stays queued in the mail log.
+    injectToSession: (sessionId: string, text: string) => !wrapUpClose.isWrappingUp(sessionId) && ptys.reply(sessionId, text),
     // close_session / close_session_with_summary: let an agent end its own
     // session. Gated on the opt-in `agentSelfCloseEnabled` flag, read here at
     // boot: when off we pass `undefined`, so the tools are never registered and

@@ -1817,6 +1817,34 @@ export interface Shelf {
   rows: ShelfRow[];
 }
 
+/**
+ * Default instructions typed into an agent by "Wrap up before closing" (see
+ * {@link AppConfig.closeWrapUpEnabled}). One line per step; CLI agents get them
+ * collapsed to a single line, threads keep the line breaks.
+ */
+export const DEFAULT_CLOSE_WRAP_UP_INSTRUCTIONS = [
+  'Wrap up this session; it will be closed when you finish.',
+  '1. Summarise: what you set out to do, what you did (files, decisions, messages sent), and what is left or waiting on someone.',
+  '2. Self-learn: save anything a future session should know to memory (update an existing entry rather than adding a duplicate), and write a short retro to the project library if there were lessons worth keeping.',
+  '3. Tidy up: resolve or update the follow-ups this session owns, and stop background tasks, monitors and pollers you started. Do not commit, push or send anything I have not asked for.',
+  "4. Don't push a summary to the inbox; Zana adds one when it closes this session.",
+  '5. If something needs my decision before closing, ask it as your final message and stop. Otherwise end with the summary.'
+].join('\n');
+
+/** Longest custom wrap-up instructions text kept by `normalizeConfig`. */
+export const CLOSE_WRAP_UP_INSTRUCTIONS_MAX = 4_000;
+
+/** How long a wrap-up may run before the agent or thread is left open; also named in the inbox note. */
+export const CLOSE_WRAP_UP_TIMEOUT_MINUTES = 15;
+
+/** The wrap-up instructions to send: the configured text when it has any, else the default. */
+export function resolveCloseWrapUpInstructions(
+  config: Pick<AppConfig, 'closeWrapUpInstructions'> | null | undefined
+): string {
+  const custom = config?.closeWrapUpInstructions?.trim();
+  return custom ? custom : DEFAULT_CLOSE_WRAP_UP_INSTRUCTIONS;
+}
+
 export interface AppConfig {
   version: 1;
   /**
@@ -2423,6 +2451,20 @@ export interface AppConfig {
    * this flag. Default OFF — it spends tokens and is experimental.
    */
   catchUpSummaryEnabled?: boolean;
+  /**
+   * Wrap up before closing (EXPERIMENTAL). When ON, Close with follow-up (and
+   * Close idle with follow-ups) first asks each agent to save what it learnt and
+   * tidy up, then closes it with the same summary as Summarize to inbox and a
+   * follow-up if work is left; an agent that asks a question stays open. Default
+   * OFF / absent — Close with follow-up keeps today's quick note and closes at once.
+   */
+  closeWrapUpEnabled?: boolean;
+  /**
+   * Custom text typed into the agent by {@link closeWrapUpEnabled}. Absent or
+   * empty means {@link DEFAULT_CLOSE_WRAP_UP_INSTRUCTIONS}; trimmed and capped at
+   * {@link CLOSE_WRAP_UP_INSTRUCTIONS_MAX} characters in `normalizeConfig`.
+   */
+  closeWrapUpInstructions?: string;
   /**
    * Skip the agent/thread inspector overlay (EXPERIMENTAL). When ON, opening a
    * CLI agent or thread — from the Agents canvas, favorites, a launch peek, or
@@ -5358,6 +5400,14 @@ export interface CloseFollowupFailure {
   reason: CloseFollowupFailureReason;
   /** The LLM or write error text, trimmed by the server. */
   detail?: string;
+}
+
+/** Why Close with follow-up left an agent open after a wrap-up request. */
+export type CloseFollowupKeptOpenReason = 'asks-you' | 'typed' | 'timeout' | 'turn-error';
+
+export interface CloseFollowupKeptOpen {
+  sessionId: string;
+  reason: CloseFollowupKeptOpenReason;
 }
 
 export interface FollowUpUpdateInput {

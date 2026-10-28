@@ -34,6 +34,16 @@ describe('PromptRegistry', () => {
     expect(tabNamer?.description).toMatch(/thread/i);
   });
 
+  it('ships the built-in session-summary (sonnet, room for the wrap-up lines)', () => {
+    const entry = registry.get('builtin:session-summary');
+    expect(entry?.source).toBe('builtin');
+    expect(entry?.model).toBe('sonnet');
+    expect(entry?.maxOutputChars).toBe(3_000);
+    expect(entry?.description).toMatch(/Wrap up before closing/);
+    expect(entry?.systemPrompt).toContain('Unfinished: yes');
+    expect(entry?.systemPrompt).toContain('Asks the user: yes');
+  });
+
   it('ships the built-in turn-summary (haiku, last-turn input)', () => {
     const entry = registry.get('builtin:turn-summary');
     expect(entry).not.toBeNull();

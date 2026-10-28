@@ -1,3 +1,4 @@
+import { DEFAULT_CLOSE_WRAP_UP_INSTRUCTIONS } from '@zana-ai/zcc-domain/product';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { Section, Field, CheckboxField } from '@/components/settings/FormFields';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
@@ -62,6 +63,38 @@ export function ExperimentalView({
           checked={config.catchUpSummaryEnabled ?? false}
           onChange={(v) => onUpdate({ catchUpSummaryEnabled: v })}
         />
+        <CheckboxField
+          searchId="experimental.close-wrap-up"
+          label="Wrap up before closing"
+          help="Close with follow-up, and Close idle with follow-ups, first ask each agent to save what it learnt and tidy up. Each agent is then closed with the same summary as Summarize to inbox, and a follow-up if work is left. When off, they close straight away with a short note."
+          checked={config.closeWrapUpEnabled ?? false}
+          onChange={(v) => onUpdate({ closeWrapUpEnabled: v })}
+        />
+        {config.closeWrapUpEnabled ? (
+          <>
+          <Field
+            searchId="experimental.close-wrap-up-instructions"
+            label="Instructions sent to the agent"
+            help="Typed into the agent when you choose Close with follow-up."
+          >
+            <textarea
+              className="settings-textarea"
+              rows={8}
+              value={config.closeWrapUpInstructions ?? DEFAULT_CLOSE_WRAP_UP_INSTRUCTIONS}
+              onChange={(event) => onConfigDraft({ ...config, closeWrapUpInstructions: event.target.value })}
+              onBlur={(event) => {
+                const text = event.target.value.trim();
+                onUpdate({
+                  closeWrapUpInstructions: text && text !== DEFAULT_CLOSE_WRAP_UP_INSTRUCTIONS ? text : undefined
+                });
+              }}
+            />
+          </Field>
+          <button type="button" className="settings-btn" onClick={() => onUpdate({ closeWrapUpInstructions: undefined })}>
+            Reset to default
+          </button>
+          </>
+        ) : null}
         <CheckboxField
           searchId="experimental.classic-session-view"
           label="Classic session view"

@@ -55,6 +55,34 @@ describe('server background Claude configuration', () => {
     expect(binaries).toEqual([expected, '/test/updated-claude']);
   });
 
+  it('runs the wrap-up summary through the session-summary prompt on the configured Claude', async () => {
+    dataDir = mkdtempSync(join(tmpdir(), 'zcc-llm-session-summary-'));
+    writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ claudeBinary: '/test/summary-claude' }));
+    server = await startProductServer({ dataDir, origins: { serverPort: 0 } });
+    const res = await server.ctx.closeSummary.summarizeForClose('project', 'thread-1', {
+      digest: 'User: do it\n\nAssistant: done',
+      title: 'Test'
+    });
+    expect(res.ok).toBe(true);
+    expect(binaries).toEqual(['/test/summary-claude']);
+    expect(JSON.stringify(runs[0])).toContain('You summarize one coding agent');
+    expect(JSON.stringify(runs[0])).toContain('User: do it');
+  });
+
+  it('reports a missing session-summary prompt instead of running', async () => {
+    dataDir = mkdtempSync(join(tmpdir(), 'zcc-llm-session-summary-missing-'));
+    server = await startProductServer({ dataDir, origins: { serverPort: 0 } });
+    const { PromptRegistry } = await import('@zana-ai/zcc-llm');
+    const get = vi.spyOn(PromptRegistry.prototype, 'get').mockReturnValue(undefined);
+    try {
+      const deps = (server.ctx.closeSummary as any).deps;
+      expect(await deps.runSessionSummary('digest', 'key')).toMatchObject({ ok: false, error: 'no session-summary prompt' });
+      expect(runs).toHaveLength(0);
+    } finally {
+      get.mockRestore();
+    }
+  });
+
   it('keeps a renamed or auto-named thread title across a server restart', async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'zcc-llm-title-restart-'));
     server = await startProductServer({ dataDir, origins: { serverPort: 0 } });

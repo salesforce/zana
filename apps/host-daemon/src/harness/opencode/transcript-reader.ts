@@ -116,22 +116,27 @@ export function extractLastAssistantTextOpenCode(rows: OpenCodePartRow[], maxCha
  * Build a readable, role-tagged DIGEST of a whole OpenCode session, mirroring
  * {@link buildSessionDigest} / {@link buildSessionDigestCodex}: typed prompts,
  * assistant prose, and the tools it ran (deduped per adjacent run). Tool
- * output/metadata is dropped. Capped to `maxChars` keeping the TAIL. Pure;
- * exported for tests.
+ * output/metadata is dropped. The final assistant prose block keeps up to
+ * `finalBlockChars`, every other block `perBlockChars`. Capped to `maxChars`
+ * keeping the TAIL. Pure; exported for tests.
  */
 export function buildSessionDigestOpenCode(
   rows: OpenCodePartRow[],
-  opts: { maxChars?: number; perBlockChars?: number } = {}
+  opts: { maxChars?: number; perBlockChars?: number; finalBlockChars?: number } = {}
 ): string {
   const maxChars = opts.maxChars ?? 12_000;
   const perBlockChars = opts.perBlockChars ?? 1_500;
-  const clamp = (s: string) => (s.length > perBlockChars ? `${s.slice(0, perBlockChars)}…` : s);
+  const finalBlockChars = opts.finalBlockChars ?? 4_000;
+  const clamp = (s: string, max = perBlockChars) => (s.length > max ? `${s.slice(0, max)}…` : s);
 
-  const parts: string[] = [];
+  // Collected unclamped first, so only the LAST assistant prose block gets the
+  // larger budget.
+  const parts: Array<{ label: string; text: string; clamped: boolean }> = [];
+  let lastProse = -1;
   let pendingTools: string[] = [];
   const flushTools = () => {
     if (pendingTools.length) {
-      parts.push(`Assistant ran: ${pendingTools.join(', ')}`);
+      parts.push({ label: 'Assistant ran', text: pendingTools.join(', '), clamped: false });
       pendingTools = [];
     }
   };
@@ -144,12 +149,13 @@ export function buildSessionDigestOpenCode(
 
     if (msg.role === 'user' && part.type === 'text' && typeof part.text === 'string' && part.text.trim()) {
       flushTools();
-      parts.push(`User: ${clamp(part.text.trim())}`);
+      parts.push({ label: 'User', text: part.text.trim(), clamped: true });
       continue;
     }
     if (msg.role === 'assistant' && part.type === 'text' && typeof part.text === 'string' && part.text.trim()) {
       flushTools();
-      parts.push(`Assistant: ${clamp(part.text.trim())}`);
+      lastProse = parts.length;
+      parts.push({ label: 'Assistant', text: part.text.trim(), clamped: true });
       continue;
     }
     if (msg.role === 'assistant' && part.type === 'tool' && typeof part.tool === 'string' && part.tool) {
@@ -158,7 +164,9 @@ export function buildSessionDigestOpenCode(
   }
   flushTools();
 
-  const digest = parts.join('\n\n');
+  const digest = parts
+    .map((p, i) => `${p.label}: ${p.clamped ? clamp(p.text, i === lastProse ? finalBlockChars : perBlockChars) : p.text}`)
+    .join('\n\n');
   return digest.length > maxChars ? digest.slice(digest.length - maxChars) : digest;
 }
 

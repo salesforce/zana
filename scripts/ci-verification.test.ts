@@ -120,6 +120,22 @@ it('selects the close-with-follow-up spec for the close summary seams', () => {
   expect(boundarySpecs(['apps/server/src/services/followups/other-service.ts'])).not.toContain('e2e/close-with-follow-up-needs-you.spec.ts');
 });
 
+it('selects the wrap-up spec with the needs-you spec for the wrap-up seams', () => {
+  for (const path of [
+    'apps/server/src/services/followups/close-summary.ts',
+    'apps/server/src/services/followups/wrap-up-close.ts',
+    'apps/server/src/services/followups/session-summary-text.ts',
+    'apps/app/src/lib/close-idle-agents.ts',
+    'apps/desktop/src/wrap-up-close-wiring.ts',
+    'apps/server/src/services/threads/thread-wrap-up.ts'
+  ]) {
+    const specs = boundarySpecs([path]);
+    expect(specs).toContain('e2e/close-with-follow-up-wrap-up.spec.ts');
+    expect(specs).toContain('e2e/close-with-follow-up-needs-you.spec.ts');
+  }
+  expect(boundarySpecs(['apps/server/src/services/followups/other-service.ts'])).not.toContain('e2e/close-with-follow-up-wrap-up.spec.ts');
+});
+
 it('selects the project Back, routing and Settings reveal specs for the router and split scope seams', () => {
   for (const path of [
     'apps/app/src/main.tsx',
