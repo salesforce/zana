@@ -4,21 +4,30 @@
  */
 import { test, expect } from './fixtures/app.js';
 import { makeFakeAgentBinary } from './sdk/harness.js';
+import { createServer } from 'node:net';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const agent = makeFakeAgentBinary({ profile: 'claude', sequence: 'work-then-idle' });
+const PRODUCT_PORT = await freePort();
+const PRODUCT_URL = `http://127.0.0.1:${PRODUCT_PORT}`;
 
 test.use({
   e2e: true,
-  launchEnv: { ZCC_SERVER_PORT: '8780' },
+  launchEnv: { ZCC_SERVER_PORT: String(PRODUCT_PORT) },
   initialConfig: { claudeBinary: agent.path, defaultHarness: 'claude' }
 });
 
 test.afterAll(() => agent.cleanup());
 
-const PRODUCT_URL = 'http://127.0.0.1:8780';
+async function freePort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as { port: number };
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return port;
+}
 
 async function waitForProduct(): Promise<void> {
   const deadline = Date.now() + 30_000;
@@ -34,7 +43,7 @@ async function waitForProduct(): Promise<void> {
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  throw new Error('product HTTP did not become ready on 8780');
+  throw new Error(`product HTTP did not become ready on ${PRODUCT_PORT}`);
 }
 
 test('HTTP CLI Agent launch reaches idle without native confirm', async ({ app }) => {

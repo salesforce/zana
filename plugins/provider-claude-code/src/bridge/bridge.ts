@@ -123,6 +123,7 @@ import {
 } from "../interactive-contract.js";
 import {
   createAutomatedConfigDir,
+  AutomatedConfigAdmissionError,
   removeAutomatedConfigDir,
   sweepAutomatedConfigDirs,
 } from "./automated-config-dir.js";
@@ -1860,19 +1861,7 @@ function beginSessionIsolation(args: {
   let configDir: string | null = null;
   if (kind === "automated") {
     sweepStaleAutomatedConfigDirsOnce(dataDir);
-    try {
-      configDir = createAutomatedConfigDir(dataDir, args.threadId);
-    } catch (error) {
-      // Rollback is the interactive path: a preparation failure must never
-      // fail the session.
-      console.error(
-        `[claude-bridge] automated config dir unavailable (${(error as NodeJS.ErrnoException).code ?? "error"}); using interactive config`,
-      );
-    }
-    if (configDir === null) {
-      kind = "interactive";
-      admission = "fallback-interactive";
-    }
+    configDir = createAutomatedConfigDir(dataDir, args.threadId);
   }
   return {
     requestedKind: requested === "automated" ? "automated" : "interactive",
@@ -1888,6 +1877,10 @@ function beginSessionIsolation(args: {
     errored: false,
     endRecorded: false,
   };
+}
+
+function automatedAdmissionBlocked(error: unknown): string | null {
+  return error instanceof AutomatedConfigAdmissionError ? error.reason : null;
 }
 
 function recordSessionKindTelemetry(
@@ -2595,10 +2588,17 @@ async function handleThreadStart(
     });
   }
 
-  const isolation = beginSessionIsolation({
-    params,
-    threadId: threadIdRef.current,
-  });
+  let isolation: SessionIsolation;
+  try {
+    isolation = beginSessionIsolation({ params, threadId: threadIdRef.current });
+  } catch (error) {
+    const reason = automatedAdmissionBlocked(error);
+    if (reason) {
+      sendError(id, -32000, `Automated Claude admission blocked: ${reason}`);
+      return;
+    }
+    throw error;
+  }
   const env = buildSessionEnv(
     readConfigEnvOverrides(params.config),
     isolation.configDir,
@@ -2710,11 +2710,17 @@ async function handleThreadResume(
     });
   }
 
-  const isolation = beginSessionIsolation({
-    params,
-    threadId,
-    previous: existing?.isolation,
-  });
+  let isolation: SessionIsolation;
+  try {
+    isolation = beginSessionIsolation({ params, threadId, previous: existing?.isolation });
+  } catch (error) {
+    const reason = automatedAdmissionBlocked(error);
+    if (reason) {
+      sendError(id, -32000, `Automated Claude admission blocked: ${reason}`);
+      return;
+    }
+    throw error;
+  }
   const env = buildSessionEnv(
     readConfigEnvOverrides(params.config),
     isolation.configDir,
@@ -2769,6 +2775,18 @@ async function handleThreadFork(
   const threadId = params.threadId;
 
   const existing = threadAttachments.get(threadId);
+  let isolation: SessionIsolation;
+  try {
+    isolation = beginSessionIsolation({ params, threadId });
+  } catch (error) {
+    const reason = automatedAdmissionBlocked(error);
+    if (reason) {
+      sendError(id, -32000, `Automated Claude admission blocked: ${reason}`);
+      return;
+    }
+    throw error;
+  }
+
   if (existing) {
     await closeThreadSession({
       graceful: false,
@@ -2791,7 +2809,6 @@ async function handleThreadFork(
     return;
   }
 
-  const isolation = beginSessionIsolation({ params, threadId });
   const env = buildSessionEnv(
     readConfigEnvOverrides(params.config),
     isolation.configDir,

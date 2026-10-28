@@ -130,6 +130,16 @@ describe('PtyManager.create — unattended Claude config isolation', () => {
     expect(existsSync(parent) ? readdirSync(parent) : []).toEqual([]);
   });
 
+  it('blocks an unattended Claude run without isolated authentication', () => {
+    writeFileSync(join(claudeHome, 'settings.json'), JSON.stringify({ hooks: { Stop: [{ command: 'x' }] } }));
+    delete process.env.ANTHROPIC_API_KEY;
+
+    expect(() => create(new PtyManager(), { scheduled: true })).toThrow(/authentication-unavailable/);
+    expect(spawned).toEqual([]);
+    const parent = join(dataDir, 'claude-automated-config');
+    expect(existsSync(parent) ? readdirSync(parent) : []).toEqual([]);
+  });
+
   it('does not isolate an interactive claude run', () => {
     create(new PtyManager());
     expect(spawned[0]!.args).not.toContain('--setting-sources');

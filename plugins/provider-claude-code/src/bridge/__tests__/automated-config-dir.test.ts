@@ -52,13 +52,14 @@ describe("automated config dir lifecycle", () => {
   });
 
   describe("authentication gate", () => {
-    it("returns null and removes the leaf for an OAuth-only home", () => {
+    it("blocks and removes the leaf for an OAuth-only home", () => {
       writeFileSync(join(sourceDir, "settings.json"), JSON.stringify({ hooks: {} }));
       writeFileSync(
         join(sourceDir, ".claude.json"),
         JSON.stringify({ oauthAccount: { emailAddress: "a@b.c" } }),
       );
-      expect(createAutomatedConfigDir(dataDir, "oauth", { sourceConfigDir: sourceDir, env: {} })).toBeNull();
+      expect(() => createAutomatedConfigDir(dataDir, "oauth", { sourceConfigDir: sourceDir, env: {} }))
+        .toThrow(/authentication-unavailable/);
       expect(existsSync(join(automatedConfigParent(dataDir), "oauth"))).toBe(false);
     });
 
@@ -73,11 +74,10 @@ describe("automated config dir lifecycle", () => {
     });
 
     it("ignores empty env credentials", () => {
-      expect(
-        createAutomatedConfigDir(dataDir, "b", {
+      expect(() => createAutomatedConfigDir(dataDir, "b", {
           env: { CLAUDE_CONFIG_DIR: sourceDir, ANTHROPIC_API_KEY: "" },
-        }),
-      ).toBeNull();
+        }))
+        .toThrow(/authentication-unavailable/);
     });
   });
 
@@ -93,8 +93,8 @@ describe("automated config dir lifecycle", () => {
   it("sanitizes owner ids so a path cannot escape the parent", () => {
     const leaf = createAutomatedConfigDir(dataDir, "../../etc")!;
     expect(leaf.startsWith(`${automatedConfigParent(dataDir)}/`)).toBe(true);
-    expect(() => createAutomatedConfigDir(dataDir, "..")).toThrow(/invalid/);
-    expect(() => createAutomatedConfigDir(dataDir, "")).toThrow(/invalid/);
+    expect(() => createAutomatedConfigDir(dataDir, "..")).toThrow(/config-unavailable/);
+    expect(() => createAutomatedConfigDir(dataDir, "")).toThrow(/config-unavailable/);
   });
 
   it("refuses to remove a path outside the parent", () => {
@@ -217,7 +217,8 @@ describe("automated config dir projects link", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "zcc-cfglink-data-"));
     const missing = join(dataDir, "no-claude-home");
     try {
-      createAutomatedConfigDir(dataDir, "thread-1", { sourceConfigDir: missing });
+      expect(() => createAutomatedConfigDir(dataDir, "thread-1", { sourceConfigDir: missing }))
+        .toThrow(/authentication-unavailable/);
       expect(existsSync(missing)).toBe(false);
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
