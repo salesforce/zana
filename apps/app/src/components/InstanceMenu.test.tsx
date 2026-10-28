@@ -15,12 +15,12 @@ it('opens a focused instance dialog and closes it after selection', async () => 
   const { container } = view();
   const menu = container.querySelector('details')!;
   menu.open = true;
-  fireEvent.click(screen.getByRole('button', { name: 'Open another Zana…' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Open another computer…' }));
   expect(menu.open).toBe(false);
-  expect(screen.getByRole('dialog', { name: 'Open another Zana' })).toBeTruthy();
+  expect(screen.getByRole('dialog', { name: 'Open another computer' })).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Open fixture' }));
   expect(screen.queryByRole('dialog')).toBeNull();
-  menu.open = true; fireEvent.click(screen.getByRole('button', { name: 'Open another Zana…' }));
+  menu.open = true; fireEvent.click(screen.getByRole('button', { name: 'Open another computer…' }));
   fireEvent.click(screen.getByRole('button', { name: 'Close' }));
   expect(screen.queryByRole('dialog')).toBeNull();
 });
@@ -42,6 +42,6 @@ it('quits the desktop through the existing authorized main action', () => {
 });
 it('preserves the old shared-instance search destination and clears its handled hash', async () => {
   view('/settings/remote-access#remote-access.shared-instance');
-  expect(await screen.findByRole('dialog', { name: 'Open another Zana' })).toBeTruthy();
+  expect(await screen.findByRole('dialog', { name: 'Open another computer' })).toBeTruthy();
   await waitFor(() => expect(screen.getByRole('status').textContent).toBe('/settings/remote-access'));
 });

@@ -37,10 +37,11 @@ import { writeSharedTarget } from './shared-target.js';
 let client: SharedClient;
 let show: ReturnType<typeof vi.fn>, hide: ReturnType<typeof vi.fn>;
 const serverId = randomUUID(), instanceId = randomUUID();
+const navigation = `https://owned.zana-ide.com/_connect/login?intent=1790000000000.${'a'.repeat(43)}`;
 const account = { servers: [{ id: serverId, instanceId, name: 'Shared', browserUrl: 'https://owned.zana-ide.com', live: true }] };
 beforeEach(() => {
   state.dir = mkdtempSync(join(tmpdir(), 'shared-client-')); state.windows = []; state.menus = []; state.chrome = []; state.permissions = []; state.failLoad = false; state.dock.mockClear(); state.quit.mockClear();
-  state.fetch.mockReset().mockImplementation(async () => Response.json(account)); state.clear.mockReset(); state.close.mockReset();
+  state.fetch.mockReset().mockImplementation(async (url: string) => Response.json(url.includes('/browser/open/') ? { location: navigation } : account)); state.clear.mockReset(); state.close.mockReset();
   state.login.mockReset().mockResolvedValue({ cookieValue: 'account-session', expiresAt: Date.now() + 60_000 }); state.cookie.mockReset(); state.external.mockReset();
   show = vi.fn(); hide = vi.fn(); client = new SharedClient(show, hide);
 });
@@ -88,7 +89,7 @@ it('bounds account responses and signs out without exposing credentials to conte
 it('restores the exact saved instance and refuses revoked or rebound selections', async () => {
   await client.restore(); expect(state.windows).toHaveLength(0);
   writeSharedTarget(join(state.dir, 'shared-target.json'), { kind: 'connect', serverId, instanceId });
-  await client.restore(); expect(state.windows.at(-1).url).toBe('https://owned.zana-ide.com');
+  await client.restore(); expect(state.windows.at(-1).url).toBe(navigation);
   state.fetch.mockResolvedValueOnce(Response.json({ servers: [{ ...account.servers[0], instanceId: randomUUID() }] }));
   await client.restore(); expect(state.windows.at(-1).url).toContain('data:text/html'); expect(show).not.toHaveBeenCalled();
 });
@@ -99,7 +100,7 @@ it('keeps recovery menu actions in the shared context and denies local OS permis
   expect(state.permissions[0]!()).toBe(false);
   const permission = vi.fn(); state.permissions[1]!(null, 'media', permission); expect(permission).toHaveBeenCalledWith(false);
   menu.template[0].submenu.find((row: any) => row.label === 'Reload shared instance').click();
-  expect(win.url).toBe('https://owned.zana-ide.com');
+  await vi.waitFor(() => expect(state.windows.at(-1).url).toBe(navigation));
   menu.template[0].submenu.find((row: any) => row.label === 'Return to this computer').click();
   expect(show).toHaveBeenCalled();
   await client.select(serverId);
@@ -112,9 +113,9 @@ it('keeps recovery menu actions in the shared context and denies local OS permis
   notice.webContents.emit('context-menu'); expect(actions.popup).toHaveBeenCalled();
   actions.template.find((row: any) => row.label === 'Sign in').click();
   expect(state.login).toHaveBeenCalledOnce();
-  await vi.waitFor(() => expect(state.windows.at(-1).url).toBe('https://owned.zana-ide.com'));
+  await vi.waitFor(() => expect(state.windows.at(-1).url).toBe(navigation));
   actions.template.find((row: any) => row.label === 'Retry shared instance').click();
-  await vi.waitFor(() => expect(state.windows.at(-1).url).toBe('https://owned.zana-ide.com'));
+  await vi.waitFor(() => expect(state.windows.at(-1).url).toBe(navigation));
   actions.template.find((row: any) => row.label === 'Return to this computer').click();
   expect(client.target()).toEqual({ kind: 'local' });
 });
@@ -157,7 +158,7 @@ it('does not resurrect an instance after the user returns locally during restore
   expect(state.windows.every(win => win.destroyed)).toBe(true); expect(client.target()).toEqual({ kind: 'local' });
   writeSharedTarget(join(state.dir, 'shared-target.json'), { kind: 'connect', serverId, instanceId });
   expect(client.showSelected()).toBe(true);
-  await vi.waitFor(() => expect(state.windows.at(-1).url).toBe('https://owned.zana-ide.com'));
+  await vi.waitFor(() => expect(state.windows.at(-1).url).toBe(navigation));
 });
 
 it('propagates browser failures, allows retry, and delegates external opening through main', async () => {
@@ -190,4 +191,40 @@ it('drains a cookie installation before clearing storage on sign-out', async () 
   const out = client.signOut(); expect(state.clear).not.toHaveBeenCalled();
   finish(); await pending; await out;
   expect(state.clear).toHaveBeenCalledOnce();
+});
+
+it('leaves local work visible when opening fails or the computer is offline', async () => {
+  state.fetch.mockResolvedValueOnce(Response.json(account)).mockResolvedValueOnce(new Response('', { status: 503 }));
+  await expect(client.select(serverId)).rejects.toThrow('Could not connect');
+  expect(hide).not.toHaveBeenCalled(); expect(client.target()).toEqual({ kind: 'local' });
+  state.fetch.mockResolvedValueOnce(Response.json({ servers: [{ ...account.servers[0], live: false }] }));
+  await expect(client.select(serverId)).rejects.toThrow('offline');
+  expect(hide).not.toHaveBeenCalled(); expect(state.windows).toHaveLength(0);
+});
+
+it('fences a late browser handoff after returning locally and serializes its cookie writes', async () => {
+  let finish!: (value: Response) => void;
+  state.fetch.mockImplementationOnce(async () => Response.json(account)).mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }));
+  const first = client.select(serverId); const rejection = expect(first).rejects.toThrow('selection changed');
+  await vi.waitFor(() => expect(state.fetch).toHaveBeenCalledTimes(2));
+  const second = client.select(serverId);
+  await vi.waitFor(() => expect(state.fetch).toHaveBeenCalledTimes(3));
+  // A second intent request cannot overtake the first response's cookie write.
+  expect(state.fetch.mock.calls.filter(([url]) => url.includes('/browser/open/'))).toHaveLength(1);
+  client.local(); finish(Response.json({ location: navigation }));
+  await rejection; await expect(second).rejects.toThrow('selection changed');
+  expect(state.windows).toHaveLength(0); expect(client.target()).toEqual({ kind: 'local' });
+});
+
+it('drains a browser handoff during sign-out and ignores a late restore authorization', async () => {
+  await client.select(serverId);
+  let finish!: (value: Response) => void;
+  state.fetch.mockImplementationOnce(async () => Response.json(account)).mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }));
+  const restoring = client.restore();
+  await vi.waitFor(() => expect(state.fetch.mock.calls.filter(([url]) => url.includes('/browser/open/'))).toHaveLength(2));
+  const signingOut = client.signOut();
+  expect(state.clear).not.toHaveBeenCalled();
+  finish(Response.json({ location: navigation }));
+  await Promise.all([restoring, signingOut]);
+  expect(state.clear).toHaveBeenCalledOnce(); expect(state.windows.every(win => win.destroyed)).toBe(true);
 });

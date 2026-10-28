@@ -11,6 +11,7 @@ import { ConnectCodePairing } from './ConnectCodePairing.js';
 import { SharedPreviews } from './SharedPreviews.js';
 import { SearchTarget } from './MachineCard.js';
 import './remote-access.css';
+import { computerLabel } from '@zana-ai/zcc-domain/computer-label';
 
 type Status = Awaited<ReturnType<typeof product.mobile.status>>;
 type Address = { key: string | null } & (
@@ -90,7 +91,8 @@ export function RemoteAccessView({ config, onConfigDraft }: {
     : currentAddress.kind === 'loading' ? 'loading' : currentAddress.kind === 'error' ? 'address-error'
     : !currentAddress.url ? 'address' : !enabled ? 'off' : status.running && status.relayState === 'connected' && !status.error ? 'connected' : 'reconnecting');
   const browserUrl = currentAddress.kind === 'ready' ? currentAddress.url : null;
-  const label = { setup: 'Not set up', loading: 'Checking…', revoked: 'Sign-in required', address: 'Address needed', off: 'Off', connected: 'On', reconnecting: 'Reconnecting', 'address-error': 'Address unavailable', 'status-error': 'Status unavailable' }[mode];
+  const label = { setup: 'Not set up', loading: 'Checking…', revoked: 'Sign-in required', address: 'Setup incomplete', off: 'Off', connected: 'Ready', reconnecting: 'Reconnecting', 'address-error': 'Address unavailable', 'status-error': 'Status unavailable' }[mode];
+  const setupStep = ['setup', 'revoked'].includes(mode) ? 0 : !browserUrl ? 1 : 2;
   const updateEnabled = async (value: boolean) => {
     const next = await product.config.set({ mobileGatewayEnabled: value });
     onConfigDraft(next);
@@ -126,15 +128,18 @@ export function RemoteAccessView({ config, onConfigDraft }: {
     {unlinked && !linked && <p className="remote-access-flash" role="status"><Check size={16} aria-hidden="true" /> Computer unlinked. Your local work keeps running.</p>}
     <section className="remote-access-connection" aria-label="This computer’s remote access">
       <div className="remote-access-computer"><span className="remote-access-computer-icon"><Laptop size={21} aria-hidden="true" /></span>
-        <div><strong>{computer}</strong><small>Projects and agents run here</small></div>
+        <div><strong title={computer}>{computerLabel(computer)}</strong><small>{computerLabel(computer) !== computer ? computer : 'Projects and agents run on this computer'}</small></div>
         <span role="status" className={`remote-access-badge ${mode === 'connected' ? 'connected' : ['revoked', 'reconnecting', 'address-error', 'status-error'].includes(mode) ? 'attention' : ''}`}><span aria-hidden="true" />{label}</span>
         {['connected', 'reconnecting'].includes(mode) && <SearchTarget searchId="remote-access.toggle"><button type="button" className="remote-access-quiet" disabled={busy} onClick={() => setConfirmation('off')}>Turn off</button></SearchTarget>}
       </div>
+      {!['loading', 'status-error'].includes(mode) && <ol className="remote-access-progress" aria-label="Remote access setup progress">
+        {['Sign in', 'Choose address', 'Connect'].map((step, index) => <li key={step} aria-current={mode !== 'connected' && index === setupStep ? 'step' : undefined} className={mode === 'connected' || index < setupStep ? 'complete' : ''}><span aria-hidden="true">{mode === 'connected' || index < setupStep ? <Check size={12} /> : index + 1}</span>{step}</li>)}
+      </ol>}
       <div className="remote-access-body">
         {mode === 'loading' && <><h2>Checking remote access…</h2><p className="settings-help">Checking this computer’s account connection and browser address.</p></>}
         {mode === 'status-error' && <><h2>We couldn’t check remote access</h2><p role="alert">{statusError}</p><button type="button" className="btn" onClick={() => void refresh()}>Try again</button></>}
         {mode === 'setup' && <SearchTarget searchId="remote-access.connect-code" block>
-          <h2>Your Zana, wherever you are</h2><p className="settings-help">Connect your account to get a private browser address. Open it from your phone or another computer to use your projects and agents.</p>
+          <h2>Enable access to this computer</h2><p className="settings-help">Sign in, choose a private browser address, then connect this computer. Open its address from another device to use these projects and agents.</p>
           {status?.error && <p role="alert">{status.error}</p>}
           <PhoneAccountConnection status={status} onSaved={enrolled} browserAccess onActivity={active => setEnrollment(active ? 'setup' : null)} />
           <details className="remote-access-advanced"><summary>Have a connect code?</summary><ConnectCodePairing onPaired={enrolled} /></details>
@@ -144,9 +149,10 @@ export function RemoteAccessView({ config, onConfigDraft }: {
           <p className="settings-help">{enabled ? 'Remote access will resume after you sign in.' : 'Remote access will stay off until you turn it on.'}</p>
         </div>}
         {mode === 'address-error' && <><h2>We couldn’t load your address</h2><p className="settings-help">Your account is connected. Try again to check your saved browser address.</p><p role="alert">{currentAddress.kind === 'error' && currentAddress.message}</p><button type="button" className="btn primary" onClick={retryAddress}>Try again</button></>}
-        {mode === 'address' && <SearchTarget searchId="remote-access.browser-address" block><h2>Choose your browser address</h2><p className="settings-help">You’re signed in. Pick one address to open this Zana from any browser.</p><a className="btn primary" href={`${accountUrl}/connect/`} target="_blank" rel="noreferrer">Choose address <ExternalLink size={14} aria-hidden="true" /></a></SearchTarget>}
+        {mode === 'address' && <SearchTarget searchId="remote-access.browser-address" block><h2>Choose your browser address</h2><p className="settings-help">Account connected. Setup is not finished: choose an address for this computer, then return here to check the connection.</p><a className="btn primary" href={`${accountUrl}/connect/?server=${encodeURIComponent(status?.connection?.serverId ?? '')}#address`} target="_blank" rel="noreferrer">Choose address <ExternalLink size={14} aria-hidden="true" /></a></SearchTarget>}
         {mode === 'off' && <><h2>Remote access is off</h2><p className="settings-help">Turn it on to reach this computer from your phone or another browser. Your account is still connected.</p><SearchTarget searchId="remote-access.toggle"><button type="button" className="btn primary" disabled={busy} onClick={() => void run(() => updateEnabled(true))}>Turn on remote access</button></SearchTarget></>}
         {mode === 'reconnecting' && <><h2>Reconnecting…</h2><p className="settings-help">We’re trying to reconnect automatically. Your projects and agents keep running on this computer.</p>{status?.error && <p role="alert">{status.error}</p>}</>}
+        {mode === 'connected' && <h2>{computerLabel(computer)} is ready</h2>}
         {browserUrl && ['connected', 'off', 'reconnecting'].includes(mode) && <SearchTarget searchId="remote-access.browser-address" block>
           <div className={`remote-access-address${mode !== 'connected' ? ' unavailable' : ''}`}>
             <span>{mode === 'connected' ? 'Your address · open from any device' : 'Saved address · currently unavailable'}</span><code>{browserUrl}</code>

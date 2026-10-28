@@ -126,7 +126,7 @@ test('Connect enrolls through desktop IPC and serves authenticated phone traffic
     await expect(win.getByRole('link', { name: 'Open in browser', exact: true })).toHaveCount(0);
     await win.getByRole('button', { name: 'Turn on remote access', exact: true }).click();
     await expect.poll(() => win.evaluate(() => window.cc.mobile.status())).toMatchObject({ running: true, relayState: 'connected' });
-    await expect(win.getByRole('status').filter({ hasText: /^On$/ })).toBeVisible();
+    await expect(win.getByRole('region', { name: 'This computer’s remote access', exact: true }).getByRole('status')).toHaveText('Ready');
     await captureElectronScreenshot(app.electron, win, testInfo.outputPath('remote-access-desktop.png'));
     expect(browserUrl).toBe(`https://my-computer.zana.localhost:${port}`);
     expect(new URL(publicUrl).hostname).toMatch(/^s-[a-f0-9]{24}\.connect\.zana\.localhost$/);
@@ -171,7 +171,7 @@ test('Connect enrolls through desktop IPC and serves authenticated phone traffic
     await win.getByRole('button', { name: 'Share preview', exact: true }).click();
     const sharedUrl = `https://my-computer--${devPort}.zana.localhost:${port}`;
     await expect(win.getByText(sharedUrl, { exact: true })).toBeVisible({ timeout: 40_000 });
-    await expect(win.getByRole('status').filter({ hasText: /^Ready$/ })).toBeVisible({ timeout: 15_000 });
+    await expect(win.getByRole('region', { name: /Share a web preview/ }).getByRole('status').filter({ hasText: /^Ready$/ })).toBeVisible({ timeout: 15_000 });
     const previewPage = await context.newPage();
     await previewPage.goto(sharedUrl);
     await expect(previewPage).toHaveURL(new RegExp('/connect/\\?browser='));

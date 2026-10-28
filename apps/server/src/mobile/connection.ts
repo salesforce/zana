@@ -3,7 +3,7 @@ import { writeSecretFile } from '@zana-ai/zcc-secret-storage';
 
 export type MobileConnectionMode = 'unconfigured' | 'connect';
 export interface MobileConnectionInput { mode: MobileConnectionMode; publicUrl?: string; relayToken?: string; accountUrl?: string; serverId?: string }
-export interface MobileConnectionView { mode: MobileConnectionMode; publicUrl?: string; hasRelayToken: boolean; accountUrl?: string }
+export interface MobileConnectionView { mode: MobileConnectionMode; publicUrl?: string; hasRelayToken: boolean; accountUrl?: string; serverId?: string }
 
 export class RemovedMobileConnectionError extends Error {
   constructor(mode = 'tailscale') {
@@ -62,6 +62,6 @@ export class MobileConnectionStore {
   }
   view(): MobileConnectionView {
     const value = this.read();
-    return { mode: value.mode, ...(value.publicUrl ? { publicUrl: value.publicUrl } : {}), hasRelayToken: !!value.relayToken, ...(value.accountUrl ? { accountUrl: value.accountUrl } : {}) };
+    return { mode: value.mode, ...(value.publicUrl ? { publicUrl: value.publicUrl } : {}), hasRelayToken: !!value.relayToken, ...(value.accountUrl ? { accountUrl: value.accountUrl } : {}), ...(value.serverId ? { serverId: value.serverId } : {}) };
   }
 }

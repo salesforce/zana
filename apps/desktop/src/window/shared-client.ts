@@ -4,6 +4,7 @@ import { electronZccDataDir } from '@zana-ai/zcc-server/electron-data-dir';
 import { accountInstances, readSharedTarget, writeSharedTarget, type SharedInstance, type SharedTarget } from './shared-target.js';
 import { SHARED_ACCOUNT as ACCOUNT, signInWithBrowser } from './shared-sign-in.js';
 import { SharedInstanceChrome } from './shared-instance-chrome.js';
+import { sharedBrowserOpen } from './shared-browser-open.js';
 
 const ownedContents = new Map<number, Set<string>>();
 /** Exemption is scoped to isolated, preload-free web clients created by main. */
@@ -22,6 +23,7 @@ export class SharedClient {
   private login: { controller: AbortController; promise: Promise<void> } | null = null;
   private generation = 0;
   private signingOut: Promise<void> | null = null;
+  private navigation: Promise<unknown> = Promise.resolve();
   private readonly file = join(electronZccDataDir(), 'shared-target.json');
   private readonly partition = 'persist:zcc-shared-account';
   constructor(private readonly showLocal: () => void, private readonly hideLocal: () => void) {}
@@ -65,6 +67,16 @@ export class SharedClient {
     this.login = { controller, promise };
     return promise;
   }
+  private browserNavigation(selected: SharedInstance, generation: number): Promise<string> {
+    // The account's one-use intent cookie belongs to this session. Serialize
+    // handoffs so a superseded response cannot overwrite the next one's cookie.
+    const navigation = this.navigation.catch(() => {}).then(() => {
+      if (generation !== this.generation) throw new Error('Instance selection changed');
+      return sharedBrowserOpen((url, init) => this.clientSession().fetch(url, init), selected);
+    });
+    this.navigation = navigation;
+    return navigation;
+  }
   async select(serverId: unknown): Promise<void> {
     if (typeof serverId !== 'string' || serverId.length > 64) throw new Error('Choose an account-owned instance');
     const generation = ++this.generation;
@@ -72,10 +84,13 @@ export class SharedClient {
     if (generation !== this.generation) throw new Error('Instance selection changed');
     const selected = instances.find(row => row.id === serverId);
     if (!selected) throw new Error('This instance is unavailable or no longer belongs to your account');
+    if (!selected.online) throw new Error('This computer is offline. Keep it awake and Zana running, then try again.');
+    const navigation = await this.browserNavigation(selected, generation);
+    if (generation !== this.generation) throw new Error('Instance selection changed');
     writeSharedTarget(this.file, { kind: 'connect', serverId: selected.id, instanceId: selected.instanceId });
-    this.open(selected);
+    this.open(selected, navigation);
   }
-  private open(selected: SharedInstance): void {
+  private open(selected: SharedInstance, navigation: string): void {
     // Destroying the old document cancels its subscriptions, requests and in-memory caches.
     // Each HTTPS origin retains its own unsent drafts in its normal browser storage.
     this.window?.destroy();
@@ -83,7 +98,7 @@ export class SharedClient {
     this.window = win; register(win, [selected.url, ACCOUNT, 'https://github.com']);
     const menu = Menu.buildFromTemplate([{ label: 'Zana instance', submenu: [
       { label: selected.name, enabled: false },
-      { label: 'Reload shared instance', click: () => { void win.loadURL(selected.url).catch(() => {}); } },
+      { label: 'Reload shared instance', click: () => { void this.restore(); } },
       { label: 'Return to this computer', click: () => this.local() },
       { label: 'Quit Zana', click: () => app.quit() },
       { label: 'Sign out of shared access', click: () => { void this.signOut().catch(() => this.notice('Sign-out could not clear the saved account session. Close Zana and try signing out again.')); } }
@@ -93,7 +108,7 @@ export class SharedClient {
     win.once('closed', () => { if (this.window === win) this.window = null; });
     const chrome = this.chrome(win, selected, false);
     this.hideLocal();
-    void win.loadURL(selected.url).catch(() => {
+    void win.loadURL(navigation).catch(() => {
       if (win.isDestroyed()) return;
       chrome.unavailable();
       // Keep a shared-only error document. Never substitute local product data.
@@ -120,6 +135,7 @@ export class SharedClient {
     this.signingOut = (async () => {
       // Drain an in-flight cookie write before clearing the account partition.
       await login?.catch(() => {});
+      await this.navigation.catch(() => {});
       try { await this.clientSession().clearStorageData(); }
       finally { await this.clientSession().closeAllConnections(); }
     })();
@@ -138,7 +154,10 @@ export class SharedClient {
       if (generation !== this.generation) return;
       const selected = instances.find(row => row.id === target.serverId && row.instanceId === target.instanceId);
       if (!selected) throw new Error('The saved instance is unavailable or requires an update.');
-      this.open(selected);
+      if (!selected.online) throw new Error('The saved computer is offline.');
+      const navigation = await this.browserNavigation(selected, generation);
+      if (generation !== this.generation) return;
+      this.open(selected, navigation);
     } catch {
       if (generation === this.generation) this.notice('Your shared instance is unavailable. Use the switcher above to sign in or retry.');
     }

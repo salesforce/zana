@@ -47,7 +47,7 @@ it('waits for status and address before showing setup or an address chooser', as
   await act(async () => status(linked));
   expect(screen.queryByRole('link', { name: 'Choose address' })).toBeNull();
   await act(async () => address(null));
-  expect(screen.getByRole('link', { name: 'Choose address' }).getAttribute('href')).toBe('https://zana-ide.com/connect/');
+  expect(screen.getByRole('link', { name: 'Choose address' }).getAttribute('href')).toBe('https://zana-ide.com/connect/?server=server#address');
   expect(screen.queryByRole('link', { name: 'Manage account' })).toBeNull();
 });
 it('leads setup with sign-in and retains code redemption as an alternative', async () => {

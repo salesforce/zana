@@ -64,9 +64,9 @@ function mount() {
 it('opens another Zana from the Settings menu and search without mixing it into setup', async () => {
   mount();
   const search = screen.getByRole('combobox', { name: 'Search settings' });
-  fireEvent.change(search, { target: { value: 'Open another Zana' } });
-  fireEvent.click(screen.getAllByRole('option').find(option => option.textContent?.includes('Open another Zana'))!);
-  expect(await screen.findByRole('dialog', { name: 'Open another Zana' })).toBeTruthy();
+  fireEvent.change(search, { target: { value: 'Open another computer' } });
+  fireEvent.click(screen.getAllByRole('option').find(option => option.textContent?.includes('Open another computer'))!);
+  expect(await screen.findByRole('dialog', { name: 'Open another computer' })).toBeTruthy();
   expect(screen.getByText('Instance picker opened')).toBeTruthy();
 });
 

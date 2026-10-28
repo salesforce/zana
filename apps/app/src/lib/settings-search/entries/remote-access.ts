@@ -56,10 +56,10 @@ export const entries: readonly SettingsSearchEntry[] = [
   {
     id: 'remote-access.shared-instance',
     section: 'remote-access',
-    label: 'Open another Zana',
-    help: 'Sign in to open an existing shared instance in this desktop app. Its projects, threads and machines stay together at the same address.',
+    label: 'Open another computer',
+    help: 'Open another computer’s projects and agents in this desktop app. Your local tabs and running work stay on this computer.',
     href: '/settings/remote-access#remote-access.shared-instance',
-    keywords: ['open an existing zana', 'shared zana', 'sign in', 'refresh instances', 'open instance', 'shared client'],
+    keywords: ['open another zana', 'open an existing zana', 'shared zana', 'sign in', 'refresh instances', 'open instance', 'shared client'],
     kind: 'action'
   }
 ];

@@ -77,9 +77,9 @@ export function createRegistry(db, { domain, browserDomain = domain, accountUrl,
     },
     async enrollmentInfo(userCode) {
       if (typeof userCode !== 'string' || userCode.length > 100) throw new ConnectError('invalid_code');
-      const row = await one(db.query, 'SELECT name,expires_at,consumed_at,denied_at FROM connect_codes WHERE hash=$1 AND purpose=$2', [digest(userCode), 'enroll']);
+      const row = await one(db.query, 'SELECT name,server_id,expires_at,consumed_at,denied_at FROM connect_codes WHERE hash=$1 AND purpose=$2', [digest(userCode), 'enroll']);
       if (!row || Number(row.expires_at) <= now()) throw new ConnectError('expired', 410);
-      return { name: row.name, expiresAt: Number(row.expires_at), approved: row.consumed_at != null, denied: row.denied_at != null };
+      return { name: row.name, ...(row.server_id ? { serverId: row.server_id } : {}), expiresAt: Number(row.expires_at), approved: row.consumed_at != null, denied: row.denied_at != null };
     },
     async approveEnrollment(userId, userCode, approved = true) {
       if (typeof userId !== 'string' || !userId || typeof userCode !== 'string' || userCode.length > 100) throw new ConnectError('invalid_code');
