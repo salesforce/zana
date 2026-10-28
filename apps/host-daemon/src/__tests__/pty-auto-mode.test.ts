@@ -56,6 +56,8 @@ const BASE: AppConfig = {
   lastProjectId: null,
 };
 
+let priorAnthropicApiKey: string | undefined;
+
 /** Pull the JSON payload from the last `--settings <json>` pair, or null. */
 function lastSettings(): Record<string, unknown> | null {
   const argv = spawned[spawned.length - 1].args;
@@ -99,6 +101,8 @@ const savedAmbient: Record<string, string | undefined> = {};
 describe('auto mode — launch wiring', () => {
   beforeEach(() => {
     spawned.length = 0;
+    priorAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'pty-auto-mode-test-key';
     for (const k of AMBIENT_KEYS) {
       savedAmbient[k] = process.env[k];
       delete process.env[k];
@@ -106,6 +110,8 @@ describe('auto mode — launch wiring', () => {
   });
 
   afterEach(() => {
+    if (priorAnthropicApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = priorAnthropicApiKey;
     for (const k of AMBIENT_KEYS) {
       if (savedAmbient[k] === undefined) delete process.env[k];
       else process.env[k] = savedAmbient[k];
@@ -201,6 +207,13 @@ describe('auto mode — launch wiring', () => {
 describe('autonomous flag gating — non-Claude harness', () => {
   beforeEach(() => {
     spawned.length = 0;
+    priorAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'pty-auto-mode-test-key';
+  });
+
+  afterEach(() => {
+    if (priorAnthropicApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = priorAnthropicApiKey;
   });
 
   // Regression: a Team/autonomous launch used to splice Claude-only
