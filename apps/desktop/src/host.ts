@@ -5218,7 +5218,8 @@ export function authorizeTeamLaunch(
   }
   if (slots.some((slot) => !slot.initialTask.trim() || Buffer.byteLength(slot.initialTask, 'utf8') > 64 * 1_024
     || slot.automatedSkillIds !== undefined && (slot.automatedSkillIds.length > 64
-      || slot.automatedSkillIds.some((skillId) => !skillId.trim() || skillId.length > 256)))) {
+      || slot.automatedSkillIds.some((skillId) => !skillId.trim() || skillId.length > 256)
+      || new Set(slot.automatedSkillIds).size !== slot.automatedSkillIds.length))) {
     return { ok: false, code: 'INVALID', message: 'invalid initial task' };
   }
   if (team.transport !== 'MODERN' && slots.some((slot) => slot.automatedSkillIds !== undefined)) {
@@ -5633,7 +5634,8 @@ export async function launchTeam(
   };
   if (structured && structured.slots.some((slot) => !slot.initialTask.trim() || Buffer.byteLength(slot.initialTask, 'utf8') > 64 * 1_024
     || slot.automatedSkillIds !== undefined && (slot.automatedSkillIds.length > 64
-      || slot.automatedSkillIds.some((skillId) => !skillId.trim() || skillId.length > 256)))) {
+      || slot.automatedSkillIds.some((skillId) => !skillId.trim() || skillId.length > 256)
+      || new Set(slot.automatedSkillIds).size !== slot.automatedSkillIds.length))) {
     return { ok: false, code: 'INVALID', message: 'invalid initial task' };
   }
   if (team.transport !== 'MODERN' && structured?.slots.some((slot) => slot.automatedSkillIds !== undefined)) {

@@ -68,6 +68,15 @@ function skillDescriptionFromFrontmatter(body: string, fallback: string): string
 
 type DiscoveredSkill = { name: string; description: string; manual: boolean };
 
+function isAuthorizedBuiltinSymlink(path: string, builtinTargets?: ReadonlySet<string>): boolean {
+  if (!builtinTargets) return false;
+  try {
+    return builtinTargets.has(realpathSync(path));
+  } catch {
+    return false;
+  }
+}
+
 function discoverSkills(root: string, builtinTargets?: ReadonlySet<string>): DiscoveredSkill[] {
   if (!existsSync(root)) return [];
   let entries;
@@ -79,7 +88,7 @@ function discoverSkills(root: string, builtinTargets?: ReadonlySet<string>): Dis
   const skills: DiscoveredSkill[] = [];
   for (const entry of entries) {
     const skillPath = join(root, entry.name);
-    if (!entry.isDirectory() && (!entry.isSymbolicLink() || !builtinTargets?.has(realpathSync(skillPath)))) continue;
+    if (!entry.isDirectory() && (!entry.isSymbolicLink() || !isAuthorizedBuiltinSymlink(skillPath, builtinTargets))) continue;
     const skillFile = join(root, entry.name, 'SKILL.md');
     if (!existsSync(skillFile)) continue;
     let description = entry.name;

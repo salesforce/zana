@@ -769,6 +769,20 @@ describe('conversation lifecycle', () => {
     }));
   });
 
+  it('keeps an empty automated skill selection through resume and forks', async () => {
+    const automatedSkillIds: string[] = [];
+    vi.mocked(getThreadPluginMetadata).mockReturnValue({ metadata: { automatedSkillIds }, corrupt: false } as never);
+    const rpc = vi.fn(async () => ({ threadId: thread.id, resumed: true, providerThreadId: 'prov-1' }));
+    await resumeConversation(ctx(rpc), thread.id);
+    expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ command: expect.objectContaining({
+      type: 'thread.resume', automatedSkillIds
+    }) }));
+    await forkConversation(ctx(async () => ({})), thread.id);
+    expect(patchThreadPluginMetadata).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      set: { automatedSkillIds }
+    }));
+  });
+
   it('fails closed when persisted automated skill selection is corrupt', async () => {
     vi.mocked(getThreadPluginMetadata).mockReturnValue({ metadata: {}, corrupt: true } as never);
     await expect(resumeConversation(ctx(vi.fn()), thread.id)).rejects.toThrow('automated skill metadata is corrupt');

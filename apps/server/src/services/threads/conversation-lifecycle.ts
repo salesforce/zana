@@ -1095,7 +1095,7 @@ async function threadStartCommandForFork(
     ...(clientRequestId ? { clientRequestId } : {}),
     ...(fork?.sourceProviderThreadId ? { providerThreadId: fork.sourceProviderThreadId } : {}),
     ...(fork?.sourceProviderCheckpointId ? { providerCheckpointId: fork.sourceProviderCheckpointId } : {}),
-    ...(automatedSkillIds ? { automatedSkillIds } : {}),
+    ...(automatedSkillIds !== undefined ? { automatedSkillIds } : {}),
     ...sessionTooling
   };
 }

@@ -129,6 +129,17 @@ it('copies main-authorized builtin symlinks and still confines their descendants
   await symlink(join(source, 'SKILL.md'), join(builtin, 'escape'));
   await expect(store.capture({})).rejects.toThrow('escapes');
 });
+it('skips a dangling builtin symlink while resolving an automated selection', async () => {
+  const { dir, store } = await setup();
+  const dangling = join(dir, 'missing-builtin');
+  await symlink(dangling, join(dir, 'skills-generated', 'dangling-builtin'));
+  await writeFile(join(dir, 'injected-skill-roots.json'), JSON.stringify({
+    directoryRoots: [], builtinSkillTargets: [dangling]
+  }));
+  await expect(store.capture({}, { skillIds: ['zcc:built-in/demo'] })).resolves.toBeTruthy();
+  await expect(store.capture({}, { skillIds: ['zcc:built-in/dangling-builtin'] }))
+    .rejects.toThrow('Unknown automated skill id');
+});
 it('drops off skills and pins manual skills to slash-only for every harness', async () => {
   const { dir, store } = await setup();
   const root = join(dir, 'skills-generated');

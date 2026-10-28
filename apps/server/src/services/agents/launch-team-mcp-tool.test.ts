@@ -72,6 +72,8 @@ describe('registerLaunchTeamTool', () => {
     expect(launchTeamInputSchema.slots.safeParse([{ ...structuredLaunchArgs.slots[0], automatedSkillIds }]).success).toBe(true);
     expect(authorizeTeamLaunchInputSchema.slots.safeParse([{ initialTask: 'Task', automatedSkillIds: Array(65).fill('zcc:built-in/test') }]).success).toBe(false);
     expect(launchTeamInputSchema.slots.safeParse([{ ...structuredLaunchArgs.slots[0], automatedSkillIds: Array(65).fill('zcc:built-in/test') }]).success).toBe(false);
+    expect(authorizeTeamLaunchInputSchema.slots.safeParse([{ initialTask: 'Task', automatedSkillIds: ['zcc:built-in/test', 'zcc:built-in/test'] }]).success).toBe(false);
+    expect(launchTeamInputSchema.slots.safeParse([{ ...structuredLaunchArgs.slots[0], automatedSkillIds: ['zcc:built-in/test', 'zcc:built-in/test'] }]).success).toBe(false);
   });
 
   it('revalidates admission digest between authorization and launch', async () => {

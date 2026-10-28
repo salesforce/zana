@@ -64,7 +64,7 @@ export async function threadResumeFields(
     ...(acpMode ? { acpMode } : {}),
     ...(serviceTier ? { serviceTier } : {}),
     ...(providerOptions ? { providerOptions } : {}),
-    ...(automatedSkillIds ? { automatedSkillIds } : {}),
+    ...(automatedSkillIds !== undefined ? { automatedSkillIds } : {}),
     ...(getThreadProvider(thread.providerId)?.capabilities.fork === 'checkpoint'
       ? (() => {
         const checkpoint = getLatestConversationCheckpoint(ctx.db, thread.id);

@@ -99,7 +99,7 @@ export async function editConversationMessage(
         bridgeLaunch: resume?.bridgeLaunch
           ?? bridgeLaunchForProvider(live.providerId, ctx.pluginHostArtifacts),
         permissionMode: resume?.permissionMode ?? permissionModeForLaunchProfile(live.providerId),
-        ...(resume?.automatedSkillIds ? { automatedSkillIds: resume.automatedSkillIds } : {})
+        ...(resume?.automatedSkillIds !== undefined ? { automatedSkillIds: resume.automatedSkillIds } : {})
       }
     });
     setConversationProviderThreadId(ctx.db, live.id, prepared.providerThreadId);

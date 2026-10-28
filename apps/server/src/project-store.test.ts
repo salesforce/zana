@@ -1,7 +1,12 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+vi.mock('./durable-store.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./durable-store.js')>();
+  return { ...actual, atomicDurableWrite: vi.fn(actual.atomicDurableWrite) };
+});
+import { DurableWriteConflictError, atomicDurableWrite } from './durable-store.js';
 import { createProjectStore, dedupeTag, pickProjectColor, PROJECT_COLORS, slugifyTag } from './project-store.js';
 
 const roots: string[] = [];
@@ -13,6 +18,7 @@ function makeDir(): string {
 }
 
 afterEach(() => {
+  vi.mocked(atomicDurableWrite).mockClear();
   for (const value of roots.splice(0)) rmSync(value, { recursive: true, force: true });
 });
 
@@ -248,20 +254,30 @@ describe('createProjectStore', () => {
     expect(touched!.lastActiveAt).toBeGreaterThan(1);
   });
 
-  it('retries an activity touch after a concurrent project mutation', async () => {
+  it('retries activity touch after a durable write conflict', async () => {
     const home = makeDir();
     const options = { projectsFile: join(home, '.zcc', 'projects.json') };
-    const primary = createProjectStore(options);
-    const project = await primary.add(home);
-    const sibling = createProjectStore(options);
+    const store = createProjectStore(options);
+    const project = await store.add(home);
+    vi.mocked(atomicDurableWrite).mockClear();
+    vi.mocked(atomicDurableWrite).mockImplementationOnce(() => { throw new DurableWriteConflictError(); });
 
-    const [touched] = await Promise.all([
-      primary.touch(project.id),
-      sibling.update(project.id, { name: 'Updated concurrently' })
-    ]);
-
+    const touched = await store.touch(project.id);
     expect(touched).toMatchObject({ id: project.id });
-    expect(createProjectStore(options).list()[0]).toMatchObject({ id: project.id, name: 'Updated concurrently' });
+    expect(atomicDurableWrite).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails activity touch after its final durable write conflict', async () => {
+    const home = makeDir();
+    const store = createProjectStore({ projectsFile: join(home, '.zcc', 'projects.json') });
+    const project = await store.add(home);
+    vi.mocked(atomicDurableWrite).mockClear();
+    vi.mocked(atomicDurableWrite)
+      .mockImplementationOnce(() => { throw new DurableWriteConflictError(); })
+      .mockImplementationOnce(() => { throw new DurableWriteConflictError(); })
+      .mockImplementationOnce(() => { throw new DurableWriteConflictError(); });
+
+    await expect(store.touch(project.id)).rejects.toThrow(DurableWriteConflictError);
   });
 
   it('removes a project and only its matching app-owned remote placeholder', async () => {

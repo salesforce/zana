@@ -264,7 +264,7 @@ async function startConversationOnHost(
         ...(providerOptions ? { providerOptions } : {}),
         ...(clientRequestId ? { clientRequestId } : {}),
         ...(checkpoint ? { providerCheckpointId: checkpoint } : {}),
-        ...(args.input.automatedSkillIds ? { automatedSkillIds: args.input.automatedSkillIds } : {}),
+        ...(args.input.automatedSkillIds !== undefined ? { automatedSkillIds: args.input.automatedSkillIds } : {}),
         ...sessionTooling,
         ...(args.remoteToolProxy ? {
           remote: threadLaunchRemote(

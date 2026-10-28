@@ -267,6 +267,14 @@ describe('authorizeTeamLaunch', () => {
       .toMatchObject({ ok: false, code: 'INVALID', message: 'automated skill selection requires Modern Team transport' });
   });
 
+  it('rejects duplicate automated skill ids before authorization', () => {
+    h.teams[0] = { ...h.teams[0], transport: 'MODERN' };
+    const slots = tasks();
+    slots[0] = { ...slots[0], automatedSkillIds: ['zcc:built-in/test', 'zcc:built-in/test'] };
+    expect(authorizeTeamLaunch('c', 'team1', 'p1', reqId(), {}, slots))
+      .toMatchObject({ ok: false, code: 'INVALID', message: 'invalid initial task' });
+  });
+
   it('issues per-slot authorizations, deadline, admission digest and honours native recovery', () => {
     const slots = tasks();
     const result = authorizeTeamLaunch('c', 'team1', 'p1', reqId(), { deadlineMs: 60_000 }, slots, 'freeform', 'digest-1', [
@@ -354,6 +362,14 @@ describe('launchTeam validation failures', () => {
       .toMatchObject({ ok: false, message: 'invalid initial task' });
     expect(await launchTeam('team1', 'p1', { ...base, policy: { maxLaunches: 2 }, slots: ok }))
       .toMatchObject({ ok: false, code: 'RESOURCE_LIMIT' });
+  });
+
+  it('rejects duplicate automated skill ids before launch', async () => {
+    h.teams[0] = { ...h.teams[0], transport: 'MODERN' };
+    const slots = SLOT_IDS.map((slotId) => ({ slotId, initialTask: 'x' }));
+    slots[0] = { ...slots[0], automatedSkillIds: ['zcc:built-in/test', 'zcc:built-in/test'] };
+    expect(await launchTeam('team1', 'p1', { callerPrincipalId: 'c', launchRequestId: reqId(), slots }))
+      .toMatchObject({ ok: false, code: 'INVALID', message: 'invalid initial task' });
   });
 });
 
