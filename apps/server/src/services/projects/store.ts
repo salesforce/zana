@@ -7,7 +7,7 @@ import { join, basename, dirname, isAbsolute } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import type { Project, ProjectRemote, AppConfig, ProjectSettings, OpenTarget, ProjectLaunchDefault, HarnessFamily } from '@zana-ai/zcc-domain/product';
-import { normalizeApiErrorResume, SESSION_MEMORY_DEFAULTS, AUTO_CLOSE_IDLE_DEFAULTS, THREAD_SESSION_RELEASE_DEFAULTS, EXPLORER_FILE_ICON_THEME_CHOICES, EXPLORER_MINIMAP_WIDTH_CHOICES, EXPLORER_MINIMAP_VERTICAL_SIZE_CHOICES, EXPLORER_MINIMAP_SLIDER_CHOICES, EXPLORER_MINIMAP_SIDE_CHOICES, COMPOSER_LAUNCH_SURFACES_REV, DEFAULT_PROJECT_DISPLAY_NAME } from '@zana-ai/zcc-domain/product';
+import { normalizeApiErrorResume, SESSION_MEMORY_DEFAULTS, AUTO_CLOSE_IDLE_DEFAULTS, THREAD_SESSION_RELEASE_DEFAULTS, EXPLORER_FILE_ICON_THEME_CHOICES, EXPLORER_MINIMAP_WIDTH_CHOICES, EXPLORER_MINIMAP_VERTICAL_SIZE_CHOICES, EXPLORER_MINIMAP_SLIDER_CHOICES, EXPLORER_MINIMAP_SIDE_CHOICES, COMPOSER_LAUNCH_SURFACES_REV, DEFAULT_PROJECT_DISPLAY_NAME, CLOSE_WRAP_UP_INSTRUCTIONS_MAX } from '@zana-ai/zcc-domain/product';
 import { isTerminalThemeId } from '@zana-ai/zcc-domain/terminal-themes';
 import { PROJECT_COLORS, pickProjectColor } from '@zana-ai/zcc-domain/project-colors';
 import { registeredAdapters } from '@zana-ai/zcc-host-daemon/harness/registry';
@@ -1047,6 +1047,14 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (typeof input.catchUpSummaryEnabled === 'boolean') {
     normalized.catchUpSummaryEnabled = input.catchUpSummaryEnabled;
+  }
+  if (typeof input.closeWrapUpEnabled === 'boolean') {
+    normalized.closeWrapUpEnabled = input.closeWrapUpEnabled;
+  }
+  if (typeof input.closeWrapUpInstructions === 'string') {
+    // Empty or whitespace-only means "use the default", so it is not stored.
+    const instructions = input.closeWrapUpInstructions.trim().slice(0, CLOSE_WRAP_UP_INSTRUCTIONS_MAX);
+    if (instructions) normalized.closeWrapUpInstructions = instructions;
   }
   if (typeof input.threadTabsEnabled === 'boolean') {
     normalized.threadTabsEnabled = input.threadTabsEnabled;

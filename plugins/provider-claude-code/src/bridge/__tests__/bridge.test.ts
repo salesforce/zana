@@ -3153,7 +3153,7 @@ describe("bridge", () => {
       }
     });
 
-    it("falls back to the interactive config when the home has only OAuth login state", async () => {
+    it("blocks an automated session when the home has only OAuth login state", async () => {
       const sourceDir = mkdtempSync(join(tmpdir(), "zcc-oauth-claude-"));
       writeFileSync(
         join(sourceDir, ".claude.json"),
@@ -3170,17 +3170,10 @@ describe("bridge", () => {
       queryMock.mockImplementation(() => createControlledClaudeQuery());
       try {
         bridge.sendRequest(1, "thread/start", startRequest("thread-oauth", "automated"));
-        await bridge.waitForResponse(1);
-
-        const queryOptions = getLatestQueryOptions();
-        expect(queryOptions.env?.CLAUDE_CONFIG_DIR).toBe(sourceDir);
-        expect(queryOptions.settingSources).toEqual(["user", "project", "local"]);
+        const response = await bridge.waitForResponse(1);
+        expect(response).toMatchObject({ error: { message: "Automated Claude admission blocked: authentication-unavailable" } });
+        expect(queryMock).not.toHaveBeenCalled();
         expect(existsSync(join(dataDir, "claude-automated-config", "thread-oauth"))).toBe(false);
-        expect((await readTelemetry())[0]).toMatchObject({
-          sessionKind: "interactive",
-          admission: "fallback-interactive",
-          isolatedConfig: false,
-        });
       } finally {
         bridge.restore();
         Object.assign(process.env, savedAuth);
@@ -3188,7 +3181,7 @@ describe("bridge", () => {
       }
     });
 
-    it("starts the session interactively when the config dir cannot be created", async () => {
+    it("blocks an automated session when the config dir cannot be created", async () => {
       // A data dir that is a regular file makes every mkdir under it fail.
       const blocker = join(dataDir, "not-a-dir");
       writeFileSync(blocker, "x");
@@ -3199,11 +3192,91 @@ describe("bridge", () => {
         bridge.sendRequest(1, "thread/start", startRequest("thread-mkdir-fails", "automated"));
         const response = await bridge.waitForResponse(1);
 
-        expect(response).not.toHaveProperty("error");
-        const queryOptions = getLatestQueryOptions();
-        expect(queryOptions.settingSources).toEqual(["user", "project", "local"]);
-        expect(queryOptions.env?.CLAUDE_CONFIG_DIR).toBeUndefined();
+        expect(response).toMatchObject({ error: { message: "Automated Claude admission blocked: config-unavailable" } });
+        expect(queryMock).not.toHaveBeenCalled();
       } finally {
+        bridge.restore();
+      }
+    });
+
+    it("blocks automated resume and fork before constructing an SDK session", async () => {
+      const sourceDir = mkdtempSync(join(tmpdir(), "zcc-oauth-claude-"));
+      writeFileSync(join(sourceDir, ".claude.json"), JSON.stringify({ oauthAccount: { emailAddress: "a@b.c" } }));
+      process.env.CLAUDE_CONFIG_DIR = sourceDir;
+      delete process.env.ANTHROPIC_API_KEY;
+      const bridge = createBridgeJsonRpcTestHarness(handleLine);
+      try {
+        bridge.sendRequest(1, "thread/resume", {
+          ...startRequest("thread-resume-blocked", "automated"),
+          providerThreadId: "provider-resume",
+        });
+        expect(await bridge.waitForResponse(1)).toMatchObject({
+          error: { message: "Automated Claude admission blocked: authentication-unavailable" },
+        });
+
+        bridge.sendRequest(2, "thread/fork", {
+          ...startRequest("thread-fork-blocked", "automated"),
+          sourceProviderThreadId: "source-session",
+        });
+        expect(await bridge.waitForResponse(2)).toMatchObject({
+          error: { message: "Automated Claude admission blocked: authentication-unavailable" },
+        });
+        expect(queryMock).not.toHaveBeenCalled();
+        expect(forkSessionMock).not.toHaveBeenCalled();
+      } finally {
+        bridge.restore();
+        rmSync(sourceDir, { recursive: true, force: true });
+      }
+    });
+
+    it("does not create a replacement automated leaf when provider fork validation fails", async () => {
+      const bridge = createBridgeJsonRpcTestHarness(handleLine);
+      queryMock.mockImplementation(() => createControlledClaudeQuery());
+      forkSessionMock.mockRejectedValue(new Error("checkpoint unavailable"));
+      const threadId = "thread-fork-validation";
+      const configDir = join(dataDir, "claude-automated-config", threadId);
+      try {
+        bridge.sendRequest(1, "thread/start", startRequest(threadId, "automated"));
+        await bridge.waitForResponse(1);
+        expect(existsSync(configDir)).toBe(true);
+
+        bridge.sendRequest(2, "thread/fork", {
+          ...startRequest(threadId, "automated"),
+          sourceProviderThreadId: "source-session",
+        });
+        await expect(bridge.waitForResponse(2)).resolves.toMatchObject({
+          error: { message: "checkpoint unavailable" },
+        });
+        expect(existsSync(configDir)).toBe(false);
+      } finally {
+        bridge.restore();
+      }
+    });
+
+    it("recreates isolation only after replacing an attached automated fork session", async () => {
+      const bridge = createBridgeJsonRpcTestHarness(handleLine);
+      const queries: ControlledClaudeQuery[] = [];
+      queryMock.mockImplementation(() => {
+        const query = createControlledClaudeQuery();
+        queries.push(query);
+        return query;
+      });
+      const threadId = "thread-fork-replace";
+      const configDir = join(dataDir, "claude-automated-config", threadId);
+      try {
+        bridge.sendRequest(1, "thread/start", startRequest(threadId, "automated"));
+        await bridge.waitForResponse(1);
+        bridge.sendRequest(2, "thread/fork", {
+          ...startRequest(threadId, "automated"),
+          sourceProviderThreadId: "source-session",
+        });
+        await expect(bridge.waitForResponse(2)).resolves.toMatchObject({
+          result: { providerThreadId: "forked-session-1" },
+        });
+        expect(existsSync(configDir)).toBe(true);
+        expect(getLatestQueryOptions().env?.CLAUDE_CONFIG_DIR).toBe(configDir);
+      } finally {
+        await stopBridgeThread({ bridge, queries, threadId });
         bridge.restore();
       }
     });

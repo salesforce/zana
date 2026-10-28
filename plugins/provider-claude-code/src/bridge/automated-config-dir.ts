@@ -15,6 +15,16 @@ import {
 
 export const AUTOMATED_CONFIG_PARENT = "claude-automated-config";
 
+export type AutomatedConfigAdmissionReason =
+  | "authentication-unavailable"
+  | "config-unavailable";
+
+export class AutomatedConfigAdmissionError extends Error {
+  constructor(readonly reason: AutomatedConfigAdmissionReason, cause?: unknown) {
+    super(`Automated Claude admission blocked: ${reason}`, { cause });
+  }
+}
+
 export function automatedConfigParent(dataDir: string): string {
   return confinedConfigParent(dataDir, AUTOMATED_CONFIG_PARENT);
 }
@@ -22,21 +32,34 @@ export function automatedConfigParent(dataDir: string): string {
 /**
  * Create (or reuse) the `0700` per-owner `CLAUDE_CONFIG_DIR` leaf under the Zana
  * data dir. The same owner id always maps to the same leaf, so resume reuses it.
- * Returns null (leaf removed) when the isolated dir could not authenticate —
- * e.g. an OAuth-only user — so the caller takes the interactive path.
+ * Throws a stable admission error when the isolated dir cannot authenticate or
+ * cannot be prepared. Callers must not take the interactive path.
  */
 export function createAutomatedConfigDir(
   dataDir: string,
   ownerId: string,
   seed: AutomatedSeedOptions = {},
-): string | null {
-  const leaf = createConfinedConfigLeaf({ dataDir, ownerId, parentName: AUTOMATED_CONFIG_PARENT });
-  seedAutomatedConfigDir(leaf, seed);
-  if (!automatedConfigCanAuthenticate(leaf, seed.env)) {
-    removeAutomatedConfigDir(dataDir, leaf);
-    return null;
+): string {
+  let leaf: string | undefined;
+  try {
+    leaf = createConfinedConfigLeaf({ dataDir, ownerId, parentName: AUTOMATED_CONFIG_PARENT });
+    seedAutomatedConfigDir(leaf, seed);
+    if (!automatedConfigCanAuthenticate(leaf, seed.env)) {
+      removeAutomatedConfigDir(dataDir, leaf);
+      throw new AutomatedConfigAdmissionError("authentication-unavailable");
+    }
+    return leaf;
+  } catch (error) {
+    if (error instanceof AutomatedConfigAdmissionError) throw error;
+    if (leaf) {
+      try {
+        removeAutomatedConfigDir(dataDir, leaf);
+      } catch {
+        // Confined cleanup is best effort; never traverse an untrusted path.
+      }
+    }
+    throw new AutomatedConfigAdmissionError("config-unavailable", error);
   }
-  return leaf;
 }
 
 export interface AutomatedSeedOptions {

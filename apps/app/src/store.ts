@@ -1,4 +1,4 @@
-import { EXPLORER_FILE_ICON_THEME_DEFAULT, EXPLORER_MINIMAP_DEFAULTS, isAgentsViewId, resolveExplorerFileIconTheme, resolveExplorerMinimap, type AgentsViewId, type ExplorerFileIconTheme, type ExplorerMinimapConfig, type ExplorerMinimapPrefs } from '@zana-ai/zcc-domain/product';
+import { EXPLORER_FILE_ICON_THEME_DEFAULT, EXPLORER_MINIMAP_DEFAULTS, isAgentsViewId, resolveExplorerFileIconTheme, resolveExplorerMinimap, type AgentsViewId, type CloseFollowupKeptOpen, type ExplorerFileIconTheme, type ExplorerMinimapConfig, type ExplorerMinimapPrefs } from '@zana-ai/zcc-domain/product';
 import { subscribeClientRecovery } from './lib/client-recovery.js';
 import { create } from 'zustand';
 import type {
@@ -746,10 +746,12 @@ export function applySidebarWidth(px: number) {
 
 /** Concrete dark/light the app should paint for a stored tri-state `theme`.
  *  'system' (WARP-A2) follows the OS `prefers-color-scheme`; anything else
- *  pins. Exported so the xterm-palette mirror resolves identically. */
+ *  pins. An unset theme is dark, the config default, as in `applyTheme` and
+ *  main's `resolveThemeSetting`. Exported so the xterm-palette mirror resolves
+ *  identically. */
 export function resolveTheme(theme: AppConfig['theme'] | undefined): 'dark' | 'light' {
+  if (theme === undefined || theme === 'dark') return 'dark';
   if (theme === 'light') return 'light';
-  if (theme === 'dark') return 'dark';
   // 'system' (or an unknown value): follow the OS, defaulting to dark when
   // matchMedia is unavailable (headless/test), matching the historical default.
   return typeof window !== 'undefined' &&
@@ -838,6 +840,7 @@ function mirroredConfigFlags(config: AppConfig) {
     autoCloseIdleEnabled: config.autoCloseIdleEnabled ?? false,
     overseerMode: config.overseerMode ?? 'off',
     catchUpSummaryEnabled: config.catchUpSummaryEnabled ?? false,
+    closeWrapUpEnabled: config.closeWrapUpEnabled ?? false,
     classicSessionViewEnabled: config.classicSessionViewEnabled ?? false,
     threadTabsEnabled: config.threadTabsEnabled ?? true,
     dockableThreadToolsEnabled: config.dockableThreadToolsEnabled ?? true,
@@ -1652,6 +1655,10 @@ interface DataState {
    *  in the agent modal (EXPERIMENTAL). Hydrated on init, kept live by the Settings
    *  toggle. Default off. */
   catchUpSummaryEnabled: boolean;
+  /** Mirror of AppConfig.closeWrapUpEnabled — Close with follow-up first asks the
+   *  agent to wrap up (EXPERIMENTAL). Hydrated on init, kept live by the Settings
+   *  toggle. Default off. */
+  closeWrapUpEnabled: boolean;
   /** Mirror of AppConfig.classicSessionViewEnabled — skip the inspector overlay
    *  and open CLI agents / threads as full pages (EXPERIMENTAL). Hydrated on init,
    *  kept live by the Settings toggle. Default off. */
@@ -1767,6 +1774,7 @@ interface DataState {
   setCliRemoteToolProxyEnabled: (on: boolean) => void;
   setFollowUpsEnabled: (on: boolean) => void;
   setCatchUpSummaryEnabled: (on: boolean) => void;
+  setCloseWrapUpEnabled: (on: boolean) => void;
   setClassicSessionViewEnabled: (on: boolean) => void;
   setThreadTabsEnabled: (on: boolean) => void;
   setDockableThreadToolsEnabled: (on: boolean) => void;
@@ -1940,7 +1948,7 @@ interface DataState {
      sessionIds: string[],
      summarize: boolean,
      opts?: { force?: boolean }
-   ) => Promise<{ closed: number; summarized: number; followedUp: number }>;
+   ) => Promise<{ closed: number; summarized: number; followedUp: number; keptOpen?: CloseFollowupKeptOpen[] }>;
   /**
    * READ-ONLY companion to {@link closeIdleAgents}: fold the given idle agents'
    * work into ONE inbox entry and leave every agent RUNNING (the Agents board's
@@ -2013,8 +2021,8 @@ let stopClientRecovery: (() => void) | undefined;
  * scheduler creates them this way; the user also produces them by hiding a
  * tab — the tab's X button, ⌘W, ⌘⇧W, and middle-click all route to
  * `hideTerminal`. Terminating a process (and removing the tab) happens only
- * via the tab's right-click → Delete or the project-list row's X — see
- * `closeTerminal`.
+ * via the tab's right-click → Archive (Delete for a plain shell) or the
+ * project-list row's X — see `closeTerminal`.
  */
 export function visibleTerminals(list: TerminalSession[] | undefined): TerminalSession[] {
   return (list ?? []).filter((t) => !t.headless);
@@ -2166,6 +2174,7 @@ export const useData = create<DataState>((set, get) => ({
   overseerMode: 'off',
   reviewerApprovalMode: 'ask',
   catchUpSummaryEnabled: false,
+  closeWrapUpEnabled: false,
   classicSessionViewEnabled: false,
   threadTabsEnabled: true,
   dockableThreadToolsEnabled: true,
@@ -2309,6 +2318,9 @@ export const useData = create<DataState>((set, get) => ({
 
   setCatchUpSummaryEnabled(on) {
     set({ catchUpSummaryEnabled: on });
+  },
+  setCloseWrapUpEnabled(on) {
+    set({ closeWrapUpEnabled: on });
   },
 
   setDockableThreadToolsEnabled(on) {
@@ -3617,11 +3629,13 @@ export const useData = create<DataState>((set, get) => ({
         return { closingFollowupIds: next };
       });
     };
+    const wrapUp = get().closeWrapUpEnabled;
     return runCloseIdleAgents({
       projectId,
       sessionIds,
       summarize,
       force: opts?.force === true,
+      wrapUp,
       deps: {
         statusById: useAgentStatus.getState().byId,
         alreadyClosingIds: get().closingFollowupIds,
@@ -3642,13 +3656,17 @@ export const useData = create<DataState>((set, get) => ({
         pushErrorToast: (err) => {
           pushErrorToast(errorMessage(err, 'Failed to summarize agents'));
         },
-        pushClosedToast: (closed, summarized, followedUp, failures) => {
+        pushClosedToast: (closed, summarized, followedUp, failures, keptOpen) => {
           useUi
             .getState()
-            .pushToast(closedToastMessage(closed, summarized, followedUp, failures), summarized > 0 ? 'info' : 'error');
+            .pushToast(
+              closedToastMessage(closed, summarized, followedUp, failures, keptOpen),
+              // Kept-open agents are a deliberate outcome, not an error.
+              summarized > 0 || (closed === 0 && (keptOpen?.length ?? 0) > 0) ? 'info' : 'error'
+            );
         },
         pushProgressToast: (count) =>
-          useUi.getState().pushToast(closeFollowupProgressMessage(count), 'info', { persist: true }),
+          useUi.getState().pushToast(closeFollowupProgressMessage(count, wrapUp), 'info', { persist: true }),
         dismissProgressToast: (id) => useUi.getState().dismissToast(id)
       }
     });

@@ -3,7 +3,7 @@ import type { DesktopBrowserApi } from './browser.js';
 import type { SquadLaunchPrefill, SquadProposalErrorCode } from '@zana-ai/zcc-domain/squad-proposal';
 import type { MarketplaceCatalogRow } from '@zana-ai/zcc-domain';
 import type { PluginPackCatalogEntry, PluginPackIdentity, PluginPackInstallation, PluginPackInstallRequest, PluginPackPlan } from '@zana-ai/zcc-domain';
-import type { CloseFollowupFailure } from '@zana-ai/zcc-domain/product';
+import type { CloseFollowupFailure, CloseFollowupKeptOpen } from '@zana-ai/zcc-domain/product';
 import type { OwnNotificationLevel, ThreadNotificationState } from '@zana-ai/zcc-domain';
 import type {
   ProviderCliInstallActionKind,
@@ -789,6 +789,10 @@ export interface CcApi {
       followedUp: number;
       /** Why a step produced nothing; absent from older main. */
       failures?: CloseFollowupFailure[];
+      /** True when the thread is wrapping up in the background and will be archived when it finishes. */
+      wrappingUp?: boolean;
+      /** The thread already waits on the user, so it was left open (the inbox says why). */
+      keptOpen?: 'asks-you';
     }>;
     fork(threadId: string, options?: { sourceSeqEnd?: number }): Promise<Result<{
       id: string;
@@ -1098,6 +1102,8 @@ export interface CcApi {
       followedUp: number;
       /** Why a step produced nothing; absent from older main. */
       failures?: CloseFollowupFailure[];
+      /** Agents the wrap-up left open (asked a question, was typed in, or timed out); absent = every agent may be closed. */
+      keptOpen?: CloseFollowupKeptOpen[];
     }>;
   };
   config: {
@@ -1869,6 +1875,12 @@ export interface CcApi {
     queryRuns(query: ScheduleRunQuery): Promise<Result<ScheduleRunQueryResult>>;
     /** Re-run failed or missed runs now (max 50). */
     retryRuns(refs: ScheduleRunRef[]): Promise<Result<ScheduleRetryResult[]>>;
+    /**
+     * Reopen a finished run's agent conversation in a new tab, sending nothing. `runId` omitted means
+     * the newest resumable run. `reused` is true when a live tab already holds that conversation.
+     * Desktop only: never part of the shared product families.
+     */
+    resumeRun(input: { scheduleId: string; runId?: string }): Promise<Result<{ session: TerminalSession; reused: boolean }>>;
     /** Mark runs as seen so they leave the open list (max 200). Resolves to the number dismissed. */
     dismissRuns(refs: ScheduleRunRef[]): Promise<Result<number>>;
     /** Check reserved workers without starting or enabling work. False means still unconfirmed. */

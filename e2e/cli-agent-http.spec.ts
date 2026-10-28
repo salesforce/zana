@@ -9,16 +9,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const agent = makeFakeAgentBinary({ profile: 'claude', sequence: 'work-then-idle' });
+// The spec runs inside its Playwright worker, so this produces a stable worker
+// port without racing a short-lived port reservation during test discovery.
+const PRODUCT_PORT = 20_000 + (process.pid % 10_000);
+const PRODUCT_URL = `http://127.0.0.1:${PRODUCT_PORT}`;
 
 test.use({
   e2e: true,
-  launchEnv: { ZCC_SERVER_PORT: '8780' },
+  launchEnv: { ZCC_SERVER_PORT: String(PRODUCT_PORT) },
   initialConfig: { claudeBinary: agent.path, defaultHarness: 'claude' }
 });
 
 test.afterAll(() => agent.cleanup());
-
-const PRODUCT_URL = 'http://127.0.0.1:8780';
 
 async function waitForProduct(): Promise<void> {
   const deadline = Date.now() + 30_000;
@@ -34,7 +36,7 @@ async function waitForProduct(): Promise<void> {
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  throw new Error('product HTTP did not become ready on 8780');
+  throw new Error(`product HTTP did not become ready on ${PRODUCT_PORT}`);
 }
 
 test('HTTP CLI Agent launch reaches idle without native confirm', async ({ app }) => {

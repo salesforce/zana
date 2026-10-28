@@ -95,6 +95,26 @@ export const entries: readonly SettingsSearchEntry[] = [
     value: onOff((c) => c.catchUpSummaryEnabled)
   },
   {
+    id: 'experimental.close-wrap-up',
+    section: 'experimental',
+    anchor: 'experimental-features',
+    label: 'Wrap up before closing',
+    help: 'Close with follow-up, and Close idle with follow-ups, first ask each agent to save what it learnt and tidy up. Each agent is then closed with the same summary as Summarize to inbox, and a follow-up if work is left. When off, they close straight away with a short note.',
+    keywords: ['wrap up', 'self-learn', 'close with follow-up', 'summary'],
+    kind: 'setting',
+    value: onOff((c) => c.closeWrapUpEnabled)
+  },
+  {
+    id: 'experimental.close-wrap-up-instructions',
+    section: 'experimental',
+    anchor: 'experimental-features',
+    label: 'Instructions sent to the agent',
+    help: 'Typed into the agent when you choose Close with follow-up.',
+    keywords: ['wrap up', 'self-learn', 'close with follow-up', 'instructions'],
+    kind: 'setting',
+    dependsOn: 'experimental.close-wrap-up'
+  },
+  {
     id: 'experimental.classic-session-view',
     section: 'experimental',
     anchor: 'experimental-features',

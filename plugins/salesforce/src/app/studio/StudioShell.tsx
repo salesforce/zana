@@ -33,7 +33,7 @@ export function StudioShell({ layout, tier, top, activity, explorer, explorerWid
   onSave(): void;
   onToggleExplorer?(): void;
 }) {
-  return <div className="sf-as-body sf-studio" data-layout={layout} data-tier={tier ?? undefined} tabIndex={-1}
+  return <div className="sf-as-body sf-studio" data-layout={layout} data-tier={tier ?? undefined} data-local-shortcuts={onToggleExplorer ? 's p b' : 's p'} tabIndex={-1}
     onKeyDown={event => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
       const key = event.key.toLowerCase();

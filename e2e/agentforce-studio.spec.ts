@@ -1,5 +1,7 @@
 import { openThreadToolLauncher } from './fixtures/thread-tool-panel.js';
 import { createServer } from 'node:http';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync, realpathSync, cpSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, delimiter } from 'node:path';
@@ -90,6 +92,14 @@ const test = base.extend({
       else if (path.endsWith('/nameduser')) result = { access_token: 'PRIVATE_NAMED_JWT' };
       else if (path.endsWith('/authoring/scripts')) { comparisonCandidate = String(body.assets?.[0]?.content).includes('# comparison-candidate'); result = { status: 'success', compiledArtifact: { globalConfiguration: { label: 'Support concierge' } } }; }
       else if (path.endsWith('/preview/sessions')) result = { sessionId: 'remote-session', messages: [{ message: 'Hello! I’m your support concierge. How can I help today?' }] };
+      else if (path.includes('/plans/') && existsSync(join(home, 'preview-trace-fixture'))) result = { plan: [
+        { type: 'UserInputStep', message: 'Find my order' },
+        { type: 'UpdateTopicStep', topic: 'welcome' },
+        { type: 'LLMExecutionStep', executionLatency: 400, data: { prompt_name: 'Route request', prompt_content: 'Help with orders and returns.', prompt_response: 'go_to_orders' } },
+        { type: 'TransitionStep', data: { from_agent: 'welcome', to_agent: 'orders', transition_type: 'handoff' } },
+        { type: 'UpdateTopicStep', topic: 'orders' },
+        { type: 'PlannerResponseStep', message: 'Could you share your order number?', executionLatency: 1200 }
+      ] };
       else if (path.endsWith('/messages')) {
         const text = body.message.text;
         const progressGate = existsSync(join(home, 'simulation-hold')) ? 'simulation-hold' : text === 'Suite progress first case' ? 'suite-first' : text === 'Suite progress second case' ? 'suite-second' : null;
@@ -810,7 +820,10 @@ test('Preview context: Context tab, setup, typed snapshots and restart work in b
         visibility: "External"
     retryCount: mutable number = 0
         visibility: "External"
-`;
+${['accountId', 'accountName', 'currentObjectApiName', 'currentRecordId', 'opportunityId', 'quoteId', 'customerLocale'].map(name => `    ${name}: mutable string
+        visibility: "External"
+        description: "Use the value supplied by the customer or the current record. Leave unset to use the runtime default."
+`).join('')}`;
   writeFileSync(join(home, 'dx', toolbarFile), `${AGENT_SCRIPT_EXAMPLES[0].source}\n${contextSource}`);
   const page = app.window;
   const errors: string[] = [];
@@ -883,6 +896,31 @@ test('Preview context: Context tab, setup, typed snapshots and restart work in b
   // The dim must sit above the whole window (sidebar + titlebar), not just the plugin panel.
   const probes = await page.evaluate(() => [[12, 300], [window.innerWidth - 12, 12]].map(([x, y]) => document.elementFromPoint(x, y)?.closest('.sf-context-backdrop') !== null));
   expect(probes).toEqual([true, true]);
+  const setupGeometry = await setup.evaluate(el => {
+    const bounds = el.getBoundingClientRect(), body = el.querySelector('.sf-context-dialog-body')!, footer = el.querySelector('footer')!.getBoundingClientRect();
+    return { width: bounds.width, top: bounds.top, bottom: bounds.bottom, viewport: innerHeight, viewportWidth: innerWidth, scrolls: body.scrollHeight > body.clientHeight, footerBottom: footer.bottom, overflow: el.scrollWidth - el.clientWidth };
+  });
+  expect(setupGeometry.width).toBeGreaterThan(Math.min(900, setupGeometry.viewportWidth - 80));
+  expect(setupGeometry.top).toBeGreaterThanOrEqual(16);
+  expect(setupGeometry.bottom).toBeLessThanOrEqual(setupGeometry.viewport - 16);
+  expect(setupGeometry.scrolls).toBe(true);
+  expect(setupGeometry.overflow).toBeLessThanOrEqual(1);
+  await setup.locator('.sf-context-dialog-body').evaluate(el => { el.scrollTop = el.scrollHeight; });
+  await expect(setup.getByRole('button', { name: 'Start preview', exact: true })).toBeInViewport();
+  await expect(setup.getByRole('heading', { name: 'Start a conversation' })).toBeInViewport();
+  await setup.locator('.sf-context-dialog-body').evaluate(el => { el.scrollTop = 0; });
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+    await captureElectronScreenshot(app.electron, page, testInfo.outputPath(`preview-context-setup-${theme}.png`));
+  }
+  const setupSize = await app.electron.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; const size = win.getSize(), minimum = win.getMinimumSize(); win.setMinimumSize(400, 400); win.setSize(620, 650); return { size, minimum }; });
+  await expect.poll(() => page.evaluate(() => innerWidth)).toBeLessThan(700);
+  const variableLayout = await setup.locator('.sf-context-field').first().evaluate(el => { const label = el.querySelector('.sf-context-field-head')!.getBoundingClientRect(), value = el.querySelector('.sf-context-value')!.getBoundingClientRect(); return { labelBottom: label.bottom, valueTop: value.top }; });
+  expect(variableLayout.valueTop).toBeGreaterThanOrEqual(variableLayout.labelBottom);
+  await expect(setup.getByRole('button', { name: 'Start preview', exact: true })).toBeInViewport();
+  expect(await setup.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-context-setup-narrow.png'));
+  await app.electron.evaluate(({ BrowserWindow }, saved) => { const win = BrowserWindow.getAllWindows()[0]; win.setMinimumSize(saved.minimum[0], saved.minimum[1]); win.setSize(saved.size[0], saved.size[1]); }, setupSize);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-context-setup.png'));
   await setup.getByRole('button', { name: 'Cancel', exact: true }).click();
   expect(existsSync(join(home, 'sfap-requests.json')) && readFileSync(join(home, 'sfap-requests.json'), 'utf8').includes('/preview/sessions')).toBe(false);
@@ -1242,8 +1280,9 @@ test('Agentforce Studio: Lightning Types, collapsible explorer sections and a hi
   // Hide the column from its header, bring it back with the shortcut.
   await explorer.getByRole('button', { name: 'Hide explorer' }).click();
   await expect(explorer).toHaveCount(0);
-  await view.getByRole('heading', { name: 'Order request' }).click();
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+B' : 'Control+B');
+  // Hiding the focused explorer button leaves focus on the document body.
+  // The focused tool owns its shortcut before the app's global project-view shortcut.
+  await studio.locator('.sf-as-body.sf-studio').press(process.platform === 'darwin' ? 'Meta+b' : 'Control+b');
   await expect(explorer).toBeVisible();
 });
 
@@ -2369,8 +2408,8 @@ test('Agentforce simulations: live lanes stay with their agent, stop, verdicts a
   const failedId = await simulations.getByLabel('Simulation batch', { exact: true }).locator('option').nth(1).getAttribute('value');
   await simulations.getByLabel('Simulation batch', { exact: true }).selectOption(failedId!);
   await expect(simulations.getByLabel('0 of 1 pass')).toBeVisible();
+  // Reload preserves the project route; its navigation is ready without reopening the project.
   await page.reload();
-  await page.getByRole('button', { name: 'Open dx', exact: true }).click();
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
   await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
   await showAllAgents(studio);
@@ -2383,6 +2422,75 @@ test('Agentforce simulations: live lanes stay with their agent, stop, verdicts a
   expect(errors).toEqual([]);
 });
 
+
+test('Agentforce self-healing: parallel candidates improve fixed scenarios without saving', async ({ app, home }, testInfo) => {
+  const page = app.window;
+  expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'salesforce')?.status), { timeout: 30_000 }).toMatch(/running|needs-configuration/);
+  const projectId = await page.evaluate(async path => { const result = await window.cc.projects.add(path); if (!result.ok) throw Error(result.message); return result.value.id; }, join(home, 'dx'));
+  await page.evaluate(async id => {
+    await window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' });
+    history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
+  }, projectId);
+  const action = (action: string, input: object = {}): Promise<any> => page.evaluate(({ projectId, action, input }) => window.cc.pluginApps.callRpc('salesforce', 'actions.run', { projectId, action, input }), { projectId, action, input });
+  await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
+  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  const studio = studioIn(page);
+  await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
+  await openTool(studio, 'Tests');
+  const tests = viewPane(page, 'tests').getByTestId('studio-tests-pane');
+  await tests.getByRole('button', { name: 'Simulations', exact: true }).click();
+  const simulations = tests.getByTestId('studio-simulations');
+  await simulations.getByLabel('Stay in scope', { exact: true }).uncheck();
+  await simulations.locator('summary').filter({ hasText: 'Run settings' }).click();
+  await simulations.getByLabel('Parallel conversations').selectOption('2');
+  await page.keyboard.press('Escape');
+  writeFileSync(join(home, 'simulation-judge-fail'), 'fail');
+  writeFileSync(join(home, 'simulation-hold'), 'hold');
+  await simulations.getByRole('button', { name: 'Run 2 conversations', exact: true }).click();
+  await expect(simulations.locator('.sf-sim-lane.is-running')).toHaveCount(2);
+  rmSync(join(home, 'simulation-hold'));
+  await expect(simulations.getByLabel('0 of 2 pass')).toBeVisible();
+  await expect(simulations.getByTestId('simulation-summary')).toContainText('Done');
+  const baseline = await action('simulations.list', { agentPath: 'force-app/Support.agent' });
+  const original = readFileSync(join(home, 'dx/force-app/Support.agent'), 'utf8');
+  const healing = simulations.getByRole('region', { name: 'Self-healing' });
+  await healing.getByLabel('Candidate attempts').selectOption('2');
+  const studioUrl = page.url();
+  await healing.getByRole('button', { name: 'Start self-healing', exact: true }).click();
+  const composer = sidePanel(page).getByTestId('panel-agent-tab-composer');
+  await expect(composer).toBeVisible();
+  await expect(composer.getByTestId('thread-command-input')).toContainText('Run self-healing for force-app/Support.agent');
+  await expect(composer.getByTestId('thread-command-input')).toContainText('Budget: 2 candidate attempts');
+  await expect(simulations).toBeVisible();
+  expect(page.url()).toBe(studioUrl);
+  const started = await action('selfHealing.status', { agentPath: 'force-app/Support.agent' });
+  expect(started).toMatchObject({ ok: true, run: { baselineBatchId: baseline.batches[0].id, baselinePass: 0, maxAttempts: 2 } });
+  await expect(composer.getByTestId('thread-command-input')).toContainText(started.run.id);
+  await healing.getByRole('button', { name: 'Continue with agent', exact: true }).click();
+  await expect(sidePanel(page).getByTestId('panel-agent-tab-composer')).toHaveCount(1);
+  await expect(healing.getByRole('button', { name: 'Stop self-healing' })).toBeVisible();
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('self-healing-side-panel-draft.png'));
+  await composer.getByTestId('thread-command-send').click();
+  await expect(sidePanel(page).getByTestId('panel-agent-tab-chat')).toBeVisible();
+  await expect(simulations).toBeVisible();
+  expect(page.url()).toBe(studioUrl);
+  rmSync(join(home, 'simulation-judge-fail'));
+  expect(await action('selfHealing.evaluate', { runId: started.run.id, source: original + '\n# tested candidate\n' })).toMatchObject({ ok: true, run: { status: 'testing' } });
+  await expect.poll(async () => (await action('selfHealing.status', { runId: started.run.id, waitMs: 100 })).run.status).toBe('passed');
+  await expect(healing).toContainText('Baseline 0/2 → Best 2/2');
+  await expect(healing).toContainText('Candidate 1: improved');
+  await expect(healing.getByRole('button', { name: 'Review best candidate with agent' })).toBeVisible();
+  await healing.getByRole('button', { name: 'Review best candidate with agent' }).click();
+  await expect(composer).toBeVisible();
+  await expect(composer.getByTestId('thread-command-input')).toContainText(started.run.id);
+  await expect(simulations).toBeVisible();
+  expect(page.url()).toBe(studioUrl);
+  expect(readFileSync(join(home, 'dx/force-app/Support.agent'), 'utf8')).toBe(original);
+  expect(await action('selfHealing.status', { runId: started.run.id, includeSource: true })).toMatchObject({ ok: true, source: original + '\n# tested candidate\n' });
+  expect(await action('selfHealing.evaluate', { runId: started.run.id, source: original + '\n# extra\n' })).toMatchObject({ ok: false, code: 'not_ready' });
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('self-healing-complete.png'));
+});
 
 test('Agentforce improvements: cache-safe discovery, source jumps, draft comparison and custom scenarios', async ({ app, home }, testInfo) => {
   const page = app.window;
@@ -2439,11 +2547,22 @@ test('Agentforce improvements: cache-safe discovery, source jumps, draft compari
   await openTool(studio, 'Tests');
   await tests.getByRole('button', { name: 'Simulations', exact: true }).click();
   const simulations = tests.getByTestId('studio-simulations');
-  await simulations.locator('summary').filter({ hasText: 'Customize scenarios and context' }).click();
+  await expect(simulations.getByLabel('Scenario 1 name', { exact: true })).toBeVisible();
+  await simulations.getByLabel('Search scenarios').fill('missing');
+  await expect(simulations.getByRole('button', { name: 'Edit Happy path', exact: true })).toBeHidden();
+  await simulations.getByRole('button', { name: 'Edit Missing details', exact: true }).click();
+  await expect(simulations.getByLabel('Scenario 2 persona', { exact: true })).toBeVisible();
+  await expect(simulations.getByLabel('Scenario 1 persona', { exact: true })).toHaveCount(0);
+  await simulations.getByLabel('Search scenarios').fill('');
+  await simulations.getByRole('button', { name: 'Edit Happy path', exact: true }).click();
   await simulations.getByLabel('Scenario 1 name', { exact: true }).fill('Custom return');
   await simulations.getByLabel('Scenario 1 opening', { exact: true }).fill('What is the return policy?');
   await simulations.getByLabel('Missing details', { exact: true }).uncheck();
   await simulations.getByLabel('Stay in scope', { exact: true }).uncheck();
+  for (const theme of ['dark', 'light']) {
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+    await captureElectronScreenshot(app.electron, page, testInfo.outputPath(`studio-scenario-editor-${theme}.png`));
+  }
   await simulations.getByRole('button', { name: 'Run 1 conversation', exact: true }).click();
   await expect(simulations.getByTestId('simulation-summary')).toContainText('Done', { timeout: 30000 });
   await simulations.getByRole('button', { name: /Custom return/ }).click();
@@ -2456,15 +2575,29 @@ test('Agentforce improvements: cache-safe discovery, source jumps, draft compari
   expect(await simulations.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   expect(await studioPanel(page).evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-custom-scenarios-narrow-light.png'));
+  await simulations.getByRole('button', { name: /^Scenarios/ }).click();
+  await expect(simulations.getByLabel('Scenario 1 opening', { exact: true })).toHaveValue('What is the return policy?');
+  expect(await simulations.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  await simulations.locator('summary').filter({ hasText: 'Run settings' }).click();
+  await expect(simulations.getByRole('group', { name: 'Run settings', exact: true })).toBeInViewport();
+  await page.keyboard.press('Escape');
+  await expect(simulations.getByLabel('Parallel conversations')).toBeHidden();
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-scenario-editor-narrow-light.png'));
+  await app.electron.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.setMinimumSize(400, 400); win.setSize(720, 800); });
+  await expect.poll(() => simulations.evaluate(el => el.clientWidth)).toBeLessThan(460);
+  const stacked = await simulations.evaluate(el => { const list = el.querySelector('.sf-sim-catalogue')!.getBoundingClientRect(), editor = el.querySelector('.sf-sim-editor')!.getBoundingClientRect(); return { listBottom: list.bottom, editorTop: editor.top }; });
+  expect(stacked.editorTop).toBeGreaterThanOrEqual(stacked.listBottom - 1);
+  expect(await simulations.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-scenario-editor-compact-light.png'));
   expect(errors).toEqual([]);
 });
 
 test('AgentScript Studio reliability: large snapshots, background recovery, setup and cancellation', async ({ app, home }, testInfo) => {
   const page = app.window;
   const projectRoot = join(home, 'dx');
-  const source = AGENT_SCRIPT_EXAMPLES[0].source + '\n# ' + 'large-source '.repeat(19500) + '\n';
+  const source = AGENT_SCRIPT_EXAMPLES[0].source + '\n# ' + 'large-source '.repeat(24000) + '\n';
   writeFileSync(join(projectRoot, 'force-app/Large.agent'), source);
-  expect(source.length).toBeGreaterThan(234000);
+  expect(source.length).toBeGreaterThan(280000);
   expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
   await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'salesforce')?.status), { timeout: 30000 }).toMatch(/running|needs-configuration/);
   const projectId = await page.evaluate(async path => { const added = await window.cc.projects.add(path); if (!added.ok) throw Error(added.message); return added.value.id; }, projectRoot);
@@ -2477,6 +2610,26 @@ test('AgentScript Studio reliability: large snapshots, background recovery, setu
     const result = await response.json();
     return JSON.parse(result.stdout);
   }, { projectId, action, input });
+  // Exercise the actual CLI and desktop socket. A file envelope avoids shell
+  // argv and the small inline transport cap, without weakening that cap.
+  const cliRoot = join(home, 'large-cli');
+  cpSync(join(root, 'packages/cli/dist'), cliRoot, { recursive: true, dereference: true });
+  const cli = async (argv: string[]) => {
+    const result = await promisify(execFile)(process.execPath, [join(cliRoot, 'bin/zcc'), 'sf', ...argv], {
+      cwd: projectRoot, timeout: 30000, maxBuffer: 2 * 1024 * 1024,
+      env: { ...process.env, HOME: home, USERPROFILE: home, ZCC_DATA_DIR: join(home, '.zcc'), ZCC_PROJECT_ID: projectId,
+        ZCC_SESSION_ID: undefined, ZCC_SESSION_TOKEN: undefined, ZCC_THREAD_ID: undefined, ZCC_SERVER_URL: undefined,
+        BB_PROJECT_ID: undefined, BB_THREAD_ID: undefined, NO_COLOR: undefined, FORCE_COLOR: undefined }
+    });
+    return JSON.parse(result.stdout);
+  };
+  writeFileSync(join(projectRoot, 'parse-input.json'), JSON.stringify({ source }));
+  expect(await cli(['action', 'source.parse', '--input-file', 'parse-input.json', '--json'])).toMatchObject({ ok: true });
+  const read = await cli(['action', 'files.read', '--input', JSON.stringify({ path: 'force-app/Large.agent' }), '--json']);
+  expect(read.file.content).toBe(source);
+  writeFileSync(join(projectRoot, 'write-input.json'), JSON.stringify({ path: 'force-app/Large.agent', content: source + '# CLI_WRITE_COMPLETE\n', expectedSha256: read.file.sha256 }));
+  expect(await cli(['action', 'files.write', '--input-file', 'write-input.json', '--json'])).toMatchObject({ ok: true });
+  expect(readFileSync(join(projectRoot, 'force-app/Large.agent'), 'utf8')).toBe(source + '# CLI_WRITE_COMPLETE\n');
   expect(await action('source.parse', { source })).toMatchObject({ ok: true });
   expect(await action('source.parse', { path: 'force-app/Large.agent' })).toMatchObject({ ok: true });
   const preview = await action('studio.start', { path: 'force-app/Large.agent', engine: 'preview' });
@@ -2500,6 +2653,57 @@ test('AgentScript Studio reliability: large snapshots, background recovery, setu
   await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
   const studio = studioIn(page);
   await studio.getByTestId('salesforce-agent-script-file:force-app/Large.agent').click();
+  let viewId = '';
+  await expect.poll(async () => { const views = await action('ui.views'); viewId = views.views.find((v: any) => v.surface === 'agentforce')?.id ?? ''; return viewId; }).not.toBe('');
+  const state = await action('ui.command', { viewId, command: 'state', input: { includeSource: true } });
+  let snapshot: any;
+  await expect.poll(async () => { snapshot = await action('ui.result', { commandId: state.commandId }); return snapshot.state; }).toBe('completed');
+  expect(snapshot).toMatchObject({ ok: true, viewState: { source: source + '# CLI_WRITE_COMPLETE\n' } });
+  // A large unsaved edit remains recoverable in the real Monaco iframe.
+  const editor = page.frameLocator('iframe[title="Agentforce playground"]');
+  await expect(editor.locator('.view-lines')).toContainText('config:');
+  await editor.locator('.monaco-editor').click({ position: { x: 180, y: 50 } });
+  await page.keyboard.press('ControlOrMeta+End'); await page.keyboard.type('\n# RECOVER_LARGE_DRAFT');
+  await expect.poll(() => editor.locator('body').evaluate(() => JSON.parse(localStorage.getItem('salesforce.agent-drafts.v1') || '[]').some((draft: any) => draft.content.length > 280000 && draft.content.includes('RECOVER_LARGE_DRAFT')))).toBe(true);
+  await expect(studio).not.toContainText('Local recovery is unavailable');
+  await studio.getByRole('button', { name: 'Save Agentforce file' }).click();
+  await expect.poll(() => readFileSync(join(projectRoot, 'force-app/Large.agent'), 'utf8')).toContain('RECOVER_LARGE_DRAFT');
+  await openTool(studio, 'Preview');
+  const previewPanel = viewPane(page, 'preview').getByTestId('preview-workbench');
+  await expect(previewPanel.getByRole('button', { name: 'Inspect 25 cases ▾' })).toBeVisible();
+  await expect(previewPanel.getByRole('region', { name: 'Scenario cases' })).toHaveCount(0);
+  await previewPanel.getByRole('button', { name: /Inspect 25 cases/ }).click();
+  await previewPanel.getByLabel('Scenario result filter').selectOption('inconclusive');
+  await expect(previewPanel.locator('.sf-pw-suite-case')).toHaveCount(1);
+  await expect(previewPanel.locator('.sf-pw-suite-case')).toContainText('Case 24');
+  await previewPanel.getByLabel('Search scenarios').fill('no matching case');
+  await expect(previewPanel.getByRole('status')).toContainText('No scenarios match');
+  await previewPanel.getByLabel('Search scenarios').fill('');
+  await previewPanel.getByLabel('Scenario result filter').selectOption('all');
+  await previewPanel.getByRole('button', { name: /Inspect 25 cases/ }).click();
+  writeFileSync(join(home, 'preview-trace-fixture'), 'enabled');
+  await previewPanel.getByTestId('pw-start').click();
+  await expect(previewPanel.getByLabel('Preview message', { exact: true })).toBeEnabled();
+  await previewPanel.getByLabel('Preview message', { exact: true }).fill('Find my order');
+  await previewPanel.getByRole('button', { name: 'Send preview message' }).click();
+  await expect(previewPanel.getByText('I can help you track an order or resolve an issue. Could you share your order number so I can find the right details?', { exact: true })).toBeVisible();
+  await previewPanel.getByRole('button', { name: /trace/ }).last().click();
+  const trace = previewPanel.getByRole('region', { name: 'Planner trace' });
+  await expect(trace).toBeVisible();
+  await expect(trace.locator('details[open]')).toHaveCount(0);
+  await trace.getByRole('button', { name: 'Expand all payloads' }).click();
+  await expect.poll(() => trace.locator('details[open]').count()).toBeGreaterThan(0);
+  await trace.getByRole('button', { name: 'Collapse all payloads' }).click();
+  await expect(trace.locator('details[open]')).toHaveCount(0);
+  await expect(trace.getByRole('button', { name: 'Expand all payloads' })).toBeVisible();
+  // Native capture can precede Chromium's paint after a disclosure changes.
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-compact-suite-trace.png'));
+  await previewPanel.getByRole('button', { name: 'End', exact: true }).click();
+  await app.electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(820, 900));
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+  expect(await previewPanel.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-compact-narrow-light.png'));
   await openTool(studio, 'Tests');
   const tests = viewPane(page, 'tests').getByTestId('studio-tests-pane');
   await expect(tests.getByTestId('tests-row-c24')).toContainText('Setup required');

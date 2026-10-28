@@ -48,8 +48,7 @@ async function spawnClaude(
 }
 
 test('Close with follow-up on a blocked Needs you agent closes the session', async ({
-  app,
-  events
+  app
 }) => {
   const { window } = app;
   const agent = makeFakeAgentBinary({
@@ -71,14 +70,8 @@ test('Close with follow-up on a blocked Needs you agent closes the session', asy
   try {
     sessionId = await spawnClaude(window, projectId, agent.path, 'Needs You Close Probe');
 
-    await events.waitForEvent((e) => {
-      return (
-        e.channel === 'terminals:onAgentStatus' &&
-        JSON.stringify(e.args).includes(sessionId as string) &&
-        JSON.stringify(e.args).includes('blocked')
-      );
-    }, 20_000);
-
+    // Poll the main-side status rather than wait for one event: a loaded CI runner can
+    // take longer than 20 s from spawn to the agent's first blocked report.
     await expect
       .poll(
         async () =>
@@ -88,7 +81,7 @@ test('Close with follow-up on a blocked Needs you agent closes the session', asy
             >;
             return pairs.find(([id]) => id === sid)?.[1] ?? null;
           }, sessionId),
-        { timeout: 10_000 }
+        { timeout: 30_000 }
       )
       .toBe('blocked');
 
@@ -108,9 +101,15 @@ test('Close with follow-up on a blocked Needs you agent closes the session', asy
       .or(window.getByRole('button', { name: 'Closing…' }))
       // The toast and the disabled button can both show at once; either one proves progress.
       .first();
+    // The card is still listed beside its detail, so its removal below means the close ran.
+    await expect(card).toBeVisible();
     window.once('dialog', (dialog) => void dialog.accept());
     await closeButton.click();
-    await expect(progress).toBeVisible({ timeout: 8_000 });
+    // A fast close can remove the card before a check sees the brief "Closing…" state.
+    // Either one shows the click started the close; the poll below proves it closed.
+    await expect
+      .poll(async () => (await progress.isVisible()) || !(await card.isVisible()), { timeout: 8_000 })
+      .toBe(true);
 
     await expect
       .poll(

@@ -112,6 +112,21 @@ afterEach(() => {
   fixtures.recoverCatalogs.mockClear(); fixtures.recoverStale.mockClear(); fixtures.recoverAfterWake.mockClear(); fixtures.offWake.mockClear(); fixtures.reconcilePlugins.mockClear(); fixtures.unsubscribePlugins.mockClear();
 });
 
+it('keeps a project focus until the project list has loaded, then drops a removed one', () => {
+  const original = store.useUi.getState();
+  store.useData.setState({ projects: [], configLoaded: false });
+  store.useUi.setState({ focusedProjectId: 'p-removed' });
+  try {
+    render(<MemoryRouter><App /></MemoryRouter>);
+    expect(store.useUi.getState().focusedProjectId).toBe('p-removed');
+    act(() => store.useData.setState({ configLoaded: true }));
+    expect(store.useUi.getState().focusedProjectId).toBeNull();
+  } finally {
+    store.useUi.setState({ focusedProjectId: original.focusedProjectId, nav: original.nav });
+    store.useData.setState({ configLoaded: false });
+  }
+});
+
 it('switches titlebar navigation live and retains compact chrome', () => {
   fixtures.compact = false;
   store.useData.setState({ threadTabsEnabled: true });
@@ -229,13 +244,14 @@ it('shares Help between the titlebar and navigation and clears exploration on qu
   fixtures.compact = false; fixtures.unread = 0;
   render(<MemoryRouter><App /></MemoryRouter>);
   const toggle = screen.getByTestId('titlebar-help-toggle');
-  expect(toggle.getAttribute('aria-pressed')).toBe('true');
+  expect(toggle.className).toContain('is-active');
   fireEvent.click(screen.getByText('Explore project navigation'));
   expect(screen.getByTestId('active-hint').textContent).toBe('sidebar');
   fireEvent.click(screen.getByText('Change page query'));
   expect(screen.getByTestId('active-hint').textContent).toBe('');
   fireEvent.click(toggle);
-  expect(toggle.getAttribute('aria-pressed')).toBe('false');
+  fireEvent.click(screen.getByRole('switch', { name: /Page hints/ }));
+  expect(toggle.className).not.toContain('is-active');
   expect(screen.queryByTestId('mobile-help-toggle')).toBeNull();
 });
 it.each([0, 2, 105])('shares the mobile Help state and closes navigation for %s unread notifications', unread => {
@@ -243,10 +259,19 @@ it.each([0, 2, 105])('shares the mobile Help state and closes navigation for %s 
   const notifications = vi.fn(); store.useUi.setState({ toggleNotificationsDrawer: notifications });
   render(<MemoryRouter><App /></MemoryRouter>);
   fireEvent.click(screen.getByTestId('mobile-help-toggle'));
-  expect(screen.getByTestId('titlebar-help-toggle').getAttribute('aria-pressed')).toBe('false');
+  expect(screen.getByTestId('titlebar-help-toggle').className).not.toContain('is-active');
   const drawerButton = screen.getAllByRole('button', { name: unread ? `Notifications — ${unread} unread` : 'Notifications' }).find(button => button.textContent?.includes('Notifications'))!;
   fireEvent.click(drawerButton);
   expect(fixtures.drawer).toHaveBeenCalledWith(false);
   expect(notifications).toHaveBeenCalledOnce();
   if (unread) expect(drawerButton.textContent).toContain(unread > 99 ? '99+' : String(unread));
+});
+it('opens the video library from mobile navigation and closes the drawer', async () => {
+  fixtures.compact = true; fixtures.unread = 0;
+  const { useHelpVideos } = await import('./components/help/help-videos-store.js');
+  render(<MemoryRouter><App /></MemoryRouter>);
+  fireEvent.click(screen.getByTestId('mobile-help-videos'));
+  expect(fixtures.drawer).toHaveBeenCalledWith(false);
+  expect(useHelpVideos.getState().openId).toBe('guided-start');
+  act(() => useHelpVideos.getState().close());
 });

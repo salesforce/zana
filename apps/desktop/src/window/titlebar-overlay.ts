@@ -8,10 +8,12 @@
  * --text-muted text, in both `:root` (dark) and `:root[data-theme='light']`;
  * the height is the Windows --titlebar-h (44px).
  */
+import { BG_BASE } from './window-theme.js';
+
 export const WINDOWS_TITLEBAR_HEIGHT = 44;
 export const WINDOWS_TITLEBAR_OVERLAY_COLORS = {
-  dark: { color: '#181818', symbolColor: '#8b949e' },
-  light: { color: '#f6f8fa', symbolColor: '#57606a' }
+  dark: { color: BG_BASE.dark, symbolColor: '#8b949e' },
+  light: { color: BG_BASE.light, symbolColor: '#57606a' }
 } as const;
 
 export interface TitleBarOverlayColors {

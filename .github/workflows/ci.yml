@@ -262,11 +262,13 @@ jobs:
 
       # Electron needs a display + the usual Chromium shared libs. xvfb-run
       # supplies a virtual X server; playwright's dep installer pulls the libs.
+      # WebKit backs the mobile Safari checks in contextual-help and
+      # mobile-composer-layout.
       - name: Install system deps for headless Electron
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb
-          pnpm exec playwright install --with-deps chromium
+          pnpm exec playwright install --with-deps chromium webkit
 
       # ubuntu-24.04 blocks Chromium's sandbox via AppArmor; Electron never
       # creates a window without this (microsoft/playwright#34251).

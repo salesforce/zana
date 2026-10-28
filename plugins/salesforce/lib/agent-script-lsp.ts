@@ -84,8 +84,14 @@ function lspDialects(): typeof defaultDialects {
 }
 
 function withDialectAnnotation(source: string, dialect: AgentScriptDialect): string {
-  if (/@dialect\s*:/.test(source.slice(0, 400))) return source;
+  if (!dialectLineOffset(source)) return source;
   return `# @dialect:${lspDialect(dialect)}\n${source}`;
+}
+
+// The language service needs a dialect comment. Keep its synthetic line out of
+// the editor/CLI coordinate space (all public positions are zero-based).
+function dialectLineOffset(source: string): number {
+  return /@dialect\s*:/.test(source.slice(0, 400)) ? 0 : 1;
 }
 
 function severityFromLsp(value: number | undefined): AgentScriptDiagnostic['severity'] {
@@ -95,26 +101,26 @@ function severityFromLsp(value: number | undefined): AgentScriptDiagnostic['seve
   return 'error';
 }
 
-function mapDiagnostic(row: LspDiagnostic): AgentScriptDiagnostic {
+function mapDiagnostic(row: LspDiagnostic, offset: number): AgentScriptDiagnostic {
   return {
     message: row.message,
     severity: severityFromLsp(row.severity),
-    line: row.range.start.line,
+    line: Math.max(0, row.range.start.line - offset),
     column: row.range.start.character,
-    endLine: row.range.end.line,
+    endLine: Math.max(0, row.range.end.line - offset),
     endColumn: row.range.end.character,
     ...(typeof row.code === 'string' || typeof row.code === 'number' ? { code: String(row.code) } : {})
   };
 }
 
-function mapRange(range: { start: { line: number; character: number }; end: { line: number; character: number } }): AgentScriptLspRange {
+function mapRange(range: { start: { line: number; character: number }; end: { line: number; character: number } }, offset: number): AgentScriptLspRange {
   return {
-    start: { line: range.start.line, column: range.start.character },
-    end: { line: range.end.line, column: range.end.character }
+    start: { line: Math.max(0, range.start.line - offset), column: range.start.character },
+    end: { line: Math.max(0, range.end.line - offset), column: range.end.character }
   };
 }
 
-function hoverMarkdown(hover: LspHover | null): { markdown: string; range?: AgentScriptLspRange } | null {
+function hoverMarkdown(hover: LspHover | null, offset: number): { markdown: string; range?: AgentScriptLspRange } | null {
   if (!hover) return null;
   const contents = hover.contents;
   const markdown = Array.isArray(contents)
@@ -126,19 +132,19 @@ function hoverMarkdown(hover: LspHover | null): { markdown: string; range?: Agen
       ? contents
       : contents.value;
   if (!markdown.trim()) return null;
-  return { markdown, ...(hover.range ? { range: mapRange(hover.range) } : {}) };
+  return { markdown, ...(hover.range ? { range: mapRange(hover.range, offset) } : {}) };
 }
 
-function flattenSymbols(symbols: LspSymbol[], cap: number, out: AgentScriptLspSymbol[] = []): AgentScriptLspSymbol[] {
+function flattenSymbols(symbols: LspSymbol[], cap: number, offset: number, out: AgentScriptLspSymbol[] = []): AgentScriptLspSymbol[] {
   for (const symbol of symbols) {
     if (out.length >= cap) return out;
     out.push({
       name: symbol.name,
       kind: symbol.kind,
       ...(symbol.detail ? { detail: symbol.detail } : {}),
-      range: mapRange(symbol.range)
+      range: mapRange(symbol.range, offset)
     });
-    if (symbol.children?.length) flattenSymbols(symbol.children, cap, out);
+    if (symbol.children?.length) flattenSymbols(symbol.children, cap, offset, out);
   }
   return out;
 }
@@ -197,7 +203,8 @@ export function queryAgentScriptLsp(input: {
     };
   }
 
-  const diagnostics = state.diagnostics.slice(0, LSP_DIAGNOSTIC_CAP).map(mapDiagnostic);
+  const offset = dialectLineOffset(input.source);
+  const diagnostics = state.diagnostics.slice(0, LSP_DIAGNOSTIC_CAP).map(row => mapDiagnostic(row, offset));
   const hasErrors = diagnostics.some((row) => row.severity === 'error') || state.diagnostics.some((row) => row.severity === 1);
   const base: AgentScriptLspResult = { dialect: input.dialect, query, diagnostics, hasErrors };
 
@@ -205,14 +212,14 @@ export function queryAgentScriptLsp(input: {
   if (query === 'symbols') {
     return {
       ok: true,
-      result: { ...base, symbols: flattenSymbols(provideDocumentSymbols(state), LSP_SYMBOL_CAP) }
+      result: { ...base, symbols: flattenSymbols(provideDocumentSymbols(state), LSP_SYMBOL_CAP, offset) }
     };
   }
 
-  const atLine = line!;
+  const atLine = line! + offset;
   const atColumn = column!;
   if (query === 'hover') {
-    const hover = hoverMarkdown(provideHover(state, atLine, atColumn, lspDialects()));
+    const hover = hoverMarkdown(provideHover(state, atLine, atColumn, lspDialects()), offset);
     return { ok: true, result: { ...base, ...(hover ? { hover: hover.markdown, range: hover.range } : {}) } };
   }
   if (query === 'complete') {
@@ -229,6 +236,6 @@ export function queryAgentScriptLsp(input: {
   const definition: LspLocation | null = provideDefinition(state, atLine, atColumn);
   return {
     ok: true,
-    result: { ...base, ...(definition ? { definition: mapRange(definition.range) } : {}) }
+    result: { ...base, ...(definition ? { definition: mapRange(definition.range, offset) } : {}) }
   };
 }

@@ -13,6 +13,16 @@ it('reports run history as unavailable when no shared owner is attached', async 
   await expect(product.scheduler.queryRuns({})).resolves.toEqual(unavailable);
   await expect(product.scheduler.retryRuns([ref])).resolves.toEqual(unavailable);
   await expect(product.scheduler.dismissRuns([ref])).resolves.toEqual(unavailable);
+  await expect(product.scheduler.resumeRun({ scheduleId: 's' })).resolves.toEqual(unavailable);
+});
+
+it('keeps resuming a run desktop-only even when a shared owner is attached', async () => {
+  const fetchMock = vi.fn(async (url: string) =>
+    url.endsWith('/system/instance') ? Response.json({ sharedProductServices: true }) : Response.json({ ok: true, value: { ok: true, value: 1 } }));
+  vi.stubGlobal('fetch', fetchMock);
+  const product = await load();
+  await expect(product.scheduler.resumeRun({ scheduleId: 's', runId: 'r' })).resolves.toMatchObject({ ok: false, code: 'unavailable' });
+  expect(fetchMock.mock.calls.some(c => String(c[0]).endsWith('/shared-product'))).toBe(false);
 });
 
 it('forwards query, retry and dismiss to the shared owner', async () => {

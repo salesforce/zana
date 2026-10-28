@@ -2,6 +2,7 @@ import { createMachineProjectSync, type MachineProjectSync } from '../services/h
 import { closeThreadReads } from '../services/threads/thread-reads.js';
 import { closeQueuedMessages } from '../services/threads/queued-messages.js';
 import { previewService, disposePreviews } from '../services/previews/preview-service.js';
+import { disposeThreadWrapUps } from '../services/threads/thread-wrap-up.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -430,7 +431,20 @@ export function createProductHttpContext(
     },
     runTurnSummary: async () => ({ ok: false, text: '', error: 'unused', provider: 'claude-cli', ms: 0 }),
     readDigest: async () => '',
-    runSessionSummary: async () => ({ ok: false, text: '', error: 'unused', provider: 'claude-cli', ms: 0 }),
+    runSessionSummary: (digest, dedupeKey) => {
+      const entry = promptRegistry.get('builtin:session-summary');
+      if (!entry) {
+        return Promise.resolve({
+          ok: false,
+          text: '',
+          error: 'no session-summary prompt',
+          provider: 'claude-cli',
+          ms: 0
+        });
+      }
+      llmService.setProvider(configuredClaudeProvider());
+      return llmService.run(entry, { digest }, dedupeKey);
+    },
     appendInbox: async (input) => {
       const entry = await inbox.append({
         projectId: input.projectId,
@@ -675,6 +689,7 @@ export function createProductHttpContext(
       const reconcilerStopped = Promise.all([remoteProjectReconciler.dispose(), ctx.machineProjectSync?.dispose()]).then(() => undefined);
       closeThreadReads(dataDir); closeQueuedMessages(dataDir);
       disposePreviews(ctx);
+      disposeThreadWrapUps(ctx);
       disposeEnvironmentRetireTimers(ctx);
       stopHistoryMaintenance();
       ctx.cliCallbacks?.dispose();

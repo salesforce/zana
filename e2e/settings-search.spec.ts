@@ -9,7 +9,12 @@ import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 // results, precise jump + flash, collapsed/tabbed containers, plugin settings,
 // live values, typo tolerance, the Cmd+P Settings scope and secret hygiene.
 
-test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { sponsorPromptDismissed: true } });
+// A hidden Linux CI window does not paint, so the smooth scroll to a row stalls
+// for seconds while its 1.2 s flash runs out. Show the window there.
+test.use({
+  launchEnv: { ZCC_FAKE_PROVIDER: '1', ...(process.platform === 'linux' ? { ZCC_E2E_VISIBLE: '1' } : {}) },
+  initialConfig: { sponsorPromptDismissed: true }
+});
 
 const FIXTURES = fileURLToPath(new URL('./fixtures/settings-search-plugins', import.meta.url));
 const VALUES = JSON.parse(readFileSync(join(FIXTURES, 'fixture-values.json'), 'utf8'));

@@ -16,6 +16,7 @@ it('renders no empty packs section and presents pack membership without installi
   view.rerender(<PluginPackCards packs={[pack]} mode="browse" onReview={onReview} onForget={onForget} />);
   expect(screen.getByRole('region', { name: 'Plugin packs' })).toBeTruthy();
   expect(screen.getByText('1 of 2 plugins installed')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Review pack' }).classList.contains('primary')).toBe(false);
   fireEvent.click(screen.getByRole('button', { name: 'Review pack' }));
   expect(onReview).toHaveBeenCalledWith(pack);
   expect(onForget).not.toHaveBeenCalled();

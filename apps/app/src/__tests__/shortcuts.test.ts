@@ -108,6 +108,19 @@ describe('shortcuts: ⌘. closes the agent detail modal', () => {
     expect(preventDefault).not.toHaveBeenCalled();
   });
 
+  it('leaves declared local chords to the focused tool and keeps global fallbacks', () => {
+    uiState.agentModal = { sessionId: 's1', projectId: 'p1' };
+    const target = (value: string | null) => ({ closest: () => ({ getAttribute: () => value }) });
+    expect(kb.press('.', { meta: true, target: target('s p .') }).preventDefault).not.toHaveBeenCalled();
+    expect(uiState.closeAgentModal).not.toHaveBeenCalled();
+    for (const chord of [
+      { target: target('s p') }, { target: target(null) },
+      { target: { closest: () => null } }, { target: {} },
+      { target: target('.'), alt: true }, { target: target('.'), shift: true },
+    ]) kb.press('.', { meta: true, ...chord });
+    expect(uiState.closeAgentModal).toHaveBeenCalledTimes(6);
+  });
+
   it('ignores a bare "." with no mod key', () => {
     uiState.agentModal = { sessionId: 's1', projectId: 'p1' };
     kb.press('.');
@@ -279,5 +292,73 @@ describe('shortcuts: ⌘F picks thread search before terminal find', () => {
     expect(openThreadFindMock).toHaveBeenCalledTimes(1);
     expect(uiState.setFindOpen).toHaveBeenCalledWith(true);
     expect(preventDefault).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('shortcuts: ⌘⇧W archives an agent tab and deletes a plain shell', () => {
+  let kb: KeyboardHarness;
+  let uninstall: () => void;
+  const closeTerminal = vi.fn(async () => undefined);
+  const confirmMock = vi.fn(() => false);
+
+  beforeEach(() => {
+    kb = installKeyboardHarness();
+    uninstall = installShortcuts();
+    closeTerminal.mockClear();
+    confirmMock.mockReset().mockReturnValue(false);
+    // the harness's fake window is dropped on teardown, so this does not leak
+    (globalThis as unknown as { window: { confirm: unknown } }).window.confirm = confirmMock;
+    (dataState as Record<string, unknown>).closeTerminal = closeTerminal;
+    uiState.selectedProjectId = 'p1';
+    uiState.selectedTabId = { p1: 't1' };
+  });
+
+  afterEach(() => {
+    uninstall();
+    kb.teardown();
+    delete (dataState as Record<string, unknown>).closeTerminal;
+    dataState.terminals = {};
+    (dataState as { projects: unknown[] }).projects = [];
+    uiState.selectedTabId = {};
+  });
+
+  it('confirms with the Archive text for a live agent and closes it when accepted', () => {
+    dataState.terminals = { p1: [{ id: 't1', title: 'Review', status: 'running', profile: 'claude' }] };
+    (dataState as { projects: unknown[] }).projects = [{ id: 'p1' }];
+    kb.press('W', { meta: true, shift: true });
+    expect(confirmMock).toHaveBeenCalledWith(
+      'Archive “Review”? The agent stops and its conversation stays in History.'
+    );
+    expect(closeTerminal).not.toHaveBeenCalled();
+    confirmMock.mockReturnValue(true);
+    kb.press('W', { meta: true, shift: true });
+    expect(closeTerminal).toHaveBeenCalledWith('t1', 'p1');
+  });
+
+  it('uses neutral Archive wording in a remote project', () => {
+    dataState.terminals = { p1: [{ id: 't1', title: 'Review', status: 'running', profile: 'claude' }] };
+    (dataState as { projects: unknown[] }).projects = [{ id: 'p1', remote: { host: 'h' } }];
+    kb.press('W', { meta: true, shift: true });
+    expect(confirmMock).toHaveBeenCalledWith('Archive “Review”? The agent stops and is removed from the board.');
+  });
+
+  it('uses neutral Archive wording for a harness without History', () => {
+    dataState.terminals = { p1: [{ id: 't1', title: 'Review', status: 'running', profile: 'mastracode' }] };
+    (dataState as { projects: unknown[] }).projects = [{ id: 'p1' }];
+    kb.press('W', { meta: true, shift: true });
+    expect(confirmMock).toHaveBeenCalledWith('Archive “Review”? The agent stops and is removed from the board.');
+  });
+
+  it('confirms with the Delete text for a live plain shell', () => {
+    dataState.terminals = { p1: [{ id: 't1', title: 'zsh', status: 'running', profile: 'shell' }] };
+    kb.press('W', { meta: true, shift: true });
+    expect(confirmMock).toHaveBeenCalledWith('Delete “zsh”? The process will be terminated.');
+  });
+
+  it('dismisses an exited tab without a prompt', () => {
+    dataState.terminals = { p1: [{ id: 't1', title: 'Review', status: 'exited', profile: 'claude' }] };
+    kb.press('W', { meta: true, shift: true });
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(closeTerminal).toHaveBeenCalledWith('t1', 'p1');
   });
 });

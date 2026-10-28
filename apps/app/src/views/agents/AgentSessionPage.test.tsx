@@ -75,7 +75,7 @@ vi.mock('../../components/AgentSessionView.js', () => ({
 }));
 
 vi.mock('../../components/AgentSessionActions.js', () => ({
-  AgentSessionActions: () => <button type="button">Delete</button>
+  AgentSessionActions: () => <button type="button">Archive</button>
 }));
 
 vi.mock('@zana-ai/zcc-domain/launch-provider', () => ({
@@ -105,7 +105,7 @@ describe('AgentSessionPage', () => {
     expect(screen.getByTestId('cli-agent-mobile-unsupported')).toBeTruthy();
     expect(screen.queryByTestId('agent-session-view')).toBeNull();
     expect(screen.queryByTestId('agent-session-missing')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Archive' })).toBeNull();
   });
 
   it('renders AgentSessionView when the session exists', () => {
@@ -117,7 +117,7 @@ describe('AgentSessionPage', () => {
     expect(html).toContain('data-show-project="yes"');
     expect(html).toContain('data-mobile-title="yes"');
     expect(html).toContain('data-project-name="Demo"');
-    expect(html).toContain('Delete');
+    expect(html).toContain('Archive');
     expect(html).not.toContain('data-testid="agent-session-missing"');
   });
 

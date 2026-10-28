@@ -158,22 +158,27 @@ function toolCallName(line: CodexLine): string {
  * Build a readable, role-tagged DIGEST of a whole Codex session, mirroring
  * {@link buildSessionDigest} (Claude): the user's typed prompts, the assistant's
  * prose, and the tools it ran (deduped per adjacent run). Tool OUTPUT and
- * reasoning are dropped (they bloat the input). Capped to `maxChars` keeping the
- * TAIL. Pure; exported for tests.
+ * reasoning are dropped (they bloat the input). The final assistant prose block
+ * keeps up to `finalBlockChars`, every other block `perBlockChars`. Capped to
+ * `maxChars` keeping the TAIL. Pure; exported for tests.
  */
 export function buildSessionDigestCodex(
   lines: CodexLine[],
-  opts: { maxChars?: number; perBlockChars?: number } = {}
+  opts: { maxChars?: number; perBlockChars?: number; finalBlockChars?: number } = {}
 ): string {
   const maxChars = opts.maxChars ?? 12_000;
   const perBlockChars = opts.perBlockChars ?? 1_500;
-  const clamp = (s: string) => (s.length > perBlockChars ? `${s.slice(0, perBlockChars)}…` : s);
+  const finalBlockChars = opts.finalBlockChars ?? 4_000;
+  const clamp = (s: string, max = perBlockChars) => (s.length > max ? `${s.slice(0, max)}…` : s);
 
-  const parts: string[] = [];
+  // Collected unclamped first, so only the LAST assistant prose block gets the
+  // larger budget.
+  const parts: Array<{ label: string; text: string; clamped: boolean }> = [];
+  let lastProse = -1;
   let pendingTools: string[] = [];
   const flushTools = () => {
     if (pendingTools.length) {
-      parts.push(`Assistant ran: ${pendingTools.join(', ')}`);
+      parts.push({ label: 'Assistant ran', text: pendingTools.join(', '), clamped: false });
       pendingTools = [];
     }
   };
@@ -182,14 +187,15 @@ export function buildSessionDigestCodex(
     const user = userMessageText(line);
     if (user) {
       flushTools();
-      parts.push(`User: ${clamp(user)}`);
+      parts.push({ label: 'User', text: user, clamped: true });
       continue;
     }
     if (isAssistantMessage(line)) {
       const t = assistantText(line);
       if (t) {
         flushTools();
-        parts.push(`Assistant: ${clamp(t)}`);
+        lastProse = parts.length;
+        parts.push({ label: 'Assistant', text: t, clamped: true });
       }
       continue;
     }
@@ -198,7 +204,9 @@ export function buildSessionDigestCodex(
   }
   flushTools();
 
-  const digest = parts.join('\n\n');
+  const digest = parts
+    .map((p, i) => `${p.label}: ${p.clamped ? clamp(p.text, i === lastProse ? finalBlockChars : perBlockChars) : p.text}`)
+    .join('\n\n');
   return digest.length > maxChars ? digest.slice(digest.length - maxChars) : digest;
 }
 

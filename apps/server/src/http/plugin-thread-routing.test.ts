@@ -271,7 +271,7 @@ describe('resolvePluginThreadRouting — execution', () => {
     const error = await failure(resolvePluginThreadRouting(input({
       family: 'codex', projectSettings: proj(routing('codex', { executionState: 'interactive' }))
     })));
-    expect(error.message).toBe(msg('the interactive execution state (workspace-write + untrusted) has no thread equivalent.'));
+    expect(error.message).toBe(msg('the interactive execution state (workspace-write + on-request) has no thread equivalent.'));
   });
 
   it('rejects a resolved permission mode the thread provider does not support', async () => {

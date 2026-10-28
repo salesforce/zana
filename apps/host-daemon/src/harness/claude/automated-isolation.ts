@@ -48,6 +48,14 @@ export interface AutomatedClaudeLaunchPlan {
   env: Record<string, string>;
 }
 
+export type AutomatedClaudeAdmissionReason = 'authentication-unavailable' | 'config-unavailable';
+
+export class AutomatedClaudeAdmissionError extends Error {
+  constructor(readonly reason: AutomatedClaudeAdmissionReason, cause?: unknown) {
+    super(`Automated Claude admission blocked: ${reason}`, { cause });
+  }
+}
+
 export interface AutomatedClaudeLaunchInput {
   ownerId: string;
   env?: NodeJS.ProcessEnv;
@@ -174,31 +182,37 @@ export function sweepStaleAutomatedConfigDirs(args: {
 }
 
 /**
- * Plan the isolation for one unattended Claude launch, or null to launch
- * exactly as before (the config dir could not be prepared — the
- * interactive path is the rollback).
+ * Plan the isolation for one unattended Claude launch. Automated requests must
+ * never fall back to the user's interactive configuration.
  */
-export function planAutomatedClaudeLaunch(input: AutomatedClaudeLaunchInput): AutomatedClaudeLaunchPlan | null {
+export function planAutomatedClaudeLaunch(input: AutomatedClaudeLaunchInput): AutomatedClaudeLaunchPlan {
   const env = input.env ?? process.env;
   const dataDir = input.dataDir ?? resolveZccDataDir(env);
+  let leaf: string | undefined;
   try {
-    const leaf = createConfinedConfigLeaf({ dataDir, ownerId: input.ownerId, parentName: AUTOMATED_CONFIG_PARENT });
+    leaf = createConfinedConfigLeaf({ dataDir, ownerId: input.ownerId, parentName: AUTOMATED_CONFIG_PARENT });
     const sourceDir =
       input.sourceConfigDir ??
       (env.CLAUDE_CONFIG_DIR ? resolve(env.CLAUDE_CONFIG_DIR) : join(homedir(), '.claude'));
     seedLeaf(leaf, sourceDir, env, input.cwd);
     if (!automatedConfigCanAuthenticate(leaf, env)) {
-      // OAuth/subscription login state is keyed to the config dir and is not
-      // carried over: launch exactly as before rather than logged out.
       removeAutomatedConfigDir(dataDir, leaf);
-      return null;
+      throw new AutomatedClaudeAdmissionError('authentication-unavailable');
     }
     return {
       configDir: leaf,
       args: ['--setting-sources', 'user'],
       env: { CLAUDE_CONFIG_DIR: leaf },
     };
-  } catch {
-    return null;
+  } catch (error) {
+    if (error instanceof AutomatedClaudeAdmissionError) throw error;
+    if (leaf) {
+      try {
+        removeAutomatedConfigDir(dataDir, leaf);
+      } catch {
+        // Confined cleanup is best effort; never traverse an untrusted path.
+      }
+    }
+    throw new AutomatedClaudeAdmissionError('config-unavailable', error);
   }
 }

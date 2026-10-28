@@ -521,10 +521,9 @@ export class PtyManager extends EventEmitter {
   private automatedConfigDirs = new Map<string, string>();
   private automatedConfigSwept = false;
 
-  /** Prepare an unattended Claude run's isolated config dir (null = launch unchanged). Also sweeps stale leaves once per process. */
+  /** Prepare an unattended Claude run's isolated config dir. Also sweeps stale leaves once per process. */
   private planAutomatedClaude(sessionId: string, cwd: string): ReturnType<typeof planAutomatedClaudeLaunch> {
     const plan = planAutomatedClaudeLaunch({ ownerId: sessionId, cwd });
-    if (!plan) return null;
     this.automatedConfigDirs.set(sessionId, plan.configDir);
     if (!this.automatedConfigSwept) {
       this.automatedConfigSwept = true;
@@ -1182,7 +1181,8 @@ export class PtyManager extends EventEmitter {
     const sessionId = opts.preallocatedSessionId ?? randomUUID();
     // Unattended Claude runs (headless / scheduled / autonomous) load only a
     // Zana-generated auth+gateway settings file from a per-run CLAUDE_CONFIG_DIR
-    // instead of the user's full hooks/plugins/project settings. Null (non-claude, non-local, or prep failure) leaves the launch byte-identical.
+    // instead of the user's full hooks/plugins/project settings. A failed
+    // automated admission throws before any interactive launch state is built.
     const automatedClaude =
       caps.injectsClaudeMcpConfig &&
       (opts.headless || opts.scheduled || opts.autonomous) &&

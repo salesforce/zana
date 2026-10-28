@@ -1,6 +1,7 @@
-import type { ScheduledTask, ScheduleCatchUp, ScheduleRetryPolicy, ScheduleStatus, LaunchProfileId } from '@zana-ai/zcc-domain/product';
+import type { ScheduledTask, ScheduleCatchUp, ScheduleRetryPolicy, ScheduleRunConversation, ScheduleStatus, LaunchProfileId } from '@zana-ai/zcc-domain/product';
 import { VALID_PROFILES } from '@zana-ai/zcc-domain/launch-provider';
 import { validateCadence } from '@zana-ai/zcc-domain/schedule-spec';
+import { isValidConversationId } from '@zana-ai/zcc-domain/schedule-health';
 
 /** Upper bound on pending reservations + active Squad runs kept per schedule file. */
 const MAX_UNRESOLVED_RUNS = 100;
@@ -30,6 +31,15 @@ export function normalizeRetry(raw: unknown): ScheduleRetryPolicy | undefined {
   const delayMinutes = clampInt((raw as { delayMinutes?: unknown }).delayMinutes, 1, 1440);
   if (attempts === undefined || delayMinutes === undefined) return undefined;
   return { attempts, delayMinutes };
+}
+
+/** A run's recorded conversation, or undefined when malformed: schedule files are editable, so the id must be safe for an argv. */
+function normalizeConversation(raw: unknown): ScheduleRunConversation | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const { profile, id, cwd, startedAt } = raw as Record<string, unknown>;
+  if (typeof profile !== 'string' || !VALID_PROFILES.includes(profile as LaunchProfileId) || typeof cwd !== 'string' || typeof startedAt !== 'string' || !Number.isFinite(Date.parse(startedAt))) return undefined;
+  if (id !== undefined && !isValidConversationId(id)) return undefined;
+  return { profile: profile as LaunchProfileId, ...(id !== undefined ? { id } : {}), cwd, startedAt };
 }
 
 function normalizePendingRetry(raw: unknown): ScheduleStatus['pendingRetry'] {
@@ -132,6 +142,11 @@ export function validateScheduleFile(raw: unknown): ScheduledTask | { error: str
   for (const value of (rawRuns ?? []) as unknown[]) {
     if (!value || typeof value !== 'object') return { error: 'invalid run' };
     const run = value as ScheduledTask['status']['runs'][number];
+    if (run.conversation !== undefined) {
+      const conversation = normalizeConversation(run.conversation);
+      if (conversation) run.conversation = conversation;
+      else delete run.conversation;
+    }
     if (typeof run.at !== 'string' || !Number.isFinite(Date.parse(run.at)) ||
         !['success', 'error', 'skipped', 'incomplete'].includes(run.result)) return { error: 'invalid run timestamp or result' };
     if (run.sessionId !== undefined && typeof run.sessionId !== 'string') return { error: 'invalid run session' };

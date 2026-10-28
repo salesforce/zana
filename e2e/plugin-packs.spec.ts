@@ -99,7 +99,11 @@ test('pack review preserves existing plugins, retries partial installs, and neve
     await expect(market.catalogNames()).toHaveText(['Pack Fixtures']);
     await win.getByRole('dialog', { name: 'Manage marketplaces', exact: true }).getByRole('button', { name: 'Close', exact: true }).click();
     const packs = win.getByRole('region', { name: 'Plugin packs', exact: true });
-    await expect(packs.getByTestId(`plugin-pack-${PACK_ID}`)).toBeVisible();
+    const packCard = packs.getByTestId(`plugin-pack-${PACK_ID}`);
+    await expect(packCard).toBeVisible();
+    await expect(packCard.getByRole('button', { name: 'Review pack', exact: true })).not.toHaveClass(/primary/);
+    await expect(packCard.locator('.ext-pack-card-body > p').first()).toHaveCSS('-webkit-line-clamp', '2');
+    expect(await packCard.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
     await packs.getByRole('button', { name: 'Review pack', exact: true }).click();
     let review = win.getByRole('dialog', { name: `Review ${PACK_NAME}`, exact: true });
     await expect(review.getByTestId('plugin-pack-member-pack-existing')).toContainText('Already installed');

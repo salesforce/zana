@@ -163,6 +163,7 @@ export function ProjectModePane({
           <div className="project-topbar-tabs">
             {isTerminals ? (
               <TabBar
+                projectId={project.id}
                 tabs={terminalTabs}
                 activeTabId={activeTab?.id}
                 onSelect={(id) => selectTab(project.id, id)}

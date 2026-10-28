@@ -75,8 +75,10 @@ export interface FakeAgentBinary {
  * (`discoverRoleTargets`) must see `build` as a directly-launchable primary or
  * the spawn is blocked (`role target unavailable`). Answer `agent list` /
  * `debug agent` the same way the catalog fixture does, then hold.
- * Other catalog probes (`--list-models`, `app-server`, `acp`) exit 0 so
- * `refreshCatalog` / ACP `list_models` do not hang, then `cat`.
+ * Other catalog probes (`--list-models`, `app-server`, `acp`, and Grok's ACP
+ * model list `models`) exit 0 so `refreshCatalog` / ACP `list_models` do not
+ * hang, then `cat`. ACP runs the configured native binary, so an unanswered
+ * `models` would hold Check status until the bridge's 30 s list timeout.
  * Do not use {@link makeFakeOpenCodeBinary} here — that fixture exits 64 on spawn.
  */
 export function makeFakeGenericHoldBinary(version = '2026.09.02'): FakeAgentBinary {
@@ -93,7 +95,7 @@ export function makeFakeGenericHoldBinary(version = '2026.09.02'): FakeAgentBina
       '  echo "{\\"name\\":\\"$3\\",\\"permission\\":{\\"read\\":true},\\"tools\\":{\\"bash\\":true}}"',
       '  exit 0',
       'fi',
-      'if [ "$1" = "--list-models" ] || [ "$1" = "app-server" ] || [ "$1" = "agent" ] || [ "$1" = "acp" ]; then exit 0; fi',
+      'if [ "$1" = "--list-models" ] || [ "$1" = "models" ] || [ "$1" = "app-server" ] || [ "$1" = "agent" ] || [ "$1" = "acp" ]; then exit 0; fi',
       'echo "generic agent running"',
       'cat'
     ].join('\n')

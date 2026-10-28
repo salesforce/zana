@@ -183,10 +183,12 @@ describe('PreviewWorkbench', () => {
     await click(btn(el, 'Review & restart')); await click(btn(el, 'Restart preview'));
     expect(calls.filter(c => c.method === 'agentPreview.start')).toHaveLength(2);
   });
-  it('loads the suite and shows chips with state', async () => {
+  it('loads a compact suite summary and expands case results', async () => {
     const el = await mount();
     expect(el.textContent).toContain('1/2 pass');
-    const chips = [...el.querySelectorAll('.sf-pw-chip')];
+    expect(el.querySelector('.sf-pw-suite-panel')).toBeNull();
+    await click(btn(el, 'Inspect'));
+    const chips = [...el.querySelectorAll('.sf-pw-suite-case')];
     expect(chips.map(c => c.getAttribute('data-state'))).toEqual(['pass', 'unrun']);
     expect(calls.find(c => c.method === 'studio.suites.list')?.args).toMatchObject({ agentPath: 'force-app/A.agent', projectId: 'proj-1' });
   });
@@ -300,8 +302,9 @@ describe('PreviewWorkbench', () => {
     const el = await mount({ threadId: 'owner' });
     await click(btn(el, 'Run suite'));
     expect(calls.find(c => c.method === 'studio.suites.run')?.args).toMatchObject({ path: 'tests/A.scenario.json', engine: 'preview', source: 'agent_label: x', threadId: 'owner', startedByUser: true });
-    expect([...el.querySelectorAll('.sf-pw-chip')].map(c => c.getAttribute('data-state'))).toEqual(['fail', 'pass']);
-    await click(btn(el, '✗ Refund'));
+    await click(btn(el, 'Inspect'));
+    expect([...el.querySelectorAll('.sf-pw-suite-case')].map(c => c.getAttribute('data-state'))).toEqual(['fail', 'pass']);
+    await click(el.querySelector('[aria-label="Rerun Refund"]') as HTMLElement);
     expect(calls.filter(c => c.method === 'studio.suites.run').pop()?.args).toMatchObject({ caseIds: ['c1'] });
     const before = calls.filter(c => c.method === 'studio.suites.list').length;
     await act(async () => { realtime?.({ kind: 'comments' }); }); await flush();
@@ -586,13 +589,14 @@ describe('PreviewWorkbench failure paths and edge cases', () => {
     let release!: (v: unknown) => void;
     handlers['studio.suites.run'] = () => new Promise(r => { release = r; });
     const el = await mount();
+    await click(btn(el, 'Inspect'));
     await click(btn(el, 'Run suite'));
     expect(el.querySelector('.sf-pw-suite')?.textContent).toContain('Running 2 cases…');
-    expect([...el.querySelectorAll('.sf-pw-chip')].every(c => (c as HTMLButtonElement).disabled)).toBe(true);
+    expect([...el.querySelectorAll('.sf-pw-suite-case button')].every(c => (c as HTMLButtonElement).disabled)).toBe(true);
     await act(async () => release({ ok: false })); await flush();
     expect(alertText(el)).toContain('The suite could not run.');
     handlers['studio.suites.run'] = () => new Promise(r => { release = r; });
-    await click(btn(el, 'Other'));
+    await click(el.querySelector('[aria-label="Rerun Other"]') as HTMLElement);
     expect(el.querySelector('.sf-pw-suite')?.textContent).toContain('Running case…');
     await act(async () => release({ ok: true, suite: suiteRow({ sha256: 'newer', lastResults: { c1: { outcome: 'pass', runId: 'r', at: 3 } } }) })); await flush();
     expect(el.querySelector('.sf-pw-suite')?.textContent).toContain('1/2 pass');
@@ -603,8 +607,9 @@ describe('PreviewWorkbench failure paths and edge cases', () => {
 
   it('disables suite runs while Live is selected or a run is active', async () => {
     const el = await mount({ engine: 'live' });
+    await click(btn(el, 'Inspect'));
     expect(btn(el, 'Run suite').disabled).toBe(true);
-    expect([...el.querySelectorAll('.sf-pw-chip')].every(c => (c as HTMLButtonElement).disabled)).toBe(true);
+    expect([...el.querySelectorAll('.sf-pw-suite-case button')].every(c => (c as HTMLButtonElement).disabled)).toBe(true);
     await rerender({ engine: 'simulate' });
     await click(btn(el, 'Start'));
     expect(btn(el, 'Run suite').disabled).toBe(true);

@@ -81,10 +81,12 @@ Scheduler tab to know what happened.
 changelog scan). Group related schedules together from the schedule's edit
 dialog — the Scheduler tab lets you filter by group.
 
-## 4. Pausing / editing
+## 4. Turning off, editing and resuming
 
-Toggle a schedule off without deleting it, or edit its prompt/cadence at any
-time — the next run picks up the change.
+Disable a schedule to stop it without deleting it, or edit its prompt/cadence at
+any time — the next run picks up the change. **Resume latest run** reopens the
+agent from a finished run in a new tab, with its whole conversation and nothing
+sent, so you can follow up where it stopped.
 `,
   personas: `
 A persona is a reusable agent identity: role, model, permission mode, system

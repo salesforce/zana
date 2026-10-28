@@ -1354,7 +1354,14 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     timedOut: playgroundTimedOut
   });
   const saveDisabled = saveIsDisabled(saveEnabled, activePath, busy) || Boolean(heldBy);
-  const composeFor = (instruction: string) => navigate.toCompose({ initialPrompt: `${instruction}\nProject: ${projectId}\nSource: ${activePath}`, focusPrompt: true });
+  const composeFor = (instruction: string, path: string | null = activePath) => {
+    const prompt = `${instruction}\nProject: ${projectId}\nSource: ${path}`;
+    if (navigate.openPanelAgent?.({
+      draft: { prompt, ...(path ? { view: path } : {}), ...(projectId ? { projectId } : {}) },
+      title: path ? basename(path) : 'Agent tests'
+    })) return;
+    navigate.toCompose({ initialPrompt: prompt, focusPrompt: true });
+  };
   const quickItems = useMemo<QuickOpenItem[]>(() => [
     ...files.map(file => ({ id: `file:${file.path}`, label: file.apiName || basename(file.path), detail: file.path, kind: 'agent' })),
     ...explorerNodes.flatMap((node, index) => node.kind === 'agent' || node.kind === 'prompt' ? [] : [{ id: `node:${index}`, label: node.apiName, detail: node.path ?? node.usedBy?.[0], kind: node.kind === 'lightning-type' ? 'type' : node.kind === 'lwc' ? 'LWC' : node.kind }])
@@ -1520,7 +1527,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       const key = `${agent.path}\n${target}`;
       const body = target === 'graph'
         ? <AgentScriptGraphPanel source={paneSource} visible={shown} compact={compact} focusNode={live ? graphFocus.node : null} focusSeq={live ? graphFocus.seq : 0} focusCase={live ? graphFocus.caseId : undefined}
-          coverage={coverageFor(agent.path)} onDraftCases={labels => composeFor(draftCasesPrompt(labels, agentSuitePath(agent.path) ?? 'the scenario suite'))}
+          coverage={coverageFor(agent.path)} onDraftCases={labels => composeFor(draftCasesPrompt(labels, agentSuitePath(agent.path) ?? 'the scenario suite'), agent.path)}
           onOpenAction={id => inspectAction(agent.path, id)} />
         : target === 'preview'
         ? <>
@@ -1536,7 +1543,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
         </>
         : target === 'tests'
         ? <TestsPane pluginId={pluginId} projectId={projectId} threadId={threadId} path={agent.path} source={paneSource} visible={shown} dirty={live && dirty}
-          proposalSource={live ? proposalSource : null} onAskAgent={composeFor} simulationsFocus={live ? simulationsFocus : null} onSimulationsFocusHandled={simulationsFocusHandled}
+          proposalSource={live ? proposalSource : null} onAskAgent={prompt => composeFor(prompt, agent.path)} simulationsFocus={live ? simulationsFocus : null} onSimulationsFocusHandled={simulationsFocusHandled}
           onShowPath={caseId => { setGraphFocus(current => ({ node: null, seq: current.seq + 1, caseId })); openTool('graph'); }}
           roleplay={<AgentforceLabPanel pluginId={pluginId} projectId={projectId} threadId={threadId} orgAlias={org?.alias} source={paneSource} mode="test" fileLabel={label} agentPath={agent.path} />} />
         : <AgentforcePreviewPanel pluginId={pluginId} projectId={projectId} threadId={threadId} />;

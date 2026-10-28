@@ -11,7 +11,8 @@ const control: { options?: any } = {};
 vi.mock('./useSalesforceControl.js', async importOriginal => ({ ...(await importOriginal<object>()), useSalesforceControl: (options: unknown) => { control.options = options; } }));
 vi.mock('./preview/PreviewWorkbench.js', () => ({ PreviewWorkbench: (p: any) => <div data-testid="stub-preview" data-engine={p.engine} data-dirty={String(Boolean(p.dirty))} data-command={p.command ? JSON.stringify(p.command) : ""}><button data-testid="stub-run" onClick={() => p.onRunChange({ runId: 'r1', engine: 'live', turn: 1 })}>run</button><button data-testid="stub-handled" onClick={() => p.onCommandHandled(p.command?.seq ?? -1)}>handled</button><button data-testid="stub-stale" onClick={() => p.onCommandHandled(0)}>stale</button></div> }));
 vi.mock('./studio/AskAgentButton.js', () => ({ AskAgentButton: () => <div data-testid="stub-ask-agent" /> }));
-vi.mock('./AgentScriptGraphPanel.js', () => ({ AgentScriptGraphPanel: (p: any) => <div data-testid="stub-graph" data-focus={`${p.focusNode}:${p.focusSeq}`} data-compact={String(p.compact)}><button data-testid="stub-graph-inspect" onClick={() => p.onOpenAction((globalThis as any).__graphInspect)}>inspect</button></div> }));
+vi.mock('./AgentScriptGraphPanel.js', () => ({ AgentScriptGraphPanel: (p: any) => <div data-testid="stub-graph" data-focus={`${p.focusNode}:${p.focusSeq}`} data-compact={String(p.compact)}><button data-testid="stub-graph-draft" onClick={() => p.onDraftCases(["welcome"])}>draft cases</button><button data-testid="stub-graph-inspect" onClick={() => p.onOpenAction((globalThis as any).__graphInspect)}>inspect</button></div> }));
+vi.mock('./studio/OrgTestsView.js', () => ({ OrgTestsView: (p: any) => <button data-testid="stub-org-tests-ask" onClick={() => p.onAskAgent('Explain this org test')}>ask about org test</button> }));
 vi.mock('./OrgAgentsPanel.js', () => ({ OrgAgentsPanel: (p: any) => <div data-testid="stub-agents"><button data-testid="stub-agents-open" onClick={() => p.onLocalOpen?.('force-app/bots/Help.agent')}>open</button></div> }));
 vi.mock('./AgentforceLabPanel.js', () => ({ AgentforceLabPanel: () => <div data-testid="stub-lab" /> }));
 vi.mock('./panels/OperationsPanel.js', () => ({ OperationsPanel: () => <div data-testid="stub-ops" /> }));
@@ -70,6 +71,7 @@ const sent = (el: HTMLElement) => (el.querySelector('iframe')!.contentWindow!.po
 
 beforeEach(() => {
   localStorage.clear(); rpc.mockClear(); observers.length = 0; width = 1000; realtime = undefined; sidePanel = true; sidePanelOpen = undefined; resetStudioToolBridge();
+  navigate.toCompose.mockClear();
   navigate.openPanelTool = vi.fn(() => true); delete navigate.openPanelAgent;
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({ width, height: 600, top: 0, left: 0, right: width, bottom: 600, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect);
   (globalThis as any).ResizeObserver = class { constructor(cb: any) { observers.push(w => cb([{ contentRect: { width: w } }])); } observe() {} disconnect() {} };
@@ -308,6 +310,80 @@ describe('AgentScriptPanel beside the host side panel', () => {
     rpc.mockImplementation(async (p: string, method: string, args?: any) => method === 'studio.draftAgent' ? { ok: false } : baseRpc(p, method, args));
     await post(el, { type: 'askSelection', action: 'explain-selection', startLine: 1, endLine: 2, text: 'a' });
     expect(el.querySelector('[role="alert"]')!.textContent).toContain('Could not prepare the request.');
+  });
+
+  it.each([true, false, undefined])('keeps self-healing beside Studio when the host accepts its draft (%s)', async available => {
+    if (available !== undefined) navigate.openPanelAgent = vi.fn(() => available);
+    const path = 'force-app/bots/QC.agent';
+    const batch = { id: 'baseline', agentPath: path, status: 'done', engine: 'preview', startedAt: 1, startedBy: 'studio',
+      counts: { pass: 1, fail: 1, total: 2, error: 0, stopped: 0 }, lanes: [] };
+    let run: any = null;
+    rpc.mockImplementation(async (p: string, method: string, args?: any) => {
+      if (method === 'studio.simulations.list') return { ok: true, batches: [batch] };
+      if (method === 'studio.simulations.get') return { ok: true, batch };
+      if (method === 'studio.selfHealing.status') return { ok: true, run };
+      if (method === 'studio.selfHealing.start') {
+        run = { id: 'healing-run', agentPath: path, bestBatchId: batch.id, baselinePass: 1, bestPass: 1, total: 2,
+          maxAttempts: args.maxAttempts, attempts: [], status: 'awaiting_candidate' };
+        return { ok: true, run };
+      }
+      return baseRpc(p, method, args);
+    });
+    const el = await mount(path);
+    await ready(el);
+    await post(el, { type: 'snapshot', content: SOURCE, issues: 0, actions: [] });
+    await act(async () => { await exec('simulations.open'); });
+    await flush();
+    const button = (name: string) => [...el.querySelectorAll<HTMLButtonElement>('.sf-sim-healing button')].find(b => b.textContent === name)!;
+    await waitFor(() => expect(button('Start self-healing')?.disabled).toBe(false));
+    await act(async () => { button('Start self-healing').click(); });
+    await flush();
+    const prompt = expect.stringContaining('Run id: healing-run. Budget: 3 candidate attempts.');
+    expect(el.querySelector('[data-testid="studio-simulations"]')).toBeTruthy();
+    if (available) {
+      expect(navigate.openPanelAgent).toHaveBeenLastCalledWith({ draft: { prompt, view: path, projectId: 'proj-1' }, title: 'QC.agent' });
+      expect(navigate.toCompose).not.toHaveBeenCalled();
+      // A kept pane's handoff still belongs to its agent after another file opens.
+      await act(async () => { await exec('file.open', { path: 'force-app/bots/Help.agent' }); });
+      await flush();
+      await act(async () => { button('Continue with agent').click(); });
+      expect(navigate.openPanelAgent).toHaveBeenLastCalledWith({ draft: { prompt, view: path, projectId: 'proj-1' }, title: 'QC.agent' });
+      expect(navigate.toCompose).not.toHaveBeenCalled();
+    } else {
+      expect(navigate.toCompose).toHaveBeenCalledWith({ initialPrompt: prompt, focusPrompt: true });
+    }
+    expect(rpc.mock.calls.some(c => c[1] === 'studio.askAgent')).toBe(false);
+  });
+
+  it('opens an org-test assistant without a selected agent file', async () => {
+    navigate.openPanelAgent = vi.fn(() => true);
+    const el = await mount();
+    await ready(el);
+    await act(async () => { await exec('orgTests.open'); });
+    await flush();
+    await act(async () => { el.querySelector<HTMLButtonElement>('[data-testid="stub-org-tests-ask"]')!.click(); });
+    expect(navigate.openPanelAgent).toHaveBeenLastCalledWith({
+      draft: { prompt: expect.stringContaining('Explain this org test'), projectId: 'proj-1' }, title: 'Agent tests'
+    });
+    expect(navigate.toCompose).not.toHaveBeenCalled();
+  });
+
+  it('drafts graph coverage cases for the graph agent after switching to another file', async () => {
+    navigate.openPanelAgent = vi.fn(() => true);
+    const path = 'force-app/bots/QC.agent';
+    const el = await mount(path);
+    await ready(el);
+    await post(el, { type: 'snapshot', content: SOURCE, issues: 0, actions: [] });
+    await act(async () => { await exec('graph.focus', { node: 'welcome' }); });
+    await act(async () => { await exec('file.open', { path: 'force-app/bots/Help.agent' }); });
+    await flush();
+    const draft = el.querySelector<HTMLButtonElement>(`[data-testid="studio-view-graph"][data-agent="${path}"] [data-testid="stub-graph-draft"]`)!;
+    await act(async () => { draft.click(); });
+    expect(navigate.openPanelAgent).toHaveBeenLastCalledWith({
+      draft: { prompt: expect.stringContaining(`Source: ${path}`), view: path, projectId: 'proj-1' }, title: 'QC.agent'
+    });
+    expect(navigate.openPanelAgent.mock.calls.at(-1)![0].draft.prompt).toContain('welcome');
+    expect(navigate.toCompose).not.toHaveBeenCalled();
   });
 
   it('B: Inspect <action> from the Graph view opens it over an open dependency tab', async () => {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { isBareCountQuery } from '../lib/soql-count.js';
 import { applyLimit, inspectSoql, parseSoqlInput, searchSObjects } from '../lib/soql.js';
 
 describe('soql plans', () => {
@@ -64,5 +65,43 @@ describe('soql plans', () => {
     expect(inspectSoql('INSERT INTO Account').ok).toBe(false);
     const validated = parseSoqlInput({ action: 'query.validate', query: 'SELECT Id FROM Account ALL ROWS' });
     expect(validated).toMatchObject({ ok: true, plan: { allRows: true } });
+  });
+});
+
+describe('bare COUNT() queries', () => {
+  it('runs as written, keeping a LIMIT the query already has', () => {
+    expect(applyLimit('SELECT COUNT() FROM Account', 200)).toBe('SELECT COUNT() FROM Account');
+    expect(applyLimit('SELECT COUNT() FROM Account;', 200)).toBe('SELECT COUNT() FROM Account');
+    expect(applyLimit('SELECT COUNT() FROM Account LIMIT 5;', 200)).toBe('SELECT COUNT() FROM Account LIMIT 5');
+    expect(applyLimit('SELECT COUNT() FROM Account LIMIT 5000', 200)).toBe('SELECT COUNT() FROM Account LIMIT 5000');
+    expect(applyLimit('select count ( ) from Account where Name != null', 200)).toBe('select count ( ) from Account where Name != null');
+  });
+
+  it('still limits every other query', () => {
+    expect(applyLimit('SELECT COUNT(Id) FROM Account', 10)).toBe('SELECT COUNT(Id) FROM Account LIMIT 10');
+    expect(applyLimit('SELECT Id FROM Account', 10)).toBe('SELECT Id FROM Account LIMIT 10');
+  });
+
+  it('treats a sampled bare COUNT() like a run: unbounded unless a LIMIT caps it', () => {
+    const plan = (action: string, query: string) => parseSoqlInput({ action, query });
+    expect(plan('query.sample', 'SELECT COUNT() FROM Account')).toMatchObject({ ok: true, plan: { unbounded: true, envelope: 'soql.unbounded' } });
+    expect(plan('query.sample', 'SELECT COUNT() FROM Account LIMIT 5')).toMatchObject({ ok: true, plan: { unbounded: false } });
+    expect(plan('query.sample', 'SELECT COUNT() FROM Account LIMIT 500')).toMatchObject({ ok: true, plan: { unbounded: true } });
+    expect(plan('query.sample', 'SELECT Id FROM Account')).toMatchObject({ ok: true, plan: { unbounded: false } });
+    expect(plan('query.run', 'SELECT COUNT() FROM Account')).toMatchObject({ ok: true, plan: { unbounded: true } });
+  });
+
+  it('keeps the LIMIT written in the query apart from the run limit', () => {
+    expect(parseSoqlInput({ action: 'query.run', query: 'SELECT COUNT() FROM Account LIMIT 5', limit: 50 })).toMatchObject({ ok: true, plan: { limit: 50, queryLimit: 5 } });
+    expect(parseSoqlInput({ action: 'query.run', query: 'SELECT Id FROM Account' })).toMatchObject({ ok: true, plan: { limit: 200, queryLimit: null } });
+    expect(parseSoqlInput({ action: 'schema.search', term: 'Acc' })).toMatchObject({ ok: true, plan: { queryLimit: null } });
+  });
+
+  it('detects a bare COUNT() behind full-line comments only', () => {
+    expect(isBareCountQuery('-- note\nSELECT COUNT() FROM Account')).toBe(true);
+    expect(isBareCountQuery('/* c */ SELECT COUNT() FROM Account')).toBe(false);
+    expect(isBareCountQuery('SELECT COUNT(Id) FROM Account')).toBe(false);
+    expect(isBareCountQuery('')).toBe(false);
+    expect(isBareCountQuery(undefined)).toBe(false);
   });
 });

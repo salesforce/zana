@@ -140,6 +140,7 @@ describe('Preview context editor and setup', () => {
     const setup = screen.getByRole('button', { name: 'Setup' }); setup.focus(); fireEvent.click(setup);
     const dialog = screen.getByRole('dialog');
     expect(dialog.getAttribute('aria-modal')).toBe('true');
+    expect(document.getElementById(dialog.getAttribute('aria-describedby')!)?.textContent).toContain('Review the values for your next run');
     expect(within(dialog).getByRole('alert').textContent).toBe('Start failed');
     const first = within(dialog).getByRole('button', { name: 'Close preview setup' });
     const last = within(dialog).getByRole('button', { name: 'Restart preview' });

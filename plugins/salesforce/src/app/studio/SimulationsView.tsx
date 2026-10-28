@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { MessageSquare, Play, SlidersHorizontal } from 'lucide-react';
+import { SimulationScenarios } from './SimulationScenarios.js';
+import { SIMULATION_STYLES } from './simulation-styles.js';
 import { callPluginRpc, useRealtime } from '@zana-ai/zcc-plugin-sdk/app';
+import { SelfHealingPanel } from './SelfHealingPanel.js';
 import { LAB_SCENARIOS, type LabEngine } from '../../../lib/agentforce-lab-contract.js';
 import { CONTEXT_PRESETS_CHANGED, type ContextPreset } from '../../../lib/preview-context-preset-contract.js';
 import { parsePreviewContext } from '../../../lib/preview-context.js';
@@ -32,42 +36,6 @@ export interface SimulationsViewProps {
 }
 
 type Reply = { ok?: boolean; code?: string; error?: string } & Record<string, unknown>;
-
-const STYLES = `
-.sf-sim { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
-.sf-sim-setup { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 8px 10px; border: 1px solid var(--sf-border); border-radius: 8px; }
-.sf-sim-setup label { display: inline-flex; gap: 4px; align-items: center; color: var(--sf-text); }
-.sf-sim-setup select { font: inherit; color: var(--sf-text); background: var(--sf-sunken); border: 1px solid var(--sf-border); border-radius: 6px; padding: 1px 4px; }
-.sf-sim-lanes { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
-.sf-sim-lanes > [role="listitem"] { min-width: 0; display: flex; }
-.sf-sim-lanes > [role="listitem"] > button { width: 100%; }
-.sf-sim-lane { border: 1px solid var(--sf-border); border-radius: 8px; display: flex; flex-direction: column; text-align: left; font: inherit; color: inherit; background: transparent; padding: 0; cursor: pointer; overflow: hidden; min-width: 0; }
-.sf-sim-lane:hover { background: var(--sf-soft); }
-.sf-sim-lane[aria-pressed="true"] { outline: 2px solid var(--sf-accent); outline-offset: -1px; }
-.sf-sim-lane.is-running { border-color: var(--sf-accent); }
-.sf-sim-lane.is-pass { border-color: var(--sf-success); }
-.sf-sim-lane.is-fail, .sf-sim-lane.is-error { border-color: var(--sf-danger); }
-.sf-sim-lane header { display: flex; gap: 6px; align-items: flex-start; padding: 6px 8px 2px; }
-.sf-sim-lane header b { flex: 1; overflow-wrap: anywhere; }
-.sf-sim-persona { padding: 0 8px 6px; color: var(--sf-muted); font-size: 11px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.sf-sim-mini { border-top: 1px solid var(--sf-border); padding: 6px 8px; display: flex; flex-direction: column; gap: 3px; min-height: 52px; font-size: 11px; }
-.sf-sim-mini p { margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
-.sf-sim-mini .is-user { color: var(--sf-muted); }
-.sf-sim-lane footer { border-top: 1px solid var(--sf-border); padding: 5px 8px; font-size: 11px; color: var(--sf-muted); overflow-wrap: anywhere; }
-.sf-sim-lane footer.is-bad { color: var(--sf-danger); }
-.sf-sim-chip.is-running { color: var(--sf-accent); border-color: var(--sf-accent); }
-.sf-sim-chip.is-error { border-color: var(--sf-danger); color: var(--sf-danger); }
-.sf-sim-detail { border: 1px solid var(--sf-border); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; }
-.sf-sim-detail h3 { margin: 0; font-size: 12px; }
-.sf-sim-turns { display: flex; flex-direction: column; gap: 6px; }
-.sf-sim-turn { max-width: 88%; padding: 5px 8px; border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--sf-elevated); }
-.sf-sim-turn.is-user { align-self: flex-end; background: color-mix(in srgb, var(--sf-accent) 14%, transparent); }
-.sf-sim-turn small { display: block; color: var(--sf-muted); font-size: 10px; }
-.sf-sim-verdict { padding: 6px 8px; border-radius: 6px; border: 1px solid var(--sf-border); overflow-wrap: anywhere; }
-.sf-sim-verdict.is-pass { border-color: var(--sf-success); }
-.sf-sim-verdict.is-fail, .sf-sim-verdict.is-error { border-color: var(--sf-danger); background: color-mix(in srgb, var(--sf-danger) 8%, transparent); }
-.sf-sim-verdict ul { margin: 4px 0 0; padding-left: 16px; }
-`;
 
 const STATUS_LABEL: Record<LaneStatus, string> = { queued: 'Queued', running: 'Running', pass: 'Pass', fail: 'Fail', inconclusive: 'Unclear', error: 'Error', stopped: 'Stopped' };
 const BATCH_LABEL: Record<SimulationBatch['status'], string> = { running: 'Running', done: 'Done', stopped: 'Stopped', interrupted: 'Interrupted' };
@@ -110,6 +78,8 @@ function AgentSimulations(props: SimulationsViewProps) {
   const [batch, setBatch] = useState<SimulationBatch | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [laneId, setLaneId] = useState<string | null>(null);
+  const [view, setView] = useState<'scenarios' | 'results'>('scenarios');
+  const [activeScenario, setActiveScenario] = useState(LAB_SCENARIOS[0]!.name);
   const [presets, setPresets] = useState<string[]>(LAB_SCENARIOS.map(row => row.name));
   const [scenarios, setScenarios] = useState(() => LAB_SCENARIOS.map(row => ({ key: row.name, name: row.name, ...row.scenario })));
   const [contextPresets, setContextPresets] = useState<ContextPreset[]>([]);
@@ -118,11 +88,19 @@ function AgentSimulations(props: SimulationsViewProps) {
   const [contextRevision, setContextRevision] = useState(0);
   const nextScenario = useRef(0);
   const [repeats, setRepeats] = useState(1);
+  const [parallel, setParallel] = useState(4);
   const [engine, setEngine] = useState<LabEngine>('preview');
   const [busy, setBusy] = useState<'start' | 'stop' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const settings = useRef<HTMLDetailsElement>(null);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  useEffect(() => {
+    const close = (event: Event) => { if (settings.current && !settings.current.contains(event.target as Node)) settings.current.open = false; };
+    document.addEventListener('pointerdown', close, true);
+    document.addEventListener('focusin', close, true);
+    return () => { document.removeEventListener('pointerdown', close, true); document.removeEventListener('focusin', close, true); };
+  }, []);
   const selected = useRef<string | null>(null);
   selected.current = selectedId;
 
@@ -167,7 +145,7 @@ function AgentSimulations(props: SimulationsViewProps) {
     // Only select one that belongs to this agent's filtered history.
     const requested = pick && rows.some(row => row.id === pick) ? pick : undefined;
     const next = requested ?? selected.current ?? rows[0]?.id ?? null;
-    if (next !== selected.current) { setSelectedId(next); setLaneId(null); }
+    if (next !== selected.current) { setSelectedId(next); setLaneId(null); if (next) setView('results'); }
     selected.current = next;
     if (next) await loadBatch(next); else setBatch(null);
   }, [loadBatch, path, rpc]);
@@ -175,6 +153,7 @@ function AgentSimulations(props: SimulationsViewProps) {
   useEffect(() => { if (visible) void loadList().catch(err => alive.current && setError(String(err?.message ?? err))); }, [visible, loadList]);
   useEffect(() => {
     if (!focus) return;
+    setView('results');
     void loadList(focus.batchId).catch(err => alive.current && setError(String(err?.message ?? err)));
     onFocusHandled?.(focus.seq);
   }, [focus, loadList, onFocusHandled]);
@@ -203,15 +182,15 @@ function AgentSimulations(props: SimulationsViewProps) {
     setBusy('start'); setError(null);
     try {
       const selectedScenarios: SimulationScenarioInput[] = scenarios.filter(row => presets.includes(row.key)).map(({ key: _key, ...row }) => row);
-      parseSimulationRequest({ scenarios: selectedScenarios, repeats, engine });
+      parseSimulationRequest({ scenarios: selectedScenarios, repeats, parallel, engine });
       const preset = contextPresets.find(p => p.id === contextPreset);
       if (contextPreset && !preset) throw Error('The selected context preset is unavailable. Select it again.');
       const contextVariables = parsePreviewContext(preset?.values);
-      const reply = await rpc(SIMULATION_RPC.start, { agentPath: path, source, scenarios: selectedScenarios, repeats, engine, contextVariables, startedByUser: true, ...(threadId ? { threadId } : {}) });
+      const reply = await rpc(SIMULATION_RPC.start, { agentPath: path, source, scenarios: selectedScenarios, repeats, parallel, engine, contextVariables, startedByUser: true, ...(threadId ? { threadId } : {}) });
       if (!alive.current) return;
       if (reply.ok === false) { setError(reply.error || 'The simulation could not start.'); return; }
       const started = reply.batch as SimulationBatch;
-      setBatch(started);
+      setBatch(started); setView('results');
       await loadList(started.id);
     } catch (err) { if (alive.current) setError(err instanceof Error ? err.message : String(err)); }
     finally { if (alive.current) setBusy(null); }
@@ -231,66 +210,53 @@ function AgentSimulations(props: SimulationsViewProps) {
   const addScenario = () => {
     const key = `custom-${++nextScenario.current}`;
     setScenarios(rows => [...rows, { key, name: 'Custom scenario', persona: '', goal: '', opening: '', criteria: '', maxTurns: 4 }]);
-    setPresets(rows => [...rows, key]);
+    setPresets(rows => [...rows, key]); setActiveScenario(key);
   };
   const reuseScenarios = () => {
     if (!batch) return;
     const unique = [...new Map(batch.lanes.map(lane => [JSON.stringify([lane.name, lane.scenario]), { name: lane.name, ...lane.scenario }])).values()];
     const rows = unique.map((row, i) => ({ ...row, key: `reused-${i}` }));
-    setScenarios(rows); setPresets(rows.map(row => row.key)); setEngine(batch.engine); setRepeats(Math.max(1, ...batch.lanes.map(l => l.repeat)));
+    setScenarios(rows); setPresets(rows.map(row => row.key)); setActiveScenario(rows[0]?.key ?? ''); setView('scenarios'); setEngine(batch.engine); setRepeats(Math.max(1, ...batch.lanes.map(l => l.repeat))); setParallel(batch.parallel);
   };
   const togglePreset = (name: string) => setPresets(current => current.includes(name) ? current.filter(row => row !== name) : [...current, name]);
 
   if (!path) return <div className="sf-tp-empty">Open an agent file to simulate conversations with it.</div>;
   const lane = batch?.lanes.find(row => row.id === laneId) ?? null;
   const counts = batch?.counts;
-  const finished = counts ? counts.pass + counts.fail + counts.inconclusive + counts.error : 0;
+  const finished = counts ? counts.pass + counts.fail + counts.inconclusive + counts.error + counts.stopped : 0;
   const notPassing = counts ? counts.fail + counts.inconclusive + counts.error : 0;
 
   return <div className="sf-sim" data-testid="studio-simulations">
-    <style>{STYLES}</style>
-    <div className="sf-sim-setup" role="group" aria-label="New simulation batch">
-      {scenarios.map(row => <label key={row.key} title={row.persona}>
-        <input type="checkbox" checked={presets.includes(row.key)} disabled={running || busy !== null} onChange={() => togglePreset(row.key)} />{row.name}
-      </label>)}
-      <label>Repeats <select value={repeats} disabled={running || busy !== null} onChange={event => setRepeats(Number(event.currentTarget.value))} aria-label="Repeats">
-        {Array.from({ length: SIMULATION_LIMITS.repeats }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}×</option>)}
-      </select></label>
-      <label>Engine <select value={engine} disabled={running || busy !== null} onChange={event => setEngine(event.currentTarget.value as LabEngine)} aria-label="Engine">
-        <option value="preview">Simulate</option><option value="rehearsal">Rehearse</option>
-      </select></label>
-      <span className="sf-tp-spacer" />
-      {running
-        ? <button type="button" className="sf-tp-btn" disabled={busy !== null} onClick={() => void stop()}>{busy === 'stop' ? 'Stopping…' : 'Stop'}</button>
-        : <button type="button" className="sf-tp-btn is-primary" disabled={busy !== null || !lanes || lanes > SIMULATION_LIMITS.lanes || !source.trim()} onClick={() => void start()}>
-          {busy === 'start' ? 'Starting…' : `Run ${lanes} conversation${lanes === 1 ? '' : 's'}`}
-        </button>}
+    <style>{SIMULATION_STYLES}</style>
+    <header className="sf-sim-heading">
+      <div><h2>Simulations</h2><p>Test customer journeys against your agent.</p></div>
+      <details ref={settings} className="sf-sim-settings" onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); event.stopPropagation(); } }}>
+        <summary><SlidersHorizontal size={14} aria-hidden="true" />Run settings</summary>
+        <div className="sf-sim-settings-body" role="group" aria-label="Run settings">
+          <label>Engine<select value={engine} disabled={running || busy !== null} onChange={event => setEngine(event.target.value as LabEngine)} aria-label="Engine"><option value="preview">Simulate</option><option value="rehearsal">Rehearse</option></select></label>
+          <label>In parallel<select value={parallel} disabled={running || busy !== null} onChange={event => setParallel(Number(event.target.value))} aria-label="Parallel conversations">{[1, 2, 3, 4].map(n => <option key={n} value={n}>{n}</option>)}</select></label>
+          <label>Repeats<select value={repeats} disabled={running || busy !== null} onChange={event => setRepeats(Number(event.target.value))} aria-label="Repeats">{Array.from({ length: SIMULATION_LIMITS.repeats }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}×</option>)}</select></label>
+          <label>Context preset<select aria-label="Simulation context preset" value={contextPreset} disabled={running || busy !== null} onChange={event => setContextPreset(event.target.value)}><option value="">Agent defaults</option>{contextPresets.map(p => <option key={p.id} value={p.id}>{p.name} · revision {p.revision}</option>)}</select></label>
+          {contextError && <p role="status">{contextError}</p>}
+          <p>Create context presets in Preview → Context. These values apply to every conversation in this batch.</p>
+        </div>
+      </details>
+      {running ? <button type="button" className="sf-tp-btn sf-sim-run" disabled={busy !== null} onClick={() => void stop()}>{busy === 'stop' ? 'Stopping…' : 'Stop'}</button>
+        : <button type="button" className="sf-tp-btn is-primary sf-sim-run" disabled={busy !== null || !lanes || lanes > SIMULATION_LIMITS.lanes || !source.trim()} onClick={() => void start()}><Play size={13} aria-hidden="true" />{busy === 'start' ? 'Starting…' : `Run ${lanes} conversation${lanes === 1 ? '' : 's'}`}</button>}
+    </header>
+    <div className="sf-sim-navigation">
+      <div role="group" aria-label="Simulation views"><button type="button" aria-pressed={view === 'scenarios'} onClick={() => setView('scenarios')}>Scenarios <span>{scenarios.length}</span></button><button type="button" aria-pressed={view === 'results'} onClick={() => setView('results')}>Results <span>{batch ? `${finished}/${batch.counts.total}` : '0'}</span></button></div>
+      <span className="sf-sim-run-meta">{engine === 'preview' ? 'Simulate' : 'Rehearse'} · {parallel} in parallel · {repeats} {repeats === 1 ? 'repeat' : 'repeats'}</span>
     </div>
-    <details>
-      <summary>Customize scenarios and context</summary>
-      <div className="sf-tp-form">
-        <label className="is-wide">Context preset<select aria-label="Simulation context preset" value={contextPreset} disabled={running || busy !== null} onChange={e => setContextPreset(e.currentTarget.value)}>
-          <option value="">Agent defaults</option>
-          {contextPresets.map(p => <option key={p.id} value={p.id}>{p.name} · revision {p.revision}</option>)}
-        </select></label>
-        {contextError && <p className="is-wide" role="status">{contextError}</p>}
-        <p className="sf-tp-foot is-wide">Create context presets in Preview → Context. The selected values apply to every conversation in this batch.</p>
-        {scenarios.map((row, i) => <fieldset key={row.key} className="is-wide sf-tp-form" disabled={running || busy !== null}>
-          <legend>Scenario {i + 1}</legend>
-          {(['name', 'persona', 'goal', 'opening', 'criteria'] as const).map(field => <label key={field} className={field === 'opening' || field === 'criteria' ? 'is-wide' : undefined}>
-            {{ name: 'Name', persona: 'Customer persona', goal: 'Customer goal', opening: 'Opening message', criteria: 'Success criteria' }[field]}
-            <textarea aria-label={`Scenario ${i + 1} ${field}`} value={row[field]} maxLength={field === 'name' ? 80 : field === 'persona' || field === 'goal' ? 2000 : 4000} rows={field === 'name' ? 1 : 2} onChange={e => editScenario(row.key, { [field]: e.currentTarget.value })} />
-          </label>)}
-          <label>Maximum turns<input aria-label={`Scenario ${i + 1} maximum turns`} type="number" min={1} max={8} value={row.maxTurns} onChange={e => editScenario(row.key, { maxTurns: Number(e.currentTarget.value) })} /></label>
-          <button type="button" className="sf-tp-btn" onClick={() => { setScenarios(rows => rows.filter(r => r.key !== row.key)); setPresets(rows => rows.filter(k => k !== row.key)); }}>Remove scenario {i + 1}</button>
-        </fieldset>)}
-        <button type="button" className="sf-tp-btn" disabled={running || busy !== null || scenarios.length >= SIMULATION_LIMITS.lanes} onClick={addScenario}>Add scenario</button>
-        {batch && <button type="button" className="sf-tp-btn" disabled={running || busy !== null} onClick={reuseScenarios}>Use scenarios from this batch</button>}
-      </div>
-    </details>
-    <p className="sf-tp-foot">An AI customer plays each scenario, {engine === 'preview' ? 'the agent answers in Simulate (actions are simulated)' : 'an AI approximation of the agent answers'}, and an AI judge grades the transcript. Runs the editor source{dirty ? ', including unsaved changes' : ''}, {SIMULATION_LIMITS.parallel} at a time. Verdicts are AI opinions, not release evidence.</p>
+    <div hidden={view !== 'scenarios'}>
+      <SimulationScenarios scenarios={scenarios} included={presets} activeKey={activeScenario} attention={new Set(batch?.lanes.filter(row => ['fail', 'inconclusive', 'error'].includes(row.status)).map(row => row.name))} disabled={running || busy !== null}
+        onSelect={setActiveScenario} onToggle={togglePreset} onEdit={editScenario} onAdd={addScenario} onRemove={key => { setScenarios(rows => rows.filter(row => row.key !== key)); setPresets(rows => rows.filter(row => row !== key)); }} />
+      {batch && <button type="button" className="sf-tp-btn sf-sim-reuse" disabled={running || busy !== null} onClick={reuseScenarios}>Use scenarios from this batch</button>}
+    </div>
+    <p className="sf-tp-foot">An AI customer plays each scenario, {engine === 'preview' ? 'the agent answers in Simulate (actions are simulated)' : 'an AI approximation of the agent answers'}, and an AI judge grades the transcript. Runs the editor source{dirty ? ', including unsaved changes' : ''}, {parallel} at a time. Verdicts are AI opinions, not release evidence.</p>
     {lanes > SIMULATION_LIMITS.lanes && <p role="alert">Choose at most {SIMULATION_LIMITS.lanes} conversations. Reduce scenarios or repeats.</p>}
     {error && <div className="sf-tp-message is-error" role="alert">{error}</div>}
+    <div className="sf-sim-results" hidden={view !== 'results'}>
     {batch && counts && <div className="sf-tp-summary" data-testid="simulation-summary">
       <span className="sf-tp-score" aria-label={`${counts.pass} of ${counts.total} pass`}>{counts.pass}/{counts.total}</span>
       <span className="sf-tp-passbar" aria-hidden="true"><i className="is-pass" style={{ width: `${(counts.pass / Math.max(1, counts.total)) * 100}%` }} /><i className="is-fail" style={{ width: `${(notPassing / Math.max(1, counts.total)) * 100}%` }} /></span>
@@ -302,7 +268,7 @@ function AgentSimulations(props: SimulationsViewProps) {
       </select>}
       {onAskAgent && isBatchDone(batch.status) && notPassing > 0 && <button type="button" className="sf-tp-btn is-primary" onClick={() => onAskAgent(improvePrompt(batch))}>Ask the agent to improve</button>}
     </div>}
-    {!batch && !error && <div className="sf-tp-empty">No simulations yet for this agent. Run a batch, or ask the thread agent to run one.</div>}
+    <div className="sf-sim-results-workspace">
     {batch && <div className="sf-sim-lanes" role="list" aria-label="Conversations">
       {batch.lanes.map(row => {
         const footer = laneFooter(row);
@@ -328,5 +294,11 @@ function AgentSimulations(props: SimulationsViewProps) {
         {!lane.turns.length && <div className="sf-tp-empty">No turns yet.</div>}
       </div>
     </section>}
+    {batch && !lane && <div className="sf-sim-detail sf-sim-placeholder"><MessageSquare size={24} aria-hidden="true" /><h3>Explore a conversation</h3><p>Select a result to read its transcript and judge’s evidence.</p></div>}
+    </div>
+    {batch && <button type="button" className="sf-tp-btn sf-sim-reuse" disabled={running || busy !== null} onClick={reuseScenarios}>Use scenarios from this batch</button>}
+    <SelfHealingPanel key={`${projectId}:${path}`} path={path} source={source} batch={batch} visible={visible} rpc={rpc} onAskAgent={onAskAgent} />
+    </div>
+    {!batch && !error && <div className="sf-tp-empty">No simulations yet for this agent. Run a batch, or ask the thread agent to run one.</div>}
   </div>;
 }

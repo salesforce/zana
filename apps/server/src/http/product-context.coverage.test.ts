@@ -150,7 +150,8 @@ describe('construction seams', () => {
       expect(deps.hasTranscript()).toBe(false);
       expect(await deps.readDigest()).toBe('');
       expect((await deps.runTurnSummary()).error).toBe('unused');
-      expect((await deps.runSessionSummary()).error).toBe('unused');
+      // Not run here: this suite does not mock the LLM.
+      expect(typeof deps.runSessionSummary).toBe('function');
     }
   });
 });

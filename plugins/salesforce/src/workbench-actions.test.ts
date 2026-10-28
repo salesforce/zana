@@ -62,6 +62,23 @@ it('offers discoverable capabilities and rejects unknown, oversized and unscoped
   expect((await cli(['tool', 'sf_soql', '--input', '{"action":"query.validate","query":"SELECT Id FROM Account LIMIT 1"}'], 'p')).exitCode).toBe(0);
   expect((await cli(['action', 'context.status'], 'missing')).exitCode).toBe(1);
 });
+it('uses input files for large CLI writes and family actions with the same revision and project checks', async () => {
+  const { action, harness, root } = await fixture();
+  const created = await action('draft.create', { name: 'Large', apiName: 'Large' });
+  const content = '# full CLI input\n'.repeat(20000) + '# END';
+  const input = { path: created.file.path, content, expectedSha256: created.file.sha256 };
+  writeFileSync(join(root, 'write.json'), JSON.stringify(input));
+  const cli = (argv: string[], projectId = 'p') => harness.cli!.run(argv, { pluginId: 'salesforce', argv, projectId });
+  expect((await cli(['action', 'files.write', '--input-file', 'write.json'])).exitCode).toBe(0);
+  expect(readFileSync(join(root, created.file.path), 'utf8')).toBe(content);
+  expect(JSON.parse((await cli(['action', 'files.write', '--input-file', 'write.json'])).stdout!)).toMatchObject({ code: 'sha_mismatch' });
+  const current = await action('files.read', { path: created.file.path });
+  writeFileSync(join(root, 'family.json'), JSON.stringify({ action: 'files.write', input: { ...input, expectedSha256: current.file.sha256, content: content + '\n# family' } }));
+  expect((await cli(['tool', 'sf_agent', '--input-file', 'family.json'])).exitCode).toBe(0);
+  expect(readFileSync(join(root, created.file.path), 'utf8')).toBe(content + '\n# family');
+  expect((await cli(['action', 'files.write', '--input-file', 'write.json'], '')).exitCode).toBe(2);
+  expect((await cli(['--help'])).stdout).toContain('--input-file');
+});
 it('mediates org reads and UI reads but permits offline local drafts', async () => {
   const { action, request, exec, harness } = await fixture(true);
   expect(await action('draft.create', { name: 'Offline', apiName: 'Offline' })).toMatchObject({ ok: true });
@@ -311,6 +328,23 @@ it('runs bounded queries, stores real results and refuses cross-project presenta
   expect(await harness.callRpc('query.result', { projectId: 'other', resultId: result.resultId })).toMatchObject({ ok: false });
   expect(await action('query.execute', { query: 'DELETE FROM Account' })).toMatchObject({ ok: false });
   expect(await action('query.execute', { query: 'SELECT Id FROM Account' })).toMatchObject({ ok: false, code: 'refused' });
+});
+it('runs an approved bare COUNT() query execute without an added LIMIT', async () => {
+  const { action, harness, request, zcc } = await fixture();
+  const confirmation = vi.spyOn(zcc.ui, 'requestInput');
+  const sent = () => (request.mock.calls.at(-1)![1] as { query: { q: string } }).query.q;
+  const run = async (query: string) => {
+    const pending = action('query.execute', { query }, { ...ctx, threadId: 'thread' });
+    await vi.waitFor(() => expect(confirmation).toHaveBeenCalledOnce());
+    harness.submitInteraction({ approved: true });
+    return pending;
+  };
+  expect(await run('SELECT COUNT() FROM Account')).toMatchObject({ ok: true });
+  expect(sent()).toBe('SELECT COUNT() FROM Account');
+  expect(await action('query.execute', { query: 'SELECT COUNT() FROM Account LIMIT 5' })).toMatchObject({ ok: true });
+  expect(sent()).toBe('SELECT COUNT() FROM Account LIMIT 5');
+  expect(await action('query.execute', { query: 'SELECT Id FROM Account LIMIT 1' })).toMatchObject({ ok: true });
+  expect(sent()).toBe('SELECT Id FROM Account LIMIT 1');
 });
 it('uses acknowledged controls and refuses unsafe project creation', async () => {
   const { action, harness } = await fixture();

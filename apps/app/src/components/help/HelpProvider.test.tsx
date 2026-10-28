@@ -21,24 +21,24 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.cle
 function Draft() { return <input data-example aria-label="Draft" />; }
 function Page({ page = 'home', child = <Draft /> }: { page?: string; child?: React.ReactNode }) {
   return <HelpProvider pageKey={page}>
-    <HelpToggle /><HelpToggle variant="mobile" />
+    <HelpToggle />
     <ContextualHelp surfaceId="example" tips={tips}>{child}</ContextualHelp>
   </HelpProvider>;
 }
 const invite = () => screen.getByRole('button', { name: /Need a few tips/ });
 const explore = () => fireEvent.click(invite());
 const dot = () => screen.getByRole('button', { name: 'Tip: Example control' });
-const master = () => screen.getByTestId('titlebar-help-toggle');
+const master = () => screen.getByTestId('mobile-help-toggle');
 
-it('defaults to the invitation and synchronizes desktop and mobile controls', () => {
+it('defaults to the invitation and saves the toggle', () => {
   render(<Page />);
   expect(master().getAttribute('aria-pressed')).toBe('true');
-  expect(screen.getByTestId('mobile-help-toggle').textContent).toBe('Help On');
+  expect(master().textContent).toBe('Help On');
   expect(invite()).toBeTruthy();
   expect(screen.queryAllByRole('button', { name: /^Tip:/ })).toHaveLength(0);
-  fireEvent.click(screen.getByTestId('mobile-help-toggle'));
+  fireEvent.click(master());
   expect(master().getAttribute('aria-pressed')).toBe('false');
-  expect(screen.getByTestId('mobile-help-toggle').textContent).toBe('Help Off');
+  expect(master().textContent).toBe('Help Off');
   expect(localStorage.getItem(HELP_ENABLED_KEY)).toBe('0');
   expect(screen.queryByRole('button', { name: /Need a few tips/ })).toBeNull();
 });

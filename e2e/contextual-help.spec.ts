@@ -9,13 +9,20 @@ test.use({
   initialConfig: { sponsorPromptDismissed: true }
 });
 
+/** The title-bar "?" opens the Help menu; its first row switches page hints. */
+async function switchHints(window: import('@playwright/test').Page) {
+  await window.getByTestId('titlebar-help-toggle').click();
+  await window.getByRole('switch', { name: /Page hints/ }).click();
+  await window.keyboard.press('Escape');
+}
+
 test('global Help is saved, sits beside the star, and keeps New Chat drafts intact', async ({ app }, testInfo) => {
   const { window } = app;
   await window.getByTestId('nav-home').click();
   const help = window.getByTestId('titlebar-help-toggle');
   const guide = window.locator('.home-launcher-tips');
   const invitation = guide.getByRole('button', { name: /Need a few tips/ });
-  await expect(help).toHaveAttribute('aria-pressed', 'true');
+  await expect(help).toHaveClass(/is-active/);
   await expect(invitation).toBeVisible();
   await expect(guide.locator('[data-tip-id]')).toHaveCount(0);
   const helpBox = (await help.boundingBox())!;
@@ -34,8 +41,14 @@ test('global Help is saved, sits beside the star, and keeps New Chat drafts inta
   await expect.poll(() => guide.getByRole('region').evaluate((node) => getComputedStyle(node).opacity)).toBe('1');
   await window.screenshot({ path: testInfo.outputPath('help-exploring.png') });
   await help.click();
-  await expect(help).toHaveAttribute('aria-pressed', 'false');
+  const hints = window.getByRole('switch', { name: /Page hints/ });
+  await expect(hints).toBeFocused();
+  await hints.click();
+  await expect(hints).toHaveAttribute('aria-checked', 'false');
+  await expect(help).not.toHaveClass(/is-active/);
   await expect(window.locator('[data-contextual-help-ui]')).toHaveCount(0);
+  await window.keyboard.press('Escape');
+  await expect(hints).toHaveCount(0);
   await expect(editor).toHaveText('Keep this unsent draft');
   await expect(editor).toHaveAttribute('data-draft-instance', 'original');
   await expect(help).toBeFocused();
@@ -43,18 +56,18 @@ test('global Help is saved, sits beside the star, and keeps New Chat drafts inta
 
   await window.getByTestId('nav-inbox').click();
   await window.getByTestId('nav-home').click();
-  await expect(help).toHaveAttribute('aria-pressed', 'false');
+  await expect(help).not.toHaveClass(/is-active/);
   await expect(invitation).toHaveCount(0);
   await window.reload();
-  await expect(help).toHaveAttribute('aria-pressed', 'false');
+  await expect(help).not.toHaveClass(/is-active/);
   await expect(invitation).toHaveCount(0);
-  await help.click();
+  await switchHints(window);
   await expect(invitation).toBeVisible();
   await expect(guide.locator('[data-tip-id]')).toHaveCount(0);
   await invitation.click();
   await guide.getByRole('button', { name: 'Tip: Modern', exact: true }).click();
   await guide.getByRole('button', { name: /Done/ }).click();
-  await expect(help).toHaveAttribute('aria-pressed', 'true');
+  await expect(help).toHaveClass(/is-active/);
   await expect(invitation).toBeFocused();
   await expect(guide.getByRole('region')).toHaveCount(0);
   await invitation.click();
@@ -62,7 +75,7 @@ test('global Help is saved, sits beside the star, and keeps New Chat drafts inta
   await window.getByTestId('nav-home').click();
   await expect(invitation).toBeVisible();
   await expect(guide.locator('[data-tip-id]')).toHaveCount(0);
-  await expect(help).toHaveAttribute('aria-pressed', 'true');
+  await expect(help).toHaveClass(/is-active/);
 });
 
 for (const engine of [chromium, webkit]) {
@@ -123,7 +136,7 @@ test(`${engine.name()} mobile navigation exposes the same Help preference, saved
     await expect(guide.locator('[data-tip-id]')).toHaveCount(0);
     await page.screenshot({ path: testInfo.outputPath('mobile-help-invitation.png') });
     // Each device/browser controls its own help; a phone opt-out doesn't alter desktop.
-    await expect(app.window.getByTestId('titlebar-help-toggle')).toHaveAttribute('aria-pressed', 'true');
+    await expect(app.window.getByTestId('titlebar-help-toggle')).toHaveClass(/is-active/);
   } finally {
     await browser.close();
     await gateway.close();

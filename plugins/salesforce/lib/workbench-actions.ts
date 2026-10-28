@@ -64,6 +64,10 @@ export const WORKBENCH_ACTIONS = {
   'simulations.result': ['studio.simulations.get', 'local', 'Read a simulation batch: batchId; optional waitMs (at most 60000) waits for it to finish, transcripts false omits turns. Per lane: scenario, status (queued/running/pass/fail/inconclusive/error/stopped), verdict reason and evidence, transcript; next says what to do'],
   'simulations.list': ['studio.simulations.list', 'local', 'List simulation batches of this project, newest first, without transcripts: optional agentPath'],
   'simulations.stop': ['studio.simulations.stop', 'local', 'Stop a running simulation batch: batchId'],
+  'selfHealing.start': ['studio.selfHealing.start', 'local', 'Start bounded agent-driven improvement from a completed Simulate batch with failures: batchId, optional source matching that batch, maxAttempts 1-5 (default 3). Scenarios, context and engine are fixed. No file is saved. Returns run and next; the authoring agent should iterate until passed or exhausted'],
+  'selfHealing.status': ['studio.selfHealing.status', 'local', 'Read and reconcile self-healing progress: runId (or agentPath for latest), optional waitMs up to 30000, includeSource true returns the best tested source. Follow next. Scores and per-attempt regressions are AI opinions, never release evidence'],
+  'selfHealing.evaluate': ['studio.selfHealing.evaluate', 'org', 'Test a candidate in a self-healing run: runId, source. Only the pinned scenarios, repeats, context and Simulate engine are used. Syntax errors and duplicate candidates do not spend an attempt. Regressions cannot replace the best source. Returns immediately; poll selfHealing.status'],
+  'selfHealing.stop': ['studio.selfHealing.stop', 'local', 'Stop self-healing and its active conversations: runId. Best tested source remains available for review; nothing is saved'],
   'orgTests.list': ['studio.orgTests.list', 'org', 'List the org\'s Testing Center definitions (AiEvaluationDefinition): optional refresh. Returns name, subject, case count when known'],
   'orgTests.details': ['studio.orgTests.details', 'org', 'Read the agent (subjectName), label and case count of up to 25 org test definitions in one retrieve: names. Returns definitions and missing'],
   'orgTests.definition': ['studio.orgTests.definition', 'org', 'Read one org test definition and its cases (utterance, history, context variables, expectations): name'],
@@ -90,7 +94,7 @@ export function actionInput(value: unknown, action?: string): Record<string, unk
   const bounded = { ...value } as Record<string, unknown>;
   // Source-bearing operations share the editor's 10 MB bound; unrelated input
   // keeps the small envelope. Never grant this exception to arbitrary fields.
-  const field = action === 'files.write' ? 'content' : ['studio.start', 'source.parse', 'source.query', 'suites.run', 'suites.start', 'suites.compare', 'draft.create', 'simulations.start'].includes(action ?? '') ? 'source' : null;
+  const field = action === 'files.write' ? 'content' : ['studio.start', 'source.parse', 'source.query', 'suites.run', 'suites.start', 'suites.compare', 'draft.create', 'simulations.start', 'selfHealing.start', 'selfHealing.evaluate'].includes(action ?? '') ? 'source' : null;
   if (field && typeof bounded[field] === 'string') {
     if ((bounded[field] as string).length > 10 * 1024 * 1024) throw Error('Agent source exceeds 10 MB.');
     delete bounded[field];

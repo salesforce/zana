@@ -17,6 +17,7 @@ import { SHARED_PRODUCT_EVENTS } from '@zana-ai/zcc-contracts/shared-product';
 import { SharedClient, allowsSharedNavigation } from './window/shared-client.js';
 import { createHistoryProviders, invalidateHarnessModelCatalog } from '@zana-ai/zcc-host-daemon/harness/registry';
 import { RendererReadiness } from './window/renderer-readiness.js';
+import { installAppPermissions } from './window/app-permissions.js';
 import { runStartupDependencyDoctor } from './startup-dependency-doctor.js';
 /**
  * Compatibility IPC host. Window/tray/updater/preload live alongside this file
@@ -264,6 +265,7 @@ import {
 import { createThreadViewHost } from './window/thread-view-host.js';
 import { findUnscopedWindow, isUnscopedRegistration } from './window/main-window-registry.js';
 import { createWindowsTitleBarOverlays } from './window/titlebar-overlay.js';
+import { resolveThemeSetting, windowThemeOptions } from './window/window-theme.js';
 import { registerPluginViewIpc, registerThreadViewIpc } from './ipc/windows.js';
 import { showApprovalSheet } from './window/approval-sheet.js';
 import { startPeerUsePrompts } from './ipc/peer-use-prompts.js';
@@ -347,6 +349,7 @@ import { ContentScreen, type ContentScreenEvent, buildWarningText } from './wind
 import { HeartbeatService } from '@zana-ai/zcc-server/services/followups/heartbeat';
 import { createApiErrorResume } from './api-error-resume-wiring.js';
 import { createWorkerApiErrorRecovery, routeApiErrorStop, workerApiErrorRecoveryEnabled } from './worker-api-error-recovery-wiring.js';
+import { createWrapUpClose } from './wrap-up-close-wiring.js';
 import { LocalExtensionWatcher } from '@zana-ai/zcc-server/services/extensions/local-extension-watcher';
 import { AutonomousRunSupervisor, AUTONOMOUS_DEFAULTS } from '@zana-ai/zcc-server/services/agents/autonomous-run-supervisor';
 import { AutoCloseIdleService } from '@zana-ai/zcc-server/services/followups/auto-close-idle';
@@ -589,14 +592,11 @@ export function logMainError(context: string, err: unknown) {
 
 /**
  * Resolve the stored tri-state `theme` to a concrete 'dark' | 'light' for
- * main-owned surfaces (tray, menubar popover) that can't read the renderer's
- * CSS cascade. 'system' follows the OS via electron `nativeTheme` (WARP-A2).
+ * main-owned surfaces (tray, menubar popover, a new window's background) that
+ * can't read the renderer's CSS cascade. 'system' follows the OS via electron `nativeTheme` (WARP-A2).
  */
 function resolveTheme(): 'dark' | 'light' {
-  const t = store.getConfig().theme;
-  if (t === 'light') return 'light';
-  if (t === 'dark') return 'dark';
-  return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+  return resolveThemeSetting(store.getConfig().theme, () => nativeTheme.shouldUseDarkColors);
 }
 
 /** Resolve `projectPath` (passed by the renderer) to listSkills options. */
@@ -1998,7 +1998,8 @@ const heartbeat = new HeartbeatService({
   isEnabled: () => store.getConfig().heartbeatEnabled === true,
   getSession: (sessionId) => {
     const s = ptys.getSession(sessionId);
-    return s
+    // An agent that is wrapping up belongs to that close: no nudge, armed or new, may type into it.
+    return s && !wrapUpClose.isWrappingUp(sessionId)
       ? {
           heartbeat: s.heartbeat,
           scheduled: s.scheduled,
@@ -2245,7 +2246,7 @@ const autoCloseIdle = new AutoCloseIdleService({
     const s = ptys.getSession(sessionId);
     if (!s) return false;
     // An agent that rests on an API error hasn't finished; spare it until its next turn.
-    return favoriteAgentKeys.has(s.claudeSessionId ?? sessionId) || apiErrorResume.restedOnApiError(sessionId);
+    return favoriteAgentKeys.has(s.claudeSessionId ?? sessionId) || apiErrorResume.restedOnApiError(sessionId) || wrapUpClose.isWrappingUp(sessionId);
   },
   now: () => Date.now(),
   // Expected close ⇒ exit code 0 (this was the app's decision, not a crash).
@@ -2280,8 +2281,10 @@ const autoCloseIdle = new AutoCloseIdleService({
  * off the same resolved-state edge as idle-triage/heartbeat below.
  */
 const mailDrain = new AgentMailDrainService({
-  pending: (sessionId) =>
-    agentMessageLog.pull(sessionId).map((m) => ({ id: m.id, fromHandle: m.fromHandle })),
+  // Queued peer mail waits while the agent wraps up, and is delivered later if it stays open.
+  pending: (sessionId) => wrapUpClose.isWrappingUp(sessionId)
+    ? []
+    : agentMessageLog.pull(sessionId).map((m) => ({ id: m.id, fromHandle: m.fromHandle })),
   reply: (sessionId, text) => ptys.reply(sessionId, text)
 });
   const executionDeliveryDrain = new ExecutionDeliveryDrainService({
@@ -2430,6 +2433,8 @@ const closeSummary = new CloseSummaryService({
     }
   }
 });
+/** "Wrap up before closing" (Experimental): asks resting Claude agents to wrap up before Close with follow-up. */
+const wrapUpClose = createWrapUpClose({ store, ptys, agentStatus, closeSummary, providerCapabilities, isRemoteSession: isTrueSshRemoteSession, suppressesInteractiveBlocked });
 /** Backs the Inbox "AI Summary" card — reads main's own inbox store (the source
  *  of truth, not the renderer's filtered view) and runs the
  *  `builtin:inbox-summary` micro-call to distill a standup-style digest, whole
@@ -7022,6 +7027,9 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
     Object.assign(viewGeometry.options, cascadeThreadViewPosition({ x: viewGeometry.options.x, y: viewGeometry.options.y }, occupied));
   }
 
+  // Every window kind opens in the effective theme's background, and its
+  // preload seeds `<html data-theme>`, so a light window doesn't flash dark.
+  const windowTheme = windowThemeOptions(resolveTheme, logMainError);
   const win = new BrowserWindow({
     ...(viewGeometry
       ? viewGeometry.options
@@ -7036,7 +7044,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
         }),
     title: 'Zana',
     icon: productIconImage(),
-    backgroundColor: '#181818',
+    backgroundColor: windowTheme.backgroundColor,
     // E2E ONLY: never auto-show the window. Playwright drives the renderer over
     // CDP, so a hidden window still runs and is fully controllable, but a shown
     // one repeatedly steals macOS focus from the developer during a local run.
@@ -7066,10 +7074,11 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
       sandbox: true,
       webviewTag: true,
       zoomFactor: DEFAULT_RENDERER_ZOOM_FACTOR,
-      // The sandboxed preload can't reliably read process.env, so pass the e2e
-      // flag as an argv token it CAN read (process.argv). Only present when the
-      // tap is enabled; gates the window.__zccTest bridge in preload.
-      ...(E2E_TAP_ENABLED ? { additionalArguments: ['--zcc-e2e'] } : {})
+      // The sandboxed preload can't reliably read process.env, so pass argv
+      // tokens it CAN read (process.argv): the theme it seeds before first
+      // paint, and the e2e flag. The e2e flag is only present when the tap is
+      // enabled; it gates the window.__zccTest bridge in preload.
+      additionalArguments: [windowTheme.themeArg, ...(E2E_TAP_ENABLED ? ['--zcc-e2e'] : [])]
     }
   });
 
@@ -7393,6 +7402,7 @@ function wireBridgeListeners() {
     heartbeat.remove(sessionId);
     apiErrorResume.forget(sessionId);
     workerApiErrorRecovery.forget(sessionId);
+    wrapUpClose.forget(sessionId);
     // Drop a session that exits while working so a dead pty can't pin the Mac
     // awake; releases (after grace) if it was the last working agent.
     keepAwake.remove(sessionId);
@@ -7544,6 +7554,7 @@ function wireBridgeListeners() {
     workerInjector.onState(sessionId, state);
     squadProposalNotifier.onState(sessionId, state);
     squadExecutionService.observeCoordinatorState(sessionId, state);
+    wrapUpClose.observe(sessionId, state);
     const session = ptys.getSession(sessionId);
     if (session) captureNativeRecoverySnapshot(session);
     if (state === 'idle' && session) {
@@ -7821,6 +7832,7 @@ function registerIpc() {
     get catchUpSummary() { return catchUpSummary; },
     get cloneAndRegisterProject() { return cloneAndRegisterProject; },
     get closeSummary() { return closeSummary; },
+    get wrapUpClose() { return wrapUpClose; },
     get conversationHistory() { return conversationHistory; },
     get createInteractiveTerminal() { return createInteractiveTerminal; },
     get createLocalExtension() { return createLocalExtension; },
@@ -8726,6 +8738,7 @@ async function bootstrapNormal() {
        // A lifecycle Stop is the authoritative end of an interactive turn. The
        // tracker keeps fallback behaviour for harnesses that never send one.
        agentStatus.turnFinished(sessionId);
+       wrapUpClose.onTurnFinished(sessionId);
        apiErrorResume.cancel(sessionId);
        void scheduler.onAgentFinished(sessionId).catch(error => logMainError('scheduler Stop', error));
       // A goal worker finishing its turn is the trigger to evaluate + branch
@@ -8751,6 +8764,8 @@ async function bootstrapNormal() {
         else if (event?.kind === 'resolved') agentStatus.inputResolved(sessionId, event.keys);
         else if (event?.kind === 'interrupted') agentStatus.turnFinished(sessionId);
         else if (event?.kind === 'api-error-stop') {
+          // A wrap-up turn that an API error ended is not finished: it stays open, with an inbox note.
+          wrapUpClose.onTurnFailed(sessionId);
           routeApiErrorStop({ service: apiErrorResume, recovery: workerApiErrorRecovery, enabled: () => workerApiErrorRecoveryEnabled(store.getConfig()), agentStatus, logMainError }, sessionId, session, event);
         }
         return;
@@ -8774,6 +8789,7 @@ async function bootstrapNormal() {
         apiErrorResume.cancel(sessionId);
         workerApiErrorRecovery.onTurnStarted(sessionId, agentStatus.get(sessionId));
         agentStatus.turnStarted(sessionId);
+        wrapUpClose.onTurnStarted(sessionId);
       }
       // Diagnostic: confirms the hook reached the main process. The emit to the
       // renderer is debounced (~250ms), so the red/grey dot is the real proof
@@ -9050,7 +9066,8 @@ async function bootstrapNormal() {
     // Phase 1 messaging: agent_send audits to the message log (never the user
     // inbox) and injects into the target pty via reply() when it's idle.
     agentMessageLog,
-    injectToSession: (sessionId: string, text: string) => ptys.reply(sessionId, text),
+    // A peer's message must not type into an agent that is wrapping up: it stays queued in the mail log.
+    injectToSession: (sessionId: string, text: string) => !wrapUpClose.isWrappingUp(sessionId) && ptys.reply(sessionId, text),
     // close_session / close_session_with_summary: let an agent end its own
     // session. Gated on the opt-in `agentSelfCloseEnabled` flag, read here at
     // boot: when off we pass `undefined`, so the tools are never registered and
@@ -9423,15 +9440,10 @@ async function bootstrapNormal() {
   // One process-lifetime sweep bounds abandoned history snapshots even when no
   // renderer polls again. Window close/reload releases eagerly; this is fallback.
   conversationHistoryEvictTimer = setInterval(() => conversationHistory.evict(), 60_000);
-  // Allow media (microphone) access for voice-to-text; deny all other
-  // permission requests. Installed once at init (not in createWindow).
-  // getUserMedia consults BOTH the request handler (interactive grant) and the
-  // synchronous check handler — without the latter, Chromium can silently deny
-  // the mic even after entitlements are in place.
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(permission === 'media');
-  });
-  session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === 'media');
+  // Allow the microphone (voice-to-text) and HTML fullscreen (videos); deny
+  // all other permission requests. Installed once at init (not in createWindow).
+  /* v8 ignore next -- bootstrap wiring; installAppPermissions is unit-tested */
+  installAppPermissions(session.defaultSession);
   try {
     await ensureRendererStaticHost();
   } catch (error) {

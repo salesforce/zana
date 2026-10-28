@@ -3,8 +3,9 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Archive, Puzzle } from 'lucide-react';
 import { runningProcessCount, withRunningProcessWarning } from '../lib/thread-running-processes.js';
+import { threadCloseFollowupConfirm, threadCloseFollowupToast } from '../lib/thread-close-followup.js';
 import { product } from '../lib/product-client.js';
-import { errorMessage, useUi } from '../store.js';
+import { errorMessage, useData, useUi } from '../store.js';
 import { getAgentsRoutePath, getProjectRoutePath, getThreadRoutePath, projectIdFromThreadPath, threadIdFromPath } from '../lib/route-paths.js';
 import { openThreadInSplit } from '../lib/split-layout/openThreadInSplit.js';
 import { useSplitWorkspace } from '../lib/split-layout/store.js';
@@ -44,7 +45,7 @@ export interface ThreadMenuContext {
   stop: (id: string) => Promise<unknown>;
   fork: (id: string) => Promise<{ ok: boolean; value?: { id: string } }>;
   archive: (id: string) => Promise<{ ok?: boolean }>;
-  closeFollowup: (id: string) => Promise<{ ok?: boolean; summarized?: number; followedUp?: number }>;
+  closeFollowup: (id: string) => Promise<{ ok?: boolean; summarized?: number; followedUp?: number; wrappingUp?: boolean; keptOpen?: 'asks-you' }>;
   pin: (id: string) => Promise<unknown>;
   unpin: (id: string) => Promise<unknown>;
   read: (id: string) => Promise<unknown>;
@@ -117,9 +118,16 @@ export async function runThreadMenuAction(
   }
   const title = threadTitle(thread);
   if (action === 'close-followup') {
-    if (ctx.confirm && !ctx.confirm(withRunningProcessWarning(`Close “${title}” and file a follow-up if work is left?`, thread))) return;
+    const prompt = threadCloseFollowupConfirm(title, useData.getState().closeWrapUpEnabled);
+    if (ctx.confirm && !ctx.confirm(withRunningProcessWarning(prompt, thread))) return;
     const result = await ctx.closeFollowup(thread.id);
     if (result && result.ok === false) return;
+    // Kept open, or wrapping up (the thread archives itself when it finishes): it stays until the thread updates remove it.
+    const leftInPlace = threadCloseFollowupToast(title, result);
+    if (leftInPlace) {
+      useUi.getState().pushToast(leftInPlace, 'info');
+      return;
+    }
     ctx.remove(thread.id);
     const closed = useSplitWorkspace.getState().closePanesForThreads([thread.id]);
     if (closed.removedAny && closed.focusedRouteContent) {
