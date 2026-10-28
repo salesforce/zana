@@ -318,3 +318,34 @@ it('refreshes presets and clears selected context when this project changes org'
   await act(async () => { channels['salesforce.context-presets.changed']!({ projectId: 'p1' }); });
   expect(calls(call, 'agentPreview.presets.list')).toHaveLength(before + 2);
 });
+
+
+it('isolates draft and project pane sizes for both scenario editing and result inspection', async () => {
+  const key = (kind: string, project = 'draft') => `salesforce:studio:simulation-${kind}:${project}:columns`;
+  for (const [kind, value] of [['scenarios', '30'], ['results', '44']]) localStorage.setItem(key(kind!), value!);
+  localStorage.setItem(key('scenarios', 'p1'), '62'); localStorage.setItem(key('results', 'p1'), '55');
+  try {
+    const done = batch('resize-batch', 'done', [lane('1', 'pass')]);
+    const { props, view } = setup({ projectId: undefined }, {
+      'studio.simulations.list': () => ({ ok: true, batches: [done] }),
+      'studio.simulations.get': () => ({ ok: true, batch: done }),
+    });
+    await screen.findByText('Lane 1');
+    const results = () => screen.getByRole('separator', { name: 'Resize conversations and result details' });
+    expect(results().getAttribute('aria-valuenow')).toBe('44');
+    fireEvent.keyDown(results(), { key: 'ArrowRight' });
+    expect(localStorage.getItem(key('results'))).toBe('48');
+    fireEvent.click(button(/^Scenarios/));
+    const scenarios = () => screen.getByRole('separator', { name: 'Resize scenario catalogue and editor' });
+    expect(scenarios().getAttribute('aria-valuenow')).toBe('30');
+    fireEvent.keyDown(scenarios(), { key: 'ArrowRight' });
+    expect(localStorage.getItem(key('scenarios'))).toBe('34');
+    view.rerender(<SimulationsView {...props} projectId="p1" />);
+    await waitFor(() => expect(scenarios().getAttribute('aria-valuenow')).toBe('62'));
+    fireEvent.click(button(/^Results/));
+    expect(results().getAttribute('aria-valuenow')).toBe('55');
+    expect(localStorage.getItem(key('results'))).toBe('48');
+  } finally {
+    for (const kind of ['scenarios', 'results']) for (const project of ['draft', 'p1']) localStorage.removeItem(key(kind, project));
+  }
+});

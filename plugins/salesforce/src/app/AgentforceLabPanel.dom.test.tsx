@@ -403,3 +403,22 @@ describe('role-play helpers', () => {
     expect(elapsed(1000, 7400)).toBe('6 s');
   });
 });
+
+
+it('keeps role-play pane sizes separate for a draft and a selected project', async () => {
+  const draft = 'salesforce:studio:lab:draft:columns';
+  const project = 'salesforce:studio:lab:p1:columns';
+  localStorage.setItem(draft, '32'); localStorage.setItem(project, '68');
+  try {
+    const view = render(<AgentforceLabPanel {...props} projectId={undefined} />);
+    const handle = () => screen.getByRole('separator', { name: 'Resize conversation and evidence' });
+    expect(handle().getAttribute('aria-valuenow')).toBe('32');
+    fireEvent.keyDown(handle(), { key: 'ArrowRight' });
+    expect(localStorage.getItem(draft)).toBe('36');
+    view.rerender(<AgentforceLabPanel {...props} />);
+    await waitFor(() => expect(handle().getAttribute('aria-valuenow')).toBe('68'));
+    fireEvent.keyDown(handle(), { key: 'ArrowLeft' });
+    expect(localStorage.getItem(project)).toBe('64');
+    expect(localStorage.getItem(draft)).toBe('36');
+  } finally { localStorage.removeItem(draft); localStorage.removeItem(project); }
+});
