@@ -14,7 +14,11 @@ import {
 } from '@zana-ai/zcc-agent-runtime';
 import { ensurePluginProcessDataDir } from '@zana-ai/zcc-agent-process-utils';
 import { createFakeAgentRuntime, fakeProviderEnabled } from './fake-runtime.js';
-import { loadRuntimeSkillRoots, hashInjectedSkillCatalog } from './injected-skill-roots.js';
+import {
+  hashInjectedSkillCatalog,
+  loadRuntimeSkillRoots,
+  type AutomatedSkillSelection
+} from './injected-skill-roots.js';
 import { ensureCachedPluginHostArtifact, type FetchPluginHostArtifact } from './plugin-host-artifact-cache.js';
 import { silentArtifactCacheLogger, type ArtifactCacheLogger } from './node-artifact-cache.js';
 import {
@@ -67,6 +71,14 @@ export function isAutomatedThreadStart(
   input: Pick<ThreadWorkInput, 'headless' | 'scheduled' | 'autonomous'>
 ): boolean {
   return Boolean(input.headless || input.scheduled || input.autonomous);
+}
+
+function automatedSkillSelection(input: { automatedSkillIds?: readonly string[] }): AutomatedSkillSelection | undefined {
+  return input.automatedSkillIds ? { skillIds: input.automatedSkillIds } : undefined;
+}
+
+function skillSelectionForStart(input: ThreadWorkInput): AutomatedSkillSelection | undefined {
+  return automatedSkillSelection(input) ?? (isAutomatedThreadStart(input) ? { skillIds: [] } : undefined);
 }
 
 export function mergeSessionTooling(input: {
@@ -499,7 +511,7 @@ export function createAgentRuntimeAdapter(options: {
       }
       try {
         const result = await runtime.startThread({
-          skillRoots: await skillSnapshots.capture(runtime),
+          skillRoots: await skillSnapshots.capture(runtime, skillSelectionForStart(input)),
           environmentId: input.environmentId,
           threadId: input.threadId,
           projectId: input.projectId,
@@ -583,7 +595,7 @@ export function createAgentRuntimeAdapter(options: {
       threadLocation.set(input.threadId, { environmentId: input.environmentId, cwd: input.cwd, status: 'active' });
       try {
         const result = await runtime.resumeThread({
-          skillRoots: await skillSnapshots.capture(runtime),
+          skillRoots: await skillSnapshots.capture(runtime, automatedSkillSelection(input)),
           environmentId: input.environmentId,
           threadId: input.threadId,
           projectId: input.projectId,
@@ -649,7 +661,7 @@ export function createAgentRuntimeAdapter(options: {
     async prepareRewind(input: ThreadRewindPrepareInput) {
       const runtime = runtimeFor(input.environmentId, input.cwd);
       const result = await runtime.prepareThreadRewind({
-        skillRoots: await skillSnapshots.capture(runtime),
+          skillRoots: await skillSnapshots.capture(runtime, automatedSkillSelection(input)),
         environmentId: input.environmentId,
         threadId: input.threadId,
         leaseId: input.leaseId,

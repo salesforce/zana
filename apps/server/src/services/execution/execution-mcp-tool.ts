@@ -19,7 +19,8 @@ const slotSchema = z.strictObject({
   initialTask: z.string().min(1).refine(
     (value) => Buffer.byteLength(value, 'utf8') <= MAX_TEAM_INITIAL_TASK_BYTES,
     { message: `initialTask must not exceed ${MAX_TEAM_INITIAL_TASK_BYTES} UTF-8 bytes` }
-  )
+  ),
+  automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional()
 });
 const workflowSchema = z.strictObject({
   schemaVersion: z.literal(1),

@@ -127,6 +127,8 @@ describe('server runtime contract', () => {
       providerId: 'claude-code', prompt: 'Do work', title: 'Worker', worktreePath: '/tmp/worktree'
     };
     expect(ServerRuntimeInboundSchema.safeParse({ type: 'request', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: '00000000-0000-4000-8000-000000000003', deadlineAt: '2026-08-19T12:00:00.000Z', operation: 'squad-member-create', request }).success).toBe(true);
+    expect(SquadMemberRuntimeRequestSchema.safeParse({ ...request, automatedSkillIds: ['zcc:built-in/test'] }).success).toBe(true);
+    expect(SquadMemberRuntimeRequestSchema.safeParse({ ...request, automatedSkillIds: Array(65).fill('zcc:built-in/test') }).success).toBe(false);
     expect(SquadMemberRuntimeRequestSchema.safeParse({ ...request, role: 'owner' }).success).toBe(false);
     expect(SquadMemberRuntimeRequestSchema.safeParse({ ...request, worktreePath: '' }).success).toBe(false);
   });

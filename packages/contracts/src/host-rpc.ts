@@ -399,7 +399,9 @@ export const ThreadStartCommandSchema = z.object({
   /** Plugin-registered ACP tools attached via zcc for this session. */
   dynamicTools: z.array(dynamicToolSchema).max(128).optional(),
   instructions: z.string().max(100_000).optional(),
-  providerCheckpointId: z.string().min(1).max(200).optional()
+  providerCheckpointId: z.string().min(1).max(200).optional(),
+  /** Main-authorized automated catalog selection. Absence keeps interactive behavior. */
+  automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional()
 }).strict();
 
 export const ThreadResizeCommandSchema = z.object({
@@ -447,7 +449,8 @@ export const ThreadResumeFieldsSchema = z.object({
   providerOptions: z.record(z.string().max(100), z.unknown()).optional(),
   dynamicTools: z.array(dynamicToolSchema).max(128).optional(),
   instructions: z.string().max(100_000).optional(),
-  providerCheckpointId: z.string().min(1).max(200).optional()
+  providerCheckpointId: z.string().min(1).max(200).optional(),
+  automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional()
 }).strict();
 export type ThreadResumeFields = z.infer<typeof ThreadResumeFieldsSchema>;
 
@@ -488,7 +491,8 @@ export const ThreadRewindPrepareCommandSchema = z.object({
   bridgeLaunch: HostBridgeLaunchSchema.optional(),
   permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional(),
   model: z.string().min(1).max(200).optional(),
-  reasoningLevel: reasoningLevelSchema.optional()
+  reasoningLevel: reasoningLevelSchema.optional(),
+  automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional()
 }).strict();
 
 export const ThreadRewindDiscardCommandSchema = z.object({

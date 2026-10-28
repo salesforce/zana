@@ -832,6 +832,23 @@ describe('execution store', () => {
       request: { version: 1, slots: [{ initialTask: 'é'.repeat(Math.floor(MAX_TEAM_INITIAL_TASK_BYTES / 2) + 1) }], resolvedModels: [] }
     })).rejects.toThrow('invalid execution request snapshot');
   }));
+  it('persists bounded automated skill selections in request and launch intent snapshots', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let record = (await store.claim({
+      ...request(),
+      request: { version: 1, slots: [{ initialTask: 'Run tests', automatedSkillIds: ['zcc:built-in/test'] }], resolvedModels: [] }
+    })).record;
+    expect(record.request.slots[0].automatedSkillIds).toEqual(['zcc:built-in/test']);
+    record = await store.prepareLaunchIntent(record.id, record.stateVersion, {
+      version: 1, authorizationContextDigest: 'sha256:context',
+      slots: [{ slotId: 'slot-1', personaId: 'worker', initialTaskDigest: 'sha256:task', automatedSkillIds: ['zcc:built-in/test'] }]
+    });
+    expect(record.launchIntent?.slots[0].automatedSkillIds).toEqual(['zcc:built-in/test']);
+    await expect(store.claim({
+      ...request(), launchRequestId: 'request-2',
+      request: { version: 1, slots: [{ initialTask: 'Run tests', automatedSkillIds: Array(65).fill('zcc:built-in/test') }], resolvedModels: [] }
+    })).rejects.toThrow('invalid execution request snapshot');
+  }));
   it('defaults generic launch metadata to Team and rejects unknown durable launch kinds', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const claimed = await store.claim({ ...request(), launchDisplay: { label: 'Release execution' }, request: { version: 1, slots: [{ initialTask: 'Run tests' }], resolvedModels: [], launchDisplay: { label: 'Release execution' } } });

@@ -28,6 +28,7 @@ vi.mock('@zana-ai/zcc-db', () => ({
   getEnvironment: vi.fn(() => ({ id: thread.environmentId, path: '/tmp/proj' })),
   getHost: vi.fn(() => ({ permissionMode: 'auto' })),
   getThreadExecutionState: vi.fn(() => null),
+  getThreadPluginMetadata: vi.fn(() => ({ metadata: {}, corrupt: false })),
   getLatestConversationCheckpoint: vi.fn(() => null),
   listConversationThreadEventsWindow: vi.fn(() => []),
   setConversationProviderThreadId: vi.fn(),
@@ -43,6 +44,7 @@ import {
   deleteConversationThreadEventsAfter,
   getConversationThread,
   getEnvironment,
+  getThreadPluginMetadata,
   getLatestConversationCheckpoint
 } from '@zana-ai/zcc-db';
 import { sendConversationTurn, stopConversation } from './conversation-lifecycle.js';
@@ -85,6 +87,7 @@ beforeEach(() => {
   );
   vi.mocked(getConversationThread).mockReturnValue(thread);
   vi.mocked(getLatestConversationCheckpoint).mockReturnValue({ sequence: 4, checkpoint: 'cp-4' });
+  vi.mocked(getThreadPluginMetadata).mockReturnValue({ metadata: {}, corrupt: false } as never);
   vi.mocked(sendConversationTurn).mockClear();
   vi.mocked(stopConversation).mockClear();
   vi.mocked(deleteConversationThreadEventsAfter).mockClear();
@@ -152,6 +155,18 @@ describe('editConversationMessage', () => {
       input: [{ type: 'text', text: 'replacement' }]
     });
     expect(stopConversation).toHaveBeenCalled();
+  });
+
+  it('reloads main-authorized skill selection for rewind', async () => {
+    const automatedSkillIds = ['zcc:built-in/test'];
+    vi.mocked(getThreadPluginMetadata).mockReturnValue({ metadata: { automatedSkillIds }, corrupt: false } as never);
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, prepared: true, providerThreadId: 'prov-rewound' }));
+    await editConversationMessage(ctx(callHostOnlineRpc), thread.id, {
+      operationId: 'op-1', input: [{ type: 'text', text: 'replacement' }]
+    });
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({ command: expect.objectContaining({
+      type: 'thread.rewind.prepare', automatedSkillIds
+    }) }));
   });
 
   it('discards a staged rewind when submit fails', async () => {

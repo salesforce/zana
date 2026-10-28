@@ -61,6 +61,7 @@ export const launchTeamInputSchema = {
   slots: z.array(z.object({
     slotId: z.string().min(1).max(2048),
     initialTask: z.string().min(1).refine((value) => Buffer.byteLength(value, 'utf8') <= MAX_TEAM_INITIAL_TASK_BYTES),
+    automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional(),
     authorizationId: z.string().min(1).max(2048)
   })).min(1).max(100)
 };
@@ -73,7 +74,8 @@ export const authorizeTeamLaunchInputSchema = {
   maxConcurrent: z.number().int().min(1).max(32).optional(),
   maxLaunches: z.number().int().min(1).max(32).optional(),
   slots: z.array(z.object({
-    initialTask: z.string().min(1).refine((value) => Buffer.byteLength(value, 'utf8') <= MAX_TEAM_INITIAL_TASK_BYTES)
+    initialTask: z.string().min(1).refine((value) => Buffer.byteLength(value, 'utf8') <= MAX_TEAM_INITIAL_TASK_BYTES),
+    automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional()
   })).min(1).max(100)
 };
 

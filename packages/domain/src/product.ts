@@ -4540,12 +4540,14 @@ export type SquadTransport = 'CLI' | 'MODERN';
 export interface TeamLaunchTaskSlot {
   slotId: string;
   initialTask: string;
+  automatedSkillIds?: string[];
   authorizationId?: string;
   nativeRecovery?: TeamLaunchAuthorizationInputSlot['nativeRecovery'];
 }
 
 export interface TeamLaunchAuthorizationInputSlot {
   initialTask: string;
+  automatedSkillIds?: string[];
   /** Trusted native recovery identity, injected only by ExecutionService. */
   nativeRecovery?: {
     role: 'worker' | 'orchestrator';

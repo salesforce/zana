@@ -4206,15 +4206,16 @@ describe('SquadExecutionService', () => {
   }));
 
   it('prefers caller job title and launches only after durable reservation and authorization', async () => fixture(async (filePath) => {
+    const automatedSkillIds = ['zcc:built-in/test'];
     const authorizeTeamLaunch = vi.fn(() => ({ ok: true as const, value: {
-      teamId: 'team-1', projectId: 'project-1', slots: [{ slotId: 'slot-1', personaId: 'persona-1', initialTask: 'Run tests', authorizationId: 'auth-1' }],
+      teamId: 'team-1', projectId: 'project-1', slots: [{ slotId: 'slot-1', personaId: 'persona-1', initialTask: 'Run tests', automatedSkillIds, authorizationId: 'auth-1' }],
       context: { version: 1 as const, principalId: 'team:team-1:session-1:request-1', authorizedAt: 10, expiresAt: 20, slots: [{ slotId: 'slot-1', personaId: 'persona-1', authorizationIdDigest: 'sha256:auth' }] }
     } }));
     const launchTeam = vi.fn(async () => ({ ok: true }));
     const service = new SquadExecutionService(deps(filePath, { authorizeTeamLaunch, launchTeam }));
-    const result = await service.start('session-1', 'project-1', { ...request, jobTitle: 'Caller title' });
-    expect(result).toMatchObject({ ok: true, value: { id: 'execution-1', jobTitle: 'Caller title', state: 'RUNNING', authorizationContext: { principalId: 'team:team-1:session-1:request-1' }, authorizationContextDigest: expect.any(String), launchIntent: { slots: [{ slotId: 'slot-1', personaId: 'persona-1', initialTaskDigest: expect.any(String) }] } } });
-    expect(authorizeTeamLaunch).toHaveBeenCalledWith('session-1', 'team-1', 'project-1', 'request-1', {}, request.slots, request.coordinationMode, expect.stringMatching(/^launch-v1:/));
+    const result = await service.start('session-1', 'project-1', { ...request, jobTitle: 'Caller title', slots: [{ initialTask: 'Run tests', automatedSkillIds }] });
+    expect(result).toMatchObject({ ok: true, value: { id: 'execution-1', jobTitle: 'Caller title', state: 'RUNNING', authorizationContext: { principalId: 'team:team-1:session-1:request-1' }, authorizationContextDigest: expect.any(String), launchIntent: { slots: [{ slotId: 'slot-1', personaId: 'persona-1', initialTaskDigest: expect.any(String), automatedSkillIds }] } } });
+    expect(authorizeTeamLaunch).toHaveBeenCalledWith('session-1', 'team-1', 'project-1', 'request-1', {}, [{ initialTask: 'Run tests', automatedSkillIds }], request.coordinationMode, expect.stringMatching(/^launch-v1:/));
     expect(launchTeam).toHaveBeenCalledWith('team-1', 'project-1', expect.objectContaining({ requirePreauthorization: true }));
   }));
 

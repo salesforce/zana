@@ -529,7 +529,7 @@ export interface ExecutionPolicyV1 extends NonNullable<TeamLaunchRequestInput['p
 export interface ExecutionLaunchIntentV1 {
   version: 1;
   authorizationContextDigest: string;
-  slots: Array<{ slotId: string; personaId: string; initialTaskDigest: string }>;
+  slots: Array<{ slotId: string; personaId: string; initialTaskDigest: string; automatedSkillIds?: string[] }>;
   preparedAt: number;
 }
 
@@ -1102,7 +1102,9 @@ function validRequestSnapshot(value: unknown): value is ExecutionRequestSnapshot
     && (request.launchDisplay === undefined || validLaunchDisplay(request.launchDisplay))
     && Array.isArray(request.slots) && request.slots.length > 0
     && request.slots.every((slot) => !!slot && typeof slot === 'object'
-      && validUtf8String((slot as { initialTask?: unknown }).initialTask, MAX_TEAM_INITIAL_TASK_BYTES))
+      && validUtf8String((slot as { initialTask?: unknown }).initialTask, MAX_TEAM_INITIAL_TASK_BYTES)
+      && ((slot as { automatedSkillIds?: unknown }).automatedSkillIds === undefined
+        || validAutomatedSkillIds((slot as { automatedSkillIds?: unknown }).automatedSkillIds)))
     && Array.isArray(request.resolvedModels) && request.resolvedModels.every(validModelSnapshot)
     && (request.objective === undefined || validString(request.objective))
     && (request.worktree === undefined || typeof request.worktree === 'boolean')
@@ -1112,6 +1114,11 @@ function validRequestSnapshot(value: unknown): value is ExecutionRequestSnapshot
     && (request.sourceBundle === undefined || validSourceBundle(request.sourceBundle))
     && (request.policy === undefined || validExecutionPolicy(request.policy))
     && (request.workflow === undefined || typeof request.workflow === 'object');
+}
+
+function validAutomatedSkillIds(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length <= 64
+    && value.every((skillId) => typeof skillId === 'string' && skillId.length > 0 && skillId.length <= 256);
 }
 
 function validSourceBundle(value: unknown): boolean {
@@ -1165,7 +1172,9 @@ function validLaunchIntent(value: unknown): value is ExecutionLaunchIntentV1 {
     && Array.isArray(intent.slots) && intent.slots.every((slot) => !!slot && typeof slot === 'object'
       && validString((slot as { slotId?: unknown }).slotId)
       && validString((slot as { personaId?: unknown }).personaId)
-      && validString((slot as { initialTaskDigest?: unknown }).initialTaskDigest));
+      && validString((slot as { initialTaskDigest?: unknown }).initialTaskDigest)
+      && ((slot as { automatedSkillIds?: unknown }).automatedSkillIds === undefined
+        || validAutomatedSkillIds((slot as { automatedSkillIds?: unknown }).automatedSkillIds)));
 }
 
 function validEvent(value: unknown): value is ExecutionEvent {

@@ -138,6 +138,15 @@ describe('trusted Modern member runtime', () => {
     expect(commands.filter(command => command.type === 'thread.start')).toHaveLength(1);
   });
 
+  it('persists main-authorized skill selection and sends it at activation', async () => {
+    const automatedSkillIds = ['zcc:built-in/test'];
+    const request = { ...member, automatedSkillIds };
+    await createSquadMemberConversation(ctx, request);
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({ automatedSkillIds });
+    await activateSquadMemberConversation(ctx, request);
+    await vi.waitFor(() => expect(commands.find(command => command.type === 'thread.start')).toMatchObject({ automatedSkillIds }));
+  });
+
   it('single-flights concurrent activation before async preflight without duplicate starts', async () => {
     await createSquadMemberConversation(ctx, member);
     const preflight = Promise.withResolvers<void>();

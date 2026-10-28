@@ -26,6 +26,7 @@ import { stopConversation, sendConversationTurn } from './conversation-lifecycle
 import { bridgeLaunchForProvider, canonicalThreadProviderId, getThreadProvider, waitForThreadProvider } from './thread-provider-catalog.js';
 import { validateProviderModelSelection } from './provider-model-validation.js';
 import type { ModernTeamMember } from '../agents/modern-team-launch-tools.js';
+import { threadAutomatedSkillIds } from './thread-automated-skill-selection.js';
 
 /** Host-owned namespace. Only trusted IPC (or an authenticated main seam) may write it. */
 export const MODERN_SQUAD_BINDING_ORIGIN = MODERN_SQUAD_THREAD_ORIGIN;
@@ -208,6 +209,7 @@ export async function createSquadMemberConversation(
   }
   // Reserve before the first await so concurrent retries cannot issue two starts.
   const promise = (async () => {
+    const automatedSkillIds = request.automatedSkillIds ?? [];
     const preflight = await preflightSquadRuntime(ctx, { projectId: request.projectId,
       hostId: request.hostId, providerIds: [request.providerId], nativeToolPolicyRequired: request.nativeToolPolicyRequired,
       selections: [{ providerId: request.providerId, model: request.model, permissionMode: request.permissionMode }] });
@@ -226,7 +228,8 @@ export async function createSquadMemberConversation(
         if (!environment?.path) throw new Error('squad member environment is unavailable');
         persistBindingMetadata(ctx, thread.id, { squadBinding: request.bindingId, squadGeneration: request.generation,
           squadHost: preflight.hostId, squadEnvironmentPath: environment.path, squadCreateFingerprint: fingerprint,
-          squadRole: request.role, ...(request.executionId ? { squadExecution: request.executionId } : {}) });
+          squadRole: request.role, ...(request.executionId ? { squadExecution: request.executionId } : {}),
+          automatedSkillIds });
       }
     });
     if (thread.id !== request.bindingId) throw new Error('squad runtime did not preserve reserved binding UUID');
@@ -269,7 +272,8 @@ export async function activateSquadMemberConversation(ctx: ProductHttpContext, i
     assertBinding();
     await activatePreparedConversation(ctx, { id: request.bindingId, projectId: request.projectId, providerId: request.providerId,
       input: [request.prompt], promptInput: [{ type: 'text', text: request.prompt, mentions: [] }], title: request.title,
-      model: request.model, reasoningLevel: request.reasoningLevel, permissionMode: request.permissionMode }, () => {
+      model: request.model, reasoningLevel: request.reasoningLevel, permissionMode: request.permissionMode,
+      automatedSkillIds: threadAutomatedSkillIds(ctx.db, request.bindingId) }, () => {
       // Runs synchronously after every pre-send await; failures before here never reached the provider.
       assertBinding();
       persistBindingMetadata(ctx, request.bindingId, { squadActivationStarted: true });

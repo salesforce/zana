@@ -248,6 +248,22 @@ describe('createProjectStore', () => {
     expect(touched!.lastActiveAt).toBeGreaterThan(1);
   });
 
+  it('retries an activity touch after a concurrent project mutation', async () => {
+    const home = makeDir();
+    const options = { projectsFile: join(home, '.zcc', 'projects.json') };
+    const primary = createProjectStore(options);
+    const project = await primary.add(home);
+    const sibling = createProjectStore(options);
+
+    const [touched] = await Promise.all([
+      primary.touch(project.id),
+      sibling.update(project.id, { name: 'Updated concurrently' })
+    ]);
+
+    expect(touched).toMatchObject({ id: project.id });
+    expect(createProjectStore(options).list()[0]).toMatchObject({ id: project.id, name: 'Updated concurrently' });
+  });
+
   it('removes a project and only its matching app-owned remote placeholder', async () => {
     const home = makeDir();
     const dataDir = join(home, '.zcc');

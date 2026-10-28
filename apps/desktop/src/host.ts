@@ -5216,8 +5216,13 @@ export function authorizeTeamLaunch(
   if (slots.length !== expectedSlots.length) {
     return { ok: false, code: 'INVALID', message: 'task count does not match host-expanded Team slots' };
   }
-  if (slots.some((slot) => !slot.initialTask.trim() || Buffer.byteLength(slot.initialTask, 'utf8') > 64 * 1_024)) {
+  if (slots.some((slot) => !slot.initialTask.trim() || Buffer.byteLength(slot.initialTask, 'utf8') > 64 * 1_024
+    || slot.automatedSkillIds !== undefined && (slot.automatedSkillIds.length > 64
+      || slot.automatedSkillIds.some((skillId) => !skillId.trim() || skillId.length > 256)))) {
     return { ok: false, code: 'INVALID', message: 'invalid initial task' };
+  }
+  if (team.transport !== 'MODERN' && slots.some((slot) => slot.automatedSkillIds !== undefined)) {
+    return { ok: false, code: 'INVALID', message: 'automated skill selection requires Modern Team transport' };
   }
   const principalRef = { kind: 'team' as const, id: `team:${team.id}:${callerPrincipalId}:${launchRequestId}` };
   const maxLaunches = Math.min(policy.maxLaunches ?? 32, 32);
@@ -5262,6 +5267,7 @@ export function authorizeTeamLaunch(
     const binding: LaunchAuthorizationBinding = {
       consumerKind: 'team-slot', teamId: team.id, slotId: expected.slotId, personaId: expected.personaId,
       profileId, initialTaskDigest: launchDigest(slots[index].initialTask),
+      ...(slots[index].automatedSkillIds === undefined ? {} : { automatedSkillIds: slots[index].automatedSkillIds }),
       scope: launchExecutionScope(project, {}, store.getConfig()),
       storeRevision: launchDigest({ team, personas: personaSnapshot }),
       projectIdentityDigest: projectIdentityDigest(project), autonomous, expiresAt, deadlineAt
@@ -5625,8 +5631,13 @@ export async function launchTeam(
       ? undefined
       : `adapter "${provider.adapter.descriptor.id}" cannot bind initial task at spawn`;
   };
-  if (structured && structured.slots.some((slot) => !slot.initialTask.trim() || Buffer.byteLength(slot.initialTask, 'utf8') > 64 * 1_024)) {
+  if (structured && structured.slots.some((slot) => !slot.initialTask.trim() || Buffer.byteLength(slot.initialTask, 'utf8') > 64 * 1_024
+    || slot.automatedSkillIds !== undefined && (slot.automatedSkillIds.length > 64
+      || slot.automatedSkillIds.some((skillId) => !skillId.trim() || skillId.length > 256)))) {
     return { ok: false, code: 'INVALID', message: 'invalid initial task' };
+  }
+  if (team.transport !== 'MODERN' && structured?.slots.some((slot) => slot.automatedSkillIds !== undefined)) {
+    return { ok: false, code: 'INVALID', message: 'automated skill selection requires Modern Team transport' };
   }
   const authorizationBindings = expectedSlots.map(({ slotId, personaId, role }) => {
     const projection = recoveryFor(slotId, role, personaId);
@@ -5648,10 +5659,11 @@ export async function launchTeam(
       maxConcurrent: structured?.policy?.maxConcurrent ?? 32,
       maxLaunches: structured?.policy?.maxLaunches ?? 32
     },
-    slots: (structured?.slots ?? expectedSlots.map(({ slotId }) => ({ slotId, initialTask: taskFor(slotId) })))
+    slots: (structured?.slots ?? expectedSlots.map(({ slotId }) => ({ slotId, initialTask: taskFor(slotId), automatedSkillIds: undefined })))
       .map((slot, index) => ({
         slotId: slot.slotId,
         initialTask: slot.initialTask,
+        ...(slot.automatedSkillIds === undefined ? {} : { automatedSkillIds: slot.automatedSkillIds }),
         authorizationBinding: authorizationBindings[index]?.authorizationBinding
       })),
     admissionDigest: structured?.admissionDigest
@@ -5702,6 +5714,7 @@ export async function launchTeam(
           ? binding.deadlineAt !== undefined
           : binding.deadlineAt !== binding.expiresAt - TEAM_AUTHORIZATION_TTL_MS + structured.policy.deadlineMs)
         || binding.initialTaskDigest !== launchDigest(requested.initialTask)
+        || launchDigest(binding.automatedSkillIds ?? []) !== launchDigest(requested.automatedSkillIds ?? [])
         || binding.storeRevision !== currentStoreRevision
         || binding.projectIdentityDigest !== currentProjectIdentity
         || binding.admissionDigest !== structured.admissionDigest
@@ -5813,7 +5826,11 @@ export async function launchTeam(
       launchPrincipals.set(principal.id, principal);
       const binding: LaunchAuthorizationBinding = {
         consumerKind: 'team-slot', teamId: team.id, slotId, personaId, profileId,
-        initialTaskDigest: launchDigest(request.prompt ?? ''), scope: launchExecutionScope(project, request, currentConfig),
+        initialTaskDigest: launchDigest(request.prompt ?? ''),
+        ...(structured?.slots.find((slot) => slot.slotId === slotId)?.automatedSkillIds === undefined ? {} : {
+          automatedSkillIds: structured.slots.find((slot) => slot.slotId === slotId)!.automatedSkillIds
+        }),
+        scope: launchExecutionScope(project, request, currentConfig),
         storeRevision: launchDigest({ team, personas: personaSnapshot }),
          projectIdentityDigest: projectIdentityDigest(project), autonomous, expiresAt, deadlineAt: launchDeadlineAt
       };
@@ -5874,6 +5891,7 @@ export async function launchTeam(
           projectId: targetProjectId, teamId: team.id, cohortId, hostId: modernHostId!, providerId: selected.providerId,
           role: expectedSlot.role, worktreePath: effective.cwd, executionId: structured?.executionId,
           model: selected.model, permissionMode: selected.permissionMode,
+          automatedSkillIds: structured?.slots.find((slot) => slot.slotId === slotId)?.automatedSkillIds,
           prompt: [selected.systemPrompt, !durableCoordination ? personaSnapshot.find(persona => persona.id === personaId)?.initialPrompt : undefined,
              request.prompt ?? 'Await squad instructions.'].filter(Boolean).join('\n\n'), title: (request.title ?? personaName(personaId)).slice(0, 120) };
         const created = await squadRuntime().createSquadMember(runtimeRequest);
@@ -9210,7 +9228,8 @@ async function bootstrapNormal() {
         const authorization = launchAuthorization.get(slot.authorizationId!);
         if (authorization?.principal.id !== principalId || authorization.projectId !== projectId) continue;
         if (authorization.binding.teamId !== teamId || authorization.binding.slotId !== slot.slotId) continue;
-        if (authorization.binding.initialTaskDigest !== launchDigest(slot.initialTask)) continue;
+        if (authorization.binding.initialTaskDigest !== launchDigest(slot.initialTask)
+          || launchDigest(authorization.binding.automatedSkillIds ?? []) !== launchDigest(slot.automatedSkillIds ?? [])) continue;
         launchAuthorization.revoke(authorization.id);
       }
     },

@@ -88,7 +88,7 @@ it('retains dropped skills only for old sessions and removes snapshots on dispos
 
 it('bounds retained revisions and makes room when an old owner is released', async () => {
   const { source, store } = await setup();
-  const owners = Array.from({ length: 32 }, () => ({}));
+  const owners = Array.from({ length: 64 }, () => ({}));
   for (const [index, owner] of owners.entries()) {
     await writeFile(join(source, 'SKILL.md'), `revision ${index}`);
     await store.capture(owner);
@@ -124,6 +124,8 @@ it('copies main-authorized builtin symlinks and still confines their descendants
   await writeFile(join(dir, 'injected-skill-roots.json'), JSON.stringify({ directoryRoots: [], builtinSkillTargets: [await realpath(builtin)] }));
   const path = codexPath(await store.capture({}));
   expect(await readFile(join(path, 'linked-builtin', 'SKILL.md'), 'utf8')).toBe('builtin contents');
+  const automated = codexPath(await store.capture({}, { skillIds: ['zcc:built-in/linked-builtin'] }));
+  expect(await readFile(join(automated, 'linked-builtin', 'SKILL.md'), 'utf8')).toBe('builtin contents');
   await symlink(join(source, 'SKILL.md'), join(builtin, 'escape'));
   await expect(store.capture({})).rejects.toThrow('escapes');
 });
@@ -158,4 +160,35 @@ it('keeps an authored Codex policy file for manual skills', async () => {
   const path = codexPath(await store.capture({}));
   expect(await readFile(join(path, 'demo', 'agents', 'openai.yaml'), 'utf8')).toBe('interface:\n  display_name: Demo\n');
   expect(await readFile(join(path, 'demo', 'SKILL.md'), 'utf8')).toContain('disable-model-invocation: true');
+});
+
+it('cuts an automated catalog from only the requested skill ids without mutating interactive roots', async () => {
+  const { dir, store } = await setup();
+  const root = join(dir, 'skills-generated');
+  await mkdir(join(root, 'other'), { recursive: true });
+  await writeFile(join(root, 'other', 'SKILL.md'), 'other');
+  const interactive = codexPath(await store.capture({}));
+  const automated = codexPath(await store.capture({}, { skillIds: ['zcc:built-in/demo'] }));
+  const selected = codexPath(await store.capture({}, { skillIds: ['zcc:built-in/other', 'zcc:built-in/demo'] }));
+  const reordered = codexPath(await store.capture({}, { skillIds: ['zcc:built-in/demo', 'zcc:built-in/other'] }));
+  const empty = await store.capture({}, { skillIds: [] });
+  expect((await readdir(interactive)).sort()).toEqual(['demo', 'other']);
+  expect(await readdir(automated)).toEqual(['demo']);
+  expect((await readdir(selected)).sort()).toEqual(['demo', 'other']);
+  expect(reordered).toBe(selected);
+  expect(empty.filter(root => root.id.startsWith('injected-'))).toEqual([]);
+  expect((await readdir(root)).sort()).toEqual(['demo', 'other']);
+});
+
+it('rejects unknown, ambiguous, and disabled automated skill ids', async () => {
+  const { dir, store } = await setup();
+  await expect(store.capture({}, { skillIds: ['zcc:built-in/missing'] })).rejects.toThrow('Unknown automated skill id');
+  const duplicate = join(dir, 'duplicate', 'demo');
+  await mkdir(duplicate, { recursive: true });
+  await writeFile(join(duplicate, 'SKILL.md'), 'demo');
+  await writeFile(join(dir, 'injected-skill-roots.json'), JSON.stringify({ directoryRoots: [join(dir, 'duplicate')] }));
+  await expect(store.capture({}, { skillIds: ['zcc:built-in/demo'] })).rejects.toThrow('Ambiguous automated skill id');
+  await rm(join(dir, 'injected-skill-roots.json'));
+  await writeFile(join(dir, 'skill-policy.json'), JSON.stringify({ version: 1, skills: { demo: 'off' } }));
+  await expect(store.capture({}, { skillIds: ['zcc:built-in/demo'] })).rejects.toThrow('disabled');
 });

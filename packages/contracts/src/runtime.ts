@@ -208,7 +208,9 @@ export const SquadMemberRuntimeRequestSchema = z.object({
   title: z.string().min(1).max(120),
   model: z.string().min(1).max(256).optional(),
   reasoningLevel: z.enum(['none', 'low', 'medium', 'high', 'xhigh', 'ultra', 'max', 'ultracode']).optional(),
-  permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional()
+  permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional(),
+  /** Main-authorized automated catalog selection. Never renderer input. */
+  automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional()
 }).strict();
 export type SquadMemberRuntimeRequest = z.infer<typeof SquadMemberRuntimeRequestSchema>;
 

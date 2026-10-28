@@ -128,6 +128,25 @@ describe('agent runtime thread adapter', () => {
     adapter.dispose();
   });
 
+  it('uses an empty catalog for an unattended start', async () => {
+    const root = join(cwd, 'skills-generated', 'demo');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'SKILL.md'), 'demo');
+    let runtime!: ReturnType<typeof createAgentRuntimeWithAdapters>;
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      createRuntime: options => {
+        runtime = createAgentRuntimeWithAdapters({ ...options, adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath }) });
+        return runtime;
+      }
+    });
+    try {
+      await adapter.startWork({ threadId: randomUUID(), environmentId: randomUUID(), projectId: 'p1', providerId: 'fake', input: prompt('hello'), cwd, headless: true });
+      expect(runtime.getLiveThreadIds()).toHaveLength(1);
+    } finally { adapter.dispose(); }
+  });
+
   it('cancels only the expected live plan and keeps the thread usable', async () => {
     let active = 'plan-turn';
     let stopThread: ReturnType<typeof vi.spyOn>;

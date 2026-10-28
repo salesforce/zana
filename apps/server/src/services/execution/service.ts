@@ -795,10 +795,11 @@ export class ExecutionService {
       record = await this.deps.store.prepareLaunchIntent(record.id, record.stateVersion, {
         version: 1,
         authorizationContextDigest: record.authorizationContextDigest!,
-        slots: authorization.value.slots.map(({ slotId, personaId, initialTask }) => ({
+        slots: authorization.value.slots.map(({ slotId, personaId, initialTask, automatedSkillIds }) => ({
           slotId,
           personaId,
-          initialTaskDigest: launchDigest(initialTask)
+          initialTaskDigest: launchDigest(initialTask),
+          ...(automatedSkillIds === undefined ? {} : { automatedSkillIds })
         }))
       });
       let revalidatedAdmission: TeamAdmissionResultV1;
@@ -2275,7 +2276,10 @@ export class ExecutionService {
       let current = await this.deps.store.setAuthorizationContext(retry.id, retry.stateVersion, authorization.value.context, launchDigest(authorization.value.context));
       current = await this.deps.store.prepareLaunchIntent(current.id, current.stateVersion, {
         version: 1, authorizationContextDigest: current.authorizationContextDigest!,
-        slots: authorization.value.slots.map(({ slotId, personaId, initialTask }) => ({ slotId, personaId, initialTaskDigest: launchDigest(initialTask) }))
+        slots: authorization.value.slots.map(({ slotId, personaId, initialTask, automatedSkillIds }) => ({
+          slotId, personaId, initialTaskDigest: launchDigest(initialTask),
+          ...(automatedSkillIds === undefined ? {} : { automatedSkillIds })
+        }))
       });
       let revalidatedAdmission: TeamAdmissionResultV1;
       try {
