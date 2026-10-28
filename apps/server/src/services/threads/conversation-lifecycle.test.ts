@@ -1307,6 +1307,24 @@ describe('conversation lifecycle', () => {
     expect(setConversationProviderThreadId).toHaveBeenCalledWith(expect.anything(), forkId, 'prov-fork');
   });
 
+  it('starts a fork with an empty automated skill selection', async () => {
+    const forkId = '33333333-3333-4333-8333-333333333333';
+    vi.mocked(getConversationThread).mockReturnValue({
+      ...thread,
+      id: forkId,
+      originKind: 'fork' as const,
+      parentThreadId: thread.id,
+      providerThreadId: null,
+      status: 'idle' as const
+    });
+    vi.mocked(getThreadPluginMetadata).mockReturnValue({ metadata: { automatedSkillIds: [] }, corrupt: false } as never);
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: forkId, started: true, providerThreadId: 'prov-fork' }));
+    await sendConversationTurn(ctx(callHostOnlineRpc), forkId, [{ type: 'text', text: 'continue' }]);
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({ command: expect.objectContaining({
+      type: 'thread.start', automatedSkillIds: []
+    }) }));
+  });
+
   it('starts a fork:none thread without cloning the source session', async () => {
     providerHandles.push(
       registerThreadProvider('test', {

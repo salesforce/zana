@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +9,7 @@ import {
   loadRuntimeSkillRoots,
   readInjectedSkillDirectoryRoots,
   readInjectedSkillPolicy,
+  resolveAutomatedSkillSelection,
   withModelInvocationDisabled
 } from './injected-skill-roots.js';
 
@@ -110,5 +111,36 @@ describe('injected skill roots', () => {
     const before = hashInjectedSkillCatalog(dataDir);
     writeFileSync(join(dataDir, 'skill-policy.json'), JSON.stringify({ version: 1, skills: { auto: 'off' } }));
     expect(hashInjectedSkillCatalog(dataDir)).not.toBe(before);
+  });
+
+  it('resolves only authorized builtin symlinks and skips dangling ones', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-builtin-symlinks-'));
+    dirs.push(dataDir);
+    const root = join(dataDir, 'skills-generated');
+    const builtin = mkdtempSync(join(tmpdir(), 'zcc-builtin-target-'));
+    dirs.push(builtin);
+    writeFileSync(join(builtin, 'SKILL.md'), '---\ndescription: Built in.\n---\n');
+    mkdirSync(root, { recursive: true });
+    symlinkSync(builtin, join(root, 'authorized'));
+    symlinkSync(join(dataDir, 'missing'), join(root, 'dangling'));
+    writeFileSync(join(dataDir, 'injected-skill-roots.json'), JSON.stringify({
+      directoryRoots: [], builtinSkillTargets: [realpathSync(builtin)]
+    }));
+
+    expect(resolveAutomatedSkillSelection(dataDir, { skillIds: ['zcc:built-in/authorized'] }))
+      .toEqual(new Map([[root, new Set(['authorized'])]]));
+    expect(() => resolveAutomatedSkillSelection(dataDir, { skillIds: ['zcc:built-in/dangling'] }))
+      .toThrow('Unknown automated skill id');
+  });
+
+  it('skips a symlink when no builtin allowlist is supplied', () => {
+    const root = mkdtempSync(join(tmpdir(), 'zcc-untrusted-symlink-'));
+    const target = mkdtempSync(join(tmpdir(), 'zcc-untrusted-target-'));
+    dirs.push(root, target);
+    writeFileSync(join(target, 'SKILL.md'), '---\ndescription: Untrusted.\n---\n');
+    symlinkSync(target, join(root, 'untrusted'));
+
+    const acp = expandDirectoryRootsToRuntimeSkillRoots([root]).find((row) => row.providerId === 'acp');
+    expect(acp && 'skills' in acp ? acp.skills : []).toEqual([]);
   });
 });
