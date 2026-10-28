@@ -1,36 +1,13 @@
 import { describe, it, expect } from 'vitest';
+import { isAllowedAppPermission } from '../../../window/app-permissions.js';
 
-/**
- * The permission request handler installed in bootstrap() allows 'media' and
- * denies everything else. This test validates the logic in isolation — the
- * actual wiring to session.defaultSession is integration-level.
- */
-describe('permission request handler logic', () => {
-  const handler = (_wc: unknown, permission: string, callback: (allowed: boolean) => void) => {
-    callback(permission === 'media');
-  };
-
-  it('grants media permission', () => {
-    let result: boolean | undefined;
-    handler(null, 'media', (allowed) => { result = allowed; });
-    expect(result).toBe(true);
+/** bootstrap() installs this check for both the request and the check handler. */
+describe('app window permissions', () => {
+  it.each(['media', 'fullscreen'])('grants %s', (permission) => {
+    expect(isAllowedAppPermission(permission)).toBe(true);
   });
 
-  it('denies geolocation', () => {
-    let result: boolean | undefined;
-    handler(null, 'geolocation', (allowed) => { result = allowed; });
-    expect(result).toBe(false);
-  });
-
-  it('denies notifications', () => {
-    let result: boolean | undefined;
-    handler(null, 'notifications', (allowed) => { result = allowed; });
-    expect(result).toBe(false);
-  });
-
-  it('denies unknown permissions', () => {
-    let result: boolean | undefined;
-    handler(null, 'clipboard-read', (allowed) => { result = allowed; });
-    expect(result).toBe(false);
+  it.each(['geolocation', 'notifications', 'clipboard-read', 'pointerLock', 'openExternal', ''])('denies %s', (permission) => {
+    expect(isAllowedAppPermission(permission)).toBe(false);
   });
 });

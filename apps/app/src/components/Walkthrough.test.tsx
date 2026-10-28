@@ -19,23 +19,21 @@ vi.mock('../store.js', () => ({
 import { Walkthrough } from './Walkthrough.js';
 
 describe('Walkthrough', () => {
-  it('opens on the Modern step and names CLI Agent as still available', () => {
+  it('opens on the intro video in a wide card, in place of the step icon', () => {
     const html = renderToStaticMarkup(<Walkthrough onClose={() => undefined} />);
-    expect(html).toContain('data-walkthrough-step="thread"');
-    expect(html).toContain('Start a conversation');
-    expect(html).toContain('New Chat');
-    expect(html).toContain('Modern');
-    expect(html).toContain('conversation');
-    expect(html).not.toContain('conversation thread');
-    expect(html).toContain('Step 1 of 4');
-    expect(html).toContain('walkthrough-backdrop--composer');
-    expect(html).not.toContain('Quick Agent');
-    expect(html).not.toContain('Launch an agent');
-    expect(html).not.toContain('Legacy Agent');
+    expect(html).toContain('data-walkthrough-step="intro"');
+    expect(html).toContain('Your first project in 30 seconds');
+    expect(html).toContain('walkthrough-card--media');
+    expect(html).toContain('data-testid="walkthrough-intro-video"');
+    expect(html).not.toContain('walkthrough-icon');
+    expect(html).toContain('Step 1 of 5');
+    expect(html).toContain('A <strong>project</strong> is just a folder');
+    expect(html).not.toContain('walkthrough-backdrop--composer');
   });
 
-  it('keeps the four-step tour in source: Modern, CLI Agent, project, schedule', () => {
+  it('keeps the tour in source: intro, Modern, CLI Agent, project, schedule', () => {
     const source = readFileSync(new URL('./Walkthrough.tsx', import.meta.url), 'utf8');
+    expect(source).toContain("id: 'intro'");
     expect(source).toContain("id: 'thread'");
     expect(source).toContain("id: 'legacy'");
     expect(source).toContain("title: 'CLI Agent still works'");

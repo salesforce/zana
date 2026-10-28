@@ -8,9 +8,12 @@ import { ConversationHistoryDialog } from './components/history/ConversationHist
 import '@/lib/monaco-loader';
 import { useEffect, useRef } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { Bell, Star } from 'lucide-react';
+import { Bell, PlayCircle, Star } from 'lucide-react';
 import { HelpProvider } from './components/help/HelpProvider.js';
 import { HelpToggle } from './components/help/HelpToggle.js';
+import { HelpMenu } from './components/help/HelpMenu.js';
+import { HelpVideoLibrary } from './components/help/HelpVideoLibrary.js';
+import { useHelpVideos } from './components/help/help-videos-store.js';
 import { InstanceMenu } from './components/InstanceMenu.js';
 import { Sidebar } from './components/Sidebar.js';
 import { MobileAgentNavigation } from './components/MobileAgentNavigation.js';
@@ -773,7 +776,7 @@ function AppShell() {
           />
         )}
         <InstanceMenu />
-        <HelpToggle />
+        <HelpMenu />
         <button
           type="button"
           className={`titlebar-fav ${favoriteCount > 0 ? 'has-favs' : ''} ${favoritesOpen ? 'active' : ''}`}
@@ -831,7 +834,13 @@ function AppShell() {
             <Bell size={18} aria-hidden="true" /> Notifications
             {unreadInbox > 0 && <span className="nav-badge" aria-hidden="true">{unreadInbox > 99 ? '99+' : unreadInbox}</span>}
           </button>
-          <HelpToggle variant="mobile" />
+          <HelpToggle />
+          <button type="button" className="mobile-nav-notifications" data-testid="mobile-help-videos" onClick={() => {
+            mobileNavigation.setDrawerOpen(false);
+            useHelpVideos.getState().open();
+          }}>
+            <PlayCircle size={18} aria-hidden="true" /> Videos
+          </button>
         </>}
         headerStart={nav === 'settings' ? <MobileSettingsBack onNavigate={() => mobileNavigation.setDrawerOpen(false)} /> : undefined}
       >
@@ -905,6 +914,7 @@ function AppShell() {
       <WalkthroughHost />
       <SetupChecklistHost />
       <WhatsNewModal />
+      <HelpVideoLibrary />
       <PendingLaunches />
       <HostDialogs />
       <Toaster />
