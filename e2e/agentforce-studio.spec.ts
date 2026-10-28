@@ -1280,7 +1280,9 @@ test('Agentforce Studio: Lightning Types, collapsible explorer sections and a hi
   // Hide the column from its header, bring it back with the shortcut.
   await explorer.getByRole('button', { name: 'Hide explorer' }).click();
   await expect(explorer).toHaveCount(0);
-  await view.getByRole('heading', { name: 'Order request' }).click();
+  // Hiding the focused explorer button leaves focus on the document body.
+  // Focus Studio explicitly so this exercises its shortcut, not the app sidebar.
+  await studio.locator('.sf-as-body.sf-studio').focus();
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+B' : 'Control+B');
   await expect(explorer).toBeVisible();
 });
