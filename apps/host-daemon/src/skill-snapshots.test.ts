@@ -36,6 +36,17 @@ it('keeps existing catalogs immutable, detects body/resource changes, and reuses
   await expect(readFile(join(oldPath, 'demo', 'SKILL.md'))).rejects.toThrow();
   expect(await readFile(join(newPath, 'demo', 'SKILL.md'), 'utf8')).toContain('second');
 });
+it('captures skill references without changing the SKILL.md prompt body', async () => {
+  const { source, store } = await setup();
+  await mkdir(join(source, 'references'));
+  const sentinel = 'reference-only-sentinel';
+  await writeFile(join(source, 'references', 'details.md'), sentinel);
+  const path = codexPath(await store.capture({}));
+  const core = await readFile(join(path, 'demo', 'SKILL.md'), 'utf8');
+  const reference = await readFile(join(path, 'demo', 'references', 'details.md'), 'utf8');
+  expect(core).not.toContain(sentinel);
+  expect(reference).toBe(sentinel);
+});
 it('serializes concurrent capture and retains a shared catalog until both owners release it', async () => {
   const { store } = await setup();
   const a = {}, b = {};
