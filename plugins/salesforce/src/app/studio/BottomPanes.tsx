@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { callPluginRpc } from '@zana-ai/zcc-plugin-sdk/app';
-import { STUDIO_RPC, type ScenarioSuite, type StudioEngine, type TurnTrace } from '../../../lib/studio-contract.js';
+import { STUDIO_RPC, type StudioEngine, type TurnTrace } from '../../../lib/studio-contract.js';
 import { TRACE_PANEL_STYLES, TracePanel } from '../preview/TracePanel.js';
-import { suiteStatus } from './useSuites.js';
+export { BottomTests } from './BottomTests.js';
 
 /** Trace tab: the planner trace of the latest Preview run (Simulate / Live); Rehearse has no runtime trace. */
 export function BottomTrace({ pluginId, path, run, visible, onRevealSource, onOpenPreview }: {
@@ -43,28 +43,5 @@ export function BottomTrace({ pluginId, path, run, visible, onRevealSource, onOp
       {error && <p className="sf-problems-empty" role="alert">{error}</p>}
     </>}
     <div className="sf-problems-empty"><button type="button" className="sf-btn-small" onClick={onOpenPreview}>Open Preview</button></div>
-  </div>;
-}
-
-/** Tests tab: saved scenario suites with their last results. */
-export function BottomTests({ suites, onOpenTests }: { suites: ScenarioSuite[]; onOpenTests(): void }) {
-  return <div data-testid="studio-tests-pane">
-    {suites.length === 0
-      ? <p className="sf-problems-empty">No scenario suites yet. Save a conversation as a scenario from Preview, or add tests/&lt;name&gt;.scenario.json.</p>
-      : <ul className="sf-problems-list">
-        {suites.map(suite => {
-          const status = suiteStatus(suite);
-          const results = Object.values(suite.lastResults ?? {});
-          const passed = results.filter(result => result.outcome === 'pass').length;
-          return <li key={suite.id}>
-            <button type="button" className={`sf-problem${status === 'fail' ? ' is-error' : ''}`} onClick={onOpenTests}>
-              <span className="sf-problem-mark" aria-hidden="true">{status === 'pass' ? '✓' : status === 'fail' ? '✕' : '○'}</span>
-              <span>{suite.path.split('/').pop()} · {suite.cases.length} case{suite.cases.length === 1 ? '' : 's'}</span>
-              <span className="sf-problem-where">{results.length ? `${passed}/${results.length} passing` : 'not run'}</span>
-            </button>
-          </li>;
-        })}
-      </ul>}
-    <div className="sf-problems-empty"><button type="button" className="sf-btn-small" onClick={onOpenTests}>Open Tests</button></div>
   </div>;
 }

@@ -2732,3 +2732,55 @@ test('AgentScript Studio reliability: large snapshots, background recovery, setu
   expect(await form.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-reliable-tests-narrow.png'));
 });
+
+test('Studio footer: inspect saved failures, filter cases and rerun the open agent', async ({ app, home }, testInfo) => {
+  const page = app.window;
+  expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'salesforce')?.status), { timeout: 30000 }).toMatch(/running|needs-configuration/);
+  const projectId = await page.evaluate(async path => { const added = await window.cc.projects.add(path); if (!added.ok) throw Error(added.message); return added.value.id; }, join(home, 'dx'));
+  await page.evaluate(async id => {
+    await window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' });
+    history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
+  }, projectId);
+  const rpc = (method: string, args: object = {}): Promise<any> => page.evaluate(({ projectId, method, args }) => window.cc.pluginApps.callRpc('salesforce', method, { projectId, ...args }), { projectId, method, args });
+  expect(await rpc('studio.suites.save', { agentPath: 'force-app/Support.agent', cases: [
+    { id: 'footer-pass', name: 'Footer order lookup', utterances: ['Find my order'], expect: { contains: ['order'] } },
+    { id: 'footer-fail', name: 'Footer missing evidence', utterances: ['Find my order'], expect: { contains: ['missing-footer-evidence'] } },
+    { id: 'footer-pending', name: 'Footer unrun case', utterances: ['Find my order'], expect: {} }
+  ] })).toMatchObject({ ok: true });
+  expect(await rpc('studio.suites.run', { agentPath: 'force-app/Support.agent', caseIds: ['footer-pass', 'footer-fail'] })).toMatchObject({ ok: true });
+  await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
+  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  const studio = studioPanel(page);
+  await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
+  const bottom = studio.getByRole('region', { name: 'Studio panel', exact: true });
+  await bottom.getByRole('tab', { name: /^Tests/ }).click();
+  const footer = bottom.getByRole('region', { name: 'Saved scenario results', exact: true });
+  await expect(footer).toContainText('1 passed');
+  await expect(footer).toContainText('1 failed');
+  await expect(footer).toContainText('1 not run');
+  await expect(bottom.getByRole('tab', { name: /^Tests/ })).toContainText('1');
+  await footer.locator('summary').filter({ hasText: 'Support.scenario.json' }).click();
+  await footer.getByRole('button', { name: 'Footer missing evidence', exact: true }).click();
+  const details = footer.getByRole('region', { name: 'Details for Footer missing evidence', exact: true });
+  await expect(details).toContainText('Expected vs actual');
+  await expect(details).toContainText('Actual: Not in the reply');
+  await details.getByRole('button', { name: 'Close details' }).click();
+  await footer.getByRole('button', { name: 'Failed only' }).click();
+  await expect(footer.getByRole('button', { name: 'Footer order lookup', exact: true })).toHaveCount(0);
+  await expect(footer.getByRole('button', { name: 'Footer missing evidence', exact: true })).toBeVisible();
+  await footer.getByRole('searchbox', { name: 'Search scenario cases' }).fill('no such case');
+  await expect(footer.getByText('No matching cases.')).toBeVisible();
+  await footer.getByRole('searchbox').fill('');
+  const before = await rpc('studio.suites.list', { agentPath: 'force-app/Support.agent' });
+  await footer.getByRole('button', { name: 'Rerun failed (1)', exact: true }).click();
+  await expect(footer.getByText('Rerun complete. Results saved.')).toBeVisible({ timeout: 30000 });
+  const after = await rpc('studio.suites.list', { agentPath: 'force-app/Support.agent' });
+  expect(after.suites[0].lastResults['footer-fail'].at).toBeGreaterThan(before.suites[0].lastResults['footer-fail'].at);
+  expect(after.suites[0].lastResults['footer-pass'].at).toBe(before.suites[0].lastResults['footer-pass'].at);
+  expect(after.suites[0].lastResults).not.toHaveProperty('footer-pending');
+  expect(await footer.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-footer-results.png'));
+  await footer.getByRole('button', { name: 'Open Tests', exact: true }).click();
+  await expect(viewPane(page, 'tests')).toBeVisible();
+});

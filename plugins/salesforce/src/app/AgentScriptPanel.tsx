@@ -1480,6 +1480,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const bottomActive: BottomTab = compact ? 'problems' : studio.bottomTab;
   const bottom = layout !== 'legacy' && (wide || compactTool === 'code') ? (
     <BottomPanel open={studio.bottomOpen} active={bottomActive} problems={problemsCount} compact={compact}
+      testFailures={suites.reduce((count, suite) => count + suite.cases.filter(scenario => suite.lastResults?.[scenario.id]?.outcome === 'fail').length, 0)}
       onToggle={() => patch({ bottomOpen: !studio.bottomOpen })} onSelect={tab => patch({ bottomTab: tab, bottomOpen: true })}
       render={(tab, visible) => {
         if (tab === 'problems') return <ProblemsPanel path={activePath} diagnostics={problems} compact={compact} busy={fixBusy}
@@ -1488,7 +1489,8 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
         if (tab === 'trace') return <BottomTrace pluginId={pluginId} path={activePath} run={lastRun} visible={visible} onOpenPreview={() => openTool('preview')}
           onRevealSource={(path, line) => { if (path === activePathRef.current) revealLine(line); else void openFile(path).then(opened => { if (opened) revealLine(line); }); }} />;
         if (tab === 'output') return visible ? <OperationsPanel pluginId={pluginId} projectId={projectId} orgAlias={org?.alias} threadId={threadId} /> : null;
-        return <BottomTests suites={suites} onOpenTests={() => openTool('test')} />;
+        return <BottomTests key={`${projectId}:${activePath}`} suites={suites}
+          context={{ pluginId, projectId, threadId, path: activePath, source, dirty }} onOpenTests={() => openTool('test')} />;
       }} />
   ) : false;
 

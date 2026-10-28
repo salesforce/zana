@@ -25,18 +25,20 @@ export function withSuiteBadges(nodes: ExplorerNode[], suites: ScenarioSuite[]):
 export function useSuites(pluginId: string, projectId?: string): ScenarioSuite[] {
   const [suites, setSuites] = useState<ScenarioSuite[]>([]);
   const alive = useRef(true);
+  const sequence = useRef(0);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const load = useCallback(async () => {
+    const request = ++sequence.current;
     if (!projectId) { setSuites([]); return; }
     try {
       const result = await callPluginRpc(pluginId, STUDIO_RPC.suites, { projectId }) as { ok?: boolean; suites?: ScenarioSuite[] } | null;
-      if (alive.current && result?.ok !== false && Array.isArray(result?.suites)) setSuites(result.suites);
+      if (alive.current && request === sequence.current && result?.ok !== false && Array.isArray(result?.suites)) setSuites(result.suites);
     } catch { /* badges and the Tests tab are optional */ }
   }, [pluginId, projectId]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { setSuites([]); void load(); }, [load]);
   useRealtime(STUDIO_CHANGED_CHANNEL, payload => {
     const row = payload as { kind?: string; projectId?: string } | null;
-    if (row?.kind === 'suites' && (!row.projectId || row.projectId === projectId)) void load();
+    if ((row?.kind === 'suites' || row?.kind === 'suite-progress') && (!row.projectId || row.projectId === projectId)) void load();
   });
   return suites;
 }
