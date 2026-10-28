@@ -28,7 +28,7 @@ test('Plugin detail pages preserve management, settings areas, list state, and n
       serverEntry: './server.mjs', appEntry: broken ? null : './app.js', npmResolvedVersion: null, npmIntegrity: null, gitResolvedCommit: null, catalogMarketplace: null, catalogEntryId: null, installedAt: Date.now(), updatedAt: Date.now() };
   });
   writeFileSync(join(pluginsDir, 'installed.json'), JSON.stringify({ version: 1, plugins: records }));
-  const handle = await launchApp(home, { initialConfig: { sponsorPromptDismissed: true }, env: {
+  const handle = await launchApp(home, { initialConfig: { theme: 'light', sponsorPromptDismissed: true }, env: {
     ZCC_OFFICIAL_MARKETPLACE_URL: 'off', ZCC_INTERNAL_MARKETPLACE_SOURCE: 'off', ZCC_COMMUNITY_MARKETPLACE_SOURCE: 'off', ZCC_SKIP_PLUGIN_NPM: '1'
   } });
   const win = handle.window;
@@ -113,6 +113,53 @@ test('Plugin detail pages preserve management, settings areas, list state, and n
     });
     expect(available).toBeTruthy();
     const card = win.getByTestId(`plugin-card-${available!.id}`);
+    const grid = win.getByTestId('plugin-browse-grid').first();
+    const market = win.locator('.ext-market');
+    await expect(card.locator('.ext-browse-card-footer .ext-browse-provenance')).toHaveText('Official');
+    await expect(card.locator('.ext-browse-card-footer').getByRole('button', { name: 'Install', exact: true })).not.toHaveClass(/primary/);
+    if (available!.category) await expect(card.locator('.ext-browse-card-body .ext-browse-card-category')).toHaveText(available!.category!);
+    for (const width of [1640, 1100, 900]) {
+      await win.setViewportSize({ width, height: 1000 });
+      // Chromium can report subpixel rounding just above the CSS max-width.
+      await expect.poll(async () => (await market.boundingBox())!.width).toBeLessThan(1201);
+      const metrics = await card.evaluate(el => {
+        const footer = el.querySelector('.ext-browse-card-footer')!;
+        const action = footer.querySelector('.ext-market-item-action')!;
+        const description = el.querySelector('.ext-market-item-desc');
+        const opener = el.querySelector('.ext-browse-card-open')!;
+        return {
+          width: el.getBoundingClientRect().width,
+          footerBorder: getComputedStyle(footer).borderTopWidth,
+          rightGap: footer.getBoundingClientRect().right - action.getBoundingClientRect().right,
+          descriptionAligned: !description || Math.abs(description.getBoundingClientRect().left - opener.getBoundingClientRect().left) < 1,
+          overflow: el.scrollWidth > el.clientWidth
+        };
+      });
+      expect(Number.parseFloat(metrics.footerBorder)).toBeGreaterThan(0);
+      expect(Math.abs(metrics.rightGap)).toBeLessThan(1);
+      expect(metrics.descriptionAligned).toBe(true);
+      expect(metrics.overflow).toBe(false);
+      expect(await market.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+      if (width === 1640) {
+        expect(metrics.width).toBeLessThan(430);
+        expect(await grid.evaluate(el => getComputedStyle(el).gridTemplateColumns.split(' ').length)).toBe(3);
+      }
+      await captureElectronScreenshot(handle.electron, win, testInfo.outputPath(`plugins-compact-${width}.png`));
+    }
+    await win.evaluate(() => window.cc.config.set({ theme: 'dark' }));
+    await expect(win.locator('html')).toHaveAttribute('data-theme', 'dark');
+    // The theme attribute changes before the card's background transition finishes.
+    await expect(card).toHaveCSS('background-color', 'rgb(30, 30, 30)');
+    await expect(card.locator('.ext-browse-card-footer')).toBeVisible();
+    await captureElectronScreenshot(handle.electron, win, testInfo.outputPath('plugins-compact-dark.png'));
+    await win.evaluate(() => window.cc.config.set({ theme: 'light' }));
+    await expect(card).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    await win.setViewportSize({ width: 1640, height: 1000 });
+    // Filtering down to one result retains card proportions rather than stretching it.
+    await win.getByLabel('Search plugins', { exact: true }).fill(available!.title);
+    await expect(card).toBeVisible();
+    expect((await card.boundingBox())!.width).toBeLessThan(430);
+    await win.getByLabel('Search plugins', { exact: true }).fill('');
     await card.getByRole('button', { name: `${available!.title} plugin details` }).click();
     await expect(win.getByRole('region', { name: 'Marketplace plugin' })).toBeVisible();
     await expect(card).toBeHidden();
