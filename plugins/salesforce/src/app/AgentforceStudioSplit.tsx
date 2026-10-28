@@ -1,65 +1,20 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type PointerEvent } from 'react';
-import { DEFAULT_SPLIT_RATIO, MIN_SPLIT_RATIO, MAX_SPLIT_RATIO, splitRatioFromClientX, splitRatioFromKey } from '../../lib/agent-script-split.js';
+import { useRef, type CSSProperties, type ReactNode } from 'react';
+import { DEFAULT_SPLIT_RATIO, MIN_SPLIT_RATIO, MAX_SPLIT_RATIO } from '../../lib/agent-script-split.js';
+import { ResizeHandle, usePaneSize } from './studio/StudioResize.js';
 
-/** Persisted ratios are untrusted storage: clamp, and fall back to the default for anything that is not a finite number. */
-export function readSplitRatio(key: string | undefined): number {
-  if (!key) return DEFAULT_SPLIT_RATIO;
-  try {
-    const value = Number(JSON.parse(localStorage.getItem(key) ?? 'null'));
-    return Number.isFinite(value) && value >= MIN_SPLIT_RATIO && value <= MAX_SPLIT_RATIO ? value : DEFAULT_SPLIT_RATIO;
-  } catch { return DEFAULT_SPLIT_RATIO; }
-}
-
-/**
- * Pointer capture keeps resizing continuous while crossing the Monaco iframe.
- * `mode` keeps both children mounted while showing one: compact layouts show the editor or the tools, never both.
- * `storageKey` persists the ratio.
- */
+/** Keeps the iframe mounted while switching between editor, tools and split views. */
 export function AgentforceStudioSplit({ editor, children, open, mode = 'split', storageKey }: {
   editor: ReactNode; children: ReactNode; open: boolean; mode?: 'split' | 'editor' | 'panel'; storageKey?: string;
 }) {
-  const [ratio, setRatio] = useState(() => readSplitRatio(storageKey));
-  useEffect(() => { if (storageKey) { try { localStorage.setItem(storageKey, JSON.stringify(ratio)); } catch { /* optional */ } } }, [storageKey, ratio]);
-  const [dragging, setDragging] = useState(false);
+  const pane = usePaneSize(storageKey, DEFAULT_SPLIT_RATIO, MIN_SPLIT_RATIO, MAX_SPLIT_RATIO);
   const workspace = useRef<HTMLDivElement>(null);
-  const pointer = useRef<number | null>(null);
-  useEffect(() => { if (!open) { pointer.current = null; setDragging(false); } }, [open]);
-  const resize = (clientX: number) => {
-    const rect = workspace.current?.getBoundingClientRect();
-    if (rect) setRatio(splitRatioFromClientX(clientX, rect.left, rect.width));
-  };
-  const finish = (event: PointerEvent<HTMLDivElement>) => {
-    if (pointer.current !== event.pointerId) return;
-    pointer.current = null;
-    setDragging(false);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-  };
-  return <div ref={workspace} className="af-workspace" data-panel-open={open} data-mode={mode} data-resizing={dragging} style={{ '--af-editor-ratio': ratio } as CSSProperties}>
+  return <div ref={workspace} className="af-workspace" data-panel-open={open} data-mode={mode} style={{ '--af-editor-ratio': pane.size } as CSSProperties}>
     <div className="sf-as-stage">{editor}</div>
-    {open && mode === 'split' && <div
-      className="af-workspace-divider" role="separator" tabIndex={0}
-      aria-label="Resize editor and side panel" aria-orientation="vertical"
-      aria-valuemin={Math.round(MIN_SPLIT_RATIO * 100)} aria-valuemax={Math.round(MAX_SPLIT_RATIO * 100)} aria-valuenow={Math.round(ratio * 100)}
-      aria-valuetext={`${Math.round(ratio * 100)}% editor, ${Math.round((1 - ratio) * 100)}% side panel`}
-      title="Drag to resize · double-click to reset · arrow keys to adjust"
-      onPointerDown={event => {
-        if (event.button !== 0) return;
-        event.preventDefault();
-        event.currentTarget.focus();
-        event.currentTarget.setPointerCapture(event.pointerId);
-        pointer.current = event.pointerId;
-        setDragging(true);
-      }}
-      onPointerMove={event => { if (pointer.current === event.pointerId) resize(event.clientX); }}
-      onPointerUp={finish} onPointerCancel={finish} onLostPointerCapture={finish}
-      onDoubleClick={() => setRatio(DEFAULT_SPLIT_RATIO)}
-      onKeyDown={event => {
-        const next = splitRatioFromKey(ratio, event.key);
-        if (next === null) return;
-        event.preventDefault();
-        setRatio(next);
-      }}
-    />}
+    {open && mode === 'split' && <ResizeHandle key={storageKey} className="af-workspace-divider" label="Resize editor and side panel" value={pane.size * 100}
+      min={MIN_SPLIT_RATIO * 100} max={MAX_SPLIT_RATIO * 100} step={4}
+      valueText={`${Math.round(pane.size * 100)}% editor, ${Math.round((1 - pane.size) * 100)}% side panel`}
+      scale={() => { const width = workspace.current?.getBoundingClientRect().width ?? 0; return width > 9 ? 100 / (width - 9) : 0; }}
+      onChange={value => pane.onChange(value / 100)} onCommit={value => pane.onCommit(value / 100)} onReset={pane.onReset} />}
     {children}
   </div>;
 }

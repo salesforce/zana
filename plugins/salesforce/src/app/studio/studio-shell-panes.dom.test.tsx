@@ -63,12 +63,12 @@ describe('StudioShell', () => {
     expect(handle.className).not.toContain('is-dragging');
     fireEvent.pointerDown(handle, { button: 0, clientX: 100, pointerId: 1 });
     expect(handle.className).toContain('is-dragging');
-    fireEvent.pointerMove(handle, { clientX: 160 });
+    fireEvent.pointerMove(handle, { clientX: 160, pointerId: 1 });
     expect(col.style.width).toBe('360px');
-    fireEvent.pointerMove(handle, { clientX: 2000 });
+    fireEvent.pointerMove(handle, { clientX: 2000, pointerId: 1 });
     expect(col.style.width).toBe('480px');
     expect(onExplorerWidth).not.toHaveBeenCalled();
-    fireEvent.pointerUp(handle, { clientX: 2000 });
+    fireEvent.pointerUp(handle, { clientX: 2000, pointerId: 1 });
     expect(onExplorerWidth).toHaveBeenCalledWith(480);
     expect(handle.className).not.toContain('is-dragging');
     // A click without movement commits nothing.
@@ -81,9 +81,9 @@ describe('StudioShell', () => {
     fireEvent.keyDown(handle, { key: 'ArrowRight' });
     expect(onExplorerWidth).toHaveBeenLastCalledWith(316);
     fireEvent.keyDown(handle, { key: 'Home' });
-    expect(onExplorerWidth).toHaveBeenLastCalledWith(null);
+    expect(onExplorerWidth).toHaveBeenLastCalledWith(200);
     fireEvent.keyDown(handle, { key: 'Enter' });
-    expect(onExplorerWidth).toHaveBeenCalledTimes(3);
+    expect(onExplorerWidth).toHaveBeenCalledTimes(4);
     fireEvent.doubleClick(handle);
     expect(onExplorerWidth).toHaveBeenLastCalledWith(null);
     // Default width, and no handle when the host cannot store a width.

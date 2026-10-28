@@ -1,23 +1,26 @@
 import { useId, useState } from 'react';
 import { Check, MessageSquare, Plus, Search, Target, Trash2, UserRound } from 'lucide-react';
+import { useStudioSplit } from './StudioResize.js';
 import { SIMULATION_LIMITS, type SimulationScenarioInput } from '../../../lib/simulation-contract.js';
 
 export type EditableScenario = SimulationScenarioInput & { key: string };
 interface Props {
+  storageKey?: string;
   scenarios: EditableScenario[]; included: string[]; activeKey: string; attention: Set<string>; disabled: boolean;
   onSelect(key: string): void; onToggle(key: string): void; onEdit(key: string, patch: Partial<SimulationScenarioInput>): void;
   onAdd(): void; onRemove(key: string): void;
 }
 
 /** One scenario stays in focus while the catalogue remains available beside it. */
-export function SimulationScenarios({ scenarios, included, activeKey, attention, disabled, onSelect, onToggle, onEdit, onAdd, onRemove }: Props) {
+export function SimulationScenarios({ storageKey, scenarios, included, activeKey, attention, disabled, onSelect, onToggle, onEdit, onAdd, onRemove }: Props) {
+  const split = useStudioSplit({ storageKey, initial: 30, breakpoint: 460, stack: false, minPane: 170 });
   const nameId = useId();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState(false);
   const active = scenarios.find(row => row.key === activeKey) ?? scenarios[0];
   const index = scenarios.indexOf(active!);
   const rows = scenarios.filter(row => (!filter || attention.has(row.name)) && `${row.name} ${row.persona} ${row.goal}`.toLowerCase().includes(query.toLowerCase()));
-  return <div className="sf-sim-workspace">
+  return <div className="sf-sim-workspace" ref={split.ref} style={split.style}>
     <aside className="sf-sim-catalogue" aria-label="Scenario catalogue">
       <label className="sf-sim-search"><Search size={14} aria-hidden="true" /><input aria-label="Search scenarios" placeholder="Find a scenario…" value={query} onChange={event => setQuery(event.target.value)} /></label>
       <div className="sf-sim-filters" role="group" aria-label="Filter scenarios">
@@ -36,6 +39,7 @@ export function SimulationScenarios({ scenarios, included, activeKey, attention,
       </div>
       <button type="button" className="sf-sim-add" disabled={disabled || scenarios.length >= SIMULATION_LIMITS.lanes} onClick={() => { setQuery(''); setFilter(false); onAdd(); }}><Plus size={14} aria-hidden="true" />Add scenario</button>
     </aside>
+    {split.divider('Resize scenario catalogue and editor')}
     {active ? <fieldset className="sf-sim-editor" disabled={disabled} aria-label={`Scenario ${index + 1}`}>
       <div className="sf-sim-editor-title"><label className="sf-sim-sr" htmlFor={nameId}>Scenario {index + 1} name</label><input id={nameId} aria-label={`Scenario ${index + 1} name`} value={active.name} maxLength={80} placeholder="Name this scenario" onChange={event => onEdit(active.key, { name: event.target.value })} />
         <button type="button" className="sf-sim-icon" aria-label={`Remove scenario ${index + 1}`} title="Remove scenario" onClick={() => onRemove(active.key)}><Trash2 size={15} aria-hidden="true" /></button></div>

@@ -1,5 +1,6 @@
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
+import { ResizeHandle, useElementSize, usePaneSize } from './StudioResize.js';
 
 export type BottomTab = 'problems' | 'trace' | 'output' | 'tests';
 export const BOTTOM_TABS: ReadonlyArray<{ id: BottomTab; title: string }> = [
@@ -11,19 +12,28 @@ export const isBottomTab = (value: unknown): value is BottomTab => BOTTOM_TABS.s
  * Wide: tabbed panel under the editor (Problems / Trace / Output / Tests). Compact: a collapsible
  * "N problems" bar that expands to the Problems view only. Panes stay mounted (hidden) so their state survives tab switches.
  */
-export function BottomPanel({ open, active, problems, compact, onToggle, onSelect, render }: {
+export function BottomPanel({ open, active, problems, compact, storageKey, onToggle, onSelect, render }: {
   open: boolean;
   active: BottomTab;
   problems: number;
   compact?: boolean;
+  storageKey?: string;
   onToggle(): void;
   onSelect(tab: BottomTab): void;
   /** Called for each visible-or-mounted pane; `visible` lets lazy panes skip work. */
   render(tab: BottomTab, visible: boolean): ReactNode;
 }) {
+  const panel = useRef<HTMLElement>(null);
+  const [bounds, setBounds] = useState({ width: 0, height: 0 });
+  useElementSize(panel, setBounds, true);
+  const maximum = bounds.height > 0 ? Math.max(40, Math.min(640, bounds.height * .65, bounds.height - 200)) : 640;
+  const minimum = Math.min(80, maximum);
+  const pane = usePaneSize(storageKey, compact ? 160 : 220, minimum, maximum);
   const tabs = compact ? BOTTOM_TABS.filter(tab => tab.id === 'problems') : BOTTOM_TABS;
   const label = problems === 0 ? 'No problems' : `${problems} ${problems === 1 ? 'problem' : 'problems'}`;
-  return <section className="sf-bottom" data-open={open} data-compact={compact ? 'true' : undefined} aria-label="Studio panel">
+  return <section ref={panel} className="sf-bottom" data-open={open} data-compact={compact ? 'true' : undefined} aria-label="Studio panel">
+    {open && <ResizeHandle key={storageKey} label="Resize bottom panel" orientation="horizontal" value={pane.size} min={minimum} max={maximum} step={-24}
+      {...pane} scale={() => -1} />}
     {compact
       ? <button type="button" className="sf-bottom-bar" aria-expanded={open} onClick={onToggle}>
         {open ? <ChevronDown size={13} aria-hidden="true" /> : <ChevronRight size={13} aria-hidden="true" />}
@@ -39,7 +49,7 @@ export function BottomPanel({ open, active, problems, compact, onToggle, onSelec
           {open ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
         </button>
       </div>}
-    <div className="sf-bottom-body" hidden={!open}>
+    <div className="sf-bottom-body" hidden={!open} style={{ height: pane.size }}>
       {tabs.map(tab => <div key={tab.id} id={`sf-bottom-pane-${tab.id}`} role="tabpanel" className="sf-bottom-pane" aria-labelledby={`sf-bottom-tab-${tab.id}`} hidden={active !== tab.id}>
         {render(tab.id, open && active === tab.id)}
       </div>)}

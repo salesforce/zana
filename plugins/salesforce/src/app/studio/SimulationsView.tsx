@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MessageSquare, Play, SlidersHorizontal } from 'lucide-react';
+import { useStudioSplit } from './StudioResize.js';
 import { SimulationScenarios } from './SimulationScenarios.js';
 import { SIMULATION_STYLES } from './simulation-styles.js';
 import { callPluginRpc, useRealtime } from '@zana-ai/zcc-plugin-sdk/app';
@@ -72,6 +73,7 @@ export function SimulationsView(props: SimulationsViewProps) {
 }
 
 function AgentSimulations(props: SimulationsViewProps) {
+  const resultsSplit = useStudioSplit({ storageKey: `salesforce:studio:simulation-results:${props.projectId ?? 'draft'}`, initial: 30, breakpoint: 460, stack: false, minPane: 170 });
   const { pluginId, projectId, threadId, path, source, dirty, visible, focus, onFocusHandled, onAskAgent, pollMs = 2000 } = props;
   const call = props.call ?? callPluginRpc;
   const [batches, setBatches] = useState<SimulationBatch[]>([]);
@@ -249,7 +251,7 @@ function AgentSimulations(props: SimulationsViewProps) {
       <span className="sf-sim-run-meta">{engine === 'preview' ? 'Simulate' : 'Rehearse'} · {parallel} in parallel · {repeats} {repeats === 1 ? 'repeat' : 'repeats'}</span>
     </div>
     <div hidden={view !== 'scenarios'}>
-      <SimulationScenarios scenarios={scenarios} included={presets} activeKey={activeScenario} attention={new Set(batch?.lanes.filter(row => ['fail', 'inconclusive', 'error'].includes(row.status)).map(row => row.name))} disabled={running || busy !== null}
+      <SimulationScenarios storageKey={`salesforce:studio:simulation-scenarios:${projectId ?? 'draft'}`} scenarios={scenarios} included={presets} activeKey={activeScenario} attention={new Set(batch?.lanes.filter(row => ['fail', 'inconclusive', 'error'].includes(row.status)).map(row => row.name))} disabled={running || busy !== null}
         onSelect={setActiveScenario} onToggle={togglePreset} onEdit={editScenario} onAdd={addScenario} onRemove={key => { setScenarios(rows => rows.filter(row => row.key !== key)); setPresets(rows => rows.filter(row => row !== key)); }} />
       {batch && <button type="button" className="sf-tp-btn sf-sim-reuse" disabled={running || busy !== null} onClick={reuseScenarios}>Use scenarios from this batch</button>}
     </div>
@@ -268,7 +270,7 @@ function AgentSimulations(props: SimulationsViewProps) {
       </select>}
       {onAskAgent && isBatchDone(batch.status) && notPassing > 0 && <button type="button" className="sf-tp-btn is-primary" onClick={() => onAskAgent(improvePrompt(batch))}>Ask the agent to improve</button>}
     </div>}
-    <div className="sf-sim-results-workspace">
+    <div className="sf-sim-results-workspace" ref={resultsSplit.ref} style={resultsSplit.style}>
     {batch && <div className="sf-sim-lanes" role="list" aria-label="Conversations">
       {batch.lanes.map(row => {
         const footer = laneFooter(row);
@@ -280,6 +282,7 @@ function AgentSimulations(props: SimulationsViewProps) {
         </button></div>;
       })}
     </div>}
+    {batch && resultsSplit.divider('Resize conversations and result details')}
     {lane && <section className="sf-sim-detail" aria-label={`Conversation ${lane.name}`}>
       <h3>{lane.name}{lane.repeat > 1 ? ` #${lane.repeat}` : ''} <StatusChip status={lane.status} /></h3>
       <div className="sf-tp-sub"><b>Goal:</b> {lane.scenario.goal}<br /><b>Criteria:</b> {lane.scenario.criteria}</div>

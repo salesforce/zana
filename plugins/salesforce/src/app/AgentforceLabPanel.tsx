@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { callPluginRpc } from '@zana-ai/zcc-plugin-sdk/app';
 import { DEFAULT_LAB_MODEL, LAB_SCENARIOS, parseLabScenario, type LabEngine, type LabScenario, type LabSnapshot, type LabTurn, type LabVerdict } from '../../lib/agentforce-lab-contract.js';
+import { STUDIO_RESIZE_STYLES, useStudioSplit } from './studio/StudioResize.js';
 import { Bot, FlaskConical } from './components/icons.js';
 import { LoadingState } from './components/SalesforceState.js';
 import { TracePanel } from './preview/TracePanel.js';
@@ -46,6 +47,7 @@ export function elapsed(since: number, now: number): string {
 const RAW_LIMIT = 200_000;
 
 export function AgentforceLabPanel(props: { pluginId: string; projectId?: string; threadId?: string; orgAlias?: string; source: string; mode: 'rehearse' | 'test'; fileLabel: string; hidden?: boolean; /** The .agent file; enables Save as test case. */ agentPath?: string }) {
+  const split = useStudioSplit({ storageKey: `salesforce:studio:lab:${props.projectId ?? 'draft'}`, initial: 48 });
   const context = usePreviewContext({ pluginId: props.pluginId, projectId: props.projectId, source: props.source, path: props.agentPath, orgAlias: props.orgAlias, scope: `${props.projectId ?? ''}:${props.agentPath ?? ''}:${props.orgAlias ?? ''}` });
   const [engine, setEngine] = useState<LabEngine>('preview');
   const [model, setModel] = useState(DEFAULT_LAB_MODEL);
@@ -235,8 +237,8 @@ export function AgentforceLabPanel(props: { pluginId: string; projectId?: string
   const raw = evidenceView === 'raw' ? JSON.stringify({ session, traces, verdict }, null, 2) : '';
 
   return <aside className="af-lab af-lab-split" hidden={props.hidden} aria-label="Agentforce rehearsal" data-testid="agentforce-lab">
-    <style>{PREVIEW_CONTEXT_STYLES}</style>
-    <div className="af-lab-grid">
+    <style>{PREVIEW_CONTEXT_STYLES}{STUDIO_RESIZE_STYLES}</style>
+    <div className="af-lab-grid" ref={split.ref} style={split.style} data-stacked={split.stacked}>
       <section className="af-lab-left" aria-label="Conversation">
         <header className="af-lab-head">
           <span className="af-icon">{testing ? <FlaskConical /> : <Bot />}</span>
@@ -295,6 +297,7 @@ export function AgentforceLabPanel(props: { pluginId: string; projectId?: string
           {(busy || running) && <button type="button" className="af-stop" onClick={() => void stop()}>Stop</button>}
         </footer>
       </section>
+      {split.divider('Resize conversation and evidence')}
       <section className="af-lab-right" aria-label="Evidence">
         <header className="af-lab-head is-evidence"><strong>Evidence</strong><div className="af-seg" role="group" aria-label="Evidence view"><button type="button" aria-pressed={evidenceView === 'trace'} onClick={() => setEvidenceView('trace')}>Trace</button><button type="button" aria-pressed={evidenceView === 'raw'} disabled={!session} onClick={() => setEvidenceView('raw')}>Raw JSON</button></div></header>
         <div className="af-evidence" ref={evidence} data-testid="agentforce-lab-evidence">

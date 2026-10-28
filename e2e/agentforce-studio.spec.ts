@@ -2732,3 +2732,100 @@ test('AgentScript Studio reliability: large snapshots, background recovery, setu
   expect(await form.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-reliable-tests-narrow.png'));
 });
+
+test('Agentforce Studio: pane dividers resize smoothly, persist and adapt to narrow containers', async ({ app, home }, testInfo) => {
+  const page = app.window;
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  const trust = page.getByRole('button', { name: 'Install with full trust' });
+  if (await trust.isVisible().catch(() => false)) await trust.click();
+  await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'salesforce')?.status), { timeout: 30_000 }).toMatch(/running|needs-configuration/);
+  const projectId = await page.evaluate(async path => {
+    const result = await window.cc.projects.add(path); if (!result.ok) throw Error(result.message); return result.value.id;
+  }, join(home, 'dx'));
+  await page.evaluate(async id => {
+    await window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' });
+    history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
+  }, projectId);
+  await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
+  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  const studio = studioPanel(page);
+  await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
+  const iframe = studio.locator('iframe[title="Agentforce playground"]');
+  await expect(page.frameLocator('iframe[title="Agentforce playground"]').getByTestId('agent-script-ide')).toBeVisible();
+  await iframe.evaluate(el => { el.dataset.resizeIdentity = 'original'; });
+
+  const drag = async (handle: Locator, dx: number, dy = 0) => {
+    const bounds = (await handle.boundingBox())!;
+    expect(Math.min(bounds.width, bounds.height)).toBeGreaterThanOrEqual(8.9);
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    await page.mouse.down(); await page.mouse.move(bounds.x + bounds.width / 2 + dx, bounds.y + bounds.height / 2 + dy, { steps: 8 }); await page.mouse.up();
+    await expect(handle).toHaveAttribute('data-resizing', 'false');
+  };
+  const explorer = studio.locator('.sf-explorer-col');
+  const explorerHandle = studio.getByRole('separator', { name: 'Resize explorer' });
+  const explorerBounds = (await explorer.boundingBox())!;
+  const explorerGrip = (await explorerHandle.boundingBox())!;
+  expect(Math.abs(explorerGrip.x + explorerGrip.width - explorerBounds.x - explorerBounds.width)).toBeLessThan(1);
+  expect(Math.abs(explorerGrip.height - explorerBounds.height)).toBeLessThan(1);
+  const explorerBefore = explorerBounds.width;
+  await drag(explorerHandle, 80);
+  await expect.poll(async () => (await explorer.boundingBox())!.width).toBeGreaterThan(explorerBefore + 60);
+  await expect(iframe).toHaveAttribute('data-resize-identity', 'original');
+  await explorerHandle.dblclick();
+  await expect.poll(async () => Math.round((await explorer.boundingBox())!.width)).toBe(260);
+
+  const bottom = studio.getByRole('region', { name: 'Studio panel' });
+  await bottom.getByRole('tab', { name: /^Problems/ }).click();
+  const bottomBefore = (await bottom.boundingBox())!.height;
+  await drag(bottom.getByRole('separator', { name: 'Resize bottom panel' }), 0, -70);
+  await expect.poll(async () => (await bottom.boundingBox())!.height).toBeGreaterThan(bottomBefore + 50);
+  await bottom.getByRole('button', { name: 'Collapse panel' }).click();
+
+  await openTool(studio, 'Tests');
+  const tests = viewPane(page, 'tests');
+  await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Role-play' }).click();
+  const lab = tests.getByTestId('agentforce-lab');
+  const divider = lab.getByRole('separator', { name: 'Resize conversation and evidence' });
+  await expect(divider).toHaveAttribute('aria-orientation', 'vertical');
+  const chat = lab.getByRole('region', { name: 'Conversation', exact: true });
+  const chatBefore = (await chat.boundingBox())!.width;
+  await drag(divider, 120);
+  await expect.poll(async () => (await chat.boundingBox())!.width).toBeGreaterThan(chatBefore + 90);
+  const saved = await divider.getAttribute('aria-valuenow');
+  await showScript(page); await openTool(studio, 'Tests');
+  await expect(divider).toHaveAttribute('aria-valuenow', saved!);
+  await divider.focus(); await page.keyboard.press('ArrowLeft');
+  await expect.poll(async () => Number(await divider.getAttribute('aria-valuenow'))).toBeLessThan(Number(saved));
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+    await captureElectronScreenshot(app.electron, page, testInfo.outputPath(`resizable-panes-${theme}.png`));
+  }
+
+  await page.setViewportSize({ width: 900, height: 1080 });
+  await expect(divider).toHaveAttribute('aria-orientation', 'horizontal');
+  const heightBefore = (await chat.boundingBox())!.height;
+  await drag(divider, 0, 70);
+  await expect.poll(async () => (await chat.boundingBox())!.height).toBeGreaterThan(heightBefore + 45);
+  await expect.poll(() => lab.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('resizable-panes-narrow.png'));
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await expect(divider).toHaveAttribute('aria-orientation', 'vertical');
+  await divider.dblclick(); await expect(divider).toHaveAttribute('aria-valuenow', '48');
+
+  await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Simulations', exact: true }).click();
+  const catalogueHandle = tests.getByRole('separator', { name: 'Resize scenario catalogue and editor' });
+  const catalogue = tests.getByRole('complementary', { name: 'Scenario catalogue' });
+  const catalogueBefore = (await catalogue.boundingBox())!.width;
+  await drag(catalogueHandle, 80);
+  await expect.poll(async () => (await catalogue.boundingBox())!.width).toBeGreaterThan(catalogueBefore + 60);
+  const simulations = tests.getByTestId('studio-simulations');
+  await simulations.getByRole('button', { name: /^Run \d+ conversations?$/ }).click();
+  const conversations = simulations.getByRole('list', { name: 'Conversations', exact: true });
+  await expect(conversations).toBeVisible();
+  const resultsBefore = (await conversations.boundingBox())!.width;
+  await drag(simulations.getByRole('separator', { name: 'Resize conversations and result details' }), 80);
+  await expect.poll(async () => (await conversations.boundingBox())!.width).toBeGreaterThan(resultsBefore + 60);
+
+  await expect(iframe).toHaveAttribute('data-resize-identity', 'original');
+});
