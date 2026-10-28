@@ -33,6 +33,7 @@ describe('StudioShell', () => {
     const { container } = setup();
     const root = container.querySelector('.sf-studio')!;
     expect(root.getAttribute('data-layout')).toBe('wide');
+    expect(root.getAttribute('data-local-shortcuts')).toBe('s p');
     expect(root.getAttribute('data-tier')).toBe('960');
     for (const id of ['top', 'act', 'exp', 'child']) expect(screen.getByTestId(id)).toBeTruthy();
   });
@@ -93,6 +94,7 @@ describe('StudioShell', () => {
   it('toggles the explorer with Cmd/Ctrl+B only when the layout offers it', () => {
     const onToggleExplorer = vi.fn();
     const { rerender } = render(<StudioShell layout="wide" tier={960} quickOpen={false} quickItems={[]} onQuickOpenChange={vi.fn()} onQuickPick={vi.fn()} onSave={vi.fn()} onToggleExplorer={onToggleExplorer}><div data-testid="b-child" /></StudioShell>);
+    expect(screen.getByTestId('b-child').closest('.sf-studio')!.getAttribute('data-local-shortcuts')).toBe('s p b');
     fireEvent.keyDown(screen.getByTestId('b-child'), { key: 'b', metaKey: true });
     expect(onToggleExplorer).toHaveBeenCalledTimes(1);
     rerender(<StudioShell layout="compact" tier={400} quickOpen={false} quickItems={[]} onQuickOpenChange={vi.fn()} onQuickPick={vi.fn()} onSave={vi.fn()}><div data-testid="b-child" /></StudioShell>);

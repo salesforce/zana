@@ -30,6 +30,9 @@ function mod(e: KeyboardEvent) {
 export function installShortcuts(): () => void {
   const handler = (e: KeyboardEvent) => {
     if (!mod(e)) return;
+    // Focused tools can own these plain modifier chords before the global capture handler.
+    const local = (e.target as Element | null)?.closest?.('[data-local-shortcuts]');
+    if (!e.altKey && !e.shiftKey && local?.getAttribute('data-local-shortcuts')?.split(/\s+/).includes(e.key.toLowerCase())) return;
 
     const ui = useUi.getState();
     const data = useData.getState();

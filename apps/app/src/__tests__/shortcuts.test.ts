@@ -108,6 +108,19 @@ describe('shortcuts: ⌘. closes the agent detail modal', () => {
     expect(preventDefault).not.toHaveBeenCalled();
   });
 
+  it('leaves declared local chords to the focused tool and keeps global fallbacks', () => {
+    uiState.agentModal = { sessionId: 's1', projectId: 'p1' };
+    const target = (value: string | null) => ({ closest: () => ({ getAttribute: () => value }) });
+    expect(kb.press('.', { meta: true, target: target('s p .') }).preventDefault).not.toHaveBeenCalled();
+    expect(uiState.closeAgentModal).not.toHaveBeenCalled();
+    for (const chord of [
+      { target: target('s p') }, { target: target(null) },
+      { target: { closest: () => null } }, { target: {} },
+      { target: target('.'), alt: true }, { target: target('.'), shift: true },
+    ]) kb.press('.', { meta: true, ...chord });
+    expect(uiState.closeAgentModal).toHaveBeenCalledTimes(6);
+  });
+
   it('ignores a bare "." with no mod key', () => {
     uiState.agentModal = { sessionId: 's1', projectId: 'p1' };
     kb.press('.');

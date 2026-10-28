@@ -1281,8 +1281,8 @@ test('Agentforce Studio: Lightning Types, collapsible explorer sections and a hi
   await explorer.getByRole('button', { name: 'Hide explorer' }).click();
   await expect(explorer).toHaveCount(0);
   // Hiding the focused explorer button leaves focus on the document body.
-  // Use Studio's Ctrl+B variant: macOS reserves Cmd+B for the native project-view menu.
-  await studio.locator('.sf-as-body.sf-studio').press('Control+b');
+  // The focused tool owns its shortcut before the app's global project-view shortcut.
+  await studio.locator('.sf-as-body.sf-studio').press(process.platform === 'darwin' ? 'Meta+b' : 'Control+b');
   await expect(explorer).toBeVisible();
 });
 
