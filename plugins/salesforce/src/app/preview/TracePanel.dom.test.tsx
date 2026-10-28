@@ -61,4 +61,19 @@ describe('TracePanel', () => {
     expect(el.querySelector('button.sf-trace-row')).toBeNull();
     expect(el.querySelectorAll('[role=listitem]').length).toBe(4);
   });
+  it('keeps payloads collapsed, expands individual steps and expands/collapses all', async () => {
+    const el = render(<TracePanel trace={{ ...trace, steps: [...trace.steps, { kind: 'topic', label: 'Orders' }, { kind: 'topic', label: 'Support' }] }} />);
+    const payloads = [...el.querySelectorAll('details')];
+    expect(payloads).toHaveLength(3);
+    expect(payloads.every(p => !p.open)).toBe(true);
+    expect(el.querySelector('[aria-label="Topic route"]')?.textContent).toBe('Orders → Support');
+    await act(async () => { payloads[0].open = true; payloads[0].dispatchEvent(new Event('toggle')); });
+    expect(payloads[0].open).toBe(true);
+    const toggle = el.querySelector('.sf-trace-toggle') as HTMLButtonElement;
+    await act(async () => toggle.click());
+    expect(payloads.every(p => p.open)).toBe(true);
+    expect(toggle.textContent).toBe('Collapse all payloads');
+    await act(async () => toggle.click());
+    expect(payloads.every(p => !p.open)).toBe(true);
+  });
 });

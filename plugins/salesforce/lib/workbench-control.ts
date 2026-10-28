@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { isProposalOutcome, type ProposalOutcome } from './studio-contract.js';
+import { AGENT_SOURCE_MAX, isProposalOutcome, type ProposalOutcome } from './studio-contract.js';
 import { STUDIO_UI_COMMANDS, validateUiCommandInput } from './ui-command-input.js';
 
 /** View lease TTL; renderers re-poll well inside this (realtime wake + 5s fallback). */
@@ -35,6 +35,15 @@ const object = (value: unknown): ControlState => {
   if (!value || typeof value !== 'object' || Array.isArray(value) || JSON.stringify(value).length > 200_000) throw Error('Invalid workbench control payload.');
   return value as ControlState;
 };
+/** Whole-source state is opt-in; it has the same bound as the editor, while
+ * metadata, normal polls and command inputs keep their small envelope. */
+function sourceState(value: unknown): ControlState {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return object(value);
+  const { source, ...rest } = value as ControlState;
+  object(rest);
+  if (source !== undefined && (typeof source !== 'string' || source.length > AGENT_SOURCE_MAX)) throw Error('Invalid workbench source state.');
+  return value as ControlState;
+}
 /** Ephemeral scoped views. No action is reported as visible until the renderer acknowledges it. */
 export class WorkbenchControl {
   private views = new Map<string, View>();
@@ -117,7 +126,9 @@ export class WorkbenchControl {
   }
   private job(scope: string, id: string) { this.prune(); const job = this.jobs.get(id); if (!job || job.scope !== scope) throw Error('UI command not found in this project.'); return job; }
   acknowledge(scope: string, input: unknown) {
-    const row = object(input); const job = this.job(scope, String(row.commandId));
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw Error('Invalid workbench control payload.');
+    const { state, ...envelope } = input as ControlState;
+    const row = object(envelope); const job = this.job(scope, String(row.commandId));
     this.view(scope, String(row.viewId));
     if (job.viewId !== row.viewId || !job.delivered || job.result || job.awaiting || this.now() - job.at >= ACK_WINDOW_MS) throw Error('UI acknowledgement is stale.');
     job.touched = this.now();
@@ -125,11 +136,12 @@ export class WorkbenchControl {
       if (typeof row.proposalId !== 'string' || !row.proposalId || row.proposalId.length > 200) throw Error('A pending acknowledgement needs a proposalId.');
       const awaiting = [...this.jobs.values()].filter(j => j.viewId === job.viewId && j.awaiting && !j.result).length;
       if (awaiting >= MAX_AWAITING_PER_VIEW) throw Error('Too many proposals are awaiting the user in this view.');
-      job.awaiting = { proposalId: row.proposalId, at: this.now(), viewState: object(row.state) };
+      job.awaiting = { proposalId: row.proposalId, at: this.now(), viewState: object(state) };
       this.release(job.command.id);
       return { acknowledged: true, state: 'awaiting_user', proposalId: row.proposalId };
     }
-    job.result = row.ok === true ? { ok: true, viewState: object(row.state) } : { ok: false, error: typeof row.error === 'string' ? row.error.slice(0, 500) : 'The UI could not apply this command.' };
+    const includeSource = job.command.command === 'state' && job.command.input.includeSource === true;
+    job.result = row.ok === true ? { ok: true, viewState: includeSource ? sourceState(state) : object(state) } : { ok: false, error: typeof row.error === 'string' ? row.error.slice(0, 500) : 'The UI could not apply this command.' };
     this.release(job.command.id);
     return { acknowledged: true };
   }

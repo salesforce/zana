@@ -3,11 +3,12 @@ import { callPluginRpc, useRealtime } from '@zana-ai/zcc-plugin-sdk/app';
 import { PREVIEW_ENGINES, STUDIO_CHANGED_CHANNEL, STUDIO_RPC, type ScenarioSuite, type StudioEngine, type TurnTrace } from '../../../lib/studio-contract.js';
 import type { LabSnapshot } from '../../../lib/agentforce-lab-contract.js';
 import {
-  appendRun, caseFromRun, diffRuns, engineToLab, exportRunPayload, suiteChip, suiteTally,
-  type ChipState, type RunRecord, type RunTurn
+  appendRun, caseFromRun, diffRuns, engineToLab, exportRunPayload,
+  type RunRecord, type RunTurn
 } from '../agentforce-preview-logic.js';
 import { STUDIO_TOKENS } from '../studio/studio-tokens.js';
 import { TRACE_PANEL_STYLES, TracePanel } from './TracePanel.js';
+import { PREVIEW_SUITE_STYLES, PreviewSuite } from './PreviewSuite.js';
 import { PREVIEW_CONTEXT_STYLES, PreviewContextEditor, PreviewContextSetup, PreviewContextTabs, usePreviewContext } from './PreviewContext.js';
 import type { AppliedContextPreset, ContextPreset } from '../../../lib/preview-context-preset-contract.js';
 import { parsePreviewContext, type PreviewContextVariable } from '../../../lib/preview-context.js';
@@ -60,25 +61,20 @@ export const PREVIEW_WORKBENCH_STYLES = `
 .sf-pw-btn { border:1px solid var(--sf-border); background:transparent; border-radius:6px; padding:4px 10px; cursor:pointer; }
 .sf-pw-btn.is-primary { background:var(--sf-accent); color:var(--sf-bg); border-color:var(--sf-accent); }
 .sf-pw-btn:disabled { opacity:.5; cursor:default; }
-.sf-pw-btn:focus-visible, .sf-pw-seg button:focus-visible, .sf-pw-chip:focus-visible { outline:2px solid var(--sf-accent); outline-offset:2px; }
+.sf-pw-btn:focus-visible, .sf-pw-seg button:focus-visible { outline:2px solid var(--sf-accent); outline-offset:2px; }
 .sf-pw-spacer { flex:1; }
 .sf-pw-hint { color:var(--sf-muted); font-size:11px; padding:4px 10px; }
 .sf-pw-hint.is-warn { color:var(--sf-warn); }
 .sf-pw-err { color:var(--sf-danger); padding:6px 10px; border-bottom:1px solid var(--sf-border); }
-.sf-pw-suite { display:flex; flex-wrap:wrap; gap:6px; align-items:center; padding:6px 10px; border-bottom:1px solid var(--sf-border); }
-.sf-pw-chip { border:1px solid var(--sf-border); border-radius:999px; padding:2px 9px; background:transparent; cursor:pointer; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.sf-pw-chip.is-pass { border-color:var(--sf-success); color:var(--sf-success); }
-.sf-pw-chip.is-fail { border-color:var(--sf-danger); color:var(--sf-danger); }
-.sf-pw-chip.is-inconclusive { border-color:var(--sf-warn); color:var(--sf-warn); }
-.sf-pw-log { flex:1; min-height:0; overflow:auto; padding:10px; display:flex; flex-direction:column; gap:10px; }
+.sf-pw-log { flex:1; min-height:0; overflow:auto; padding:20px max(14px, calc((100% - 920px) / 2)); display:flex; flex-direction:column; gap:16px; }
 .sf-pw-empty { margin:auto; text-align:center; color:var(--sf-muted); max-width:260px; }
-.sf-pw-msg { display:flex; flex-direction:column; gap:4px; max-width:92%; }
+.sf-pw-msg { display:flex; flex-direction:column; gap:6px; max-width:100%; min-width:0; flex-shrink:0; }
 .sf-pw-msg.is-user { align-self:flex-end; align-items:flex-end; }
-.sf-pw-bubble { border:1px solid var(--sf-border); border-radius:10px; padding:6px 10px; white-space:pre-wrap; overflow-wrap:anywhere; }
+.sf-pw-bubble { border:1px solid var(--sf-border); border-radius:12px; padding:10px 14px; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; }
 .sf-pw-msg.is-user .sf-pw-bubble { background:var(--sf-accent); color:var(--sf-bg); border-color:var(--sf-accent); }
 .sf-pw-meta { display:flex; gap:8px; align-items:center; color:var(--sf-muted); font-size:10px; }
 .sf-pw-link { border:0; background:transparent; color:var(--sf-accent); cursor:pointer; padding:0; font-size:10px; }
-.sf-pw-composer { display:flex; gap:6px; padding:8px 10px; border-top:1px solid var(--sf-border); }
+.sf-pw-composer { display:flex; gap:8px; padding:12px max(14px, calc((100% - 920px) / 2)); border-top:1px solid var(--sf-border); }
 .sf-pw-composer input { flex:1; min-width:0; font:inherit; padding:6px 8px; border:1px solid var(--sf-border); border-radius:6px; background:transparent; color:var(--sf-text); }
 .sf-pw-panel { border-top:1px solid var(--sf-border); padding:8px 10px; display:flex; flex-direction:column; gap:6px; }
 .sf-pw-panel label { display:flex; flex-direction:column; gap:2px; color:var(--sf-muted); }
@@ -346,11 +342,10 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
 
   const cmpRuns = compare ? [runs.find(r => r.runId === compare[0]), runs.find(r => r.runId === compare[1])] : [];
   const rows = cmpRuns[0] && cmpRuns[1] ? diffRuns(cmpRuns[0], cmpRuns[1]) : [];
-  const tally = suite ? suiteTally(suite) : null;
 
   return (
     <section className="sf-studio sf-pw" data-testid="preview-workbench" aria-label="Agent preview">
-      <style>{STUDIO_TOKENS}{PREVIEW_WORKBENCH_STYLES}{TRACE_PANEL_STYLES}{PREVIEW_CONTEXT_STYLES}</style>
+      <style>{STUDIO_TOKENS}{PREVIEW_WORKBENCH_STYLES}{PREVIEW_SUITE_STYLES}{TRACE_PANEL_STYLES}{PREVIEW_CONTEXT_STYLES}</style>
       <div className="sf-pw-bar">
         <div className="sf-pw-seg" role="group" aria-label="Preview engine">
           {PREVIEW_ENGINES.map(e => <button key={e} type="button" aria-pressed={engine === e} disabled={busy || running} title={ENGINE_COPY[e].hint} onClick={() => setEngine(e)}>{ENGINE_COPY[e].title}</button>)}
@@ -372,12 +367,7 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
       {context.tab === 'context' && <div className="sf-context-panel" id={`${context.id}-context-panel`} role="tabpanel" aria-labelledby={`${context.id}-context`}><PreviewContextEditor context={context} running={running} onRestart={() => context.setSetup(true)} /></div>}
       <div className="sf-context-conversation" id={`${context.id}-conversation-panel`} role="tabpanel" aria-labelledby={`${context.id}-conversation`} hidden={context.tab !== 'conversation'}>
       {path && (suite || suiteBusy) && (
-        <div className="sf-pw-suite" aria-label="Scenario suite">
-          <strong>{tally ? `${tally.pass}/${tally.total} pass` : 'Suite'}</strong>
-          {suite?.cases.map(c => { const state: ChipState = suiteChip(suite, c.id); return <button key={c.id} type="button" className={`sf-pw-chip is-${state}`} data-state={state} title={`${c.name} · ${state} — click to rerun`} disabled={Boolean(suiteBusy) || engine === 'live'} onClick={() => void runSuite([c.id])}>{state === 'pass' ? '✓ ' : state === 'fail' ? '✗ ' : ''}{c.name}</button>; })}
-          <span className="sf-pw-spacer" />
-          {suiteBusy ? <span className="sf-pw-hint">{suiteBusy}</span> : <button type="button" className="sf-pw-btn" disabled={engine === 'live' || running} onClick={() => void runSuite()}>Run suite</button>}
-        </div>
+        <PreviewSuite key={`${projectId}:${path}:${suite?.id}`} suite={suite} busy={suiteBusy} disabled={engine === 'live' || running} onRun={ids => void runSuite(ids)} />
       )}
       <div className="sf-pw-log" role="log" aria-label="Preview conversation">
         {turns.length === 0

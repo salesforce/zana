@@ -62,6 +62,23 @@ it('offers discoverable capabilities and rejects unknown, oversized and unscoped
   expect((await cli(['tool', 'sf_soql', '--input', '{"action":"query.validate","query":"SELECT Id FROM Account LIMIT 1"}'], 'p')).exitCode).toBe(0);
   expect((await cli(['action', 'context.status'], 'missing')).exitCode).toBe(1);
 });
+it('uses input files for large CLI writes and family actions with the same revision and project checks', async () => {
+  const { action, harness, root } = await fixture();
+  const created = await action('draft.create', { name: 'Large', apiName: 'Large' });
+  const content = '# full CLI input\n'.repeat(20000) + '# END';
+  const input = { path: created.file.path, content, expectedSha256: created.file.sha256 };
+  writeFileSync(join(root, 'write.json'), JSON.stringify(input));
+  const cli = (argv: string[], projectId = 'p') => harness.cli!.run(argv, { pluginId: 'salesforce', argv, projectId });
+  expect((await cli(['action', 'files.write', '--input-file', 'write.json'])).exitCode).toBe(0);
+  expect(readFileSync(join(root, created.file.path), 'utf8')).toBe(content);
+  expect(JSON.parse((await cli(['action', 'files.write', '--input-file', 'write.json'])).stdout!)).toMatchObject({ code: 'sha_mismatch' });
+  const current = await action('files.read', { path: created.file.path });
+  writeFileSync(join(root, 'family.json'), JSON.stringify({ action: 'files.write', input: { ...input, expectedSha256: current.file.sha256, content: content + '\n# family' } }));
+  expect((await cli(['tool', 'sf_agent', '--input-file', 'family.json'])).exitCode).toBe(0);
+  expect(readFileSync(join(root, created.file.path), 'utf8')).toBe(content + '\n# family');
+  expect((await cli(['action', 'files.write', '--input-file', 'write.json'], '')).exitCode).toBe(2);
+  expect((await cli(['--help'])).stdout).toContain('--input-file');
+});
 it('mediates org reads and UI reads but permits offline local drafts', async () => {
   const { action, request, exec, harness } = await fixture(true);
   expect(await action('draft.create', { name: 'Offline', apiName: 'Offline' })).toMatchObject({ ok: true });

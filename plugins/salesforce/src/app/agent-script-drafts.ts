@@ -3,7 +3,10 @@ import type { AgentScriptDialect } from '../../lib/types.js';
 const STORAGE = 'salesforce.agent-drafts.v1';
 const SELECTIONS = 'salesforce.agent-selections.v1';
 // Recovery lives in localStorage (a few MB per origin), so it stays well below AGENT_SOURCE_MAX.
-export const MAX_AGENT_DRAFT = 180_000;
+export const MAX_AGENT_DRAFT = 1_000_000;
+// UTF-16 storage plus JSON escaping must fit the shared origin's quota. Keep
+// newest drafts in a single bounded write, without ever trimming their content.
+export const MAX_AGENT_DRAFT_STORAGE = 2_000_000;
 export type AgentDraft = { key: string; content: string; baseSha?: string; dialect: AgentScriptDialect };
 // The shared origin lets the iframe save synchronously on each edit, including
 // the last keystroke before its parent is unmounted. Never persist a truncated draft.
@@ -17,7 +20,16 @@ export function agentDraftKey(project: string, identity: string) { return `${pro
 export function readAgentDraft(key: string) { return drafts().find(row => row.key === key); }
 export function writeAgentDraft(draft: AgentDraft): boolean {
   if (draft.content.length > MAX_AGENT_DRAFT) return false;
-  try { localStorage.setItem(STORAGE, JSON.stringify([draft, ...drafts().filter(row => row.key !== draft.key)].slice(0, 12))); return true; }
+  try {
+    const next = [draft];
+    if (JSON.stringify(next).length > MAX_AGENT_DRAFT_STORAGE) return false;
+    for (const prior of drafts().filter(row => row.key !== draft.key)) {
+      if (next.length >= 12) break;
+      if (JSON.stringify([...next, prior]).length <= MAX_AGENT_DRAFT_STORAGE) next.push(prior);
+    }
+    localStorage.setItem(STORAGE, JSON.stringify(next));
+    return true;
+  }
   catch { return false; }
 }
 export function clearAgentDraft(key: string) {

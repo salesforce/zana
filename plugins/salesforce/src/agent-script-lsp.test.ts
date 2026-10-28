@@ -7,6 +7,25 @@ import {
 } from '../lib/agent-script-lsp.js';
 
 describe('agent script LSP', () => {
+  it.each(['', '# @dialect:agentforce\n', '# saved agent\n# @dialect:agentforce\n'])('keeps diagnostics, nested symbols and definition coordinates in the original source (%j)', annotation => {
+    const source = `${annotation}config:\n    agent_name: "Test"\nvariables:\n    activeTopic: mutable string = ""\nstart_agent router:\n    reasoning:\n        instructions: ->\n            set @variables.activeTopic = "Support"\n            | Help the user.\n`;
+    const lines = source.split('\n');
+    const declaration = lines.findIndex(line => line.includes('activeTopic:'));
+    const reference = lines.findIndex(line => line.includes('@variables'));
+    const query = (query: 'definition' | 'symbols' | 'diagnostics' | 'hover' | 'complete', line = reference, column = 28) => {
+      const result = queryAgentScriptLsp({ source, dialect: 'agentforce', query, line, column });
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw Error(result.error);
+      return result.result;
+    };
+    expect(query('definition').definition).toEqual({ start: { line: declaration, column: 4 }, end: { line: declaration, column: 15 } });
+    expect(query('symbols').symbols?.find(symbol => symbol.name === 'activeTopic')?.range.start).toEqual({ line: declaration, column: 4 });
+    expect(query('diagnostics').diagnostics.find(d => d.code === 'missing-required-field')).toMatchObject({ line: lines.findIndex(line => line.startsWith('start_agent')), column: 0 });
+    expect(query('complete').completions?.some(c => c.label === 'activeTopic')).toBe(true);
+    const hover = query('hover', lines.findIndex(line => line.startsWith('config:')), 2);
+    expect(hover.hover).toBeTruthy();
+    if (hover.range) expect(hover.range.start.line).toBe(lines.findIndex(line => line.startsWith('config:')));
+  });
   it('maps agentfabric to the agentforce dialect the language service ships', () => {
     expect(lspDialect('agentfabric')).toBe('agentforce');
     expect(lspDialect('agentscript')).toBe('agentscript');

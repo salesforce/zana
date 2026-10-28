@@ -16,6 +16,20 @@ function delivered(service: WorkbenchControl, command = 'editor.proposeEdit', in
 }
 
 describe('Studio UI verbs on the control channel', () => {
+  it('acknowledges a large source snapshot only when the command explicitly requests it', () => {
+    const service = new WorkbenchControl();
+    const source = '# large GuiAgentReview snapshot\n'.repeat(10000);
+    const { viewId, commandId } = delivered(service, 'state', { includeSource: true });
+    service.acknowledge('p', { viewId, commandId, ok: true, state: { source, path: 'GuiAgentReview.agent' } });
+    expect(service.result('p', commandId)).toMatchObject({ state: 'completed', ok: true, viewState: { source } });
+    const plain = delivered(service, 'state', {});
+    expect(() => service.acknowledge('p', { ...plain, ok: true, state: { source } })).toThrow('payload');
+    const bounded = delivered(service, 'state', { includeSource: true });
+    for (const state of [null, [], { source: 1 }, { source: 'x'.repeat(AGENT_SOURCE_MAX + 1) }, { source, extra: 'x'.repeat(200000) }]) expect(() => service.acknowledge('p', { ...bounded, ok: true, state })).toThrow();
+    expect(() => service.acknowledge('p', null)).toThrow('payload');
+    service.acknowledge('p', { ...bounded, ok: true, state: {} });
+    service.dispose();
+  });
   it('accepts the new verbs and rejects invalid input before queuing', () => {
     const service = new WorkbenchControl();
     const { viewId } = service.register('p', { surface: 'agentforce', commands: [...UI_COMMANDS] });

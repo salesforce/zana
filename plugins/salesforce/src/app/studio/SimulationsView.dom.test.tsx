@@ -131,6 +131,10 @@ it('opens the batch the agent asked to show and follows realtime changes', async
   view.rerender(<SimulationsView {...props} focus={{ batchId: 'b9', seq: 3 }} />);
   await waitFor(() => expect(screen.getByLabelText('1 of 1 pass')).toBeTruthy());
   expect(onFocusHandled).toHaveBeenCalledWith(3);
+  fireEvent.click(button(/^Scenarios/));
+  view.rerender(<SimulationsView {...props} focus={{ batchId: 'b9', seq: 4 }} />);
+  await waitFor(() => expect(button(/^Results/).getAttribute('aria-pressed')).toBe('true'));
+  expect(onFocusHandled).toHaveBeenCalledWith(4);
 
   // A change on the batch on screen reloads it; other kinds and projects are ignored.
   const before = calls(call, 'studio.simulations.get').length;
@@ -231,7 +235,6 @@ it('edits scenarios, adds/removes custom cases, validates and applies a typed co
   });
   await screen.findByText(/No simulations yet/);
   await screen.findByRole('option', { name: 'French customer · revision 2' });
-  fireEvent.click(screen.getByText('Customize scenarios and context'));
   fireEvent.change(screen.getByLabelText('Scenario 1 name'), { target: { value: 'Return policy' } });
   fireEvent.change(screen.getByLabelText('Scenario 1 opening'), { target: { value: 'Can I return this?' } });
   fireEvent.change(screen.getByLabelText('Simulation context preset'), { target: { value: 'fr' } });
@@ -253,7 +256,6 @@ it('edits scenarios, adds/removes custom cases, validates and applies a typed co
 it('explains conversation limits before starting any work', async () => {
   setup();
   await screen.findByText(/No simulations yet/);
-  fireEvent.click(screen.getByText('Customize scenarios and context'));
   fireEvent.click(button('Add scenario'));
   fireEvent.click(button('Add scenario'));
   fireEvent.change(screen.getByLabelText('Repeats'), { target: { value: '3' } });
@@ -261,19 +263,45 @@ it('explains conversation limits before starting any work', async () => {
   expect(button('Run 15 conversations').disabled).toBe(true);
 });
 
+it('switches between setup and results, and dismisses run settings with Escape or outside focus', async () => {
+  const done = batch('b1', 'done', [lane('1', 'pass')]);
+  setup({}, { 'studio.simulations.list': () => ({ ok: true, batches: [done] }), 'studio.simulations.get': () => ({ ok: true, batch: done }) });
+  await screen.findByText('Lane 1');
+  fireEvent.click(button(/^Scenarios/));
+  expect(button(/^Scenarios/).getAttribute('aria-pressed')).toBe('true');
+  expect(screen.queryByRole('list', { name: 'Conversations' })).toBeNull();
+  fireEvent.click(button(/^Results/));
+  expect(screen.getByRole('list', { name: 'Conversations' })).toBeTruthy();
+  const summary = screen.getByText('Run settings');
+  const settings = summary.closest('details')!;
+  settings.open = true;
+  fireEvent.keyDown(settings, { key: 'Escape' });
+  expect(settings.open).toBe(false);
+  expect(document.activeElement).toBe(summary);
+  settings.open = true;
+  fireEvent.pointerDown(screen.getByLabelText('Engine'));
+  expect(settings.open).toBe(true);
+  fireEvent.pointerDown(document.body);
+  expect(settings.open).toBe(false);
+  settings.open = true;
+  fireEvent.focusIn(button(/^Scenarios/));
+  expect(settings.open).toBe(false);
+});
+
 it('keeps custom scenario identities distinct after deleting a middle scenario', async () => {
   const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
   setup();
   await screen.findByText(/No simulations yet/);
-  fireEvent.click(screen.getByText('Customize scenarios and context'));
   fireEvent.click(button('Add scenario'));
   fireEvent.click(button('Add scenario'));
   fireEvent.change(screen.getByLabelText('Scenario 5 name'), { target: { value: 'Keep me' } });
+  fireEvent.click(button('Edit Custom scenario'));
   fireEvent.click(button('Remove scenario 4'));
   fireEvent.click(button('Add scenario'));
   fireEvent.change(screen.getByLabelText('Scenario 5 name'), { target: { value: 'New one' } });
-  expect((screen.getByLabelText('Scenario 4 name') as HTMLInputElement).value).toBe('Keep me');
   expect((screen.getByLabelText('Scenario 5 name') as HTMLInputElement).value).toBe('New one');
+  fireEvent.click(button('Edit Keep me'));
+  expect((screen.getByLabelText('Scenario 4 name') as HTMLInputElement).value).toBe('Keep me');
   expect(errors.mock.calls.flat().join(' ')).not.toContain('same key');
 });
 

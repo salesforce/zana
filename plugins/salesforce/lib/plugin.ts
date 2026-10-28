@@ -1,4 +1,5 @@
 import { OrgLoginHistory } from './org-login-history.js';
+import { readCliInput } from './cli-input.js';
 import { join, relative } from 'node:path';
 import { ContextPresets, ContextPresetError, contextPresetStorage, registerContextPresets } from './preview-context-presets.js';
 import { CONTEXT_PRESETS_CHANGED } from './preview-context-preset-contract.js';
@@ -21,6 +22,7 @@ import { registerStudioExplorer } from './studio-explorer.js';
 import { registerAgentScriptDocuments } from './agent-script-document.js';
 import { registerOrgTests } from './org-tests.js';
 import { registerSimulations } from './simulation-batches.js';
+import { registerSelfHealing } from './self-healing.js';
 import { createAgentDraft, draftDestination, DRAFT_PROJECT } from './agent-drafts.js';
 import type { AgentDraftInput } from './agent-draft-contract.js';
 import type { PluginAgentToolContext, PluginInteractionResult, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
@@ -885,14 +887,16 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   // Org tests read the org through the Studio read grants, like Release "Load versions"; a Studio click approves the read.
   registerOrgTests(studio, { sdkFor: args => clickedSdk(readGrants.wrap(sdk, releaseScope()), args) });
   // A batch is approved once, like one lab run; its lanes then start without asking again.
-  registerSimulations(studio, {
+  const simulationOptions = {
     agent: agentAt,
-    authorize: async request => {
+    authorize: async (request: { engine: 'preview' | 'rehearsal'; threadId: string; startedByUser: boolean }) => {
       const org = await connections.connect();
       await authorizeLab(org, request);
       return { orgAlias: org.alias };
     }
-  });
+  };
+  const simulationBatches = registerSimulations(studio, simulationOptions);
+  registerSelfHealing(studio, { ...simulationOptions, batches: simulationBatches, now: () => deps.now() });
   zcc.agents.registerTool({
     desktopOnly: ['ui.views', 'ui.command', 'ui.result'],
     name: 'sf_workbench',
@@ -933,16 +937,18 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       const execute = async () => {
       const command = argv[0] ?? 'doctor';
       if (command === '--help' || command === '-h') {
-        return { exitCode: 0, stdout: 'zcc sf doctor\nzcc sf org\nzcc sf lint [path]\nzcc sf action capabilities --json\nzcc sf action <action> --input <JSON> --json\nzcc sf tool <sf_agent|sf_soql|sf_apex|sf_lwc|sf_tools|sf_flow|code_analyzer|sf_metadata> --input <JSON> --json\n' };
+        return { exitCode: 0, stdout: 'zcc sf doctor\nzcc sf org\nzcc sf lint [path]\nzcc sf action capabilities --json\nzcc sf action <action> [--input <JSON> | --input-file <path>] --json\nzcc sf tool <sf_agent|sf_soql|sf_apex|sf_lwc|sf_tools|sf_flow|code_analyzer|sf_metadata> [--input <JSON> | --input-file <path>] --json\n\nFor large source or file writes, use --input-file with a JSON file inside the registered project (relative to its root, at most 16 MB). Source fields support up to 10 MB.\n' };
       }
       if (command === 'action' || command === 'tool') {
-        const inputIndex = argv.indexOf('--input');
         let input: unknown = {};
-        try { input = inputIndex === -1 ? {} : JSON.parse(argv[inputIndex + 1] ?? ''); }
-        catch { return { exitCode: 2, stderr: 'Provide valid JSON after --input.\n' }; }
+        try {
+          const root = argv.includes('--input-file') && cliContext.projectId ? (await resolveAgentFilesRoot({ projectId: cliContext.projectId })).root : undefined;
+          input = readCliInput(argv, root, deps);
+        } catch (error) { return { exitCode: 2, stderr: `${error instanceof Error ? error.message : String(error)}\n` }; }
         const ctx = { projectId: cliContext.projectId ?? '', threadId: cliContext.threadId ?? '', signal: cliContext.signal ?? new AbortController().signal };
         if (!ctx.projectId && argv[1] !== 'capabilities') return { exitCode: 2, stderr: 'Run in a registered project (or pass the ZCC project context).\n' };
-        const result = command === 'action' ? await invokeAction(argv[1] ?? '', input, ctx) : await runFamily(argv[1] ?? '', argv[1] === 'sf_tools' ? input as Record<string, unknown> : actionInput(input), ctx);
+        const familyInput = command === 'tool' && argv[1] !== 'sf_tools' && !isWorkbenchAction(rpcString(input, 'action')) ? actionInput(input) : input;
+        const result = command === 'action' ? await invokeAction(argv[1] ?? '', input, ctx) : await runFamily(argv[1] ?? '', familyInput, ctx);
         return { exitCode: (result as { ok?: boolean })?.ok === false ? 1 : 0, stdout: JSON.stringify(result) + '\n' };
       }
       const snapshot = await readSettings();
@@ -1089,7 +1095,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
             'lifecycle.publish',
             'lifecycle.activate',
             'lifecycle.deactivate',
-            ...workbenchActionNames.filter(name => /^(source|draft|files|studio|actions|simulations)\./.test(name))
+            ...workbenchActionNames.filter(name => /^(source|draft|files|studio|actions|simulations|selfHealing)\./.test(name))
           ]
         },
         apiName: { type: 'string' },
