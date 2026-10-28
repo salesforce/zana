@@ -1879,8 +1879,17 @@ function beginSessionIsolation(args: {
   };
 }
 
-function automatedAdmissionBlocked(error: unknown): string | null {
-  return error instanceof AutomatedConfigAdmissionError ? error.reason : null;
+function admitOrReject(
+  id: string | number,
+  admit: () => SessionIsolation,
+): SessionIsolation | null {
+  try {
+    return admit();
+  } catch (error) {
+    if (!(error instanceof AutomatedConfigAdmissionError)) throw error;
+    sendError(id, -32000, error.message);
+    return null;
+  }
 }
 
 function recordSessionKindTelemetry(
@@ -2588,17 +2597,10 @@ async function handleThreadStart(
     });
   }
 
-  let isolation: SessionIsolation;
-  try {
-    isolation = beginSessionIsolation({ params, threadId: threadIdRef.current });
-  } catch (error) {
-    const reason = automatedAdmissionBlocked(error);
-    if (reason) {
-      sendError(id, -32000, `Automated Claude admission blocked: ${reason}`);
-      return;
-    }
-    throw error;
-  }
+  const isolation = admitOrReject(id, () =>
+    beginSessionIsolation({ params, threadId: threadIdRef.current }),
+  );
+  if (!isolation) return;
   const env = buildSessionEnv(
     readConfigEnvOverrides(params.config),
     isolation.configDir,
@@ -2710,17 +2712,10 @@ async function handleThreadResume(
     });
   }
 
-  let isolation: SessionIsolation;
-  try {
-    isolation = beginSessionIsolation({ params, threadId, previous: existing?.isolation });
-  } catch (error) {
-    const reason = automatedAdmissionBlocked(error);
-    if (reason) {
-      sendError(id, -32000, `Automated Claude admission blocked: ${reason}`);
-      return;
-    }
-    throw error;
-  }
+  const isolation = admitOrReject(id, () =>
+    beginSessionIsolation({ params, threadId, previous: existing?.isolation }),
+  );
+  if (!isolation) return;
   const env = buildSessionEnv(
     readConfigEnvOverrides(params.config),
     isolation.configDir,
@@ -2775,17 +2770,6 @@ async function handleThreadFork(
   const threadId = params.threadId;
 
   const existing = threadAttachments.get(threadId);
-  let isolation: SessionIsolation;
-  try {
-    isolation = beginSessionIsolation({ params, threadId });
-  } catch (error) {
-    const reason = automatedAdmissionBlocked(error);
-    if (reason) {
-      sendError(id, -32000, `Automated Claude admission blocked: ${reason}`);
-      return;
-    }
-    throw error;
-  }
 
   if (existing) {
     await closeThreadSession({
@@ -2794,6 +2778,9 @@ async function handleThreadFork(
       threadId,
     });
   }
+
+  const isolation = admitOrReject(id, () => beginSessionIsolation({ params, threadId }));
+  if (!isolation) return;
 
   let forkedProviderThreadId: string;
   try {
@@ -2804,6 +2791,7 @@ async function handleThreadFork(
     });
     forkedProviderThreadId = forkResult.sessionId;
   } catch (error) {
+    discardAutomatedConfigDir(isolation);
     const message = error instanceof Error ? error.message : String(error);
     sendError(id, -32000, message);
     return;

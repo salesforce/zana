@@ -88,6 +88,18 @@ describe('automated claude isolation', () => {
         .toThrow(/config-unavailable/);
     });
 
+    it('preserves the preparation failure as the config admission cause', () => {
+      const blocker = join(dataDir, 'not-a-directory');
+      writeFileSync(blocker, 'x');
+      let thrown: unknown;
+      try {
+        planAutomatedClaudeLaunch({ ownerId: 'blocked', env: {}, dataDir: blocker, sourceConfigDir: sourceDir });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toMatchObject({ message: expect.stringMatching(/config-unavailable/), cause: expect.any(Error) });
+    });
+
     it('sanitizes path separators in the owner id', () => {
       const plan = planAutomatedClaudeLaunch({ ownerId: '../../x', env: authEnv, dataDir, sourceConfigDir: sourceDir })!;
       expect(plan.configDir.startsWith(join(dataDir, 'claude-automated-config'))).toBe(true);

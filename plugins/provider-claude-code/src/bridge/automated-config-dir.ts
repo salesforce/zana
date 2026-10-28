@@ -20,8 +20,8 @@ export type AutomatedConfigAdmissionReason =
   | "config-unavailable";
 
 export class AutomatedConfigAdmissionError extends Error {
-  constructor(readonly reason: AutomatedConfigAdmissionReason) {
-    super(`Automated Claude admission blocked: ${reason}`);
+  constructor(readonly reason: AutomatedConfigAdmissionReason, cause?: unknown) {
+    super(`Automated Claude admission blocked: ${reason}`, { cause });
   }
 }
 
@@ -58,7 +58,7 @@ export function createAutomatedConfigDir(
         // Confined cleanup is best effort; never traverse an untrusted path.
       }
     }
-    throw new AutomatedConfigAdmissionError("config-unavailable");
+    throw new AutomatedConfigAdmissionError("config-unavailable", error);
   }
 }
 

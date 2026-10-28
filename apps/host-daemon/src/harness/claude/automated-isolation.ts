@@ -51,8 +51,8 @@ export interface AutomatedClaudeLaunchPlan {
 export type AutomatedClaudeAdmissionReason = 'authentication-unavailable' | 'config-unavailable';
 
 export class AutomatedClaudeAdmissionError extends Error {
-  constructor(readonly reason: AutomatedClaudeAdmissionReason) {
-    super(`Automated Claude admission blocked: ${reason}`);
+  constructor(readonly reason: AutomatedClaudeAdmissionReason, cause?: unknown) {
+    super(`Automated Claude admission blocked: ${reason}`, { cause });
   }
 }
 
@@ -213,6 +213,6 @@ export function planAutomatedClaudeLaunch(input: AutomatedClaudeLaunchInput): Au
         // Confined cleanup is best effort; never traverse an untrusted path.
       }
     }
-    throw new AutomatedClaudeAdmissionError('config-unavailable');
+    throw new AutomatedClaudeAdmissionError('config-unavailable', error);
   }
 }

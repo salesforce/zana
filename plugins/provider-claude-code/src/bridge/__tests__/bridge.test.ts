@@ -3229,6 +3229,58 @@ describe("bridge", () => {
       }
     });
 
+    it("does not create a replacement automated leaf when provider fork validation fails", async () => {
+      const bridge = createBridgeJsonRpcTestHarness(handleLine);
+      queryMock.mockImplementation(() => createControlledClaudeQuery());
+      forkSessionMock.mockRejectedValue(new Error("checkpoint unavailable"));
+      const threadId = "thread-fork-validation";
+      const configDir = join(dataDir, "claude-automated-config", threadId);
+      try {
+        bridge.sendRequest(1, "thread/start", startRequest(threadId, "automated"));
+        await bridge.waitForResponse(1);
+        expect(existsSync(configDir)).toBe(true);
+
+        bridge.sendRequest(2, "thread/fork", {
+          ...startRequest(threadId, "automated"),
+          sourceProviderThreadId: "source-session",
+        });
+        await expect(bridge.waitForResponse(2)).resolves.toMatchObject({
+          error: { message: "checkpoint unavailable" },
+        });
+        expect(existsSync(configDir)).toBe(false);
+      } finally {
+        bridge.restore();
+      }
+    });
+
+    it("recreates isolation only after replacing an attached automated fork session", async () => {
+      const bridge = createBridgeJsonRpcTestHarness(handleLine);
+      const queries: ControlledClaudeQuery[] = [];
+      queryMock.mockImplementation(() => {
+        const query = createControlledClaudeQuery();
+        queries.push(query);
+        return query;
+      });
+      const threadId = "thread-fork-replace";
+      const configDir = join(dataDir, "claude-automated-config", threadId);
+      try {
+        bridge.sendRequest(1, "thread/start", startRequest(threadId, "automated"));
+        await bridge.waitForResponse(1);
+        bridge.sendRequest(2, "thread/fork", {
+          ...startRequest(threadId, "automated"),
+          sourceProviderThreadId: "source-session",
+        });
+        await expect(bridge.waitForResponse(2)).resolves.toMatchObject({
+          result: { providerThreadId: "forked-session-1" },
+        });
+        expect(existsSync(configDir)).toBe(true);
+        expect(getLatestQueryOptions().env?.CLAUDE_CONFIG_DIR).toBe(configDir);
+      } finally {
+        await stopBridgeThread({ bridge, queries, threadId });
+        bridge.restore();
+      }
+    });
+
     it("keeps a session without sessionKind interactive and unisolated", async () => {
       const bridge = createBridgeJsonRpcTestHarness(handleLine);
       queryMock.mockImplementation(() => createControlledClaudeQuery());

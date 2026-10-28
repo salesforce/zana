@@ -4,13 +4,14 @@
  */
 import { test, expect } from './fixtures/app.js';
 import { makeFakeAgentBinary } from './sdk/harness.js';
-import { createServer } from 'node:net';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const agent = makeFakeAgentBinary({ profile: 'claude', sequence: 'work-then-idle' });
-const PRODUCT_PORT = await freePort();
+// The spec runs inside its Playwright worker, so this produces a stable worker
+// port without racing a short-lived port reservation during test discovery.
+const PRODUCT_PORT = 20_000 + (process.pid % 10_000);
 const PRODUCT_URL = `http://127.0.0.1:${PRODUCT_PORT}`;
 
 test.use({
@@ -20,14 +21,6 @@ test.use({
 });
 
 test.afterAll(() => agent.cleanup());
-
-async function freePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const { port } = server.address() as { port: number };
-  await new Promise<void>((resolve) => server.close(() => resolve()));
-  return port;
-}
 
 async function waitForProduct(): Promise<void> {
   const deadline = Date.now() + 30_000;
