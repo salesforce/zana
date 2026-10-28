@@ -63,11 +63,7 @@ const REFERENCE_FILES = [
 function readSkillDocumentation(): string {
   return [
     readFileSync(SKILL_PATH, 'utf8'),
-    ...REFERENCE_FILES.map((file) => {
-      const path = join(dirname(SKILL_PATH), 'references', file);
-      expect(existsSync(path), `declared skill reference is missing: ${file}`).toBe(true);
-      return readFileSync(path, 'utf8');
-    })
+    ...REFERENCE_FILES.map((file) => readFileSync(join(dirname(SKILL_PATH), 'references', file), 'utf8'))
   ].join('\n\n');
 }
 
@@ -367,6 +363,12 @@ describe('zcc-plugin-authoring skill', () => {
 
   it('has frontmatter naming the skill after its directory', () => {
     expect(core).toMatch(/^---\nname: zcc-plugin-authoring\n/);
+  });
+
+  it('ships every declared reference', () => {
+    for (const file of REFERENCE_FILES) {
+      expect(existsSync(join(dirname(SKILL_PATH), 'references', file)), `declared skill reference is missing: ${file}`).toBe(true);
+    }
   });
 
   it('keeps default instructions as a small router with explicit references', () => {
