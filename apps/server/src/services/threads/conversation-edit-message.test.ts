@@ -181,6 +181,16 @@ describe('editConversationMessage', () => {
     }) }));
   });
 
+  it('omits automated skill selection for rewind when metadata has none', async () => {
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, prepared: true, providerThreadId: 'prov-rewound' }));
+    await editConversationMessage(ctx(callHostOnlineRpc), thread.id, {
+      operationId: 'op-1', input: [{ type: 'text', text: 'replacement' }]
+    });
+    const [{ command }] = callHostOnlineRpc.mock.calls[0]!;
+    expect(command).toMatchObject({ type: 'thread.rewind.prepare' });
+    expect(command).not.toHaveProperty('automatedSkillIds');
+  });
+
   it('discards a staged rewind when submit fails', async () => {
     vi.mocked(sendConversationTurn).mockRejectedValueOnce(new Error('submit failed'));
     const callHostOnlineRpc = vi.fn(async (input: { command: { type: string } }) => {

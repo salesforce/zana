@@ -118,10 +118,13 @@ describe('injected skill roots', () => {
     dirs.push(dataDir);
     const root = join(dataDir, 'skills-generated');
     const builtin = mkdtempSync(join(tmpdir(), 'zcc-builtin-target-'));
-    dirs.push(builtin);
+    const unlisted = mkdtempSync(join(tmpdir(), 'zcc-unlisted-target-'));
+    dirs.push(builtin, unlisted);
     writeFileSync(join(builtin, 'SKILL.md'), '---\ndescription: Built in.\n---\n');
+    writeFileSync(join(unlisted, 'SKILL.md'), '---\ndescription: Unlisted.\n---\n');
     mkdirSync(root, { recursive: true });
     symlinkSync(builtin, join(root, 'authorized'));
+    symlinkSync(unlisted, join(root, 'unlisted'));
     symlinkSync(join(dataDir, 'missing'), join(root, 'dangling'));
     writeFileSync(join(dataDir, 'injected-skill-roots.json'), JSON.stringify({
       directoryRoots: [], builtinSkillTargets: [realpathSync(builtin)]
@@ -129,6 +132,8 @@ describe('injected skill roots', () => {
 
     expect(resolveAutomatedSkillSelection(dataDir, { skillIds: ['zcc:built-in/authorized'] }))
       .toEqual(new Map([[root, new Set(['authorized'])]]));
+    expect(() => resolveAutomatedSkillSelection(dataDir, { skillIds: ['zcc:built-in/unlisted'] }))
+      .toThrow('Unknown automated skill id');
     expect(() => resolveAutomatedSkillSelection(dataDir, { skillIds: ['zcc:built-in/dangling'] }))
       .toThrow('Unknown automated skill id');
   });

@@ -154,6 +154,14 @@ describe('trusted Modern member runtime', () => {
     await vi.waitFor(() => expect(commands.find(command => command.type === 'thread.start')).toMatchObject({ automatedSkillIds: [] }));
   });
 
+  it('persists and sends an explicit empty automated skill selection', async () => {
+    const request = { ...member, automatedSkillIds: [] };
+    await createSquadMemberConversation(ctx, request);
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({ automatedSkillIds: [] });
+    await activateSquadMemberConversation(ctx, request);
+    await vi.waitFor(() => expect(commands.find(command => command.type === 'thread.start')).toMatchObject({ automatedSkillIds: [] }));
+  });
+
   it('single-flights concurrent activation before async preflight without duplicate starts', async () => {
     await createSquadMemberConversation(ctx, member);
     const preflight = Promise.withResolvers<void>();
