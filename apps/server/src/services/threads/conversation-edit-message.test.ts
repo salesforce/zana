@@ -48,6 +48,7 @@ import {
   getLatestConversationCheckpoint
 } from '@zana-ai/zcc-db';
 import { sendConversationTurn, stopConversation } from './conversation-lifecycle.js';
+import * as conversationHostRpc from './conversation-host-rpc.js';
 
 function ctx(callHostOnlineRpc: (input: unknown) => Promise<unknown>): ProductHttpContext {
   const pluginHostArtifacts = new PluginHostArtifactRegistry();
@@ -189,6 +190,20 @@ describe('editConversationMessage', () => {
     const [{ command }] = callHostOnlineRpc.mock.calls[0]!;
     expect(command).toMatchObject({ type: 'thread.rewind.prepare' });
     expect(command).not.toHaveProperty('automatedSkillIds');
+  });
+
+  it('rejects rewind when resume fields disappear before preparation', async () => {
+    vi.spyOn(conversationHostRpc, 'threadResumeFields').mockResolvedValueOnce(undefined);
+    const callHostOnlineRpc = vi.fn();
+    await expect(editConversationMessage(ctx(callHostOnlineRpc), thread.id, {
+      operationId: 'op-1', input: [{ type: 'text', text: 'replacement' }]
+    })).rejects.toMatchObject({ status: 409, code: 'not_resumable' });
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({ command: {
+      type: 'thread.rewind.discard',
+      threadId: thread.id,
+      environmentId: thread.environmentId,
+      leaseId: expect.any(String)
+    } }));
   });
 
   it('discards a staged rewind when submit fails', async () => {
