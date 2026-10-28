@@ -5,6 +5,7 @@ import {
   readFileSync,
   readlinkSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -77,6 +78,62 @@ describe("claude skill plugins", () => {
     });
     expect(movedPluginPath).not.toBe(pluginPath);
     expect(readlinkSync(join(movedPluginPath, "skills"))).toBe(second);
+  });
+
+  it("re-points the link without deleting anything in the previous root", () => {
+    const pluginsRoot = createClaudeSkillPluginsRoot(baseDir);
+    const first = stageSkills("a");
+    const pluginPath = ensureClaudeSkillPlugin({
+      pluginsRoot,
+      root: { id: "r", path: first },
+    });
+    const skillsLink = join(pluginPath, "skills");
+    rmSync(skillsLink);
+    const elsewhere = stageSkills("elsewhere");
+    symlinkSync(elsewhere, skillsLink, "junction");
+
+    ensureClaudeSkillPlugin({ pluginsRoot, root: { id: "r", path: first } });
+
+    expect(readlinkSync(skillsLink)).toBe(first);
+    expect(readFileSync(join(elsewhere, "demo", "SKILL.md"), "utf8")).toContain(
+      "name: demo",
+    );
+  });
+
+  it("replaces a plain file left at the skills path", () => {
+    const pluginsRoot = createClaudeSkillPluginsRoot(baseDir);
+    const first = stageSkills("a");
+    const pluginPath = ensureClaudeSkillPlugin({
+      pluginsRoot,
+      root: { id: "r", path: first },
+    });
+    const skillsLink = join(pluginPath, "skills");
+    rmSync(skillsLink);
+    writeFileSync(skillsLink, "stale\n");
+
+    ensureClaudeSkillPlugin({ pluginsRoot, root: { id: "r", path: first } });
+
+    expect(readlinkSync(skillsLink)).toBe(first);
+  });
+
+  it("refuses to replace a real skills directory and leaves it intact", () => {
+    const pluginsRoot = createClaudeSkillPluginsRoot(baseDir);
+    const first = stageSkills("a");
+    const pluginPath = ensureClaudeSkillPlugin({
+      pluginsRoot,
+      root: { id: "r", path: first },
+    });
+    const skillsLink = join(pluginPath, "skills");
+    rmSync(skillsLink);
+    mkdirSync(join(skillsLink, "mine"), { recursive: true });
+    writeFileSync(join(skillsLink, "mine", "SKILL.md"), "keep me\n");
+
+    expect(() =>
+      ensureClaudeSkillPlugin({ pluginsRoot, root: { id: "r", path: first } }),
+    ).toThrow("refusing to replace a real directory");
+    expect(readFileSync(join(skillsLink, "mine", "SKILL.md"), "utf8")).toBe(
+      "keep me\n",
+    );
   });
 
   it("keeps the stable name across catalog changes and suffixes only a colliding second root", () => {

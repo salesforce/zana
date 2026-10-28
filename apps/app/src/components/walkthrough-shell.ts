@@ -1,4 +1,4 @@
-export const WALKTHROUGH_STEP_IDS = ['thread', 'legacy', 'project', 'schedule'] as const;
+export const WALKTHROUGH_STEP_IDS = ['intro', 'thread', 'legacy', 'project', 'schedule'] as const;
 
 export type WalkthroughStepId = (typeof WALKTHROUGH_STEP_IDS)[number];
 export type WalkthroughHomeMode = 'thread' | 'agent';
@@ -12,6 +12,7 @@ export function walkthroughShellFor(stepId: WalkthroughStepId): {
   nav: 'home' | 'scheduler';
   homeMode: WalkthroughHomeMode | null;
 } {
+  if (stepId === 'intro') return { nav: 'home', homeMode: null };
   if (stepId === 'thread') return { nav: 'home', homeMode: 'thread' };
   if (stepId === 'legacy') return { nav: 'home', homeMode: 'agent' };
   if (stepId === 'project') return { nav: 'home', homeMode: null };

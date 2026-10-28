@@ -1869,6 +1869,12 @@ export interface CcApi {
     queryRuns(query: ScheduleRunQuery): Promise<Result<ScheduleRunQueryResult>>;
     /** Re-run failed or missed runs now (max 50). */
     retryRuns(refs: ScheduleRunRef[]): Promise<Result<ScheduleRetryResult[]>>;
+    /**
+     * Reopen a finished run's agent conversation in a new tab, sending nothing. `runId` omitted means
+     * the newest resumable run. `reused` is true when a live tab already holds that conversation.
+     * Desktop only: never part of the shared product families.
+     */
+    resumeRun(input: { scheduleId: string; runId?: string }): Promise<Result<{ session: TerminalSession; reused: boolean }>>;
     /** Mark runs as seen so they leave the open list (max 200). Resolves to the number dismissed. */
     dismissRuns(refs: ScheduleRunRef[]): Promise<Result<number>>;
     /** Check reserved workers without starting or enabling work. False means still unconfirmed. */

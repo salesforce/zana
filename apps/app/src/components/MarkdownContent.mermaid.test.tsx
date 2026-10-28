@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  */
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mermaidRender = vi.hoisted(() =>
@@ -76,5 +76,38 @@ describe('MarkdownContent mermaid remounts', () => {
       expect(document.querySelector('[data-mermaid-state="settled"]')).toBeTruthy();
     });
     expect(mermaidRender).toHaveBeenCalledTimes(1);
+  });
+
+  it('exposes natural width for a tall diagram without fixing its rendered width', async () => {
+    mermaidRender.mockResolvedValueOnce({ svg: '<svg width="100%" viewBox="0 0 180 2400"><g></g></svg>' });
+    const { container, getByRole } = render(<MarkdownContent text={SOURCE} threadId="thread-1" />);
+    await waitFor(() => expect(container.querySelector('.inbox-mermaid-frame')).toBeTruthy());
+    const frame = container.querySelector<HTMLElement>('.inbox-mermaid-frame')!;
+    expect(frame.classList.contains('is-sized')).toBe(true);
+    expect(frame.style.aspectRatio).toBe('180 / 2400');
+    expect(frame.style.getPropertyValue('--mermaid-intrinsic-width')).toBe('180px');
+    expect(frame.querySelector('svg')?.hasAttribute('width')).toBe(false);
+    expect(getByRole('button', { name: 'Open diagram in full screen' })).toBeTruthy();
+  });
+
+  it('keeps the unsized fallback when the SVG has no usable viewBox', async () => {
+    mermaidRender.mockResolvedValueOnce({ svg: '<svg width="100%" height="40"><g></g></svg>' });
+    const { container } = render(<MarkdownContent text={SOURCE} />);
+    await waitFor(() => expect(container.querySelector('.inbox-mermaid-frame')).toBeTruthy());
+    const frame = container.querySelector<HTMLElement>('.inbox-mermaid-frame')!;
+    expect(frame.classList.contains('is-sized')).toBe(false);
+    expect(frame.getAttribute('style')).toBeNull();
+    expect(container.querySelector('.inbox-mermaid-toolbar')).toBeNull();
+  });
+
+  it('switches between source and the sized diagram without losing the layout', async () => {
+    const { container, getByRole } = render(<MarkdownContent text={SOURCE} exportable />);
+    await waitFor(() => expect(container.querySelector('.inbox-mermaid-frame')).toBeTruthy());
+    fireEvent.click(getByRole('button', { name: 'Source', exact: true }));
+    expect(container.querySelector('.inbox-mermaid-frame')).toBeNull();
+    expect(container.querySelector('.inbox-mermaid-source')?.textContent).toBe('graph TD; A-->B');
+    fireEvent.click(getByRole('button', { name: 'Diagram', exact: true }));
+    expect(container.querySelector('.inbox-mermaid-source')).toBeNull();
+    expect(container.querySelector<HTMLElement>('.inbox-mermaid-frame')?.style.aspectRatio).toBe('20 / 10');
   });
 });

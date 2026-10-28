@@ -312,6 +312,23 @@ it('runs bounded queries, stores real results and refuses cross-project presenta
   expect(await action('query.execute', { query: 'DELETE FROM Account' })).toMatchObject({ ok: false });
   expect(await action('query.execute', { query: 'SELECT Id FROM Account' })).toMatchObject({ ok: false, code: 'refused' });
 });
+it('runs an approved bare COUNT() query execute without an added LIMIT', async () => {
+  const { action, harness, request, zcc } = await fixture();
+  const confirmation = vi.spyOn(zcc.ui, 'requestInput');
+  const sent = () => (request.mock.calls.at(-1)![1] as { query: { q: string } }).query.q;
+  const run = async (query: string) => {
+    const pending = action('query.execute', { query }, { ...ctx, threadId: 'thread' });
+    await vi.waitFor(() => expect(confirmation).toHaveBeenCalledOnce());
+    harness.submitInteraction({ approved: true });
+    return pending;
+  };
+  expect(await run('SELECT COUNT() FROM Account')).toMatchObject({ ok: true });
+  expect(sent()).toBe('SELECT COUNT() FROM Account');
+  expect(await action('query.execute', { query: 'SELECT COUNT() FROM Account LIMIT 5' })).toMatchObject({ ok: true });
+  expect(sent()).toBe('SELECT COUNT() FROM Account LIMIT 5');
+  expect(await action('query.execute', { query: 'SELECT Id FROM Account LIMIT 1' })).toMatchObject({ ok: true });
+  expect(sent()).toBe('SELECT Id FROM Account LIMIT 1');
+});
 it('uses acknowledged controls and refuses unsafe project creation', async () => {
   const { action, harness } = await fixture();
   const view = await harness.callRpc('control.register', { projectId: 'p', surface: 'workbench', commands: ['view.open'] }) as any;

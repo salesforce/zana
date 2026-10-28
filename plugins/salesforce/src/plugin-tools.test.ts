@@ -315,6 +315,64 @@ describe('salesforce family tools', () => {
     ).resolves.toMatchObject({ ok: true, summary: expect.stringMatching(/ALL ROWS/) });
   });
 
+  it('validates a bare COUNT() as running without an added LIMIT', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
+    await createSalesforcePlugin(zcc, mockDeps());
+    harness.setSettings({ defaultOrg: 'dev' });
+    const soql = harness.agentTools.find((row) => row.name === 'sf_soql')!;
+    await expect(soql.execute({ action: 'query.validate', query: 'SELECT COUNT() FROM Account' }, ctx)).resolves.toMatchObject({
+      ok: true,
+      summary: 'Query parsed. A bare COUNT() runs as written, with no added LIMIT.',
+      data: { limit: null }
+    });
+    await expect(soql.execute({ action: 'query.validate', query: 'SELECT COUNT() FROM Account LIMIT 5', limit: 50 }, ctx)).resolves.toMatchObject({
+      summary: 'Query parsed. A bare COUNT() runs as written, with no added LIMIT.',
+      data: { limit: 5 }
+    });
+    await expect(soql.execute({ action: 'query.validate', query: 'SELECT Id FROM Account LIMIT 1' }, ctx)).resolves.toMatchObject({
+      summary: 'Query parsed. Bounded run will use LIMIT 1.',
+      data: { limit: 1 }
+    });
+  });
+
+  it('runs an approved bare COUNT() with no added LIMIT and reports the count', async () => {
+    const requests: SalesforceRequest[] = [];
+    const rest = (req: SalesforceRequest) => {
+      requests.push(req);
+      const q = req.query?.q;
+      if (q === 'SELECT Id FROM Account LIMIT 5') return { status: 200, json: { totalSize: 1, done: true, records: [{ Id: '001' }] }, text: '{}' };
+      return { status: 200, json: q === 'SELECT COUNT() FROM Contact' ? { done: true, records: [] } : { totalSize: 1234, done: true, records: [] }, text: '{}' };
+    };
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
+    await createSalesforcePlugin(zcc, mockDeps({ rest }));
+    harness.setSettings({ defaultOrg: 'dev' });
+    const soql = harness.agentTools.find((row) => row.name === 'sf_soql')!;
+    const confirmation = vi.spyOn(zcc.ui, 'requestInput');
+    const run = async (action: string, query: string) => {
+      const before = confirmation.mock.calls.length;
+      const pending = soql.execute({ action, query }, ctx);
+      await vi.waitFor(() => expect(confirmation).toHaveBeenCalledTimes(before + 1));
+      harness.submitInteraction({ approved: true });
+      return pending as Promise<any>;
+    };
+
+    const counted = await run('query.run', 'SELECT COUNT() FROM Account');
+    expect(counted).toMatchObject({ ok: true, summary: 'Count: 1234', data: { totalSize: 1234 } });
+    expect(requests.at(-1)!.query).toEqual({ q: 'SELECT COUNT() FROM Account' });
+    expect(confirmation.mock.calls.at(-1)![0]).toMatchObject({ payload: { preview: 'SELECT COUNT() FROM Account' } });
+
+    await run('query.sample', 'SELECT COUNT() FROM Lead');
+    expect(confirmation.mock.calls.at(-1)![0]).toMatchObject({ payload: { kind: 'soql.unbounded', preview: 'SELECT COUNT() FROM Lead' } });
+    expect(requests.at(-1)!.query).toEqual({ q: 'SELECT COUNT() FROM Lead' });
+
+    const noTotal = await run('query.run', 'SELECT COUNT() FROM Contact');
+    expect(noTotal).toMatchObject({ ok: true, summary: '0 row(s); showing 0' });
+
+    const ordinary = await soql.execute({ action: 'query.run', query: 'SELECT Id FROM Account LIMIT 5' }, ctx);
+    expect(ordinary).toMatchObject({ ok: true, summary: '1 row(s); showing 1' });
+    expect(requests.at(-1)!.query).toEqual({ q: 'SELECT Id FROM Account LIMIT 5' });
+  });
+
   it('includes exact sObjects in a large org and honors schema search limits', async () => {
     const { zcc, harness } = createFakePluginHost({ pluginId: 'salesforce', listProjects: async () => [{ id: 'p1', name: 'DX', path: '/proj' }] });
     const sobjects = [...Array.from({ length: 30 }, (_, i) => ({ name: `ns__Account_${i}__c` })), { name: 'Account', label: 'Account' }];

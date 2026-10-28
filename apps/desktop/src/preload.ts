@@ -29,6 +29,11 @@ import {
   parseDesktopBrowserState,
   parseDesktopBrowserTabRef
 } from '@zana-ai/zcc-desktop-contract';
+import { seedDocumentTheme } from './window/window-theme.js';
+
+// Paint the first frame in the window's theme: main passes it in argv
+// (`--zcc-theme=`), and the renderer's applyTheme takes over once the config loads.
+seedDocumentTheme(process.argv, globalThis.document, globalThis.MutationObserver);
 
 // `ipcRenderer` is a single process-wide EventEmitter shared by every subscriber
 // in the renderer. High-fan-out channels — chiefly `terminals:onData`/`onExit`,
@@ -1162,6 +1167,7 @@ const api: CcApi = {
     runNow: (id) => ipcRenderer.invoke(IPC.scheduler.runNow, id),
     queryRuns: (query) => ipcRenderer.invoke(IPC.scheduler.queryRuns, query),
     retryRuns: (refs) => ipcRenderer.invoke(IPC.scheduler.retryRuns, refs),
+    resumeRun: (input) => ipcRenderer.invoke(IPC.scheduler.resumeRun, input),
     dismissRuns: (refs) => ipcRenderer.invoke(IPC.scheduler.dismissRuns, refs),
     reconcile: (id) => ipcRenderer.invoke(IPC.scheduler.reconcile, id),
     onChanged: (cb) => {

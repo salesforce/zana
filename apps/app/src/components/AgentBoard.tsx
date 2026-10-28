@@ -1306,7 +1306,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
           {(!showProject || grouped) && <span className="agent-card-sub">{cadence}</span>}
           <span className="grow" />
           {paused ? (
-            <span className="agent-card-badge">Paused</span>
+            <span className="agent-card-badge">Off</span>
           ) : nextMs != null && !Number.isNaN(nextMs) ? (
             <span
               className="agent-card-badge sched-next"

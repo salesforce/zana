@@ -120,6 +120,20 @@ it('selects the close-with-follow-up spec for the close summary seams', () => {
   expect(boundarySpecs(['apps/server/src/services/followups/other-service.ts'])).not.toContain('e2e/close-with-follow-up-needs-you.spec.ts');
 });
 
+it('selects the project Back, routing and Settings reveal specs for the router and split scope seams', () => {
+  for (const path of [
+    'apps/app/src/main.tsx',
+    'apps/app/src/lib/split-layout/store.ts',
+    'apps/app/src/views/thread-detail/SplitThreadArea.tsx',
+    'apps/app/src/hooks/useRouteSync.ts',
+    'apps/app/src/lib/app-navigate.ts',
+    'apps/app/src/components/ProjectScopedNav.tsx'
+  ]) {
+    expect(boundarySpecs([path])).toEqual(expect.arrayContaining(['e2e/project-back-navigation.spec.ts', 'e2e/app-routing.spec.ts', 'e2e/settings-search.spec.ts']));
+  }
+  expect(boundarySpecs(['apps/app/src/views/thread-detail/SplitDivider.tsx'])).not.toContain('e2e/project-back-navigation.spec.ts');
+});
+
 it('selects squad-direct-report for the owner report-back seams', () => {
   for (const path of [
     'apps/server/src/services/execution/service.ts',
@@ -147,8 +161,8 @@ it('selects the Squad source retry spec for the picker, registry and composer se
 });
 
 it('selects the scheduler specs for scheduler seams', () => {
-  for (const path of ['apps/server/src/services/scheduler/scheduler.ts', 'apps/app/src/components/scheduler/ProblemsPanel.tsx', 'apps/app/src/views/scheduler/SchedulerView.tsx', 'packages/domain/src/schedule-health.ts']) {
-    expect(boundarySpecs([path])).toEqual(expect.arrayContaining(['e2e/scheduler-self-healing.spec.ts', 'e2e/scheduler-overview.spec.ts', 'e2e/scheduler-detail.spec.ts', 'e2e/scheduler-cron.spec.ts']));
+  for (const path of ['apps/server/src/services/scheduler/scheduler.ts', 'apps/app/src/components/scheduler/ProblemsPanel.tsx', 'apps/app/src/views/scheduler/SchedulerView.tsx', 'packages/domain/src/schedule-health.ts', 'apps/desktop/src/ipc/scheduler.ts', 'apps/desktop/src/scheduler-resume-run.ts']) {
+    expect(boundarySpecs([path])).toEqual(expect.arrayContaining(['e2e/scheduler-self-healing.spec.ts', 'e2e/scheduler-overview.spec.ts', 'e2e/scheduler-detail.spec.ts', 'e2e/scheduler-cron.spec.ts', 'e2e/scheduler-resume-latest-run.spec.ts']));
   }
   expect(boundarySpecs(['apps/app/src/components/inbox/Row.tsx'])).not.toContain('e2e/scheduler-cron.spec.ts');
 });

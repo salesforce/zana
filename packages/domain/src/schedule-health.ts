@@ -115,6 +115,42 @@ export function isProblemRun(run: ScheduleRun): boolean {
   }
 }
 
+/** A native conversation id as the harnesses mint them; anything else never reaches a launch argv. */
+const CONVERSATION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+export function isValidConversationId(id: unknown): id is string {
+  return typeof id === 'string' && CONVERSATION_ID_PATTERN.test(id);
+}
+
+/**
+ * Whether a run can be reopened: it started an agent (no marker, no skipped
+ * result, no `pending` or `failed` launch), is not a Squad run, and recorded a
+ * valid conversation id. Main and the renderer both decide with this one rule,
+ * so an explicit run id never gets past checks that "latest" applies.
+ */
+export function resumableRun(run: ScheduleRun): boolean {
+  if (!run || typeof run !== 'object') return false;
+  if (run.launchKind === 'team' || run.executionId) return false;
+  if (run.marker || run.result === 'skipped') return false;
+  if (run.launchState === 'pending' || run.launchState === 'failed') return false;
+  const conversation = run.conversation;
+  return !!conversation && typeof conversation === 'object' && typeof conversation.profile === 'string'
+    && isValidConversationId(conversation.id);
+}
+
+/** The newest run that {@link resumableRun} accepts, newest first by `at`. */
+export function latestResumableRun(runs: readonly ScheduleRun[] | undefined): ScheduleRun | undefined {
+  let best: ScheduleRun | undefined;
+  let bestMs = -Infinity;
+  for (const run of runs ?? []) {
+    if (!resumableRun(run)) continue;
+    const ms = Date.parse(run.at);
+    const key = Number.isFinite(ms) ? ms : -Infinity;
+    if (!best || key > bestMs) { best = run; bestMs = key; }
+  }
+  return best;
+}
+
 /**
  * Start time (epoch ms) of the newest FINISHED success in a run history
  * (`-Infinity` when none). A problem that ENDED before a finished success

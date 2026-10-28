@@ -45,6 +45,7 @@ const h = vi.hoisted(() => {
     browserManager: undefined as any,
     mobileStart: vi.fn(),
     lastWin: undefined as any,
+    winOptions: [] as any[],
     sent: [] as unknown[][],
     winDestroyed: false,
     contentsDestroyed: (() => false) as () => boolean,
@@ -72,7 +73,8 @@ vi.mock('electron', () => {
     static getAllWindows() { return []; }
     static getFocusedWindow() { return null; }
     static fromWebContents() { return null; }
-    constructor() {
+    constructor(options: unknown) {
+      h.winOptions.push(options);
       const fallback = { get: (target: Record<string, unknown>, key: string | symbol) =>
         key in target ? target[key as string] : loose() };
       const win = new Proxy({
@@ -265,11 +267,15 @@ describe('host bootstrap wiring', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.stubEnv('ELECTRON_RENDERER_URL', 'http://127.0.0.1:5173');
     const realGetConfig = store.getConfig.bind(store);
-    const configSpy = vi.spyOn(store, 'getConfig').mockImplementation(() => ({ ...realGetConfig(), mobileGatewayEnabled: true }));
+    // Theme light: the boot window must open on the light background.
+    const configSpy = vi.spyOn(store, 'getConfig').mockImplementation(() => ({ ...realGetConfig(), mobileGatewayEnabled: true, theme: 'light' }));
     try {
       h.ready!();
       await vi.waitFor(() => expect(h.controlPlaneDeps, JSON.stringify(vi.mocked(console.error).mock.calls)).toBeDefined(), { timeout: 20000 });
       expect(h.controlPlaneDeps.pluginCommands.cliContributions).toBeTypeOf('function');
+      // The window paints the light --bg-base and its preload seeds data-theme=light.
+      expect(h.winOptions[0].backgroundColor).toBe('#f6f8fa');
+      expect(h.winOptions[0].webPreferences.additionalArguments).toContain('--zcc-theme=light');
       expect(h.controlPlaneDeps.pluginCommands.runCliCommand).toBeTypeOf('function');
     } finally { vi.unstubAllEnvs(); configSpy.mockRestore(); }
     expect(h.mobileStart).toHaveBeenCalledOnce();

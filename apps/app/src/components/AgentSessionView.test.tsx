@@ -93,13 +93,13 @@ describe('AgentSessionView', () => {
     layout.compact = true;
     const html = renderToStaticMarkup(
       <AgentSessionView session={session()} projectId="p1" projectName="demo" state="idle"
-        terminalAnchorId="agent-terminal" modal={modal} footer={<button type="button">Delete</button>} />
+        terminalAnchorId="agent-terminal" modal={modal} footer={<button type="button">Archive</button>} />
     );
     expect(html).toContain('cli-agent-mobile-unsupported');
     expect(html).not.toContain('agent-terminal');
     expect(html).not.toContain('agent-info-body');
     expect(html).not.toContain('thread-secondary-panel');
-    expect(html).not.toContain('Delete');
+    expect(html).not.toContain('Archive');
   });
   it.each([
     { modal: true, isFocused: false, allowed: true },
@@ -124,14 +124,14 @@ describe('AgentSessionView', () => {
         projectName="demo-project"
         state="idle"
         terminalAnchorId="cc-terminal-anchor-agent-modal"
-        footer={<button type="button">Delete</button>}
+        footer={<button type="button">Archive</button>}
         modal
       />
     );
     expect(html).toContain('thread-detail-view--modal');
     expect(html).toContain('data-testid="thread-secondary-show"');
     expect(html).not.toContain('data-testid="thread-secondary-panel"');
-    expect(html).not.toContain('Delete');
+    expect(html).not.toContain('Archive');
   });
 
   it('does not inherit a workspace-open panel into the inspector modal', () => {
@@ -188,7 +188,7 @@ describe('AgentSessionView', () => {
         projectName="demo-project"
         state="idle"
         terminalAnchorId="cc-terminal-anchor-agent-modal"
-        footer={<button type="button">Delete</button>}
+        footer={<button type="button">Archive</button>}
       />
     );
     expect(html).toContain('data-testid="agent-session-view"');
@@ -202,7 +202,7 @@ describe('AgentSessionView', () => {
     expect(html).toContain('data-testid="thread-diff-pin"');
     expect(html).not.toContain('data-testid="thread-plan-pin"');
     expect(html).toContain('data-testid="thread-secondary-footer"');
-    expect(html).toContain('Delete');
+    expect(html).toContain('Archive');
     expect(html).toContain('Status PID');
     expect(html).toContain('id="cc-terminal-anchor-agent-modal"');
     expect(html).not.toContain('data-testid="thread-secondary-show"');
@@ -234,12 +234,12 @@ describe('AgentSessionView', () => {
         projectName="demo"
         state="working"
         terminalAnchorId="a"
-        footer={<button type="button">Delete</button>}
+        footer={<button type="button">Archive</button>}
       />
     );
     expect(diffHtml).toContain('data-testid="agent-diff-panel"');
     expect(diffHtml).not.toContain('data-testid="thread-secondary-footer"');
-    expect(diffHtml).not.toContain('Delete');
+    expect(diffHtml).not.toContain('Archive');
 
     persistPanel('s-new', { activeId: 'new-tab:1', tabs: [{ id: 'new-tab:1', kind: 'new-tab', title: 'New Tab' }] });
     expect(renderToStaticMarkup(

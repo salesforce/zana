@@ -3,8 +3,9 @@ import { resolveTheme } from '../store.js';
 
 /**
  * resolveTheme maps the stored tri-state AppConfig.theme to the concrete
- * dark/light the app paints (WARP-A2). 'dark'/'light' pin; 'system' (and any
- * unknown value) follows the OS via `matchMedia('(prefers-color-scheme: light)')`,
+ * dark/light the app paints (WARP-A2). 'dark'/'light' pin, and an unset theme
+ * is dark (the config default, as in applyTheme and main's resolveThemeSetting);
+ * 'system' (and any unknown value) follows the OS via `matchMedia('(prefers-color-scheme: light)')`,
  * defaulting to dark when matchMedia is unavailable (headless/test) — the app's
  * historical default. The test env is node (no jsdom), so we stub window.
  */
@@ -44,8 +45,13 @@ describe('resolveTheme (WARP-A2)', () => {
     expect(resolveTheme('system')).toBe('dark');
   });
 
-  it('an undefined / unknown value follows the OS (never throws)', () => {
+  it('an undefined theme is dark, like applyTheme and main, whatever the OS', () => {
     stubMatchMedia(true);
-    expect(resolveTheme(undefined)).toBe('light');
+    expect(resolveTheme(undefined)).toBe('dark');
+  });
+
+  it('an unknown value follows the OS (never throws)', () => {
+    stubMatchMedia(true);
+    expect(resolveTheme('sepia' as never)).toBe('light');
   });
 });

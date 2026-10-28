@@ -8,7 +8,8 @@ const state = vi.hoisted(() => ({
   tabs: [] as PluginProjectTabRegistration[],
   modules: [] as Array<{ id: string; title: string }>,
   desktop: false,
-  open: [] as Array<{ pluginId: string; tabId: string; projectId: string }>
+  open: [] as Array<{ pluginId: string; tabId: string; projectId: string }>,
+  tabBarProps: [] as Array<{ projectId?: string }>
 }));
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }));
 vi.mock('@/store', () => ({
@@ -17,7 +18,7 @@ vi.mock('@/store', () => ({
   visibleTerminals: () => []
 }));
 vi.mock('@/modules', () => ({ useProjectTabModules: () => state.modules }));
-vi.mock('@/components/TabBar', () => ({ TabBar: () => null }));
+vi.mock('@/components/TabBar', () => ({ TabBar: (props: { projectId?: string }) => { state.tabBarProps.push(props); return null; } }));
 vi.mock('@/components/agentCardActions', () => ({ cliAgentRestartConfirm: () => '' }));
 vi.mock('@/components/FindBar', () => ({ FindBar: () => null }));
 vi.mock('@/views/agents/AgentsBoard', () => ({ AgentsBoard: () => null }));
@@ -103,4 +104,10 @@ it('gives a built-in module tab the same host side panel as plugin tabs', () => 
   expect(layout).toBeTruthy();
   expect(layout.contains(screen.getByRole('region', { name: 'Module tab' }))).toBe(true);
   expect(screen.getByRole('region', { name: 'Module tab' }).textContent).toBe('notes');
+});
+it('tells the terminal tab strip which project it belongs to, so Archive can word its History promise', () => {
+  state.tabs = [];
+  state.tabBarProps = [];
+  render(<ProjectModePane projectId="p" mode="terminals" paneId="pane" />);
+  expect(state.tabBarProps.at(-1)?.projectId).toBe('p');
 });

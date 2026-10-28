@@ -66,6 +66,7 @@ export function PluginCatalogCard({
   const action = catalogRowAction(entry, busy);
   const provenance = marketplaceProvenance(entry);
   const author = entry.author?.trim();
+  const capabilities = catalogCapabilities(entry);
   return (
     <article className="ext-market-item ext-browse-card" data-testid={`plugin-card-${entry.id}`}>
       <div className="ext-browse-card-main">
@@ -75,68 +76,70 @@ export function PluginCatalogCard({
           onClick={onOpen}
           aria-label={`${entry.title} plugin details`}
         >
-          <span className="ext-browse-card-icon">
+          <span className="ext-browse-card-icon" data-category={entry.category}>
             <Icon size={18} />
           </span>
           <span className="ext-browse-card-body">
             <span className="ext-market-item-head">
               <span className="ext-market-item-title">{entry.title}</span>
-              {(
-                <span
-                  className="ext-market-item-source ext-browse-provenance"
-                  data-provenance={provenance}
-                  title={provenance === 'official' ? 'Official plugin' : 'From a configured plugin catalog'}
-                >
-                  {provenance === 'official' ? 'Official' : 'Community'}
-                </span>
-              )}
               {entry.hasUpdate && (
                 <span className="ext-market-item-source ext-market-item-source--update">Update</span>
               )}
             </span>
-            {entry.description ? <span className="ext-market-item-desc">{entry.description}</span> : null}
             {showCategory && entry.category ? (
-              <span className="ext-browse-category-pill">{entry.category}</span>
+              <span className="ext-browse-card-category">{entry.category}</span>
             ) : null}
-            <span className="ext-plugin-capabilities">{catalogCapabilities(entry).map((cap) => <span key={cap}>{cap}</span>)}</span>
-            {error ? <span className="modal-error">{error}</span> : null}
           </span>
+          {entry.description ? <span className="ext-market-item-desc">{entry.description}</span> : null}
         </button>
-        {author ? (
-          <span className="ext-browse-card-byline">
-            By{' '}
-            {onOpenAuthor ? (
-              <button
-                type="button"
-                className="ext-browse-author-link"
-                onClick={() => onOpenAuthor(author)}
-              >
-                {author}
-              </button>
-            ) : (
-              author
-            )}
-          </span>
-        ) : null}
+        {capabilities.length > 0 ? <div className="ext-plugin-capabilities">{capabilities.map((cap) => <span key={cap}>{cap}</span>)}</div> : null}
+        {error ? <p className="modal-error" role="alert">{error}</p> : null}
       </div>
-      <div className="ext-market-item-action">
-        {action.label === 'Installed' && !entry.hasUpdate ? (
-          <button type="button" className="settings-btn" onClick={onOpen}>{action.icon} Manage</button>
-        ) : (
-          <button
-            type="button"
-            className={`settings-btn ${action.primary ? 'primary' : ''}`}
-            disabled={action.disabled}
-            onClick={(event) => {
-              event.stopPropagation();
-              onInstall();
-            }}
+      <footer className="ext-browse-card-footer">
+        <div className="ext-browse-card-meta">
+          {author ? (
+            <span className="ext-browse-card-byline">
+              By{' '}
+              {onOpenAuthor ? (
+                <button
+                  type="button"
+                  className="ext-browse-author-link"
+                  onClick={() => onOpenAuthor(author)}
+                >
+                  {author}
+                </button>
+              ) : (
+                author
+              )}
+            </span>
+          ) : null}
+          <span
+            className="ext-browse-provenance"
+            data-provenance={provenance}
+            title={provenance === 'official' ? 'Official plugin' : 'From a configured plugin catalog'}
           >
-            {action.icon}
-            {action.label}
-          </button>
-        )}
-      </div>
+            {provenance === 'official' ? 'Official' : 'Community'}
+          </span>
+        </div>
+        <div className="ext-market-item-action">
+          {action.label === 'Installed' && !entry.hasUpdate ? (
+            <button type="button" className="settings-btn" onClick={onOpen}>{action.icon} Manage</button>
+          ) : (
+            <button
+              type="button"
+              className={`settings-btn${action.label === 'Update' ? ' primary' : ''}`}
+              disabled={action.disabled}
+              onClick={(event) => {
+                event.stopPropagation();
+                onInstall();
+              }}
+            >
+              {action.label !== 'Install' ? action.icon : null}
+              {action.label}
+            </button>
+          )}
+        </div>
+      </footer>
     </article>
   );
 }

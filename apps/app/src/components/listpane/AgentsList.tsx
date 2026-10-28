@@ -327,7 +327,7 @@ export function AgentsListPane() {
   };
   // Right-click lifecycle menu — the SAME hook the kanban board uses, so a row
   // and a board card drive the identical pty actions and expose the identical
-  // menu (Stop / Restart / Rename / Delete …). No parallel action path.
+  // menu (Stop / Restart / Rename / Archive …). No parallel action path.
   const { menu, setMenu, actions, rename, closeRename, submitRename } = useAgentCardActions();
   const { menu: threadMenu, setMenu: setThreadMenu } = useThreadCardActions();
 

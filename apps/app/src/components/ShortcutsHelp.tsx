@@ -57,7 +57,7 @@ const sections = (pasteRow: Row | null): Section[] => [
       { keys: ['⌘', '⇧', 'R'], label: 'Restart active tab (kill + respawn)' },
       { keys: ['⌘', '⇧', 'T'], label: 'Reopen / resume last removed tab' },
       { keys: ['⌘', 'W'], label: 'Hide active tab (process keeps running)' },
-      { keys: ['⌘', '⇧', 'W'], label: 'Delete active tab (terminates the process)' },
+      { keys: ['⌘', '⇧', 'W'], label: 'Archive active agent tab (a plain shell is deleted)' },
       { keys: ['⌘', '1'], label: 'Switch to tab 1 (… up to ⌘9)' },
       { keys: ['⌘', ']'], label: 'Next tab' },
       { keys: ['⌘', '['], label: 'Previous tab' }
@@ -113,7 +113,8 @@ const sections = (pasteRow: Row | null): Section[] => [
       { keys: ['Hide'], label: 'Detach: hide tab, keep process running' },
       { keys: ['Hide others'], label: 'Hide every other tab (processes keep running)' },
       { keys: ['Hide to right'], label: 'Hide all tabs after this one' },
-      { keys: ['Delete'], label: 'Terminate the process and remove the tab' },
+      { keys: ['Archive'], label: 'Stop the agent and remove the tab; its conversation stays in History' },
+      { keys: ['Delete'], label: 'Plain shell: end it and remove the tab' },
       { keys: ['Dismiss exited'], label: 'Clean up dead tabs' }
     ]
   }

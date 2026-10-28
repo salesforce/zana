@@ -62,7 +62,7 @@ export function PluginPackCards({ packs, mode, onReview, onForget }: {
           {pack.memberNames.length > 3 ? <span>+{pack.memberNames.length - 3} more</span> : null}</div>
         <p className="ext-pack-progress">{pack.installedCount === undefined ? `${pack.memberCount} plugins` : `${pack.installedCount} of ${pack.memberCount} plugins installed`}</p>
       </div>
-      <div className="ext-pack-card-actions"><button type="button" className={installed ? 'settings-btn' : 'settings-btn primary'} onClick={() => onReview(pack)}>{installed ? 'Manage pack' : 'Review pack'}</button>
+      <div className="ext-pack-card-actions"><button type="button" className="settings-btn" onClick={() => onReview(pack)}>{installed ? 'Manage pack' : 'Review pack'}</button>
         {installed ? <button type="button" className="ext-pack-forget" onClick={() => onForget(pack)}>Forget pack</button> : null}</div>
     </article>)}</div>
   </section>;

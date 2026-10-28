@@ -40,6 +40,12 @@ vi.mock('../../lib/product-client.js', () => ({
   }
 }));
 
+const resume = vi.hoisted(() => vi.fn());
+vi.mock('./resumeScheduledRun.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./resumeScheduledRun.js')>()),
+  resumeScheduledRun: (...args: unknown[]) => resume(...args)
+}));
+
 import { ScheduleRow } from './ScheduleRow.js';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -116,6 +122,21 @@ describe('ScheduleRow', () => {
     expect(onOpenInSplit).toHaveBeenCalledTimes(1);
   });
 
+  it('says off in the next column of a disabled schedule', () => {
+    const view = render(<MemoryRouter><ScheduleRow task={{ ...task, enabled: false }} projectName="Demo" onOpen={vi.fn()} onOpenInSplit={vi.fn()} onDuplicate={vi.fn()} onAskDelete={vi.fn()} /></MemoryRouter>);
+    expect(view.container.querySelector('.scheduler-card-compact-next--muted')?.textContent).toBe('off');
+    expect(view.queryByText('paused')).toBeNull();
+  });
+
+  it('shows the countdown for an enabled schedule with a next run, and off without one', () => {
+    const wrap = (t: ScheduledTask) => <MemoryRouter><ScheduleRow task={t} projectName="Demo" onOpen={vi.fn()} onOpenInSplit={vi.fn()} onDuplicate={vi.fn()} onAskDelete={vi.fn()} /></MemoryRouter>;
+    const soon = render(wrap({ ...task, status: { runCount: 0, runs: [], nextRunAt: new Date(Date.now() + 3_600_000).toISOString() } }));
+    expect(soon.container.querySelector('.scheduler-card-compact-next')?.textContent).toMatch(/^in /);
+    soon.unmount();
+    const none = render(wrap({ ...task, status: { runCount: 0, runs: [] } }));
+    expect(none.getByText('off')).toBeTruthy();
+  });
+
   it('shows neutral queued and retry pending indicators', () => {
     const wrap = (t: ScheduledTask) => <MemoryRouter><ScheduleRow task={t} projectName="Demo" onOpen={vi.fn()} onOpenInSplit={vi.fn()} onDuplicate={vi.fn()} onAskDelete={vi.fn()} /></MemoryRouter>;
     const queued = render(wrap({ ...task, status: { runCount: 0, runs: [], queuedAt: '2026-01-01T00:00:00Z' } }));
@@ -134,5 +155,54 @@ describe('ScheduleRow', () => {
     } finally {
       terminalState.terminals = {};
     }
+  });
+});
+
+describe('ScheduleRow Resume latest run', () => {
+  afterEach(() => { cleanup(); resume.mockReset(); terminalState.terminals = {}; });
+  const conversation = { profile: 'claude', id: 'conv-1', cwd: '/p', startedAt: '2026-01-01T00:00:00Z' };
+  const ran = (over: Record<string, unknown> = {}, runs?: Array<Record<string, unknown>>) => ({
+    ...task, ...over,
+    status: { runCount: 1, runs: runs ?? [{ id: 'r1', at: '2026-01-01T00:00:00Z', result: 'success', sessionId: 'old', conversation }] }
+  }) as unknown as ScheduledTask;
+  const mount = (t: ScheduledTask) => render(
+    <MemoryRouter><ul><ScheduleRow task={t} projectName="Demo" onOpen={vi.fn()} onOpenInSplit={vi.fn()} onDuplicate={vi.fn()} onAskDelete={vi.fn()} /></ul></MemoryRouter>
+  );
+
+  it('resumes the latest run from the row icon without opening the schedule', () => {
+    const onOpen = vi.fn();
+    render(<MemoryRouter><ul><ScheduleRow task={ran()} projectName="Demo" onOpen={onOpen} onOpenInSplit={vi.fn()} onDuplicate={vi.fn()} onAskDelete={vi.fn()} /></ul></MemoryRouter>);
+    const button = screen.getByRole('button', { name: 'Resume latest run' });
+    expect(button.getAttribute('title')).toBe('Resume latest run');
+    fireEvent.click(button);
+    expect(resume).toHaveBeenCalledWith(expect.objectContaining({ id: 'sched-1' }), undefined, expect.any(Function));
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it('resumes from the context menu entry, placed under Run now', () => {
+    mount(ran());
+    fireEvent.contextMenu(screen.getByTitle('Open schedule'));
+    const items = screen.getAllByRole('menuitem').map((item) => item.textContent?.trim());
+    expect(items.indexOf('Resume latest run')).toBe(items.indexOf('Run now') + 1);
+    fireEvent.click(screen.getByRole('menuitem', { name: /Resume latest run/ }));
+    expect(resume).toHaveBeenCalledWith(expect.objectContaining({ id: 'sched-1' }), undefined, expect.any(Function));
+  });
+
+  it('is hidden when no run recorded a conversation, for Squads, /loop rows, and while a run is open', () => {
+    const none = mount(ran({}, [{ id: 'r1', at: '2026-01-01T00:00:00Z', result: 'success', sessionId: 'old' }]));
+    expect(screen.queryByRole('button', { name: 'Resume latest run' })).toBeNull();
+    none.unmount();
+    const squad = mount(ran({ kind: 'team' }));
+    expect(screen.queryByRole('button', { name: 'Resume latest run' })).toBeNull();
+    squad.unmount();
+    const loop = mount(ran({ external: { kind: 'claude-loop' } }));
+    expect(screen.queryByRole('button', { name: 'Resume latest run' })).toBeNull();
+    loop.unmount();
+    terminalState.terminals = { p1: [{ id: 'old', status: 'running' }] };
+    mount(ran());
+    expect(screen.queryByRole('button', { name: 'Resume latest run' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Open running terminal' })).toBeTruthy();
+    fireEvent.contextMenu(screen.getByTitle('Open schedule'));
+    expect(screen.queryByRole('menuitem', { name: /Resume latest run/ })).toBeNull();
   });
 });
