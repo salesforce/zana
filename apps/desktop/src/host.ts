@@ -17,7 +17,7 @@ import { SHARED_PRODUCT_EVENTS } from '@zana-ai/zcc-contracts/shared-product';
 import { SharedClient, allowsSharedNavigation } from './window/shared-client.js';
 import { createHistoryProviders, invalidateHarnessModelCatalog } from '@zana-ai/zcc-host-daemon/harness/registry';
 import { RendererReadiness } from './window/renderer-readiness.js';
-import { isAllowedAppPermission } from './window/app-permissions.js';
+import { installAppPermissions } from './window/app-permissions.js';
 import { runStartupDependencyDoctor } from './startup-dependency-doctor.js';
 /**
  * Compatibility IPC host. Window/tray/updater/preload live alongside this file
@@ -9428,13 +9428,8 @@ async function bootstrapNormal() {
   conversationHistoryEvictTimer = setInterval(() => conversationHistory.evict(), 60_000);
   // Allow the microphone (voice-to-text) and HTML fullscreen (videos); deny
   // all other permission requests. Installed once at init (not in createWindow).
-  // getUserMedia consults BOTH the request handler (interactive grant) and the
-  // synchronous check handler — without the latter, Chromium can silently deny
-  // the mic even after entitlements are in place.
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(isAllowedAppPermission(permission));
-  });
-  session.defaultSession.setPermissionCheckHandler((_wc, permission) => isAllowedAppPermission(permission));
+  /* v8 ignore next -- bootstrap wiring; installAppPermissions is unit-tested */
+  installAppPermissions(session.defaultSession);
   try {
     await ensureRendererStaticHost();
   } catch (error) {

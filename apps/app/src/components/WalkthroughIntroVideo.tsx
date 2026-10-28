@@ -17,10 +17,8 @@ export function WalkthroughIntroVideo() {
   const ref = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    const video = ref.current;
-    if (!video) return;
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
-    video.play()?.catch(() => {});
+    ref.current!.play()?.catch(() => {});
   }, []);
 
   return (

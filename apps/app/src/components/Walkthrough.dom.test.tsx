@@ -61,6 +61,13 @@ describe('Walkthrough intro video', () => {
     expect(screen.getByTestId('walkthrough-intro-video')).toBeTruthy();
   });
 
+  it('autoplays without matchMedia and tolerates a play() that returns nothing', () => {
+    (window as { matchMedia?: unknown }).matchMedia = undefined;
+    play.mockImplementation(() => undefined);
+    render(<Walkthrough onClose={() => undefined} />);
+    expect(play).toHaveBeenCalledTimes(1);
+  });
+
   it('moves on to the Modern composer step with its icon and the narrow card', () => {
     render(<Walkthrough onClose={() => undefined} />);
     fireEvent.click(screen.getByRole('button', { name: /Next/ }));
