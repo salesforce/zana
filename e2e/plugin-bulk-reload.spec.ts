@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect, launchApp, closeApp } from './fixtures/app.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 import type { InstalledPluginRow } from '../apps/server/src/plugins/plugin-store.js';
 
 test('reloads every degraded plugin from one action, reports partial failure, and retries', async ({ home }, testInfo) => {
@@ -46,7 +47,7 @@ test('reloads every degraded plugin from one action, reports partial failure, an
     for (const id of ['bulk-one', 'bulk-two']) expect(await win.evaluate(id => window.cc.pluginApps.callRpc(id, 'ping'), id)).toBe('ready');
     await win.setViewportSize({ width: 900, height: 900 });
     expect(await win.locator('.ext-plugin-attention').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
-    await win.screenshot({ path: testInfo.outputPath('bulk-reload-partial-failure.png') });
+    await captureElectronScreenshot(app.electron, win, testInfo.outputPath('bulk-reload-partial-failure.png'));
     writeFileSync(join(home, 'bulk-broken/server.mjs'), healthyServer);
     await win.getByRole('button', { name: 'Reload degraded plugins (1)', exact: true }).click();
     await expect(win.getByText('1 plugin reloaded.', { exact: true })).toBeVisible({ timeout: 60_000 });
