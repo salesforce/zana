@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { HELP_ENABLED_KEY, HelpProvider } from './HelpProvider.js';
 import { HelpMenu } from './HelpMenu.js';
@@ -7,11 +7,13 @@ import { HelpToggle } from './HelpToggle.js';
 import { HelpVideoLibrary } from './HelpVideoLibrary.js';
 import { HELP_VIDEOS_WATCHED_KEY, useHelpVideos } from './help-videos-store.js';
 
-const ui = vi.hoisted(() => ({ setWalkthroughOpen: vi.fn(), openWhatsNewAll: vi.fn(async () => {}) }));
+const ui = vi.hoisted(() => ({ setWalkthroughOpen: vi.fn(), getReleaseNotes: vi.fn(async () => [{ version: '2.5.1', markdown: '# Plugin packs' }, { version: '2.3.0', markdown: '# Use Zana everywhere' }]) }));
 vi.mock('../../store.js', () => ({
-  useUi: { getState: () => ({ setWalkthroughOpen: ui.setWalkthroughOpen }) },
-  openWhatsNewAll: ui.openWhatsNewAll
+  useUi: { getState: () => ({ setWalkthroughOpen: ui.setWalkthroughOpen }) }
 }));
+
+vi.mock('../../lib/product-client.js', () => ({ product: { updates: { getReleaseNotes: ui.getReleaseNotes } } }));
+vi.mock('../MarkdownContent.js', () => ({ MarkdownContent: ({ text }: { text: string }) => <div>{text}</div> }));
 
 beforeEach(() => {
   localStorage.clear();
@@ -132,15 +134,25 @@ it('opens the first clip from All videos and leaves reduced motion paused', () =
   vi.unstubAllGlobals();
 });
 
-it('replays the walkthrough and opens What’s new', () => {
+it('replays the walkthrough and opens the release browser with focus restored on close', async () => {
   renderMenu();
   fireEvent.click(trigger());
   fireEvent.click(screen.getByRole('button', { name: 'Replay walkthrough' }));
   expect(ui.setWalkthroughOpen).toHaveBeenCalledWith(true);
   expect(screen.queryByRole('dialog')).toBeNull();
   fireEvent.click(trigger());
-  fireEvent.click(screen.getByRole('button', { name: 'What’s new' }));
-  expect(ui.openWhatsNewAll).toHaveBeenCalledOnce();
+  await waitFor(() => expect(screen.getByRole('button', { name: /Zana 2.5.1 Latest/ })).toBeTruthy());
+  fireEvent.click(screen.getByRole('button', { name: /Zana 2.5.1 Latest/ }));
+  expect(screen.queryByRole('dialog', { name: 'Help' })).toBeNull();
+  expect(screen.getByRole('dialog', { name: 'Release notes' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: '2.3.0' }));
+  expect(screen.getByRole('article', { name: 'Release 2.3.0' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+  expect(document.activeElement).toBe(trigger());
+  fireEvent.click(trigger());
+  await waitFor(() => expect(screen.getByRole('button', { name: /All releases/ }).hasAttribute('disabled')).toBe(false));
+  fireEvent.click(screen.getByRole('button', { name: /All releases/ }));
+  expect(screen.getByRole('article', { name: 'Release 2.5.1' })).toBeTruthy();
 });
 
 it('ignores unknown ids and keeps a corrupt or foreign watched list safe', async () => {
@@ -161,4 +173,15 @@ it('ignores unknown ids and keeps a corrupt or foreign watched list safe', async
   expect(useHelpVideos.getState().watched).toEqual([]);
   act(() => useHelpVideos.getState().close());
   expect(useHelpVideos.getState().openId).toBeNull();
+});
+
+
+it('skips the disabled release action during keyboard navigation while notes load', () => {
+  ui.getReleaseNotes.mockReturnValueOnce(new Promise(() => {}));
+  renderMenu();
+  fireEvent.click(trigger());
+  const lastVideo = screen.getByRole('button', { name: 'Play Use Zana everywhere, 1:04' });
+  lastVideo.focus();
+  fireEvent.keyDown(lastVideo, { key: 'ArrowDown' });
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Replay walkthrough' }));
 });

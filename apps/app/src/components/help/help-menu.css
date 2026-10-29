@@ -199,3 +199,50 @@
   .help-menu-popover { animation: none; }
   .help-menu-switch, .help-menu-switch::after { transition: none; }
 }
+
+.help-menu-release {
+  width: calc(100% - 12px);
+  margin: 0 6px 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-base);
+}
+.help-menu-release:hover { border-color: var(--accent); }
+.help-menu-release-copy { flex: 1; min-width: 0; }
+.help-menu-release-title { display: flex; align-items: center; gap: 7px; font-weight: 500; }
+.help-menu-release-badge {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 500;
+}
+.help-menu-release-status { padding: 4px 10px 10px; color: var(--text-muted); font-size: 11.5px; }
+.help-menu-all:disabled { opacity: 0.5; cursor: default; }
+.help-menu-all:disabled:hover { background: none; }
+.help-releases-modal { width: min(800px, calc(100vw - 32px)); }
+.help-releases-modal .help-releases-body { display: flex; flex-direction: row; gap: 0; padding: 0; height: min(560px, 65vh); min-height: 0; overflow: hidden; }
+.help-releases-nav { width: 132px; flex-shrink: 0; padding: 10px 8px; overflow-y: auto; border-right: 1px solid var(--border); }
+.help-releases-nav button {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.help-releases-nav button:hover { background: var(--bg-hover); }
+.help-releases-nav button[aria-current='true'] { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+.help-releases-nav small { font-size: 10px; color: var(--text-muted); }
+.help-releases-content { flex: 1; min-width: 0; padding: 20px 24px; overflow: auto; }
+.help-releases-nav button:focus-visible, .help-releases-content:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+@media (max-width: 520px) {
+  .help-releases-nav { width: 96px; }
+  .help-releases-content { padding: 12px 14px; }
+}
