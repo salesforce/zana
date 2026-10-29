@@ -2617,7 +2617,7 @@ test('Agentforce Studio: host tools preserve two agents and all twelve document 
 });
 
 
-test('Agentforce Studio: scoped Preview reconnects to the same running session across navigation and reload', async ({ app, home }, testInfo) => {
+test('Agentforce Studio: pinned Preview reconnects to the same running session across navigation and reload', async ({ app, home }, testInfo) => {
   const page = app.window;
   await page.setViewportSize({ width: 1920, height: 1080 });
   const errors: string[] = [];
@@ -2646,14 +2646,12 @@ test('Agentforce Studio: scoped Preview reconnects to the same running session a
     await expect(agentTab('Support')).toHaveAttribute('aria-selected', 'true');
     await expect(viewPane(page, 'preview')).toHaveAttribute('data-agent', 'force-app/Support.agent');
   };
-  const resumeScopedPreview = async (runId: string) => {
+  const expectOrdersWithPinnedPreview = async (runId: string) => {
     await expect(agentTab('Orders')).toHaveAttribute('aria-selected', 'true');
     await expect(editorTabs(page).getByRole('tab', { name: /^Script/ })).toHaveAttribute('aria-selected', 'true');
     await expect(frame.locator('.view-lines')).toContainText('# Orders draft survives Preview navigation');
-    // A pin belongs to Support's workspace and cannot replace Orders' panel.
-    await expect(viewPane(page, 'preview')).toHaveCount(0);
-    await returnToPreview();
-    await expect(viewPane(page, 'preview').getByRole('button', { name: 'Pin Preview to Support.agent', exact: true })).toBeVisible();
+    await expect(viewPane(page, 'preview')).toHaveAttribute('data-agent', 'force-app/Support.agent');
+    await expect(viewPane(page, 'preview').getByRole('button', { name: 'Follow selected agent', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await expect(preview).toHaveAttribute('data-run-id', runId);
     await expect(preview.getByRole('log', { name: 'Preview conversation' })).toContainText('Persistent preview turn');
     expect(remoteStarts()).toBe(1);
@@ -2687,13 +2685,12 @@ test('Agentforce Studio: scoped Preview reconnects to the same running session a
     await returnToPreview();
     await viewPane(page, 'preview').getByRole('button', { name: 'Pin Preview to Support.agent', exact: true }).click();
     await agentTab('Orders').click();
-    await resumeScopedPreview(runId);
+    await expectOrdersWithPinnedPreview(runId);
     await sidePanel(page).getByTestId('thread-secondary-hide').click();
     await expect(sidePanel(page)).toBeHidden();
     expect(await snapshot(runId)).toMatchObject({ ok: true, data: { id: runId, busy: true, closed: false } });
     await showSidePanel(page);
-    await expect(preview).toHaveAttribute('data-run-id', runId);
-    await agentTab('Orders').click();
+    await expectOrdersWithPinnedPreview(runId);
 
     // Closing the owner's editor tab clears its pin, without ending its session.
     await agentTabs(page).getByRole('button', { name: /^Close agent Support\.agent/ }).click();
@@ -2703,10 +2700,9 @@ test('Agentforce Studio: scoped Preview reconnects to the same running session a
     await expect(preview).toHaveAttribute('data-run-id', runId);
     await viewPane(page, 'preview').getByRole('button', { name: 'Pin Preview to Support.agent', exact: true }).click();
     await agentTab('Orders').click();
-    await resumeScopedPreview(runId);
+    await expectOrdersWithPinnedPreview(runId);
     await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-pinned-while-editing-another-agent.png'));
 
-    await agentTab('Orders').click();
     // A renderer restart reconnects to the server-owned request, using its original id.
     await page.reload();
     const projectNav = page.getByRole('navigation', { name: 'dx navigation' });
@@ -2715,7 +2711,7 @@ test('Agentforce Studio: scoped Preview reconnects to the same running session a
     if (await openProject.isVisible()) await openProject.click();
     await projectNav.getByRole('button', { name: 'Salesforce', exact: true }).click();
     await expect(page.getByTestId('salesforce-workbench').getByRole('button', { name: 'Open Salesforce tools', exact: true })).toContainText('Agentforce');
-    await resumeScopedPreview(runId);
+    await expectOrdersWithPinnedPreview(runId);
     expect(await snapshot(runId)).toMatchObject({ ok: true, data: { id: runId, busy: true, closed: false } });
     rmSync(join(home, 'persistent-preview-hold'), { force: true });
     await expect(preview.getByRole('log', { name: 'Preview conversation' })).toContainText('Could you share your order number', { timeout: 30_000 });
@@ -2727,26 +2723,25 @@ test('Agentforce Studio: scoped Preview reconnects to the same running session a
     await preview.getByRole('button', { name: 'End conversation', exact: true }).click();
     await expect.poll(async () => (await snapshot(runId)).data?.closed).toBe(true);
     await expect(page.getByTestId('salesforce-workbench').getByRole('button', { name: 'Active runs', exact: true })).toHaveCount(0);
-    await agentTab('Orders').click();
+    await expect(agentTab('Orders')).toHaveAttribute('aria-selected', 'true');
     await expect(frame.locator('.view-lines')).toContainText('# Orders draft survives Preview navigation');
     expect(readFileSync(join(home, 'dx/force-app/Orders.agent'), 'utf8')).not.toContain('Orders draft survives Preview navigation');
 
-    // A pinned graph also belongs to Support's panel; Orders retains its own workspace.
+    // A pinned inactive agent hydrates its own graph after reload, without replacing the editor draft.
     await agentTab('Support').click();
     await openTool(studio, 'Graph');
     const graph = viewPane(page, 'graph').frameLocator('iframe[title="AgentScript graph"]');
     await expect(graph.locator('.react-flow__node')).toHaveCount(3);
     await viewPane(page, 'graph').getByRole('button', { name: 'Pin Graph to Support.agent', exact: true }).click();
     await agentTab('Orders').click();
-    await expect(viewPane(page, 'graph')).toHaveCount(0);
-    await agentTab('Support').click();
     await expect(viewPane(page, 'graph')).toHaveAttribute('data-agent', 'force-app/Support.agent');
     await page.reload();
     await expect.poll(async () => await projectNav.isVisible() || await openProject.isVisible()).toBe(true);
     if (await openProject.isVisible()) await openProject.click();
     await projectNav.getByRole('button', { name: 'Salesforce', exact: true }).click();
-    await expect(agentTab('Support')).toHaveAttribute('aria-selected', 'true');
+    await expect(agentTab('Orders')).toHaveAttribute('aria-selected', 'true');
     await expect(editorTabs(page).getByRole('tab', { name: /^Script/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(frame.locator('.view-lines')).toContainText('# Orders draft survives Preview navigation');
     await expect(activeSidePanelTab(page)).toHaveText('Graph view');
     await expect(viewPane(page, 'graph')).toHaveAttribute('data-agent', 'force-app/Support.agent');
     await expect(viewPane(page, 'graph').getByRole('button', { name: 'Follow selected agent', exact: true })).toHaveAttribute('aria-pressed', 'true');
