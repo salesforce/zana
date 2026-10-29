@@ -2,7 +2,7 @@
  * @vitest-environment happy-dom
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ScheduledTask } from '@zana-ai/zcc-domain/product';
 
@@ -215,5 +215,50 @@ describe('ScheduleRow Resume latest run', () => {
     expect(screen.getByRole('button', { name: 'Open running terminal' })).toBeTruthy();
     fireEvent.contextMenu(screen.getByTitle('Open schedule'));
     expect(screen.queryByRole('menuitem', { name: /Resume latest run/ })).toBeNull();
+  });
+});
+
+describe('ScheduleRow skipped last run', () => {
+  // A fixed clock keeps the slot on the same local day, whatever time the suite runs.
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(2026, 9, 14, 12, 0)); });
+  afterEach(() => { vi.useRealTimers(); cleanup(); terminalState.terminals = {}; });
+  const slot = new Date(2026, 9, 14, 11, 59);
+  const time = slot.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const overlap = { id: 'o1', at: slot.toISOString(), result: 'skipped' as const, reasonCode: 'overlap' as const };
+  const mount = (t: ScheduledTask) => render(
+    <MemoryRouter><ul><ScheduleRow task={t} projectName="Demo" onOpen={vi.fn()} onOpenInSplit={vi.fn()} onDuplicate={vi.fn()} onAskDelete={vi.fn()} /></ul></MemoryRouter>
+  );
+
+  it('shows the time and reason of an overlap skip', () => {
+    const view = mount({ ...task, status: { runCount: 1, runs: [overlap] } });
+    const pill = view.getByTestId('schedule-skipped-last');
+    expect(pill.textContent).toBe(`skipped ${time} · Previous run still active`);
+    expect(pill.getAttribute('title')).toBe(
+      `Skipped the ${time} run. The previous run's session was still open, so this run didn't start. Close that session or press Run now.`
+    );
+    expect(pill.className).toBe('scheduler-pill scheduler-pill--skipped scheduler-pill--skipped-last');
+  });
+
+  it('words the title for a Squad', () => {
+    const view = mount({ ...task, kind: 'team', status: { runCount: 1, runs: [overlap] } });
+    expect(view.getByTestId('schedule-skipped-last').getAttribute('title'))
+      .toBe(`Skipped the ${time} run. The previous Squad run was still running, so this run didn't start.`);
+  });
+
+  it('still shows beside the running pill while the previous session is open', () => {
+    terminalState.terminals = { p1: [{ id: 'live', status: 'running' }] };
+    const earlier = { id: 'r0', at: new Date(slot.getTime() - 3_600_000).toISOString(), result: 'success' as const, sessionId: 'live' };
+    const view = mount({ ...task, status: { runCount: 2, runs: [overlap, earlier] } });
+    expect(view.getByText('running')).toBeTruthy();
+    expect(view.getByTestId('schedule-skipped-last')).toBeTruthy();
+  });
+
+  it('shows no pill for a success, a disabled schedule or an external row', () => {
+    const ok = { id: 'ok', at: slot.toISOString(), result: 'success' as const };
+    expect(mount({ ...task, status: { runCount: 1, runs: [ok] } }).queryByTestId('schedule-skipped-last')).toBeNull();
+    cleanup();
+    expect(mount({ ...task, enabled: false, status: { runCount: 1, runs: [overlap] } }).queryByTestId('schedule-skipped-last')).toBeNull();
+    cleanup();
+    expect(mount({ ...task, external: { kind: 'claude-loop' }, status: { runCount: 1, runs: [overlap] } } as unknown as ScheduledTask).queryByTestId('schedule-skipped-last')).toBeNull();
   });
 });

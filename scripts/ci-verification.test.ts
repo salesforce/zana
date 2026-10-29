@@ -177,7 +177,7 @@ it('selects the Squad source retry spec for the picker, registry and composer se
 });
 
 it('selects the scheduler specs for scheduler seams', () => {
-  for (const path of ['apps/server/src/services/scheduler/scheduler.ts', 'apps/app/src/components/scheduler/ProblemsPanel.tsx', 'apps/app/src/views/scheduler/SchedulerView.tsx', 'packages/domain/src/schedule-health.ts', 'apps/desktop/src/ipc/scheduler.ts', 'apps/desktop/src/scheduler-resume-run.ts']) {
+  for (const path of ['apps/server/src/services/scheduler/scheduler.ts', 'apps/app/src/components/scheduler/ProblemsPanel.tsx', 'apps/app/src/views/scheduler/SchedulerView.tsx', 'packages/domain/src/schedule-health.ts', 'packages/domain/src/schedule-skipped.ts', 'apps/desktop/src/ipc/scheduler.ts', 'apps/desktop/src/scheduler-resume-run.ts']) {
     expect(boundarySpecs([path])).toEqual(expect.arrayContaining(['e2e/scheduler-self-healing.spec.ts', 'e2e/scheduler-overview.spec.ts', 'e2e/scheduler-detail.spec.ts', 'e2e/scheduler-cron.spec.ts', 'e2e/scheduler-resume-latest-run.spec.ts']));
   }
   expect(boundarySpecs(['apps/app/src/components/inbox/Row.tsx'])).not.toContain('e2e/scheduler-cron.spec.ts');

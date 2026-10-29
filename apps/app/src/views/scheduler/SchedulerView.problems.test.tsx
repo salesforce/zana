@@ -1,5 +1,5 @@
 /** @vitest-environment happy-dom */
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ScheduledTask } from '@zana-ai/zcc-domain/product';
@@ -37,7 +37,12 @@ vi.mock('@/components/scheduler/ScheduleRow', () => ({ ScheduleRow: () => null }
 vi.mock('@/components/scheduler/DeleteConfirmModal', () => ({ DeleteConfirmModal: () => null }));
 vi.mock('@/components/scheduler/TemplatePickerModal', () => ({ TemplatePickerModal: () => null }));
 vi.mock('@/components/scheduler/ScheduleFilters', () => ({
-  ScheduleFilters: ({ onSearch }: { onSearch: (v: string) => void }) => <button onClick={() => onSearch('zzz-no-match')}>search nothing</button>
+  ScheduleFilters: ({ onSearch, onFilter }: { onSearch: (v: string) => void; onFilter: (v: string) => void }) => (
+    <>
+      <button onClick={() => onSearch('zzz-no-match')}>search nothing</button>
+      <button onClick={() => onFilter('skipped')}>filter skipped</button>
+    </>
+  )
 }));
 vi.mock('@/components/scheduler/openScheduledLive', () => ({ openScheduledLive: h.openLive }));
 vi.mock('@/components/scheduler/resumeScheduledRun', () => ({ resumeScheduledRun: h.resume }));
@@ -106,6 +111,33 @@ describe('SchedulerView Problems segment', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Schedules$/ }));
     fireEvent.click(screen.getByRole('button', { name: 'search nothing' }));
     expect(screen.getByText('No schedules match')).toBeTruthy();
+  });
+
+  it('lists a schedule under Skipped last run once its due time passes with the list open', () => {
+    const slot = Date.parse('2026-10-14T09:00:00Z');
+    const daily = {
+      ...task('daily', 'p1'),
+      schedule: { cron: '0 9 * * *', tz: 'UTC' },
+      createdAt: '2026-10-01T00:00:00Z',
+      status: {
+        runCount: 1, lastRunAt: '2026-10-13T09:00:00.000Z',
+        runs: [{ at: '2026-10-13T09:00:00.000Z', result: 'success' }]
+      }
+    } as unknown as ScheduledTask;
+    h.tasks = [daily];
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(slot + 60_000);
+      mount();
+      fireEvent.click(screen.getByRole('button', { name: /^Schedules$/ }));
+      fireEvent.click(screen.getByRole('button', { name: 'filter skipped' }));
+      // Inside the two-minute grace the 09:00 run may still be starting.
+      expect(screen.getByText('No schedules match')).toBeTruthy();
+      act(() => { vi.setSystemTime(slot + 3 * 60_000); vi.advanceTimersByTime(1000); });
+      expect(screen.queryByText('No schedules match')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('shows the no-projects, loading and empty-project states around the toolbar', () => {

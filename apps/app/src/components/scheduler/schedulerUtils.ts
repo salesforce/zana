@@ -1,5 +1,7 @@
 import type { ScheduledTask, LaunchProfileId, Project, ScheduleTemplate, ScheduleRun, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { parseEvery, formatInterval } from '@zana-ai/zcc-domain/parse-every';
+import { reasonHint, reasonLabel } from '@zana-ai/zcc-domain/schedule-health';
+import { lastRunSkipped, type SkippedLastRun } from '@zana-ai/zcc-domain/schedule-skipped';
 import {
   ShieldCheck,
   Sun,
@@ -234,4 +236,38 @@ export function formatCountdown(d: Date): string {
   const h = Math.floor(m / 60);
   const remM = m % 60;
   return `${h}h ${remM}m`;
+}
+
+/** When a skipped slot was due: the time today, the weekday and time within a week, else the date. */
+function skippedWhen(slotMs: number, nowMs: number): string {
+  const slot = new Date(slotMs);
+  const time = slot.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (slot.toDateString() === new Date(nowMs).toDateString()) return time;
+  if (nowMs - slotMs < 7 * 86_400_000) return `${slot.toLocaleDateString([], { weekday: 'short' })} ${time}`;
+  return slot.toLocaleDateString([], { day: 'numeric', month: 'short' });
+}
+
+/** The pill text and hover title for a schedule that skipped its last run. */
+export function skippedLastRunLabel(skipped: SkippedLastRun, nowMs: number, squad = false): { text: string; title: string } {
+  const when = skippedWhen(Date.parse(skipped.slotAt), nowMs);
+  const { reason } = skipped;
+  const text = reason ? `skipped ${when} · ${reasonLabel(reason)}` : `skipped ${when}`;
+  let detail: string;
+  if (reason === 'overlap') {
+    detail = squad
+      ? "The previous Squad run was still running, so this run didn't start."
+      : "The previous run's session was still open, so this run didn't start. Close that session or press Run now.";
+  } else if (reason) {
+    detail = `${reasonHint(reason)} Press Run now to run it.`;
+  } else {
+    detail = 'No run was recorded for this time. Press Run now to run it.';
+  }
+  return { text, title: `Skipped the ${when} run. ${detail}` };
+}
+
+/** The skipped pill for a schedule row, or null: /loop rows and schedules that ran their last due time get none. */
+export function skippedLastRunPill(task: ScheduledTask, nowMs: number): { text: string; title: string } | null {
+  if (task.external?.kind === 'claude-loop') return null;
+  const skipped = lastRunSkipped(task, nowMs);
+  return skipped ? skippedLastRunLabel(skipped, nowMs, task.kind === 'team') : null;
 }
