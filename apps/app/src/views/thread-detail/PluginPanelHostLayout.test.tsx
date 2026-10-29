@@ -560,6 +560,7 @@ describe('PluginPanelHostLayout', () => {
     }
     render(<PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="project"><Editor /></PluginPanelHostLayout>);
     act(() => select('agents/a.agent'));
+    expect(screen.getByTestId('plugin-panel-host-layout').dataset.panelResource).toBe('agents/a.agent');
     fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
     expect(screen.getByTestId('agent-composer').dataset).toMatchObject({ binding: 'salesforce/salesforce/agents/a.agent', project: 'project' });
     act(() => requestPluginPanelAgent({ pluginId: 'salesforce', threadId: 'thread-a' }));
@@ -578,6 +579,7 @@ describe('PluginPanelHostLayout', () => {
     expect(unmounted).not.toHaveBeenCalled();
     expect((screen.getByLabelText('Script text') as HTMLInputElement).value).toBe('unsaved source');
     act(() => select(null));
+    expect(screen.getByTestId('plugin-panel-host-layout').dataset.panelResource).toBe('');
     expect(screen.queryByTestId('plugin-tool')).toBeNull();
     expect(screen.getByTestId('plugin-panel-agent-show')).toBeTruthy();
   });

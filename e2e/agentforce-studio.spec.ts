@@ -1655,6 +1655,9 @@ test('Agentforce Studio: no-file entry points reach org agents, an explorer org 
   // Closing the only agent leaves no agent open.
   await agentTabs(page).getByRole('button', { name: /^Close agent Empty\.agent/ }).click();
   await expect(agentTabs(page).getByRole('tab')).toHaveCount(0);
+  // Plugin selection reaches the host asynchronously; wait for the page's panel
+  // ownership before opening it, rather than opening the outgoing agent's panel.
+  await expect(page.getByTestId('plugin-panel-host-layout')).toHaveAttribute('data-panel-resource', '');
   // The side panel offers Studio tools; org agent browsing stays in the workbench.
   await showSidePanel(page);
   await openThreadToolLauncher(sidePanel(page));

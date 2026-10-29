@@ -107,6 +107,7 @@ function PluginPageSidePanelHost({
       ref={viewRef}
       className={`plugin-panel-host-layout${presentation.isOpen ? ' is-secondary-open' : ''}${presentation.isOpen && presentation.isMaximized ? ' is-secondary-maximized' : ''}${compact ? ' is-compact' : ''}`}
       data-testid="plugin-panel-host-layout"
+      data-panel-resource={selectedResourceId ?? ''}
       style={presentation.isOpen ? { ['--thread-secondary-width' as string]: `${presentation.widthPx}px` } : undefined}
     >
       <div className="split-plugin-main">
