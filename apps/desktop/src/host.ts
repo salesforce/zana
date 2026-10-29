@@ -9257,6 +9257,27 @@ async function bootstrapNormal() {
         principalId: sessionId, authorizationId: modern.authorizationId, memberFence: { bindingId: sessionId, generation: modern.generation }
       } : undefined;
     },
+    resolveAutomatedMcpCatalogue: async (binding) => {
+      const record = await executionStore.getInProject(binding.projectId, binding.executionId);
+      if (!record) throw new Error('execution catalogue provenance unavailable');
+      const existing = record.automatedMcpCatalogueProvenance?.[binding.slotId];
+      if (existing) {
+        if (existing.role !== binding.role) throw new Error('execution catalogue provenance role mismatch');
+        return existing;
+      }
+      const { trustedAutomatedMcpCatalogue } = await import('../../server/src/services/mcp/trusted-automated-catalogue-policy.js');
+      const capabilities = store.listProjects().some((project) => project.id === binding.projectId && project.remote)
+        ? ['remote_fs']
+        : [];
+      const selected = trustedAutomatedMcpCatalogue({ member: { role: binding.role, capabilities } });
+      if (!selected.tools) throw new Error('execution catalogue provenance unavailable');
+      return executionStore.recordAutomatedMcpCatalogueProvenance(record.id, binding.slotId, {
+        role: binding.role,
+        capabilities,
+        tools: [...selected.tools],
+        digest: selected.digest
+      });
+    },
     validateExecutionRecoveryBinding: async (sessionId, binding) => {
       if (binding.slotId !== 'orchestrator:recovery') return true;
       const record = await executionStore.getInProject(binding.projectId, binding.executionId);

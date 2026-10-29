@@ -221,6 +221,8 @@ export interface RegisterExecutionToolOptions {
   approveHandoff?: (sourceSessionId: string, targetSessionId: string, projectId: string, executionId: string, operation: typeof EXECUTION_HANDOFF_OPERATION | typeof EXECUTION_RESUME_MONITOR_OPERATION) => Promise<boolean>;
   /** How this route's session receives a `[Squad report]`: a CLI Agent PTY (default) or a Modern thread. */
   reportKind?: 'pty' | 'thread';
+  /** Host-selected frozen catalogue for this authenticated member route. */
+  allowedToolNames?: ReadonlySet<string>;
   /**
    * The launch-approval policy that applies to a Squad in this project. `review`
    * makes `execution.start` refuse so the agent proposes the run for the user to
@@ -418,7 +420,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   // internal failure never leaks a stack/message across the MCP boundary.
   const memberNames = new Set<string>(Object.values(EXECUTION_MEMBER_TOOL_NAMES).flat());
   const register: McpServer['registerTool'] = ((name: string, config: unknown, handler: (args: unknown) => unknown) => {
-    if (options.memberFence && !memberNames.has(name)) return;
+    if (options.memberFence && (!memberNames.has(name) || options.allowedToolNames && !options.allowedToolNames.has(name))) return;
     return server.registerTool(name as never, config as never, (async (args: unknown) => {
       try {
         if (options.memberFence) {
@@ -426,7 +428,8 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
           if (name === 'execution.event' && args && typeof args === 'object' && ('slotId' in args || 'producerRole' in args)) return denied(name);
           const bound = await binding((args as { executionId?: string }).executionId);
           if (!bound) return boundDenied(name);
-          if (!EXECUTION_MEMBER_TOOL_NAMES[bound.role]?.some((tool) => tool === name)) return denied(name);
+          if (options.allowedToolNames && !options.allowedToolNames.has(name)
+            || !EXECUTION_MEMBER_TOOL_NAMES[bound.role]?.some((tool) => tool === name)) return denied(name);
         }
         return await (handler(args) as Promise<unknown>);
       } catch (error) {
