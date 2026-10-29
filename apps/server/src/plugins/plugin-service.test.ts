@@ -1527,24 +1527,24 @@ describe('PluginService', () => {
     const dataDir = root();
     const bundled = root();
     writePlugin(join(bundled, 'docs'), 'docs');
-    writePlugin(join(bundled, 'salesforce'), 'salesforce');
-    const legacyDir = writeLegacyExtension(join(root(), 'zcc-extension-salesforce'), 'salesforce');
+    writePlugin(join(bundled, 'memory'), 'memory');
+    const legacyDir = writeLegacyExtension(join(root(), 'zcc-extension-memory'), 'memory');
     const service = createPluginService({ watchBuiltinPluginSources: true, dataDir, bundledRoot: bundled });
     await service.install(legacyDir);
-    expect(service.get('salesforce')?.sourceKind).toBe('path');
-    await expect(service.callRpc('salesforce', 'ping', {})).rejects.toThrow(/unknown rpc/);
+    expect(service.get('memory')?.sourceKind).toBe('path');
+    await expect(service.callRpc('memory', 'ping', {})).rejects.toThrow(/unknown rpc/);
     await service.reconcileBuiltins();
-    expect(service.get('salesforce')).toMatchObject({
-      id: 'salesforce',
+    expect(service.get('memory')).toMatchObject({
+      id: 'memory',
       sourceKind: 'builtin',
-      source: 'builtin:salesforce',
+      source: 'builtin:memory',
       enabled: true,
       status: 'running'
     });
-    expect(service.get('salesforce')?.rootDir).toBe(join(bundled, 'salesforce'));
-    await expect(service.callRpc('salesforce', 'ping', {})).resolves.toEqual({
+    expect(service.get('memory')?.rootDir).toBe(join(bundled, 'memory'));
+    await expect(service.callRpc('memory', 'ping', {})).resolves.toEqual({
       ok: true,
-      id: 'salesforce'
+      id: 'memory'
     });
     expect(existsSync(legacyDir)).toBe(true);
   });
@@ -1553,16 +1553,16 @@ describe('PluginService', () => {
     const dataDir = root();
     const bundled = root();
     writePlugin(join(bundled, 'docs'), 'docs');
-    writePlugin(join(bundled, 'salesforce'), 'salesforce');
-    const devDir = writePlugin(join(root(), 'salesforce-dev'), 'salesforce', `export default function plugin(zcc) {
+    writePlugin(join(bundled, 'memory'), 'memory');
+    const devDir = writePlugin(join(root(), 'memory-dev'), 'memory', `export default function plugin(zcc) {
         zcc.rpc.method('ping', () => ({ ok: true, from: 'path-dev' }));
       }\n`);
     const service = createPluginService({ watchBuiltinPluginSources: true, dataDir, bundledRoot: bundled });
     await service.install(devDir);
     await service.reconcileBuiltins();
-    expect(service.get('salesforce')?.sourceKind).toBe('path');
-    expect(service.get('salesforce')?.rootDir).toBe(devDir);
-    await expect(service.callRpc('salesforce', 'ping', {})).resolves.toEqual({
+    expect(service.get('memory')?.sourceKind).toBe('path');
+    expect(service.get('memory')?.rootDir).toBe(devDir);
+    await expect(service.callRpc('memory', 'ping', {})).resolves.toEqual({
       ok: true,
       from: 'path-dev'
     });
@@ -1572,13 +1572,13 @@ describe('PluginService', () => {
     const dataDir = root();
     const bundled = root();
     writePlugin(join(bundled, 'docs'), 'docs');
-    writePlugin(join(bundled, 'salesforce'), 'salesforce');
-    const legacyDir = writeLegacyExtension(join(root(), 'legacy-sf'), 'salesforce');
+    writePlugin(join(bundled, 'memory'), 'memory');
+    const legacyDir = writeLegacyExtension(join(root(), 'legacy-memory'), 'memory');
     const service = createPluginService({ watchBuiltinPluginSources: true, dataDir, bundledRoot: bundled });
     await service.install(legacyDir);
-    await service.disable('salesforce');
+    await service.disable('memory');
     await service.reconcileBuiltins();
-    expect(service.get('salesforce')).toMatchObject({
+    expect(service.get('memory')).toMatchObject({
       sourceKind: 'builtin',
       enabled: false,
       status: 'disabled'
@@ -1760,9 +1760,10 @@ describe('listBundledPluginCatalog', () => {
     expect(out.find((entry) => entry.id === 'posthog-analytics')?.description).toBe(
       'Anonymous usage analytics. Never sends prompts or replies.'
     );
+    expect(out.map(entry => entry.id)).not.toContain('salesforce');
     expect(out.find((entry) => entry.id === 'tasks')?.category).toBe('Workflow management');
     expect(out.map((entry) => entry.id)).toEqual(
-      expect.arrayContaining(['docs', 'tasks', 'custom-instructions', 'ask-user-question', 'salesforce', 'pr-monitor', 'plugin-guide'])
+      expect.arrayContaining(['docs', 'tasks', 'custom-instructions', 'ask-user-question', 'pr-monitor', 'plugin-guide'])
     );
   });
 
