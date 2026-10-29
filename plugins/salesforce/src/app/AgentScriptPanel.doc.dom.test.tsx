@@ -30,7 +30,7 @@ vi.mock('./agent-doc/useAgentScriptDoc.js', () => ({
 vi.mock('./preview/PreviewRunReplay.js', () => ({ PreviewRunReplay: (p: any) => <div data-testid="stub-replay" data-run={p.runId} data-turn={String(p.turn ?? '')}><button data-testid="stub-replay-close" onClick={p.onClose}>close</button></div> }));
 const control: { options?: any; closeHandler?: ((signal: AbortSignal) => Promise<void>) | null } = {};
 const closeControls = vi.fn(async (_project: string) => undefined);
-vi.mock('./useSalesforceControl.js', () => ({ resumeSalesforceControls: vi.fn(), closeSalesforceControls: (project: string) => closeControls(project), useSalesforceControl: (options: unknown) => { control.options = options; } }));
+vi.mock('./useSalesforceControl.js', async importOriginal => ({ ...(await importOriginal<object>()), resumeSalesforceControls: vi.fn(), closeSalesforceControls: (project: string) => closeControls(project), useSalesforceControl: (options: unknown) => { control.options = options; } }));
 vi.mock('./preview/PreviewWorkbench.js', () => ({ PreviewWorkbench: (p: any) => <div data-testid="stub-preview" data-engine={p.engine} data-dirty={String(Boolean(p.dirty))} data-command={p.command ? JSON.stringify(p.command) : ""}><button data-testid="stub-run" onClick={() => p.onRunChange({ runId: 'r1', engine: 'live', turn: 1 })}>run</button><button data-testid="stub-handled" onClick={() => p.onCommandHandled(p.command?.seq ?? -1)}>handled</button><button data-testid="stub-stale" onClick={() => p.onCommandHandled(0)}>stale</button></div> }));
 vi.mock('./studio/AskAgentButton.js', () => ({ AskAgentButton: () => <div data-testid="stub-ask-agent" /> }));
 vi.mock('./AgentScriptGraphPanel.js', () => ({ AgentScriptGraphPanel: (p: any) => <div data-testid="stub-graph" data-focus={`${p.focusNode}:${p.focusSeq}`} data-compact={String(p.compact)} /> }));
@@ -40,6 +40,8 @@ vi.mock('./panels/OperationsPanel.js', () => ({ OperationsPanel: () => <div data
 vi.mock('./studio/OrgTestsView.js', () => ({ OrgTestsView: (p: any) => <div data-testid="stub-org-tests" data-visible={String(p.visible)} data-focus={p.focus ? JSON.stringify(p.focus) : ''}><button data-testid="stub-org-tests-handled" onClick={() => p.onFocusHandled?.(p.focus?.seq ?? -1)}>handled</button></div> }));
 const { AgentScriptPanel } = await import('./AgentScriptPanel.js');
 const { routeStudioIntent } = await import('./studio/studio-intents.js');
+const windowRoute = await import('./studio-window-route.js');
+const navigation: { toCompose: ReturnType<typeof vi.fn>; openInWindow?: ReturnType<typeof vi.fn> } = { toCompose: vi.fn() };
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 const flush = () => act(async () => { for (let i = 0; i < 3; i++) await new Promise(r => setTimeout(r, 0)); });
@@ -87,6 +89,7 @@ const exec = (command: string, input: Record<string, unknown> = {}) => control.o
 const sent = (el: HTMLElement) => (el.querySelector('iframe')!.contentWindow!.postMessage as any).mock.calls.map((c: any[]) => c[0]);
 
 beforeEach(() => {
+  delete navigation.openInWindow; rpc.mockImplementation(baseRpc);
   localStorage.clear(); store.state = { doc: null, loading: false, error: null, leased: false, leaseGen: 0, heldBy: null }; surface = undefined; resourceId = undefined; Object.values(docApi).forEach(fn => fn.mockClear()); rpc.mockClear(); observers.length = 0; width = 1000; realtime = undefined; control.closeHandler = undefined; closeControls.mockReset();
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({ width, height: 600, top: 0, left: 0, right: width, bottom: 600, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect);
   (globalThis as any).ResizeObserver = class { constructor(cb: any) { observers.push(w => cb([{ contentRect: { width: w } }])); } observe() {} disconnect() {} };
@@ -97,7 +100,7 @@ beforeEach(() => {
   (globalThis as any).__ZCC_PLUGIN_HOST__ = { callRpc: rpc, useZccNavigate: () => ({ toCompose: vi.fn() }), getSettings: async () => ({ values: { agentScriptDialect: 'agentforce' } }), setSettings: async () => undefined };
   (globalThis as any).__ZCC_PLUGIN_RUNTIME__ = {
     useWindowCloseHandler: (handler: ((signal: AbortSignal) => Promise<void>) | null) => { control.closeHandler = handler; },
-    useZccNavigate: () => ({ toCompose: vi.fn() }),
+    useZccNavigate: () => navigation,
     useSettings: () => ({ values: { agentScriptDialect: 'agentforce', defaultOrg: 'dev' }, isLoading: false }),
     useRealtime: (_c: string, h: (p: unknown) => void) => { realtime = h; },
     useZccContext: () => ({ projectId: 'proj-1', threadId: null, ...(surface ? { surface, resourceId } : {}) })
@@ -722,4 +725,55 @@ it('reopens the editor after control-close refusal and after native-close timeou
   const aborted = new AbortController(); aborted.abort();
   await act(async () => { await expect(control.closeHandler!(aborted.signal)).rejects.toBeDefined(); });
   expect(docApi.resume).toHaveBeenCalledTimes(2);
+});
+
+
+describe('native agent window ownership', () => {
+  it('shows the matching detached owner and can focus it again', async () => {
+    const openWindow = vi.spyOn(windowRoute, 'openAgentInStudioWindow').mockResolvedValue(true);
+    navigation.openInWindow = vi.fn();
+    rpc.mockImplementation(async (plugin, method, args) => method === 'control.views' ? { ok: true, views: [
+      { window: 'project', surface: 'workbench', state: { resourceId: PATH } },
+      { window: 'plugin-view', surface: 'other', state: { resourceId: PATH } },
+      { window: 'plugin-view', surface: 'workbench', state: { resourceId: 'force-app/Other.agent' } },
+      { window: 'plugin-view', surface: 'workbench', state: { resourceId: PATH } }
+    ] } : baseRpc(plugin, method, args));
+    const el = await open();
+    const banner = el.querySelector('[data-testid="salesforce-agent-detached-banner"]');
+    expect(banner?.textContent).toContain('Editing this agent in its own window');
+    await act(async () => { fireEvent.click(banner!.querySelector('button')!); });
+    expect(openWindow).toHaveBeenCalledWith(expect.objectContaining({ path: PATH, projectId: 'proj-1' }));
+    expect(docApi.release).toHaveBeenCalledOnce();
+  });
+  it('serializes detach requests and restores the workspace on open refusal', async () => {
+    navigation.openInWindow = vi.fn();
+    let finish!: (value: boolean) => void;
+    const openWindow = vi.spyOn(windowRoute, 'openAgentInStudioWindow').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    rpc.mockImplementation(async (plugin, method, args) => method === 'control.views' ? { ok: true, views: [] } : baseRpc(plugin, method, args));
+    const el = await open();
+    const detach = el.querySelector('[aria-label="Open QC.agent in its own window"]')!;
+    await act(async () => { fireEvent.click(detach); await Promise.resolve(); fireEvent.click(detach); });
+    expect(openWindow).toHaveBeenCalledOnce();
+    await act(async () => { finish(false); });
+    expect(el.textContent).toContain('Could not open the agent window. Your workspace remains here.');
+    expect(el.querySelector('[data-testid="salesforce-agent-detached-banner"]')).toBeNull();
+  });
+  it.each([Error('Cannot flush draft'), 'Connection lost'])('keeps the workspace when detaching throws (%s)', async failure => {
+    navigation.openInWindow = vi.fn();
+    vi.spyOn(windowRoute, 'openAgentInStudioWindow').mockRejectedValueOnce(failure);
+    const el = await open();
+    await act(async () => { fireEvent.click(el.querySelector('[aria-label="Open QC.agent in its own window"]')!); });
+    expect(el.textContent).toContain(failure instanceof Error ? failure.message : failure);
+    expect(el.querySelector('[data-testid="salesforce-agent-detached-banner"]')).toBeNull();
+  });
+  it('refuses retargeting a resource window when another agent cannot open', async () => {
+    surface = 'plugin-view'; resourceId = PATH;
+    const openWindow = vi.spyOn(windowRoute, 'openAgentInStudioWindow').mockResolvedValue(false);
+    const el = await open();
+    await act(async () => { await expect(exec('file.open', { path: 'force-app/bots/Help.agent' })).rejects.toThrow('Could not open'); });
+    await flush();
+    expect(openWindow).toHaveBeenCalledWith(expect.objectContaining({ path: 'force-app/bots/Help.agent' }));
+    expect(el.textContent).toContain('Could not open the agent window. Try again from the main Studio.');
+    expect(el.querySelector('.af-document-name')?.textContent).toBe('QC.agent');
+  });
 });

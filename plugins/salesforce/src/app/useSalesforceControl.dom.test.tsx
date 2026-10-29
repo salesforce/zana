@@ -2,7 +2,7 @@
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useState } from 'react';
-import { closeSalesforceControls, controlText, useSalesforceControl } from './useSalesforceControl.js';
+import { closeSalesforceControls, resumeSalesforceControls, controlText, useSalesforceControl } from './useSalesforceControl.js';
 const rpc = vi.fn(); const queued: unknown[] = [];
 function Surface({ enabled = true, projectId = 'p' }) {
   const [view, setView] = useState('overview');
@@ -73,4 +73,28 @@ it('rejects a failed close acknowledgement and permits retry', async () => {
   await expect(closeSalesforceControls('p')).rejects.toThrow('Cannot release view');
   await closeSalesforceControls('p');
   expect(rpc.mock.calls.filter(row => row[1] === 'control.close')).toHaveLength(2);
+});
+
+it('resumes only closed controls of the requested project without duplicating live polling', async () => {
+  render(<><Surface /><Surface projectId="other" /></>);
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  rpc.mockClear();
+  resumeSalesforceControls('p');
+  expect(rpc).not.toHaveBeenCalled();
+  await act(async () => { await closeSalesforceControls('p'); });
+  rpc.mockClear();
+  await act(async () => { resumeSalesforceControls('p'); });
+  expect(rpc).toHaveBeenCalledWith('salesforce', 'control.register', expect.objectContaining({ projectId: 'p' }));
+  expect(rpc.mock.calls.some(row => row[2].projectId === 'other')).toBe(false);
+});
+
+it('shares an in-flight lease close across concurrent native close requests', async () => {
+  render(<Surface />);
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  let finish!: (value: unknown) => void;
+  rpc.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const first = closeSalesforceControls('p');
+  const second = closeSalesforceControls('p');
+  expect(rpc.mock.calls.filter(row => row[1] === 'control.close')).toHaveLength(1);
+  await act(async () => { finish({ ok: true }); await Promise.all([first, second]); });
 });

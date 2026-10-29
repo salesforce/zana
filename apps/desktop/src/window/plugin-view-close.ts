@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
+import type { BrowserWindow } from 'electron';
 
 export const PLUGIN_VIEW_CLOSE_TIMEOUT_MS = 15_000;
 interface CloseWindow {
@@ -7,6 +8,27 @@ interface CloseWindow {
   isDestroyed(): boolean;
   close(): void;
   webContents: { isDestroyed(): boolean; send(channel: string, value: unknown): void };
+}
+
+/** Attach native lifecycle invalidation to the same guard used by sender-bound IPC. */
+export function bindPluginViewCloseLifecycle(win: BrowserWindow, guard: ReturnType<typeof createPluginViewCloseGuard>, shuttingDown: () => boolean): void {
+  win.on('close', event => { if (!shuttingDown() && guard.intercept(win)) event.preventDefault(); });
+  win.webContents.on('render-process-gone', () => guard.forget(win.id));
+  win.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
+    if (mainFrame && !inPlace) guard.forget(win.id);
+  });
+}
+
+type SafeWindowHandle = <TArgs extends unknown[], TResult>(
+  channel: string,
+  handler: (win: BrowserWindow, ...args: TArgs) => TResult | Promise<TResult>,
+  onError: (err: unknown, ...args: TArgs) => TResult
+) => void;
+
+/** The host supplies actual sender windows; only registered plugin views may participate. */
+export function registerPluginViewCloseIpc(handle: SafeWindowHandle, guard: ReturnType<typeof createPluginViewCloseGuard>, windows: ReadonlyMap<number, { view?: unknown }>): void {
+  handle<[unknown], boolean>(IPC.windows.pluginViewCloseReady, (win, value) => windows.get(win.id)?.view ? guard.setReady(win, value) : false, () => false);
+  handle<[unknown, unknown], boolean>(IPC.windows.pluginViewCloseComplete, (win, id, result) => windows.get(win.id)?.view ? guard.complete(win, id, result) : false, () => false);
 }
 /** Native close remains pending until the owning renderer confirms durable handoff. No resource grants occur here. */
 export function createPluginViewCloseGuard(timeoutMs = PLUGIN_VIEW_CLOSE_TIMEOUT_MS) {

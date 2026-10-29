@@ -1,3 +1,4 @@
+import { selectSalesforceSection } from './fixtures/salesforce-navigation.js';
 import { openThreadToolLauncher } from './fixtures/thread-tool-panel.js';
 import { createServer } from 'node:http';
 import { execFile } from 'node:child_process';
@@ -351,7 +352,7 @@ test('Agentforce document toolbar and focused explorer: long paths, save state a
     history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
   }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioIn(page);
   const frame = page.frameLocator('iframe[title="Agentforce playground"]');
   await expect(frame.getByTestId('agent-script-ide')).toBeVisible();
@@ -814,7 +815,7 @@ test('Org preview: agent-scoped target, employee-agent simulation and an unclipp
     history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
   }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioIn(page);
   await expect(page.frameLocator('iframe[title="Agentforce playground"]').getByTestId('agent-script-ide')).toBeVisible();
   // Org preview follows the selected editor agent; its identity cannot retarget the editor's run.
@@ -896,7 +897,7 @@ ${['accountId', 'accountName', 'currentObjectApiName', 'currentRecordId', 'oppor
     history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
   }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioIn(page);
   await expect(page.frameLocator('iframe[title="Agentforce playground"]').getByTestId('agent-script-ide')).toBeVisible();
   await showAllAgents(studio);
@@ -1150,7 +1151,7 @@ ${['accountId', 'accountName', 'currentObjectApiName', 'currentRecordId', 'oppor
   await page.reload();
   await expect(page.getByRole('navigation', { name: 'dx navigation' })).toBeVisible();
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   await expect(page.frameLocator('iframe[title="Agentforce playground"]').getByTestId('agent-script-ide')).toBeVisible();
   await openTool(studio, 'Tests');
   await tests.getByRole('button', { name: 'Scenarios', exact: true }).click();
@@ -1197,7 +1198,7 @@ test('Agentforce action explorer: real source RPC, Apex colors, Flow map and pre
     history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
   }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioIn(page);
   const agent = page.frameLocator('iframe[title="Agentforce playground"]');
   await expect(agent.getByTestId('agent-script-ide')).toBeVisible();
@@ -1337,7 +1338,7 @@ test('Salesforce Flow visualizer: official canvas, branches, details, themes and
   }, join(home, 'dx'));
   await page.evaluate(id => { history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate')); }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioIn(page);
   await expect(page.frameLocator('iframe[title="Agentforce playground"]').getByTestId('agent-script-ide')).toBeVisible();
   await studio.getByTestId('salesforce-agent-script-file:force-app/Orders.agent').click();
@@ -1416,7 +1417,7 @@ test('Agentforce Studio: Lightning Types, collapsible explorer sections and a hi
   }, join(home, 'dx'));
   await page.evaluate(id => { history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate')); }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioIn(page);
   const explorer = studio.getByTestId('salesforce-agent-script-explorer');
   const types = explorer.getByTestId('sf-explorer-lightning-type');
@@ -1438,7 +1439,7 @@ test('Agentforce Studio: Lightning Types, collapsible explorer sections and a hi
   await types.getByRole('button', { name: /Lightning Types/ }).click();
   await expect(types.getByRole('button', { name: /^c__OrderRequest/ })).toHaveCount(0);
   await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Data', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   await allReferences.click();
   await expect(types.getByRole('button', { name: /Lightning Types/ })).toHaveAttribute('aria-expanded', 'false');
   await explorer.getByLabel('Filter Agentforce files').fill('OrderRequest');
@@ -1470,7 +1471,7 @@ test('Agentforce Studio: browse org source versions, retrieve and preserve local
     history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
   }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioIn(page);
   const editor = page.frameLocator('iframe[title="Agentforce playground"]');
   await expect(studio.getByTestId('salesforce-agent-script-no-file')).toBeVisible();
@@ -1536,7 +1537,7 @@ test('Agentforce graph: hovering keeps nodes visible and the viewport still', as
     history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
   }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioIn(page);
   await studio.getByTestId('salesforce-agent-script-file:force-app/Orders.agent').click();
   await openTool(studio, 'Graph view');
@@ -1622,7 +1623,7 @@ test('Agentforce Studio: no-file entry points reach org agents, an explorer org 
   // Wide enough that Studio keeps its explorer beside the host side panel.
   await page.setViewportSize({ width: 1800, height: 1000 });
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioIn(page);
   await expect(studio.locator('.sf-as-body.sf-studio')).toHaveAttribute('data-layout', 'wide');
   const noFile = studio.getByTestId('salesforce-agent-script-no-file');
@@ -1823,7 +1824,7 @@ test('Agentforce Release RPC: a Zana-drawn sheet approves Publish and Activate; 
     history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
   }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioIn(page);
   await expect(page.frameLocator('iframe[title="Agentforce playground"]').getByTestId('agent-script-ide')).toBeVisible();
   const explorer = studio.getByTestId('salesforce-agent-script-explorer');
@@ -2085,7 +2086,7 @@ test('Agentforce Studio: Org tests list Testing Center definitions, run one in t
     history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
   }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioIn(page);
   await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
   await expect(studio.getByTestId('salesforce-agent-script-no-file')).toHaveCount(0);
@@ -2379,7 +2380,7 @@ test('Agentforce suite progress: current case, turns and partial results reach t
     history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
   }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioIn(page);
   await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
   await openTool(studio, 'Tests');
@@ -2480,7 +2481,7 @@ test('Agentforce Studio: host tools preserve two agents and all twelve document 
     history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
   }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioIn(page);
   const frame = page.frameLocator('iframe[title="Agentforce playground"]');
   const agentTab = (name: string) => agentTabs(page).getByRole('tab', { name: new RegExp(`^${name}\\.agent`) });
@@ -2623,7 +2624,7 @@ test('Agentforce Studio: pinned Preview reconnects to the same running session a
     history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
   }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioIn(page);
   const frame = page.frameLocator('iframe[title="Agentforce playground"]');
   const agentTab = (name: string) => agentTabs(page).getByRole('tab', { name: new RegExp(`^${name}\\.agent`) });
@@ -2760,7 +2761,7 @@ test('Agentforce Studio: server-owned role-play survives owner close and reload,
     history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
   }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioIn(page);
   const agentTab = (name: string) => agentTabs(page).getByRole('tab', { name: new RegExp(`^${name}\\.agent`) });
   const lab = viewPane(page, 'tests').getByTestId('agentforce-lab');
@@ -2851,7 +2852,7 @@ test('Agentforce simulations: live lanes stay with their agent, stop, verdicts a
     history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
   }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioIn(page);
   await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
   await openTool(studio, 'Tests');
@@ -2918,7 +2919,7 @@ test('Agentforce simulations: live lanes stay with their agent, stop, verdicts a
   // Reload preserves the project route; its navigation is ready without reopening the project.
   await page.reload();
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   await agentTabs(page).getByRole('tab', { name: /^Support\.agent/ }).click();
   await openTool(studio, 'Tests');
   await viewPane(page, 'tests').getByRole('button', { name: 'Batch simulations', exact: true }).click();
@@ -2940,7 +2941,7 @@ test('Agentforce self-healing: parallel candidates improve fixed scenarios witho
   }, projectId);
   const action = (action: string, input: object = {}): Promise<any> => page.evaluate(({ projectId, action, input }) => window.cc.pluginApps.callRpc('salesforce', 'actions.run', { projectId, action, input }), { projectId, action, input });
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioIn(page);
   await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
   await openTool(studio, 'Tests');
@@ -3025,7 +3026,7 @@ test('Agentforce improvements: cache-safe discovery, source jumps, draft compari
     history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
   }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioIn(page);
   await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
   const listed = await page.evaluate(projectId => window.cc.pluginApps.callRpc('salesforce', 'agentFiles.list', { projectId }), projectId);
@@ -3186,7 +3187,7 @@ test('AgentScript Studio reliability: large snapshots, background recovery, setu
   expect(complete.result.results.c23).toMatchObject({ outcome: 'pass', deterministic: 'pass' });
   expect(complete.result.results.c24).toMatchObject({ setupBlocked: true, outcome: 'inconclusive' });
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioIn(page);
   await studio.getByTestId('salesforce-agent-script-file:force-app/Large.agent').click();
   let viewId = '';
@@ -3288,7 +3289,7 @@ test('Preview workflows: separate conversation and scenarios, preserve state and
   ];
   expect(await page.evaluate(({ projectId, cases }) => window.cc.pluginApps.callRpc('salesforce', 'studio.suites.save', { projectId, agentPath: 'force-app/Support.agent', cases }), { projectId, cases })).toMatchObject({ ok: true });
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioIn(page);
   await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
   await openTool(studio, 'Preview');
@@ -3357,7 +3358,7 @@ test('Agentforce case details and list scrolling keep controls and progress in v
   writeFileSync(join(home, 'preview-trace-fixture'), 'enabled');
   expect(await rpc('studio.suites.run', { agentPath: 'force-app/Support.agent', caseIds: ['detail-0'] })).toMatchObject({ ok: true });
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioIn(page);
   await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
   await openTool(studio, 'Preview');
@@ -3484,7 +3485,7 @@ test('Studio footer: inspect saved failures, filter cases and rerun the open age
   ] })).toMatchObject({ ok: true });
   expect(await rpc('studio.suites.run', { agentPath: 'force-app/Support.agent', caseIds: ['footer-pass', 'footer-fail'] })).toMatchObject({ ok: true });
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioPanel(page);
   await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
   const bottom = studio.getByRole('region', { name: 'Studio panel', exact: true });
@@ -3534,7 +3535,7 @@ test('Agentforce Studio: pane dividers resize smoothly, persist and adapt to nar
     history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
   }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   const studio = studioPanel(page);
   await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
   const iframe = studio.locator('iframe[title="Agentforce playground"]');
@@ -3646,7 +3647,7 @@ test('Agentforce Studio: copied code pastes as a selection reference in the assi
     const result = await window.cc.projects.add(path); if (!result.ok) throw Error(result.message); return result.value.id;
   }, join(home, 'dx'));
   await page.evaluate(id => { history.pushState({}, '', `/projects/${id}/salesforce`); dispatchEvent(new PopStateEvent('popstate')); }, projectId);
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   await studioIn(page).getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
   const frame = page.frameLocator('iframe[title="Agentforce playground"]');
   await expect(frame.getByTestId('agent-script-ide')).toBeVisible();

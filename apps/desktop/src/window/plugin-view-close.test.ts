@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
-import { createPluginViewCloseGuard } from './plugin-view-close.js';
+import { bindPluginViewCloseLifecycle, createPluginViewCloseGuard, registerPluginViewCloseIpc } from './plugin-view-close.js';
 const window = (id = 1) => ({ id, isDestroyed: () => false, close: vi.fn(), webContents: { isDestroyed: () => false, send: vi.fn() } });
 afterEach(() => vi.useRealTimers());
 describe('plugin window close preflight', () => {
@@ -47,5 +47,43 @@ describe('plugin window close preflight', () => {
     expect(guard.intercept(a)).toBe(false);
     a.isDestroyed = () => false; a.webContents.isDestroyed = () => true;
     expect(guard.intercept(a)).toBe(false);
+  });
+});
+
+
+describe('native lifecycle and sender-bound close registration', () => {
+  it('prevents close only during an active handoff and invalidates the lease on crash or full navigation', () => {
+    const a = window();
+    const events = new Map<string, (...args: any[]) => void>();
+    const contents = new Map<string, (...args: any[]) => void>();
+    const win = Object.assign(a, { on: (name: string, fn: (...args: any[]) => void) => events.set(name, fn) });
+    Object.assign(win.webContents, { on: (name: string, fn: (...args: any[]) => void) => contents.set(name, fn) });
+    const guard = createPluginViewCloseGuard(); let shutdown = false;
+    bindPluginViewCloseLifecycle(win as any, guard, () => shutdown);
+    const event = { preventDefault: vi.fn() };
+    events.get('close')!(event); expect(event.preventDefault).not.toHaveBeenCalled();
+    guard.setReady(win, true); events.get('close')!(event); expect(event.preventDefault).toHaveBeenCalledOnce();
+    shutdown = true; events.get('close')!(event); expect(event.preventDefault).toHaveBeenCalledOnce();
+    shutdown = false;
+    contents.get('did-start-navigation')!({}, '', true, true);
+    contents.get('did-start-navigation')!({}, '', false, false);
+    expect(guard.intercept(win)).toBe(true);
+    contents.get('did-start-navigation')!({}, '', false, true);
+    expect(guard.intercept(win)).toBe(false);
+    guard.setReady(win, true); guard.intercept(win);
+    contents.get('render-process-gone')!(); expect(guard.intercept(win)).toBe(false);
+  });
+  it('rejects main and unknown windows and only completes the originating plugin view', () => {
+    const guard = createPluginViewCloseGuard(); const a = window(); const other = window(2);
+    const handlers = new Map<string, (...args: any[]) => boolean>(); const fallback: Array<() => boolean> = [];
+    registerPluginViewCloseIpc((channel, handler, failed) => { handlers.set(channel, handler as any); fallback.push(failed as any); }, guard, new Map([[1, { view: {} }], [2, {}]]));
+    const ready = handlers.get(IPC.windows.pluginViewCloseReady)!;
+    const complete = handlers.get(IPC.windows.pluginViewCloseComplete)!;
+    expect(ready(other, true)).toBe(false); expect(ready(window(3), true)).toBe(false);
+    expect(complete(other, 'spoofed', { ok: true })).toBe(false);
+    expect(ready(a, true)).toBe(true); guard.intercept(a);
+    const requestId = a.webContents.send.mock.calls[0]![1].requestId;
+    expect(complete(a, requestId, { ok: true })).toBe(true); expect(a.close).toHaveBeenCalledOnce();
+    expect(fallback.map(fn => fn())).toEqual([false, false]);
   });
 });

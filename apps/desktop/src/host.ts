@@ -256,7 +256,7 @@ import {
   writePluginViewBounds
 } from './window/plugin-view-windows.js';
 import { createPluginViewHost } from './window/plugin-view-host.js';
-import { createPluginViewCloseGuard } from './window/plugin-view-close.js';
+import { bindPluginViewCloseLifecycle, createPluginViewCloseGuard, registerPluginViewCloseIpc } from './window/plugin-view-close.js';
 import {
   cascadeThreadViewPosition,
   readThreadViewBounds,
@@ -7107,11 +7107,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
 
   windows.set(win.id, { win, projectId, view, threadView });
   if (view) {
-    win.on('close', event => { if (!windowShutdownStarted && pluginViewCloseGuard.intercept(win)) event.preventDefault(); });
-    win.webContents.on('render-process-gone', () => pluginViewCloseGuard.forget(win.id));
-    win.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
-      if (mainFrame && !inPlace) pluginViewCloseGuard.forget(win.id);
-    });
+    bindPluginViewCloseLifecycle(win, pluginViewCloseGuard, () => windowShutdownStarted);
     pluginViews.broadcast();
   }
   if (threadView) threadViews.broadcast();
@@ -7832,8 +7828,7 @@ function registerIpc() {
   }), () => ({ approved: false as const, reason: 'unavailable' as const }));
   /* v8 ignore next -- registered at built-Electron boot; registerPluginViewIpc is unit-tested */
   registerPluginViewIpc(safeHandle, pluginViews);
-  safeHandleFromWindow<[unknown], boolean>(IPC.windows.pluginViewCloseReady, (win, value: unknown) => windows.get(win.id)?.view ? pluginViewCloseGuard.setReady(win, value) : false, () => false);
-  safeHandleFromWindow<[unknown, unknown], boolean>(IPC.windows.pluginViewCloseComplete, (win, id: unknown, result: unknown) => windows.get(win.id)?.view ? pluginViewCloseGuard.complete(win, id, result) : false, () => false);
+  registerPluginViewCloseIpc(safeHandleFromWindow, pluginViewCloseGuard, windows);
   registerDeepLinkIpc(safeHandleFromWindow, deepLinks);
   /* v8 ignore next -- registered at built-Electron boot; registerThreadViewIpc is unit-tested */
   registerThreadViewIpc(safeHandle, threadViews);
