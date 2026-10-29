@@ -1154,7 +1154,7 @@ ${['accountId', 'accountName', 'currentObjectApiName', 'currentRecordId', 'oppor
   expect(batchResult.batch.lanes[0].scenario).toMatchObject({ goal: 'Updated shared goal', origin: { name: 'Reusable customer', revision: 2 }, contextVariables: starts[0].body.variables });
   // Reload the renderer: shared definitions come from plugin storage and local runner copies remain pinned.
   await page.reload();
-  await page.getByRole('button', { name: 'Open dx', exact: true }).click();
+  await expect(page.getByRole('navigation', { name: 'dx navigation' })).toBeVisible();
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
   await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
   await expect(page.frameLocator('iframe[title="Agentforce playground"]').getByTestId('agent-script-ide')).toBeVisible();
