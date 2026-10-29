@@ -38935,6 +38935,12 @@ body.split-frame-guard webview {
   min-width: 0;
 }
 
+/* Keep the saved drag width inside the live container after a window shrinks.
+   This matches the shared panel's 70% drag limit without discarding its saved width. */
+.plugin-panel-host-layout:not(.is-secondary-maximized):not(.is-compact) > .thread-secondary-panel {
+  flex-basis: min(var(--thread-secondary-width, 22rem), 70%);
+}
+
 .plugin-panel-host-layout:is(.is-secondary-maximized, .is-compact.is-secondary-open) > .split-plugin-main {
   display: none;
 }
