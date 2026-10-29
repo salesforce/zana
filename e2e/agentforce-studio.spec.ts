@@ -2734,6 +2734,9 @@ test('Agentforce Studio: pinned Preview reconnects to the same running session a
     await expect(graph.locator('.react-flow__node')).toHaveCount(3);
     await viewPane(page, 'graph').getByRole('button', { name: 'Pin Graph to Support.agent', exact: true }).click();
     await agentTab('Orders').click();
+    // Orders keeps its own active tool. Explicitly opening Graph there retains
+    // the pinned source without replacing its editor or assistant selection.
+    await openTool(studio, 'Graph');
     await expect(viewPane(page, 'graph')).toHaveAttribute('data-agent', 'force-app/Support.agent');
     await page.reload();
     await expect.poll(async () => await projectNav.isVisible() || await openProject.isVisible()).toBe(true);
