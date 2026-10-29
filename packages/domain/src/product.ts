@@ -6235,7 +6235,7 @@ export interface WhatsNewEvent {
 /**
  * First-run dependency check ("setup doctor"). On launch the app verifies that
  * the companion CLIs are actually present — Claude Code, Cursor, OpenCode, Pi,
- * Codex, and the Salesforce CLI — and guides the user through anything missing.
+ * Codex, and other agent harnesses — and guides the user through anything missing.
  *
  * `kind` distinguishes how a missing dependency is remediated:
  *   - `installable` — the app can install it itself (npm / claude CLI calls).

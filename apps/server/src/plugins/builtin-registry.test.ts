@@ -61,7 +61,6 @@ const EXPECTED_CATEGORIES: Record<string, (typeof PLUGIN_CATALOG_CATEGORIES)[num
   'provider-codex': 'Agent interaction',
   'provider-pi': 'Agent interaction',
   'provider-retry': 'Agent interaction',
-  salesforce: 'Developer tools',
   secrets: 'Host access',
   'side-chat': 'Agent interaction',
   'storage-retention': 'Host access',
@@ -103,7 +102,6 @@ const EXPECTED_ICONS: Record<string, string> = {
   'provider-codex': './icons/codex.svg',
   'provider-pi': './icons/pi.svg',
   'provider-retry': 'RotateCcw',
-  salesforce: 'Cloud',
   secrets: 'KeyRound',
   'side-chat': 'MessagesSquare',
   'storage-retention': 'DatabaseBackup',
@@ -162,8 +160,9 @@ describe('bundled plugin registry invariants', () => {
     }
   });
 
-  it('installs Design Docs and Salesforce enabled by default', () => {
-    for (const pluginId of ['design-docs', 'salesforce']) {
+  it('installs Design Docs enabled by default and leaves independent plugins optional', () => {
+    expect(BUILTIN_PLUGINS.some(plugin => plugin.pluginId === 'salesforce')).toBe(false);
+    for (const pluginId of ['design-docs']) {
       expect(BUILTIN_PLUGINS.find(plugin => plugin.pluginId === pluginId)).toMatchObject({
         autoInstall: true, defaultEnabled: true
       });

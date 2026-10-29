@@ -19,7 +19,7 @@ import type { DependencyState } from '@zana-ai/zcc-domain/product';
  * First-run setup checklist — the visible half of the dependency doctor
  * (dependency-doctor.ts). It shows, in one nicely-laid-out card, the
  * state of the companion CLIs (Claude Code, Cursor, OpenCode, Pi, Codex,
- * and Salesforce), and lets the user:
+ * and other agent harnesses), and lets the user:
  *   - copy the exact command for the pieces we can't install for them
  *     (the manual Claude Code installation);
  *   - re-check after they've installed something out-of-band;
@@ -151,7 +151,7 @@ function SetupChecklist({ onClose }: Props) {
             <p className="setup-subtitle">
               {allGood
                 ? 'All listed CLIs are installed.'
-                : 'These CLIs power agents and Salesforce work. Install anything missing below.'}
+                : 'These CLIs power your coding agents. Install anything missing below.'}
             </p>
           </div>
         </div>

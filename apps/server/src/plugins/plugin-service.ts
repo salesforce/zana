@@ -63,6 +63,7 @@ import { registerThreadProvider, trackThreadProviderStartup } from '../services/
 import { discoverPluginSkillNames } from './plugin-skills.js';
 import {
   BUILTIN_PLUGINS,
+  EXTERNALIZED_PLUGINS,
   OFFICIAL_PLUGINS,
   RECLAIM_UNINSTALLED_AUTOINSTALL_IDS,
   bundledPluginByName,
@@ -1849,7 +1850,11 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     }
     if (source.kind === 'builtin') {
       const def = bundledPluginByName(source.name);
-      if (!def) throw new Error(`unknown builtin/official plugin "${source.name}"`);
+      if (!def) {
+        const external = EXTERNALIZED_PLUGINS.find(plugin => plugin.name === source.name);
+        if (external) return materialize(parsePluginSource(`git:${external.url}@${external.ref}`));
+        throw new Error(`unknown builtin/official plugin "${source.name}"`);
+      }
       const rootDir = resolveBundledDir(opts.bundledRoot, def.name);
       return {
         rootDir,
@@ -2087,6 +2092,18 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       try {
         // A crash before candidate activation must still name the managed
         // previous generation recorded by the durable rollback journal.
+        await store.upsert(previous);
+        await activateManaged(previous, row, expectedEpoch);
+        removeUnreferencedGeneration(existing.rootDir);
+      } finally { if (!recoveryBlocked.has(row.id)) removeUnreferencedGeneration(backupRoot); }
+      await emitCapabilities();
+      await syncCliSkill();
+      return store.get(row.id)!;
+    }
+    if (existing?.sourceKind === 'builtin' && EXTERNALIZED_PLUGINS.some(plugin => plugin.pluginId === row.id) && row.sourceKind === 'git') {
+      const backupRoot = await copyRecoveryRollbackRuntime(opts.dataDir, existing.rootDir);
+      const previous = { ...existing, rootDir: backupRoot };
+      try {
         await store.upsert(previous);
         await activateManaged(previous, row, expectedEpoch);
         removeUnreferencedGeneration(existing.rootDir);
@@ -2712,6 +2729,22 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     },
     reload: id => reloadPlugin(id),
     async reconcileBuiltins() {
+      // Migrate existing users only; fresh profiles never auto-install external plugins.
+      // Failed downloads/activation retain the prior registration and all user data.
+      for (const external of EXTERNALIZED_PLUGINS) {
+        const row = store.get(external.pluginId);
+        if (!row || row.sourceKind !== 'builtin' || uninstalled.has(row.id) || activationRecoveryDetail(row)) continue;
+        const epoch = lifecycleEpoch(row.id);
+        try {
+          const candidate = await materialize(parsePluginSource(`git:${external.url}@${external.ref}`));
+          await installFromMaterialized(candidate, row.enabled, {
+            provenance: 'catalog', catalogMarketplace: 'official', catalogEntryId: row.id,
+            bundledRecoveryVersion: undefined
+          }, row.id, epoch, pluginUpdateFingerprint(row, hostVersion, sdkVersion));
+        } catch (error) {
+          console.error(`[plugins] independent migration pending for ${row.id}:`, error instanceof Error ? error.message : error);
+        }
+      }
       for (const id of RECLAIM_UNINSTALLED_AUTOINSTALL_IDS) {
         if (uninstalled.hasReclaimed(id)) continue;
         if (uninstalled.has(id)) await uninstalled.forget(id);

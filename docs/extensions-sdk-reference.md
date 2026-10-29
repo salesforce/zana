@@ -98,7 +98,7 @@ consumer exists — see `packages/plugin-sdk/docs/api_to_audit.md`.
 The Salesforce plugin publishes `@zcc-ext/salesforce/sdk` (`SalesforceSdk`) as
 a **types-only** contract. Consumers `import type` and `use('salesforce')`;
 they must not import `ConnectionManager` / `createSalesforceSdk` or receive
-org credentials. Reuse + extraction map: `plugins/salesforce/SDK.md`.
+org credentials. Reuse + extraction map: [Salesforce SDK contract](https://github.com/grebmann1/zcc-plugin-salesforce/blob/main/SDK.md).
 
 ## App — `definePluginApp`
 

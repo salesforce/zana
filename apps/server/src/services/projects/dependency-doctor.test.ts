@@ -37,8 +37,7 @@ const ALL_IDS = [
   'opencode-cli',
   'mastracode-cli',
   'pi-cli',
-  'codex-cli',
-  'sf-cli'
+  'codex-cli'
 ] as const;
 
 function makeDeps() {
@@ -68,8 +67,7 @@ const ALL_PRESENT: Record<string, { stdout: string }> = {
   'opencode --version': { stdout: '1.2.3' },
   'mastracode --help': { stdout: 'mastracode 0.38.0' },
   'pi --version': { stdout: '0.4.1' },
-  'codex --version': { stdout: 'codex-cli 0.136.0' },
-  'sf --version': { stdout: '@salesforce/cli/2.50.0 darwin-arm64' }
+  'codex --version': { stdout: 'codex-cli 0.136.0' }
 };
 
 describe('dependency doctor — detection', () => {
@@ -80,7 +78,7 @@ describe('dependency doctor — detection', () => {
     vi.clearAllMocks();
   });
 
-  it('lists Claude, Cursor, OpenCode, Mastra Code, Pi, Codex, and SF CLIs and marks them missing when absent', async () => {
+  it('lists Claude, Cursor, OpenCode, Mastra Code, Pi, and Codex CLIs and marks them missing when absent', async () => {
     const { deps } = makeDeps();
     const doctor = createDoctor(deps);
     await doctor.check();
@@ -111,7 +109,7 @@ describe('dependency doctor — detection', () => {
     const s = doctor.snapshot();
     expect(phaseOf(s, 'claude-cli')).toBe('present');
     expect(phaseOf(s, 'cursor-cli')).toBe('missing');
-    expect(phaseOf(s, 'sf-cli')).toBe('missing');
+    expect(idsOf(s)).not.toContain('sf-cli');
     expect(hasMissingDeps(s)).toBe(false);
   });
 
@@ -133,8 +131,7 @@ describe('dependency doctor — install / dismiss', () => {
       'claude --version': { stdout: '2.1.260 (Claude Code)' },
       'cursor-agent --version': { stdout: '2026.1.0' },
       'pi --version': { stdout: '0.4.1' },
-      'codex --version': { stdout: 'codex-cli 0.136.0' },
-      'sf --version': { stdout: '@salesforce/cli/2.50.0' }
+      'codex --version': { stdout: 'codex-cli 0.136.0' }
     };
     const { deps } = makeDeps();
     const doctor = createDoctor(deps);
@@ -154,14 +151,14 @@ describe('dependency doctor — install / dismiss', () => {
 
   it('fails an npm install step without throwing', async () => {
     cmdMap = { ...ALL_PRESENT };
-    delete cmdMap['sf --version'];
+    delete cmdMap['codex --version'];
     const { deps } = makeDeps();
     const doctor = createDoctor(deps);
     await doctor.check();
-    cmdMap['npm install -g @salesforce/cli@latest'] = { err: true, stderr: 'EACCES: permission denied' };
+    cmdMap['npm install -g @openai/codex@latest'] = { err: true, stderr: 'EACCES: permission denied' };
     await doctor.install();
-    expect(phaseOf(doctor.snapshot(), 'sf-cli')).toBe('failed');
-    expect(doctor.snapshot().items.find((i) => i.id === 'sf-cli')?.note).toContain('permission denied');
+    expect(phaseOf(doctor.snapshot(), 'codex-cli')).toBe('failed');
+    expect(doctor.snapshot().items.find((i) => i.id === 'codex-cli')?.note).toContain('permission denied');
   });
 
   it('installs the Cursor CLI via its official script', async () => {

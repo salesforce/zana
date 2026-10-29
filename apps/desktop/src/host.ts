@@ -9683,7 +9683,7 @@ async function bootstrapNormal() {
   }
 
   // First-run dependency doctor: detect companion CLIs (Claude Code, Cursor,
-  // OpenCode, Pi, Codex, Salesforce) and surface anything missing so the user
+  // OpenCode, Pi, Codex) and surface anything missing so the user
   // can auto-install or copy the manual command from the in-app setup
   // checklist. The renderer subscribes via IPC.deps.onStatus and decides
   // whether to auto-open the checklist (only when a *required* CLI is missing

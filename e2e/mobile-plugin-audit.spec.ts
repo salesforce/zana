@@ -23,7 +23,7 @@ test.beforeEach(async ({ home }) => {
 test('Audit installed plugin pages on phone and tablet widths', async ({ app }, testInfo) => {
   test.setTimeout(240_000);
   expect(await app.window.locator('.app-shell').evaluate(el => parseFloat(getComputedStyle(el).getPropertyValue('--shell-trailing-reserve')))).toBe(36);
-  const ids = ['docs', 'tasks', 'pr-monitor', 'plugin-guide', 'salesforce', 'custom-instructions', 'ask-user-question', 'secrets', 'monaco-editor', 'pdf-preview'];
+  const ids = ['docs', 'tasks', 'pr-monitor', 'plugin-guide', 'custom-instructions', 'ask-user-question', 'secrets', 'monaco-editor', 'pdf-preview'];
   for (const id of ids) {
     expect(await app.window.evaluate(id => window.cc.extensions.install({ kind: 'bundled', id }), id)).toMatchObject({ ok: true });
   }
@@ -98,8 +98,7 @@ test('Audit installed plugin pages on phone and tablet widths', async ({ app }, 
         ['tasks', '/plugins/tasks/tasks', '.bb-tasks'],
         ['pr-monitor', '/plugins/pr-monitor/main', '.prm-panel'],
         ['plugin-guide', '/extensions/pages/plugin-guide/plugin-guide', '.plugin-guide-scroll'],
-        ['salesforce', '/plugins/salesforce/orgs', '[data-testid="salesforce-orgs-panel"]'],
-        ...ids.filter(id => !['docs', 'tasks', 'pr-monitor', 'plugin-guide', 'salesforce'].includes(id)).map(id => [`settings-${id}`, `/extensions/plugins/${id}?view=installed`, '.extensions-panel']),
+        ...ids.filter(id => !['docs', 'tasks', 'pr-monitor', 'plugin-guide'].includes(id)).map(id => [`settings-${id}`, `/extensions/plugins/${id}?view=installed`, '.extensions-panel']),
       ]) {
         await page.evaluate(path => { history.pushState({}, '', path); dispatchEvent(new PopStateEvent('popstate')); }, path);
         try { await expect(page.locator(selector).first()).toBeVisible({ timeout: 5_000 }); }
