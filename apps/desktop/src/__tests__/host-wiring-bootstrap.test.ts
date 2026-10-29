@@ -756,6 +756,46 @@ describe('host bootstrap wiring', () => {
     }
   });
 
+  it('resolves and persists host-attested automated MCP catalogues', async () => {
+    const resolve = h.mcpDeps.resolveAutomatedMcpCatalogue;
+    const executionStore = ctx().executionStore;
+    const record = { id: 'execution-1' };
+    const binding = { executionId: 'execution-1', projectId: project.id, slotId: 'worker-1', role: 'worker' as const };
+    const get = vi.spyOn(executionStore, 'getInProject').mockResolvedValue(record);
+    const persist = vi.spyOn(executionStore, 'recordAutomatedMcpCatalogueProvenance').mockImplementation(async (_id: string, _slotId: string, provenance: unknown) => ({
+      version: 1 as const, ...(provenance as object)
+    }));
+    const projects = vi.spyOn(store, 'listProjects').mockReturnValue([{ ...project, remote: undefined }] as never);
+    try {
+      const local = await resolve(binding);
+      expect(local.tools).not.toContain('remote_exec');
+      expect(persist).toHaveBeenCalledWith('execution-1', 'worker-1', expect.objectContaining({ role: 'worker', capabilities: [] }));
+
+      projects.mockReturnValue([{ ...project, remote: { host: 'remote.test' } }] as never);
+      const remote = await resolve(binding);
+      expect(remote.tools).toContain('remote_exec');
+      expect(persist).toHaveBeenLastCalledWith('execution-1', 'worker-1', expect.objectContaining({ capabilities: ['remote_fs'] }));
+
+      get.mockResolvedValueOnce({ id: 'execution-1', automatedMcpCatalogueProvenance: {
+        'worker-1': { version: 1, role: 'worker', capabilities: [], tools: ['execution.snapshot'], digest: 'a'.repeat(64) }
+      } });
+      expect(await resolve(binding)).toMatchObject({ tools: ['execution.snapshot'] });
+      expect(persist).toHaveBeenCalledTimes(2);
+
+      get.mockResolvedValueOnce({ id: 'execution-1', automatedMcpCatalogueProvenance: {
+        'worker-1': { version: 1, role: 'orchestrator', capabilities: [], tools: ['execution.snapshot'], digest: 'a'.repeat(64) }
+      } });
+      await expect(resolve(binding)).rejects.toThrow('role mismatch');
+
+      get.mockResolvedValueOnce(undefined);
+      await expect(resolve(binding)).rejects.toThrow('unavailable');
+    } finally {
+      get.mockRestore();
+      persist.mockRestore();
+      projects.mockRestore();
+    }
+  });
+
   it('reports team task outcomes for known and unknown workers', async () => {
     expect(await host.reportTeamTask('worker-1', 'lr-1', 'slot-1', 'complete')).toMatchObject({ ok: false, code: 'NOT_FOUND' });
     vi.spyOn(h.lifecycleStore, 'list').mockResolvedValue([{ id: 'rec', launchRequestId: 'lr-1', workers: [{ sessionId: 'worker-1', slotId: 'slot-1' }] }]);
