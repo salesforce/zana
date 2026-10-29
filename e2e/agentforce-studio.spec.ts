@@ -796,7 +796,7 @@ test('Thread Agent and Preview panels retain their agent when switching tabs, an
   await expect(agent.getByRole('tablist', { name: 'Agent views' })).toBeVisible();
 });
 
-test('Org preview: searchable agent picker, employee-agent simulation and an unclipped composer', async ({ app, home }, testInfo) => {
+test('Org preview: agent-scoped target, employee-agent simulation and an unclipped composer', async ({ app, home }, testInfo) => {
   const employeeSource = AGENT_SCRIPT_EXAMPLES[0].source.replace('config:\n', 'config:\n    agent_type: "AgentforceEmployeeAgent"\n');
   writeFileSync(join(home, 'dx', toolbarFile), employeeSource);
   const page = app.window;
@@ -817,22 +817,15 @@ test('Org preview: searchable agent picker, employee-agent simulation and an unc
   await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
   const studio = studioIn(page);
   await expect(page.frameLocator('iframe[title="Agentforce playground"]').getByTestId('agent-script-ide')).toBeVisible();
-  // Org preview is a view of the open agent, so open one first; its own picker still reaches every agent.
+  // Org preview follows the selected editor agent; its identity cannot retarget the editor's run.
   await showAllAgents(studio);
   await studio.getByTestId(`salesforce-agent-script-file:${toolbarFile}`).click();
   await openTool(studio, 'Org preview');
   const preview = viewPane(page, 'org-preview').getByTestId('salesforce-agentforce-preview');
-  const picker = preview.getByRole('button', { name: 'Agentforce preview file', exact: true });
-  await picker.click();
-  const search = page.getByRole('textbox', { name: 'Search agents…', exact: true });
-  await expect(search).toBeFocused();
-  await search.fill('no-such-agent');
-  await expect(page.getByRole('listbox', { name: 'Agentforce preview file' })).toContainText('No matching agents');
-  await search.fill('aiAuthoringBundles/Customer');
-  await expect(page.getByRole('listbox', { name: 'Agentforce preview file' }).getByRole('option')).toHaveCount(1);
-  await page.keyboard.press('Enter');
-  await expect(picker).toContainText('Customer_Service_Agent_With_A_Long_Name');
-  await expect(picker).toBeFocused();
+  const identity = preview.getByTestId('salesforce-preview-pinned');
+  await expect(identity).toHaveText('Customer_Service_Agent_With_A_Long_Name.agent');
+  await expect(identity).toHaveAttribute('title', toolbarFile);
+  await expect(preview.getByRole('button', { name: 'Agentforce preview file', exact: true })).toHaveCount(0);
 
   for (const theme of ['dark', 'light']) {
     await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
@@ -857,12 +850,12 @@ test('Org preview: searchable agent picker, employee-agent simulation and an unc
   }
   await preview.getByTestId('salesforce-agentforce-preview-start').click();
   await expect(preview.getByRole('log')).toContainText('Hello! I’m your support concierge.');
-  await expect(picker).toBeDisabled();
+  await expect(identity).toHaveAttribute('title', toolbarFile);
   await preview.getByTestId('salesforce-agentforce-preview-input').fill('Long response');
   await preview.getByTestId('salesforce-agentforce-preview-send').click();
   await expect(preview.getByRole('log')).toContainText('END_OF_RESPONSE');
   await preview.getByTestId('salesforce-agentforce-preview-end').click();
-  await expect(picker).toBeEnabled();
+  await expect(identity).toHaveAttribute('title', toolbarFile);
   await preview.getByTestId('salesforce-agentforce-preview-start').click();
   await expect(preview.getByRole('log')).not.toContainText('END_OF_RESPONSE');
   await preview.getByTestId('salesforce-agentforce-preview-end').click();
@@ -1133,6 +1126,7 @@ ${['accountId', 'accountName', 'currentObjectApiName', 'currentRecordId', 'oppor
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('duplicate-scenario-dialog.png'));
   await page.keyboard.press('Escape');
   await expect(copyDialog).toHaveCount(0);
+  await expect(scenarios.getByLabel('Scenario actions', { exact: true })).toBeFocused();
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('shared-scenarios.png'));
   await scenarios.getByRole('button', { name: 'Try in Role-play', exact: true }).click();
   await expect(lab.getByRole('textbox', { name: 'Customer goal', exact: true })).toHaveValue('Understand supported requests');
@@ -2271,7 +2265,7 @@ test('Agentforce Studio window: Org tests sit in the activity rail, and an agent
   await expect(localDetails.getByTestId('tests-row-local-order')).toContainText('Local order status');
   await expect(localDetails.getByRole('group', { name: 'Tests view' })).toHaveCount(0);
   await localDetails.getByRole('button', { name: 'Run all in Simulate' }).click();
-  await expect(localDetails.getByTestId('tests-row-local-order').locator('td').nth(2)).toContainText('Pass', { timeout: 30_000 });
+  await expect(localDetails.getByTestId('tests-row-local-order')).toContainText('Pass', { timeout: 30_000 });
   await expect(localSuite).toContainText('Has runs');
   await localDetails.getByRole('button', { name: '+ Case', exact: true }).click();
   await localDetails.getByLabel('Name', { exact: true }).fill('Added in tests workbench');
@@ -2872,8 +2866,9 @@ test('Agentforce simulations: live lanes stay with their agent, stop, verdicts a
   await expect(simulations.getByRole('region', { name: 'Conversation Happy path' })).toContainText('Understand what the agent can do');
 
   // Another agent owns a separate view and history, even while this project has a running batch.
-  await showAllAgents(studio);
-  await studio.getByTestId('salesforce-agent-script-file:force-app/Orders.agent').click();
+  await agentTabs(page).getByRole('button', { name: 'Open agent', exact: true }).click();
+  const agentSearch = page.getByRole('dialog', { name: 'Quick open', exact: true }).getByRole('combobox', { name: 'Search files and actions' });
+  await agentSearch.fill('Orders'); await agentSearch.press('Enter');
   await openTool(studio, 'Tests');
   const ordersTests = viewPane(page, 'tests').getByTestId('studio-tests-pane');
   await ordersTests.getByRole('button', { name: 'Batch simulations', exact: true }).click();
@@ -2921,8 +2916,7 @@ test('Agentforce simulations: live lanes stay with their agent, stop, verdicts a
   await page.reload();
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
   await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
-  await showAllAgents(studio);
-  await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
+  await agentTabs(page).getByRole('tab', { name: /^Support\.agent/ }).click();
   await openTool(studio, 'Tests');
   await viewPane(page, 'tests').getByRole('button', { name: 'Batch simulations', exact: true }).click();
   const restored = viewPane(page, 'tests').getByTestId('studio-simulations');
@@ -3122,6 +3116,7 @@ test('Agentforce improvements: cache-safe discovery, source jumps, draft compari
   await expect(simulations.getByLabel('Parallel conversations')).toBeHidden();
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-scenario-editor-narrow-light.png'));
   await app.electron.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.setMinimumSize(400, 400); win.setSize(560, 800); });
+  await page.setViewportSize({ width: 560, height: 800 });
   await expect.poll(() => simulations.evaluate(el => el.clientWidth)).toBeLessThan(460);
   const stacked = await simulations.evaluate(el => { const list = el.querySelector('.sf-sim-catalogue')!.getBoundingClientRect(), editor = el.querySelector('.sf-sim-editor')!.getBoundingClientRect(); return { listBottom: list.bottom, editorTop: editor.top }; });
   expect(stacked.editorTop).toBeGreaterThanOrEqual(stacked.listBottom - 1);
@@ -3253,6 +3248,8 @@ test('AgentScript Studio reliability: large snapshots, background recovery, setu
   expect(await page.evaluate(({ projectId, expectedSha256 }) => window.cc.pluginApps.callRpc('salesforce', 'studio.suites.save', { projectId, agentPath: 'force-app/Large.agent', expectedSha256, cases: [{ id: 'held', name: 'Held case', utterances: ['Suite progress first case'], expect: { contains: ['order'], forbiddenActions: ['SendSignature'], stateChecks: [{ variable: 'orderExists', value: false }] } }] }), { projectId, expectedSha256: current.suites.find((s: any) => s.id === 'Large').sha256 })).toMatchObject({ ok: true });
   writeFileSync(join(home, 'suite-first'), 'hold');
   await showScript(page); await openTool(studio, 'Tests');
+  // Narrow layouts retain the selected inspector; return to the case list explicitly.
+  await tests.getByRole('button', { name: '← All cases', exact: true }).click();
   await expect(tests.getByTestId('tests-row-held')).toBeVisible();
   await tests.getByRole('button', { name: 'Run all in Simulate', exact: true }).click();
   await expect(tests.getByRole('button', { name: 'Stop suite', exact: true })).toBeVisible();
@@ -3608,12 +3605,13 @@ test('Agentforce Studio: pane dividers resize smoothly, persist and adapt to nar
   await expect(divider).toHaveAttribute('aria-orientation', 'vertical');
   await divider.dblclick(); await expect(divider).toHaveAttribute('aria-valuenow', '48');
 
-  await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Batch simulations', exact: true }).click();
+  await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Scenarios', exact: true }).click();
   const catalogueHandle = tests.getByRole('separator', { name: 'Resize scenario catalogue and editor' });
   const catalogue = tests.getByRole('complementary', { name: 'Scenario catalogue' });
   const catalogueBefore = (await catalogue.boundingBox())!.width;
   await drag(catalogueHandle, 80);
   await expect.poll(async () => (await catalogue.boundingBox())!.width).toBeGreaterThan(catalogueBefore + 60);
+  await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Batch simulations', exact: true }).click();
   const simulations = tests.getByTestId('studio-simulations');
   await simulations.getByRole('button', { name: /^Run \d+ conversations?$/ }).click();
   const conversations = simulations.getByRole('list', { name: 'Conversations', exact: true });

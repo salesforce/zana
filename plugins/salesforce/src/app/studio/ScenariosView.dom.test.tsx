@@ -93,7 +93,9 @@ it('opens a modal copy form, preserves naming errors and closes it with Escape',
   fireEvent.click(screen.getByRole('button', { name: 'Create copy' }));
   await screen.findByRole('alert');
   expect((screen.getByLabelText('New scenario name') as HTMLInputElement).value).toBe('Existing');
+  const restoreFocus = vi.spyOn(screen.getByLabelText('Scenario actions'), 'focus');
   fireEvent(dialog, new Event('cancel', { bubbles: true, cancelable: true }));
   expect(screen.queryByRole('dialog')).toBeNull();
+  expect(restoreFocus).toHaveBeenCalled();
   expect((screen.getByLabelText('Scenario actions').closest('details') as HTMLDetailsElement).open).toBe(false);
 });
