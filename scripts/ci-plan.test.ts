@@ -77,6 +77,9 @@ it('gates selective jobs on successful planning and keeps all required checks lo
   }
   const builder = workflow.jobs['e2e-build'];
   expect(builder.if).toBe(workflow.jobs.e2e.if);
+  // Re-run-all replaces the same-run artifact; re-run-failed consumers can
+  // still download it when the successful build job was not re-run.
+  expect(builder.steps.find((step: any) => step.uses === 'actions/upload-artifact@v7').with.overwrite).toBe(true);
   const archive = builder.steps.find((step: any) => step.name?.startsWith('Archive')).run;
   for (const path of ['out', 'plugins', 'resources', 'packages/cli/dist', 'packages/plugin-sdk/dist', 'apps/host-daemon/dist']) expect(archive).toContain(path);
   expect(archive).toContain("--exclude='*/node_modules'");

@@ -283,6 +283,7 @@ jobs:
         with:
           name: electron-e2e-build
           path: ${{ runner.temp }}/electron-e2e-build.tgz
+          overwrite: true
           compression-level: 0
           retention-days: 1
           if-no-files-found: error
