@@ -69,7 +69,7 @@ const EXPECTED_CATEGORIES: Record<string, (typeof PLUGIN_CATALOG_CATEGORIES)[num
 };
 
 const EXPECTED_ICONS: Record<string, string> = {
-  'slack-bridge-2ff2': 'MessageSquare',
+  'slack-bridge-2ff2': './icons/slack.png',
   'ask-user-question': 'CircleHelp',
   automations: 'Workflow',
   connect: 'Cable',
@@ -77,7 +77,7 @@ const EXPECTED_ICONS: Record<string, string> = {
   'custom-instructions': 'ScrollText',
   'design-docs': 'DraftingCompass',
   docs: 'Library',
-  github: 'Github',
+  github: './icons/github.png',
   'harness-claude': './icons/claude-code.svg',
   'harness-codex': './icons/codex.svg',
   'harness-cursor': './icons/cursor.svg',
@@ -221,7 +221,7 @@ describe('bundled plugin registry invariants', () => {
 
       const icon = manifest.branding.icon;
       if (icon?.startsWith('./')) {
-        expect(icon.toLowerCase().endsWith('.svg'), `${plugin.name} path icon must be svg`).toBe(true);
+        expect(icon, `${plugin.name} path icon must be an image`).toMatch(/\.(svg|png|webp|jpe?g|gif)$/i);
         expect(existsSync(resolvePluginPath(root, icon)), `${plugin.name} missing ${icon}`).toBe(true);
       }
 

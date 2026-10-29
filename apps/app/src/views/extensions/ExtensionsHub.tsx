@@ -37,7 +37,8 @@ import type { AppModule } from '@zana-ai/zcc-extension-sdk/renderer';
 import type { ExtensionEntry, MarketplaceEntry, PluginAppEntry, PluginSettingsSnapshot } from '@zana-ai/zcc-domain/product';
 import { useMergedModules } from '@/modules';
 import { getHost } from '@/modules/ModulePanelHost';
-import { resolveIcon } from '@/lib/resolveIcon';
+import { PluginBrandIcon } from './PluginBrandIcon.js';
+import { installedIconUrl } from './installed-collection.js';
 import { appNavigate } from '@/lib/app-navigate';
 import { getPluginDetailRoutePath } from '@/lib/route-paths';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -63,7 +64,6 @@ import { summarizePluginHealthDetail } from './plugin-health.js';
 import { useUi } from '@/store';
 import {
   buildHubRows,
-  displayIcon,
   hostSettingsPanelOf,
   moduleHostCallReady,
   shouldMountHostSettings,
@@ -894,7 +894,7 @@ function PermissionsCard({ entry }: { entry: ExtensionEntry }) {
 function AboutCard({ row, installation, onConfigure, onManage }: { row: HubRow; installation: boolean; onConfigure: () => void; onManage: () => void }) {
   const { module, entry, plugin } = row;
   const healthCopy = summarizePluginHealthDetail(plugin?.statusDetail);
-  const Icon = resolveIcon(displayIcon(module.icon));
+  const iconUrl = installedIconUrl(row);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [aboutMenuOpen, setAboutMenuOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -1039,7 +1039,7 @@ function AboutCard({ row, installation, onConfigure, onManage }: { row: HubRow; 
     }}>
       <div className="ext-hub-about-head">
         <span className="ext-hub-about-icon-wrap">
-          <Icon size={28} className="ext-hub-about-icon" />
+          <PluginBrandIcon src={iconUrl} icon={module.icon} size={28} />
         </span>
         <div className="ext-hub-about-titles">
           <h3>

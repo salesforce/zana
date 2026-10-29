@@ -1,3 +1,4 @@
+import { readCatalogIcon } from './catalog-icon.js';
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, watch } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
@@ -3219,6 +3220,7 @@ export interface BundledPluginCatalogEntry {
   apiRange: string;
   title: string;
   icon?: string;
+  iconUrl?: string;
   description?: string;
   author?: string;
   permissions: string[];
@@ -3268,6 +3270,7 @@ export function listBundledPluginCatalog(
           apiRange: '',
           title: manifest.name,
           icon: manifest.branding.icon,
+          iconUrl: readCatalogIcon(dir, manifest.branding.icon),
           description: manifest.description,
           permissions: [],
           skillNames: discoverPluginSkillNames(dir, manifest.skillsRootPaths),

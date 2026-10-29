@@ -144,6 +144,31 @@ describe('attachProductPluginService', () => {
     expect(server.ctx.pluginHostArtifacts.get('provider-acp')?.digest).toMatch(/^[a-f0-9]{64}$/u);
   });
 
+  it('serves only declared branding for headless and disabled plugins', async () => {
+    const bundled = tempDir();
+    const root = join(bundled, 'branding-test');
+    mkdirSync(join(root, 'icons'), { recursive: true });
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'zcc-plugin-branding-test', version: '0.1.0',
+      engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' },
+      zcc: { name: 'Branding test', description: 'A headless logo', branding: { icon: './icons/My Logo.svg' }, server: './server.mjs' } }));
+    writeFileSync(join(root, 'server.mjs'), 'export default () => {};');
+    writeFileSync(join(root, 'icons/My Logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><path fill="#d97757" d="M0 0h24v24H0z"/></svg>');
+    server = await startProductServer({ dataDir: tempDir(), origins: { serverPort: 0, devAppPort: 5173 } });
+    await attachProductPluginService(server.ctx, { bundledRoot: bundled });
+    await server.ctx.plugins!.install(root);
+    for (const enabled of [true, false]) {
+      await server.ctx.plugins![enabled ? 'enable' : 'disable']('branding-test');
+      const response = await fetch(`${server.url}plugins/branding-test/assets/icons/My%20Logo.svg`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toBe('image/svg+xml');
+      expect(response.headers.get('content-security-policy')).toContain("default-src 'none'");
+      expect(await response.text()).toContain('#d97757');
+      expect(await fetch(`${server.url}plugins/branding-test/assets/server.mjs`).then(r => r.status)).toBe(404);
+      expect(pluginAssetRootFromService(server.ctx.plugins, 'branding-test')).toBeNull();
+    }
+    expect(pluginAssetRootFromService(undefined, 'branding-test', 'icons/My Logo.svg')).toBeNull();
+  });
+
   it('serves contained plugin renderer assets from the product listener', async () => {
     const dataDir = tempDir();
     const bundled = tempDir();

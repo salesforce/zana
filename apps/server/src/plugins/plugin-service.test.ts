@@ -1757,6 +1757,8 @@ describe('listBundledPluginCatalog', () => {
     const out = listBundledPluginCatalog(pluginsRoot);
     expect(out.some((entry) => entry.id === 'docs' && entry.title === 'Library')).toBe(true);
     expect(out.find((entry) => entry.id === 'docs')?.overview).toContain('## What you get');
+    expect(out.find(entry => entry.id === 'provider-codex')?.iconUrl).toMatch(/^data:image\/svg\+xml;base64,/);
+    expect(out.find(entry => entry.id === 'slack-bridge-2ff2')?.iconUrl).toMatch(/^data:image\/png;base64,/);
     expect(out.find((entry) => entry.id === 'posthog-analytics')?.description).toBe(
       'Anonymous usage analytics. Never sends prompts or replies.'
     );

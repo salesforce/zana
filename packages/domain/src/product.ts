@@ -6114,6 +6114,8 @@ export interface MarketplaceEntry {
   author?: string;
   /** Lucide icon name (resolved renderer-side, like a manifest icon). */
   icon?: string;
+  /** Inert, bounded branding image supplied by the host. */
+  iconUrl?: string;
   /** Permissions the release declares — previewed before install. */
   permissions?: string[];
   /** True when an extension with this id is already installed on disk. */

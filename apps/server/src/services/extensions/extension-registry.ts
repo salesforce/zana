@@ -491,6 +491,7 @@ export async function listMarketplace(
       description: b.description,
       author: b.author,
       icon: b.icon,
+      iconUrl: b.iconUrl,
       permissions: b.permissions,
       skillNames: b.skillNames,
       mcpServers: b.mcpServers,
@@ -539,6 +540,7 @@ export interface BundledMarketplaceInput {
   apiRange: string;
   title: string;
   icon?: string;
+  iconUrl?: string;
   description?: string;
   author?: string;
   permissions: string[];
