@@ -89,6 +89,25 @@ it('asks for a file, and keeps the role-play view without one', () => {
   expect(screen.getByTestId('roleplay')).toBeTruthy();
 });
 
+it('selects Batch simulations and returns to Test cases before opening an agent', async () => {
+  setup({ path: null });
+  fireEvent.click(button('Batch simulations'));
+  expect(await screen.findByText('Open an agent file to simulate conversations with it.')).toBeTruthy();
+  expect(button('Batch simulations').getAttribute('aria-pressed')).toBe('true');
+  expect(button('Test cases').getAttribute('aria-pressed')).toBe('false');
+  fireEvent.click(button('Test cases'));
+  expect(screen.getByText('Open an agent file to test it.')).toBeTruthy();
+  expect(button('Test cases').getAttribute('aria-pressed')).toBe('true');
+  expect(button('Batch simulations').getAttribute('aria-pressed')).toBe('false');
+});
+
+it('keeps embedded local suites focused on cases without duplicate view navigation', async () => {
+  setup({ casesOnly: true });
+  expect(await screen.findByText(/tests\/MyBot\.scenario\.json/)).toBeTruthy();
+  expect(screen.queryByRole('group', { name: 'Tests view' })).toBeNull();
+  expect(button('Run all in Simulate')).toBeTruthy();
+});
+
 it('lists the cases with pinned, multi-turn and expectation hints', async () => {
   const { call } = setup();
   expect(await screen.findByTestId('tests-table')).toBeTruthy();
