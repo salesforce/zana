@@ -1,0 +1,85 @@
+/* Experimental "Inset workspace" shell (AppConfig.insetWorkspaceEnabled).
+ *
+ * Navigation chrome (title bar, rail, status bar) shares one flat tone; the
+ * routed content track becomes a raised, rounded sheet inset from the window
+ * edge, so the sidebar, the thread and its side panel read as distinct
+ * columns. Every rule is scoped under `.shell-inset`, which App.tsx only sets
+ * on desktop while the flag is on — off means none of this applies. */
+
+.app-shell.shell-inset {
+  --inset-chrome: #131313;
+  --inset-gap: 8px;
+  --inset-radius: 10px;
+  --inset-side-bg: #1a1a1a;
+  --sidebar-bg: var(--inset-chrome);
+  --sidebar-border: transparent;
+  --sidebar-active: color-mix(in srgb, var(--text-primary) 9%, transparent);
+  --sidebar-hover: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  background: var(--inset-chrome);
+}
+
+:root[data-theme='light'] .app-shell.shell-inset {
+  --inset-chrome: #edf0f4;
+  --inset-side-bg: #fafbfc;
+}
+
+.app-shell.shell-inset .titlebar,
+.app-shell.shell-inset .statusbar {
+  background: var(--inset-chrome);
+}
+
+.app-shell.shell-inset .statusbar {
+  border-top-color: transparent;
+}
+
+.app-shell.shell-inset .sidebar {
+  background: var(--inset-chrome);
+  border-right-color: transparent;
+}
+
+/* The content sheet. Same content-track list as the collapsed-sidebar reset
+ * in global.css, plus the project shell (wrapped in display:contents). */
+.app-shell.shell-inset .shell-main > .settings-panel,
+.app-shell.shell-inset .shell-main > .extensions-panel,
+.app-shell.shell-inset .shell-main > .library-panel,
+.app-shell.shell-inset .shell-main > .home-panel,
+.app-shell.shell-inset .shell-main > .followups-panel,
+.app-shell.shell-inset .shell-main > .suggestions-view,
+.app-shell.shell-inset .shell-main > .gus-panel,
+.app-shell.shell-inset .shell-main > .cu-panel,
+.app-shell.shell-inset .shell-main > .inbox-view,
+.app-shell.shell-inset .shell-main > .scheduler-panel,
+.app-shell.shell-inset .shell-main > .scheduler-page,
+.app-shell.shell-inset .shell-main > .agents-board--global,
+.app-shell.shell-inset .shell-main > .thread-detail-view,
+.app-shell.shell-inset .shell-main > .new-thread-view,
+.app-shell.shell-inset .shell-main > .split-workspace,
+.app-shell.shell-inset .shell-main > .module-panel-slot,
+.app-shell.shell-inset .shell-main > .module-panel-host,
+.app-shell.shell-inset .project-shell {
+  /* Stretch to the grid track minus the inset instead of height:100%, which
+     would overflow the track by the bottom margin. */
+  height: auto;
+  width: auto;
+  align-self: stretch;
+  margin: 0 var(--inset-gap) var(--inset-gap) 0;
+  border-radius: var(--inset-radius);
+  /* No overflow override: each panel keeps its own scroller (settings, home,
+     plugin slots scroll themselves) and a scroller already clips to the
+     rounded corners. */
+  background: var(--bg-panel);
+  box-shadow:
+    0 0 0 1px var(--border),
+    0 1px 3px rgb(0 0 0 / 0.04);
+}
+
+.app-shell.shell-inset.sidebar-is-collapsed .shell-main > *,
+.app-shell.shell-inset.sidebar-is-collapsed .project-shell {
+  margin-left: var(--inset-gap);
+}
+
+/* The thread side panel shares the sheet; a quieter tone separates it from
+ * the conversation without a second card. */
+.app-shell.shell-inset .thread-secondary-panel {
+  background: var(--inset-side-bg);
+}

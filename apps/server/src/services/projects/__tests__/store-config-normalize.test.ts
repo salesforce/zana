@@ -601,6 +601,14 @@ describe('normalizeConfig — catch-up summary flags', () => {
     expect(normalizeConfig({}).dockableThreadToolsEnabled).toBeUndefined();
   });
 
+  it('accepts only boolean insetWorkspaceEnabled values', () => {
+    expect(normalizeConfig({ insetWorkspaceEnabled: true }).insetWorkspaceEnabled).toBe(true);
+    expect(normalizeConfig({ insetWorkspaceEnabled: false }).insetWorkspaceEnabled).toBe(false);
+    // @ts-expect-error intentional bad input
+    expect(normalizeConfig({ insetWorkspaceEnabled: 'true' }).insetWorkspaceEnabled).toBeUndefined();
+    expect(normalizeConfig({}).insetWorkspaceEnabled).toBeUndefined();
+  });
+
   it('passes through a boolean heldQuestionsEnabled, drops non-booleans', () => {
     expect(normalizeConfig({ heldQuestionsEnabled: true }).heldQuestionsEnabled).toBe(true);
     expect(normalizeConfig({ heldQuestionsEnabled: false }).heldQuestionsEnabled).toBe(false);

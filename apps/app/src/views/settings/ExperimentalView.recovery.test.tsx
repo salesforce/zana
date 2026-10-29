@@ -51,3 +51,12 @@ it.each([undefined, true, false])('offers dockable thread tools, enabled by defa
   expect(update).toHaveBeenCalledWith({ dockableThreadToolsEnabled: !(enabled ?? true) });
   expect(screen.getByText(/Moving a terminal keeps its session running/)).toBeTruthy();
 });
+
+it.each([undefined, true, false])('offers the inset workspace, disabled by default: %s', enabled => {
+  const update = vi.fn();
+  render(<ExperimentalView config={{ ...base, insetWorkspaceEnabled: enabled }} onConfigDraft={vi.fn()} onUpdate={update} />);
+  const toggle = screen.getByRole('switch', { name: 'Inset workspace' });
+  expect(toggle.getAttribute('aria-checked')).toBe(String(enabled ?? false));
+  fireEvent.click(toggle);
+  expect(update).toHaveBeenCalledWith({ insetWorkspaceEnabled: !(enabled ?? false) });
+});

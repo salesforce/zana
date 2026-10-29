@@ -39,6 +39,16 @@ it.each([undefined, true, false])('hydrates thread tabs with default enabled: %s
   expect(useData.getState().threadTabsEnabled).toBe(false);
 });
 
+it.each([undefined, true, false])('hydrates the inset workspace with default disabled: %s', async enabled => {
+  config.value = { insetWorkspaceEnabled: enabled, walkthroughCompleted: true, setupDismissed: true };
+  await useData.getState().init();
+  expect(useData.getState().insetWorkspaceEnabled).toBe(enabled ?? false);
+  config.changed?.({ ...config.value, insetWorkspaceEnabled: true });
+  expect(useData.getState().insetWorkspaceEnabled).toBe(true);
+  useData.getState().setInsetWorkspaceEnabled(false);
+  expect(useData.getState().insetWorkspaceEnabled).toBe(false);
+});
+
 it.each([undefined, true, false])('hydrates dockable thread tools with default enabled: %s', async enabled => {
   config.value = { dockableThreadToolsEnabled: enabled, walkthroughCompleted: true, setupDismissed: true };
   await useData.getState().init();

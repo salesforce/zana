@@ -56,6 +56,16 @@ export const entries: readonly SettingsSearchEntry[] = [
     value: onOff((c) => c.threadTabsEnabled, true)
   },
   {
+    id: 'experimental.inset-workspace',
+    section: 'experimental',
+    anchor: 'experimental-features',
+    label: 'Inset workspace',
+    help: 'Gives the sidebar, title bar and work area clearly separate surfaces. The sidebar and title bar share one flat background. Threads, panels and the thread side panel sit on a raised sheet with rounded corners. Off by default.',
+    keywords: ['layout', 'columns', 'appearance', 'sidebar', 'contrast', 'separation', 'look'],
+    kind: 'setting',
+    value: onOff((c) => c.insetWorkspaceEnabled)
+  },
+  {
     id: 'experimental.goals',
     section: 'experimental',
     anchor: 'experimental-features',

@@ -57,12 +57,16 @@ export interface BrowserTabContentProps {
   onStopAutomation?: (targetId: string) => void;
 }
 
+// Round inward: the native view paints above the DOM, so a box that spills
+// even one pixel past its container covers the panel's separator border.
 function roundedBoundsFromRect(rect: DOMRect): DesktopBrowserViewBounds {
+  const x = Math.ceil(rect.left);
+  const y = Math.ceil(rect.top);
   return {
-    x: Math.round(rect.left),
-    y: Math.round(rect.top),
-    width: Math.round(rect.width),
-    height: Math.round(rect.height)
+    x,
+    y,
+    width: Math.max(0, Math.floor(rect.right) - x),
+    height: Math.max(0, Math.floor(rect.bottom) - y)
   };
 }
 

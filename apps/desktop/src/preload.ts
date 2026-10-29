@@ -90,16 +90,17 @@ const browserControlListeners = new Set<(state: DesktopBrowserControlState) => v
 const browserFindResultListeners = new Set<(result: DesktopBrowserFindResult) => void>();
 const browserAppCommandListeners = new Set<(command: string) => void>();
 
+// Round inward so the native view never paints over the borders around it.
 function browserViewBoundsAtWindowScale(bounds: DesktopBrowserViewBounds): DesktopBrowserViewBounds {
   const zoomFactor = webFrame.getZoomFactor();
   if (zoomFactor === 1) return bounds;
-  const x = Math.round(bounds.x * zoomFactor);
-  const y = Math.round(bounds.y * zoomFactor);
+  const x = Math.ceil(bounds.x * zoomFactor);
+  const y = Math.ceil(bounds.y * zoomFactor);
   return {
     x,
     y,
-    width: Math.max(0, Math.round((bounds.x + bounds.width) * zoomFactor) - x),
-    height: Math.max(0, Math.round((bounds.y + bounds.height) * zoomFactor) - y)
+    width: Math.max(0, Math.floor((bounds.x + bounds.width) * zoomFactor) - x),
+    height: Math.max(0, Math.floor((bounds.y + bounds.height) * zoomFactor) - y)
   };
 }
 

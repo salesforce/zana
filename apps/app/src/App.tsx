@@ -6,6 +6,7 @@ import {
 } from './components/thread/pickers/thread-model-catalog.js';
 import { ConversationHistoryDialog } from './components/history/ConversationHistoryDialog.js';
 import '@/lib/monaco-loader';
+import './styles/shell-inset.css';
 import { useEffect, useRef } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Bell, PlayCircle, Star } from 'lucide-react';
@@ -231,6 +232,7 @@ export function App() {
 
 function AppShell() {
   const threadTabsEnabled = useData((s) => s.threadTabsEnabled);
+  const insetWorkspaceEnabled = useData((s) => s.insetWorkspaceEnabled);
   useRouteSync();
   useEffect(installAgentBoardMoves, []);
   const init = useData((s) => s.init);
@@ -757,7 +759,7 @@ function AppShell() {
     <div
       className={`app-shell nav-${nav} shell-rail-${shellLayout.rail} ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''} scoped-no-list ${
         updateBannerVisible ? 'has-update-banner' : ''
-      }`}
+      }${insetWorkspaceEnabled && !mobileNavigation.isCompact ? ' shell-inset' : ''}`}
       data-mobile={mobileNavigation.isCompact}
       data-platform={shellChrome.platform}
       data-fullscreen={shellChrome.isFullScreen}

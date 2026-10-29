@@ -379,6 +379,10 @@ describe('BrowserTabContent visibility', () => {
     fireEvent(window, new Event('resize'));
     expect(h.api.setBounds).toHaveBeenCalledTimes(1);
     expect(h.api.setBounds).toHaveBeenCalledWith({ tabId: 'browser:test', bounds: { x: 300, y: 20, width: 200, height: 300 } });
+    // Fractional layout rounds inward so the native view never covers the panel border.
+    vi.spyOn(contents[1]!, 'getBoundingClientRect').mockReturnValue(new DOMRect(300.4, 20.6, 200.5, 299.2));
+    fireEvent(window, new Event('resize'));
+    expect(h.api.setBounds).toHaveBeenLastCalledWith({ tabId: 'browser:test', bounds: { x: 301, y: 21, width: 199, height: 298 } });
     rerender(<main>{h.browser}</main>);
     await act(async () => {});
     expect(h.api.setVisible).toHaveBeenLastCalledWith({ tabId: 'browser:test', visible: true });
