@@ -30,7 +30,7 @@ it.each([undefined, false, true])('finds plugin safe mode under Development with
   const snapshot = { config: { pluginSafeMode: enabled } as AppConfig };
   const hit = searchSettings('plugin safe mode', snapshot)[0]!;
   expect(hit.entry.id).toBe('development.plugin-safe-mode');
-  expect(hit.entry.anchor).toBe('plugin-recovery');
+  expect(hit.entry.anchor).toBe('recovery');
   expect(hit.entry.value!(snapshot)).toBe(enabled ? 'On' : 'Off');
   expect(settingsHitPath(hit)).toBe('/settings/development#development.plugin-safe-mode');
 });

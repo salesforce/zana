@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { DevelopmentView } from './DevelopmentView.js';
@@ -18,8 +18,10 @@ it.each([undefined, false, true])('persists plugin safe mode, off by default (%s
   expect(toggle.getAttribute('aria-checked')).toBe(String(enabled ?? false));
   fireEvent.click(toggle);
   expect(update).toHaveBeenCalledExactlyOnceWith({ pluginSafeMode: !(enabled ?? false) });
-  expect(screen.getByRole('heading', { name: 'Plugin recovery' }).closest('[data-settings-target]')?.getAttribute('data-settings-target'))
-    .toBe('development.plugin-recovery');
+  const recovery = screen.getByRole('region', { name: 'Recovery' });
+  expect(within(recovery).getByRole('switch', { name: 'Plugin safe mode' })).toBe(toggle);
+  expect(within(recovery).getByRole('button', { name: 'Hard Plugin reload…' })).toBeTruthy();
+  expect(screen.queryByRole('heading', { name: 'Plugin recovery' })).toBeNull();
 });
 
 it.each([undefined, false, true])('persists bundled plugin development, off by default (%s)', enabled => {

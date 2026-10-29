@@ -17,18 +17,9 @@ export const entries: readonly SettingsSearchEntry[] = [
     keywords: ['repair plugins', 'reset plugins', 'corrupted', 'marketplace', 'restore', 'agent provider'], kind: 'action'
   },
   {
-    id: 'development.plugin-recovery',
-    section: 'development',
-    anchor: 'plugin-recovery',
-    label: 'Plugin recovery',
-    help: 'Temporarily suspend installed plugins while diagnosing a problem.',
-    keywords: ['troubleshoot', 'diagnose'],
-    kind: 'subsection'
-  },
-  {
     id: 'development.plugin-safe-mode',
     section: 'development',
-    anchor: 'plugin-recovery',
+    anchor: 'recovery',
     label: 'Plugin safe mode',
     help: 'Suspend non-bundled plugins and their tools. Turning this off restores plugins that were enabled. Your plugin settings are preserved.',
     keywords: ['disable plugins', 'suspend', 'crash', 'troubleshoot'],

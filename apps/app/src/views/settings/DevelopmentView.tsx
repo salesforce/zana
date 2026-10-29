@@ -72,6 +72,9 @@ export function DevelopmentView({ config, onUpdate }: {
       </div>
       {daemonStatus && <p className="settings-help" role="status">{daemonStatus}</p>}
       {daemonError && <p className="settings-help" role="alert">{daemonError}</p>}
+      <CheckboxField searchId="development.plugin-safe-mode" label="Plugin safe mode"
+        help="Suspend non-bundled plugins and their tools. Turning this off restores plugins that were enabled. Your plugin settings are preserved."
+        checked={config.pluginSafeMode ?? false} onChange={v => onUpdate({ pluginSafeMode: v })} />
       <div className="development-recovery-row" data-settings-target="development.hard-plugin-reload">
         <div><span className="settings-label">Hard Plugin reload</span>
           <p className="settings-help">Fetch fresh plugin files from their recorded sources. Bundled plugins use the official runtime for this Zana release. Saved settings, credentials, data and enabled states are preserved.</p>
@@ -88,11 +91,6 @@ export function DevelopmentView({ config, onUpdate }: {
         {recovery.skipped.length > 0 && <><strong>Skipped</strong><ul>{recovery.skipped.map(item => <li key={item.id}>{item.id}: {item.message}</li>)}</ul></>}
       </div>}
       {error && <p className="settings-help" role="alert">{error}</p>}
-    </Section>
-    <Section searchId="development.plugin-recovery" anchorId="plugin-recovery" title="Plugin recovery" help="Temporarily suspend installed plugins while diagnosing a problem.">
-      <CheckboxField searchId="development.plugin-safe-mode" label="Plugin safe mode"
-        help="Suspend non-bundled plugins and their tools. Turning this off restores plugins that were enabled. Your plugin settings are preserved."
-        checked={config.pluginSafeMode ?? false} onChange={v => onUpdate({ pluginSafeMode: v })} />
     </Section>
     <Section searchId="development.bundled-plugins" anchorId="bundled-plugins" title="Bundled plugins" help="Develop and test bundled plugins on this instance.">
       <CheckboxField searchId="development.plugin-development" label="Bundled plugin development"
