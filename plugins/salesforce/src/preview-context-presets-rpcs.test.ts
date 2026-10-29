@@ -28,6 +28,10 @@ describe('trusted preset RPC scopes and database persistence', () => {
     deps.request = vi.fn(async () => { throw Error('No org requests allowed'); });
     try {
       await createSalesforcePlugin(zcc, deps);
+      expect(await harness.callRpc('studio.scenarios.list', {})).toMatchObject({ ok: false, error: expect.stringContaining('Choose a registered project') });
+      const shared = await harness.callRpc('studio.scenarios.list', { projectId: 'p', path: 'A.agent' }) as any;
+      expect(shared).toMatchObject({ ok: true }); expect(shared.scenarios).toHaveLength(3);
+      expect(await harness.callRpc('studio.scenarios.list', { projectId: 'p', agentPath: 'A.agent' })).toMatchObject({ ok: true, scenarios: shared.scenarios });
       const list = (patch = {}) => harness.callRpc('agentPreview.presets.list', { projectId: 'p', path: 'A.agent', orgAlias: 'dev', ...patch }) as Promise<any>;
       const first = await list(); expect(first).toMatchObject({ ok: true, presets: [] });
       const input = { projectId: 'p', path: 'A.agent', orgAlias: 'dev', expectedScope: first.scopeKey,

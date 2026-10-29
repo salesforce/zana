@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
+import { DuplicateScenarioDialog } from './DuplicateScenarioDialog.js';
 import { ScenariosView } from './ScenariosView.js';
 import { SaveSharedScenario } from './SaveSharedScenario.js';
 import { clearStudioRunWorkspaces } from './run-workspaces.js';
@@ -98,4 +99,19 @@ it('opens a modal copy form, preserves naming errors and closes it with Escape',
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(restoreFocus).toHaveBeenCalled();
   expect((screen.getByLabelText('Scenario actions').closest('details') as HTMLDetailsElement).open).toBe(false);
+});
+
+it('keeps a pending copy modal open and rejects busy or blank submissions', () => {
+  const trigger = document.createElement('button'); document.body.append(trigger); trigger.focus();
+  const restoreFocus = vi.spyOn(trigger, 'focus'); const onClose = vi.fn(); const onCreate = vi.fn();
+  const props = { name: 'Copy', busy: true, error: '', onName: vi.fn(), onClose, onCreate };
+  const view = render(<DuplicateScenarioDialog {...props} />);
+  fireEvent(screen.getByRole('dialog'), new Event('cancel', { cancelable: true }));
+  fireEvent.submit(screen.getByLabelText('New scenario name').closest('form')!);
+  expect(onClose).not.toHaveBeenCalled(); expect(onCreate).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Creating…' }).hasAttribute('disabled')).toBe(true);
+  view.rerender(<DuplicateScenarioDialog {...props} busy={false} name="   " />);
+  fireEvent.submit(screen.getByLabelText('New scenario name').closest('form')!);
+  expect(onCreate).not.toHaveBeenCalled();
+  view.unmount(); expect(restoreFocus).toHaveBeenCalled(); trigger.remove();
 });

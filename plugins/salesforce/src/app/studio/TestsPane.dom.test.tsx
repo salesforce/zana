@@ -727,3 +727,21 @@ it.each([
   expect(button('Run all in Simulate').disabled).toBe(false);
   if (status === 'stopped') expect(screen.queryByRole('alert')).toBeNull();
 });
+
+it('opens the shared scenario library and sends a detached saved setup to Role-play', async () => {
+  const roleplay = vi.fn(() => <div>Selected role-play</div>);
+  setup({ roleplay }); await screen.findByTestId('tests-row-refund');
+  fireEvent.click(button('Scenarios'));
+  await screen.findByTestId('studio-scenarios');
+  expect((screen.getByLabelText('Scenario 1 goal') as HTMLTextAreaElement).value).toBe(starterScenarios()[0].goal);
+  fireEvent.click(button('Try in Role-play'));
+  expect(screen.getByText('Selected role-play')).toBeTruthy();
+  expect(roleplay).toHaveBeenLastCalledWith(expect.objectContaining({ selection: { scenario: starterScenarios()[0], seq: 1 } }));
+  fireEvent.click(button('Scenarios'));
+  expect((screen.getByLabelText('Scenario 1 goal') as HTMLTextAreaElement).value).toBe(starterScenarios()[0].goal);
+});
+it('explains that shared scenarios require an open agent file', () => {
+  setup({ path: null }); fireEvent.click(button('Scenarios'));
+  expect(screen.getByText('Open an agent file to manage shared scenarios.')).toBeTruthy();
+  expect(screen.queryByTestId('studio-scenarios')).toBeNull();
+});
