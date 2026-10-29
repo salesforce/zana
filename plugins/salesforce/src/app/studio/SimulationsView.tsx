@@ -231,7 +231,7 @@ function AgentSimulations(props: SimulationsViewProps) {
   return <div className="sf-sim" data-testid="studio-simulations">
     <style>{SIMULATION_STYLES}</style>
     <header className="sf-sim-heading">
-      <div><h2>Simulations</h2><p>Test customer journeys against your agent.</p></div>
+      <div><h2>Batch simulations</h2><p>Run multiple AI customer conversations across scenarios and repeats.</p></div>
       <details ref={settings} className="sf-sim-settings" onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); event.stopPropagation(); } }}>
         <summary><SlidersHorizontal size={14} aria-hidden="true" />Run settings</summary>
         <div className="sf-sim-settings-body" role="group" aria-label="Run settings">

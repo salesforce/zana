@@ -19,7 +19,7 @@ import { SimulationsView, type SimulationsFocus } from './SimulationsView.js';
  * editor source; Org eval runs the generated `sf agent test` spec against the
  * published agent; a proposal open in the editor can run without being stored.
  * "Make these pass" hands failing cases to the thread agent as a bounded fix loop.
- * AI role-play stays as the second view.
+ * Test catalogue, batch simulations and role-play share the same navigation.
  */
 export interface TestsPaneProps {
   pluginId: string;
@@ -32,7 +32,7 @@ export interface TestsPaneProps {
   dirty: boolean;
   /** The source of an edit an agent is proposing, while the proposal is open. */
   proposalSource?: string | null;
-  /** The AI role-play lab, the second view. */
+  /** The single-conversation AI role-play lab. */
   roleplay: ReactNode;
   onAskAgent?(prompt: string): void;
   /** "Show path on graph": open the conversation map with this case pinned. */
@@ -433,10 +433,10 @@ export function TestsPane(props: TestsPaneProps) {
   useEffect(() => { if (props.simulationsFocus && !props.casesOnly) setView('simulations'); }, [props.simulationsFocus, props.casesOnly]);
   const switcher = props.casesOnly ? null : (
     <div className="sf-tp-seg" role="group" aria-label="Tests view">
-      <button type="button" aria-pressed={view === 'cases'} onClick={() => showView('cases')}>Cases</button>
-      <button type="button" aria-pressed={view === 'org'} onClick={() => showView('org')}>All tests</button>
-      <button type="button" aria-pressed={view === 'simulations'} onClick={() => showView('simulations')}>Simulations</button>
-      <button type="button" aria-pressed={view === 'roleplay'} onClick={() => showView('roleplay')}>Role-play</button>
+      <button type="button" title="Replay saved scenarios and check expected outcomes for this agent." aria-pressed={view === 'cases'} onClick={() => showView('cases')}>Test cases</button>
+      <button type="button" title="Browse local test suites and Salesforce Testing Center tests, runs and results." aria-pressed={view === 'org'} onClick={() => showView('org')}>Test catalogue</button>
+      <button type="button" title="Run multiple AI customer conversations across scenarios and repeats." aria-pressed={view === 'simulations'} onClick={() => showView('simulations')}>Batch simulations</button>
+      <button type="button" title="Explore one AI customer conversation with its setup, chat and traces." aria-pressed={view === 'roleplay'} onClick={() => showView('roleplay')}>Role-play</button>
     </div>
   );
   const roleplayView = roleplayShown && <div hidden={view !== 'roleplay'} style={{ display: view === 'roleplay' ? 'flex' : 'none', flex: 1, minHeight: 0 }}>{roleplay}</div>;

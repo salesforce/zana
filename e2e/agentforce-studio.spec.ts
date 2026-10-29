@@ -592,7 +592,8 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await openTool(studio, 'Tests');
   // Tests open on the case table; an imported sf agent test spec becomes rows.
   const tests = viewPane(page, 'tests').getByTestId('studio-tests-pane');
-  await expect(tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Cases' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(tests.getByRole('group', { name: 'Tests view' }).getByRole('button')).toHaveText(['Test cases', 'Test catalogue', 'Batch simulations', 'Role-play']);
+  await expect(tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Test cases' })).toHaveAttribute('aria-pressed', 'true');
   await tests.getByTestId('tests-import-input').setInputFiles({
     name: 'orders.yaml',
     mimeType: 'application/x-yaml',
@@ -1923,7 +1924,7 @@ test('Agentforce Studio: Org tests list Testing Center definitions, run one in t
 
   await openTool(studio, 'Tests');
   const tests = viewPane(page, 'tests').getByTestId('studio-tests-pane');
-  await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'All tests' }).click();
+  await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Test catalogue' }).click();
   const view = tests.getByTestId('org-tests-view');
   const table = view.getByTestId('org-tests-table');
   // One retrieve reads each definition's agent and label: Support.agent is open, so the list shows its test only.
@@ -2016,7 +2017,7 @@ test('Agentforce Studio: Org tests list Testing Center definitions, run one in t
   await run.getByRole('button', { name: 'Import failing to suite' }).click();
   await expect(view.getByRole('status')).toHaveText('Imported 1 case into the suite.');
   await beat();
-  await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Cases' }).click();
+  await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Test cases' }).click();
   await expect(tests.getByTestId('tests-table')).toContainText('Cancel my subscription');
   await beat();
 
@@ -2350,7 +2351,7 @@ test('Agentforce simulations: live lanes stay with their agent, stop, verdicts a
   await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
   await openTool(studio, 'Tests');
   const tests = viewPane(page, 'tests').getByTestId('studio-tests-pane');
-  await tests.getByRole('button', { name: 'Simulations', exact: true }).click();
+  await tests.getByRole('button', { name: 'Batch simulations', exact: true }).click();
   const simulations = tests.getByTestId('studio-simulations');
   await expect(simulations).toContainText('No simulations yet');
   await simulations.getByLabel('Missing details', { exact: true }).uncheck();
@@ -2367,7 +2368,7 @@ test('Agentforce simulations: live lanes stay with their agent, stop, verdicts a
   await studio.getByTestId('salesforce-agent-script-file:force-app/Orders.agent').click();
   await openTool(studio, 'Tests');
   const ordersTests = viewPane(page, 'tests').getByTestId('studio-tests-pane');
-  await ordersTests.getByRole('button', { name: 'Simulations', exact: true }).click();
+  await ordersTests.getByRole('button', { name: 'Batch simulations', exact: true }).click();
   await expect(ordersTests.getByTestId('studio-simulations')).toContainText('No simulations yet');
   await expect(ordersTests.getByTestId('studio-simulations').getByTestId('simulation-summary')).toHaveCount(0);
   await agentTabs(page).getByRole('tab', { name: /^Support\.agent/ }).click();
@@ -2415,7 +2416,7 @@ test('Agentforce simulations: live lanes stay with their agent, stop, verdicts a
   await showAllAgents(studio);
   await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
   await openTool(studio, 'Tests');
-  await viewPane(page, 'tests').getByRole('button', { name: 'Simulations', exact: true }).click();
+  await viewPane(page, 'tests').getByRole('button', { name: 'Batch simulations', exact: true }).click();
   const restored = viewPane(page, 'tests').getByTestId('studio-simulations');
   await expect(restored.getByLabel('Simulation batch', { exact: true }).locator('option')).toHaveCount(3);
   await expect(restored.getByLabel('1 of 1 pass')).toBeVisible();
@@ -2439,7 +2440,7 @@ test('Agentforce self-healing: parallel candidates improve fixed scenarios witho
   await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
   await openTool(studio, 'Tests');
   const tests = viewPane(page, 'tests').getByTestId('studio-tests-pane');
-  await tests.getByRole('button', { name: 'Simulations', exact: true }).click();
+  await tests.getByRole('button', { name: 'Batch simulations', exact: true }).click();
   const simulations = tests.getByTestId('studio-simulations');
   await simulations.getByLabel('Stay in scope', { exact: true }).uncheck();
   await simulations.locator('summary').filter({ hasText: 'Run settings' }).click();
@@ -2545,7 +2546,7 @@ test('Agentforce improvements: cache-safe discovery, source jumps, draft compari
   await expect(frame.locator('.view-lines')).toBeVisible();
   await sidePanel(page).getByTestId('thread-secondary-hide').click();
   await openTool(studio, 'Tests');
-  await tests.getByRole('button', { name: 'Simulations', exact: true }).click();
+  await tests.getByRole('button', { name: 'Batch simulations', exact: true }).click();
   const simulations = tests.getByTestId('studio-simulations');
   await expect(simulations.getByLabel('Scenario 1 name', { exact: true })).toBeVisible();
   await simulations.getByLabel('Search scenarios').fill('missing');
@@ -2865,7 +2866,7 @@ test('Agentforce Studio: pane dividers resize smoothly, persist and adapt to nar
   await expect(divider).toHaveAttribute('aria-orientation', 'vertical');
   await divider.dblclick(); await expect(divider).toHaveAttribute('aria-valuenow', '48');
 
-  await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Simulations', exact: true }).click();
+  await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Batch simulations', exact: true }).click();
   const catalogueHandle = tests.getByRole('separator', { name: 'Resize scenario catalogue and editor' });
   const catalogue = tests.getByRole('complementary', { name: 'Scenario catalogue' });
   const catalogueBefore = (await catalogue.boundingBox())!.width;

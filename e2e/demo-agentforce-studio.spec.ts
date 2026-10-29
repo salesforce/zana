@@ -404,7 +404,7 @@ test('demo: Agentforce Studio tour', async ({ app, home }) => {
   await caption('Run simulated customers and get a judge verdict');
   await openTool(studio, 'Tests');
   const tests = viewPane(page, 'tests').getByTestId('studio-tests-pane');
-  await tests.getByRole('button', { name: 'Simulations', exact: true }).click();
+  await tests.getByRole('button', { name: 'Batch simulations', exact: true }).click();
   const simulations = tests.getByTestId('studio-simulations');
   await simulations.getByLabel('Missing details', { exact: true }).uncheck();
   await simulations.getByLabel('Stay in scope', { exact: true }).uncheck();
