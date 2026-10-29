@@ -7,6 +7,7 @@
  * never count as Release or activation evidence.
  */
 import { LAB_SCENARIOS, labRecord, parseLabScenario, type LabEngine, type LabScenario, type LabTurn, type LabVerdict } from './agentforce-lab-contract.js';
+import { parsePreviewContext, type PreviewContextVariable } from './preview-context.js';
 
 export const SIMULATION_RPC = {
   /** {agentPath, source?, engine?, scenarios?, repeats?, parallel?, model?, contextVariables?, threadId?, startedByUser?} -> {ok, batch} */
@@ -48,7 +49,9 @@ export interface SimulationLane {
   name: string;
   /** 1-based repeat of the same scenario. */
   repeat: number;
-  scenario: LabScenario;
+  scenario: Omit<SimulationScenarioInput, 'name'>;
+  /** Detached effective starting values, after scenario overrides replace batch defaults. */
+  contextVariables?: PreviewContextVariable[];
   status: LaneStatus;
   turns: LabTurn[];
   verdict?: LabVerdict;
@@ -83,7 +86,14 @@ export interface SimulationBatch {
   lanes: SimulationLane[];
 }
 
-export interface SimulationScenarioInput extends LabScenario { name: string }
+export interface SimulationScenarioInput extends LabScenario { name: string; contextVariables?: PreviewContextVariable[] }
+
+/** Validate the combined context too: individually valid sets can exceed the shared limits. */
+export function simulationContext(defaults?: PreviewContextVariable[], overrides?: PreviewContextVariable[]): PreviewContextVariable[] {
+  const merged = new Map(parsePreviewContext(defaults).map(row => [row.name, row]));
+  for (const row of parsePreviewContext(overrides)) merged.set(row.name, row);
+  return parsePreviewContext([...merged.values()]);
+}
 
 export interface SimulationRequest {
   scenarios: SimulationScenarioInput[];
@@ -122,8 +132,9 @@ export function parseSimulationRequest(input: unknown): SimulationRequest {
     const name = labRecord(item).name;
     if (name !== undefined && (typeof name !== 'string' || name.length > SIMULATION_LIMITS.name)) throw new Error(`Scenario ${index + 1}: name must be at most ${SIMULATION_LIMITS.name} characters.`);
     let scenario: LabScenario;
-    try { scenario = parseLabScenario(item); } catch (error) { throw new Error(`Scenario ${index + 1}: ${(error as Error).message}`); }
-    return { name: (typeof name === 'string' && name.trim()) || `Scenario ${index + 1}`, ...scenario };
+    let contextVariables: PreviewContextVariable[];
+    try { scenario = parseLabScenario(item); contextVariables = parsePreviewContext(labRecord(item).contextVariables); } catch (error) { throw new Error(`Scenario ${index + 1}: ${(error as Error).message}`); }
+    return { name: (typeof name === 'string' && name.trim()) || `Scenario ${index + 1}`, ...scenario, ...(contextVariables.length ? { contextVariables } : {}) };
   });
   const repeats = intIn(row.repeats, 'repeats', 1, SIMULATION_LIMITS.repeats, 1);
   if (scenarios.length * repeats > SIMULATION_LIMITS.lanes) throw new Error(`scenarios × repeats must be at most ${SIMULATION_LIMITS.lanes} conversations.`);

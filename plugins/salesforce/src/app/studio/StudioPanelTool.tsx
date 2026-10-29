@@ -2,17 +2,17 @@ import { useEffect, useRef, type ComponentType } from 'react';
 import type { PluginThreadPanelProps } from '@zana-ai/zcc-plugin-sdk/app';
 import { EmptyState } from '../components/SalesforceState.js';
 import { STUDIO_TOKENS } from './studio-tokens.js';
-import { attachStudioTool, useStudioMounted, type PanelTool } from './studio-tool-bridge.js';
+import { attachStudioTool, useStudioMounted, useStudioToolScope, type PanelTool } from './studio-tool-bridge.js';
 
 const HOST_STYLES = `${STUDIO_TOKENS}
 .sf-panel-tool-host { display:flex; flex-direction:column; height:100%; min-height:0; background:var(--sf-surface); color:var(--sf-text); }
-.sf-panel-tool-slot { display:flex; flex:1 1 auto; min-height:0; min-width:0; }
+.sf-panel-tool-slot { display:flex; flex:1 1 auto; min-height:0; min-width:0; overflow:hidden; }
 .sf-panel-tool-slot[hidden] { display:none; }
 `;
 
 /** The host side-panel tab for one Studio tool; Studio renders the content (studio-tool-bridge). */
-export function StudioPanelTool({ tool, title, projectId, tabId }: { tool: PanelTool; title: string; projectId?: string; tabId?: string }) {
-  const key = projectId ?? '';
+export function StudioPanelTool({ tool, title, projectId, tabId, studioId }: { tool: PanelTool; title: string; projectId?: string; tabId?: string; studioId?: string }) {
+  const key = useStudioToolScope(projectId, studioId);
   const mounted = useStudioMounted(key);
   const slot = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -28,7 +28,10 @@ export function StudioPanelTool({ tool, title, projectId, tabId }: { tool: Panel
 
 /** The thread-panel action component for `tool`. */
 export function studioPanelTool(tool: PanelTool, title: string): ComponentType<PluginThreadPanelProps> {
-  const Tool = (props: PluginThreadPanelProps) => <StudioPanelTool tool={tool} title={title} projectId={props.projectId} tabId={props.tabId} />;
+  const Tool = (props: PluginThreadPanelProps) => {
+    const studioId = props.params && typeof props.params === 'object' && !Array.isArray(props.params) && typeof props.params.studioId === 'string' ? props.params.studioId : undefined;
+    return <StudioPanelTool tool={tool} title={title} projectId={props.projectId} tabId={props.tabId} studioId={studioId} />;
+  };
   Tool.displayName = `StudioPanelTool(${tool})`;
   return Tool;
 }

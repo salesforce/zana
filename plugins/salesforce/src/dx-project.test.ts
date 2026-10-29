@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isDxProject, scanFilesRecursive, listFilesRecursive, parsePackageDirectories, resolveUnderRoot, fingerprint } from '../lib/dx-project.js';
+import { isDxProject, scanFilesRecursive, scanFilesRecursiveSteps, runProjectScanAsync, listFilesRecursive, parsePackageDirectories, resolveUnderRoot, fingerprint } from '../lib/dx-project.js';
 import { shouldContributeConstitution } from '../lib/constitution.js';
 
 describe('DX project gating', () => {
@@ -39,6 +39,28 @@ describe('DX project gating', () => {
 
 
 describe('bounded project discovery', () => {
+  it('cooperatively scans the same bounded paths and yields after at most 32 entries', async () => {
+    let examined = 0, previous = 0;
+    const batches: number[] = [];
+    const deps = { realpath: (p: string) => p, stat: () => { examined++; return 'file' as const; }, readdir: () => Array.from({ length: 130 }, (_, i) => `f${i}`) };
+    const actual = await runProjectScanAsync(scanFilesRecursiveSteps('/p', deps, 100), async () => {
+      batches.push(examined - previous); previous = examined;
+    });
+    expect(actual).toEqual(scanFilesRecursive('/p', deps, 100));
+    expect(actual.truncated).toBe(true);
+    expect(batches).toHaveLength(3);
+    expect(batches.every(count => count > 0 && count <= 32)).toBe(true);
+  });
+  it('lets native event-loop work run and preserves traversal failures', async () => {
+    let heartbeat = false;
+    const beat = new Promise<void>(resolve => setImmediate(() => { heartbeat = true; resolve(); }));
+    const deps = { realpath: (p: string) => p, stat: () => 'file' as const, readdir: () => Array.from({ length: 65 }, (_, i) => `f${i}`) };
+    await runProjectScanAsync(scanFilesRecursiveSteps('/p', deps));
+    expect(heartbeat).toBe(true);
+    await beat;
+    await expect(runProjectScanAsync((function* () { yield; throw Error('scan failed'); })())).rejects.toThrow('scan failed');
+    expect(await runProjectScanAsync(scanFilesRecursiveSteps('/p', { ...deps, readdir: () => { throw Error('denied'); } }))).toEqual({ files: [], truncated: false });
+  });
   it('enforces flat file limits and reports incomplete results', () => {
     const deps = { realpath: (p: string) => p, stat: (_p: string) => 'file' as const, readdir: (_p: string) => ['a', 'b', 'c'] };
     expect(scanFilesRecursive('/p', deps, 1)).toEqual({ files: ['/p/a'], truncated: true });

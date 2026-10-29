@@ -1,3 +1,4 @@
+import { clearStudioRunWorkspaces } from '../studio/run-workspaces.js';
 /** @vitest-environment happy-dom */
 import { act } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -22,6 +23,7 @@ function Harness({ scope = 'file1', source = 'source', running = false, error = 
   </div>;
 }
 beforeEach(() => {
+  clearStudioRunWorkspaces();
   rpc.mockReset().mockResolvedValue({ ok: true, fields });
   (globalThis as Record<string, unknown>).__ZCC_PLUGIN_HOST__ = { callRpc: rpc };
 });
@@ -29,6 +31,34 @@ afterEach(() => { cleanup(); vi.useRealTimers(); delete (globalThis as Record<st
 const options = (label: string) => fireEvent.click(screen.getByLabelText(`Options for ${label}`));
 const enable = (label: string) => fireEvent.click(screen.getByRole('checkbox', { name: `Set ${label}` }));
 describe('Preview context editor and setup', () => {
+  it('keeps setup dialogs local when two preview surfaces use the same agent context', async () => {
+    const view = render(<><div data-testid="preview-one"><Harness /></div><div data-testid="preview-two"><Harness /></div></>);
+    await within(screen.getByTestId('preview-one')).findByLabelText('Count value');
+    fireEvent.click(within(screen.getByTestId('preview-two')).getByRole('button', { name: 'Setup' }));
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    view.unmount(); render(<Harness />);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+  it('restores next-run drafts and applied context after detach while keeping another scope separate', async () => {
+    const view = render(<Harness running />);
+    await screen.findByLabelText('Count value');
+    fireEvent.change(screen.getByLabelText('Count value'), { target: { value: '2' } });
+    act(() => current.markApplied(current.values));
+    fireEvent.change(screen.getByLabelText('Count value'), { target: { value: '3' } });
+    view.unmount();
+    const restored = render(<Harness running />);
+    expect(await screen.findByLabelText('Count value')).toHaveProperty('value', '3');
+    expect(current.changed).toBe(true);
+    expect(current.applied).toEqual([{ name: 'count', type: 'Number', value: 2 }]);
+    restored.rerender(<Harness scope="other-org:other-file" running />);
+    await waitFor(() => expect(screen.getByLabelText('Count value')).toHaveProperty('value', ''));
+    expect(current.applied).toBeNull();
+    restored.rerender(<Harness running />);
+    await waitFor(() => expect(screen.getByLabelText('Count value')).toHaveProperty('value', '3'));
+    fireEvent.click(screen.getByRole('button', { name: 'Clear overrides' }));
+    expect(current.values).toEqual([]);
+  });
+
   it('edits values directly, groups linked inputs and keeps advanced actions out of the rows', async () => {
     render(<Harness />);
     await screen.findByRole('checkbox', { name: 'Set Session' });
@@ -237,7 +267,9 @@ describe('context presets and inline validation', () => {
     expect(current.selected?.revision).toBe(2);
     view.unmount(); render(<Harness path="a.agent" />);
     await screen.findByRole('option', { name: 'Unverified' });
-    expect(current.values).toEqual([]);
+    expect(current.values.at(-1)!.value).toBe(3);
+    expect(current.applied?.at(-1)!.value).toBe(0);
+    expect(current.appliedPreset?.revision).toBe(1);
     choose('p1'); expect(current.values.at(-1)!.value).toBe(3);
   });
   it('switches complete snapshots and Undo restores raw invalid text, manual variables and selection', async () => {

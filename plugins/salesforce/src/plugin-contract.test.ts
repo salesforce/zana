@@ -138,7 +138,7 @@ describe('salesforce plugin contract', () => {
     expect(set.projectTabs[0]).toMatchObject({ label: 'Salesforce', icon: 'Cloud', global: false, detachable: true });
     expect(typeof set.projectTabs[0]?.detachedPlaceholder).toBe('function');
     expect(set.threadPanelActions.map((row) => row.id)).toEqual(['sf-org', 'sf-soql', 'sf-object', 'sf-record', 'sf-logs', 'sf-deployments', 'sf-operations', 'agent', 'preview',
-      'studio-actions', 'studio-comments']);
+      'studio-graph', 'studio-preview', 'studio-test', 'studio-actions', 'studio-org-preview', 'studio-comments']);
     // Studio's tools are listed only beside the Salesforce tab, never in a thread or agent session.
     for (const row of set.threadPanelActions.filter(row => row.id.startsWith('studio-'))) {
       expect(row).toMatchObject({ scopes: ['plugin-page'], pages: ['salesforce'], layout: 'flush', category: 'Agent Script Studio' });

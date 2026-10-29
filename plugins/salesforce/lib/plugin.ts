@@ -2,6 +2,8 @@ import { OrgLoginHistory } from './org-login-history.js';
 import { readCliInput } from './cli-input.js';
 import { join, relative } from 'node:path';
 import { ContextPresets, ContextPresetError, contextPresetStorage, registerContextPresets } from './preview-context-presets.js';
+import { ScenarioLibrary, scenarioLibraryStorage, registerScenarioLibrary } from './scenario-library.js';
+import { SCENARIOS_CHANGED } from './scenario-library-contract.js';
 import { CONTEXT_PRESETS_CHANGED } from './preview-context-preset-contract.js';
 import { discoverPreviewContext } from './preview-context-source.js';
 import { SalesforceToolkitAdapter, providerTools, toolProvider, toolkitNativeSchema } from './toolkit-adapter.js';
@@ -82,7 +84,7 @@ import {
   AgentFilesError,
   createAgentFile,
   listAgentFiles,
-  scanAgentFiles,
+  scanAgentFilesAsync,
   readAgentFile,
   sha256Hex,
   writeAgentFile
@@ -241,7 +243,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
   });
   zcc.onDispose(() => lab.dispose());
   const previewLab: PreviewLab = { lab, sessions: new Set() };
-  for (const method of ['start', 'send', 'next', 'evaluate', 'end', 'get'] as const) {
+  for (const method of ['start', 'send', 'next', 'evaluate', 'end', 'get', 'list', 'run'] as const) {
     registerRpc(`agentLab.${method}`, async (args) => ({ ok: true, data: await lab[method](args) }));
   }
   let lastDoctor: DoctorReport | null = null;
@@ -576,7 +578,7 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
       const resolved = await resolveAgentFilesRoot(args);
       const preview = rpcString(args, 'purpose') === 'preview';
       const child = preview && !isDxProject(resolved.root, deps.exists) ? dxProjectRoot({ ...await readSettings(), projectRoot: resolved.root }, deps) : undefined;
-      const { files, truncated } = scanAgentFiles(child || resolved.root, deps, { ...resolved.options, bundlesOnly: preview });
+      const { files, truncated } = await scanAgentFilesAsync(child || resolved.root, deps, { ...resolved.options, bundlesOnly: preview });
       return { ok: true, truncated, files: child ? files.map(file => ({ ...file, path: `${DRAFT_PROJECT}/${file.path}` })) : files };
     } catch (error) {
       return agentFilesFailure(error);
@@ -627,6 +629,18 @@ export async function createSalesforcePlugin(zcc: ZccPluginApi, deps: Salesforce
     },
     discover: args => rpcString(args, 'path') ? previewContextFields({ path: rpcString(args, 'path'), projectId: rpcString(args, 'projectId') }) : Promise.resolve([]),
     changed: projectId => zcc.realtime.publish(CONTEXT_PRESETS_CHANGED, { projectId })
+  });
+  registerScenarioLibrary({
+    registerRpc, store: new ScenarioLibrary(scenarioLibraryStorage(() => zcc.storage.database()), deps.now),
+    resolveScope: async args => {
+      const projectId = contexts.current()?.projectId;
+      if (!projectId) throw Error('Choose a registered project to use shared scenarios.');
+      const path = rpcString(args, 'agentPath') || rpcString(args, 'path');
+      const resolved = await resolveAgentFilesRoot(args);
+      const file = readAgentFile(resolved.root, path, deps, resolved.options);
+      return { projectId, agentPath: relative(deps.realpath(resolved.root), deps.realpath(join(resolved.root, file.path))).replace(/\\/g, '/') };
+    },
+    changed: scope => zcc.realtime.publish(SCENARIOS_CHANGED, scope),
   });
   /** studio.start and sf_agent preview.start take presetId in place of contextVariables: the saved preset of that agent's path. */
   const presetContext = async (data: Record<string, unknown>, projectId = data.projectId) => {

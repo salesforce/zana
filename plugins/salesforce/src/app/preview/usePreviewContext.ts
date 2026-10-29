@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useRunWorkspaceState } from '../studio/run-workspaces.js';
 import { callPluginRpc, useRealtime } from '@zana-ai/zcc-plugin-sdk/app';
 import { parsePreviewContext, validateContextEntries, type ContextEntry, type PreviewContextField, type PreviewContextVariable } from '../../../lib/preview-context.js';
 import { CONTEXT_PRESETS_CHANGED, presetCompatibility, sameContext, type AppliedContextPreset, type ContextPreset, type ContextPresetList } from '../../../lib/preview-context-preset-contract.js';
@@ -7,37 +8,40 @@ const valueText = (row: PreviewContextVariable) => typeof row.value === 'string'
 const toEntries = (rows: PreviewContextVariable[]) => Object.fromEntries(rows.map(r => [r.name, { type: r.type, text: r.value === null ? '' : valueText(r), ...(r.value === null ? { isNull: true } : {}) }]));
 export function usePreviewContext(input: { pluginId: string; projectId?: string; scope: string; source?: string; path?: string; apiName?: string; orgAlias?: string }) {
   const id = useId();
+  const workspaceKey = JSON.stringify(['context', input.pluginId, input.projectId ?? '', input.orgAlias ?? '', input.path ?? input.apiName ?? '', input.scope]);
   const [fields, setFields] = useState<PreviewContextField[]>([]);
-  const [manual, setManual] = useState<PreviewContextField[]>([]);
-  const [entries, setEntries] = useState<Record<string, ContextEntry>>({});
-  const [applied, setApplied] = useState<PreviewContextVariable[] | null>(null);
-  const [appliedPreset, setAppliedPreset] = useState<AppliedContextPreset | null>(null);
+  const [manual, setManual] = useRunWorkspaceState<PreviewContextField[]>(workspaceKey, 'manual', []);
+  const [entries, setEntries] = useRunWorkspaceState<Record<string, ContextEntry>>(workspaceKey, 'entries', {});
+  const [applied, setApplied] = useRunWorkspaceState<PreviewContextVariable[] | null>(workspaceKey, 'applied', null);
+  const [appliedPreset, setAppliedPreset] = useRunWorkspaceState<AppliedContextPreset | null>(workspaceKey, 'appliedPreset', null);
   const [loading, setLoading] = useState(false);
   const [discoveryError, setDiscoveryError] = useState('');
+  // Dialog visibility belongs to its mounted surface; sharing it opens duplicate portals.
   const [setup, setSetup] = useState(false);
-  const [tab, setTab] = useState<'conversation' | 'context'>('conversation');
+  const [tab, setTab] = useRunWorkspaceState<'conversation' | 'scenarios' | 'context'>(workspaceKey, 'tab', 'conversation');
   const [presets, setPresets] = useState<ContextPreset[]>([]);
-  const [selected, setSelected] = useState<ContextPreset | null>(null);
+  const [selected, setSelected] = useRunWorkspaceState<ContextPreset | null>(workspaceKey, 'selected', null);
   const [presetScope, setPresetScope] = useState('');
   const [orgLabel, setOrgLabel] = useState('');
   const [presetError, setPresetError] = useState('');
   const [presetLoading, setPresetLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [reload, setReload] = useState(0);
-  const [touched, setTouched] = useState<Record<string, boolean>>({});
-  const [reviewErrors, setReviewErrors] = useState(false);
-  const [undo, setUndo] = useState<{ entries: typeof entries; manual: typeof manual; selected: typeof selected; touched: typeof touched; reviewErrors: boolean } | null>(null);
+  const [touched, setTouched] = useRunWorkspaceState<Record<string, boolean>>(workspaceKey, 'touched', {});
+  const [reviewErrors, setReviewErrors] = useRunWorkspaceState(workspaceKey, 'reviewErrors', false);
+  const [undo, setUndo] = useRunWorkspaceState<{ entries: typeof entries; manual: typeof manual; selected: typeof selected; touched: typeof touched; reviewErrors: boolean } | null>(workspaceKey, 'undo', null);
   /** Names an agent set through context.set, until the person edits them. */
-  const [agentSet, setAgentSet] = useState<Record<string, true>>({});
+  const [agentSet, setAgentSet] = useRunWorkspaceState<Record<string, true>>(workspaceKey, 'agentSet', {});
   const discoveryScope = useRef<string | null>(null);
   const generation = useRef(0);
   const activeScope = useRef(input.scope); activeScope.current = input.scope;
   const selectedRef = useRef(selected); selectedRef.current = selected;
   const presetsEnabled = Boolean(input.projectId && (input.path || input.apiName));
   useEffect(() => {
-    setEntries({}); setManual([]); setFields([]); setApplied(null); setAppliedPreset(null); setSetup(false); setTab('conversation');
+    setSetup(false);
+    setFields([]);
     generation.current++;
-    setPresets([]); setSelected(null); setPresetScope(''); setOrgLabel(''); setPresetError(''); setSaving(false); setTouched({}); setReviewErrors(false); setUndo(null); setAgentSet({});
+    setPresets([]); setPresetScope(''); setOrgLabel(''); setPresetError(''); setSaving(false);
     return () => { generation.current++; };
   }, [input.scope]);
   // An agent's contextPresets.save or remove shows up in the picker without a reload.

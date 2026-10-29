@@ -8,6 +8,7 @@ import {
   createAgentFile,
   listAgentFiles,
   scanAgentFiles,
+  scanAgentFilesAsync,
   readAgentFile,
   sha256Hex,
   writeAgentFile
@@ -48,7 +49,7 @@ describe('agent files confinement', () => {
     expect(listAgentFiles('/proj', deps, { bundlesOnly: true })).toEqual([]);
   });
 
-  it('lists scanned bundles and refuses path escape', () => {
+  it('lists scanned bundles and refuses path escape', async () => {
     const files = {
       '/proj/sfdx-project.json': '{"packageDirectories":[{"path":"force-app"}]}',
       '/proj/force-app/MyBot.agent': 'config:\n    agent_name: "MyBot"\nstart_agent:\n    reasoning:\n        instructions: "hi"\n'
@@ -61,6 +62,9 @@ describe('agent files confinement', () => {
     expect(listed).toHaveLength(1);
     expect(listed[0]).toMatchObject({ apiName: 'MyBot', path: 'force-app/MyBot.agent' });
     expect(listAgentFiles('/proj', deps, { bundlesOnly: true })).toEqual(listed);
+    expect(await scanAgentFilesAsync('/proj', deps)).toEqual(scanAgentFiles('/proj', deps));
+    expect(await scanAgentFilesAsync('/proj', deps, { bundlesOnly: true })).toEqual(scanAgentFiles('/proj', deps, { bundlesOnly: true }));
+    await expect(scanAgentFilesAsync('/missing', deps)).rejects.toThrow('DX project root');
     expect(() => readAgentFile('/proj', '/etc/passwd', deps)).toThrow(AgentFilesError);
     expect(() => writeAgentFile('/proj', '../secret.agent', 'x', deps)).toThrow(/path_refused|inside/);
     expect(() => writeAgentFile('/proj', 'force-app/notes.txt', 'x', deps)).toThrow(/path_refused|inside/);
@@ -146,10 +150,11 @@ describe('agent files confinement', () => {
 
 });
 
-it('finds agents beyond cache files and pins an opened agent beyond the general scan budget', () => {
+it('finds agents beyond cache files and pins an opened agent beyond the general scan budget', async () => {
   const files = { '/p/force-app/Bot.agent': 'start_agent welcome:', '/p/zzz/Open.agent': 'start_agent welcome:' };
   const deps = memFs(files, { '/p': ['.pnpm-store', 'force-app', 'noise', 'zzz'], '/p/.pnpm-store': Array(5000).fill('cache'), '/p/force-app': ['Bot.agent'], '/p/noise': Array.from({ length: 21000 }, (_, i) => `file${i}`), '/p/zzz': ['Open.agent'] });
   const scan = scanAgentFiles('/p', deps, { allowNonDx: true, priority: ['zzz/Open.agent', '../escape.agent'] });
   expect(scan.truncated).toBe(true);
   expect(scan.files.map(f => f.path)).toEqual(['force-app/Bot.agent', 'zzz/Open.agent']);
+  expect(await scanAgentFilesAsync('/p', deps, { allowNonDx: true, priority: ['zzz/Open.agent', '../escape.agent'] })).toEqual(scan);
 });

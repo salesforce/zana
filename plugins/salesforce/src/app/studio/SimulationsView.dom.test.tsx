@@ -1,7 +1,8 @@
 /** @vitest-environment happy-dom */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { SimulationsView, improvePrompt, type SimulationsViewProps } from './SimulationsView.js';
+import { clearStudioRunWorkspaces } from './run-workspaces.js';
 import { LAB_SCENARIOS } from '../../../lib/agentforce-lab-contract.js';
 import { simulationCounts, type SimulationBatch, type SimulationLane } from '../../../lib/simulation-contract.js';
 
@@ -9,6 +10,7 @@ const PATH = 'force-app/main/default/aiAuthoringBundles/MyBot/MyBot.agent';
 let realtime: ((payload: unknown) => void) | null = null;
 let channels: Record<string, (payload: unknown) => void>;
 beforeEach(() => {
+  clearStudioRunWorkspaces();
   realtime = null;
   channels = {};
   (globalThis as Record<string, unknown>).__ZCC_PLUGIN_RUNTIME__ = { useRealtime: (channel: string, h: (p: unknown) => void) => { channels[channel] = h; if (channel === 'sf.studio.changed') realtime = h; } };
@@ -27,6 +29,8 @@ type Handler = (args: Record<string, unknown>) => unknown;
 function setup(overrides: Partial<SimulationsViewProps> = {}, handlers: Record<string, Handler> = {}) {
   const table: Record<string, Handler> = {
     'studio.simulations.list': () => ({ ok: true, batches: [] }),
+    'agentPreview.context': () => ({ ok: true, fields: [] }),
+    'agentPreview.presets.list': () => ({ ok: true, presets: [] }),
     ...handlers,
   };
   const call = vi.fn<Call>(async (_p, method, args) => {
@@ -39,6 +43,68 @@ function setup(overrides: Partial<SimulationsViewProps> = {}, handlers: Record<s
 }
 const button = (name: RegExp | string) => screen.getByRole('button', { name }) as HTMLButtonElement;
 const calls = (call: ReturnType<typeof setup>['call'], method: string) => call.mock.calls.filter(([, m]) => m === method).map(([, , a]) => a as Record<string, unknown>);
+
+it('copies shared presets into individual scenarios and pins both scenario and batch values on refresh', async () => {
+  const original = [{ name: 'verified', type: 'Boolean', value: false }, { name: 'count', type: 'Number', value: 0 }];
+  let preset = { id: 'customer', name: 'Customer', revision: 1, fields: [], values: original };
+  const { call } = setup({}, {
+    'agentPreview.presets.list': () => ({ ok: true, presets: [preset] }),
+    'studio.simulations.start': () => ({ ok: false, error: 'Test stop' }),
+  });
+  await within(screen.getByLabelText('Simulation context preset')).findByRole('option', { name: 'Customer · revision 1' });
+  await waitFor(() => expect((screen.getByLabelText('Variable preset') as HTMLSelectElement).disabled).toBe(false));
+  fireEvent.change(screen.getByLabelText('Simulation context preset'), { target: { value: 'customer' } });
+  fireEvent.change(screen.getByLabelText('Variable preset'), { target: { value: 'customer' } });
+  fireEvent.change(screen.getByLabelText('count value'), { target: { value: '2' } });
+  fireEvent.click(button('Edit Missing details'));
+  expect(screen.queryByLabelText('count value')).toBeNull();
+  fireEvent.click(button('Edit Happy path'));
+  preset = { ...preset, revision: 2, values: [{ name: 'count', type: 'Number', value: 9 }] };
+  await act(async () => channels['salesforce.context-presets.changed']({ projectId: 'p1' }));
+  await within(screen.getByLabelText('Variable preset')).findByRole('option', { name: 'Customer · revision 2' });
+  expect((screen.getByLabelText('count value') as HTMLInputElement).value).toBe('2');
+  expect(within(screen.getByLabelText('Simulation context preset')).getByRole('option', { name: 'Customer · copied values' })).toBeTruthy();
+  fireEvent.click(button('Run 3 conversations')); await screen.findByText('Test stop');
+  const sent = calls(call, 'studio.simulations.start')[0] as any;
+  expect(sent.contextVariables).toEqual(original);
+  expect(sent.scenarios[0].contextVariables).toEqual([original[0], { name: 'count', type: 'Number', value: 2 }]);
+  expect(sent.scenarios[1].contextVariables).toBeUndefined();
+  fireEvent.change(screen.getByLabelText('Variable preset'), { target: { value: 'customer' } });
+  expect((screen.getByLabelText('count value') as HTMLInputElement).value).toBe('9');
+});
+
+it('keeps scenario overrides across selections, blocks invalid values and submits typed context per scenario', async () => {
+  const { call } = setup({}, { 'agentPreview.context': () => ({ ok: true, fields: [{ name: 'count', label: 'Count', type: 'Number' }] }), 'studio.simulations.start': () => ({ ok: false, error: 'Test stop' }) });
+  await screen.findByText(/No simulations yet/);
+  fireEvent.click(button('Add variable'));
+  fireEvent.change(screen.getByLabelText('New scenario variable name'), { target: { value: 'count' } });
+  fireEvent.click(button('Add override'));
+  fireEvent.change(screen.getByLabelText('count value'), { target: { value: 'invalid' } });
+  fireEvent.click(button('Edit Missing details')); fireEvent.click(button('Edit Happy path'));
+  expect((screen.getByLabelText('count value') as HTMLInputElement).value).toBe('invalid');
+  fireEvent.click(button('Run 3 conversations'));
+  await screen.findByText(/Happy path: Enter a number/);
+  expect(calls(call, 'studio.simulations.start')).toHaveLength(0);
+  fireEvent.change(screen.getByLabelText('count value'), { target: { value: '0' } });
+  fireEvent.click(button('Run 3 conversations'));
+  await screen.findByText('Test stop');
+  const submitted = calls(call, 'studio.simulations.start')[0].scenarios as any[];
+  expect(submitted[0].contextVariables).toEqual([{ name: 'count', type: 'Number', value: 0 }]);
+  expect(submitted[1].contextVariables).toBeUndefined(); expect(submitted[0].contextEntries).toBeUndefined();
+});
+
+it('shows applied lane variables and restores batch defaults plus scenario overrides for reuse', async () => {
+  const done = batch('context', 'done', [lane('1', 'pass', { scenario: { ...scenario, contextVariables: [{ name: 'verified', type: 'Boolean', value: false }] }, contextVariables: [{ name: 'locale', type: 'Text', value: 'fr' }, { name: 'verified', type: 'Boolean', value: false }] })], { contextVariables: [{ name: 'locale', type: 'Text', value: 'fr' }] });
+  const { call } = setup({}, { 'studio.simulations.list': () => ({ ok: true, batches: [done] }), 'studio.simulations.get': () => ({ ok: true, batch: done }), 'studio.simulations.start': () => ({ ok: false, error: 'Test stop' }) });
+  await screen.findByText('Lane 1'); fireEvent.click(button(/Lane 1/));
+  expect(screen.getByText('Starting variables · 2')).toBeTruthy();
+  expect(screen.getByText('false')).toBeTruthy();
+  fireEvent.click(button('Use scenarios from this batch'));
+  expect((screen.getByLabelText('verified value') as HTMLSelectElement).value).toBe('false');
+  expect(screen.getByText(/1 variable inherited/)).toBeTruthy();
+  fireEvent.click(button('Run 1 conversation')); await screen.findByText('Test stop');
+  expect(calls(call, 'studio.simulations.start')[0]).toMatchObject({ contextVariables: done.contextVariables, scenarios: [{ name: 'Lane 1', ...done.lanes[0].scenario }] });
+});
 
 it('asks for an agent file first', () => {
   setup({ path: null });
@@ -107,7 +173,7 @@ it('shows a finished batch, its lane detail and hands failures to the agent', as
   fireEvent.click(screen.getByText('Lane 3'));
   expect(screen.getByRole('region', { name: 'Conversation Lane 3' }).textContent).toMatch(/Error Session expired/);
 
-  fireEvent.click(button('Ask the agent to improve'));
+  fireEvent.click(button('Ask assistant to investigate'));
   const prompt = (props.onAskAgent as ReturnType<typeof vi.fn>).mock.calls[0]![0] as string;
   expect(prompt).toMatch(/batch b2 \(1\/4 pass\)/);
   expect(prompt).toMatch(/Failing: Lane 2 #2, Lane 3\./);
@@ -116,7 +182,7 @@ it('shows a finished batch, its lane detail and hands failures to the agent', as
   fireEvent.change(screen.getByLabelText('Simulation batch'), { target: { value: 'b1' } });
   await waitFor(() => expect(screen.getByLabelText('1 of 1 pass')).toBeTruthy());
   expect(calls(call, 'studio.simulations.get').at(-1)).toMatchObject({ batchId: 'b1' });
-  expect(screen.queryByRole('button', { name: 'Ask the agent to improve' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Ask assistant to investigate' })).toBeNull();
 });
 
 it('opens the batch the agent asked to show and follows realtime changes', async () => {
@@ -131,7 +197,7 @@ it('opens the batch the agent asked to show and follows realtime changes', async
   view.rerender(<SimulationsView {...props} focus={{ batchId: 'b9', seq: 3 }} />);
   await waitFor(() => expect(screen.getByLabelText('1 of 1 pass')).toBeTruthy());
   expect(onFocusHandled).toHaveBeenCalledWith(3);
-  fireEvent.click(button(/^Scenarios/));
+  fireEvent.click(button(/^Batch setup/));
   view.rerender(<SimulationsView {...props} focus={{ batchId: 'b9', seq: 4 }} />);
   await waitFor(() => expect(button(/^Results/).getAttribute('aria-pressed')).toBe('true'));
   expect(onFocusHandled).toHaveBeenCalledWith(4);
@@ -234,7 +300,7 @@ it('edits scenarios, adds/removes custom cases, validates and applies a typed co
     'studio.simulations.list': () => ({ ok: true, batches: [] }),
   });
   await screen.findByText(/No simulations yet/);
-  await screen.findByRole('option', { name: 'French customer · revision 2' });
+  await within(screen.getByLabelText('Simulation context preset')).findByRole('option', { name: 'French customer · revision 2' });
   fireEvent.change(screen.getByLabelText('Scenario 1 name'), { target: { value: 'Return policy' } });
   fireEvent.change(screen.getByLabelText('Scenario 1 opening'), { target: { value: 'Can I return this?' } });
   fireEvent.change(screen.getByLabelText('Simulation context preset'), { target: { value: 'fr' } });
@@ -267,8 +333,8 @@ it('switches between setup and results, and dismisses run settings with Escape o
   const done = batch('b1', 'done', [lane('1', 'pass')]);
   setup({}, { 'studio.simulations.list': () => ({ ok: true, batches: [done] }), 'studio.simulations.get': () => ({ ok: true, batch: done }) });
   await screen.findByText('Lane 1');
-  fireEvent.click(button(/^Scenarios/));
-  expect(button(/^Scenarios/).getAttribute('aria-pressed')).toBe('true');
+  fireEvent.click(button(/^Batch setup/));
+  expect(button(/^Batch setup/).getAttribute('aria-pressed')).toBe('true');
   expect(screen.queryByRole('list', { name: 'Conversations' })).toBeNull();
   fireEvent.click(button(/^Results/));
   expect(screen.getByRole('list', { name: 'Conversations' })).toBeTruthy();
@@ -284,7 +350,7 @@ it('switches between setup and results, and dismisses run settings with Escape o
   fireEvent.pointerDown(document.body);
   expect(settings.open).toBe(false);
   settings.open = true;
-  fireEvent.focusIn(button(/^Scenarios/));
+  fireEvent.focusIn(button(/^Batch setup/));
   expect(settings.open).toBe(false);
 });
 
@@ -307,7 +373,7 @@ it('keeps custom scenario identities distinct after deleting a middle scenario',
 
 it('refreshes presets and clears selected context when this project changes org', async () => {
   const { call } = setup({}, { 'agentPreview.presets.list': () => ({ ok: true, presets: [{ id: 'fr', name: 'French', revision: 1, values: [] }] }) });
-  await screen.findByRole('option', { name: 'French · revision 1' });
+  await within(screen.getByLabelText('Simulation context preset')).findByRole('option', { name: 'French · revision 1' });
   fireEvent.change(screen.getByLabelText('Simulation context preset'), { target: { value: 'fr' } });
   const before = calls(call, 'agentPreview.presets.list').length;
   await act(async () => { channels['context.changed']!({ projectId: 'other' }); });
@@ -335,7 +401,7 @@ it('isolates draft and project pane sizes for both scenario editing and result i
     expect(results().getAttribute('aria-valuenow')).toBe('44');
     fireEvent.keyDown(results(), { key: 'ArrowRight' });
     expect(localStorage.getItem(key('results'))).toBe('48');
-    fireEvent.click(button(/^Scenarios/));
+    fireEvent.click(button(/^Batch setup/));
     const scenarios = () => screen.getByRole('separator', { name: 'Resize scenario catalogue and editor' });
     expect(scenarios().getAttribute('aria-valuenow')).toBe('30');
     fireEvent.keyDown(scenarios(), { key: 'ArrowRight' });
@@ -348,4 +414,48 @@ it('isolates draft and project pane sizes for both scenario editing and result i
   } finally {
     for (const kind of ['scenarios', 'results']) for (const project of ['draft', 'p1']) localStorage.removeItem(key(kind, project));
   }
+});
+
+it('selects shared copies, preserves batch edits and pins their source revisions and variables', async () => {
+  const { starterScenarios } = await import('../../../lib/scenario-library-contract.js'); const rows = starterScenarios(); rows[0].contextVariables = [{ name: 'count', type: 'Number', value: 0 }];
+  const shared = { scenarios: rows, loading: false, error: '', reload: vi.fn(), save: vi.fn(), remove: vi.fn(), onManage: vi.fn() };
+  const { call, view, props: current } = setup({ scenarioLibrary: shared }, { 'studio.simulations.start': () => ({ ok: true, batch: batch('new', 'done', []) }) });
+  await screen.findByRole('checkbox', { name: 'Happy path', exact: true });
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Missing details', exact: true })); fireEvent.click(screen.getByRole('checkbox', { name: 'Stay in scope', exact: true }));
+  fireEvent.click(screen.getByText('Adjust for this batch')); fireEvent.change(screen.getByLabelText('Scenario 1 goal'), { target: { value: 'Local batch goal' } });
+  view.rerender(<SimulationsView {...current} scenarioLibrary={{ ...shared, scenarios: rows.map(row => ({ ...row, revision: 2, goal: 'Shared update' })) }} />);
+  expect((screen.getByLabelText('Scenario 1 goal') as HTMLInputElement).value).toBe('Local batch goal');
+  fireEvent.click(screen.getByRole('button', { name: 'Run 1 conversation' }));
+  await waitFor(() => expect(call.mock.calls.some(([, method]) => method === 'studio.simulations.start')).toBe(true));
+  const input = call.mock.calls.find(([, method]) => method === 'studio.simulations.start')![2] as any;
+  expect(input.scenarios).toEqual([expect.objectContaining({ name: 'Happy path', goal: 'Local batch goal', origin: { id: rows[0].id, name: 'Happy path', revision: 1 }, contextVariables: [{ name: 'count', type: 'Number', value: 0 }] })]);
+});
+it('adds an explicitly selected library scenario and sends management back to the shared tab', async () => {
+  const { starterScenarios } = await import('../../../lib/scenario-library-contract.js'); const rows = starterScenarios();
+  const extra = { ...rows[0], id: 'new', name: 'Custom shared', goal: 'Shared goal' };
+  const shared = { scenarios: rows, loading: false, error: '', reload: vi.fn(), save: vi.fn(), remove: vi.fn(), onManage: vi.fn() };
+  const { view, props: current } = setup({ scenarioLibrary: shared });
+  await screen.findByRole('checkbox', { name: 'Happy path', exact: true });
+  view.rerender(<SimulationsView {...current} scenarioLibrary={{ ...shared, selection: { scenario: extra, seq: 1 } }} />);
+  await screen.findByRole('checkbox', { name: 'Custom shared', exact: true });
+  fireEvent.click(screen.getByRole('button', { name: 'Manage scenarios' })); expect(shared.onManage).toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText('Add shared scenario to batch'), { target: { value: rows[1].id } }); fireEvent.click(screen.getByRole('button', { name: 'Copy into batch' }));
+  fireEvent.click(screen.getByText('Adjust for this batch')); expect((screen.getByLabelText('Scenario 4 goal') as HTMLInputElement).value).toBe(rows[1].goal);
+});
+
+it('keeps an explicitly copied scenario visible when previous batch history arrives later', async () => {
+  const { starterScenarios } = await import('../../../lib/scenario-library-contract.js'); const rows = starterScenarios();
+  let resolveHistory!: (value: unknown) => void;
+  const history = new Promise(resolve => { resolveHistory = resolve; });
+  const shared = { scenarios: rows, loading: false, error: '', reload: vi.fn(), save: vi.fn(), remove: vi.fn(), onManage: vi.fn(), selection: { scenario: rows[0], seq: 1 } };
+  setup({ scenarioLibrary: shared }, {
+    'studio.simulations.list': () => history,
+    'studio.simulations.get': () => ({ ok: true, batch: batch('previous', 'done', []) }),
+  });
+  await screen.findByRole('checkbox', { name: 'Happy path', exact: true });
+  await act(async () => resolveHistory({ ok: true, batches: [batch('previous', 'done', [])] }));
+  expect(screen.getByRole('button', { name: 'Batch setup 3' }).getAttribute('aria-pressed')).toBe('true');
+  expect(screen.getByRole('checkbox', { name: 'Happy path', exact: true })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: /Results/ }));
+  expect(screen.getByRole('button', { name: /Results/ }).getAttribute('aria-pressed')).toBe('true');
 });

@@ -1,10 +1,10 @@
-import { Fragment, useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { callPluginRpc, experimental_requestApproval, useRealtime } from '@zana-ai/zcc-plugin-sdk/app';
-import { STUDIO_CHANGED_CHANNEL, STUDIO_RPC, type CaseObserved, type CaseOutcome, type CaseResult, type ScenarioCase, type ScenarioSuite } from '../../../lib/studio-contract.js';
+import { STUDIO_CHANGED_CHANNEL, STUDIO_RPC, type CaseOutcome, type CaseResult, type ScenarioCase, type ScenarioSuite } from '../../../lib/studio-contract.js';
 import { parseExtraAssertions, actionCheckLabel, stateCheckLabel } from '../../../lib/scenario-assertions.js';
 import { SuiteComparisonView } from './SuiteComparisonView.js';
 import type { SuiteComparison } from '../../../lib/studio-contract.js';
-import { caseChecks, failureReason, type CheckState } from '../../../lib/case-checks.js';
+import { TestCasesWorkbench, caseStatus, type CaseFilter } from './TestCasesWorkbench.js';
 import { RELEASE_RPC, type ReleasePrepared } from '../../../lib/release-contract.js';
 import { FIX_LOOP_LIMITS, type FixLoop } from '../../../lib/fix-loop.js';
 import { declined, type Message } from './approval-notice.js';
@@ -13,9 +13,13 @@ import { LocalSuiteDetail } from './LocalSuiteDetail.js';
 import { runSuiteJob, SuiteStoppedError } from './suite-job-rpc.js';
 import { SuiteRunProgress } from './SuiteRunProgress.js';
 import { SimulationsView, type SimulationsFocus } from './SimulationsView.js';
+import { CaseVariables } from './CaseVariables.js';
+import { ScenariosView } from './ScenariosView.js';
+import { useScenarioLibrary, type ScenarioLibraryControls, type ScenarioSelection } from './useScenarioLibrary.js';
+import { sameContext } from '../../../lib/preview-context-preset-contract.js';
 
 /**
- * The Tests tool: the agent's scenario suite as one table. Simulate runs the
+ * The Tests tool: a scenario catalogue with a selected case inspector. Simulate runs the
  * editor source; Org eval runs the generated `sf agent test` spec against the
  * published agent; a proposal open in the editor can run without being stored.
  * "Make these pass" hands failing cases to the thread agent as a bounded fix loop.
@@ -33,7 +37,7 @@ export interface TestsPaneProps {
   /** The source of an edit an agent is proposing, while the proposal is open. */
   proposalSource?: string | null;
   /** The single-conversation AI role-play lab. */
-  roleplay: ReactNode;
+  roleplay: ReactNode | ((library: ScenarioLibraryControls) => ReactNode);
   onAskAgent?(prompt: string): void;
   /** "Show path on graph": open the conversation map with this case pinned. */
   onShowPath?(caseId: string): void;
@@ -45,28 +49,43 @@ export interface TestsPaneProps {
   /** simulations.open: show the Simulations view, on this batch when named. */
   simulationsFocus?: SimulationsFocus | null;
   onSimulationsFocusHandled?(seq: number): void;
+  /** Return to a running role-play from the Studio run tray. */
+  roleplayFocus?: number;
 }
 
 type Suite = ScenarioSuite & { sha256?: string };
-interface Detail { caseId: string; outcome: CaseOutcome; notes: string[]; turns: Array<{ role: 'user' | 'agent'; text: string }>; observed?: CaseObserved; judge?: CaseOutcome; deterministic?: CaseOutcome; setupBlocked?: boolean }
-type Filter = 'all' | 'fail' | 'pass';
-type TestsView = 'cases' | 'org' | 'simulations' | 'roleplay';
+interface Detail extends CaseResult { caseId: string; turns: Array<{ role: 'user' | 'agent'; text: string }> }
+type TestsView = 'scenarios' | 'cases' | 'org' | 'simulations' | 'roleplay';
 type Notice = Message & { allowReads?: boolean };
 type Reply = { ok?: boolean; code?: string; error?: string; summary?: string } & Record<string, unknown>;
 
 const SPEC_BYTES = 256_000;
 
 const STYLES = `
-.sf-tp { container-type: inline-size; display: flex; flex-direction: column; gap: 10px; padding: 10px; color: var(--sf-text); font-size: 12px; min-height: 0; overflow: auto; flex: 1; }
+.sf-tp { container-type: inline-size; display: flex; flex-direction: column; gap: 10px; padding: 10px; box-sizing:border-box; color: var(--sf-text); font-size: 12px; min-height: 0; min-width:0; overflow: auto; flex: 1; }
+.sf-tp[data-view] { overflow:hidden; }
+.sf-tp > .sf-tp-head { flex-shrink:0; }
+.sf-tp-subview { display:flex; flex-direction:column; flex:1; min-width:0; min-height:0; overflow:auto; overscroll-behavior:contain; }
+.sf-tp-subview[hidden] { display:none; }
+.sf-tp-subview.is-workbench { overflow:hidden; }
+.sf-tp-cases-view { flex:1; display:flex; flex-direction:column; gap:10px; min-height:0; overflow:hidden; }
+.sf-tp-cases-view[hidden] { display:none; }
+.sf-tp-cases-view > :not(.sf-tp-cases-scroll) { flex-shrink:0; }
+.sf-tp-cases-scroll { flex:1; display:flex; flex-direction:column; min-height:0; min-width:0; overflow:hidden; overscroll-behavior:contain; }
+.sf-tp-cases-scroll > :not(.sf-cases) { flex-shrink:0; max-height:45%; overflow:auto; margin-bottom:10px; }
+.sf-tp-cases-scroll .sf-tp-table thead { position:sticky; top:0; z-index:1; background:var(--sf-bg); }
+.sf-tp-cases-scroll:focus-visible { outline:2px solid var(--sf-accent); outline-offset:-2px; }
 .sf-tp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sf-tp-head h2 { margin: 0; font-size: 13px; }
-.sf-tp-seg { display: inline-flex; border: 1px solid var(--sf-border); border-radius: 6px; overflow: hidden; }
-.sf-tp-seg button { border: 0; background: transparent; color: var(--sf-muted); padding: 3px 10px; font: inherit; cursor: pointer; }
+.sf-tp-seg { display: inline-flex; max-width:100%; border: 1px solid var(--sf-border); border-radius: 6px; overflow-x:auto; }
+.sf-tp-seg button { flex-shrink:0; border: 0; background: transparent; color: var(--sf-muted); padding: 3px 10px; min-height:30px; font: inherit; cursor: pointer; }
 .sf-tp-seg button[aria-pressed="true"] { background: var(--sf-soft); color: var(--sf-text); }
 .sf-tp-spacer { flex: 1; }
 .sf-tp-bar { display: flex; gap: 6px; flex-wrap: wrap; }
 .sf-tp-btn { border: 1px solid var(--sf-border); background: transparent; color: var(--sf-text); border-radius: 6px; padding: 3px 10px; font: inherit; cursor: pointer; white-space: nowrap; }
 .sf-tp-btn.is-primary { border-color: var(--sf-accent); color: var(--sf-accent); }
+.sf-tp-btn.is-danger { border-color: var(--sf-danger); color: var(--sf-danger); }
+.sf-tp-btn.is-danger:hover { background: color-mix(in srgb, var(--sf-danger) 10%, transparent); }
 .sf-tp-btn:disabled { opacity: 0.5; cursor: default; }
 .sf-tp-table { width: 100%; border-collapse: collapse; }
 .sf-tp-table th { text-align: left; font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--sf-muted); padding: 4px 6px; border-bottom: 1px solid var(--sf-border); }
@@ -74,6 +93,10 @@ const STYLES = `
 .sf-tp-row { cursor: pointer; }
 .sf-tp-row:hover td { background: var(--sf-soft); }
 .sf-tp-name { font-weight: 600; }
+.sf-tp-case-toggle { display:inline-flex; align-items:center; gap:6px; min-height:30px; max-width:100%; padding:4px 6px; white-space:normal; text-align:left; color:var(--sf-accent); }
+.sf-tp-case-toggle:focus-visible { outline:2px solid var(--sf-accent); outline-offset:2px; }
+.sf-tp-case-chevron { display:inline-block; flex:none; width:12px; font-size:14px; transition:transform .12s; }
+.sf-tp-case-toggle[aria-expanded="true"] .sf-tp-case-chevron { transform:rotate(90deg); }
 .sf-tp-sub { color: var(--sf-muted); overflow-wrap: anywhere; }
 .sf-tp-chip { border-radius: 999px; padding: 0 6px; border: 1px solid var(--sf-border); color: var(--sf-muted); font-size: 11px; white-space: nowrap; }
 .sf-tp-chip.is-pass { border-color: var(--sf-success); color: var(--sf-success); }
@@ -126,18 +149,10 @@ const STYLES = `
 .sf-tp-run progress { flex: 1; min-width: 80px; accent-color: var(--sf-accent); }
 .sf-tp-run-case { font-weight: 600; overflow-wrap: anywhere; }
 .sf-tp-chip.is-running { color: var(--sf-accent); border-color: var(--sf-accent); }
-@container (max-width: 480px) { .sf-tp-form { grid-template-columns: minmax(0, 1fr); } .sf-tp-table { table-layout: fixed; } .sf-tp-table td, .sf-tp-table th { overflow-wrap: anywhere; } .sf-tp-chip { white-space: normal; } }
+@container (max-width: 480px) { .sf-tp-form { grid-template-columns: minmax(0, 1fr); } .sf-tp-table { table-layout: fixed; } .sf-tp-table td, .sf-tp-table th { overflow-wrap: anywhere; } .sf-tp-chip,.sf-tp-check { white-space: normal; overflow-wrap:anywhere; } .sf-tp-head>.sf-tp-seg { flex-basis:100%; } .sf-tp-head>.sf-tp-sub { min-width:0; flex:1 1 160px; } .sf-tp-bar>.sf-tp-btn { min-height:32px; white-space:normal; } }
 `;
 /** Shared by the Org tests editor tab, which reuses the pane's tables, chips and buttons. */
 export const TESTS_PANE_STYLES = STYLES;
-
-const OUTCOME_LABEL: Record<CaseOutcome, string> = { pass: 'Pass', fail: 'Fail', inconclusive: 'Unclear' };
-function Chip({ outcome, title }: { outcome?: CaseOutcome; title?: string }) {
-  return <span className={`sf-tp-chip${outcome ? ` is-${outcome}` : ''}`} title={title}>{outcome ? OUTCOME_LABEL[outcome] : '—'}</span>;
-}
-
-const MARK: Record<CheckState, string> = { ok: '✓', ko: '✗', na: '–' };
-const RUBRIC_CLAMP = 140;
 
 /** "just now", "5 min ago", "3 h ago", else a short date. */
 export function relativeTime(at: number, now = Date.now()): string {
@@ -164,16 +179,7 @@ export function runSummary(cases: readonly ScenarioCase[], results: ScenarioSuit
 function evidenceOf(detail: Detail | undefined, saved: CaseResult | undefined): CaseResult | undefined {
   if (!detail) return saved;
   const reply = [...detail.turns].reverse().find(turn => turn.role === 'agent')?.text;
-  return { outcome: detail.outcome, runId: saved?.runId ?? '', at: saved?.at ?? Date.now(), notes: detail.notes, ...(detail.deterministic || saved?.deterministic ? { deterministic: detail.deterministic ?? saved?.deterministic } : {}), ...(detail.setupBlocked ? { setupBlocked: true } : {}), ...(saved?.assertions ? { assertions: saved.assertions } : {}), ...(detail.observed ? { observed: detail.observed } : {}), ...(detail.judge ? { judge: detail.judge } : {}), ...(reply ? { reply } : {}) };
-}
-
-function Rubric({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  if (!text) return null;
-  return <>
-    <div className={`sf-tp-rubric${open ? ' is-open' : ''}`}>{text}</div>
-    {text.length > RUBRIC_CLAMP && <button type="button" className="sf-tp-more" onClick={event => { event.stopPropagation(); setOpen(value => !value); }}>{open ? 'less' : 'more'}</button>}
-  </>;
+  return { outcome: detail.outcome, runId: saved?.runId ?? '', at: saved?.at ?? Date.now(), notes: detail.notes, ...(detail.deterministic || saved?.deterministic ? { deterministic: detail.deterministic ?? saved?.deterministic } : {}), ...(detail.setupBlocked ? { setupBlocked: true } : {}), ...(detail.stopped ? { stopped: true } : {}), ...(detail.turns.length ? { conversation: detail.turns.map(turn => ({ role: turn.role, message: turn.text })) } : saved?.conversation ? { conversation: saved.conversation } : {}), ...(saved?.conversationTruncated ? { conversationTruncated: true } : {}), ...(saved?.assertions ? { assertions: saved.assertions } : {}), ...(detail.observed ? { observed: detail.observed } : {}), ...(detail.judge ? { judge: detail.judge } : {}), ...(reply ? { reply } : {}) };
 }
 
 const shortDate = (at: number) => new Date(at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -217,6 +223,14 @@ export function TestsPane(props: TestsPaneProps) {
   const requestApproval = props.requestApproval ?? experimental_requestApproval;
   const [view, setView] = useState<TestsView>('cases');
   const [roleplayShown, setRoleplayShown] = useState(false);
+  const [simulationsShown, setSimulationsShown] = useState(false);
+  const [orgShown, setOrgShown] = useState(false);
+  const [scenariosShown, setScenariosShown] = useState(false);
+  const library = useScenarioLibrary({ pluginId, projectId, path, call, enabled: !props.casesOnly });
+  const [roleplayScenario, setRoleplayScenario] = useState<ScenarioSelection>();
+  const [batchScenario, setBatchScenario] = useState<ScenarioSelection>();
+  const scenarioSequence = useRef(0);
+  useEffect(() => { setRoleplayScenario(undefined); setBatchScenario(undefined); }, [pluginId, projectId, path]);
   const [suite, setSuite] = useState<Suite | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [details, setDetails] = useState<Record<string, Detail>>({});
@@ -233,12 +247,11 @@ export function TestsPane(props: TestsPaneProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const [startedAt, setStartedAt] = useState(0);
   const [notice, setNotice] = useState<Notice | null>(null);
-  const [expanded, setExpanded] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [comparison, setComparison] = useState<{ value: SuiteComparison; source: string; cases: string } | null>(null);
   const comparisonTarget = useRef('');
   comparisonTarget.current = JSON.stringify([projectId, path]);
-  const [filter, setFilter] = useState<Filter>('all');
+  const [filter, setFilter] = useState<CaseFilter>('all');
   const fileInput = useRef<HTMLInputElement>(null);
   const sequence = useRef(0);
   const alive = useRef(true);
@@ -266,7 +279,7 @@ export function TestsPane(props: TestsPaneProps) {
     }
   }, [path, rpc]);
 
-  useEffect(() => { setBusy(null); setSuite(null); setLoop(null); setDetails({}); setProposal({}); setComparison(null); setNotice(null); setExpanded(null); setAdding(false); setFilter('all'); setLoaded(false); }, [path, projectId]);
+  useEffect(() => { setBusy(null); setSuite(null); setLoop(null); setDetails({}); setProposal({}); setComparison(null); setNotice(null); setAdding(false); setFilter('all'); setLoaded(false); }, [path, projectId]);
   useEffect(() => { setProposal({}); }, [proposalSource]);
   useEffect(() => { if (visible) void load(); }, [visible, load]);
   useRealtime(STUDIO_CHANGED_CHANNEL, payload => {
@@ -429,32 +442,45 @@ export function TestsPane(props: TestsPaneProps) {
     return null;
   });
 
-  const showView = (next: TestsView) => { setView(next); if (next === 'roleplay') setRoleplayShown(true); };
-  useEffect(() => { if (props.simulationsFocus && !props.casesOnly) setView('simulations'); }, [props.simulationsFocus, props.casesOnly]);
+  const showView = (next: TestsView) => {
+    setView(next);
+    if (next === 'roleplay') setRoleplayShown(true);
+    if (next === 'simulations') setSimulationsShown(true);
+    if (next === 'org') setOrgShown(true);
+    if (next === 'scenarios') setScenariosShown(true);
+  };
+  useEffect(() => { if (props.simulationsFocus && !props.casesOnly) { setView('simulations'); setSimulationsShown(true); } }, [props.simulationsFocus, props.casesOnly]);
+  useEffect(() => { if (props.roleplayFocus !== undefined && !props.casesOnly) { setView('roleplay'); setRoleplayShown(true); } }, [props.roleplayFocus, props.casesOnly]);
   const switcher = props.casesOnly ? null : (
     <div className="sf-tp-seg" role="group" aria-label="Tests view">
+      <button type="button" title="Create reusable customer setups and starting variables." aria-pressed={view === 'scenarios'} onClick={() => showView('scenarios')}>Scenarios</button>
       <button type="button" title="Replay saved scenarios and check expected outcomes for this agent." aria-pressed={view === 'cases'} onClick={() => showView('cases')}>Test cases</button>
-      <button type="button" title="Browse local test suites and Salesforce Testing Center tests, runs and results." aria-pressed={view === 'org'} onClick={() => showView('org')}>Test catalogue</button>
       <button type="button" title="Run multiple AI customer conversations across scenarios and repeats." aria-pressed={view === 'simulations'} onClick={() => showView('simulations')}>Batch simulations</button>
       <button type="button" title="Explore one AI customer conversation with its setup, chat and traces." aria-pressed={view === 'roleplay'} onClick={() => showView('roleplay')}>Role-play</button>
     </div>
   );
-  const roleplayView = roleplayShown && <div hidden={view !== 'roleplay'} style={{ display: view === 'roleplay' ? 'flex' : 'none', flex: 1, minHeight: 0 }}>{roleplay}</div>;
-  const simulationsView = view === 'simulations' && <SimulationsView pluginId={pluginId} projectId={projectId} threadId={threadId} path={path} source={source} dirty={dirty}
-    visible={visible} onAskAgent={onAskAgent} focus={props.simulationsFocus ?? null} onFocusHandled={props.onSimulationsFocusHandled} call={props.call} />;
-  const renderLocalSuite = (suite: ScenarioSuite) => <LocalSuiteDetail key={`${projectId}:${suite.path}`} suite={suite} editor={props} Cases={TestsPane} />;
+  const browse = !props.casesOnly && <button className="sf-tp-btn" type="button" aria-pressed={view === 'org'} onClick={() => showView('org')}>Browse tests</button>;
+  const controls: ScenarioLibraryControls = { ...library, onManage: () => showView('scenarios') };
+  const scenariosView = scenariosShown && <div className="sf-tp-subview is-workbench" hidden={view !== 'scenarios'}>{path ? <ScenariosView key={JSON.stringify([pluginId, projectId, path])} library={controls} pluginId={pluginId} projectId={projectId} path={path} source={source} call={call}
+    onRoleplay={scenario => { setRoleplayScenario({ scenario, seq: ++scenarioSequence.current }); showView('roleplay'); }}
+    onBatch={scenario => { setBatchScenario({ scenario, seq: ++scenarioSequence.current }); showView('simulations'); }} /> : <p>Open an agent file to manage shared scenarios.</p>}</div>;
+  const roleplayView = roleplayShown && <div className="sf-tp-subview is-workbench" hidden={view !== 'roleplay'}>{typeof roleplay === 'function' ? roleplay({ ...controls, selection: roleplayScenario }) : roleplay}</div>;
+  const simulationsView = simulationsShown && <div className="sf-tp-subview" hidden={view !== 'simulations'}><SimulationsView pluginId={pluginId} projectId={projectId} threadId={threadId} path={path} source={source} dirty={dirty}
+    visible={visible && view === 'simulations'} onAskAgent={onAskAgent} focus={props.simulationsFocus ?? null} onFocusHandled={props.onSimulationsFocusHandled} scenarioLibrary={{ ...controls, selection: batchScenario }} call={props.call} /></div>;
+  const renderLocalSuite = (suite: ScenarioSuite) => <LocalSuiteDetail key={`${projectId}:${suite.path}`} suite={suite} editor={{ ...props, visible: visible && view === 'org' }} Cases={TestsPane} />;
+  const orgView = orgShown && <div className="sf-tp-subview is-workbench" hidden={view !== 'org'}><OrgTestsView key={`${pluginId}:${projectId}:${path}`} pluginId={pluginId} projectId={projectId} threadId={threadId} path={path} visible={visible && view === 'org'} onAskAgent={onAskAgent} call={props.call} requestApproval={props.requestApproval} renderLocalSuite={renderLocalSuite} /></div>;
 
   if (!path) {
-    return <section className="sf-tp" aria-label="Tests" data-testid="studio-tests-pane"><style>{STYLES}</style>
-      <div className="sf-tp-head"><h2>Tests</h2><span className="sf-tp-spacer" />{switcher}</div>
+    return <section className="sf-tp" data-view={view} aria-label="Tests" data-testid="studio-tests-pane"><style>{STYLES}</style>
+      <div className="sf-tp-head"><h2>Tests</h2><span className="sf-tp-spacer" />{switcher}{browse}</div>
       {view === 'cases' && <div className="sf-tp-empty">Open an agent file to test it.</div>}
-      {view === 'org' && <OrgTestsView pluginId={pluginId} projectId={projectId} threadId={threadId} path={path} visible={visible} onAskAgent={onAskAgent} call={props.call} requestApproval={props.requestApproval} renderLocalSuite={renderLocalSuite} />}
+      {scenariosView}
+      {orgView}
       {simulationsView}
       {roleplayView}
     </section>;
   }
 
-  const lastEval = suite?.lastEval;
   const cases = suite?.cases ?? [];
   const showProposal = Boolean(proposalSource);
   const progress = suite?.progress;
@@ -462,8 +488,7 @@ export function TestsPane(props: TestsPaneProps) {
   const loopLive = loop?.status === 'running';
   const summary = runSummary(cases, suite?.lastResults);
   const liveResults = progress && progress.mode === 'simulate' ? progress.results : undefined;
-  const outcomeOf = (id: string) => liveResults?.[id]?.outcome ?? suite?.lastResults?.[id]?.outcome;
-  const shown = cases.filter(c => filter === 'all' || progress?.caseIds.includes(c.id) || outcomeOf(c.id) === filter);
+  const remaining = cases.filter(c => !suite?.lastResults?.[c.id]).map(c => c.id);
   const fixCase = (c: ScenarioCase) => {
     const notes = evidenceOf(details[c.id], suite?.lastResults?.[c.id])?.notes ?? [];
     onAskAgent?.([
@@ -476,20 +501,20 @@ export function TestsPane(props: TestsPaneProps) {
   };
 
   return (
-    <section className="sf-tp" aria-label="Tests" data-testid="studio-tests-pane">
+    <section className="sf-tp" data-view={view} aria-label="Tests" data-testid="studio-tests-pane">
       <style>{STYLES}</style>
       <div className="sf-tp-head">
         <h2>Tests</h2>
         {suite && <span className="sf-tp-sub">{suite.path} · {cases.length} case{cases.length === 1 ? '' : 's'}</span>}
         <span className="sf-tp-spacer" />
-        {switcher}
+        {switcher}{browse}
       </div>
-      {view === 'cases' && <>
+      <div className="sf-tp-cases-view" hidden={view !== 'cases'}>
         {summary.ran > 0 && <div className="sf-tp-summary" data-testid="tests-summary">
           <span className="sf-tp-score" aria-label={`${summary.pass} of ${summary.ran} pass`}>{summary.pass}/{summary.ran}</span>
           <span className="sf-tp-passbar" aria-hidden="true"><i className="is-pass" style={{ width: `${(summary.pass / summary.ran) * 100}%` }} /><i className="is-fail" style={{ width: `${(summary.fail / summary.ran) * 100}%` }} /></span>
           <span className="sf-tp-chip">{hasRun ? 'Previous Simulate results' : 'Simulate'}</span>
-          <span className="sf-tp-sub">ran {relativeTime(summary.at)}{summary.ran < cases.length ? ` · ${cases.length - summary.ran} not run` : ''}</span>
+          <span className="sf-tp-sub">{summary.pass} passed · {summary.fail} failed · {cases.filter(c => caseStatus(suite?.lastResults?.[c.id]) === 'stopped').length} stopped · {remaining.length} not run · {relativeTime(summary.at)}</span>
           <span className="sf-tp-spacer" />
           <div className="sf-tp-seg" role="group" aria-label="Filter cases">
             <button type="button" aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>All {cases.length}</button>
@@ -499,6 +524,8 @@ export function TestsPane(props: TestsPaneProps) {
         </div>}
         <div className="sf-tp-bar" role="toolbar" aria-label="Test actions">
           <button type="button" className="sf-tp-btn is-primary" disabled={running || !cases.length || !source.trim()} onClick={() => void simulate()}>{busy === 'simulate' ? 'Running…' : 'Run all in Simulate'}</button>
+          {!running && remaining.length > 0 && remaining.length < cases.length && <button type="button" className="sf-tp-btn" disabled={!source.trim()} onClick={() => void simulate(remaining)}>Run remaining {remaining.length}</button>}
+          {activeJob && <button type="button" className="sf-tp-btn is-danger" onClick={() => void rpc(STUDIO_RPC.suiteStop, { jobId: activeJob }).then(() => load())}>Stop suite</button>}
           <button type="button" className="sf-tp-btn" disabled={running || !cases.length || !source.trim()} title="Run the saved source and editor draft on the same cases. Results do not replace ordinary suite results." onClick={() => void compare()}>{busy === 'compare' ? 'Comparing…' : 'Compare saved vs draft'}</button>
           <button type="button" className="sf-tp-btn" disabled={running || !cases.length} onClick={() => void perform('eval', evaluate)}>{busy === 'eval' || busy === 'reads' ? 'Running org eval…' : 'Run org eval'}</button>
           {showProposal && <button type="button" className="sf-tp-btn" disabled={running || !cases.length} onClick={() => void runProposal()}>{busy === 'proposal' ? 'Running…' : 'Run with proposal'}</button>}
@@ -511,12 +538,12 @@ export function TestsPane(props: TestsPaneProps) {
             title={dirty ? 'Save first: the agent starts from the file on disk.' : !failing.length ? 'Run in Simulate first; the fix loop takes the failing cases.' : undefined}
             onClick={() => void startLoop()}>{failing.length ? `Make ${failing.length === 1 ? 'this' : 'these'} pass` : 'Make these pass'}</button>}
         </div>
-        {activeJob && <button type="button" className="sf-tp-btn" onClick={() => void rpc(STUDIO_RPC.suiteStop, { jobId: activeJob }).then(() => load())}>Stop suite</button>}
         {hasRun && <SuiteRunProgress progress={progress} cases={busy?.startsWith('case:') ? cases.filter(c => busy === `case:${c.id}`) : cases} startedAt={startedAt} orgEval={busy === 'eval' || busy === 'reads'} />}
         {notice && <div className={`sf-tp-message is-${notice.tone}`} role={notice.tone === 'error' ? 'alert' : 'status'}>
           <span>{notice.text}</span>
           {notice.allowReads && <button type="button" className="sf-tp-btn" disabled={running} onClick={() => void allowReads()}>Allow reads…</button>}
         </div>}
+        <div className="sf-tp-cases-scroll">
         {comparison && <SuiteComparisonView comparison={comparison.value} cases={cases} stale={comparison.source !== source || comparison.cases !== JSON.stringify(suite?.cases)} />}
         {adding && <form className="sf-tp-form" aria-label="New test case" onSubmit={addCase}>
           <label>Name<input name="name" required maxLength={200} /></label>
@@ -547,74 +574,30 @@ export function TestsPane(props: TestsPaneProps) {
         </div>}
         {!loaded && !suite && <div className="sf-tp-empty">Loading cases…</div>}
         {loaded && !cases.length && <div className="sf-tp-empty">No cases yet. Add one, import a spec, or pin a conversation from Preview with Save as scenario.</div>}
-        {cases.length > 0 && <table className="sf-tp-table" data-testid="tests-table">
-          <thead><tr>
-            <th style={{ width: '26%' }}>Case</th><th>Expects</th><th>Simulate</th>
-            <th title={lastEval ? `${lastEval.org}, ${shortDate(lastEval.at)}${lastEval.perCase ? '' : '. The CLI reported totals only.'}` : 'Not run yet'}>Org eval{lastEval && !lastEval.perCase ? ' (totals)' : ''}</th>
-            {showProposal && <th>Proposal</th>}
-          </tr></thead>
-          <tbody>{shown.map(c => {
-            const open = expanded === c.id;
-            const pending = progress?.mode === 'simulate' && progress.caseIds.includes(c.id) && !progress.results[c.id];
-            const saved = pending ? undefined : liveResults?.[c.id] ?? suite?.lastResults?.[c.id];
-            const evidence = pending ? undefined : liveResults?.[c.id] ?? evidenceOf(details[c.id], saved);
-            const checks = caseChecks(c.expect, evidence);
-            const assertions = checks.filter(check => check.kind === 'topic' || check.kind === 'action' || check.kind === 'forbidden');
-            const rubric = [...(c.expect.maxLatencyMs !== undefined ? [`Responses ≤ ${c.expect.maxLatencyMs} ms`] : []), ...(c.expect.actionChecks?.map(actionCheckLabel) ?? []), ...(c.expect.stateChecks?.map(stateCheckLabel) ?? []), ...(c.expect.contains?.length ? [`Mentions ${c.expect.contains.map(text => `"${text}"`).join(', ')}`] : []), ...(c.expect.criteria ? [c.expect.criteria] : [])].join(' · ');
-            const simulated = saved?.outcome;
-            const multiTurn = c.utterances.length > 1;
-            const reason = failureReason(evidence);
-            const orgOutcome = lastEval?.results[c.id]?.outcome;
-            const active = pending && progress.currentCaseId === c.id;
-            return <Fragment key={c.id}>
-              <tr className="sf-tp-row" data-testid={`tests-row-${c.id}`} aria-expanded={open} onClick={() => setExpanded(open ? null : c.id)}>
-                <td><span className="sf-tp-name">{c.name}</span>
-                  {multiTurn && <span className="sf-tp-chip is-pinned">{c.utterances.length} turns</span>}
-                  {c.pinned && <span className="sf-tp-chip is-pinned" title={`Pinned from run ${c.pinned.runId}, ${shortDate(c.pinned.at)}`}>Pinned</span>}
-                  <div className="sf-tp-sub">“{c.utterances[0]}”</div></td>
-                <td>
-                  {assertions.length > 0 && <div className="sf-tp-checks">{assertions.map(check => <span key={`${check.kind}:${check.target}`} className={`sf-tp-check is-${check.state}`} title={check.actual}>
-                    {check.state === 'na' ? '' : `${MARK[check.state]} `}{check.kind === 'topic' ? `topic ${check.target}` : check.kind === 'forbidden' ? `Never ${check.target}` : check.target}</span>)}</div>}
-                  <Rubric text={rubric} />
-                  {!checks.length && <span className="sf-tp-sub">No checks</span>}
-                </td>
-                <td>{saved?.setupBlocked ? <span className="sf-tp-chip">Setup required</span> : pending ? <span className={`sf-tp-chip${active ? ' is-running' : ''}`}>{active ? 'Running…' : 'Queued'}</span> : <Chip outcome={busy === `case:${c.id}` ? undefined : simulated} />}{saved && <div className="sf-tp-sub">Checks: {saved.deterministic ?? 'not recorded'}<br />AI: {saved.judge ?? 'not evaluated'}</div>}</td>
-                <td>{orgOutcome ? <Chip outcome={orgOutcome} title={multiTurn ? suite?.lastEval?.historyReplay ? 'Final-turn replay with recorded history; earlier replies are fixed context. Use Simulate to rerun the entire conversation.' : 'Legacy evaluation tested only the opening message. Run a new evaluation to replay the final turn with history.' : undefined} />
-                  : <span className="sf-tp-na" title={multiTurn ? 'Final-turn replay with recorded history; earlier replies are fixed context. Use Simulate to rerun the entire conversation.' : 'Run org eval against the published agent.'}>Not run</span>}</td>
-                {showProposal && <td><Chip outcome={progress?.mode === 'proposal' ? progress.results[c.id]?.outcome : proposal[c.id]} /></td>}
-              </tr>
-              {open && <tr className="sf-tp-detail"><td colSpan={showProposal ? 5 : 4}>
-                {c.prerequisites?.length ? <div className="sf-tp-message is-muted"><strong>Setup required</strong><span>{c.prerequisites.join('; ')}</span><label><input type="checkbox" checked={prepared.includes(c.id)} onChange={e => setPrepared(ids => e.target.checked ? [...ids, c.id] : ids.filter(id => id !== c.id))} /> I prepared this case for this session</label><span>Message replay does not submit forms or complete asynchronous work. Simulated results do not prove live delivery.</span></div> : null}
-                {evidence && <p className="sf-tp-foot">Deterministic checks: {evidence.deterministic ?? 'not recorded'} · AI opinion: {evidence.judge ?? 'not evaluated'} · Trace: {evidence.observed?.traceComplete === false ? 'incomplete' : evidence.observed?.traced ? 'available' : 'unavailable'}</p>}
-                <div className="sf-tp-compare">
-                  <div><h4>Expected</h4><div className="sf-tp-list">
-                    {checks.length ? checks.map(check => <div key={`${check.kind}:${check.target}`} className="sf-tp-line"><span className="sf-tp-mark is-expect">•</span><span>{check.expected}</span></div>)
-                      : <div className="sf-tp-line">No checks</div>}
-                  </div></div>
-                  <div><h4>{evidence ? `Actual · Simulate ${saved ? relativeTime(saved.at) : 'this session'}` : 'Actual · not run yet'}</h4><div className="sf-tp-list">
-                    {checks.map(check => <div key={`${check.kind}:${check.target}`} className="sf-tp-line"><span className={`sf-tp-mark is-${check.state}`}>{MARK[check.state]}</span><span>{check.actual}</span></div>)}
-                  </div>
-                    {evidence?.reply && <p className="sf-tp-reply">Reply: <i>{evidence.reply}</i></p>}
-                  </div>
-                </div>
-                {evidence?.outcome === 'fail' && reason && <div className="sf-tp-why" role="note"><strong>Why it failed:</strong> {reason}</div>}
-                {evidence?.outcome === 'inconclusive' && reason && <div className="sf-tp-message is-muted" role="note">{reason}</div>}
-                <div className="sf-tp-bar">
-                  {onAskAgent && simulated === 'fail' && <button type="button" className="sf-tp-btn is-primary" onClick={() => fixCase(c)}>Fix this case</button>}
-                  {onShowPath && <button type="button" className="sf-tp-btn" onClick={() => onShowPath(c.id)}>Show path on graph</button>}
-                  <button type="button" className="sf-tp-btn" disabled={running || !source.trim()} onClick={() => void simulate([c.id])}>{busy === `case:${c.id}` ? 'Running…' : simulated ? 'Re-run' : 'Run in Simulate'}</button>
-                  <span className="sf-tp-spacer" />
-                  <button type="button" className="sf-tp-btn" disabled={running || cases.length < 2} title={cases.length < 2 ? 'A suite keeps at least one case.' : undefined}
-                    onClick={() => void perform('remove', () => save(cases.filter(row => row.id !== c.id)))}>Remove</button>
-                </div>
-              </td></tr>}
-            </Fragment>;
-          })}</tbody>
-        </table>}
-        {cases.length > 0 && !shown.length && <div className="sf-tp-empty">No {filter === 'fail' ? 'failing' : 'passing'} cases.</div>}
-        <p className="sf-tp-foot">Simulate runs the editor source{dirty ? ', including unsaved changes' : ''}. Org eval runs <code>sf agent test run-eval</code> against the agent published on the org. Multi-turn exports replay the final message with captured history; Simulate reruns all turns. A pass counts as Release eval evidence for the exported checks only.</p>
-      </>}
-      {view === 'org' && <OrgTestsView pluginId={pluginId} projectId={projectId} threadId={threadId} path={path} visible={visible} onAskAgent={onAskAgent} call={props.call} requestApproval={props.requestApproval} renderLocalSuite={renderLocalSuite} />}
+        {cases.length > 0 && <TestCasesWorkbench key={`${projectId}:${path}`} cases={cases}
+          results={Object.fromEntries(cases.map(c => [c.id, liveResults?.[c.id] ?? evidenceOf(details[c.id], suite?.lastResults?.[c.id])]))}
+          progress={progress} lastEval={suite?.lastEval}
+          proposal={showProposal ? progress?.mode === 'proposal' ? Object.fromEntries(Object.entries(progress.results).map(([id, result]) => [id, result.outcome])) : proposal : undefined}
+          filter={filter} onFilterChange={setFilter} running={running} sourceReady={Boolean(source.trim())} prepared={prepared}
+          onPreparedChange={(id, ready) => setPrepared(ids => ready ? [...ids, id] : ids.filter(value => value !== id))}
+          onRun={id => void simulate([id])} onFix={onAskAgent ? fixCase : undefined} onShowPath={onShowPath}
+          renderVariables={scenario => <CaseVariables key={scenario.id} scenario={scenario} path={path!} source={source} projectId={projectId} rpc={rpc} disabled={running} onSave={async (contextVariables, previous) => {
+            if (!suite?.sha256) throw Error('Reload test cases before saving variable changes.');
+            if (!sameContext(previous, scenario.contextVariables ?? [])) throw Error('This case has newer saved variables. Reload saved values before editing.');
+            const target = comparisonTarget.current;
+            setBusy('variables');
+            try {
+              const reply = await rpc(STUDIO_RPC.suiteSave, { cases: cases.map(c => c.id === scenario.id ? { ...c, contextVariables } : c), expectedSha256: suite.sha256 });
+              if (reply.ok === false || !reply.suite) throw Error(reply.error || 'The case variables could not be saved.');
+              if (alive.current && target === comparisonTarget.current) setSuite(reply.suite as Suite);
+            } finally { if (alive.current && target === comparisonTarget.current) setBusy(null); }
+          }} />}
+          onRemove={id => void perform('remove', () => save(cases.filter(c => c.id !== id)))} />}
+        <details className="sf-tp-foot"><summary>About Simulate and org eval</summary><p>Simulate runs the editor source{dirty ? ', including unsaved changes' : ''}. Org eval runs <code>sf agent test run-eval</code> against the agent published on the org. Multi-turn exports replay the final message with captured history; Simulate reruns all turns. A pass counts as Release eval evidence for the exported checks only.</p></details>
+        </div>
+      </div>
+      {scenariosView}
+      {orgView}
       {simulationsView}
       {roleplayView}
     </section>

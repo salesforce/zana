@@ -143,8 +143,7 @@ export default definePluginApp((app) => {
     scopes: ['thread', 'agent-session'],
     component: AgentforcePreviewPanel
   });
-  // The Assistant rail's Actions and Comments tabs beside the Studio; Studio renders them (studio-tool-bridge).
-  // Graph, Preview, Tests and Org preview are Studio view tabs, not host panels.
+  // Studio tools share the page's host panel; Studio retains their agent-owned state through portals.
   for (const tool of AGENT_SCRIPT_TOOLS) {
     if (!isPanelTool(tool.id)) continue;
     app.slots.threadPanelAction({

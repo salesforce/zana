@@ -1,7 +1,7 @@
 /** @vitest-environment happy-dom */
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { DEFAULT_LAYOUT, MAX_AGENTS, MAX_EDITOR_TABS, parseTab, readStudioLayout, useStudioLayout, viewTab, withoutTabs } from './studio-layout.js';
+import { DEFAULT_LAYOUT, MAX_AGENTS, MAX_EDITOR_TABS, dockStudioViews, parseTab, readStudioLayout, useStudioLayout, viewTab, withAgent, withoutTabs } from './studio-layout.js';
 
 beforeEach(() => localStorage.clear());
 afterEach(cleanup);
@@ -143,6 +143,103 @@ it('opens agents with a Script tab, keeps a workspace per agent and switches bet
   expect(result.current.state.tabs[0]).toMatchObject({ label: 'renamed' });
   act(() => result.current.patchWorkspace('missing.agent', { threadId: 'x' }));
   expect(result.current.state.workspaces['missing.agent']).toBeUndefined();
+});
+
+it('keeps Script and the requested Tests view when a full workspace switches agents and reloads', () => {
+  const { result } = renderHook(() => useStudioLayout('full-workspace'));
+  const path = 'GuiAgentReview.agent';
+  act(() => {
+    result.current.openAgent(path, 'GuiAgentReview');
+    for (let index = 0; index < 9; index++) result.current.openTab({ id: `apex:Dependency${index}`, kind: 'apex', label: `Dependency${index}`, target: `apex://Dependency${index}` });
+    result.current.openTab(viewTab('preview'));
+    result.current.openTab(viewTab('graph'));
+  });
+  expect(result.current.state.tabs).toHaveLength(MAX_EDITOR_TABS);
+  act(() => result.current.openTab(viewTab('tests')));
+  const expected = ['agent:GuiAgentReview.agent', ...Array.from({ length: 8 }, (_, index) => `apex:Dependency${index + 1}`), 'view:preview', 'view:graph', 'view:tests'];
+  expect(result.current.state.tabs.map(tab => tab.id)).toEqual(expected);
+  expect(result.current.state.activeTab).toBe('view:tests');
+  act(() => result.current.openAgent('Agent_Opp_1.agent', 'Agent_Opp_1'));
+  act(() => {
+    result.current.selectAgent(path);
+    result.current.openAgent(path, 'GuiAgentReview');
+  });
+  expect(result.current.state.tabs.map(tab => tab.id)).toEqual(expected);
+  expect(result.current.state.activeTab).toBe('view:tests');
+  const restored = readStudioLayout('salesforce:studio:full-workspace');
+  expect(restored.tabs.map(tab => tab.id)).toEqual(expected);
+  expect(restored.activeTab).toBe('view:tests');
+});
+
+it('opens host views without evicting document tabs and remembers each agent’s panel selection', () => {
+  const { result } = renderHook(() => useStudioLayout('docked'));
+  act(() => result.current.openPanelView('preview')); // no agent: no orphan workspace
+  expect(result.current.state.workspaces).toEqual({});
+  act(() => {
+    result.current.openAgent('a.agent', 'A');
+    for (let i = 0; i < 11; i++) result.current.openTab({ id: `apex:${i}`, kind: 'apex', label: `A${i}`, target: `apex://A${i}` });
+  });
+  const documents = result.current.state.tabs;
+  act(() => {
+    result.current.openPanelView('preview');
+    result.current.openPanelView('tests');
+    result.current.openPanelView('preview');
+  });
+  expect(result.current.state.tabs).toEqual(documents);
+  expect(result.current.state.activeTab).toBe('apex:10');
+  expect(result.current.state.workspaces['a.agent']).toMatchObject({ panelViews: ['preview', 'tests'], rail: 'preview' });
+  act(() => { result.current.openAgent('b.agent', 'B'); result.current.openPanelView('graph'); });
+  act(() => result.current.selectAgent('a.agent'));
+  expect(result.current.state.rail).toBe('preview');
+  expect(result.current.state.tabs).toEqual(documents);
+  const restored = readStudioLayout('salesforce:studio:docked');
+  expect(restored.workspaces['b.agent']).toMatchObject({ panelViews: ['graph'], rail: 'graph' });
+  expect(restored.workspaces['a.agent']).toMatchObject({ panelViews: ['preview', 'tests'], rail: 'preview' });
+});
+
+it('migrates saved editor views into each agent’s panel while keeping document focus', () => {
+  const { result } = renderHook(() => useStudioLayout('migration'));
+  act(() => {
+    result.current.openAgent('a.agent', 'A');
+    result.current.openTab(viewTab('graph'));
+    result.current.openTab(viewTab('tests'));
+    result.current.openAgent('b.agent', 'B');
+    result.current.openTab(viewTab('preview'));
+    result.current.selectTab('agent:b.agent');
+  });
+  act(() => result.current.dockViews());
+  expect(result.current.state.tabs.map(tab => tab.id)).toEqual(['agent:b.agent']);
+  expect(result.current.state.activeTab).toBe('agent:b.agent');
+  expect(result.current.state.workspaces['b.agent']).toMatchObject({ panelViews: ['preview'], rail: null });
+  act(() => result.current.selectAgent('a.agent'));
+  expect(result.current.state.activeTab).toBe('agent:a.agent');
+  expect(result.current.state.workspaces['a.agent']).toMatchObject({ panelViews: ['graph', 'tests'], rail: 'test' });
+  expect(dockStudioViews(result.current.state)).toBe(result.current.state);
+  const saved = JSON.parse(localStorage.getItem('salesforce:studio:migration')!);
+  saved.workspaces['a.agent'].panelViews = ['preview', 'preview', 'org-preview', 'invalid', 3];
+  saved.workspaces['b.agent'].panelViews = 'graph';
+  saved.workspaces['b.agent'].rail = 'org-preview';
+  localStorage.setItem('bounded', JSON.stringify(saved));
+  const bounded = readStudioLayout('bounded');
+  expect(bounded.workspaces['a.agent'].panelViews).toEqual(['preview', 'org-preview']);
+  expect(bounded.workspaces['b.agent'].panelViews).toBeUndefined();
+  expect(bounded.workspaces['b.agent'].rail).toBe('org-preview');
+  expect(dockStudioViews(DEFAULT_LAYOUT)).toBe(DEFAULT_LAYOUT);
+});
+
+it.each([0, MAX_EDITOR_TABS - 1])('repairs a full workspace missing Script without dropping its active tab at index %s', activeIndex => {
+  const tabs = Array.from({ length: MAX_EDITOR_TABS }, (_, index) => ({ id: `apex:Dependency${index}`, kind: 'apex' as const, label: `Dependency${index}`, target: `apex://Dependency${index}` }));
+  const activeTab = tabs[activeIndex].id;
+  const agent = ref('GuiAgentReview');
+  const workspace = { ...DEFAULT_LAYOUT, agents: [agent], activeAgent: agent.path, workspaces: { [agent.path]: { tabs, activeTab, bottomOpen: false, bottomTab: 'problems' as const, rail: null } } };
+  localStorage.setItem('missing-script', JSON.stringify(workspace));
+  for (const repaired of [readStudioLayout('missing-script'), withAgent(workspace, agent)]) {
+    expect(repaired.tabs).toHaveLength(MAX_EDITOR_TABS);
+    expect(repaired.tabs[0].id).toBe(`agent:${agent.path}`);
+    expect(repaired.tabs.some(tab => tab.id === activeTab)).toBe(true);
+    expect(repaired.activeTab).toBe(activeTab);
+    expect(repaired.tabs.some(tab => tab.id === tabs[activeIndex === 0 ? 1 : 0].id)).toBe(false);
+  }
 });
 
 it('closing an agent selects the right neighbour, else the left, and drops its workspace', () => {

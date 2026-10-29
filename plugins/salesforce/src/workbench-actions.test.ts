@@ -29,6 +29,43 @@ async function fixture(production = false, labTransport?: AgentforceTransport, d
   const action = (action: string, input: unknown = {}, context = ctx) => tool.execute({ action, input }, context) as Promise<any>;
   return { root, harness, action, exec, request, zcc };
 }
+it('lets assistants create shared scenarios locally with project and revision boundaries', async () => {
+  const db = createSqliteDatabase(':memory:');
+  const database = { runScript: (sql: string) => { db.exec(sql); }, prepare: (sql: string) => db.prepare(sql), migrate: (statements: string[]) => statements.forEach(sql => db.exec(sql)), transaction: (fn: () => unknown) => db.transaction(fn)() };
+  const { action, root, exec, request } = await fixture(false, undefined, database);
+  disposals.push(() => db.close());
+  writeFileSync(join(root, 'Bot.agent'), 'config:');
+  const list = await action('scenarios.list', { agentPath: 'Bot.agent' }); expect(list.scenarios).toHaveLength(3);
+  const input = { agentPath: 'Bot.agent', name: 'Verified customer', ...list.scenarios[0], id: undefined, contextVariables: [{ name: 'verified', type: 'Boolean', value: false }] };
+  input.name = 'Verified customer';
+  const saved = await action('scenarios.save', input); expect(saved).toMatchObject({ ok: true, scenario: { revision: 1, contextVariables: input.contextVariables } });
+  expect((await action('scenarios.list', { agentPath: 'Bot.agent' }, { ...ctx, projectId: 'other' })).scenarios).toHaveLength(3);
+  expect(await action('scenarios.save', { ...input, projectId: 'forged', id: saved.scenario.id, expectedRevision: 1, name: 'Edited' })).toMatchObject({ ok: true, scenario: { revision: 2 } });
+  expect(await action('scenarios.save', { ...input, id: saved.scenario.id, expectedRevision: 1 })).toMatchObject({ ok: false, code: 'revision_mismatch' });
+  expect(await action('scenarios.list', { agentPath: '../Outside.agent' })).toMatchObject({ ok: false });
+  const outside = realpathSync(mkdtempSync(join(tmpdir(), 'scenario-outside-'))); roots.push(outside); writeFileSync(join(outside, 'Secret.agent'), 'config:'); symlinkSync(join(outside, 'Secret.agent'), join(root, 'Escape.agent'));
+  expect(await action('scenarios.list', { agentPath: 'Escape.agent' })).toMatchObject({ ok: false });
+  expect(await action('scenarios.list', { agentPath: 'Bot.agent' }, { ...ctx, projectId: '' })).toMatchObject({ ok: false });
+  expect(await action('scenarios.remove', { agentPath: 'Bot.agent', id: saved.scenario.id, expectedRevision: 2 })).toEqual({ ok: true });
+  expect((await action('capabilities')).actions).toContainEqual(expect.objectContaining({ action: 'scenarios.save' }));
+  expect(request).not.toHaveBeenCalled(); expect(exec.mock.calls.every(([args]) => args[0] === 'org')).toBe(true);
+});
+it('lets an assistant create multiple typed test cases and update only the revision it read', async () => {
+  const { action, harness } = await fixture();
+  const created = await action('draft.create', { name: 'Cases', apiName: 'Cases' });
+  const cases = [false, true].map((verified, i) => ({ id: `c${i}`, name: `Verified ${verified}`, utterances: ['Can you help?'], expect: { contains: ['help'] }, contextVariables: [{ name: 'verified', type: 'Boolean', value: verified }] }));
+  const saved = await action('suites.save', { agentPath: created.file.path, cases });
+  expect(saved).toMatchObject({ ok: true, suite: { cases } });
+  expect((await action('capabilities')).actions).toContainEqual(expect.objectContaining({ action: 'suites.save' }));
+  const listed = await action('suites.list');
+  expect(listed.suites[0].sha256).toBe(saved.suite.sha256);
+  expect(await action('suites.save', { agentPath: created.file.path, cases })).toMatchObject({ ok: false, code: 'sha_mismatch' });
+  expect(await action('suites.save', { path: '../../escape.scenario.json', cases })).toMatchObject({ ok: false, code: 'path_refused' });
+  const updated = await action('suites.save', { agentPath: created.file.path, cases: [...cases, { ...cases[0], id: 'third' }], expectedSha256: saved.suite.sha256 });
+  expect(updated.suite.cases).toHaveLength(3);
+  const cli = await harness.cli!.run(['action', 'suites.save', '--input', JSON.stringify({ agentPath: created.file.path, cases, expectedSha256: updated.suite.sha256 })], { pluginId: 'salesforce', argv: [], projectId: 'p' });
+  expect(JSON.parse(cli.stdout!)).toMatchObject({ ok: true, suite: { cases } });
+});
 it('uses identical scoped creation and file revisions from tools, UI RPC and CLI', async () => {
   const { action, harness, root } = await fixture();
   const destination = await action('draft.destination'); expect(destination.initializesProject).toBe(true);
@@ -132,6 +169,35 @@ it('runs Agentforce lab rehearsals on a sandbox without asking', async () => {
   expect(await harness.callRpc('agentLab.start', { projectId: 'p', engine: 'rehearsal', source: 'config:\n  agent_name: Help' })).toMatchObject({ ok: true, data: { engine: 'rehearsal', orgAlias: 'dev' } });
   expect(confirmation).not.toHaveBeenCalled();
   expect(bootstrap).toHaveBeenCalledOnce();
+});
+it('reconnects server-owned role-play after its RPC returns without crossing project, path or org scope', async () => {
+  let finishTurn!: () => void;
+  const heldTurn = new Promise<void>(resolve => { finishTurn = resolve; });
+  const request = vi.fn(async (_token: string, _path: string, input: unknown) => {
+    const judging = JSON.stringify(input).includes('Evaluate a test transcript');
+    if (!judging) await heldTurn;
+    return { host: 'test.api.salesforce.com', body: { generationDetails: { generations: [{ content: judging
+      ? JSON.stringify({ outcome: 'pass', reason: 'Question answered', evidence: ['The agent replied.'] }) : 'I can help.' }] } } };
+  });
+  const { harness } = await fixture(false, { bootstrap: async () => 'PRIVATE_JWT', request } as unknown as AgentforceTransport);
+  const owner = { projectId: 'p', orgAlias: 'dev', path: 'Bot.agent' };
+  const started = await harness.callRpc('agentLab.run', { ...owner, engine: 'rehearsal', source: 'start_agent:\n', threadId: 'original-thread',
+    contextVariables: [{ name: 'verified', type: 'Boolean', value: true }],
+    scenario: { persona: 'Cooperative', goal: 'Get help', opening: 'Help me', criteria: 'Agent replies', maxTurns: 1 } }) as any;
+  expect(started).toMatchObject({ ok: true, data: { busy: true, execution: { totalTurns: 1 } } });
+  const id = started.data.id;
+  expect(await harness.callRpc('agentLab.list', owner)).toMatchObject({ ok: true, data: [{ id, path: 'Bot.agent', threadId: 'original-thread' }] });
+  expect(await harness.callRpc('agentLab.list', { ...owner, projectId: 'other' })).toEqual({ ok: true, data: [] });
+  expect(await harness.callRpc('agentLab.get', { ...owner, id, projectId: 'other' })).toMatchObject({ ok: false, error: expect.stringContaining('another project') });
+  expect(await harness.callRpc('agentLab.get', { ...owner, id, path: 'Other.agent' })).toMatchObject({ ok: false, error: expect.stringContaining('another agent or org') });
+  expect(await harness.callRpc('agentLab.get', { ...owner, id, orgAlias: 'different' })).toMatchObject({ ok: false, error: expect.stringContaining('another agent or org') });
+  finishTurn();
+  await vi.waitFor(async () => expect(await harness.callRpc('agentLab.get', { ...owner, id, includeSource: true })).toMatchObject({ ok: true,
+    data: { source: 'start_agent:\n', busy: false, threadId: 'original-thread', contextVariables: [{ name: 'verified', type: 'Boolean', value: true }], execution: { phase: 'done', verdict: { outcome: 'pass' } } } }));
+  const restored = await harness.callRpc('agentLab.get', { ...owner, id });
+  expect(JSON.stringify(restored)).not.toContain('PRIVATE_JWT');
+  expect(await harness.callRpc('agentLab.end', { ...owner, id })).toMatchObject({ ok: true, data: { closed: true } });
+  expect(await harness.callRpc('agentLab.list', owner)).toEqual({ ok: true, data: [] });
 });
 it('lets an agent read the preview context, manage presets and start a run from one', async () => {
   const { request, transport } = previewApi();

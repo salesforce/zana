@@ -1,5 +1,5 @@
 import { basename, join, relative } from 'node:path';
-import { parsePackageDirectories, resolveUnderRoot } from './dx-project.js';
+import { parsePackageDirectories, resolveUnderRoot, runProjectScan } from './dx-project.js';
 import { parseActionTarget, type ActionParameter } from './agent-action-model.js';
 import type { ResolvedOrg, SalesforceDeps } from './types.js';
 import type { FlowVisualization } from './flow-visualizer.js';
@@ -53,6 +53,10 @@ const ACTION_SUFFIXES = ['.cls', '.flow-meta.xml'];
 
 /** Scan only package roots, never follow a link outside the registered project. */
 export function indexProjectActions(root: string, deps: SalesforceDeps): ProjectActionIndex {
+  return runProjectScan(indexProjectActionsSteps(root, deps));
+}
+
+export function* indexProjectActionsSteps(root: string, deps: SalesforceDeps): Generator<void, ProjectActionIndex> {
   const realRoot = deps.realpath(root);
   const config = resolveUnderRoot(realRoot, 'sfdx-project.json', deps.realpath);
   const configText = config ? boundedRead(deps, config) : '';
@@ -66,6 +70,7 @@ export function indexProjectActions(root: string, deps: SalesforceDeps): Project
   let visited = 0;
   let incomplete = false;
   while (queue.length && visited < 6000) {
+    yield;
     const next = queue.shift()!;
     const path = resolveUnderRoot(realRoot, next.path, deps.realpath);
     if (!path || seen.has(path)) continue;
@@ -74,6 +79,7 @@ export function indexProjectActions(root: string, deps: SalesforceDeps): Project
     let children: string[];
     try { children = deps.readdir(path); } catch { continue; }
     for (const name of children) {
+      yield;
       if (++visited > 6000) { incomplete = true; break; }
       // Agent bundles hold no Apex or Flows, and a large project has hundreds of them.
       if (['node_modules', '.git', '.sf', '.sfdx', 'dist', '.zcc', 'aiAuthoringBundles'].includes(name)) continue;

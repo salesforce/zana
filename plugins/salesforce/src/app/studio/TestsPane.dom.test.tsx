@@ -1,13 +1,16 @@
 /** @vitest-environment happy-dom */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { starterScenarios } from '../../../lib/scenario-library-contract.js';
 import { TestsPane, expectLines, fixLoopPrompt, relativeTime, runSummary, type TestsPaneProps } from './TestsPane.js';
 import type { ScenarioCase, ScenarioSuite } from '../../../lib/studio-contract.js';
 import type { FixLoop } from '../../../lib/fix-loop.js';
+import { clearStudioRunWorkspaces } from './run-workspaces.js';
 
 const PATH = 'force-app/main/default/aiAuthoringBundles/MyBot/MyBot.agent';
 let realtime: ((payload: unknown) => void) | null = null;
 beforeEach(() => {
+  clearStudioRunWorkspaces();
   realtime = null;
   (globalThis as Record<string, unknown>).__ZCC_PLUGIN_RUNTIME__ = { useRealtime: (_c: string, h: (p: unknown) => void) => { realtime = h; } };
 });
@@ -35,7 +38,10 @@ type Handler = (args: Record<string, unknown>) => unknown;
 function setup(overrides: Partial<TestsPaneProps> = {}, handlers: Record<string, Handler> = {}) {
   const table: Record<string, Handler> = {
     'studio.suites.list': () => ({ ok: true, suites: [suite()] }),
+    'studio.scenarios.list': () => ({ ok: true, scenarios: starterScenarios() }),
     'studio.loop.get': () => ({ ok: true, loop: null }),
+    'agentPreview.presets.list': () => ({ ok: true, presets: [{ id: 'customer', name: 'Customer', revision: 1, values: [{ name: 'verified', type: 'Boolean', value: false }], fields: [] }] }),
+    'agentPreview.context': () => ({ ok: true, fields: [] }),
     ...handlers
   };
   const jobs = new Map<string, Promise<unknown>>();
@@ -63,6 +69,34 @@ function setup(overrides: Partial<TestsPaneProps> = {}, handlers: Record<string,
 const button = (name: RegExp | string) => screen.getByRole('button', { name }) as HTMLButtonElement;
 const calls = (call: ReturnType<typeof setup>['call'], method: string) => call.mock.calls.filter(([, m, args]) => method === 'studio.suites.run' ? m === 'studio.suites.start' && !(args as Record<string, unknown>).compare : method === 'studio.suites.compare' ? m === 'studio.suites.start' && (args as Record<string, unknown>).compare === true : m === method).map(([, , args]) => args as Record<string, unknown>);
 
+it('saves a reused preset on one case with the suite revision and preserves all other case data', async () => {
+  const { call } = setup({}, { 'studio.suites.save': args => ({ ok: true, suite: suite({ cases: args.cases as ScenarioCase[], sha256: 'sha-2' } as any) }) });
+  await screen.findByTestId('tests-row-refund'); fireEvent.click(button('Details for Refund'));
+  fireEvent.click(screen.getByRole('tab', { name: 'Variables' }));
+  await screen.findByRole('option', { name: 'Customer · revision 1' });
+  fireEvent.change(screen.getByLabelText('Variable preset'), { target: { value: 'customer' } });
+  fireEvent.click(button('Save case variables')); await screen.findByText(/Starting variables saved/);
+  expect(calls(call, 'studio.suites.save')).toEqual([{ projectId: 'p1', agentPath: PATH, expectedSha256: 'sha-1', cases: [
+    { ...suite().cases[0], contextVariables: [{ name: 'verified', type: 'Boolean', value: false }] }, suite().cases[1],
+  ] }]);
+  expect(button('Save case variables').disabled).toBe(true);
+  fireEvent.click(button('Details for Late order')); fireEvent.click(screen.getByRole('tab', { name: 'Variables' }));
+  expect(screen.queryByLabelText('verified value')).toBeNull();
+});
+
+it.each(['conflict', 'missing-response', 'missing-revision'])('keeps case variable drafts on %s and reports the save failure', async failure => {
+  const { call } = setup({}, {
+    'studio.suites.list': () => ({ ok: true, suites: [{ ...suite(), ...(failure === 'missing-revision' ? { sha256: undefined } : {}) }] }),
+    'studio.suites.save': () => failure === 'conflict' ? { ok: false, error: 'Suite changed on disk' } : { ok: true },
+  });
+  await screen.findByTestId('tests-row-refund'); fireEvent.click(button('Details for Refund'));
+  fireEvent.click(screen.getByRole('tab', { name: 'Variables' })); await screen.findByRole('option', { name: 'Customer · revision 1' });
+  fireEvent.change(screen.getByLabelText('Variable preset'), { target: { value: 'customer' } }); fireEvent.click(button('Save case variables'));
+  await screen.findByText(failure === 'conflict' ? 'Suite changed on disk' : failure === 'missing-revision' ? 'Reload test cases before saving variable changes.' : 'The case variables could not be saved.');
+  expect((screen.getByLabelText('verified value') as HTMLSelectElement).value).toBe('false');
+  expect(calls(call, 'studio.suites.save')).toHaveLength(failure === 'missing-revision' ? 0 : 1);
+});
+
 it('describes expectations and the fix-loop prompt', () => {
   expect(expectLines({ topic: 'T', actions: ['A', 'B'], contains: ['x'], criteria: 'Be kind.' })).toEqual(['Topic T', 'Calls A, B', 'Mentions "x"', 'Be kind.']);
   expect(expectLines({})).toEqual([]);
@@ -76,10 +110,10 @@ it('describes expectations and the fix-loop prompt', () => {
 it('asks for a file, and keeps the role-play view without one', () => {
   const { call } = setup({ path: null });
   const views = within(screen.getByRole('group', { name: 'Tests view' })).getAllByRole('button');
-  expect(views.map(view => view.textContent)).toEqual(['Test cases', 'Test catalogue', 'Batch simulations', 'Role-play']);
+  expect(views.map(view => view.textContent)).toEqual(['Scenarios', 'Test cases', 'Batch simulations', 'Role-play']);
   expect(views.map(view => view.title)).toEqual([
+    'Create reusable customer setups and starting variables.',
     'Replay saved scenarios and check expected outcomes for this agent.',
-    'Browse local test suites and Salesforce Testing Center tests, runs and results.',
     'Run multiple AI customer conversations across scenarios and repeats.',
     'Explore one AI customer conversation with its setup, chat and traces.'
   ]);
@@ -108,22 +142,18 @@ it('keeps embedded local suites focused on cases without duplicate view navigati
   expect(button('Run all in Simulate')).toBeTruthy();
 });
 
-it('lists the cases with pinned, multi-turn and expectation hints', async () => {
+it('lists concise cases and opens a separate inspector with real run actions', async () => {
   const { call } = setup();
-  expect(await screen.findByTestId('tests-table')).toBeTruthy();
+  await screen.findByTestId('tests-cases-workbench');
   expect(calls(call, 'studio.suites.list')[0]).toEqual({ projectId: 'p1', agentPath: PATH });
-  const refund = screen.getByTestId('tests-row-refund');
-  expect(within(refund).getByText('Pinned').getAttribute('title')).toContain('run-7');
-  expect(within(refund).getByText('topic Billing').className).toContain('is-na');
-  expect(within(refund).getByText('Mentions "refund"')).toBeTruthy();
-  const late = screen.getByTestId('tests-row-late');
-  expect(within(late).getByText('“Where is it?”')).toBeTruthy();
-  expect(within(late).getByText('2 turns')).toBeTruthy();
-  expect(within(late).getByText('Not run').getAttribute('title')).toBe('Final-turn replay with recorded history; earlier replies are fixed context. Use Simulate to rerun the entire conversation.');
-  expect(within(refund).getByText('Not run').getAttribute('title')).toContain('published agent');
+  expect(within(screen.getByTestId('tests-row-refund')).getByText('Pinned').title).toContain('run-7');
+  expect(within(screen.getByTestId('tests-row-late')).getByText('2 turns')).toBeTruthy();
+  fireEvent.click(button('Details for Late order'));
+  const detail = screen.getByRole('region', { name: 'Case details' });
+  expect(within(detail).getByText('This case has not run yet')).toBeTruthy();
+  fireEvent.click(screen.getByRole('tab', { name: 'Expectations' }));
+  expect(screen.getByText('Order 42')).toBeTruthy();
   expect(screen.queryByTestId('tests-summary')).toBeNull();
-  expect(screen.getByText('tests/MyBot.scenario.json · 2 cases')).toBeTruthy();
-  expect(screen.queryByText('Proposal')).toBeNull();
   expect(button(/Make these pass/).disabled).toBe(true);
 });
 
@@ -143,29 +173,29 @@ it('runs all cases in Simulate, then one, and explains a failing row', async () 
   const { call, props } = setup({}, {
     'studio.suites.run': () => ({ ok: true, suite: { ...ran, sha256: undefined }, details: [{ caseId: 'late', outcome: 'fail', notes: ['Action "Lookup" not called.'], turns: [{ role: 'user', text: 'Where is it?' }, { role: 'agent', text: 'I cannot tell.' }] }] })
   });
-  await screen.findByTestId('tests-table');
+  await screen.findByTestId('tests-cases-workbench');
   fireEvent.click(button('Run all in Simulate'));
-  await waitFor(() => expect(within(screen.getByTestId('tests-row-late')).getByText('Fail')).toBeTruthy());
+  await waitFor(() => expect(within(screen.getByTestId('tests-row-late')).getByText('Failed')).toBeTruthy());
   expect(calls(call, 'studio.suites.run')[0]).toMatchObject({ projectId: 'p1', agentPath: PATH, path: 'tests/MyBot.scenario.json', source: 'config: editor', engine: 'preview', startedByUser: true, threadId: 't1' });
-  expect(within(screen.getByTestId('tests-row-late')).getByText('✗ Lookup')).toBeTruthy();
   expect(screen.getByTestId('tests-summary').textContent).toContain('1/2');
   fireEvent.click(screen.getByTestId('tests-row-late'));
-  expect(screen.getByRole('note').textContent).toBe('Why it failed: Action "Lookup" not called.');
+  expect(screen.getByText('Action "Lookup" not called.')).toBeTruthy();
   expect(screen.getByText('Not called')).toBeTruthy();
   expect(screen.getByText('I cannot tell.')).toBeTruthy();
-  expect(screen.getByText('AI opinion: Gives a date.')).toBeTruthy();
+  fireEvent.click(screen.getByRole('tab', { name: 'Expectations' }));
+  expect(screen.getByText('Gives a date.')).toBeTruthy();
+  fireEvent.click(screen.getByRole('tab', { name: 'Result' }));
   fireEvent.click(button('Fix this case'));
   expect(props.onAskAgent).toHaveBeenCalledWith(expect.stringContaining('Observed: Action "Lookup" not called.'));
-  fireEvent.click(button('Re-run'));
+  fireEvent.click(button('Run case again'));
   await waitFor(() => expect(calls(call, 'studio.suites.run')).toHaveLength(2));
   expect(calls(call, 'studio.suites.run')[1]).toMatchObject({ caseIds: ['late'] });
-  fireEvent.click(screen.getByTestId('tests-row-late'));
-  expect(screen.queryByText('Fix this case')).toBeNull();
+  expect(calls(call, 'studio.suites.run')).toHaveLength(2);
 });
 
 it('reports a failed run', async () => {
   setup({}, { 'studio.suites.run': () => ({ ok: false, error: 'A suite is already running for this project.' }) });
-  await screen.findByTestId('tests-table');
+  await screen.findByTestId('tests-cases-workbench');
   fireEvent.click(button('Run all in Simulate'));
   expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'A suite is already running for this project.');
 });
@@ -193,7 +223,7 @@ it('recovers a running suite, updates rows live and filters progress events by p
   active = { ...active, progress: { ...active.progress!, currentCaseId: 'late', stage: 'judging', completed: 1, results: { refund: { outcome: 'pass', runId: 'new', at: 2, reply: 'Live reply' } } } };
   await act(async () => { realtime?.({ kind: 'suite-progress', projectId: 'p1', path: active.path }); });
   expect(screen.getByRole('status').textContent).toContain('1 of 2 cases complete');
-  expect(within(screen.getByTestId('tests-row-refund')).getByText('Pass')).toBeTruthy();
+  expect(within(screen.getByTestId('tests-row-refund')).getByText('Passed')).toBeTruthy();
   fireEvent.click(screen.getByTestId('tests-row-refund'));
   expect(screen.getByText('Live reply')).toBeTruthy();
   active = suite({ lastResults: { refund: { outcome: 'pass', runId: 'new', at: 2 } } });
@@ -207,7 +237,7 @@ it('polls active progress after missed realtime messages and stops polling when 
   const active = suite({ progress: { id: 'r', mode: 'proposal', startedAt: Date.now(), caseIds: ['late'], completed: 1, stage: 'saving', results: { late: { outcome: 'pass', runId: 'r', at: 2 } } } });
   const { call, props, view } = setup({ proposalSource: 'candidate' }, { 'studio.suites.list': () => ({ ok: true, suites: [active] }) });
   await screen.findByTestId('tests-run-progress');
-  expect(within(screen.getByTestId('tests-row-late')).getByText('Pass')).toBeTruthy();
+  expect(within(screen.getByTestId('tests-row-late')).getByText('Proposal: Passed')).toBeTruthy();
   vi.useFakeTimers();
   try {
     const count = calls(call, 'studio.suites.list').length;
@@ -230,11 +260,13 @@ it('polls active progress after missed realtime messages and stops polling when 
 it('runs the org eval and shows per-case and totals-only results', async () => {
   const evaluated = suite({ lastEval: { at: 3, org: 'dev', orgId: '00D1', passed: false, specPath: 'tests/MyBot.eval.yaml', perCase: true, historyReplay: true, results: { refund: { outcome: 'pass' }, late: { outcome: 'fail' } }, multiTurn: ['late'] } });
   const { call } = setup({}, { 'studio.suites.eval': () => ({ ok: true, summary: 'Eval failed (1 failure(s)) for v-1', suite: evaluated }) });
-  await screen.findByTestId('tests-table');
+  await screen.findByTestId('tests-cases-workbench');
   fireEvent.click(button('Run org eval'));
   expect(await screen.findByText('Eval failed (1 failure(s)) for v-1')).toBeTruthy();
   expect(calls(call, 'studio.suites.eval')[0]).toEqual({ projectId: 'p1', agentPath: PATH });
-  expect(within(screen.getByTestId('tests-row-late')).getByText('Fail').getAttribute('title')).toBe('Final-turn replay with recorded history; earlier replies are fixed context. Use Simulate to rerun the entire conversation.');
+  fireEvent.click(screen.getByTestId('tests-row-late'));
+  expect(screen.getByText('Failed · dev')).toBeTruthy();
+  expect(screen.getByText(/Final-turn replay with recorded history/)).toBeTruthy();
   cleanup();
   setup({}, { 'studio.suites.list': () => ({ ok: true, suites: [suite({ lastEval: { ...evaluated.lastEval!, perCase: false } })] }) });
   expect(await screen.findByText('Org eval (totals)')).toBeTruthy();
@@ -247,7 +279,7 @@ it('asks for read approval on a production org, then reruns the eval', async () 
     'release.prepare': () => ({ ok: true, data: { request: { binding: { action: 'org.read', target: '00D1', targetLabel: 'prod (production)', subject: 'MyBot' }, title: 'Allow reads' } } }),
     'release.run': () => ({ ok: true, summary: 'Reading prod allowed' })
   });
-  await screen.findByTestId('tests-table');
+  await screen.findByTestId('tests-cases-workbench');
   fireEvent.click(button('Run org eval'));
   expect(await screen.findByText(/needs your approval/)).toBeTruthy();
   fireEvent.click(button('Allow reads…'));
@@ -266,7 +298,7 @@ it('handles declined, refused and unneeded read approvals', async () => {
     'release.prepare': () => prepare,
     'release.run': () => ({ ok: false, error: 'This approval expired.' })
   });
-  await screen.findByTestId('tests-table');
+  await screen.findByTestId('tests-cases-workbench');
   const refuse = async () => { evalReply = refused; fireEvent.click(button('Run org eval')); await screen.findByText(/needs your approval/); };
   await refuse();
   requestApproval.mockResolvedValueOnce({ approved: false, reason: 'cancelled' });
@@ -291,26 +323,26 @@ it('runs an open proposal without storing it', async () => {
   const { call, view, props } = setup({ proposalSource: 'config: proposed' }, {
     'studio.suites.run': () => ({ ok: true, results: { refund: { outcome: 'pass' }, late: { outcome: 'inconclusive' } } })
   });
-  await screen.findByTestId('tests-table');
-  expect(screen.getByText('Proposal')).toBeTruthy();
+  await screen.findByTestId('tests-cases-workbench');
+  expect(screen.getAllByText('Proposal').length).toBeGreaterThan(0);
   fireEvent.click(button('Run with proposal'));
   expect(await screen.findByText(/Its results are not saved/)).toBeTruthy();
   expect(calls(call, 'studio.suites.run')[0]).toMatchObject({ source: 'config: proposed', store: false, engine: 'preview', startedByUser: true });
-  expect(within(screen.getByTestId('tests-row-late')).getByText('Unclear')).toBeTruthy();
+  expect(within(screen.getByTestId('tests-row-late')).getByText('Proposal: Needs review')).toBeTruthy();
   view.rerender(<TestsPane {...props} proposalSource={null} />);
   expect(screen.queryByText('Proposal')).toBeNull();
 });
 
 it('reports a failed proposal run', async () => {
   setup({ proposalSource: 'x' }, { 'studio.suites.run': () => ({ ok: false }) });
-  await screen.findByTestId('tests-table');
+  await screen.findByTestId('tests-cases-workbench');
   fireEvent.click(button('Run with proposal'));
   expect(await screen.findByText('The proposal could not run.')).toBeTruthy();
 });
 
 it('adds a case, validates the form and removes a case', async () => {
   const { call } = setup({}, { 'studio.suites.save': args => ({ ok: true, suite: suite({ cases: args.cases as never, sha256: 'sha-2' } as never) }) });
-  await screen.findByTestId('tests-table');
+  await screen.findByTestId('tests-cases-workbench');
   fireEvent.click(button('+ Case'));
   const form = screen.getByRole('form', { name: 'New test case' });
   fireEvent.submit(form);
@@ -327,7 +359,8 @@ it('adds a case, validates the form and removes a case', async () => {
   expect(saved.expectedSha256).toBe('sha-1');
   expect((saved.cases as unknown[]).at(-1)).toEqual({ id: 'refund-2', name: 'Refund', utterances: ['Money back', 'Now'], expect: { topic: 'Billing', actions: ['Refund', 'Log'], contains: ['refund'], criteria: 'Polite' } });
   fireEvent.click(screen.getByTestId('tests-row-refund'));
-  fireEvent.click(button('Remove'));
+  fireEvent.click(screen.getByText('Case options'));
+  fireEvent.click(button('Remove case'));
   await waitFor(() => expect(calls(call, 'studio.suites.save')).toHaveLength(2));
   expect((calls(call, 'studio.suites.save')[1]!.cases as Array<{ id: string }>).map(c => c.id)).toEqual(['late', 'refund-2']);
   expect(calls(call, 'studio.suites.save')[1]!.expectedSha256).toBe('sha-2');
@@ -353,7 +386,7 @@ it('imports a spec file and refuses an oversized one', async () => {
   const { call } = setup({}, {
     'studio.suites.import': args => (String(args.text).includes('bad') ? { ok: false, error: 'Unreadable YAML at line 2.' } : { ok: true, imported: 1, suite: suite() })
   });
-  await screen.findByTestId('tests-table');
+  await screen.findByTestId('tests-cases-workbench');
   const input = screen.getByTestId('tests-import-input') as HTMLInputElement;
   const click = vi.spyOn(input, 'click');
   fireEvent.click(button('Import YAML / JSON'));
@@ -372,7 +405,7 @@ it('imports a spec file and refuses an oversized one', async () => {
 it('writes the eval spec and names multi-turn cases', async () => {
   let reply: unknown = { ok: true, specPath: 'tests/MyBot.eval.yaml', multiTurn: ['late'] };
   setup({}, { 'studio.suites.spec': () => reply });
-  await screen.findByTestId('tests-table');
+  await screen.findByTestId('tests-cases-workbench');
   fireEvent.click(button('Write eval spec'));
   expect(await screen.findByText('Wrote tests/MyBot.eval.yaml. 1 multi-turn case replays its final turn with recorded history; earlier replies are fixed context.')).toBeTruthy();
   reply = { ok: true, specPath: 'tests/MyBot.eval.yaml', multiTurn: [] };
@@ -388,10 +421,11 @@ it('starts a fix loop for the failing cases, follows it and stops it', async () 
   const { call, props } = setup({}, {
     'studio.suites.list': () => ({ ok: true, suites: [failed] }),
     'studio.loop.start': () => ({ ok: true, loop: loop() }),
+    'studio.scenarios.list': () => ({ ok: true, scenarios: starterScenarios() }),
     'studio.loop.get': args => ({ ok: true, loop: args.loopId ? loop({ attempts: [{ n: 1, pass: 0, total: 1, at: 2, failing: ['late'] }] }) : null }),
     'studio.loop.stop': () => ({ ok: true, loop: loop({ status: 'stopped' }) })
   });
-  await screen.findByTestId('tests-table');
+  await screen.findByTestId('tests-cases-workbench');
   fireEvent.click(button('Make this pass'));
   expect(await screen.findByTestId('tests-loop')).toBeTruthy();
   expect(calls(call, 'studio.loop.start')[0]).toMatchObject({ caseIds: ['late'], budget: 3 });
@@ -412,6 +446,7 @@ it('blocks the fix loop while the file is unsaved and reports start or stop fail
   const failed = suite({ lastResults: { refund: { outcome: 'fail', runId: 'r', at: 2 }, late: { outcome: 'fail', runId: 'r', at: 2 } } });
   const { view, props } = setup({ dirty: true }, {
     'studio.suites.list': () => ({ ok: true, suites: [failed] }),
+    'studio.scenarios.list': () => ({ ok: true, scenarios: starterScenarios() }),
     'studio.loop.get': () => ({ ok: true, loop: loop() }),
     'studio.loop.start': () => ({ ok: false, error: 'Pick at least one failing case.' }),
     'studio.loop.stop': () => ({ ok: false })
@@ -428,7 +463,7 @@ it('blocks the fix loop while the file is unsaved and reports start or stop fail
 it('reports a fix loop that could not start', async () => {
   const failed = suite({ lastResults: { late: { outcome: 'fail', runId: 'r', at: 2 } } });
   const { props } = setup({}, { 'studio.suites.list': () => ({ ok: true, suites: [failed] }), 'studio.loop.start': () => ({ ok: false }) });
-  await screen.findByTestId('tests-table');
+  await screen.findByTestId('tests-cases-workbench');
   fireEvent.click(button('Make this pass'));
   expect(await screen.findByText('The fix loop could not start.')).toBeTruthy();
   expect(props.onAskAgent).not.toHaveBeenCalled();
@@ -436,7 +471,7 @@ it('reports a fix loop that could not start', async () => {
 
 it('reloads on suite changes while visible and switches to role-play', async () => {
   const { call, view, props } = setup();
-  await screen.findByTestId('tests-table');
+  await screen.findByTestId('tests-cases-workbench');
   await act(async () => { realtime?.({ projectId: 'p1', kind: 'suites' }); });
   await waitFor(() => expect(calls(call, 'studio.suites.list')).toHaveLength(2));
   view.rerender(<TestsPane {...props} visible={false} />);
@@ -445,7 +480,7 @@ it('reloads on suite changes while visible and switches to role-play', async () 
   view.rerender(<TestsPane {...props} visible />);
   fireEvent.click(button('Role-play'));
   expect(screen.getByTestId('roleplay')).toBeTruthy();
-  expect(screen.queryByTestId('tests-table')).toBeNull();
+  expect(screen.getByTestId('tests-cases-workbench').closest<HTMLElement>('.sf-tp-cases-view')!.hidden).toBe(true);
   fireEvent.click(button('Test cases'));
   expect(screen.getByTestId('roleplay').parentElement!.hidden).toBe(true);
   view.rerender(<TestsPane {...props} path="force-app/Other.agent" />);
@@ -466,11 +501,76 @@ it('switches to the Org tests view', async () => {
     'studio.orgTests.details': () => ({ ok: true, definitions: [{ name: 'RefundTests', subjectName: 'MyBot', caseCount: 3 }], missing: [] }),
     'studio.orgTests.runs': () => ({ ok: true, runs: [] })
   });
-  await screen.findByTestId('tests-table');
-  fireEvent.click(button('Test catalogue'));
+  await screen.findByTestId('tests-cases-workbench');
+  fireEvent.click(button('Browse tests'));
   expect(await screen.findByTestId('org-def-RefundTests')).toBeTruthy();
-  expect(screen.queryByTestId('tests-table')).toBeNull();
+  expect(screen.getByTestId('tests-cases-workbench').closest<HTMLElement>('.sf-tp-cases-view')!.hidden).toBe(true);
   expect(calls(call, 'studio.orgTests.list')).toHaveLength(1);
+});
+
+it('keeps edited simulation scenarios and the selected result when returning from another test view', async () => {
+  const batch = {
+    id: 'retained-batch', agentPath: PATH, sourceHash: 'old-source', candidate: true, engine: 'preview', parallel: 1,
+    plannedCalls: 1, status: 'done', startedAt: 1, startedBy: 'studio',
+    counts: { total: 1, pass: 0, fail: 1, inconclusive: 0, error: 0, stopped: 0, running: 0, queued: 0 },
+    lanes: [{ id: 'lane-1', name: 'Recorded refund', repeat: 1, status: 'fail',
+      scenario: { persona: 'Customer', goal: 'Refund', opening: 'Help', criteria: 'Offers help', maxTurns: 1 },
+      turns: [{ role: 'user', text: 'Help with my refund' }, { role: 'agent', text: 'Recorded answer' }],
+      verdict: { outcome: 'fail', reason: 'Refund not offered', evidence: ['Recorded answer'] } }]
+  };
+  const { call } = setup({}, {
+    'studio.simulations.list': () => ({ ok: true, batches: [batch] }),
+    'studio.simulations.get': () => ({ ok: true, batch }),
+    'agentPreview.presets.list': () => ({ ok: true, presets: [] }),
+    'studio.selfHealing.status': () => ({ ok: true, run: null })
+  });
+  await screen.findByTestId('tests-cases-workbench');
+  expect(calls(call, 'studio.simulations.list')).toHaveLength(0);
+  fireEvent.click(button('Batch simulations'));
+  await screen.findByText('Recorded refund');
+  fireEvent.click(button(/^Batch setup/));
+  fireEvent.click(screen.getByText('Adjust for this batch'));
+  fireEvent.click(button('Add scenario'));
+  fireEvent.change(screen.getByLabelText('Scenario 4 name'), { target: { value: 'My unsaved scenario' } });
+  fireEvent.change(screen.getByLabelText('Scenario 4 goal'), { target: { value: 'Keep this customer goal' } });
+  fireEvent.click(button(/^Results/));
+  fireEvent.click(button(/Recorded refund/));
+  const selected = screen.getByRole('region', { name: 'Conversation Recorded refund' });
+  fireEvent.click(button('Test cases'));
+  expect(selected.closest<HTMLElement>('.sf-tp-subview')!.hidden).toBe(true);
+  fireEvent.click(button('Batch simulations'));
+  expect(screen.getByRole('region', { name: 'Conversation Recorded refund' })).toBe(selected);
+  fireEvent.click(button(/^Batch setup/));
+  expect(screen.getByLabelText('Scenario 4 name')).toHaveProperty('value', 'My unsaved scenario');
+  expect(screen.getByLabelText('Scenario 4 goal')).toHaveProperty('value', 'Keep this customer goal');
+});
+
+it('retains the Test catalogue filter on tab switches and clears it for another target', async () => {
+  const { props, view } = setup({}, {
+    'studio.orgTests.list': () => ({ ok: true, org: { alias: 'dev' }, definitions: [], at: 1 }),
+    'studio.orgTests.runs': () => ({ ok: true, runs: [] })
+  });
+  await screen.findByTestId('tests-cases-workbench');
+  fireEvent.click(button('Browse tests'));
+  const filter = await screen.findByLabelText('Filter tests');
+  fireEvent.change(filter, { target: { value: 'Refund' } });
+  fireEvent.click(button('Test cases'));
+  expect(filter.closest<HTMLElement>('.sf-tp-subview')!.hidden).toBe(true);
+  fireEvent.click(button('Browse tests'));
+  expect(screen.getByLabelText('Filter tests')).toBe(filter);
+  expect(filter).toHaveProperty('value', 'Refund');
+  view.rerender(<TestsPane {...props} path="force-app/Other.agent" />);
+  expect(await screen.findByLabelText('Filter tests')).toHaveProperty('value', '');
+});
+
+it('opens the simulations command lazily even before an agent file is selected', async () => {
+  const onSimulationsFocusHandled = vi.fn();
+  const { props, view } = setup({ path: null, onSimulationsFocusHandled });
+  expect(screen.queryByText('Open an agent file to simulate conversations with it.')).toBeNull();
+  view.rerender(<TestsPane {...props} simulationsFocus={{ seq: 7 }} />);
+  expect(await screen.findByText('Open an agent file to simulate conversations with it.')).toBeTruthy();
+  expect(button('Batch simulations').getAttribute('aria-pressed')).toBe('true');
+  expect(onSimulationsFocusHandled).toHaveBeenCalledWith(7);
 });
 
 it('explains a saved Fail after a reload, filters by outcome and opens the case path on the graph', async () => {
@@ -485,25 +585,19 @@ it('explains a saved Fail after a reload, filters by outcome and opens the case 
   });
   const onShowPath = vi.fn();
   const { props } = setup({ onShowPath }, { 'studio.suites.list': () => ({ ok: true, suites: [saved] }) });
-  await screen.findByTestId('tests-table');
+  await screen.findByTestId('tests-cases-workbench');
   expect(screen.getByTestId('tests-summary').textContent).toContain('1/3');
-  expect(within(screen.getByTestId('tests-row-refund')).getByText('✓ topic Billing')).toBeTruthy();
   const late = screen.getByTestId('tests-row-late');
-  const more = within(late).getByRole('button', { name: 'more' });
-  fireEvent.click(more);
-  expect(within(late).getByText(long).className).toContain('is-open');
-  expect(screen.queryByRole('note')).toBeNull();
-  fireEvent.click(within(late).getByRole('button', { name: 'less' }));
+  expect(within(late).queryByText(long)).toBeNull();
   fireEvent.click(late);
-  expect(screen.getByRole('note').textContent).toBe('Why it failed: Action "Lookup" not called. Judge: no date given');
-  expect(screen.getByText('Actual · Simulate 1 min ago')).toBeTruthy();
+  expect(screen.getByText('Action "Lookup" not called. Judge: no date given')).toBeTruthy();
   expect(screen.getByText('Let me check.')).toBeTruthy();
   fireEvent.click(button('Fix this case'));
   expect(props.onAskAgent).toHaveBeenCalledWith(expect.stringContaining('Observed: Action "Lookup" not called.; AI: no date given'));
   fireEvent.click(button('Show path on graph'));
   expect(onShowPath).toHaveBeenCalledWith('late');
   fireEvent.click(screen.getByTestId('tests-row-odd'));
-  expect(screen.getByRole('note').textContent).toBe('Topic/action checks need a Simulate runtime trace.');
+  expect(screen.getByText('Topic/action checks need a Simulate runtime trace.')).toBeTruthy();
   expect(screen.getByText('No runtime trace')).toBeTruthy();
   fireEvent.click(button('Failing 1'));
   expect(screen.queryByTestId('tests-row-refund')).toBeNull();
@@ -517,13 +611,13 @@ it('explains a saved Fail after a reload, filters by outcome and opens the case 
 
 it('says when a filter matches nothing and shows a case that was never run', async () => {
   setup({}, { 'studio.suites.list': () => ({ ok: true, suites: [suite({ lastResults: { refund: { outcome: 'pass', runId: 'r', at: 1 } } })] }) });
-  await screen.findByTestId('tests-table');
+  await screen.findByTestId('tests-cases-workbench');
   expect(screen.getByTestId('tests-summary').textContent).toContain('1 not run');
   fireEvent.click(screen.getByTestId('tests-row-late'));
-  expect(screen.getByText('Actual · not run yet')).toBeTruthy();
+  expect(screen.getByText('This case has not run yet')).toBeTruthy();
   expect(screen.getAllByText('Not run').length).toBeGreaterThan(1);
   fireEvent.click(button('Failing 0'));
-  expect(screen.getByText('No failing cases.')).toBeTruthy();
+  expect(screen.getByText(/No matching cases/)).toBeTruthy();
   fireEvent.click(button('Passing 1'));
   expect(screen.queryByText('No passing cases.')).toBeNull();
 });
@@ -543,7 +637,7 @@ it('compares immutable source snapshots and marks the result stale after editing
   const ref = { outcome: 'fail', runId: 'r1', at: 1, reply: 'No refund', latencyMs: 200, observed: { actions: ['Lookup'], topics: [], traced: true } };
   const candidate = { ...ref, outcome: 'pass', runId: 'r2', reply: 'Refund offered', latencyMs: 150 };
   const { call, props, view } = setup({}, { 'studio.suites.compare': () => ({ ok: true, comparison: { referenceHash: 'aaa', candidateHash: 'bbb', suiteHash: 'ccc', at: 1, reference: { refund: ref }, candidate: { refund: candidate } } }) });
-  await screen.findByTestId('tests-table');
+  await screen.findByTestId('tests-cases-workbench');
   fireEvent.click(button('Compare saved vs draft'));
   expect(await screen.findByText('Saved source → Editor draft: 0/1 → 1/1 pass')).toBeTruthy();
   expect(screen.getByText('1 improved · 0 regressed · 0 unclear')).toBeTruthy();
@@ -557,7 +651,7 @@ it('compares immutable source snapshots and marks the result stale after editing
 
 it('reports comparison failures and validates advanced case checks before saving', async () => {
   const { call } = setup({}, { 'studio.suites.compare': () => ({ ok: false, error: 'Session unavailable' }) });
-  await screen.findByTestId('tests-table');
+  await screen.findByTestId('tests-cases-workbench');
   fireEvent.click(button('Compare saved vs draft'));
   expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Session unavailable');
   fireEvent.click(button('+ Case'));
@@ -574,7 +668,7 @@ it('shows setup separately, passes explicit preparation and exposes recovered jo
   const c = { id: 'setup', name: 'Historical replay', utterances: ['Continue'], prerequisites: ['Account selected'], expect: { forbiddenActions: ['Send'], criteria: 'Stay helpful' } };
   const last = { outcome: 'inconclusive' as const, runId: '', at: 1, setupBlocked: true, deterministic: 'pass' as const, judge: 'fail' as const, observed: { traced: false, traceComplete: false, actions: [], topics: [] } };
   const { call, table } = setup({}, { 'studio.suites.list': () => ({ ok: true, suites: [suite({ cases: [c], lastResults: { setup: last } })] }), 'studio.suites.run': () => ({ ok: true, suite: suite({ cases: [c] }) }) });
-  await screen.findByTestId('tests-table');
+  await screen.findByTestId('tests-cases-workbench');
   expect(within(screen.getByTestId('tests-row-setup')).getByText('Setup required')).toBeTruthy();
   fireEvent.click(screen.getByTestId('tests-row-setup'));
   expect(screen.getByText('Never calls Send')).toBeTruthy();
@@ -585,13 +679,14 @@ it('shows setup separately, passes explicit preparation and exposes recovered jo
   table['studio.suites.stop'] = () => ({ ok: true, status: 'stopped' });
   table['studio.suites.list'] = () => ({ ok: true, suites: [suite({ cases: [c] })], job: { jobId: 'recovered' } });
   await act(async () => { realtime?.({ kind: 'suites', projectId: 'p1' }); });
-  fireEvent.click(button('Stop suite'));
+  const stop = within(screen.getByRole('toolbar', { name: 'Test actions' })).getByRole('button', { name: 'Stop suite' });
+  fireEvent.click(stop);
   await waitFor(() => expect(calls(call, 'studio.suites.stop')[0]).toMatchObject({ jobId: 'recovered' }));
 });
 
 it('saves and displays advanced checks and setup prerequisites without losing their scalar types', async () => {
   const { call } = setup({}, { 'studio.suites.save': args => ({ ok: true, suite: suite({ cases: args.cases as ScenarioCase[] }) }) });
-  await screen.findByTestId('tests-table');
+  await screen.findByTestId('tests-cases-workbench');
   fireEvent.click(button('+ Case'));
   const form = screen.getByRole('form', { name: 'New test case' });
   for (const [label, value] of [
@@ -606,6 +701,7 @@ it('saves and displays advanced checks and setup prerequisites without losing th
   const added = (calls(call, 'studio.suites.save')[0]!.cases as ScenarioCase[]).at(-1)!;
   expect(added).toMatchObject({ prerequisites: ['Account selected', 'Address saved'], expect: { maxLatencyMs: 500, forbiddenActions: ['Send', 'Apply'], actionChecks: [{ value: false }], stateChecks: [{ variable: 'orderExists', value: false }] } });
   fireEvent.click(await screen.findByTestId(`tests-row-${added.id}`));
+  fireEvent.click(screen.getByRole('tab', { name: 'Expectations' }));
   expect(screen.getByText('Each response ≤ 500 ms')).toBeTruthy();
   expect(screen.getByText('Final orderExists equals false')).toBeTruthy();
   expect(screen.getByText('Never calls Send')).toBeTruthy();
@@ -619,7 +715,7 @@ it.each([
   { status: 'failed', role: 'alert', message: 'Preview connection lost' }
 ])('distinguishes a $status background suite in the user feedback', async ({ status, role, message }) => {
   const { call } = setup();
-  await screen.findByTestId('tests-table');
+  await screen.findByTestId('tests-cases-workbench');
   call.mockImplementation(async (_plugin, method) => {
     if (method === 'studio.suites.start') return { ok: true, jobId: 'job-feedback' };
     if (method === 'studio.suites.result') return { ok: true, status, ...(status === 'failed' ? { error: message } : {}) };

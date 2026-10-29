@@ -44,6 +44,34 @@ beforeEach(() => { vi.useFakeTimers(); rpc.mockReset(); realtime = undefined; })
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('viewer mode', () => {
+  it('routes shared drafts and pending cleanup through their captured project after a project switch', async () => {
+    const documents = new Map<string, AgentDocSnapshot>();
+    rpc.mockImplementation(async (_id, method, input) => {
+      if (!input.projectId) return { ok: false, code: 'project_required', error: 'Choose a registered project.' };
+      let doc = documents.get(input.projectId) ?? snap({ projectId: input.projectId });
+      if (method === 'agentDoc.lease') doc = { ...doc, lease: mine, rev: doc.rev + 1 };
+      if (method === 'agentDoc.update') doc = { ...doc, text: input.text, rev: doc.rev + 1 };
+      documents.set(input.projectId, doc);
+      return ok(doc);
+    });
+    const view = render(<Probe projectId="p" path="a.agent" />); await tick();
+    expect(api.doc?.projectId).toBe('p'); expect(api.error).toBeNull();
+    view.rerender(<Probe projectId="p" path="a.agent" editor={ME} />); await tick();
+    act(() => api.update('saved debounce')); await tick(400);
+    act(() => api.update('last pending keystrokes'));
+    view.rerender(<Probe projectId="q" path="a.agent" editor={ME} />); await tick();
+    expect(api.doc?.projectId).toBe('q'); expect(api.leased).toBe(true);
+    expect(callsOf('agentDoc.update')).toEqual([
+      expect.objectContaining({ projectId: 'p', text: 'saved debounce' }),
+      expect.objectContaining({ projectId: 'p', text: 'last pending keystrokes' })
+    ]);
+    expect(callsOf('agentDoc.close')).toEqual([expect.objectContaining({ projectId: 'p', path: 'a.agent' })]);
+    expect(callsOf('agentDoc.open').map(input => input.projectId)).toEqual(['p', 'p', 'q']);
+    expect(callsOf('agentDoc.lease').map(input => input.projectId)).toEqual(['p', 'q']);
+    view.unmount(); await tick();
+    expect(callsOf('agentDoc.close').at(-1)).toMatchObject({ projectId: 'q', path: 'a.agent' });
+  });
+
   it('does nothing without project or path', async () => {
     render(<Probe projectId={null} path="a.agent" />); await tick();
     expect(api.doc).toBeNull(); expect(api.loading).toBe(false); expect(rpc).not.toHaveBeenCalled();
@@ -59,7 +87,7 @@ describe('viewer mode', () => {
   it('opens, exposes the doc and a foreign lease, and never leases or closes', async () => {
     server({ doc: snap({ lease: other }) });
     const view = render(<Probe projectId="p" path="a.agent" />); await tick();
-    expect(rpc).toHaveBeenCalledWith('sf', 'agentDoc.open', { path: 'a.agent' });
+    expect(rpc).toHaveBeenCalledWith('sf', 'agentDoc.open', { projectId: 'p', path: 'a.agent' });
     expect(api.doc?.text).toBe('v1'); expect(api.loading).toBe(false); expect(api.heldBy).toEqual(other); expect(api.leased).toBe(false);
     api.update('ignored'); await tick(1000);
     expect(methods()).toEqual(['agentDoc.open']);
@@ -108,7 +136,7 @@ describe('viewer mode', () => {
     rpc.mockResolvedValueOnce(ok(snap({ rev: 2, proposals: [proposal as any] }), { proposal }));
     let got: unknown; await act(async () => { got = await api.propose(proposal.input, { id: 'q', threadId: 't' }); });
     expect(got).toBe(proposal); expect(api.doc?.proposals).toHaveLength(1);
-    expect(callsOf('agentDoc.propose')[0]).toEqual({ path: 'a.agent', input: proposal.input, id: 'q', threadId: 't' });
+    expect(callsOf('agentDoc.propose')[0]).toEqual({ projectId: 'p', path: 'a.agent', input: proposal.input, id: 'q', threadId: 't' });
     // proposal falls back to the doc's list
     rpc.mockResolvedValueOnce(ok(snap({ rev: 3, proposals: [proposal as any] })));
     await act(async () => { got = await api.propose(proposal.input, { id: 'q' }); });
@@ -123,14 +151,14 @@ describe('viewer mode', () => {
     rpc.mockResolvedValueOnce(ok(snap({ rev: 5 })));
     await act(async () => { got = await api.resolve('q', 'accept', 'sha'); });
     expect(got).toEqual({ ok: true }); expect(api.doc?.rev).toBe(5);
-    expect(callsOf('agentDoc.resolve')[0]).toEqual({ path: 'a.agent', id: 'q', decision: 'accept', sha256: 'sha' });
+    expect(callsOf('agentDoc.resolve')[0]).toEqual({ projectId: 'p', path: 'a.agent', id: 'q', decision: 'accept', sha256: 'sha' });
     rpc.mockResolvedValueOnce({ ok: false, code: 'conflict', error: 'changed' });
     await act(async () => { got = await api.resolve('q', 'reject'); });
     expect(got).toEqual({ ok: false, error: 'changed', code: 'conflict' });
 
     rpc.mockResolvedValueOnce(ok(snap({ rev: 6, text: 'T' })));
     await act(async () => { await api.saved('sha', 'T'); });
-    expect(api.doc?.text).toBe('T'); expect(callsOf('agentDoc.saved')[0]).toEqual({ path: 'a.agent', clientId: '', sha256: 'sha', text: 'T' });
+    expect(api.doc?.text).toBe('T'); expect(callsOf('agentDoc.saved')[0]).toEqual({ projectId: 'p', path: 'a.agent', clientId: '', sha256: 'sha', text: 'T' });
     rpc.mockResolvedValueOnce({ ok: false, code: 'x', error: 'save failed' });
     await act(async () => { await api.saved('sha', 'T'); });
     expect(api.error).toBe('save failed');
@@ -177,12 +205,12 @@ describe('editor mode', () => {
     server({ doc: snap() });
     const view = render(<Probe projectId="p" path="a.agent" editor={ME} />); await tick();
     expect(methods().slice(0, 2)).toEqual(['agentDoc.open', 'agentDoc.lease']);
-    expect(callsOf('agentDoc.lease')[0]).toEqual({ path: 'a.agent', clientId: 'me', label: 'Studio' });
+    expect(callsOf('agentDoc.lease')[0]).toEqual({ projectId: 'p', path: 'a.agent', clientId: 'me', label: 'Studio' });
     expect(api.leased).toBe(true); expect(api.heldBy).toBeNull();
     await tick(15_000); expect(callsOf('agentDoc.lease')).toHaveLength(2);
     await tick(15_000); expect(callsOf('agentDoc.lease')).toHaveLength(3);
     view.unmount();
-    expect(callsOf('agentDoc.close')).toEqual([{ path: 'a.agent', clientId: 'me', leaseId: 'L1' }]);
+    expect(callsOf('agentDoc.close')).toEqual([{ projectId: 'p', path: 'a.agent', clientId: 'me', leaseId: 'L1' }]);
     await tick(30_000); expect(callsOf('agentDoc.lease')).toHaveLength(3);
   });
 
@@ -190,7 +218,7 @@ describe('editor mode', () => {
     server({ doc: snap() });
     const view = render(<Probe projectId="p" path="a.agent" editor={ME} />); await tick();
     view.rerender(<Probe projectId="p" path="b.agent" editor={ME} />); await tick();
-    expect(callsOf('agentDoc.close')).toEqual([{ path: 'a.agent', clientId: 'me', leaseId: 'L1' }]);
+    expect(callsOf('agentDoc.close')).toEqual([{ projectId: 'p', path: 'a.agent', clientId: 'me', leaseId: 'L1' }]);
     expect(callsOf('agentDoc.open').map(c => c.path)).toEqual(['a.agent', 'b.agent']);
   });
 
@@ -231,7 +259,7 @@ describe('editor mode', () => {
     expect(api.leased).toBe(false); expect(api.heldBy).toEqual(other);
     await tick(30_000);
     // Each tick asks again, never with take, naming the grant it lost.
-    expect(callsOf('agentDoc.lease').slice(-2)).toEqual([0, 1].map(() => ({ path: 'a.agent', clientId: 'me', label: 'Studio', leaseId: 'L1' })));
+    expect(callsOf('agentDoc.lease').slice(-2)).toEqual([0, 1].map(() => ({ projectId: 'p', path: 'a.agent', clientId: 'me', label: 'Studio', leaseId: 'L1' })));
     expect(api.leased).toBe(false); expect(api.heldBy).toEqual(other); expect(api.error).toBeNull();
   });
 
@@ -240,7 +268,7 @@ describe('editor mode', () => {
     render(<Probe projectId="p" path="a.agent" editor={ME} />); await tick();
     const gen = api.leaseGen; expect(gen).toBeGreaterThan(0);
     await tick(15_000);
-    expect(callsOf('agentDoc.lease').at(-1)).toEqual({ path: 'a.agent', clientId: 'me', label: 'Studio', leaseId: 'L1' });
+    expect(callsOf('agentDoc.lease').at(-1)).toEqual({ projectId: 'p', path: 'a.agent', clientId: 'me', label: 'Studio', leaseId: 'L1' });
     expect(api.leaseGen).toBe(gen); // a plain renewal is not a regain
     rpc.mockImplementation(async (_id, method) => method === 'agentDoc.lease' ? { ok: false, code: 'boom', error: 'offline' } : ok(state.doc));
     await tick(15_000);
@@ -272,7 +300,7 @@ describe('editor mode', () => {
     api.update('a'); await tick(100); api.update('ab'); await tick(100); api.update('abc');
     expect(callsOf('agentDoc.update')).toHaveLength(0);
     await tick(300);
-    expect(callsOf('agentDoc.update')).toEqual([{ path: 'a.agent', clientId: 'me', label: 'Studio', leaseId: 'L1', rev, text: 'abc' }]);
+    expect(callsOf('agentDoc.update')).toEqual([{ projectId: 'p', path: 'a.agent', clientId: 'me', label: 'Studio', leaseId: 'L1', rev, text: 'abc' }]);
     expect(api.doc?.text).toBe('abc');
   });
 
@@ -392,7 +420,7 @@ describe('editor mode', () => {
     server({ doc: snap() });
     const view = render(<Probe projectId="p" path="a.agent" editor={ME} />); await tick();
     window.dispatchEvent(new Event('pagehide'));
-    expect(callsOf('agentDoc.close')).toEqual([{ path: 'a.agent', clientId: 'me', leaseId: 'L1' }]);
+    expect(callsOf('agentDoc.close')).toEqual([{ projectId: 'p', path: 'a.agent', clientId: 'me', leaseId: 'L1' }]);
     view.unmount(); rpc.mockClear(); window.dispatchEvent(new Event('pagehide'));
     expect(callsOf('agentDoc.close')).toHaveLength(0); // listener removed
   });
@@ -417,7 +445,7 @@ describe('editor mode', () => {
     render(<Probe projectId="p" path="a.agent" editor={ME} />); await tick();
     await act(async () => { await api.saved('sha', 'T'); await api.resolve('q', 'applied', 'sha2'); });
     expect(callsOf('agentDoc.saved')[0]).toMatchObject({ clientId: 'me' });
-    expect(callsOf('agentDoc.resolve')[0]).toEqual({ path: 'a.agent', id: 'q', decision: 'applied', clientId: 'me', sha256: 'sha2' });
+    expect(callsOf('agentDoc.resolve')[0]).toEqual({ projectId: 'p', path: 'a.agent', id: 'q', decision: 'applied', clientId: 'me', sha256: 'sha2' });
   });
 
   it('does not lease when the open itself failed', async () => {
@@ -455,7 +483,7 @@ describe('second review fixes', () => {
     state.doc = snap({ rev: 40 });
     await event(40);
     expect(api.leased).toBe(true); expect(api.leaseGen).toBe(gen + 1);
-    expect(callsOf('agentDoc.lease').at(-1)).toEqual({ path: 'a.agent', clientId: 'me', label: 'Studio', leaseId: 'G1' });
+    expect(callsOf('agentDoc.lease').at(-1)).toEqual({ projectId: 'p', path: 'a.agent', clientId: 'me', label: 'Studio', leaseId: 'G1' });
     // Window B takes over, then closes.
     state.doc = { ...state.doc, rev: 50, lease: other };
     await event(50);
@@ -488,11 +516,11 @@ describe('second review fixes', () => {
     const state = leaseServer();
     const first = render(<Probe projectId="p" path="a.agent" editor={ME} />); await tick();
     first.unmount();
-    expect(callsOf('agentDoc.close').at(-1)).toEqual({ path: 'a.agent', clientId: 'me', leaseId: 'G1' });
+    expect(callsOf('agentDoc.close').at(-1)).toEqual({ projectId: 'p', path: 'a.agent', clientId: 'me', leaseId: 'G1' });
     state.doc = { ...state.doc, lease: { ...mine, id: 'G1' } }; // the close has not landed yet
     rpc.mockClear();
     render(<Probe projectId="p" path="a.agent" editor={ME} />); await tick();
-    expect(callsOf('agentDoc.lease')[0]).toEqual({ path: 'a.agent', clientId: 'me', label: 'Studio' });
+    expect(callsOf('agentDoc.lease')[0]).toEqual({ projectId: 'p', path: 'a.agent', clientId: 'me', label: 'Studio' });
     // Before its first request the old grant in this client's name is not shown as someone else's.
     expect(api.leased).toBe(true); expect(api.heldBy).toBeNull();
   });
@@ -501,7 +529,7 @@ describe('second review fixes', () => {
     rpc.mockImplementation(async (_id, method) => method === 'agentDoc.lease' ? { ok: false, code: 'leased', error: 'held' } : ok(snap({ lease: other })));
     const view = render(<Probe projectId="p" path="a.agent" editor={ME} />); await tick();
     view.unmount();
-    expect(callsOf('agentDoc.close')).toEqual([{ path: 'a.agent', clientId: 'me', leaseId: '' }]);
+    expect(callsOf('agentDoc.close')).toEqual([{ projectId: 'p', path: 'a.agent', clientId: 'me', leaseId: '' }]);
   });
 
   it('6: a lease of this client under another grant (a duplicated window) is shown as held, not ours', async () => {
@@ -589,13 +617,13 @@ describe('final review fixes', () => {
     view.rerender(<Probe projectId="p" path="a.agent" editor={ME} />);
     expect(api.doc).not.toBeNull();
     await tick();
-    expect(callsOf('agentDoc.lease')).toEqual([{ path: 'a.agent', clientId: 'me', label: 'Studio' }]);
+    expect(callsOf('agentDoc.lease')).toEqual([{ projectId: 'p', path: 'a.agent', clientId: 'me', label: 'Studio' }]);
     expect(api.leased).toBe(true);
     // Another window's lease seen in standby is shown as held.
     state.doc = snap({ lease: other });
     view.rerender(<Probe projectId="p" path="b.agent" editor={{ ...ME, standby: true }} />); await tick();
     expect(api.heldBy).toEqual(other);
-    expect(callsOf('agentDoc.close').at(-1)).toMatchObject({ path: 'a.agent', clientId: 'me' });
+    expect(callsOf('agentDoc.close').at(-1)).toMatchObject({ projectId: 'p', path: 'a.agent', clientId: 'me' });
   });
 
   it('2: a viewer reads the document again once a lease it saw would have lapsed, re-armed by each snapshot', async () => {

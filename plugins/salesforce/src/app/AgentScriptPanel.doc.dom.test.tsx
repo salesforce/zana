@@ -325,7 +325,7 @@ describe('AgentScriptPanel shared document', () => {
   it('keeps one layout key per project and surface, not per thread, seeding the window from the tab', async () => {
     await mount({ subPath: PATH, threadId: 't-1' });
     await mount({ subPath: PATH, threadId: 't-2' });
-    const keys = () => Object.keys(localStorage).filter(k => k.startsWith('salesforce:studio:') && !k.startsWith('salesforce:studio:split:'));
+    const keys = () => Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index)!).filter(Boolean).filter(k => k.startsWith('salesforce:studio:') && !k.startsWith('salesforce:studio:split:'));
     expect(keys()).toEqual(['salesforce:studio:proj-1']);
     nodes.splice(0).forEach(fn => fn());
     surface = 'plugin-view';
@@ -506,8 +506,8 @@ describe('AgentScriptPanel shared document: second review fixes', () => {
     localStorage.setItem('salesforce:studio:proj-1', '{}');
     localStorage.setItem('other', 'x');
     await mount(PATH);
-    expect(Object.keys(localStorage).sort()).toEqual(expect.arrayContaining(['other', 'salesforce:studio:proj-1']));
-    expect(Object.keys(localStorage).some(k => k.includes('["'))).toBe(false);
+    expect(Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index)!).filter(Boolean).sort()).toEqual(expect.arrayContaining(['other', 'salesforce:studio:proj-1']));
+    expect(Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index)!).filter(Boolean).some(k => k.includes('["'))).toBe(false);
     localStorage.setItem('salesforce:studio:["proj-1","t2"]', '{}');
     expect(pruneThreadLayoutKeys()).toBe(0); // once per page
     resetThreadLayoutPrune();

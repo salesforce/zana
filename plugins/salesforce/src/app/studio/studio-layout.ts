@@ -6,7 +6,7 @@ export type CompactTool = 'code' | AgentScriptTool;
 export const VIEW_TARGETS = ['preview', 'tests', 'graph', 'org-preview'] as const;
 export type ViewTarget = typeof VIEW_TARGETS[number];
 export const isViewTarget = (value: unknown): value is ViewTarget => VIEW_TARGETS.includes(value as ViewTarget);
-export type RailTab = 'assistant' | 'actions' | 'comments';
+export type RailTab = 'assistant' | 'actions' | 'comments' | 'preview' | 'test' | 'graph' | 'org-preview';
 /**
  * `agent` is an agent's Script tab, `view` one of its Preview / Tests / Graph / Org preview views (one per kind),
  * `org` the Org agents browser: beside a host side panel it opens here instead of as a panel tool.
@@ -14,7 +14,7 @@ export type RailTab = 'assistant' | 'actions' | 'comments';
 export interface EditorTab { id: string; kind: 'agent' | 'apex' | 'flow' | 'type' | 'lwc' | 'org' | 'view'; label: string; path?: string; target?: string }
 export interface AgentRef { path: string; label: string }
 /** What one open agent remembers: its tabs, bottom panel, host rail tab and the Assistant thread. */
-export interface Workspace { tabs: EditorTab[]; activeTab: string | null; bottomOpen: boolean; bottomTab: BottomTab; rail: RailTab | null; threadId?: string }
+export interface Workspace { tabs: EditorTab[]; activeTab: string | null; bottomOpen: boolean; bottomTab: BottomTab; rail: RailTab | null; threadId?: string; panelViews?: ViewTarget[] }
 export interface StudioLayoutState {
   /** Compact mode shows exactly one tool; wide mode ignores it. */
   tool: CompactTool;
@@ -55,6 +55,14 @@ export const scriptTab = (ref: AgentRef): EditorTab => ({ id: scriptTabId(ref.pa
 export const viewTab = (target: ViewTarget): EditorTab => ({ id: viewTabId(target), kind: 'view', label: VIEW_LABEL[target], target });
 export const emptyWorkspace = (): Workspace => ({ tabs: [], activeTab: null, bottomOpen: false, bottomTab: 'problems', rail: null });
 
+/** Evict the oldest other tabs; Script and the requested view survive opening or restoring an agent. */
+function capTabs(tabs: EditorTab[], activeTab: string | null, scriptId?: string): EditorTab[] {
+  if (tabs.length <= MAX_EDITOR_TABS) return tabs;
+  const dropped = new Set(tabs.filter(tab => tab.id !== activeTab && tab.id !== scriptId)
+    .slice(0, tabs.length - MAX_EDITOR_TABS).map(tab => tab.id));
+  return tabs.filter(tab => !dropped.has(tab.id));
+}
+
 const GLOBAL_DEFAULTS = { orgTabs: [] as EditorTab[], tool: 'code' as CompactTool, explorerOpen: true, explorerWidth: null, collapsedSections: [] as string[], share: false, railSeeded: false, actionOrigin: 'project' as const };
 
 /** Mirrors the active workspace into the flat fields the components read. */
@@ -88,17 +96,19 @@ function parseTabs(value: unknown): EditorTab[] {
   }
   return tabs;
 }
-const parseRail = (value: unknown): RailTab | null => value === 'assistant' || value === 'actions' || value === 'comments' ? value : null;
+const parseRail = (value: unknown): RailTab | null => value === 'assistant' || value === 'actions' || value === 'comments' || value === 'preview' || value === 'test' || value === 'graph' || value === 'org-preview' ? value : null;
+export const viewRail = (target: ViewTarget): RailTab => target === 'tests' ? 'test' : target;
 
 function parseWorkspace(value: unknown): Workspace {
   if (!value || typeof value !== 'object') return emptyWorkspace();
   const raw = value as Record<string, unknown>;
   const tabs = parseTabs(raw.tabs);
   const threadId = text(raw.threadId, 200);
+  const panelViews = Array.isArray(raw.panelViews) ? [...new Set(raw.panelViews.filter(isViewTarget))] : [];
   return {
     tabs, activeTab: tabs.some(tab => tab.id === raw.activeTab) || (typeof raw.activeTab === 'string' && raw.activeTab.startsWith('org-')) ? raw.activeTab as string : tabs[0]?.id ?? null,
     bottomOpen: raw.bottomOpen === true, bottomTab: isBottomTab(raw.bottomTab) ? raw.bottomTab : 'problems', rail: parseRail(raw.rail),
-    ...(threadId ? { threadId } : {})
+    ...(threadId ? { threadId } : {}), ...(panelViews.length ? { panelViews } : {})
   };
 }
 
@@ -155,7 +165,7 @@ export function readStudioLayout(key: string): StudioLayoutState {
     const orgTabs = hoistOrgTabs(workspaces, parseTabs(raw.orgTabs).filter(isOrgTab));
     for (const agent of agents) { // every open agent keeps its Script tab
       const ws = workspaces[agent.path] ??= emptyWorkspace();
-      if (!ws.tabs.some(tab => tab.id === scriptTabId(agent.path))) { ws.tabs = [scriptTab(agent), ...ws.tabs].slice(0, MAX_EDITOR_TABS); ws.activeTab ??= scriptTabId(agent.path); }
+      if (!ws.tabs.some(tab => tab.id === scriptTabId(agent.path))) { ws.tabs = capTabs([scriptTab(agent), ...ws.tabs], ws.activeTab, scriptTabId(agent.path)); ws.activeTab ??= scriptTabId(agent.path); }
     }
     return derive({
       tool: raw.tool === 'code' || AGENT_SCRIPT_TOOLS.some(tool => tool.id === raw.tool) ? raw.tool : 'code',
@@ -212,7 +222,7 @@ export function withAgent(state: StudioLayoutState, ref: AgentRef): StudioLayout
   }
   const ws = workspaces[ref.path] ?? emptyWorkspace();
   const script = scriptTab(ref);
-  workspaces[ref.path] = ws.tabs.some(tab => tab.id === script.id) ? { ...ws, tabs: ws.tabs.map(tab => tab.id === script.id ? script : tab) } : { ...ws, tabs: [script, ...ws.tabs].slice(0, MAX_EDITOR_TABS), activeTab: ws.activeTab ?? script.id };
+  workspaces[ref.path] = ws.tabs.some(tab => tab.id === script.id) ? { ...ws, tabs: ws.tabs.map(tab => tab.id === script.id ? script : tab) } : { ...ws, tabs: capTabs([script, ...ws.tabs], ws.activeTab, script.id), activeTab: ws.activeTab ?? script.id };
   return derive({ ...rest, agents, activeAgent: ref.path, workspaces });
 }
 
@@ -220,6 +230,24 @@ export function withActiveAgent(state: StudioLayoutState, path: string): StudioL
   if (state.activeAgent === path || !state.agents.some(agent => agent.path === path)) return state;
   const { tabs: _t, activeTab: _a, bottomOpen: _o, bottomTab: _b, rail: _r, threadId: _i, ...rest } = state;
   return derive({ ...rest, activeAgent: path });
+}
+
+/** Move saved editor views into the host panel without using document-tab capacity. */
+export function dockStudioViews(state: StudioLayoutState): StudioLayoutState {
+  let next = state;
+  for (const agent of state.agents) {
+    const ws = next.workspaces[agent.path];
+    const views = ws?.tabs.filter(tab => tab.kind === 'view' && isViewTarget(tab.target)) ?? [];
+    if (!ws || !views.length) continue;
+    const selected = views.find(tab => tab.id === ws.activeTab);
+    next = withWorkspace(next, agent.path, current => ({
+      ...current, tabs: current.tabs.filter(tab => tab.kind !== 'view'),
+      panelViews: [...new Set([...(current.panelViews ?? []), ...views.map(tab => tab.target as ViewTarget)])],
+      activeTab: selected ? scriptTabId(agent.path) : current.activeTab,
+      rail: selected ? viewRail(selected.target as ViewTarget) : current.rail,
+    }));
+  }
+  return next;
 }
 
 /** Closes an agent; the right neighbour becomes active, else the left one. */
@@ -258,14 +286,18 @@ export function useStudioLayout(scope: string, fallbackScope?: string) {
   }), []);
   const patchWorkspace = useCallback((path: string, next: Partial<Workspace>) => setState(current => withWorkspace(current, path, ws => ({ ...ws, ...next }))), []);
   const openTab = useCallback((tab: EditorTab) => setState(current => withWorkspace(current, activeKey(current), ws => {
-    const tabs = ws.tabs.some(row => row.id === tab.id) ? ws.tabs.map(row => row.id === tab.id ? tab : row) : [...ws.tabs.slice(-(MAX_EDITOR_TABS - 1)), tab];
+    const tabs = ws.tabs.some(row => row.id === tab.id) ? ws.tabs.map(row => row.id === tab.id ? tab : row) : capTabs([...ws.tabs, tab], tab.id, current.activeAgent ? scriptTabId(current.activeAgent) : undefined);
     return { ...ws, tabs, activeTab: tab.id };
   })), []);
   const selectTab = useCallback((id: string) => setState(current => withWorkspace(current, activeKey(current), ws => ws.tabs.some(tab => tab.id === id) ? { ...ws, activeTab: id } : ws)), []);
   const closeTabs = useCallback((ids: string[], focus?: string) => setState(current => withWorkspace(current, activeKey(current), ws => withoutTabs(ws, ids, focus))), []);
   const closeTab = useCallback((id: string) => closeTabs([id]), [closeTabs]);
   const openAgent = useCallback((path: string, label: string) => setState(current => withAgent(current, { path, label })), []);
+  const openPanelView = useCallback((target: ViewTarget) => setState(current => current.activeAgent ? withWorkspace(current, current.activeAgent, ws => ({
+    ...ws, panelViews: [...new Set([...(ws.panelViews ?? []), target])], rail: viewRail(target),
+  })) : current), []);
+  const dockViews = useCallback(() => setState(dockStudioViews), []);
   const selectAgent = useCallback((path: string) => setState(current => withActiveAgent(current, path)), []);
   const closeAgent = useCallback((path: string) => setState(current => withoutAgent(current, path)), []);
-  return { state, patch, patchWorkspace, openTab, selectTab, closeTab, closeTabs, openAgent, selectAgent, closeAgent };
+  return { state, patch, patchWorkspace, openTab, selectTab, closeTab, closeTabs, openAgent, selectAgent, closeAgent, openPanelView, dockViews };
 }

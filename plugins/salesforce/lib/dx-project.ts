@@ -73,6 +73,23 @@ export function compactError(status: number, json: unknown, text: string): strin
 const SCAN_SKIP = new Set(['node_modules', '.git', '.sf', '.sfdx', '.pnpm-store', '.cache', '.next', 'coverage', 'out', 'out-dev', 'dist']);
 const sourceRank = (name: string) => /^(force-app|agentforce-drafts|src|main|default|aiAuthoringBundles)$/.test(name) ? 0 : name.startsWith('.') ? 2 : 1;
 
+/** Shared scan steps keep CLI and cooperative UI discovery on the same confinement and limits. */
+export function runProjectScan<T>(steps: Generator<void, T>): T {
+  let next = steps.next();
+  while (!next.done) next = steps.next();
+  return next.value;
+}
+
+/** Do at most 32 filesystem/inspection steps before allowing RPCs and worker heartbeats to run. */
+export async function runProjectScanAsync<T>(steps: Generator<void, T>, yieldTurn = () => new Promise<void>(resolve => setImmediate(resolve))): Promise<T> {
+  let next = steps.next(), batch = 0;
+  while (!next.done) {
+    if (++batch === 32) { batch = 0; await yieldTurn(); }
+    next = steps.next();
+  }
+  return next.value;
+}
+
 /** Strictly bounded traversal, with relevant source before generated trees. Symlink cycles are visited once. */
 export function scanFilesRecursive(
   root: string,
@@ -80,11 +97,20 @@ export function scanFilesRecursive(
   max = 4000,
   matches: (path: string) => boolean = () => true
 ): { files: string[]; truncated: boolean } {
+  return runProjectScan(scanFilesRecursiveSteps(root, deps, max, matches));
+}
+
+export function* scanFilesRecursiveSteps(
+  root: string,
+  deps: Pick<SalesforceDeps, 'stat' | 'readdir' | 'realpath'>,
+  max = 4000,
+  matches: (path: string) => boolean = () => true
+): Generator<void, { files: string[]; truncated: boolean }> {
   const out: string[] = [];
   const visited = new Set<string>();
   let examined = 0;
   let truncated = false;
-  const walk = (dir: string) => {
+  function* walk(dir: string): Generator<void> {
     if (visited.has(dir)) return;
     if (visited.size >= 1000 || examined >= 20_000 || out.length >= max) { truncated = true; return; }
     visited.add(dir);
@@ -95,17 +121,18 @@ export function scanFilesRecursive(
       return;
     }
     for (const name of entries) {
+      yield;
       if (out.length >= max || examined >= 20_000) { truncated = true; break; }
       examined++;
       const full = join(dir, name);
       const confined = resolveUnderRoot(root, full, deps.realpath);
       if (!confined) continue;
       const kind = deps.stat(confined);
-      if (kind === 'dir') walk(confined);
+      if (kind === 'dir') yield* walk(confined);
       else if (kind === 'file' && matches(confined)) out.push(confined);
     }
-  };
-  walk(root);
+  }
+  yield* walk(root);
   return { files: out, truncated };
 }
 

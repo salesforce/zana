@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildLocalExplorer, EXPLORER_LIMITS, referencedTargets, registerStudioExplorer } from '../lib/studio-explorer.js';
+import { buildLocalExplorer, buildLocalExplorerAsync, EXPLORER_LIMITS, referencedTargets, registerStudioExplorer } from '../lib/studio-explorer.js';
 import { createNodeDeps } from '../lib/node-deps.js';
 import type { StudioServerContext } from '../lib/studio-server-context.js';
 
@@ -37,6 +37,24 @@ describe('referencedTargets', () => {
 });
 
 describe('buildLocalExplorer', () => {
+  it('cooperative UI discovery preserves focused agents, caps, references and confined paths', async () => {
+    const extra = Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`agents/A${i}.agent`, `x: apex://Cls${i}`]));
+    const root = project(extra), deps = createNodeDeps();
+    const outside = mkdtempSync(join(tmpdir(), 'sf-outside-')); dirs.push(outside);
+    writeFileSync(join(outside, 'Secret.agent'), 'x: apex://Secret');
+    symlinkSync(outside, join(root, 'escape'));
+    const focus = 'agents/A49.agent', expand = ['agents/A48.agent', '../Secret.agent'];
+    let heartbeat = false;
+    const beat = new Promise<void>(resolve => setImmediate(() => { heartbeat = true; resolve(); }));
+    const actual = await buildLocalExplorerAsync(root, deps, focus, expand);
+    expect(heartbeat).toBe(true);
+    await beat;
+    expect(actual).toEqual(buildLocalExplorer(root, deps, focus, expand));
+    expect(actual.truncated).toBe(true);
+    expect(actual.nodes.some(node => node.apiName === 'Secret')).toBe(false);
+    expect(actual.nodes.find(node => node.path === focus)?.uses).toEqual([{ kind: 'apex', apiName: 'Cls49' }]);
+    expect(await buildLocalExplorerAsync('/definitely/not/here', deps)).toEqual({ nodes: [], truncated: false });
+  });
   it('lists agents, resolved targets with usedBy, and scenario suites', () => {
     const result = buildLocalExplorer(project(), createNodeDeps());
     const byKind = (kind: string) => result.nodes.filter(node => node.kind === kind);

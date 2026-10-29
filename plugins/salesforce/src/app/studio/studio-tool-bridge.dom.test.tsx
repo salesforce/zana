@@ -9,7 +9,9 @@ import {
   panelToolActionId,
   registerStudio,
   resetStudioToolBridge,
+  studioToolScope,
   useStudioMounted,
+  useStudioToolScope,
   useStudioToolSlots
 } from './studio-tool-bridge.js';
 import { StudioPanelTool, studioPanelTool } from './StudioPanelTool.js';
@@ -22,9 +24,11 @@ afterEach(() => { cleanup(); resetStudioToolBridge(); });
 
 describe('studio-tool-bridge', () => {
   it('names the panel tools and their actions', () => {
-    expect(PANEL_TOOLS).toEqual(['actions', 'comments']);
-    expect(isPanelTool('actions')).toBe(true);
-    expect(isPanelTool('preview')).toBe(false);
+    expect(PANEL_TOOLS).toEqual(['graph', 'preview', 'test', 'org-preview', 'actions', 'comments']);
+    for (const tool of PANEL_TOOLS) {
+      expect(isPanelTool(tool)).toBe(true);
+      expect(panelToolActionId(tool)).toBe(`studio-${tool}`);
+    }
     expect(isPanelTool('files')).toBe(false);
     expect(isPanelTool(undefined)).toBe(false);
     expect(panelToolActionId('comments')).toBe('studio-comments');
@@ -72,6 +76,89 @@ describe('studio-tool-bridge', () => {
     act(() => releaseFirst());
     expect(second.firstChild).toBe(result.current[0].node);
     expect(result.current[0].attached).toBe(true);
+  });
+
+  it('ignores an older or repeated release even when a newer attachment reused the same container', () => {
+    const { result } = renderHook(() => useStudioToolSlots('p1'));
+    const container = document.createElement('div');
+    let releaseFirst!: () => void;
+    let releaseCurrent!: () => void;
+    act(() => {
+      releaseFirst = attachStudioTool('p1', 'preview', container, 'first');
+      releaseCurrent = attachStudioTool('p1', 'preview', container, 'current');
+    });
+    const node = result.current[0].node;
+    act(() => { releaseFirst(); releaseFirst(); });
+    expect(container.firstChild).toBe(node);
+    expect(result.current[0]).toMatchObject({ attached: true, tabId: 'current' });
+    act(() => { releaseCurrent(); releaseCurrent(); });
+    expect(container.firstChild).toBeNull();
+    expect(result.current[0].attached).toBe(false);
+  });
+
+  it('keeps detached tool state until the last Studio owner leaves', () => {
+    const { result } = renderHook(() => useStudioToolSlots('p1'));
+    const first = registerStudio('p1');
+    const last = registerStudio('p1');
+    let release!: () => void;
+    act(() => { release = attachStudioTool('p1', 'test', document.createElement('div')); });
+    const node = result.current[0].node;
+    act(() => { release(); first(); });
+    expect(result.current[0].node).toBe(node);
+    act(() => last());
+    expect(result.current).toEqual([]);
+  });
+
+  it('scopes tool identity by project and Studio instance', () => {
+    expect(studioToolScope()).toBe('');
+    expect(studioToolScope('p1')).toBe('p1');
+    expect(studioToolScope('p1', '')).toBe('p1');
+    expect(studioToolScope('p1', 'window')).not.toBe(studioToolScope('p2', 'window'));
+    const first = renderHook(() => useStudioToolSlots(studioToolScope('p1', 'main')));
+    const second = renderHook(() => useStudioToolSlots(studioToolScope('p1', 'window')));
+    act(() => {
+      attachStudioTool(studioToolScope('p1', 'main'), 'graph', document.createElement('div'));
+      attachStudioTool(studioToolScope('p1', 'window'), 'graph', document.createElement('div'));
+    });
+    expect(first.result.current[0].node).not.toBe(second.result.current[0].node);
+  });
+
+  it('resolves unbound launchers to their default or latest available project Studio', () => {
+    const { result } = renderHook(() => useStudioToolScope('p1'));
+    const scoped = studioToolScope('p1', 'window');
+    const other = studioToolScope('p1', 'second');
+    let removeScoped!: () => void;
+    let removeOther!: () => void;
+    let removeDefault!: () => void;
+    expect(result.current).toBe('p1');
+    act(() => { registerStudio(studioToolScope('p2', 'window')); removeScoped = registerStudio(scoped); });
+    expect(result.current).toBe(scoped);
+    act(() => { removeOther = registerStudio(other); });
+    expect(result.current).toBe(other);
+    act(() => { removeDefault = registerStudio('p1'); });
+    expect(result.current).toBe('p1');
+    act(() => removeDefault());
+    expect(result.current).toBe(other);
+    act(() => removeOther());
+    expect(result.current).toBe(scoped);
+    act(() => removeScoped());
+    expect(result.current).toBe('p1');
+  });
+
+  it('keeps explicit Studio bindings and tolerates legacy project keys resembling scoped keys', () => {
+    const explicit = renderHook(() => useStudioToolScope('p1', 'window'));
+    act(() => { registerStudio('p1'); registerStudio(studioToolScope('p1', 'other')); });
+    expect(explicit.result.current).toBe(studioToolScope('p1', 'window'));
+    const legacy = renderHook(() => useStudioToolScope('studio:not-json'));
+    act(() => {
+      registerStudio('studio:not-json');
+      registerStudio('studio:[1,2]');
+      registerStudio('studio:["single"]');
+      registerStudio('studio:["different","window"]');
+    });
+    expect(legacy.result.current).toBe('studio:not-json');
+    const missing = renderHook(() => useStudioToolScope('absent'));
+    expect(missing.result.current).toBe('absent');
   });
 
   it('orders slots by tool, keeps projects apart and opts out with a null key', () => {
@@ -147,5 +234,39 @@ describe('StudioPanelTool', () => {
     expect(screen.getByTestId('studio-panel-tool-comments')).toBeTruthy();
     expect(slots.result.current[0]).toMatchObject({ tool: 'comments', tabId: 'tab-9' });
     expect(screen.getByText('Comments needs Agent Script Studio')).toBeTruthy();
+  });
+
+  it('preserves a tool node and its form state across tab switches and reopening', () => {
+    registerStudio('p1');
+    const view = render(<StudioPanelTool tool="preview" title="Preview" projectId="p1" tabId="old" />);
+    const node = screen.getByTestId('studio-panel-tool-preview').querySelector('[data-studio-tool="preview"]')!;
+    const input = document.createElement('input');
+    input.value = 'Unsent preview message'; node.appendChild(input);
+    view.unmount();
+    render(<StudioPanelTool tool="preview" title="Preview" projectId="p1" tabId="new" />);
+    expect(screen.getByTestId('studio-panel-tool-preview').querySelector('[data-studio-tool="preview"]')).toBe(node);
+    expect(node.querySelector('input')?.value).toBe('Unsent preview message');
+  });
+
+  it('routes explicit launch params and a bare New Tab to the correct registered Studio', () => {
+    const Tool = studioPanelTool('graph', 'Graph');
+    const mainScope = studioToolScope('p1', 'main');
+    const windowScope = studioToolScope('p1', 'window');
+    registerStudio(mainScope);
+    registerStudio(windowScope);
+    const main = renderHook(() => useStudioToolSlots(mainScope));
+    const window = renderHook(() => useStudioToolSlots(windowScope));
+    const view = render(<Tool pluginId="salesforce" projectId="p1" threadId="" params={{ studioId: 'main' }} surface="plugin-page" tabId="explicit" />);
+    expect(main.result.current[0]).toMatchObject({ tool: 'graph', attached: true, tabId: 'explicit' });
+    expect(window.result.current).toEqual([]);
+    view.rerender(<Tool pluginId="salesforce" projectId="p1" threadId="" params={null} surface="plugin-page" tabId="bare" />);
+    expect(main.result.current[0].attached).toBe(false);
+    expect(window.result.current[0]).toMatchObject({ tool: 'graph', attached: true, tabId: 'bare' });
+    view.rerender(<Tool pluginId="salesforce" projectId="p1" threadId="" params={{ studioId: 42 }} surface="plugin-page" />);
+    expect(window.result.current[0].attached).toBe(true);
+    view.rerender(<Tool pluginId="salesforce" projectId="p1" threadId="" params={['invalid']} surface="plugin-page" />);
+    expect(window.result.current[0].attached).toBe(true);
+    view.rerender(<Tool pluginId="salesforce" projectId="p1" threadId="" params="invalid" surface="plugin-page" />);
+    expect(window.result.current[0].attached).toBe(true);
   });
 });

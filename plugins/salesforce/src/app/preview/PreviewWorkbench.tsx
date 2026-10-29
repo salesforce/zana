@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { MessageSquare, Play, Square } from 'lucide-react';
 import { callPluginRpc, useRealtime } from '@zana-ai/zcc-plugin-sdk/app';
 import { PREVIEW_ENGINES, STUDIO_CHANGED_CHANNEL, STUDIO_RPC, type ScenarioSuite, type StudioEngine, type TurnTrace } from '../../../lib/studio-contract.js';
 import type { LabSnapshot } from '../../../lib/agentforce-lab-contract.js';
@@ -6,12 +7,14 @@ import {
   appendRun, caseFromRun, diffRuns, engineToLab, exportRunPayload,
   type RunRecord, type RunTurn
 } from '../agentforce-preview-logic.js';
+import { runSuiteJob, SuiteStoppedError } from '../studio/suite-job-rpc.js';
 import { STUDIO_TOKENS } from '../studio/studio-tokens.js';
 import { TRACE_PANEL_STYLES, TracePanel } from './TracePanel.js';
 import { PREVIEW_SUITE_STYLES, PreviewSuite } from './PreviewSuite.js';
 import { PREVIEW_CONTEXT_STYLES, PreviewContextEditor, PreviewContextSetup, PreviewContextTabs, usePreviewContext } from './PreviewContext.js';
 import type { AppliedContextPreset, ContextPreset } from '../../../lib/preview-context-preset-contract.js';
 import { parsePreviewContext, type PreviewContextVariable } from '../../../lib/preview-context.js';
+import { getStudioRun, readWorkspaceValue, runWorkspaceRef, studioRunKey, updateStudioRun, useRunWorkspaceState, type StudioRunOwner } from '../studio/run-workspaces.js';
 
 export interface PreviewWorkbenchProps {
   pluginId: string;
@@ -51,38 +54,73 @@ const ENGINE_COPY: Record<StudioEngine, { title: string; hint: string }> = {
 };
 
 export const PREVIEW_WORKBENCH_STYLES = `
-.sf-pw { display:flex; flex-direction:column; height:100%; min-height:0; background:var(--sf-bg); color:var(--sf-text); font-size:12px; }
+.sf-pw { display:flex; flex-direction:column; height:100%; min-height:0; min-width:0; overflow:hidden; container-type:inline-size; background:var(--sf-bg); color:var(--sf-text); font-size:12px; }
+.sf-pw > :not(.sf-pw-view,.sf-context-panel,.sf-context-conversation,.sf-context-backdrop) { flex-shrink:0; }
 .sf-pw button { font:inherit; color:inherit; }
-.sf-pw-bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:8px 10px; border-bottom:1px solid var(--sf-border); }
+.sf-pw-heading { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:14px 18px; border-bottom:1px solid var(--sf-border); }
+.sf-pw-heading strong { font-size:14px; overflow-wrap:anywhere; }
+.sf-pw-heading span { color:var(--sf-muted); }
+.sf-pw-view { display:flex; flex:1; flex-direction:column; min-height:0; min-width:0; overflow:hidden; }
+.sf-pw-view[hidden] { display:none; }
+.sf-pw .sf-context-tabs { gap:18px; padding:0 18px; }
+.sf-pw .sf-context-tabs button { padding:12px 2px; border-radius:0; border-bottom:2px solid transparent; }
+.sf-pw .sf-context-tabs button[aria-selected=true] { border-bottom-color:var(--sf-accent); background:transparent; }
+.sf-pw-bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:14px 18px; border-bottom:1px solid var(--sf-border); }
 .sf-pw-seg { display:inline-flex; border:1px solid var(--sf-border); border-radius:8px; overflow:hidden; }
 .sf-pw-seg button { border:0; background:transparent; padding:4px 10px; cursor:pointer; color:var(--sf-muted); }
 .sf-pw-seg button[aria-pressed=true] { background:var(--sf-accent); color:var(--sf-bg); }
 .sf-pw-seg button:disabled { opacity:.55; cursor:default; }
-.sf-pw-btn { border:1px solid var(--sf-border); background:transparent; border-radius:6px; padding:4px 10px; cursor:pointer; }
-.sf-pw-btn.is-primary { background:var(--sf-accent); color:var(--sf-bg); border-color:var(--sf-accent); }
+.sf-pw-btn { display:inline-flex; justify-content:center; align-items:center; gap:6px; border:1px solid var(--sf-border); background:transparent; border-radius:6px; padding:7px 12px; cursor:pointer; }
+.sf-pw-btn.is-primary { background:var(--sf-accent); color:var(--sf-on-accent); border-color:var(--sf-accent); }
+.sf-pw-btn.is-danger { color:var(--sf-danger); border-color:var(--sf-danger); }
 .sf-pw-btn:disabled { opacity:.5; cursor:default; }
 .sf-pw-btn:focus-visible, .sf-pw-seg button:focus-visible { outline:2px solid var(--sf-accent); outline-offset:2px; }
 .sf-pw-spacer { flex:1; }
-.sf-pw-hint { color:var(--sf-muted); font-size:11px; padding:4px 10px; }
-.sf-pw-hint.is-warn { color:var(--sf-warn); }
+.sf-pw-hint { color:var(--sf-muted); font-size:12px; padding:10px 18px; border-bottom:1px solid var(--sf-border); }
+.sf-pw-hint.is-warn { color:var(--sf-warn); background:color-mix(in srgb,var(--sf-warn) 7%,var(--sf-bg)); }
 .sf-pw-err { color:var(--sf-danger); padding:6px 10px; border-bottom:1px solid var(--sf-border); }
-.sf-pw-log { flex:1; min-height:0; overflow:auto; padding:20px max(14px, calc((100% - 920px) / 2)); display:flex; flex-direction:column; gap:16px; }
-.sf-pw-empty { margin:auto; text-align:center; color:var(--sf-muted); max-width:260px; }
+.sf-pw-log { flex:1; min-height:0; min-width:0; overflow:auto; overscroll-behavior:contain; padding:20px max(14px, calc((100% - 920px) / 2)); display:flex; flex-direction:column; gap:16px; }
+.sf-pw-empty { margin:auto; display:flex; flex-direction:column; align-items:center; gap:14px; padding:28px 8px; text-align:center; color:var(--sf-muted); max-width:380px; }
+.sf-pw-empty h3 { margin:0; color:var(--sf-text); font-size:21px; }
+.sf-pw-empty p { margin:0; line-height:1.6; }
+.sf-pw-empty-icon { display:grid; place-items:center; width:48px; height:48px; border-radius:12px; color:var(--sf-accent); background:var(--sf-soft); }
+.sf-pw-ended { display:flex; justify-content:center; align-items:center; flex-wrap:wrap; gap:12px; padding:14px; border-top:1px solid var(--sf-border); color:var(--sf-muted); }
+.sf-pw-start-reason { font-size:12px; color:var(--sf-muted); }
+.sf-pw-bar-label { color:var(--sf-muted); }
+.sf-pw-back { flex-shrink:0; display:flex; justify-content:space-between; gap:12px; align-items:center; padding:14px 18px; border-bottom:1px solid var(--sf-border); }
+.sf-pw-back h3 { margin:0; font-size:14px; }
+.sf-pw-back p { margin:4px 0 0; color:var(--sf-muted); }
 .sf-pw-msg { display:flex; flex-direction:column; gap:6px; max-width:100%; min-width:0; flex-shrink:0; }
 .sf-pw-msg.is-user { align-self:flex-end; align-items:flex-end; }
 .sf-pw-bubble { border:1px solid var(--sf-border); border-radius:12px; padding:10px 14px; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; }
 .sf-pw-msg.is-user .sf-pw-bubble { background:var(--sf-accent); color:var(--sf-bg); border-color:var(--sf-accent); }
-.sf-pw-meta { display:flex; gap:8px; align-items:center; color:var(--sf-muted); font-size:10px; }
+.sf-pw-meta { display:flex; flex-wrap:wrap; gap:8px; align-items:center; color:var(--sf-muted); font-size:10px; }
 .sf-pw-link { border:0; background:transparent; color:var(--sf-accent); cursor:pointer; padding:0; font-size:10px; }
 .sf-pw-composer { display:flex; gap:8px; padding:12px max(14px, calc((100% - 920px) / 2)); border-top:1px solid var(--sf-border); }
 .sf-pw-composer input { flex:1; min-width:0; font:inherit; padding:6px 8px; border:1px solid var(--sf-border); border-radius:6px; background:transparent; color:var(--sf-text); }
-.sf-pw-panel { border-top:1px solid var(--sf-border); padding:8px 10px; display:flex; flex-direction:column; gap:6px; }
+.sf-pw-panel { border-top:1px solid var(--sf-border); padding:8px 10px; display:flex; flex:0 1 auto; flex-direction:column; gap:6px; min-height:0; max-height:35%; overflow:auto; overscroll-behavior:contain; }
 .sf-pw-panel label { display:flex; flex-direction:column; gap:2px; color:var(--sf-muted); }
 .sf-pw-panel input, .sf-pw-panel select { font:inherit; padding:4px 6px; border:1px solid var(--sf-border); border-radius:6px; background:transparent; color:var(--sf-text); }
 .sf-pw-cmp { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
 .sf-pw-cmp > div { border:1px solid var(--sf-border); border-radius:6px; padding:4px 6px; overflow-wrap:anywhere; white-space:pre-wrap; }
 .sf-pw-cmp > div.is-diff { border-color:var(--sf-warn); }
 .sf-pw-cmp .sf-pw-meta { grid-column:1 / -1; }
+.sf-pw-cmp > select { min-width:0; width:100%; }
+.sf-pw .sf-context-conversation { min-width:0; overflow:hidden; }
+.sf-pw .sf-context-conversation > :not(.sf-pw-log,.sf-pw-panel) { flex-shrink:0; }
+.sf-pw .sf-context-panel { min-width:0; overscroll-behavior:contain; }
+@container (max-width:520px) {
+  .sf-pw-heading,.sf-pw-bar,.sf-pw-back { padding:10px 12px; gap:8px; }
+  .sf-pw .sf-context-tabs { gap:12px; padding:0 12px; }
+  .sf-pw-back { flex-wrap:wrap; }
+  .sf-pw-bar-label { flex-basis:calc(100% - 180px); }
+  .sf-pw-btn { white-space:normal; min-height:34px; }
+  .sf-pw-hint { padding:8px 12px; }
+  .sf-pw-empty { padding:16px 0; }
+  .sf-pw-empty h3 { font-size:18px; }
+  .sf-pw-cmp { grid-template-columns:minmax(0,1fr); }
+  .sf-pw-cmp > select,.sf-pw-cmp > div { grid-column:1; }
+}
 /* The host chrome sets user-select:none; the conversation, traces, hints and errors are reading surfaces the user copies from. */
 .sf-pw-log, .sf-pw-hint, .sf-pw-err, .sf-pw-cmp { user-select:text; -webkit-user-select:text; }
 `;
@@ -100,36 +138,55 @@ const unavailable = (runId: string, reason: string, planId?: string): TurnTrace 
 const LIVE_TRACE_REASON = 'Live runs do not return a planner trace here. Use Simulate to see how the agent decided.';
 
 export function PreviewWorkbench(props: PreviewWorkbenchProps) {
+  const owner: StudioRunOwner = { pluginId: props.pluginId, projectId: props.projectId, orgAlias: props.orgAlias, path: props.path, view: 'preview' };
+  return <PreviewWorkspace key={studioRunKey(owner)} {...props} />;
+}
+function PreviewWorkspace(props: PreviewWorkbenchProps) {
   const { pluginId, projectId, path } = props;
+  const owner: StudioRunOwner = { pluginId, projectId, orgAlias: props.orgAlias, path, view: 'preview' };
+  const workspaceKey = studioRunKey(owner);
   const context = usePreviewContext({ pluginId, projectId, path, source: props.source, orgAlias: props.orgAlias, scope: `${projectId ?? ''}:${path ?? ''}:${props.orgAlias ?? ''}` });
-  const [runContext, setRunContext] = useState<PreviewContextVariable[]>([]);
+  const [runContext, setRunContext] = useRunWorkspaceState<PreviewContextVariable[]>(workspaceKey, 'runContext', []);
   const [innerEngine, setInnerEngine] = useState<StudioEngine>(props.engine ?? 'simulate');
   // Rehearse is hidden for now: a stale request for it runs Simulate.
   const chosen = props.engine ?? innerEngine;
   const engine: StudioEngine = chosen === 'rehearse' ? 'simulate' : chosen;
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [turns, setTurns] = useState<RunTurn[]>([]);
-  const [traces, setTraces] = useState<Record<string, TurnTrace>>({});
-  const [open, setOpen] = useState<Record<number, boolean>>({});
+  const [sessionId, setSessionId] = useRunWorkspaceState<string | null>(workspaceKey, 'sessionId', null);
+  const [turns, setTurns] = useRunWorkspaceState<RunTurn[]>(workspaceKey, 'turns', []);
+  const [traces, setTraces] = useRunWorkspaceState<Record<string, TurnTrace>>(workspaceKey, 'traces', {});
+  const [open, setOpen] = useRunWorkspaceState<Record<number, boolean>>(workspaceKey, 'open', {});
   const [tracing, setTracing] = useState<Record<number, boolean>>({});
-  const [runPreset, setRunPreset] = useState<AppliedContextPreset | null>(null);
-  const [runs, setRuns] = useState<RunRecord[]>([]);
-  const [draft, setDraft] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [runSource, setRunSource] = useState('');
-  const [runEngine, setRunEngine] = useState<StudioEngine>(engine);
+  const [runPreset, setRunPreset] = useRunWorkspaceState<AppliedContextPreset | null>(workspaceKey, 'runPreset', null);
+  const [runs, setRuns] = useRunWorkspaceState<RunRecord[]>(workspaceKey, 'runs', []);
+  const [draft, setDraft] = useRunWorkspaceState(workspaceKey, 'draft', '');
+  const [busy, setBusy] = useRunWorkspaceState(workspaceKey, 'busy', false);
+  const [error, setError] = useRunWorkspaceState(workspaceKey, 'error', '');
+  const [runSource, setRunSource] = useRunWorkspaceState(workspaceKey, 'runSource', '');
+  const [runEngine, setRunEngine] = useRunWorkspaceState<StudioEngine>(workspaceKey, 'runEngine', engine);
   const [suite, setSuite] = useState<SuiteEntry | null>(null);
+  const [suiteLoadError, setSuiteLoadError] = useState('');
   const [suiteBusy, setSuiteBusy] = useState('');
+  const [suiteJob, setSuiteJob] = useState<string | null>(null);
+  const [suiteStopping, setSuiteStopping] = useState(false);
+  const [suiteNotice, setSuiteNotice] = useState('');
+  const suiteController = useRef(new AbortController());
+  const suiteLocked = useRef(false);
+  const suiteSequence = useRef(0);
+  useEffect(() => {
+    suiteController.current = new AbortController();
+    suiteLocked.current = false;
+    setSuite(null); setSuiteLoadError(''); setSuiteBusy(''); setSuiteJob(null); setSuiteStopping(false); setSuiteNotice('');
+    return () => { suiteController.current.abort(); suiteSequence.current++; };
+  }, [projectId, path]);
   const [saving, setSaving] = useState(false);
   const [saveName, setSaveName] = useState('');
   const [saveCriteria, setSaveCriteria] = useState('');
   const [compare, setCompare] = useState<[string, string] | null>(null);
   const alive = useRef(true);
-  const active = useRef<ActiveRun | null>(null);
+  const active = runWorkspaceRef<ActiveRun | null>(workspaceKey, 'active', null, true);
   // Bumped whenever the run is released, so a start that resolves afterwards knows it was superseded.
-  const epoch = useRef(0);
-  const locked = useRef(false);
+  const epoch = runWorkspaceRef(workspaceKey, 'epoch', 0);
+  const locked = runWorkspaceRef(workspaceKey, 'locked', false);
 
   const rpc = useCallback(async <T,>(method: string, args: Record<string, unknown> = {}): Promise<Rpc<T>> => {
     const result = await callPluginRpc(pluginId, method, { ...(projectId ? { projectId } : {}), ...args }) as Rpc<T>;
@@ -146,21 +203,60 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
   }, [pluginId]);
   const release = useCallback(() => {
     epoch.current += 1;
-    const current = active.current;
     active.current = null;
     setSessionId(null);
-    if (current) void close(current).catch(() => undefined);
-  }, [close]);
+  }, []);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
-  // A run belongs to the file it started from: opening another file ends it, while saving a new draft keeps it.
-  const shownPath = useRef(path);
+  // Views only attach to a run. Its original owner stays alive until an explicit End or Restart.
   useEffect(() => {
-    const previous = shownPath.current;
-    shownPath.current = path;
-    if (previous && previous !== path) release();
-  }, [path, release]);
-  // Switching project or unmounting ends the run.
-  useEffect(() => release, [projectId, props.orgAlias, release]);
+    let saved = active.current;
+    const remembered = getStudioRun(owner);
+    if (!saved && remembered && ['active', 'running'].includes(remembered.status)) {
+      saved = { id: remembered.runId, engine: remembered.engine, projectId, path, orgAlias: props.orgAlias, threadId: props.threadId };
+      active.current = saved; setSessionId(saved.id); setRunEngine(saved.engine);
+    }
+    if (!saved && !busy) return;
+    let attached = true, pending = false;
+    const refresh = async () => {
+      if (pending || !saved && !active.current && locked.current) return;
+      saved ??= active.current;
+      pending = true;
+      try {
+        if (!saved) {
+          const listed = await rpc<LabSnapshot[]>('agentLab.list', { path, orgAlias: props.orgAlias });
+          const found = listed.data?.find(row => !row.execution && row.path === path && Boolean(row.live) === (runEngine === 'live'));
+          if (!found) { setBusy(false); return; }
+          saved = { id: found.id, engine: found.live ? 'live' : found.engine === 'rehearsal' ? 'rehearse' : 'simulate', projectId, path, orgAlias: props.orgAlias, threadId: found.threadId };
+          active.current = saved; setSessionId(saved.id); setRunEngine(saved.engine);
+        }
+        const response = await rpc<LabSnapshot>('agentLab.get', { id: saved.id, path: saved.path, orgAlias: saved.orgAlias, includeSource: true });
+        if (!attached || active.current?.id !== saved.id) return;
+        if (!response.ok || !response.data) {
+          if (saved.engine === 'live') { setBusy(false); return; }
+          active.current = null; setSessionId(null); setBusy(false);
+          setError(response.error || 'This conversation is no longer available. Its recorded messages are still here.');
+          updateStudioRun(owner, { runId: saved.id, engine: saved.engine, status: 'expired', turn: turns.filter(t => t.role === 'user').length });
+          return;
+        }
+        const snapshot = response.data;
+        setTurns(snapshotTurns(snapshot)); setRunContext(snapshot.contextVariables ?? []);
+        if (snapshot.source) setRunSource(snapshot.source);
+        setBusy(Boolean(snapshot.busy) || locked.current);
+        if (snapshot.closed || snapshot.failed) { active.current = null; setSessionId(null); if (snapshot.failed) setError('This conversation could not continue. Start a new conversation to retry.'); }
+      } catch (err) { if (attached) setError(`Could not reconnect: ${err instanceof Error ? err.message : String(err)}`); }
+      finally { pending = false; }
+    };
+    void refresh();
+    const timer = setInterval(() => void refresh(), 2000);
+    return () => { attached = false; clearInterval(timer); };
+    // This attachment has a stable original owner; reopening another file mounts its own workspace.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    const id = sessionId ?? getStudioRun(owner)?.runId;
+    if (id) updateStudioRun(owner, { runId: id, engine: runEngine, status: sessionId ? busy ? 'running' : 'active' : getStudioRun(owner)?.status === 'expired' ? 'expired' : 'ended', turn: turns.filter(turn => turn.role === 'user').length });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, busy, turns, runEngine]);
 
   // Keep a bounded history of runs (compare / export) and tell the host which run is active.
   useEffect(() => {
@@ -173,15 +269,28 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
   }, [sessionId, runEngine, turns, onRunChange]);
 
   const loadSuite = useCallback(async () => {
-    if (!path || !projectId) { setSuite(null); return; }
-    const result = await rpc<never>(STUDIO_RPC.suites, { agentPath: path }).catch(() => null);
-    const list = (result as { suites?: SuiteEntry[] } | null)?.suites;
-    if (alive.current && Array.isArray(list)) setSuite(list[0] ?? null);
+    const sequence = ++suiteSequence.current;
+    if (!path || !projectId) { setSuite(null); setSuiteLoadError(''); return; }
+    try {
+      const result = await rpc<never>(STUDIO_RPC.suites, { agentPath: path });
+      if (!alive.current || sequence !== suiteSequence.current) return;
+      const list = result.suites;
+      if (result.ok === false || !Array.isArray(list)) throw new Error(result.error || 'Could not load saved scenarios.');
+      setSuite((list as SuiteEntry[])[0] ?? null); setSuiteLoadError('');
+    } catch (err) {
+      if (alive.current && sequence === suiteSequence.current) setSuiteLoadError(err instanceof Error ? err.message : String(err));
+    }
   }, [rpc, path, projectId]);
   useEffect(() => { void loadSuite(); }, [loadSuite]);
+  const previousSuiteTab = useRef(context.tab);
+  useEffect(() => {
+    const entered = context.tab === 'scenarios' && previousSuiteTab.current !== 'scenarios';
+    previousSuiteTab.current = context.tab;
+    if (entered) void loadSuite();
+  }, [context.tab, loadSuite]);
   useRealtime(STUDIO_CHANGED_CHANNEL, payload => {
     const row = payload as { kind?: string; projectId?: string } | null;
-    if (row?.kind === 'suites' && (!row.projectId || row.projectId === projectId)) void loadSuite();
+    if ((row?.kind === 'suites' || row?.kind === 'suite-progress') && (!row.projectId || row.projectId === projectId)) void loadSuite();
   });
 
   const setEngine = (next: StudioEngine) => { setInnerEngine(next); props.onEngineChange?.(next); };
@@ -190,16 +299,22 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
   const stale = running && props.source !== runSource;
   const currentRun = useMemo(() => runs.find(r => r.runId === sessionId) ?? null, [runs, sessionId]);
 
+  function publish(status?: 'active' | 'running' | 'ended') {
+    const current = active.current; const previous = getStudioRun(owner);
+    const runId = current?.id ?? previous?.runId;
+    if (runId) updateStudioRun(owner, { runId, engine: current?.engine ?? previous?.engine ?? runEngine, status: status ?? (current ? 'active' : 'ended'), turn: readWorkspaceValue<RunTurn[]>(workspaceKey, 'turns', []).filter(turn => turn.role === 'user').length });
+  }
   async function perform(work: () => Promise<void>) {
     if (locked.current) return;
-    locked.current = true; setBusy(true); setError('');
+    locked.current = true; setBusy(true); setError(''); publish('running');
     try { await work(); }
-    catch (err) { if (alive.current) setError(err instanceof Error ? err.message : String(err)); }
-    finally { locked.current = false; if (alive.current) setBusy(false); }
+    catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    finally { locked.current = false; setBusy(false); publish(); }
   }
 
   /** `byUser`: a click on Start or Send, which approves the run itself; a host command does not. */
   async function start(byUser = false, initialContext = context.values, contextPreset: AppliedContextPreset | null = context.presetIdentity) {
+    if (suiteLocked.current || suite?.progress) throw Error('Wait for the scenario suite to finish or stop it before starting a conversation.');
     const contextVariables = parsePreviewContext(initialContext);
     const previous = active.current;
     const beforeClose = epoch.current;
@@ -217,7 +332,7 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
     const lab = engineToLab(engine);
     let run: ActiveRun; let first: RunTurn[] = [];
     if (lab) {
-      const res = await rpc<LabSnapshot>('agentLab.start', { engine: lab, source: props.source, ...(contextVariables.length ? { contextVariables } : {}), ...(path ? { path } : {}), ...(props.threadId ? { threadId: props.threadId } : {}), ...(byUser ? { startedByUser: true } : {}) });
+      const res = await rpc<LabSnapshot>('agentLab.start', { engine: lab, source: props.source, orgAlias: props.orgAlias, ...(contextVariables.length ? { contextVariables } : {}), ...(path ? { path } : {}), ...(props.threadId ? { threadId: props.threadId } : {}), ...(byUser ? { startedByUser: true } : {}) });
       if (!res.ok || !res.data) throw new Error(res.error || 'The preview could not start.');
       run = { ...owner, id: res.data.id }; first = snapshotTurns(res.data);
     } else {
@@ -226,10 +341,10 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
       if (!res.ok || !id) throw new Error(res.error || 'Live preview could not start.');
       run = { ...owner, id };
     }
-    // The panel closed or the file changed while starting: nobody owns this run, so end it.
+    // An explicit restart can supersede an older request. Detaching the UI does not.
     if (started !== epoch.current) { void close(run).catch(() => undefined); return; }
     active.current = run;
-    setSessionId(run.id); setTurns(first);
+    setSessionId(run.id); setTurns(first); publish('active');
     setRunEngine(engine); setRunSource(props.source);
     setRunContext(contextVariables); setRunPreset(contextPreset); context.markApplied(contextVariables, contextPreset); context.setSetup(false); context.setTab('conversation');
   }
@@ -237,7 +352,7 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
     const current = active.current;
     if (!current) return;
     active.current = null;
-    setSessionId(null);
+    setSessionId(null); publish('ended');
     const res = await close(current).catch((err: unknown) => ({ ok: false, error: err instanceof Error ? err.message : String(err) }));
     // A lab run is a local handle that is gone either way; a Live session may still be open on the org.
     if (current.engine === 'live' && !res.ok) throw new Error(`The Live session may still be open on the org: ${res.error || 'it did not confirm the end.'}`);
@@ -259,6 +374,7 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
       const reply = res.data?.response?.trim();
       if (reply) setTurns(prev => [...prev, { role: 'agent', text: reply, ...(res.data?.planId ? { planId: res.data.planId } : {}) }]);
     } else {
+      setTurns(previous => [...previous, { role: 'user', text }]);
       const res = await rpc<LabSnapshot>('agentLab.send', { id: current.id, text });
       if (!res.ok || !res.data) throw new Error(res.error || 'The agent did not respond.');
       setTurns(snapshotTurns(res.data));
@@ -316,15 +432,33 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
   }
 
   async function runSuite(caseIds?: string[]) {
-    if (!suite || engine === 'live') return;
-    setSuiteBusy(caseIds?.length ? 'Running case…' : `Running ${suite.cases.length} cases…`); setError('');
+    if (!suite?.cases.length || !path || !projectId || active.current || locked.current || suiteLocked.current || suite.progress) return;
+    suiteLocked.current = true;
+    const signal = suiteController.current.signal;
+    setSuiteBusy(caseIds?.length ? 'Running case…' : `Running ${suite.cases.length} cases…`); setError(''); setSuiteNotice('');
     try {
-      const res = await rpc<never>(STUDIO_RPC.suiteRun, { path: suite.path, agentPath: path, source: props.source, engine: engineToLab(engine), startedByUser: true, ...(props.threadId ? { threadId: props.threadId } : {}), ...(caseIds ? { caseIds } : {}) });
-      const next = (res as { suite?: SuiteEntry }).suite;
+      const res = await runSuiteJob(rpc, { path: suite.path, agentPath: path, source: props.source, engine: 'preview', startedByUser: true, ...(props.threadId ? { threadId: props.threadId } : {}), ...(caseIds ? { caseIds } : {}) }, signal, setSuiteJob);
+      const next = res.suite as SuiteEntry | undefined;
       if (!res.ok || !next) throw new Error(res.error || 'The suite could not run.');
-      if (alive.current) setSuite(prev => ({ ...next, sha256: prev?.sha256 ?? next.sha256 }));
-    } catch (err) { if (alive.current) setError(err instanceof Error ? err.message : String(err)); }
-    finally { if (alive.current) setSuiteBusy(''); }
+      if (!signal.aborted) setSuite(prev => ({ ...next, sha256: prev?.sha256 ?? next.sha256 }));
+    } catch (err) {
+      if (!signal.aborted) {
+        if (err instanceof SuiteStoppedError) { setSuiteNotice(err.message); void loadSuite(); }
+        else setError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      if (!signal.aborted) { suiteLocked.current = false; setSuiteBusy(''); setSuiteJob(null); setSuiteStopping(false); }
+    }
+  }
+  async function stopSuite() {
+    if (!suiteJob || suiteStopping) return;
+    const signal = suiteController.current.signal;
+    setSuiteStopping(true);
+    try {
+      const reply = await rpc(STUDIO_RPC.suiteStop, { jobId: suiteJob });
+      if (!reply.ok) throw Error(reply.error || 'Could not stop the suite.');
+    } catch (err) { if (!signal.aborted) setError(err instanceof Error ? err.message : String(err)); }
+    finally { if (!signal.aborted) setSuiteStopping(false); }
   }
   async function saveScenario(event: FormEvent) {
     event.preventDefault();
@@ -343,35 +477,56 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
   const cmpRuns = compare ? [runs.find(r => r.runId === compare[0]), runs.find(r => r.runId === compare[1])] : [];
   const rows = cmpRuns[0] && cmpRuns[1] ? diffRuns(cmpRuns[0], cmpRuns[1]) : [];
 
+  const scenariosRunning = Boolean(suiteBusy || suite?.progress);
+  const startReason = scenariosRunning ? 'Wait for the scenario suite to finish or stop it before starting a conversation.' : context.loading ? 'Finding context variables…' : liveBlocked ? 'Open a saved .agent file to run Live.' : engine !== 'live' && !props.source.trim() ? 'Add an agent script before starting a conversation.' : '';
+  const startButton = <button type="button" className="sf-pw-btn is-primary" data-testid="pw-start" disabled={busy || Boolean(startReason)}
+    onClick={() => context.fields.length || context.count || context.discoveryError ? context.setSetup(true) : void perform(() => start(true))}><Play size={14} aria-hidden="true" />{busy ? 'Starting…' : turns.length ? 'Start new conversation' : engine === 'live' ? 'Start live conversation' : 'Start simulated conversation'}</button>;
+
   return (
-    <section className="sf-studio sf-pw" data-testid="preview-workbench" aria-label="Agent preview">
+    <section className="sf-studio sf-pw" data-testid="preview-workbench" data-run-id={sessionId ?? undefined} aria-label="Agent preview">
       <style>{STUDIO_TOKENS}{PREVIEW_WORKBENCH_STYLES}{PREVIEW_SUITE_STYLES}{TRACE_PANEL_STYLES}{PREVIEW_CONTEXT_STYLES}</style>
+      <div className="sf-pw-heading"><strong>{props.fileLabel || 'Current draft'}</strong><span>Agent Preview</span><span className="sf-pw-spacer" />{props.orgAlias && <span>{props.orgAlias}</span>}</div>
+      <PreviewContextTabs context={context} scenarios={suite?.cases.length ?? 0} running={running} />
+      {error && <div className="sf-pw-err" role="alert">{error}</div>}
+      <div className="sf-pw-view" id={`${context.id}-scenarios-panel`} role="tabpanel" aria-labelledby={`${context.id}-scenarios`} hidden={context.tab !== 'scenarios'}>
+        {suiteLoadError && <div className="sf-pw-err" role="alert">Could not load saved scenarios: {suiteLoadError} <button type="button" className="sf-pw-btn" onClick={() => void loadSuite()}>Retry</button></div>}
+        {(!suiteLoadError || suite) && <PreviewSuite key={`${projectId}:${path}`} pluginId={pluginId} projectId={projectId} suite={suite} busy={suiteBusy || (suite?.progress ? `Running · ${suite.progress.completed}/${suite.progress.caseIds.length} cases complete` : '')}
+          disabled={busy || running || !path || !projectId || !props.source.trim() || scenariosRunning}
+          disabledReason={running ? 'A manual conversation is running. End it before starting scenario tests.' : busy ? 'Wait for the conversation operation to finish before running scenarios.' : !path || !projectId ? 'Open a saved .agent file to run scenarios.' : !props.source.trim() ? 'Add an agent script before running scenarios.' : undefined}
+          onRun={ids => void runSuite(ids)} onStop={suiteJob ? () => void stopSuite() : undefined} stopping={suiteStopping} onConversation={running ? () => context.setTab('conversation') : undefined} />}
+        {suiteNotice && <div className="sf-pw-hint" role="status">{suiteNotice}</div>}
+      </div>
+      {context.tab === 'context' && <div className="sf-context-panel" id={`${context.id}-context-panel`} role="tabpanel" aria-labelledby={`${context.id}-context`}>
+        <div className="sf-pw-back"><div><h3>Conversation context</h3><p>Optional initial values for your next conversation.</p></div><button type="button" className="sf-pw-btn" onClick={() => context.setTab('conversation')}>Back to conversation</button></div>
+        <PreviewContextEditor context={context} running={running} onRestart={() => context.setSetup(true)} />
+      </div>}
+      <div className="sf-context-conversation" id={`${context.id}-conversation-panel`} role="tabpanel" aria-labelledby={`${context.id}-conversation`} hidden={context.tab !== 'conversation'}>
       <div className="sf-pw-bar">
         <div className="sf-pw-seg" role="group" aria-label="Preview engine">
-          {PREVIEW_ENGINES.map(e => <button key={e} type="button" aria-pressed={engine === e} disabled={busy || running} title={ENGINE_COPY[e].hint} onClick={() => setEngine(e)}>{ENGINE_COPY[e].title}</button>)}
+          {PREVIEW_ENGINES.map(e => <button key={e} type="button" aria-pressed={engine === e} disabled={busy || running || scenariosRunning} title={ENGINE_COPY[e].hint} onClick={() => setEngine(e)}>{ENGINE_COPY[e].title}</button>)}
         </div>
+        <span className="sf-pw-bar-label">{running ? 'Conversation running' : 'Manual conversation'}</span>
         <span className="sf-pw-spacer" />
-        {running
-          ? <button type="button" className="sf-pw-btn" disabled={busy} onClick={() => void perform(end)}>End</button>
-          : <button type="button" className="sf-pw-btn is-primary" data-testid="pw-start" disabled={busy || context.loading || liveBlocked || (engine !== 'live' && !props.source.trim())} onClick={() => context.fields.length || context.count || context.discoveryError ? context.setSetup(true) : void perform(() => start(true))}>{busy ? 'Starting…' : 'Start'}</button>}
+        {running && <button type="button" className="sf-pw-btn is-danger" disabled={busy} onClick={() => void perform(end)}><Square size={13} aria-hidden="true" />End conversation</button>}
         {runs.length > 0 && <button type="button" className="sf-pw-btn" onClick={() => currentRun || runs[0] ? download('agentforce-run.json', exportRunPayload(currentRun ?? runs[0]!)) : undefined}>Export run</button>}
         {runs.length > 1 && <button type="button" className="sf-pw-btn" aria-pressed={Boolean(compare)} onClick={() => setCompare(compare ? null : [runs[0]!.runId, runs[1]!.runId])}>Compare runs</button>}
         {running && turns.some(t => t.role === 'user') && <button type="button" className="sf-pw-btn" disabled={!path} title={path ? 'Save this conversation as a scenario' : 'Open a saved .agent file to save scenarios'} onClick={() => setSaving(s => !s)}>Save as scenario</button>}
+        <button type="button" className="sf-pw-btn" onClick={() => context.setTab('context')}>Context · {context.count ? `${context.count} values` : 'none set'}</button>
       </div>
       <div className={engine === 'live' ? 'sf-pw-hint is-warn' : 'sf-pw-hint'}>
         {engine === 'simulate' ? 'Compiles this draft through the Preview API. Actions are simulated.' : liveBlocked ? 'Open a saved .agent file to run Live.' : `Live runs real actions${props.orgAlias ? ` on ${props.orgAlias}` : ' on the connected org'}.${props.dirty ? ' It runs the saved file, so save to include your edits.' : ''}`}
         {stale && ' Your script changed; start a new run to test the edits.'}
       </div>
-      {error && <div className="sf-pw-err" role="alert">{error}</div>}
-      <PreviewContextTabs context={context} />
-      {context.tab === 'context' && <div className="sf-context-panel" id={`${context.id}-context-panel`} role="tabpanel" aria-labelledby={`${context.id}-context`}><PreviewContextEditor context={context} running={running} onRestart={() => context.setSetup(true)} /></div>}
-      <div className="sf-context-conversation" id={`${context.id}-conversation-panel`} role="tabpanel" aria-labelledby={`${context.id}-conversation`} hidden={context.tab !== 'conversation'}>
-      {path && (suite || suiteBusy) && (
-        <PreviewSuite key={`${projectId}:${path}:${suite?.id}`} suite={suite} busy={suiteBusy} disabled={engine === 'live' || running} onRun={ids => void runSuite(ids)} />
-      )}
       <div className="sf-pw-log" role="log" aria-label="Preview conversation">
         {turns.length === 0
-          ? <div className="sf-pw-empty">{busy ? 'Starting…' : <><strong>{props.fileLabel || 'Current draft'}</strong><p>Start a conversation, then expand “trace” on any reply to see how the agent decided.</p></>}</div>
+          ? <div className="sf-pw-empty">
+              <span className="sf-pw-empty-icon"><MessageSquare size={24} aria-hidden="true" /></span>
+              <h3>Talk to your agent</h3><p>Try a request and inspect how your agent responds. Start a conversation to enable messaging.</p>
+              {!running && startButton}
+              {!running && startReason && <p className="sf-pw-start-reason">{startReason}</p>}
+              {running && <p>Conversation started. Send your first message below.</p>}
+              <button type="button" className="sf-pw-link" onClick={() => context.setTab('scenarios')}>Looking for saved tests? Open Scenarios →</button>
+            </div>
           : turns.map((turn, index) => (
             <div key={index} className={`sf-pw-msg is-${turn.role}`} data-role={turn.role}>
               <div className="sf-pw-bubble">{turn.text}</div>
@@ -417,10 +572,10 @@ export function PreviewWorkbench(props: PreviewWorkbenchProps) {
           </div>
         </div>
       )}
-      <form className="sf-pw-composer" onSubmit={e => void perform(() => send(e))}>
+      {running ? <form className="sf-pw-composer" onSubmit={e => void perform(() => send(e))}>
         <input aria-label="Preview message" placeholder={running ? 'Ask your agent something…' : 'Start a run to talk to your agent'} disabled={!running || busy} value={draft} maxLength={4000} onChange={e => setDraft(e.target.value)} />
         <button type="submit" className="sf-pw-btn is-primary" aria-label="Send preview message" disabled={!running || busy || !draft.trim()}>Send</button>
-      </form>
+      </form> : turns.length > 0 && <div className="sf-pw-ended"><span>Conversation ended. Your messages are still here.</span>{startButton}{startReason && <span>{startReason}</span>}</div>}
       </div>
       {context.setup && <PreviewContextSetup context={context} error={error} busy={busy} running={running} onClose={() => context.setSetup(false)} onStart={() => void perform(() => start(true))} />}
     </section>

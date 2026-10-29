@@ -112,10 +112,16 @@ export function useStudioSplit({ storageKey, initial = 50, breakpoint = 760, sta
   const length = (stacked ? bounds.height : bounds.width) - 9;
   const minimum = length > 0 ? Math.min(40, (stacked ? 120 : minPane) / length * 100) : 20;
   const pane = usePaneSize(storageKey ? `${storageKey}:${stacked ? 'rows' : 'columns'}` : undefined, stacked && stack ? 58 : initial, Math.max(20, minimum), Math.min(80, 100 - minimum));
+  const dragScale = () => {
+    // A newly revealed pane can receive input before ResizeObserver delivers its size.
+    const current = element?.getBoundingClientRect();
+    const pixels = current ? (stacked ? current.height : current.width) - 9 : length;
+    return pixels > 0 ? 100 / pixels : 0;
+  };
   return {
     ref, style: { '--sf-pane-ratio': pane.size } as CSSProperties, stacked,
     divider: (label: string) => !stacked || stack ? <ResizeHandle key={storageKey} label={label} orientation={stacked ? 'horizontal' : 'vertical'} value={pane.size}
-      min={Math.max(20, minimum)} max={Math.min(80, 100 - minimum)} {...pane} scale={() => length > 0 ? 100 / length : 0} /> : null
+      min={Math.max(20, minimum)} max={Math.min(80, 100 - minimum)} {...pane} scale={dragScale} /> : null
   };
 }
 

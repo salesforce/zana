@@ -29,19 +29,30 @@ type Outcome = CaseOutcome;
 export type SuiteResults = NonNullable<ScenarioSuite['lastResults']>;
 export interface SuiteEntry extends ScenarioSuite { sha256: string }
 export interface CaseRunDetail extends CaseResult { caseId: string; notes: string[]; turns: Array<{ role: 'user' | 'agent'; text: string }> }
-/** Per-case evidence kept in kv: up to 40 suites × 50 cases, so each entry stays a few KB. */
-export const EVIDENCE_LIMITS = { notes: 5, note: 240, reply: 480, names: 10, name: 100 } as const;
+/** Per-case evidence kept in kv: up to 40 suites × 50 cases, with at most 12,000 transcript characters per case. */
+export const EVIDENCE_LIMITS = { notes: 5, note: 240, reply: 480, names: 10, name: 100, conversationChars: 12000, conversationTurns: 16, message: 4000 } as const;
 
-/** The stored form of a run: outcome plus bounded evidence (judge notes, what the trace saw, the agent's last reply). */
+/** The stored form of a run: outcome, bounded conversation and check evidence. */
 export function caseResult(detail: CaseRunDetail): CaseResult {
   const names = (values: string[]) => values.slice(0, EVIDENCE_LIMITS.names).map(value => value.slice(0, EVIDENCE_LIMITS.name));
   const reply = [...detail.turns].reverse().find(turn => turn.role === 'agent')?.text.trim().slice(0, EVIDENCE_LIMITS.reply);
+  const conversation: NonNullable<CaseResult['conversation']> = [];
+  let remaining: number = EVIDENCE_LIMITS.conversationChars;
+  for (const turn of detail.turns.slice(0, EVIDENCE_LIMITS.conversationTurns)) {
+    if (remaining <= 0) break;
+    const message = turn.text.slice(0, Math.min(EVIDENCE_LIMITS.message, remaining));
+    conversation.push({ role: turn.role, message });
+    remaining -= message.length;
+  }
+  const conversationTruncated = conversation.length < detail.turns.length || conversation.some((turn, i) => turn.message.length < detail.turns[i]!.text.length);
   return {
     outcome: detail.outcome, runId: detail.runId, at: detail.at,
     ...(detail.notes.length ? { notes: detail.notes.slice(0, EVIDENCE_LIMITS.notes).map(note => note.slice(0, EVIDENCE_LIMITS.note)) } : {}),
     ...(detail.observed ? { observed: { topics: names(detail.observed.topics), actions: names(detail.observed.actions), traced: detail.observed.traced, ...(detail.observed.traceComplete !== undefined ? { traceComplete: detail.observed.traceComplete } : {}) } } : {}),
     ...(reply ? { reply } : {}),
+    ...(conversation.length ? { conversation, ...(conversationTruncated ? { conversationTruncated: true } : {}) } : {}),
     ...(detail.setupBlocked ? { setupBlocked: true } : {}),
+    ...(detail.stopped ? { stopped: true } : {}),
     ...(detail.deterministic ? { deterministic: detail.deterministic } : {}),
     ...(detail.judge ? { judge: detail.judge } : {}),
     ...(detail.sourceHash ? { sourceHash: detail.sourceHash, caseHash: detail.caseHash } : {}),
@@ -394,6 +405,8 @@ export class ScenarioSuites {
         input.signal?.throwIfAborted();
         update({ stage: 'conversation', turn: index + 1 });
         last = await lab.send({ id, text: utterance });
+        detail.turns = last.turns.slice(Math.max(0, last.turns.findIndex(t => t.role === 'user'))).map(t => ({ role: t.role, text: t.text }));
+        input.signal?.throwIfAborted();
       }
       // A runtime may greet on start. Only replies to the scripted user turns
       // have response latency and belong in the evaluation replay history.
@@ -443,7 +456,9 @@ export class ScenarioSuites {
         if (assertion.outcome === 'fail' || assertion.outcome === 'inconclusive' && detail.outcome === 'pass') detail.outcome = assertion.outcome;
         if (assertion.outcome !== 'pass') detail.notes.push(`${assertion.label}: ${assertion.actual}`);
       }
+      input.signal?.throwIfAborted();
     } catch (error) {
+      if (input.signal?.aborted) detail.stopped = true;
       detail.notes.push(error instanceof Error ? error.message : String(error));
     } finally {
       input.signal?.removeEventListener('abort', cancel);

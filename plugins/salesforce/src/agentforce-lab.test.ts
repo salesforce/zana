@@ -48,6 +48,7 @@ describe('Agentforce lab', () => {
     expect(JSON.stringify(session)).not.toMatch(/PRIVATE|remote\/1/);
     expect(request.mock.calls[1][2]).toMatchObject({ enableSimulationMode: true, bypassUser: false, agentDefinition: { agentVersion: { developerName: 'v0' } } });
     const result = await lab.send({ id: session.id, text: 'Hello' });
+    expect(result.busy).toBe(false);
     expect(result.turns.at(-1)).toMatchObject({ role: 'agent', text: 'I can help you find an order.', planId: 'plan1', latencyMs: 0 });
     expect(request.mock.calls.at(-1)).toEqual(['PRIVATE_JWT', expect.stringContaining('remote%2F1/messages'), expect.objectContaining({ message: { sequenceId: 1, type: 'Text', text: 'Hello' } }), 'test.api.salesforce.com', expect.any(AbortSignal)]);
     expect(connect).toHaveBeenCalledTimes(1);
@@ -70,6 +71,7 @@ describe('Agentforce lab', () => {
     await expect(lab.next({ id: s.id })).resolves.toEqual({ text: 'I need help with my order.' });
     request.mockResolvedValueOnce({ host: 'api.salesforce.com', body: { generationDetails: { generations: [{ content: JSON.stringify({ outcome: 'inconclusive', reason: 'No action evidence', evidence: ['The customer only said hello.'] }) }] } } });
     const evaluation = await lab.evaluate({ id: s.id, transcript: [{ text: 'FORGED' }] });
+    expect(evaluation.session.busy).toBe(false);
     expect(evaluation.verdict.outcome).toBe('inconclusive');
     expect(JSON.stringify(request.mock.calls.at(-1)?.[2])).toContain('Hello');
     expect(JSON.stringify(request.mock.calls.at(-1)?.[2])).not.toContain('FORGED');
@@ -151,6 +153,112 @@ describe('scenario and verdict contracts', () => {
     for (const value of [null, [], { maxTurns: 0 }, { ...LAB_SCENARIOS[0].scenario, persona: '' }, { ...LAB_SCENARIOS[0].scenario, criteria: 'x'.repeat(4001) }]) expect(() => parseLabScenario(value)).toThrow();
     for (const value of ['{}', '{"outcome":"pass","reason":"Fine","evidence":[]}', '{"outcome":"maybe"}', '{"outcome":"pass","reason":"Fine","evidence":[3]}']) expect(() => parseLabVerdict(value)).toThrow();
     expect(parseLabVerdict('```json\n{"outcome":"fail","reason":"Out of scope","evidence":["Turn 2: unrelated response"]}\n```').outcome).toBe('fail');
+  });
+});
+
+describe('retained lab runs and server-owned role-play', () => {
+  it('lists bounded project/agent/org runs and reconnects original source, context and owner without credentials', async () => {
+    const h = setup();
+    const contextVariables = [{ name: 'verified', type: 'Boolean', value: false }];
+    const first = await h.lab.start({ ...h.args, path: 'Bot.agent', threadId: 'original-thread', contextVariables, live: true });
+    const otherAgent = await h.lab.start({ ...h.args, engine: 'rehearsal', path: 'Other.agent' });
+    expect(h.lab.list({ path: 'Bot.agent', orgAlias: 'dev', engine: 'preview' })).toMatchObject([{ id: first.id, live: true, busy: false, threadId: 'original-thread' }]);
+    expect(h.lab.list({ orgAlias: 'different' })).toEqual([]);
+    expect(h.lab.list({ path: 'missing.agent' })).toEqual([]);
+    expect(h.lab.list({ engine: 'rehearsal' }).map(s => s.id)).toEqual([otherAgent.id]);
+    const reconnected = h.lab.get({ id: first.id, path: 'Bot.agent', orgAlias: 'dev', includeSource: true });
+    expect(reconnected).toMatchObject({ source: h.args.source, scenario: h.args.scenario, contextVariables, createdAt: 100, updatedAt: 100 });
+    expect(JSON.stringify(reconnected)).not.toMatch(/PRIVATE|remote\/1/);
+    expect(h.lab.list({})[0]).not.toHaveProperty('source');
+    reconnected.scenario!.goal = 'forged';
+    reconnected.contextVariables![0]!.value = true;
+    reconnected.turns[0]!.text = 'forged';
+    expect(h.lab.get({ id: first.id })).toMatchObject({ scenario: h.args.scenario, contextVariables, turns: [{ text: 'Welcome' }] });
+    await h.lab.send({ id: first.id, text: 'Hello' });
+    const summary = h.lab.list({ path: 'Bot.agent', summaryOnly: true })[0]!;
+    expect(summary).toMatchObject({ id: first.id, turns: [], turnCount: 1, threadId: 'original-thread', live: true });
+    for (const field of ['source', 'scenario', 'contextVariables']) expect(summary).not.toHaveProperty(field);
+    for (const input of [{ path: 'Other.agent' }, { orgAlias: 'different' }, { path: 3 }, { orgAlias: '' }]) {
+      expect(() => h.lab.get({ id: first.id, ...input })).toThrow();
+      await expect(h.lab.send({ id: first.id, text: 'hi', ...input })).rejects.toThrow();
+      expect(() => h.lab.end({ id: first.id, ...input })).toThrow();
+    }
+    for (const input of [{ path: '' }, { orgAlias: 7 }, { engine: 'live' }, { path: 'x'.repeat(513) }]) expect(() => h.lab.list(input)).toThrow();
+    h.setScope('another-project');
+    expect(h.lab.list({})).toEqual([]);
+    expect(() => h.lab.get({ id: first.id })).toThrow('another project');
+    h.setScope('project-a');
+    h.lab.end({ id: first.id });
+    expect(h.lab.list({}).map(s => s.id)).toEqual([otherAgent.id]);
+    expect(h.lab.list({ includeClosed: true })).toHaveLength(2);
+    h.advance();
+    expect(h.lab.list({ includeClosed: true })).toEqual([]);
+  });
+
+  it('continues autonomous turns after the start reply and exposes detached progress and final verdict on reconnect', async () => {
+    const h = setup();
+    const original = h.request.getMockImplementation()!;
+    let releaseFirst!: () => void;
+    const firstReply = new Promise<void>(resolve => { releaseFirst = resolve; });
+    let messages = 0;
+    h.request.mockImplementation(async (token, path, body, host, signal) => {
+      if (path.endsWith('/messages') && ++messages === 1) await firstReply;
+      if (path.includes('/chat-generations') && JSON.stringify(body).includes('Evaluate a test transcript')) return { host: 'test.api.salesforce.com', body: { generationDetails: { generations: [{ content: JSON.stringify({ outcome: 'pass', reason: 'Goal reached', evidence: ['The agent answered the customer.'] }) }] } } };
+      return original(token, path, body, host, signal);
+    });
+    const started = await h.lab.run({ ...h.args, path: 'Bot.agent', threadId: 'original-thread' });
+    expect(started).toMatchObject({ busy: true, execution: { phase: 'opening', completedTurns: 0, totalTurns: 2 } });
+    expect(h.lab.get({ id: started.id })).toMatchObject({ busy: true, execution: { phase: 'agent' }, turns: [{ role: 'agent' }, { role: 'user', text: h.args.scenario.opening }] });
+    await expect(h.lab.send({ id: started.id, text: 'interleave' })).rejects.toThrow('role-play is running');
+    await expect(h.lab.next({ id: started.id })).rejects.toThrow('role-play is running');
+    await expect(h.lab.evaluate({ id: started.id })).rejects.toThrow('role-play is running');
+    h.advance(); // A server task is never expired merely because its UI has gone away.
+    expect(h.lab.list({ path: 'Bot.agent' })).toHaveLength(1);
+    releaseFirst();
+    await vi.waitFor(() => expect(h.lab.get({ id: started.id }).execution?.phase).toBe('done'));
+    const finished = h.lab.get({ id: started.id, includeSource: true });
+    expect(finished).toMatchObject({ busy: false, closed: false, failed: false, source: h.args.source, execution: { completedTurns: 2, totalTurns: 2, verdict: { outcome: 'pass' } } });
+    expect(finished.turns.filter(t => t.role === 'user')).toHaveLength(2);
+    finished.execution!.verdict!.evidence[0] = 'forged';
+    expect(h.lab.get({ id: started.id }).execution!.verdict!.evidence[0]).toBe('The agent answered the customer.');
+    expect(h.connect).toHaveBeenCalledOnce();
+    h.lab.dispose();
+    expect(() => h.lab.get({ id: started.id })).toThrow('expired');
+  });
+
+  it('records background errors without unhandled rejection and rejects missing scenarios before connecting', async () => {
+    const h = setup();
+    await expect(h.lab.run({ ...h.args, scenario: undefined })).rejects.toThrow('Choose a scenario');
+    expect(h.connect).not.toHaveBeenCalled();
+    const original = h.request.getMockImplementation()!;
+    h.request.mockImplementation(async (token, path, body, host, signal) => {
+      if (path.endsWith('/messages')) throw Error('Turn connection lost');
+      return original(token, path, body, host, signal);
+    });
+    const started = await h.lab.run(h.args);
+    await vi.waitFor(() => expect(h.lab.get({ id: started.id })).toMatchObject({ busy: false, failed: true, execution: { phase: 'error', error: 'Turn connection lost', completedTurns: 0 } }));
+    expect(h.lab.list({})[0]?.execution?.phase).toBe('error');
+  });
+
+  it('stops only on explicit End or backend disposal and never sends another turn after cancellation', async () => {
+    const h = setup();
+    const original = h.request.getMockImplementation()!;
+    let entered = false;
+    h.request.mockImplementation(async (token, path, body, host, signal) => {
+      if (path.endsWith('/messages')) {
+        entered = true;
+        return await new Promise((resolve, reject) => { signal?.addEventListener('abort', () => reject(Error('Stopped')), { once: true }); });
+      }
+      return original(token, path, body, host, signal);
+    });
+    const started = await h.lab.run(h.args);
+    expect(entered).toBe(true);
+    expect(h.lab.end({ id: started.id })).toMatchObject({ closed: true, execution: { phase: 'stopped' } });
+    await vi.waitFor(() => expect(h.lab.get({ id: started.id })).toMatchObject({ busy: false, failed: false, execution: { phase: 'stopped', completedTurns: 0 } }));
+    expect(h.request.mock.calls.filter(call => call[1].endsWith('/messages'))).toHaveLength(1);
+    const next = await h.lab.run(h.args);
+    h.lab.dispose();
+    expect(() => h.lab.get({ id: next.id })).toThrow('expired');
   });
 });
 

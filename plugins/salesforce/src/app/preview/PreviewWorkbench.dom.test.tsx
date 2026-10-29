@@ -1,3 +1,4 @@
+import { clearStudioRunWorkspaces } from '../studio/run-workspaces.js';
 /** @vitest-environment happy-dom */
 import { fireEvent } from '@testing-library/react';
 import { act, createElement } from 'react';
@@ -12,6 +13,7 @@ let handlers: Record<string, Handler>;
 const calls: Array<{ method: string; args: Record<string, unknown> }> = [];
 let realtime: ((p: unknown) => void) | null = null;
 let presetsRealtime: ((p: unknown) => void) | null = null;
+let suiteJobResult: unknown;
 let root: Root | null = null;
 let host: HTMLElement | null = null;
 
@@ -23,15 +25,21 @@ const suiteRow = (extra: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
+  clearStudioRunWorkspaces();
   calls.length = 0; realtime = null; presetsRealtime = null;
   handlers = {
     'agentPreview.context': () => ({ ok: true, fields: [] }),
+    'agentLab.get': () => snap([{ role: 'agent', text: 'Welcome' }]),
+    'agentLab.list': () => ({ ok: true, data: [] }),
     'agentLab.start': () => snap([{ role: 'agent', text: 'Welcome' }]),
     'agentLab.send': () => snap([{ role: 'agent', text: 'Welcome' }, { role: 'user', text: 'hello' }, { role: 'agent', text: 'Hi there', planId: 'p1', latencyMs: 1200 }]),
     'agentLab.end': () => ({ ok: true }),
     'agentLab.trace': () => ({ ok: true, data: { runId: 'sess-1', turn: 1, planId: 'p1', available: true, steps: [{ kind: 'topic', label: 'Orders', source: { path: 'a.agent', line: 3 } }] } }),
     'studio.suites.list': () => ({ ok: true, suites: [suiteRow()] }),
     'studio.suites.save': (a) => ({ ok: true, suite: suiteRow({ cases: a.cases, sha256: 'sha2' }) }),
+    'studio.suites.start': async a => { suiteJobResult = await handlers['studio.suites.run'](a); return { ok: true, jobId: 'job-1', status: 'running' }; },
+    'studio.suites.result': () => ({ ok: true, jobId: 'job-1', status: 'completed', result: suiteJobResult }),
+    'studio.suites.stop': () => ({ ok: true, status: 'stopped' }),
     'studio.suites.run': () => ({ ok: true, suite: suiteRow({ lastResults: { c1: { outcome: 'fail', runId: 'r', at: 2 }, c2: { outcome: 'pass', runId: 'r', at: 2 } } }) }),
     'agentPreview.start': () => ({ ok: true, data: { sessionId: 'live-1' } }),
     'agentPreview.send': () => ({ ok: true, data: { response: 'Live reply', planId: 'lp' } }),
@@ -82,6 +90,14 @@ async function typeAndSend(el: HTMLElement, text: string) {
   await flush();
 }
 const methods = () => calls.map(c => c.method);
+async function startAndSave(el: HTMLElement, name: string, criteria = '') {
+  await click(btn(el, 'Start')); await typeAndSend(el, 'hello');
+  await click(btn(el, 'Save as scenario'));
+  const form = document.querySelector('form[aria-label="Save as scenario"]') as HTMLFormElement;
+  const inputs = form.querySelectorAll('input');
+  await act(async () => { fireEvent.change(inputs[0], { target: { value: name } }); fireEvent.change(inputs[1], { target: { value: criteria } }); });
+  await act(async () => form.requestSubmit()); await flush();
+}
 
 describe('PreviewWorkbench', () => {
   it('reviews discovered context before starting, pins it to scenarios and keeps edits for a reviewed restart', async () => {
@@ -183,14 +199,71 @@ describe('PreviewWorkbench', () => {
     await click(btn(el, 'Review & restart')); await click(btn(el, 'Restart preview'));
     expect(calls.filter(c => c.method === 'agentPreview.start')).toHaveLength(2);
   });
-  it('loads a compact suite summary and expands case results', async () => {
+  it('separates scenarios from the conversation and displays their count', async () => {
     const el = await mount();
     expect(el.textContent).toContain('1/2 pass');
-    expect(el.querySelector('.sf-pw-suite-panel')).toBeNull();
-    await click(btn(el, 'Inspect'));
+    expect(el.querySelector('.sf-pw-suite-panel')!.closest('[role=tabpanel]')!.hasAttribute('hidden')).toBe(true);
+    await click(btn(el, 'Scenarios'));
     const chips = [...el.querySelectorAll('.sf-pw-suite-case')];
     expect(chips.map(c => c.getAttribute('data-state'))).toEqual(['pass', 'unrun']);
     expect(calls.find(c => c.method === 'studio.suites.list')?.args).toMatchObject({ agentPath: 'force-app/A.agent', projectId: 'proj-1' });
+  });
+
+  it('recovers a failed startup listing when opening Scenarios without restarting the conversation', async () => {
+    handlers['studio.suites.list'] = () => { throw new Error('Plugin is starting'); };
+    const el = await mount();
+    expect(el.textContent).not.toContain('No saved scenarios yet');
+    await click(btn(el, 'Start'));
+    const cases = Array.from({ length: 29 }, (_, index) => ({ id: `case-${index}`, name: `Case ${index}`, utterances: ['hello'], expect: {} }));
+    handlers['studio.suites.list'] = () => ({ ok: true, suites: [suiteRow({ cases })] });
+    await click(btn(el, 'Scenarios'));
+    expect(btn(el, 'Scenarios').textContent).toContain('29');
+    expect(el.querySelectorAll('.sf-pw-suite-case')).toHaveLength(29);
+    expect(el.querySelector('[role=alert]')).toBeNull();
+    expect(el.getAttribute('data-run-id') ?? el.querySelector('[data-run-id]')?.getAttribute('data-run-id')).toBe('sess-1');
+    expect(calls.filter(call => call.method === 'agentLab.start')).toHaveLength(1);
+    expect(methods()).not.toContain('agentLab.end');
+  });
+
+  it('shows a listing failure with Retry and keeps the last successful cases during a failed refresh', async () => {
+    const el = await mount();
+    handlers['studio.suites.list'] = () => ({ ok: false, error: 'Server reconnecting', suites: [] });
+    await click(btn(el, 'Scenarios'));
+    expect(el.querySelector('[role=alert]')?.textContent).toContain('Server reconnecting');
+    expect(btn(el, 'Scenarios').textContent).toContain('2');
+    expect(el.querySelectorAll('.sf-pw-suite-case')).toHaveLength(2);
+    handlers['studio.suites.list'] = () => ({ ok: true, suites: [] });
+    await click(btn(el, 'Retry'));
+    expect(el.querySelector('[role=alert]')).toBeNull();
+    expect(btn(el, 'Scenarios').textContent).toContain('0');
+    expect(el.textContent).toContain('No saved scenarios yet');
+  });
+
+  it('distinguishes malformed or rejected listings from an empty suite and retries explicitly', async () => {
+    handlers['studio.suites.list'] = () => ({ ok: true, suites: 'invalid' });
+    const el = await mount();
+    await click(btn(el, 'Scenarios'));
+    expect(el.querySelector('[role=alert]')?.textContent).toContain('Could not load saved scenarios');
+    expect(el.textContent).not.toContain('No saved scenarios yet');
+    handlers['studio.suites.list'] = () => Promise.reject('Disconnected');
+    await click(btn(el, 'Retry'));
+    expect(el.querySelector('[role=alert]')?.textContent).toContain('Disconnected');
+    handlers['studio.suites.list'] = () => ({ ok: true, suites: [suiteRow()] });
+    await click(btn(el, 'Retry'));
+    expect(el.querySelector('[role=alert]')).toBeNull();
+    expect(el.querySelectorAll('.sf-pw-suite-case')).toHaveLength(2);
+  });
+
+  it('ignores an older listing failure after a newer Scenarios refresh succeeds', async () => {
+    let rejectOld!: (reason: unknown) => void;
+    handlers['studio.suites.list'] = () => new Promise((_resolve, reject) => { rejectOld = reject; });
+    const el = await mount();
+    handlers['studio.suites.list'] = () => ({ ok: true, suites: [suiteRow()] });
+    await click(btn(el, 'Scenarios'));
+    await act(async () => { rejectOld(new Error('Old request failed')); });
+    await flush();
+    expect(el.querySelector('[role=alert]')).toBeNull();
+    expect(el.querySelectorAll('.sf-pw-suite-case')).toHaveLength(2);
   });
 
   it('offers only Simulate and Live, and runs a stale Rehearse request as Simulate', async () => {
@@ -200,6 +273,70 @@ describe('PreviewWorkbench', () => {
     expect(btn(el, 'Simulate').getAttribute('aria-pressed')).toBe('true');
     await click(btn(el, 'Start'));
     expect(calls.find(c => c.method === 'agentLab.start')?.args).toMatchObject({ engine: 'preview' });
+  });
+
+  it('preserves scenario inspection, message drafts and tab keyboard navigation', async () => {
+    const el = await mount();
+    const tabs = () => [...el.querySelectorAll<HTMLElement>('[role=tab]')];
+    expect(tabs().map(t => t.textContent)).toEqual(['Conversation', 'Scenarios 2', 'Context 0']);
+    await act(async () => fireEvent.keyDown(tabs()[0], { key: 'ArrowRight' }));
+    expect(tabs()[1].getAttribute('aria-selected')).toBe('true');
+    await click(el.querySelector('[aria-label="View details for Refund"]') as HTMLElement);
+    await act(async () => fireEvent.change(el.querySelector('[aria-label="Search scenarios"]')!, { target: { value: 'Refund' } }));
+    await click(btn(el, 'Conversation')); await click(btn(el, 'Start'));
+    await act(async () => fireEvent.change(el.querySelector('[aria-label="Preview message"]')!, { target: { value: 'Unsent message' } }));
+    await click(btn(el, 'Scenarios'));
+    expect(el.querySelector('[aria-label="Search scenarios"]')).toHaveProperty('value', 'Refund');
+    expect(el.querySelector('[aria-label="Details for Refund"]')).not.toBeNull();
+    await click(btn(el, 'Conversation'));
+    expect(el.querySelector('[aria-label="Preview message"]')).toHaveProperty('value', 'Unsent message');
+    for (const [key, index] of [['End', 2], ['Home', 0], ['ArrowLeft', 2], ['ArrowRight', 0]] as const) {
+      await act(async () => fireEvent.keyDown(el.querySelector('[role=tab][aria-selected=true]')!, { key }));
+      expect(tabs()[index].getAttribute('aria-selected')).toBe('true');
+      expect(document.activeElement).toBe(tabs()[index]);
+    }
+    expect(calls.filter(c => c.method === 'agentLab.start')).toHaveLength(1);
+    expect(methods()).not.toContain('agentLab.end');
+  });
+
+  it('shows a cancellable suite, guards conversation starts and reports Stop errors', async () => {
+    let complete!: (value: unknown) => void;
+    handlers['studio.suites.result'] = () => new Promise(resolve => { complete = resolve; });
+    const el = await mount();
+    await click(btn(el, 'Scenarios')); await click(btn(el, 'Run 2 scenarios'));
+    expect(btn(el, 'Stop suite')).toBeTruthy();
+    await click(btn(el, 'Conversation'));
+    expect(btn(el, 'Start').disabled).toBe(true);
+    expect(el.textContent).toContain('stop it before starting a conversation');
+    await click(btn(el, 'Scenarios'));
+    handlers['studio.suites.stop'] = () => ({ ok: false, error: 'Stop failed' });
+    await click(btn(el, 'Stop suite'));
+    expect(el.querySelector('[role=alert]')?.textContent).toContain('Stop failed');
+    handlers['studio.suites.stop'] = () => ({ ok: true });
+    await click(btn(el, 'Stop suite'));
+    expect(calls.filter(c => c.method === 'studio.suites.stop').at(-1)?.args).toMatchObject({ jobId: 'job-1', projectId: 'proj-1' });
+    await act(async () => complete({ ok: true, status: 'stopped' })); await flush();
+    expect(el.textContent).toContain('Suite stopped. Completed cases were saved.');
+    expect(btn(el, 'Run 2 scenarios').disabled).toBe(false);
+    await click(btn(el, 'Conversation'));
+    expect(btn(el, 'Start').disabled).toBe(false);
+  });
+
+  it('ignores old scenario loads and completion after switching files', async () => {
+    let oldLoad!: (value: unknown) => void, complete!: (value: unknown) => void;
+    handlers['studio.suites.list'] = () => new Promise(resolve => { oldLoad = resolve; });
+    const el = await mount();
+    handlers['studio.suites.list'] = () => ({ ok: true, suites: [suiteRow({ id: 'B', cases: [{ id: 'b', name: 'B case', utterances: ['hi'], expect: {} }] })] });
+    const props = { pluginId: 'salesforce', projectId: 'proj-1', source: 'agent_label: x', fileLabel: 'B.agent', path: 'force-app/B.agent' };
+    await act(async () => root!.render(createElement(PreviewWorkbench, props))); await flush();
+    await act(async () => oldLoad({ ok: true, suites: [suiteRow()] })); await flush();
+    expect(btn(el, 'Scenarios').textContent).toBe('Scenarios 1');
+    handlers['studio.suites.result'] = () => new Promise(resolve => { complete = resolve; });
+    await click(btn(el, 'Scenarios')); await click(btn(el, 'Run 1 scenarios'));
+    await act(async () => root!.render(createElement(PreviewWorkbench, { ...props, path: 'force-app/C.agent' }))); await flush();
+    await act(async () => complete({ ok: true, status: 'completed', result: { ok: true, suite: suiteRow() } })); await flush();
+    expect(btn(el, 'Scenarios').textContent).toBe('Scenarios 1');
+    expect(el.textContent).not.toContain('Running case…');
   });
 
   it('runs a Simulate session for the owning thread and reports it to the host', async () => {
@@ -287,6 +424,7 @@ describe('PreviewWorkbench', () => {
     await click(btn(live, 'Start'));
     expect(calls.find(c => c.method === 'agentPreview.start')?.args).toMatchObject({ live: true, path: 'force-app/A.agent' });
     act(() => root!.unmount()); host!.remove();
+    clearStudioRunWorkspaces();
     const rehearse = await mount({ engine: 'rehearse', source: '' });
     expect(btn(rehearse, 'Start').disabled).toBe(true);
   });
@@ -300,12 +438,13 @@ describe('PreviewWorkbench', () => {
 
   it('runs the suite, reruns one case and reloads on realtime', async () => {
     const el = await mount({ threadId: 'owner' });
-    await click(btn(el, 'Run suite'));
-    expect(calls.find(c => c.method === 'studio.suites.run')?.args).toMatchObject({ path: 'tests/A.scenario.json', engine: 'preview', source: 'agent_label: x', threadId: 'owner', startedByUser: true });
-    await click(btn(el, 'Inspect'));
+    await click(btn(el, 'Scenarios'));
+    await click(btn(el, 'Run 2 scenarios'));
+    expect(calls.find(c => c.method === 'studio.suites.start')?.args).toMatchObject({ path: 'tests/A.scenario.json', engine: 'preview', source: 'agent_label: x', threadId: 'owner', startedByUser: true });
+    await click(btn(el, 'Scenarios'));
     expect([...el.querySelectorAll('.sf-pw-suite-case')].map(c => c.getAttribute('data-state'))).toEqual(['fail', 'pass']);
     await click(el.querySelector('[aria-label="Rerun Refund"]') as HTMLElement);
-    expect(calls.filter(c => c.method === 'studio.suites.run').pop()?.args).toMatchObject({ caseIds: ['c1'] });
+    expect(calls.filter(c => c.method === 'studio.suites.start').pop()?.args).toMatchObject({ caseIds: ['c1'] });
     const before = calls.filter(c => c.method === 'studio.suites.list').length;
     await act(async () => { realtime?.({ kind: 'comments' }); }); await flush();
     expect(calls.filter(c => c.method === 'studio.suites.list').length).toBe(before);
@@ -316,7 +455,8 @@ describe('PreviewWorkbench', () => {
   it('reports suite run failures', async () => {
     handlers['studio.suites.run'] = () => ({ ok: false, error: 'busy' });
     const el = await mount();
-    await click(btn(el, 'Run suite'));
+    await click(btn(el, 'Scenarios'));
+    await click(btn(el, 'Run 2 scenarios'));
     expect(el.querySelector('[role=alert]')?.textContent).toContain('busy');
   });
 
@@ -375,13 +515,48 @@ describe('PreviewWorkbench', () => {
     expect(el.textContent).toContain('Your script changed');
   });
 
-  it('ends the session on unmount', async () => {
+  it('retains the session on unmount and reattaches without restarting', async () => {
     const el = await mount();
     await click(btn(el, 'Start'));
     act(() => root!.unmount()); root = null;
     await flush();
-    expect(calls.filter(c => c.method === 'agentLab.end')).toHaveLength(1);
+    expect(calls.filter(c => c.method === 'agentLab.end')).toHaveLength(0);
+    const restored = await mount();
+    expect(restored.querySelector('[data-run-id]')?.getAttribute('data-run-id')).toBe('sess-1');
+    expect(calls.filter(c => c.method === 'agentLab.start')).toHaveLength(1);
+    expect(calls.find(c => c.method === 'agentLab.get')?.args).toMatchObject({ id: 'sess-1', path: 'force-app/A.agent' });
     el.remove();
+  });
+
+  it('starts the pinned original org and disables an unusable failed session on reconnect', async () => {
+    const el = await mount({ orgAlias: 'original-org' });
+    await click(btn(el, 'Start'));
+    expect(calls.find(call => call.method === 'agentLab.start')?.args.orgAlias).toBe('original-org');
+    act(() => root!.unmount()); root = null; el.remove();
+    handlers['agentLab.get'] = () => ({ ok: true, data: { id: 'sess-1', failed: true, turns: [{ role: 'user', text: 'Recorded failure' }] } });
+    const restored = await mount({ orgAlias: 'original-org' });
+    expect(restored.textContent).toContain('Start a new conversation to retry');
+    expect(restored.textContent).toContain('Recorded failure');
+    expect(restored.querySelector('[aria-label="Preview message"]')).toBeNull();
+  });
+
+  it('reattaches to a pending server message while the original send promise remains in flight', async () => {
+    let finish!: (value: unknown) => void;
+    handlers['agentLab.send'] = () => new Promise(resolve => { finish = resolve; });
+    handlers['agentLab.get'] = () => ({ ok: true, data: { id: 'sess-1', busy: true, turns: [{ role: 'agent', text: 'Welcome' }, { role: 'user', text: 'Pending question' }] } });
+    const first = await mount();
+    await click(btn(first, 'Start')); await typeAndSend(first, 'Pending question');
+    expect(first.textContent).toContain('Pending question');
+    expect((first.querySelector('[aria-label="Preview message"]') as HTMLInputElement).disabled).toBe(true);
+    act(() => root!.unmount()); root = null; first.remove();
+    const restored = await mount();
+    expect(restored.textContent).toContain('Pending question');
+    expect((restored.querySelector('[aria-label="Preview message"]') as HTMLInputElement).disabled).toBe(true);
+    expect(calls.filter(call => call.method === 'agentLab.start')).toHaveLength(1);
+    expect(methods()).not.toContain('agentLab.end');
+    await act(async () => { finish(snap([{ role: 'user', text: 'Pending question' }, { role: 'agent', text: 'Finished while detached' }])); });
+    await flush();
+    expect(restored.textContent).toContain('Finished while detached');
   });
 
   describe('host commands', () => {
@@ -472,18 +647,18 @@ describe('PreviewWorkbench failure paths and edge cases', () => {
     expect(el.textContent).toContain('Actions are simulated');
   });
 
-  it('keeps Start disabled for a blank draft and shows the placeholder when idle', async () => {
+  it('explains a blank draft and replaces the disabled idle composer with Start', async () => {
     const el = await mount({ source: '   ', fileLabel: '' });
     expect(btn(el, 'Start').disabled).toBe(true);
     expect(el.textContent).toContain('Current draft');
-    expect((el.querySelector('input[aria-label="Preview message"]') as HTMLInputElement).disabled).toBe(true);
+    expect(el.querySelector('input[aria-label="Preview message"]')).toBeNull();
   });
 
   it('does nothing when submitting an empty message and shows Starting while a run starts', async () => {
     let release!: (v: unknown) => void;
     handlers['agentLab.start'] = () => new Promise(r => { release = r; });
     const el = await mount();
-    await act(async () => { (el.querySelector('form.sf-pw-composer') as HTMLFormElement).requestSubmit(); }); await flush();
+    expect(el.querySelector('form.sf-pw-composer')).toBeNull();
     expect(methods()).not.toContain('agentLab.send');
     await click(btn(el, 'Start'));
     expect(el.textContent).toContain('Starting…');
@@ -527,13 +702,13 @@ describe('PreviewWorkbench failure paths and edge cases', () => {
     expect(methods()).not.toContain('agentLab.trace');
   });
 
-  it('releases a live session on unmount and ignores end failures', async () => {
+  it('keeps a live session open when the view detaches', async () => {
     handlers['agentPreview.end'] = () => { throw new Error('gone'); };
     const el = await mount({ engine: 'live' });
     await click(btn(el, 'Start'));
     act(() => root!.unmount()); root = null;
     await flush();
-    expect(calls.find(c => c.method === 'agentPreview.end')?.args).toMatchObject({ sessionId: 'live-1', live: true });
+    expect(methods()).not.toContain('agentPreview.end');
     el.remove();
   });
 
@@ -570,15 +745,15 @@ describe('PreviewWorkbench failure paths and edge cases', () => {
   it('tolerates failing or malformed suite listings and skips them without a path', async () => {
     handlers['studio.suites.list'] = () => { throw new Error('offline'); };
     let el = await mount();
-    expect(el.querySelector('.sf-pw-suite')).toBeNull();
+    expect(el.querySelectorAll('.sf-pw-suite-case')).toHaveLength(0);
     act(() => root!.unmount()); host!.remove();
     handlers['studio.suites.list'] = () => ({ ok: true, suites: [] });
     el = await mount();
-    expect(el.querySelector('.sf-pw-suite')).toBeNull();
+    expect(el.querySelectorAll('.sf-pw-suite-case')).toHaveLength(0);
     act(() => root!.unmount()); host!.remove();
     handlers['studio.suites.list'] = () => ({ ok: true, suites: 'nope' });
     el = await mount();
-    expect(el.querySelector('.sf-pw-suite')).toBeNull();
+    expect(el.querySelectorAll('.sf-pw-suite-case')).toHaveLength(0);
     act(() => root!.unmount()); host!.remove();
     calls.length = 0;
     el = await mount({ path: undefined });
@@ -589,10 +764,11 @@ describe('PreviewWorkbench failure paths and edge cases', () => {
     let release!: (v: unknown) => void;
     handlers['studio.suites.run'] = () => new Promise(r => { release = r; });
     const el = await mount();
-    await click(btn(el, 'Inspect'));
-    await click(btn(el, 'Run suite'));
+    await click(btn(el, 'Scenarios'));
+    await click(btn(el, 'Scenarios'));
+    await click(btn(el, 'Run 2 scenarios'));
     expect(el.querySelector('.sf-pw-suite')?.textContent).toContain('Running 2 cases…');
-    expect([...el.querySelectorAll('.sf-pw-suite-case button')].every(c => (c as HTMLButtonElement).disabled)).toBe(true);
+    expect([...el.querySelectorAll('.sf-pw-suite-case button[aria-label^=Rerun]')].every(c => (c as HTMLButtonElement).disabled)).toBe(true);
     await act(async () => release({ ok: false })); await flush();
     expect(alertText(el)).toContain('The suite could not run.');
     handlers['studio.suites.run'] = () => new Promise(r => { release = r; });
@@ -601,30 +777,27 @@ describe('PreviewWorkbench failure paths and edge cases', () => {
     await act(async () => release({ ok: true, suite: suiteRow({ sha256: 'newer', lastResults: { c1: { outcome: 'pass', runId: 'r', at: 3 } } }) })); await flush();
     expect(el.querySelector('.sf-pw-suite')?.textContent).toContain('1/2 pass');
     handlers['studio.suites.run'] = () => { throw new Error('socket closed'); };
-    await click(btn(el, 'Run suite'));
+    await click(btn(el, 'Scenarios'));
+    await click(btn(el, 'Run 2 scenarios'));
     expect(alertText(el)).toContain('socket closed');
   });
 
-  it('disables suite runs while Live is selected or a run is active', async () => {
+  it('runs scenarios in Simulate independently of Live, and explains active conversation blocking', async () => {
     const el = await mount({ engine: 'live' });
-    await click(btn(el, 'Inspect'));
-    expect(btn(el, 'Run suite').disabled).toBe(true);
-    expect([...el.querySelectorAll('.sf-pw-suite-case button')].every(c => (c as HTMLButtonElement).disabled)).toBe(true);
-    await rerender({ engine: 'simulate' });
+    await click(btn(el, 'Scenarios'));
+    expect(btn(el, 'Run 2 scenarios').disabled).toBe(false);
+    await click(btn(el, 'Run 2 scenarios'));
+    expect(calls.find(c => c.method === 'studio.suites.start')?.args).toMatchObject({ engine: 'preview' });
+    await click(btn(el, 'Conversation'));
+    expect(btn(el, 'Live').getAttribute('aria-pressed')).toBe('true');
     await click(btn(el, 'Start'));
-    expect(btn(el, 'Run suite').disabled).toBe(true);
+    await click(btn(el, 'Scenarios'));
+    expect(btn(el, 'Run 2 scenarios').disabled).toBe(true);
+    expect(el.textContent).toContain('End it before starting scenario tests.');
+    expect([...el.querySelectorAll('.sf-pw-suite-case button[aria-label^=Rerun]')].every(c => (c as HTMLButtonElement).disabled)).toBe(true);
+    await click(btn(el, 'Return to conversation'));
+    expect(el.querySelector('[aria-label="Preview message"]')!.closest('[role=tabpanel]')!.hasAttribute('hidden')).toBe(false);
   });
-
-  async function startAndSave(el: HTMLElement, name: string, criteria = '') {
-    await click(btn(el, 'Start')); await typeAndSend(el, 'hello');
-    await click(btn(el, 'Save as scenario'));
-    const form = document.querySelector('form[aria-label="Save as scenario"]') as HTMLFormElement;
-    const inputs = form.querySelectorAll('input');
-    expect((form.querySelector('button[type=submit]') as HTMLButtonElement).disabled).toBe(true);
-    await setInput(inputs[0] as HTMLInputElement, name);
-    if (criteria) await setInput(inputs[1] as HTMLInputElement, criteria);
-    await act(async () => { form.requestSubmit(); }); await flush();
-  }
 
   it('saves a scenario into an empty suite without an expected sha and keeps the criteria', async () => {
     handlers['studio.suites.list'] = () => ({ ok: true, suites: [] });
@@ -654,6 +827,7 @@ describe('PreviewWorkbench failure paths and edge cases', () => {
     await click(btn(el, 'Start')); await typeAndSend(el, 'hello');
     expect(btn(el, 'Save as scenario').disabled).toBe(true);
     await rerender({ path: 'force-app/A.agent' });
+    await click(btn(el, 'Start')); await typeAndSend(el, 'hello');
     await click(btn(el, 'Save as scenario'));
     expect(document.querySelector('form[aria-label="Save as scenario"]')).toBeTruthy();
     await click(btn(el, 'Save as scenario'));
@@ -713,44 +887,46 @@ describe('PreviewWorkbench failure paths and edge cases', () => {
 describe('PreviewWorkbench run ownership', () => {
   const deferred = () => { let resolve!: (value: unknown) => void; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
-  it('ends the run when another file opens, keeps its conversation and lets a new run start', async () => {
+  it('isolates another file and restores the original conversation without ending it', async () => {
     const el = await mount();
     await click(btn(el, 'Start')); await typeAndSend(el, 'hello');
     await rerender({ path: 'force-app/B.agent', fileLabel: 'B.agent' });
-    expect(calls.filter(c => c.method === 'agentLab.end').map(c => c.args)).toEqual([expect.objectContaining({ id: 'sess-1' })]);
-    expect(el.textContent).toContain('Hi there');
-    expect((el.querySelector('input[aria-label="Preview message"]') as HTMLInputElement).disabled).toBe(true);
+    expect(methods()).not.toContain('agentLab.end');
+    expect(el.textContent).not.toContain('Hi there');
+    expect(el.querySelector('input[aria-label="Preview message"]')).toBeNull();
     await click(btn(el, 'Start'));
     expect(calls.filter(c => c.method === 'agentLab.start')).toHaveLength(2);
   });
 
-  it('keeps the run when a new draft is saved for the first time', async () => {
+  it('keeps an unsaved run in its original workspace when a saved file opens', async () => {
     const el = await mount({ path: undefined });
     await click(btn(el, 'Start'));
     await rerender({ path: 'force-app/A.agent' });
     expect(methods()).not.toContain('agentLab.end');
-    expect(btn(el, 'End')).toBeTruthy();
+    expect(btn(el, 'Start')).toBeTruthy();
   });
 
-  it('ends a run whose start resolves after the panel closed', async () => {
+  it('retains a run whose start resolves after the panel closed', async () => {
     const late = deferred();
     handlers['agentLab.start'] = () => late.promise;
     const el = await mount();
     await act(async () => { btn(el, 'Start').click(); });
     act(() => root!.unmount()); root = null;
     await act(async () => { late.resolve(snap([])); }); await flush();
-    expect(calls.find(c => c.method === 'agentLab.end')?.args).toMatchObject({ id: 'sess-1' });
+    expect(methods()).not.toContain('agentLab.end');
+    const restored = await mount();
+    expect(restored.querySelector('[data-run-id]')?.getAttribute('data-run-id')).toBe('sess-1');
     el.remove();
   });
 
-  it('ends a Live run whose start resolves after another file opened, against the file it started on', async () => {
+  it('retains a late Live start against its original file and thread', async () => {
     const late = deferred();
     handlers['agentPreview.start'] = () => late.promise;
     const el = await mount({ engine: 'live', threadId: 'thr-1' });
     await act(async () => { btn(el, 'Start').click(); });
     await rerender({ engine: 'live', threadId: 'thr-1', path: 'force-app/B.agent' });
     await act(async () => { late.resolve({ ok: true, data: { sessionId: 'live-late' } }); }); await flush();
-    expect(calls.find(c => c.method === 'agentPreview.end')?.args).toMatchObject({ sessionId: 'live-late', path: 'force-app/A.agent', threadId: 'thr-1', live: true });
+    expect(methods()).not.toContain('agentPreview.end');
     expect(btn(el, 'Start')).toBeTruthy();
     expect(btn(el, 'End')).toBeUndefined();
   });
@@ -758,8 +934,7 @@ describe('PreviewWorkbench run ownership', () => {
   it('releases a Live run with its thread so the end is not refused as headless', async () => {
     const el = await mount({ engine: 'live', threadId: 'thr-1' });
     await click(btn(el, 'Start'));
-    act(() => root!.unmount()); root = null;
-    await flush();
+    await click(btn(el, 'End'));
     expect(calls.find(c => c.method === 'agentPreview.end')?.args).toMatchObject({ projectId: 'proj-1', sessionId: 'live-1', path: 'force-app/A.agent', threadId: 'thr-1', live: true });
     el.remove();
   });

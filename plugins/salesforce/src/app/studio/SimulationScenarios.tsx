@@ -2,17 +2,24 @@ import { useId, useState } from 'react';
 import { Check, MessageSquare, Plus, Search, Target, Trash2, UserRound } from 'lucide-react';
 import { useStudioSplit } from './StudioResize.js';
 import { SIMULATION_LIMITS, type SimulationScenarioInput } from '../../../lib/simulation-contract.js';
+import type { ContextEntry, PreviewContextField, PreviewContextVariable } from '../../../lib/preview-context.js';
+import { contextEntries, ScenarioVariables } from './ScenarioVariables.js';
+import type { ContextPreset } from '../../../lib/preview-context-preset-contract.js';
 
-export type EditableScenario = SimulationScenarioInput & { key: string };
+export type EditableScenario = SimulationScenarioInput & { key: string; contextEntries?: Record<string, ContextEntry> };
 interface Props {
+  variant?: 'library' | 'batch';
+  showInclusion?: boolean;
   storageKey?: string;
   scenarios: EditableScenario[]; included: string[]; activeKey: string; attention: Set<string>; disabled: boolean;
-  onSelect(key: string): void; onToggle(key: string): void; onEdit(key: string, patch: Partial<SimulationScenarioInput>): void;
+  contextFields?: PreviewContextField[]; inheritedContext?: PreviewContextVariable[];
+  contextPresets?: ContextPreset[]; presetsLoading?: boolean; presetsError?: string | null; onReloadPresets?(): void;
+  onSelect(key: string): void; onToggle(key: string): void; onEdit(key: string, patch: Partial<EditableScenario>): void;
   onAdd(): void; onRemove(key: string): void;
 }
 
 /** One scenario stays in focus while the catalogue remains available beside it. */
-export function SimulationScenarios({ storageKey, scenarios, included, activeKey, attention, disabled, onSelect, onToggle, onEdit, onAdd, onRemove }: Props) {
+export function SimulationScenarios({ variant = 'batch', showInclusion = true, storageKey, scenarios, included, activeKey, attention, disabled, contextFields, inheritedContext, contextPresets, presetsLoading, presetsError, onReloadPresets, onSelect, onToggle, onEdit, onAdd, onRemove }: Props) {
   const split = useStudioSplit({ storageKey, initial: 30, breakpoint: 460, stack: false, minPane: 170 });
   const nameId = useId();
   const [query, setQuery] = useState('');
@@ -23,13 +30,13 @@ export function SimulationScenarios({ storageKey, scenarios, included, activeKey
   return <div className="sf-sim-workspace" ref={split.ref} style={split.style}>
     <aside className="sf-sim-catalogue" aria-label="Scenario catalogue">
       <label className="sf-sim-search"><Search size={14} aria-hidden="true" /><input aria-label="Search scenarios" placeholder="Find a scenario…" value={query} onChange={event => setQuery(event.target.value)} /></label>
-      <div className="sf-sim-filters" role="group" aria-label="Filter scenarios">
+      {variant === 'batch' && <div className="sf-sim-filters" role="group" aria-label="Filter scenarios">
         <button type="button" aria-pressed={!filter} onClick={() => setFilter(false)}>All <span>{scenarios.length}</span></button>
         <button type="button" aria-pressed={filter} onClick={() => setFilter(true)}>Needs attention</button>
-      </div>
+      </div>}
       <div className="sf-sim-scenarios">
         {rows.map(row => <div key={row.key} className={`sf-sim-scenario${active?.key === row.key ? ' is-active' : ''}`}>
-          <input type="checkbox" aria-label={row.name || 'Untitled scenario'} checked={included.includes(row.key)} disabled={disabled} onChange={() => onToggle(row.key)} />
+          {variant === 'batch' && showInclusion && <input type="checkbox" aria-label={row.name || 'Untitled scenario'} checked={included.includes(row.key)} disabled={disabled} onChange={() => onToggle(row.key)} />}
           <button type="button" aria-label={`Edit ${row.name || 'Untitled scenario'}`} aria-pressed={active?.key === row.key} onClick={() => onSelect(row.key)}>
             <strong>{row.name || 'Untitled scenario'}</strong><span>{row.goal || 'Define a customer goal'}</span>
             {attention.has(row.name) && <small>Needs attention</small>}
@@ -37,7 +44,7 @@ export function SimulationScenarios({ storageKey, scenarios, included, activeKey
         </div>)}
         {!rows.length && <p className="sf-sim-catalogue-empty">{filter ? 'No scenarios need attention.' : 'No matching scenarios.'}</p>}
       </div>
-      <button type="button" className="sf-sim-add" disabled={disabled || scenarios.length >= SIMULATION_LIMITS.lanes} onClick={() => { setQuery(''); setFilter(false); onAdd(); }}><Plus size={14} aria-hidden="true" />Add scenario</button>
+      <button type="button" className="sf-sim-add" disabled={disabled || scenarios.length >= (variant === 'library' ? 30 : SIMULATION_LIMITS.lanes)} onClick={() => { setQuery(''); setFilter(false); onAdd(); }}><Plus size={14} aria-hidden="true" />{variant === 'library' ? 'New scenario' : 'Add scenario'}</button>
     </aside>
     {split.divider('Resize scenario catalogue and editor')}
     {active ? <fieldset className="sf-sim-editor" disabled={disabled} aria-label={`Scenario ${index + 1}`}>
@@ -53,7 +60,8 @@ export function SimulationScenarios({ storageKey, scenarios, included, activeKey
         {field === 'opening' && <small>The first message sent by the simulated customer.</small>}
         {field === 'criteria' && <small>The judge checks these expectations against the conversation.</small>}
       </label>)}</div>
-      <div className="sf-sim-editor-footer"><label>Maximum turns<input aria-label={`Scenario ${index + 1} maximum turns`} type="number" min={1} max={8} value={active.maxTurns} onChange={event => onEdit(active.key, { maxTurns: Number(event.target.value) })} /></label><span>Edits apply to the next run</span></div>
+      <ScenarioVariables key={active.key} defaultsLabel={variant === 'library' ? 'Runtime defaults' : 'Batch defaults'} description={variant === 'library' ? 'Starting values copied when this scenario is selected for a run.' : undefined} fields={contextFields} inherited={inheritedContext} presets={contextPresets} presetsLoading={presetsLoading} presetsError={presetsError} onReloadPresets={onReloadPresets} entries={active.contextEntries ?? contextEntries(active.contextVariables)} onChange={contextEntries => onEdit(active.key, { contextEntries })} />
+      <div className="sf-sim-editor-footer"><label>Maximum turns<input aria-label={`Scenario ${index + 1} maximum turns`} type="number" min={1} max={8} value={active.maxTurns} onChange={event => onEdit(active.key, { maxTurns: Number(event.target.value) })} /></label><span>{variant === 'library' ? 'Save to share these changes' : 'Edits apply to the next run'}</span></div>
     </fieldset> : <div className="sf-sim-editor sf-sim-placeholder"><MessageSquare size={24} aria-hidden="true" /><h3>Create your first scenario</h3><p>Describe a customer journey and the outcome you expect.</p><button type="button" className="sf-tp-btn" disabled={disabled} onClick={onAdd}>Add your first scenario</button></div>}
   </div>;
 }

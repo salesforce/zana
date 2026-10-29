@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { AgentforceTransport, type SfapHost } from './agentforce-transport.js';
-import { DEFAULT_LAB_MODEL, labRecord, labText, parseLabScenario, parseLabVerdict, type LabEngine, type LabScenario, type LabSnapshot, type LabTurn } from './agentforce-lab-contract.js';
+import { DEFAULT_LAB_MODEL, labRecord, labText, parseLabScenario, parseLabVerdict, type LabEngine, type LabExecution, type LabScenario, type LabSnapshot, type LabTurn } from './agentforce-lab-contract.js';
 import type { ResolvedOrg } from './types.js';
 import { AGENT_SOURCE_MAX, type TurnTrace } from './studio-contract.js';
 import { REHEARSAL_TRACE_REASON, TraceCache, normalizeTrace, unavailableTrace } from './agentforce-trace.js';
@@ -15,6 +15,7 @@ type Session = {
   scenario?: LabScenario; turns: LabTurn[]; busy: boolean; closed: boolean; failed: boolean;
   touched: number; calls: number; controller: AbortController;
   traces: TraceCache; traceCalls: number;
+  createdAt: number; threadId: string; live: boolean; execution?: LabExecution;
 };
 const MAX_TRACE_CALLS = 200;
 
@@ -49,15 +50,25 @@ export class AgentforceLab {
     this.sessions.clear();
   }
   private prune(): void {
-    for (const [id, s] of this.sessions) if (this.now() - s.touched > 30 * 60_000) { s.controller.abort(); this.sessions.delete(id); }
+    for (const [id, s] of this.sessions) if (!s.busy && !this.executing(s) && this.now() - s.touched > 30 * 60_000) { s.controller.abort(); this.sessions.delete(id); }
   }
-  private snapshot(s: Session): LabSnapshot {
-    return { id: s.id, engine: s.engine, orgAlias: s.orgAlias, sourceHash: s.sourceHash, model: s.model, turns: s.turns.map(t => ({ ...t })), closed: s.closed, failed: s.failed, ...(s.path ? { path: s.path } : {}), ...(s.contextVariables.length ? { contextVariables: parsePreviewContext(s.contextVariables) } : {}) };
+  private executing(s: Session): boolean {
+    return !!s.execution && !['done', 'stopped', 'error'].includes(s.execution.phase);
   }
-  private session(input: unknown): Session {
+  private snapshot(s: Session, includeSource = false, summaryOnly = false): LabSnapshot {
+    return { id: s.id, engine: s.engine, orgAlias: s.orgAlias, sourceHash: s.sourceHash, model: s.model, turns: summaryOnly ? [] : s.turns.map(t => ({ ...t })), closed: s.closed, failed: s.failed,
+      busy: s.busy || this.executing(s), live: s.live, threadId: s.threadId, createdAt: s.createdAt, updatedAt: s.touched, turnCount: s.turns.filter(turn => turn.role === 'user').length,
+      ...(!summaryOnly && s.scenario ? { scenario: { ...s.scenario } } : {}),
+      ...(s.execution ? { execution: { ...s.execution, ...(s.execution.verdict ? { verdict: { ...s.execution.verdict, evidence: [...s.execution.verdict.evidence] } } : {}) } } : {}),
+      ...(includeSource ? { source: s.source } : {}), ...(s.path ? { path: s.path } : {}), ...(!summaryOnly && s.contextVariables.length ? { contextVariables: parsePreviewContext(s.contextVariables) } : {}) };
+  }
+  private session(input: unknown, traceLabel = false): Session {
     this.prune();
     const s = this.sessions.get(labText(labRecord(input).id, 'Session', 128));
     if (!s || s.scope !== this.deps.scope()) throw new Error('This run has expired or belongs to another project. Start a new run.');
+    const raw = labRecord(input);
+    if ((raw.path !== undefined && (!traceLabel || s.path !== undefined) && labText(raw.path, 'Agent path', 512) !== s.path)
+      || (raw.orgAlias !== undefined && labText(raw.orgAlias, 'Org alias', 160) !== s.orgAlias)) throw new Error('This run belongs to another agent or org.');
     s.touched = this.now();
     return s;
   }
@@ -75,7 +86,7 @@ export class AgentforceLab {
     if (s.closed || s.failed) throw new Error('Start a fresh run to continue.');
     s.busy = true;
     try { return await work(); }
-    catch (error) { s.failed = true; throw error; }
+    catch (error) { if (!s.closed) s.failed = true; throw error; }
     finally { s.busy = false; s.touched = this.now(); }
   }
 
@@ -100,7 +111,7 @@ export class AgentforceLab {
       const org = await this.deps.connect();
       await this.deps.authorize?.(org, { engine: raw.engine, threadId: typeof raw.threadId === 'string' ? raw.threadId.slice(0, 128) : '', startedByUser: raw.startedByUser === true });
       const token = await this.transport.bootstrap(org, controller.signal);
-      const s: Session = { id: randomUUID(), scope, engine: raw.engine, source, path, sourceHash: createHash('sha256').update(source).digest('hex'), orgAlias: org.alias, model, token, sequence: 0, scenario, contextVariables, turns: [], busy: false, closed: false, failed: false, touched: this.now(), calls: 0, controller, traces: new TraceCache(), traceCalls: 0 };
+      const s: Session = { id: randomUUID(), scope, engine: raw.engine, source, path, sourceHash: createHash('sha256').update(source).digest('hex'), orgAlias: org.alias, model, token, sequence: 0, scenario, contextVariables, turns: [], busy: false, closed: false, failed: false, touched: this.now(), createdAt: this.now(), threadId: typeof raw.threadId === 'string' ? raw.threadId.slice(0, 128) : '', live: raw.live === true, calls: 0, controller, traces: new TraceCache(), traceCalls: 0 };
       if (s.engine === 'preview') {
         const compiled = await this.transport.request(token, '/einstein/ai-agent/v1.1/authoring/scripts', {
           assets: [{ type: 'AFScript', name: 'AFScript', content: source }], afScriptVersion: '2.0.0'
@@ -129,7 +140,12 @@ export class AgentforceLab {
 
   async send(input: unknown): Promise<LabSnapshot> {
     const s = this.session(input);
+    if (this.executing(s)) throw new Error('AI role-play is running. Stop it before sending a manual turn.');
     const text = labText(labRecord(input).text, 'Message', 4000);
+    await this.sendTurn(s, text);
+    return this.snapshot(s);
+  }
+  private async sendTurn(s: Session, text: string): Promise<LabSnapshot> {
     return this.exclusive(s, async () => {
       if (s.turns.filter(t => t.role === 'user').length >= (s.scenario?.maxTurns ?? 20)) throw new Error('Turn budget reached. Review the conversation or start a new run.');
       s.turns.push({ role: 'user', text });
@@ -152,6 +168,10 @@ export class AgentforceLab {
 
   async next(input: unknown): Promise<{ text: string }> {
     const s = this.session(input);
+    if (this.executing(s)) throw new Error('AI role-play is running.');
+    return this.nextTurn(s);
+  }
+  private async nextTurn(s: Session): Promise<{ text: string }> {
     return this.exclusive(s, async () => {
       if (!s.scenario) throw new Error('Choose a scenario before starting AI role-play.');
       if (s.turns.filter(t => t.role === 'user').length >= s.scenario.maxTurns) throw new Error('Turn budget reached.');
@@ -162,6 +182,11 @@ export class AgentforceLab {
 
   async evaluate(input: unknown) {
     const s = this.session(input);
+    if (this.executing(s)) throw new Error('AI role-play is running.');
+    const result = await this.evaluateSession(s);
+    return { ...result, session: this.snapshot(s) };
+  }
+  private async evaluateSession(s: Session) {
     return this.exclusive(s, async () => {
       if (!s.scenario || !s.turns.some(t => t.role === 'user') || s.turns.at(-1)?.role !== 'agent') throw new Error('A complete conversation and success criteria are required.');
       const evidence = [];
@@ -193,7 +218,7 @@ export class AgentforceLab {
     const ref = { runId: id, planId: planId || undefined, turn: Number.isInteger(raw.turn) ? Number(raw.turn) : undefined };
     if (!id) return unavailableTrace(ref, 'A run id is required for a trace.');
     let s: Session;
-    try { s = this.session(raw); }
+    try { s = this.session(raw, true); }
     catch { return unavailableTrace(ref, 'This run has expired or is not a lab run, so its runtime trace is unavailable.'); }
     if (s.engine === 'rehearsal') return unavailableTrace(ref, REHEARSAL_TRACE_REASON);
     // Without a planId the latest agent turn that carries one is traced.
@@ -220,12 +245,59 @@ export class AgentforceLab {
 
   /** Read-only snapshot of a run in this project, so a chat card can reopen it. */
   get(input: unknown): LabSnapshot {
-    return this.snapshot(this.session(input));
+    return this.snapshot(this.session(input), labRecord(input).includeSource === true);
+  }
+
+  /** Discovers only the current project's retained runs; no source or credentials are listed. */
+  list(input: unknown): LabSnapshot[] {
+    this.prune();
+    const raw = labRecord(input);
+    const path = raw.path === undefined ? undefined : labText(raw.path, 'Agent path', 512);
+    const orgAlias = raw.orgAlias === undefined ? undefined : labText(raw.orgAlias, 'Org alias', 160);
+    if (raw.engine !== undefined && raw.engine !== 'preview' && raw.engine !== 'rehearsal') throw new Error('Choose a rehearsal engine.');
+    return [...this.sessions.values()].filter(s => s.scope === this.deps.scope() && (raw.includeClosed === true || !s.closed)
+      && (path === undefined || path === s.path) && (orgAlias === undefined || orgAlias === s.orgAlias) && (raw.engine === undefined || raw.engine === s.engine))
+      .sort((a, b) => b.createdAt - a.createdAt).slice(0, 12).map(s => this.snapshot(s, false, raw.summaryOnly === true));
+  }
+
+  /** The server owns the loop, so closing or reloading a renderer does not cancel its execution. */
+  async run(input: unknown): Promise<LabSnapshot> {
+    if (labRecord(input).scenario === undefined) throw new Error('Choose a scenario before starting AI role-play.');
+    const started = await this.start(input);
+    const s = this.session({ id: started.id });
+    s.execution = { phase: 'opening', completedTurns: 0, totalTurns: s.scenario!.maxTurns };
+    const initial = this.snapshot(s);
+    void this.execute(s);
+    return initial;
+  }
+  private async execute(s: Session): Promise<void> {
+    const execution = s.execution!;
+    try {
+      for (let index = 0; index < s.scenario!.maxTurns; index++) {
+        s.controller.signal.throwIfAborted();
+        execution.phase = index === 0 ? 'opening' : 'customer';
+        const text = index === 0 ? s.scenario!.opening : (await this.nextTurn(s)).text;
+        s.controller.signal.throwIfAborted();
+        execution.phase = 'agent';
+        await this.sendTurn(s, text);
+        execution.completedTurns++;
+      }
+      s.controller.signal.throwIfAborted();
+      execution.phase = 'evaluating';
+      const { verdict } = await this.evaluateSession(s);
+      s.controller.signal.throwIfAborted();
+      execution.verdict = verdict;
+      execution.phase = 'done';
+    } catch (error) {
+      execution.phase = s.closed || s.controller.signal.aborted ? 'stopped' : 'error';
+      if (execution.phase === 'error') { s.failed = true; execution.error = (error instanceof Error ? error.message : String(error)).slice(0, 4000); }
+    } finally { s.touched = this.now(); }
   }
 
   end(input: unknown): LabSnapshot {
     const s = this.session(input);
     s.closed = true;
+    if (this.executing(s)) s.execution!.phase = 'stopped';
     s.controller.abort();
     // SFAP draft previews have no documented remote DELETE contract. Like sf-pi,
     // ending closes the local handle; Salesforce owns expiry of the remote preview.

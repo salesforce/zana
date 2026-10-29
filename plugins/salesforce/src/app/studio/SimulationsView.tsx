@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MessageSquare, Play, SlidersHorizontal } from 'lucide-react';
 import { useStudioSplit } from './StudioResize.js';
-import { SimulationScenarios } from './SimulationScenarios.js';
-import { SIMULATION_STYLES } from './simulation-styles.js';
+import { scenarioSnapshot, type SavedScenario } from '../../../lib/scenario-library-contract.js';
+import { useRunWorkspaceState } from './run-workspaces.js';
+import type { ScenarioLibraryControls } from './useScenarioLibrary.js';
+import { SaveSharedScenario } from './SaveSharedScenario.js';
+import { SimulationScenarios, type EditableScenario } from './SimulationScenarios.js';
+import { IMPROVEMENT_STYLES, SIMULATION_STYLES } from './simulation-styles.js';
 import { callPluginRpc, useRealtime } from '@zana-ai/zcc-plugin-sdk/app';
 import { SelfHealingPanel } from './SelfHealingPanel.js';
 import { LAB_SCENARIOS, type LabEngine } from '../../../lib/agentforce-lab-contract.js';
-import { CONTEXT_PRESETS_CHANGED, type ContextPreset } from '../../../lib/preview-context-preset-contract.js';
-import { parsePreviewContext } from '../../../lib/preview-context.js';
+import { CONTEXT_PRESETS_CHANGED, sameContext, type ContextPreset } from '../../../lib/preview-context-preset-contract.js';
+import { parsePreviewContext, validateContextEntries, type PreviewContextField, type PreviewContextVariable } from '../../../lib/preview-context.js';
 import { CONTEXT_CHANGED_CHANNEL, STUDIO_CHANGED_CHANNEL } from '../../../lib/studio-contract.js';
 import {
   parseSimulationRequest, SIMULATION_LIMITS, SIMULATION_RPC, SIMULATIONS_CHANGED_KIND, isBatchDone, type LaneStatus, type SimulationBatch, type SimulationLane, type SimulationScenarioInput,
@@ -34,6 +38,7 @@ export interface SimulationsViewProps {
   /** Injected in tests. */
   call?: typeof callPluginRpc;
   pollMs?: number;
+  scenarioLibrary?: ScenarioLibraryControls;
 }
 
 type Reply = { ok?: boolean; code?: string; error?: string } & Record<string, unknown>;
@@ -81,14 +86,26 @@ function AgentSimulations(props: SimulationsViewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [laneId, setLaneId] = useState<string | null>(null);
   const [view, setView] = useState<'scenarios' | 'results'>('scenarios');
-  const [activeScenario, setActiveScenario] = useState(LAB_SCENARIOS[0]!.name);
-  const [presets, setPresets] = useState<string[]>(LAB_SCENARIOS.map(row => row.name));
-  const [scenarios, setScenarios] = useState(() => LAB_SCENARIOS.map(row => ({ key: row.name, name: row.name, ...row.scenario })));
+  const shared = props.scenarioLibrary;
+  const setupRequested = useRef(Boolean(shared?.selection));
+  const showView = useCallback((next: 'scenarios' | 'results') => {
+    setupRequested.current = next === 'scenarios'; setView(next);
+  }, []);
+  const draftKey = JSON.stringify(['batch-scenario-drafts', pluginId, projectId, path]);
+  const [initialized, setInitialized] = useRunWorkspaceState(draftKey, 'initialized', false);
+  const [activeScenario, setActiveScenario] = useRunWorkspaceState(draftKey, 'active', LAB_SCENARIOS[0]!.name);
+  const [presets, setPresets] = useRunWorkspaceState<string[]>(draftKey, 'included', LAB_SCENARIOS.map(row => row.name));
+  const [scenarios, setScenarios] = useRunWorkspaceState<EditableScenario[]>(draftKey, 'scenarios', LAB_SCENARIOS.map(row => ({ key: row.name, name: row.name, ...row.scenario })));
+  const [libraryId, setLibraryId] = useState('');
+  const appliedSelection = useRef<number | undefined>(undefined);
+  const [contextFields, setContextFields] = useState<PreviewContextField[]>([]);
+  const [reusedContext, setReusedContext] = useState<PreviewContextVariable[]>([]);
   const [contextPresets, setContextPresets] = useState<ContextPreset[]>([]);
   const [contextPreset, setContextPreset] = useState('');
+  const [presetsLoading, setPresetsLoading] = useState(true);
+  const [fieldsLoading, setFieldsLoading] = useState(true);
   const [contextError, setContextError] = useState<string | null>(null);
   const [contextRevision, setContextRevision] = useState(0);
-  const nextScenario = useRef(0);
   const [repeats, setRepeats] = useState(1);
   const [parallel, setParallel] = useState(4);
   const [engine, setEngine] = useState<LabEngine>('preview');
@@ -114,12 +131,23 @@ function AgentSimulations(props: SimulationsViewProps) {
   useEffect(() => {
     if (!visible || !path) return;
     let cancelled = false;
+    setFieldsLoading(true);
+    void rpc('agentPreview.context', { source }).then(reply => {
+      if (!cancelled) setContextFields(reply.ok === false ? [] : (reply.fields as PreviewContextField[] | undefined) ?? []);
+    }).catch(() => { if (!cancelled) setContextFields([]); }).finally(() => { if (!cancelled) setFieldsLoading(false); });
+    return () => { cancelled = true; };
+  }, [visible, path, source, rpc]);
+
+  useEffect(() => {
+    if (!visible || !path) return;
+    let cancelled = false;
+    setPresetsLoading(true);
     void rpc('agentPreview.presets.list', { path }).then(reply => {
       if (cancelled) return;
       if (reply.ok === false) { setContextError(reply.error || 'Could not load context presets.'); return; }
       setContextError(null);
       setContextPresets((reply.presets as ContextPreset[] | undefined) ?? []);
-    }).catch(err => { if (!cancelled) setContextError(String(err?.message ?? err)); });
+    }).catch(err => { if (!cancelled) setContextError(String(err?.message ?? err)); }).finally(() => { if (!cancelled) setPresetsLoading(false); });
     return () => { cancelled = true; };
   }, [visible, path, rpc, contextRevision]);
   useRealtime(CONTEXT_CHANGED_CHANNEL, payload => {
@@ -147,7 +175,7 @@ function AgentSimulations(props: SimulationsViewProps) {
     // Only select one that belongs to this agent's filtered history.
     const requested = pick && rows.some(row => row.id === pick) ? pick : undefined;
     const next = requested ?? selected.current ?? rows[0]?.id ?? null;
-    if (next !== selected.current) { setSelectedId(next); setLaneId(null); if (next) setView('results'); }
+    if (next !== selected.current) { setSelectedId(next); setLaneId(null); if (next && (requested || !setupRequested.current)) setView('results'); }
     selected.current = next;
     if (next) await loadBatch(next); else setBatch(null);
   }, [loadBatch, path, rpc]);
@@ -155,10 +183,10 @@ function AgentSimulations(props: SimulationsViewProps) {
   useEffect(() => { if (visible) void loadList().catch(err => alive.current && setError(String(err?.message ?? err))); }, [visible, loadList]);
   useEffect(() => {
     if (!focus) return;
-    setView('results');
+    showView('results');
     void loadList(focus.batchId).catch(err => alive.current && setError(String(err?.message ?? err)));
     onFocusHandled?.(focus.seq);
-  }, [focus, loadList, onFocusHandled]);
+  }, [focus, loadList, onFocusHandled, showView]);
   useRealtime(STUDIO_CHANGED_CHANNEL, payload => {
     const row = payload as { kind?: string; projectId?: string; batchId?: string } | null;
     if (!row || row.kind !== SIMULATIONS_CHANGED_KIND || (row.projectId && row.projectId !== projectId) || !visible) return;
@@ -168,6 +196,27 @@ function AgentSimulations(props: SimulationsViewProps) {
   });
   // Reconcile after missed realtime messages while the batch on screen runs.
   const running = batch?.status === 'running';
+  const copyShared = (row: SavedScenario) => {
+    const key = `shared-${row.id}`;
+    if (!scenarios.some(item => item.key === key) && scenarios.length >= SIMULATION_LIMITS.lanes) { setError('Remove a setup before adding another scenario (maximum 12).'); return; }
+    setScenarios(previous => [...previous.filter(item => item.key !== key), { key, ...scenarioSnapshot(row) }]);
+    setPresets(previous => previous.includes(key) ? previous : [...previous, key]); setActiveScenario(key); showView('scenarios');
+  };
+  useEffect(() => {
+    if (!shared || shared.loading || shared.error || initialized || running || busy) return;
+    // Preserve local setups from before this library was introduced.
+    const defaults = LAB_SCENARIOS.map(row => ({ key: row.name, name: row.name, ...row.scenario }));
+    if (JSON.stringify(scenarios) === JSON.stringify(defaults)) {
+      const rows = shared.scenarios.slice(0, SIMULATION_LIMITS.lanes).map(row => ({ key: `shared-${row.id}`, ...scenarioSnapshot(row) }));
+      setScenarios(rows); setPresets(rows.map(row => row.key)); setActiveScenario(rows[0]?.key ?? '');
+    }
+    setInitialized(true);
+  }, [shared?.loading, shared?.error, initialized, running, busy]);
+  useEffect(() => {
+    if (!shared?.selection || appliedSelection.current === shared.selection.seq || running || busy || !initialized) return;
+    appliedSelection.current = shared.selection.seq; copyShared(shared.selection.scenario);
+  }, [shared?.selection, running, busy, initialized]);
+
   useEffect(() => {
     if (!visible || !running || !selectedId) return;
     const timer = setInterval(() => void loadBatch(selectedId).catch(() => undefined), pollMs);
@@ -179,20 +228,27 @@ function AgentSimulations(props: SimulationsViewProps) {
   }, [batch]);
 
   const lanes = presets.length * repeats;
+  const inheritedContext = contextPreset ? reusedContext : [];
   const start = async () => {
     if (!path) return;
     setBusy('start'); setError(null);
     try {
-      const selectedScenarios: SimulationScenarioInput[] = scenarios.filter(row => presets.includes(row.key)).map(({ key: _key, ...row }) => row);
+      const selectedScenarios: SimulationScenarioInput[] = scenarios.filter(row => presets.includes(row.key)).map(({ key: _key, contextEntries, ...row }) => {
+        if (!contextEntries) return row;
+        const parsed = validateContextEntries(contextEntries);
+        const issue = parsed.errors[0] || Object.values(parsed.fieldErrors)[0];
+        if (issue) throw Error(`${row.name}: ${issue}`);
+        return { ...row, contextVariables: parsed.values };
+      });
       parseSimulationRequest({ scenarios: selectedScenarios, repeats, parallel, engine });
       const preset = contextPresets.find(p => p.id === contextPreset);
-      if (contextPreset && !preset) throw Error('The selected context preset is unavailable. Select it again.');
-      const contextVariables = parsePreviewContext(preset?.values);
+      if (contextPreset && contextPreset !== '__batch' && !preset) throw Error('The selected context preset is unavailable. Select it again.');
+      const contextVariables = parsePreviewContext(inheritedContext);
       const reply = await rpc(SIMULATION_RPC.start, { agentPath: path, source, scenarios: selectedScenarios, repeats, parallel, engine, contextVariables, startedByUser: true, ...(threadId ? { threadId } : {}) });
       if (!alive.current) return;
       if (reply.ok === false) { setError(reply.error || 'The simulation could not start.'); return; }
       const started = reply.batch as SimulationBatch;
-      setBatch(started); setView('results');
+      setBatch(started); showView('results');
       await loadList(started.id);
     } catch (err) { if (alive.current) setError(err instanceof Error ? err.message : String(err)); }
     finally { if (alive.current) setBusy(null); }
@@ -208,9 +264,9 @@ function AgentSimulations(props: SimulationsViewProps) {
     finally { if (alive.current) setBusy(null); }
   };
   const pickBatch = (id: string) => { setSelectedId(id); selected.current = id; setLaneId(null); void loadBatch(id).catch(() => undefined); };
-  const editScenario = (key: string, patch: Partial<SimulationScenarioInput>) => setScenarios(rows => rows.map(row => row.key === key ? { ...row, ...patch } : row));
+  const editScenario = (key: string, patch: Partial<EditableScenario>) => setScenarios(rows => rows.map(row => row.key === key ? { ...row, ...patch } : row));
   const addScenario = () => {
-    const key = `custom-${++nextScenario.current}`;
+    const key = `custom-${crypto.randomUUID()}`;
     setScenarios(rows => [...rows, { key, name: 'Custom scenario', persona: '', goal: '', opening: '', criteria: '', maxTurns: 4 }]);
     setPresets(rows => [...rows, key]); setActiveScenario(key);
   };
@@ -218,7 +274,8 @@ function AgentSimulations(props: SimulationsViewProps) {
     if (!batch) return;
     const unique = [...new Map(batch.lanes.map(lane => [JSON.stringify([lane.name, lane.scenario]), { name: lane.name, ...lane.scenario }])).values()];
     const rows = unique.map((row, i) => ({ ...row, key: `reused-${i}` }));
-    setScenarios(rows); setPresets(rows.map(row => row.key)); setActiveScenario(rows[0]?.key ?? ''); setView('scenarios'); setEngine(batch.engine); setRepeats(Math.max(1, ...batch.lanes.map(l => l.repeat))); setParallel(batch.parallel);
+    setScenarios(rows); setPresets(rows.map(row => row.key)); setActiveScenario(rows[0]?.key ?? ''); showView('scenarios'); setEngine(batch.engine); setRepeats(Math.max(1, ...batch.lanes.map(l => l.repeat))); setParallel(batch.parallel);
+    setReusedContext(batch.contextVariables ?? []); setContextPreset('__batch');
   };
   const togglePreset = (name: string) => setPresets(current => current.includes(name) ? current.filter(row => row !== name) : [...current, name]);
 
@@ -229,7 +286,7 @@ function AgentSimulations(props: SimulationsViewProps) {
   const notPassing = counts ? counts.fail + counts.inconclusive + counts.error : 0;
 
   return <div className="sf-sim" data-testid="studio-simulations">
-    <style>{SIMULATION_STYLES}</style>
+    <style>{SIMULATION_STYLES}{IMPROVEMENT_STYLES}{`.sf-sim-shared-picker{display:flex;align-items:end;gap:10px;flex-wrap:wrap;padding:12px;border:1px solid var(--sf-border);border-radius:10px}.sf-sim-shared-picker>div{flex:1 1 100%}.sf-sim-shared-picker h3{margin:0}.sf-sim-shared-picker p{color:var(--sf-muted)}.sf-sim-shared-picker label{display:flex;flex-direction:column;gap:6px;min-width:0}.sf-sim-shared-picker select{font:inherit;max-width:100%;padding:8px;border:1px solid var(--sf-border);border-radius:6px;background:var(--sf-bg);color:var(--sf-text)}.sf-sim-shared-list{display:flex;flex-direction:column;margin:12px 0}.sf-sim-shared-list label{display:flex;align-items:center;gap:10px;padding:12px;border-bottom:1px solid var(--sf-border)}.sf-sim-shared-list span{display:flex;flex-direction:column;gap:5px}.sf-sim-shared-list small{color:var(--sf-muted)}.sf-sim-adjust>summary{padding:12px;cursor:pointer;font-weight:600}.sf-sim-adjust>p{color:var(--sf-muted)}`}</style>
     <header className="sf-sim-heading">
       <div><h2>Batch simulations</h2><p>Run multiple AI customer conversations across scenarios and repeats.</p></div>
       <details ref={settings} className="sf-sim-settings" onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); event.stopPropagation(); } }}>
@@ -238,21 +295,40 @@ function AgentSimulations(props: SimulationsViewProps) {
           <label>Engine<select value={engine} disabled={running || busy !== null} onChange={event => setEngine(event.target.value as LabEngine)} aria-label="Engine"><option value="preview">Simulate</option><option value="rehearsal">Rehearse</option></select></label>
           <label>In parallel<select value={parallel} disabled={running || busy !== null} onChange={event => setParallel(Number(event.target.value))} aria-label="Parallel conversations">{[1, 2, 3, 4].map(n => <option key={n} value={n}>{n}</option>)}</select></label>
           <label>Repeats<select value={repeats} disabled={running || busy !== null} onChange={event => setRepeats(Number(event.target.value))} aria-label="Repeats">{Array.from({ length: SIMULATION_LIMITS.repeats }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}×</option>)}</select></label>
-          <label>Context preset<select aria-label="Simulation context preset" value={contextPreset} disabled={running || busy !== null} onChange={event => setContextPreset(event.target.value)}><option value="">Agent defaults</option>{contextPresets.map(p => <option key={p.id} value={p.id}>{p.name} · revision {p.revision}</option>)}</select></label>
+          <label>Batch context preset<select aria-label="Simulation context preset" value={contextPreset} disabled={running || busy !== null} onChange={event => { const id = event.target.value; setReusedContext(parsePreviewContext(contextPresets.find(p => p.id === id)?.values ?? [])); setContextPreset(id); }}><option value="">Agent defaults</option>{contextPreset === '__batch' && <option value="__batch">Values from selected batch</option>}{contextPresets.map(p => <option key={p.id} value={p.id}>{p.name} · {contextPreset === p.id && !sameContext(p.values, reusedContext) ? 'copied values' : `revision ${p.revision}`}</option>)}</select></label>
           {contextError && <p role="status">{contextError}</p>}
-          <p>Create context presets in Preview → Context. These values apply to every conversation in this batch.</p>
+          <p>Create presets in Preview → Context. These are batch defaults; each scenario can override individual variables.</p>
         </div>
       </details>
       {running ? <button type="button" className="sf-tp-btn sf-sim-run" disabled={busy !== null} onClick={() => void stop()}>{busy === 'stop' ? 'Stopping…' : 'Stop'}</button>
         : <button type="button" className="sf-tp-btn is-primary sf-sim-run" disabled={busy !== null || !lanes || lanes > SIMULATION_LIMITS.lanes || !source.trim()} onClick={() => void start()}><Play size={13} aria-hidden="true" />{busy === 'start' ? 'Starting…' : `Run ${lanes} conversation${lanes === 1 ? '' : 's'}`}</button>}
     </header>
     <div className="sf-sim-navigation">
-      <div role="group" aria-label="Simulation views"><button type="button" aria-pressed={view === 'scenarios'} onClick={() => setView('scenarios')}>Scenarios <span>{scenarios.length}</span></button><button type="button" aria-pressed={view === 'results'} onClick={() => setView('results')}>Results <span>{batch ? `${finished}/${batch.counts.total}` : '0'}</span></button></div>
+      <div role="group" aria-label="Simulation views"><button type="button" aria-pressed={view === 'scenarios'} onClick={() => showView('scenarios')}>Batch setup <span>{scenarios.length}</span></button><button type="button" aria-pressed={view === 'results'} onClick={() => showView('results')}>Results <span>{batch ? `${finished}/${batch.counts.total}` : '0'}</span></button></div>
       <span className="sf-sim-run-meta">{engine === 'preview' ? 'Simulate' : 'Rehearse'} · {parallel} in parallel · {repeats} {repeats === 1 ? 'repeat' : 'repeats'}</span>
     </div>
     <div hidden={view !== 'scenarios'}>
-      <SimulationScenarios storageKey={`salesforce:studio:simulation-scenarios:${projectId ?? 'draft'}`} scenarios={scenarios} included={presets} activeKey={activeScenario} attention={new Set(batch?.lanes.filter(row => ['fail', 'inconclusive', 'error'].includes(row.status)).map(row => row.name))} disabled={running || busy !== null}
+      {shared && <div className="sf-sim-shared-picker">
+        <div><h3>Scenarios for this batch</h3><p>Choose a shared setup. Each selection keeps a copy of its variables and revision.</p></div>
+        <label>Shared scenario<select aria-label="Add shared scenario to batch" value={libraryId} disabled={running || busy !== null || shared.loading} onChange={event => setLibraryId(event.target.value)}><option value="">Choose a scenario…</option>{shared.scenarios.map(row => <option key={row.id} value={row.id}>{row.name} · revision {row.revision}</option>)}</select></label>
+        <button type="button" className="sf-tp-btn" disabled={!libraryId || running || busy !== null} onClick={() => { const row = shared.scenarios.find(row => row.id === libraryId); if (row) copyShared(row); }}>Copy into batch</button>
+        <button type="button" className="sf-tp-btn" onClick={shared.onManage}>Manage scenarios</button>
+        {shared.error && <p role="alert">{shared.error}</p>}
+        {shared.selection && appliedSelection.current !== shared.selection.seq && (busy || running) && <p role="status">Your selected scenario will be added after this batch ends.</p>}
+      </div>}
+      {shared && <div className="sf-sim-shared-list" role="group" aria-label="Scenarios in this batch">{scenarios.map(row => <label key={row.key}><input type="checkbox" aria-label={row.name} checked={presets.includes(row.key)} disabled={running || busy !== null} onChange={() => togglePreset(row.key)} /><span><strong>{row.name}</strong><small>{row.origin ? `Based on revision ${row.origin.revision}` : 'Local setup'} · {row.maxTurns} turns · {row.contextEntries ? Object.keys(row.contextEntries).length : row.contextVariables?.length ?? 0} variables</small></span></label>)}</div>}
+      {shared ? <details className="sf-sim-adjust"><summary>Adjust for this batch</summary><p>These edits affect this batch only. Save a shared copy to reuse them elsewhere.</p>
+      <SimulationScenarios showInclusion={!shared} storageKey={`salesforce:studio:simulation-scenarios:${projectId ?? 'draft'}`} scenarios={scenarios} included={presets} activeKey={activeScenario} attention={new Set(batch?.lanes.filter(row => ['fail', 'inconclusive', 'error'].includes(row.status)).map(row => row.name))} disabled={running || busy !== null}
+        contextFields={contextFields} inheritedContext={inheritedContext}
+        contextPresets={contextPresets} presetsLoading={presetsLoading || fieldsLoading} presetsError={contextError} onReloadPresets={() => setContextRevision(v => v + 1)}
         onSelect={setActiveScenario} onToggle={togglePreset} onEdit={editScenario} onAdd={addScenario} onRemove={key => { setScenarios(rows => rows.filter(row => row.key !== key)); setPresets(rows => rows.filter(row => row !== key)); }} />
+        {scenarios.find(row => row.key === activeScenario) && (() => { const row = scenarios.find(row => row.key === activeScenario)!; const parsed = row.contextEntries ? validateContextEntries(row.contextEntries) : null; return <SaveSharedScenario library={shared} scenario={row} name={row.name} values={parsed?.values ?? row.contextVariables ?? []} disabled={running || busy !== null || Boolean(parsed && (parsed.errors.length || Object.keys(parsed.fieldErrors).length))} />; })()}
+      </details> : <>
+      <SimulationScenarios showInclusion={!shared} storageKey={`salesforce:studio:simulation-scenarios:${projectId ?? 'draft'}`} scenarios={scenarios} included={presets} activeKey={activeScenario} attention={new Set(batch?.lanes.filter(row => ['fail', 'inconclusive', 'error'].includes(row.status)).map(row => row.name))} disabled={running || busy !== null}
+        contextFields={contextFields} inheritedContext={inheritedContext}
+        contextPresets={contextPresets} presetsLoading={presetsLoading || fieldsLoading} presetsError={contextError} onReloadPresets={() => setContextRevision(v => v + 1)}
+        onSelect={setActiveScenario} onToggle={togglePreset} onEdit={editScenario} onAdd={addScenario} onRemove={key => { setScenarios(rows => rows.filter(row => row.key !== key)); setPresets(rows => rows.filter(row => row !== key)); }} />
+      </>}
       {batch && <button type="button" className="sf-tp-btn sf-sim-reuse" disabled={running || busy !== null} onClick={reuseScenarios}>Use scenarios from this batch</button>}
     </div>
     <p className="sf-tp-foot">An AI customer plays each scenario, {engine === 'preview' ? 'the agent answers in Simulate (actions are simulated)' : 'an AI approximation of the agent answers'}, and an AI judge grades the transcript. Runs the editor source{dirty ? ', including unsaved changes' : ''}, {parallel} at a time. Verdicts are AI opinions, not release evidence.</p>
@@ -268,8 +344,8 @@ function AgentSimulations(props: SimulationsViewProps) {
       {batches.length > 1 && <select aria-label="Simulation batch" value={batch.id} onChange={event => pickBatch(event.currentTarget.value)}>
         {batches.map(row => <option key={row.id} value={row.id}>{new Date(row.startedAt).toLocaleString()} · {row.counts.pass}/{row.counts.total} · {BATCH_LABEL[row.status]}</option>)}
       </select>}
-      {onAskAgent && isBatchDone(batch.status) && notPassing > 0 && <button type="button" className="sf-tp-btn is-primary" onClick={() => onAskAgent(improvePrompt(batch))}>Ask the agent to improve</button>}
     </div>}
+    <SelfHealingPanel key={`${projectId}:${path}`} path={path} source={source} batch={batch} visible={visible} rpc={rpc} onAskAgent={onAskAgent} onInvestigate={batch && onAskAgent ? () => onAskAgent(improvePrompt(batch)) : undefined} />
     <div className="sf-sim-results-workspace" ref={resultsSplit.ref} style={resultsSplit.style}>
     {batch && <div className="sf-sim-lanes" role="list" aria-label="Conversations">
       {batch.lanes.map(row => {
@@ -286,6 +362,9 @@ function AgentSimulations(props: SimulationsViewProps) {
     {lane && <section className="sf-sim-detail" aria-label={`Conversation ${lane.name}`}>
       <h3>{lane.name}{lane.repeat > 1 ? ` #${lane.repeat}` : ''} <StatusChip status={lane.status} /></h3>
       <div className="sf-tp-sub"><b>Goal:</b> {lane.scenario.goal}<br /><b>Criteria:</b> {lane.scenario.criteria}</div>
+      <details className="sf-sim-applied-context"><summary>Starting variables · {lane.contextVariables?.length ?? batch?.contextVariables?.length ?? 0}</summary>
+        <dl>{(lane.contextVariables ?? batch?.contextVariables ?? []).map(row => <div key={row.name}><dt>{row.name} <small>{row.type}</small></dt><dd>{typeof row.value === 'string' ? row.value : JSON.stringify(row.value)}</dd></div>)}</dl>
+      </details>
       {(lane.verdict || lane.error) && <div className={`sf-sim-verdict is-${lane.error ? 'error' : lane.verdict!.outcome}`}>
         <strong>{lane.error ? 'Error' : `Judge: ${STATUS_LABEL[lane.verdict!.outcome]}`}</strong> {lane.error ?? lane.verdict!.reason}
         {lane.verdict && <ul>{lane.verdict.evidence.map((item, index) => <li key={index}>{item}</li>)}</ul>}
@@ -300,7 +379,6 @@ function AgentSimulations(props: SimulationsViewProps) {
     {batch && !lane && <div className="sf-sim-detail sf-sim-placeholder"><MessageSquare size={24} aria-hidden="true" /><h3>Explore a conversation</h3><p>Select a result to read its transcript and judge’s evidence.</p></div>}
     </div>
     {batch && <button type="button" className="sf-tp-btn sf-sim-reuse" disabled={running || busy !== null} onClick={reuseScenarios}>Use scenarios from this batch</button>}
-    <SelfHealingPanel key={`${projectId}:${path}`} path={path} source={source} batch={batch} visible={visible} rpc={rpc} onAskAgent={onAskAgent} />
     </div>
     {!batch && !error && <div className="sf-tp-empty">No simulations yet for this agent. Run a batch, or ask the thread agent to run one.</div>}
   </div>;

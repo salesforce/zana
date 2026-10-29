@@ -14,9 +14,11 @@ import { PLAYGROUND_BRIDGE_SOURCE } from './playground-bridge.js';
 import { queueAgentScriptOpen } from './agent-script-open.js';
 import { parseAgentScriptSource } from '../../lib/agent-script-parse.js';
 import { ACTION_AGENT } from '../action-fixtures.js';
+import { starterScenarios } from '../../lib/scenario-library-contract.js';
 
 const rpc = vi.fn(async (_pluginId: string, method: string, args?: { path?: string; projectId?: string }) => {
   if (method === 'agentPreview.context') return { ok: true, fields: [] };
+  if (method === 'studio.scenarios.list') return { ok: true, scenarios: starterScenarios() };
   if (method === 'status') {
     return { dxProject: true, agentScriptDialect: 'agentforce', projectRoot: '/proj' };
   }
@@ -350,7 +352,9 @@ describe('AgentScriptPanel', () => {
     const tests = el.querySelector<HTMLElement>('[data-testid="studio-view-tests"]')!;
     await act(async () => { within(tests).getByRole('button', { name: 'Role-play' }).click(); });
     const lab = tests.querySelector<HTMLElement>('[data-testid="agentforce-lab"]')!;
-    await act(async () => { [...lab.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Missing details')!.click(); });
+    const picker = within(lab).getByLabelText('Shared scenario');
+    await within(picker).findByRole('option', { name: 'Missing details · revision 1' });
+    await act(async () => fireEvent.change(picker, { target: { value: starterScenarios()[1].id } }));
     const persona = lab.querySelector<HTMLTextAreaElement>('textarea')!.value;
     expect(persona).toContain('distracted');
     await openView(el, 'Preview');

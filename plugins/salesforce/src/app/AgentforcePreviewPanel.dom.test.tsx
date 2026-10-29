@@ -1,3 +1,4 @@
+import { clearStudioRunWorkspaces, getStudioRun, studioRunKey, writeWorkspaceValue } from './studio/run-workspaces.js';
 /**
  * @vitest-environment happy-dom
  */
@@ -60,6 +61,7 @@ describe('AgentforcePreviewPanel', () => {
   const nodes: Array<{ unmount: () => void; root: ReturnType<typeof createRoot> }> = [];
 
   beforeEach(() => {
+  clearStudioRunWorkspaces();
     localStorage.clear();
     rpc.mockClear();
     rpc.mockImplementation(baseRpc);
@@ -218,9 +220,7 @@ describe('AgentforcePreviewPanel', () => {
     await act(async () => ([...published.querySelectorAll('button'), ...document.querySelectorAll('.sf-context-backdrop button')].find(b => b.textContent === 'Start preview') as HTMLElement).click());
     expect(rpc.mock.calls.find(call => call[1] === 'agentPreview.start')![2]).toMatchObject({ contextVariables });
     await act(async () => nodes.pop()!.unmount());
-    const ended = rpc.mock.calls.filter(call => call[1] === 'agentPreview.end').at(-1)![2]!;
-    expect(ended).toMatchObject({ sessionId: 'sess-1', apiName: 'Published', orgAlias: 'dev' });
-    expect(ended).not.toHaveProperty('contextVariables');
+    expect(rpc.mock.calls.some(call => call[1] === 'agentPreview.end')).toBe(false);
   });
 
   it('starts live preview after switching mode', async () => {
@@ -299,13 +299,13 @@ describe('AgentforcePreviewPanel', () => {
     expect(rpc).toHaveBeenCalledWith('salesforce', 'agentLab.start', expect.objectContaining({ path: 'force-app/Orders.agent' }));
   });
 
-  it('follows a new card target while mounted and releases the old agent session', async () => {
+  it('follows a new card target while retaining the old agent session', async () => {
     const el = await mount({ apiName: 'Published' });
     await act(async () => { el.querySelector<HTMLButtonElement>('[data-testid="salesforce-agentforce-preview-start"]')!.click(); });
     await act(async () => { nodes.at(-1)!.root.render(createElement(AgentforcePreviewPanel, {
       pluginId: 'salesforce', projectId: 'proj-1', threadId: 'thr-1', params: { path: 'force-app/bots/QC.agent' }
     })); });
-    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentPreview.end', expect.objectContaining({ sessionId: 'sess-1', apiName: 'Published', path: undefined }));
+    expect(rpc.mock.calls.some(call => call[1] === 'agentPreview.end')).toBe(false);
     expect(el.querySelector('[aria-label="Agentforce preview file"]')?.textContent).toContain('QC');
     expect(el.querySelector('[data-testid="salesforce-agentforce-preview-end"]')).toBeNull();
     await act(async () => { el.querySelector<HTMLButtonElement>('[data-testid="salesforce-agentforce-preview-start"]')!.click(); });
@@ -376,12 +376,13 @@ describe('AgentforcePreviewPanel', () => {
     expect(el.querySelector('[data-testid="salesforce-agentforce-preview-error"]')?.textContent).toBe('no org');
   });
 
-  it('releases the pinned session on tab close, including a start that finishes after closing', async () => {
+  it('retains the pinned session on close, including a late start', async () => {
     const el = await mount();
     await act(async () => { el.querySelector<HTMLButtonElement>('[data-testid="salesforce-agentforce-preview-start"]')!.click(); });
     rpc.mockClear();
     await act(async () => { nodes.pop()!.unmount(); });
-    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentLab.end', expect.objectContaining({ id: 'sess-1', projectId: 'proj-1', orgAlias: 'dev' }));
+    expect(rpc.mock.calls.some(call => call[1] === 'agentLab.end')).toBe(false);
+    clearStudioRunWorkspaces();
     const pending = await mount();
     let finish!: (value: any) => void;
     rpc.mockImplementation((id, method, args) => method === 'agentLab.start' ? new Promise(resolve => { finish = resolve; }) : baseRpc(id, method, args));
@@ -389,7 +390,82 @@ describe('AgentforcePreviewPanel', () => {
     await act(async () => { nodes.pop()!.unmount(); });
     rpc.mockClear();
     await act(async () => { finish({ ok: true, data: { id: 'late', turns: [] } }); });
-    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentLab.end', expect.objectContaining({ id: 'late', projectId: 'proj-1', orgAlias: 'dev' }));
+    expect(rpc.mock.calls.some(call => call[1] === 'agentLab.end')).toBe(false);
+  });
+
+  it('reattaches a simulated preview to its server transcript and busy state without starting again', async () => {
+    const el = await mount();
+    await act(async () => { el.querySelector<HTMLButtonElement>('[data-testid="salesforce-agentforce-preview-start"]')!.click(); });
+    await act(async () => { nodes.pop()!.unmount(); });
+    rpc.mockImplementation(async (id, method, args) => method === 'agentLab.get' ? { ok: true, data: { id: 'sess-1', engine: 'preview', busy: true, closed: false, turns: [{ role: 'user', text: 'Pending request' }] } } : baseRpc(id, method, args));
+    const restored = await mount();
+    expect(restored.getAttribute('data-run-id') ?? restored.querySelector('[data-run-id]')?.getAttribute('data-run-id')).toBe('sess-1');
+    expect(restored.querySelector('[data-testid="salesforce-agentforce-preview-transcript"]')?.textContent).toContain('Pending request');
+    expect(restored.querySelector<HTMLInputElement>('[data-testid="salesforce-agentforce-preview-input"]')!.disabled).toBe(true);
+    expect(rpc.mock.calls.filter(call => call[1] === 'agentLab.start')).toHaveLength(1);
+    await act(async () => { nodes.pop()!.unmount(); });
+    rpc.mockImplementation(async (id, method, args) => method === 'agentLab.get' ? { ok: true, data: { id: 'sess-1', engine: 'preview', busy: false, closed: true, turns: [{ role: 'agent', text: 'Finished while detached' }] } } : baseRpc(id, method, args));
+    const finished = await mount();
+    expect(finished.querySelector('[data-testid="salesforce-agentforce-preview-transcript"]')?.textContent).toContain('Finished while detached');
+    expect(finished.querySelector('[data-testid="salesforce-agentforce-preview-end"]')).toBeNull();
+  });
+
+  it('keeps a published Live id when status cannot be queried and ends it with its original owner', async () => {
+    const el = await mount({ apiName: 'Published' });
+    await act(async () => { el.querySelector<HTMLButtonElement>('[data-testid="salesforce-agentforce-preview-start"]')!.click(); });
+    await act(async () => { nodes.pop()!.unmount(); });
+    const restored = await mount({ apiName: 'Published' });
+    expect(restored.querySelector('[data-testid="salesforce-agentforce-preview-end"]')).not.toBeNull();
+    expect(rpc.mock.calls.filter(call => call[1] === 'agentPreview.start')).toHaveLength(1);
+    expect(rpc.mock.calls.some(call => call[1] === 'agentPreview.end')).toBe(false);
+    await act(async () => { restored.querySelector<HTMLButtonElement>('[data-testid="salesforce-agentforce-preview-end"]')!.click(); });
+    expect(rpc).toHaveBeenCalledWith('salesforce', 'agentPreview.end', expect.objectContaining({ projectId: 'proj-1', apiName: 'Published', orgAlias: 'dev', threadId: 'thr-1', sessionId: 'sess-1' }));
+  });
+
+  it('rejects an old poll after restart and preserves the replacement run', async () => {
+    const el = await mount();
+    await act(async () => { el.querySelector<HTMLButtonElement>('[data-testid="salesforce-agentforce-preview-start"]')!.click(); });
+    await act(async () => { nodes.pop()!.unmount(); });
+    let finish!: (value: unknown) => void;
+    rpc.mockImplementation(async (id, method, args) => method === 'agentLab.get' ? new Promise(resolve => { finish = resolve; }) : method === 'agentLab.start' ? { ok: true, data: { id: 'replacement', turns: [] } } : baseRpc(id, method, args));
+    const restored = await mount();
+    await act(async () => { restored.querySelector<HTMLButtonElement>('[data-testid="salesforce-agentforce-preview-end"]')!.click(); });
+    await act(async () => { restored.querySelector<HTMLButtonElement>('[data-testid="salesforce-agentforce-preview-start"]')!.click(); });
+    await act(async () => { finish({ ok: true, data: { id: 'sess-1', turns: [{ role: 'agent', text: 'Superseded reply' }] } }); });
+    expect(restored.querySelector('[data-run-id]')?.getAttribute('data-run-id')).toBe('replacement');
+    expect(restored.textContent).not.toContain('Superseded reply');
+  });
+
+  it('deduplicates a reply recovered by polling before the original send promise resolves', async () => {
+    const el = await mount();
+    await act(async () => { el.querySelector<HTMLButtonElement>('[data-testid="salesforce-agentforce-preview-start"]')!.click(); });
+    let finish!: (value: unknown) => void;
+    rpc.mockImplementation(async (id, method, args) => method === 'agentLab.send' ? new Promise(resolve => { finish = resolve; }) : method === 'agentLab.get' ? { ok: true, data: { id: 'sess-1', turns: [{ role: 'user', text: 'Question' }, { role: 'agent', text: 'Recovered reply' }] } } : baseRpc(id, method, args));
+    await act(async () => {
+      const input = el.querySelector<HTMLInputElement>('[data-testid="salesforce-agentforce-preview-input"]')!;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'Question');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => { el.querySelector<HTMLButtonElement>('[data-testid="salesforce-agentforce-preview-send"]')!.click(); });
+    await act(async () => { nodes.pop()!.unmount(); });
+    const restored = await mount();
+    await act(async () => { finish({ ok: true, data: { id: 'sess-1', turns: [{ role: 'agent', text: 'Recovered reply' }] } }); });
+    expect([...restored.querySelectorAll('[data-preview-role="agent"]')].map(row => row.textContent).filter(text => text?.includes('Recovered reply'))).toHaveLength(1);
+  });
+
+  it('recovers a descriptor-only handle and disables failed simulated sessions', async () => {
+    const el = await mount();
+    await act(async () => { el.querySelector<HTMLButtonElement>('[data-testid="salesforce-agentforce-preview-start"]')!.click(); });
+    await act(async () => { nodes.pop()!.unmount(); });
+    const owner = { pluginId: 'salesforce', projectId: 'proj-1', orgAlias: 'dev', path: 'force-app/bots/QC.agent', view: 'org-preview' as const };
+    writeWorkspaceValue(studioRunKey(owner), 'sessionId', null, null);
+    writeWorkspaceValue(studioRunKey(owner), 'lifecycle', {}, {});
+    rpc.mockImplementation(async (id, method, args) => method === 'agentLab.get' ? { ok: true, data: { id: 'sess-1', failed: true, turns: [{ role: 'user', text: 'Recorded failure' }] } } : baseRpc(id, method, args));
+    const restored = await mount();
+    expect(restored.textContent).toContain('Recorded failure');
+    expect(restored.textContent).toContain('Start a new conversation to retry');
+    expect(restored.querySelector('[data-testid="salesforce-agentforce-preview-end"]')).toBeNull();
+    expect(getStudioRun(owner)?.status).toBe('ended');
   });
 
   it('does not end an explicitly ended session a second time', async () => {

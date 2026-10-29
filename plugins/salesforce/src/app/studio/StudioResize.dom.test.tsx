@@ -131,6 +131,20 @@ it('still works without ResizeObserver and handles a zero-size hidden container'
   expect(handle.getAttribute('aria-valuenow')).toBe('48');
 });
 
+it('uses the visible container size when a drag starts before its resize notification', () => {
+  let width = 0;
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({ width, height: 600 }) as DOMRect);
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  render(<Split />);
+  width = 1009;
+  const handle = screen.getByRole('separator');
+  fireEvent.pointerDown(handle, { button: 0, pointerId: 1, clientX: 100 });
+  fireEvent.pointerMove(handle, { pointerId: 1, clientX: 200 });
+  fireEvent.pointerUp(handle, { pointerId: 1 });
+  expect(handle.getAttribute('aria-valuenow')).toBe('58');
+  expect(localStorage.getItem('test-split:columns')).toBe('58');
+});
+
 it('resizes the bottom panel upward, preserves child state when collapsed and protects editor space after a parent resize', () => {
   let height = 800;
   let resized = () => {};

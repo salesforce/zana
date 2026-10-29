@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { indexProjectActions, projectActionCandidates, readOrgAction, readProjectAction, ACTION_SOURCE_CAP } from '../lib/action-source.js';
+import { indexProjectActions, indexProjectActionsSteps, projectActionCandidates, readOrgAction, readProjectAction, ACTION_SOURCE_CAP } from '../lib/action-source.js';
+import { runProjectScanAsync } from '../lib/dx-project.js';
 import { createNodeDeps } from '../lib/node-deps.js';
 import { readBoundedResponse, salesforceRestRequest } from '../lib/sf-cli.js';
 import { createSalesforcePlugin } from '../lib/plugin.js';
@@ -21,6 +22,15 @@ function setup() {
 }
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); });
 describe('action source resolution', () => {
+  it('cooperative indexing preserves complete results and bounded standard-path probes', async () => {
+    const { root, deps } = setup();
+    const complete = await runProjectScanAsync(indexProjectActionsSteps(root, deps));
+    expect(complete).toEqual(indexProjectActions(root, deps));
+    const limited = { ...deps, readdir: (p: string) => p.endsWith('force-app') ? Array.from({ length: 6001 }, (_, i) => `f${i}`) : deps.readdir(p) };
+    const partial = await runProjectScanAsync(indexProjectActionsSteps(root, limited));
+    expect(partial.incomplete).toBe(true);
+    expect(projectActionCandidates(partial, 'apex://OrderLookup')).toEqual(projectActionCandidates(indexProjectActions(root, limited), 'apex://OrderLookup'));
+  });
   it('resolves package source, reports ambiguity, and only accepts an exact confined candidate', () => {
     const { root, write, deps } = setup();
     expect(readProjectAction(root, 'apex://OrderLookup', deps)).toMatchObject({ status: 'ready', content: ACTION_APEX, origin: 'project', language: 'apex' });

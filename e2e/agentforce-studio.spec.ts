@@ -102,9 +102,9 @@ const test = base.extend({
       ] };
       else if (path.endsWith('/messages')) {
         const text = body.message.text;
-        const progressGate = existsSync(join(home, 'simulation-hold')) ? 'simulation-hold' : text === 'Suite progress first case' ? 'suite-first' : text === 'Suite progress second case' ? 'suite-second' : null;
+        const progressGate = text === 'Persistent preview turn' ? 'persistent-preview-hold' : existsSync(join(home, 'simulation-hold')) ? 'simulation-hold' : text === 'Suite progress first case' ? 'suite-first' : text === 'Suite progress second case' ? 'suite-second' : null;
         if (progressGate) {
-          const deadline = Date.now() + 30_000;
+          const deadline = Date.now() + (progressGate === 'persistent-preview-hold' ? 90_000 : 30_000);
           while (existsSync(join(home, progressGate)) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
         }
         if (text === 'Fail this turn') { res.writeHead(503); res.end('{}'); return; }
@@ -283,21 +283,20 @@ const studioIn = (page: Page) => studioPanel(page).or(page.locator('.sf-panel-to
 const sidePanel = (page: Page) => page.getByTestId('plugin-panel-host-layout').getByTestId('thread-secondary-panel');
 const sidePanelTab = (page: Page, name: string) => sidePanel(page).locator('.thread-secondary-tabs').getByRole('button', { name, exact: true });
 const activeSidePanelTab = (page: Page) => sidePanel(page).locator('.thread-secondary-tab.is-active .thread-secondary-tab-label');
-/** Actions and Comments are the Studio tools that stay host side-panel tools. */
-const PANEL_TOOL_IDS: Record<string, string> = { Actions: 'actions', Comments: 'comments' };
-/** Graph, Preview, Tests and Org preview are view tabs of the active agent in the Studio editor area. */
-const VIEW_TOOLS: Record<string, { target: 'graph' | 'preview' | 'tests' | 'org-preview'; tab: string }> = {
-  'Graph view': { target: 'graph', tab: 'Graph' }, Graph: { target: 'graph', tab: 'Graph' },
-  Preview: { target: 'preview', tab: 'Preview' }, Tests: { target: 'tests', tab: 'Tests' }, 'Org preview': { target: 'org-preview', tab: 'Org preview' }
+/** All Studio tools share the host side panel; Script and source dependencies stay central. */
+const PANEL_TOOL_IDS: Record<string, string> = { Actions: 'actions', Comments: 'comments', Graph: 'graph', 'Graph view': 'graph', Preview: 'preview', Tests: 'test', 'Org preview': 'org-preview' };
+const VIEW_TOOLS: Record<string, { target: 'graph' | 'preview' | 'tests' | 'org-preview'; tab: string; title: string }> = {
+  'Graph view': { target: 'graph', tab: 'Graph', title: 'Graph view' }, Graph: { target: 'graph', tab: 'Graph', title: 'Graph view' },
+  Preview: { target: 'preview', tab: 'Preview', title: 'Preview' }, Tests: { target: 'tests', tab: 'Tests', title: 'Tests' }, 'Org preview': { target: 'org-preview', tab: 'Org preview', title: 'Org preview' }
 };
-/** The agent view tab strip (Script, Preview, Tests, Graph, Org preview, plus referenced Apex / Flow / Org tabs). */
+/** The document tab strip (Script and referenced Apex / Flow / Org sources). */
 const editorTabs = (page: Page) => studioPanel(page).getByRole('tablist', { name: 'Open files' });
 /** The agent tab strip at the top of the Studio: one tab per open agent. */
 const agentTabs = (page: Page) => studioPanel(page).getByRole('tablist', { name: 'Open agents' });
-/** The visible pane of one view tab (several agents keep their panes mounted, hidden). */
-const viewPane = (page: Page, target: 'graph' | 'preview' | 'tests' | 'org-preview') => studioPanel(page).locator(`[data-testid="studio-view-${target}"]:visible`);
+/** The visible host tool record; other agents keep their records mounted and hidden. */
+const viewPane = (page: Page, target: 'graph' | 'preview' | 'tests' | 'org-preview') => sidePanel(page).locator(`[data-testid="studio-view-${target}"]:visible`);
 
-/** Brings the active agent's Script tab forward (the editor stays mounted behind view tabs). */
+/** Brings Script forward without changing the active host tool. */
 async function showScript(page: Page) {
   await editorTabs(page).getByRole('tab', { name: /^Script/ }).click();
 }
@@ -308,29 +307,34 @@ async function showSidePanel(page: Page) {
   await expect(sidePanel(page)).toBeVisible();
 }
 
-/** Opens a Studio tool: Actions / Comments in the host side panel, everything else as a view tab of the active agent. */
+/** Gives workbench tools enough room to exercise their wide layouts through the real host divider. */
+async function widenSidePanel(page: Page) {
+  const panel = sidePanel(page);
+  const bounds = (await panel.boundingBox())!;
+  const handle = (await panel.getByRole('separator', { name: 'Resize right panel', exact: true }).boundingBox())!;
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handle.x + handle.width / 2 - Math.max(0, 1500 - bounds.width), handle.y + handle.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(async () => (await panel.boundingBox())!.width).toBeGreaterThan(1100);
+}
+/** Opens a Studio tool through the host's New Tab launcher or an existing host tab. */
 async function openTool(studio: Locator, name: string) {
   const page = studio.page();
   const view = VIEW_TOOLS[name];
-  if (!view) {
-    await showSidePanel(page);
-    const tab = sidePanelTab(page, name);
-    if (await tab.count()) { await tab.click(); return; }
+  await showSidePanel(page);
+  const title = view?.title ?? name;
+  const tab = sidePanelTab(page, title);
+  if (await tab.count()) await tab.click();
+  else {
     await openThreadToolLauncher(sidePanel(page));
     await sidePanel(page).getByTestId(`thread-new-tab-plugin-salesforce-studio-${PANEL_TOOL_IDS[name]}`).click();
-    await expect(activeSidePanelTab(page)).toHaveText(name);
-    return;
   }
-  if (view.target === 'org-preview') {
-    // Org preview has no button in the wide agent tab bar; the compact tool strip lists it.
-    const size = page.viewportSize() ?? { width: 1440, height: 900 };
-    await page.setViewportSize({ width: 760, height: size.height });
-    await studioPanel(page).getByRole('tablist', { name: 'Studio tools' }).getByRole('tab', { name: 'Org preview', exact: true }).click();
-    await page.setViewportSize(size);
-  } else {
-    await studioPanel(page).getByRole('button', { name: `Open ${view.tab} view`, exact: true }).click();
+  await expect(activeSidePanelTab(page)).toHaveText(title);
+  if (view) {
+    await expect(viewPane(page, view.target)).toBeVisible();
+    await expect(editorTabs(page).getByRole('tab', { name: view.tab, exact: true })).toHaveCount(0);
   }
-  await expect(editorTabs(page).getByRole('tab', { name: view.tab, exact: true })).toHaveAttribute('aria-selected', 'true');
 }
 
 test('Agentforce document toolbar and focused explorer: long paths, save state and narrow light/dark layouts', async ({ app, home }, testInfo) => {
@@ -409,6 +413,7 @@ test('Agentforce document toolbar and focused explorer: long paths, save state a
 
 test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellation and evidence', async ({ app, home }, testInfo) => {
   const page = app.window;
+  await page.setViewportSize({ width: 1920, height: 1080 });
   const errors: string[] = [];
   page.on('pageerror', e => errors.push(e.message));
   const installed = await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }));
@@ -504,23 +509,24 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await commentRow.getByRole('button', { name: 'Delete', exact: true, includeHidden: true }).click();
   await commentRow.getByRole('button', { name: 'Confirm delete', exact: true, includeHidden: true }).click();
   await expect(frame.locator('.sf-comment-glyph')).toHaveCount(0);
-  // The host's own toggle opens the side panel beside the tab; its New Tab page lists only Actions and Comments.
+  // The host launcher offers the same Studio tools as the document bar.
   await showSidePanel(page);
   await openThreadToolLauncher(sidePanel(page));
   await expect(sidePanel(page).getByTestId('thread-new-tab-plugin-salesforce-studio-actions')).toBeVisible();
   await expect(sidePanel(page).getByTestId('thread-new-tab-plugin-salesforce-studio-comments')).toBeVisible();
-  for (const gone of ['graph', 'preview', 'test', 'release', 'org-preview', 'agents']) await expect(sidePanel(page).getByTestId(`thread-new-tab-plugin-salesforce-studio-${gone}`)).toHaveCount(0);
+  for (const tool of ['graph', 'preview', 'test', 'org-preview']) await expect(sidePanel(page).getByTestId(`thread-new-tab-plugin-salesforce-studio-${tool}`)).toBeVisible();
+  for (const gone of ['release', 'agents']) await expect(sidePanel(page).getByTestId(`thread-new-tab-plugin-salesforce-studio-${gone}`)).toHaveCount(0);
   await expect(sidePanel(page).getByTestId('thread-new-tab-plugin-salesforce-playground')).toHaveCount(0);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-add-tools.png'));
   await sidePanel(page).getByTestId('thread-secondary-hide').click();
   await expect(sidePanel(page)).toBeHidden();
-  // Graph is a view tab of the active agent, inside Studio's editor area.
+  // Graph opens beside the active agent and leaves its Script visible.
   await openTool(studio, 'Graph view');
   const graph = viewPane(page, 'graph').frameLocator('iframe[title="AgentScript graph"]');
   await expect(graph.getByText('Conversation map')).toBeVisible();
-  await expect(frame.locator('.view-lines')).toBeHidden();
+  await expect(frame.locator('.view-lines')).toBeVisible();
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-editor-graph-dark.png'));
-  await editorTabs(page).getByRole('button', { name: 'Close Graph', exact: true }).click();
+  await sidePanel(page).getByTestId('thread-secondary-hide').click();
   await expect(editorTabs(page).getByRole('tab', { name: 'Graph', exact: true })).toHaveCount(0);
   await expect(editorTabs(page).getByRole('tab', { name: /^Script/ })).toHaveAttribute('aria-selected', 'true');
   await expect(frame.locator('.view-lines')).toBeVisible();
@@ -568,15 +574,16 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await studio.getByTestId('salesforce-agent-script-save').click();
   await expect(studio.getByRole('alert')).toContainText('changed on disk');
   expect(readFileSync(join(home, 'dx/DraftCopy.afscript'), 'utf8')).toBe(externalSource);
-  // The document bar's Preview button opens the Preview view tab of this agent.
+  // The document bar opens this agent's Preview in the host side panel.
   await studioPanel(page).locator('.af-document-bar').getByRole('button', { name: 'Preview', exact: true }).click();
-  await expect(editorTabs(page).getByRole('tab', { name: 'Preview', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(activeSidePanelTab(page)).toHaveText('Preview');
+  await expect(editorTabs(page).getByRole('tab', { name: 'Preview', exact: true })).toHaveCount(0);
   const preview = viewPane(page, 'preview').getByTestId('preview-workbench');
   await expect(preview).toBeVisible();
-  await expect(sidePanel(page)).toBeHidden();
+  await expect(frame.locator('.view-lines')).toBeVisible();
   await preview.getByRole('group', { name: 'Preview engine' }).getByRole('button', { name: 'Simulate' }).click();
   await preview.getByTestId('pw-start').click();
-  await expect(preview.getByRole('button', { name: 'End', exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(preview.getByRole('button', { name: 'End conversation', exact: true })).toBeVisible({ timeout: 30_000 });
   const say = async (text: string) => {
     await preview.getByLabel('Preview message', { exact: true }).fill(text);
     await preview.getByRole('button', { name: 'Send preview message' }).click();
@@ -592,7 +599,6 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await openTool(studio, 'Tests');
   // Tests open on the case table; an imported sf agent test spec becomes rows.
   const tests = viewPane(page, 'tests').getByTestId('studio-tests-pane');
-  await expect(tests.getByRole('group', { name: 'Tests view' }).getByRole('button')).toHaveText(['Test cases', 'Test catalogue', 'Batch simulations', 'Role-play']);
   await expect(tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Test cases' })).toHaveAttribute('aria-pressed', 'true');
   await tests.getByTestId('tests-import-input').setInputFiles({
     name: 'orders.yaml',
@@ -600,23 +606,64 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
     buffer: Buffer.from('testCases:\n  - utterance: "Where is my order?"\n    expectedTopic: "Orders"\n')
   });
   await expect(tests.getByRole('status')).toHaveText('Imported 1 case from orders.yaml.');
-  await expect(tests.getByTestId('tests-table')).toContainText('Where is my order?');
+  await expect(tests.getByTestId('tests-cases-workbench')).toContainText('Where is my order?');
   await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Role-play' }).click();
+  writeFileSync(join(home, 'preview-trace-fixture'), '1');
+  await widenSidePanel(page);
   await lab.getByLabel('Conversation budget').selectOption('2');
   await lab.getByRole('button', { name: /Run AI role-play/ }).click();
   await expect(lab.getByText('Run complete')).toBeVisible({ timeout: 30_000 });
   await expect(lab.getByText('Criteria met')).toBeVisible();
+  const chat = lab.getByRole('region', { name: 'Conversation', exact: true });
+  const evidence = lab.getByTestId('agentforce-lab-evidence');
+  const setup = lab.getByRole('region', { name: 'Run setup' });
+  const setupBox = (await setup.boundingBox())!, chatBox = (await chat.boundingBox())!, traceBox = (await evidence.boundingBox())!;
+  expect(setupBox.x + setupBox.width).toBeLessThanOrEqual(chatBox.x + 1);
+  expect(chatBox.x + chatBox.width).toBeLessThan(traceBox.x);
+  await expect(evidence.locator('.af-ev-turn')).toHaveCount(1);
+  await expect(evidence.locator('.af-ev-turn')).toHaveAttribute('data-turn', '2');
+  await expect(evidence.getByRole('region', { name: 'Planner trace' })).toBeVisible();
+  await lab.getByRole('button', { name: 'View trace for turn 1', exact: true }).click();
+  await expect(evidence.locator('.af-ev-turn')).toHaveAttribute('data-turn', '1');
+  await expect(lab.getByRole('button', { name: 'View trace for turn 1' })).toHaveAttribute('aria-pressed', 'true');
+  await lab.getByRole('button', { name: 'Next turn', exact: true }).click();
+  await expect(evidence.locator('.af-ev-turn')).toHaveAttribute('data-turn', '2');
+  await expect(lab.getByRole('button', { name: 'Next turn', exact: true })).toBeDisabled();
+  await lab.getByRole('button', { name: 'Raw JSON', exact: true }).click();
+  await expect(evidence.locator('pre')).toContainText('"turn": 2');
+  await lab.getByRole('button', { name: 'Trace', exact: true }).click();
+  const summary = evidence.locator('.sf-trace-io > summary').first();
+  await summary.click();
+  await expect(summary.locator('..')).toHaveAttribute('open', '');
+  expect((await summary.boundingBox())!.height).toBeGreaterThanOrEqual(40);
+  const scrollBefore = await lab.evaluate(el => {
+    const bounds = el.getBoundingClientRect();
+    const chat = el.querySelector('.af-lab-scroll')!, trace = el.querySelector('.af-evidence')!;
+    trace.scrollTop = 30;
+    return { top: bounds.top, chatTop: chat.scrollTop, traceTop: trace.scrollTop };
+  });
+  await chat.locator('.af-lab-scroll').evaluate(el => { el.scrollTop = el.scrollHeight; });
+  expect(await lab.evaluate(el => el.getBoundingClientRect().top)).toBe(scrollBefore.top);
+  expect(await evidence.evaluate(el => el.scrollTop)).toBe(scrollBefore.traceTop);
+  expect(await evidence.locator('.sf-trace-steps').evaluate(el => getComputedStyle(el).maxHeight)).toBe('none');
+  const runButton = lab.getByRole('button', { name: 'Run again', exact: true });
+  // Chromium's CSS-pixel rounding can report a 36px target as 35.995px.
+  expect((await runButton.boundingBox())!.height).toBeGreaterThanOrEqual(35.9);
+  expect((await runButton.boundingBox())!.width).toBeLessThan(180);
+
   await lab.getByRole('region', { name: 'AI evaluation' }).scrollIntoViewIfNeeded();
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-test-dark.png'));
   await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
   await expect(frame.getByTestId('agent-script-ide')).toHaveClass(/light/);
-  // The editor sits behind the Tests view tab; bring Script forward to read its rendered tokens.
+  // Script remains readable while Tests stays selected in the host side panel.
   await showScript(page);
   await expect.poll(keywordColor).toBe('rgb(5, 80, 174)');
-  await editorTabs(page).getByRole('tab', { name: 'Tests', exact: true }).click();
+  await openTool(studio, 'Tests');
   await lab.getByRole('region', { name: 'AI evaluation' }).scrollIntoViewIfNeeded();
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-test-light.png'));
   await lab.getByRole('button', { name: /AI rehearsal/ }).click();
+  await expect(lab.getByLabel('Recorded run')).toContainText('Preview API');
+  await expect(evidence.getByRole('region', { name: 'Planner trace' })).toBeVisible();
   await lab.getByRole('button', { name: /^(Run AI role-play|Run again)/ }).click();
   await expect(lab.getByText('Run complete')).toBeVisible({ timeout: 30_000 });
   await expect(lab.getByText('AI approximation')).toBeVisible();
@@ -629,16 +676,31 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await expect(lab.getByText('Stopped · partial conversation')).toBeVisible();
   await expect(lab.getByText('Criteria met')).toHaveCount(0);
   await page.setViewportSize({ width: 760, height: 900 });
-  // Narrow studios show one tool at a time; the compact strip selects view tabs and the host side panel stays closed.
-  await expect(studio.locator('.sf-as-body.sf-studio')).toHaveAttribute('data-layout', 'compact');
-  const strip = studioPanel(page).getByRole('tablist', { name: 'Studio tools' });
-  await expect(strip).toBeVisible();
+  const runView = lab.getByRole('group', { name: 'Run view' });
+  await expect(runView).toBeVisible();
+  await expect(lab.getByRole('separator', { name: 'Resize conversation and evidence' })).toHaveCount(0);
+  await lab.getByRole('button', { name: 'Setup', exact: true }).click();
+  await expect(lab.getByRole('dialog', { name: 'Run setup' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(lab.getByRole('dialog')).toHaveCount(0);
+  await expect(lab.getByRole('button', { name: 'Setup', exact: true })).toBeFocused();
+  await runView.getByRole('button', { name: 'Turn trace', exact: true }).click();
+  await expect(evidence).toBeVisible();
+  await expect(chat).toBeHidden();
+  await runView.getByRole('button', { name: 'Conversation', exact: true }).click();
+  await expect(chat).toBeVisible();
+  await expect(evidence).toBeHidden();
+  expect(await lab.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+
+  // Compact host tools overlay Studio; closing the panel returns to the source editor.
+  await sidePanel(page).getByTestId('thread-secondary-hide').click();
+  await expect(studioPanel(page).getByRole('tablist', { name: 'Studio tools' })).toHaveCount(0);
+  await expect(frame.locator('.view-lines')).toBeVisible();
   expect(await studioPanel(page).evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-narrow-light.png'));
-  await strip.getByRole('tab', { name: 'Preview', exact: true }).click();
-  await expect(editorTabs(page).getByRole('tab', { name: 'Preview', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await openTool(studio, 'Preview');
   await expect(preview).toBeVisible();
-  await editorTabs(page).getByRole('tab', { name: /^Script/ }).click();
+  await sidePanel(page).getByTestId('thread-secondary-hide').click();
   await expect(frame.locator('.view-lines')).toBeVisible();
   const requests = JSON.parse(readFileSync(join(home, 'sfap-requests.json'), 'utf8')) as Array<{ path: string; body: Record<string, any> }>;
   expect(requests.find(r => r.path.endsWith('/authoring/scripts'))?.body.assets[0].content).toContain('# unsaved studio draft');
@@ -656,7 +718,7 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await expect(orgPreview.getByRole('log')).toContainText('END_OF_RESPONSE');
   await orgPreview.getByTestId('salesforce-agentforce-preview-end').click();
   await expect(orgPreview.getByText('Preview ended.')).toBeVisible();
-  await editorTabs(page).getByRole('button', { name: 'Close Org preview', exact: true }).click();
+  await sidePanel(page).getByTestId('thread-secondary-hide').click();
   await editorTabs(page).getByRole('tab', { name: /^Script/ }).click();
   await expect(frame.locator('.view-lines')).toBeVisible();
   await expect(studioPanel(page)).toBeVisible();
@@ -778,8 +840,8 @@ test('Org preview: searchable agent picker, employee-agent simulation and an unc
       await page.setViewportSize({ width, height: 900 });
       await expect(preview).toBeVisible();
       await expect(preview.getByTestId('salesforce-agentforce-preview-send')).toBeVisible();
-      // The preview fills its view tab without spilling past the Studio.
-      expect((await preview.boundingBox())!.width).toBeLessThanOrEqual((await studioPanel(page).boundingBox())!.width);
+      // Org preview stays inside the host panel at every supported window width.
+      expect((await preview.boundingBox())!.width).toBeLessThanOrEqual((await sidePanel(page).boundingBox())!.width);
       for (const locator of [preview, preview.locator('.sf-as-header'), preview.locator('.af-composer')]) {
         expect(await locator.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
       }
@@ -874,9 +936,11 @@ ${['accountId', 'accountName', 'currentObjectApiName', 'currentRecordId', 'oppor
   await workbench.getByLabel('Session value', { exact: true }).focus();
   await expect(workbench.getByRole('alert')).toContainText('Enter a number');
   await expect(workbench.getByRole('button', { name: 'Save as…', exact: true })).toBeDisabled();
+  await workbench.getByRole('tab', { name: 'Conversation', exact: true }).click();
   await workbench.getByTestId('pw-start').click();
   await expect(page.getByRole('dialog').getByRole('button', { name: 'Start preview', exact: true })).toBeDisabled();
   await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+  await workbench.getByRole('tab', { name: 'Context 3', exact: true }).click();
   await workbench.getByLabel('Context preset', { exact: true }).selectOption('');
   await expect(workbench.getByLabel('retryCount value', { exact: true })).toHaveValue('');
   await workbench.getByRole('button', { name: 'Undo', exact: true }).click();
@@ -891,6 +955,7 @@ ${['accountId', 'accountName', 'currentObjectApiName', 'currentRecordId', 'oppor
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-context-options.png'));
   await page.keyboard.press('Escape');
   await expect(workbench.getByRole('button', { name: 'Set Session to null', exact: true })).toBeHidden();
+  await workbench.getByRole('tab', { name: 'Conversation', exact: true }).click();
   await workbench.getByTestId('pw-start').click();
   const setup = page.getByRole('dialog', { name: 'Start a conversation' });
   await expect(setup).toBeVisible();
@@ -946,18 +1011,18 @@ ${['accountId', 'accountName', 'currentObjectApiName', 'currentRecordId', 'oppor
   await workbench.getByRole('button', { name: 'Review & restart', exact: true }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Restart preview', exact: true }).click();
   await expect(workbench.getByRole('log')).toContainText('support concierge');
-  await workbench.getByRole('button', { name: 'End', exact: true }).click();
+  await workbench.getByRole('button', { name: 'End conversation', exact: true }).click();
   // Exercise the real Electron child-process boundary too. Only this private fixture CLI runs.
   const saved = readFileSync(join(home, 'dx', toolbarFile), 'utf8');
   writeFileSync(join(home, 'dx', toolbarFile), saved.replace('config:\n', 'config:\n    default_agent_user: "fixture@example.com"\n'));
   await workbench.getByRole('button', { name: 'Live', exact: true }).click();
   await workbench.getByTestId('pw-start').click();
   await page.getByRole('dialog').getByRole('button', { name: 'Start preview', exact: true }).click();
-  await expect(workbench.getByRole('button', { name: 'End', exact: true })).toBeVisible();
+  await expect(workbench.getByRole('button', { name: 'End conversation', exact: true })).toBeVisible();
   await workbench.getByLabel('Preview message', { exact: true }).fill('Large fixture response');
   await workbench.getByRole('button', { name: 'Send preview message', exact: true }).click();
   await expect(workbench.getByRole('log')).toContainText('CLI_END_OF_RESPONSE');
-  await workbench.getByRole('button', { name: 'End', exact: true }).click();
+  await workbench.getByRole('button', { name: 'End conversation', exact: true }).click();
   await openTool(studio, 'Org preview');
   const orgPreview = viewPane(page, 'org-preview').getByTestId('salesforce-agentforce-preview');
   await orgPreview.getByTestId('salesforce-agentforce-preview-start').click();
@@ -985,7 +1050,9 @@ ${['accountId', 'accountName', 'currentObjectApiName', 'currentRecordId', 'oppor
   await openTool(studio, 'Tests');
   const tests = viewPane(page, 'tests').getByTestId('studio-tests-pane');
   await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Role-play' }).click();
+  await page.setViewportSize({ width: 1920, height: 1080 });
   const lab = tests.getByTestId('agentforce-lab');
+  await widenSidePanel(page);
   await lab.locator('.af-context-details > summary').click();
   await expect(lab.getByLabel('Context preset', { exact: true })).toBeEnabled();
   await lab.getByLabel('Context preset', { exact: true }).selectOption(presetId);
@@ -1020,6 +1087,103 @@ ${['accountId', 'accountName', 'currentObjectApiName', 'currentRecordId', 'oppor
   const startArgs: string[] = cliCalls[0].args;
   expect(JSON.parse(startArgs[startArgs.indexOf('--context-variables-json') + 1]!)).toEqual(starts[1]!.body.variables);
   expect(cliCalls.slice(1).every(call => !call.args.includes('--context-variables-json'))).toBe(true);
+  // The same org/agent catalogue works in saved cases and individual batch scenarios.
+  await tests.getByRole('button', { name: 'Test cases', exact: true }).click();
+  const caseRow = tests.getByTestId(`tests-row-${roleplayCase.id}`);
+  await caseRow.click();
+  await tests.getByRole('tab', { name: 'Variables', exact: true }).click();
+  const caseVariables = tests.locator('.sf-case-variables');
+  await expect(caseVariables.getByLabel('Variable preset', { exact: true })).toBeEnabled();
+  await caseVariables.getByLabel('Variable preset', { exact: true }).selectOption('');
+  await caseVariables.getByLabel('Variable preset', { exact: true }).selectOption(presetId);
+  await expect(caseVariables.getByLabel('verified value', { exact: true })).toHaveValue('false');
+  await caseVariables.getByLabel('retryCount value', { exact: true }).fill('2');
+  await caseVariables.getByRole('button', { name: 'Save case variables', exact: true }).click();
+  await expect(caseVariables.getByRole('status')).toContainText('Starting variables saved');
+  const persistedCases = JSON.parse(readFileSync(join(home, 'dx/tests', toolbarFile.split('/').at(-1)!.replace('.agent', '.scenario.json')), 'utf8')).cases;
+  expect(persistedCases.find((row: any) => row.id === roleplayCase.id).contextVariables).toEqual([
+    starts[0]!.body.variables[0], starts[0]!.body.variables[1], { name: 'retryCount', type: 'Number', value: 2 },
+  ]);
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('case-variable-presets.png'));
+  await tests.getByRole('button', { name: 'Batch simulations', exact: true }).click();
+  const simulations = tests.getByTestId('studio-simulations');
+  await simulations.getByRole('button', { name: /^Batch setup/ }).click();
+  await simulations.getByText('Adjust for this batch', { exact: true }).click();
+  await expect(simulations.getByLabel('Variable preset', { exact: true })).toBeEnabled();
+  await simulations.getByLabel('Variable preset', { exact: true }).selectOption(presetId);
+  await expect(simulations.getByLabel('retryCount value', { exact: true })).toHaveValue('0');
+  await simulations.getByRole('button', { name: 'Edit Missing details', exact: true }).click();
+  await expect(simulations.getByLabel('retryCount value', { exact: true })).toHaveCount(0);
+  await simulations.getByRole('button', { name: 'Edit Happy path', exact: true }).click();
+  await expect(simulations.getByLabel('retryCount value', { exact: true })).toHaveValue('0');
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('scenario-variable-presets.png'));
+  await tests.getByRole('button', { name: 'Scenarios', exact: true }).click();
+  const scenarios = tests.getByTestId('studio-scenarios');
+  await scenarios.getByRole('button', { name: 'New scenario', exact: true }).click();
+  await scenarios.getByLabel('Scenario 4 name', { exact: true }).fill('Reusable customer');
+  for (const [field, value] of [['persona', 'A customer requesting support'], ['goal', 'Understand supported requests'], ['opening', 'Can you help?'], ['criteria', 'Explain how to help']]) await scenarios.getByLabel(`Scenario 4 ${field}`, { exact: true }).fill(value);
+  await scenarios.getByLabel('Scenario 4 maximum turns', { exact: true }).fill('1');
+  await scenarios.getByLabel('Variable preset', { exact: true }).selectOption(presetId);
+  await scenarios.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(scenarios.getByRole('status')).toContainText('revision 1');
+  await scenarios.getByLabel('Scenario actions', { exact: true }).click();
+  await scenarios.getByRole('button', { name: 'Duplicate scenario…', exact: true }).click();
+  const copyDialog = page.getByRole('dialog', { name: 'Duplicate scenario', exact: true });
+  await expect(copyDialog.getByRole('textbox', { name: 'New scenario name', exact: true })).toBeFocused();
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('duplicate-scenario-dialog.png'));
+  await page.keyboard.press('Escape');
+  await expect(copyDialog).toHaveCount(0);
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('shared-scenarios.png'));
+  await scenarios.getByRole('button', { name: 'Try in Role-play', exact: true }).click();
+  await expect(lab.getByRole('textbox', { name: 'Customer goal', exact: true })).toHaveValue('Understand supported requests');
+  await expect(lab.getByLabel('retryCount value', { exact: true })).toHaveValue('0');
+  await lab.getByRole('button', { name: 'Manage scenarios', exact: true }).click();
+  await scenarios.getByLabel('Scenario 4 goal', { exact: true }).fill('Updated shared goal');
+  await scenarios.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(scenarios.getByRole('status')).toContainText('revision 2');
+  await tests.getByRole('button', { name: 'Role-play', exact: true }).click();
+  await expect(lab.getByRole('textbox', { name: 'Customer goal', exact: true })).toHaveValue('Understand supported requests');
+  await expect(lab.getByText(/Based on Reusable customer · revision 1/)).toBeVisible();
+  await lab.getByRole('button', { name: 'Manage scenarios', exact: true }).click();
+  await scenarios.getByRole('button', { name: 'Add to batch', exact: true }).click();
+  for (const name of ['Happy path', 'Missing details', 'Stay in scope']) await simulations.getByRole('checkbox', { name, exact: true }).uncheck();
+  await simulations.getByRole('button', { name: 'Run 1 conversation', exact: true }).click();
+  await expect(simulations.getByTestId('simulation-summary')).toContainText('Done', { timeout: 30_000 });
+  const stored = await page.evaluate(({ projectId, path }) => window.cc.pluginApps.callRpc('salesforce', 'studio.simulations.list', { projectId, agentPath: path }), { projectId, path: toolbarFile }) as any;
+  const batchResult = await page.evaluate(({ projectId, batchId }) => window.cc.pluginApps.callRpc('salesforce', 'studio.simulations.get', { projectId, batchId }), { projectId, batchId: stored.batches[0].id }) as any;
+  expect(batchResult.batch.lanes[0].scenario).toMatchObject({ goal: 'Updated shared goal', origin: { name: 'Reusable customer', revision: 2 }, contextVariables: starts[0].body.variables });
+  // Reload the renderer: shared definitions come from plugin storage and local runner copies remain pinned.
+  await page.reload();
+  await page.getByRole('button', { name: 'Open dx', exact: true }).click();
+  await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
+  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await expect(page.frameLocator('iframe[title="Agentforce playground"]').getByTestId('agent-script-ide')).toBeVisible();
+  await openTool(studio, 'Tests');
+  await tests.getByRole('button', { name: 'Scenarios', exact: true }).click();
+  await scenarios.getByRole('button', { name: 'Edit Reusable customer', exact: true }).click();
+  await expect(scenarios.getByLabel('Scenario 4 goal', { exact: true })).toHaveValue('Updated shared goal');
+  await expect(scenarios.getByLabel('retryCount value', { exact: true })).toHaveValue('0');
+  await app.electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1920, 1080));
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('shared-scenarios-restored.png'));
+  const panelBefore = (await sidePanel(page).boundingBox())!;
+  const resize = (await sidePanel(page).getByRole('separator', { name: 'Resize right panel', exact: true }).boundingBox())!;
+  await page.mouse.move(resize.x + resize.width / 2, resize.y + resize.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(resize.x + resize.width / 2 + panelBefore.width - 420, resize.y + resize.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(async () => (await sidePanel(page).boundingBox())!.width).toBeLessThanOrEqual(460);
+  await expect(scenarios.getByRole('button', { name: 'Add to batch', exact: true })).toBeInViewport();
+  expect(await scenarios.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  expect((await scenarios.locator('.sf-sim-editor').boundingBox())!.height).toBeGreaterThan(100);
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('shared-scenarios-narrow.png'));
+  await widenSidePanel(page);
+  await tests.getByRole('button', { name: 'Role-play', exact: true }).click();
+  if (await lab.getByRole('button', { name: 'Setup', exact: true }).isVisible()) await lab.getByRole('button', { name: 'Setup', exact: true }).click();
+  if (!(await lab.locator('.af-scenario-details').evaluate(el => (el as HTMLDetailsElement).open))) await lab.locator('.af-scenario-details > summary').click();
+  await expect(lab.getByRole('textbox', { name: 'Customer goal', exact: true })).toHaveValue('Understand supported requests');
+
+
   expect(errors).toEqual([]);
 });
 
@@ -1054,7 +1218,7 @@ test('Agentforce action explorer: real source RPC, Apex colors, Flow map and pre
   await openTool(studio, 'Preview');
   const preview = viewPane(page, 'preview').getByTestId('preview-workbench');
   await preview.getByTestId('pw-start').click();
-  await expect(preview.getByRole('button', { name: 'End', exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(preview.getByRole('button', { name: 'End conversation', exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(preview.getByLabel('Preview message', { exact: true })).toBeEnabled();
   await openTool(studio, 'Actions');
   await studio.getByRole('button', { name: 'Inspect lookup in start_agent.orders' }).click();
@@ -1074,7 +1238,7 @@ test('Agentforce action explorer: real source RPC, Apex colors, Flow map and pre
   await showScript(page);
   await expect(agent.locator('.view-lines')).toBeVisible();
   await openTool(studio, 'Preview');
-  await expect(preview.getByRole('button', { name: 'End', exact: true })).toBeVisible();
+  await expect(preview.getByRole('button', { name: 'End conversation', exact: true })).toBeVisible();
   await openTool(studio, 'Actions');
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('actions-apex-dark.png'));
   await detail.getByRole('button', { name: 'Org · studio' }).click();
@@ -1131,29 +1295,33 @@ test('Agentforce action explorer: real source RPC, Apex colors, Flow map and pre
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('actions-flow-narrow-light.png'));
   await expect(detail.getByRole('button', { name: 'Last preview' })).toHaveCount(0);
   expect(await page.getByTestId('plugin-panel-host-layout').innerText()).not.toContain('PRIVATE_TOKEN');
-  // View tabs: right-click offers bulk close; Close others keeps the clicked tab and the agent's Script.
+  // Dependency documents retain bulk-close actions and belong to the active agent.
+  await page.setViewportSize({ width: 1800, height: 1000 });
+  await sidePanel(page).getByTestId('thread-secondary-hide').click();
+  const explorer = studioPanel(page).getByTestId('salesforce-agent-script-explorer');
+  await explorer.getByRole('button', { name: /^OrderLookup(?:\s|$)/ }).first().click();
+  await explorer.getByRole('button', { name: /^CheckReturn(?:\s|$)/ }).first().click();
   const openFiles = editorTabs(page);
-  const graphTab = openFiles.getByRole('tab', { name: 'Graph', exact: true });
-  await expect(graphTab).toBeVisible();
-  expect(await openFiles.getByRole('tab').count()).toBeGreaterThan(2);
-  await graphTab.click({ button: 'right' });
-  const tabMenu = studioPanel(page).getByRole('menu', { name: 'Graph tab actions' });
+  const apexTab = openFiles.getByRole('tab', { name: /APEX OrderLookup read-only/ });
+  await expect(apexTab).toBeVisible();
+  await expect(openFiles.getByRole('tab')).toHaveCount(3);
+  await apexTab.click({ button: 'right' });
+  const tabMenu = studioPanel(page).getByRole('menu', { name: 'OrderLookup tab actions' });
   await expect(tabMenu.getByRole('menuitem')).toHaveText(['Close', 'Close others', 'Close to the right', 'Close all']);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('editor-tab-menu.png'));
   await page.keyboard.press('Escape');
   await expect(tabMenu).toHaveCount(0);
-  // Each agent keeps its own view tabs: another agent opens on its Script alone, and switching back restores Graph.
   await showAllAgents(studio);
   await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
   await expect(agentTabs(page).getByRole('tab', { name: /Support/ })).toHaveAttribute('aria-selected', 'true');
-  await expect(graphTab).toHaveCount(0);
+  await expect(apexTab).toHaveCount(0);
   await agentTabs(page).getByRole('tab', { name: /Orders/ }).click();
-  await expect(graphTab).toBeVisible();
-  await graphTab.click({ button: 'right' });
+  await expect(apexTab).toBeVisible();
+  await apexTab.click({ button: 'right' });
   await tabMenu.getByRole('menuitem', { name: 'Close others' }).click();
   await expect(openFiles.getByRole('tab')).toHaveCount(2);
   await expect(openFiles.getByRole('tab', { name: /^Script/ })).toBeVisible();
-  await expect(graphTab).toHaveAttribute('aria-selected', 'true');
+  await expect(apexTab).toHaveAttribute('aria-selected', 'true');
   expect(readFileSync(join(home, 'dx', 'force-app', 'Orders.agent'), 'utf8')).toBe(ACTION_AGENT);
   expect(readFileSync(join(home, 'dx', 'force-app', 'main', 'default', 'classes', 'OrderLookup.cls'), 'utf8')).toBe(ACTION_APEX);
   expect(errors).toEqual([]);
@@ -1474,8 +1642,8 @@ test('Agentforce Studio: no-file entry points reach org agents, an explorer org 
   await expect(agentsTab).toHaveAttribute('aria-selected', 'true');
   await expect(search).toBeFocused();
 
-  // Views belong to an agent: with none open, the agent bar's view buttons are disabled.
-  for (const name of ['Graph', 'Preview', 'Tests']) await expect(studio.getByRole('button', { name: `Open ${name} view`, exact: true })).toBeDisabled();
+  // Host tools have one launcher, with no duplicate view buttons in the agent bar.
+  for (const name of ['Graph', 'Preview', 'Tests']) await expect(studioPanel(page).getByRole('button', { name: `Open ${name} view`, exact: true })).toHaveCount(0);
 
   // An empty graph is a single readable hint, not one row per text run and code chip.
   await studio.getByTestId('salesforce-agent-script-file:force-app/Empty.agent').click();
@@ -1488,12 +1656,13 @@ test('Agentforce Studio: no-file entry points reach org agents, an explorer org 
   // Closing the only agent leaves no agent open.
   await agentTabs(page).getByRole('button', { name: /^Close agent Empty\.agent/ }).click();
   await expect(agentTabs(page).getByRole('tab')).toHaveCount(0);
-  // The side panel's New Tab lists only Actions and Comments; views and org agents are Studio tabs.
+  // The side panel offers Studio tools; org agent browsing stays in the workbench.
   await showSidePanel(page);
   await openThreadToolLauncher(sidePanel(page));
   await expect(sidePanel(page).getByTestId('thread-new-tab-plugin-salesforce-studio-actions')).toBeVisible();
   await expect(sidePanel(page).getByTestId('thread-new-tab-plugin-salesforce-studio-comments')).toBeVisible();
-  for (const gone of ['graph', 'preview', 'test', 'release', 'org-preview', 'agents']) await expect(sidePanel(page).getByTestId(`thread-new-tab-plugin-salesforce-studio-${gone}`)).toHaveCount(0);
+  for (const tool of ['graph', 'preview', 'test', 'org-preview']) await expect(sidePanel(page).getByTestId(`thread-new-tab-plugin-salesforce-studio-${tool}`)).toBeVisible();
+  for (const gone of ['release', 'agents']) await expect(sidePanel(page).getByTestId(`thread-new-tab-plugin-salesforce-studio-${gone}`)).toHaveCount(0);
 
   // The explorer link switches back to Org agents, and re-asking while it is already open still lands focus in its search.
   const explorer = studio.getByTestId('salesforce-agent-script-explorer');
@@ -1613,9 +1782,11 @@ test('Agentforce Studio: create local agents and control the visible workbench t
   const agentView = await view('agentforce');
   expect(await command(agentView, 'file.open', { path: created.file.path })).toMatchObject({ ok: true, viewState: { path: created.file.path } });
   await expect(editor.locator('.view-lines')).toContainText('Billing');
-  // Graph is a view tab of the open agent, so the command selects that tab rather than adding a side-panel tool.
+  // The command routes Graph to the host panel and preserves the source editor.
   expect(await command(agentView, 'panel.open', { tool: 'graph' })).toMatchObject({ ok: true });
-  await expect(editorTabs(page).getByRole('tab', { name: 'Graph', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(activeSidePanelTab(page)).toHaveText('Graph view');
+  await expect(viewPane(page, 'graph')).toBeVisible();
+  await expect(editorTabs(page).getByRole('tab', { name: 'Graph', exact: true })).toHaveCount(0);
   await showScript(page);
   await editor.locator('.monaco-editor').click({ position: { x: 180, y: 50 } });
   await page.keyboard.press('ControlOrMeta+End'); await page.keyboard.type('\n# HUMAN_EDIT');
@@ -1628,7 +1799,7 @@ test('Agentforce Studio: create local agents and control the visible workbench t
   // The Data view checks its full-width results table, so put the side panel away.
   // Studio opens host tabs but leaves closing them to the panel.
   expect(await command(agentView, 'panel.hide')).toMatchObject({ ok: false, error: expect.stringContaining('ZCC side panel') });
-  // Graph no longer opens a host tool, so the panel may already be closed.
+  // Close the host through its own chrome before checking the Data layout.
   if (await sidePanel(page).isVisible()) await sidePanel(page).getByTestId('thread-secondary-hide').click();
   await expect(sidePanel(page)).toBeHidden();
   const query = await action('query.execute', { query: 'SELECT Id, Name FROM Account LIMIT 1' });
@@ -1924,7 +2095,7 @@ test('Agentforce Studio: Org tests list Testing Center definitions, run one in t
 
   await openTool(studio, 'Tests');
   const tests = viewPane(page, 'tests').getByTestId('studio-tests-pane');
-  await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Test catalogue' }).click();
+  await tests.getByRole('button', { name: 'Browse tests', exact: true }).click();
   const view = tests.getByTestId('org-tests-view');
   const table = view.getByTestId('org-tests-table');
   // One retrieve reads each definition's agent and label: Support.agent is open, so the list shows its test only.
@@ -2018,7 +2189,7 @@ test('Agentforce Studio: Org tests list Testing Center definitions, run one in t
   await expect(view.getByRole('status')).toHaveText('Imported 1 case into the suite.');
   await beat();
   await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Test cases' }).click();
-  await expect(tests.getByTestId('tests-table')).toContainText('Cancel my subscription');
+  await expect(tests.getByTestId('tests-cases-workbench')).toContainText('Cancel my subscription');
   await beat();
 
   const requests = JSON.parse(readFileSync(join(home, 'sfap-requests.json'), 'utf8')) as Array<{ path: string; body: Record<string, unknown> }>;
@@ -2238,17 +2409,74 @@ test('Agentforce suite progress: current case, turns and partial results reach t
   await expect(tests.getByRole('button', { name: 'Run all in Simulate', exact: true })).toBeEnabled();
 });
 
-test('Agentforce Studio: two agents keep their own view tabs, and closing one moves to the other', async ({ app, home }, testInfo) => {
+test('Agentforce Studio: saved editor views migrate to host tools on startup', async ({ app, home }) => {
   const page = app.window;
-  const errors: string[] = [];
-  page.on('pageerror', error => errors.push(error.message));
+  await page.setViewportSize({ width: 1920, height: 1080 });
   expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
   const trust = page.getByRole('button', { name: 'Install with full trust' });
   if (await trust.isVisible().catch(() => false)) await trust.click();
   await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'salesforce')?.status), { timeout: 30_000 }).toMatch(/running|needs-configuration/);
+  const projectId = await page.evaluate(async path => { const added = await window.cc.projects.add(path); if (!added.ok) throw Error(added.message); return added.value.id; }, join(home, 'dx'));
+  await page.evaluate(() => window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' }));
+  for (const [target, title] of [['graph', 'Graph view'], ['preview', 'Preview'], ['tests', 'Tests'], ['org-preview', 'Org preview']] as const) {
+    // This is the previously saved central-tab shape, before host tools existed.
+    await page.evaluate(({ id, target }) => {
+      const path = 'force-app/Support.agent';
+      localStorage.setItem(`salesforce:studio:${id}`, JSON.stringify({
+        agents: [{ path, label: 'Support.agent' }], activeAgent: path,
+        workspaces: { [path]: { tabs: [
+          { id: `agent:${path}`, kind: 'agent', label: 'Support.agent', path },
+          ...['graph', 'preview', 'tests', 'org-preview'].map(view => ({ id: `view:${view}`, kind: 'view', label: view, target: view }))
+        ], activeTab: `view:${target}`, bottomOpen: false, bottomTab: 'problems', rail: null } }
+      }));
+      localStorage.setItem(`salesforce:project-tab:${id}`, 'agentforce');
+    }, { id: projectId, target });
+    await page.reload();
+    // Wait for boot navigation to finish restoring, then use real project navigation.
+    const projectNav = page.getByRole('navigation', { name: 'dx navigation' });
+    const openProject = page.getByRole('button', { name: 'Open dx', exact: true });
+    await expect.poll(async () => await projectNav.isVisible() || await openProject.isVisible()).toBe(true);
+    if (await openProject.isVisible()) await openProject.click();
+    await projectNav.getByRole('button', { name: 'Salesforce', exact: true }).click();
+    await expect(page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true })).toHaveAttribute('aria-selected', 'true');
+    // No explicit tool action: the migrated saved selection must attach to its real host automatically.
+    await expect(activeSidePanelTab(page)).toHaveText(title);
+    await expect(viewPane(page, target)).toHaveAttribute('data-agent', 'force-app/Support.agent');
+    await expect(editorTabs(page).getByRole('tab')).toHaveCount(1);
+    await expect(editorTabs(page).getByRole('tab', { name: /^Script/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.frameLocator('iframe[title="Agentforce playground"]').locator('.view-lines')).toContainText('Support_Concierge');
+    // Unmount before installing the next persisted legacy layout.
+    await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Data', exact: true }).click();
+  }
+});
+
+test('Agentforce Studio: host tools preserve two agents and all twelve document tabs', async ({ app, home }, testInfo) => {
+  const page = app.window;
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const dependencyNames = Array.from({ length: 11 }, (_, index) => `TabCapacity${index + 1}`);
+  for (const name of dependencyNames) {
+    writeFileSync(join(home, 'dx', 'force-app/main/default/classes', `${name}.cls`), `public class ${name} {}`);
+  }
+  expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  const trust = page.getByRole('button', { name: 'Install with full trust' });
+  if (await trust.isVisible().catch(() => false)) await trust.click();
+  await expect.poll(() => page.evaluate(async () => { const { plugins } = await fetch('/api/v1/plugins').then(response => response.json()); const plugin = plugins.find((entry: { id: string }) => entry.id === 'salesforce'); return `${plugin?.status ?? 'missing'}: ${plugin?.statusDetail ?? ''}`; }), { timeout: 30_000 }).toMatch(/^(running|needs-configuration):/);
   const projectId = await page.evaluate(async path => {
     const added = await window.cc.projects.add(path); if (!added.ok) throw Error(added.message); return added.value.id;
   }, join(home, 'dx'));
+  await page.evaluate(({ id, dependencies }) => {
+    const path = 'force-app/Support.agent';
+    const tabs = [
+      { id: `agent:${path}`, kind: 'agent', label: 'Support.agent', path },
+      ...dependencies.map(name => ({ id: `apex:${name}`, kind: 'apex', label: name, target: `apex://${name}`, path: `force-app/main/default/classes/${name}.cls` }))
+    ];
+    localStorage.setItem(`salesforce:studio:${id}`, JSON.stringify({
+      agents: [{ path, label: 'Support.agent' }], activeAgent: path,
+      workspaces: { [path]: { tabs, activeTab: `agent:${path}`, bottomOpen: false, bottomTab: 'problems', rail: null } }
+    }));
+  }, { id: projectId, dependencies: dependencyNames });
   await page.evaluate(async id => {
     await window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' });
     history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
@@ -2263,57 +2491,107 @@ test('Agentforce Studio: two agents keep their own view tabs, and closing one mo
     await studio.getByTestId(`salesforce-agent-script-file:${path}`).click();
   };
 
-  // Agent 1: Support, with Graph and Tests opened as its view tabs.
+  // Source documents fill the cap. Host tools must never evict any of them.
   await openFromExplorer('force-app/Support.agent');
+  const expectSupportDocuments = async () => {
+    await expect(editorTabs(page).getByRole('tab')).toHaveCount(12);
+    await expect(editorTabs(page).getByRole('tab', { name: /^Script/ })).toHaveAttribute('aria-selected', 'true');
+    for (const name of dependencyNames) await expect(editorTabs(page).getByRole('tab', { name: new RegExp(`\\b${name}\\b`) })).toHaveCount(1);
+    for (const name of ['Graph', 'Preview', 'Tests', 'Org preview']) await expect(editorTabs(page).getByRole('tab', { name, exact: true })).toHaveCount(0);
+    await expect(frame.locator('.view-lines')).toContainText('Support_Concierge');
+  };
   await expect(agentTab('Support')).toHaveAttribute('aria-selected', 'true');
-  await expect(frame.locator('.view-lines')).toContainText('Support_Concierge');
+  await expectSupportDocuments();
   await openTool(studio, 'Graph');
   await expect(viewPane(page, 'graph').frameLocator('iframe[title="AgentScript graph"]').getByText('Conversation map')).toBeVisible();
+  await expectSupportDocuments();
+  await openTool(studio, 'Preview');
+  const preview = viewPane(page, 'preview').getByTestId('preview-workbench');
+  await preview.getByTestId('pw-start').click();
+  await expect(preview.getByRole('button', { name: 'End conversation', exact: true })).toBeVisible({ timeout: 30_000 });
+  await preview.getByLabel('Preview message', { exact: true }).fill('Where is my order?');
+  await preview.getByRole('button', { name: 'Send preview message' }).click();
+  await expect(preview.getByRole('log', { name: 'Preview conversation' })).toContainText('Could you share your order number');
+  await expectSupportDocuments();
+  await openTool(studio, 'Org preview');
+  await expect(viewPane(page, 'org-preview').getByTestId('salesforce-agentforce-preview')).toBeVisible();
+  await expectSupportDocuments();
   await openTool(studio, 'Tests');
-  await expect(viewPane(page, 'tests').getByTestId('studio-tests-pane')).toBeVisible();
-  await expect(editorTabs(page).getByRole('tab')).toHaveText([/^Script/, 'Graph', 'Tests']);
+  const tests = viewPane(page, 'tests').getByTestId('studio-tests-pane');
+  await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Role-play' }).click();
+  await expect(tests.getByTestId('agentforce-lab')).toBeVisible();
+  await expectSupportDocuments();
 
-  // Agent 2: Orders gets its own tab and its own workspace, with no Graph or Tests tab.
-  await openFromExplorer('force-app/Orders.agent');
+  // Closing and reopening the host preserves the selected tool and its child state.
+  await sidePanel(page).getByTestId('thread-secondary-hide').click();
+  await expect(sidePanel(page)).toBeHidden();
+  await expectSupportDocuments();
+  await showSidePanel(page);
+  await expect(activeSidePanelTab(page)).toHaveText('Tests');
+  await expect(tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Role-play' })).toHaveAttribute('aria-pressed', 'true');
+
+  // Open agent is usable while Tests is active, including keyboard selection.
+  await agentTabs(page).getByRole('button', { name: 'Open agent', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: 'Quick open', exact: true });
+  await expect(picker).toBeVisible();
+  await expect(activeSidePanelTab(page)).toHaveText('Tests');
+  const search = picker.getByRole('combobox', { name: 'Search files and actions' });
+  await search.click(); await search.fill('Orders');
+  await expect(picker.getByRole('option').first()).toContainText('force-app/Orders.agent');
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-open-agent-from-tests.png'));
+  await search.press('Enter');
+  await expect(picker).toHaveCount(0);
   await expect(agentTab('Orders')).toHaveAttribute('aria-selected', 'true');
-  await expect(agentTab('Support')).toHaveAttribute('aria-selected', 'false');
-  await expect(editorTabs(page).getByRole('tab', { name: 'Graph', exact: true })).toHaveCount(0);
-  await expect(editorTabs(page).getByRole('tab', { name: 'Tests', exact: true })).toHaveCount(0);
-  await expect(editorTabs(page).getByRole('tab', { name: /^Script/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(editorTabs(page).getByRole('tab')).toHaveCount(1);
   await expect(frame.locator('.view-lines')).toContainText('Order_Assistant');
+  // The host follows Orders; its Preview cannot show Support's conversation.
+  await openTool(studio, 'Preview');
+  await expect(viewPane(page, 'preview')).toHaveAttribute('data-agent', 'force-app/Orders.agent');
+  await expect(viewPane(page, 'preview').getByRole('log', { name: 'Preview conversation' })).not.toContainText('Could you share your order number');
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-two-agents.png'));
 
-  // Back to agent 1: its Graph and Tests tabs return, Tests still in front.
+  // Returning restores Support's selected Tests tool, all source documents, and its role-play subview.
   await agentTab('Support').click();
-  await expect(agentTab('Support')).toHaveAttribute('aria-selected', 'true');
-  await expect(editorTabs(page).getByRole('tab')).toHaveText([/^Script/, 'Graph', 'Tests']);
-  await expect(editorTabs(page).getByRole('tab', { name: 'Tests', exact: true })).toHaveAttribute('aria-selected', 'true');
-  await expect(viewPane(page, 'tests').getByTestId('studio-tests-pane')).toBeVisible();
-  await editorTabs(page).getByRole('tab', { name: 'Graph', exact: true }).click();
-  await expect(viewPane(page, 'graph').frameLocator('iframe[title="AgentScript graph"]').getByText('Conversation map')).toBeVisible();
+  await expect(activeSidePanelTab(page)).toHaveText('Tests');
+  await expect(viewPane(page, 'tests')).toHaveAttribute('data-agent', 'force-app/Support.agent');
+  await expect(tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Role-play' })).toHaveAttribute('aria-pressed', 'true');
+  await expectSupportDocuments();
+  await openTool(studio, 'Preview');
+  await expect(preview.getByRole('log', { name: 'Preview conversation' })).toContainText('Could you share your order number');
+  await expect(preview.getByRole('button', { name: 'End conversation', exact: true })).toBeVisible();
+  await openTool(studio, 'Graph');
+  await expectSupportDocuments();
 
-  // The explorer brings an open agent forward instead of opening it twice.
-  await openFromExplorer('force-app/Orders.agent');
+  // Clicking an already-open agent in Quick open focuses it without duplicating it.
+  await agentTabs(page).getByRole('button', { name: 'Open agent', exact: true }).click();
+  await expect(picker).toBeVisible();
+  await search.click(); await search.fill('Orders');
+  await picker.getByRole('option').filter({ hasText: 'force-app/Orders.agent' }).click();
+  await expect(picker).toHaveCount(0);
   await expect(agentTab('Orders')).toHaveAttribute('aria-selected', 'true');
   await expect(agentTab('Orders')).toHaveCount(1);
+  await expect(activeSidePanelTab(page)).toHaveText('Preview');
+  await expect(frame.locator('.view-lines')).toContainText('Order_Assistant');
   await agentTab('Support').click();
-  await expect(editorTabs(page).getByRole('tab', { name: 'Graph', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(activeSidePanelTab(page)).toHaveText('Graph view');
+  await expectSupportDocuments();
 
-  // Closing agent 1's tab moves to agent 2 and drops agent 1's view tabs.
+  // Closing Support moves both editor and host tools to the remaining agent.
   await agentTabs(page).getByRole('button', { name: /^Close agent Support\.agent/ }).click();
   await expect(agentTab('Support')).toHaveCount(0);
   await expect(agentTab('Orders')).toHaveAttribute('aria-selected', 'true');
-  await expect(editorTabs(page).getByRole('tab', { name: 'Graph', exact: true })).toHaveCount(0);
+  await expect(activeSidePanelTab(page)).toHaveText('Preview');
+  await expect(viewPane(page, 'preview')).toHaveAttribute('data-agent', 'force-app/Orders.agent');
   await expect(frame.locator('.view-lines')).toContainText('Order_Assistant');
 
-  // Cards in the Assistant rail beside the Studio open Studio tabs, not a thread side panel.
-  await showSidePanel(page);
+  // Assistant cards use this same Studio and host routing, including a Preview for another agent.
   await openThreadToolLauncher(sidePanel(page));
   await sidePanel(page).getByTestId('thread-new-tab-agent').click();
   const composer = sidePanel(page).getByTestId('panel-agent-tab-composer');
   await composer.getByTestId('thread-command-input').fill('Review these\n::sf-agent{path="force-app/Support.agent"}\n::sf-preview{runId="rail-run-1" path="force-app/Orders.agent"}');
   await composer.getByTestId('thread-command-send').click();
   const chat = sidePanel(page).getByTestId('panel-agent-tab-chat');
+  const assistantTitle = await activeSidePanelTab(page).innerText();
   const agentCard = chat.getByTestId('sf-card-agent').last();
   await expect(agentCard.locator('.plugin-directive-card-main')).toBeEnabled({ timeout: 30_000 });
   await agentCard.locator('.plugin-directive-card-main').click();
@@ -2321,14 +2599,244 @@ test('Agentforce Studio: two agents keep their own view tabs, and closing one mo
   await expect(editorTabs(page).getByRole('tab', { name: /^Script/ })).toHaveAttribute('aria-selected', 'true');
   await expect(frame.locator('.view-lines')).toContainText('Support_Concierge');
   await expect(sidePanel(page).getByTestId('atp-root')).toHaveCount(0);
+  await sidePanelTab(page, assistantTitle).click();
   await chat.getByTestId('sf-card-preview').last().locator('.plugin-directive-card-main').click();
   await expect(agentTab('Orders')).toHaveAttribute('aria-selected', 'true');
-  await expect(editorTabs(page).getByRole('tab', { name: 'Preview', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(activeSidePanelTab(page)).toHaveText('Preview');
+  await expect(editorTabs(page).getByRole('tab', { name: 'Preview', exact: true })).toHaveCount(0);
   await expect(viewPane(page, 'preview').getByTestId('preview-workbench')).toBeVisible();
+  await expect(frame.locator('.view-lines')).toContainText('Order_Assistant');
   await expect(sidePanel(page).getByTestId('atp-root')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 
+
+test('Agentforce Studio: pinned Preview reconnects to the same running session across navigation and reload', async ({ app, home }, testInfo) => {
+  const page = app.window;
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  const trust = page.getByRole('button', { name: 'Install with full trust' });
+  if (await trust.isVisible().catch(() => false)) await trust.click();
+  await expect.poll(() => page.evaluate(async () => { const { plugins } = await fetch('/api/v1/plugins').then(response => response.json()); const plugin = plugins.find((entry: { id: string }) => entry.id === 'salesforce'); return `${plugin?.status ?? 'missing'}: ${plugin?.statusDetail ?? ''}`; }), { timeout: 30_000 }).toMatch(/^(running|needs-configuration):/);
+  const projectId = await page.evaluate(async path => { const added = await window.cc.projects.add(path); if (!added.ok) throw Error(added.message); return added.value.id; }, join(home, 'dx'));
+  await page.evaluate(async id => {
+    await window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' });
+    history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
+  }, projectId);
+  await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
+  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  const studio = studioIn(page);
+  const frame = page.frameLocator('iframe[title="Agentforce playground"]');
+  const agentTab = (name: string) => agentTabs(page).getByRole('tab', { name: new RegExp(`^${name}\\.agent`) });
+  const preview = viewPane(page, 'preview').getByTestId('preview-workbench');
+  const remoteRequests = (): Array<{ path: string; body: Record<string, any> }> => JSON.parse(readFileSync(join(home, 'sfap-requests.json'), 'utf8'));
+  const remoteStarts = () => remoteRequests().filter(request => request.path.endsWith('/preview/sessions')).length;
+  const snapshot = (id: string): Promise<any> => page.evaluate(({ projectId, id }) => window.cc.pluginApps.callRpc('salesforce', 'agentLab.get', { projectId, id, path: 'force-app/Support.agent' }), { projectId, id });
+  const returnToPreview = async () => {
+    await studioPanel(page).getByRole('button', { name: 'Active runs', exact: true }).click();
+    await studioPanel(page).getByRole('region', { name: 'Active run sessions' }).getByRole('button', { name: /Support\.agent.*Preview/ }).click();
+    await expect(agentTab('Support')).toHaveAttribute('aria-selected', 'true');
+    await expect(viewPane(page, 'preview')).toHaveAttribute('data-agent', 'force-app/Support.agent');
+  };
+  const expectOrdersWithPinnedPreview = async (runId: string) => {
+    await expect(agentTab('Orders')).toHaveAttribute('aria-selected', 'true');
+    await expect(editorTabs(page).getByRole('tab', { name: /^Script/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(frame.locator('.view-lines')).toContainText('# Orders draft survives Preview navigation');
+    await expect(viewPane(page, 'preview')).toHaveAttribute('data-agent', 'force-app/Support.agent');
+    await expect(viewPane(page, 'preview').getByRole('button', { name: 'Follow selected agent', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(preview).toHaveAttribute('data-run-id', runId);
+    await expect(preview.getByRole('log', { name: 'Preview conversation' })).toContainText('Persistent preview turn');
+    expect(remoteStarts()).toBe(1);
+  };
+
+  await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
+  await openTool(studio, 'Preview');
+  await preview.getByTestId('pw-start').click();
+  await expect(preview).toHaveAttribute('data-run-id', /.+/, { timeout: 30_000 });
+  const runId = (await preview.getAttribute('data-run-id'))!;
+  writeFileSync(join(home, 'persistent-preview-hold'), 'hold');
+  try {
+    await preview.getByLabel('Preview message', { exact: true }).fill('Persistent preview turn');
+    await preview.getByRole('button', { name: 'Send preview message' }).click();
+    await expect.poll(() => remoteRequests().some(request => request.path.endsWith('/messages') && request.body.message?.text === 'Persistent preview turn')).toBe(true);
+    await expect.poll(async () => (await snapshot(runId)).data?.busy).toBe(true);
+
+    // Another agent remains editable while Support's request is still executing.
+    await agentTabs(page).getByRole('button', { name: 'Open agent', exact: true }).click();
+    const picker = page.getByRole('dialog', { name: 'Quick open', exact: true });
+    const search = picker.getByRole('combobox', { name: 'Search files and actions' });
+    await search.click(); await search.fill('Orders'); await search.press('Enter');
+    await expect(agentTab('Orders')).toHaveAttribute('aria-selected', 'true');
+    await expect(frame.locator('.view-lines')).toContainText('Order_Assistant');
+    await frame.locator('.monaco-editor').click({ position: { x: 120, y: 45 } });
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowUp' : 'Control+Home');
+    await page.keyboard.insertText('# Orders draft survives Preview navigation\n');
+    await expect(frame.locator('.view-lines')).toContainText('# Orders draft survives Preview navigation');
+    expect(await snapshot(runId)).toMatchObject({ ok: true, data: { id: runId, busy: true, closed: false } });
+
+    await returnToPreview();
+    await viewPane(page, 'preview').getByRole('button', { name: 'Pin Preview to Support.agent', exact: true }).click();
+    await agentTab('Orders').click();
+    await expectOrdersWithPinnedPreview(runId);
+    await sidePanel(page).getByTestId('thread-secondary-hide').click();
+    await expect(sidePanel(page)).toBeHidden();
+    expect(await snapshot(runId)).toMatchObject({ ok: true, data: { id: runId, busy: true, closed: false } });
+    await showSidePanel(page);
+    await expectOrdersWithPinnedPreview(runId);
+
+    // Closing the owner's editor tab clears its pin, without ending its session.
+    await agentTabs(page).getByRole('button', { name: /^Close agent Support\.agent/ }).click();
+    await expect(agentTab('Support')).toHaveCount(0);
+    expect(await snapshot(runId)).toMatchObject({ ok: true, data: { id: runId, busy: true, closed: false } });
+    await returnToPreview();
+    await expect(preview).toHaveAttribute('data-run-id', runId);
+    await viewPane(page, 'preview').getByRole('button', { name: 'Pin Preview to Support.agent', exact: true }).click();
+    await agentTab('Orders').click();
+    await expectOrdersWithPinnedPreview(runId);
+    await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-pinned-while-editing-another-agent.png'));
+
+    // A renderer restart reconnects to the server-owned request, using its original id.
+    await page.reload();
+    const projectNav = page.getByRole('navigation', { name: 'dx navigation' });
+    const openProject = page.getByRole('button', { name: 'Open dx', exact: true });
+    await expect.poll(async () => await projectNav.isVisible() || await openProject.isVisible()).toBe(true);
+    if (await openProject.isVisible()) await openProject.click();
+    await projectNav.getByRole('button', { name: 'Salesforce', exact: true }).click();
+    await expect(page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expectOrdersWithPinnedPreview(runId);
+    expect(await snapshot(runId)).toMatchObject({ ok: true, data: { id: runId, busy: true, closed: false } });
+    rmSync(join(home, 'persistent-preview-hold'), { force: true });
+    await expect(preview.getByRole('log', { name: 'Preview conversation' })).toContainText('Could you share your order number', { timeout: 30_000 });
+    await expect.poll(async () => (await snapshot(runId)).data?.busy).toBe(false);
+    expect(remoteStarts()).toBe(1);
+    await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-reconnected-after-reload.png'));
+
+    // Only the explicit end action closes the session and removes running-work navigation.
+    await preview.getByRole('button', { name: 'End conversation', exact: true }).click();
+    await expect.poll(async () => (await snapshot(runId)).data?.closed).toBe(true);
+    await expect(studioPanel(page).getByRole('button', { name: 'Active runs', exact: true })).toHaveCount(0);
+    await expect(agentTab('Orders')).toHaveAttribute('aria-selected', 'true');
+    await expect(frame.locator('.view-lines')).toContainText('# Orders draft survives Preview navigation');
+    expect(readFileSync(join(home, 'dx/force-app/Orders.agent'), 'utf8')).not.toContain('Orders draft survives Preview navigation');
+
+    // A pinned inactive agent hydrates its own graph after reload, without replacing the editor draft.
+    await agentTab('Support').click();
+    await openTool(studio, 'Graph');
+    const graph = viewPane(page, 'graph').frameLocator('iframe[title="AgentScript graph"]');
+    await expect(graph.locator('.react-flow__node')).toHaveCount(3);
+    await viewPane(page, 'graph').getByRole('button', { name: 'Pin Graph to Support.agent', exact: true }).click();
+    await agentTab('Orders').click();
+    await expect(viewPane(page, 'graph')).toHaveAttribute('data-agent', 'force-app/Support.agent');
+    await page.reload();
+    await expect.poll(async () => await projectNav.isVisible() || await openProject.isVisible()).toBe(true);
+    if (await openProject.isVisible()) await openProject.click();
+    await projectNav.getByRole('button', { name: 'Salesforce', exact: true }).click();
+    await expect(agentTab('Orders')).toHaveAttribute('aria-selected', 'true');
+    await expect(editorTabs(page).getByRole('tab', { name: /^Script/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(frame.locator('.view-lines')).toContainText('# Orders draft survives Preview navigation');
+    await expect(activeSidePanelTab(page)).toHaveText('Graph view');
+    await expect(viewPane(page, 'graph')).toHaveAttribute('data-agent', 'force-app/Support.agent');
+    await expect(viewPane(page, 'graph').getByRole('button', { name: 'Follow selected agent', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(graph.locator('.react-flow__node')).toHaveCount(3);
+    await expect(graph.locator('.react-flow__node[data-id="topic:returns"] .as-node-label')).toHaveText('returns');
+    await captureElectronScreenshot(app.electron, page, testInfo.outputPath('graph-pinned-inactive-source-after-reload.png'));
+    expect(errors).toEqual([]);
+  } finally {
+    rmSync(join(home, 'persistent-preview-hold'), { force: true });
+  }
+});
+
+test('Agentforce Studio: server-owned role-play survives owner close and reload, and stops explicitly', async ({ app, home }, testInfo) => {
+  const page = app.window;
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  const trust = page.getByRole('button', { name: 'Install with full trust' });
+  if (await trust.isVisible().catch(() => false)) await trust.click();
+  await expect.poll(() => page.evaluate(async () => { const { plugins } = await fetch('/api/v1/plugins').then(response => response.json()); const plugin = plugins.find((entry: { id: string }) => entry.id === 'salesforce'); return `${plugin?.status ?? 'missing'}: ${plugin?.statusDetail ?? ''}`; }), { timeout: 30_000 }).toMatch(/^(running|needs-configuration):/);
+  const projectId = await page.evaluate(async path => { const added = await window.cc.projects.add(path); if (!added.ok) throw Error(added.message); return added.value.id; }, join(home, 'dx'));
+  await page.evaluate(async id => {
+    await window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' });
+    history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
+  }, projectId);
+  await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
+  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  const studio = studioIn(page);
+  const agentTab = (name: string) => agentTabs(page).getByRole('tab', { name: new RegExp(`^${name}\\.agent`) });
+  const lab = viewPane(page, 'tests').getByTestId('agentforce-lab');
+  const snapshot = (id: string): Promise<any> => page.evaluate(({ projectId, id }) => window.cc.pluginApps.callRpc('salesforce', 'agentLab.get', { projectId, id, path: 'force-app/Support.agent' }), { projectId, id });
+  const requests = (): Array<{ path: string; body: Record<string, any> }> => JSON.parse(readFileSync(join(home, 'sfap-requests.json'), 'utf8'));
+  const heldRequests = () => requests().filter(request => request.path.endsWith('/messages') && request.body.message?.text === 'Persistent preview turn').length;
+
+  await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
+  await openTool(studio, 'Tests');
+  await viewPane(page, 'tests').getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Role-play' }).click();
+  await widenSidePanel(page);
+  if (await lab.locator('.af-scenario-details').getAttribute('open') === null) await lab.locator('.af-scenario-details > summary').click();
+  await lab.getByLabel('Opening message', { exact: true }).fill('Persistent preview turn');
+  await lab.getByLabel('Conversation budget').selectOption('2');
+  writeFileSync(join(home, 'persistent-preview-hold'), 'hold');
+  try {
+    await lab.getByRole('button', { name: 'Run AI role-play', exact: true }).click();
+    await expect(lab).toHaveAttribute('data-run-id', /.+/, { timeout: 30_000 });
+    const runId = (await lab.getAttribute('data-run-id'))!;
+    await expect.poll(heldRequests).toBe(1);
+    expect(await snapshot(runId)).toMatchObject({ ok: true, data: { id: runId, busy: true, closed: false, execution: { phase: 'agent', totalTurns: 2 } } });
+    await agentTabs(page).getByRole('button', { name: 'Open agent', exact: true }).click();
+    const picker = page.getByRole('dialog', { name: 'Quick open', exact: true });
+    const search = picker.getByRole('combobox', { name: 'Search files and actions' });
+    await search.click(); await search.fill('Orders'); await search.press('Enter');
+    await expect(agentTab('Orders')).toHaveAttribute('aria-selected', 'true');
+    await agentTabs(page).getByRole('button', { name: /^Close agent Support\.agent/ }).click();
+    await expect(agentTab('Support')).toHaveCount(0);
+
+    // No renderer continues the customer/agent/evaluation loop while its owner is closed.
+    await page.reload();
+    const projectNav = page.getByRole('navigation', { name: 'dx navigation' });
+    const openProject = page.getByRole('button', { name: 'Open dx', exact: true });
+    await expect.poll(async () => await projectNav.isVisible() || await openProject.isVisible()).toBe(true);
+    if (await openProject.isVisible()) await openProject.click();
+    await projectNav.getByRole('button', { name: 'Salesforce', exact: true }).click();
+    await expect(agentTab('Orders')).toHaveAttribute('aria-selected', 'true');
+    await expect(agentTab('Support')).toHaveCount(0);
+    expect(await snapshot(runId)).toMatchObject({ ok: true, data: { id: runId, busy: true, closed: false } });
+    await studioPanel(page).getByRole('button', { name: 'Active runs', exact: true }).click();
+    await studioPanel(page).getByRole('region', { name: 'Active run sessions' }).getByRole('button', { name: /Support\.agent.*Role-play/ }).click();
+    await expect(agentTab('Support')).toHaveAttribute('aria-selected', 'true');
+    await expect(viewPane(page, 'tests')).toHaveAttribute('data-agent', 'force-app/Support.agent');
+    await expect(lab).toHaveAttribute('data-run-id', runId);
+    await expect(viewPane(page, 'tests').getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Role-play' })).toHaveAttribute('aria-pressed', 'true');
+    await agentTab('Orders').click();
+    rmSync(join(home, 'persistent-preview-hold'), { force: true });
+    await expect.poll(async () => (await snapshot(runId)).data?.execution?.phase, { timeout: 30_000 }).toBe('done');
+    expect(await snapshot(runId)).toMatchObject({ ok: true, data: { id: runId, busy: false, execution: { completedTurns: 2, verdict: { outcome: 'pass' } } } });
+    expect(requests().filter(request => request.path.endsWith('/preview/sessions'))).toHaveLength(1);
+    await agentTab('Support').click();
+    await expect(lab.getByText('Run complete', { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(lab.getByRole('region', { name: 'AI evaluation' })).toContainText('Criteria met');
+    await expect(lab.getByRole('log', { name: 'Rehearsal conversation' })).toContainText('My order is ORD-1042');
+    await captureElectronScreenshot(app.electron, page, testInfo.outputPath('roleplay-reconnected-after-owner-close-and-reload.png'));
+
+    // Explicit Stop also cancels the autonomous loop while a reply is in flight.
+    writeFileSync(join(home, 'persistent-preview-hold'), 'hold');
+    await lab.getByRole('button', { name: 'Run again', exact: true }).click();
+    await expect(lab).not.toHaveAttribute('data-run-id', runId);
+    await expect(lab).toHaveAttribute('data-run-id', /.+/, { timeout: 30_000 });
+    const stoppedRunId = (await lab.getAttribute('data-run-id'))!;
+    await expect.poll(heldRequests).toBe(2);
+    await lab.getByRole('button', { name: 'Stop', exact: true }).click();
+    await expect.poll(async () => (await snapshot(stoppedRunId)).data).toMatchObject({ id: stoppedRunId, busy: false, closed: true, execution: { phase: 'stopped', completedTurns: 0 } });
+    await expect(lab.getByText('Stopped · partial conversation', { exact: true })).toBeVisible();
+    await expect(lab.getByRole('region', { name: 'AI evaluation' })).toHaveCount(0);
+    await expect(studioPanel(page).getByRole('button', { name: 'Active runs', exact: true })).toHaveCount(0);
+    expect(errors).toEqual([]);
+  } finally {
+    rmSync(join(home, 'persistent-preview-hold'), { force: true });
+  }
+});
 
 test('Agentforce simulations: live lanes stay with their agent, stop, verdicts and saved history', async ({ app, home }, testInfo) => {
   const page = app.window;
@@ -2455,37 +2963,45 @@ test('Agentforce self-healing: parallel candidates improve fixed scenarios witho
   await expect(simulations.getByTestId('simulation-summary')).toContainText('Done');
   const baseline = await action('simulations.list', { agentPath: 'force-app/Support.agent' });
   const original = readFileSync(join(home, 'dx/force-app/Support.agent'), 'utf8');
-  const healing = simulations.getByRole('region', { name: 'Self-healing' });
-  await healing.getByLabel('Candidate attempts').selectOption('2');
+  const healing = simulations.getByRole('region', { name: 'Improve with assistant' });
+  await healing.getByText('Options · up to 3 attempts').click();
+  await healing.getByLabel('Maximum attempts').selectOption('2');
   const studioUrl = page.url();
-  await healing.getByRole('button', { name: 'Start self-healing', exact: true }).click();
+  await healing.getByRole('button', { name: 'Ask assistant to improve', exact: true }).click();
   const composer = sidePanel(page).getByTestId('panel-agent-tab-composer');
   await expect(composer).toBeVisible();
+  const assistantTitle = await activeSidePanelTab(page).innerText();
   await expect(composer.getByTestId('thread-command-input')).toContainText('Run self-healing for force-app/Support.agent');
   await expect(composer.getByTestId('thread-command-input')).toContainText('Budget: 2 candidate attempts');
-  await expect(simulations).toBeVisible();
+  await expect(simulations).toBeHidden();
   expect(page.url()).toBe(studioUrl);
   const started = await action('selfHealing.status', { agentPath: 'force-app/Support.agent' });
   expect(started).toMatchObject({ ok: true, run: { baselineBatchId: baseline.batches[0].id, baselinePass: 0, maxAttempts: 2 } });
   await expect(composer.getByTestId('thread-command-input')).toContainText(started.run.id);
-  await healing.getByRole('button', { name: 'Continue with agent', exact: true }).click();
+  await openTool(studio, 'Tests');
+  await expect(simulations).toBeVisible();
+  await expect(healing.getByRole('button', { name: 'Stop improving' })).toBeVisible();
+  await healing.getByRole('button', { name: 'Continue with assistant', exact: true }).click();
+  await expect(activeSidePanelTab(page)).toHaveText(assistantTitle);
   await expect(sidePanel(page).getByTestId('panel-agent-tab-composer')).toHaveCount(1);
-  await expect(healing.getByRole('button', { name: 'Stop self-healing' })).toBeVisible();
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('self-healing-side-panel-draft.png'));
   await composer.getByTestId('thread-command-send').click();
   await expect(sidePanel(page).getByTestId('panel-agent-tab-chat')).toBeVisible();
-  await expect(simulations).toBeVisible();
+  await expect(simulations).toBeHidden();
   expect(page.url()).toBe(studioUrl);
   rmSync(join(home, 'simulation-judge-fail'));
   expect(await action('selfHealing.evaluate', { runId: started.run.id, source: original + '\n# tested candidate\n' })).toMatchObject({ ok: true, run: { status: 'testing' } });
   await expect.poll(async () => (await action('selfHealing.status', { runId: started.run.id, waitMs: 100 })).run.status).toBe('passed');
+  await openTool(studio, 'Tests');
+  await expect(simulations).toBeVisible();
   await expect(healing).toContainText('Baseline 0/2 → Best 2/2');
+  await healing.getByText('Attempt history · 1').click();
   await expect(healing).toContainText('Candidate 1: improved');
-  await expect(healing.getByRole('button', { name: 'Review best candidate with agent' })).toBeVisible();
-  await healing.getByRole('button', { name: 'Review best candidate with agent' }).click();
+  await expect(healing.getByRole('button', { name: 'Review proposed changes' })).toBeVisible();
+  await healing.getByRole('button', { name: 'Review proposed changes' }).click();
   await expect(composer).toBeVisible();
   await expect(composer.getByTestId('thread-command-input')).toContainText(started.run.id);
-  await expect(simulations).toBeVisible();
+  await expect(simulations).toBeHidden();
   expect(page.url()).toBe(studioUrl);
   expect(readFileSync(join(home, 'dx/force-app/Support.agent'), 'utf8')).toBe(original);
   expect(await action('selfHealing.status', { runId: started.run.id, includeSource: true })).toMatchObject({ ok: true, source: original + '\n# tested candidate\n' });
@@ -2518,7 +3034,7 @@ test('Agentforce improvements: cache-safe discovery, source jumps, draft compari
   const listed = await page.evaluate(projectId => window.cc.pluginApps.callRpc('salesforce', 'agentFiles.list', { projectId }), projectId);
   expect(listed).toMatchObject({ ok: true, truncated: false, files: expect.arrayContaining([expect.objectContaining({ path: 'force-app/Support.agent' })]) });
   const savedSource = readFileSync(join(home, 'dx/force-app/Support.agent'), 'utf8');
-  expect(await page.evaluate(projectId => window.cc.pluginApps.callRpc('salesforce', 'studio.suites.save', { projectId, agentPath: 'force-app/Support.agent', cases: [{ id: 'comparison', name: 'Comparison acceptance', utterances: ['Comparison acceptance'], expect: { contains: ['comparison success'], maxLatencyMs: 30000 } }] }), projectId)).toMatchObject({ ok: true });
+  expect(await page.evaluate(projectId => window.cc.pluginApps.callRpc('salesforce', 'actions.run', { projectId, action: 'suites.save', input: { agentPath: 'force-app/Support.agent', cases: [{ id: 'comparison', name: 'Comparison acceptance', utterances: ['Comparison acceptance'], expect: { contains: ['comparison success'], maxLatencyMs: 30000 } }] } }), projectId)).toMatchObject({ ok: true });
   const frame = page.frameLocator('iframe[title="Agentforce playground"]');
   await expect(frame.getByTestId('agent-script-ide')).toBeVisible();
   await frame.locator('.monaco-editor').click({ position: { x: 120, y: 45 } });
@@ -2544,10 +3060,13 @@ test('Agentforce improvements: cache-safe discovery, source jumps, draft compari
   await jump.focus(); await page.keyboard.press('Enter');
   await expect(editorTabs(page).getByRole('tab', { name: /^Script/ })).toHaveAttribute('aria-selected', 'true');
   await expect(frame.locator('.view-lines')).toBeVisible();
+  await expect(activeSidePanelTab(page)).toHaveText('Comments');
+  await expect(jump).toBeVisible();
   await sidePanel(page).getByTestId('thread-secondary-hide').click();
   await openTool(studio, 'Tests');
   await tests.getByRole('button', { name: 'Batch simulations', exact: true }).click();
   const simulations = tests.getByTestId('studio-simulations');
+  await simulations.getByText('Adjust for this batch', { exact: true }).click();
   await expect(simulations.getByLabel('Scenario 1 name', { exact: true })).toBeVisible();
   await simulations.getByLabel('Search scenarios').fill('missing');
   await expect(simulations.getByRole('button', { name: 'Edit Happy path', exact: true })).toBeHidden();
@@ -2558,16 +3077,34 @@ test('Agentforce improvements: cache-safe discovery, source jumps, draft compari
   await simulations.getByRole('button', { name: 'Edit Happy path', exact: true }).click();
   await simulations.getByLabel('Scenario 1 name', { exact: true }).fill('Custom return');
   await simulations.getByLabel('Scenario 1 opening', { exact: true }).fill('What is the return policy?');
-  await simulations.getByLabel('Missing details', { exact: true }).uncheck();
+  await simulations.getByRole('button', { name: 'Add variable', exact: true }).click();
+  await simulations.getByLabel('New scenario variable name', { exact: true }).fill('scenarioVerified');
+  await simulations.getByLabel('New scenario variable type', { exact: true }).selectOption('Boolean');
+  await simulations.getByRole('button', { name: 'Add override', exact: true }).click();
+  await expect(simulations.getByLabel('scenarioVerified value', { exact: true })).toHaveValue('false');
+  await simulations.getByRole('button', { name: 'Edit Missing details', exact: true }).click();
+  await simulations.getByRole('button', { name: 'Add variable', exact: true }).click();
+  await simulations.getByLabel('New scenario variable name', { exact: true }).fill('scenarioVerified');
+  await simulations.getByLabel('New scenario variable type', { exact: true }).selectOption('Boolean');
+  await simulations.getByRole('button', { name: 'Add override', exact: true }).click();
+  await simulations.getByLabel('scenarioVerified value', { exact: true }).selectOption('true');
+  await simulations.getByRole('button', { name: 'Edit Custom return', exact: true }).click();
+  await expect(simulations.getByLabel('scenarioVerified value', { exact: true })).toHaveValue('false');
   await simulations.getByLabel('Stay in scope', { exact: true }).uncheck();
   for (const theme of ['dark', 'light']) {
     await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
     await captureElectronScreenshot(app.electron, page, testInfo.outputPath(`studio-scenario-editor-${theme}.png`));
   }
-  await simulations.getByRole('button', { name: 'Run 1 conversation', exact: true }).click();
+  await simulations.getByRole('button', { name: 'Run 2 conversations', exact: true }).click();
   await expect(simulations.getByTestId('simulation-summary')).toContainText('Done', { timeout: 30000 });
   await simulations.getByRole('button', { name: /Custom return/ }).click();
   await expect(simulations.getByRole('region', { name: 'Conversation Custom return' })).toContainText('What is the return policy?');
+  await simulations.getByRole('region', { name: 'Conversation Custom return' }).locator('summary').filter({ hasText: 'Starting variables' }).click();
+  await expect(simulations.getByRole('region', { name: 'Conversation Custom return' })).toContainText('scenarioVerified');
+  await expect(simulations.getByRole('region', { name: 'Conversation Custom return' })).toContainText('false');
+  const variableRequests = JSON.parse(readFileSync(join(home, 'sfap-requests.json'), 'utf8')) as Array<{ path: string; body: Record<string, any> }>;
+  const scenarioStarts = variableRequests.filter(row => row.path.endsWith('/preview/sessions') && row.body.variables?.some((variable: any) => variable.name === 'scenarioVerified'));
+  expect(scenarioStarts.map(row => row.body.variables.find((variable: any) => variable.name === 'scenarioVerified').value).sort()).toEqual([false, true]);
   await app.electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(820, 900));
   await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
   await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click();
@@ -2576,7 +3113,7 @@ test('Agentforce improvements: cache-safe discovery, source jumps, draft compari
   expect(await simulations.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   expect(await studioPanel(page).evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-custom-scenarios-narrow-light.png'));
-  await simulations.getByRole('button', { name: /^Scenarios/ }).click();
+  await simulations.getByRole('button', { name: /^Batch setup/ }).click();
   await expect(simulations.getByLabel('Scenario 1 opening', { exact: true })).toHaveValue('What is the return policy?');
   expect(await simulations.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   await simulations.locator('summary').filter({ hasText: 'Run settings' }).click();
@@ -2584,7 +3121,7 @@ test('Agentforce improvements: cache-safe discovery, source jumps, draft compari
   await page.keyboard.press('Escape');
   await expect(simulations.getByLabel('Parallel conversations')).toBeHidden();
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-scenario-editor-narrow-light.png'));
-  await app.electron.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.setMinimumSize(400, 400); win.setSize(720, 800); });
+  await app.electron.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.setMinimumSize(400, 400); win.setSize(560, 800); });
   await expect.poll(() => simulations.evaluate(el => el.clientWidth)).toBeLessThan(460);
   const stacked = await simulations.evaluate(el => { const list = el.querySelector('.sf-sim-catalogue')!.getBoundingClientRect(), editor = el.querySelector('.sf-sim-editor')!.getBoundingClientRect(); return { listBottom: list.bottom, editorTop: editor.top }; });
   expect(stacked.editorTop).toBeGreaterThanOrEqual(stacked.listBottom - 1);
@@ -2671,9 +3208,9 @@ test('AgentScript Studio reliability: large snapshots, background recovery, setu
   await expect.poll(() => readFileSync(join(projectRoot, 'force-app/Large.agent'), 'utf8')).toContain('RECOVER_LARGE_DRAFT');
   await openTool(studio, 'Preview');
   const previewPanel = viewPane(page, 'preview').getByTestId('preview-workbench');
-  await expect(previewPanel.getByRole('button', { name: 'Inspect 25 cases ▾' })).toBeVisible();
-  await expect(previewPanel.getByRole('region', { name: 'Scenario cases' })).toHaveCount(0);
-  await previewPanel.getByRole('button', { name: /Inspect 25 cases/ }).click();
+  await expect(previewPanel.getByRole('tab', { name: 'Scenarios 25', exact: true })).toBeVisible();
+  await expect(previewPanel.getByRole('region', { name: 'Scenario cases' })).toBeHidden();
+  await previewPanel.getByRole('tab', { name: 'Scenarios 25', exact: true }).click();
   await previewPanel.getByLabel('Scenario result filter').selectOption('inconclusive');
   await expect(previewPanel.locator('.sf-pw-suite-case')).toHaveCount(1);
   await expect(previewPanel.locator('.sf-pw-suite-case')).toContainText('Case 24');
@@ -2681,7 +3218,7 @@ test('AgentScript Studio reliability: large snapshots, background recovery, setu
   await expect(previewPanel.getByRole('status')).toContainText('No scenarios match');
   await previewPanel.getByLabel('Search scenarios').fill('');
   await previewPanel.getByLabel('Scenario result filter').selectOption('all');
-  await previewPanel.getByRole('button', { name: /Inspect 25 cases/ }).click();
+  await previewPanel.getByRole('tab', { name: 'Conversation', exact: true }).click();
   writeFileSync(join(home, 'preview-trace-fixture'), 'enabled');
   await previewPanel.getByTestId('pw-start').click();
   await expect(previewPanel.getByLabel('Preview message', { exact: true })).toBeEnabled();
@@ -2700,7 +3237,7 @@ test('AgentScript Studio reliability: large snapshots, background recovery, setu
   // Native capture can precede Chromium's paint after a disclosure changes.
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-compact-suite-trace.png'));
-  await previewPanel.getByRole('button', { name: 'End', exact: true }).click();
+  await previewPanel.getByRole('button', { name: 'End conversation', exact: true }).click();
   await app.electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(820, 900));
   await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
   expect(await previewPanel.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
@@ -2733,6 +3270,202 @@ test('AgentScript Studio reliability: large snapshots, background recovery, setu
   expect(await form.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('studio-reliable-tests-narrow.png'));
 });
+
+
+test('Preview workflows: separate conversation and scenarios, preserve state and cancel a simulated suite', async ({ app, home }, testInfo) => {
+  const page = app.window;
+  const projectRoot = join(home, 'dx');
+  expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'salesforce')?.status), { timeout: 30000 }).toMatch(/running|needs-configuration/);
+  const projectId = await page.evaluate(async path => { const added = await window.cc.projects.add(path); if (!added.ok) throw Error(added.message); return added.value.id; }, projectRoot);
+  await page.evaluate(async id => {
+    await window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' });
+    history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
+  }, projectId);
+  const cases = [
+    { id: 'quote', name: 'Quote asks for the required details', utterances: ['Suite progress first case'], expect: {} },
+    { id: 'billing', name: 'Billing request is redirected', utterances: ['Billing request'], expect: {} }
+  ];
+  expect(await page.evaluate(({ projectId, cases }) => window.cc.pluginApps.callRpc('salesforce', 'studio.suites.save', { projectId, agentPath: 'force-app/Support.agent', cases }), { projectId, cases })).toMatchObject({ ok: true });
+  await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
+  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  const studio = studioIn(page);
+  await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
+  await openTool(studio, 'Preview');
+  const preview = viewPane(page, 'preview').getByTestId('preview-workbench');
+  const conversation = preview.getByRole('tab', { name: /^Conversation/ });
+  const scenarios = preview.getByRole('tab', { name: 'Scenarios 2', exact: true });
+  await expect(preview.getByLabel('Preview message', { exact: true })).toHaveCount(0);
+  await expect(preview.getByRole('region', { name: 'Scenario cases' })).toBeHidden();
+  await expect(preview.getByRole('log').getByTestId('pw-start')).toBeVisible();
+  await preview.getByRole('button', { name: 'Live', exact: true }).click();
+  await scenarios.click();
+  await expect(preview.getByRole('button', { name: 'Run 2 scenarios', exact: true })).toBeEnabled();
+  await expect(preview).toContainText('Scenarios use simulated actions');
+  // Live is only a conversation preference; scenario execution uses Preview API sessions.
+  writeFileSync(join(home, 'suite-first'), 'enabled');
+  await preview.getByRole('button', { name: 'Rerun Quote asks for the required details', exact: true }).click();
+  await expect(preview.getByRole('button', { name: 'Stop suite', exact: true })).toBeVisible();
+  await conversation.click();
+  await expect(preview.getByTestId('pw-start')).toBeDisabled();
+  await expect(preview).toContainText('stop it before starting a conversation');
+  await scenarios.click();
+  await preview.getByRole('button', { name: 'Stop suite', exact: true }).click();
+  await expect(preview.getByRole('status').filter({ hasText: 'Suite stopped' })).toBeVisible({ timeout: 15000 });
+  rmSync(join(home, 'suite-first'), { force: true });
+  await preview.getByLabel('Search scenarios').fill('Billing');
+  await preview.getByRole('button', { name: 'View details for Billing request is redirected' }).click();
+  await conversation.click();
+  await preview.getByRole('button', { name: 'Simulate', exact: true }).click();
+  await preview.getByTestId('pw-start').click();
+  await preview.getByLabel('Preview message', { exact: true }).fill('Find my order');
+  await preview.getByRole('button', { name: 'Send preview message' }).click();
+  await expect(preview.getByRole('log')).toContainText('Could you share your order number');
+  await preview.getByLabel('Preview message', { exact: true }).fill('Unsent follow-up');
+  await scenarios.click();
+  await expect(preview.getByLabel('Preview message', { exact: true })).toBeHidden();
+  await expect(preview.getByLabel('Search scenarios')).toHaveValue('Billing');
+  await expect(preview.getByRole('region', { name: 'Details for Billing request is redirected' })).toBeVisible();
+  await expect(preview.getByRole('button', { name: 'Run 2 scenarios', exact: true })).toBeDisabled();
+  await preview.getByRole('button', { name: 'Return to conversation' }).click();
+  await expect(preview.getByLabel('Preview message', { exact: true })).toHaveValue('Unsent follow-up');
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-conversation-separated.png'));
+  await preview.getByRole('button', { name: 'End conversation', exact: true }).click();
+  await scenarios.click();
+  await app.electron.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.setMinimumSize(400, 400); win.setSize(820, 900); });
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+  await expect(preview.getByRole('region', { name: 'Scenario list' })).toBeHidden();
+  expect(await preview.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  await expect(preview.getByRole('button', { name: 'Close details' })).toBeInViewport();
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-scenarios-separated-narrow.png'));
+});
+
+
+test('Agentforce case details and list scrolling keep controls and progress in view', async ({ app, home }, testInfo) => {
+  const page = app.window;
+  const projectRoot = join(home, 'dx');
+  expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'salesforce')?.status), { timeout: 30000 }).toMatch(/running|needs-configuration/);
+  const projectId = await page.evaluate(async path => { const added = await window.cc.projects.add(path); if (!added.ok) throw Error(added.message); return added.value.id; }, projectRoot);
+  await page.evaluate(async id => {
+    await window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' });
+    history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate'));
+  }, projectId);
+  const cases = Array.from({ length: 30 }, (_, i) => ({ id: `detail-${i}`, name: `Order lookup scenario ${i + 1}`, utterances: [i === 0 ? 'Suite progress first case' : 'Find my order', 'Order 42'], expect: { contains: ['missing-evidence-marker'] } }));
+  const rpc = (method: string, args: object = {}): Promise<any> => page.evaluate(({ projectId, method, args }) => window.cc.pluginApps.callRpc('salesforce', method, { projectId, ...args }), { projectId, method, args });
+  expect(await rpc('studio.suites.save', { agentPath: 'force-app/Support.agent', cases })).toMatchObject({ ok: true });
+  writeFileSync(join(home, 'preview-trace-fixture'), 'enabled');
+  expect(await rpc('studio.suites.run', { agentPath: 'force-app/Support.agent', caseIds: ['detail-0'] })).toMatchObject({ ok: true });
+  await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
+  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  const studio = studioIn(page);
+  await studio.getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
+  await openTool(studio, 'Preview');
+  const preview = viewPane(page, 'preview').getByTestId('preview-workbench');
+  await preview.getByRole('tab', { name: 'Scenarios 30', exact: true }).click();
+  await preview.getByRole('button', { name: 'View details for Order lookup scenario 1', exact: true }).click();
+  const detail = preview.getByRole('region', { name: 'Details for Order lookup scenario 1', exact: true });
+  await expect(detail).toContainText('Expected vs actual');
+  await expect(detail).toContainText('Actual: Not in the reply');
+  await expect(detail.getByRole('log', { name: 'Case conversation' })).toContainText('Order 42');
+  await expect(detail.getByRole('log', { name: 'Case conversation' }).locator('article')).toHaveCount(5);
+  await detail.getByRole('button', { name: 'View trace for reply 2', exact: true }).click();
+  await expect(detail.getByRole('region', { name: 'Planner trace', exact: true })).toBeVisible();
+  await expect(detail.getByRole('button', { name: 'Close details' })).toBeInViewport();
+  expect(await preview.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('scenario-details-wide.png'));
+  await app.electron.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.setMinimumSize(400, 400); win.setSize(820, 900); });
+  await expect(preview.getByRole('region', { name: 'Scenario list' })).toBeHidden();
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+  await detail.getByRole('button', { name: 'Close details' }).focus();
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('scenario-details-narrow-light.png'));
+  await detail.getByRole('button', { name: 'Close details' }).click();
+  await expect(preview.getByRole('region', { name: 'Scenario list' })).toBeVisible();
+  // A newer run evicts finished live sessions. The case must still retain its own transcript.
+  expect(await rpc('agentLab.start', { engine: 'preview', source: AGENT_SCRIPT_EXAMPLES[0].source, path: 'force-app/Support.agent', startedByUser: true })).toMatchObject({ ok: true });
+  await preview.getByRole('button', { name: 'View details for Order lookup scenario 1', exact: true }).click();
+  await expect(detail).toContainText('Showing the saved conversation');
+  await expect(detail.getByRole('log').locator('article')).toHaveCount(4);
+  await expect(detail.getByRole('log')).toContainText('Order 42');
+  await detail.getByRole('button', { name: 'Close details' }).click();
+  await openTool(studio, 'Tests');
+  const tests = viewPane(page, 'tests').getByTestId('studio-tests-pane');
+  const list = tests.getByRole('region', { name: 'Test case list' });
+  await expect(tests.getByRole('group', { name: 'Tests view' }).getByRole('button')).toHaveText(['Scenarios', 'Test cases', 'Batch simulations', 'Role-play']);
+  await expect(tests.getByTestId('tests-cases-workbench')).toBeVisible();
+  // Narrow panels use a dedicated detail page with a keyboard return path.
+  await tests.getByRole('button', { name: 'Details for Order lookup scenario 1', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  const inspector = tests.getByRole('region', { name: 'Case details', exact: true });
+  await expect(inspector.getByRole('heading', { name: 'Order lookup scenario 1', exact: true })).toBeVisible();
+  await expect(list).toBeHidden();
+  await inspector.getByRole('tab', { name: 'Conversation', exact: true }).click();
+  await expect(inspector).toContainText('Order 42');
+  await inspector.getByRole('tab', { name: 'Expectations', exact: true }).click();
+  await inspector.getByText('Technical checks · 1', { exact: true }).click();
+  await expect(inspector).toContainText('Mentions "missing-evidence-marker"');
+  await inspector.getByRole('button', { name: '← All cases', exact: true }).click();
+  await expect(list).toBeVisible();
+  await expect(tests.getByRole('button', { name: 'Details for Order lookup scenario 1', exact: true })).toBeFocused();
+  await tests.getByRole('searchbox', { name: 'Search cases', exact: true }).fill('scenario 30');
+  await expect(list.getByRole('button')).toHaveCount(1);
+  await tests.getByRole('searchbox', { name: 'Search cases', exact: true }).fill('');
+  const header = tests.getByRole('toolbar', { name: 'Test actions' });
+  const headerY = (await header.boundingBox())!.y;
+  await list.hover(); await page.mouse.wheel(0, 1000);
+  await expect.poll(() => list.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
+  expect((await header.boundingBox())!.y).toBeCloseTo(headerY, 0);
+  expect(await tests.evaluate(el => el.scrollTop)).toBe(0);
+  await list.evaluate(el => { el.scrollTop = el.scrollHeight; });
+  await page.mouse.wheel(0, 1000);
+  expect((await header.boundingBox())!.y).toBeCloseTo(headerY, 0);
+  expect(await tests.evaluate(el => el.closest('.sf-etab-view')?.scrollTop ?? 0)).toBe(0);
+  await expect(tests.getByTestId('tests-summary')).toBeInViewport();
+  await list.evaluate(el => { el.scrollTop = 0; });
+  writeFileSync(join(home, 'suite-first'), 'enabled');
+  await tests.getByRole('button', { name: 'Run all in Simulate', exact: true }).click();
+  const stopSuite = header.getByRole('button', { name: 'Stop suite', exact: true });
+  await expect(stopSuite).toBeVisible();
+  expect((await stopSuite.boundingBox())!.width).toBeLessThan(120);
+  const stopColor = await stopSuite.evaluate(el => {
+    const style = getComputedStyle(el);
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--sf-danger)';
+    el.appendChild(probe);
+    const danger = getComputedStyle(probe).color;
+    probe.remove();
+    return { color: style.color, border: style.borderTopColor, danger };
+  });
+  expect(stopColor.danger).toMatch(/^rgb\(/);
+  expect(stopColor.color).toBe(stopColor.danger);
+  expect(stopColor.border).toBe(stopColor.danger);
+  const progressY = (await tests.locator('.sf-tp-run').boundingBox())!.y;
+  await list.hover(); await page.mouse.wheel(0, 1000);
+  await expect.poll(() => list.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
+  expect((await tests.locator('.sf-tp-run').boundingBox())!.y).toBeCloseTo(progressY, 0);
+  await expect(tests.getByRole('button', { name: 'Stop suite', exact: true })).toBeInViewport();
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('tests-fixed-progress-list-scroll.png'));
+  await tests.getByRole('button', { name: 'Stop suite', exact: true }).click();
+  await expect(tests.getByRole('button', { name: 'Run all in Simulate', exact: true })).toBeEnabled();
+  await list.evaluate(el => { el.scrollTop = 0; });
+  await expect(tests.getByTestId('tests-row-detail-0')).toContainText('Stopped');
+  await tests.getByTestId('tests-row-detail-0').click();
+  await expect(inspector).toContainText('This case was stopped');
+  await expect(inspector).not.toContainText('This operation was aborted');
+  await inspector.getByRole('tab', { name: 'Conversation', exact: true }).click();
+  await tests.getByRole('button', { name: 'Role-play', exact: true }).click();
+  await tests.getByRole('button', { name: 'Test cases', exact: true }).click();
+  await expect(inspector.getByRole('tab', { name: 'Conversation', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await app.electron.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(1600, 1000); });
+  await sidePanel(page).getByTestId('thread-secondary-maximize').click();
+  await expect(list).toBeVisible();
+  await expect(inspector).toBeVisible();
+  expect(await tests.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('tests-case-list-details-wide.png'));
+  rmSync(join(home, 'suite-first'), { force: true });
+});
+
 
 test('Studio footer: inspect saved failures, filter cases and rerun the open agent', async ({ app, home }, testInfo) => {
   const page = app.window;
@@ -2812,7 +3545,10 @@ test('Agentforce Studio: pane dividers resize smoothly, persist and adapt to nar
     const bounds = (await handle.boundingBox())!;
     expect(Math.min(bounds.width, bounds.height)).toBeGreaterThanOrEqual(8.9);
     await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
-    await page.mouse.down(); await page.mouse.move(bounds.x + bounds.width / 2 + dx, bounds.y + bounds.height / 2 + dy, { steps: 8 }); await page.mouse.up();
+    await page.mouse.down();
+    await expect(handle).toHaveAttribute('data-resizing', 'true');
+    await page.mouse.move(bounds.x + bounds.width / 2 + dx, bounds.y + bounds.height / 2 + dy, { steps: 8 });
+    await page.mouse.up();
     await expect(handle).toHaveAttribute('data-resizing', 'false');
   };
   const explorer = studio.locator('.sf-explorer-col');
@@ -2839,6 +3575,7 @@ test('Agentforce Studio: pane dividers resize smoothly, persist and adapt to nar
   const tests = viewPane(page, 'tests');
   await tests.getByRole('group', { name: 'Tests view' }).getByRole('button', { name: 'Role-play' }).click();
   const lab = tests.getByTestId('agentforce-lab');
+  await widenSidePanel(page);
   const divider = lab.getByRole('separator', { name: 'Resize conversation and evidence' });
   await expect(divider).toHaveAttribute('aria-orientation', 'vertical');
   const chat = lab.getByRole('region', { name: 'Conversation', exact: true });
@@ -2856,13 +3593,18 @@ test('Agentforce Studio: pane dividers resize smoothly, persist and adapt to nar
   }
 
   await page.setViewportSize({ width: 900, height: 1080 });
-  await expect(divider).toHaveAttribute('aria-orientation', 'horizontal');
-  const heightBefore = (await chat.boundingBox())!.height;
-  await drag(divider, 0, 70);
-  await expect.poll(async () => (await chat.boundingBox())!.height).toBeGreaterThan(heightBefore + 45);
+  const viewportWidth = await page.evaluate(() => innerWidth);
+  await expect.poll(async () => { const bounds = (await sidePanel(page).boundingBox())!; return bounds.x + bounds.width; }).toBeLessThanOrEqual(viewportWidth + 1);
+  await expect(divider).toHaveCount(0);
+  await expect(lab.getByRole('group', { name: 'Run view' })).toBeVisible();
+  await lab.getByRole('group', { name: 'Run view' }).getByRole('button', { name: 'Turn trace' }).click();
+  await expect(chat).toBeHidden();
+  await lab.getByRole('group', { name: 'Run view' }).getByRole('button', { name: 'Conversation', exact: true }).click();
+  await expect(chat).toBeVisible();
   await expect.poll(() => lab.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('resizable-panes-narrow.png'));
   await page.setViewportSize({ width: 1920, height: 1080 });
+  await widenSidePanel(page);
   await expect(divider).toHaveAttribute('aria-orientation', 'vertical');
   await divider.dblclick(); await expect(divider).toHaveAttribute('aria-valuenow', '48');
 
@@ -2880,5 +3622,16 @@ test('Agentforce Studio: pane dividers resize smoothly, persist and adapt to nar
   await drag(simulations.getByRole('separator', { name: 'Resize conversations and result details' }), 80);
   await expect.poll(async () => (await conversations.boundingBox())!.width).toBeGreaterThan(resultsBefore + 60);
 
+  expect(await page.evaluate(projectId => window.cc.pluginApps.callRpc('salesforce', 'studio.suites.save', { projectId, agentPath: 'force-app/Support.agent', cases: [
+    { id: 'resize-case', name: 'Resize inspector', utterances: ['Where is my order?'], expect: { topics: ['Orders'] } }
+  ] }), projectId)).toMatchObject({ ok: true });
+  await openTool(studio, 'Preview');
+  const preview = viewPane(page, 'preview');
+  await preview.getByRole('tab', { name: 'Scenarios 1', exact: true }).click();
+  await preview.getByRole('button', { name: 'View details for Resize inspector' }).click();
+  const scenarioList = preview.getByRole('region', { name: 'Scenario list', exact: true });
+  const casesBefore = (await scenarioList.boundingBox())!.width;
+  await drag(preview.getByRole('separator', { name: 'Resize scenario list and details' }), 80);
+  await expect.poll(async () => (await scenarioList.boundingBox())!.width).toBeGreaterThan(casesBefore + 60);
   await expect(iframe).toHaveAttribute('data-resize-identity', 'original');
 });

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { isDxProject, scanFilesRecursive, resolveUnderRoot } from './dx-project.js';
-import { inspectAgentSource, scanAgentBundles } from './agent.js';
+import { isDxProject, scanFilesRecursiveSteps, resolveUnderRoot, runProjectScan, runProjectScanAsync } from './dx-project.js';
+import { inspectAgentSource, scanAgentBundlesSteps } from './agent.js';
 import { isAgentScriptFile } from './agent-script-model.js';
 import type { SalesforceDeps } from './types.js';
 import { AGENT_SOURCE_MAX, AGENT_SOURCE_MAX_LABEL } from './studio-contract.js';
@@ -83,15 +83,18 @@ export function confineAgentPath(projectRoot: string, candidate: string, deps: S
   return confined;
 }
 
-function collectAgentFiles(root: string, deps: SalesforceDeps, bundlesOnly = false, priority: readonly string[] = []): { files: AgentFileListItem[]; truncated: boolean } {
-  const scan = bundlesOnly ? { files: [], truncated: false } : scanFilesRecursive(root, deps, 4000, isAgentScriptFile);
+function* collectAgentFiles(root: string, deps: SalesforceDeps, bundlesOnly = false, priority: readonly string[] = []): Generator<void, { files: AgentFileListItem[]; truncated: boolean }> {
+  const scan = bundlesOnly ? { files: [], truncated: false } : yield* scanFilesRecursiveSteps(root, deps, 4000, isAgentScriptFile);
   // The open/created agent must remain discoverable even when the broad walk is incomplete.
   const pinned = priority.slice(0, 21).map(path => resolveUnderRoot(root, path, deps.realpath)).filter((path): path is string => Boolean(path && isAgentScriptFile(path) && deps.stat(path) === 'file'));
   // Editing includes drafts outside a DX package and both supported extensions.
   const bundles = bundlesOnly
-    ? (isDxProject(root, deps.exists) ? scanAgentBundles(root, deps) : [])
-    : [...new Set([...pinned, ...scan.files])]
-        .map((file) => inspectAgentSource(file, deps.readFile(file) ?? ''));
+    ? (isDxProject(root, deps.exists) ? yield* scanAgentBundlesSteps(root, deps) : [])
+    : [];
+  if (!bundlesOnly) for (const file of new Set([...pinned, ...scan.files])) {
+    yield;
+    bundles.push(inspectAgentSource(file, deps.readFile(file) ?? ''));
+  }
   return { truncated: scan.truncated, files: bundles
     .map((row) => ({
       apiName: basename(row.path).replace(/\.(agent|afscript)$/i, ''),
@@ -110,7 +113,15 @@ export function listAgentFiles(
 }
 
 export function scanAgentFiles(projectRoot: string, deps: SalesforceDeps, options?: AgentFilesRootOptions & { bundlesOnly?: boolean; priority?: readonly string[] }) {
-  return collectAgentFiles(resolveAgentRoot(projectRoot, deps, options), deps, options?.bundlesOnly, options?.priority);
+  return runProjectScan(scanAgentFilesSteps(projectRoot, deps, options));
+}
+
+export function* scanAgentFilesSteps(projectRoot: string, deps: SalesforceDeps, options?: AgentFilesRootOptions & { bundlesOnly?: boolean; priority?: readonly string[] }) {
+  return yield* collectAgentFiles(resolveAgentRoot(projectRoot, deps, options), deps, options?.bundlesOnly, options?.priority);
+}
+
+export function scanAgentFilesAsync(projectRoot: string, deps: SalesforceDeps, options?: AgentFilesRootOptions & { bundlesOnly?: boolean; priority?: readonly string[] }) {
+  return runProjectScanAsync(scanAgentFilesSteps(projectRoot, deps, options));
 }
 
 export function readAgentFile(

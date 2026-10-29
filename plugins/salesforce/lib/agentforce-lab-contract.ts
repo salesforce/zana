@@ -10,6 +10,7 @@ export interface LabTurn {
   planId?: string;
 }
 export interface LabScenario {
+  origin?: { id: string; name: string; revision: number };
   persona: string;
   goal: string;
   opening: string;
@@ -21,6 +22,13 @@ export interface LabVerdict {
   reason: string;
   evidence: string[];
 }
+export interface LabExecution {
+  phase: 'opening' | 'customer' | 'agent' | 'evaluating' | 'done' | 'stopped' | 'error';
+  completedTurns: number;
+  totalTurns: number;
+  verdict?: LabVerdict;
+  error?: string;
+}
 export interface LabSnapshot {
   contextVariables?: PreviewContextVariable[];
   id: string;
@@ -31,6 +39,18 @@ export interface LabSnapshot {
   turns: LabTurn[];
   closed: boolean;
   failed: boolean;
+  /** Reconnect metadata describes the original run, never the currently selected editor or org. */
+  busy?: boolean;
+  live?: boolean;
+  threadId?: string;
+  createdAt?: number;
+  updatedAt?: number;
+  /** User turns completed or in flight; present even when list({summaryOnly:true}) omits the transcript. */
+  turnCount?: number;
+  scenario?: LabScenario;
+  execution?: LabExecution;
+  /** Included only by get({ includeSource: true }); list and normal turn replies stay bounded. */
+  source?: string;
   /** Project-relative .agent file the run started from, when the caller named it. A label, never read. */
   path?: string;
 }
@@ -51,9 +71,15 @@ export function parseLabScenario(value: unknown): LabScenario {
   const row = labRecord(value);
   if (!Number.isInteger(row.maxTurns) || Number(row.maxTurns) < 1 || Number(row.maxTurns) > LAB_MAX_TURNS) throw new Error(`Choose 1–${LAB_MAX_TURNS} turns.`);
   return {
+    ...(row.origin !== undefined ? { origin: parseScenarioOrigin(row.origin) } : {}),
     persona: labText(row.persona, 'Persona', 2000), goal: labText(row.goal, 'Goal', 2000),
     opening: labText(row.opening, 'Opening message', 4000), criteria: labText(row.criteria, 'Success criteria', 4000), maxTurns: Number(row.maxTurns)
   };
+}
+export function parseScenarioOrigin(value: unknown): NonNullable<LabScenario['origin']> {
+  const row = labRecord(value);
+  if (!Number.isSafeInteger(row.revision) || Number(row.revision) < 1 || typeof row.id !== 'string' || !/^[A-Za-z0-9_.-]{1,80}$/.test(row.id)) throw Error('Choose a valid scenario revision.');
+  return { id: String(row.id), name: labText(row.name, 'Scenario name', 80), revision: Number(row.revision) };
 }
 export function parseLabVerdict(text: string): LabVerdict {
   const row = labRecord(JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, '').trim()));

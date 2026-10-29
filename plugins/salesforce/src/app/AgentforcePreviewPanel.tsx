@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from 'react';
 import { callPluginRpc, useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { PopoverPicklist } from '@zana-ai/zcc-ui/popover-picklist';
 import { parseAgentforcePanelRun } from './agentforce-panel-params.js';
@@ -26,6 +26,8 @@ import { Bot } from './components/icons.js';
 import { callOrgPreview, type PreviewResult } from './org-preview-session.js';
 import { ORG_PREVIEW_STYLES } from './org-preview-styles.js';
 import { PREVIEW_CONTEXT_STYLES, PreviewContextEditor, PreviewContextSetup, PreviewContextTabs, usePreviewContext } from './preview/PreviewContext.js';
+import { getStudioRun, readWorkspaceValue, runWorkspaceRef, studioRunKey, updateStudioRun, useRunWorkspaceState, type StudioRunOwner } from './studio/run-workspaces.js';
+import type { LabSnapshot } from '../../lib/agentforce-lab-contract.js';
 import type { PreviewContextVariable } from '../../lib/preview-context.js';
 
 const PLUGIN_ID = 'salesforce';
@@ -65,12 +67,6 @@ function AgentforcePreviewWorkspace(props: AgentforcePreviewPanelProps) {
   const pinned = props.pinnedPath || undefined;
   // Pinned: the panel's params must not rewrite the thread's shared target either.
   const { target, select } = useAgentforceTarget({ pluginId, projectId, threadId, tabId: props.tabId, surface: 'preview', params: pinned ? undefined : props.params });
-  const [mode, setMode] = useState<PreviewMode>('simulate');
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [utterance, setUtterance] = useState('');
-  const [turns, setTurns] = useState<PreviewTurn[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [org, setOrg] = useState<PublicOrgView | null>(null);
   const linkedRun = parseAgentforcePanelRun(props.params);
   const runKey = linkedRun ? `${linkedRun.runId}:${linkedRun.turn ?? ''}` : '';
@@ -80,17 +76,47 @@ function AgentforcePreviewWorkspace(props: AgentforcePreviewPanelProps) {
   const apiName = pinned ? undefined : target?.apiName;
   const targetPath = pinned ?? (target?.path || files.find(file => file.apiName === apiName)?.path || (apiName ? null : files[0]?.path ?? null));
   useEffect(() => { if (!pinned && targetPath && target?.path !== targetPath) select({ path: targetPath }); }, [pinned, target?.path, targetPath, select]);
+  const owner: StudioRunOwner = { pluginId, projectId, orgAlias: pinnedOrg ?? org?.alias, path: targetPath ?? apiName ?? undefined, view: 'org-preview' };
+  const workspaceKey = studioRunKey(owner);
+  const [mode, setMode] = useRunWorkspaceState<PreviewMode>(workspaceKey, 'mode', 'simulate');
+  const [sessionId, setSessionId] = useRunWorkspaceState<string | null>(workspaceKey, 'sessionId', null);
+  const [utterance, setUtterance] = useRunWorkspaceState(workspaceKey, 'utterance', '');
+  const [turns, setTurns] = useRunWorkspaceState<PreviewTurn[]>(workspaceKey, 'turns', []);
+  const [busy, setBusy] = useRunWorkspaceState(workspaceKey, 'busy', false);
+  const [error, setError] = useState<string | null>(null);
   const hasTarget = Boolean(targetPath || apiName);
   const context = usePreviewContext({ pluginId, projectId, path: targetPath ?? undefined, apiName: apiName ?? undefined, orgAlias: pinnedOrg ?? org?.alias, scope: `${projectId ?? ''}:${targetPath ?? apiName ?? ''}:${pinnedOrg ?? org?.alias ?? ''}` });
-  const lifecycle = useRef<{ generation: number; simulated?: boolean; owner?: Record<string, unknown>; release?: () => void }>({ generation: 0 });
+  const epoch = runWorkspaceRef(workspaceKey, 'epoch', 0);
+  const locked = runWorkspaceRef(workspaceKey, 'locked', false);
+  const lifecycle = runWorkspaceRef<{ simulated?: boolean; owner?: Record<string, unknown> }>(workspaceKey, 'lifecycle', {}, true);
   useEffect(() => {
-    setSessionId(null); setTurns([]); setBusy(false);
-    return () => {
-      lifecycle.current.generation++;
-      lifecycle.current.release?.();
-      lifecycle.current.release = undefined; lifecycle.current.owner = undefined;
+    let attached = true, pending = false;
+    const refresh = async () => {
+      let id = readWorkspaceValue<string | null>(workspaceKey, 'sessionId', null);
+      const remembered = getStudioRun(owner);
+      if (!id && remembered && ['active', 'running'].includes(remembered.status)) {
+        id = remembered.runId; setSessionId(id);
+        lifecycle.current = { simulated: remembered.engine !== 'live', owner: rpcProject(projectId, { threadId, orgAlias: owner.orgAlias, path: targetPath || undefined, apiName: targetPath ? undefined : apiName, live: remembered.engine === 'live', startedByUser: true }) };
+      }
+      if (!id || pending) return;
+      pending = true;
+      const requestedEpoch = epoch.current;
+      try {
+        const result = await callPluginRpc(pluginId, 'agentLab.get', { projectId, id, path: targetPath ?? undefined, orgAlias: owner.orgAlias }) as { ok?: boolean; data?: LabSnapshot; error?: string };
+        if (!attached || epoch.current !== requestedEpoch || readWorkspaceValue(workspaceKey, 'sessionId', null) !== id) return;
+        if (result?.ok && result.data) {
+          const snapshot = result.data;
+          setTurns(snapshot.turns.map((turn, index) => ({ id: `${id}:${index}`, role: turn.role, text: turn.text })));
+          setBusy(Boolean(snapshot.busy) || locked.current);
+          if (snapshot.closed || snapshot.failed) { setSessionId(null); setBusy(false); if (snapshot.failed) setError('This preview could not continue. Start a new conversation to retry.'); }
+          updateStudioRun(owner, { runId: id, engine: snapshot.live ? 'live' : 'simulate', status: snapshot.closed || snapshot.failed ? 'ended' : snapshot.busy ? 'running' : 'active', turn: snapshot.turns.filter(turn => turn.role === 'user').length });
+        } else if (!lifecycle.current.simulated) setBusy(false);
+        else { setSessionId(null); setBusy(false); setError(result.error || 'This preview is no longer available.'); updateStudioRun(owner, { runId: id, engine: 'simulate', status: 'expired', turn: 0 }); }
+      } catch { if (attached && epoch.current === requestedEpoch) setBusy(locked.current); } finally { pending = false; }
     };
-  }, [pluginId, projectId, threadId, pinnedOrg, org?.alias, targetPath, apiName]);
+    void refresh(); const timer = setInterval(() => void refresh(), 2000);
+    return () => { attached = false; clearInterval(timer); };
+  }, [workspaceKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refreshOrg = useCallback(async () => {
     const payload = await fetchConnectedOrg(pluginId, projectId, pinnedOrg);
@@ -116,9 +142,10 @@ function AgentforcePreviewWorkspace(props: AgentforcePreviewPanelProps) {
 
   const callPreview = useCallback(
     async (action: 'start' | 'send' | 'end', extra?: Record<string, unknown>): Promise<PreviewResult> => {
-      setBusy(true);
+      if (action === 'start' || action === 'end') epoch.current++;
+      const requestedEpoch = epoch.current;
+      locked.current = true; setBusy(true);
       setError(null);
-      const generation = lifecycle.current.generation;
       const simulated = action === 'start' ? mode === 'simulate' && Boolean(targetPath) : Boolean(lifecycle.current.simulated);
       const scopeArgs = rpcProject(projectId, {
         threadId, orgAlias: org?.alias ?? pinnedOrg,
@@ -126,19 +153,22 @@ function AgentforcePreviewWorkspace(props: AgentforcePreviewPanelProps) {
         // Every call here comes from a click on Start, Send or End: that click is the approval.
         live: mode === 'live', startedByUser: true
       });
+      const ownerForWorkspace: StudioRunOwner = { pluginId, projectId, orgAlias: pinnedOrg ?? org?.alias, path: targetPath ?? apiName ?? undefined, view: 'org-preview' };
       const owner = action === 'start' ? scopeArgs : lifecycle.current.owner ?? scopeArgs;
       const args = { ...owner, ...extra };
       try {
-        const result = await callOrgPreview(pluginId, action, args, simulated, () => generation === lifecycle.current.generation);
+        const result = await callOrgPreview(pluginId, action, args, simulated);
+        if (epoch.current !== requestedEpoch) return { ok: false };
         if (result?.ok && action === 'start' && result.data?.sessionId) {
           const sessionId = result.data.sessionId;
-          const release = () => { void callOrgPreview(pluginId, 'end', { ...owner, sessionId }, simulated).catch(() => undefined); };
-          // A tab can close while start is in flight. Release that late session too.
-          if (generation !== lifecycle.current.generation) release();
-          else { lifecycle.current.release = release; lifecycle.current.simulated = simulated; lifecycle.current.owner = owner; }
+          lifecycle.current = { simulated, owner };
+          updateStudioRun({ pluginId, projectId, orgAlias: pinnedOrg ?? org?.alias, path: targetPath ?? apiName ?? undefined, view: 'org-preview' }, { runId: sessionId, engine: simulated ? 'simulate' : 'live', status: 'active', turn: 0 });
         }
-        if (generation !== lifecycle.current.generation) return { ok: false };
-        if (result?.ok && action === 'end') { lifecycle.current.release = undefined; lifecycle.current.owner = undefined; }
+        if (result?.ok && action === 'end') {
+          lifecycle.current = {};
+          const remembered = getStudioRun(ownerForWorkspace);
+          if (remembered) updateStudioRun(ownerForWorkspace, { runId: remembered.runId, engine: remembered.engine, status: 'ended', turn: remembered.turn });
+        }
         if (!result?.ok) {
           setError(previewErrorMessage(result));
           return result;
@@ -151,10 +181,10 @@ function AgentforcePreviewWorkspace(props: AgentforcePreviewPanelProps) {
         return result;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        if (generation === lifecycle.current.generation) setError(message);
+        if (epoch.current === requestedEpoch) setError(message);
         return { ok: false, error: message };
       } finally {
-        if (generation === lifecycle.current.generation) setBusy(false);
+        if (epoch.current === requestedEpoch) { locked.current = false; setBusy(false); }
       }
     },
     [apiName, mode, pluginId, projectId, targetPath, threadId, org?.alias, pinnedOrg]
@@ -207,7 +237,7 @@ function AgentforcePreviewWorkspace(props: AgentforcePreviewPanelProps) {
       const response = result?.data?.response?.trim();
       if (result?.ok && response) {
         setTurns((current) =>
-          appendPreviewTurn(current, { id: `${Date.now()}-agent`, role: 'agent', text: response })
+          current.at(-1)?.role === 'agent' && current.at(-1)?.text === response ? current : appendPreviewTurn(current, { id: `${Date.now()}-agent`, role: 'agent', text: response })
         );
       }
     },
@@ -220,7 +250,7 @@ function AgentforcePreviewWorkspace(props: AgentforcePreviewPanelProps) {
   }, [apiName, targetPath]);
 
   return (
-    <div className="sf-as sf-org-preview" style={PANEL_ROOT} data-testid="salesforce-agentforce-preview">
+    <div className="sf-as sf-org-preview" style={PANEL_ROOT} data-testid="salesforce-agentforce-preview" data-run-id={sessionId ?? undefined}>
       <style>{AGENTFORCE_PANEL_STYLES}</style>
       <style>{AGENTFORCE_STUDIO_STYLES}</style>
       <style>{ORG_PREVIEW_STYLES}</style>

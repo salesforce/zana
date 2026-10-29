@@ -61,7 +61,10 @@ export interface CaseResult { outcome: CaseOutcome; runId: string; at: number; n
   /** Bounded recorded messages, independent of the expiring live preview session. */
   conversation?: ConversationMessage[];
   conversationTruncated?: boolean;
-  setupBlocked?: boolean; deterministic?: CaseOutcome;
+  setupBlocked?: boolean;
+  /** This attempt was explicitly cancelled, so it has no evaluation verdict. */
+  stopped?: boolean;
+  deterministic?: CaseOutcome;
   latencyMs?: number; assertions?: AssertionResult[]; sourceHash?: string; caseHash?: string;
   /** Complete preceding messages for a final-turn org replay. Omitted when evidence is incomplete or too large. */
   history?: ConversationMessage[];

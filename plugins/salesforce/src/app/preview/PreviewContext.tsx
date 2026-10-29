@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Braces, Ellipsis, Link2, MessageSquare, Plus, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
+import { Braces, Ellipsis, Link2, ListChecks, MessageSquare, Plus, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
 import { CONTEXT_TYPES, parsePreviewContext, type ContextType, type PreviewContextField, type PreviewContextVariable } from '../../../lib/preview-context.js';
 
 import { usePreviewContext, type PreviewContextState } from './usePreviewContext.js';
@@ -40,17 +40,18 @@ function ContextPresetPicker({ context }: { context: PreviewContextState }) {
   </div>;
 }
 
-export function PreviewContextTabs({ context }: { context: PreviewContextState }) {
+export function PreviewContextTabs({ context, scenarios, running = false }: { context: PreviewContextState; scenarios?: number; running?: boolean }) {
   const id = context.id;
+  const tabs = scenarios === undefined ? ['conversation', 'context'] as const : ['conversation', 'scenarios', 'context'] as const;
   return <div className="sf-context-tabs" role="tablist" aria-label="Preview panels">
-    {(['conversation', 'context'] as const).map((tab, index) => <button key={tab} type="button" role="tab" id={`${id}-${tab}`}
+    {tabs.map((tab, index) => <button key={tab} type="button" role="tab" id={`${id}-${tab}`}
       aria-selected={context.tab === tab} aria-controls={`${id}-${tab}-panel`} tabIndex={context.tab === tab ? 0 : -1}
       onClick={() => context.setTab(tab)} onKeyDown={event => {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-        event.preventDefault(); const next = event.key === 'Home' ? 0 : event.key === 'End' ? 1 : 1 - index;
-        context.setTab(next === 0 ? 'conversation' : 'context');
+        event.preventDefault(); const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length;
+        context.setTab(tabs[next]);
         (event.currentTarget.parentElement?.children[next] as HTMLElement)?.focus();
-      }}>{tab === 'conversation' ? <><MessageSquare size={14} aria-hidden="true" />Conversation</> : <><SlidersHorizontal size={14} aria-hidden="true" />Context <span>{context.count}</span></>}</button>)}
+      }}>{tab === 'conversation' ? <><MessageSquare size={14} aria-hidden="true" />Conversation{running && <span aria-label="Conversation running">●</span>}</> : tab === 'scenarios' ? <><ListChecks size={14} aria-hidden="true" />Scenarios <span>{scenarios}</span></> : <><SlidersHorizontal size={14} aria-hidden="true" />Context <span>{context.count}</span></>}</button>)}
   </div>;
 }
 

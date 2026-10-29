@@ -164,6 +164,19 @@ describe('ScenarioSuites.run', () => {
   ] }) };
   const input = { path: 'tests/Bot.scenario.json', source: 'config: x', engine: 'preview' as const, agentPath: 'Bot.agent' };
 
+  it('persists recorded conversations independently of preview sessions and bounds their size', () => {
+    const base = { caseId: 'c', outcome: 'pass' as const, runId: 'r', at: 1, notes: [] };
+    const turns = [{ role: 'user' as const, text: 'Find my order' }, { role: 'agent' as const, text: 'Your order number?' }];
+    expect(caseResult({ ...base, turns })).toMatchObject({ conversation: [{ role: 'user', message: 'Find my order' }, { role: 'agent', message: 'Your order number?' }] });
+    expect(caseResult({ ...base, turns }).conversationTruncated).toBeUndefined();
+    const oversized = caseResult({ ...base, turns: Array.from({ length: 20 }, () => ({ role: 'agent' as const, text: 'x'.repeat(5000) })) });
+    expect(oversized.conversationTruncated).toBe(true);
+    expect(oversized.conversation!.reduce((size, turn) => size + turn.message.length, 0)).toBe(EVIDENCE_LIMITS.conversationChars);
+    expect(oversized.conversation!.every(turn => turn.message.length <= EVIDENCE_LIMITS.message)).toBe(true);
+    const many = caseResult({ ...base, turns: Array.from({ length: 20 }, () => ({ role: 'user' as const, text: 'x' })) });
+    expect(many.conversation).toHaveLength(EVIDENCE_LIMITS.conversationTurns);
+    expect(many.conversationTruncated).toBe(true);
+  });
   it('runs cases sequentially, ends every session, traces for topic/action and persists bounded results', async () => {
     const s = store({ files });
     const order: string[] = [];
@@ -654,4 +667,16 @@ it('cancels the active session, saves completed cases and starts no remaining ca
   release(); await failed;
   expect(h.lab.start).toHaveBeenCalledOnce();
   expect((await h.suites.list())[0]?.progress).toBeUndefined();
+  expect((await h.suites.list())[0]?.lastResults?.refund).toMatchObject({ outcome: 'inconclusive', stopped: true });
+  expect((await h.suites.list())[0]?.lastResults?.second).toBeUndefined();
+});
+
+it('retains completed messages when a later turn is stopped, without assigning a verdict', async () => {
+  const controller = new AbortController();
+  const h = store();
+  h.lab.send.mockResolvedValueOnce({ turns: [{ role: 'user', text: 'First' }, { role: 'agent', text: 'Recorded reply' }] } as never);
+  h.lab.send.mockImplementationOnce((async () => { controller.abort(); throw new Error('Stopped during second turn'); }) as never);
+  await h.suites.save({ agentPath: 'A.agent', cases: [{ ...caseA, utterances: ['First', 'Second'] }] });
+  await expect(h.suites.run({ path: 'tests/A.scenario.json', source: 'source', engine: 'preview', signal: controller.signal })).rejects.toThrow();
+  expect((await h.suites.list())[0]?.lastResults?.refund).toMatchObject({ outcome: 'inconclusive', stopped: true, conversation: [{ role: 'user', message: 'First' }, { role: 'agent', message: 'Recorded reply' }] });
 });

@@ -139,7 +139,7 @@ export function useAgentScriptDoc(pluginId: string, projectId: string | null, pa
     let finishing = false;
     const live = () => session.alive;
     const setLease = (value: boolean) => { isLeased = value; setLeased(value); };
-    const call = (method: string, extra: Record<string, unknown> = {}) => rpc(pluginId, method, { path: activePath, ...extra });
+    const call = (method: string, extra: Record<string, unknown> = {}) => rpc(pluginId, method, { projectId, path: activePath, ...extra });
     const mutate = async (method: string, extra: Record<string, unknown> = {}) => {
       busy++;
       let carried = -1;
@@ -288,11 +288,11 @@ export function useAgentScriptDoc(pluginId: string, projectId: string | null, pa
       const unsent = pending; const cur = docRef.current;
       pending = null;
       if (timer) { clearTimeout(timer); timer = undefined; }
-      const closeDoc = () => void rpc(pluginId, AGENT_DOC_RPC.close, { path: activePath, clientId, leaseId: leaseId ?? '' });
+      const closeDoc = () => void call(AGENT_DOC_RPC.close, { clientId, leaseId: leaseId ?? '' });
       const flushFinal = (latest: AgentDocSnapshot | null) => {
         if (isLeased && unsent && latest && unsent.text !== latest.text) {
-          void rpc(pluginId, AGENT_DOC_RPC.update, {
-            path: activePath, clientId, label, leaseId, rev: latest.rev, text: unsent.text,
+          void call(AGENT_DOC_RPC.update, {
+            clientId, label, leaseId, rev: latest.rev, text: unsent.text,
             ...(unsent.diagnostics ? { diagnostics: unsent.diagnostics } : {}), ...(unsent.baseSha256 ? { baseSha256: unsent.baseSha256 } : {})
           }).then(closeDoc);
         } else closeDoc();

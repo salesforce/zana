@@ -2,7 +2,7 @@ import type { ContextPreset, ContextPresetList } from '../../lib/preview-context
 import { useSalesforceControl } from './useSalesforceControl.js';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Bot, Cloud, Code, FlaskConical, Files, MessageSquare, Network, PanelRight, Play, Search, Zap } from 'lucide-react';
+import { Bot, Cloud, Code, FlaskConical, Files, MessageSquare, Network, PanelRight, Pin, Play, Search, Zap } from 'lucide-react';
 import { callPluginRpc, useRealtime, useSettings, useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { type AgentScriptDialect, type PublicOrgView } from '../../lib/types.js';
 import { applyProposalText } from '../../lib/agent-doc-apply.js';
@@ -72,7 +72,7 @@ import { PreviewWorkbench, type PreviewCommand } from './preview/PreviewWorkbenc
 import { PreviewRunReplay } from './preview/PreviewRunReplay.js';
 import { OperationsPanel } from './panels/OperationsPanel.js';
 import { AskAgentButton } from './studio/AskAgentButton.js';
-import { isPanelTool, panelToolActionId, useStudioRegistration, useStudioToolSlots, type PanelTool } from './studio/studio-tool-bridge.js';
+import { isPanelTool, panelToolActionId, studioToolScope, useStudioRegistration, useStudioToolSlots, type PanelTool } from './studio/studio-tool-bridge.js';
 import { CommentsPane } from './studio/CommentsPane.js';
 import { useStudioView } from './studio/useStudioView.js';
 import { StudioShell } from './studio/StudioShell.js';
@@ -85,7 +85,11 @@ import { ProblemsPanel } from './studio/ProblemsPanel.js';
 import { ToolStrip, type StripItem } from './studio/ToolStrip.js';
 import type { QuickOpenItem } from './studio/QuickOpen.js';
 import { layoutForTier, useWidthTier } from './studio/useWidthTier.js';
-import { scriptTabId, useStudioLayout, viewTab, viewTabId, type CompactTool, type EditorTab, type RailTab, type ViewTarget } from './studio/studio-layout.js';
+import { scriptTabId, useStudioLayout, viewTab, viewTabId, VIEW_LABEL, type CompactTool, type EditorTab, type RailTab, type ViewTarget } from './studio/studio-layout.js';
+import { useToolPins } from './studio/useToolPins.js';
+import { useStudioRuns, type StudioRunDescriptor } from './studio/run-workspaces.js';
+import { StudioRunTray } from './studio/StudioRunTray.js';
+import { PinnedToolSource } from './studio/PinnedToolSource.js';
 import { AgentTabs } from './studio/AgentTabs.js';
 import { registerStudioIntentTarget, type StudioIntent } from './studio/studio-intents.js';
 import { applyProposalEdits } from './studio/proposal-edits.js';
@@ -301,11 +305,15 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   // Not the width: a narrow window's panel covers Studio (0 px, 'legacy'), and its tabs still need Studio.
   const [hostRefused, setHostRefused] = useState(false);
   const hostCapable = context.sidePanel === true && typeof navigate.openPanelTool === 'function';
-  const hostPanel = !hostRefused && hostCapable;
-  const toolScope = projectId ?? '';
-  useStudioRegistration(toolScope, hostPanel);
-  const hostSlots = useStudioToolSlots(hostPanel ? toolScope : null);
+  const studioId = studioWindow ? 'window' : undefined;
+  const toolScope = studioToolScope(projectId, studioId);
+  const panelParams = studioId ? { studioId } : undefined;
+  // Stay discoverable after a refused request: the user can still open a host tab directly.
+  useStudioRegistration(toolScope, hostCapable);
+  const hostSlots = useStudioToolSlots(hostCapable ? toolScope : null);
   const hostTool = hostSlots.find(slot => slot.attached)?.tool ?? null;
+  const hostPanel = hostCapable && (!hostRefused || hostTool !== null);
+  useEffect(() => { if (hostTool) setHostRefused(false); }, [hostTool]);
   // Opening the panel reopens the tool last shown there; the panel's New Tab lists the rest.
   const lastHostTool = useRef<PanelTool>('actions');
   if (hostTool) lastHostTool.current = hostTool;
@@ -318,7 +326,10 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   useEffect(() => { pruneThreadLayoutKeys(); }, []);
   // The Studio window keeps its own layout, seeded from the project tab's the first time.
   const studioLayout = useStudioLayout(studioWindow ? `${draftScope}|window` : draftScope, draftScope);
-  const { state: studio, patch, patchWorkspace, openTab, selectTab, closeTab, closeTabs, openAgent, selectAgent, closeAgent } = studioLayout;
+  const { state: studio, patch, patchWorkspace, openTab, selectTab, closeTab, closeTabs, openAgent, selectAgent, closeAgent, openPanelView, dockViews } = studioLayout;
+  const { pins: toolPins, pin: pinTool, forget: forgetPins } = useToolPins(studioWindow ? `${draftScope}|window` : draftScope);
+  const panelAgent = (target: ViewTarget) => studio.agents.some(agent => agent.path === toolPins[target]) ? toolPins[target]! : studio.activeAgent;
+  useEffect(() => { if (hostPanel) dockViews(); }, [dockViews, hostPanel]);
   const studioRef = useRef(studio);
   studioRef.current = studio;
   /** Brings the open agent's Script tab to the front, where proposals are reviewed. */
@@ -344,11 +355,14 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const [fixBusy, setFixBusy] = useState(false);
   const [previewEngine, setPreviewEngine] = useState<StudioEngine>('simulate');
   const [previewCommand, setPreviewCommand] = useState<PreviewCommand | null>(null);
+  const [roleplayRunFocus, setRoleplayRunFocus] = useState<{ path: string; seq: number } | null>(null);
   // Monotonic, so a command issued after one was handled and dropped never reuses its seq.
   const previewSeq = useRef(0);
   const previewCommandHandled = useCallback((seq: number) => setPreviewCommand(current => current?.seq === seq ? null : current), []);
   // Each agent's running preview, so its tab can show the mark while another agent is in front.
   const [runs, setRuns] = useState<Record<string, { runId: string; engine: StudioEngine; turn: number } | null>>({});
+  const runSessions = useStudioRuns(pluginId, projectId);
+  const [runOrgScopes, setRunOrgScopes] = useState<Record<string, string>>({});
   const runChangers = useRef(new Map<string, (run: { runId: string; engine: StudioEngine; turn: number } | null) => void>());
   const runChangeFor = (path: string) => {
     let change = runChangers.current.get(path);
@@ -357,6 +371,12 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   };
   // The source of every agent shown this session, so a view of another agent keeps its content while it is not in front.
   const sourceCache = useRef<Record<string, string>>({});
+  const [, refreshToolSources] = useState(0);
+  const receivePinnedSource = useCallback((path: string, text: string) => {
+    if (sourceCache.current[path] === text) return;
+    sourceCache.current[path] = text;
+    refreshToolSources(value => value + 1);
+  }, []);
   // The path the editor frame currently holds (set once its file is read), so a snapshot lands on the right agent.
   const loadedPath = useRef<string | null>(null);
   /** A stored run a card asked to see: shown read-only over that agent's Preview until closed. */
@@ -446,12 +466,26 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     ? compactTool
     : tools.state.open && tools.state.active !== 'new' && !hiddenTools.includes(tools.state.active) ? tools.state.active : 'code');
 
-  // Graph, Preview, Tests and Org preview open as one view tab of the open agent (one per kind).
+  // The host owns tool chrome; document tabs stay independent of its selected tool.
   const openView = useCallback((target: ViewTarget) => {
     if (!studioRef.current.activeAgent) { setError(`Open an agent to see its ${target === 'tests' ? 'tests' : target === 'org-preview' ? 'org preview' : target}.`); return; }
+    if (hostCapable) {
+      const tool = TOOL_FOR_VIEW[target] as PanelTool;
+      if (navigateRef.current.openPanelTool?.({ actionId: panelToolActionId(tool), ...(studioId ? { params: { studioId } } : {}) })) {
+        requestedHostTool.current = tool;
+        setHostRefused(false);
+        // Explicit editor requests target its agent. Selecting an existing host tab keeps its pin.
+        pinTool(target, null);
+        openPanelView(target);
+        return;
+      }
+      if (hostSlots.length) { setError('Could not open the tool in the side panel. Try opening it from the panel’s New Tab menu.'); return; }
+      setHostRefused(true);
+    }
+    pinTool(target, null);
     openTab(viewTab(target));
     if (compact) patch({ tool: 'code' });
-  }, [compact, openTab, patch]);
+  }, [compact, hostCapable, hostSlots.length, openPanelView, openTab, patch, studioId, pinTool]);
   const openTool = useCallback((id: AgentScriptTool) => {
     const view = VIEW_FOR_TOOL[id];
     if (view) { openView(view); return; }
@@ -463,17 +497,25 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     // Beside a host side panel, browsing org agents picks what to edit, so it opens as an editor tab.
     if (id === 'agents' && hostCapable) { openTab(ORG_AGENTS_TAB); return; }
     if (hostCapable && isPanelTool(id)) {
-      if (navigateRef.current.openPanelTool?.({ actionId: panelToolActionId(id) })) {
+      if (navigateRef.current.openPanelTool?.({ actionId: panelToolActionId(id), ...(panelParams ? { params: panelParams } : {}) })) {
         if (id !== hostTool) requestedHostTool.current = id;
         setHostRefused(false);
         patch({ rail: id });
         return;
       }
+      if (hostSlots.length) { setError('Could not open the tool in the side panel. Try opening it from the panel’s New Tab menu.'); return; }
       setHostRefused(true);
     }
     tools.openTool(id);
     patch({ tool: id });
-  }, [hostCapable, hostTool, layout, openTab, openView, patch, tools.openTool]);
+  }, [hostCapable, hostSlots.length, hostTool, layout, openTab, openView, patch, tools.openTool, studioId]);
+  const restoredHostView = useRef(false);
+  useEffect(() => {
+    if (!hostPanel || restoredHostView.current) return;
+    restoredHostView.current = true;
+    // The parent host installs its request listener in an effect too. Let it finish first.
+    if (viewTool) queueMicrotask(() => { if (alive.current) openTool(viewTool); });
+  }, [hostPanel, openTool, viewTool]);
   const panelShown = hostPanel ? hostTool !== null : tools.state.open;
   // A host panel showing another tab (a thread) is still open. The host panel has its own toggle, so Studio shows one only without it.
   const panelVisible = hostPanel && typeof context.sidePanelOpen === 'boolean' ? context.sidePanelOpen : panelShown;
@@ -482,9 +524,9 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     else tools.toggle();
   }, [hostPanel, openTool, tools.toggle]);
   const closeTool = useCallback((id: AgentScriptTool) => {
+    if (hostPanel && isPanelTool(id)) throw Error(HOST_PANEL_CLOSE);
     const view = VIEW_FOR_TOOL[id];
     if (view) { closeTab(viewTabId(view)); return; }
-    if (hostPanel && isPanelTool(id)) throw Error(HOST_PANEL_CLOSE);
     tools.close(id);
     if (studio.tool === id) patch({ tool: 'code' });
   }, [closeTab, hostPanel, patch, studio.tool, tools.close]);
@@ -640,6 +682,29 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       if (pendingInspect.current?.path !== path) pendingInspect.current = null;
       const generation = ++fileEpoch.current;
       setError(null);
+      let result: { ok?: boolean; error?: string; file?: { path: string; content: string; sha256: string } } | undefined;
+      if (path) {
+        try {
+          result = await callPluginRpc(pluginId, 'agentFiles.read', rpcArgs({ path })) as typeof result;
+        } catch (err) {
+          if (alive.current && generation === fileEpoch.current && isCurrent()) {
+            setError(err instanceof Error ? err.message : String(err));
+            if (restore && activePathRef.current) selectAgent(activePathRef.current);
+          }
+          return false;
+        }
+        if (!alive.current || generation !== fileEpoch.current || !isCurrent()) return false;
+        if (!result?.ok || !result.file) {
+          setError(result?.error || 'Could not read Agentforce file.');
+          if (restore) closeAgent(path); // a tab whose file is gone cannot be restored
+          return false;
+        }
+      }
+      const file = result?.file;
+      // A tool can open before the editor sends its first snapshot. Keep its agent
+      // mounted, but wait for that snapshot before enabling runs against the draft.
+      if (file) sourceCache.current[file.path] ??= '';
+      // Keep the current document and its tools intact until the new file is available.
       setActionTabs([]);
       setSelectedActionId(null);
       setActions([]);
@@ -653,7 +718,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       setComments([]);
       settleProposals('The file changed before the proposal was resolved.');
       // No file: the editor stays empty behind the "open an agent" state.
-      if (!path) {
+      if (!file) {
         activeDraft.current = '';
         setActivePath(null);
         setSha256(undefined);
@@ -668,40 +733,29 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
         });
         return true;
       }
-      const result = (await callPluginRpc(pluginId, 'agentFiles.read', rpcArgs({ path }))) as {
-        ok?: boolean;
-        error?: string;
-        file?: { path: string; content: string; sha256: string };
-      };
-      if (generation !== fileEpoch.current || !isCurrent()) return false;
-      if (!result?.ok || !result.file) {
-        setError(result?.error || 'Could not read Agentforce file.');
-        if (restore) closeAgent(path); // a tab whose file is gone cannot be restored
-        return false;
-      }
-      const identity = `file:${result.file.path}`;
+      const identity = `file:${file.path}`;
       activeDraft.current = agentDraftKey(draftScope, identity);
       rememberAgentSelection(selectionScope, identity);
-      selectAgentTarget({ path: result.file.path });
-      setActivePath(result.file.path);
-      setSha256(result.file.sha256);
+      selectAgentTarget({ path: file.path });
+      setActivePath(file.path);
+      setSha256(file.sha256);
       setDirty(false);
-      loadedPath.current = result.file.path;
-      openAgent(result.file.path, basename(result.file.path));
-      if (!restore) selectTab(scriptTabId(result.file.path));
+      loadedPath.current = file.path;
+      openAgent(file.path, basename(file.path));
+      if (!restore) selectTab(scriptTabId(file.path));
       if (compact) patch({ tool: 'code' });
       send.setFile({
         draftKey: activeDraft.current,
-        path: result.file.path,
-        content: result.file.content,
+        path: file.path,
+        content: file.content,
         dialect,
         readOnly: false,
-        sha256: result.file.sha256
+        sha256: file.sha256
       });
       setFileLoads(count => count + 1);
       return true;
     },
-    [closeAgent, compact, dialect, openAgent, patch, pluginId, rpcArgs, draftScope, selectionScope, selectTab, send, settleProposals, selectAgentTarget]
+    [closeAgent, compact, dialect, openAgent, patch, pluginId, rpcArgs, draftScope, selectionScope, selectTab, send, settleProposals, selectAgentTarget, selectAgent]
   );
 
   // A retrieval opens its file seconds after the click: read the live editor, not the click-time render.
@@ -851,7 +905,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   useEffect(() => {
     const pending = pendingFocus.current;
     if (!pending || !playgroundReady) return;
-    if (pending.path && pending.path !== activePath) return;
+    if (pending.path && (pending.path !== activePath || pending.path !== loadedPath.current)) return;
     pendingFocus.current = null;
     if (pending.apiName) {
       const kind = pending.readOnly ? 'apex' : 'flow';
@@ -883,8 +937,10 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       const id = path ? studioRef.current.workspaces[path]?.threadId : undefined;
       return Boolean(id && path && host.openPanelAgent?.({ threadId: id, title: basename(path) }));
     }
-    return Boolean(host.openPanelTool?.({ actionId: panelToolActionId(tab) }));
-  }, []);
+    const opened = Boolean(host.openPanelTool?.({ actionId: panelToolActionId(tab), ...(studioId ? { params: { studioId } } : {}) }));
+    if (opened) requestedHostTool.current = tab;
+    return opened;
+  }, [studioId]);
   // Switching agents brings back that agent's rail, but only into a side panel that is already open.
   const railAgent = useRef(studio.activeAgent);
   useEffect(() => {
@@ -892,8 +948,28 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     railAgent.current = studio.activeAgent;
     if (context.sidePanelOpen !== true || !studio.activeAgent) return;
     const rail = studioRef.current.workspaces[studio.activeAgent]?.rail;
+    // A pinned tool remains visible while the editor changes agents.
+    const target = hostTool ? VIEW_FOR_TOOL[hostTool] : undefined;
+    if (target && studio.agents.some(agent => agent.path === toolPins[target])) return;
     if (rail) openRail(rail, studio.activeAgent);
-  }, [context.sidePanelOpen, openRail, studio.activeAgent]);
+  }, [context.sidePanelOpen, openRail, studio.activeAgent, hostTool, toolPins]);
+  // Host New Tab and direct tab selection use the same per-agent lifetime as Studio buttons.
+  const recordedHostTool = useRef<PanelTool | null>(null);
+  useEffect(() => {
+    if (!hostTool) { recordedHostTool.current = null; return; }
+    const target = VIEW_FOR_TOOL[hostTool];
+    const owner = target ? panelAgent(target) : studio.activeAgent;
+    if (!hostPanel || !owner) return;
+    const ws = studio.workspaces[owner];
+    const selected = recordedHostTool.current !== hostTool;
+    recordedHostTool.current = hostTool;
+    if ((target && !ws?.panelViews?.includes(target)) || (selected && ws?.rail !== hostTool)) {
+      patchWorkspace(owner, {
+        ...(target ? { panelViews: [...new Set([...(ws?.panelViews ?? []), target])] } : {}),
+        ...(selected ? { rail: hostTool } : {}),
+      });
+    }
+  }, [hostPanel, hostTool, patchWorkspace, studio.activeAgent, studio.workspaces, toolPins]);
 
   // The last Compile answer, shown only for the file it was run on; a failed compile joins the problems.
   const [compileState, setCompileState] = useState<CompileState | null>(null);
@@ -1410,7 +1486,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   </> : undefined;
 
   const orgAgentsPanel = (visible: boolean) => <OrgAgentsPanel pluginId={pluginId} projectId={projectId} visible={visible} editorReady={playgroundReady} focus={agentsFocus} onFocusHandled={agentsFocusHandled} onNew={() => setNewAgentOpen(true)} localFiles={files.filter(file => !file.path.startsWith('.zcc/'))} onLocalOpen={path => void openFile(path)} onOpen={openRetrieved} />;
-  const showTargetTab = activeEditorTab !== null && activeEditorTab.kind !== 'agent';
+  const showTargetTab = activeEditorTab !== null && activeEditorTab.kind !== 'agent' && !(hostPanel && activeEditorTab.kind === 'view');
   const openAgentTab = (path: string) => { if (path === activePath) selectTab(`agent:${path}`); else void openFile(path); };
   // The Org agents tab stays mounted while open, so its search and retrieve status survive opening an agent.
   const orgTabActive = activeEditorTab?.kind === 'org';
@@ -1463,19 +1539,50 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   // An agent's Script tab goes with the agent (close the agent tab), so "close others / all" never takes it.
   const closeEditorTabs = (ids: string[], focus?: string) => closeTabs(ids.filter(id => studio.tabs.find(tab => tab.id === id)?.kind !== 'agent'), focus);
   const tabs = (
-    <EditorTabs tabs={studio.tabs} active={studio.activeTab} dirtyId={dirty && activePath ? scriptTabId(activePath) : null} problems={problemsCount}
+    <EditorTabs tabs={hostPanel ? studio.tabs.filter(tab => tab.kind !== 'view') : studio.tabs} active={studio.activeTab} dirtyId={dirty && activePath ? scriptTabId(activePath) : null} problems={problemsCount}
       problemsId={activePath ? scriptTabId(activePath) : null} trailing={workspaceActions} onSelect={selectTab} onClose={closeTab} onCloseMany={closeEditorTabs} />
   );
   const dirtyPaths = useMemo(() => new Set(studio.agents.filter(agent => agent.path === activePath ? dirty : Boolean(readAgentDraft(agentDraftKey(draftScope, `file:${agent.path}`)))).map(agent => agent.path)), [activePath, dirty, draftScope, studio.agents]);
-  const runningPaths = useMemo(() => new Set(Object.keys(runs).filter(path => runs[path] && studio.agents.some(agent => agent.path === path))), [runs, studio.agents]);
+  const runningPaths = useMemo(() => new Set([
+    ...Object.keys(runs).filter(path => runs[path]),
+    ...runSessions.filter(run => run.status === 'running' || run.status === 'active').flatMap(run => run.path ? [run.path] : []),
+  ]), [runs, runSessions]);
   const closeAgentTab = (path: string) => {
     closeAgent(path);
+    forgetPins(path);
+    setRunOrgScopes(current => Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${path}\n`))));
     delete sourceCache.current[path];
     runChangers.current.delete(path);
     setRuns(current => { if (!(path in current)) return current; const { [path]: _gone, ...rest } = current; return rest; });
   };
+  const returnToRun = async (run: StudioRunDescriptor) => {
+    if (!run.path) return;
+    const opened = await openFile(run.path);
+    if (!opened) return;
+    const target = run.view === 'roleplay' ? 'tests' : run.view === 'org-preview' ? 'org-preview' : 'preview';
+    const restore = () => {
+      if (run.orgAlias) setRunOrgScopes(current => ({ ...current, [`${run.path}\n${target}`]: run.orgAlias! }));
+      // openFile queued the owner's workspace; this updater follows it in the same state queue.
+      openPanelView(target);
+      pinTool(target, null);
+      if (run.view === 'roleplay') setRoleplayRunFocus(current => ({ path: run.path!, seq: (current?.seq ?? 0) + 1 }));
+    };
+    if (hostCapable) {
+      const tool = TOOL_FOR_VIEW[target] as PanelTool;
+      if (navigateRef.current.openPanelTool?.({ actionId: panelToolActionId(tool), ...(panelParams ? { params: panelParams } : {}) })) {
+        requestedHostTool.current = tool;
+        setHostRefused(false);
+        restore();
+        return;
+      }
+      if (hostSlots.length) { setError('Could not open the run in the side panel. Try opening its tool from the panel’s New Tab menu.'); return; }
+      setHostRefused(true);
+    }
+    restore();
+    openTab(viewTab(target));
+  };
   const agentTabs = <AgentTabs agents={studio.agents} active={studio.activeAgent} dirtyPaths={dirtyPaths} runningPaths={runningPaths} projectId={projectId ?? ''}
-    orgPill={orgPicker || undefined} onSelect={selectAgent} onClose={closeAgentTab} onOpenAgent={() => setQuickOpen(true)} onOpenView={openView} />;
+    orgPill={<><StudioRunTray runs={runSessions} onOpen={run => { void returnToRun(run); }} />{orgPicker || undefined}</>} onSelect={selectAgent} onClose={closeAgentTab} onOpenAgent={() => setQuickOpen(true)} onOpenView={hostPanel ? undefined : openView} />;
 
   const bottomActive: BottomTab = compact ? 'problems' : studio.bottomTab;
   const bottom = layout !== 'legacy' && (wide || compactTool === 'code') ? (
@@ -1514,18 +1621,30 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       collapsed={studio.collapsedSections} onToggleSection={toggleSection} onHide={wide ? () => patch({ explorerOpen: false }) : undefined} />
   );
 
-  // One mounted pane per open view tab of every agent shown this session; only the agent and tab in front are visible.
+  // Keep agent-owned tools mounted while another tool, agent or Assistant is in front.
   const revealIn = (path: string, line: number) => { if (path === activePathRef.current) revealLine(line); else void openFile(path).then(opened => { if (opened) revealLine(line); }); };
-  const viewPanes = studio.agents.flatMap(agent => {
-    const open = studio.workspaces[agent.path]?.tabs.filter(tab => tab.kind === 'view') ?? [];
+  const showGraphFor = (path: string, caseId: string) => {
+    const show = () => { setGraphFocus(current => ({ node: null, seq: current.seq + 1, caseId })); openTool('graph'); };
+    if (path === activePathRef.current) show();
+    else void openFile(path).then(opened => { if (opened) show(); });
+  };
+  const renderViews = (panelTarget?: ViewTarget, panelVisible = false) => studio.agents.flatMap(agent => {
+    const workspace = studio.workspaces[agent.path];
+    const open = panelTarget
+      ? workspace?.panelViews?.includes(panelTarget) ? [viewTab(panelTarget)] : []
+      : workspace?.tabs.filter(tab => tab.kind === 'view') ?? [];
     const live = agent.path === activePath;
     const cached = sourceCache.current[agent.path];
-    if (!live && cached === undefined) return []; // never loaded this session: nothing to show yet
-    const paneSource = cached ?? source;
+    if (!live && cached === undefined && !(panelTarget && toolPins[panelTarget] === agent.path)) return [];
+    // A pinned run can reconnect before its editor loads. Never pass another agent's source.
+    const paneSource = cached ?? (live ? source : '');
     const label = basename(agent.path);
     return open.map(tab => {
       const target = tab.target as ViewTarget;
-      const shown = agent.path === studio.activeAgent && studio.activeTab === tab.id;
+      const runView = target === 'tests' ? 'roleplay' : target === 'org-preview' ? 'org-preview' : 'preview';
+      const retainedRun = target === 'graph' ? undefined : runSessions.find(run => run.path === agent.path && run.view === runView && (run.status === 'active' || run.status === 'running'));
+      const paneOrg = runOrgScopes[`${agent.path}\n${target}`] ?? retainedRun?.orgAlias ?? org?.alias;
+      const shown = agent.path === (panelTarget ? panelAgent(panelTarget) : studio.activeAgent) && (panelTarget ? panelVisible : studio.activeTab === tab.id);
       const key = `${agent.path}\n${target}`;
       const body = target === 'graph'
         ? <AgentScriptGraphPanel source={paneSource} visible={shown} compact={compact} focusNode={live ? graphFocus.node : null} focusSeq={live ? graphFocus.seq : 0} focusCase={live ? graphFocus.caseId : undefined}
@@ -1538,25 +1657,39 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
           {/* Stays mounted behind a replay: a live session is not ended by looking at an old run. */}
           <div style={{ display: previewRun?.path === agent.path ? 'none' : 'contents' }}>
             <PreviewWorkbench pluginId={pluginId} projectId={projectId} source={paneSource} fileLabel={label}
-              engine={previewEngine} onEngineChange={setPreviewEngine} path={agent.path} orgAlias={org?.alias} threadId={threadId}
+              engine={previewEngine} onEngineChange={setPreviewEngine} path={agent.path} orgAlias={paneOrg} threadId={threadId}
               onRunChange={runChangeFor(agent.path)} command={live ? previewCommand : null} onCommandHandled={previewCommandHandled} dirty={live && dirty}
               onRevealSource={revealIn} />
           </div>
         </>
         : target === 'tests'
         ? <TestsPane pluginId={pluginId} projectId={projectId} threadId={threadId} path={agent.path} source={paneSource} visible={shown} dirty={live && dirty}
+          roleplayFocus={roleplayRunFocus?.path === agent.path ? roleplayRunFocus.seq : undefined}
           proposalSource={live ? proposalSource : null} onAskAgent={prompt => composeFor(prompt, agent.path)} simulationsFocus={live ? simulationsFocus : null} onSimulationsFocusHandled={simulationsFocusHandled}
-          onShowPath={caseId => { setGraphFocus(current => ({ node: null, seq: current.seq + 1, caseId })); openTool('graph'); }}
-          roleplay={<AgentforceLabPanel pluginId={pluginId} projectId={projectId} threadId={threadId} orgAlias={org?.alias} source={paneSource} mode="test" fileLabel={label} agentPath={agent.path} />} />
-        : <AgentforcePreviewPanel pluginId={pluginId} projectId={projectId} threadId={threadId} />;
-      return <div key={key} className="sf-etab-view" data-testid={`studio-view-${target}`} data-agent={agent.path} style={shown ? undefined : { display: 'none' }}>{body}</div>;
+          onShowPath={caseId => showGraphFor(agent.path, caseId)}
+          roleplay={scenarioLibrary => <AgentforceLabPanel scenarioLibrary={scenarioLibrary} pluginId={pluginId} projectId={projectId} threadId={threadId} orgAlias={paneOrg} source={paneSource} mode="test" fileLabel={label} agentPath={agent.path} />} />
+        : <AgentforcePreviewPanel pluginId={pluginId} projectId={projectId} threadId={threadId} pinnedPath={agent.path} orgAlias={paneOrg} />;
+      return <div key={key} className="sf-etab-view" data-testid={`studio-view-${target}`} data-agent={agent.path} style={shown ? undefined : { display: 'none' }}>
+        {panelTarget && <div className={`sf-studio-tool-context${toolPins[panelTarget] === agent.path ? ' is-pinned' : ''}`}>
+          <div className="sf-studio-tool-owner" title={agent.path}><strong>{label}</strong><span>{toolPins[panelTarget] === agent.path ? 'Pinned' : 'Follows selected agent'}{paneOrg ? ` · ${paneOrg}` : ''}</span></div>
+          <button type="button" className="sf-studio-tool-pin" aria-pressed={toolPins[panelTarget] === agent.path}
+            aria-label={toolPins[panelTarget] === agent.path ? 'Follow selected agent' : `Pin ${VIEW_LABEL[panelTarget]} to ${label}`}
+            title={toolPins[panelTarget] === agent.path ? 'Follow the agent selected in the editor' : `Keep ${VIEW_LABEL[panelTarget]} on ${label} while editing another agent`}
+            onClick={() => pinTool(panelTarget, toolPins[panelTarget] === agent.path ? null : agent.path)}>
+            <Pin size={14} aria-hidden="true" />{toolPins[panelTarget] === agent.path ? 'Follow agent' : 'Pin'}
+          </button>
+        </div>}
+        {panelTarget && toolPins[panelTarget] === agent.path && !live && <PinnedToolSource pluginId={pluginId} projectId={projectId} path={agent.path}
+          ready={cached !== undefined} onSource={receivePinnedSource} onOpen={path => { void openFile(path); }} />}
+        {cached === undefined && !live && target !== 'preview' && target !== 'org-preview' ? null : body}
+      </div>;
     });
   });
-  const top = compact ? (
+  const top = compact && !hostPanel ? (
     <>
       <ToolStrip orientation="horizontal" label="Studio tools" iconsOnly={tier === 0} active={hostPanel ? currentTool : compactTool}
         items={COMPACT_TOOLS.map(id => stripItem(id, id === 'code' ? problemsCount : undefined))} onSelect={id => {
-          if (id !== 'code' && VIEW_FOR_TOOL[id as AgentScriptTool]) openTool(id as AgentScriptTool); // a view opens as a tab of the editor
+          if (id !== 'code' && VIEW_FOR_TOOL[id as AgentScriptTool]) openTool(id as AgentScriptTool);
           else if (hostPanel) { if (id !== 'code') openTool(id as AgentScriptTool); } else patch({ tool: id as CompactTool });
         }} />
     </>
@@ -1571,6 +1704,8 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const splitOpen = hostPanel ? false : swapCompact ? compactTool !== 'code' : tools.state.open;
 
   const renderTool = (id: AgentScriptTool, visible: boolean): ReactNode => {
+    const target = VIEW_FOR_TOOL[id];
+    if (target) return studio.activeAgent ? renderViews(target, visible) : <EmptyState compact art="code" title="Open an agent">Choose an agent to use this tool beside its script.</EmptyState>;
     if (id === 'agents') return orgAgentsPanel(visible);
     if (id === 'files') return layout === 'legacy' ? explorerNode : null;
     if (id === 'comments') return <CommentsPane pluginId={pluginId} projectId={projectId} path={activePath} comments={comments}
@@ -1579,7 +1714,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       onEdit={updateComment}
       onDelete={deleteComment}
       onAddressWithAgent={() => { void askAgent('address-comments').catch(err => { if (alive.current) setError(err instanceof Error ? err.message : String(err)); }); }} />;
-    if (id !== 'actions') return null; // Graph, Preview, Tests and Org preview are editor view tabs
+    if (id !== 'actions') return null;
     return <div className="af-action-workspace">
       {actionTabs.length > 0 && <div className="af-related-tabs" aria-label="Open agent files">
         <div className={`af-related-tab${!selectedActionId ? ' is-active' : ''}`}><button aria-pressed={!selectedActionId} onClick={() => setSelectedActionId(null)}>All actions</button></div>
@@ -1658,7 +1793,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
           {targetTabView}
           {orgAgentsView}
           {orgTestsView}
-          {viewPanes}
+          {!hostPanel && renderViews()}
           {playgroundFailed ? (
           <div data-testid="salesforce-agent-script-playground-error"><SalesforceState kind="error" art="code" title="Editor unavailable">{PLAYGROUND_LOAD_ERROR}</SalesforceState></div>
         ) : (
@@ -1687,8 +1822,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
         {bottom}
         </div>
       </StudioShell>
-      {/* Keyed by tab: switching tabs keeps a tool's state, a reopened tab starts it fresh. */}
-      {hostSlots.map(slot => createPortal(<div key={slot.tabId ?? ''} className="af-tool-content">{renderTool(slot.tool, slot.attached)}</div>, slot.node, slot.tool))}
+      {hostSlots.map(slot => createPortal(<div className="af-tool-content">{renderTool(slot.tool, slot.attached)}</div>, slot.node, slot.tool))}
     </div>
   );
 }

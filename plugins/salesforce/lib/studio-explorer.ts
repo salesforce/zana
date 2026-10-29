@@ -6,8 +6,9 @@
  * project context (never from renderer input).
  */
 import { join } from 'node:path';
-import { scanAgentFiles, readAgentFile, type AgentFileListItem } from './agent-files.js';
-import { indexProjectActions, projectActionCandidates, type ProjectActionIndex } from './action-source.js';
+import { scanAgentFilesSteps, readAgentFile, type AgentFileListItem } from './agent-files.js';
+import { indexProjectActionsSteps, projectActionCandidates, type ProjectActionIndex } from './action-source.js';
+import { runProjectScan, runProjectScanAsync } from './dx-project.js';
 import { parseActionTarget } from './agent-action-model.js';
 import { OrgAgentService } from './org-agent-service.js';
 import { lightningTypeBundlePath, readLightningType, readLwcBundle, referencedLightningTypes } from './lightning-types.js';
@@ -58,9 +59,17 @@ function scenarioNodes(root: string, deps: SalesforceDeps): { nodes: ExplorerNod
  * listed files among them are scanned first, then the project's agents, then `.zcc/` copies, so the agent and scan caps never leave them without references.
  */
 export function buildLocalExplorer(root: string, deps: SalesforceDeps, focus = '', expand: readonly string[] = []): ExplorerResult {
+  return runProjectScan(buildLocalExplorerSteps(root, deps, focus, expand));
+}
+
+export function buildLocalExplorerAsync(root: string, deps: SalesforceDeps, focus = '', expand: readonly string[] = []): Promise<ExplorerResult> {
+  return runProjectScanAsync(buildLocalExplorerSteps(root, deps, focus, expand));
+}
+
+function* buildLocalExplorerSteps(root: string, deps: SalesforceDeps, focus: string, expand: readonly string[]): Generator<void, ExplorerResult> {
   let truncated = false;
   let agents: AgentFileListItem[];
-  try { const scan = scanAgentFiles(root, deps, { allowNonDx: true, priority: [focus, ...expand] }); agents = scan.files; truncated = scan.truncated; } catch { return { nodes: [], truncated: false }; }
+  try { const scan = yield* scanAgentFilesSteps(root, deps, { allowNonDx: true, priority: [focus, ...expand] }); agents = scan.files; truncated = scan.truncated; } catch { return { nodes: [], truncated: false }; }
   const priority = [focus, ...expand.slice(0, EXPLORER_LIMITS.expand)].filter(Boolean);
   const rank = (path: string) => { const at = priority.indexOf(path); return at >= 0 ? at : priority.length + (path.startsWith(HISTORY_PREFIX) ? 1 : 0); };
   agents = agents.map((agent, order) => ({ agent, order, rank: rank(agent.path) })).sort((a, b) => a.rank - b.rank || a.order - b.order).map(row => row.agent);
@@ -69,6 +78,7 @@ export function buildLocalExplorer(root: string, deps: SalesforceDeps, focus = '
   const used = new Map<string, { kind: 'apex' | 'flow' | 'prompt'; name: string; by: Set<string> }>();
   const types = new Map<string, Set<string>>();
   for (const [index, agent] of agents.slice(0, EXPLORER_LIMITS.scanAgents).entries()) {
+    yield;
     let content: string;
     try { content = readAgentFile(root, agent.path, deps, { allowNonDx: true }).content; } catch { continue; }
     const uses: ExplorerUse[] = [];
@@ -94,10 +104,11 @@ export function buildLocalExplorer(root: string, deps: SalesforceDeps, focus = '
   // One project walk serves every target: a walk per target blocked the plugin's event loop.
   let index: ProjectActionIndex | null | undefined;
   for (const row of [...used.values()].sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name)).slice(0, EXPLORER_LIMITS.targets)) {
+    yield;
     let path: string | undefined;
     if (row.kind !== 'prompt' && parseActionTarget(`${row.kind}://${row.name}`) && resolved++ < EXPLORER_LIMITS.resolveTargets) {
       if (index === undefined) {
-        try { index = indexProjectActions(root, deps); } catch { index = null; }
+        try { index = yield* indexProjectActionsSteps(root, deps); } catch { index = null; }
       }
       // An unreadable project is still listed, just not openable by path.
       if (index) path = projectActionCandidates(index, `${row.kind}://${row.name}`)[0];
@@ -107,7 +118,7 @@ export function buildLocalExplorer(root: string, deps: SalesforceDeps, focus = '
   if (used.size > EXPLORER_LIMITS.targets) truncated = true;
   // Lightning Types: every referenced type, plus project bundles no agent uses yet.
   if (index === undefined) {
-    try { index = indexProjectActions(root, deps); } catch { index = null; }
+    try { index = yield* indexProjectActionsSteps(root, deps); } catch { index = null; }
   }
   const typeNodes = new Map<string, ExplorerNode>();
   for (const [ref, by] of types) {
@@ -126,6 +137,7 @@ export function buildLocalExplorer(root: string, deps: SalesforceDeps, focus = '
   const referenced = typeRows.filter(row => row.path && types.has(row.apiName));
   if (referenced.length > EXPLORER_LIMITS.componentTypes) truncated = true;
   for (const row of index ? referenced.slice(0, EXPLORER_LIMITS.componentTypes) : []) {
+    yield;
     let view: ReturnType<typeof readLightningType>;
     try { view = readLightningType(root, row.apiName, deps, index!); } catch { continue; }
     const refs = new Set<string>();
@@ -163,7 +175,7 @@ export function registerStudioExplorer(studio: StudioServerContext): void {
     if (!root) return rpcFailure('not_configured', 'Open a project folder to browse its Agentforce files.');
     // Only a path the listing returns is honoured, so `focus` and `expand` never read outside the project's agents.
     const expand = Array.isArray((args as { expand?: unknown } | null)?.expand) ? (args as { expand: unknown[] }).expand : [];
-    const local = buildLocalExplorer(root, studio.deps, rpcString(args, 'focus').slice(0, 1000),
+    const local = await buildLocalExplorerAsync(root, studio.deps, rpcString(args, 'focus').slice(0, 1000),
       expand.slice(0, EXPLORER_LIMITS.expand).filter((path): path is string => typeof path === 'string' && path.length <= 1000));
     const nodes = [...local.nodes];
     let truncated = local.truncated;
@@ -189,7 +201,7 @@ export function registerStudioExplorer(studio: StudioServerContext): void {
     if (!root) return rpcFailure('not_configured', 'Open a project folder to read its Lightning Types.');
     const ref = rpcString(args, 'ref');
     if (!ref || ref.length > 200) return rpcFailure('invalid_argument', 'ref is required.');
-    try { return { ok: true, data: readLightningType(root, ref, studio.deps, indexProjectActions(root, studio.deps)) }; }
+    try { return { ok: true, data: readLightningType(root, ref, studio.deps, await runProjectScanAsync(indexProjectActionsSteps(root, studio.deps))) }; }
     catch (error) { return rpcFailure('lightning_type_failed', error instanceof Error ? error.message : 'The Lightning Type could not be read.'); }
   });
   studio.registerRpc(STUDIO_RPC.lwc, async args => {
@@ -197,7 +209,7 @@ export function registerStudioExplorer(studio: StudioServerContext): void {
     if (!root) return rpcFailure('not_configured', 'Open a project folder to read its components.');
     const ref = rpcString(args, 'ref');
     if (!ref || ref.length > 200) return rpcFailure('invalid_argument', 'ref is required.');
-    try { return { ok: true, data: readLwcBundle(ref, studio.deps, indexProjectActions(root, studio.deps)) }; }
+    try { return { ok: true, data: readLwcBundle(ref, studio.deps, await runProjectScanAsync(indexProjectActionsSteps(root, studio.deps))) }; }
     catch (error) { return rpcFailure('lwc_failed', error instanceof Error ? error.message : 'The component could not be read.'); }
   });
 }

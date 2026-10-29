@@ -7,7 +7,7 @@ import {
   type ExecSfOptions,
   type SalesforceDeps
 } from './types.js';
-import { fingerprint, listFilesRecursive, parsePackageDirectories, readJsonObject, resolveUnderRoot } from './dx-project.js';
+import { fingerprint, parsePackageDirectories, readJsonObject, resolveUnderRoot, runProjectScan, scanFilesRecursiveSteps } from './dx-project.js';
 import { parsePreviewContext, type PreviewContextVariable } from './preview-context.js';
 
 export type AgentAction =
@@ -197,14 +197,19 @@ export function parseAgentInput(input: unknown): { ok: true; plan: AgentPlan } |
 }
 
 export function scanAgentBundles(projectRoot: string, deps: SalesforceDeps): AgentBundle[] {
+  return runProjectScan(scanAgentBundlesSteps(projectRoot, deps));
+}
+
+export function* scanAgentBundlesSteps(projectRoot: string, deps: SalesforceDeps): Generator<void, AgentBundle[]> {
   const manifest = deps.readFile(join(projectRoot, 'sfdx-project.json')) ?? '{}';
   const packages = parsePackageDirectories(manifest);
   const found: AgentBundle[] = [];
   for (const pkg of packages) {
     const pkgRoot = resolveUnderRoot(projectRoot, pkg, deps.realpath);
     if (!pkgRoot) continue;
-    const files = listFilesRecursive(pkgRoot, deps);
+    const { files } = yield* scanFilesRecursiveSteps(pkgRoot, deps);
     for (const file of files) {
+      yield;
       if (!file.endsWith('.agent')) continue;
       const source = deps.readFile(file) ?? '';
       found.push(inspectAgentSource(file, source));

@@ -34,6 +34,8 @@ function setup(baseline = batch()) {
 describe('SelfHealingRuns', () => {
   it('pins scenarios, repeats, context, model and org, then retains an improved source for review', async () => {
     const baseline = batch(); baseline.contextVariables = [{ name: 'locale', type: 'Text', value: 'en_US' }]; baseline.model = 'Model';
+    baseline.lanes[0].scenario.contextVariables = [{ name: 'locale', type: 'Text', value: 'fr' }];
+    baseline.lanes[1].scenario.contextVariables = [{ name: 'verified', type: 'Boolean', value: false }];
     const t = setup(baseline);
     const run = await t.runs.start('p1', { batchId: baseline.id, maxAttempts: 2 });
     const testing = await t.runs.evaluate('p1', { runId: run.id, source: candidate(), engine: 'live', scenarios: [], threadId: 't1' });

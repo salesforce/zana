@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SimulationBatches, registerSimulations, type SimulationOptions, type SimulationStart } from '../lib/simulation-batches.js';
 import {
-  SIMULATION_LIMITS, SIMULATION_RPC, batchSummary, laneCalls, parseSimulationRequest, simulationCounts, simulationNext, type SimulationBatch,
+  SIMULATION_LIMITS, SIMULATION_RPC, batchSummary, laneCalls, parseSimulationRequest, simulationCounts, simulationContext, simulationNext, type SimulationBatch,
 } from '../lib/simulation-contract.js';
 import { LAB_SCENARIOS } from '../lib/agentforce-lab-contract.js';
 import { STUDIO_CHANGED_CHANNEL } from '../lib/studio-contract.js';
@@ -61,6 +61,18 @@ function setup(verdicts?: Verdicts, opts?: { hold?: boolean }) {
 }
 
 describe('parseSimulationRequest', () => {
+  it('preserves detached scenario variables and validates each scenario', () => {
+    const variables = [{ name: 'verified', type: 'Boolean', value: false }];
+    const parsed = parseSimulationRequest({ scenarios: [{ ...scenario('A'), contextVariables: variables }] });
+    variables[0].value = true;
+    expect(parsed.scenarios[0].contextVariables).toEqual([{ name: 'verified', type: 'Boolean', value: false }]);
+    expect(() => parseSimulationRequest({ scenarios: [{ ...scenario('A'), contextVariables: [{ name: 'x', type: 'Number', value: 'wrong' }] }] })).toThrow(/Scenario 1: x needs a Number/);
+  });
+  it('merges typed overrides by name and validates the combined limits', () => {
+    expect(simulationContext([{ name: 'x', type: 'Text', value: 'default' }, { name: 'y', type: 'Number', value: 0 }], [{ name: 'x', type: 'Text', value: null }])).toEqual([{ name: 'x', type: 'Text', value: null }, { name: 'y', type: 'Number', value: 0 }]);
+    const defaults = Array.from({ length: 100 }, (_, i) => ({ name: `v${i}`, type: 'Text' as const, value: '' }));
+    expect(() => simulationContext(defaults, [{ name: 'extra', type: 'Boolean', value: false }])).toThrow(/at most 100/);
+  });
   it('defaults to the lab presets, four at a time in Simulate', () => {
     const request = parseSimulationRequest({});
     expect(request.scenarios.map(row => row.name)).toEqual(LAB_SCENARIOS.map(row => row.name));
@@ -102,6 +114,24 @@ describe('simulationNext', () => {
     expect(simulationNext(batch('done', ['pass', 'pass']))).toMatch(/All 2 conversations pass/);
     expect(simulationNext(batch('done', ['pass', 'fail', 'error']))).toMatch(/2 of 3 .*editor\.proposeEdit.*Never deploy/);
   });
+});
+
+it('pins per-scenario starting variables independently for all repeats and saved results', async () => {
+  const t = setup({}, { hold: true });
+  const request = parseSimulationRequest({ scenarios: [
+    { ...scenario('A', 1), contextVariables: [{ name: 'verified', type: 'Boolean', value: false }, { name: '$Context.AccountId', type: 'Text', value: null }] },
+    scenario('B', 1),
+  ], repeats: 2 });
+  const defaults = [{ name: 'verified', type: 'Boolean' as const, value: true }, { name: 'count', type: 'Number' as const, value: 0 }];
+  const batch = await t.batches.start(start({ contextVariables: defaults }, request));
+  defaults[0].value = false;
+  request.scenarios[0].contextVariables![0].value = true;
+  const expectedA = [{ name: 'verified', type: 'Boolean', value: false }, { name: 'count', type: 'Number', value: 0 }, { name: '$Context.AccountId', type: 'Text', value: null }];
+  expect(t.lab.start.mock.calls.map(([input]) => (input as any).contextVariables)).toEqual([expectedA, expectedA, [{ name: 'verified', type: 'Boolean', value: true }, { name: 'count', type: 'Number', value: 0 }], [{ name: 'verified', type: 'Boolean', value: true }, { name: 'count', type: 'Number', value: 0 }]]);
+  expect(batch.lanes[0].contextVariables).toEqual(expectedA);
+  expect(batch.lanes[0].scenario.contextVariables![0].value).toBe(false);
+  t.release(); const done = await t.batches.get('p1', batch.id, 1000);
+  expect(done.lanes[0].contextVariables).toEqual(expectedA);
 });
 
 describe('SimulationBatches', () => {
@@ -294,6 +324,12 @@ describe('registerSimulations', () => {
     expect(reply.batch).toMatchObject({ candidate: true, startedBy: 'studio', engine: 'rehearsal', model: 'gpt_x' });
     expect(t.authorize).toHaveBeenCalledWith({ engine: 'rehearsal', threadId: '', startedByUser: true });
     expect(t.lab.start.mock.calls[0]![0]).toMatchObject({ source: 'candidate', model: 'gpt_x' });
+  });
+  it('refuses a merged context above limits before approval or starting any lane', async () => {
+    const t = studioFake();
+    const reply = await t.call(SIMULATION_RPC.start, { agentPath: 'a.agent', contextVariables: Array.from({ length: 100 }, (_, i) => ({ name: `v${i}`, type: 'Text', value: '' })), scenarios: [{ ...scenario('A'), contextVariables: [{ name: 'extra', type: 'Number', value: 0 }] }] });
+    expect(reply).toMatchObject({ ok: false, code: 'invalid_input', error: expect.stringContaining('at most 100') });
+    expect(t.authorize).not.toHaveBeenCalled(); expect(t.lab.start).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -32,7 +32,7 @@ export const STUDIO_AGENT_ACTIONS: readonly StudioAgentAction[] = [
     instruction: 'Address every open review comment on this agent: propose the edits each one asks for (or explain why not), then resolve each comment with sf_workbench comments.resolve and a one-line note describing what changed.' },
   { id: 'write-scenarios', label: 'Write scenarios', description: 'Draft test scenarios for the agent', role: 'tester',
     ask: 'Write test scenarios for {file}.',
-    instruction: 'Write a scenario suite for this agent: happy paths, topic-routing edge cases and refusal cases, each with utterances and expectations (topic, actions, contains). Save it with sf_workbench studio.suites.save and run it in Preview when you can.' },
+    instruction: 'Write a scenario suite for this agent: happy paths, topic-routing edge cases and refusal cases, each with utterances, expectations (topic, actions, contains), and starting contextVariables where needed. Read sf_workbench suites.list first; preserve existing cases and use expectedSha256 when updating. Save it with sf_workbench suites.save and run it in Preview when you can.' },
   { id: 'explain-selection', label: 'Explain selection', description: 'Explain the selected lines', role: 'assistant',
     ask: 'Explain {lines} of {file}.',
     instruction: 'Explain what the selected lines (or the line under the cursor) do, which topics and actions they affect, and anything risky about them. Do not change the file.' },

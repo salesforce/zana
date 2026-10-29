@@ -44,7 +44,8 @@ export function BottomPanel({ open, active, problems, testFailures = 0, compact,
         {tabs.map(tab => <button key={tab.id} type="button" role="tab" id={`sf-bottom-tab-${tab.id}`} aria-selected={open && active === tab.id} aria-controls={`sf-bottom-pane-${tab.id}`}
           className={`sf-bottom-tab${open && active === tab.id ? ' is-active' : ''}`}
           onClick={() => { if (open && active === tab.id) onToggle(); else onSelect(tab.id); }}>
-          {tab.title}{tab.id === 'problems' && problems > 0 ? <span className="sf-bottom-badge">{problems}</span> : tab.id === 'tests' && testFailures > 0 ? <span className="sf-bottom-badge">{testFailures}</span> : null}
+          {tab.title}{(tab.id === 'problems' ? problems : tab.id === 'tests' ? testFailures : 0) > 0
+            ? <span className="sf-bottom-badge">{tab.id === 'problems' ? problems : testFailures}</span> : null}
         </button>)}
         <button type="button" className="sf-bottom-toggle" aria-label={open ? 'Collapse panel' : 'Expand panel'} aria-expanded={open} onClick={onToggle}>
           {open ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}

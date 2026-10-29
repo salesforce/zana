@@ -4,7 +4,7 @@ import { VIEW_LABEL, type AgentRef, type ViewTarget } from './studio-layout.js';
 import { SalesforceToolsLink } from '../salesforce-tools-link.js';
 
 /**
- * One tab per open agent, above that agent's view tabs. A dot marks unsaved edits, a play mark a running
+ * One tab per open agent, above that agent's documents. A dot marks unsaved edits, a play mark a running
  * preview. The org pill and "Salesforce ↗" sit at the end, outside the scrolling strip.
  */
 export function AgentTabs({ agents, active, dirtyPaths, runningPaths, projectId, orgPill, onSelect, onClose, onOpenAgent, onOpenView }: {
@@ -18,7 +18,7 @@ export function AgentTabs({ agents, active, dirtyPaths, runningPaths, projectId,
   onClose(path: string): void;
   /** "+ Open agent": quick open, or focus on the explorer when it is the only surface. */
   onOpenAgent(): void;
-  /** Opens one of the active agent's views (Graph, Preview, Tests) as a tab. */
+  /** View launchers for hosts without a side panel. Modern hosts list these in the panel's tool menu. */
   onOpenView?(target: ViewTarget): void;
 }) {
   const strip = useRef<HTMLDivElement>(null);

@@ -4,7 +4,7 @@ import { labRecord, type LabTurn } from './agentforce-lab-contract.js';
 import { parsePreviewContext, type PreviewContextVariable } from './preview-context.js';
 import {
   SIMULATION_LIMITS, SIMULATION_RPC, SIMULATIONS_CHANGED_KIND, batchSummary, isBatchDone, isLaneDone, laneCalls, parseSimulationRequest,
-  simulationCounts, simulationNext, type SimulationBatch, type SimulationLane, type SimulationRequest,
+  simulationCounts, simulationContext, simulationNext, type SimulationBatch, type SimulationLane, type SimulationRequest,
 } from './simulation-contract.js';
 import { STUDIO_CHANGED_CHANNEL } from './studio-contract.js';
 import { rpcFailure, rpcString, type RpcFailure, type StudioServerContext } from './studio-server-context.js';
@@ -98,7 +98,8 @@ export class SimulationBatches {
     for (const scenario of request.scenarios) {
       for (let repeat = 1; repeat <= request.repeats; repeat++) {
         const { name, ...rest } = scenario;
-        lanes.push({ id: `${lanes.length + 1}`, name, repeat, scenario: rest, status: 'queued', turns: [] });
+        const contextVariables = simulationContext(input.contextVariables, scenario.contextVariables);
+        lanes.push({ id: `${lanes.length + 1}`, name, repeat, scenario: structuredClone(rest), ...(contextVariables.length ? { contextVariables } : {}), status: 'queued', turns: [] });
       }
     }
     const batch: SimulationBatch = {
@@ -153,7 +154,7 @@ export class SimulationBatches {
     try {
       const started = await this.o.lab.start({
         engine: input.request.engine, source: input.source, scenario: lane.scenario, path: input.agentPath,
-        ...(input.model ? { model: input.model } : {}), ...(input.contextVariables?.length ? { contextVariables: input.contextVariables } : {}),
+        ...(input.model ? { model: input.model } : {}), ...(lane.contextVariables?.length ? { contextVariables: lane.contextVariables } : {}),
         ...(input.threadId ? { threadId: input.threadId } : {}),
         // The batch start was approved once (a click, or the guardrail in the thread); its lanes do not ask again.
         startedByUser: true,
@@ -284,6 +285,7 @@ export function registerSimulations(studio: StudioServerContext, options: Simula
     try {
       request = parseSimulationRequest(row);
       contextVariables = parsePreviewContext(row.contextVariables);
+      for (const scenario of request.scenarios) simulationContext(contextVariables, scenario.contextVariables);
     } catch (error) { throw new SimulationError('invalid_input', message(error)); }
     const model = rpcString(args, 'model');
     if (model && !/^[a-zA-Z0-9_]{1,160}$/.test(model)) throw new SimulationError('invalid_input', 'Choose a valid Salesforce model API name.');

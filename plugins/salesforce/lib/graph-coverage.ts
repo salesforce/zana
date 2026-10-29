@@ -86,6 +86,6 @@ export function draftCasesPrompt(labels: readonly string[], suitePath: string): 
   return [
     `Draft Agentforce scenario test cases that reach these untested parts of the agent: ${labels.join(', ')}.`,
     `Add them to ${suitePath}: one case per topic or action, with realistic utterances and an expect block (topic, actions, and criteria where useful).`,
-    'Save them with sf_workbench studio.suites.save, then run them with suites.run. Do not change the agent source, publish or activate anything.'
+    'Read suites.list first and preserve existing cases. Save them with sf_workbench suites.save (expectedSha256 when updating), then run them with suites.run. Do not change the agent source, publish or activate anything.'
   ].join('\n');
 }
