@@ -202,6 +202,26 @@ describe('normalizeConfig — window state', () => {
 });
 
 describe('normalizeConfig — plugin view window state', () => {
+  it('persists bounded resource geometry keys while rejecting malformed tuples', () => {
+    const key = JSON.stringify(['sales', 'studio', 'p-1', 'agents/Help.agent']);
+    const entry = { bounds: { width: 1000, height: 700 }, at: 3 };
+    expect(normalizeConfig({ pluginViewWindowBounds: { [key]: entry } }).pluginViewWindowBounds).toEqual({ [key]: entry });
+    const bad = [
+      '[not json', JSON.stringify(['sales', 'studio', 'p-1']),
+      JSON.stringify(['Sales', 'studio', 'p-1', 'a']),
+      JSON.stringify(['sales', 'bad/tab', 'p-1', 'a']),
+      JSON.stringify(['sales', 'studio', '', 'a']),
+      JSON.stringify(['sales', 'studio', 'p'.repeat(257), 'a']),
+      JSON.stringify(['sales', 'studio', 'p-1', 1]),
+      JSON.stringify(['sales', 'studio', 'p-1', '']),
+      JSON.stringify(['sales', 'studio', 'p-1', 'a'.repeat(2049)]),
+      JSON.stringify(['sales', 'studio', 'p-1', 'a\n']),
+      '[' + ' '.repeat(16000)
+    ];
+    for (const badKey of bad) {
+      expect(normalizeConfig({ pluginViewWindowBounds: { [key]: entry, [badKey]: entry } }).pluginViewWindowBounds).toEqual({ [key]: entry });
+    }
+  });
   const key = 'salesforce/salesforce@p-1';
 
   it('does not add omitted plugin view state', () => {

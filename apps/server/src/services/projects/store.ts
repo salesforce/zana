@@ -550,6 +550,22 @@ const PLUGIN_VIEW_BOUNDS_LIMIT = 24;
 const PLUGIN_VIEW_BOUNDS_KEY = /^[a-z0-9][a-z0-9-]{0,127}\/[A-Za-z0-9_-]{1,64}@(.{1,256})$/s;
 
 function isPluginViewBoundsKey(key: string): boolean {
+  if (key.startsWith('[')) {
+    // Resource identities are opaque navigation keys, not filesystem grants.
+    if (key.length > 16000) return false;
+    try {
+      const tuple: unknown = JSON.parse(key);
+      if (!Array.isArray(tuple) || tuple.length !== 4) return false;
+      const [pluginId, tabId, projectId, resourceId] = tuple;
+      return typeof pluginId === 'string' && /^[a-z0-9][a-z0-9-]{0,127}$/.test(pluginId)
+        && typeof tabId === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(tabId)
+        && typeof projectId === 'string' && !!projectId.trim() && projectId.length <= 256
+        && typeof resourceId === 'string' && !!resourceId.trim() && resourceId.length <= 2048
+        && !/[\x00-\x1f\x7f]/.test(projectId + resourceId);
+    } catch {
+      return false;
+    }
+  }
   const projectId = PLUGIN_VIEW_BOUNDS_KEY.exec(key)?.[1];
   if (!projectId) return false;
   for (let i = 0; i < projectId.length; i++) {

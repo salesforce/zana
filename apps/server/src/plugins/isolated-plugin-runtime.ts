@@ -55,7 +55,10 @@ export function createIsolatedPluginRuntime(options: {
   const started = new Promise<void>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
   // Disposal can race the installer attaching its await during application shutdown.
   void started.catch(() => {});
-  const startup = setTimeout(() => fail(new Error('Plugin factory timed out')), options.startupTimeoutMs ?? 10_000);
+  // Source installs also pay for uncached TypeScript graph loading before their factory runs. Keep that
+  // development-only startup allowance bounded; compiled plugins and the ready-worker watchdog stay unchanged.
+  const startupTimeoutMs = options.startupTimeoutMs ?? (/\.tsx?$/.test(options.entry) ? 20_000 : 10_000);
+  const startup = setTimeout(() => fail(new Error('Plugin factory timed out')), startupTimeoutMs);
   // A synchronous peer commit blocks worker heartbeats, so it is exempt — but only for a bounded grace. The bridge
   // terminates a commit at PEER_WORKER_COMMIT_TIMEOUT_MS; a count that stops moving past that (e.g. a failed
   // termination) must not disable the watchdog forever. Any change in the count is progress and restarts the grace.

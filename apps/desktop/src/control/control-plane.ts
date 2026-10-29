@@ -241,8 +241,9 @@ export interface ControlPlaneDeps {
     ): Promise<unknown>;
     logs(id: string, n?: number): Promise<unknown>;
   };
-  /** Dev's separately running product server owns SDK-backed CLI commands. */
-  pluginCommands?: Pick<NonNullable<ControlPlaneDeps['pluginHost']>, 'cliContributions' | 'runCliCommand'>;
+  /** Dev's separate product server owns SDK commands and its live plugin policy inventory. */
+  pluginCommands?: Pick<NonNullable<ControlPlaneDeps['pluginHost']>, 'cliContributions' | 'runCliCommand'>
+    & Partial<Pick<NonNullable<ControlPlaneDeps['pluginHost']>, 'enable' | 'disable' | 'remove' | 'reload' | 'update' | 'updateAll'>>;
   log?: (msg: string) => void;
 }
 
@@ -812,24 +813,25 @@ export async function dispatchOp(
         if (op === 'plugin.enable') {
           const id = str(args.id);
           if (!id) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
-          return { ok: true, value: await (host?.enable(id) ?? (await ensureFallbackPluginService()).enable(id)) };
+          return { ok: true, value: await (deps.pluginCommands?.enable?.(id) ?? host?.enable(id) ?? (await ensureFallbackPluginService()).enable(id)) };
         }
         if (op === 'plugin.disable') {
           const id = str(args.id);
           if (!id) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
-          return { ok: true, value: await (host?.disable(id) ?? (await ensureFallbackPluginService()).disable(id)) };
+          return { ok: true, value: await (deps.pluginCommands?.disable?.(id) ?? host?.disable(id) ?? (await ensureFallbackPluginService()).disable(id)) };
         }
         if (op === 'plugin.remove') {
           const id = str(args.id);
           if (!id) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
-          if (host) await host.remove(id);
+          if (deps.pluginCommands?.remove) await deps.pluginCommands.remove(id);
+          else if (host) await host.remove(id);
           else await (await ensureFallbackPluginService()).remove(id);
           return { ok: true, value: { ok: true } };
         }
         if (op === 'plugin.reload') {
           const id = str(args.id);
           if (!id) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
-          return { ok: true, value: await (host?.reload(id) ?? (await ensureFallbackPluginService()).reload(id)) };
+          return { ok: true, value: await (deps.pluginCommands?.reload?.(id) ?? host?.reload(id) ?? (await ensureFallbackPluginService()).reload(id)) };
         }
         if (op === 'plugin.logs') {
           const id = str(args.id);
@@ -847,11 +849,11 @@ export async function dispatchOp(
         if (op === 'plugin.update') {
           if (args.all === true) {
             if (args.id !== undefined) return { ok: false, code: 'BAD_ARGS', message: 'Choose id or all' };
-            return { ok: true, value: await (host ? host.updateAll?.() ?? Promise.reject(new Error('Bulk update is unavailable')) : (await ensureFallbackPluginService()).applyAllUpdates()) };
+            return { ok: true, value: await (deps.pluginCommands?.updateAll?.() ?? (host ? host.updateAll?.() ?? Promise.reject(new Error('Bulk update is unavailable')) : (await ensureFallbackPluginService()).applyAllUpdates())) };
           }
           const id = str(args.id);
           if (!id) return { ok: false, code: 'BAD_ARGS', message: 'id required' };
-          return { ok: true, value: await (host?.update(id) ?? (await ensureFallbackPluginService()).applyUpdate(id)) };
+          return { ok: true, value: await (deps.pluginCommands?.update?.(id) ?? host?.update(id) ?? (await ensureFallbackPluginService()).applyUpdate(id)) };
         }
         if (op === 'marketplace.list') {
           return { ok: true, value: await (host?.listMarketplaces() ?? (await ensureFallbackPluginService()).listMarketplaces()) };

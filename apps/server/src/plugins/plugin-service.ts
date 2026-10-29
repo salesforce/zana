@@ -806,7 +806,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     const timer = setTimeout(() => {
       recoveryTimers.delete(id);
       if (stopped || !store.get(id)?.enabled) return;
-      void service.reload(id).then((row) => {
+      void reloadPlugin(id, false).then((row) => {
         if (row.status === 'degraded') scheduleWatchdogRecovery(id);
       }).catch((error) => {
         console.error(`[plugins] automatic recovery failed for ${id}:`, error instanceof Error ? error.message : error);
@@ -822,6 +822,35 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     if (starting) await starting;
     await ensureActivationRecovery();
     if (stopped) throw new Error('plugin service is stopped');
+  }
+
+  async function reloadPlugin(id: string, resetRecovery = true): Promise<InstalledPluginRow> {
+    await waitForStartup();
+    // Automatic recovery keeps its attempt budget; an explicit reload starts a fresh one.
+    cancelRecovery(id, resetRecovery);
+    bumpLifecycleEpoch(id);
+    const row = store.get(id);
+    if (!row) throw new Error(`plugin not installed: ${id}`);
+    assertBundledPluginInstall({ id, sourceKind: row.sourceKind, source: row.source, development: developmentEnabled() });
+    const epoch = lifecycleEpoch(id);
+    const overrides = {
+      provenance: row.provenance,
+      catalogMarketplace: row.catalogMarketplace,
+      catalogEntryId: row.catalogEntryId,
+      bundledRecoveryVersion: row.bundledRecoveryVersion
+    };
+    // Reload the installed artifact; mutable remote refs only move through Update.
+    const source = row.sourceKind === 'git' || row.sourceKind === 'npm' || row.bundledRecoveryVersion
+      ? { rootDir: row.rootDir, sourceKind: row.sourceKind, provenance: row.provenance, display: row.source,
+          sourceIntent: row.sourceIntent, npmResolvedVersion: row.npmResolvedVersion, npmIntegrity: row.npmIntegrity,
+          gitResolvedCommit: row.gitResolvedCommit, catalogMarketplace: row.catalogMarketplace, catalogEntryId: row.catalogEntryId }
+      : await materialize(parsePluginSource(row.source));
+    const next = await installFromMaterialized(source, row.enabled, overrides, id, epoch, pluginUpdateFingerprint(row, hostVersion, sdkVersion));
+    if (started) startBuiltinSourceWatchers();
+    await emitCapabilities();
+    await syncCliSkill();
+    await emitAppsChanged();
+    return next;
   }
 
   function removeUnreferencedGeneration(root: string) {
@@ -2681,33 +2710,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await syncCliSkill();
       });
     },
-    async reload(id) {
-      await waitForStartup();
-      cancelRecovery(id);
-      bumpLifecycleEpoch(id);
-      const row = store.get(id);
-      if (!row) throw new Error(`plugin not installed: ${id}`);
-      assertBundledPluginInstall({ id, sourceKind: row.sourceKind, source: row.source, development: developmentEnabled() });
-      const epoch = lifecycleEpoch(id);
-      const overrides = {
-        provenance: row.provenance,
-        catalogMarketplace: row.catalogMarketplace,
-        catalogEntryId: row.catalogEntryId,
-        bundledRecoveryVersion: row.bundledRecoveryVersion
-      };
-      // Reload the installed artifact; mutable remote refs only move through Update.
-      const source = row.sourceKind === 'git' || row.sourceKind === 'npm' || row.bundledRecoveryVersion
-        ? { rootDir: row.rootDir, sourceKind: row.sourceKind, provenance: row.provenance, display: row.source,
-            sourceIntent: row.sourceIntent, npmResolvedVersion: row.npmResolvedVersion, npmIntegrity: row.npmIntegrity,
-            gitResolvedCommit: row.gitResolvedCommit, catalogMarketplace: row.catalogMarketplace, catalogEntryId: row.catalogEntryId }
-        : await materialize(parsePluginSource(row.source));
-      const next = await installFromMaterialized(source, row.enabled, overrides, id, epoch, pluginUpdateFingerprint(row, hostVersion, sdkVersion));
-      if (started) startBuiltinSourceWatchers();
-      await emitCapabilities();
-      await syncCliSkill();
-      await emitAppsChanged();
-      return next;
-    },
+    reload: id => reloadPlugin(id),
     async reconcileBuiltins() {
       for (const id of RECLAIM_UNINSTALLED_AUTOINSTALL_IDS) {
         if (uninstalled.hasReclaimed(id)) continue;

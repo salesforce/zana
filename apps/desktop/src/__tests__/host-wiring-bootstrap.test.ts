@@ -277,6 +277,9 @@ describe('host bootstrap wiring', () => {
       expect(h.winOptions[0].backgroundColor).toBe('#f6f8fa');
       expect(h.winOptions[0].webPreferences.additionalArguments).toContain('--zcc-theme=light');
       expect(h.controlPlaneDeps.pluginCommands.runCliCommand).toBeTypeOf('function');
+      for (const action of ['enable', 'disable', 'remove', 'reload', 'update', 'updateAll']) {
+        expect(h.controlPlaneDeps.pluginCommands[action]).toBeTypeOf('function');
+      }
     } finally { vi.unstubAllEnvs(); configSpy.mockRestore(); }
     expect(h.mobileStart).toHaveBeenCalledOnce();
     await vi.waitFor(() => expect(vi.mocked(console.error).mock.calls.some(call => String(call[0]).includes('mobileGateway.start'))).toBe(true));

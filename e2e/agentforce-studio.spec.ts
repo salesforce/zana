@@ -2729,11 +2729,13 @@ test('Agentforce Studio: pinned Preview reconnects to the same running session a
 
     // A pinned inactive agent hydrates its own graph after reload, without replacing the editor draft.
     await agentTab('Support').click();
+    await expect(page.getByTestId('plugin-panel-host-layout')).toHaveAttribute('data-panel-resource', 'force-app/Support.agent');
     await openTool(studio, 'Graph');
     const graph = viewPane(page, 'graph').frameLocator('iframe[title="AgentScript graph"]');
     await expect(graph.locator('.react-flow__node')).toHaveCount(3);
     await viewPane(page, 'graph').getByRole('button', { name: 'Pin Graph to Support.agent', exact: true }).click();
     await agentTab('Orders').click();
+    await expect(page.getByTestId('plugin-panel-host-layout')).toHaveAttribute('data-panel-resource', 'force-app/Orders.agent');
     // Orders keeps its own active tool. Explicitly opening Graph there retains
     // the pinned source without replacing its editor or assistant selection.
     await openTool(studio, 'Graph');

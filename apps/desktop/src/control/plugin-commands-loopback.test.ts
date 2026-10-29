@@ -21,6 +21,48 @@ describe('dev plugin command transport', () => {
     expect(() => createLoopbackPluginCommands(url)).toThrow('loopback product server');
   });
 
+  it.each(['enable', 'disable', 'reload', 'update'] as const)('uses authoritative %s and returns its updated installed row', async action => {
+    const row = { id: 'fixture/path', enabled: action !== 'disable', status: action === 'disable' ? 'disabled' : 'running' };
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ ok: true, value: true }))
+      .mockResolvedValueOnce(Response.json({ plugins: [{ id: 'other' }, row] }));
+    const transport = createLoopbackPluginCommands('http://127.0.0.1:8781', fetchImpl);
+    await expect(transport[action]!(row.id)).resolves.toEqual(row);
+    expect(String(fetchImpl.mock.calls[0]![0])).toBe(`http://127.0.0.1:8781/api/v1/plugin-apps/fixture%2Fpath/${action}`);
+    expect(fetchImpl.mock.calls[0]![1]).toMatchObject({ method: 'POST', body: '{}', redirect: 'error', signal: expect.any(AbortSignal) });
+    expect(String(fetchImpl.mock.calls[1]![0])).toBe('http://127.0.0.1:8781/api/v1/plugins');
+    expect(fetchImpl.mock.calls[1]![1]).toMatchObject({ method: 'GET', redirect: 'error' });
+  });
+
+  it('routes removal and bulk updates without nesting the bulk result', async () => {
+    const value = { updated: [], failed: [{ id: 'fixture', message: 'offline' }] };
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ ok: true, value: true }))
+      .mockResolvedValueOnce(Response.json({ ok: true, value }));
+    const transport = createLoopbackPluginCommands('http://localhost:8781/', fetchImpl);
+    await transport.remove!('fixture');
+    await expect(transport.updateAll!()).resolves.toEqual(value);
+    expect(String(fetchImpl.mock.calls[0]![0])).toBe('http://localhost:8781/api/v1/plugin-apps/fixture/remove');
+    expect(String(fetchImpl.mock.calls[1]![0])).toBe('http://localhost:8781/api/v1/plugin-apps/update-all');
+    expect(fetchImpl.mock.calls.every(([, init]) => init?.method === 'POST' && init.body === '{}')).toBe(true);
+  });
+
+  it.each([{}, { plugins: [] }])('reports a missing updated row without repeating the mutation', async snapshot => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ ok: true, value: true }))
+      .mockResolvedValueOnce(Response.json(snapshot));
+    const transport = createLoopbackPluginCommands('http://localhost:8781/', fetchImpl);
+    await expect(transport.disable!('fixture')).rejects.toThrow('did not return updated plugin');
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('propagates lifecycle failure before any snapshot read', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ error: 'policy generation unavailable' }, { status: 503 }));
+    const transport = createLoopbackPluginCommands('http://localhost:8781/', fetchImpl);
+    await expect(transport.disable!('fixture')).rejects.toThrow('policy generation unavailable');
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
   it.each([
     [{ message: 'plugin stopped' }, 'plugin stopped'],
     [{ error: 'plugin missing' }, 'plugin missing'],
