@@ -4,7 +4,7 @@ import { test, expect } from './fixtures/app.js';
 
 test.use({ e2e: true, launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { tmuxScope: 'off', sponsorPromptDismissed: true, insetWorkspaceEnabled: true } });
 
-test('inset workspace lifts the thread onto a rounded sheet and toggles live', async ({ app }, testInfo) => {
+test('inset workspace lifts the thread onto a rounded sheet and toggles live', async ({ app }) => {
   const { window: page, home } = app;
   const root = join(home, 'inset-workspace');
   mkdirSync(root);
@@ -36,7 +36,6 @@ test('inset workspace lifts the thread onto a rounded sheet and toggles live', a
   expect(inset.radius).toBe('10px');
   expect(inset.rightGap).toBeGreaterThanOrEqual(6);
   expect(inset.bottomGap).toBeGreaterThanOrEqual(6);
-  await page.screenshot({ path: testInfo.outputPath('inset-on.png') });
 
   // The sheet must not take over overflow: long panels keep their own scroller.
   await page.evaluate(() => { history.pushState({}, '', '/settings/experimental'); dispatchEvent(new PopStateEvent('popstate')); });
@@ -50,5 +49,4 @@ test('inset workspace lifts the thread onto a rounded sheet and toggles live', a
   await page.evaluate(() => window.cc.config.set({ insetWorkspaceEnabled: false }));
   await expect(shell).not.toHaveClass(/shell-inset/);
   expect((await geometry()).radius).toBe('0px');
-  await page.screenshot({ path: testInfo.outputPath('inset-off.png') });
 });
