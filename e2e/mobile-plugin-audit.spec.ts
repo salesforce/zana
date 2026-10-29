@@ -62,7 +62,12 @@ test('Audit installed plugin pages on phone and tablet widths', async ({ app }, 
     await drawer.getByTestId('nav-docs').click();
     await expect(page.locator('.library-panel')).toBeVisible();
     await expect(page.locator('.tree-row.file').first()).toBeVisible();
-    const refresh = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/library');
+    const refresh = page.waitForResponse(response => {
+      const request = response.request();
+      return new URL(response.url()).pathname === '/api/v1/library/documents'
+        && request.method() === 'POST'
+        && request.postDataJSON()?.action === 'snapshot';
+    }, { timeout: 15_000 });
     socket!.send(JSON.stringify({ type: 'library:changed', payload: { projectId: 'audit' } }));
     expect((await refresh).ok()).toBe(true);
     await expect(page.locator('.tree-row.file').first()).toBeVisible();
