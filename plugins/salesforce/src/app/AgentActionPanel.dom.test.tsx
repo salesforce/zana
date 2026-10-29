@@ -30,6 +30,20 @@ describe('Agent action explorer', () => {
   });
 });
 describe('action implementation panel', () => {
+  it('keeps successful source scan information beside the path instead of above the canvas', async () => {
+    const message = 'Opened from the standard source path. The project is too large to rule out another copy elsewhere.';
+    rpc.mockResolvedValue(ok({ language: 'xml', content: ACTION_FLOW_XML, label: 'flows/CheckReturn.flow-meta.xml', message }));
+    render(<AgentActionPanel {...props} action={actions[1]} />);
+    await screen.findByLabelText('Flow implementation map');
+    const info = screen.getByLabelText('Source information');
+    const disclosure = info.closest('details')!;
+    expect(disclosure.closest('.af-action-glance')?.textContent).toContain('flows/CheckReturn.flow-meta.xml');
+    expect(disclosure.open).toBe(false);
+    fireEvent.click(info);
+    expect(disclosure.open).toBe(true);
+    expect(disclosure.textContent).toContain(message);
+    expect(document.querySelector('.af-action-content')?.textContent).not.toContain(message);
+  });
   it('loads project source, checks org parameters, and reveals actual call-site bindings', async () => {
     render(<AgentActionPanel {...props} />);
     await screen.findByText('classes/OrderLookup.cls');

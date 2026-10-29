@@ -214,9 +214,10 @@ copies the package license. No CDN or external rendering service is used.
 it omits `contentCenterX` so the SDK uses its full-layout centering fallback,
 instead of centering the main branch and clipping scheduled/fault branches.
 An unexpected or duplicate integration point fails the build and requires
-review on SDK upgrades. Reset Flow view remounts the immutable snapshot to
-recalculate fit at the current size. Electron verifies the diagram bounds stay
-inside the canvas after resizing and reset.
+review on SDK upgrades. The viewer remounts the immutable snapshot after resizing
+settles to recalculate fit at the current size. The compact toolbar also offers
+Fit view and Expand Flow. Electron verifies the diagram bounds stay inside the
+canvas after resizing automatically.
 The backend parses only the already-authorized local XML or org metadata
 snapshot through a read-only virtual filesystem. The SDK never receives disk
 access. Input is capped at 750 KB, depth 40 and 25,000 metadata tags; interactive
