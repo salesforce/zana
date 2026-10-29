@@ -1088,7 +1088,7 @@ async function handleConnection(
       finish(authd);
       return;
     }
-    if (authd.op === 'plugin.cli') {
+    if (['plugin.cli', 'plugin.install', 'plugin.update', 'plugin.outdated'].includes(authd.op)) {
       clearTimeout(timer);
       timer = setTimeout(() => finish({ ok: false, code: 'TIMEOUT', message: 'plugin command timed out' }), PLUGIN_CLI_TIMEOUT_MS);
     }

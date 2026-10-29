@@ -981,6 +981,40 @@ describe('startControlPlane (real socket)', () => {
     }
   });
 
+  it.each(['plugin.install', 'plugin.update', 'plugin.outdated'])('lets authenticated %s finish beyond the handshake deadline', async op => {
+    const nativeTimeout = globalThis.setTimeout;
+    const timers = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((...args: Parameters<typeof setTimeout>) => {
+      if (args[1] === 10_000) args[1] = 25;
+      return nativeTimeout(...args);
+    }) as typeof setTimeout);
+    try {
+      const work = vi.fn(async () => { await new Promise(resolve => nativeTimeout(resolve, 75)); return { id: 'fixture' }; });
+      const { socketPath, tokenPath } = await boot({ pluginHost: { install: work, update: work, outdated: work } as any });
+      const { token, nonce } = JSON.parse(readFileSync(tokenPath, 'utf8'));
+      const result = await rawRequest(socketPath, [JSON.stringify({ token, nonce, op, args: { id: 'fixture', source: 'git:https://example.com/plugin.git' } }) + '\n']);
+      expect(result).toEqual({ ok: true, value: { id: 'fixture' } });
+      expect(work).toHaveBeenCalledOnce();
+    } finally { timers.mockRestore(); }
+  });
+
+  it.each(['plugin.install', 'plugin.update', 'plugin.outdated'])('keeps a finite deadline for authenticated %s', async op => {
+    const nativeTimeout = globalThis.setTimeout;
+    const timers = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((...args: Parameters<typeof setTimeout>) => {
+      if (args[1] === 300_000) args[1] = 25;
+      return nativeTimeout(...args);
+    }) as typeof setTimeout);
+    let complete!: (value: unknown) => void;
+    try {
+      const work = vi.fn(() => new Promise(resolve => { complete = resolve; }));
+      const { socketPath, tokenPath } = await boot({ pluginHost: { install: work, update: work, outdated: work } as any });
+      const { token, nonce } = JSON.parse(readFileSync(tokenPath, 'utf8'));
+      const result = await rawRequest(socketPath, [JSON.stringify({ token, nonce, op, args: { id: 'fixture', source: 'git:https://example.com/plugin.git' } }) + '\n']);
+      expect(result).toMatchObject({ ok: false, code: 'TIMEOUT', message: 'plugin command timed out' });
+      expect(work).toHaveBeenCalledOnce();
+      complete({ id: 'fixture' });
+    } finally { timers.mockRestore(); }
+  });
+
   it('removes the socket + token file on close', async () => {
     const { socketPath, tokenPath } = await boot();
     await handle!.close();
