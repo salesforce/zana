@@ -2582,26 +2582,25 @@ test('Agentforce Studio: host tools preserve two agents and all twelve document 
   await expect(viewPane(page, 'preview')).toHaveAttribute('data-agent', 'force-app/Orders.agent');
   await expect(frame.locator('.view-lines')).toContainText('Order_Assistant');
 
-  // Assistant cards use this same Studio and host routing, including a Preview for another agent.
+  // The assistant hides redundant Agent links while Preview cards retain host routing.
   await openThreadToolLauncher(sidePanel(page));
   await sidePanel(page).getByTestId('thread-new-tab-agent').click();
   const composer = sidePanel(page).getByTestId('panel-agent-tab-composer');
   await composer.getByTestId('thread-command-input').fill('Review these\n::sf-agent{path="force-app/Support.agent"}\n::sf-preview{runId="rail-run-1" path="force-app/Orders.agent"}');
   await composer.getByTestId('thread-command-send').click();
   const chat = sidePanel(page).getByTestId('panel-agent-tab-chat');
-  const assistantTitle = await activeSidePanelTab(page).innerText();
-  const agentCard = chat.getByTestId('sf-card-agent').last();
-  await expect(agentCard.locator('.plugin-directive-card-main')).toBeEnabled({ timeout: 30_000 });
-  await agentCard.locator('.plugin-directive-card-main').click();
-  await expect(agentTab('Support')).toHaveAttribute('aria-selected', 'true');
-  await expect(editorTabs(page).getByRole('tab', { name: /^Script/ })).toHaveAttribute('aria-selected', 'true');
-  await expect(frame.locator('.view-lines')).toContainText('Support_Concierge');
-  await expect(sidePanel(page).getByTestId('atp-root')).toHaveCount(0);
-  await sidePanelTab(page, assistantTitle).click();
-  await chat.getByTestId('sf-card-preview').last().locator('.plugin-directive-card-main').click();
+  const previewCard = chat.getByTestId('sf-card-preview').last().locator('.plugin-directive-card-main');
+  await expect(previewCard).toBeEnabled({ timeout: 30_000 });
+  await expect(chat.getByTestId('sf-card-agent')).toHaveCount(0);
+  await expect(agentTab('Orders')).toHaveAttribute('aria-selected', 'true');
+  await expect(frame.locator('.view-lines')).toContainText('Order_Assistant');
+  await previewCard.click();
   await expect(agentTab('Orders')).toHaveAttribute('aria-selected', 'true');
   await expect(activeSidePanelTab(page)).toHaveText('Preview');
   await expect(editorTabs(page).getByRole('tab', { name: 'Preview', exact: true })).toHaveCount(0);
+  // This fixture links an expired run; its recovery stays in the same Preview tool.
+  await expect(viewPane(page, 'preview').getByRole('alert')).toContainText('This run has expired');
+  await viewPane(page, 'preview').getByRole('button', { name: 'Start a new preview', exact: true }).click();
   await expect(viewPane(page, 'preview').getByTestId('preview-workbench')).toBeVisible();
   await expect(frame.locator('.view-lines')).toContainText('Order_Assistant');
   await expect(sidePanel(page).getByTestId('atp-root')).toHaveCount(0);
