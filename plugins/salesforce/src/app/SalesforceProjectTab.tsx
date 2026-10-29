@@ -1,6 +1,6 @@
 import { useSalesforceControl } from './useSalesforceControl.js';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Settings2, Plus, CloudDownload } from 'lucide-react';
+import { Settings2, Plus, CloudDownload, ChevronDown } from 'lucide-react';
 import {
   Database,
   FlaskConical,
@@ -36,20 +36,16 @@ import {
 import { AgentforcePlaygroundPanel } from "./AgentScriptPanel.js";
 import { parseAgentforcePanelFocus, type StudioFocus } from "./agentforce-panel-params.js";
 
-import { SalesforceTabs } from "./components/Tabs.js";
+import { SALESFORCE_SECTIONS, SalesforceSectionLauncher } from './SalesforceSectionLauncher.js';
+import { openSalesforceTools } from './salesforce-tools-link.js';
 import { useContextChangeRelay } from './context-sync.js';
 import { recordRecentAgent } from './recent-agents.js';
-import { readProjectView, rememberProjectView } from './project-view.js';
+import { studioAgentResource } from './studio-window-route.js';
+import { projectViewStorageKey, readProjectView, rememberProjectView } from './project-view.js';
 
 export { readProjectView } from './project-view.js';
 
-const VIEWS: Array<[WorkbenchView, string]> = [
-  ["overview", "Overview"],
-  ["data", "Data"],
-  ["apex", "Apex & logs"],
-  ["deployments", "Deployments"],
-  ["agentforce", "Agentforce"],
-];
+const VIEWS: Array<[WorkbenchView, string]> = SALESFORCE_SECTIONS.map(({ id, label }) => [id, label]);
 
 /** The Studio window is Agentforce only: general Salesforce tools live in the main window's tab. */
 const STUDIO_ONLY: WorkbenchView = "agentforce";
@@ -87,6 +83,7 @@ export function SalesforceProjectTab(props: {
   const navigate = useZccNavigate();
   const context = useZccContext();
   const studio = context.surface === "plugin-view";
+  const resourceId = studioAgentResource(context.resourceId);
   const call = useSalesforceCall(
     props.pluginId,
     props,
@@ -99,9 +96,24 @@ export function SalesforceProjectTab(props: {
   const fit = (stored: WorkbenchView): WorkbenchView => views.some(([id]) => id === stored) ? stored : views[0][0];
   const [viewState, setViewState] = useState<WorkbenchView>(() => readProjectView(props.projectId, studio));
   const view = fit(viewState);
+  const [navigationTarget, setNavigationTarget] = useState<HTMLDivElement | null>(null);
+  // Keep visited Studio sessions mounted while using the general tools. Runs, drafts and iframe survive.
+  const [agentforceProject, setAgentforceProject] = useState<string | null>(() => view === 'agentforce' ? props.projectId : null);
+  useEffect(() => { if (view === 'agentforce') setAgentforceProject(props.projectId); }, [view, props.projectId]);
+  useEffect(() => {
+    if (studio) return;
+    const changed = (event: StorageEvent) => {
+      if (event.key === projectViewStorageKey(props.projectId)) setViewState(readProjectView(props.projectId));
+    };
+    window.addEventListener('storage', changed);
+    return () => window.removeEventListener('storage', changed);
+  }, [studio, props.projectId]);
   // An agent opened from a card in another window; cleared on leaving Agents so a later visit restores the last file.
-  const [agentFocus, setAgentFocus] = useState<StudioFocus | null>(null);
+  const [agentFocus, setAgentFocus] = useState<StudioFocus | null>(() => resourceId ? { path: resourceId } : null);
   const focusSeq = useRef(0);
+  useEffect(() => {
+    if (resourceId) { setViewState('agentforce'); setAgentFocus({ path: resourceId, nonce: ++focusSeq.current }); }
+  }, [resourceId, context.resourceRequestId]);
   const setView = (next: WorkbenchView) => {
     setViewState(next);
     if (next !== "agentforce") setAgentFocus(null);
@@ -118,7 +130,7 @@ export function SalesforceProjectTab(props: {
   useEffect(() => {
     setDoctor(null);
     setViewState(readProjectView(props.projectId, studio));
-    setAgentFocus(null);
+    setAgentFocus(resourceId ? { path: resourceId } : null);
     setOrgsOpen(false);
     setSyncOpen(false);
     setLoginRequest(0);
@@ -127,7 +139,7 @@ export function SalesforceProjectTab(props: {
   useEffect(() => { setChosenTarget(null); }, [props.projectId, status.data]);
   const selected = (alias: string) => setChosenTarget({ projectId: props.projectId, alias });
   useSalesforceControl({ pluginId: props.pluginId, projectId: props.projectId, orgAlias: alias || undefined, threadId: context.threadId ?? undefined, surface: 'workbench',
-    commands: ['state', 'view.open'], state: () => ({ view, orgAlias: alias }),
+    commands: ['state', 'view.open'], state: () => ({ view, orgAlias: alias, ...(studio && resourceId ? { resourceId, path: resourceId } : {}) }),
     execute: ({ command, input, user }) => {
       if (command === 'state') return;
       const next = VIEWS.find(([id]) => id === input.view);
@@ -139,6 +151,7 @@ export function SalesforceProjectTab(props: {
       if (!user) throw Error('Open the file with file.open on the agentforce view.');
       const focus = parseAgentforcePanelFocus({ path: input.path, line: input.line });
       if (next[0] !== 'agentforce' || !focus.path) throw Error('Provide an agent path for the agentforce view.');
+      if (studio && resourceId && studioAgentResource(focus.path) !== resourceId) throw Error('This window belongs to another AgentScript. Open that agent in its own window.');
       setView(next[0]);
       setAgentFocus({ path: focus.path, ...(focus.line ? { line: focus.line } : {}), nonce: ++focusSeq.current });
     },
@@ -215,24 +228,52 @@ export function SalesforceProjectTab(props: {
       if (generation === doctorGeneration.current) setChecking(false);
     }
   }
-  const tabs = (
-    <SalesforceTabs<WorkbenchView>
-      label="Salesforce tools"
-      items={views}
-      value={view}
-      onChange={setView}
-      panelId={panelId}
-    />
-  );
+  const orgActions = <>
+    <button type="button" className="icon-btn sf-section-org-summary" aria-label="Choose Salesforce org" onClick={() => setOrgsOpen(true)}>
+      <span>{alias || 'Choose an org'}</span><ChevronDown size={13} aria-hidden="true" />
+    </button>
+          <button
+            className="icon-btn"
+            type="button"
+            title={alias ? "Fetch latest from org" : "Choose an org to fetch from"}
+            aria-label="Fetch latest from org"
+            disabled={!alias}
+            onClick={() => setSyncOpen(true)}
+          >
+            <CloudDownload size={15} aria-hidden="true" /><span className="sf-org-action-label">Fetch latest</span>
+          </button>
+          <button
+            className="icon-btn"
+            type="button"
+            title="Connect org"
+            aria-label="Connect org"
+            onClick={() => setLoginRequest(value => value + 1)}
+          >
+            <Plus size={15} aria-hidden="true" /><span className="sf-org-action-label">Connect org</span>
+          </button>
+          <button
+            className="icon-btn"
+            type="button"
+            title="Org details"
+            aria-label="Org details"
+            onClick={() => setOrgsOpen(value => !value)}
+            aria-expanded={Boolean(orgsOpen)}
+          >
+            <Settings2 size={15} aria-hidden="true" /><span className="sf-org-action-label">Org details</span>
+          </button>
+  </>;
   const workbench = (
     <>
       <header className="sf-workbench-toolbar">
-        {studio ? (
-          <span className="sf-studio-heading">
-            Agentforce
-            {status.data?.projectName && <span className="sf-muted"> · {status.data.projectName}</span>}
-          </span>
-        ) : tabs}
+        <SalesforceSectionLauncher value={view} actions={orgActions}
+          external={studio ? VIEWS.filter(([id]) => id !== STUDIO_ONLY).map(([id]) => id) : []}
+          onSelect={next => {
+            if (studio && next !== STUDIO_ONLY) openSalesforceTools(navigate, props.projectId, next);
+            else if (detached && next === STUDIO_ONLY) detached.focusWindow();
+            else setView(next);
+          }} />
+        <div ref={setNavigationTarget} className="sf-workbench-agent-tabs" hidden={view !== 'agentforce'} data-testid="salesforce-navigation-tabs" />
+        {view !== 'agentforce' && <span className="sf-workbench-section-detail">{SALESFORCE_SECTIONS.find(section => section.id === view)!.detail}</span>}
         <div className="sf-workbench-org">
           <OrgPicker
             pluginId={props.pluginId}
@@ -243,37 +284,7 @@ export function SalesforceProjectTab(props: {
             loginRequest={loginRequest}
             onSelect={selected}
           />
-          <div className="sf-workbench-org-actions">
-          <button
-            className="icon-btn"
-            type="button"
-            title={alias ? "Fetch latest from org" : "Choose an org to fetch from"}
-            aria-label="Fetch latest from org"
-            disabled={!alias}
-            onClick={() => setSyncOpen(true)}
-          >
-            <CloudDownload size={15} aria-hidden="true" />
-          </button>
-          <button
-            className="icon-btn"
-            type="button"
-            title="Connect org"
-            aria-label="Connect org"
-            onClick={() => setLoginRequest(value => value + 1)}
-          >
-            <Plus size={15} aria-hidden="true" />
-          </button>
-          <button
-            className="icon-btn"
-            type="button"
-            title="Org details"
-            aria-label="Org details"
-            onClick={() => setOrgsOpen(value => !value)}
-            aria-expanded={Boolean(orgsOpen)}
-          >
-            <Settings2 size={15} aria-hidden="true" />
-          </button>
-          </div>
+          <div className="sf-workbench-org-actions">{orgActions}</div>
           {props.headerActions}
         </div>
       </header>
@@ -307,8 +318,8 @@ export function SalesforceProjectTab(props: {
       )}
       <div
         id={panelId}
-        role="tabpanel"
-        aria-labelledby={`${panelId}-${view}`}
+        role="region"
+        aria-label={VIEWS.find(([id]) => id === view)![1]}
         className="sf-scroll"
         style={{ display: "flex", flexDirection: "column" }}
       >
@@ -451,8 +462,10 @@ export function SalesforceProjectTab(props: {
             onAddToPrompt={investigate}
           />
         )}
-        {view === "agentforce" && (
-          <AgentforcePlaygroundPanel pluginId={props.pluginId} projectId={props.projectId} params={agentFocus ?? undefined} orgPicker={false} onActivePath={setAgentPath} />
+        {(view === 'agentforce' || agentforceProject === props.projectId) && !detached && (
+          <div className="sf-workbench-studio" hidden={view !== 'agentforce'}>
+            <AgentforcePlaygroundPanel pluginId={props.pluginId} projectId={props.projectId} params={agentFocus ?? undefined} orgPicker={false} navigationTarget={navigationTarget} onActivePath={setAgentPath} />
+          </div>
         )}
       </div>
     </>

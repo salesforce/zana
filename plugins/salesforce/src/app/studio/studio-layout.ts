@@ -265,13 +265,16 @@ export function withoutAgent(state: StudioLayoutState, path: string): StudioLayo
  * Per-project Studio layout (one key per project and surface, never per thread). Only layout is persisted; editor drafts have their own store.
  * `fallbackScope` seeds a scope with no stored layout yet from another one (the Studio window starts from the project tab's).
  */
-export function useStudioLayout(scope: string, fallbackScope?: string) {
+export function useStudioLayout(scope: string, fallbackScope?: string, primaryPath?: string) {
   const key = `salesforce:studio:${scope}`;
   const fallbackKey = fallbackScope && fallbackScope !== scope ? `salesforce:studio:${fallbackScope}` : null;
   const load = (target: string) => {
     let stored: string | null = null;
     try { stored = localStorage.getItem(target); } catch { /* optional */ }
-    return readStudioLayout(stored === null && fallbackKey ? fallbackKey : target);
+    const restored = readStudioLayout(stored === null && fallbackKey ? fallbackKey : target);
+    if (!primaryPath) return restored;
+    const ref = restored.agents.find(agent => agent.path === primaryPath) ?? { path: primaryPath, label: primaryPath.split('/').pop()! };
+    return derive({ ...restored, agents: [ref], activeAgent: primaryPath, workspaces: { [primaryPath]: restored.workspaces[primaryPath] ?? { ...emptyWorkspace(), tabs: [scriptTab(ref)], activeTab: scriptTabId(primaryPath) } } });
   };
   const [state, setState] = useState(() => load(key));
   const [loadedKey, setLoadedKey] = useState(key);

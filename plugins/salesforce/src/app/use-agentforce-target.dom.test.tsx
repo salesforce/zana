@@ -9,6 +9,18 @@ beforeEach(() => localStorage.clear());
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('shared Agentforce target', () => {
+  it('keeps resource window selections independent from the main Studio and sibling resources', () => {
+    const main = renderHook(() => useAgentforceTarget(scope));
+    const a = renderHook(() => useAgentforceTarget({ ...scope, resourceId: 'A.agent', params: { path: 'A.agent' } }));
+    const b = renderHook(() => useAgentforceTarget({ ...scope, resourceId: 'B.agent', params: { path: 'B.agent' } }));
+    act(() => main.result.current.select({ path: 'Main.agent' }));
+    expect(a.result.current.target?.path).toBe('A.agent');
+    expect(b.result.current.target?.path).toBe('B.agent');
+    act(() => a.result.current.select({ path: 'A2.agent' }));
+    expect(main.result.current.target?.path).toBe('Main.agent');
+    expect(b.result.current.target?.path).toBe('B.agent');
+  });
+
   it('restores a picker choice after remount, ahead of the original card params', () => {
     const input = { ...scope, params: { path: 'Original.agent' } };
     const first = renderHook(() => useAgentforceTarget(input));

@@ -51,8 +51,8 @@ afterEach(() => {
   state.open = [];
   state.modules = [];
 });
-function open(header?: 'custom', detachable?: boolean) {
-  state.tabs = [{ id: 'tools', pluginId: 'example', generation: 1, label: 'Tools', header, detachable,
+function open(header?: 'custom', detachable?: boolean, statusbar?: 'hidden') {
+  state.tabs = [{ id: 'tools', pluginId: 'example', generation: 1, label: 'Tools', header, detachable, statusbar,
     component: ({ projectId, headerActions }) => <section aria-label="Plugin toolbar">{projectId}{headerActions}</section> }];
   return render(<ProjectModePane projectId="p" mode="tools" paneId="pane" />);
 }
@@ -63,10 +63,27 @@ it('lets a plugin own its toolbar while retaining the host split controls', () =
 });
 it('keeps the existing host title and split controls for default project tabs', () => {
   const view = open();
+  expect(view.container.querySelector('.statusbar')?.textContent).toContain('/project');
   const header = view.container.querySelector('.project-topbar')!;
   expect(header.textContent).toContain('Tools');
   expect(header.contains(screen.getByRole('button', { name: 'Close pane' }))).toBe(true);
   expect(screen.getByRole('region', { name: 'Plugin toolbar' }).textContent).toBe('p');
+});
+it('omits the project footer only for a tab that explicitly hides it', () => {
+  const view = open('custom', false, 'hidden');
+  expect(view.container.querySelector('.statusbar')).toBeNull();
+  expect(screen.getByRole('region', { name: 'Plugin toolbar' })).toBeTruthy();
+  view.rerender(<ProjectModePane projectId="p" mode="agents" paneId="pane" />);
+  expect(view.container.querySelector('.statusbar')?.textContent).toContain('/project');
+  view.rerender(<ProjectModePane projectId="p" mode="tools" paneId="pane" />);
+  expect(view.container.querySelector('.statusbar')).toBeNull();
+});
+it('keeps the footer hidden on the opted-in tab detached placeholder', () => {
+  state.desktop = true;
+  state.open = [{ pluginId: 'example', tabId: 'tools', projectId: 'p' }];
+  const view = open('custom', true, 'hidden');
+  expect(screen.getByTestId('plugin-tab-detached')).toBeTruthy();
+  expect(view.container.querySelector('.statusbar')).toBeNull();
 });
 it('offers a detachable tab its own window from the host title row', () => {
   state.desktop = true;

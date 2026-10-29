@@ -49,6 +49,36 @@ describe('StudioViewStore', () => {
     expect(viewStoreFor(zcc)).toBe(viewStoreFor(zcc));
     expect(viewStoreFor({})).not.toBe(viewStoreFor(zcc));
   });
+
+  it('retains both agent windows and never falls back to another script for a bound assistant', () => {
+    let now = 1000;
+    const store = new StudioViewStore(() => now);
+    store.publish('p', state({ path: 'a.agent', orgAlias: 'a-org' }));
+    store.bindThread('p', 'assistant-a', 'a.agent');
+    store.publish('p', state({ path: 'b.agent', orgAlias: 'b-org' }));
+    expect(store.get('p', 'assistant-a')?.state.path).toBe('a.agent');
+    expect(store.latest('p', 'b.agent')?.state.orgAlias).toBe('b-org');
+    expect(store.latest('p')?.state.path).toBe('b.agent');
+    expect(buildViewInstructions(store, { projectId: 'p', threadId: 'assistant-a' })).toContain('a.agent');
+    store.publish('p', state({ path: 'a.agent', share: false }));
+    expect(store.get('p', 'assistant-a')).toBeNull();
+    expect(buildViewInstructions(store, { projectId: 'p', threadId: 'assistant-a' })).toBeNull();
+    expect(store.latest('p', 'b.agent')).not.toBeNull();
+    store.publish('p', state({ path: 'a.agent' }));
+    now += VIEW_TTL_MS + 1;
+    expect(store.latest('p', 'a.agent')).toBeNull();
+  });
+
+  it('bounds thread bindings and keeps the same thread name separate across projects', () => {
+    const store = new StudioViewStore();
+    store.bindThread('p', 'same', 'a.agent');
+    store.bindThread('other', 'same', 'b.agent');
+    expect(store.threadPath('p', 'same')).toBe('a.agent');
+    expect(store.threadPath('other', 'same')).toBe('b.agent');
+    for (let i = 0; i < 1000; i++) store.bindThread('p', `thread-${i}`, 'a.agent');
+    expect(store.threadPath('p', 'same')).toBeUndefined();
+    expect(store.threadPath('p', 'thread-999')).toBe('a.agent');
+  });
 });
 
 describe('describeView / instructions', () => {
@@ -74,6 +104,15 @@ describe('describeView / instructions', () => {
     expect(text).toContain('currently viewing');
     expect(text).toContain('view.state');
     expect(text.length).toBeLessThanOrEqual(INSTRUCTIONS_MAX_CHARS);
+  });
+
+  it('uses the host-bound script metadata before the latest project window', () => {
+    const store = new StudioViewStore();
+    store.publish('p', state({ path: 'a.agent' }));
+    store.publish('p', state({ path: 'b.agent' }));
+    expect(buildViewInstructions(store, { projectId: 'p', pluginMetadata: { panelAgent: { view: 'a.agent' } } })).toContain('File: a.agent');
+    expect(buildViewInstructions(store, { projectId: 'p', pluginMetadata: { sfAgentPath: 'a.agent' } })).not.toContain('File: b.agent');
+    expect(buildViewInstructions(store, { projectId: 'p', pluginMetadata: { panelAgent: { view: 'closed.agent' } } })).toBeNull();
   });
 });
 

@@ -7,6 +7,7 @@
 import { formatComments, formatDiagnostics } from './studio-agent-actions.js';
 import { isStudioComment, isStudioViewState, STUDIO_RPC, type StudioComment, type StudioViewState } from './studio-contract.js';
 import { rpcFailure, type StudioServerContext } from './studio-server-context.js';
+import { studioThreadPath } from './studio-agent-binding.js';
 
 export const VIEW_TTL_MS = 60_000;
 export const VIEW_MAX_ENTRIES = 40;
@@ -19,19 +20,23 @@ interface Entry { projectId: string; threadId: string | null; state: StudioViewS
 /** In-memory, bounded, TTL'd store of the latest shared view per project (and per thread). */
 export class StudioViewStore {
   private readonly entries = new Map<string, Entry>();
+  private readonly bindings = new Map<string, string>();
   constructor(private readonly now: () => number = Date.now) {}
 
-  private key(projectId: string, threadId: string | null) { return `${projectId}:${threadId || PROJECT_SCOPE}`; }
+  private key(projectId: string, threadId: string | null, path?: string | null) { return JSON.stringify([projectId, threadId || PROJECT_SCOPE, path ?? null]); }
   private fresh(entry: Entry | undefined): Entry | null {
     if (!entry) return null;
-    if (this.now() - entry.receivedAt > VIEW_TTL_MS) { this.entries.delete(this.key(entry.projectId, entry.threadId)); return null; }
+    if (this.now() - entry.receivedAt > VIEW_TTL_MS) { this.entries.delete(this.key(entry.projectId, entry.threadId, entry.state.path)); return null; }
     return entry;
   }
 
   /** Stores the view when `share` is on; a `share:false` publish forgets what was shared. */
   publish(projectId: string, state: StudioViewState, threadId: string | null = null): boolean {
-    const key = this.key(projectId, threadId);
-    if (!state.share) { this.entries.delete(key); return false; }
+    const key = this.key(projectId, threadId, state.path);
+    if (!state.share) {
+      for (const [id, entry] of this.entries) if (entry.projectId === projectId && entry.threadId === threadId && (threadId !== null || entry.state.path === state.path)) this.entries.delete(id);
+      return false;
+    }
     this.entries.delete(key);
     this.entries.set(key, { projectId, threadId, state, receivedAt: this.now() });
     this.sweep();
@@ -43,16 +48,36 @@ export class StudioViewStore {
     while (this.entries.size > VIEW_MAX_ENTRIES) this.entries.delete(this.entries.keys().next().value as string);
   }
 
-  /** The thread's own view when it has one, else the project's. */
+  /** Remember the conversation's script independently of whichever window publishes last. */
+  bindThread(projectId: string, threadId: string, path: string) {
+    const key = this.key(projectId, threadId);
+    this.bindings.delete(key);
+    this.bindings.set(key, path);
+    while (this.bindings.size > 1000) this.bindings.delete(this.bindings.keys().next().value as string);
+  }
+
+  threadPath(projectId: string, threadId?: string): string | undefined {
+    return threadId ? this.bindings.get(this.key(projectId, threadId)) : undefined;
+  }
+
+  /** A bound thread may only read its own script's view. */
   get(projectId: string, threadId?: string | null): Entry | null {
-    return (threadId ? this.fresh(this.entries.get(this.key(projectId, threadId))) : null) ?? this.fresh(this.entries.get(this.key(projectId, null)));
+    const path = threadId ? this.bindings.get(this.key(projectId, threadId)) : undefined;
+    let own: Entry | null = null;
+    let project: Entry | null = null;
+    for (const entry of [...this.entries.values()]) {
+      if (entry.projectId !== projectId || path !== undefined && entry.state.path !== path || !this.fresh(entry)) continue;
+      if (threadId && entry.threadId === threadId) own = entry;
+      else if (entry.threadId === null) project = entry;
+    }
+    return own ?? project;
   }
 
   /** Most recently published fresh view of the project from any surface. */
-  latest(projectId: string): Entry | null {
+  latest(projectId: string, path?: string): Entry | null {
     let best: Entry | null = null;
     for (const entry of [...this.entries.values()]) {
-      if (entry.projectId !== projectId || !this.fresh(entry)) continue;
+      if (entry.projectId !== projectId || path !== undefined && entry.state.path !== path || !this.fresh(entry)) continue;
       if (!best || entry.receivedAt >= best.receivedAt) best = entry;
     }
     return best;
@@ -90,9 +115,10 @@ export function describeView(state: StudioViewState, ageMs = 0): string {
  * The single contributeInstructions section. Providers run at thread
  * create/resume only, so it is a snapshot plus a pointer to the live source.
  */
-export function buildViewInstructions(store: StudioViewStore, ctx: { projectId: string; threadId?: string }): string | null {
+export function buildViewInstructions(store: StudioViewStore, ctx: { projectId: string; threadId?: string; pluginMetadata?: unknown }): string | null {
   if (!ctx.projectId) return null;
-  const entry = store.get(ctx.projectId, ctx.threadId) ?? store.latest(ctx.projectId);
+  const path = studioThreadPath(ctx.pluginMetadata) ?? store.threadPath(ctx.projectId, ctx.threadId);
+  const entry = path ? store.latest(ctx.projectId, path) : store.get(ctx.projectId, ctx.threadId) ?? store.latest(ctx.projectId);
   if (!entry) return null;
   const head = 'The user is currently viewing the Salesforce Studio (as of thread start). Call sf_workbench view.state for the live screen before acting on "this", "here" or "the selection".';
   const text = `${head}\n${describeView(entry.state)}`;
@@ -136,7 +162,8 @@ export function registerStudioContext(studio: StudioServerContext): void {
     if (!projectId) return rpcFailure('project_required', 'Choose a project to read the Studio view.');
     const input = record(args);
     const threadId = typeof input.threadId === 'string' ? input.threadId : null;
-    const entry = store.get(projectId, threadId) ?? store.latest(projectId);
+    const path = typeof input.path === 'string' ? input.path : undefined;
+    const entry = path ? store.latest(projectId, path) : threadId ? store.get(projectId, threadId) : store.latest(projectId);
     if (!entry) return { ok: true, shared: false, state: null, note: 'The Studio is not open or the user is not sharing their view.' };
     const ageMs = Math.max(0, Date.now() - entry.receivedAt);
     return { ok: true, shared: true, state: entry.state, ageMs, summary: describeView(entry.state, ageMs) };

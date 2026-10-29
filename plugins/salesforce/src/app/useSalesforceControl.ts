@@ -26,6 +26,24 @@ export interface PendingUserResult extends ControlState { pending: 'user'; propo
 export const isPendingUser = (value: unknown): value is PendingUserResult => Boolean(value) && typeof value === 'object'
   && (value as PendingUserResult).pending === 'user' && typeof (value as PendingUserResult).proposalId === 'string' && typeof (value as PendingUserResult).settled?.then === 'function';
 
+// Module-local: these are only the surfaces in this renderer, never another Studio window.
+const mountedControls = new Set<{ projectId: string; close(): Promise<void>; resume(): void }>();
+
+/** Native close waits for every mounted surface to disappear from command routing. */
+export async function closeSalesforceControls(projectId: string): Promise<void> {
+  const controls = [...mountedControls].filter(control => control.projectId === projectId);
+  const results = await Promise.allSettled(controls.map(control => control.close()));
+  const failure = results.find(result => result.status === 'rejected');
+  if (failure?.status === 'rejected') {
+    controls.forEach(control => control.resume());
+    throw failure.reason;
+  }
+}
+
+export function resumeSalesforceControls(projectId: string): void {
+  for (const control of mountedControls) if (control.projectId === projectId) control.resume();
+}
+
 /** One scoped lease per mounted surface; commands execute once, then acknowledge the rendered state. */
 export function useSalesforceControl(options: {
   pluginId: string; projectId?: string; orgAlias?: string; threadId?: string; surface: string; enabled?: boolean;
@@ -52,11 +70,32 @@ export function useSalesforceControl(options: {
     let viewId = ''; leaseId.current = '';
     let timer: ReturnType<typeof setTimeout> | undefined;
     let running = false; let again = false;
+    let registering: Promise<void> | undefined;
+    let closing: Promise<void> | undefined;
     const call = async (method: string, args: Record<string, unknown>) => {
       const result = await callPluginRpc(pluginId, method, { ...args, projectId, orgAlias, threadId }) as Record<string, any>;
       if (!result?.ok) throw Error(result?.error || 'Workbench control unavailable.');
       return result;
     };
+    const closeLease = (): Promise<void> => {
+      if (closing) return closing;
+      if (!viewId) return Promise.resolve();
+      const closingId = viewId;
+      closing = call('control.close', { viewId: closingId }).then(() => {
+        if (viewId === closingId) viewId = '';
+        leaseId.current = '';
+      }).finally(() => { closing = undefined; });
+      return closing;
+    };
+    const close = async () => {
+      cancelled = true; wake.current = () => {}; clearTimeout(timer);
+      commits.current.splice(0).forEach(resolve => resolve());
+      // A window can close while control.register is still acquiring its lease.
+      if (registering) await registering;
+      await closeLease();
+    };
+    const control = { projectId, close, resume: () => { if (cancelled) { cancelled = false; wake.current = () => { void poll(); }; void poll(); } } };
+    mountedControls.add(control);
     const settle = (commandId: string, pending: PendingUserResult) => {
       const report = (outcome: ProposalOutcome) => { if (!cancelled) void call('control.outcome', { viewId, commandId, outcome }).catch(() => {}); };
       pending.settled.then(report, error => report({ outcome: 'rejected', acceptedHunks: 0, rejectedHunks: 0, note: (error instanceof Error ? error.message : String(error)).slice(0, 500) }));
@@ -65,8 +104,13 @@ export function useSalesforceControl(options: {
       if (running) { again = true; return; }
       running = true; again = false; clearTimeout(timer);
       try {
-        if (!viewId) { viewId = (await call('control.register', { surface, commands: current.current.commands, ...(hostWindow ? { window: hostWindow } : {}) })).viewId; leaseId.current = viewId; }
-        if (cancelled) { void call('control.close', { viewId }).catch(() => {}); return; }
+        if (!viewId) {
+          registering = call('control.register', { surface, commands: current.current.commands, ...(hostWindow ? { window: hostWindow } : {}) }).then(result => {
+            viewId = result.viewId; leaseId.current = viewId;
+          });
+          try { await registering; } finally { registering = undefined; }
+        }
+        if (cancelled) return;
         const result = await call('control.poll', { viewId, state: current.current.state(), presence: viewPresence() });
         for (const command of (result.commands ?? []) as UiCommand[]) {
           if (cancelled) return;
@@ -85,7 +129,7 @@ export function useSalesforceControl(options: {
             if (!cancelled) await call('control.ack', { viewId, commandId: command.id, ok: false, error: error instanceof Error ? error.message : String(error) });
           }
         }
-      } catch { viewId = ''; leaseId.current = ''; /* A reload expires the lease; retry while this surface remains mounted. */ }
+      } catch { if (!cancelled) { viewId = ''; leaseId.current = ''; } /* A reload expires the lease; retry while this surface remains mounted. */ }
       finally {
         running = false;
         if (!cancelled) { if (again) void poll(); else timer = setTimeout(poll, delay()); }
@@ -96,8 +140,7 @@ export function useSalesforceControl(options: {
     // Report a focus or visibility change now, so ui.views ranks the window the person just moved to.
     const nudge = () => wake.current();
     // Closing a window unloads it without React cleanup; drop the lease so no agent or window targets it.
-    // A page that lives on re-registers on its next poll.
-    const unload = () => { if (viewId) void call('control.close', { viewId }).catch(() => {}); };
+    const unload = () => { void close().catch(() => {}); };
     document.addEventListener('visibilitychange', nudge);
     window.addEventListener('focus', nudge);
     window.addEventListener('blur', nudge);
@@ -110,7 +153,8 @@ export function useSalesforceControl(options: {
       window.removeEventListener('blur', nudge);
       window.removeEventListener('pagehide', unload);
       commits.current.splice(0).forEach(resolve => resolve()); clearTimeout(timer);
-      if (viewId) void call('control.close', { viewId }).catch(() => {});
+      mountedControls.delete(control);
+      void close().catch(() => {});
     };
   }, [pluginId, projectId, orgAlias, threadId, surface, enabled, hostWindow]);
 }

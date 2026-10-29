@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { SalesforceUiProvider } from "../../ui.js";
 import { STUDIO_RPC } from "../../lib/studio-contract.js";
 import { SalesforceProjectTab, readProjectView, studioWindowTitle } from "./SalesforceProjectTab.js";
@@ -19,7 +19,7 @@ vi.mock("./AgentScriptPanel.js", async () => {
         onActivePath?.("force-app/main/default/aiAuthoringBundles/Help/Help.agent");
         return () => onActivePath?.(null);
       }, [onActivePath]);
-      return <div data-testid="script">Agentforce script{headerActions}</div>;
+      return <div data-testid="script">Agentforce script<input aria-label="Unsaved script" defaultValue="draft" />{headerActions}</div>;
     },
   };
 });
@@ -30,6 +30,7 @@ const navigate = { toCompose: vi.fn(), openThreadPanel: vi.fn(), toProject: vi.f
 const call = vi.fn();
 const useWindowTitle = vi.fn();
 let surface: string | undefined;
+let resourceId: string | undefined;
 let shared: unknown;
 
 function respond(method: string) {
@@ -44,14 +45,15 @@ beforeEach(() => {
   localStorage.clear();
   call.mockReset();
   useWindowTitle.mockReset();
+  navigate.toProject.mockClear();
   call.mockImplementation(async (method: string) => respond(method));
-  surface = "plugin-view";
+  surface = "plugin-view"; resourceId = undefined;
   shared = { ok: true, shared: false, state: null };
   Object.assign(globalThis, {
     __ZCC_PLUGIN_HOST__: { callRpc: (_id: string, method: string, args?: Record<string, unknown>) => call(method, args) },
     __ZCC_PLUGIN_RUNTIME__: {
       useZccNavigate: () => navigate,
-      useZccContext: () => ({ projectId: "p", threadId: null, ...(surface ? { surface } : {}) }),
+      useZccContext: () => ({ projectId: "p", threadId: null, ...(surface ? { surface } : {}), ...(resourceId ? { resourceId } : {}) }),
       useWindowTitle,
     },
   });
@@ -65,7 +67,28 @@ afterEach(() => {
 const mount = (element: React.ReactNode) => render(<SalesforceUiProvider client={{ call }}>{element}</SalesforceUiProvider>);
 const calls = (method: string) => call.mock.calls.filter(([name]) => name === method).length;
 
+function chooseSection(id: string) {
+  fireEvent.click(screen.getByRole('button', { name: 'Open Salesforce tools' }));
+  fireEvent.click(screen.getByRole('dialog').querySelector(`[data-section="${id}"]`)!);
+}
+
 describe("Salesforce Studio window", () => {
+  it("publishes its fixed AgentScript identity and refuses retargeting another resource", async () => {
+    resourceId = "force-app/main/default/aiAuthoringBundles/Help/Help.agent";
+    mount(<SalesforceProjectTab pluginId="salesforce" projectId="p" />);
+    expect(control.options!.state()).toMatchObject({ resourceId, path: resourceId });
+    expect(() => control.options!.execute({ command: "view.open", input: { view: "agentforce", path: "Other.agent" }, user: true })).toThrow(/another AgentScript/);
+    await act(async () => { control.options!.execute({ command: "view.open", input: { view: "agentforce", path: resourceId }, user: true }); });
+  });
+
+  it("treats a returned resource in the main window as selection, not a locked workspace", async () => {
+    surface = "main"; resourceId = "Help.agent";
+    mount(<SalesforceProjectTab pluginId="salesforce" projectId="p" />);
+    expect(control.options!.state()).not.toHaveProperty("resourceId");
+    await act(async () => { control.options!.execute({ command: "view.open", input: { view: "agentforce", path: "Other.agent" }, user: true }); });
+    expect(screen.getByTestId("script")).toBeTruthy();
+  });
+
   it("shows only the Agentforce Studio: no activity bar, no general views", async () => {
     localStorage.setItem("salesforce:studio-window:p", "deployments");
     mount(<SalesforceProjectTab pluginId="salesforce" projectId="p" />);
@@ -74,7 +97,7 @@ describe("Salesforce Studio window", () => {
     expect(screen.queryByRole("tab")).toBeNull();
     expect(screen.getByTestId("script")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Open beside agent" })).toBeNull();
-    await screen.findByText(/Project One/);
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Salesforce org" }).getAttribute("disabled")).toBeNull());
     expect(screen.getByText("Agentforce")).toBeTruthy();
     expect(screen.getAllByRole("combobox", { name: "Salesforce org" })).toHaveLength(1);
     // The stored view is ignored and never rewritten from the Studio window.
@@ -105,14 +128,14 @@ describe("Salesforce Studio window", () => {
     const prod = { ...org, alias: "prod", kind: "production" as const };
     call.mockImplementation(async (method: string) => method === "status" ? { ...status, selectedAlias: "prod", orgs: [prod] } : respond(method));
     mount(<SalesforceProjectTab pluginId="salesforce" projectId="p" />);
-    await screen.findByText(/Project One/);
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Salesforce org" }).getAttribute("disabled")).toBeNull());
     expect(useWindowTitle).toHaveBeenLastCalledWith({ title: "Agentforce · Help", detail: "prod", badge: "Production", tone: "danger" });
   });
 
   it("warns when the selected org is not one the CLI lists", async () => {
     call.mockImplementation(async (method: string) => method === "status" ? { ...status, selectedAlias: "gone", orgs: [org] } : respond(method));
     mount(<SalesforceProjectTab pluginId="salesforce" projectId="p" />);
-    await screen.findByText(/Project One/);
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Salesforce org" }).getAttribute("disabled")).toBeNull());
     expect(useWindowTitle).toHaveBeenLastCalledWith({ title: "Agentforce · Help", detail: "gone", badge: "Unknown org", tone: "warning" });
   });
 
@@ -123,15 +146,55 @@ describe("Salesforce Studio window", () => {
     expect(studioWindowTitle({ agentPath: null, alias: "", orgKind: "production" })).toEqual({ title: "Agentforce" });
   });
 
-  it("keeps the tab strip in the main window", () => {
+  it("offers all tools through the compact launcher in the main window", () => {
     surface = undefined;
     mount(<SalesforceProjectTab pluginId="salesforce" projectId="p" />);
     expect(useWindowTitle).toHaveBeenLastCalledWith(null);
-    expect(screen.getByRole("tablist", { name: "Salesforce tools" }).getAttribute("aria-orientation")).toBeNull();
-    expect(screen.getByRole("tab", { name: "Overview" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole('button', { name: 'Open Salesforce tools' }).textContent).toContain('Overview');
+    fireEvent.click(screen.getByRole('button', { name: 'Open Salesforce tools' }));
     expect(screen.getByTestId("salesforce-workbench").getAttribute("data-surface")).toBeNull();
-    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Overview", "Data", "Apex & logs", "Deployments", "Agentforce"]);
+    expect(screen.getByRole('dialog').querySelectorAll('[data-section]')).toHaveLength(5);
     expect(screen.queryByRole("button", { name: "Open beside agent" })).toBeNull();
+  });
+
+  it('preserves the mounted Studio and its draft when switching tools', async () => {
+    surface = undefined;
+    mount(<SalesforceProjectTab pluginId="salesforce" projectId="p" />);
+    chooseSection('agentforce');
+    const script = screen.getByTestId('script');
+    const draft = screen.getByRole('textbox', { name: 'Unsaved script' });
+    fireEvent.change(draft, { target: { value: 'keep this unsaved edit' } });
+    chooseSection('overview');
+    expect(script.closest('[hidden]')).toBeTruthy();
+    expect(screen.queryByRole('textbox', { name: 'Unsaved script' })).toBeNull();
+    chooseSection('agentforce');
+    expect(screen.getByTestId('script')).toBe(script);
+    expect((screen.getByRole('textbox', { name: 'Unsaved script' }) as HTMLInputElement).value).toBe('keep this unsaved edit');
+  });
+
+  it('accepts exact section requests for this project from another window and removes its listener', async () => {
+    surface = undefined;
+    const { unmount } = mount(<SalesforceProjectTab pluginId="salesforce" projectId="p" />);
+    localStorage.setItem('salesforce:project-tab:p', 'deployments');
+    act(() => { window.dispatchEvent(new StorageEvent('storage', { key: 'salesforce:project-tab:other' })); });
+    expect(screen.getByRole('button', { name: 'Open Salesforce tools' }).textContent).toContain('Overview');
+    act(() => { window.dispatchEvent(new StorageEvent('storage', { key: 'salesforce:project-tab:p' })); });
+    expect(screen.getByRole('region', { name: 'Deployments' })).toBeTruthy();
+    const remove = vi.spyOn(window, 'removeEventListener');
+    unmount();
+    expect(remove).toHaveBeenCalledWith('storage', expect.any(Function));
+    remove.mockRestore();
+  });
+
+  it('opens the requested general tool in main without changing the dedicated agent', () => {
+    mount(<SalesforceProjectTab pluginId="salesforce" projectId="p" />);
+    const script = screen.getByTestId('script');
+    chooseSection('data');
+    expect(navigate.toProject).toHaveBeenLastCalledWith('p', { tabId: 'salesforce', inMainWindow: true });
+    expect(localStorage.getItem('salesforce:project-tab:p')).toBe('data');
+    act(() => { window.dispatchEvent(new StorageEvent('storage', { key: 'salesforce:project-tab:p' })); });
+    expect(screen.getByRole('region', { name: 'Agentforce' })).toBeTruthy();
+    expect(screen.getByTestId('script')).toBe(script);
   });
 });
 
@@ -139,9 +202,9 @@ describe("Salesforce tools link", () => {
   it("sends the Studio window to the main window project and hides in the main window", () => {
     mount(<SalesforceToolsLink projectId="p" />);
     fireEvent.click(screen.getByRole("button", { name: /Salesforce/ }));
-    expect(navigate.toProject).toHaveBeenCalledWith("p");
+    expect(navigate.toProject).toHaveBeenCalledWith("p", { tabId: "salesforce", inMainWindow: true });
     openSalesforceTools(navigate, "q");
-    expect(navigate.toProject).toHaveBeenLastCalledWith("q");
+    expect(navigate.toProject).toHaveBeenLastCalledWith("q", { tabId: "salesforce", inMainWindow: true });
     cleanup();
     surface = undefined;
     mount(<SalesforceToolsLink projectId="p" />);
@@ -170,9 +233,11 @@ describe("Salesforce Studio detached card", () => {
     expect(screen.getByText("Agentforce Studio is open in its own window")).toBeTruthy();
     expect(screen.getByText("Unsaved edits")).toBeTruthy();
     expect(screen.getByText("2 problems")).toBeTruthy();
-    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Overview", "Data", "Apex & logs", "Deployments"]);
+    fireEvent.click(screen.getByRole('button', { name: 'Open Salesforce tools' }));
+    expect(screen.getByRole('dialog').querySelectorAll('[data-section]')).toHaveLength(5);
+    fireEvent.click(screen.getByRole('button', { name: 'Close Salesforce tools' }));
     expect(screen.queryByTestId("script")).toBeNull();
-    fireEvent.click(screen.getByRole("tab", { name: "Deployments" }));
+    chooseSection('deployments');
     expect(screen.getByLabelText("Targeted Apex tests")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Show window" }));
     fireEvent.click(screen.getByRole("button", { name: "Bring back here" }));
@@ -184,7 +249,7 @@ describe("Salesforce Studio detached card", () => {
     localStorage.setItem("salesforce:project-tab:p", "agentforce");
     const { focusWindow } = card();
     expect(await screen.findByText("Ready for your next change.")).toBeTruthy();
-    expect(screen.getByRole("tab", { name: "Overview" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole('button', { name: 'Open Salesforce tools' }).textContent).toContain('Overview');
     fireEvent.click(screen.getByRole("button", { name: /Build an agent/ }));
     expect(focusWindow).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId("script")).toBeNull();
@@ -196,7 +261,7 @@ describe("Salesforce Studio detached card", () => {
     const exec = (input: unknown) => control.options!.execute({ command: "view.open", input, user: false });
     expect(() => exec({ view: "agentforce" })).toThrow(/open in its own window/);
     act(() => { exec({ view: "data" }); });
-    expect(screen.getByRole("tab", { name: "Data" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole('button', { name: 'Open Salesforce tools' }).textContent).toContain('Data');
   });
 
   it("shows only the notice when nothing is shared, and re-reads the shared view on a timer until unmount", async () => {

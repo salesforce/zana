@@ -1263,7 +1263,12 @@ export async function handleProductHttp(
 
     const panelThreads = routeParams(path, '/api/v1/plugins/:id/panel-threads');
     if (panelThreads && method === 'GET') {
-      const listed = pluginPanelThreads(ctx.db, ctx.plugins, panelThreads.id ?? '', requestUrl.searchParams.get('limit'), requestUrl.searchParams.get('panel'));
+      const projectId = requestUrl.searchParams.get('projectId');
+      const view = requestUrl.searchParams.get('view');
+      const scope = projectId !== null || view !== null
+        ? { ...(projectId !== null ? { projectId } : {}), ...(view !== null ? { view } : {}) }
+        : undefined;
+      const listed = pluginPanelThreads(ctx.db, ctx.plugins, panelThreads.id ?? '', requestUrl.searchParams.get('limit'), requestUrl.searchParams.get('panel'), scope);
       if (!listed.ok) {
         sendJson(response, listed.status, { error: listed.message });
         return true;

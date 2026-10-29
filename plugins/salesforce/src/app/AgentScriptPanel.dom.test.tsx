@@ -88,7 +88,7 @@ describe('AgentScriptPanel', () => {
     delete (globalThis as { __ZCC_PLUGIN_RUNTIME__?: unknown }).__ZCC_PLUGIN_RUNTIME__;
   });
 
-  async function mount(subPath = '', projectId = 'proj-1', orgPicker = true, extra: { onActivePath?: (path: string | null) => void } = {}) {
+  async function mount(subPath = '', projectId = 'proj-1', orgPicker = true, extra: { onActivePath?: (path: string | null) => void; navigationTarget?: HTMLElement | null } = {}) {
     const el = document.createElement('div');
     document.body.appendChild(el);
     const root = createRoot(el);
@@ -126,6 +126,23 @@ describe('AgentScriptPanel', () => {
     expect(rpc).toHaveBeenCalledWith('salesforce', 'agentFiles.list', { projectId: 'proj-1' });
     expect(rpc.mock.calls.some((call) => call[0] === 'salesforce' && call[1] === 'org')).toBe(true);
     expect(el.querySelector('[data-testid="salesforce-playground-org"]')?.textContent).toBe('dev (sandbox)');
+  });
+
+  it('portals file tabs into the project header while retaining Studio keyboard shortcuts', async () => {
+    const target = document.createElement('header');
+    document.body.appendChild(target);
+    try {
+      const el = await mount('force-app/bots/QC.agent', 'proj-1', false, { navigationTarget: target });
+      await message(el, { type: 'ready' });
+      const iframe = el.querySelector('iframe');
+      expect(target.querySelector('[data-testid="salesforce-agent-tabs"]')).toBeTruthy();
+      expect(el.querySelector('[data-testid="salesforce-agent-tabs"]')).toBeNull();
+      expect(within(target).getByRole('tab', { name: /^QC.agent/ })).toBeTruthy();
+      const open = within(target).getByRole('button', { name: 'Open agent', exact: true });
+      fireEvent.keyDown(open, { key: 'p', ctrlKey: true });
+      await waitFor(() => expect(within(el).getByRole('dialog', { name: 'Quick open' })).toBeTruthy());
+      expect(el.querySelector('iframe')).toBe(iframe);
+    } finally { target.remove(); }
   });
 
   it('opens no example by default and offers to open or create an agent', async () => {

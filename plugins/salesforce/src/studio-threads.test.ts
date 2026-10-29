@@ -212,6 +212,19 @@ describe('side-panel drafts', () => {
     expect(threads.find((t: any) => t.threadId === 'pt3')).not.toHaveProperty('action');
   });
 
+  it('grounds a generic panel assistant on its script and keeps view.state on that script', async () => {
+    const h = harness();
+    const store = viewStoreFor(h.zcc);
+    const view = (path: string) => ({ surface: 'studio' as const, path, dirty: false, tool: 'code' as const, diagnostics: [], share: true, at: 1 });
+    store.publish('p1', view('a.agent'));
+    store.publish('p1', view('b.agent'));
+    const configured = await h.configure(panel('a.agent')) as { instructions?: string };
+    expect(configured.instructions).toContain('"a.agent"');
+    expect(configured.instructions).not.toContain('"b.agent"');
+    expect(store.get('p1', 'pt1')?.state.path).toBe('a.agent');
+    expect(await h.configure(panel('a.agent'))).toEqual(configured);
+  });
+
   it('ignores other launches and never fails one', async () => {
     const h = harness();
     for (const ctx of [panel('../x'), panel(7), { threadId: 't', projectId: 'p1', pluginMetadata: {} }, { threadId: 't', projectId: 'p1' }, panel('a.agent', { threadId: undefined }), panel('a.agent', { projectId: undefined })]) {
@@ -219,7 +232,7 @@ describe('side-panel drafts', () => {
     }
     expect((await h.call(STUDIO_RPC.threads)).threads).toEqual([]);
     h.zcc.storage.kv.set = async () => { throw new Error('disk'); };
-    expect(await h.configure(panel('a.agent'))).toEqual({});
+    expect(await h.configure(panel('a.agent'))).toMatchObject({ instructions: expect.stringContaining('"a.agent"') });
   });
 
   it('panelAgentPath reads only a safe view', () => {

@@ -57,6 +57,8 @@ const rpc = vi.fn(baseRpc);
 let realtime: ((p: unknown) => void) | undefined;
 const nodes: Array<() => void> = [];
 let sidePanel = true;
+let resourceId: string | undefined;
+let panelScope: ReturnType<typeof vi.fn> | undefined;
 let sidePanelOpen: boolean | undefined;
 const navigate: { toCompose: ReturnType<typeof vi.fn>; openPanelTool: ReturnType<typeof vi.fn>; openPanelAgent?: ReturnType<typeof vi.fn> } = { toCompose: vi.fn(), openPanelTool: vi.fn(() => true) };
 
@@ -79,7 +81,7 @@ const exec = (command: string, input: Record<string, unknown> = {}) => control.o
 const sent = (el: HTMLElement) => (el.querySelector('iframe')!.contentWindow!.postMessage as any).mock.calls.map((c: any[]) => c[0]);
 
 beforeEach(() => {
-  localStorage.clear(); rpc.mockClear(); rpc.mockImplementation(baseRpc); observers.length = 0; width = 1000; realtime = undefined; sidePanel = true; sidePanelOpen = undefined; resetStudioToolBridge();
+  localStorage.clear(); rpc.mockClear(); rpc.mockImplementation(baseRpc); observers.length = 0; width = 1000; realtime = undefined; sidePanel = true; sidePanelOpen = undefined; resetStudioToolBridge(); resourceId = undefined; panelScope = undefined;
   clearStudioRunWorkspaces();
   navigate.toCompose.mockClear();
   navigate.openPanelTool = vi.fn(() => true); delete navigate.openPanelAgent;
@@ -91,8 +93,8 @@ beforeEach(() => {
   });
   (globalThis as any).__ZCC_PLUGIN_HOST__ = { callRpc: rpc, useZccNavigate: () => ({ toCompose: vi.fn() }), getSettings: async () => ({ values: { agentScriptDialect: 'agentforce' } }), setSettings: async () => undefined };
   (globalThis as any).__ZCC_PLUGIN_RUNTIME__ = {
-    useZccNavigate: () => navigate,
-    useZccContext: () => ({ projectId: 'proj-1', threadId: null, sidePanel, ...(sidePanelOpen === undefined ? {} : { sidePanelOpen }) }),
+    useZccNavigate: () => { if (panelScope) Object.assign(navigate, { setPanelScope: panelScope }); else delete (navigate as any).setPanelScope; return navigate; },
+    useZccContext: () => ({ projectId: 'proj-1', threadId: null, sidePanel, ...(resourceId ? { surface: 'plugin-view', resourceId } : {}), ...(sidePanelOpen === undefined ? {} : { sidePanelOpen }) }),
     useSettings: () => ({ values: { agentScriptDialect: 'agentforce', defaultOrg: 'dev' }, isLoading: false }),
     useRealtime: (_c: string, h: (p: unknown) => void) => { realtime = h; }
   };
@@ -120,6 +122,36 @@ const seedWorkspace = (tabs: ReturnType<typeof scriptTab>[], activeTab = scriptT
 };
 
 describe('AgentScriptPanel beside the host side panel', () => {
+  it('locks a resource window to its primary script while retaining related tool portals', async () => {
+    resourceId = QC; panelScope = vi.fn();
+    const el = await mount(HELP); await ready(el);
+    expect(el.querySelector('[aria-label="Close agent QC.agent"]')).toBeNull();
+    expect(el.querySelector('[aria-label="Close agent Help.agent"]')).toBeNull();
+    expect(panelScope).toHaveBeenLastCalledWith({ id: QC, view: QC });
+    expect(rpc.mock.calls.filter(([, method]) => method === 'agentFiles.read').every(([, , input]) => input.path === QC)).toBe(true);
+    expect(el.textContent).toContain('Open another agent');
+    await act(async () => { fireEvent.click(el.querySelector('[data-testid="salesforce-agent-script-preview"]')!); });
+    expect(navigate.openPanelTool).toHaveBeenLastCalledWith({ actionId: 'studio-preview' });
+    const preview = await hostTab('preview');
+    expect(preview.el.querySelector('[data-testid="studio-view-preview"]')?.getAttribute('data-agent')).toBe(QC);
+  });
+
+  it('leaves a scoped host assistant selected instead of restoring a legacy Preview view', async () => {
+    panelScope = vi.fn();
+    const script = scriptTab({ path: QC, label: 'QC.agent' });
+    seedWorkspace([script, viewTab('preview')], 'view:preview');
+    await mount(QC);
+    expect(navigate.openPanelTool).not.toHaveBeenCalled();
+  });
+
+  it('updates the host assistant scope when switching agents in the main window', async () => {
+    panelScope = vi.fn();
+    const el = await mount(QC); await ready(el);
+    expect(panelScope).toHaveBeenLastCalledWith({ id: QC, view: QC });
+    await act(async () => { await exec('file.open', { path: HELP }); }); await flush();
+    expect(panelScope).toHaveBeenLastCalledWith({ id: HELP, view: HELP });
+  });
+
   it('opens tools in the host panel and renders them there, keeping their state across tab switches', async () => {
     const el = await mount('force-app/bots/QC.agent');
     await ready(el);

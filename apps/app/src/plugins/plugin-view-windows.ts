@@ -60,7 +60,8 @@ export function isPluginViewOpen(
     (view) =>
       view.pluginId === target.pluginId &&
       view.tabId === target.tabId &&
-      view.projectId === target.projectId
+      view.projectId === target.projectId &&
+      view.resourceId === target.resourceId
   );
 }
 

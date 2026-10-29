@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ComponentType } from 'react';
-import type { PluginThreadPanelProps } from '@zana-ai/zcc-plugin-sdk/app';
+import { useZccContext, type PluginThreadPanelProps } from '@zana-ai/zcc-plugin-sdk/app';
 import { EmptyState } from '../components/SalesforceState.js';
 import { STUDIO_TOKENS } from './studio-tokens.js';
 import { attachStudioTool, useStudioMounted, useStudioToolScope, type PanelTool } from './studio-tool-bridge.js';
@@ -12,7 +12,10 @@ const HOST_STYLES = `${STUDIO_TOKENS}
 
 /** The host side-panel tab for one Studio tool; Studio renders the content (studio-tool-bridge). */
 export function StudioPanelTool({ tool, title, projectId, tabId, studioId }: { tool: PanelTool; title: string; projectId?: string; tabId?: string; studioId?: string }) {
-  const key = useStudioToolScope(projectId, studioId);
+  const context = useZccContext();
+  // Restored host tabs follow the runtime in this window, not their previous window.
+  const owner = context.sidePanel === true ? context.surface === 'plugin-view' ? context.resourceId ?? 'window' : undefined : studioId;
+  const key = useStudioToolScope(projectId, owner);
   const mounted = useStudioMounted(key);
   const slot = useRef<HTMLDivElement>(null);
   useEffect(() => {

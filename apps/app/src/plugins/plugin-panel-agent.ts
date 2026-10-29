@@ -11,7 +11,7 @@ export const PLUGIN_PANEL_AGENT_EVENT = 'zcc:plugin-panel-agent-open';
 export const PANEL_AGENT_DRAFT_MAX_LENGTH = 20_000;
 
 /** Matches the server's bound on a recorded view; main still validates it. */
-export const PANEL_AGENT_VIEW_MAX_LENGTH = 256;
+export const PANEL_AGENT_VIEW_MAX_LENGTH = 500;
 
 export type PanelAgentTarget =
   | { threadId: string; title?: string }

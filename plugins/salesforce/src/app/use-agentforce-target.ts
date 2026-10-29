@@ -28,9 +28,9 @@ function save(selection: Selection) {
  */
 export function useAgentforceTarget(input: {
   pluginId: string; projectId?: string; threadId?: string; tabId?: string;
-  surface: 'playground' | 'preview'; params?: unknown;
+  surface: 'playground' | 'preview'; params?: unknown; resourceId?: string;
 }) {
-  const scope = JSON.stringify([input.pluginId, input.projectId ?? '', input.threadId ?? '']);
+  const scope = JSON.stringify([input.pluginId, input.projectId ?? '', input.threadId ?? '', ...(input.resourceId ? [input.resourceId] : [])]);
   const consumer = JSON.stringify([input.surface, input.tabId ?? '']);
   const focus = parseAgentforcePanelFocus(input.params);
   const path = focus.path;

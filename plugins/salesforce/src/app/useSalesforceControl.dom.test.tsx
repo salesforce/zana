@@ -2,7 +2,7 @@
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useState } from 'react';
-import { controlText, useSalesforceControl } from './useSalesforceControl.js';
+import { closeSalesforceControls, controlText, useSalesforceControl } from './useSalesforceControl.js';
 const rpc = vi.fn(); const queued: unknown[] = [];
 function Surface({ enabled = true, projectId = 'p' }) {
   const [view, setView] = useState('overview');
@@ -40,4 +40,37 @@ it('releases a lease that registered after unmount', async () => {
   const mounted = render(<Surface />); mounted.unmount();
   await act(async () => { finish({ ok: true, viewId: 'late' }); });
   expect(rpc).toHaveBeenCalledWith('salesforce', 'control.close', expect.objectContaining({ viewId: 'late' }));
+});
+
+it('preflights all local project leases and stops renewal without closing other projects', async () => {
+  render(<><Surface /><Surface /><Surface projectId="other" /></>);
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  await act(async () => { await closeSalesforceControls('p'); });
+  expect(rpc.mock.calls.filter(row => row[1] === 'control.close' && row[2].projectId === 'p')).toHaveLength(2);
+  expect(rpc.mock.calls.filter(row => row[1] === 'control.close' && row[2].projectId === 'other')).toHaveLength(0);
+  rpc.mockClear();
+  await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+  expect(rpc.mock.calls.filter(row => row[1] === 'control.poll').every(row => row[2].projectId === 'other')).toBe(true);
+  await closeSalesforceControls('p');
+  expect(rpc.mock.calls.some(row => row[1] === 'control.close')).toBe(false);
+});
+it('awaits an in-flight registration before acknowledging native close', async () => {
+  let finish!: (value: unknown) => void;
+  rpc.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  render(<Surface />);
+  let settled = false;
+  const closing = closeSalesforceControls('p').then(() => { settled = true; });
+  await act(async () => { await Promise.resolve(); });
+  expect(settled).toBe(false);
+  await act(async () => { finish({ ok: true, viewId: 'late' }); await closing; });
+  expect(rpc).toHaveBeenCalledWith('salesforce', 'control.close', expect.objectContaining({ viewId: 'late' }));
+  expect(rpc.mock.calls.some(row => row[1] === 'control.poll')).toBe(false);
+});
+it('rejects a failed close acknowledgement and permits retry', async () => {
+  render(<Surface />);
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  rpc.mockImplementationOnce(async () => ({ ok: false, error: 'Cannot release view' }));
+  await expect(closeSalesforceControls('p')).rejects.toThrow('Cannot release view');
+  await closeSalesforceControls('p');
+  expect(rpc.mock.calls.filter(row => row[1] === 'control.close')).toHaveLength(2);
 });

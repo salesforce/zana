@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ExternalLink, MessageSquare } from 'lucide-react';
+import { PluginAssistantContext } from '../../../plugins/plugin-assistant-context.js';
 import { ThreadCommandComposer } from '../../ThreadCommandComposer.js';
 import { ComposerDraftProvider } from '../../composer/ComposerDraft.js';
 import { product } from '../../../lib/product-client.js';
@@ -46,6 +47,7 @@ export function PanelAgentTab({
   draft,
   draftProjectId,
   projectId,
+  resourceLabel,
   pluginPanel,
   onCreated,
   onOpenConversation
@@ -57,6 +59,8 @@ export function PanelAgentTab({
   draftProjectId?: string;
   /** The page's own project: new threads run there, with no project or machine to pick. */
   projectId?: string;
+  /** Human-readable identity of the page resource this assistant belongs to. */
+  resourceLabel?: string;
   pluginPanel?: { pluginId: string; panel: string; view?: string };
   onCreated: (threadId: string) => void;
   onOpenConversation?: (conversation: PanelConversation) => void;
@@ -67,7 +71,9 @@ export function PanelAgentTab({
       <div className="panel-agent-tab is-chat" data-testid="panel-agent-tab-chat">
         {pluginPanel ? <OpenAsThreadBar threadId={threadId} /> : null}
         <Suspense fallback={null}>
-          <ThreadDetailLazy threadId={threadId} embedded />
+          <PluginAssistantContext.Provider value={pluginPanel?.pluginId ?? null}>
+            <ThreadDetailLazy threadId={threadId} embedded />
+          </PluginAssistantContext.Provider>
         </Suspense>
       </div>
     );
@@ -75,14 +81,14 @@ export function PanelAgentTab({
   return (
     <div className="panel-agent-tab is-composer" data-testid="panel-agent-tab-composer">
       {pluginPanel && onOpenConversation ? (
-        <RecentPanelConversations pluginId={pluginPanel.pluginId} panel={pluginPanel.panel} onOpen={onOpenConversation} />
+        <RecentPanelConversations key={JSON.stringify([pluginPanel.pluginId, pluginPanel.panel, projectId, pluginPanel.view])} pluginId={pluginPanel.pluginId} panel={pluginPanel.panel} projectId={projectId} view={pluginPanel.view} onOpen={onOpenConversation} />
       ) : null}
       <p className="panel-agent-tab-hint">
-        {pluginPanel
+        {resourceLabel ? `Ask about ${resourceLabel}.` : pluginPanel
           ? 'Ask about this page. The agent knows which plugin it is next to.'
           : 'Ask an agent without leaving this page.'}
       </p>
-      <ComposerDraftProvider sessionKey={pluginPanel ? JSON.stringify(['panel', pluginPanel.pluginId, pluginPanel.panel, pluginPanel.view ?? null]) : undefined}>
+      <ComposerDraftProvider sessionKey={pluginPanel ? JSON.stringify(['panel', pluginPanel.pluginId, pluginPanel.panel, projectId ?? draftProjectId ?? null, pluginPanel.view ?? null]) : undefined}>
       <ThreadCommandComposer
         autoFocus
         navigateOnCreate={false}
@@ -100,16 +106,20 @@ export function PanelAgentTab({
 function RecentPanelConversations({
   pluginId,
   panel,
+  projectId,
+  view,
   onOpen
 }: {
   pluginId: string;
   panel: string;
+  projectId?: string;
+  view?: string;
   onOpen: (conversation: PanelConversation) => void;
 }) {
   const [conversations, setConversations] = useState<PanelConversation[]>([]);
   useEffect(() => {
     let cancelled = false;
-    product.threads.panelConversations(pluginId, panel)
+    product.threads.panelConversations(pluginId, panel, { projectId, view })
       .then((rows) => {
         if (!cancelled) setConversations(rows.slice(0, PANEL_AGENT_RECENT_LIMIT));
       })
@@ -118,7 +128,7 @@ function RecentPanelConversations({
     return () => {
       cancelled = true;
     };
-  }, [pluginId, panel]);
+  }, [pluginId, panel, projectId, view]);
 
   if (conversations.length === 0) return null;
   return (

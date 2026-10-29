@@ -3,7 +3,16 @@ import { callPluginRpc, type ZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 /** The Salesforce project tab, which also runs as the Studio window. */
 export const STUDIO_TAB_ID = 'salesforce';
 
-interface LeaseRow { id?: unknown; surface?: unknown; window?: unknown; commands?: unknown }
+interface LeaseRow { id?: unknown; surface?: unknown; window?: unknown; commands?: unknown; state?: { resourceId?: unknown; path?: unknown } }
+
+/** An identity only; every file operation still goes through server path confinement. */
+export function studioAgentResource(path: unknown): string | null {
+  if (typeof path !== 'string' || !path || path.length > 500 || /[\u0000-\u001f]/.test(path)) return null;
+  const clean = path.replace(/\\/g, '/');
+  if (clean.startsWith('/') || /^[A-Za-z]:/.test(clean) || clean.split('/').includes('..')) return null;
+  const normalized = clean.split('/').filter(part => part && part !== '.').join('/');
+  return /\.(agent|afscript)$/i.test(normalized) ? normalized : null;
+}
 
 /**
  * A live window acknowledges within a second (a realtime wake delivers the command). A window that
@@ -24,14 +33,17 @@ export async function openInStudioWindow(args: {
   navigate: Pick<ZccNavigate, 'openInWindow'>;
   call?: typeof callPluginRpc;
 }): Promise<boolean> {
+  const resourceId = studioAgentResource(args.path);
+  if (!resourceId) return false;
   const call = args.call ?? callPluginRpc;
   try {
     const listed = await call(args.pluginId, 'control.views', { projectId: args.projectId }) as { ok?: boolean; views?: LeaseRow[] } | null;
     const views = listed?.ok && Array.isArray(listed.views) ? listed.views : [];
     const lease = views.find(view => view.window === 'plugin-view' && view.surface === 'workbench'
-      && Array.isArray(view.commands) && view.commands.includes('view.open'));
+      && Array.isArray(view.commands) && view.commands.includes('view.open')
+      && studioAgentResource(view.state?.resourceId ?? view.state?.path) === resourceId);
     if (!lease || typeof lease.id !== 'string') return false;
-    const input = { view: 'agentforce', path: args.path, ...(args.line && args.line >= 1 ? { line: Math.floor(args.line) } : {}) };
+    const input = { view: 'agentforce', path: resourceId, ...(args.line && args.line >= 1 ? { line: Math.floor(args.line) } : {}) };
     const sent = await call(args.pluginId, 'control.command', { projectId: args.projectId, viewId: lease.id, command: 'view.open', input }) as { ok?: boolean; commandId?: unknown } | null;
     if (!sent?.ok || typeof sent.commandId !== 'string') return false;
     const done = await call(args.pluginId, 'control.result', { projectId: args.projectId, commandId: sent.commandId, waitMs: STUDIO_ACK_WAIT_MS }) as { ok?: boolean; state?: unknown } | null;
@@ -40,7 +52,7 @@ export async function openInStudioWindow(args: {
   } catch {
     return false;
   }
-  void args.navigate.openInWindow?.(args.projectId, { tabId: STUDIO_TAB_ID });
+  void args.navigate.openInWindow?.(args.projectId, { tabId: STUDIO_TAB_ID, resourceId });
   return true;
 }
 
@@ -58,8 +70,10 @@ export async function openAgentInStudioWindow(args: Parameters<typeof openInStud
   pollMs?: number;
   sleep?: (ms: number) => Promise<void>;
 }): Promise<boolean> {
+  const resourceId = studioAgentResource(args.path);
+  if (!resourceId) return false;
   if (await openInStudioWindow(args)) return true;
-  if (!args.navigate.openInWindow || !(await args.navigate.openInWindow(args.projectId, { tabId: STUDIO_TAB_ID }))) return false;
+  if (!args.navigate.openInWindow || !(await args.navigate.openInWindow(args.projectId, { tabId: STUDIO_TAB_ID, resourceId }))) return false;
   const sleep = args.sleep ?? (ms => new Promise<void>(resolve => setTimeout(resolve, ms)));
   const pollMs = args.pollMs ?? STUDIO_WINDOW_POLL_MS;
   for (let waited = 0; waited < (args.startMs ?? STUDIO_WINDOW_START_MS); waited += pollMs) {

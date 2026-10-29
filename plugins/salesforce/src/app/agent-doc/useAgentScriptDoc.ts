@@ -26,6 +26,10 @@ export interface AgentScriptDocApi {
   update(text: string, diagnostics?: StudioDiagnostic[], baseSha256?: string): void;
   saved(sha256: string, text: string): Promise<void>;
   takeOver(): Promise<boolean>;
+  /** Flushes edits and releases this editor before moving its document to another window. */
+  release(): Promise<void>;
+  /** Reopens this editor after a cancelled native window close. */
+  resume(): void;
   propose(input: ProposeEditInput, options?: { id?: string; threadId?: string }): Promise<AgentDocProposal | null>;
   resolve(id: string, decision: 'accept' | 'reject' | 'applied', sha256?: string): Promise<{ ok: boolean; error?: string; code?: string }>;
   reload(): void;
@@ -81,6 +85,8 @@ interface Session {
   update(text: string, diagnostics?: StudioDiagnostic[], baseSha256?: string): void;
   saved(sha256: string, text: string): Promise<void>;
   takeOver(): Promise<boolean>;
+  /** Flushes edits and releases this editor before moving its document to another window. */
+  release(): Promise<void>;
   propose(input: ProposeEditInput, options?: { id?: string; threadId?: string }): Promise<AgentDocProposal | null>;
   resolve(id: string, decision: 'accept' | 'reject' | 'applied', sha256?: string): Promise<{ ok: boolean; error?: string; code?: string }>;
   /** A realtime change at `rev`. */
@@ -92,6 +98,7 @@ interface Session {
  * the editor (options.editor) also holds an edit lease and is the only writer.
  */
 export function useAgentScriptDoc(pluginId: string, projectId: string | null, path: string | null, options?: { editor?: AgentDocEditor }): AgentScriptDocApi {
+  const [sessionEpoch, setSessionEpoch] = useState(0);
   const [doc, setDoc] = useState<AgentDocSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -125,6 +132,7 @@ export function useAgentScriptDoc(pluginId: string, projectId: string | null, pa
     /** The first lease request ran: from then on a document without a lease is re-acquired. */
     let started = false;
     let acquiring = false;
+    let acquisition: Promise<Result> | undefined;
     /** This session's own calls in flight, and the newest change announced meanwhile (their results usually carry it). */
     let busy = 0;
     let announced = -1;
@@ -178,7 +186,7 @@ export function useAgentScriptDoc(pluginId: string, projectId: string | null, pa
       // Before the first request a lease in this client's name is this window's previous session (a reload): not someone else.
       const held = !mine && shown.lease && (shown.lease.clientId !== clientId || started) ? shown.lease : null;
       setHeldBy(prev => prev?.id === held?.id && prev?.label === held?.label && prev?.clientId === held?.clientId ? prev : held);
-      if (editing && started && !shown.lease && !acquiring) void acquire();
+      if (editing && !finishing && started && !shown.lease && !acquiring) void acquire();
     };
     const fail = (result: Failure) => { if (live()) setError(result.error); };
 
@@ -186,7 +194,8 @@ export function useAgentScriptDoc(pluginId: string, projectId: string | null, pa
     const acquire = async (take = false): Promise<Result> => {
       acquiring = true;
       try {
-        const result = await mutate(AGENT_DOC_RPC.lease, { clientId, label, ...(leaseId ? { leaseId } : {}), ...(take ? { take: true } : {}) });
+        acquisition = mutate(AGENT_DOC_RPC.lease, { clientId, label, ...(leaseId ? { leaseId } : {}), ...(take ? { take: true } : {}) });
+        const result = await acquisition;
         if (!live()) return result;
         if (result.ok) { apply(result.doc, true); setError(null); }
         else if (result.code === 'leased') {
@@ -194,7 +203,7 @@ export function useAgentScriptDoc(pluginId: string, projectId: string | null, pa
           else { const fresh = await call(AGENT_DOC_RPC.open); if (live() && fresh.ok) apply(fresh.doc); else if (live()) setLease(false); }
         } else if (!isLeased) fail(result); // a held lease survives a failed renewal (offline, restarting); the next tick retries
         return result;
-      } finally { acquiring = false; }
+      } finally { acquiring = false; acquisition = undefined; }
     };
 
     session.open = async () => {
@@ -274,45 +283,66 @@ export function useAgentScriptDoc(pluginId: string, projectId: string | null, pa
       await session.open();
       if (!live()) return;
       setLoading(false);
-      if (!editing) return;
+      if (!editing || finishing) return;
       if (docRef.current) await acquire();
       started = true;
       // A lease seen before the first request (this window's previous session) and refused since is someone else's now.
       if (live() && docRef.current) apply(docRef.current);
     })();
-    if (editing) renew = setInterval(() => { if (started && !acquiring) void acquire(); }, AGENT_DOC_LEASE_RENEW_MS);
+    if (editing) renew = setInterval(() => { if (!finishing && started && !acquiring) void acquire(); }, AGENT_DOC_LEASE_RENEW_MS);
     /** Sends an edit still waiting for its debounce, then closes with this session's grant (an older session's close never ends a newer grant). */
-    const finish = () => {
-      if (!editing || finishing) return;
+    let finished: Promise<void> | undefined;
+    const finish = (strict = false): Promise<void> => {
+      if (!editing) return Promise.resolve();
+      if (finished) return finished;
       finishing = true;
       const unsent = pending; const cur = docRef.current;
       pending = null;
       if (timer) { clearTimeout(timer); timer = undefined; }
-      const closeDoc = () => void call(AGENT_DOC_RPC.close, { clientId, leaseId: leaseId ?? '' });
-      const flushFinal = (latest: AgentDocSnapshot | null) => {
+      const closeDoc = async () => {
+        // Close acknowledges the grant release without returning a document snapshot.
+        try {
+          const result = await callPluginRpc(pluginId, AGENT_DOC_RPC.close, { projectId, path: activePath, clientId, leaseId: leaseId ?? '' }) as { ok?: boolean; error?: string } | null;
+          if (strict && result?.ok !== true) throw Error(result?.error || 'Could not release the editor.');
+          if (live()) setLease(false);
+        } catch (error) { if (strict) throw error; }
+      };
+      const flushFinal = async (latest: AgentDocSnapshot | null) => {
         if (isLeased && unsent && latest && unsent.text !== latest.text) {
-          void call(AGENT_DOC_RPC.update, {
+          const result = await call(AGENT_DOC_RPC.update, {
             clientId, label, leaseId, rev: latest.rev, text: unsent.text,
             ...(unsent.diagnostics ? { diagnostics: unsent.diagnostics } : {}), ...(unsent.baseSha256 ? { baseSha256: unsent.baseSha256 } : {})
-          }).then(closeDoc);
-        } else closeDoc();
+          });
+          if (strict && !result.ok) throw Error(result.error);
+        }
+        await closeDoc();
       };
       // A previous update owns the next revision. Flushing against the snapshot
       // from before it (or closing first) would discard the last keystrokes.
-      if (inFlight) void inFlight.then(result => flushFinal(result.doc ?? cur));
-      else flushFinal(cur);
+      const waiting = inFlight ?? acquisition;
+      finished = (waiting ? waiting.then(result => {
+        if (strict && !result.ok) throw Error(result.error);
+        return flushFinal(result.doc ?? cur);
+      }) : flushFinal(cur)).catch(error => {
+        finished = undefined; finishing = false; pending ??= unsent;
+        if (live() && pending && isLeased) timer = setTimeout(() => void flush(), AGENT_DOC_UPDATE_DEBOUNCE_MS);
+        throw error;
+      });
+      return finished;
     };
+    session.release = () => finish(true);
+    const onPageHide = () => { void finish(); };
     // Best effort on a reload or window close: the update and the close may not both make it, then the lease lapses.
-    if (editing) window.addEventListener('pagehide', finish);
+    if (editing) window.addEventListener('pagehide', onPageHide);
     return () => {
-      if (editing) window.removeEventListener('pagehide', finish);
+      if (editing) window.removeEventListener('pagehide', onPageHide);
       finish();
       session.alive = false;
       if (sessionRef.current === session) sessionRef.current = null;
       if (renew) clearInterval(renew);
       if (lapseCheck) clearTimeout(lapseCheck);
     };
-  }, [pluginId, projectId, path, clientId, label, standby]);
+  }, [pluginId, projectId, path, clientId, label, standby, sessionEpoch]);
 
   useRealtime(AGENT_DOC_CHANNEL, payload => {
     const p = payload as { projectId?: unknown; path?: unknown; rev?: unknown } | null;
@@ -323,6 +353,8 @@ export function useAgentScriptDoc(pluginId: string, projectId: string | null, pa
 
   const update = useCallback((text: string, diagnostics?: StudioDiagnostic[], baseSha256?: string) => { sessionRef.current?.update(text, diagnostics, baseSha256); }, []);
   const saved = useCallback(async (sha256: string, text: string) => { await sessionRef.current?.saved(sha256, text); }, []);
+  const release = useCallback(async () => { await sessionRef.current?.release(); }, []);
+  const resume = useCallback(() => { setSessionEpoch(epoch => epoch + 1); }, []);
   const takeOver = useCallback(async () => (await sessionRef.current?.takeOver()) ?? false, []);
   const propose = useCallback(async (input: ProposeEditInput, opts?: { id?: string; threadId?: string }) => (await sessionRef.current?.propose(input, opts)) ?? null, []);
   const resolve = useCallback(async (id: string, decision: 'accept' | 'reject' | 'applied', sha256?: string) =>
@@ -330,6 +362,6 @@ export function useAgentScriptDoc(pluginId: string, projectId: string | null, pa
   const reload = useCallback(() => { void sessionRef.current?.open(); }, []);
 
   const held = leased ? null : heldBy;
-  return useMemo(() => ({ doc, loading, error, leased, leaseGen, heldBy: held, update, saved, takeOver, propose, resolve, reload }),
-    [doc, loading, error, leased, leaseGen, held, update, saved, takeOver, propose, resolve, reload]);
+  return useMemo(() => ({ doc, loading, error, leased, leaseGen, heldBy: held, update, saved, release, resume, takeOver, propose, resolve, reload }),
+    [doc, loading, error, leased, leaseGen, held, update, saved, release, resume, takeOver, propose, resolve, reload]);
 }

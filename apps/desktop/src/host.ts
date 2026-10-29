@@ -256,6 +256,7 @@ import {
   writePluginViewBounds
 } from './window/plugin-view-windows.js';
 import { createPluginViewHost } from './window/plugin-view-host.js';
+import { createPluginViewCloseGuard } from './window/plugin-view-close.js';
 import {
   cascadeThreadViewPosition,
   readThreadViewBounds,
@@ -1474,6 +1475,7 @@ let updater: Updater | null = null;
 // consented via "Restart now"). Shared with `before-quit` so an in-flight
 // auto-update cannot be cancelled by the live-sessions prompt.
 let quitConfirmed = false;
+let windowShutdownStarted = false;
 let doctor: Doctor | null = null;
 /**
  * Pending "What's New" window, computed once at boot when the running version
@@ -3560,6 +3562,7 @@ function openProjectWindow(projectId: string) {
 }
 
 /* v8 ignore next -- wiring to Electron windows; createPluginViewHost is unit-tested and the windows are covered by built-Electron E2E */
+const pluginViewCloseGuard = createPluginViewCloseGuard();
 const pluginViews = createPluginViewHost({
   windows,
   listApps: () => runtimeSupervisor ? runtimeSupervisor.listPluginApps() : listPluginAppsFromProductServer(),
@@ -7103,7 +7106,14 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
   });
 
   windows.set(win.id, { win, projectId, view, threadView });
-  if (view) pluginViews.broadcast();
+  if (view) {
+    win.on('close', event => { if (!windowShutdownStarted && pluginViewCloseGuard.intercept(win)) event.preventDefault(); });
+    win.webContents.on('render-process-gone', () => pluginViewCloseGuard.forget(win.id));
+    win.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
+      if (mainFrame && !inPlace) pluginViewCloseGuard.forget(win.id);
+    });
+    pluginViews.broadcast();
+  }
   if (threadView) threadViews.broadcast();
   rendererReadiness.reset(win.id);
   /* v8 ignore next -- Electron navigation event is covered by boundary E2E; navigationStarted is unit-tested */
@@ -7153,6 +7163,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
     desktopBrowserViewManager.releaseWindow(hostWebContentsId);
     conversationHistory.releaseWindow(win.id);
     rendererReadiness.remove(win.id);
+    pluginViewCloseGuard.forget(win.id);
     windows.delete(win.id);
     boundsControllers.delete(win.id);
     if (view) pluginViews.broadcast();
@@ -7821,6 +7832,8 @@ function registerIpc() {
   }), () => ({ approved: false as const, reason: 'unavailable' as const }));
   /* v8 ignore next -- registered at built-Electron boot; registerPluginViewIpc is unit-tested */
   registerPluginViewIpc(safeHandle, pluginViews);
+  safeHandleFromWindow<[unknown], boolean>(IPC.windows.pluginViewCloseReady, (win, value: unknown) => windows.get(win.id)?.view ? pluginViewCloseGuard.setReady(win, value) : false, () => false);
+  safeHandleFromWindow<[unknown, unknown], boolean>(IPC.windows.pluginViewCloseComplete, (win, id: unknown, result: unknown) => windows.get(win.id)?.view ? pluginViewCloseGuard.complete(win, id, result) : false, () => false);
   registerDeepLinkIpc(safeHandleFromWindow, deepLinks);
   /* v8 ignore next -- registered at built-Electron boot; registerThreadViewIpc is unit-tested */
   registerThreadViewIpc(safeHandle, threadViews);
@@ -9916,6 +9929,7 @@ app.on('before-quit', (event) => {
   // Keep services alive while the authoritative activity probe and confirmation run.
   // Update restarts set quitConfirmed after their own consent and bypass this guard.
   if (!quitGuard.allowQuit(event)) return;
+  windowShutdownStarted = true;
   runtimeRecovery.dispose();
   // Quit can bypass a usable per-window close transition. Clear native maximize
   // state here too, so macOS cannot restore a maximized window on next launch.

@@ -8,19 +8,14 @@ import { buildStudioContext, buildStudioRequest, MAX_STUDIO_REQUEST_LENGTH, role
 import { isStudioDiagnostics, STUDIO_CHANGED_CHANNEL, STUDIO_RPC, type StudioThreadLink } from './studio-contract.js';
 import { rpcFailure, rpcString, type StudioServerContext } from './studio-server-context.js';
 import { readOpenComments, viewStoreFor } from './studio-view.js';
+import { isSafeStudioPath, panelAgentPath, studioThreadPath } from './studio-agent-binding.js';
+export { isSafeStudioPath, panelAgentPath } from './studio-agent-binding.js';
 
 export const MAX_THREAD_LINKS = 200;
-const MAX_PATH = 500;
 const linksKey = (projectId: string) => `studio:links:${projectId}`;
 
 interface LinkDoc { links: StudioThreadLink[] }
 interface KvLike { get<T>(key: string): Promise<T | undefined>; set(key: string, value: unknown): Promise<void> }
-
-/** Relative project path of an agent file; rejects traversal, absolute paths and control characters. */
-export function isSafeStudioPath(path: unknown): path is string {
-  return typeof path === 'string' && path.length > 0 && path.length <= MAX_PATH
-    && !path.startsWith('/') && !/[\\\0-\x1f:]/.test(path) && !path.split('/').some(part => !part || part === '.' || part === '..');
-}
 
 /** Per-project link store: capped, newest activity wins, writes serialized per project. */
 export class StudioLinkStore {
@@ -109,7 +104,7 @@ export function registerStudioAssistant(studio: StudioServerContext): { linkPane
     if (!action && !prompt) return { failure: rpcFailure('invalid_input', 'Pick an action or write a request.') };
     if (prompt.length > MAX_STUDIO_REQUEST_LENGTH) return { failure: rpcFailure('invalid_input', `Request must be at most ${MAX_STUDIO_REQUEST_LENGTH} characters.`) };
     const given = (args as { diagnostics?: unknown }).diagnostics;
-    const view = views.get(projectId)?.state;
+    const view = views.latest(projectId, path)?.state;
     const sameFile = view?.path === path ? view : undefined;
     const diagnostics = isStudioDiagnostics(given) ? given : sameFile?.diagnostics ?? [];
     const comments = action?.id === 'address-comments' || action?.id === 'review' ? await readOpenComments(zcc.storage.kv, projectId, path) : [];
@@ -190,13 +185,15 @@ export function registerStudioAssistant(studio: StudioServerContext): { linkPane
     const threadId = ctx.thread?.id ?? ctx.threadId;
     const projectId = ctx.projectId ?? ctx.project?.id;
     const briefId = (ctx.pluginMetadata as { sfBriefId?: unknown } | undefined)?.sfBriefId;
+    const ownedPath = studioThreadPath(ctx.pluginMetadata);
+    if (threadId && projectId && ownedPath) views.bindThread(projectId, threadId, ownedPath);
     if (threadId && typeof briefId === 'string' && briefs.has(briefId)) { briefs.set(threadId, briefs.get(briefId)!); briefs.delete(briefId); }
     const brief = (): { instructions?: string } => { const text = threadId ? briefs.get(threadId) : undefined; return text ? { instructions: text } : {}; };
     const path = panelAgentPath(ctx.pluginMetadata);
     if (!threadId || !projectId || !path || seen.has(threadId)) return brief();
     seen.add(threadId);
     const draft = drafts.take(projectId, path);
-    if (draft?.context) briefs.set(threadId, draft.context);
+    briefs.set(threadId, draft?.context ?? buildStudioContext({ path, view: views.latest(projectId, path)?.state }));
     const title = draft?.title || ctx.thread?.title?.trim()?.slice(0, 120) || `Agent script · ${path.split('/').pop()}`;
     try {
       await links.link(projectId, { threadId, title, role: roleForAction(draft?.action), ...(draft?.action ? { action: draft.action } : {}), path });
@@ -210,14 +207,6 @@ export function registerStudioAssistant(studio: StudioServerContext): { linkPane
 const MAX_SEEN_PANEL_THREADS = 1000;
 const MAX_PENDING_DRAFTS = 50;
 const DRAFT_TTL_MS = 30 * 60_000;
-
-/** The agent file a side-panel conversation was started beside: the view the Studio named in its draft. */
-export function panelAgentPath(pluginMetadata: unknown): string | null {
-  const binding = (pluginMetadata as { panelAgent?: unknown } | null | undefined)?.panelAgent;
-  if (!binding || typeof binding !== 'object' || Array.isArray(binding)) return null;
-  const view = (binding as { view?: unknown }).view;
-  return isSafeStudioPath(view) ? view : null;
-}
 
 /** Insertion-ordered set that forgets its oldest entries past `max`. */
 export class BoundedSet {

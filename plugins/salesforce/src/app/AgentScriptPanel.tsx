@@ -1,9 +1,9 @@
 import type { ContextPreset, ContextPresetList } from '../../lib/preview-context-preset-contract.js';
-import { useSalesforceControl } from './useSalesforceControl.js';
+import { closeSalesforceControls, resumeSalesforceControls, useSalesforceControl } from './useSalesforceControl.js';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Bot, Cloud, Code, FlaskConical, Files, MessageSquare, Network, PanelRight, Pin, Play, Search, Zap } from 'lucide-react';
-import { callPluginRpc, useRealtime, useSettings, useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
+import { callPluginRpc, useRealtime, useSettings, useZccContext, useZccNavigate, useWindowCloseHandler } from '@zana-ai/zcc-plugin-sdk/app';
 import { type AgentScriptDialect, type PublicOrgView } from '../../lib/types.js';
 import { applyProposalText } from '../../lib/agent-doc-apply.js';
 import { AGENT_DOC_RPC, type AgentDocSnapshot } from '../../lib/agent-doc-contract.js';
@@ -23,6 +23,7 @@ import {
 } from '../../lib/studio-contract.js';
 import { takeQueuedAgentScriptOpen } from './agent-script-open.js';
 import { focusKey, parseAgentforcePanelFocus, type StudioFocus } from './agentforce-panel-params.js';
+import { openAgentInStudioWindow, studioAgentResource } from './studio-window-route.js';
 import { useAgentforceTarget } from './use-agentforce-target.js';
 import { OrgPicker } from './OrgPicker.js';
 import { AgentScriptDocumentBar } from './AgentScriptDocumentBar.js';
@@ -222,6 +223,8 @@ type AgentScriptPanelProps = {
   params?: unknown;
   headerActions?: ReactNode;
   orgPicker?: boolean;
+  /** Shared workbench header; portals move only the file tabs, never the editor. */
+  navigationTarget?: HTMLElement | null;
   /** The thread that owns a side panel; it wins over the focused route's thread. */
   threadId?: string;
   tabId?: string;
@@ -236,7 +239,7 @@ export function AgentScriptPanel(props: AgentScriptPanelProps) {
   const context = useZccContext();
   const projectId = props.projectId ?? context.projectId ?? undefined;
   const threadId = props.threadId || context.threadId || undefined;
-  return <AgentScriptWorkspace key={JSON.stringify([props.pluginId, projectId, threadId])} {...props} projectId={projectId} threadId={threadId} />;
+  return <AgentScriptWorkspace key={JSON.stringify([props.pluginId, projectId, threadId, context.surface === 'plugin-view' ? context.resourceId : null])} {...props} projectId={projectId} threadId={threadId} />;
 }
 function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const navigate = useZccNavigate();
@@ -247,10 +250,11 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const context = useZccContext();
   const projectId = props.projectId ?? context.projectId ?? undefined;
   const threadId = props.threadId || context.threadId || undefined;
+  const windowResource = context.surface === 'plugin-view' ? studioAgentResource(context.resourceId) : null;
   const focus = parseAgentforcePanelFocus(props.params);
   const focusSignature = focusKey(focus);
-  const { target: agentTarget, select: selectAgentTarget } = useAgentforceTarget({ pluginId, projectId, threadId, tabId: props.tabId, surface: 'playground', params: { ...focus, path: focus.path ?? props.subPath } });
-  const initialPath = agentTarget?.path ?? null;
+  const { target: agentTarget, select: selectAgentTarget } = useAgentforceTarget({ pluginId, projectId, threadId, tabId: props.tabId, surface: 'playground', resourceId: windowResource ?? undefined, params: { ...focus, path: windowResource ?? focus.path ?? props.subPath } });
+  const initialPath = windowResource ?? agentTarget?.path ?? null;
   const initialFileOpened = useRef(false);
   const settings = useSettings();
   const [status, setStatus] = useState<StatusPayload | null>(null);
@@ -259,6 +263,8 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const [orgAgentsMore, setOrgAgentsMore] = useState(false);
   const [orgAgentsNotLocal, setOrgAgentsNotLocal] = useState<number | undefined>(undefined);
   const [activePath, setActivePath] = useState<string | null>(initialPath || null);
+  const [detachedPath, setDetachedPath] = useState<string | null>(null);
+  const detaching = useRef<string | null>(null);
   const [sha256, setSha256] = useState<string | undefined>(undefined);
   const [dirty, setDirty] = useState(false);
   const [saveAsOpen, setSaveAsOpen] = useState(false);
@@ -266,7 +272,12 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const [draftWarning, setDraftWarning] = useState(false);
   const draftScope = projectId ?? `root:${String(settings.values?.projectRoot ?? '')}`;
   // Selection is remembered per thread; the layout is per project (and window), never per thread, so it cannot pile up one key per thread.
-  const selectionScope = threadId ? JSON.stringify([draftScope, threadId]) : draftScope;
+  const selectionScope = windowResource ? JSON.stringify([draftScope, windowResource, threadId ?? '']) : threadId ? JSON.stringify([draftScope, threadId]) : draftScope;
+  const layoutScope = windowResource ? `${draftScope}|agent:${windowResource}` : context.surface === 'plugin-view' ? `${draftScope}|window` : draftScope;
+  useLayoutEffect(() => {
+    navigateRef.current.setPanelScope?.(activePath ? { id: activePath, view: activePath } : null);
+    return () => { navigateRef.current.setPanelScope?.(null); };
+  }, [activePath]);
   const studioWindow = context.surface === 'plugin-view';
   const activeDraft = useRef('');
   const { frameRef, send, handlers: bridgeHandlers } = usePlaygroundBridge(activeDraft);
@@ -305,9 +316,9 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   // Not the width: a narrow window's panel covers Studio (0 px, 'legacy'), and its tabs still need Studio.
   const [hostRefused, setHostRefused] = useState(false);
   const hostCapable = context.sidePanel === true && typeof navigate.openPanelTool === 'function';
-  const studioId = studioWindow ? 'window' : undefined;
+  const studioId = windowResource ?? (studioWindow ? 'window' : undefined);
   const toolScope = studioToolScope(projectId, studioId);
-  const panelParams = studioId ? { studioId } : undefined;
+  const panelParams = studioId && typeof navigate.setPanelScope !== 'function' ? { studioId } : undefined;
   // Stay discoverable after a refused request: the user can still open a host tab directly.
   useStudioRegistration(toolScope, hostCapable);
   const hostSlots = useStudioToolSlots(hostCapable ? toolScope : null);
@@ -325,9 +336,9 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const swapCompact = compact && !hostPanel;
   useEffect(() => { pruneThreadLayoutKeys(); }, []);
   // The Studio window keeps its own layout, seeded from the project tab's the first time.
-  const studioLayout = useStudioLayout(studioWindow ? `${draftScope}|window` : draftScope, draftScope);
+  const studioLayout = useStudioLayout(layoutScope, draftScope, windowResource ?? undefined);
   const { state: studio, patch, patchWorkspace, openTab, selectTab, closeTab, closeTabs, openAgent, selectAgent, closeAgent, openPanelView, dockViews } = studioLayout;
-  const { pins: toolPins, pin: pinTool, forget: forgetPins } = useToolPins(studioWindow ? `${draftScope}|window` : draftScope);
+  const { pins: toolPins, pin: pinTool, forget: forgetPins } = useToolPins(layoutScope);
   const panelAgent = (target: ViewTarget) => studio.agents.some(agent => agent.path === toolPins[target]) ? toolPins[target]! : studio.activeAgent;
   useEffect(() => { if (hostPanel) dockViews(); }, [dockViews, hostPanel]);
   const studioRef = useRef(studio);
@@ -415,23 +426,122 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
 
   // The shared document of the open agent: this Studio edits it (holds the lease), other surfaces read it and propose.
   // The client id survives a reload (sessionStorage), so the page renews its own lease instead of waiting out the old one.
-  const docEditor = useMemo(() => ({ clientId: stableAgentDocClientId(`${draftScope}|${studioWindow ? 'window' : 'tab'}`), label: studioWindow ? 'Agentforce Studio window' : 'Agentforce Studio' }), [draftScope, studioWindow]);
+  const docEditor = useMemo(() => ({ clientId: stableAgentDocClientId(`${draftScope}|${windowResource ?? (studioWindow ? 'window' : 'tab')}`), label: studioWindow ? 'Agentforce Studio window' : 'Agentforce Studio' }), [draftScope, studioWindow, windowResource]);
   // Only an editor whose frame loaded this agent edits it: until then (or if the frame never loads) the document is opened as a viewer,
   // so a broken frame never holds the lease.
-  const editorReady = playgroundReady && Boolean(activePath) && snapshotPath === activePath;
+  const editorReady = playgroundReady && Boolean(activePath) && snapshotPath === activePath && detachedPath !== activePath;
   const docOptions = useMemo(() => ({ editor: editorReady ? docEditor : { ...docEditor, standby: true } }), [docEditor, editorReady]);
   const agentDoc = useAgentScriptDoc(pluginId, projectId ?? null, activePath, docOptions);
   const agentDocRef = useRef(agentDoc);
   agentDocRef.current = agentDoc;
+  const nativeClosing = useRef(false);
+  useWindowCloseHandler(windowResource && projectId ? async signal => {
+    // Keep the window open on failure; the last keystroke and grant must be settled first.
+    nativeClosing.current = true;
+    frameLocked.current = true;
+    send.raw({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'setReadOnly', readOnly: true });
+    let released = false;
+    try {
+      await agentDocRef.current.release();
+      released = true;
+      signal.throwIfAborted();
+      await closeSalesforceControls(projectId);
+      signal.throwIfAborted();
+    } catch (error) {
+      nativeClosing.current = false;
+      resumeSalesforceControls(projectId);
+      if (released) agentDocRef.current.resume();
+      else if (agentDocRef.current.leased) {
+        frameLocked.current = false;
+        send.raw({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'setReadOnly', readOnly: false });
+      }
+      throw error;
+    }
+  } : null);
+  // Main keeps the workspace mounted while its editor moves to another window. A closed
+  // resource window drops its lease; main then resumes editing with the same draft.
+  useEffect(() => {
+    if (studioWindow || !projectId || !activePath) return;
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const result = await callPluginRpc(pluginId, 'control.views', { projectId }) as { ok?: boolean; views?: Array<{ window?: string; surface?: string; state?: { resourceId?: unknown } }> };
+        if (!cancelled && result?.ok && Array.isArray(result.views) && detaching.current !== activePath) {
+          const open = result.views.some(view => view.window === 'plugin-view' && view.surface === 'workbench' && studioAgentResource(view.state?.resourceId) === activePath);
+          setDetachedPath(open ? activePath : null);
+        }
+      } catch { /* A transient connection failure does not transfer ownership. */ }
+    };
+    void check();
+    const timer = window.setInterval(check, DISK_POLL_MS);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [activePath, pluginId, projectId, studioWindow]);
+  const detachAgent = async (path: string) => {
+    if (!projectId || detaching.current) return;
+    detaching.current = path;
+    try {
+      if (path === activePathRef.current) {
+        await agentDocRef.current.release();
+        setDetachedPath(path);
+      }
+      const opened = await openAgentInStudioWindow({ pluginId, projectId, path, navigate: navigateRef.current });
+      if (!opened) { setDetachedPath(null); setError('Could not open the agent window. Your workspace remains here.'); }
+    } catch (error) { setDetachedPath(null); setError(error instanceof Error ? error.message : String(error)); }
+    finally { detaching.current = null; }
+  };
+
   // Effects run in order: once the hook points at the new path this ref follows, and only then do snapshots reach it.
   const docPath = useRef<string | null>(null);
   useEffect(() => { docPath.current = activePath; }, [activePath]);
+  // A holder persists each keystroke before its debounced shared-document update.
+  // Track only recovery writes made during a follower session, never an unrelated
+  // old recovery draft. The final synchronous read covers a queued storage event.
+  const followerRecovery = useRef<{ path: string; initial?: string; observed: boolean } | null>(null);
+  const recoveringFollower = Boolean(agentDoc.heldBy || (activePath && detachedPath === activePath));
+  const unlockRecovery = useRef<{ path: string; content: string } | null>(null);
+  useLayoutEffect(() => {
+    if (followerRecovery.current?.path !== activePath) followerRecovery.current = null;
+    if (unlockRecovery.current?.path !== activePath) unlockRecovery.current = null;
+    if (recoveringFollower && activePath && !followerRecovery.current) {
+      followerRecovery.current = { path: activePath, initial: readAgentDraft(agentDraftKey(draftScope, `file:${activePath}`))?.content, observed: false };
+    }
+  }, [activePath, draftScope, recoveringFollower]);
+  useEffect(() => {
+    const changed = (event: StorageEvent) => {
+      if (event.key !== null && event.key !== 'salesforce.agent-drafts.v1') return;
+      const follower = followerRecovery.current;
+      if (!follower) return;
+      const key = agentDraftKey(draftScope, `file:${follower.path}`);
+      const content = (raw: string | null) => {
+        if (!raw || raw.length > 2_000_000) return undefined;
+        try {
+          const rows: unknown = JSON.parse(raw);
+          return Array.isArray(rows) ? rows.slice(0, 12).find(row => row?.key === key)?.content : undefined;
+        } catch { return undefined; }
+      };
+      if (content(event.oldValue) !== content(event.newValue)) follower.observed = true;
+    };
+    window.addEventListener('storage', changed);
+    return () => window.removeEventListener('storage', changed);
+  }, [draftScope]);
   // The lease arrives after the first snapshots. Hand over what the editor holds (a recovered draft included) only once the frame
   // has sent this agent's snapshot. A dirty document another editor wrote last is loaded instead (with its saved version as the
   // baseline); text this editor wrote last is never newer there than here, so it is pushed.
   useEffect(() => {
     if (!agentDoc.leased || !activePath || snapshotPath !== activePath) return;
     const live = agentDoc.doc;
+    const followed = followerRecovery.current;
+    followerRecovery.current = null;
+    if (followed?.path === activePath) {
+      const recovered = readAgentDraft(agentDraftKey(draftScope, `file:${activePath}`));
+      if (recovered && recovered.baseSha === (live?.baseSha256 ?? shaRef.current) &&
+        (followed.observed || recovered.content !== followed.initial)) {
+        unlockRecovery.current = { path: activePath, content: recovered.content };
+        send.raw({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'setReadOnly', readOnly: false, content: recovered.content, ...(live ? docBaseline(live) : {}) });
+        agentDoc.update(recovered.content, undefined, recovered.baseSha);
+        return;
+      }
+    }
     if (live && live.path === activePath && live.dirty && live.text !== null && live.lastWriter && live.lastWriter !== docEditor.clientId && live.text !== sourceRef.current) {
       send.raw({ source: PLAYGROUND_BRIDGE_SOURCE, type: 'setReadOnly', readOnly: false, content: live.text, ...docBaseline(live) });
       return;
@@ -441,17 +551,21 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const heldBy = agentDoc.heldBy;
   // Another Studio edits this agent: the frame is read-only and follows the holder's live text.
   const heldById = heldBy?.clientId ?? null;
+  const editorDetached = Boolean(activePath && detachedPath === activePath);
   const followText = heldBy ? agentDoc.doc?.text ?? null : null;
   const frameLocked = useRef(false);
   useEffect(() => {
-    if (!playgroundReady || !activePath || snapshotPath !== activePath || (!heldById && !frameLocked.current)) return;
-    frameLocked.current = Boolean(heldById);
+    if (!playgroundReady || !activePath || snapshotPath !== activePath || (!heldById && !editorDetached && !frameLocked.current)) return;
+    // A follower remains locked until its new grant is reconciled with recovery.
+    const locked = Boolean(nativeClosing.current || heldById || editorDetached || (frameLocked.current && !agentDoc.leased));
+    frameLocked.current = locked;
     // Unlocked (the holder left, or this window took over): the draft sits on the shared document's saved version from now on.
     const live = agentDocRef.current.doc;
-    send.raw(heldById
+    const recovered = unlockRecovery.current?.path === activePath ? unlockRecovery.current.content : undefined;
+    send.raw(locked
       ? { source: PLAYGROUND_BRIDGE_SOURCE, type: 'setReadOnly', readOnly: true, ...(followText !== null ? { content: followText } : {}) }
-      : { source: PLAYGROUND_BRIDGE_SOURCE, type: 'setReadOnly', readOnly: false, ...(live && live.path === activePath ? docBaseline(live) : {}) });
-  }, [playgroundReady, activePath, snapshotPath, heldById, followText, send]);
+      : { source: PLAYGROUND_BRIDGE_SOURCE, type: 'setReadOnly', readOnly: false, ...(recovered !== undefined ? { content: recovered } : {}), ...(live && live.path === activePath ? docBaseline(live) : {}) });
+  }, [playgroundReady, activePath, snapshotPath, heldById, editorDetached, followText, agentDoc.leased, send]);
   const heldByRef = useRef(heldBy);
   heldByRef.current = heldBy;
 
@@ -471,7 +585,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     if (!studioRef.current.activeAgent) { setError(`Open an agent to see its ${target === 'tests' ? 'tests' : target === 'org-preview' ? 'org preview' : target}.`); return; }
     if (hostCapable) {
       const tool = TOOL_FOR_VIEW[target] as PanelTool;
-      if (navigateRef.current.openPanelTool?.({ actionId: panelToolActionId(tool), ...(studioId ? { params: { studioId } } : {}) })) {
+      if (navigateRef.current.openPanelTool?.({ actionId: panelToolActionId(tool), ...(panelParams ? { params: panelParams } : {}) })) {
         requestedHostTool.current = tool;
         setHostRefused(false);
         // Explicit editor requests target its agent. Selecting an existing host tab keeps its pin.
@@ -513,6 +627,9 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   useEffect(() => {
     if (!hostPanel || restoredHostView.current) return;
     restoredHostView.current = true;
+    // A scoped host restores its own active assistant/tool. Legacy editor views are
+    // migration input only and must not replace that selection after a window move.
+    if (typeof navigateRef.current.setPanelScope === 'function') return;
     // The parent host installs its request listener in an effect too. Let it finish first.
     if (viewTool) queueMicrotask(() => { if (alive.current) openTool(viewTool); });
   }, [hostPanel, openTool, viewTool]);
@@ -677,6 +794,13 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   const openFile = useCallback(
     async (path: string | null, isCurrent: () => boolean = () => true, restore = false) => {
       if (!isCurrent()) return false;
+      if (windowResource && path !== windowResource) {
+        if (path && projectId) {
+          const opened = await openAgentInStudioWindow({ pluginId, projectId, path, navigate: navigateRef.current });
+          if (!opened && alive.current) setError('Could not open the agent window. Try again from the main Studio.');
+        }
+        return false;
+      }
       // Before the frame is ready its setFile is lost: remember the request, the ready handler opens it (and nothing older).
       if (path && !playgroundReadyRef.current) requestedBeforeReady.current = path;
       if (pendingInspect.current?.path !== path) pendingInspect.current = null;
@@ -755,7 +879,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       setFileLoads(count => count + 1);
       return true;
     },
-    [closeAgent, compact, dialect, openAgent, patch, pluginId, rpcArgs, draftScope, selectionScope, selectTab, send, settleProposals, selectAgentTarget, selectAgent]
+    [closeAgent, compact, dialect, openAgent, patch, pluginId, rpcArgs, draftScope, selectionScope, selectTab, send, settleProposals, selectAgentTarget, selectAgent, windowResource, projectId]
   );
 
   // A retrieval opens its file seconds after the click: read the live editor, not the click-time render.
@@ -830,8 +954,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   };
   const updateComment = (id: string, body: string) => commentRpc(STUDIO_RPC.commentUpdate, { id, body }, 'Could not edit the comment.');
   const deleteComment = (id: string) => commentRpc(STUDIO_RPC.commentDelete, { id }, 'Could not delete the comment.');
-  // Each agent remembers its Assistant thread: the newest linked to its file, and a thread that appears later takes the rail.
-  const seenThreads = useRef(new Map<string, Set<string>>());
+  // Each agent remembers the explicitly selected assistant; new activity never steals its panel.
   const loadThreads = useCallback(async () => {
     const path = activePathRef.current;
     if (!projectId || !path) return;
@@ -840,11 +963,8 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       if (!alive.current || activePathRef.current !== path || result?.ok === false || !Array.isArray(result?.threads) || !result.threads.length) return;
       const list = result.threads;
       const newest = [...list].sort((a, b) => b.lastActivityAt - a.lastActivityAt)[0];
-      const seen = seenThreads.current.get(path);
-      seenThreads.current.set(path, new Set(list.map(row => row.threadId)));
       const known = studioRef.current.workspaces[path]?.threadId;
-      if (seen && !seen.has(newest.threadId)) patchWorkspace(path, { threadId: newest.threadId, rail: 'assistant' });
-      else if (!known || !list.some(row => row.threadId === known)) patchWorkspace(path, { threadId: newest.threadId });
+      if (!known || !list.some(row => row.threadId === known)) patchWorkspace(path, { threadId: newest.threadId });
     } catch { /* the Assistant thread is an enhancement */ }
   }, [patchWorkspace, pluginId, projectId]);
   useEffect(() => { void loadThreads(); }, [loadThreads, activePath]);
@@ -937,7 +1057,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
       const id = path ? studioRef.current.workspaces[path]?.threadId : undefined;
       return Boolean(id && path && host.openPanelAgent?.({ threadId: id, title: basename(path) }));
     }
-    const opened = Boolean(host.openPanelTool?.({ actionId: panelToolActionId(tab), ...(studioId ? { params: { studioId } } : {}) }));
+    const opened = Boolean(host.openPanelTool?.({ actionId: panelToolActionId(tab), ...(panelParams ? { params: panelParams } : {}) }));
     if (opened) requestedHostTool.current = tab;
     return opened;
   }, [studioId]);
@@ -946,7 +1066,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   useEffect(() => {
     if (railAgent.current === studio.activeAgent) return;
     railAgent.current = studio.activeAgent;
-    if (context.sidePanelOpen !== true || !studio.activeAgent) return;
+    if (typeof navigateRef.current.setPanelScope === 'function' || context.sidePanelOpen !== true || !studio.activeAgent) return;
     const rail = studioRef.current.workspaces[studio.activeAgent]?.rail;
     // A pinned tool remains visible while the editor changes agents.
     const target = hostTool ? VIEW_FOR_TOOL[hostTool] : undefined;
@@ -1287,6 +1407,7 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   bridgeHandlers.current = {
     onSnapshot: message => {
       const nextActions = message.actions ?? [];
+      if (unlockRecovery.current?.path === loadedPath.current && unlockRecovery.current?.content === message.content) unlockRecovery.current = null;
       // The frame's `issues` counts every diagnostic; the document bar shows problems only.
       setSource(message.content); setIssues(message.diagnostics ? countProblems(message.diagnostics) : message.issues); setActions(nextActions);
       setDiagnostics(message.diagnostics ?? []);
@@ -1325,14 +1446,14 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
         org
       });
       void refreshOrg();
-      const queued = projectId ? takeQueuedAgentScriptOpen(projectId) : null;
+      const queued = projectId && !windowResource ? takeQueuedAgentScriptOpen(projectId) : null;
       const last = recalledAgentSelection(selectionScope);
       const tabPath = studio.activeAgent ?? undefined;
       const recalled = last?.startsWith('file:') ? last.slice(5) : null;
       // A request made while the frame loaded wins over the initial and the restored agent; nothing is opened over it.
       const requested = requestedBeforeReady.current || pendingFocus.current?.path;
       requestedBeforeReady.current = null;
-      const file = requested || queued || initialPath || (agentTarget ? null : tabPath || recalled);
+      const file = windowResource || requested || queued || initialPath || (agentTarget ? null : tabPath || recalled);
       // Re-sending the agent already shown (its setFile was lost before ready) keeps the tab picked meanwhile.
       const restore = file !== null && ((file === requested && file === activePathRef.current) || (file === tabPath && !queued && !requested));
       void openFile(file, undefined, restore).then(() => { initialFileOpened.current = true; });
@@ -1389,10 +1510,10 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
   };
 
   useEffect(() => {
-    if (!projectId || !playgroundReady) return;
+    if (!projectId || !playgroundReady || windowResource) return;
     const queued = takeQueuedAgentScriptOpen(projectId);
     if (queued) void openFile(queued);
-  }, [openFile, playgroundReady, projectId]);
+  }, [openFile, playgroundReady, projectId, windowResource]);
 
   useEffect(() => {
     if (typeof process !== 'undefined' && process.env.VITEST) return;
@@ -1582,6 +1703,8 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
     openTab(viewTab(target));
   };
   const agentTabs = <AgentTabs agents={studio.agents} active={studio.activeAgent} dirtyPaths={dirtyPaths} runningPaths={runningPaths} projectId={projectId ?? ''}
+    showToolsLink={!props.navigationTarget}
+    lockedPath={windowResource ?? undefined} onDetach={!studioWindow && navigate.openInWindow ? path => { void detachAgent(path); } : undefined}
     orgPill={<><StudioRunTray runs={runSessions} onOpen={run => { void returnToRun(run); }} />{orgPicker || undefined}</>} onSelect={selectAgent} onClose={closeAgentTab} onOpenAgent={() => setQuickOpen(true)} onOpenView={hostPanel ? undefined : openView} />;
 
   const bottomActive: BottomTab = compact ? 'problems' : studio.bottomTab;
@@ -1781,10 +1904,13 @@ function AgentScriptWorkspace(props: AgentScriptPanelProps) {
         onToggleExplorer={wide ? () => patch({ explorerOpen: !studio.explorerOpen }) : undefined}>
         <div className="sf-main-col">
         <AgentforceStudioSplit open={splitOpen} mode={splitMode} storageKey={`salesforce:studio:split:${draftScope}`} editor={<div className="af-action-workspace">
-          {agentTabs}
+          {props.navigationTarget ? createPortal(agentTabs, props.navigationTarget) : agentTabs}
           {tabs}
           {!showTargetTab && documentBar}
-          {!showTargetTab && heldBy && <div className="sf-held-banner" role="status" data-testid="salesforce-agent-held-banner">
+          {!showTargetTab && editorDetached && <div className="sf-held-banner" role="status" data-testid="salesforce-agent-detached-banner">
+            <span>Editing this agent in its own window.</span><button type="button" className="sf-as-save" onClick={() => { if (activePath) void detachAgent(activePath); }}>Show window</button>
+          </div>}
+          {!showTargetTab && heldBy && !editorDetached && <div className="sf-held-banner" role="status" data-testid="salesforce-agent-held-banner">
             <span>Read-only: {heldBy.label} is editing this agent.</span>
             <button type="button" className="sf-as-save" onClick={() => void agentDoc.takeOver()}>Take over</button>
           </div>}
@@ -1835,6 +1961,7 @@ export function AgentforcePlaygroundPanel(props: {
   params?: unknown;
   headerActions?: ReactNode;
   orgPicker?: boolean;
+  navigationTarget?: HTMLElement | null;
   onActivePath?: (path: string | null) => void;
 }) {
   return (
@@ -1844,6 +1971,7 @@ export function AgentforcePlaygroundPanel(props: {
       params={props.params}
       headerActions={props.headerActions}
       orgPicker={props.orgPicker}
+      navigationTarget={props.navigationTarget}
       threadId={props.threadId}
       tabId={props.tabId}
       onActivePath={props.onActivePath}

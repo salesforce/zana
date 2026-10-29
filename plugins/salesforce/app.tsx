@@ -123,6 +123,7 @@ export default definePluginApp((app) => {
     order: 80,
     global: false,
     header: 'custom',
+    statusbar: 'hidden',
     component: SalesforceProjectTab,
     detachable: true,
     detachedPlaceholder: SalesforceStudioDetachedCard

@@ -7,6 +7,7 @@ import React, { act, createElement, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
 import { fireEvent } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { agentDraftKey, writeAgentDraft } from './agent-script-drafts.js';
 import { PLAYGROUND_BRIDGE_SOURCE } from './playground-bridge.js';
 
 // The shared-document hook is mocked with a tiny store so a test can change the doc and the Studio re-renders.
@@ -15,7 +16,7 @@ const store = {
   listeners: new Set<() => void>(),
   set(patch: Record<string, unknown>) { store.state = { ...store.state, ...patch }; store.listeners.forEach(fn => fn()); }
 };
-const docApi = { update: vi.fn(), saved: vi.fn(async () => undefined), takeOver: vi.fn(async () => true), propose: vi.fn(async () => null), resolve: vi.fn(async () => ({ ok: true })), reload: vi.fn() };
+const docApi = { release: vi.fn(async () => undefined), resume: vi.fn(), update: vi.fn(), saved: vi.fn(async () => undefined), takeOver: vi.fn(async () => true), propose: vi.fn(async () => null), resolve: vi.fn(async () => ({ ok: true })), reload: vi.fn() };
 const hook: { editor?: { clientId: string; label: string }; scope?: string } = {};
 vi.mock('./agent-doc/useAgentScriptDoc.js', () => ({
   newAgentDocClientId: () => 'client-1',
@@ -27,8 +28,9 @@ vi.mock('./agent-doc/useAgentScriptDoc.js', () => ({
   }
 }));
 vi.mock('./preview/PreviewRunReplay.js', () => ({ PreviewRunReplay: (p: any) => <div data-testid="stub-replay" data-run={p.runId} data-turn={String(p.turn ?? '')}><button data-testid="stub-replay-close" onClick={p.onClose}>close</button></div> }));
-const control: { options?: any } = {};
-vi.mock('./useSalesforceControl.js', () => ({ useSalesforceControl: (options: unknown) => { control.options = options; } }));
+const control: { options?: any; closeHandler?: ((signal: AbortSignal) => Promise<void>) | null } = {};
+const closeControls = vi.fn(async (_project: string) => undefined);
+vi.mock('./useSalesforceControl.js', () => ({ resumeSalesforceControls: vi.fn(), closeSalesforceControls: (project: string) => closeControls(project), useSalesforceControl: (options: unknown) => { control.options = options; } }));
 vi.mock('./preview/PreviewWorkbench.js', () => ({ PreviewWorkbench: (p: any) => <div data-testid="stub-preview" data-engine={p.engine} data-dirty={String(Boolean(p.dirty))} data-command={p.command ? JSON.stringify(p.command) : ""}><button data-testid="stub-run" onClick={() => p.onRunChange({ runId: 'r1', engine: 'live', turn: 1 })}>run</button><button data-testid="stub-handled" onClick={() => p.onCommandHandled(p.command?.seq ?? -1)}>handled</button><button data-testid="stub-stale" onClick={() => p.onCommandHandled(0)}>stale</button></div> }));
 vi.mock('./studio/AskAgentButton.js', () => ({ AskAgentButton: () => <div data-testid="stub-ask-agent" /> }));
 vi.mock('./AgentScriptGraphPanel.js', () => ({ AgentScriptGraphPanel: (p: any) => <div data-testid="stub-graph" data-focus={`${p.focusNode}:${p.focusSeq}`} data-compact={String(p.compact)} /> }));
@@ -62,6 +64,7 @@ const baseRpc = async (_p: string, method: string, args?: any): Promise<unknown>
 };
 const rpc = vi.fn(baseRpc);
 let surface: string | undefined;
+let resourceId: string | undefined;
 let realtime: ((p: unknown) => void) | undefined;
 const nodes: Array<() => void> = [];
 
@@ -84,7 +87,7 @@ const exec = (command: string, input: Record<string, unknown> = {}) => control.o
 const sent = (el: HTMLElement) => (el.querySelector('iframe')!.contentWindow!.postMessage as any).mock.calls.map((c: any[]) => c[0]);
 
 beforeEach(() => {
-  localStorage.clear(); store.state = { doc: null, loading: false, error: null, leased: false, leaseGen: 0, heldBy: null }; surface = undefined; Object.values(docApi).forEach(fn => fn.mockClear()); rpc.mockClear(); observers.length = 0; width = 1000; realtime = undefined;
+  localStorage.clear(); store.state = { doc: null, loading: false, error: null, leased: false, leaseGen: 0, heldBy: null }; surface = undefined; resourceId = undefined; Object.values(docApi).forEach(fn => fn.mockClear()); rpc.mockClear(); observers.length = 0; width = 1000; realtime = undefined; control.closeHandler = undefined; closeControls.mockReset();
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({ width, height: 600, top: 0, left: 0, right: width, bottom: 600, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect);
   (globalThis as any).ResizeObserver = class { constructor(cb: any) { observers.push(w => cb([{ contentRect: { width: w } }])); } observe() {} disconnect() {} };
   vi.spyOn(HTMLIFrameElement.prototype, 'contentWindow', 'get').mockImplementation(function (this: HTMLIFrameElement) {
@@ -93,16 +96,18 @@ beforeEach(() => {
   });
   (globalThis as any).__ZCC_PLUGIN_HOST__ = { callRpc: rpc, useZccNavigate: () => ({ toCompose: vi.fn() }), getSettings: async () => ({ values: { agentScriptDialect: 'agentforce' } }), setSettings: async () => undefined };
   (globalThis as any).__ZCC_PLUGIN_RUNTIME__ = {
+    useWindowCloseHandler: (handler: ((signal: AbortSignal) => Promise<void>) | null) => { control.closeHandler = handler; },
     useZccNavigate: () => ({ toCompose: vi.fn() }),
     useSettings: () => ({ values: { agentScriptDialect: 'agentforce', defaultOrg: 'dev' }, isLoading: false }),
     useRealtime: (_c: string, h: (p: unknown) => void) => { realtime = h; },
-    useZccContext: () => ({ projectId: 'proj-1', threadId: null, ...(surface ? { surface } : {}) })
+    useZccContext: () => ({ projectId: 'proj-1', threadId: null, ...(surface ? { surface, resourceId } : {}) })
   };
 });
 afterEach(() => { nodes.splice(0).forEach(fn => fn()); vi.restoreAllMocks(); delete (globalThis as any).__ZCC_PLUGIN_HOST__; delete (globalThis as any).__ZCC_PLUGIN_RUNTIME__; });
 
 
 const PATH = 'force-app/bots/QC.agent';
+const FOLLOWER_HELD = { id: 'X1', clientId: 'other', label: 'Studio window', since: 1, renewedAt: 1 };
 const proposal = (id: string, status: string, input: Record<string, unknown> = {}) => ({ id, status, createdAt: 1, input: { path: PATH, expectedSha256: SHA, summary: 'tweak', content: 'new text\n', ...input } });
 const docOf = (proposals: unknown[] = []) => ({ projectId: 'proj-1', path: PATH, rev: 1, text: SOURCE, baseSha256: SHA, savedText: null, dirty: false, diagnostics: [], lease: null, lastWriter: null as string | null, proposals, updatedAt: 1 });
 const open = async () => { const el = await mount(PATH); await ready(el); await post(el, { type: 'snapshot', content: SOURCE, issues: 0 }); return el; };
@@ -263,7 +268,7 @@ describe('AgentScriptPanel shared document', () => {
     await act(async () => { store.set({ doc: { ...docOf(), text: 'holder typing more\n' } }); });
     await flush();
     expect(sent(el).filter((m: any) => m.type === 'setReadOnly').at(-1)).toMatchObject({ readOnly: true, content: 'holder typing more\n' });
-    await act(async () => { store.set({ heldBy: null }); });
+    await act(async () => { store.set({ heldBy: null, leased: true }); });
     await flush();
     expect(sent(el).filter((m: any) => m.type === 'setReadOnly').at(-1)).toEqual(expect.objectContaining({ readOnly: false }));
     const count = sent(el).filter((m: any) => m.type === 'setReadOnly').length;
@@ -287,6 +292,63 @@ describe('AgentScriptPanel shared document', () => {
     expect(sent(el).filter((m: any) => m.type === 'setReadOnly').at(-1)).toMatchObject({ readOnly: false, content: 'other client unsaved\n', baseline: SOURCE, baseSha: SHA });
     expect(docApi.update).not.toHaveBeenCalledWith(SOURCE, expect.anything(), SHA);
     expect(docApi.update.mock.calls.some(c => c[0] === SOURCE)).toBe(false);
+  });
+
+  it('recovers the former holder last keystroke before unlocking and publishing stale follower text', async () => {
+    const el = await open();
+    await act(async () => { store.set({ heldBy: FOLLOWER_HELD, doc: docOf() }); });
+    writeAgentDraft({ key: agentDraftKey('proj-1', `file:${PATH}`), dialect: 'agentforce', content: 'last keystroke before close\n', baseSha: SHA });
+    docApi.update.mockClear();
+    await act(async () => { store.set({ heldBy: null, leased: true, leaseGen: 1, doc: docOf() }); });
+    await flush();
+    expect(sent(el).filter((m: any) => m.type === 'setReadOnly').at(-1)).toMatchObject({ readOnly: false, content: 'last keystroke before close\n' });
+    expect(docApi.update).toHaveBeenCalledWith('last keystroke before close\n', undefined, SHA);
+    expect(docApi.update.mock.calls.some(call => call[0] === SOURCE)).toBe(false);
+  });
+
+  it('uses the former holder observed edit even when it returns to the follower-start recovery text', async () => {
+    const key = agentDraftKey('proj-1', `file:${PATH}`);
+    writeAgentDraft({ key, dialect: 'agentforce', content: 'holder final text', baseSha: SHA });
+    const el = await open();
+    await act(async () => { store.set({ heldBy: FOLLOWER_HELD, doc: docOf() }); });
+    const raw = (content: string) => JSON.stringify([{ key, content, dialect: 'agentforce', baseSha: SHA }]);
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', { key: 'other-setting', oldValue: raw('unrelated'), newValue: raw('holder final text') }));
+      window.dispatchEvent(new StorageEvent('storage', { key: 'salesforce.agent-drafts.v1', oldValue: '{broken', newValue: '{}' }));
+      window.dispatchEvent(new StorageEvent('storage', { key: 'salesforce.agent-drafts.v1', oldValue: raw('intermediate holder edit'), newValue: raw('holder final text') }));
+    });
+    docApi.update.mockClear();
+    await act(async () => { store.set({ heldBy: null, leased: true, leaseGen: 1, doc: docOf() }); });
+    expect(docApi.update).toHaveBeenCalledWith('holder final text', undefined, SHA);
+    expect(sent(el).filter((m: any) => m.type === 'setReadOnly').at(-1)).toMatchObject({ readOnly: false, content: 'holder final text' });
+    await act(async () => { window.dispatchEvent(new StorageEvent('storage', { key: 'salesforce.agent-drafts.v1', oldValue: raw('a'), newValue: raw('b') })); });
+  });
+
+  it('keeps a follower locked until its new edit grant arrives', async () => {
+    const el = await open();
+    await act(async () => { store.set({ heldBy: FOLLOWER_HELD, doc: docOf() }); });
+    await act(async () => { store.set({ heldBy: null, leased: false }); });
+    await flush();
+    expect(sent(el).filter((m: any) => m.type === 'setReadOnly').at(-1)).toMatchObject({ readOnly: true });
+    await act(async () => { store.set({ leased: true, leaseGen: 1 }); });
+    expect(sent(el).filter((m: any) => m.type === 'setReadOnly').at(-1)).toMatchObject({ readOnly: false });
+  });
+
+  it('does not restore unchanged old recovery or a different disk baseline', async () => {
+    writeAgentDraft({ key: agentDraftKey('proj-1', `file:${PATH}`), dialect: 'agentforce', content: 'stale recovery', baseSha: SHA });
+    const el = await open();
+    await act(async () => { store.set({ heldBy: FOLLOWER_HELD, doc: docOf() }); });
+    const before = localStorage.getItem('salesforce.agent-drafts.v1');
+    writeAgentDraft({ key: agentDraftKey('proj-1', 'file:Other.agent'), dialect: 'agentforce', content: 'unrelated edit', baseSha: SHA });
+    await act(async () => { window.dispatchEvent(new StorageEvent('storage', { key: 'salesforce.agent-drafts.v1', oldValue: before, newValue: localStorage.getItem('salesforce.agent-drafts.v1') })); });
+    docApi.update.mockClear();
+    await act(async () => { store.set({ heldBy: null, leased: true, leaseGen: 1, doc: docOf() }); });
+    expect(docApi.update).toHaveBeenCalledWith(SOURCE, expect.anything(), SHA);
+    await act(async () => { store.set({ heldBy: FOLLOWER_HELD, leased: false }); });
+    writeAgentDraft({ key: agentDraftKey('proj-1', `file:${PATH}`), dialect: 'agentforce', content: 'wrong disk base', baseSha: 'b'.repeat(64) });
+    docApi.update.mockClear();
+    await act(async () => { store.set({ heldBy: null, leased: true, leaseGen: 2, doc: docOf() }); });
+    expect(docApi.update).toHaveBeenCalledWith(SOURCE, expect.anything(), SHA);
   });
 
   it('on gaining the lease it pushes its text when the document is clean or matches', async () => {
@@ -429,11 +491,11 @@ describe('AgentScriptPanel shared document: second review fixes', () => {
   it('4: a clean shared document re-baselines on its text; one without a valid base sends no baseline', async () => {
     const el = await open();
     await act(async () => { store.set({ doc: docOf(), heldBy: HELD }); });
-    await act(async () => { store.set({ heldBy: null }); });
+    await act(async () => { store.set({ heldBy: null, leased: true }); });
     await flush();
     expect(readOnlyMsgs(el).at(-1)).toMatchObject({ readOnly: false, baseline: SOURCE, baseSha: SHA });
     await act(async () => { store.set({ doc: { ...docOf(), baseSha256: 'nope' }, heldBy: HELD }); });
-    await act(async () => { store.set({ heldBy: null }); });
+    await act(async () => { store.set({ heldBy: null, leased: true }); });
     await flush();
     expect('baseline' in readOnlyMsgs(el).at(-1)).toBe(false);
   });
@@ -620,4 +682,44 @@ describe('AgentScriptPanel preview intent', () => {
     await route(el, { kind: 'tests', sub: 'local' });
     expect(el.querySelector('[data-testid="studio-view-tests"]')).toBeTruthy();
   });
+});
+
+describe('native Studio close preflight', () => {
+  it('flushes and releases the document before closing local control leases', async () => {
+    surface = 'plugin-view'; resourceId = PATH;
+    await open();
+    expect(control.closeHandler).toBeTypeOf('function');
+    let finish!: () => void;
+    docApi.release.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+    const closing = control.closeHandler!(new AbortController().signal);
+    expect(closeControls).not.toHaveBeenCalled();
+    finish();
+    await closing;
+    expect(closeControls).toHaveBeenCalledWith('proj-1');
+  });
+  it('keeps control routing alive when document release rejects', async () => {
+    surface = 'plugin-view'; resourceId = PATH;
+    await open();
+    await act(async () => { store.set({ leased: true }); });
+    docApi.release.mockRejectedValueOnce(Error('Draft flush failed'));
+    await expect(control.closeHandler!(new AbortController().signal)).rejects.toThrow('Draft flush failed');
+    expect(closeControls).not.toHaveBeenCalled();
+    expect(docApi.resume).not.toHaveBeenCalled();
+  });
+  it('does not install native close preflight for the main Studio', async () => {
+    await open();
+    expect(control.closeHandler).toBeNull();
+  });
+});
+
+it('reopens the editor after control-close refusal and after native-close timeout', async () => {
+  surface = 'plugin-view'; resourceId = PATH;
+  const el = await open();
+  closeControls.mockRejectedValueOnce(Error('Control unavailable'));
+  await act(async () => { await expect(control.closeHandler!(new AbortController().signal)).rejects.toThrow('Control unavailable'); });
+  expect(docApi.resume).toHaveBeenCalledTimes(1);
+  expect(sent(el).some(message => message.type === 'setReadOnly' && message.readOnly)).toBe(true);
+  const aborted = new AbortController(); aborted.abort();
+  await act(async () => { await expect(control.closeHandler!(aborted.signal)).rejects.toBeDefined(); });
+  expect(docApi.resume).toHaveBeenCalledTimes(2);
 });

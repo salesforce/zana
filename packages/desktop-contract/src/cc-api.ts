@@ -214,6 +214,8 @@ export interface PluginViewTarget {
   /** The tab's slot id (`app.slots.projectTab({ id })`). */
   tabId: string;
   projectId: string;
+  /** Opaque resource identity for deduplication and layout; grants no filesystem access. */
+  resourceId?: string;
 }
 
 /** One thread and its side panel shown in its own window (`windows.openThreadView`). */
@@ -662,7 +664,7 @@ export interface CcApi {
     unread(threadId: string): Promise<{ thread: Record<string, unknown> }>;
     rename(threadId: string, title: string): Promise<{ thread: Record<string, unknown> }>;
     /** A plugin panel's side-panel conversations (hidden until opened as threads), newest first. */
-    panelConversations(pluginId: string, panel?: string): Promise<Array<{
+    panelConversations(pluginId: string, panel?: string, scope?: { projectId?: string; view?: string }): Promise<Array<{
       id: string;
       projectId: string;
       title: string | null;
@@ -1404,6 +1406,10 @@ export interface CcApi {
     openPluginView(target: PluginViewTarget): Promise<boolean>;
     /** Close the window showing this tab, if one is open. */
     closePluginView(target: PluginViewTarget): Promise<boolean>;
+    /** Registers this renderer's bounded close preflight. Main derives the owning window from the IPC sender. */
+    pluginViewCloseReady(ready: boolean): Promise<boolean>;
+    pluginViewCloseComplete(requestId: string, result: { ok: boolean; error?: string }): Promise<boolean>;
+    onPluginViewCloseRequest(cb: (request: { requestId?: string; error?: string }) => void): () => void;
     /** The plugin view windows open now. */
     listPluginViews(): Promise<PluginViewTarget[]>;
     /** Pushed to every window when a plugin view window opens or closes. */

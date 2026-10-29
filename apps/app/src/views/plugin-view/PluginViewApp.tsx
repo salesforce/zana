@@ -15,6 +15,7 @@ import { closePluginViewWindow, showInMainWindow } from '@/plugins/plugin-view-w
 import { useShellChromeState } from '@/hooks/useShellChromeState';
 import { product } from '@/lib/product-client';
 import type { PluginViewSurfaceTarget } from '@/lib/pluginViewSurface';
+import { usePluginWindowCloseState } from '@/plugins/plugin-window-close';
 import { usePluginViewTitle } from '@/plugins/plugin-view-title';
 import { isCloseWindowShortcut, pluginViewDocumentTitle, pluginViewTitleContext, resolvePluginViewState } from './plugin-view-state.js';
 
@@ -31,6 +32,7 @@ export function PluginViewApp({ target }: { target: PluginViewSurfaceTarget }) {
   const [appsReady, setAppsReady] = useState(false);
   const chrome = useShellChromeState();
   const pluginTitle = usePluginViewTitle();
+  const closeState = usePluginWindowCloseState();
 
   useEffect(() => {
     void init();
@@ -68,8 +70,8 @@ export function PluginViewApp({ target }: { target: PluginViewSurfaceTarget }) {
   }, [custom, label, project?.name]);
 
   const bringBack = () => {
-    void showInMainWindow(hrefForPluginProjectTab(target.pluginId, target.projectId, target.tabId)).finally(
-      () => void closePluginViewWindow(target)
+    void showInMainWindow(hrefForPluginProjectTab(target.pluginId, target.projectId, target.tabId, target.resourceId)).then(
+      (shown) => { if (shown) void closePluginViewWindow(target); }
     );
   };
   const closeWindow = () => void closePluginViewWindow(target);
@@ -118,6 +120,8 @@ export function PluginViewApp({ target }: { target: PluginViewSurfaceTarget }) {
           </button>
         ) : null}
       </header>
+      {closeState.error ? <div role="alert" style={{ padding: '8px 16px', color: 'var(--text-danger, #b42318)' }}>{closeState.error}</div> : null}
+      {closeState.pending ? <div role="status" style={{ padding: '8px 16px' }}>Finishing your workspace before closing…</div> : null}
       <main className="plugin-view-body">
         {state.kind === 'loading' ? (
           <PaneEmptyState art="loading" title="Loading…" testId="plugin-view-loading" />
@@ -135,7 +139,7 @@ export function PluginViewApp({ target }: { target: PluginViewSurfaceTarget }) {
           </PaneEmptyState>
         ) : (
           // The same side panel as in the main window, so agents and page tools open beside the tab here too.
-          <PluginPanelHostLayout pluginId={state.tab.pluginId} panelPath={state.tab.id} scopeId={target.projectId} separateWindow>
+          <PluginPanelHostLayout pluginId={state.tab.pluginId} panelPath={state.tab.id} scopeId={target.projectId} resourceId={target.resourceId} separateWindow>
             <PluginSlotBoundary pluginId={state.tab.pluginId} generation={state.tab.generation}>
               {(() => {
                 const Component = state.tab.component;

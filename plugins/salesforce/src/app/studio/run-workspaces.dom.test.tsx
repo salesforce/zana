@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearStudioRunWorkspaces, getStudioRun, readWorkspaceValue, runWorkspaceRef, studioRunKey, updateStudioRun, useRunWorkspaceState, useStudioRuns, writeWorkspaceValue, type StudioRunOwner } from './run-workspaces.js';
 const owner: StudioRunOwner = { pluginId: 'salesforce', projectId: 'p', orgAlias: 'dev', path: 'A.agent', view: 'preview' };
 const storage = 'salesforce:studio:run-workspaces:v1';
+const rowKey = (key: string) => `${storage}:${encodeURIComponent(key)}`;
+const stored = () => Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index)!).filter(key => key.startsWith(`${storage}:`)).map(key => JSON.parse(localStorage.getItem(key)!));
 const rpc = vi.fn();
 beforeEach(() => { clearStudioRunWorkspaces(); rpc.mockReset().mockResolvedValue({ ok: true, data: [] }); (globalThis as Record<string, unknown>).__ZCC_PLUGIN_HOST__ = { callRpc: rpc }; });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); delete (globalThis as Record<string, unknown>).__ZCC_PLUGIN_HOST__; });
@@ -31,7 +33,7 @@ describe('run workspaces', () => {
     expect(screen.getByLabelText('Draft')).toHaveProperty('value', 'Keep this');
     writeWorkspaceValue(key, 'draft', previous => `${previous}!`, '');
     expect(readWorkspaceValue(key, 'draft', '')).toBe('Keep this!');
-    expect(JSON.parse(localStorage.getItem(storage)!).find((row: {key:string}) => row.key === key).values.draft).toBe('Keep this!');
+    expect(stored().find((row: {key:string}) => row.key === key).values.draft).toBe('Keep this!');
   });
 
   it('bounds detached history, retains active requests, and falls back to descriptors for oversized source snapshots', () => {
@@ -44,12 +46,12 @@ describe('run workspaces', () => {
     }
     expect(getStudioRun({ ...owner, path: '0.agent' })).toBeNull();
     expect(readWorkspaceValue(lockedKey, 'draft', '')).toBe('Pinned request');
-    expect(JSON.parse(localStorage.getItem(storage)!).length).toBeLessThanOrEqual(16);
+    expect(stored().length).toBeLessThanOrEqual(16);
     const key = studioRunKey({ ...owner, path: 'large.agent' });
     updateStudioRun({ ...owner, path: 'large.agent' }, { runId: 'large', engine: 'simulate', status: 'running', turn: 1 });
     writeWorkspaceValue(key, 'draft', 'Keep my setup', '');
     writeWorkspaceValue(key, 'source', 'x'.repeat(2_100_000), '');
-    const rows = JSON.parse(localStorage.getItem(storage)!);
+    const rows = stored();
     expect(rows.find((row: {key:string}) => row.key === key).values).toEqual({ draft: 'Keep my setup' });
     expect(rows.find((row: {key:string}) => row.key === key).descriptor.runId).toBe('large');
   });
@@ -99,7 +101,8 @@ describe('run workspaces', () => {
   it('restores validated descriptors and saved values after a renderer module reload and rejects forged owner types', async () => {
     updateStudioRun(owner, { runId: 'one', engine: 'simulate', status: 'active', turn: 2 });
     writeWorkspaceValue(studioRunKey(owner), 'draft', 'Reload me', '');
-    const row = JSON.parse(localStorage.getItem(storage)!)[0];
+    const row = stored()[0];
+    localStorage.removeItem(rowKey(row.key));
     localStorage.setItem(storage, JSON.stringify([row, { ...row, key: 'forged', descriptor: { ...row.descriptor, key: 'forged', path: { injected: true } } }]));
     vi.resetModules();
     const reloaded = await import('./run-workspaces.js');
@@ -107,6 +110,63 @@ describe('run workspaces', () => {
     expect(reloaded.readWorkspaceValue(studioRunKey(owner), 'draft', '')).toBe('Reload me');
     expect(reloaded.readWorkspaceValue('forged', 'draft', '')).toBe('Reload me');
     expect(reloaded.getStudioRun({ ...owner, path: '[object Object]' })).toBeNull();
+    reloaded.clearStudioRunWorkspaces();
+  });
+
+  it('lets independent renderer stores save different scripts without erasing each other or unrelated fields', async () => {
+    const key = studioRunKey(owner);
+    writeWorkspaceValue(key, 'draft', 'First window', '');
+    vi.resetModules();
+    const secondWindow = await import('./run-workspaces.js');
+    expect(secondWindow.readWorkspaceValue(key, 'draft', '')).toBe('First window');
+    const other = studioRunKey({ ...owner, path: 'B.agent' });
+    writeWorkspaceValue(other, 'draft', 'Other script', '');
+    secondWindow.writeWorkspaceValue(key, 'selectedTrace', 'step-3', '');
+    writeWorkspaceValue(key, 'draft', 'Updated first window', '');
+    expect(JSON.parse(localStorage.getItem(rowKey(other))!).values.draft).toBe('Other script');
+    expect(JSON.parse(localStorage.getItem(rowKey(key))!).values).toMatchObject({ draft: 'Updated first window', selectedTrace: 'step-3' });
+    secondWindow.clearStudioRunWorkspaces();
+  });
+
+  it('retains unchanged object identities when persisting another field or receiving equal remote values', () => {
+    const key = studioRunKey(owner);
+    const turns = [{ role: 'assistant', message: 'Hello' }];
+    writeWorkspaceValue(key, 'turns', turns, []);
+    writeWorkspaceValue(key, 'draft', 'Next message', '');
+    expect(readWorkspaceValue(key, 'turns', [])).toBe(turns);
+    render(<Draft />);
+    const row = JSON.parse(localStorage.getItem(rowKey(key))!);
+    const remote = JSON.stringify({ ...row, at: row.at + 10, values: { ...row.values, draft: 'Another window' } });
+    localStorage.setItem(rowKey(key), remote);
+    act(() => window.dispatchEvent(new StorageEvent('storage', { key: rowKey(key), newValue: remote })));
+    expect(readWorkspaceValue(key, 'turns', [])).toBe(turns);
+  });
+
+  it('updates mounted views from another window and rejects malformed, mismatched and stale events', () => {
+    const key = studioRunKey(owner);
+    writeWorkspaceValue(key, 'draft', 'Local', '');
+    render(<Draft />);
+    const row = JSON.parse(localStorage.getItem(rowKey(key))!);
+    const remote = JSON.stringify({ ...row, at: row.at + 10, values: { draft: 'Other window' } });
+    localStorage.setItem(rowKey(key), remote);
+    act(() => window.dispatchEvent(new StorageEvent('storage', { key: rowKey(key), newValue: remote })));
+    expect(screen.getByLabelText('Draft')).toHaveProperty('value', 'Other window');
+    for (const value of ['invalid-json', JSON.stringify({ ...row, at: row.at - 1 }), JSON.stringify({ ...row, key: 'other' })]) {
+      act(() => window.dispatchEvent(new StorageEvent('storage', { key: rowKey(key), newValue: value })));
+    }
+    act(() => window.dispatchEvent(new StorageEvent('storage', { key: storage, newValue: remote })));
+    act(() => window.dispatchEvent(new StorageEvent('storage', { key: rowKey(key), newValue: null })));
+    act(() => window.dispatchEvent(new StorageEvent('storage', { key: rowKey(key), newValue: 'x'.repeat(2_000_001) })));
+    expect(screen.getByLabelText('Draft')).toHaveProperty('value', 'Other window');
+  });
+
+  it('migrates legacy rows once while keeping an existing per-script snapshot newer than the aggregate', async () => {
+    const key = studioRunKey(owner);
+    localStorage.setItem(storage, JSON.stringify([{ key, at: 1, values: { draft: 'Old aggregate' } }]));
+    localStorage.setItem(rowKey(key), JSON.stringify({ key, at: 2, values: { draft: 'Latest script' } }));
+    vi.resetModules();
+    const reloaded = await import('./run-workspaces.js');
+    expect(reloaded.readWorkspaceValue(key, 'draft', '')).toBe('Latest script');
     reloaded.clearStudioRunWorkspaces();
   });
 

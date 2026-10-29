@@ -23,3 +23,12 @@ it('opens a side-panel conversation as a thread', async () => {
   expect(fetch.mock.calls[0][0]).toBe('/api/v1/threads/t%2F1/open-as-thread');
   expect(fetch.mock.calls[0][1]).toMatchObject({ method: 'POST' });
 });
+
+it('sends project and view filters without losing path characters', async () => {
+  const fetch = vi.fn().mockImplementation(async () => Response.json({ threads: [] }));
+  vi.stubGlobal('fetch', fetch);
+  await product.threads.panelConversations('studio', 'agentforce', { projectId: 'p/1', view: 'force-app/Support.agent' });
+  expect(fetch.mock.calls[0][0]).toBe('/api/v1/plugins/studio/panel-threads?panel=agentforce&projectId=p%2F1&view=force-app%2FSupport.agent');
+  await product.threads.panelConversations('studio', undefined, { view: '' });
+  expect(fetch.mock.calls[1][0]).toBe('/api/v1/plugins/studio/panel-threads?view=');
+});

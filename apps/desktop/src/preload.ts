@@ -1368,6 +1368,13 @@ const api: CcApi = {
       ipcRenderer.invoke(IPC.windows.openPluginView, target),
     closePluginView: (target: PluginViewTarget) =>
       ipcRenderer.invoke(IPC.windows.closePluginView, target),
+    pluginViewCloseReady: (ready: boolean) => ipcRenderer.invoke(IPC.windows.pluginViewCloseReady, ready),
+    pluginViewCloseComplete: (requestId: string, result: { ok: boolean; error?: string }) => ipcRenderer.invoke(IPC.windows.pluginViewCloseComplete, requestId, result),
+    onPluginViewCloseRequest: (cb: (request: { requestId?: string; error?: string }) => void) => {
+      const handler = (_e: unknown, request: { requestId?: string; error?: string }) => cb(request);
+      ipcRenderer.on(IPC.windows.onPluginViewCloseRequest, handler);
+      return () => ipcRenderer.off(IPC.windows.onPluginViewCloseRequest, handler);
+    },
     listPluginViews: () => ipcRenderer.invoke(IPC.windows.listPluginViews),
     onPluginViewsChanged: (cb: (views: PluginViewTarget[]) => void) => {
       const handler = (_e: unknown, views: PluginViewTarget[]) => cb(views);

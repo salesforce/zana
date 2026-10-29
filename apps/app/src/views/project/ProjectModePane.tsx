@@ -294,7 +294,7 @@ export function ProjectModePane({
         )}
         {isAgents && <AgentsBoard scope={{ kind: 'project', project }} />}
       </div>
-      <div className="statusbar">
+      {slotTab?.statusbar !== 'hidden' && <div className="statusbar">
         <span>{project.path}</span>
         {gitStatus && (gitStatus.branch || gitStatus.detached) && (
           <span
@@ -326,7 +326,7 @@ export function ProjectModePane({
             <span>{activeTab.status}</span>
           </>
         )}
-      </div>
+      </div>}
     </div>
   );
 }

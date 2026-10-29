@@ -36,12 +36,93 @@ function server(state: { doc: AgentDocSnapshot }) {
     if (method === 'agentDoc.open') return ok(state.doc);
     if (method === 'agentDoc.lease') { state.doc = { ...state.doc, rev: state.doc.rev + 1, lease: mine }; return ok(state.doc); }
     if (method === 'agentDoc.update') { state.doc = { ...state.doc, rev: state.doc.rev + 1, text: input.text }; return ok(state.doc); }
+    if (method === 'agentDoc.close') return { ok: true };
     return ok(state.doc);
   });
 }
 
 beforeEach(() => { vi.useFakeTimers(); rpc.mockReset(); realtime = undefined; });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
+
+describe('moving an editor to another window', () => {
+  it('flushes the pending draft before releasing its grant and does not reacquire it', async () => {
+    const state = { doc: snap() }; server(state);
+    const view = render(<Probe projectId="p" path="a.agent" editor={ME} />); await tick();
+    expect(api.leased).toBe(true);
+    act(() => api.update('last keystrokes before detach'));
+    await act(async () => { await api.release(); });
+    expect(methods().slice(-2)).toEqual(['agentDoc.update', 'agentDoc.close']);
+    expect(callsOf('agentDoc.update').at(-1)).toMatchObject({ text: 'last keystrokes before detach', leaseId: 'L1' });
+    expect(api.leased).toBe(false);
+    const grants = callsOf('agentDoc.lease').length;
+    await tick(15001);
+    expect(callsOf('agentDoc.lease')).toHaveLength(grants);
+    await act(async () => { await api.release(); });
+    expect(callsOf('agentDoc.close')).toHaveLength(1);
+    view.unmount(); await tick();
+    expect(callsOf('agentDoc.close')).toHaveLength(1);
+  });
+
+  it('reacquires an editor after native close was cancelled and continues saving edits', async () => {
+    const state = { doc: snap() }; server(state);
+    render(<Probe projectId="p" path="a.agent" editor={ME} />); await tick();
+    await act(async () => { await api.release(); });
+    expect(api.leased).toBe(false);
+    const grants = callsOf('agentDoc.lease').length;
+    act(() => api.resume()); await tick();
+    expect(api.leased).toBe(true);
+    expect(callsOf('agentDoc.lease')).toHaveLength(grants + 1);
+    act(() => api.update('edit after cancelled close')); await tick(301);
+    expect(callsOf('agentDoc.update').at(-1)).toMatchObject({ text: 'edit after cancelled close' });
+  });
+
+  it('waits for an in-flight initial grant before releasing that exact grant', async () => {
+    let grant: ((result: unknown) => void) | undefined;
+    rpc.mockImplementation(async (_id, method) => {
+      if (method === 'agentDoc.open') return ok(snap());
+      if (method === 'agentDoc.lease') return new Promise(resolve => { grant = resolve; });
+      return { ok: true };
+    });
+    render(<Probe projectId="p" path="a.agent" editor={ME} />); await tick();
+    let released!: Promise<void>;
+    act(() => { released = api.release(); });
+    expect(callsOf('agentDoc.close')).toHaveLength(0);
+    await act(async () => { grant!(ok(snap({ lease: mine }))); await released; });
+    expect(callsOf('agentDoc.close')).toEqual([expect.objectContaining({ leaseId: 'L1' })]);
+    expect(api.leased).toBe(false);
+  });
+
+  it('rejects a refused close and can clean up without an unhandled rejection', async () => {
+    const state = { doc: snap() }; server(state);
+    const view = render(<Probe projectId="p" path="a.agent" editor={ME} />); await tick();
+    rpc.mockResolvedValueOnce({ ok: false, error: 'Could not close' });
+    await act(async () => { await expect(api.release()).rejects.toThrow('Could not close'); });
+    expect(api.leased).toBe(true);
+    view.unmount(); await tick();
+    expect(callsOf('agentDoc.close')).toHaveLength(2);
+  });
+
+  it('keeps its grant and draft when a handoff flush fails', async () => {
+    const state = { doc: snap() }; server(state);
+    render(<Probe projectId="p" path="a.agent" editor={ME} />); await tick();
+    act(() => api.update('must survive'));
+    rpc.mockResolvedValueOnce({ ok: false, code: 'offline', error: 'Offline' });
+    await act(async () => { await expect(api.release()).rejects.toThrow('Offline'); });
+    expect(callsOf('agentDoc.close')).toHaveLength(0);
+    expect(api.leased).toBe(true);
+    await tick(301);
+    expect(callsOf('agentDoc.update').at(-1)).toMatchObject({ text: 'must survive' });
+    await act(async () => { await api.release(); });
+    expect(callsOf('agentDoc.close')).toHaveLength(1);
+  });
+
+  it('is a no-op for a viewer without a grant', async () => {
+    server({ doc: snap() });
+    render(<Probe projectId="p" path="a.agent" />); await tick();
+    await act(async () => { await api.release(); });
+    expect(callsOf('agentDoc.close')).toHaveLength(0);
+  });
+});
 
 describe('viewer mode', () => {
   it('routes shared drafts and pending cleanup through their captured project after a project switch', async () => {

@@ -852,8 +852,12 @@ function httpProduct(): Pick<
           method: 'PATCH',
           body: JSON.stringify({ title })
         }),
-      panelConversations: async (pluginId, panel) => {
-        const query = panel ? `?${new URLSearchParams({ panel })}` : '';
+      panelConversations: async (pluginId, panel, scope) => {
+        const params = new URLSearchParams();
+        if (panel) params.set('panel', panel);
+        if (scope?.projectId !== undefined) params.set('projectId', scope.projectId);
+        if (scope?.view !== undefined) params.set('view', scope.view);
+        const query = params.size ? `?${params}` : '';
         const body = await apiJson<{ threads: Awaited<ReturnType<CcApi['threads']['panelConversations']>> }>(
           `/plugins/${encodeURIComponent(pluginId)}/panel-threads${query}`
         );

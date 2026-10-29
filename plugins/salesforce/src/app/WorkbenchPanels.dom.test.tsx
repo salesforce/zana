@@ -179,6 +179,11 @@ const mount = (element: React.ReactNode) =>
     <SalesforceUiProvider client={{ call }}>{element}</SalesforceUiProvider>,
   );
 
+function selectSection(label: string) {
+  fireEvent.click(screen.getByRole('button', { name: 'Open Salesforce tools' }));
+  fireEvent.click(within(screen.getByRole('dialog', { name: 'Salesforce tools' })).getByRole('button', { name: new RegExp(`^${label}`) }));
+}
+
 describe("public Salesforce panels", () => {
   it('filters activity to its tool, exposes all activity and keeps the selected detail separate', async () => {
     call.mockImplementation(async method => method === 'operations.list' ? { ok: true, operations: [operation, { ...operation, id: 'test', kind: 'apex.test', title: 'InvoiceTest', state: 'succeeded', jobId: undefined }] } : respond(method));
@@ -367,11 +372,11 @@ describe("public Salesforce panels", () => {
     fireEvent.click(screen.getByRole("button", { name: "Org details" }));
     fireEvent.click(screen.getByRole("button", { name: /Explore data/ }));
     expect(screen.getByTestId("soql-editor")).toBeTruthy();
-    fireEvent.click(screen.getByRole("tab", { name: "Apex & logs" }));
+    selectSection("Apex & logs");
     expect(screen.getByRole("button", { name: /Run targeted/ })).toBeTruthy();
-    fireEvent.click(screen.getByRole("tab", { name: "Deployments" }));
+    selectSection("Deployments");
     expect(screen.getByLabelText("Targeted Apex tests")).toBeTruthy();
-    fireEvent.click(screen.getByRole("tab", { name: "Agentforce" }));
+    selectSection("Agentforce");
     expect(screen.getByText("Agentforce script")).toBeTruthy();
     expect(screen.getByTestId('script').getAttribute('data-org-picker')).toBe('false');
     expect(screen.getAllByRole('combobox', { name: 'Salesforce org' })).toHaveLength(1);
@@ -428,7 +433,7 @@ describe("public Salesforce panels", () => {
     await screen.findByRole('heading', { name: orgsError ? 'Org connections unavailable' : 'Choose an org when you need it' });
     fireEvent.click(screen.getByRole('button', { name: /Build an agent/ }));
     expect(screen.getByTestId('script')).toBeTruthy();
-    fireEvent.click(screen.getByRole('tab', { name: 'Data', exact: true }));
+    selectSection("Data");
     expect(screen.queryByTestId('soql-editor')).toBeNull();
     expect(screen.getByRole('button', { name: 'Sign in to an org' })).toBeTruthy();
     const reads = call.mock.calls.filter(row => row[0] === 'status').length;
@@ -440,7 +445,7 @@ describe("public Salesforce panels", () => {
     // Check again drops the cached roster, so orgs signed in from a terminal appear.
     expect(call).toHaveBeenCalledWith('orgs', expect.objectContaining({ refresh: true }));
     expect(screen.queryByRole('button', { name: 'Sign in to an org' })).toBeNull();
-    fireEvent.click(screen.getByRole('tab', { name: 'Overview' }));
+    selectSection("Overview");
     await screen.findByText('Ready for your next change.');
     expect(screen.getByText('Local authoring ready')).toBeTruthy();
   });
@@ -456,7 +461,7 @@ describe("public Salesforce panels", () => {
     let finish!: (value: unknown) => void;
     call.mockImplementation(async (method, args) => method === 'status' ? new Promise(resolve => { finish = resolve; }) : respond(method, args));
     mount(<SalesforceProjectTab pluginId="salesforce" projectId="p" />);
-    fireEvent.click(screen.getByRole('tab', { name: 'Data', exact: true }));
+    selectSection("Data");
     await screen.findByText('Checking org connections…');
     await act(async () => finish(respond('status')));
     await screen.findByTestId('soql-editor');
@@ -479,7 +484,7 @@ describe("public Salesforce panels", () => {
     await screen.findByText('Ready for your next change.');
     fireEvent.change(screen.getByRole('combobox', { name: 'Salesforce org' }), { target: { value: 'other' } });
     await waitFor(() => expect(finish).toBeTypeOf('function'));
-    fireEvent.click(screen.getByRole('tab', { name: 'Data', exact: true }));
+    selectSection("Data");
     fireEvent.change(await screen.findByTestId('soql-editor'), { target: { value: 'SELECT Id, Name FROM Account LIMIT 1' } });
     fireEvent.click(screen.getByTestId('soql-run'));
     await screen.findByRole('cell', { name: 'Acme' });
@@ -529,7 +534,7 @@ describe("public Salesforce panels", () => {
     );
     mount(<SalesforceProjectTab pluginId="salesforce" projectId="p" />);
     await screen.findByText("Ready for your next change.");
-    fireEvent.click(screen.getByRole("tab", { name: "Apex & logs" }));
+    selectSection("Apex & logs");
     fireEvent.click(screen.getByRole("button", { name: "Fetch latest from org" }));
     await screen.findByText("Nothing in the org to fetch.");
     expect(call).toHaveBeenCalledWith("sync.check", expect.objectContaining({ scope: "all", current: true, projectId: "p" }));

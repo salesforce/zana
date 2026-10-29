@@ -496,7 +496,7 @@ describe('AgentforcePreviewPanel', () => {
     // With the Studio in its own window, the step opens there instead.
     const base = rpc.getMockImplementation()!;
     rpc.mockImplementation(async (id: string, method: string, args?: Record<string, unknown>) =>
-      method === 'control.views' ? { ok: true, views: [{ id: 'studio', surface: 'workbench', window: 'plugin-view', commands: ['view.open'] }] }
+      method === 'control.views' ? { ok: true, views: [{ id: 'studio', surface: 'workbench', window: 'plugin-view', commands: ['view.open'], state: { resourceId: 'force-app/bots/QC.agent' } }] }
         : method === 'control.command' ? { ok: true, commandId: 'c' }
           : method === 'control.result' ? { ok: true, state: 'completed' } : base(id, method, args));
     navigate.openThreadPanel.mockClear();

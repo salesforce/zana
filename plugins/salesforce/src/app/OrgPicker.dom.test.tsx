@@ -233,7 +233,9 @@ describe('OrgPicker and Salesforce project tab', () => {
 
   it('renders CLI orgs on the Salesforce project tab', async () => {
     const el = await mount(createElement(SalesforceProjectTab, { pluginId: 'salesforce', projectId: 'proj-1' }));
-    expect(el.querySelectorAll('[role=tab]')).toHaveLength(5);
+    await act(async () => { el.querySelector<HTMLButtonElement>('[aria-label="Open Salesforce tools"]')!.click(); });
+    expect(el.querySelectorAll('[data-section]')).toHaveLength(5);
+    await act(async () => { el.querySelector<HTMLButtonElement>('[aria-label="Close Salesforce tools"]')!.click(); });
     expect(el.textContent).toContain('Explore data');
     await act(async () => { el.querySelector<HTMLButtonElement>('[aria-label="Org details"]')!.click(); });
     expect(el.querySelector('[data-testid="salesforce-org:prod"]')).toBeTruthy();

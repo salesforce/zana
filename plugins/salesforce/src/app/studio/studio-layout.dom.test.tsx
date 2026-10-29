@@ -384,3 +384,16 @@ it('seeds an unseen scope from the fallback scope, then keeps its own key', () =
   const { result: none } = renderHook(() => useStudioLayout('fresh2', 'missing'));
   expect(none.current.state.agents).toEqual([]);
 });
+
+it('seeds a resource window with only its primary script and related workspace, leaving main intact', () => {
+  const main = renderHook(() => useStudioLayout('main'));
+  act(() => { main.result.current.openAgent('A.agent', 'A.agent'); main.result.current.openTab({ id: 'apex:Related', kind: 'apex', label: 'Related', target: 'apex://Related' }); main.result.current.openAgent('B.agent', 'B.agent'); });
+  const a = renderHook(() => useStudioLayout('window-A', 'main', 'A.agent'));
+  expect(a.result.current.state.agents.map(agent => agent.path)).toEqual(['A.agent']);
+  expect(a.result.current.state.tabs.some(tab => tab.id === 'apex:Related')).toBe(true);
+  expect(Object.keys(a.result.current.state.workspaces)).toEqual(['A.agent']);
+  expect(main.result.current.state.agents).toHaveLength(2);
+  const c = renderHook(() => useStudioLayout('window-C', 'main', 'C.agent'));
+  expect(c.result.current.state.agents).toEqual([{ path: 'C.agent', label: 'C.agent' }]);
+  expect(c.result.current.state.activeTab).toBe('agent:C.agent');
+});

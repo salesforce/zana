@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { openAgentInStudioWindow, openInStudioWindow, STUDIO_ACK_WAIT_MS, STUDIO_TAB_ID } from './studio-window-route.js';
+import { openAgentInStudioWindow, openInStudioWindow, STUDIO_ACK_WAIT_MS, STUDIO_TAB_ID, studioAgentResource } from './studio-window-route.js';
 
-const studio = { id: 'studio', surface: 'workbench', window: 'plugin-view', commands: ['state', 'view.open'] };
+const studio = { id: 'studio', surface: 'workbench', window: 'plugin-view', commands: ['state', 'view.open'], state: { resourceId: 'a/Help.agent' } };
 const acked = { ok: true, state: 'completed' };
 function setup(views: unknown, sent: unknown = { ok: true, commandId: 'c' }, result: unknown = acked) {
   const call = vi.fn(async (_plugin: string, method: string) => method === 'control.views' ? views : method === 'control.result' ? result : sent);
@@ -9,7 +9,28 @@ function setup(views: unknown, sent: unknown = { ok: true, commandId: 'c' }, res
   return { call, navigate, open: (extra: { line?: number } = {}) => openInStudioWindow({ pluginId: 'salesforce', projectId: 'p', path: 'a/Help.agent', ...extra, navigate, call: call as never }) };
 }
 
+describe('studioAgentResource', () => {
+  it('normalizes relative AgentScript identity and refuses invalid or ambiguous paths', () => {
+    expect(studioAgentResource('./a//Help.agent')).toBe('a/Help.agent');
+    expect(studioAgentResource('a\\Help.agent')).toBe('a/Help.agent');
+    expect(studioAgentResource('a/Help.afscript')).toBe('a/Help.afscript');
+    for (const path of [null, '', '/a.agent', 'C:/a.agent', '../a.agent', 'a/../b.agent', 'a.txt', 'a\0.agent', 'a'.repeat(501)]) expect(studioAgentResource(path)).toBeNull();
+  });
+});
+
 describe('openInStudioWindow', () => {
+  it('routes by resource identity, never to the first Studio in the project', async () => {
+    const other = { ...studio, id: 'other', state: { resourceId: 'a/Other.agent' } };
+    const { call, open } = setup({ ok: true, views: [other, studio] });
+    await expect(open()).resolves.toBe(true);
+    expect(call).toHaveBeenCalledWith('salesforce', 'control.command', expect.objectContaining({ viewId: 'studio' }));
+    await expect(setup({ ok: true, views: [other, { ...studio, state: {} }] }).open()).resolves.toBe(false);
+  });
+  it('does not call the host or list views for an invalid path', async () => {
+    const call = vi.fn(); const navigate = { openInWindow: vi.fn() };
+    await expect(openAgentInStudioWindow({ pluginId: 'salesforce', projectId: 'p', path: '../bad.agent', call: call as never, navigate: navigate as never })).resolves.toBe(false);
+    expect(call).not.toHaveBeenCalled(); expect(navigate.openInWindow).not.toHaveBeenCalled();
+  });
   it('sends the open to the Studio window lease and brings that window forward', async () => {
     const main = { id: 'main', surface: 'workbench', window: 'main', commands: ['view.open'] };
     const { call, navigate, open } = setup({ ok: true, views: [main, studio] });
@@ -17,7 +38,7 @@ describe('openInStudioWindow', () => {
     expect(call).toHaveBeenCalledWith('salesforce', 'control.views', { projectId: 'p' });
     expect(call).toHaveBeenCalledWith('salesforce', 'control.command', { projectId: 'p', viewId: 'studio', command: 'view.open', input: { view: 'agentforce', path: 'a/Help.agent', line: 12 } });
     expect(call).toHaveBeenCalledWith('salesforce', 'control.result', { projectId: 'p', commandId: 'c', waitMs: STUDIO_ACK_WAIT_MS });
-    expect(navigate.openInWindow).toHaveBeenCalledWith('p', { tabId: STUDIO_TAB_ID });
+    expect(navigate.openInWindow).toHaveBeenCalledWith('p', { tabId: STUDIO_TAB_ID, resourceId: 'a/Help.agent' });
     await open({ line: 0 });
     expect([...call.mock.calls].reverse().find(([, method]) => method === 'control.command')![2]).toMatchObject({ input: { view: 'agentforce', path: 'a/Help.agent' } });
   });
@@ -51,7 +72,7 @@ describe('openInStudioWindow', () => {
   });
   it('still reports the routed open on hosts without openInWindow', async () => {
     const call = vi.fn(async (_plugin: string, method: string) => method === 'control.views' ? { ok: true, views: [studio] } : method === 'control.result' ? acked : { ok: true, commandId: 'c' });
-    await expect(openInStudioWindow({ pluginId: 'salesforce', projectId: 'p', path: 'x.agent', navigate: {}, call: call as never })).resolves.toBe(true);
+    await expect(openInStudioWindow({ pluginId: 'salesforce', projectId: 'p', path: 'a/Help.agent', navigate: {}, call: call as never })).resolves.toBe(true);
   });
 });
 
@@ -75,7 +96,7 @@ describe('openAgentInStudioWindow', () => {
     });
     const navigate = { openInWindow: vi.fn(async () => true) };
     await expect(run(call, navigate)).resolves.toBe(true);
-    expect(navigate.openInWindow).toHaveBeenNthCalledWith(1, 'p', { tabId: STUDIO_TAB_ID });
+    expect(navigate.openInWindow).toHaveBeenNthCalledWith(1, 'p', { tabId: STUDIO_TAB_ID, resourceId: 'a/Help.agent' });
     expect(call).toHaveBeenCalledWith('salesforce', 'control.command', expect.objectContaining({ input: { view: 'agentforce', path: 'a/Help.agent' } }));
     expect(polls).toBe(3);
   });

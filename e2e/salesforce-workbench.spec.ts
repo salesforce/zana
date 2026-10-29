@@ -1,3 +1,4 @@
+import { selectSalesforceSection } from './fixtures/salesforce-navigation.js';
 import { createServer } from "node:http";
 import { existsSync, mkdirSync, writeFileSync, readFileSync, realpathSync } from "node:fs";
 import { join, delimiter } from "node:path";
@@ -223,7 +224,9 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
   const workbench = window.getByTestId("salesforce-workbench");
   await expect(workbench).toBeVisible();
   await expect(window.getByRole("navigation", { name: "dx navigation" }).getByRole("button", { name: "SOQL", exact: true })).toHaveCount(0);
-  await expect(workbench.getByRole("tab")).toHaveCount(5);
+  await workbench.getByRole('button', { name: 'Open Salesforce tools' }).click();
+  await expect(workbench.getByRole('dialog', { name: 'Salesforce tools' }).locator('[data-section]')).toHaveCount(5);
+  await workbench.getByRole('button', { name: 'Close Salesforce tools' }).click();
   await workbench.getByTestId("salesforce-org-picker").selectOption("org-159");
   await expect(workbench.getByTestId("salesforce-org-picker")).toHaveValue("org-159");
   await expect(workbench.locator(".sf-summary")).toContainText("Project target");
@@ -310,7 +313,7 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
   await workbench.getByRole('button', { name: 'Cancel', exact: true }).click();
   await workbench.getByTestId('salesforce-org-picker').selectOption('org-159');
   await expect(workbench.getByTestId('salesforce-org-picker')).toHaveValue('org-159');
-  await workbench.getByRole("tab", { name: "Data", exact: true }).click();
+  await selectSalesforceSection(workbench, 'data');
   await window.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
   expect(await workbench.getByTestId('soql-run').evaluate(el => getComputedStyle(el).color)).toBe('rgb(255, 255, 255)');
   await window.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
@@ -354,9 +357,7 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
   await expect(workbench.getByRole("alert")).toHaveCount(0);
   await workbench.getByTestId("salesforce-org-picker").selectOption("org-159");
   await expect(workbench.getByTestId("salesforce-org-picker")).toHaveValue("org-159");
-  await workbench
-    .getByRole("tab", { name: "Deployments", exact: true })
-    .click();
+  await selectSalesforceSection(workbench, 'deployments');
   await workbench.getByRole("button", { name: "Browse org metadata" }).click();
   await workbench.getByLabel('Search metadata').fill('Class179');
   await expect(workbench.getByLabel('Select Class179', { exact: true })).toBeVisible();
@@ -409,7 +410,7 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
   await expect(workbench.getByRole("alert")).toContainText(
     "Fixture metadata denied",
   );
-  await workbench.getByRole("tab", { name: "Data", exact: true }).click();
+  await selectSalesforceSection(workbench, 'data');
   await expect(workbench.getByTestId("soql-editor")).toHaveValue(
     "SELECT Id, Name FROM Account",
   );
@@ -614,7 +615,7 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
   await route(window, `/projects/${projectId}`);
   await window.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
   await expect(workbench.getByTestId('salesforce-org-picker')).toHaveValue('org-159');
-  await workbench.getByRole('tab', { name: 'Apex & logs', exact: true }).click();
+  await selectSalesforceSection(workbench, 'apex');
   await workbench.getByRole('tab', { name: 'Debug logs', exact: true }).click();
   await expect(workbench.getByText('No debug logs returned')).toBeVisible();
   await workbench.getByRole('button', { name: 'Refresh logs' }).click();

@@ -1,0 +1,51 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { IPC } from '@zana-ai/zcc-desktop-contract';
+import { createPluginViewCloseGuard } from './plugin-view-close.js';
+const window = (id = 1) => ({ id, isDestroyed: () => false, close: vi.fn(), webContents: { isDestroyed: () => false, send: vi.fn() } });
+afterEach(() => vi.useRealTimers());
+describe('plugin window close preflight', () => {
+  it('leaves legacy windows alone and waits for an exact sender-bound acknowledgement', () => {
+    const guard = createPluginViewCloseGuard(); const a = window(); const b = window(2);
+    expect(guard.intercept(a)).toBe(false);
+    expect(guard.setReady(a, 'yes')).toBe(false);
+    expect(guard.setReady(a, true)).toBe(true);
+    expect(guard.intercept(a)).toBe(true);
+    expect(guard.intercept(a)).toBe(true);
+    expect(a.webContents.send).toHaveBeenCalledTimes(1);
+    const requestId = a.webContents.send.mock.calls[0]![1].requestId;
+    expect(guard.complete(b, requestId, { ok: true })).toBe(false);
+    expect(guard.complete(a, 'wrong', { ok: true })).toBe(false);
+    expect(guard.complete(a, requestId, null)).toBe(false);
+    expect(guard.complete(a, requestId, { ok: 'yes' })).toBe(false);
+    expect(guard.complete(a, requestId, { ok: true })).toBe(true);
+    expect(a.close).toHaveBeenCalledTimes(1);
+    expect(guard.intercept(a)).toBe(false);
+    expect(guard.complete(a, requestId, { ok: true })).toBe(false);
+    guard.forget(a.id);
+  });
+  it('keeps failures and timeouts open, then allows a fresh retry', () => {
+    vi.useFakeTimers(); const guard = createPluginViewCloseGuard(50); const a = window();
+    guard.setReady(a, true); guard.intercept(a);
+    const requestId = a.webContents.send.mock.calls[0]![1].requestId;
+    expect(guard.complete(a, requestId, { ok: false, error: 'Offline\nretry' })).toBe(true);
+    expect(a.webContents.send).toHaveBeenLastCalledWith(IPC.windows.onPluginViewCloseRequest, { error: 'Offline retry' });
+    expect(a.close).not.toHaveBeenCalled();
+    guard.intercept(a); vi.advanceTimersByTime(51);
+    expect(a.webContents.send.mock.calls.at(-1)![1].error).toContain('too long');
+    expect(a.close).not.toHaveBeenCalled();
+    guard.intercept(a); guard.setReady(a, false); vi.advanceTimersByTime(100);
+    expect(guard.intercept(a)).toBe(false);
+  });
+  it('releases timers on crash/unregister and fails closed when sending fails', () => {
+    vi.useFakeTimers(); const guard = createPluginViewCloseGuard(50); const a = window();
+    guard.setReady(a, true); a.webContents.send.mockImplementationOnce(() => { throw Error('gone'); });
+    expect(guard.intercept(a)).toBe(true);
+    expect(a.close).not.toHaveBeenCalled();
+    guard.intercept(a); guard.forget(a.id); vi.advanceTimersByTime(100);
+    expect(guard.intercept(a)).toBe(false);
+    guard.setReady(a, true); a.isDestroyed = () => true;
+    expect(guard.intercept(a)).toBe(false);
+    a.isDestroyed = () => false; a.webContents.isDestroyed = () => true;
+    expect(guard.intercept(a)).toBe(false);
+  });
+});

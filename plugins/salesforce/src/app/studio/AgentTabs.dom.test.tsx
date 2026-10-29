@@ -41,3 +41,14 @@ it('has no tabs but still offers Open agent when nothing is open', () => {
   expect(screen.queryAllByRole('tab')).toHaveLength(0);
   expect(screen.getByRole('button', { name: /Open agent/ })).toBeTruthy();
 });
+
+it('offers per-agent windows in main and keeps a detached primary tab open', () => {
+  const onDetach = vi.fn(); const onOpenAgent = vi.fn();
+  const view = render(<AgentTabs agents={agents} active="a/A.agent" projectId="p1" onSelect={vi.fn()} onClose={vi.fn()} onOpenAgent={onOpenAgent} onDetach={onDetach} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Open B.agent in its own window' }));
+  expect(onDetach).toHaveBeenCalledWith('b/B.agent');
+  view.rerender(<AgentTabs agents={[agents[0]]} active="a/A.agent" lockedPath="a/A.agent" projectId="p1" onSelect={vi.fn()} onClose={vi.fn()} onOpenAgent={onOpenAgent} />);
+  expect(screen.queryByRole('button', { name: 'Close agent A.agent' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Open another agent' }));
+  expect(onOpenAgent).toHaveBeenCalledOnce();
+});

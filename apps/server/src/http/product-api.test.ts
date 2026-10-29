@@ -2241,6 +2241,19 @@ describe('product HTTP plugin side-panel conversations', () => {
     expect((await fetch(`${server.url}api/v1/plugins/ghost/panel-threads`)).status).toBe(404);
     expect((await fetch(`${server.url}api/v1/plugins/notes/panel-threads?limit=0`)).status).toBe(400);
 
+    const scoped = make('notes');
+    insertThreadPluginMetadata(server.ctx.db, { threadId: scoped.id, pluginId: 'notes', metadata: { panelAgent: { panel: 'board', view: 'force-app/Support.agent' } } });
+    const otherScript = make('notes');
+    insertThreadPluginMetadata(server.ctx.db, { threadId: otherScript.id, pluginId: 'notes', metadata: { panelAgent: { panel: 'board', view: 'force-app/Quote.agent' } } });
+    const otherProject = make('notes');
+    server.ctx.db.sqlite.prepare('UPDATE threads SET project_id = ? WHERE id = ?').run('proj-2', otherProject.id);
+    insertThreadPluginMetadata(server.ctx.db, { threadId: otherProject.id, pluginId: 'notes', metadata: { panelAgent: { panel: 'board', view: 'force-app/Support.agent' } } });
+    const filtered = await fetch(`${server.url}api/v1/plugins/notes/panel-threads?panel=board&projectId=proj-1&view=force-app%2FSupport.agent&limit=1`);
+    expect(filtered.status).toBe(200);
+    expect(((await filtered.json()) as { threads: Array<{ id: string }> }).threads.map(row => row.id)).toEqual([scoped.id]);
+    expect((await fetch(`${server.url}api/v1/plugins/notes/panel-threads?projectId=`)).status).toBe(400);
+    expect((await fetch(`${server.url}api/v1/plugins/notes/panel-threads?view=%0A`)).status).toBe(400);
+
     const updated: unknown[] = [];
     const dispose = server.ctx.hub.subscribe('threads:updated', (payload) => updated.push(payload));
     const post = (id: string) => fetch(`${server!.url}api/v1/threads/${id}/open-as-thread`, {
