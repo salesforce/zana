@@ -133,7 +133,7 @@ export async function peerDaemonConnectInstall(ssh: PeerDaemonSsh, input: {
     || !PEER_HOST_ID_RE.test(serverId) || !/^(?:[A-F0-9]{4}-){7}[A-F0-9]{4}$/.test(code)) {
     throw new HostCommandError('invalid_request', 'Invalid Connect machine enrollment');
   }
-  const script = ['(', 'umask 077', ...peerNodeSelectionLines(), 'export PATH="$(dirname "$node_bin"):$PATH"', `f=$(mktemp); trap 'rm -f "$f"' EXIT; curl --proto '=https' -fsS --connect-timeout 10 --max-time 30 ${shQuote(accountUrl + '/api/connect/host-installer')} -o "$f" && "$node_bin" "$f" --account ${shQuote(accountUrl)} --server-id ${shQuote(serverId)} --code ${shQuote(code)}`, ')'].join('\n');
+  const script = ['(', 'umask 077', ...peerNodeSelectionLines(), 'export PATH="$(dirname "$node_bin"):$PATH"', `d=$(mktemp -d); trap 'rm -rf "$d"' EXIT; f="$d/host-installer.mjs"; curl --proto '=https' -fsS --connect-timeout 10 --max-time 30 ${shQuote(accountUrl + '/api/connect/host-installer')} -o "$f" && "$node_bin" "$f" --account ${shQuote(accountUrl)} --server-id ${shQuote(serverId)} --code ${shQuote(code)}`, ')'].join('\n');
   const result = await ssh.run(input.remote, script, SSH_TIMEOUT_MS);
   const log = logText(result).replaceAll(code, '[redacted]');
   if (result.code !== 0) throw new HostCommandError('peer_install_failed', log || 'Connect machine installation failed');
