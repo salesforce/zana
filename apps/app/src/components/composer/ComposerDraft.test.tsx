@@ -1,10 +1,11 @@
 // @vitest-environment happy-dom
-import { act, cleanup, render, renderHook, waitFor } from '@testing-library/react';
+import { act, cleanup, render, renderHook, waitFor, fireEvent, screen } from '@testing-library/react';
 import { EditorContent, type JSONContent } from '@tiptap/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ComposerDraftProvider, useComposerSession, useComposerSetting, useRetainedText } from './ComposerDraft.js';
 import { ComposerSession, composerSession, resetComposerSessions, MAX_COMPOSER_SESSIONS } from './composer-session.js';
 import { useComposerPromptField } from './use-composer-prompt-field.js';
+import { EDITOR_SELECTION_MIME } from '@zana-ai/zcc-plugin-sdk/app';
 import { mentionAttrsForSuggestion } from './mention-attrs.js';
 
 vi.mock('../../lib/fetch-with-app-surface.js', () => ({ apiJson: async () => ({}) }));
@@ -280,4 +281,89 @@ describe('retained reply text', () => {
     view.unmount();
     expect(renderHook(() => useRetainedText('overflow')).result.current[0]).toBe('');
   });
+});
+
+
+const copiedSelection = { version: 1, path: 'force-app/Review.agent', startLine: 12, endLine: 14, text: 'reasoning:\n    instructions: |\n        Unsaved instruction' };
+function pasteSelection(metadata = JSON.stringify(copiedSelection), text = copiedSelection.text) {
+  const clipboardData = { getData: (type: string) => type === EDITOR_SELECTION_MIME ? metadata : type === 'text/plain' ? text : '', types: ['text/plain', EDITOR_SELECTION_MIME], files: [], items: [] };
+  const event = new Event('paste', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'clipboardData', { value: clipboardData });
+  act(() => field.editor!.view.dom.dispatchEvent(event));
+  return event;
+}
+
+describe('pasted editor selection references', () => {
+  it('pastes an inline chip with its exact snapshot, inspects, dismisses, removes and undoes', async () => {
+    render(<Surface mode="modern" sessionKey="code-selection" />);
+    await ready();
+    act(() => field.editor!.commands.insertContent('Explain '));
+    expect(pasteSelection().defaultPrevented).toBe(true);
+    const chip = await screen.findByRole('button', { name: 'Inspect Review.agent (12–14)' });
+    expect(screen.getByTestId('prompt').textContent).not.toContain('Unsaved instruction');
+    expect(field.text).toContain(copiedSelection.text);
+    expect(field.serialize().mentions).toEqual([]);
+    expect(field.editor!.getHTML()).toContain('Review.agent (12–14)');
+    expect(field.editor!.getText()).toContain(copiedSelection.text);
+    fireEvent.click(chip);
+    expect(screen.getByRole('dialog').textContent).toContain(copiedSelection.text);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(chip); fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    vi.spyOn(chip, 'getBoundingClientRect').mockReturnValue({ top: 500, left: 30, bottom: 520 } as DOMRect);
+    fireEvent.click(chip);
+    expect(screen.getByRole('dialog').style.bottom).not.toBe('');
+    fireEvent.click(screen.getByRole('button', { name: 'Close selection preview' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Review.agent (12–14)' }));
+    expect(screen.queryByRole('button', { name: 'Inspect Review.agent (12–14)' })).toBeNull();
+    expect(field.text).toBe('Explain ');
+    act(() => field.editor!.commands.undo());
+    expect(await screen.findByRole('button', { name: 'Inspect Review.agent (12–14)' })).toBeTruthy();
+  });
+
+  it('retains multiple references through navigation and clears them after submission', async () => {
+    const view = render(<Surface mode="modern" sessionKey="retained-code" />);
+    await ready(); pasteSelection(); pasteSelection();
+    const json = field.editor!.getJSON();
+    view.unmount();
+    render(<Surface mode="modern" sessionKey="retained-code" />);
+    await ready();
+    expect(field.editor!.getJSON()).toEqual(json);
+    expect(await screen.findAllByRole('button', { name: 'Inspect Review.agent (12–14)' })).toHaveLength(2);
+    act(() => field.clear());
+    expect(field.text).toBe('');
+    expect(screen.queryByRole('button', { name: 'Inspect Review.agent (12–14)' })).toBeNull();
+  });
+
+  it('leaves ordinary, stale and paste-as-plain-text content as editable text', async () => {
+    render(<Surface mode="modern" />); await ready();
+    pasteSelection('{broken', 'ordinary paste');
+    expect(screen.queryByRole('button', { name: /Inspect/ })).toBeNull();
+    expect(field.text).toBe('ordinary paste');
+    act(() => field.clear());
+    pasteSelection(JSON.stringify(copiedSelection), 'unrelated clipboard');
+    expect(field.text).toBe('unrelated clipboard');
+    act(() => field.clear());
+    // Native menu accelerators can consume V after delivering the Shift key.
+    fireEvent.keyDown(field.editor!.view.dom, { key: 'Shift', ctrlKey: true, shiftKey: true });
+    pasteSelection();
+    expect(screen.queryByRole('button', { name: /Inspect/ })).toBeNull();
+    expect(field.text).toBe(copiedSelection.text);
+    act(() => field.clear());
+    fireEvent.keyDown(field.editor!.view.dom, { key: 'v', ctrlKey: true, shiftKey: true });
+    fireEvent.keyUp(field.editor!.view.dom, { key: 'v' });
+    pasteSelection();
+    expect(await screen.findByRole('button', { name: /Inspect/ })).toBeTruthy();
+  });
+});
+
+
+it('ignores invalid retained selection nodes when displaying or serializing a draft', async () => {
+  render(<Surface mode="modern" />); await ready();
+  act(() => field.editor!.commands.insertContent({ type: 'editorSelection', attrs: { selection: null } }));
+  expect(screen.queryByRole('button', { name: /Inspect/ })).toBeNull();
+  expect(field.editor!.getText()).toBe('');
+  expect(field.editor!.getHTML()).not.toContain('Review.agent');
 });

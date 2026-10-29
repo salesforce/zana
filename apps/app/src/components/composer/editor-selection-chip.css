@@ -1,0 +1,12 @@
+.editor-selection-node { display: inline; vertical-align: baseline; }
+.editor-selection-chip { display: inline-flex; max-width: 100%; align-items: center; gap: 2px; margin: 0 2px; padding: 2px 4px; border-radius: 6px; background: color-mix(in srgb, var(--accent-blue) 16%, var(--bg-elevated, var(--bg-2))); color: var(--text-primary); font-size: 13px; line-height: 1.5; vertical-align: middle; }
+.editor-selection-chip button { display: inline-flex; align-items: center; gap: 5px; border: 0; padding: 0 2px; background: transparent; color: inherit; font: inherit; cursor: pointer; min-width: 0; }
+.editor-selection-label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor-selection-label svg, .editor-selection-remove { flex-shrink: 0; }
+.editor-selection-chip button:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; border-radius: 3px; }
+.editor-selection-preview { position: fixed; z-index: 10000; width: min(480px, calc(100vw - 16px)); max-height: min(380px, calc(100vh - 16px)); overflow: auto; padding: 12px; border: 1px solid var(--border-strong, var(--border)); border-radius: 9px; background: var(--bg-elevated, var(--bg-2)); color: var(--text-primary); box-shadow: 0 6px 24px #0003; font-size: 12px; }
+.editor-selection-preview-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.editor-selection-preview-heading button { display: inline-flex; background: none; border: 0; padding: 3px; color: inherit; cursor: pointer; }
+.editor-selection-path { color: var(--text-muted); overflow-wrap: anywhere; margin-top: 4px; }
+.editor-selection-preview pre { overflow: auto; max-height: 220px; padding: 8px; border-radius: 4px; background: var(--bg-base); font: 12px/1.6 ui-monospace, monospace; tab-size: 4; }
+.editor-selection-preview small { color: var(--text-muted); }

@@ -12,6 +12,7 @@ import {
 } from '../../src/app/playground-bridge.js';
 import { orgSessionLabel } from '../../lib/org-session.js';
 import { applyDiagnostics, ensureAgentScriptMonaco, setAgentScriptLspDialect } from './editor';
+import { bindEditorSelectionCopy } from './editor-selection-copy';
 import { StudioLayer } from './studio-layer';
 import { toStudioDiagnostics } from './studio-helpers';
 import type { AgentAction } from '../../lib/agent-action-model';
@@ -108,6 +109,7 @@ export default function App() {
       glyphMargin: true
     });
     editorRef.current = instance;
+    const releaseSelectionCopy = bindEditorSelectionCopy(container, instance, () => pathRef.current);
     const layer = new StudioLayer(host, instance, onLayerPost);
     layerRef.current = layer;
     const sub = instance.onDidChangeModelContent(() => {
@@ -126,6 +128,7 @@ export default function App() {
     return () => {
       sub.dispose();
       targetClick.dispose();
+      releaseSelectionCopy();
       layer.dispose();
       layerRef.current = null;
       instance.dispose();

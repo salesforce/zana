@@ -386,6 +386,7 @@ describe('host bootstrap wiring', () => {
       try { item.click({}, {}); } catch { /* menu click needs a window */ }
     }
     expect(items.some((i) => i.label === 'View on GitHub')).toBe(true);
+    expect(items.find((i) => i.role === 'pasteAndMatchStyle')).toMatchObject({ accelerator: 'CmdOrCtrl+Shift+V' });
     expect(shell).toBeDefined();
   });
 

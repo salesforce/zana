@@ -2582,26 +2582,25 @@ test('Agentforce Studio: host tools preserve two agents and all twelve document 
   await expect(viewPane(page, 'preview')).toHaveAttribute('data-agent', 'force-app/Orders.agent');
   await expect(frame.locator('.view-lines')).toContainText('Order_Assistant');
 
-  // Assistant cards use this same Studio and host routing, including a Preview for another agent.
+  // The assistant hides redundant Agent links while Preview cards retain host routing.
   await openThreadToolLauncher(sidePanel(page));
   await sidePanel(page).getByTestId('thread-new-tab-agent').click();
   const composer = sidePanel(page).getByTestId('panel-agent-tab-composer');
   await composer.getByTestId('thread-command-input').fill('Review these\n::sf-agent{path="force-app/Support.agent"}\n::sf-preview{runId="rail-run-1" path="force-app/Orders.agent"}');
   await composer.getByTestId('thread-command-send').click();
   const chat = sidePanel(page).getByTestId('panel-agent-tab-chat');
-  const assistantTitle = await activeSidePanelTab(page).innerText();
-  const agentCard = chat.getByTestId('sf-card-agent').last();
-  await expect(agentCard.locator('.plugin-directive-card-main')).toBeEnabled({ timeout: 30_000 });
-  await agentCard.locator('.plugin-directive-card-main').click();
-  await expect(agentTab('Support')).toHaveAttribute('aria-selected', 'true');
-  await expect(editorTabs(page).getByRole('tab', { name: /^Script/ })).toHaveAttribute('aria-selected', 'true');
-  await expect(frame.locator('.view-lines')).toContainText('Support_Concierge');
-  await expect(sidePanel(page).getByTestId('atp-root')).toHaveCount(0);
-  await sidePanelTab(page, assistantTitle).click();
-  await chat.getByTestId('sf-card-preview').last().locator('.plugin-directive-card-main').click();
+  const previewCard = chat.getByTestId('sf-card-preview').last().locator('.plugin-directive-card-main');
+  await expect(previewCard).toBeEnabled({ timeout: 30_000 });
+  await expect(chat.getByTestId('sf-card-agent')).toHaveCount(0);
+  await expect(agentTab('Orders')).toHaveAttribute('aria-selected', 'true');
+  await expect(frame.locator('.view-lines')).toContainText('Order_Assistant');
+  await previewCard.click();
   await expect(agentTab('Orders')).toHaveAttribute('aria-selected', 'true');
   await expect(activeSidePanelTab(page)).toHaveText('Preview');
   await expect(editorTabs(page).getByRole('tab', { name: 'Preview', exact: true })).toHaveCount(0);
+  // This fixture links an expired run; its recovery stays in the same Preview tool.
+  await expect(viewPane(page, 'preview').getByRole('alert')).toContainText('This run has expired');
+  await viewPane(page, 'preview').getByRole('button', { name: 'Start a new preview', exact: true }).click();
   await expect(viewPane(page, 'preview').getByTestId('preview-workbench')).toBeVisible();
   await expect(frame.locator('.view-lines')).toContainText('Order_Assistant');
   await expect(sidePanel(page).getByTestId('atp-root')).toHaveCount(0);
@@ -3636,4 +3635,64 @@ test('Agentforce Studio: pane dividers resize smoothly, persist and adapt to nar
   await drag(preview.getByRole('separator', { name: 'Resize scenario list and details' }), 80);
   await expect.poll(async () => (await scenarioList.boundingBox())!.width).toBeGreaterThan(casesBefore + 60);
   await expect(iframe).toHaveAttribute('data-resize-identity', 'original');
+});
+
+test('Agentforce Studio: copied code pastes as a selection reference in the assistant', async ({ app, home }) => {
+  const page = app.window;
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
+  await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'salesforce')?.status), { timeout: 30_000 }).toMatch(/running|needs-configuration/);
+  const projectId = await page.evaluate(async path => {
+    const result = await window.cc.projects.add(path); if (!result.ok) throw Error(result.message); return result.value.id;
+  }, join(home, 'dx'));
+  await page.evaluate(id => { history.pushState({}, '', `/projects/${id}/salesforce`); dispatchEvent(new PopStateEvent('popstate')); }, projectId);
+  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await studioIn(page).getByTestId('salesforce-agent-script-file:force-app/Support.agent').click();
+  const frame = page.frameLocator('iframe[title="Agentforce playground"]');
+  await expect(frame.getByTestId('agent-script-ide')).toBeVisible();
+  await frame.locator('.monaco-editor').click({ position: { x: 120, y: 45 } });
+  await page.keyboard.press('ControlOrMeta+a');
+  const source = '# COPIED_UNSAVED_CONTEXT\ntopic main:\n    description: "Selection snapshot"';
+  await page.keyboard.insertText(source);
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.press('ControlOrMeta+c');
+  expect(readFileSync(join(home, 'dx/force-app/Support.agent'), 'utf8')).not.toContain('COPIED_UNSAVED_CONTEXT');
+  await page.getByTestId('plugin-panel-agent-show').click();
+  const composer = page.getByTestId('panel-agent-tab-composer');
+  const input = composer.getByTestId('thread-command-input');
+  await input.fill('Explain ');
+  await input.press('End');
+  await page.keyboard.press('ControlOrMeta+v');
+  const chip = composer.getByRole('button', { name: 'Inspect Support.agent (1–3)' });
+  await expect(chip).toBeVisible();
+  await expect(input).not.toContainText('COPIED_UNSAVED_CONTEXT');
+  await chip.click();
+  await expect(page.getByRole('dialog', { name: 'Copied selection: Support.agent (1–3)' })).toContainText(source);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Copied selection: Support.agent (1–3)' })).toHaveCount(0);
+  await composer.getByRole('button', { name: 'Remove Support.agent (1–3)' }).click();
+  await expect(chip).toHaveCount(0);
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(chip).toBeVisible();
+  // Native paste-as-plain-text is still available for editable code in the prompt.
+  await input.focus();
+  await expect(input).toBeFocused();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.press('ControlOrMeta+a');
+  // Playwright keypresses bypass native menu accelerators. Invoke the same Electron command.
+  await page.keyboard.down('Shift');
+  const nativeWindow = await app.electron.browserWindow(page);
+  await nativeWindow.evaluate(win => win.webContents.pasteAndMatchStyle());
+  await page.keyboard.up('Shift');
+  await expect(input).toContainText('COPIED_UNSAVED_CONTEXT');
+  await expect(chip).toHaveCount(0);
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.press('ControlOrMeta+v');
+  await expect(chip).toBeVisible();
+  await expect(composer.getByTestId('thread-command-send')).toBeEnabled({ timeout: 30_000 });
+  await composer.getByTestId('thread-command-send').click();
+  const timeline = page.getByTestId('panel-agent-tab-chat').getByTestId('thread-timeline');
+  await expect(timeline).toContainText('Response to:', { timeout: 30_000 });
+  await expect(timeline).toContainText('COPIED_UNSAVED_CONTEXT');
+  await expect(timeline).toContainText('force-app/Support.agent:1–3');
 });

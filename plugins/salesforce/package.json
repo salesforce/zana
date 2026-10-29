@@ -37,6 +37,7 @@
     "./panels": "./panels.tsx"
   },
   "dependencies": {
+    "@zana-ai/zcc-plugin-sdk": "workspace:*",
     "@zana-ai/zcc-ui": "workspace:*",
     "@salesforce/metadata-visualizer-web": "1.7.0",
     "@sf-agentscript/agentforce": "2.10.38",

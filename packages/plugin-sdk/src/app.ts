@@ -1,3 +1,4 @@
+export { EDITOR_SELECTION_MIME, MAX_EDITOR_SELECTION_TEXT, parseEditorSelection, editorSelectionFromClipboard, editorSelectionLabel, editorSelectionPrompt, type EditorSelection } from './editor-selection.js';
 import type {
   ComposerView,
   HarnessRoutingEditorProps,
