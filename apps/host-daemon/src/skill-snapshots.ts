@@ -22,23 +22,6 @@ const MAX_FILES = 10_000;
 const MAX_SNAPSHOTS = 64;
 type CapturedFile = { path: string; content: Buffer; mode: number };
 
-export type SkillSnapshotByteMeasurement = {
-  skillCoreBytes: number;
-  referenceBytes: number;
-};
-
-/** Measures final captured content; other skill assets are deliberately excluded. */
-export function measureSkillSnapshotBytes(files: ReadonlyArray<Pick<CapturedFile, 'path' | 'content'>>): SkillSnapshotByteMeasurement {
-  let skillCoreBytes = 0;
-  let referenceBytes = 0;
-  for (const file of files) {
-    const parts = file.path.split(/[\\/]+/);
-    if (parts.includes('references')) referenceBytes += file.content.length;
-    else if (parts.at(-1) === 'SKILL.md') skillCoreBytes += file.content.length;
-  }
-  return { skillCoreBytes, referenceBytes };
-}
-
 /** Immutable, content-addressed catalogs, retained until their owning runtime shuts down. */
 export function createSkillSnapshotStore(dataDir: string) {
   const parent = join(dataDir, 'runtime-skill-snapshots');

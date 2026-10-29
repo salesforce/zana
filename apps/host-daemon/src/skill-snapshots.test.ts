@@ -2,21 +2,10 @@ import { afterEach, expect, it } from 'vitest';
 import { mkdtemp, mkdir, readFile, writeFile, symlink, rm, readdir, truncate } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createSkillSnapshotStore, measureSkillSnapshotBytes, SKILL_SNAPSHOT_MAX_BYTES } from './skill-snapshots.js';
+import { createSkillSnapshotStore, SKILL_SNAPSHOT_MAX_BYTES } from './skill-snapshots.js';
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const run of cleanup.splice(0).reverse()) await run(); });
-
-it('measures final UTF-8 skill core and reference bytes separately', () => {
-  const measurement = measureSkillSnapshotBytes([
-    { path: '0/demo/SKILL.md', content: Buffer.from('cafe\u0301', 'utf8') },
-    { path: '0/demo/references/guide.md', content: Buffer.from('\u{1F680}', 'utf8') },
-    { path: '0/demo/references/nested/data.json', content: Buffer.from('ok', 'utf8') },
-    { path: '0/demo/helper.sh', content: Buffer.from('ignored', 'utf8') }
-  ]);
-
-  expect(measurement).toEqual({ skillCoreBytes: 6, referenceBytes: 6 });
-});
 
 async function setup() {
   const dir = await mkdtemp(join(tmpdir(), 'zcc-skill-snapshot-'));

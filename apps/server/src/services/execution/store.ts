@@ -825,6 +825,19 @@ function validAutomatedMcpCatalogueProvenance(value: unknown): value is Executio
     && provenance.tools.every(validString) && validSha256Hex(provenance.digest);
 }
 
+function equalAutomatedMcpCatalogueProvenance(
+  left: ExecutionSlotMcpCatalogueProvenanceV1,
+  right: ExecutionSlotMcpCatalogueProvenanceV1
+): boolean {
+  return left.version === right.version
+    && left.role === right.role
+    && left.digest === right.digest
+    && left.capabilities.length === right.capabilities.length
+    && left.capabilities.every((capability, index) => capability === right.capabilities[index])
+    && left.tools.length === right.tools.length
+    && left.tools.every((tool, index) => tool === right.tools[index]);
+}
+
 function validSha256Hex(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 }
@@ -2027,10 +2040,13 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       if (!validAutomatedMcpCatalogueProvenance(provenance)) throw new Error('invalid automated MCP catalogue provenance');
       const existing = record.automatedMcpCatalogueProvenance?.[safeSlotId];
       if (existing) {
-        if (JSON.stringify(existing) !== JSON.stringify(provenance)) {
+        if (!equalAutomatedMcpCatalogueProvenance(existing, provenance)) {
           throw new Error(`automated MCP catalogue provenance mismatch for slot ${safeSlotId}`);
         }
         return clone(existing);
+      }
+      if (Object.keys(record.automatedMcpCatalogueProvenance ?? {}).length >= MAX_AUTOMATED_MCP_CATALOGUE_SLOTS) {
+        throw new Error('automated MCP catalogue provenance slot limit reached');
       }
       record.automatedMcpCatalogueProvenance = {
         ...record.automatedMcpCatalogueProvenance,

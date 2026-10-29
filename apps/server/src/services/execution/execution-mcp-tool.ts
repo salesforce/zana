@@ -378,13 +378,16 @@ export function outcomeAck(record: ExecutionRecord, workUnitId: string) {
 export function registerExecutionTools(server: McpServer, options: RegisterExecutionToolOptions): void {
   const authorized = async (): Promise<boolean> => {
     if (!options.sessionId || (await options.validateRouteIdentity?.(options.sessionId, options.projectId)) !== true) return false;
-    return !!options.memberFence || !(await options.resolveCohortBinding?.(options.sessionId, options.projectId))?.memberFence;
+    if (options.memberFence) return true;
+    const cohortBinding = await options.resolveCohortBinding?.(options.sessionId, options.projectId);
+    return cohortBinding?.memberFence === undefined;
   };
   const ownerAuthorized = async (): Promise<boolean> => {
     if (!options.sessionId || options.memberFence) return false;
     const gate = options.validateOwnerRouteIdentity ?? options.validateRouteIdentity;
     if ((await gate?.(options.sessionId, options.projectId)) !== true) return false;
-    return !(await options.resolveCohortBinding?.(options.sessionId, options.projectId))?.memberFence;
+    const cohortBinding = await options.resolveCohortBinding?.(options.sessionId, options.projectId);
+    return cohortBinding?.memberFence === undefined;
   };
   const binding = async (correlationExecutionId?: string): Promise<ExecutionCohortBinding | undefined> => {
     const resolved = options.sessionId ? await options.resolveCohortBinding?.(options.sessionId, options.projectId, options.memberFence) : undefined;
@@ -428,8 +431,9 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
           if (name === 'execution.event' && args && typeof args === 'object' && ('slotId' in args || 'producerRole' in args)) return denied(name);
           const bound = await binding((args as { executionId?: string }).executionId);
           if (!bound) return boundDenied(name);
-          if (options.allowedToolNames && !options.allowedToolNames.has(name)
-            || !EXECUTION_MEMBER_TOOL_NAMES[bound.role]?.some((tool) => tool === name)) return denied(name);
+          const allowedByCatalogue = !options.allowedToolNames || options.allowedToolNames.has(name);
+          const allowedForRole = EXECUTION_MEMBER_TOOL_NAMES[bound.role]?.some((tool) => tool === name) === true;
+          if (!allowedByCatalogue || !allowedForRole) return denied(name);
         }
         return await (handler(args) as Promise<unknown>);
       } catch (error) {
