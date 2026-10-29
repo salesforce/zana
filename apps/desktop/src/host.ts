@@ -8037,6 +8037,7 @@ function buildAppMenu() {
         { role: 'cut' },
         { role: 'copy' },
         { role: 'paste' },
+        { role: 'pasteAndMatchStyle', accelerator: 'CmdOrCtrl+Shift+V' },
         { role: 'selectAll' }
       ]
     },

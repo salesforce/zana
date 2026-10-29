@@ -1,3 +1,4 @@
+import { EditorSelectionExtension } from '../components/composer/editor-selection-extension.js';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import { PromptMentionExtension } from '../components/composer/prompt-mention-extension.js';
@@ -56,6 +57,7 @@ export function composerPromptExtensions(markdownEnabled: boolean, placeholder: 
       trailingNode: false
     }),
     Placeholder.configure({ placeholder }),
-    PromptMentionExtension
+    PromptMentionExtension,
+    EditorSelectionExtension
   ];
 }

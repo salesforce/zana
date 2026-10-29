@@ -54,6 +54,7 @@ describe('registration and helpers', () => {
     const messageDirective = vi.fn();
     registerStudioDirectives({ slots: { messageDirective } } as never);
     expect(messageDirective.mock.calls.map(call => call[0].id)).toEqual(['sf-agent', 'sf-preview', 'sf-operation', 'sf-simulation']);
+    expect(messageDirective.mock.calls.filter(call => call[0].hideInAssistant).map(call => call[0].id)).toEqual(['sf-agent']);
   });
   it('parses attributes defensively', () => {
     expect(cleanAttr('  a ')).toBe('a');

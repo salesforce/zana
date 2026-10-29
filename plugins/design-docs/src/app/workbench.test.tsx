@@ -43,6 +43,7 @@ describe('plugin app', () => {
     expect(app.projectTabs.map((slot) => slot.id)).toEqual(['design']);
     expect(app.projectTabs[0]!.detachable).toBe(true);
     expect(app.messageDirectives.map((slot) => slot.id)).toEqual(['design-doc']);
+    expect(app.messageDirectives[0]?.hideInAssistant).toBe(true);
     expect(app.threadPanelActions.map((slot) => slot.id)).toEqual(['design-doc']);
     expect(app.messageActions.map((slot) => slot.id)).toEqual(['save-design-doc']);
     // Peers live inside the workbench, not on the host Plugins page.

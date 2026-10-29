@@ -107,6 +107,7 @@ describe('definePluginApp', () => {
       });
       app.slots.messageDirective({
         id: 'task',
+        hideInAssistant: true,
         component: () => null
       });
       app.composer.customize({
@@ -151,7 +152,7 @@ describe('definePluginApp', () => {
         })
       )
     ).toThrow(/"scopes" must be a non-empty array/);
-    expect(set.messageDirectives[0]?.id).toBe('task');
+    expect(set.messageDirectives[0]).toMatchObject({ id: 'task', hideInAssistant: true });
     expect(set.composerCustomizations[0]?.id).toBe('retry');
     expect(set.contentScripts[0]?.id).toBe('boot');
   });

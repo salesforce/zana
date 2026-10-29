@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ExternalLink, MessageSquare } from 'lucide-react';
+import { PluginAssistantContext } from '../../../plugins/plugin-assistant-context.js';
 import { ThreadCommandComposer } from '../../ThreadCommandComposer.js';
 import { ComposerDraftProvider } from '../../composer/ComposerDraft.js';
 import { product } from '../../../lib/product-client.js';
@@ -67,7 +68,9 @@ export function PanelAgentTab({
       <div className="panel-agent-tab is-chat" data-testid="panel-agent-tab-chat">
         {pluginPanel ? <OpenAsThreadBar threadId={threadId} /> : null}
         <Suspense fallback={null}>
-          <ThreadDetailLazy threadId={threadId} embedded />
+          <PluginAssistantContext.Provider value={pluginPanel?.pluginId ?? null}>
+            <ThreadDetailLazy threadId={threadId} embedded />
+          </PluginAssistantContext.Provider>
         </Suspense>
       </div>
     );

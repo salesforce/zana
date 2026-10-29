@@ -1691,6 +1691,9 @@ importers:
       '@xyflow/react':
         specifier: ^12.10.0
         version: 12.11.6(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(immer@11.1.21)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@zana-ai/zcc-plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
       '@zana-ai/zcc-ui':
         specifier: workspace:*
         version: link:../../packages/ui

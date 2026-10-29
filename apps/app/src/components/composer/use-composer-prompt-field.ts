@@ -1,3 +1,4 @@
+import { editorSelectionFromClipboard } from '@zana-ai/zcc-plugin-sdk/app';
 import { nativeCapabilities } from '../../lib/native-capabilities.js';
 import { promptEditorDocument } from './restore-prompt-editor.js';
 import { promptInputSchema, type PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
@@ -145,6 +146,7 @@ export function useComposerPromptField({
   const insertDroppedMentionsRef = useRef<(event: DragEvent) => boolean>(() => false);
   const attachImagesRef = useRef<(files: File[]) => boolean>(() => false);
   const restoreFocusAfterSubmitRef = useRef(false);
+  const pastePlainTextRef = useRef(false);
   const [dropOver, setDropOver] = useState(false);
   const [, setEditorRevision] = useState(0);
   const dropOverRef = useRef(false);
@@ -262,7 +264,16 @@ export function useComposerPromptField({
         event.stopPropagation();
         return true;
       },
-      handlePaste: (_view, event) => {
+      handlePaste: (view, event) => {
+        const plain = pastePlainTextRef.current;
+        pastePlainTextRef.current = false;
+        const selection = plain ? null : editorSelectionFromClipboard(event.clipboardData);
+        if (!disabled && selection) {
+          const node = view.state.schema.nodes.editorSelection!.create({ selection });
+          view.dispatch(view.state.tr.replaceSelectionWith(node).scrollIntoView());
+          event.preventDefault();
+          return true;
+        }
         const files = imageFilesFromClipboard(event.clipboardData);
         if (files.length === 0) return false;
         event.preventDefault();
@@ -270,6 +281,7 @@ export function useComposerPromptField({
         return true;
       },
       handleDOMEvents: {
+        keyup: () => { pastePlainTextRef.current = false; return false; },
         dragover: (_view, event) => {
           const types = Array.from(event.dataTransfer?.types ?? []);
           if (!types.includes(PROJECT_DRAG_MIME) && !isComposerPathDrag(types)) return false;
@@ -283,6 +295,8 @@ export function useComposerPromptField({
         }
       },
       handleKeyDown: (_view, event) => {
+        // Electron may consume the V accelerator; Shift itself still reaches the editor.
+        pastePlainTextRef.current = event.shiftKey || event.key === 'Shift';
         if (interceptKeyDownRef.current?.(event)) return true;
         const menu = typeaheadRef.current;
         if (menu.open) {

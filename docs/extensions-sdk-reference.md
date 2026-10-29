@@ -131,6 +131,8 @@ into `website/lib/plugin-guide/`; do not hand-edit that folder).
 
 ### Composer
 
+- **Copied editor selections.** An editor can add `EDITOR_SELECTION_MIME` (`application/x-zcc-editor-selection`, exported by the app SDK) alongside normal `text/plain` on its copy event. The JSON shape is `{ version: 1, path, startLine, endLine, text }`, with one-based inclusive lines and a maximum of 100,000 text characters. The composer validates the metadata against the plain text and inserts an inspectable, removable file-and-line chip. Paste as plain text bypasses it. Sending expands the copied snapshot into ordinary prompt text, including unsaved edits; clipboard paths never grant filesystem access. Missing, malformed, oversized, or mismatched metadata falls back to normal paste.
+
 - `composer` — `composer.customize`: actions, banners, plus-menu items, meta chips, advanced fields, and rich-text effects. Scope to `thread`, `new-thread`, `cli-agent`, `queued-message`, or `side-chat`. `useComposer().experimental_setLaunchPatch` overlays spawn extraArgs / profile / routing
 
 ### Thread

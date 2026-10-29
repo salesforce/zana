@@ -20,7 +20,7 @@ vi.mock('../../ThreadCommandComposer.js', () => ({
 }));
 vi.mock('../../../views/threads/ThreadDetailView.js', () => ({
   ThreadDetail: ({ threadId, embedded }: { threadId: string; embedded?: boolean }) => (
-    <div data-testid="thread-detail">{`${threadId}:${embedded ? 'embedded' : 'full'}`}</div>
+    <div data-testid="thread-detail" data-assistant-owner={usePluginAssistantOwner() ?? 'none'}>{`${threadId}:${embedded ? 'embedded' : 'full'}`}</div>
   )
 }));
 vi.mock('../../../lib/product-client.js', () => ({ product: { threads } }));
@@ -31,6 +31,7 @@ const viewWindow = vi.hoisted(() => ({ target: null as null | { pluginId: string
 vi.mock('../../../lib/pluginViewSurface.js', () => ({ getPluginViewTarget: () => viewWindow.target }));
 vi.mock('../../../plugins/plugin-view-windows.js', () => ({ showInMainWindow: viewWindow.show }));
 
+import { usePluginAssistantOwner } from '../../../plugins/plugin-assistant-context.js';
 import { useComposerDraft } from '../../composer/ComposerDraft.js';
 import { resetComposerSessions } from '../../composer/composer-session.js';
 import { PANEL_AGENT_RECENT_LIMIT, PanelAgentTab } from './PanelAgentTab.js';
@@ -48,6 +49,11 @@ afterEach(() => {
 });
 
 describe('PanelAgentTab', () => {
+  it.each([binding, undefined])('provides the assistant owner only for plugin-bound chats (%j)', async (pluginPanel) => {
+    render(<PanelAgentTab threadId="t1" pluginPanel={pluginPanel} onCreated={vi.fn()} />);
+    expect((await screen.findByTestId('thread-detail')).getAttribute('data-assistant-owner')).toBe(pluginPanel?.pluginId ?? 'none');
+  });
+
   it('starts a bound thread from a composer that never navigates away', () => {
     const onCreated = vi.fn();
     render(<PanelAgentTab pluginPanel={binding} onCreated={onCreated} />);

@@ -9,7 +9,7 @@ import { SimulationCard } from './SimulationCard.js';
  * host matches (`::sf-agent{path line}`, `::sf-preview{runId turn}`, `::sf-operation{id}`, `::sf-simulation{batchId}`).
  */
 export function registerStudioDirectives(app: PluginAppBuilder): void {
-  app.slots.messageDirective({ id: 'sf-agent', component: AgentCard });
+  app.slots.messageDirective({ id: 'sf-agent', hideInAssistant: true, component: AgentCard });
   app.slots.messageDirective({ id: 'sf-preview', component: PreviewCard });
   app.slots.messageDirective({ id: 'sf-operation', component: OperationCard });
   app.slots.messageDirective({ id: 'sf-simulation', component: SimulationCard });

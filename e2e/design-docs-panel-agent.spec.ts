@@ -119,3 +119,29 @@ test('Design Docs Ask agent opens the side panel composer from a project tab', a
   await askReviewAndSend(win, { docId, panel: 'design', owner: `design@${projectId}`, stayOn: tabPath });
   await captureElectronScreenshot(app.electron, win, testInfo.outputPath('design-docs-project-agent.png'));
 });
+
+
+test('artifact cards stay hidden in the doc assistant and reappear when opened as a thread', async ({ app, home }) => {
+  test.setTimeout(120_000);
+  const win = app.window;
+  const { docId } = await setUpDoc(win, home, 'design-docs-assistant-card');
+  await win.evaluate(path => {
+    history.pushState({}, '', path);
+    dispatchEvent(new PopStateEvent('popstate'));
+  }, `/plugins/design-docs/design-docs/${docId}`);
+  await expect(win.getByRole('button', { name: /Ask agent/ }).first()).toBeVisible();
+  await win.getByTestId('plugin-panel-agent-show').click();
+  const composer = win.getByTestId('panel-agent-tab-composer');
+  await expect(composer.getByTestId('thread-command-send')).toBeEnabled({ timeout: 30_000 });
+  // The deterministic provider echoes this text, including the real plugin directive.
+  await composer.getByTestId('thread-command-input').fill(`Compilation passed.\n\n::design-doc{id="${docId}"}\n\nLocal change only.`);
+  await composer.getByTestId('thread-command-send').click();
+  const chat = win.getByTestId('panel-agent-tab-chat');
+  await expect(chat.getByTestId('thread-timeline')).toContainText('Response to:', { timeout: 30_000 });
+  await expect(chat.getByTestId('thread-timeline')).toContainText('Local change only.');
+  await expect(chat.locator('.dd-card')).toHaveCount(0);
+  await chat.getByTestId('panel-agent-open-as-thread').click();
+  await expect(win.getByTestId('panel-agent-tab-chat')).toHaveCount(0);
+  await expect(win.locator('.dd-card').first()).toBeVisible({ timeout: 30_000 });
+  await expect(win.getByRole('button', { name: 'Open in Design Docs' }).first()).toBeVisible();
+});

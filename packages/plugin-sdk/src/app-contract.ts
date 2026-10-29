@@ -395,6 +395,8 @@ export interface PluginMessageDirectiveProps {
 }
 
 export interface PluginMessageDirectiveRegistration extends PluginSlotBase {
+  /** Hide this navigation card in the assistant beside its own plugin page. */
+  hideInAssistant?: boolean;
   component: ComponentType<PluginMessageDirectiveProps>;
 }
 
@@ -1607,6 +1609,7 @@ export function collectPluginApp(
         set.messageDirectives.push(
           stamp({
             id: registration.id,
+            ...(registration.hideInAssistant === true ? { hideInAssistant: true } : {}),
             component: requireComponent(kind, 'component', registration.component)
           })
         );
