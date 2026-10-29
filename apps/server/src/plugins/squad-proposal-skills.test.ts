@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 const read = (path: string) => readFileSync(new URL(`./builtin-skills/${path}`, import.meta.url), 'utf8');
 const brainstorm = read('brainstorm/SKILL.md');
 const inbox = read('zcc-inbox/SKILL.md');
+const inboxReferences = ['inbox.md', 'library.md', 'remote.md', 'schedules.md', 'squads.md'];
 const squads = read('zcc-inbox/references/squads.md');
 
 describe('squad proposal skills', () => {
@@ -23,5 +24,12 @@ describe('squad proposal skills', () => {
     expect(squads).toContain("`mode: 'now'");
     expect(squads).toContain('`execution.snapshot`');
     expect(squads).toContain('execution_respond({');
+  });
+
+  it('links every extracted zcc-inbox reference from its compact core skill', () => {
+    for (const name of inboxReferences) {
+      expect(inbox).toContain(`\`references/${name}\``);
+      expect(read(`zcc-inbox/references/${name}`)).not.toHaveLength(0);
+    }
   });
 });

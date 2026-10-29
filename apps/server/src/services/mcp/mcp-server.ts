@@ -677,7 +677,7 @@ async function buildProjectMcpServer(opts: {
           }
         }
       } catch (error) {
-        opts.log?.(`Member MCP catalogue resolution failed for ${opts.sessionId ?? 'unknown session'}: ${error instanceof Error ? error.message : String(error)}`);
+        opts.log?.(`Member MCP catalogue resolution failed for execution ${automatedBinding.executionId}, slot ${automatedBinding.slotId}, session ${opts.sessionId ?? 'unknown session'}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }
@@ -921,14 +921,13 @@ async function buildProjectMcpServer(opts: {
   if (opts.sessionId && opts.executionService) {
     const routeAuthenticated = !!opts.sessionCredential
       && verifySessionControlCredential(opts.sessionId, opts.sessionCredential);
-    const catalogue = automatedCatalogue;
     registerExecutionTools(mcp, {
       sessionId: opts.sessionId,
       projectId: opts.projectId,
       projectName: opts.projectLabel,
       service: opts.executionService,
       memberFence: opts.memberFence,
-      ...(catalogue?.tools ? { allowedToolNames: new Set(catalogue.tools) } : {}),
+      ...(automatedCatalogue?.tools ? { allowedToolNames: new Set(automatedCatalogue.tools) } : {}),
       resolveCohortBinding: opts.resolveExecutionCohortBinding,
       validateRecoveryBinding: opts.validateExecutionRecoveryBinding,
       resolveLaunchApproval: opts.resolveExecutionLaunchApproval,

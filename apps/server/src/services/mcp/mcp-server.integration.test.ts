@@ -316,7 +316,7 @@ describe('inbox MCP server (end-to-end)', () => {
     const client = await connectClient(handle.url, `proj-1/thread-1/${controlCredentialForSession('thread-1')}/member/binding-1/1`);
     clients.push(client);
     await expect(client.listTools()).rejects.toMatchObject({ code: -32601 });
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('catalogue resolution failed'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('catalogue resolution failed for execution execution-1, slot worker-1'));
   });
 
   it('allows only individually catalogued remote filesystem tools to a member', async () => {
