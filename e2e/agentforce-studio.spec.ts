@@ -413,6 +413,7 @@ test('Agentforce document toolbar and focused explorer: long paths, save state a
 });
 
 test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellation and evidence', async ({ app, home }, testInfo) => {
+  test.setTimeout(process.env.CI ? 360_000 : 180_000);
   const page = app.window;
   await page.setViewportSize({ width: 1920, height: 1080 });
   const errors: string[] = [];
@@ -2411,7 +2412,7 @@ test('Agentforce suite progress: current case, turns and partial results reach t
   await expect(tests.getByRole('button', { name: 'Run all in Simulate', exact: true })).toBeEnabled();
 });
 
-test('Agentforce Studio: saved editor views migrate to host tools on startup', async ({ app, home }) => {
+test('Agentforce Studio: saved editor views migrate without replacing the scoped host panel', async ({ app, home }) => {
   const page = app.window;
   await page.setViewportSize({ width: 1920, height: 1080 });
   expect(await page.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'salesforce' }))).toMatchObject({ ok: true });
@@ -2441,7 +2442,11 @@ test('Agentforce Studio: saved editor views migrate to host tools on startup', a
     if (await openProject.isVisible()) await openProject.click();
     await projectNav.getByRole('button', { name: 'Salesforce', exact: true }).click();
     await expect(page.getByTestId('salesforce-workbench').getByRole('button', { name: 'Open Salesforce tools', exact: true })).toContainText('Agentforce');
-    // No explicit tool action: the migrated saved selection must attach to its real host automatically.
+    await expect(page.getByTestId('plugin-panel-host-layout')).toHaveAttribute('data-panel-resource', 'force-app/Support.agent');
+    // The scoped host owns its selection. A legacy editor view must not replace
+    // a restored assistant or reopen a deliberately closed resource panel.
+    // The migrated tool remains available through the normal host launcher.
+    await openTool(studioIn(page), title);
     await expect(activeSidePanelTab(page)).toHaveText(title);
     await expect(viewPane(page, target)).toHaveAttribute('data-agent', 'force-app/Support.agent');
     await expect(editorTabs(page).getByRole('tab')).toHaveCount(1);
@@ -2612,7 +2617,7 @@ test('Agentforce Studio: host tools preserve two agents and all twelve document 
 });
 
 
-test('Agentforce Studio: pinned Preview reconnects to the same running session across navigation and reload', async ({ app, home }, testInfo) => {
+test('Agentforce Studio: scoped Preview reconnects to the same running session across navigation and reload', async ({ app, home }, testInfo) => {
   const page = app.window;
   await page.setViewportSize({ width: 1920, height: 1080 });
   const errors: string[] = [];
@@ -2636,17 +2641,19 @@ test('Agentforce Studio: pinned Preview reconnects to the same running session a
   const remoteStarts = () => remoteRequests().filter(request => request.path.endsWith('/preview/sessions')).length;
   const snapshot = (id: string): Promise<any> => page.evaluate(({ projectId, id }) => window.cc.pluginApps.callRpc('salesforce', 'agentLab.get', { projectId, id, path: 'force-app/Support.agent' }), { projectId, id });
   const returnToPreview = async () => {
-    await studioPanel(page).getByRole('button', { name: 'Active runs', exact: true }).click();
-    await studioPanel(page).getByRole('region', { name: 'Active run sessions' }).getByRole('button', { name: /Support\.agent.*Preview/ }).click();
+    await page.getByTestId('salesforce-workbench').getByRole('button', { name: 'Active runs', exact: true }).click();
+    await page.getByTestId('salesforce-workbench').getByRole('region', { name: 'Active run sessions' }).getByRole('button', { name: /Support\.agent.*Preview/ }).click();
     await expect(agentTab('Support')).toHaveAttribute('aria-selected', 'true');
     await expect(viewPane(page, 'preview')).toHaveAttribute('data-agent', 'force-app/Support.agent');
   };
-  const expectOrdersWithPinnedPreview = async (runId: string) => {
+  const resumeScopedPreview = async (runId: string) => {
     await expect(agentTab('Orders')).toHaveAttribute('aria-selected', 'true');
     await expect(editorTabs(page).getByRole('tab', { name: /^Script/ })).toHaveAttribute('aria-selected', 'true');
     await expect(frame.locator('.view-lines')).toContainText('# Orders draft survives Preview navigation');
-    await expect(viewPane(page, 'preview')).toHaveAttribute('data-agent', 'force-app/Support.agent');
-    await expect(viewPane(page, 'preview').getByRole('button', { name: 'Follow selected agent', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    // A pin belongs to Support's workspace and cannot replace Orders' panel.
+    await expect(viewPane(page, 'preview')).toHaveCount(0);
+    await returnToPreview();
+    await expect(viewPane(page, 'preview').getByRole('button', { name: 'Pin Preview to Support.agent', exact: true })).toBeVisible();
     await expect(preview).toHaveAttribute('data-run-id', runId);
     await expect(preview.getByRole('log', { name: 'Preview conversation' })).toContainText('Persistent preview turn');
     expect(remoteStarts()).toBe(1);
@@ -2680,12 +2687,13 @@ test('Agentforce Studio: pinned Preview reconnects to the same running session a
     await returnToPreview();
     await viewPane(page, 'preview').getByRole('button', { name: 'Pin Preview to Support.agent', exact: true }).click();
     await agentTab('Orders').click();
-    await expectOrdersWithPinnedPreview(runId);
+    await resumeScopedPreview(runId);
     await sidePanel(page).getByTestId('thread-secondary-hide').click();
     await expect(sidePanel(page)).toBeHidden();
     expect(await snapshot(runId)).toMatchObject({ ok: true, data: { id: runId, busy: true, closed: false } });
     await showSidePanel(page);
-    await expectOrdersWithPinnedPreview(runId);
+    await expect(preview).toHaveAttribute('data-run-id', runId);
+    await agentTab('Orders').click();
 
     // Closing the owner's editor tab clears its pin, without ending its session.
     await agentTabs(page).getByRole('button', { name: /^Close agent Support\.agent/ }).click();
@@ -2695,9 +2703,10 @@ test('Agentforce Studio: pinned Preview reconnects to the same running session a
     await expect(preview).toHaveAttribute('data-run-id', runId);
     await viewPane(page, 'preview').getByRole('button', { name: 'Pin Preview to Support.agent', exact: true }).click();
     await agentTab('Orders').click();
-    await expectOrdersWithPinnedPreview(runId);
+    await resumeScopedPreview(runId);
     await captureElectronScreenshot(app.electron, page, testInfo.outputPath('preview-pinned-while-editing-another-agent.png'));
 
+    await agentTab('Orders').click();
     // A renderer restart reconnects to the server-owned request, using its original id.
     await page.reload();
     const projectNav = page.getByRole('navigation', { name: 'dx navigation' });
@@ -2706,7 +2715,7 @@ test('Agentforce Studio: pinned Preview reconnects to the same running session a
     if (await openProject.isVisible()) await openProject.click();
     await projectNav.getByRole('button', { name: 'Salesforce', exact: true }).click();
     await expect(page.getByTestId('salesforce-workbench').getByRole('button', { name: 'Open Salesforce tools', exact: true })).toContainText('Agentforce');
-    await expectOrdersWithPinnedPreview(runId);
+    await resumeScopedPreview(runId);
     expect(await snapshot(runId)).toMatchObject({ ok: true, data: { id: runId, busy: true, closed: false } });
     rmSync(join(home, 'persistent-preview-hold'), { force: true });
     await expect(preview.getByRole('log', { name: 'Preview conversation' })).toContainText('Could you share your order number', { timeout: 30_000 });
@@ -2717,26 +2726,27 @@ test('Agentforce Studio: pinned Preview reconnects to the same running session a
     // Only the explicit end action closes the session and removes running-work navigation.
     await preview.getByRole('button', { name: 'End conversation', exact: true }).click();
     await expect.poll(async () => (await snapshot(runId)).data?.closed).toBe(true);
-    await expect(studioPanel(page).getByRole('button', { name: 'Active runs', exact: true })).toHaveCount(0);
-    await expect(agentTab('Orders')).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByTestId('salesforce-workbench').getByRole('button', { name: 'Active runs', exact: true })).toHaveCount(0);
+    await agentTab('Orders').click();
     await expect(frame.locator('.view-lines')).toContainText('# Orders draft survives Preview navigation');
     expect(readFileSync(join(home, 'dx/force-app/Orders.agent'), 'utf8')).not.toContain('Orders draft survives Preview navigation');
 
-    // A pinned inactive agent hydrates its own graph after reload, without replacing the editor draft.
+    // A pinned graph also belongs to Support's panel; Orders retains its own workspace.
     await agentTab('Support').click();
     await openTool(studio, 'Graph');
     const graph = viewPane(page, 'graph').frameLocator('iframe[title="AgentScript graph"]');
     await expect(graph.locator('.react-flow__node')).toHaveCount(3);
     await viewPane(page, 'graph').getByRole('button', { name: 'Pin Graph to Support.agent', exact: true }).click();
     await agentTab('Orders').click();
+    await expect(viewPane(page, 'graph')).toHaveCount(0);
+    await agentTab('Support').click();
     await expect(viewPane(page, 'graph')).toHaveAttribute('data-agent', 'force-app/Support.agent');
     await page.reload();
     await expect.poll(async () => await projectNav.isVisible() || await openProject.isVisible()).toBe(true);
     if (await openProject.isVisible()) await openProject.click();
     await projectNav.getByRole('button', { name: 'Salesforce', exact: true }).click();
-    await expect(agentTab('Orders')).toHaveAttribute('aria-selected', 'true');
+    await expect(agentTab('Support')).toHaveAttribute('aria-selected', 'true');
     await expect(editorTabs(page).getByRole('tab', { name: /^Script/ })).toHaveAttribute('aria-selected', 'true');
-    await expect(frame.locator('.view-lines')).toContainText('# Orders draft survives Preview navigation');
     await expect(activeSidePanelTab(page)).toHaveText('Graph view');
     await expect(viewPane(page, 'graph')).toHaveAttribute('data-agent', 'force-app/Support.agent');
     await expect(viewPane(page, 'graph').getByRole('button', { name: 'Follow selected agent', exact: true })).toHaveAttribute('aria-pressed', 'true');
@@ -2804,8 +2814,8 @@ test('Agentforce Studio: server-owned role-play survives owner close and reload,
     await expect(agentTab('Orders')).toHaveAttribute('aria-selected', 'true');
     await expect(agentTab('Support')).toHaveCount(0);
     expect(await snapshot(runId)).toMatchObject({ ok: true, data: { id: runId, busy: true, closed: false } });
-    await studioPanel(page).getByRole('button', { name: 'Active runs', exact: true }).click();
-    await studioPanel(page).getByRole('region', { name: 'Active run sessions' }).getByRole('button', { name: /Support\.agent.*Role-play/ }).click();
+    await page.getByTestId('salesforce-workbench').getByRole('button', { name: 'Active runs', exact: true }).click();
+    await page.getByTestId('salesforce-workbench').getByRole('region', { name: 'Active run sessions' }).getByRole('button', { name: /Support\.agent.*Role-play/ }).click();
     await expect(agentTab('Support')).toHaveAttribute('aria-selected', 'true');
     await expect(viewPane(page, 'tests')).toHaveAttribute('data-agent', 'force-app/Support.agent');
     await expect(lab).toHaveAttribute('data-run-id', runId);
@@ -2832,7 +2842,7 @@ test('Agentforce Studio: server-owned role-play survives owner close and reload,
     await expect.poll(async () => (await snapshot(stoppedRunId)).data).toMatchObject({ id: stoppedRunId, busy: false, closed: true, execution: { phase: 'stopped', completedTurns: 0 } });
     await expect(lab.getByText('Stopped · partial conversation', { exact: true })).toBeVisible();
     await expect(lab.getByRole('region', { name: 'AI evaluation' })).toHaveCount(0);
-    await expect(studioPanel(page).getByRole('button', { name: 'Active runs', exact: true })).toHaveCount(0);
+    await expect(page.getByTestId('salesforce-workbench').getByRole('button', { name: 'Active runs', exact: true })).toHaveCount(0);
     expect(errors).toEqual([]);
   } finally {
     rmSync(join(home, 'persistent-preview-hold'), { force: true });

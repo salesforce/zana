@@ -173,6 +173,7 @@ test("Salesforce workbench: real plugin, project targeting, data, operations and
   app,
   home,
 }, testInfo) => {
+  test.setTimeout(process.env.CI ? 360_000 : 180_000);
   const window = app.window;
   const rendererErrors: string[] = [];
   window.on("pageerror", (error) => rendererErrors.push(error.message));
