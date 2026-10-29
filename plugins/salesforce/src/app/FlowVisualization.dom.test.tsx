@@ -7,7 +7,7 @@ import { flowModel } from './action-flow.js';
 import { ACTION_FLOW } from '../action-fixtures.js';
 
 const props = { pluginId: 'salesforce', model: flowModel(ACTION_FLOW), visualization: { fileName: 'CheckReturn.flow-meta.xml', data: { nodes: ['example'] } }, onOpenTarget: vi.fn() };
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); props.onOpenTarget.mockClear(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); props.onOpenTarget.mockClear(); });
 const request = (frame: HTMLIFrameElement, patch = {}) => fireEvent(window, new MessageEvent('message', { origin: 'null', source: frame.contentWindow, data: { type: 'REQUEST_PLUGIN_DATA' }, ...patch }));
 
 describe('official Flow frame', () => {
@@ -55,8 +55,14 @@ describe('official Flow frame', () => {
   it('opens a native expanded viewer and restores focus on Escape', () => {
     render(<FlowVisualization {...props} />);
     const button = screen.getByRole('button', { name: 'Expand Flow' });
+    expect(document.querySelectorAll('.af-flow-toolbar')).toHaveLength(1);
+    expect(button.parentElement).toBe(screen.getByRole('button', { name: 'Fit view' }).parentElement);
+    expect(screen.queryByText(/reset after resizing/)).toBeNull();
     button.focus(); fireEvent.click(button);
     const dialog = screen.getByRole('dialog', { name: 'Expanded Flow' });
+    expect(document.querySelectorAll('.af-flow-toolbar')).toHaveLength(1);
+    expect(dialog.contains(screen.getByRole('button', { name: 'Fit view' }))).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Expand Flow' })).toBeNull();
     expect(dialog.contains(screen.getByTitle('Salesforce Flow visualizer'))).toBe(true);
     fireEvent(dialog, new Event('cancel', { cancelable: true }));
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -79,15 +85,53 @@ describe('official Flow frame', () => {
   });
 });
 
-it('resets the official viewer explicitly after a resize without losing its Flow snapshot', () => {
+it('fits the official viewer explicitly without losing its Flow snapshot', () => {
   render(<FlowVisualization {...props} />);
   const before = screen.getByTitle('Salesforce Flow visualizer') as HTMLIFrameElement;
   request(before);
-  fireEvent.click(screen.getByRole('button', { name: 'Reset Flow view' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Fit view' }));
   const after = screen.getByTitle('Salesforce Flow visualizer') as HTMLIFrameElement;
   expect(after).not.toBe(before);
   expect(screen.getByText('Drawing Flow…')).toBeTruthy();
   const post = vi.spyOn(after.contentWindow!, 'postMessage').mockImplementation(() => {});
   request(after);
   expect(post).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ data: props.visualization.data }) }), '*');
+});
+
+it('refits once after resizing settles, preserves the snapshot and cleans up pending work', () => {
+  vi.useFakeTimers();
+  let resize!: (entries: { contentRect: { width: number; height: number } }[]) => void;
+  const observe = vi.fn(), disconnect = vi.fn();
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(callback: typeof resize) { resize = callback; }
+    observe = observe;
+    disconnect = disconnect;
+  });
+  const view = render(<FlowVisualization {...props} />);
+  const notify = (width: number, height: number) => act(() => resize([{ contentRect: { width, height } }]));
+  const before = screen.getByTitle('Salesforce Flow visualizer') as HTMLIFrameElement;
+  request(before);
+  expect(observe).toHaveBeenCalledWith(before.parentElement);
+  notify(800, 600); notify(800, 600); notify(0, 0);
+  act(() => vi.advanceTimersByTime(250));
+  expect(screen.getByTitle('Salesforce Flow visualizer')).toBe(before);
+  notify(700, 600);
+  act(() => vi.advanceTimersByTime(150));
+  notify(600, 500);
+  act(() => vi.advanceTimersByTime(150));
+  expect(screen.getByTitle('Salesforce Flow visualizer')).toBe(before);
+  act(() => vi.advanceTimersByTime(50));
+  const after = screen.getByTitle('Salesforce Flow visualizer') as HTMLIFrameElement;
+  expect(after).not.toBe(before);
+  expect(screen.getByText('Drawing Flow…')).toBeTruthy();
+  const post = vi.spyOn(after.contentWindow!, 'postMessage').mockImplementation(() => {});
+  request(before);
+  expect(post).not.toHaveBeenCalled();
+  request(after);
+  expect(post).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ data: props.visualization.data }) }), '*');
+  expect(screen.queryByText('Drawing Flow…')).toBeNull();
+  notify(600, 400);
+  view.unmount();
+  expect(disconnect).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
 });

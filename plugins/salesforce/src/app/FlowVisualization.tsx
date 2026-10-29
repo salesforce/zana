@@ -9,7 +9,26 @@ function OfficialFlowFrame({ visualization, pluginId, theme, onFailure, onClose 
   visualization: VisualizationData; pluginId: string; theme: 'light' | 'dark'; onFailure(): void; onClose?(): void;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
-  const [ready, setReady] = useState(false);
+  const container = useRef<HTMLDivElement>(null);
+  const [viewportVersion, setViewportVersion] = useState(0);
+  const [readyVersion, setReadyVersion] = useState<number>();
+  // The upstream viewer fits only on mount. Refit once resizing settles, rather
+  // than asking users to repair the viewport after changing the panel size.
+  useEffect(() => {
+    let size: { width: number; height: number } | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      if (width <= 0 || height <= 0) return;
+      if (size && (size.width !== width || size.height !== height)) {
+        clearTimeout(timer);
+        timer = setTimeout(() => setViewportVersion(version => version + 1), 200);
+      }
+      size = { width, height };
+    });
+    observer.observe(container.current!);
+    return () => { observer.disconnect(); clearTimeout(timer); };
+  }, []);
   useEffect(() => {
     const timeout = window.setTimeout(onFailure, 10_000);
     const listener = (event: MessageEvent) => {
@@ -23,7 +42,7 @@ function OfficialFlowFrame({ visualization, pluginId, theme, onFailure, onClose 
           // Deliberately omit selectableNodes: this is a viewer, not Vibe Edit.
         } }, '*');
         window.clearTimeout(timeout);
-        setReady(true);
+        setReadyVersion(viewportVersion);
       } else if (event.data?.type === 'FLOW_PREVIEW_CLOSE') {
         onClose?.();
       } else if (event.data?.type === 'PLUGIN_ERROR') {
@@ -35,16 +54,16 @@ function OfficialFlowFrame({ visualization, pluginId, theme, onFailure, onClose 
     element?.addEventListener('error', onFailure);
     window.addEventListener('message', listener);
     return () => { window.clearTimeout(timeout); window.removeEventListener('message', listener); element?.removeEventListener('error', onFailure); };
-  }, [visualization, onFailure, onClose]);
-  return <div className="af-flow-official">
-    {!ready && <div className="af-flow-loading"><LoadingState compact art="code" label="Drawing Flow…" /></div>}
-    <iframe ref={frame} title="Salesforce Flow visualizer" sandbox="allow-scripts"
+  }, [visualization, onFailure, onClose, viewportVersion]);
+  return <div ref={container} className="af-flow-official">
+    {readyVersion !== viewportVersion && <div className="af-flow-loading"><LoadingState compact art="code" label="Drawing Flow…" /></div>}
+    <iframe key={viewportVersion} ref={frame} title="Salesforce Flow visualizer" sandbox="allow-scripts"
       src={typeof process !== 'undefined' && process.env.VITEST ? 'about:blank' : `/plugins/${encodeURIComponent(pluginId)}/assets/flow-visualizer/${theme}.html`}
       className="af-flow-frame" />
   </div>;
 }
 
-function ExpandedFlow({ title, children, onClose }: { title: string; children: ReactNode; onClose(): void }) {
+function ExpandedFlow({ title, children, onClose, onFit }: { title: string; children: ReactNode; onClose(): void; onFit(): void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const previous = document.activeElement;
@@ -53,7 +72,7 @@ function ExpandedFlow({ title, children, onClose }: { title: string; children: R
     return () => { element.close(); if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
   }, []);
   return <dialog ref={dialog} className="af-flow-dialog" aria-label="Expanded Flow" onCancel={event => { event.preventDefault(); onClose(); }}>
-    <header><div><strong>{title}</strong><small>Read only</small></div><button className="sf-btn quiet" onClick={onClose}>Close Flow</button></header>
+    <header><div><strong>{title}</strong><small>Read only</small></div><div className="af-flow-dialog-actions"><button className="sf-btn quiet" onClick={onFit}>Fit view</button><button className="sf-btn quiet" onClick={onClose}>Close Flow</button></div></header>
     <div className="af-flow">{children}</div>
   </dialog>;
 }
@@ -79,14 +98,13 @@ export function FlowVisualization({ visualization, error, model, pluginId, sourc
     <ActionFlowMap model={model} onOpenTarget={onOpenTarget} />
   </>;
   const canvas = <>
-    <div className="af-flow-toolbar"><span>Pan to explore · reset after resizing</span><button title="Reset pan, zoom and selection to fit the current space" onClick={() => setViewportVersion(v => v + 1)}>Reset Flow view</button></div>
     <OfficialFlowFrame key={`${theme}:${viewportVersion}`} visualization={visualization} theme={theme} pluginId={pluginId} onFailure={fail} onClose={expanded ? close : undefined} />
     {targets.length > 0 && <details className="af-flow-dependencies"><summary>Related implementations · {targets.length}</summary><div>
       {targets.map(target => <button key={target} className="af-target-link" onClick={() => onOpenTarget(target)}>Open {target} ↗</button>)}
     </div></details>}
   </>;
   return <div className="af-flow">
-    <div className="af-flow-toolbar"><span>Salesforce Flow</span><button onClick={() => setExpanded(true)}>Expand Flow</button></div>
-    {expanded ? <ExpandedFlow title={sourceLabel || visualization.fileName.replace(/\.flow-meta\.xml$/, '')} onClose={close}>{canvas}</ExpandedFlow> : canvas}
+    <div className="af-flow-toolbar" hidden={expanded}><span>Salesforce Flow</span><button title="Fit the Flow to the current space" onClick={() => setViewportVersion(v => v + 1)}>Fit view</button><button onClick={() => setExpanded(true)}>Expand Flow</button></div>
+    {expanded ? <ExpandedFlow title={sourceLabel || visualization.fileName.replace(/\.flow-meta\.xml$/, '')} onClose={close} onFit={() => setViewportVersion(v => v + 1)}>{canvas}</ExpandedFlow> : canvas}
   </div>;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { PanelRight } from 'lucide-react';
+import { Info, PanelRight } from 'lucide-react';
 import { callPluginRpc } from '@zana-ai/zcc-plugin-sdk/app';
 import { parseActionTarget, type AgentAction, type ActionParameter } from '../../lib/agent-action-model.js';
 import type { ActionSource } from '../../lib/action-source.js';
@@ -160,7 +160,7 @@ export function AgentActionPanel({ pluginId, projectId, action, org, context, on
   const driftTitle = drift === 'differs' ? `Project copy differs from the org${orgVersion != null ? ` (v${orgVersion})` : ''}${parsed?.kind === 'flow' ? ': elements, connectors or variables changed' : ''}` : drift === 'same' ? `Project copy matches the org${orgVersion != null ? ` (v${orgVersion})` : ''}` : sourceNote;
   const owner = context ? <button type="button" className="af-backlink" title={context.title} onClick={context.onOpen}>← {context.label}</button> : action.owner ? <span>{action.owner}</span> : null;
   const loadState = (view: (data: ActionSource) => ReactNode) => !parsed ? <p className="af-action-note">This target type has no implementation viewer yet. Its action definition and usage remain available.</p> : origin === 'org' && !org ? <p className="af-action-note">Connect an org to inspect its deployed implementation.</p> : !current ? <LoadingState compact art="code" label="Loading implementation…" /> : current.error ? <p role="alert" className="af-action-note">{current.error}</p> : <>
-    {data?.message && <p className="af-action-note">{data.message}</p>}
+    {data?.message && !ready && <p className="af-action-note">{data.message}</p>}
     {data?.candidates?.map(path => <button key={path} className="af-source-candidate" onClick={() => setCandidate(path)}>{path} →</button>)}
     {data?.status === 'ready' && view(data)}
   </>;
@@ -187,6 +187,7 @@ export function AgentActionPanel({ pluginId, projectId, action, org, context, on
         {owner}
         {!action.target && <span>No implementation target declared</span>}
         {origin === 'project' && ready && data?.label && <code title={sourceNote}>{data.label}</code>}
+        {ready && data?.message && <details className="af-source-info"><summary aria-label="Source information" title="Source information"><Info size={13} aria-hidden="true" /></summary><p>{data.message}</p></details>}
         {touches && <span>Reads <b>{touches.reads.join(', ') || 'nothing'}</b></span>}
         {touches && <span>Writes <b>{touches.writes.join(', ') || 'nothing'}</b></span>}
         {touches && touches.calls.length > 0 && <span><b>{touches.calls.length}</b> {touches.calls.length === 1 ? 'call' : 'calls'}</span>}

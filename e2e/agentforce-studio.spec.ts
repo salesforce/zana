@@ -1350,6 +1350,8 @@ test('Salesforce Flow visualizer: official canvas, branches, details, themes and
   await expect(flow.getByText('Tomorrow', { exact: true })).toBeVisible();
   await expect(flow.getByText(/After commit|Run Asynchronously/).first()).toBeVisible();
   await expect(frame).toHaveAttribute('sandbox', 'allow-scripts');
+  await expect(detail.locator('.af-flow-toolbar')).toHaveCount(1);
+  await expect(detail.locator('.af-flow-toolbar').getByRole('button', { name: 'Fit view', exact: true })).toBeVisible();
   await expect(flow.getByRole('button', { name: 'Select components to edit with AI' })).toHaveCount(0);
   await detail.getByRole('button', { name: 'Expand Flow', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Expanded Flow' })).toBeVisible();
@@ -1371,13 +1373,15 @@ test('Salesforce Flow visualizer: official canvas, branches, details, themes and
   await app.electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 850));
   expect(await studioPanel(page).evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   await expect(flow.getByRole('button', { name: 'Collapse All', exact: true })).toBeVisible();
-  await page.getByRole('dialog', { name: 'Expanded Flow' }).getByRole('button', { name: 'Reset Flow view', exact: true }).click();
+  // The canvas refits automatically after the native window is resized.
   await expect(flow.getByText('Each order item', { exact: true })).toBeVisible();
   await expect.poll(() => flow.locator('div[style*="will-change: transform"]').evaluate(el => {
     const diagram = el.getBoundingClientRect(), canvas = el.parentElement!.getBoundingClientRect();
     return diagram.left >= canvas.left - 2 && diagram.right <= canvas.right + 2
       && diagram.top >= canvas.top - 2 && diagram.bottom <= canvas.bottom + 2;
   }), { timeout: 10_000 }).toBe(true);
+  await page.getByRole('dialog', { name: 'Expanded Flow' }).getByRole('button', { name: 'Fit view', exact: true }).click();
+  await expect(flow.getByText('Each order item', { exact: true })).toBeVisible();
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('flow-official-narrow-light.png'));
   // Focus a control inside the sandbox: Escape must cross the frame boundary.
   await flow.getByRole('button', { name: 'Zoom out', exact: true }).click();

@@ -275,7 +275,7 @@ Operators are `equals`, `contains`, `less_than` and `greater_than`. Every record
 
 **Custom simulation scenarios.** Create reusable setups in **Scenarios**, then select them in **Batch simulations**. Expand **Adjust for this batch** for local changes to names, personas, goals, openings, success criteria, turn budgets and variables, or to add a one-off scenario. Use **Save as shared scenario** to keep that local setup in the library. Repeats are limited to 12 conversations total. A completed batch can restore its scenario definitions for another run; batches retain the context snapshot used during execution.
 
-**Source navigation and Flow.** Comment and trace source links visibly select Script, including keyboard activation. Agent discovery skips build/cache folders, prioritizes source directories, retains explicitly opened files and reports incomplete scans. The official Flow canvas has **Reset Flow view** to refit after resizing and reset pan, zoom and selection.
+**Source navigation and Flow.** Comment and trace source links visibly select Script, including keyboard activation. Agent discovery skips build/cache folders, prioritizes source directories, retains explicitly opened files and reports incomplete scans. Successful source scan notices appear beside the source path under **Source information**. The official Flow canvas refits automatically after resizing, with **Fit view** and **Expand Flow** in one toolbar.
 
 ### Repeatable sandbox smoke
 

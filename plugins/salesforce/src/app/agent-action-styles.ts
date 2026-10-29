@@ -18,9 +18,12 @@ ${STUDIO_TOKENS}.af-action-workspace { flex:1; min-width:0; min-height:0; displa
 .af-action-name { display:flex; align-items:center; gap:6px; flex:1 1 220px; min-width:0; flex-wrap:wrap; }
 .af-chip { flex-shrink:0; font-size:10px; line-height:16px; padding:0 7px; border-radius:9px; border:1px solid var(--sf-border); color:var(--sf-muted); white-space:nowrap; }
 .af-chip.is-ok { color:var(--sf-success); border-color:color-mix(in srgb,var(--sf-success) 35%,transparent); background:color-mix(in srgb,var(--sf-success) 10%,transparent); }
-.af-action-glance { display:flex; flex-wrap:wrap; align-items:center; gap:4px 14px; padding-left:30px; font-size:11px; color:var(--sf-muted); min-width:0; }
+.af-action-glance { position:relative; display:flex; flex-wrap:wrap; align-items:center; gap:4px 14px; padding-left:30px; font-size:11px; color:var(--sf-muted); min-width:0; }
 .af-action-glance b { color:var(--sf-text); font-weight:500; }
 .af-action-glance code { font-size:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; }
+.af-source-info summary { cursor:pointer; list-style:none; font-size:13px; }
+.af-source-info summary::-webkit-details-marker { display:none; }
+.af-action-heading .af-source-info p { position:absolute; z-index:2; top:100%; left:0; margin:6px 0 0; padding:10px 12px; width:320px; max-width:100%; box-sizing:border-box; max-height:none; border:1px solid var(--sf-border); border-radius:6px; background:var(--sf-elevated); box-shadow:0 4px 12px color-mix(in srgb,var(--sf-text) 12%,transparent); }
 .af-backlink { border:0; border-radius:10px; padding:1px 8px; font:inherit; font-size:11px; color:var(--sf-accent); background:color-mix(in srgb,var(--sf-accent) 12%,transparent); cursor:pointer; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .af-backlink:hover { background:color-mix(in srgb,var(--sf-accent) 20%,transparent); }
 .af-drift { display:inline-block; width:6px; height:6px; margin-left:5px; border-radius:50%; background:var(--sf-warn); vertical-align:1px; }
@@ -86,9 +89,11 @@ ${STUDIO_TOKENS}.af-action-workspace { flex:1; min-width:0; min-height:0; displa
 .af-flow-dialog::backdrop { background:rgba(0,0,0,.5); }
 .af-flow-dialog > header { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:12px 16px; border-bottom:1px solid var(--sf-border); }
 .af-flow-dialog > header div { min-width:0; }
+.af-flow-dialog-actions { display:flex; gap:4px; flex-shrink:0; }
 .af-flow-dialog strong { font-size:14px; overflow-wrap:anywhere; }
 .af-flow-dialog small { display:block; font-size:11px; color:var(--sf-muted); margin-top:3px; }
-.af-flow-toolbar { display:flex; padding:6px 12px; align-items:center; font-size:10px; color:var(--sf-muted); }
+.af-flow-toolbar { display:flex; flex-shrink:0; gap:4px; padding:6px 12px; align-items:center; font-size:10px; color:var(--sf-muted); }
+.af-flow-toolbar[hidden] { display:none; }
 .af-flow-toolbar span { margin-right:auto; }
 .af-flow-viewport { flex:1; overflow:auto; min-height:150px; background-image:radial-gradient(var(--sf-border) .7px, transparent .7px); background-size:16px 16px; }
 .af-flow-viewport svg { display:block; margin:0 auto; color:var(--sf-muted); }
