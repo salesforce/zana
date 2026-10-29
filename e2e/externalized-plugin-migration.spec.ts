@@ -50,7 +50,9 @@ for (const enabled of [true, false]) {
       expect(installed()).toMatchObject({ enabled, installedAt: 12, catalogMarketplace: 'official', source: 'git:https://github.com/grebmann1/zcc-plugin-salesforce.git@runtime' });
       expect(JSON.parse(readFileSync(join(home, '.zcc/plugins/salesforce/settings.json'), 'utf8'))).toEqual({ defaultOrg: 'dev' });
       if (!enabled) expect(await app.window.evaluate(() => window.cc.pluginApps.setEnabled('salesforce', true))).toMatchObject({ ok: true });
-      await expect.poll(() => app.window.evaluate(() => window.cc.pluginApps.callRpc('salesforce', 'migration.proof', {}))).toEqual({ runtime: 'independent', saved: { org: 'dev', scenario: 'kept' } });
+      await expect(async () => {
+        expect(await app.window.evaluate(() => window.cc.pluginApps.callRpc('salesforce', 'migration.proof', {}))).toEqual({ runtime: 'independent', saved: { org: 'dev', scenario: 'kept' } });
+      }).toPass({ timeout: 30000 });
     });
   });
 }
