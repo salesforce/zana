@@ -18,13 +18,13 @@ Do not add a runtime plugin to `MAIN_MODULES`. Author it with a `package.json`
 `zcc` block under `plugins/<id>` and install it through the plugin workflow.
 
 SDK consumer examples and the extraction map live in
-[`salesforce/SDK.md`](./salesforce/SDK.md).
+[Salesforce SDK contract](https://github.com/grebmann1/zcc-plugin-salesforce/blob/main/SDK.md).
 
 ## Consuming the Salesforce SDK
 
 `zcc.services` is experimental. A consumer plugin declares a dependency and
 calls the live proxy — it must not npm-import `ConnectionManager` or read
-tokens. Full API table: [`salesforce/SDK.md`](./salesforce/SDK.md).
+tokens. Full API table: [Salesforce SDK contract](https://github.com/grebmann1/zcc-plugin-salesforce/blob/main/SDK.md).
 
 ```json
 {
