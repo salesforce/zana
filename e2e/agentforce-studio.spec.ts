@@ -293,7 +293,7 @@ const VIEW_TOOLS: Record<string, { target: 'graph' | 'preview' | 'tests' | 'org-
 /** The document tab strip (Script and referenced Apex / Flow / Org sources). */
 const editorTabs = (page: Page) => studioPanel(page).getByRole('tablist', { name: 'Open files' });
 /** The agent tab strip at the top of the Studio: one tab per open agent. */
-const agentTabs = (page: Page) => studioPanel(page).getByRole('tablist', { name: 'Open agents' });
+const agentTabs = (page: Page) => page.getByTestId('salesforce-navigation-tabs').getByRole('tablist', { name: 'Open agents' });
 /** The visible host tool record; other agents keep their records mounted and hidden. */
 const viewPane = (page: Page, target: 'graph' | 'preview' | 'tests' | 'org-preview') => sidePanel(page).locator(`[data-testid="studio-view-${target}"]:visible`);
 
@@ -431,7 +431,7 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   }, projectId);
   await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
   const workbench = page.getByTestId('salesforce-workbench');
-  await workbench.getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(workbench, 'agentforce');
   const studio = studioIn(page);
   await expect(studioPanel(page)).toBeVisible();
   const frame = page.frameLocator('iframe[title="Agentforce playground"]');
@@ -537,8 +537,8 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowUp' : 'Control+Home');
   await page.keyboard.insertText('# unsaved studio draft\n');
   // The last keystroke must survive parent-tab unmounts and file switches.
-  await workbench.getByRole('tab', { name: 'Data', exact: true }).click();
-  await workbench.getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(workbench, 'data');
+  await selectSalesforceSection(workbench, 'agentforce');
   await expect(frame.locator('.view-lines')).toContainText('# unsaved studio draft');
   await expect(studio.getByTestId('sf-explorer-all-agents')).toBeVisible();
   await showAllAgents(studio);
@@ -569,8 +569,8 @@ test('Agentforce Studio: edit, Preview API conversation, AI role-play, cancellat
   await page.keyboard.insertText('# recovered conflict draft\n');
   const externalSource = '# external change\n' + AGENT_SCRIPT_EXAMPLES[0].source;
   writeFileSync(join(home, 'dx/DraftCopy.afscript'), externalSource);
-  await workbench.getByRole('tab', { name: 'Data', exact: true }).click();
-  await workbench.getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(workbench, 'data');
+  await selectSalesforceSection(workbench, 'agentforce');
   await expect(frame.locator('.view-lines')).toContainText('# recovered conflict draft');
   await studio.getByTestId('salesforce-agent-script-save').click();
   await expect(studio.getByRole('alert')).toContainText('changed on disk');
@@ -1438,7 +1438,7 @@ test('Agentforce Studio: Lightning Types, collapsible explorer sections and a hi
   // Folding survives a remount; a filter shows folded matches.
   await types.getByRole('button', { name: /Lightning Types/ }).click();
   await expect(types.getByRole('button', { name: /^c__OrderRequest/ })).toHaveCount(0);
-  await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Data', exact: true }).click();
+  await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'data');
   await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'agentforce');
   await allReferences.click();
   await expect(types.getByRole('button', { name: /Lightning Types/ })).toHaveAttribute('aria-expanded', 'false');
@@ -1716,7 +1716,7 @@ test('Agentforce Studio: create local agents and control the visible workbench t
   await page.evaluate(async id => { await window.cc.pluginApps.setSettings('salesforce', { defaultOrg: 'studio' }); history.pushState({}, '', `/projects/${id}`); window.dispatchEvent(new PopStateEvent('popstate')); }, projectId);
   await page.getByRole('navigation', { name: 'new-agents navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
   const workbench = page.getByTestId('salesforce-workbench');
-  await workbench.getByRole('tab', { name: 'Agentforce', exact: true }).click();
+  await selectSalesforceSection(workbench, 'agentforce');
   const studio = studioIn(page);
   const editor = page.frameLocator('iframe[title="Agentforce playground"]');
   await expect(studio.getByTestId('salesforce-agent-script-no-file')).toBeVisible();
@@ -1963,7 +1963,7 @@ test('Salesforce readiness: local authoring without CLI, project org selection a
   // Org browsing can stay in the explorer; hide a host panel only if it opened.
   if (await sidePanel(page).isVisible()) await sidePanel(page).getByTestId('thread-secondary-hide').click();
   expect(existsSync(join(projectRoot, 'agentforce-drafts/force-app/main/default/aiAuthoringBundles/Offline_support/Offline_support.agent'))).toBe(true);
-  await workbench.getByRole('tab', { name: 'Data', exact: true }).click();
+  await selectSalesforceSection(workbench, 'data');
   await expect(workbench.getByRole('button', { name: 'Sign in to an org' })).toBeVisible();
   await expect(page.getByTestId('soql-editor')).toHaveCount(0);
   await workbench.getByRole('button', { name: 'Sign in to an org' }).click();
@@ -1982,7 +1982,7 @@ test('Salesforce readiness: local authoring without CLI, project org selection a
   await picker.selectOption('studio');
   await expect(page.getByTestId('soql-editor')).toBeVisible();
   expect(await page.evaluate(() => window.cc.pluginApps.getSettings('salesforce'))).toEqual(initialSettings);
-  await workbench.getByRole('tab', { name: 'Overview' }).click();
+  await selectSalesforceSection(workbench, 'overview');
   await expect(workbench).toContainText('Project target');
   writeFileSync(statePath, 'expired');
   // The roster is cached until sign-in or Refresh, so drop it, then do a real
@@ -2027,7 +2027,7 @@ test('Salesforce illustrated states: editor and agents loading, empty results, r
   try {
     await page.getByRole('navigation', { name: 'dx navigation' }).getByRole('button', { name: 'Salesforce', exact: true }).click();
     const workbench = page.getByTestId('salesforce-workbench');
-    await workbench.getByRole('tab', { name: 'Agentforce', exact: true }).click();
+    await selectSalesforceSection(workbench, 'agentforce');
     const editorLoading = page.getByRole('status').filter({ hasText: 'Opening your editor…' });
     await expect(editorLoading).toBeVisible();
     await expect(editorLoading.locator('.sf-state-art')).toHaveAttribute('aria-hidden', 'true');
@@ -2061,7 +2061,7 @@ test('Salesforce illustrated states: editor and agents loading, empty results, r
     expect(await state.evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
     // Org agents open in Studio itself, so no side panel covers the narrow page.
     await expect(sidePanel(page)).toBeHidden();
-    await workbench.getByRole('tab', { name: 'Data', exact: true }).click();
+    await selectSalesforceSection(workbench, 'data');
     await expect(page.getByRole('heading', { name: 'Run a query to see records.' })).toBeVisible();
     await captureElectronScreenshot(app.electron, page, testInfo.outputPath('salesforce-data-empty-light.png'));
     expect(errors).toEqual([]);
@@ -2437,7 +2437,7 @@ test('Agentforce Studio: saved editor views migrate to host tools on startup', a
     await expect.poll(async () => await projectNav.isVisible() || await openProject.isVisible()).toBe(true);
     if (await openProject.isVisible()) await openProject.click();
     await projectNav.getByRole('button', { name: 'Salesforce', exact: true }).click();
-    await expect(page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByTestId('salesforce-workbench').getByRole('button', { name: 'Open Salesforce tools', exact: true })).toContainText('Agentforce');
     // No explicit tool action: the migrated saved selection must attach to its real host automatically.
     await expect(activeSidePanelTab(page)).toHaveText(title);
     await expect(viewPane(page, target)).toHaveAttribute('data-agent', 'force-app/Support.agent');
@@ -2445,7 +2445,7 @@ test('Agentforce Studio: saved editor views migrate to host tools on startup', a
     await expect(editorTabs(page).getByRole('tab', { name: /^Script/ })).toHaveAttribute('aria-selected', 'true');
     await expect(page.frameLocator('iframe[title="Agentforce playground"]').locator('.view-lines')).toContainText('Support_Concierge');
     // Unmount before installing the next persisted legacy layout.
-    await page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Data', exact: true }).click();
+    await selectSalesforceSection(page.getByTestId('salesforce-workbench'), 'data');
   }
 });
 
@@ -2702,7 +2702,7 @@ test('Agentforce Studio: pinned Preview reconnects to the same running session a
     await expect.poll(async () => await projectNav.isVisible() || await openProject.isVisible()).toBe(true);
     if (await openProject.isVisible()) await openProject.click();
     await projectNav.getByRole('button', { name: 'Salesforce', exact: true }).click();
-    await expect(page.getByTestId('salesforce-workbench').getByRole('tab', { name: 'Agentforce', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByTestId('salesforce-workbench').getByRole('button', { name: 'Open Salesforce tools', exact: true })).toContainText('Agentforce');
     await expectOrdersWithPinnedPreview(runId);
     expect(await snapshot(runId)).toMatchObject({ ok: true, data: { id: runId, busy: true, closed: false } });
     rmSync(join(home, 'persistent-preview-hold'), { force: true });
