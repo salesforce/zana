@@ -279,10 +279,10 @@ it('runs the private production app suite only for affected paths and fails miss
   expect(runVerification(['--coverage', 'coverage.json'], {}, io)).toBe(0);
 });
 
-it('forwards a CI shard to the production app suite and rejects a malformed one', () => {
+it('selects a CI shard before building and rejects a malformed one', () => {
   const io = { execute: vi.fn().mockReturnValue('+++ b/apps/app/src/App.tsx\n@@ -1 +1 @@'), read: vi.fn(), log: vi.fn(), error: vi.fn() };
   expect(runVerification([], { CI_E2E_SHARD: '2/3' }, io)).toBe(0);
-  expect(io.execute.mock.calls[1][1]).toEqual(expect.arrayContaining(['e2e/smoke.spec.ts', '--shard=2/3', '--pass-with-no-tests']));
+  expect(io.execute.mock.calls[1][1]).toEqual(['test:e2e', '--', 'e2e/renderer-resource-budget.spec.ts']);
   io.execute.mockClear();
   expect(runVerification([], { CI_E2E_SHARD: '0/3' }, io)).toBe(1);
   expect(io.error).toHaveBeenCalledWith('Invalid CI_E2E_SHARD: 0/3');
@@ -344,7 +344,7 @@ it('combines complementary root and package coverage even when local ids differ'
 it('keeps the existing required CI check as an always-running gate over every job', () => {
   const workflow = readFileSync(resolve('.github/workflows/ci.yml'), 'utf8');
   expect(workflow).toContain('name: Typecheck and test');
-  expect(workflow).toContain('needs: [unit, unit-packages, coverage, e2e, preview-cross-platform, connect-postgres]');
+  expect(workflow).toContain('needs: [plan, unit, unit-packages, coverage, e2e-build, e2e, preview-cross-platform, connect-postgres]');
   expect(workflow).toContain('if: always()');
   expect(workflow).toContain('test "$UNIT_RESULT" = success');
   expect(workflow).toContain('test "$PACKAGES_RESULT" = success');
@@ -366,7 +366,7 @@ it('keeps the existing required CI check as an always-running gate over every jo
   expect(workflow).toContain('--config vitest.release-coverage.config.ts --coverage');
   expect(workflow).toContain('coverage/tasks/coverage-final.json coverage/pi/coverage-final.json coverage/release/coverage-final.json');
   expect(workflow).toContain("description: 'Optional comparison base for the full unpublished branch range'");
-  expect(workflow.match(/CI_BASE_SHA: \$\{\{ inputs\.base_sha \|\| github\.event\.pull_request\.base\.sha \|\| github\.event\.before \|\| 'HEAD\^' \}\}/g)).toHaveLength(2);
+  expect(workflow.match(/CI_BASE_SHA: \$\{\{ inputs\.base_sha \|\| github\.event\.pull_request\.base\.sha \|\| github\.event\.before \|\| 'HEAD\^' \}\}/g)).toHaveLength(3);
 });
 
 it('includes the Squad proposal flow in the job-team E2E runner', async () => {

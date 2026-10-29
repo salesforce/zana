@@ -62,14 +62,16 @@ test('Audit installed plugin pages on phone and tablet widths', async ({ app }, 
     await drawer.getByTestId('nav-docs').click();
     await expect(page.locator('.library-panel')).toBeVisible();
     await expect(page.locator('.tree-row.file').first()).toBeVisible();
-    const refresh = page.waitForResponse(response => {
-      const request = response.request();
-      return new URL(response.url()).pathname === '/api/v1/library/documents'
-        && request.method() === 'POST'
-        && request.postDataJSON()?.action === 'snapshot';
-    }, { timeout: 15_000 });
-    socket!.send(JSON.stringify({ type: 'library:changed', payload: { projectId: 'audit' } }));
-    expect((await refresh).ok()).toBe(true);
+    // The Library reads scoped snapshots, rather than the legacy GET /library.
+    // Verify a real content change reaches the UI after the invalidation.
+    writeFileSync(join(app.home, '.zcc', 'library', 'refreshed-audit.md'), '# Refreshed audit document\n');
+    const [refresh] = await Promise.all([
+      page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/library/documents'
+        && response.request().method() === 'POST' && response.request().postDataJSON()?.action === 'snapshot', { timeout: 15_000 }),
+      Promise.resolve().then(() => socket!.send(JSON.stringify({ type: 'library:changed', payload: {} }))),
+    ]);
+    expect(refresh.ok()).toBe(true);
+    await expect(page.getByRole('button', { name: 'refreshed-audit.md', exact: true })).toBeVisible();
     await expect(page.locator('.tree-row.file').first()).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Renderer crashed' })).toHaveCount(0);
     async function capture(name: string) {

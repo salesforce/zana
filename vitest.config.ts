@@ -3,6 +3,7 @@ import { readdirSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import { resolve } from 'node:path';
 import { serialTestFiles } from './vitest.serial';
+import DurationSequencer from './scripts/ci-unit-sequencer';
 
 const tippyDir = readdirSync(resolve(__dirname, 'node_modules/.pnpm')).find((name) => name.startsWith('tippy.js@'));
 const tippyEsm = tippyDir
@@ -82,6 +83,7 @@ export default defineConfig({
     __ZCC_BUNDLED_POSTHOG_API_KEY__: JSON.stringify('')
   },
   test: {
+    sequence: { sequencer: DurationSequencer },
     // Real CLI bridges, shells and PTYs starve their bounded version probes when
     // they share CPU with other files. Those files (vitest.serial.ts) run one at
     // a time after everything else; pure unit files run in parallel first.

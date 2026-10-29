@@ -27,6 +27,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Plan with Node built-ins before provisioning any Electron runner.
+  plan:
+    name: Select production-boundary checks
+    runs-on: ubuntu-latest
+    outputs:
+      preview: ${{ steps.plan.outputs.preview }}
+      e2e: ${{ steps.plan.outputs.e2e }}
+      e2e_matrix: ${{ steps.plan.outputs.e2e_matrix }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - id: plan
+        run: node scripts/ci-plan.mjs
+        env:
+          CI_BASE_SHA: ${{ inputs.base_sha || github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
+          CI_FORCE_PREVIEW: ${{ github.event_name == 'workflow_dispatch' }}
+
   # The root suite runs pure unit files in parallel, then files that spawn real
   # bridges, shells and PTYs one at a time (vitest.serial.ts). Each shard is its
   # own VM, so that split holds within every shard.
@@ -229,18 +250,56 @@ jobs:
           CI_BASE_SHA: ${{ inputs.base_sha || github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
           CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
+  # One immutable Linux build feeds private per-shard runtime snapshots.
+  e2e-build:
+    name: Build Electron test artifact
+    needs: plan
+    if: needs.plan.outputs.e2e == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/electron-cache
+      - name: Build production Electron runtime
+        run: pnpm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+      - name: Archive runtime and generated plugin assets
+        run: >-
+          tar --exclude='*/node_modules' --exclude='*/.git'
+          -czf "$RUNNER_TEMP/electron-e2e-build.tgz"
+          out plugins resources packages/cli/dist packages/plugin-sdk/dist apps/host-daemon/dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: electron-e2e-build
+          path: ${{ runner.temp }}/electron-e2e-build.tgz
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
   # Every affected seam is exercised in the built app; failures fail CI.
   # Keep model-spending live attach suites outside unattended CI.
   e2e:
     name: Affected Electron boundaries (${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
-    # Broad branches select 94 serial production-boundary cases, over an hour
-    # on one runner. Split them by spec file and bound each private build and shard.
+    needs: [plan, e2e-build]
+    if: needs.plan.outputs.e2e == 'true'
+    # Pack whole spec files by measured duration; empty shards never provision.
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: ${{ fromJSON(needs.plan.outputs.e2e_matrix) }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -260,6 +319,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - uses: ./.github/actions/electron-cache
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: electron-e2e-build
+          path: ${{ runner.temp }}
+
+      - name: Restore the same-run Electron build
+        run: tar -xzf "$RUNNER_TEMP/electron-e2e-build.tgz"
+
       # Electron needs a display + the usual Chromium shared libs. xvfb-run
       # supplies a virtual X server; playwright's dep installer pulls the libs.
       # WebKit backs the mobile Safari checks in contextual-help and
@@ -275,12 +344,13 @@ jobs:
       - name: Allow unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
-      - name: Build and test affected Electron boundaries
+      - name: Test affected Electron boundaries from private snapshots
         run: xvfb-run -a node scripts/ci-verification.mjs
         env:
           CI_BASE_SHA: ${{ inputs.base_sha || github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
           NODE_OPTIONS: --max-old-space-size=6144
           CI_E2E_SHARD: ${{ matrix.shard }}/3
+          CI_E2E_PREBUILT: '1'
 
       - name: Upload Playwright report on failure
         if: failure()
@@ -296,6 +366,8 @@ jobs:
   # File URL parsing and preview path confinement cross OS boundaries. Keep a
   # focused built-Electron regression on every supported desktop/runtime OS.
   preview-cross-platform:
+    needs: plan
+    if: needs.plan.outputs.preview == 'true'
     name: File preview (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -319,6 +391,8 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - uses: ./.github/actions/electron-cache
 
       - name: Install Linux Electron display dependencies
         if: runner.os == 'Linux'
@@ -351,21 +425,38 @@ jobs:
   verify:
     name: Typecheck and test
     runs-on: ubuntu-latest
-    needs: [unit, unit-packages, coverage, e2e, preview-cross-platform, connect-postgres]
+    needs: [plan, unit, unit-packages, coverage, e2e-build, e2e, preview-cross-platform, connect-postgres]
     if: always()
     steps:
       - name: Require unit and production-boundary verification
         env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+          E2E_REQUIRED: ${{ needs.plan.outputs.e2e }}
+          PREVIEW_REQUIRED: ${{ needs.plan.outputs.preview }}
           UNIT_RESULT: ${{ needs.unit.result }}
           PACKAGES_RESULT: ${{ needs.unit-packages.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
+          BUILD_RESULT: ${{ needs.e2e-build.result }}
           BOUNDARY_RESULT: ${{ needs.e2e.result }}
           PREVIEW_MATRIX_RESULT: ${{ needs.preview-cross-platform.result }}
           POSTGRES_RESULT: ${{ needs.connect-postgres.result }}
         run: |
+          test "$PLAN_RESULT" = success
           test "$UNIT_RESULT" = success
           test "$PACKAGES_RESULT" = success
           test "$COVERAGE_RESULT" = success
-          test "$BOUNDARY_RESULT" = success
-          test "$PREVIEW_MATRIX_RESULT" = success
+          if [ "$E2E_REQUIRED" = true ]; then
+            test "$BUILD_RESULT" = success
+            test "$BOUNDARY_RESULT" = success
+          else
+            test "$E2E_REQUIRED" = false
+            test "$BUILD_RESULT" = skipped
+            test "$BOUNDARY_RESULT" = skipped
+          fi
+          if [ "$PREVIEW_REQUIRED" = true ]; then
+            test "$PREVIEW_MATRIX_RESULT" = success
+          else
+            test "$PREVIEW_REQUIRED" = false
+            test "$PREVIEW_MATRIX_RESULT" = skipped
+          fi
           test "$POSTGRES_RESULT" = success
