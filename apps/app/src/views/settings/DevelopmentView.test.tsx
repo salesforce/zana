@@ -10,6 +10,18 @@ beforeEach(() => { vi.clearAllMocks(); h.status.mockResolvedValue(idle); h.start
 
 afterEach(cleanup);
 
+it.each([undefined, false, true])('persists plugin safe mode, off by default (%s)', async enabled => {
+  const update = vi.fn();
+  render(<DevelopmentView config={{ pluginSafeMode: enabled } as AppConfig} onUpdate={update} />);
+  await waitFor(() => expect(h.status).toHaveBeenCalledOnce());
+  const toggle = screen.getByRole('switch', { name: 'Plugin safe mode' });
+  expect(toggle.getAttribute('aria-checked')).toBe(String(enabled ?? false));
+  fireEvent.click(toggle);
+  expect(update).toHaveBeenCalledExactlyOnceWith({ pluginSafeMode: !(enabled ?? false) });
+  expect(screen.getByRole('heading', { name: 'Plugin recovery' }).closest('[data-settings-target]')?.getAttribute('data-settings-target'))
+    .toBe('development.plugin-recovery');
+});
+
 it.each([undefined, false, true])('persists bundled plugin development, off by default (%s)', enabled => {
   const update = vi.fn();
   render(<DevelopmentView config={{ pluginDevelopmentEnabled: enabled } as AppConfig} onUpdate={update} />);

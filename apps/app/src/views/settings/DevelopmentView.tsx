@@ -89,6 +89,11 @@ export function DevelopmentView({ config, onUpdate }: {
       </div>}
       {error && <p className="settings-help" role="alert">{error}</p>}
     </Section>
+    <Section searchId="development.plugin-recovery" anchorId="plugin-recovery" title="Plugin recovery" help="Temporarily suspend installed plugins while diagnosing a problem.">
+      <CheckboxField searchId="development.plugin-safe-mode" label="Plugin safe mode"
+        help="Suspend non-bundled plugins and their tools. Turning this off restores plugins that were enabled. Your plugin settings are preserved."
+        checked={config.pluginSafeMode ?? false} onChange={v => onUpdate({ pluginSafeMode: v })} />
+    </Section>
     <Section searchId="development.bundled-plugins" anchorId="bundled-plugins" title="Bundled plugins" help="Develop and test bundled plugins on this instance.">
       <CheckboxField searchId="development.plugin-development" label="Bundled plugin development"
         help="Allow local source folders to override bundled plugins and automatically rebuild bundled plugins when their sources change. Applies immediately. Turning this off stops source watching and blocks further overrides; currently loaded plugins keep running."

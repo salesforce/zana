@@ -13,14 +13,15 @@ const base = {
 it('keeps development controls on the dedicated Development page', () => {
   render(<ExperimentalView config={base} onConfigDraft={vi.fn()} onUpdate={vi.fn()} />);
   expect(screen.queryByRole('switch', { name: 'Bundled plugin development' })).toBeNull();
+  expect(screen.queryByRole('heading', { name: 'Plugin recovery' })).toBeNull();
+  expect(screen.queryByRole('switch', { name: 'Plugin safe mode' })).toBeNull();
 });
 
-it.each([false, true])('hydrates recovery and service-tier switches and persists changes from %s', enabled => {
+it.each([false, true])('hydrates the service-tier switch and persists changes from %s', enabled => {
   const update = vi.fn();
   render(<ExperimentalView config={{ ...base, pluginSafeMode: enabled, providerServiceTiersDisabled: enabled }}
     onConfigDraft={vi.fn()} onUpdate={update} />);
   for (const [label, key] of [
-    ['Plugin safe mode', 'pluginSafeMode'],
     ['Disable non-default service tiers', 'providerServiceTiersDisabled']
   ] as const) {
     const toggle = screen.getByRole('switch', { name: label });

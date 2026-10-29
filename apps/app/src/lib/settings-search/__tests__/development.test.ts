@@ -23,6 +23,16 @@ it.each(['developer mode', 'hot reload', 'local override', 'reserved plugin', 's
 
 it('removes development results from Experimental', () => {
   expect(experimental.some(row => row.id.includes('development'))).toBe(false);
+  expect(experimental.some(row => row.label === 'Plugin recovery' || row.label === 'Plugin safe mode')).toBe(false);
+});
+
+it.each([undefined, false, true])('finds plugin safe mode under Development with its effective value: %s', enabled => {
+  const snapshot = { config: { pluginSafeMode: enabled } as AppConfig };
+  const hit = searchSettings('plugin safe mode', snapshot)[0]!;
+  expect(hit.entry.id).toBe('development.plugin-safe-mode');
+  expect(hit.entry.anchor).toBe('plugin-recovery');
+  expect(hit.entry.value!(snapshot)).toBe(enabled ? 'On' : 'Off');
+  expect(settingsHitPath(hit)).toBe('/settings/development#development.plugin-safe-mode');
 });
 
 it.each([['host daemon', 'development.restart-daemon'], ['hard plugin reload', 'development.hard-plugin-reload'], ['corrupted', 'development.hard-plugin-reload']])('finds recovery through %s', (query, id) => {
