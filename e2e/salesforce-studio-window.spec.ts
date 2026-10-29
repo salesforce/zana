@@ -442,10 +442,11 @@ test('Salesforce Studio window: one owner, status card, cross-window org sync an
     projectId: id, viewId, command: 'view.open', input: { view: 'agentforce', path: 'force-app/Help.agent', line: 2 },
   }), { id: projectId, viewId: lease!.id });
   expect(sent).toMatchObject({ ok: true, commandId: expect.any(String) });
-  const delivered = await main.evaluate(({ id, commandId }) => window.cc.pluginApps.callRpc('salesforce', 'control.result', {
-    projectId: id, commandId, waitMs: 3000,
-  }), { id: projectId, commandId: (sent as { commandId: string }).commandId });
-  expect(delivered).toMatchObject({ ok: true, state: 'completed' });
+  // A realtime wake can race the window's subscription; allow its 5s fallback poll too.
+  await expect.poll(() => main.evaluate(({ id, commandId }) => window.cc.pluginApps.callRpc('salesforce', 'control.result', {
+    projectId: id, commandId, waitMs: 1000,
+  }), { id: projectId, commandId: (sent as { commandId: string }).commandId }), { timeout: 15_000 })
+    .toMatchObject({ ok: true, state: 'completed' });
   await expect(studio.getByTestId('salesforce-agent-script-panel').locator('.af-document-name')).toHaveText('Help.agent');
   await expect(title).toHaveText('Agentforce · Help — dx · studio');
   await expect(studio).toHaveTitle(/^Agentforce · Help — dx · studio — /);
