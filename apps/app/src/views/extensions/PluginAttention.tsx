@@ -10,7 +10,7 @@ export function PluginAttention({ rows, issuesOnly, onReview }: {
   onReview: () => void;
 }) {
   const count = rows.filter((row) => installedRuntimeStatus(row) !== null).length;
-  const degraded = rows.flatMap((row) => row.plugin?.enabled && row.plugin.status === 'degraded' ? [row.plugin] : []);
+  const degraded = rows.flatMap((row) => row.plugin?.enabled && row.plugin.status === 'degraded' && !row.plugin.sourceRecovery ? [row.plugin] : []);
   const busy = useRef(false);
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
   const [result, setResult] = useState<{ message: string; failures: string[] } | null>(null);

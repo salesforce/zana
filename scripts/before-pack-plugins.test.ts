@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+vi.mock('./package-migration-runtimes.mjs', () => ({ packageMigrationRuntimes: vi.fn() }));
 import beforePack from './before-pack-plugins.mjs';
 
 const roots: string[] = [];

@@ -1154,6 +1154,7 @@ function httpProduct(): Pick<
       forget: (identity) => apiJson('/plugin-packs/forget', { method: 'POST', body: JSON.stringify(identity) })
     },
     pluginApps: {
+      repair: async () => ({ ok: false as const, code: 'DESKTOP_REQUIRED', message: 'Open the desktop app to recover this plugin source' }),
       list: async () => {
         const body = await apiJson<{ apps?: PluginAppEntry[] }>('/plugin-apps');
         return Array.isArray(body.apps) ? body.apps : [];

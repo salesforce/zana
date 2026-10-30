@@ -5753,6 +5753,8 @@ export interface PluginAppEntry {
   collection?: 'coding-agents';
   status: 'running' | 'disabled' | 'degraded' | 'needs-configuration';
   statusDetail?: string | null;
+  /** Host-derived recovery choices; local paths and replacement sources remain private. */
+  sourceRecovery?: { canLocate: boolean; canSwitchOfficial: boolean };
   appUrl: string | null;
   /** Compatible remote release from the last persisted source check, when any. */
   availableVersion?: string;

@@ -400,7 +400,8 @@ export const IPC = {
     applyUpdate: 'pluginApps:applyUpdate',
     applyAllUpdates: 'pluginApps:applyAllUpdates',
     remove: 'pluginApps:remove',
-    reload: 'pluginApps:reload'
+    reload: 'pluginApps:reload',
+    repair: 'pluginApps:repair'
   },
   /**
    * Configured plugin marketplace catalogs (`plugins/marketplaces.json`).

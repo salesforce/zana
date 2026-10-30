@@ -14,7 +14,7 @@ const OWNED = ['kv.json', 'settings.json', 'secrets', 'data.db'] as const;
 const uuid = /^[a-f0-9-]{36}$/;
 const registration = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]*$/), rootDir: z.string().max(4096),
-  sourceKind: z.enum(['git', 'npm', 'builtin']), version: z.string(), enabled: z.boolean(), installedAt: z.number()
+  sourceKind: z.enum(['git', 'npm', 'builtin', 'path']), version: z.string(), enabled: z.boolean(), installedAt: z.number()
 }).passthrough();
 const schema = z.object({
   version: z.literal(1), id: z.string().regex(uuid), phase: z.enum(['activating', 'restoring', 'committed', 'restored']),

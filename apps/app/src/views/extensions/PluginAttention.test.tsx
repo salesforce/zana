@@ -75,3 +75,10 @@ it('keeps a specific host refusal visible', async () => {
   setup([plugin('one')]); clickReload();
   await waitFor(() => expect(screen.getByText('one: Reload denied')).toBeTruthy());
 });
+
+
+it('keeps source-recovery issues reviewable without retrying their obsolete paths', () => {
+  setup([plugin('moved', { sourceRecovery: { canLocate: true, canSwitchOfficial: false } })]);
+  expect(screen.queryByRole('button', { name: /Reload degraded/ })).toBeNull();
+  expect(screen.getByRole('button', { name: /Review/ })).toBeTruthy();
+});

@@ -508,6 +508,11 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
       await plugins.remove(message.pluginId);
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: { ok: true } });
     }
+    if (message.operation === 'plugins-repair') {
+      if (!plugins) throw new Error('plugin host is unavailable');
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id,
+        value: await plugins.repair(message.pluginId, message.path) });
+    }
     if (message.operation === 'plugins-reload') {
       if (!plugins) {
         parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, message: 'plugin host is unavailable' });

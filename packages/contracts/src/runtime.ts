@@ -447,6 +447,11 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
     pluginId: z.string().min(1).max(128)
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugins-repair'),
+    pluginId: z.string().min(1).max(128),
+    path: z.string().min(1).max(4096).optional()
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('plugins-reload'),
     pluginId: z.string().min(1).max(128)
   }).strict(),
@@ -627,6 +632,7 @@ export const PluginAppSnapshotSchema = z.object({
   enabled: z.boolean(),
   provenance: z.enum(['builtin', 'direct', 'catalog']),
   sourceKind: z.enum(['builtin', 'path', 'git', 'npm']).optional(),
+  sourceRecovery: z.object({ canLocate: z.boolean(), canSwitchOfficial: z.boolean() }).strict().optional(),
   collection: z.literal('coding-agents').optional(),
   status: z.enum(['running', 'disabled', 'degraded', 'needs-configuration']),
   statusDetail: z.string().max(4096).nullable().optional(),

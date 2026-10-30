@@ -1716,6 +1716,7 @@ export interface CcApi {
     applyAllUpdates(): Promise<Result<import('@zana-ai/zcc-domain/product').PluginUpdateAllResult>>;
     remove(id: string): Promise<Result<true>>;
     reload(id: string): Promise<Result<true>>;
+    repair(id: string, action: 'locate' | 'official'): Promise<Result<true>>;
   };
   /**
    * Runtime extensions discovered under `~/.zcc/extensions/<id>/`.

@@ -35,3 +35,11 @@ it('throws when threads.resolvePreviewPath is called without product server', as
   const api = electron.expose.mock.calls.find(([name]) => name === 'cc')![1];
   await expect(api.threads.resolvePreviewPath('t1', { path: 'a.md' })).rejects.toThrow('threads require the product server');
 });
+
+it('forwards only the installed id and recovery action through the plugin bridge', async () => {
+  await import('./preload.js');
+  const api = electron.expose.mock.calls.find(([name]) => name === 'cc')![1];
+  electron.invoke.mockClear(); electron.invoke.mockResolvedValueOnce({ ok: true, value: true });
+  await expect(api.pluginApps.repair('example', 'locate')).resolves.toEqual({ ok: true, value: true });
+  expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.pluginApps.repair, 'example', 'locate');
+});
