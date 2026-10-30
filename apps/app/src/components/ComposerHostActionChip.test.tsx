@@ -3,6 +3,23 @@ import { describe, expect, it, vi } from 'vitest';
 import { ComposerHostActionChip } from './ComposerHostActionChip.js';
 
 describe('ComposerHostActionChip', () => {
+  it('hides a ready host and disables an unavailable host', () => {
+    expect(renderToStaticMarkup(<ComposerHostActionChip action={{ kind: 'ready' }} onAction={vi.fn()} />)).toBe('');
+    const html = renderToStaticMarkup(<ComposerHostActionChip action={{ kind: 'blocked', reason: 'Offline' }} onAction={vi.fn()} />);
+    expect(html).toContain('disabled');
+    expect(html).toContain('Unavailable');
+    expect(html).not.toContain('is-cta');
+  });
+
+  it('renders ongoing repair progress and its pairing fallback', () => {
+    const html = renderToStaticMarkup(<ComposerHostActionChip
+      action={{ kind: 'fix', hostId: 'remote', label: 'Fix', reason: 'Offline' }}
+      busyLabel="Reconnecting…" pairingCommand="ssh fixture" onAction={vi.fn()} onCopyPairing={vi.fn()} />);
+    expect(html).toContain('Reconnecting…');
+    expect(html).toContain('thread-command-send-spin');
+    expect(html).toContain('Copy install command');
+  });
+
   it('renders Install as a clickable host-daemon CTA', () => {
     const html = renderToStaticMarkup(
       <ComposerHostActionChip
