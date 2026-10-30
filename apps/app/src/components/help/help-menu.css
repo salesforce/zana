@@ -5,6 +5,9 @@
   top: calc(100% + 9px);
   width: 340px;
   max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 76px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 6px;
   border: 1px solid var(--border-strong);
   border-radius: 11px;

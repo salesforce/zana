@@ -1,0 +1,59 @@
+WEBVTT
+
+00:00:00.302 --> 00:00:04.980
+Squads live in Settings, next to the
+built-in ones you can launch right away.
+
+00:00:05.163 --> 00:00:12.319
+The quickest way to make your own is to just ask an agent.
+Pick a project, describe the squad you want, and send it.
+
+00:00:14.117 --> 00:00:20.761
+The agent works out the roles, and writes the squad straight
+into your project, as a file you can review and commit.
+
+00:00:20.942 --> 00:00:24.797
+Back in Settings, it's already
+there, tagged with its project.
+
+00:00:24.980 --> 00:00:32.181
+You can also build one by hand. Click New squad, then
+give it a name, an icon, and a short description.
+
+00:00:32.362 --> 00:00:37.697
+Add a slot for each role: an orchestrator,
+two workers, and a code reviewer.
+
+00:00:37.923 --> 00:00:43.343
+Crown the orchestrator, so it starts first,
+plans the work, and hands out the tasks.
+
+00:00:43.525 --> 00:00:49.657
+If you like, add an opening prompt, a default
+project, worktrees, and launch approval.
+
+00:00:49.839 --> 00:00:53.031
+Save it, and it joins the catalogue with the others.
+
+00:00:53.213 --> 00:01:00.902
+Now let's launch it. Open New agent, switch to Squad,
+describe the goal, and choose the squad and project.
+
+00:01:02.749 --> 00:01:07.683
+The orchestrator breaks the goal into tasks,
+and the workers pick them up in parallel.
+
+00:01:07.863 --> 00:01:12.065
+Flow view shows who's working on
+what, and how the work hands off.
+
+00:01:12.246 --> 00:01:17.171
+When the squad needs a decision, it doesn't
+guess. It asks you, right in the Inbox.
+
+00:01:17.352 --> 00:01:21.511
+Answer once, and it carries on until every task is done.
+
+00:01:23.301 --> 00:01:29.376
+That's Squads. Ask an agent, or build
+one yourself, then point it at any goal.

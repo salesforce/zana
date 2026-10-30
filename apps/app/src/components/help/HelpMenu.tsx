@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { ArrowRight, CircleHelp, Play, RotateCcw, Sparkles } from 'lucide-react';
-import { HELP_VIDEOS } from '../../lib/help-videos.js';
 import { useUi } from '../../store.js';
 import type { ReleaseNote } from '@zana-ai/zcc-domain/product';
 import { HelpReleaseNotesSection, ReleaseNotesBrowser } from './HelpReleaseNotes.js';
@@ -18,6 +17,8 @@ export function HelpMenu() {
   const { enabled, setEnabled } = useHelp();
   const watched = useHelpVideos((s) => s.watched);
   const openVideos = useHelpVideos((s) => s.open);
+  const videos = useHelpVideos((s) => s.videos);
+  const refreshVideos = useHelpVideos((s) => s.refresh);
   const [open, setOpen] = useState(false);
   const [releaseNotes, setReleaseNotes] = useState<ReleaseNote[] | null>(null);
   const root = useRef<HTMLDivElement>(null);
@@ -26,13 +27,14 @@ export function HelpMenu() {
 
   useEffect(() => {
     if (!open) return;
+    void refreshVideos();
     popover.current?.querySelector<HTMLButtonElement>('button')?.focus();
     const outside = (event: PointerEvent) => {
       if (!root.current?.contains(event.target as Node)) setOpen(false);
     };
     document.addEventListener('pointerdown', outside);
     return () => document.removeEventListener('pointerdown', outside);
-  }, [open]);
+  }, [open, refreshVideos]);
 
   const close = () => { setOpen(false); trigger.current?.focus(); };
   // Focus the trigger first so a dialog opened by the action returns there.
@@ -73,7 +75,7 @@ export function HelpMenu() {
               </button>
             </div>
             <div className="help-menu-videos">
-              {HELP_VIDEOS.map((video) => {
+              {videos.map((video) => {
                 const seen = watched.includes(video.id);
                 return (
                   <button key={video.id} type="button" className="help-menu-video" aria-label={`Play ${video.title}, ${video.duration}${seen ? ', watched' : ''}`}

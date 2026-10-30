@@ -1,4 +1,5 @@
 import { listNativeCapabilities } from "../services/skills/native-capabilities.js";
+import { handleHelpVideosApi } from './help-videos-api.js';
 import { normalizePortableAttachments } from '../services/projects/portable-attachments.js';
 import { withoutSecretValues } from '../plugins/plugin-settings-redaction.js';
 import { handlePreviewsApi } from './previews-api.js';
@@ -529,6 +530,7 @@ export async function handleProductHttp(
   }
 
   try {
+    if (await handleHelpVideosApi(request, response, ctx.helpVideos, path, method)) return true;
     if (await handlePreviewsApi(request, response, ctx, path, method)) return true;
     if (await handlePluginPacksApi(request, response, ctx.plugins?.pluginPacks, path, method)) return true;
     if (await handleScopedLinkApi(request, response, ctx, path, method)) return true;
