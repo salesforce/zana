@@ -9,6 +9,7 @@ import {
   type InboxSummaryDeps
 } from '@zana-ai/zcc-server';
 import type { InboxEntry, LlmRunResult } from '@zana-ai/zcc-domain/product';
+import { WorkloadMemo } from '@zana-ai/zcc-llm';
 
 const NOW = 1_700_000_000_000;
 
@@ -142,6 +143,17 @@ describe('InboxSummaryService.summarize', () => {
     await new InboxSummaryService(deps, () => NOW).summarize(null);
     expect(deps.readEntries).toHaveBeenCalledWith(null, INBOX_SUMMARY_MAX_ENTRIES);
     expect((deps.runSummary as ReturnType<typeof vi.fn>).mock.calls[0][1]).toBe('inbox-summary:all');
+  });
+
+  it('reuses a validated summary only for the same trusted request identity', async () => {
+    const deps = makeDeps({
+      requestIdentity: (_kind, text) => text,
+      memo: new WorkloadMemo()
+    });
+    const service = new InboxSummaryService(deps, () => NOW);
+    await service.summarize('p1');
+    await service.summarize('p1');
+    expect(deps.runSummary).toHaveBeenCalledTimes(1);
   });
 
   it('reports empty when the inbox has no entries (no call spent)', async () => {

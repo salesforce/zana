@@ -1,5 +1,6 @@
 import type { LlmPromptEntry, LlmProviderId, LlmRunResult } from '@zana-ai/zcc-domain/llm';
 import type { LlmProvider, LlmProviderMap } from './provider.js';
+import { createHash } from 'node:crypto';
 
 const DEFAULT_PROVIDER: LlmProviderId = 'claude-cli';
 
@@ -25,12 +26,33 @@ export function fillTemplate(template: string, vars: Record<string, string>): st
  */
 export class LlmService {
   private readonly inFlight = new Map<string, Promise<LlmRunResult>>();
+  private providerGeneration = 0;
 
-  constructor(private readonly providers: LlmProviderMap) {}
+  constructor(
+    private readonly providers: LlmProviderMap,
+    private readonly refreshProviderIdentity: () => void = () => {}
+  ) {}
 
   /** Register or replace a provider after construction (e.g. config reload). */
   setProvider(provider: LlmProvider): void {
     this.providers.set(provider.id, provider);
+    this.providerGeneration++;
+  }
+
+  /** Provider config changed. New work must not join an old-provider call. */
+  invalidateProviderIdentity(): void {
+    this.providerGeneration++;
+    this.inFlight.clear();
+  }
+
+  /** Hash complete provider request identity; never expose prompt text in keys. */
+  requestIdentity(entry: LlmPromptEntry, vars: Record<string, string>): string {
+    this.refreshProviderIdentity();
+    const provider = entry.provider ?? DEFAULT_PROVIDER;
+    const payload = JSON.stringify({ generation: this.providerGeneration, provider, model: entry.model,
+      system: entry.systemPrompt, user: fillTemplate(entry.userTemplate, vars),
+      maxOutputChars: entry.maxOutputChars, timeoutMs: entry.timeoutMs });
+    return createHash('sha256').update(payload).digest('hex');
   }
 
   /**
@@ -58,8 +80,10 @@ export class LlmService {
     vars: Record<string, string>,
     dedupeKey?: string
   ): Promise<LlmRunResult> {
-    if (dedupeKey) {
-      const existing = this.inFlight.get(dedupeKey);
+    const identity = this.requestIdentity(entry, vars);
+    const inflightKey = dedupeKey ? `${dedupeKey}:${identity}` : undefined;
+    if (inflightKey) {
+      const existing = this.inFlight.get(inflightKey);
       if (existing) return existing;
     }
 
@@ -85,11 +109,11 @@ export class LlmService {
       timeoutMs: entry.timeoutMs
     });
 
-    if (dedupeKey) {
-      this.inFlight.set(dedupeKey, call);
+    if (inflightKey) {
+      this.inFlight.set(inflightKey, call);
       void call.finally(() => {
         // Only clear if still the same promise (a later call may have replaced it).
-        if (this.inFlight.get(dedupeKey) === call) this.inFlight.delete(dedupeKey);
+        if (this.inFlight.get(inflightKey) === call) this.inFlight.delete(inflightKey);
       });
     }
 

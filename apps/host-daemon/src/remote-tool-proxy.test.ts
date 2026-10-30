@@ -32,6 +32,9 @@ describe('remote tool proxy helpers', () => {
     ]);
     expect(isRemoteProxyTool('remote_read')).toBe(true);
     expect(isRemoteProxyTool('Bash')).toBe(false);
+    const read = REMOTE_TOOL_PROXY_DYNAMIC_TOOLS.find((tool) => tool.name === 'remote_read');
+    expect(read?.description).toContain('nextByteOffset');
+    expect(read?.inputSchema).toMatchObject({ properties: { byte_offset: { minimum: 0 } } });
   });
 
   it('copies launch remote identity without extra fields', () => {

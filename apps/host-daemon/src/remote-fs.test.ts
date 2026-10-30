@@ -214,6 +214,21 @@ describe('remote-fs over a fake ssh', () => {
     expect(res.content).toBeUndefined();
   });
 
+  it('continues a truncated UTF-8 text read without splitting a code point', async () => {
+    const f = join(workDir, 'utf8.txt');
+    await writeFile(f, `${'a'.repeat(2 * 1024 * 1024 - 1)}é`);
+
+    const first = await readFileRemote(remote, workDir, f);
+    expect(first.ok).toBe(true);
+    expect(first.truncated).toBe(true);
+    expect(first.content?.endsWith('�')).toBe(false);
+    expect(first.nextByteOffset).toBe(2 * 1024 * 1024 - 1);
+
+    const second = await readFileRemote(remote, workDir, f, first.nextByteOffset);
+    expect(second).toMatchObject({ ok: true, content: 'é', truncated: false, binary: false });
+    expect(second.nextByteOffset).toBeUndefined();
+  });
+
   it('refuses to read a directory as a file', async () => {
     await mkdir(join(workDir, 'adir'));
     const res = await readFileRemote(remote, workDir, join(workDir, 'adir'));
@@ -498,11 +513,11 @@ describe('resolveAndReadRemote (gating, mocked deps)', () => {
     expect(readFile).not.toHaveBeenCalled();
   });
 
-  it('passes the store-resolved remote + root through to read', async () => {
+  it('passes the store-resolved remote, root, and continuation cursor through to read', async () => {
     const readFile = vi.fn(async () => ({ ok: true as const, content: 'hi', bytes: 2, binary: false }));
-    const res = await resolveAndReadRemote(deps({ readFile }), 'prj', '/home/sfwork/core/README.md');
+    const res = await resolveAndReadRemote(deps({ readFile }), 'prj', '/home/sfwork/core/README.md', 2_097_152);
     expect(res.ok).toBe(true);
-    expect(readFile).toHaveBeenCalledWith(REMOTE, '/home/sfwork/core', '/home/sfwork/core/README.md');
+    expect(readFile).toHaveBeenCalledWith(REMOTE, '/home/sfwork/core', '/home/sfwork/core/README.md', 2_097_152);
   });
 });
 

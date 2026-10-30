@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   FeedSummaryService,
   parseFeedDigest,
@@ -6,6 +6,7 @@ import {
   type FeedSummaryDeps
 } from './feed-summary.js';
 import type { FeedEvent, LlmRunResult } from '@zana-ai/zcc-domain/product';
+import { WorkloadMemo } from '@zana-ai/zcc-llm';
 
 const NOW = 1_700_000_000_000;
 
@@ -95,5 +96,27 @@ describe('FeedSummaryService.summarize', () => {
       runSummary: async () => ({ ok: false, text: '', provider: 'claude-cli', ms: 0 })
     }).summarize('p1');
     expect(res).toEqual({ ok: false, reason: 'summary-failed' });
+  });
+
+  it('reuses a validated digest only for the same trusted request identity', async () => {
+    const runSummary = vi.fn(async () => ({ ok: true, text: '{"headline":"Recap","highlights":[]}', provider: 'claude-cli' as const, ms: 1 }));
+    const service = new FeedSummaryService({
+      readEvents: async () => [ev()], runSummary,
+      requestIdentity: (text) => text,
+      memo: new WorkloadMemo()
+    }, () => NOW);
+    await service.summarize('p1');
+    await service.summarize('p1');
+    expect(runSummary).toHaveBeenCalledTimes(1);
+  });
+
+  it('reruns when trusted identity changes', async () => {
+    let identity = 'first';
+    const runSummary = vi.fn(async () => ({ ok: true, text: '{"headline":"Recap","highlights":[]}', provider: 'claude-cli' as const, ms: 1 }));
+    const service = new FeedSummaryService({ readEvents: async () => [ev()], runSummary, requestIdentity: () => identity, memo: new WorkloadMemo() }, () => NOW);
+    await service.summarize('p1');
+    identity = 'second';
+    await service.summarize('p1');
+    expect(runSummary).toHaveBeenCalledTimes(2);
   });
 });

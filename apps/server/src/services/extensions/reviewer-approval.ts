@@ -60,6 +60,7 @@ interface CacheEntry { verdict: ReviewerVerdict; ts: number }
 export class ReviewerApprovalService {
   private readonly cache = new Map<string, CacheEntry>();
   private readonly inflight = new Set<string>();
+  private generation = 0;
   constructor(
     private readonly deps: ReviewerDeps,
     private readonly now: () => number = () => Date.now(),
@@ -86,6 +87,7 @@ export class ReviewerApprovalService {
   async consult(key: string, req: ReviewerRequest): Promise<ReviewerVerdict> {
     if (this.inflight.has(key)) return 'ask';
     this.inflight.add(key);
+    const generation = this.generation;
     let verdict: ReviewerVerdict = 'ask';
     try {
       const result = await this.deps.runReview(req, `approve-reviewer:${key}`);
@@ -95,8 +97,14 @@ export class ReviewerApprovalService {
     } finally {
       this.inflight.delete(key);
     }
-    this.set(key, verdict);
+    if (generation === this.generation) this.set(key, verdict);
     return verdict;
+  }
+
+  /** Prompt changes revoke prior advisory approvals rather than waiting for TTL. */
+  clear(): void {
+    this.generation++;
+    this.cache.clear();
   }
 
   private set(key: string, verdict: ReviewerVerdict): void {

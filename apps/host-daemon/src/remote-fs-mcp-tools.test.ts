@@ -54,7 +54,21 @@ describe('registerRemoteFsTools', () => {
     }));
     const { tools } = register({ readFile });
     await tools.get('remote_read')!({ path: 'README.md', projectId: 'other' });
-    expect(readFile).toHaveBeenCalledWith('p-ssh', 'README.md');
+    expect(readFile).toHaveBeenCalledWith('p-ssh', 'README.md', undefined);
+  });
+
+  it('returns text page metadata and forwards a continuation cursor', async () => {
+    const readFile = vi.fn(async (): Promise<FsReadResult> => ({
+      ok: true, content: 'first page', bytes: 20, binary: false, truncated: true, nextByteOffset: 10
+    }));
+    const { tools } = register({ readFile });
+
+    const result = await tools.get('remote_read')!({ path: 'README.md', byte_offset: 10 });
+
+    expect(readFile).toHaveBeenCalledWith('p-ssh', 'README.md', 10);
+    expect(JSON.parse(payload(result))).toEqual({
+      content: 'first page', bytes: 20, truncated: true, nextByteOffset: 10
+    });
   });
 
   it('surfaces a non-remote / unknown project as isError', async () => {

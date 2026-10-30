@@ -134,6 +134,7 @@ export type ThreadResumeInput = {
   providerOptions?: Record<string, unknown>;
   dynamicTools?: ThreadStartFields['dynamicTools'];
   instructions?: ThreadStartFields['instructions'];
+  sessionKind?: 'automated';
 };
 
 export type ThreadRewindPrepareInput = {
@@ -445,7 +446,8 @@ async function applyThreadResume(
       claudeCodePermissionMode: command.claudeCodePermissionMode,
       providerOptions: command.providerOptions,
       dynamicTools: command.dynamicTools,
-      instructions: command.instructions
+      instructions: command.instructions,
+      sessionKind: command.sessionKind
     });
     providerThreadId = resumed?.providerThreadId ?? providerThreadId;
   }

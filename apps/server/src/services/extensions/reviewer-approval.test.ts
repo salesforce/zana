@@ -69,6 +69,22 @@ describe('ReviewerApprovalService', () => {
     // Only 2 kept; 'a' (oldest) evicted.
     expect(svc.peek('a', req)).toBe('ask');
   });
+  it('clears cached approvals when trusted reviewer configuration changes', async () => {
+    const svc = new ReviewerApprovalService({ runReview: vi.fn(async () => ok('{"decision":"approve","confidence":0.9}')) });
+    await svc.consult('k', req);
+    expect(svc.peek('k', req)).toBe('approve');
+    svc.clear();
+    expect(svc.peek('k', req)).toBe('ask');
+  });
+  it('does not restore a stale pending approval after clear', async () => {
+    let resolve!: (result: LlmRunResult) => void;
+    const svc = new ReviewerApprovalService({ runReview: () => new Promise((done) => { resolve = done; }) });
+    const consult = svc.consult('k', req);
+    svc.clear();
+    resolve(ok('{"decision":"approve","confidence":0.9}'));
+    await consult;
+    expect(svc.peek('k', req)).toBe('ask');
+  });
   it('exposes REVIEWER_MIN_CONFIDENCE = 0.8', () => {
     expect(REVIEWER_MIN_CONFIDENCE).toBe(0.8);
   });

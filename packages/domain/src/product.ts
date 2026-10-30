@@ -3460,6 +3460,8 @@ export interface FsEntry {
 export interface FsReadResult {
   ok: boolean;
   content?: string;
+  /** Byte cursor for the next page when a text read is truncated. */
+  nextByteOffset?: number;
   bytes?: number;
   binary?: boolean;
   truncated?: boolean;

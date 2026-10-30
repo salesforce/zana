@@ -447,6 +447,8 @@ export const ThreadResumeFieldsSchema = z.object({
   providerOptions: z.record(z.string().max(100), z.unknown()).optional(),
   dynamicTools: z.array(dynamicToolSchema).max(128).optional(),
   instructions: z.string().max(100_000).optional(),
+  /** Carries unattended-session admission to a restored provider session. */
+  sessionKind: z.literal('automated').optional(),
   providerCheckpointId: z.string().min(1).max(200).optional()
 }).strict();
 export type ThreadResumeFields = z.infer<typeof ThreadResumeFieldsSchema>;

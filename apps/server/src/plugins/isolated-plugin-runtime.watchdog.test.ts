@@ -32,14 +32,14 @@ function start(timeout: { heartbeatTimeoutMs?: number } = { heartbeatTimeoutMs: 
 
 it('tolerates bounded synchronous plugin work by default and still fails a wedged worker', async () => {
   vi.useFakeTimers();
-  expect(PLUGIN_HEARTBEAT_TIMEOUT_MS).toBe(5_000);
+  expect(PLUGIN_HEARTBEAT_TIMEOUT_MS).toBe(20_000);
   const f = start({});
-  // A supported 24MiB Design Docs journal blocks a slow runner for seconds; the old 1.5s budget killed it.
-  await vi.advanceTimersByTimeAsync(4_500);
+  // A supported 24MiB Design Docs journal blocks a contended runner for seconds.
+  await vi.advanceTimersByTimeAsync(19_500);
   expect(f.onFailure).not.toHaveBeenCalled();
   // A heartbeat restarts the budget.
   f.worker.emit('message', { kind: 'heartbeat' });
-  await vi.advanceTimersByTimeAsync(4_500);
+  await vi.advanceTimersByTimeAsync(19_500);
   expect(f.onFailure).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(1_000);
   expect(f.onFailure).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: 'Plugin event loop stopped responding' }));

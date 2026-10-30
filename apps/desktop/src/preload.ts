@@ -859,7 +859,8 @@ const api: CcApi = {
     }
   },
   usage: {
-    getSummary: () => ipcRenderer.invoke(IPC.usage.getSummary)
+    getSummary: () => ipcRenderer.invoke(IPC.usage.getSummary),
+    getMemoCounters: () => ipcRenderer.invoke(IPC.usage.getMemoCounters)
   },
   suggestions: {
     list: (projectId) => ipcRenderer.invoke(IPC.suggestions.list, projectId ?? undefined),

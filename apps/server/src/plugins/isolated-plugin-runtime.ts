@@ -10,9 +10,10 @@ import { createPluginWorkerBridge, PEER_WORKER_COMMIT_TIMEOUT_MS } from './plugi
  * Silence tolerated from a ready plugin worker before it is declared hung. The worker runs off the server thread, so
  * synchronous plugin work never stalls the app; this only has to separate a wedged worker from a busy one. Plugins
  * legitimately do synchronous SQLite work (Design Docs journals a supported 24MiB paired document in ~0.75s on fast
- * hardware), so the budget keeps several-fold headroom for slower machines and CI runners.
+ * hardware), so the budget keeps several-fold headroom for slower machines and
+ * concurrent test runners.
  */
-export const PLUGIN_HEARTBEAT_TIMEOUT_MS = 5_000;
+export const PLUGIN_HEARTBEAT_TIMEOUT_MS = 20_000;
 // A 24MiB paired document needs multiple transient closure/hash copies during a rewrite.
 export const PLUGIN_WORKER_MAX_OLD_GENERATION_SIZE_MB = 384;
 
