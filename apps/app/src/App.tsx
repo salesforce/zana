@@ -232,7 +232,6 @@ export function App() {
 
 function AppShell() {
   const threadTabsEnabled = useData((s) => s.threadTabsEnabled);
-  const insetWorkspaceEnabled = useData((s) => s.insetWorkspaceEnabled);
   useRouteSync();
   useEffect(installAgentBoardMoves, []);
   const init = useData((s) => s.init);
@@ -759,7 +758,7 @@ function AppShell() {
     <div
       className={`app-shell nav-${nav} shell-rail-${shellLayout.rail} ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''} scoped-no-list ${
         updateBannerVisible ? 'has-update-banner' : ''
-      }${insetWorkspaceEnabled && !mobileNavigation.isCompact ? ' shell-inset' : ''}`}
+      }${!mobileNavigation.isCompact ? ' shell-inset' : ''}`}
       data-mobile={mobileNavigation.isCompact}
       data-platform={shellChrome.platform}
       data-fullscreen={shellChrome.isFullScreen}

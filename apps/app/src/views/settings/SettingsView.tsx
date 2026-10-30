@@ -175,9 +175,6 @@ export function SettingsView() {
       if (typeof patch.dockableThreadToolsEnabled === 'boolean') {
         useData.getState().setDockableThreadToolsEnabled(patch.dockableThreadToolsEnabled);
       }
-      if (typeof patch.insetWorkspaceEnabled === 'boolean') {
-        useData.getState().setInsetWorkspaceEnabled(patch.insetWorkspaceEnabled);
-      }
       if (typeof patch.threadTabsEnabled === 'boolean') {
         useData.getState().setThreadTabsEnabled(patch.threadTabsEnabled);
       }

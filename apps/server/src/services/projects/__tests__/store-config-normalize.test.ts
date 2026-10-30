@@ -621,12 +621,8 @@ describe('normalizeConfig — catch-up summary flags', () => {
     expect(normalizeConfig({}).dockableThreadToolsEnabled).toBeUndefined();
   });
 
-  it('accepts only boolean insetWorkspaceEnabled values', () => {
-    expect(normalizeConfig({ insetWorkspaceEnabled: true }).insetWorkspaceEnabled).toBe(true);
-    expect(normalizeConfig({ insetWorkspaceEnabled: false }).insetWorkspaceEnabled).toBe(false);
-    // @ts-expect-error intentional bad input
-    expect(normalizeConfig({ insetWorkspaceEnabled: 'true' }).insetWorkspaceEnabled).toBeUndefined();
-    expect(normalizeConfig({}).insetWorkspaceEnabled).toBeUndefined();
+  it.each([true, false, 'true', undefined])('drops the retired inset workspace flag (%s)', value => {
+    expect(normalizeConfig({ insetWorkspaceEnabled: value } as unknown as AppConfig)).not.toHaveProperty('insetWorkspaceEnabled');
   });
 
   it('passes through a boolean heldQuestionsEnabled, drops non-booleans', () => {

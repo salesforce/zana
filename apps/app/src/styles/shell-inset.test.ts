@@ -3,7 +3,7 @@ import { expect, it } from 'vitest';
 
 const css = readFileSync(new URL('./shell-inset.css', import.meta.url), 'utf8');
 
-it('scopes every inset-workspace rule under the experimental shell class', () => {
+it('scopes every inset-workspace rule under the desktop shell class', () => {
   const selectors = css.replace(/\/\*[\s\S]*?\*\//g, '').match(/[^{}]+(?=\{)/g) ?? [];
   expect(selectors.length).toBeGreaterThan(0);
   for (const group of selectors) {

@@ -1,10 +1,10 @@
-/* Experimental "Inset workspace" shell (AppConfig.insetWorkspaceEnabled).
+/* Standard desktop inset workspace shell.
  *
  * Navigation chrome (title bar, rail, status bar) shares one flat tone; the
  * routed content track becomes a raised, rounded sheet inset from the window
  * edge, so the sidebar, the thread and its side panel read as distinct
  * columns. Every rule is scoped under `.shell-inset`, which App.tsx only sets
- * on desktop while the flag is on — off means none of this applies. */
+ * on desktop; compact/mobile navigation retains its edge-to-edge layout. */
 
 .app-shell.shell-inset {
   --inset-chrome: #131313;

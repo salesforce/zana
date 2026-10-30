@@ -45,13 +45,6 @@ export function ExperimentalView({
           onChange={(v) => onUpdate({ threadTabsEnabled: v })}
         />
         <CheckboxField
-          searchId="experimental.inset-workspace"
-          label="Inset workspace"
-          help="Gives the sidebar, title bar and work area clearly separate surfaces. The sidebar and title bar share one flat background. Threads, panels and the thread side panel sit on a raised sheet with rounded corners. Off by default."
-          checked={config.insetWorkspaceEnabled ?? false}
-          onChange={(v) => onUpdate({ insetWorkspaceEnabled: v })}
-        />
-        <CheckboxField
           searchId="experimental.goals"
           label="Goals"
           help="Show the Goals tab in a project — persistent objectives with falsifiable success criteria that spawn worker sessions and self-evaluate until met. An experiment under active evaluation. Off ⇒ the Goals project tab is removed."

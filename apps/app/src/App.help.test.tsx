@@ -142,22 +142,21 @@ it('switches titlebar navigation live and retains compact chrome', () => {
   fixtures.compact = false;
 });
 
-it('applies the inset workspace shell class live on desktop only', () => {
+it('always applies the inset workspace design on desktop and retains compact chrome', () => {
   fixtures.compact = false;
-  store.useData.setState({ insetWorkspaceEnabled: false });
   const view = render(<MemoryRouter><App /></MemoryRouter>);
   const shell = () => view.container.querySelector('.app-shell')!;
   try {
-    expect(shell().classList.contains('shell-inset')).toBe(false);
-    act(() => store.useData.setState({ insetWorkspaceEnabled: true }));
     expect(shell().classList.contains('shell-inset')).toBe(true);
     fixtures.compact = true;
     view.rerender(<MemoryRouter><App /></MemoryRouter>);
     expect(shell().classList.contains('shell-inset')).toBe(false);
+    fixtures.compact = false;
+    view.rerender(<MemoryRouter><App /></MemoryRouter>);
+    expect(shell().classList.contains('shell-inset')).toBe(true);
   } finally {
     fixtures.compact = false;
     view.unmount();
-    store.useData.setState({ insetWorkspaceEnabled: false });
   }
 });
 

@@ -2,9 +2,9 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect } from './fixtures/app.js';
 
-test.use({ e2e: true, launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { tmuxScope: 'off', sponsorPromptDismissed: true, insetWorkspaceEnabled: true } });
+test.use({ e2e: true, launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { tmuxScope: 'off', sponsorPromptDismissed: true } });
 
-test('inset workspace lifts the thread onto a rounded sheet and toggles live', async ({ app }) => {
+test('inset workspace is the standard desktop design and ignores retired opt-outs', async ({ app }) => {
   const { window: page, home } = app;
   const root = join(home, 'inset-workspace');
   mkdirSync(root);
@@ -41,12 +41,16 @@ test('inset workspace lifts the thread onto a rounded sheet and toggles live', a
   await page.evaluate(() => { history.pushState({}, '', '/settings/experimental'); dispatchEvent(new PopStateEvent('popstate')); });
   const settings = page.locator('.shell-main > .settings-panel');
   await expect(settings).toBeVisible();
+  await expect(page.getByRole('switch', { name: 'Inset workspace', exact: true })).toHaveCount(0);
   await expect(settings).toHaveCSS('overflow-y', 'auto');
   await expect.poll(() => settings.evaluate((el) => { el.scrollTop = 200; return el.scrollTop; })).toBeGreaterThan(0);
   await page.evaluate(id => { history.pushState({}, '', `/threads/${id}`); dispatchEvent(new PopStateEvent('popstate')); }, threadId);
   await expect(page.getByRole('heading', { name: 'Inset workspace check', exact: true })).toBeVisible();
 
-  await page.evaluate(() => window.cc.config.set({ insetWorkspaceEnabled: false }));
-  await expect(shell).not.toHaveClass(/shell-inset/);
-  expect((await geometry()).radius).toBe('0px');
+  // Older clients may still send the retired opt-out; it must not alter the layout.
+  await page.evaluate(() => window.cc.config.set({ insetWorkspaceEnabled: false } as never));
+  await expect(shell).toHaveClass(/shell-inset/);
+  await page.reload();
+  await expect(shell).toHaveClass(/shell-inset/);
+  expect((await geometry()).radius).toBe('10px');
 });

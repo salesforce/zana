@@ -1078,9 +1078,6 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.dockableThreadToolsEnabled === 'boolean') {
     normalized.dockableThreadToolsEnabled = input.dockableThreadToolsEnabled;
   }
-  if (typeof input.insetWorkspaceEnabled === 'boolean') {
-    normalized.insetWorkspaceEnabled = input.insetWorkspaceEnabled;
-  }
   if (typeof input.classicSessionViewEnabled === 'boolean') {
     normalized.classicSessionViewEnabled = input.classicSessionViewEnabled;
   }

@@ -19,10 +19,7 @@ it.each([undefined, true, false])('finds Dockable thread tools with its effectiv
   expect(entry.anchor).toBe('experimental-features');
 });
 
-it.each([undefined, true, false])('finds Inset workspace with its effective value: %s', enabled => {
-  const snapshot = { config: { insetWorkspaceEnabled: enabled } as AppConfig };
-  const entry = entries.find(row => row.id === 'experimental.inset-workspace')!;
-  expect(entry.value!(snapshot)).toBe(enabled ? 'On' : 'Off');
-  expect(searchSettings('inset workspace', snapshot, { entries })[0]!.entry.id).toBe(entry.id);
-  expect(entry.anchor).toBe('experimental-features');
+it('does not offer the standard inset workspace as an experimental setting', () => {
+  expect(entries.some(row => row.id === 'experimental.inset-workspace')).toBe(false);
+  expect(searchSettings('inset workspace', { config: {} as AppConfig }, { entries })).toEqual([]);
 });

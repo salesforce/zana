@@ -844,7 +844,6 @@ function mirroredConfigFlags(config: AppConfig) {
     classicSessionViewEnabled: config.classicSessionViewEnabled ?? false,
     threadTabsEnabled: config.threadTabsEnabled ?? true,
     dockableThreadToolsEnabled: config.dockableThreadToolsEnabled ?? true,
-    insetWorkspaceEnabled: config.insetWorkspaceEnabled ?? false,
     catchUpSummaryDelaySeconds: config.catchUpSummaryDelaySeconds ?? 20,
     feedNoiseClassifierEnabled: config.feedNoiseClassifierEnabled ?? false,
     terminalClipboardWriteEnabled: config.terminalClipboardWriteEnabled ?? true,
@@ -1666,8 +1665,6 @@ interface DataState {
   classicSessionViewEnabled: boolean;
   threadTabsEnabled: boolean;
   dockableThreadToolsEnabled: boolean;
-  /** Mirror of AppConfig.insetWorkspaceEnabled — experimental shell styling. Default off. */
-  insetWorkspaceEnabled: boolean;
   /** Mirror of AppConfig.catchUpSummaryDelaySeconds — idle/blocked dwell before
    *  the add-on fires. Hydrated on init. Default 20. Used by the card to compute
    *  the shimmer threshold. */
@@ -1781,7 +1778,6 @@ interface DataState {
   setClassicSessionViewEnabled: (on: boolean) => void;
   setThreadTabsEnabled: (on: boolean) => void;
   setDockableThreadToolsEnabled: (on: boolean) => void;
-  setInsetWorkspaceEnabled: (on: boolean) => void;
   setCatchUpSummaryDelaySeconds: (seconds: number) => void;
   setFeedNoiseClassifierEnabled: (on: boolean) => void;
   setTerminalClipboardWriteEnabled: (on: boolean) => void;
@@ -2182,7 +2178,6 @@ export const useData = create<DataState>((set, get) => ({
   classicSessionViewEnabled: false,
   threadTabsEnabled: true,
   dockableThreadToolsEnabled: true,
-  insetWorkspaceEnabled: false,
   catchUpSummaryDelaySeconds: 20,
   feedNoiseClassifierEnabled: false,
   terminalClipboardWriteEnabled: true,
@@ -2330,9 +2325,6 @@ export const useData = create<DataState>((set, get) => ({
 
   setDockableThreadToolsEnabled(on) {
     set({ dockableThreadToolsEnabled: on });
-  },
-  setInsetWorkspaceEnabled(on) {
-    set({ insetWorkspaceEnabled: on });
   },
   setThreadTabsEnabled(on) {
     set({ threadTabsEnabled: on });

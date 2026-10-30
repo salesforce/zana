@@ -2478,12 +2478,6 @@ export interface AppConfig {
   /** Drag thread tools between right and bottom panels. Defaults on. */
   dockableThreadToolsEnabled?: boolean;
   /**
-   * Inset workspace shell styling (EXPERIMENTAL). The sidebar and title bar
-   * become one flat chrome surface; the work area sits on a raised, rounded
-   * sheet so navigation and content read as distinct columns. Default OFF.
-   */
-  insetWorkspaceEnabled?: boolean;
-  /**
    * Idle / blocked dwell (seconds) before the catch-up-summary add-on fires its
    * micro-call. On the working/blocked → idle edge (or entering 'blocked'), the
    * service arms a timer of this length; it generates ONLY if the agent is still
