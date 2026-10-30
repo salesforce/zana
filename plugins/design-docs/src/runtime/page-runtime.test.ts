@@ -514,6 +514,7 @@ describe('links', () => {
     await wait();
     expect(ofType('navigate')).toEqual([
       { type: 'navigate', path: 'runs/r1.html', hash: 'top', newTab: false, redirect: false },
+      { type: 'navigate', path: 'runs/r1.html', hash: 'top', newTab: false, redirect: false },
       { type: 'navigate', path: 'other.html', hash: null, newTab: true, redirect: false },
       { type: 'navigate', path: 'd.html', hash: null, newTab: false, redirect: false },
       { type: 'navigate', path: 'runs/r1.html', hash: 'top', newTab: true, redirect: false },
