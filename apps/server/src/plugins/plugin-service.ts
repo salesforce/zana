@@ -143,7 +143,7 @@ import { createPluginServicesRegistry } from '@zana-ai/zcc-plugin-sdk/server';
 import { createSerializedTransactionQueue } from '../durable-store.js';
 import { createPluginPackService, type PluginPackService } from './plugin-packs.js';
 import type { PluginRecoveryState } from '@zana-ai/zcc-domain/product';
-import { copyRecoveryRollbackRuntime, createOfficialPluginRecovery } from './plugin-recovery-runtime.js';
+import { copyRecoveryRollbackRuntime, copyBundledPluginRuntime } from './plugin-recovery-runtime.js';
 
 export interface CatalogSearchHit {
   marketplace: string;
@@ -353,8 +353,6 @@ export interface PluginServiceOptions {
   cloneGit?: (url: string, dest: string, spec: string) => Promise<{ commit: string; refKind?: 'branch' | 'tag' | 'commit' }>;
   updateResolver?: Partial<PluginUpdateResolver>;
   fetchJson?: (url: string) => Promise<unknown>;
-  /** Internal transport seam for official compiled recovery artifacts. */
-  recoveryFetch?: typeof fetch;
   onAgentCapabilitiesChanged?: (contributors: PluginAgentContribution[]) => void | Promise<void>;
   /** Notify the runtime bridge after a plugin's visible app state changes. */
   onAppsChanged?: (apps: PluginUiSnapshot[]) => void | Promise<void>;
@@ -2558,8 +2556,6 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       hardReloadRunning = true;
       recoveryState = { phase: 'running', total: rows.length, restored: [], skipped: [], failed: [] };
       startBuiltinSourceWatchers();
-      const official = createOfficialPluginRecovery({ dataDir: opts.dataDir, hostVersion,
-        signal: sourceCommands.signal, fetcher: opts.recoveryFetch });
       void (async () => {
         const { ordered, cycles } = sortPluginsByRequires(rows.map(row => ({ id: row.id, requires: requiresOf(row), row })));
         const candidates = [...ordered.map(node => node.row), ...cycles.map(node => node.plugin.row)];
@@ -2580,7 +2576,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
             if (definition) {
               // A recovery runtime is still an official bundled identity. Ordinary
               // marketplace installs remain unable to claim these reserved ids.
-              root = await official(row.id);
+              root = await copyBundledPluginRuntime({ dataDir: opts.dataDir, bundledRoot: opts.bundledRoot,
+                name: definition.name, signal: sourceCommands.signal });
               materialized = { rootDir: root, sourceKind: 'builtin', provenance: row.provenance,
                 display: `builtin:${definition.name}`, npmResolvedVersion: null, npmIntegrity: null,
                 gitResolvedCommit: null, catalogMarketplace: null, catalogEntryId: null };

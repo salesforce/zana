@@ -76,11 +76,11 @@ export function DevelopmentView({ config, onUpdate }: {
         help="Suspend non-bundled plugins and their tools. Turning this off restores plugins that were enabled. Your plugin settings are preserved."
         checked={config.pluginSafeMode ?? false} onChange={v => onUpdate({ pluginSafeMode: v })} />
       <div className="development-recovery-row" data-settings-target="development.hard-plugin-reload">
-        <div><span className="settings-label">Hard Plugin reload</span>
-          <p className="settings-help">Fetch fresh plugin files from their recorded sources. Bundled plugins use the official runtime for this Zana release. Saved settings, credentials, data and enabled states are preserved.</p>
+        <div><span className="settings-label">Restore plugins</span>
+          <p className="settings-help">Restore bundled plugins from this app, even offline. Reinstall third-party plugins from their recorded sources. Saved settings, credentials, data and enabled states are preserved.</p>
         </div>
         <button type="button" className="settings-btn" disabled={busy || restarting} onClick={() => setConfirm(true)}>
-          {busy ? 'Restoring plugins…' : 'Hard Plugin reload…'}
+          {busy ? 'Restoring plugins…' : 'Restore plugins…'}
         </button>
       </div>
       {recovery && recovery.phase !== 'idle' && <div className="development-recovery-result" aria-live="polite" role="status">
@@ -97,18 +97,18 @@ export function DevelopmentView({ config, onUpdate }: {
         help="Allow local source folders to override bundled plugins and automatically rebuild bundled plugins when their sources change. Applies immediately. Turning this off stops source watching and blocks further overrides; currently loaded plugins keep running."
         checked={config.pluginDevelopmentEnabled ?? false} onChange={v => onUpdate({ pluginDevelopmentEnabled: v })} />
     </Section>
-    {confirm && <Modal title="Fetch fresh plugin files?" onClose={() => setConfirm(false)} footer={<>
+    {confirm && <Modal title="Restore plugins?" onClose={() => setConfirm(false)} footer={<>
       <button type="button" className="settings-btn" onClick={() => setConfirm(false)}>Cancel</button>
-      <button type="button" className="settings-btn" onClick={() => void restorePlugins()}>Fetch and reload</button>
+      <button type="button" className="settings-btn" onClick={() => void restorePlugins()}>Restore and reload</button>
     </>}>
-      <p>Restore installed plugins from fresh downloads, including broken agent providers.</p>
+      <p>Restore bundled plugins from the installed app, including broken agent providers. Third-party plugins are downloaded from their recorded sources.</p>
       <ul className="development-recovery-confirm">
         <li>Keep plugin settings, credentials, data and enabled states.</li>
         <li>Use compatible published versions and honor explicit version pins.</li>
-        <li>Replace local overrides of bundled plugins with the official runtime. Restored files remain in use after restarting Zana.</li>
+        <li>Replace bundled plugin overrides with the files shipped in this app. This works offline, and restored files remain in use after restarting Zana.</li>
         <li>Keep local-only plugins and report those without a published recovery source.</li>
       </ul>
-      <p>Active plugin work may be interrupted. Local source folders are preserved.</p>
+      <p>Active plugin work may be interrupted. Local source folders are preserved. If the app’s bundled files are damaged, reinstall Zana.</p>
     </Modal>}
     </>
   );

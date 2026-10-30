@@ -2,11 +2,12 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { gzipSync } from 'node:zlib';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createPluginService, type PluginServiceOptions } from './plugin-service.js';
 import { createPluginStore, pluginStorePath } from './plugin-store.js';
 import { createPluginActivationStore } from './plugin-activation-store.js';
+import * as recovery from './plugin-recovery-runtime.js';
+import { getThreadProvider } from '../services/threads/thread-provider-catalog.js';
 
 const roots: string[] = [], services: ReturnType<typeof createPluginService>[] = [];
 function root() { const path = mkdtempSync(join(tmpdir(), 'plugin-service-recovery-')); roots.push(path); return path; }
@@ -23,20 +24,12 @@ function plugin(path: string, id = 'tasks', server = good) {
   mkdirSync(path, { recursive: true }); writeFileSync(join(path, 'package.json'), JSON.stringify(pkg(id)));
   writeFileSync(join(path, 'server.mjs'), server); return path;
 }
-function fixture(options: Partial<PluginServiceOptions> = {}, payload: Record<string, { pkg?: unknown; server?: string }> = { tasks: {} }) {
+function fixture(options: Partial<PluginServiceOptions> = {}) {
   const dataDir = options.dataDir ?? root(), bundledRoot = options.bundledRoot ?? root();
-  const archives = Object.entries(payload).map(([id, p]) => {
-    const files = { 'package.json': JSON.stringify(p.pkg ?? pkg(id)), 'server.mjs': p.server ?? good };
-    const bytes = gzipSync(JSON.stringify({ version: 1, id, files: Object.entries(files).map(([path, value]) => ({ path, base64: Buffer.from(value).toString('base64'), executable: false })) }));
-    return { id, bytes, file: `plugin-recovery-${id}.json.gz`, sha256: createHash('sha256').update(bytes).digest('hex') };
-  });
-  const fetcher = vi.fn(async (url: URL) => {
-    const archive = archives.find(a => url.pathname.endsWith(a.file));
-    return archive ? new Response(new Uint8Array(archive.bytes)) : new Response(JSON.stringify({ version: 1, zccVersion: '2.3.1', plugins: archives.map(({ bytes, ...rest }) => rest) }));
-  });
-  const opts = { dataDir, bundledRoot, hostVersion: '2.3.1', activationStabilizationMs: 0, recoveryFetch: fetcher as never, ...options };
+  plugin(join(bundledRoot, 'tasks'));
+  const opts = { dataDir, bundledRoot, hostVersion: '2.3.1', activationStabilizationMs: 0, ...options };
   const service = createPluginService(opts); services.push(service);
-  return { service, dataDir, bundledRoot, fetcher, opts };
+  return { service, dataDir, bundledRoot, opts };
 }
 async function finish(service: ReturnType<typeof createPluginService>) {
   await service.hardReload();
@@ -44,15 +37,17 @@ async function finish(service: ReturnType<typeof createPluginService>) {
   return service.recoveryStatus();
 }
 beforeEach(() => { vi.stubEnv('ZCC_OFFICIAL_MARKETPLACE_URL', 'off'); vi.stubEnv('ZCC_INTERNAL_MARKETPLACE_SOURCE', 'off'); vi.stubEnv('ZCC_COMMUNITY_MARKETPLACE_SOURCE', 'off'); });
-afterEach(() => { services.splice(0).forEach(s => s.stop()); roots.splice(0).forEach(p => rmSync(p, { recursive: true, force: true })); vi.unstubAllEnvs(); });
+afterEach(() => { services.splice(0).forEach(s => s.stop()); roots.splice(0).forEach(p => rmSync(p, { recursive: true, force: true })); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
-it('repairs corrupt bundled code, preserves settings/secrets/KV, and keeps the clean runtime on restart and reload', async () => {
+it('repairs corrupt managed bundled code offline, preserves settings/secrets/KV, and keeps the clean runtime on restart and reload', async () => {
   const { service, bundledRoot, opts } = fixture();
   plugin(join(bundledRoot, 'tasks'));
   await service.install('builtin:tasks');
   await service.callRpc('tasks', 'save', {});
   await service.setSettings('tasks', { name: 'keep', token: 'secret-fixture' });
-  writeFileSync(join(bundledRoot, 'tasks/server.mjs'), 'corrupted plugin code');
+  await finish(service);
+  writeFileSync(join(service.get('tasks')!.rootDir, 'server.mjs'), 'corrupted plugin code');
+  const network = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('offline'));
   const result = await finish(service);
   expect(result).toMatchObject({ restored: ['tasks'], failed: [], skipped: [] });
   const cleanRoot = service.get('tasks')!.rootDir;
@@ -67,7 +62,8 @@ it('repairs corrupt bundled code, preserves settings/secrets/KV, and keeps the c
   await restarted.start();
   expect(restarted.get('tasks')?.rootDir).toBe(cleanRoot);
   await expect(restarted.callRpc('tasks', 'read', {})).resolves.toEqual({ saved: 'preserved', clean: true });
-  expect(readFileSync(join(bundledRoot, 'tasks/server.mjs'), 'utf8')).toBe('corrupted plugin code');
+  expect(readFileSync(join(bundledRoot, 'tasks/server.mjs'), 'utf8')).toBe(good);
+  expect(network).not.toHaveBeenCalled();
 });
 
 it('replaces a disabled local bundled override even after development mode is turned off and leaves local-only plugins alone', async () => {
@@ -82,11 +78,13 @@ it('replaces a disabled local bundled override even after development mode is tu
   expect(readFileSync(join(local, 'server.mjs'), 'utf8')).toBe(good);
 });
 
-it('rolls back storage and settings when a freshly downloaded initializer fails', async () => {
+it('rolls back storage and settings when the app bundle initializer fails', async () => {
   const bad = `export default async zcc => { await zcc.storage.kv.set('value', 'corrupted'); throw new Error('bad candidate'); };`;
-  const { service, bundledRoot } = fixture({}, { tasks: { server: bad } });
+  const { service, bundledRoot } = fixture();
   plugin(join(bundledRoot, 'tasks')); await service.install('builtin:tasks');
   await service.callRpc('tasks', 'save', {}); await service.setSettings('tasks', { name: 'keep' });
+  await finish(service);
+  writeFileSync(join(bundledRoot, 'tasks/server.mjs'), bad);
   const result = await finish(service);
   expect(result.failed).toEqual([{ id: 'tasks', message: expect.stringContaining('rolled back') }]);
   expect(result.restored).toEqual([]);
@@ -97,11 +95,15 @@ it('rolls back storage and settings when a freshly downloaded initializer fails'
 it.each([
   [{ tasks: { pkg: pkg('different') } }, 'identity'],
   [{ tasks: { pkg: pkg('tasks', '9.0.0', '>=99.0.0') } }, 'requires zcc'],
-  [{}, 'No published']
-])('keeps the current generation after invalid downloads: %s', async (payload, message) => {
-  const { service, bundledRoot } = fixture({}, payload);
-  plugin(join(bundledRoot, 'tasks')); await service.install('builtin:tasks');
+  [{}, 'Reinstall Zana']
+])('keeps the current generation after invalid app resources: %s', async (payload, message) => {
+  const { service, bundledRoot } = fixture();
+  await service.install('builtin:tasks');
+  await finish(service);
   const before = service.get('tasks')!.rootDir;
+  if ('tasks' in payload) {
+    writeFileSync(join(bundledRoot, 'tasks/package.json'), JSON.stringify(payload.tasks.pkg));
+  } else rmSync(join(bundledRoot, 'tasks'), { recursive: true });
   expect((await finish(service)).failed[0]?.message).toContain(message);
   expect(service.get('tasks')?.rootDir).toBe(before);
 });
@@ -109,8 +111,8 @@ it.each([
 it('deduplicates concurrent recovery requests and exposes immutable progress snapshots', async () => {
   const { service, bundledRoot, opts } = fixture(); plugin(join(bundledRoot, 'tasks')); await service.install('builtin:tasks');
   let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
-  const fetcher = opts.recoveryFetch!; opts.recoveryFetch = vi.fn(async (...args) => { await gate; return fetcher(...args); });
-  // opts is read dynamically by a run, while each service still owns one job.
+  const copy = recovery.copyBundledPluginRuntime;
+  vi.spyOn(recovery, 'copyBundledPluginRuntime').mockImplementationOnce(async args => { await gate; return copy(args); });
   const first = await service.hardReload(), next = await service.hardReload();
   expect(first.phase).toBe('running'); expect(next.phase).toBe('running');
   first.failed.push({ id: 'injected', message: 'ignored' });
@@ -166,11 +168,11 @@ it.each(['exact', 'range'] as const)('redownloads npm %s sources with integrity 
   expect(installs[1]).toContain('--prefer-online');
 });
 
-it('does not resurrect a plugin removed while its fresh files download', async () => {
+it('does not resurrect a plugin removed while its bundled files are copied', async () => {
   const { service, bundledRoot, opts } = fixture(); plugin(join(bundledRoot, 'tasks')); await service.install('builtin:tasks');
   let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
-  const transport = opts.recoveryFetch!;
-  opts.recoveryFetch = (async (...args) => { await gate; return transport(...args); }) as typeof fetch;
+  const copy = recovery.copyBundledPluginRuntime;
+  vi.spyOn(recovery, 'copyBundledPluginRuntime').mockImplementationOnce(async args => { await gate; return copy(args); });
   await service.hardReload(); await service.remove('tasks'); release();
   await vi.waitFor(() => expect(service.recoveryStatus().phase).toBe('complete'));
   expect(service.get('tasks')).toBeUndefined();
@@ -233,4 +235,31 @@ it.each(['previous', 'candidate', 'unmarked candidate', 'unresolved candidate', 
   await restarted.reload('tasks');
   await expect(restarted.callRpc('tasks', 'read', {})).resolves.toMatchObject({ saved: 'preserved', clean: true });
   expect(await activations.list()).toEqual([]);
+});
+
+it('restores provider availability when startup finds a corrupt managed host artifact', async () => {
+  const { service, bundledRoot, opts } = fixture();
+  const source = join(bundledRoot, 'tasks');
+  const metadata = pkg('tasks');
+  writeFileSync(join(source, 'package.json'), JSON.stringify({ ...metadata, zcc: { ...metadata.zcc, host: './host.mjs' } }));
+  writeFileSync(join(source, 'server.mjs'), `export default zcc => {
+    zcc.agents.experimental_registerProvider({ id: 'recovery-provider-fixture', displayName: 'Fixture',
+      capabilities: { fork: 'none', permissionModes: ['full'] },
+      models: { scope: 'host', fallback: [] }
+    });
+  };`);
+  mkdirSync(join(source, 'dist'));
+  const artifact = 'export default {};';
+  writeFileSync(join(source, 'dist/host.js'), artifact);
+  writeFileSync(join(source, 'dist/host.meta.json'), JSON.stringify({ artifactDigest: createHash('sha256').update(artifact).digest('hex') }));
+  await service.install('builtin:tasks');
+  expect(getThreadProvider('recovery-provider-fixture')?.unavailableReason).toBeUndefined();
+  expect((await finish(service)).restored).toEqual(['tasks']);
+  writeFileSync(join(service.get('tasks')!.rootDir, 'dist/host.js'), 'corrupted managed host');
+  service.stop();
+  const restarted = createPluginService(opts); services.push(restarted);
+  await restarted.start();
+  expect(getThreadProvider('recovery-provider-fixture')?.unavailableReason).toBeTruthy();
+  expect(await finish(restarted)).toMatchObject({ restored: ['tasks'], failed: [] });
+  expect(getThreadProvider('recovery-provider-fixture')?.unavailableReason).toBeUndefined();
 });

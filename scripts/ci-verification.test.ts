@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { boundarySpecs, changedLines, codeLines, coverageFailures, runVerification, mergeCoverage } from './ci-verification.mjs';
 
 it('checks recovery through the built app whenever its UI, service or distribution changes', () => {
-  for (const path of ['apps/app/src/views/settings/DevelopmentView.tsx', 'apps/server/src/plugins/plugin-recovery-runtime.ts', 'apps/server/src/plugins/plugin-service.ts', 'scripts/plugin-recovery-artifacts.mjs', 'scripts/before-pack-plugins.mjs', '.github/workflows/release.yml']) {
+  for (const path of ['apps/app/src/views/settings/DevelopmentView.tsx', 'apps/server/src/plugins/plugin-recovery-runtime.ts', 'apps/server/src/plugins/plugin-service.ts', 'scripts/before-pack-plugins.mjs', '.github/workflows/release.yml']) {
     expect(boundarySpecs([path])).toContain('e2e/development-recovery.spec.ts');
   }
 });

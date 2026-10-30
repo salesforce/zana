@@ -35,7 +35,7 @@ it.each([undefined, false, true])('finds plugin safe mode under Development with
   expect(settingsHitPath(hit)).toBe('/settings/development#development.plugin-safe-mode');
 });
 
-it.each([['host daemon', 'development.restart-daemon'], ['hard plugin reload', 'development.hard-plugin-reload'], ['corrupted', 'development.hard-plugin-reload']])('finds recovery through %s', (query, id) => {
+it.each([['host daemon', 'development.restart-daemon'], ['hard plugin reload', 'development.hard-plugin-reload'], ['restore plugins', 'development.hard-plugin-reload'], ['offline restore', 'development.hard-plugin-reload'], ['corrupted', 'development.hard-plugin-reload']])('finds recovery through %s', (query, id) => {
   const hit = searchSettings(query, { config: {} as AppConfig }, { entries }).find(row => row.entry.id === id)!;
   expect(hit).toBeDefined();
   expect(hit.entry.anchor).toBe('recovery');

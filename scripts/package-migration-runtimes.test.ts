@@ -1,12 +1,11 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readdirSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, expect, it, vi } from 'vitest';
 import { packageMigrationRuntimes } from './package-migration-runtimes.mjs';
 import { preparePluginRuntime } from '../packages/plugin-build/src/prepare-plugin-runtime';
 import { loadManifestFromDir } from '../apps/server/src/plugins/plugin-service';
-import { writePluginRecoveryArtifacts } from './plugin-recovery-artifacts.mjs';
 const roots: string[] = [];
 afterEach(() => roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })));
 function fixture() {
@@ -18,15 +17,14 @@ function fixture() {
   for (const args of [['init', '-b', 'runtime'], ['add', '.'], ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-m', 'runtime']]) execFileSync('git', args, { cwd: repo, env, stdio: 'pipe' });
   return { root, destination: join(root, 'packaged'), definition: { name: 'example', pluginId: 'example', url: repo, ref: 'runtime' } };
 }
-it('packages compiled independent runtimes separately from the fresh-install and recovery catalogues', async () => {
+it('packages compiled independent runtimes outside the fresh-install catalogue', async () => {
   const f = fixture();
   await packageMigrationRuntimes([f.definition], f.destination, '2.5.0', preparePluginRuntime, loadManifestFromDir);
   const runtime = join(f.destination, 'migration-runtimes/example');
   expect(existsSync(join(runtime, 'server.mjs'))).toBe(true);
   expect(existsSync(join(runtime, '.git'))).toBe(false);
   expect(JSON.parse(readFileSync(join(runtime, 'package.json'), 'utf8')).zcc.server).toBe('./server.mjs');
-  await writePluginRecoveryArtifacts(f.destination, join(f.root, 'feed'), '2.5.0');
-  expect(JSON.parse(readFileSync(join(f.root, 'feed', `plugin-recovery-${process.platform}-${process.arch}.json`), 'utf8')).plugins).toEqual([]);
+  expect(readdirSync(f.destination)).toEqual(['migration-runtimes']);
 });
 it('rejects a mismatched identity before building and fails packaging when the source is unavailable', async () => {
   const f = fixture(); const prepare = vi.fn();

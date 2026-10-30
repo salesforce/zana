@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { afterEach, expect, it, vi } from 'vitest';
 vi.mock('./package-migration-runtimes.mjs', () => ({ packageMigrationRuntimes: vi.fn() }));
 import beforePack from './before-pack-plugins.mjs';
+import { packageMigrationRuntimes } from './package-migration-runtimes.mjs';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -19,17 +20,15 @@ it('replaces the entire runtime catalog, skips non-plugins and aborts packaging 
   writeFileSync(join(plugins, 'ordinary/package.json'), '{}');
   writeFileSync(join(source, 'package.json'), JSON.stringify({ name: 'zcc-plugin-fixture', version: '1.0.0', zcc: { name: 'Fixture', description: 'Packaging fixture', branding: { icon: 'Puzzle' }, server: './server.mjs' } }));
   writeFileSync(join(source, 'server.mjs'), 'export default () => 42;');
+  vi.mocked(packageMigrationRuntimes).mockImplementationOnce(async (_definitions, _destination, _version, _prepare, readManifest) => {
+    expect(readManifest(source).id).toBe('fixture');
+  });
   await beforePack({ packager: { projectDir: root } });
   const runtime = join(root, 'out/packaged-plugins');
   expect(readdirSync(runtime)).toEqual(['fixture']);
   expect(existsSync(join(runtime, 'fixture/server.mjs'))).toBe(true);
   const previous = readFileSync(join(runtime, 'fixture/server.mjs'), 'utf8');
-  const nativeIndex = JSON.parse(readFileSync(join(root, 'dist', `plugin-recovery-${process.platform}-${process.arch}.json`), 'utf8'));
-  expect(nativeIndex).toMatchObject({ zccVersion: '2.3.1', plugins: [{ id: 'fixture' }] });
-  expect(existsSync(join(root, 'dist', nativeIndex.plugins[0].file))).toBe(true);
-  await beforePack({ packager: { projectDir: root }, electronPlatformName: 'win32', arch: 1 });
-  const windowsIndex = JSON.parse(readFileSync(join(root, 'dist/plugin-recovery-win32-x64.json'), 'utf8'));
-  expect(windowsIndex.plugins[0].file).toBe('plugin-recovery-2.3.1-win32-x64-fixture.json.gz');
+  expect(existsSync(join(root, 'dist'))).toBe(false);
   writeFileSync(join(source, 'server.mjs'), 'import "missing-build-dependency";');
   await expect(beforePack({ packager: { projectDir: root } })).rejects.toThrow('Could not resolve');
   expect(readFileSync(join(runtime, 'fixture/server.mjs'), 'utf8')).toBe(previous);

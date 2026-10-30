@@ -20,7 +20,7 @@ it.each([undefined, false, true])('persists plugin safe mode, off by default (%s
   expect(update).toHaveBeenCalledExactlyOnceWith({ pluginSafeMode: !(enabled ?? false) });
   const recovery = screen.getByRole('region', { name: 'Recovery' });
   expect(within(recovery).getByRole('switch', { name: 'Plugin safe mode' })).toBe(toggle);
-  expect(within(recovery).getByRole('button', { name: 'Hard Plugin reload…' })).toBeTruthy();
+  expect(within(recovery).getByRole('button', { name: 'Restore plugins…' })).toBeTruthy();
   expect(screen.queryByRole('heading', { name: 'Plugin recovery' })).toBeNull();
 });
 
@@ -39,14 +39,16 @@ it.each([undefined, false, true])('persists bundled plugin development, off by d
 it('requires confirmation and starts core recovery, then displays partial failures', async () => {
   render(<DevelopmentView config={{} as AppConfig} onUpdate={vi.fn()} />);
   await waitFor(() => expect(h.status).toHaveBeenCalledOnce());
-  fireEvent.click(screen.getByRole('button', { name: 'Hard Plugin reload…' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Restore plugins…' }));
   expect(h.start).not.toHaveBeenCalled();
-  expect(screen.getByRole('dialog', { name: 'Fetch fresh plugin files?' })).toBeTruthy();
+  expect(screen.getByRole('dialog', { name: 'Restore plugins?' })).toBeTruthy();
+  expect(screen.getByText(/This works offline/)).toBeTruthy();
+  expect(screen.getByText(/reinstall Zana/)).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   expect(screen.queryByRole('dialog')).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Hard Plugin reload…' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Restore plugins…' }));
   h.status.mockResolvedValue({ ...idle, phase: 'complete', total: 3, restored: ['provider-codex'], failed: [{ id: 'bad', message: 'offline' }], skipped: [{ id: 'local', message: 'No published source' }] });
-  fireEvent.click(screen.getByRole('button', { name: 'Fetch and reload' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Restore and reload' }));
   await screen.findByText('Recovery complete: 1 restored, 1 failed, 1 skipped.');
   expect(h.start).toHaveBeenCalledOnce();
   expect(screen.getByText('bad: offline')).toBeTruthy();
@@ -56,8 +58,8 @@ it('requires confirmation and starts core recovery, then displays partial failur
 it.each([new Error('offline'), 'offline'])('reports recovery request failures: %s', async reason => {
   h.start.mockRejectedValue(reason);
   render(<DevelopmentView config={{} as AppConfig} onUpdate={vi.fn()} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Hard Plugin reload…' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Fetch and reload' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Restore plugins…' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Restore and reload' }));
   expect((await screen.findByRole('alert')).textContent).toBe('offline');
 });
 
