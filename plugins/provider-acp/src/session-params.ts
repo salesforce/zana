@@ -114,6 +114,7 @@ export type AcpModelSelection =
 
 /** Everything the bridge needs to construct one ACP agent session. */
 export interface AcpSessionParams {
+  dialectId?: string;
   threadId: string;
   cwd: string;
   agent: { command: string; args: string[] };
@@ -407,6 +408,7 @@ export function buildAcpSessionParams(
   }
   return {
     threadId: args.threadId,
+    ...(args.dialectId !== undefined ? { dialectId: args.dialectId } : {}),
     cwd,
     agent: {
       command: profile.agentCommand.command,

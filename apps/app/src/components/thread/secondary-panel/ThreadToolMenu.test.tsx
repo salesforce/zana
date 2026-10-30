@@ -12,6 +12,23 @@ function setup() {
   return { anchor, onClose, rows, view };
 }
 describe('ThreadToolMenu', () => {
+  it('focuses enabled actions, skips disabled actions and renders group separators', () => {
+    const anchor = document.createElement('button'); document.body.append(anchor);
+    const rows = items().map((item, index) => ({ ...item, disabled: index !== 1, separatorBefore: index === 1 }));
+    const onClose = vi.fn();
+    const view = render(<ThreadToolMenu anchor={anchor} label="Actions" items={rows} onClose={onClose} />);
+    const enabled = screen.getByRole('menuitem', { name: 'Maximize' });
+    expect(document.activeElement).toBe(enabled);
+    expect(screen.getAllByRole('separator')).toHaveLength(1);
+    for (const key of ['ArrowUp', 'ArrowDown', 'Home', 'End']) {
+      fireEvent.keyDown(enabled, { key }); expect(document.activeElement).toBe(enabled);
+    }
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Move' }));
+    expect(rows[0].run).not.toHaveBeenCalled(); expect(onClose).not.toHaveBeenCalled();
+    view.rerender(<ThreadToolMenu anchor={anchor} label="Actions" items={rows.map(row => ({ ...row, disabled: true }))} onClose={onClose} />);
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowDown' });
+    expect(onClose).not.toHaveBeenCalled();
+  });
   it('portals inside the viewport and supports keyboard navigation and actions', () => {
     const { rows, onClose } = setup();
     const menu = screen.getByRole('menu', { name: 'Shell' });

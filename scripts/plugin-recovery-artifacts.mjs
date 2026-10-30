@@ -9,7 +9,7 @@ export async function writePluginRecoveryArtifacts(root, output, version, platfo
   const plugins = [];
   await mkdir(output, { recursive: true });
   for (const entry of await readdir(root, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
+    if (!entry.isDirectory() || entry.name === 'migration-runtimes') continue;
     const directory = join(root, entry.name);
     const pkg = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8'));
     const id = pkg.name.replace(/^@[^/]+\//, '').replace(/^zcc-plugin-/, '');

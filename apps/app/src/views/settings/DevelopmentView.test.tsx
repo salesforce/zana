@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { DevelopmentView } from './DevelopmentView.js';
@@ -9,6 +9,20 @@ const idle = { phase: 'idle', total: 0, restored: [], failed: [], skipped: [] };
 beforeEach(() => { vi.clearAllMocks(); h.status.mockResolvedValue(idle); h.start.mockResolvedValue({ ...idle, phase: 'running' }); h.restart.mockResolvedValue({ ok: true }); });
 
 afterEach(cleanup);
+
+it.each([undefined, false, true])('persists plugin safe mode, off by default (%s)', async enabled => {
+  const update = vi.fn();
+  render(<DevelopmentView config={{ pluginSafeMode: enabled } as AppConfig} onUpdate={update} />);
+  await waitFor(() => expect(h.status).toHaveBeenCalledOnce());
+  const toggle = screen.getByRole('switch', { name: 'Plugin safe mode' });
+  expect(toggle.getAttribute('aria-checked')).toBe(String(enabled ?? false));
+  fireEvent.click(toggle);
+  expect(update).toHaveBeenCalledExactlyOnceWith({ pluginSafeMode: !(enabled ?? false) });
+  const recovery = screen.getByRole('region', { name: 'Recovery' });
+  expect(within(recovery).getByRole('switch', { name: 'Plugin safe mode' })).toBe(toggle);
+  expect(within(recovery).getByRole('button', { name: 'Hard Plugin reload…' })).toBeTruthy();
+  expect(screen.queryByRole('heading', { name: 'Plugin recovery' })).toBeNull();
+});
 
 it.each([undefined, false, true])('persists bundled plugin development, off by default (%s)', enabled => {
   const update = vi.fn();

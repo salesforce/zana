@@ -12,12 +12,23 @@ async function chromeText(app: App) {
   return (await sharedChromePage(app)).locator('body').innerText();
 }
 async function chromeClick(app: App, label: string) {
-  await (await sharedChromePage(app)).getByRole('button', { name: label, exact: true }).click();
+  // Main consumes these custom-scheme actions; there is no document navigation to await.
+  await (await sharedChromePage(app)).getByRole('button', { name: label, exact: true }).click({ noWaitAfter: true });
 }
 async function chromeToggle(app: App) {
   const chrome = await sharedChromePage(app);
-  await chrome.getByRole('button', { name: /^Zana switcher:/ }).click();
-  await expect(chrome.getByRole('button', { name: 'Return to this computer', exact: true })).toBeVisible();
+  await chrome.getByRole('button', { name: /^Zana switcher:/ }).click({ noWaitAfter: true });
+  try {
+    await expect(chrome.getByRole('button', { name: 'Return to this computer', exact: true })).toBeVisible();
+  } catch (error) {
+    console.error('Switcher page identities', app.electron.windows().map(page => {
+      const url = page.url();
+      if (!url.startsWith('data:')) return new URL(url).origin;
+      const html = decodeURIComponent(url);
+      return { switcher: html.match(/aria-label="Zana switcher: ([^"]*)"/)?.[1], expanded: html.includes('aria-expanded="true"'), controlled: page === chrome };
+    }));
+    throw error;
+  }
 }
 async function capture(app: App, file: string) {
   // BrowserWindow.capturePage captures the primary document. Save the native
@@ -43,9 +54,16 @@ test('header switching, remote isolation, offline return and Dock return keep lo
     expect(control!.x + control!.width).toBeLessThanOrEqual(help!.x);
     await app.electron.evaluate(({ session }, rows) => {
       const state = { unavailable: false }; (globalThis as any).__switcherFixture = state;
-      session.fromPartition('persist:zcc-shared-account').protocol.handle('https', request => {
+      session.fromPartition('persist:zcc-shared-account').protocol.handle('https', async request => {
         const url = new URL(request.url);
         if (url.hostname === 'zana-ide.com' && url.pathname === '/api/connect/account') return state.unavailable ? new Response('Offline', { status: 503 }) : Response.json({ servers: rows });
+        if (url.hostname === 'zana-ide.com' && url.pathname === '/api/connect/browser/open/') {
+          const { serverId } = await request.json();
+          const selected = rows.find(row => row.id === serverId);
+          if (!selected || !selected.live) return new Response('Unavailable', { status: 403 });
+          return Response.json({ location: `${selected.browserUrl}/_connect/login?intent=1790000000000.${'i'.repeat(43)}` });
+        }
+        if (url.pathname === '/_connect/login') return new Response(null, { status: 303, headers: { location: url.origin + '/' } });
         const row = rows.find(row => row.browserUrl === url.origin);
         if (!row || state.unavailable) return new Response('Offline', { status: 503 });
         return new Response(`<!doctype html><title>${row.name}</title><style>body{font:16px system-ui;background:#f7f9fc;padding:60px 40px}header{position:absolute;top:0;right:10px;height:38px;display:flex;gap:18px;align-items:center;color:#68778a}</style><header><span>?</span><span>☆</span><span>♧</span></header><h1>${row.name}</h1><textarea aria-label="Draft"></textarea><script>const field=document.querySelector('textarea');field.value=localStorage.getItem('draft')||'';field.oninput=()=>localStorage.setItem('draft',field.value)</script>`, { headers: { 'content-type': 'text/html' } });
@@ -53,10 +71,10 @@ test('header switching, remote isolation, offline return and Dock return keep lo
     }, rows);
     await summary.click();
     await captureElectronScreenshot(app.electron, app.window, testInfo.outputPath('local-header-switcher.png'));
-    await app.window.getByRole('button', { name: 'Open another Zana…', exact: true }).click();
-    await app.window.getByRole('region', { name: 'Zana instances' }).getByRole('listitem').filter({ hasText: 'Studio Mac' }).getByRole('button', { name: 'Open Zana' }).click();
+    await app.window.getByRole('button', { name: 'Open another computer…', exact: true }).click();
+    await app.window.getByRole('region', { name: 'Zana instances' }).getByRole('listitem').filter({ hasText: 'Studio Mac' }).getByRole('button', { name: 'Open computer' }).click();
     const studio = await sharedInstancePage(app, rows[0]!.browserUrl); await expect(studio.getByRole('heading', { name: 'Studio Mac' })).toBeVisible();
-    await expect.poll(() => chromeText(app)).toContain('Studio Mac');
+    await expect.poll(() => chromeText(app)).toContain('Connected to Studio Mac');
     expect(await studio.evaluate(() => typeof window.cc)).toBe('undefined');
     await studio.getByRole('textbox', { name: 'Draft' }).fill('Keep my Studio draft');
     // Remote attempts to imitate the action scheme cannot switch local authority.
@@ -64,7 +82,7 @@ test('header switching, remote isolation, offline return and Dock return keep lo
     expect(JSON.parse(readFileSync(join(home, '.zcc/shared-target.json'), 'utf8')).kind).toBe('connect');
     await chromeToggle(app);
     await capture(app, testInfo.outputPath('remote-document-only.png'));
-    await chromeClick(app, 'Open another Zana…');
+    await chromeClick(app, 'Open another computer…');
     await expect.poll(() => chromeText(app)).toContain('Travel Mac');
     await chromeClick(app, 'Travel Mac');
     const travel = await sharedInstancePage(app, rows[1]!.browserUrl); await expect(travel.getByRole('heading', { name: 'Travel Mac' })).toBeVisible();
@@ -83,10 +101,11 @@ test('header switching, remote isolation, offline return and Dock return keep lo
       await expect(summary).toBeVisible();
       expect(await app.electron.evaluate(({ app }) => app.dock!.getMenu()!.items.length)).toBe(0);
       await app.window.evaluate(id => window.cc.sharedClient.select(id), rows[0]!.id); await sharedInstancePage(app, rows[0]!.browserUrl);
+      await expect.poll(() => chromeText(app)).toContain('Connected to Studio Mac');
     }
     // A fresh unavailable/expired state still presents desktop-owned return.
     await app.electron.evaluate(() => { (globalThis as any).__switcherFixture.unavailable = true; });
-    await chromeToggle(app); await chromeClick(app, 'Open another Zana…');
+    await chromeToggle(app); await chromeClick(app, 'Open another computer…');
     await expect.poll(() => chromeText(app)).toContain('Check your connection');
     await chromeClick(app, 'Return to this computer'); await expect(summary).toBeVisible();
     expect(await app.window.evaluate(() => window.cc.projects.list())).toEqual(original);

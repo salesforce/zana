@@ -32,7 +32,11 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
-test.use({ e2e: true, initialConfig: { teamJobLaunchEnabled: true, composerShowAutonomousTeam: true, autoRenameTabs: false } });
+test.use({
+  e2e: true,
+  launchEnv: { ANTHROPIC_API_KEY: 'job-team-launch-ui-e2e-key' },
+  initialConfig: { teamJobLaunchEnabled: true, composerShowAutonomousTeam: true, autoRenameTabs: false }
+});
 
 test.setTimeout(120_000);
 

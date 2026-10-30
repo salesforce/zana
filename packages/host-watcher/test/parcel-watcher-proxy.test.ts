@@ -1,9 +1,12 @@
+import { RootSubscription } from "../src/root-subscription.js";
+import { setParcelWatcherBackend, disposeParcelWatcherBackend } from "../src/parcel-watcher-backend.js";
+import * as pathExistsModule from "../src/path-exists.js";
 import { describe, expect, it, vi } from "vitest";
 import type {
   ChildToParentMessage,
   ParentToChildMessage,
 } from "../src/parcel-subprocess/messages.js";
-import { createParcelChildHandler } from "../src/parcel-subprocess/parcel-child-handler.js";
+import { createParcelChildHandler, disposeThenExit } from "../src/parcel-subprocess/parcel-child-handler.js";
 import {
   createParcelWatcherProxy,
   type ChildChannel,
@@ -13,7 +16,7 @@ import type {
   ParcelWatcherError,
   ParcelWatcherEventBatch,
 } from "../src/parcel-watcher-backend.js";
-import { RESCAN_REQUIRED_MESSAGE } from "../src/watch-recovery.js";
+import { EVENTS_DROPPED_MESSAGE, RESCAN_REQUIRED_MESSAGE } from "../src/watch-recovery.js";
 
 async function flush(times = 5): Promise<void> {
   for (let i = 0; i < times; i += 1) {
@@ -240,6 +243,39 @@ async function runRecoveryCountSample(
 }
 
 describe("createParcelWatcherProxy", () => {
+  it("reports oversized batches without recycling or resubscribing, and still delivers later changes", async () => {
+    vi.spyOn(pathExistsModule, "pathExists").mockResolvedValue(true);
+    const { proxy, children, current } = createHarness();
+    setParcelWatcherBackend(proxy);
+    const delivered: number[] = [];
+    const dropped = vi.fn();
+    const subscription = new RootSubscription({ rootPath: "/root", retryDelayMs: 250, maxRetryDelayMs: 30_000,
+      onEvents: events => { delivered.push(events.length); }, onDroppedEvents: dropped, onWatchError: vi.fn() });
+    const batch = (size: number): ParcelWatcherEventBatch => Array.from({ length: size }, (_, index) => ({ path: `/root/${index}`, type: "update" }));
+    try {
+      subscription.start();
+      await flush(20);
+      current().parcel.emit("/root", batch(10_000));
+      current().parcel.emit("/root", batch(10_001));
+      current().parcel.emit("/root", batch(1));
+      await flush(20);
+      expect(delivered).toEqual([10_000, 1]);
+      expect(dropped).toHaveBeenCalledOnce();
+      expect(children).toHaveLength(1);
+      expect(current().parcel.subscriptions).toHaveLength(1);
+    } finally { await subscription.dispose(); disposeParcelWatcherBackend(); vi.restoreAllMocks(); }
+  });
+
+  it("bounds synthetic rescan batches after a child restart", async () => {
+    const { proxy, current } = createHarness({ listEntries: async () => Array(10_001).fill("entry") });
+    const callback = vi.fn();
+    await proxy.subscribe("/root", callback);
+    current().exit();
+    await flush(20);
+    expect(callback).toHaveBeenCalledWith(expect.objectContaining({ message: EVENTS_DROPPED_MESSAGE }), []);
+    proxy.dispose();
+  });
+
   it("delivers parcel events from the child to the subscriber", async () => {
     const { proxy, current } = createHarness();
     const received: ParcelWatcherEventBatch[] = [];
@@ -597,3 +633,22 @@ if (process.env.BB_WATCHER_RECOVERY_BENCHMARK === "1") {
     }, 30_000);
   });
 }
+
+
+describe("disposeThenExit", () => {
+  it.each(["resolve", "reject", "hang"])("exits once when disposal %s", async mode => {
+    vi.useFakeTimers();
+    try {
+      const exit = vi.fn();
+      let settle!: () => void;
+      const dispose = () => mode === "resolve" ? Promise.resolve() : mode === "reject" ? Promise.reject(new Error("unsubscribe failed")) : new Promise<void>(resolve => { settle = resolve; });
+      disposeThenExit({ deadlineMs: 2_000, dispose, exit });
+      await flush();
+      expect(exit).toHaveBeenCalledTimes(mode === "hang" ? 0 : 1);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(exit).toHaveBeenCalledOnce();
+      if (mode === "hang") { settle(); await flush(); expect(exit).toHaveBeenCalledOnce(); }
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+});

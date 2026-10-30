@@ -82,6 +82,33 @@ describe('buildSessionDigestOpenCode', () => {
     expect(digest).toContain('Assistant ran: apply_patch, read, todowrite');
     expect(digest).toContain('Assistant: Fixed the bug and added a test.');
   });
+
+  const textRow = (role: 'user' | 'assistant', text: string) => ({
+    mdata: JSON.stringify({ role }),
+    pdata: JSON.stringify({ type: 'text', text })
+  });
+
+  it('keeps a 3,000-character final message whole but clamps an earlier one to 1,500', () => {
+    const digest = buildSessionDigestOpenCode([
+      textRow('user', 'go'),
+      textRow('assistant', 'E'.repeat(3_000)),
+      textRow('assistant', 'F'.repeat(3_000))
+    ]);
+    expect(digest).toContain(`Assistant: ${'E'.repeat(1_500)}…`);
+    expect(digest).not.toContain('E'.repeat(1_501));
+    expect(digest).toContain(`Assistant: ${'F'.repeat(3_000)}`);
+    expect(digest).not.toContain('F'.repeat(3_000) + '…');
+  });
+
+  it('honours an explicit finalBlockChars on the last assistant prose block only', () => {
+    const digest = buildSessionDigestOpenCode(
+      [textRow('user', 'U'.repeat(40)), textRow('assistant', 'E'.repeat(40)), textRow('assistant', 'F'.repeat(40))],
+      { perBlockChars: 10, finalBlockChars: 25 }
+    );
+    expect(digest).toContain(`User: ${'U'.repeat(10)}…`);
+    expect(digest).toContain(`Assistant: ${'E'.repeat(10)}…`);
+    expect(digest).toContain(`Assistant: ${'F'.repeat(25)}…`);
+  });
 });
 
 describe('buildSessionStatsOpenCode', () => {

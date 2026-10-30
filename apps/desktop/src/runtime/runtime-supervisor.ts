@@ -150,6 +150,7 @@ export interface RuntimeSupervisor {
   disablePlugin(id: string): Promise<unknown>;
   removePlugin(id: string): Promise<unknown>;
   reloadPlugin(id: string): Promise<unknown>;
+  repairPlugin(id: string, path?: string): Promise<unknown>;
   pluginLogs(id: string, n?: number): Promise<unknown>;
   searchPlugins(query: string): Promise<unknown>;
   outdatedPlugins(): Promise<unknown>;
@@ -419,6 +420,7 @@ export async function startRuntimeSupervisor(options: StartRuntimeSupervisorOpti
     disablePlugin: async () => { throw new Error('plugin host is unavailable'); },
     removePlugin: async () => { throw new Error('plugin host is unavailable'); },
     reloadPlugin: async () => { throw new Error('plugin host is unavailable'); },
+    repairPlugin: async () => { throw new Error('plugin host is unavailable'); },
     pluginLogs: async () => [],
     searchPlugins: async () => [],
     outdatedPlugins: async () => [],
@@ -492,6 +494,7 @@ interface UtilityRuntime {
   request(operation: 'plugins-disable', pluginId: string): Promise<unknown>;
   request(operation: 'plugins-remove', pluginId: string): Promise<unknown>;
   request(operation: 'plugins-reload', pluginId: string): Promise<unknown>;
+  request(operation: 'plugins-repair', pluginId: string, path?: string): Promise<unknown>;
   request(operation: 'plugins-logs', pluginId: string, n?: number): Promise<unknown>;
   request(operation: 'plugins-search', query: string): Promise<unknown>;
   request(operation: 'plugins-outdated'): Promise<unknown>;
@@ -860,6 +863,7 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     disablePlugin: (id) => server.request('plugins-disable', id),
     removePlugin: (id) => server.request('plugins-remove', id),
     reloadPlugin: (id) => server.request('plugins-reload', id),
+    repairPlugin: (id, path) => server.request('plugins-repair', id, path),
     pluginLogs: (id, n) => server.request('plugins-logs', id, n),
     searchPlugins: (query) => server.request('plugins-search', query),
     outdatedPlugins: () => server.request('plugins-outdated'),
@@ -950,13 +954,13 @@ export function createUtilityRuntime(runtime: { child: UtilityChild; url: string
   return {
     ...runtime,
     request(
-      operation: 'cli-callback-grant' | 'cli-discovery' | 'library-agent' | 'library-document' | 'project-metadata' | 'project-catalogs' | 'project-history' | 'project-feed' | 'product-event' | 'app-version' | 'thread-live' | 'thread-queue-turn' | 'squad-runtime-preflight' | 'squad-member-create' | 'squad-member-activate' | 'squad-member-deliver' | 'squad-member-delivery-complete' | 'squad-member-status' | 'squad-member-stop' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'projects-touch' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugin-packs-list' | 'plugin-packs-installed' | 'plugin-packs-plan' | 'plugin-packs-install' | 'plugin-packs-forget' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-update-all' | 'plugins-call-rpc' | 'plugins-tool-policy' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
-        ...args: [PluginPackIdentity] | [PluginPackInstallRequest] | [number] | [CliCallbackControl] | [CliDiscoveryRequest] | [LibraryAgentRequest] | [LibraryDocumentRequest] | [ProjectMetadataRequest] | [ProjectCatalogRequest] | [NativeToolPolicyRequest] | [SquadMemberRuntimeRequest] | [SquadMemberDeliveryRequest] | [SquadMemberDeliveryCompletion] | [SquadMemberControlRequest] | [SquadRuntimePreflightRequest] | [string, unknown[]] | [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, string, string] | [string, Record<string, string | number | boolean | null>] | [string, string[]] | [string, string[], { projectId?: string; threadId?: string; cwd?: string }?] | []
+      operation: 'cli-callback-grant' | 'cli-discovery' | 'library-agent' | 'library-document' | 'project-metadata' | 'project-catalogs' | 'project-history' | 'project-feed' | 'product-event' | 'app-version' | 'thread-live' | 'thread-queue-turn' | 'squad-runtime-preflight' | 'squad-member-create' | 'squad-member-activate' | 'squad-member-deliver' | 'squad-member-delivery-complete' | 'squad-member-status' | 'squad-member-stop' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'projects-touch' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugin-packs-list' | 'plugin-packs-installed' | 'plugin-packs-plan' | 'plugin-packs-install' | 'plugin-packs-forget' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-repair' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-update-all' | 'plugins-call-rpc' | 'plugins-tool-policy' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
+        ...args: [PluginPackIdentity] | [PluginPackInstallRequest] | [number] | [CliCallbackControl] | [CliDiscoveryRequest] | [LibraryAgentRequest] | [LibraryDocumentRequest] | [ProjectMetadataRequest] | [ProjectCatalogRequest] | [NativeToolPolicyRequest] | [SquadMemberRuntimeRequest] | [SquadMemberDeliveryRequest] | [SquadMemberDeliveryCompletion] | [SquadMemberControlRequest] | [SquadRuntimePreflightRequest] | [string, unknown[]] | [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, string?] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, string, string] | [string, Record<string, string | number | boolean | null>] | [string, string[]] | [string, string[], { projectId?: string; threadId?: string; cwd?: string }?] | []
     ) {
       if (stopped || stopping) return Promise.reject(new Error('Background service stopped. Restart Zana to reconnect.'));
       const id = randomUUID();
       // Plugin CLI runs and RPCs may wrap slow external CLIs (e.g. `sf agent preview start`, up to 120s), so they get the long budget.
-      const timeoutMs = operation === 'plugin-packs-install' || operation === 'plugins-cli-run' || operation === 'plugins-call-rpc' || operation === 'plugins-install' || operation === 'plugins-update' || operation === 'plugins-update-all' || operation === 'plugins-outdated' ? 300_000 : 20_000;
+      const timeoutMs = operation === 'plugins-repair' || operation === 'plugin-packs-install' || operation === 'plugins-cli-run' || operation === 'plugins-call-rpc' || operation === 'plugins-install' || operation === 'plugins-update' || operation === 'plugins-update-all' || operation === 'plugins-outdated' ? 300_000 : 20_000;
       return new Promise<unknown>((resolveResult, rejectResult) => {
         const timer = setTimeout(() => {
           pending.delete(id);
@@ -1003,6 +1007,7 @@ export function createUtilityRuntime(runtime: { child: UtilityChild; url: string
             projectId: args[0] as string,
             patch: args[1] as RuntimeProjectSettings
           } : {}),
+          ...(operation === 'plugins-repair' ? { pluginId: args[0] as string, path: args[1] as string | undefined } : {}),
           ...(operation === 'plugins-install' ? { source: args[0] as string } : {}),
           ...(operation === 'plugin-packs-plan' || operation === 'plugin-packs-forget' ? { identity: args[0] as PluginPackIdentity } : {}),
           ...(operation === 'plugin-packs-install' ? { request: args[0] as PluginPackInstallRequest } : {}),

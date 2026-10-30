@@ -1,5 +1,5 @@
-import type { PluginManifest } from '@zana-ai/zcc-domain';
-import { BUNDLED_PLUGINS, bundledPluginByName } from './builtin-registry.js';
+import { parsePluginSource, type PluginManifest } from '@zana-ai/zcc-domain';
+import { BUNDLED_PLUGINS, EXTERNALIZED_PLUGINS, bundledPluginByName } from './builtin-registry.js';
 import type { InstalledPluginRow, PluginSourceKind } from './plugin-store.js';
 
 export function bundledPluginById(id: string) {
@@ -12,6 +12,15 @@ export function assertBundledPluginInstall(args: {
   source: string;
   development: boolean;
 }): void {
+  const external = EXTERNALIZED_PLUGINS.find(plugin => plugin.pluginId === args.id);
+  if (external) {
+    if (args.sourceKind === 'path' || (args.sourceKind === 'builtin' && args.source === `builtin:${external.name}`)) return;
+    if (args.sourceKind === 'git') {
+      const parsed = parsePluginSource(args.source);
+      if (parsed.kind === 'git' && parsed.url.replace(/\.git$/, '') === external.url.replace(/\.git$/, '')) return;
+    }
+    throw new Error(`Plugin id "${args.id}" is reserved for its independent repository: ${external.url}`);
+  }
   if (args.sourceKind === 'builtin') {
     const definition = bundledPluginByName(args.source.slice('builtin:'.length));
     if (!definition || definition.pluginId !== args.id) {

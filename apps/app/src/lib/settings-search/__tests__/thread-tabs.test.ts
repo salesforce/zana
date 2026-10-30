@@ -18,3 +18,8 @@ it.each([undefined, true, false])('finds Dockable thread tools with its effectiv
   expect(searchSettings('dock terminal bottom', snapshot, { entries })[0]!.entry.id).toBe(entry.id);
   expect(entry.anchor).toBe('experimental-features');
 });
+
+it('does not offer the standard inset workspace as an experimental setting', () => {
+  expect(entries.some(row => row.id === 'experimental.inset-workspace')).toBe(false);
+  expect(searchSettings('inset workspace', { config: {} as AppConfig }, { entries })).toEqual([]);
+});

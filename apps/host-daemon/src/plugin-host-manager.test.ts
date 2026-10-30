@@ -453,6 +453,35 @@ describe("PluginHostManager", () => {
       ).resolves.toMatchObject({ output: { before: "third", after: "third" } });
     });
 
+    it("abandons a handler that ignores cancellation without killing other calls or pinning its environment", async () => {
+      const { manager, command, cancel, waitForStart, onWorkerExit } =
+        await fixture();
+      const initial = await manager.call(callCommand());
+      const running = manager.call(command("a", "first", 6500));
+      await waitForStart("a");
+      const hung = manager
+        .call({
+          ...command("hung", "first"),
+          input: { id: "hung", hang: true },
+        })
+        .catch((error: unknown) => error);
+      await waitForStart("hung");
+      cancel("hung");
+      await expect(hung).resolves.toMatchObject({ name: "AbortError" });
+      await expect(running).resolves.toMatchObject({
+        output: { before: "first", after: "first" },
+      });
+      await expect(
+        manager.call(command("rotated", "rotated")),
+      ).resolves.toMatchObject({
+        output: { before: "rotated", after: "rotated" },
+      });
+      expect(onWorkerExit).not.toHaveBeenCalled();
+      expect((await manager.call(callCommand())).output).toEqual(
+        initial.output,
+      );
+    });
+
     it("still force-kills a started handler that ignores cancellation", async () => {
       const { manager, command, cancel, waitForStart, onWorkerExit } =
         await fixture();
@@ -931,6 +960,36 @@ describe("PluginHostManager", () => {
       readFile(join(paths.dataDir, "disposed"), "utf8"),
     ).resolves.toBe("yes");
     await expect(stat(paths.tempDir)).rejects.toThrow();
+  });
+
+  it.each(["lease", "watch"] as const)("preserves a retained %s when a sole hung call is abandoned", async (resource) => {
+    const onSignal = vi.fn();
+    const onWorkerExit = vi.fn();
+    let watcher: WatchPathRootArgs | undefined;
+    const manager = await createManager({
+      onSignal, onWorkerExit,
+      hostWatcher: { watchPathRoot(args) { watcher = args; return async () => {}; } },
+    });
+    const initial = await manager.call(callCommand());
+    if (resource === "lease") {
+      await manager.call(callCommand({ method: "retain", input: { enabled: true } }));
+    } else {
+      const watching = manager.call(callCommand({ method: "watch", input: { rootPath: "/tmp/workspace" } }));
+      await vi.waitFor(() => expect(watcher).toBeDefined(), { timeout: 5_000 });
+      watcher!.onReady();
+      await watching;
+    }
+    const hung = callCommand({ method: "environment", input: { id: "hung-resource", hang: true } });
+    const result = manager.call(hung).catch((error: unknown) => error);
+    await vi.waitFor(() => expect(onSignal).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ id: "hung-resource" }) })), { timeout: 5_000 });
+    manager.cancel({ type: "plugin.host.cancel", pluginId: hung.pluginId, generation: hung.generation, callId: hung.callId });
+    await expect(result).resolves.toMatchObject({ name: "AbortError" });
+    expect(onWorkerExit).not.toHaveBeenCalled();
+    expect((await manager.call(callCommand())).output).toEqual(initial.output);
+    if (resource === "watch") {
+      watcher!.onChange([{ path: "/tmp/workspace/survived", type: "update" }]);
+      await vi.waitFor(() => expect(onSignal).toHaveBeenCalledWith(expect.objectContaining({ payload: { kind: "changed", changes: [{ path: "/tmp/workspace/survived", type: "update" }] } })));
+    }
   });
 
   it("backpressures native watch delivery and disposes watches with the worker", async () => {

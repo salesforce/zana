@@ -1,3 +1,4 @@
+import { PluginSourceRecovery } from './PluginSourceRecovery.js';
 import { product } from '../../lib/product-client.js';
 import { revealElement } from '@/lib/settings-search/reveal';
 import { PLUGIN_SETTING_PARAM } from '@/lib/settings-search/providers/plugins';
@@ -37,7 +38,8 @@ import type { AppModule } from '@zana-ai/zcc-extension-sdk/renderer';
 import type { ExtensionEntry, MarketplaceEntry, PluginAppEntry, PluginSettingsSnapshot } from '@zana-ai/zcc-domain/product';
 import { useMergedModules } from '@/modules';
 import { getHost } from '@/modules/ModulePanelHost';
-import { resolveIcon } from '@/lib/resolveIcon';
+import { PluginBrandIcon } from './PluginBrandIcon.js';
+import { installedIconUrl } from './installed-collection.js';
 import { appNavigate } from '@/lib/app-navigate';
 import { getPluginDetailRoutePath } from '@/lib/route-paths';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -63,7 +65,6 @@ import { summarizePluginHealthDetail } from './plugin-health.js';
 import { useUi } from '@/store';
 import {
   buildHubRows,
-  displayIcon,
   hostSettingsPanelOf,
   moduleHostCallReady,
   shouldMountHostSettings,
@@ -894,7 +895,7 @@ function PermissionsCard({ entry }: { entry: ExtensionEntry }) {
 function AboutCard({ row, installation, onConfigure, onManage }: { row: HubRow; installation: boolean; onConfigure: () => void; onManage: () => void }) {
   const { module, entry, plugin } = row;
   const healthCopy = summarizePluginHealthDetail(plugin?.statusDetail);
-  const Icon = resolveIcon(displayIcon(module.icon));
+  const iconUrl = installedIconUrl(row);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [aboutMenuOpen, setAboutMenuOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -1039,7 +1040,7 @@ function AboutCard({ row, installation, onConfigure, onManage }: { row: HubRow; 
     }}>
       <div className="ext-hub-about-head">
         <span className="ext-hub-about-icon-wrap">
-          <Icon size={28} className="ext-hub-about-icon" />
+          <PluginBrandIcon src={iconUrl} icon={module.icon} size={28} />
         </span>
         <div className="ext-hub-about-titles">
           <h3>
@@ -1239,12 +1240,12 @@ function AboutCard({ row, installation, onConfigure, onManage }: { row: HubRow; 
       {/* Management footer — safe utility actions on the left, the destructive
           action pushed to the far right and separated by a hairline so it can't
           be hit by muscle memory. Confirm/Cancel replace Uninstall in place. */}
-      {plugin && (plugin.status === 'degraded' || plugin.status === 'needs-configuration' || plugin.statusDetail) ? (
+      {plugin && (plugin.status === 'degraded' || plugin.status === 'needs-configuration' || plugin.statusDetail || plugin.sourceRecovery) ? (
         <div className="ext-actions-group ext-plugin-health" data-testid="plugin-health">
           <div className="ext-actions-group-head">
             <span className="ext-actions-group-title">Health</span>
             <span className="ext-plugin-health-summary">
-              {healthCopy.summary ||
+              {plugin.sourceRecovery ? 'Plugin source folder is unavailable' : healthCopy.summary ||
                 (plugin.status === 'needs-configuration'
                   ? 'This plugin needs configuration before it can run fully.'
                   : 'Reload the plugin process without restarting the app.')}
@@ -1253,7 +1254,7 @@ function AboutCard({ row, installation, onConfigure, onManage }: { row: HubRow; 
               <details><summary>Technical details</summary><pre className="ext-plugin-health-detail">{healthCopy.technical}</pre></details>
             ) : null}
           </div>
-          <div className="ext-actions">
+          {plugin.sourceRecovery ? <PluginSourceRecovery plugin={plugin} /> : <div className="ext-actions">
             <button type="button" className="settings-btn" onClick={() => void reloadPlugin()} disabled={pluginReloading}>
               <RefreshCw size={14} className={pluginReloading ? 'ext-spin' : undefined} />
               {pluginReloading ? 'Reloading…' : 'Reload'}
@@ -1263,7 +1264,7 @@ function AboutCard({ row, installation, onConfigure, onManage }: { row: HubRow; 
                 Open configure
               </button>
             ) : null}
-          </div>
+          </div>}
           {pluginReloadError ? <p className="modal-error">{pluginReloadError}</p> : null}
         </div>
       ) : plugin ? (

@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import './installed-plugin-collection.css';
-import { ArrowDownAZ, ArrowUpAZ, AlertTriangle, CheckCircle2, ChevronRight, Search } from 'lucide-react';
+import { ArrowDownAZ, ArrowUpAZ, CheckCircle2, ChevronRight, Search } from 'lucide-react';
+import { PluginAttention } from './PluginAttention.js';
 import { InstalledPluginCard } from './InstalledPluginCard.js';
 import {
   filterInstalledRows, rowEnabled, type HubRow
@@ -38,7 +39,6 @@ export function InstalledPluginCollection({ rows, onOpen, onBrowse, headerAction
   const selectedSource = sources.includes(source) ? source : 'all';
   const capabilities = [...new Set(rows.flatMap(installedCapabilities))].sort();
   const selectedCapability = capabilities.includes(capability) ? capability : 'all';
-  const attentionCount = rows.filter((row) => installedRuntimeStatus(row) !== null).length;
   const visible = useMemo(() => filterCollectionRows(
     filterInstalledRows(rows, query, 'all', sortDir), status, updatesOnly
   ).filter((row) => (selectedSource === 'all' || installedSource(row) === selectedSource) &&
@@ -105,13 +105,9 @@ export function InstalledPluginCollection({ rows, onOpen, onBrowse, headerAction
       <div className="ext-plugin-workbench">
       <div className="ext-installed-scroller ext-plugin-collection-main">
         {!updatesOnly ? packs : null}
-        {!updatesOnly && attentionCount > 0 ? <div className="ext-plugin-attention">
-          <AlertTriangle size={19} aria-hidden="true" /><div><strong>{attentionCount} {attentionCount === 1 ? 'plugin needs' : 'plugins need'} attention</strong>
-          <p>Review runtime issues and configuration requests.</p></div>
-          <button type="button" className="settings-btn" aria-pressed={issuesOnly} onClick={() => {
+        <div hidden={updatesOnly}><PluginAttention rows={rows} issuesOnly={issuesOnly} onReview={() => {
             setIssuesOnly(!issuesOnly); setQuery(''); setStatus('all'); setSource('all'); setCapability('all');
-          }}>{issuesOnly ? 'Show all' : `Review ${attentionCount}`}</button>
-        </div> : null}
+          }} /></div>
         {updatesOnly && updateCount === 0 ? <div className="ext-plugin-current" role="status"><CheckCircle2 size={30} />
           <h4>No pending updates</h4><p>Check for updates from the More menu to refresh your sources.</p></div> : null}
         {visible.length === 0 && !(updatesOnly && updateCount === 0) ? (
@@ -122,12 +118,6 @@ export function InstalledPluginCollection({ rows, onOpen, onBrowse, headerAction
               : 'No plugins match these filters.'}
           </p>
         ) : <>
-          {tools.length > 0 ? <section aria-label={updatesOnly ? 'Plugin updates' : 'Tools & integrations'}>
-            <div className="ext-installed-section-heading"><h4>{updatesOnly ? 'Ready for a refresh' : 'Tools & integrations'}</h4>
-              <span className="ext-installed-section-count">{tools.length}</span></div>
-            <div className="ext-installed-table-heading" aria-hidden="true"><span>Plugin</span><span>What it adds</span><span>Installed from</span><span>Status</span><span /><span /></div>
-            <div className="ext-installed-panel" role="list" aria-label="Installed plugins">{tools.map(renderCard)}</div>
-          </section> : null}
           {agents.length > 0 ? <section className="ext-installed-agents" aria-label="Coding agents">
             <button type="button" className="ext-installed-group-toggle" aria-expanded={showAgents} aria-controls={agentsId}
               onClick={() => setAgentsExpanded(!showAgents)}>
@@ -139,6 +129,12 @@ export function InstalledPluginCollection({ rows, onOpen, onBrowse, headerAction
             <div id={agentsId} hidden={!showAgents}>
               <div className="ext-installed-panel" role="list" aria-label="Installed coding agents">{agents.map(renderCard)}</div>
             </div>
+          </section> : null}
+          {tools.length > 0 ? <section aria-label={updatesOnly ? 'Plugin updates' : 'Tools & integrations'}>
+            <div className="ext-installed-section-heading"><h4>{updatesOnly ? 'Ready for a refresh' : 'Tools & integrations'}</h4>
+              <span className="ext-installed-section-count">{tools.length}</span></div>
+            <div className="ext-installed-table-heading" aria-hidden="true"><span>Plugin</span><span>What it adds</span><span>Installed from</span><span>Status</span><span /><span /></div>
+            <div className="ext-installed-panel" role="list" aria-label="Installed plugins">{tools.map(renderCard)}</div>
           </section> : null}
         </>}
         {updatesOnly ? <section className="ext-plugin-update-policies" aria-label="Update delivery">

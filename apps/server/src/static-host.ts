@@ -50,7 +50,7 @@ export interface StartStaticHostOptions {
    * `/plugins/:id/assets/*`, the host asks this callback for the plugin root
    * and serves a contained file from that tree (never the host-daemon).
    */
-  pluginAssetRoot?: (pluginId: string) => string | null;
+  pluginAssetRoot?: (pluginId: string, assetPath: string) => string | null;
   /**
    * Loopback product API + `/ws` (renderer) and `/internal/hosts` (daemon enroll).
    * Origin-guarded; host-daemon tokens never reach the renderer.

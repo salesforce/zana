@@ -12,6 +12,12 @@
 .remote-access-computer > div { flex: 1; min-width: 0; }
 .remote-access-computer strong { display: block; font-size: 13px; overflow-wrap: anywhere; }
 .remote-access-computer small { display: block; color: var(--text-muted); font-size: 11px; margin-top: 2px; }
+.remote-access-progress { display: flex; flex-wrap: wrap; gap: 12px 24px; list-style: none; margin: 0; padding: 16px 22px; border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: 11px; }
+.remote-access-progress li { display: flex; align-items: center; gap: 7px; }
+.remote-access-progress li > span { display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--border); border-radius: 50%; font-size: 10px; }
+.remote-access-progress li[aria-current='step'] { color: var(--accent-blue); font-weight: 600; }
+.remote-access-progress li.complete { color: var(--success, #24784c); }
+.remote-access-computer small { overflow-wrap: anywhere; }
 .remote-access-badge { display: inline-flex; align-items: center; gap: 6px; border-radius: 20px; padding: 4px 9px; font-size: 10px; font-weight: 600; color: var(--text-muted); background: var(--bg-elevated); white-space: nowrap; }
 .remote-access-badge > span { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .remote-access-badge.connected { color: var(--success, #24784c); background: color-mix(in srgb, var(--success, #24784c) 10%, transparent); }

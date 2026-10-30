@@ -2,6 +2,7 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -94,25 +95,29 @@ export function SplitThreadArea({ routeContent }: { routeContent: PaneContent })
   });
   const storedScopeKey = useSplitWorkspace((s) => s.scopeKey);
   const layoutFromStore = useSplitWorkspace((s) => s.layout);
+  const savedScopeSlot = useSplitWorkspace((s) => s.scopes[scopeKey]);
   const setLayout = useSplitWorkspace((s) => s.setLayout);
   const updateLayout = useSplitWorkspace((s) => s.updateLayout);
   const dimsInactiveSplits = useSplitWorkspace((s) => s.dimInactiveSplits);
-  const maximizedPaneId = useSplitWorkspace((s) => s.maximizedPaneId);
+  const maximizedFromStore = useSplitWorkspace((s) => s.maximizedPaneId);
   const setMaximizedPaneIdAtom = useSplitWorkspace((s) => s.setMaximizedPaneId);
   const routeKey = paneContentRoute(routeContent);
   const cancelDrag = useRef<(() => void) | null>(null);
   useEffect(() => () => cancelDrag.current?.(), [scopeKey, isCompact]);
 
-  // Activate before reconcile so a project route never writes into the global tree.
-  if (storedScopeKey !== scopeKey) {
-    useSplitWorkspace.getState().activateScope(scopeKey);
-  }
-  const layout =
-    storedScopeKey === scopeKey ? layoutFromStore : useSplitWorkspace.getState().layout;
+  // Render must not switch the shared scope. A route render React discards
+  // would flip it under the tree on screen, which flips it back, and the
+  // navigation never lands (#532). Until the scope is active, show its saved
+  // slot; activate it before any passive effect writes the layout. This
+  // assumes one mounted instance per window (the store has one active scope),
+  // which `split-thread-area-single-mount.guard.test.ts` holds.
+  const scopeActive = storedScopeKey === scopeKey;
+  const layout = scopeActive ? layoutFromStore : savedScopeSlot?.layout ?? null;
+  const maximizedPaneId = scopeActive ? maximizedFromStore : savedScopeSlot?.maximizedPaneId ?? null;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     useSplitWorkspace.getState().activateScope(scopeKey);
-  }, [scopeKey]);
+  }, [scopeKey, storedScopeKey]);
 
   useEffect(() => {
     updateLayout((previous) =>
@@ -143,7 +148,12 @@ export function SplitThreadArea({ routeContent }: { routeContent: PaneContent })
     hosts.set(pane.paneId, host);
     paneKeys.set(pane.paneId, key);
   }
-  hostCache.current = new Map(panes.map((pane) => [paneKeys.get(pane.paneId)!, hosts.get(pane.paneId)!]));
+  const nextHostCache = new Map(panes.map((pane) => [paneKeys.get(pane.paneId)!, hosts.get(pane.paneId)!]));
+  // Keep the cache in step with what is on screen: a discarded render must not
+  // drop the hosts the mounted panes live in, or they remount.
+  useLayoutEffect(() => {
+    hostCache.current = nextHostCache;
+  });
   const maximizedPane =
     maximizedPaneId !== null ? findPane(effectiveLayout.root, maximizedPaneId) : null;
   const maximizedPaneMissing = maximizedPaneId !== null && maximizedPane === null;

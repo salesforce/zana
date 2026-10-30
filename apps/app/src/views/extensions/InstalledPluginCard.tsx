@@ -2,10 +2,10 @@ import { useState } from 'react';
 import { ArrowUpCircle, ChevronRight } from 'lucide-react';
 import { product } from '@/lib/product-client';
 import { hasDesktopBridge } from '@/lib/app-surface';
-import { resolveIcon } from '@/lib/resolveIcon';
+import { PluginBrandIcon } from './PluginBrandIcon.js';
 import { useUi } from '@/store';
 import { reconcilePluginApps } from '@/plugins/plugin-app-loader';
-import { displayIcon, rowDescription, rowEnabled, type HubRow } from './installed-plugins.js';
+import { rowDescription, rowEnabled, type HubRow } from './installed-plugins.js';
 import { installedIconTone, installedIconUrl } from './installed-collection.js';
 import { installedNotRunning, installedRuntimeStatus } from './installed-row-status.js';
 import { installedCapabilities, installedSource } from './plugin-presentation.js';
@@ -28,9 +28,7 @@ export function InstalledPluginCard({ row, onOpen, selected = false }: { row: Hu
     });
   const description = rowDescription(row);
   const running = enabled && (row.plugin ? row.plugin.status === 'running' : row.entry?.loaded === true);
-  const Icon = resolveIcon(displayIcon(row.module.icon));
   const iconUrl = installedIconUrl(row);
-  const [failedIcon, setFailedIcon] = useState<string | null>(null);
   const runtimeToneClass =
     runtime?.tone === 'error'
       ? 'ext-installed-status--error'
@@ -86,9 +84,7 @@ export function InstalledPluginCard({ row, onOpen, selected = false }: { row: Hu
         aria-label={`${row.module.title} plugin details`}>
 
           <span className={`ext-installed-icon ext-installed-icon--${installedIconTone(row.module.id)}${runtime ? ` is-${runtime.tone}` : ''}`}>
-            {iconUrl && failedIcon !== iconUrl ? (
-              <img src={iconUrl} alt="" onError={() => setFailedIcon(iconUrl)} />
-            ) : <Icon size={20} />}
+            <PluginBrandIcon src={iconUrl} icon={row.module.icon} />
             {runtime ? <span className="ext-installed-icon-badge" aria-hidden="true" /> : null}
           </span>
           <span className="ext-installed-row-copy"><span className="ext-installed-row-title">{row.module.title}</span>

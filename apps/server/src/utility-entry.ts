@@ -177,7 +177,7 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
           // A browser never needs filesystem paths to render this landing view.
           projects: toBrowserProjectSummaries(projects?.list() ?? [])
         }),
-        pluginAssetRoot: (pluginId) => pluginAssetRootFromService(plugins ?? undefined, pluginId),
+        pluginAssetRoot: (pluginId, assetPath) => pluginAssetRootFromService(plugins ?? undefined, pluginId, assetPath),
         product,
         diagnostics
       });
@@ -507,6 +507,11 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
       }
       await plugins.remove(message.pluginId);
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: { ok: true } });
+    }
+    if (message.operation === 'plugins-repair') {
+      if (!plugins) throw new Error('plugin host is unavailable');
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id,
+        value: await plugins.repair(message.pluginId, message.path) });
     }
     if (message.operation === 'plugins-reload') {
       if (!plugins) {

@@ -36,6 +36,7 @@ export function ThreadSecondaryPanel({
   onAddTool,
   canAddBrowser = true,
   onCloseTab,
+  onCloseTabs,
   onActivateTab,
   onToggleMaximized,
   onHide,
@@ -55,6 +56,7 @@ export function ThreadSecondaryPanel({
   onAddTool?: (kind: ThreadPanelToolKind) => void;
   canAddBrowser?: boolean;
   onCloseTab: (tabId: string) => void;
+  onCloseTabs?: (tabIds: string[]) => void;
   onActivateTab: (tabId: string) => void;
   onToggleMaximized: () => void;
   onHide: () => void;
@@ -96,6 +98,13 @@ export function ThreadSecondaryPanel({
   const menuPinnedTab = pinnedTabs.find(tab => tab.id === menuTabId);
   const menuClosableTab = state.tabs.find(tab => tab.id === menuTabId);
   const menuTab = menuPinnedTab ?? menuClosableTab;
+  const menuTabIndex = state.tabs.findIndex(tab => tab.id === menuTabId);
+  const closeActions = [
+    { id: 'close-others', label: 'Close other tabs', tabs: state.tabs.filter(tab => tab.id !== menuTabId) },
+    { id: 'close-left', label: 'Close tabs to the left', tabs: state.tabs.slice(0, Math.max(0, menuTabIndex)) },
+    { id: 'close-right', label: 'Close tabs to the right', tabs: menuPinnedTab ? state.tabs : menuTabIndex < 0 ? [] : state.tabs.slice(menuTabIndex + 1) },
+    { id: 'close-all', label: 'Close all tabs', tabs: state.tabs }
+  ];
   const hideLabel = dock?.side === 'bottom' ? (dock.collapsed ? 'Expand bottom panel' : 'Hide bottom panel') : 'Hide right panel';
   const hidePanel = dock?.side === 'bottom' ? dock.onToggleCollapsed! : onHide;
   const menuItems: ThreadToolMenuItem[] = menu?.kind === 'add' ? [
@@ -111,7 +120,16 @@ export function ThreadSecondaryPanel({
     { id: 'maximize', label: state.isMaximized ? 'Restore conversation' : 'Maximize panel', icon: <Maximize2 />, run: onToggleMaximized },
     { id: 'hide', label: hideLabel, description: 'Keeps your tools and sessions available', icon: dock?.side === 'bottom' ? <ChevronDown /> : <PanelRight />, run: hidePanel },
     ...(menuClosableTab ? [{ id: 'close', label: `Close ${menuClosableTab.title}`, description: menuClosableTab.kind === 'terminal' ? 'Stops this terminal session' : undefined,
-      icon: <X />, run: () => onCloseTab(menuClosableTab.id) }] : [])
+      separatorBefore: true, icon: <X />, run: () => onCloseTab(menuClosableTab.id) }] : []),
+    ...closeActions.map((action, index) => ({
+      id: action.id, label: action.label, icon: <X />, disabled: action.tabs.length === 0,
+      separatorBefore: index === 0 && !menuClosableTab,
+      description: action.tabs.some(tab => tab.kind === 'terminal') ? 'Stops terminal sessions in these tabs' : undefined,
+      run: () => {
+        if (onCloseTabs) onCloseTabs(action.tabs.map(tab => tab.id));
+        else action.tabs.forEach(tab => onCloseTab(tab.id));
+      }
+    }))
   ];
   // Only the active surface is mounted, so a file's scroll container disappears whenever the
   // reader visits another tab. Offsets live here, keyed by open tab id, to survive that.
@@ -133,10 +151,10 @@ export function ThreadSecondaryPanel({
     activeTabRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
   }, [state.activeId]);
 
-  const tabActions = (tabId: string) => dock ? {
-    draggable: true,
-    onDragStart: (event: DragEvent<HTMLSpanElement>) => dock.onDragStart(event, tabId),
-    onDragEnd: dock.onDragEnd,
+  const tabActions = (tabId: string) => ({
+    draggable: Boolean(dock),
+    onDragStart: (event: DragEvent<HTMLSpanElement>) => dock?.onDragStart(event, tabId),
+    onDragEnd: dock?.onDragEnd,
     onContextMenu: (event: MouseEvent<HTMLSpanElement>) => {
       event.preventDefault(); setMenu({ kind: 'actions', anchor: event.currentTarget.querySelector('button')!, tabId });
     },
@@ -145,7 +163,7 @@ export function ThreadSecondaryPanel({
         event.preventDefault(); setMenu({ kind: 'actions', anchor: event.currentTarget.querySelector('button')!, tabId });
       }
     }
-  } : {};
+  });
 
   const onResizeMouseDown = (event: MouseEvent<HTMLDivElement>) => {
     startColumnResize(
@@ -261,12 +279,12 @@ export function ThreadSecondaryPanel({
           <Plus size={15} />
         </button> : null}
         <div className="thread-secondary-controls">
-          {dock ? <button type="button" className="thread-secondary-pin"
-            aria-label={`${dock.side === 'bottom' ? 'Bottom' : 'Right'} panel actions`} title="Panel actions"
+          <button type="button" className="thread-secondary-pin"
+            aria-label={`${dock?.side === 'bottom' ? 'Bottom' : 'Right'} panel actions`} title="Panel actions"
             aria-haspopup="menu" aria-expanded={menu?.kind === 'actions'}
             onClick={event => menu?.kind === 'actions' ? closeMenu(true) : setMenu({ kind: 'actions', anchor: event.currentTarget })}>
             <MoreHorizontal size={15} />
-          </button> : null}
+          </button>
           {!dock ? <button
             type="button"
             className="thread-secondary-pin"
@@ -299,8 +317,8 @@ export function ThreadSecondaryPanel({
         </div>
       </div>
       </>}
-      {menu && dock && !compact ? <ThreadToolMenu anchor={menu.anchor}
-        label={menu.kind === 'add' ? `Add to ${dock.side} panel` : menuTab?.title ?? 'Panel actions'}
+      {menu && !compact ? <ThreadToolMenu anchor={menu.anchor}
+        label={menu.kind === 'add' ? `Add to ${dock?.side} panel` : menuTab?.title ?? 'Panel actions'}
         items={menuItems} onClose={closeMenu} /> : null}
       <div className="thread-secondary-body" hidden={(compact && viewsOpen) || dock?.collapsed}>
         <FilePreviewScrollPositionContext.Provider value={scrollPosition}>{dock?.collapsed ? null : children}</FilePreviewScrollPositionContext.Provider>

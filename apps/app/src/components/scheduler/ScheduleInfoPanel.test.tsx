@@ -1,7 +1,9 @@
 /**
  * @vitest-environment happy-dom
  */
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render as rtlRender, screen, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ScheduledTask, TerminalSession } from '@zana-ai/zcc-domain/product';
 
@@ -13,6 +15,14 @@ const close = vi.fn();
 const pushToast = vi.fn();
 
 const terminals: Record<string, TerminalSession[]> = {};
+const store = { projects: undefined as undefined | Array<{ id: string }> };
+const resume = vi.fn();
+const render = (ui: React.ReactElement) => rtlRender(ui, { wrapper: MemoryRouter });
+
+vi.mock('./resumeScheduledRun.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./resumeScheduledRun.js')>()),
+  resumeScheduledRun: (...args: unknown[]) => resume(...args)
+}));
 
 vi.mock('../../lib/product-client.js', () => ({
   product: {
@@ -27,8 +37,8 @@ vi.mock('../../lib/product-client.js', () => ({
 }));
 
 vi.mock('../../store.js', () => ({
-  useData: (selector: (s: { terminals: Record<string, TerminalSession[]> }) => unknown) =>
-    selector({ terminals }),
+  useData: (selector: (s: { terminals: Record<string, TerminalSession[]>; projects?: Array<{ id: string }> }) => unknown) =>
+    selector({ terminals, projects: store.projects }),
   useUi: Object.assign(
     (selector: (s: { pushToast: typeof pushToast }) => unknown) => selector({ pushToast }),
     { getState: () => ({ pushToast }) }
@@ -56,7 +66,7 @@ describe('ScheduleInfoPanel', () => {
     render(<ScheduleInfoPanel task={{ ...baseTask, enabled: false, status: { runCount: 0, runs: [{ at: new Date().toISOString(), launchState: 'pending', sessionId: 'reserved', result: 'skipped' }] } }} />);
     expect(screen.getByTestId('pending-worker-recovery')).toBeTruthy();
     expect((screen.getByRole('button', { name: /Run now/ }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole('button', { name: /Resume/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Enable', exact: true }) as HTMLButtonElement).disabled).toBe(true);
   });
   it('lists the cause of a failed run and hides messages on successful runs', () => {
     render(<ScheduleInfoPanel task={{ ...baseTask, status: { runCount: 2, runs: [
@@ -121,7 +131,7 @@ describe('ScheduleInfoPanel', () => {
     expect(screen.getByTestId('schedule-run-report').textContent).toContain('Done');
     fireEvent.click(screen.getByRole('button', { name: /Run now/ }));
     await vi.waitFor(() => expect(runNow).toHaveBeenCalledWith('sched-1'));
-    fireEvent.click(screen.getByRole('button', { name: /Pause/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Disable', exact: true }));
     await vi.waitFor(() => expect(setEnabled).toHaveBeenCalledWith('sched-1', false));
     fireEvent.click(screen.getByRole('button', { name: /Duplicate/ }));
     expect(onDuplicate).toHaveBeenCalled();
@@ -158,7 +168,7 @@ describe('ScheduleInfoPanel', () => {
       />
     );
     expect(screen.queryByRole('button', { name: /Run now/ })).toBeNull();
-    expect(screen.queryByRole('button', { name: /Pause/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Disable', exact: true })).toBeNull();
   });
 
   it('stops a live session and surfaces failures', async () => {
@@ -183,14 +193,15 @@ describe('ScheduleInfoPanel', () => {
     );
   });
 
-  it('toasts when run-now or pause fail', async () => {
+  it('toasts when run-now or disable fail', async () => {
     runNow.mockResolvedValue({ ok: false, message: 'busy' });
     setEnabled.mockResolvedValue({ ok: false, message: 'denied' });
     render(<ScheduleInfoPanel task={{ ...baseTask, enabled: false } as ScheduledTask} />);
-    expect(screen.getByText('Paused')).toBeTruthy();
+    expect(screen.getByText('Off')).toBeTruthy();
+    expect(screen.getByText('off')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /Run now/ }));
     await vi.waitFor(() => expect(pushToast).toHaveBeenCalledWith('Run failed: busy', 'error'));
-    fireEvent.click(screen.getByRole('button', { name: /Resume/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Enable', exact: true }));
     await vi.waitFor(() => expect(pushToast).toHaveBeenCalledWith('denied', 'error'));
   });
 
@@ -324,6 +335,95 @@ describe('ScheduleInfoPanel', () => {
       expect(screen.queryByText('Queued')).toBeNull();
       expect(screen.queryByText(/^Retry at /)).toBeNull();
       expect(screen.queryByText('Recovery off')).toBeNull();
+    });
+  });
+
+  describe('Resume latest run', () => {
+    const conversation = { profile: 'claude', id: 'conv-1', cwd: '/p', startedAt: '2026-01-01T00:00:00Z' };
+    const ran = (runs: Array<Record<string, unknown>>, over: Record<string, unknown> = {}) =>
+      ({ ...baseTask, ...over, status: { runCount: runs.length, runs } }) as unknown as ScheduledTask;
+    const good = { id: 'good', at: new Date(Date.now() - 3_600_000).toISOString(), result: 'success', sessionId: 'old', conversation };
+    afterEach(() => { resume.mockReset(); store.projects = undefined; });
+
+    it('reopens the newest resumable run from the footer, before Run now', () => {
+      render(<ScheduleInfoPanel task={ran([good])} />);
+      const button = screen.getByRole('button', { name: 'Resume latest run' });
+      expect((button as HTMLButtonElement).disabled).toBe(false);
+      expect(button.getAttribute('title')).toBe('Reopen the agent from the run 1h ago with its conversation');
+      expect(button.compareDocumentPosition(screen.getByRole('button', { name: /Run now/ })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      fireEvent.click(button);
+      expect(resume).toHaveBeenCalledWith(expect.objectContaining({ id: 'sched-1' }), undefined, expect.any(Function));
+    });
+
+    it('is disabled with the reason when no run recorded a conversation, and hidden before the first run', () => {
+      const none = render(<ScheduleInfoPanel task={ran([{ id: 'old', at: new Date().toISOString(), result: 'success', sessionId: 'x' }])} />);
+      const button = screen.getByRole('button', { name: 'Resume latest run' }) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+      expect(button.getAttribute('title')).toBe("This run didn't record a conversation to reopen");
+      none.unmount();
+      render(<ScheduleInfoPanel task={ran([])} />);
+      expect(screen.queryByRole('button', { name: 'Resume latest run' })).toBeNull();
+    });
+
+    it.each(['codex', 'opencode'])('shows Resume as non-resumable for a %s run that ended before its id was detected', (profile) => {
+      const noId = { id: 'short', at: new Date().toISOString(), result: 'success', sessionId: 'gone', conversation: { profile, cwd: '/p', startedAt: '2026-01-01T00:00:00Z' } };
+      render(<ScheduleInfoPanel task={ran([noId])} />);
+      const button = screen.getByRole('button', { name: 'Resume latest run' }) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+      expect(button.getAttribute('title')).toBe("This run didn't record a conversation to reopen");
+      expect(screen.queryByRole('button', { name: 'Resume this run' })).toBeNull();
+      fireEvent.click(button);
+      expect(resume).not.toHaveBeenCalled();
+    });
+
+    it('offers Resume once a codex run did record its id', () => {
+      const withId = { id: 'long', at: new Date().toISOString(), result: 'success', sessionId: 'gone', conversation: { profile: 'codex', id: 'codex-9', cwd: '/p', startedAt: '2026-01-01T00:00:00Z' } };
+      render(<ScheduleInfoPanel task={ran([withId])} />);
+      expect((screen.getByRole('button', { name: 'Resume latest run' }) as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it('is disabled with the reason when the schedule\'s project is gone', () => {
+      store.projects = [{ id: 'other' }];
+      render(<ScheduleInfoPanel task={ran([good])} />);
+      const button = screen.getByRole('button', { name: 'Resume latest run' }) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+      expect(button.getAttribute('title')).toBe('The project for this schedule is no longer registered');
+    });
+
+    it('stays enabled when the project is registered', () => {
+      store.projects = [{ id: 'p1' }];
+      render(<ScheduleInfoPanel task={ran([good])} />);
+      expect((screen.getByRole('button', { name: 'Resume latest run' }) as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it('never shows for a Squad schedule or a /loop row, nor while a run is still open', () => {
+      const squad = render(<ScheduleInfoPanel task={ran([good], { kind: 'team' })} />);
+      expect(screen.queryByRole('button', { name: 'Resume latest run' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Resume this run' })).toBeNull();
+      squad.unmount();
+      const loop = render(<ScheduleInfoPanel task={ran([good], { external: { kind: 'claude-loop' } })} />);
+      expect(screen.queryByRole('button', { name: 'Resume latest run' })).toBeNull();
+      loop.unmount();
+      terminals.p1 = [{ id: 'old', status: 'running' } as TerminalSession];
+      try {
+        render(<ScheduleInfoPanel task={ran([good])} />);
+        expect(screen.queryByRole('button', { name: 'Resume latest run' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Resume this run' })).toBeNull();
+        expect(screen.getByLabelText('Stop running terminal')).toBeTruthy();
+      } finally { delete terminals.p1; }
+    });
+
+    it('offers Resume this run on each run that started an agent and is closed', () => {
+      const older = { ...good, id: 'older', sessionId: 'older-s', at: new Date(Date.now() - 7_200_000).toISOString() };
+      const noConv = { id: 'plain', at: new Date(Date.now() - 100_000).toISOString(), result: 'success', sessionId: 'p' };
+      const skipped = { ...good, id: 'sk', result: 'skipped', at: new Date(Date.now() - 200_000).toISOString() };
+      // A run without its own id would turn the call into "latest" and reopen a different run.
+      const idless = { ...good, id: undefined, sessionId: 'idless-s', at: new Date(Date.now() - 300_000).toISOString() };
+      render(<ScheduleInfoPanel task={ran([noConv, skipped, idless, good, older])} />);
+      const buttons = screen.getAllByRole('button', { name: 'Resume this run' });
+      expect(buttons).toHaveLength(2);
+      fireEvent.click(buttons[1]!);
+      expect(resume).toHaveBeenCalledWith(expect.objectContaining({ id: 'sched-1' }), 'older', expect.any(Function));
     });
   });
 });

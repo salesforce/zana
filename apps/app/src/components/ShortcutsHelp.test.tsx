@@ -19,6 +19,14 @@ describe('ShortcutsHelp', () => {
     }
   });
 
+  it('says Archive for agent tabs and keeps Delete for plain shells', () => {
+    render(<ShortcutsHelp onClose={() => undefined} />);
+    expect(screen.getByText('Archive active agent tab (a plain shell is deleted)')).toBeTruthy();
+    expect(screen.getByText('Stop the agent and remove the tab; its conversation stays in History')).toBeTruthy();
+    expect(screen.getByText('Plain shell: end it and remove the tab')).toBeTruthy();
+    expect(screen.queryByText('Delete active tab (terminates the process)')).toBeNull();
+  });
+
   it('lists the Inbox shortcuts', () => {
     render(<ShortcutsHelp onClose={() => undefined} />);
     expect(screen.getByRole('heading', { name: 'Inbox' })).toBeTruthy();

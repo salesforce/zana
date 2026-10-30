@@ -260,6 +260,7 @@ export const acpInitializeResultSchema = z
         sessionCapabilities: z
           .object({
             fork: z.object({}).passthrough().nullable().optional(),
+            additionalDirectories: z.object({}).passthrough().nullable().optional(),
           })
           .passthrough()
           .optional(),

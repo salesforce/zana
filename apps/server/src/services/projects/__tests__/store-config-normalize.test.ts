@@ -36,6 +36,32 @@ describe('normalizeConfig — provider tiers and plugin safe mode', () => {
   });
 });
 
+describe('normalizeConfig — wrap up before closing', () => {
+  it.each([true, false])('passes the toggle through (%s)', value => {
+    expect(normalizeConfig({ closeWrapUpEnabled: value })).toMatchObject({ closeWrapUpEnabled: value });
+  });
+  it.each(['true', 1, null])('drops a malformed toggle (%s)', value => {
+    expect(normalizeConfig({ closeWrapUpEnabled: value as never })).not.toHaveProperty('closeWrapUpEnabled');
+  });
+  it('trims the instructions', () => {
+    expect(normalizeConfig({ closeWrapUpInstructions: '  Wrap up.\nThen stop.  ' }).closeWrapUpInstructions).toBe('Wrap up.\nThen stop.');
+  });
+  it.each(['', '   \n '])('drops empty instructions (%j)', value => {
+    expect(normalizeConfig({ closeWrapUpInstructions: value })).not.toHaveProperty('closeWrapUpInstructions');
+  });
+  it('caps the instructions at 4,000 characters', () => {
+    expect(normalizeConfig({ closeWrapUpInstructions: 'x'.repeat(5_000) }).closeWrapUpInstructions).toHaveLength(4_000);
+  });
+  it.each([5, null, ['a']])('drops non-string instructions (%j)', value => {
+    expect(normalizeConfig({ closeWrapUpInstructions: value as never })).not.toHaveProperty('closeWrapUpInstructions');
+  });
+  it('leaves both absent when the input has neither', () => {
+    const result = normalizeConfig({ theme: 'dark' });
+    expect(result).not.toHaveProperty('closeWrapUpEnabled');
+    expect(result).not.toHaveProperty('closeWrapUpInstructions');
+  });
+});
+
 describe('normalizeConfig — global Claude launch settings', () => {
   it('trims, deduplicates, and preserves supported values', () => {
     const result = normalizeConfig({
@@ -176,6 +202,26 @@ describe('normalizeConfig — window state', () => {
 });
 
 describe('normalizeConfig — plugin view window state', () => {
+  it('persists bounded resource geometry keys while rejecting malformed tuples', () => {
+    const key = JSON.stringify(['sales', 'studio', 'p-1', 'agents/Help.agent']);
+    const entry = { bounds: { width: 1000, height: 700 }, at: 3 };
+    expect(normalizeConfig({ pluginViewWindowBounds: { [key]: entry } }).pluginViewWindowBounds).toEqual({ [key]: entry });
+    const bad = [
+      '[not json', JSON.stringify(['sales', 'studio', 'p-1']),
+      JSON.stringify(['Sales', 'studio', 'p-1', 'a']),
+      JSON.stringify(['sales', 'bad/tab', 'p-1', 'a']),
+      JSON.stringify(['sales', 'studio', '', 'a']),
+      JSON.stringify(['sales', 'studio', 'p'.repeat(257), 'a']),
+      JSON.stringify(['sales', 'studio', 'p-1', 1]),
+      JSON.stringify(['sales', 'studio', 'p-1', '']),
+      JSON.stringify(['sales', 'studio', 'p-1', 'a'.repeat(2049)]),
+      JSON.stringify(['sales', 'studio', 'p-1', 'a\n']),
+      '[' + ' '.repeat(16000)
+    ];
+    for (const badKey of bad) {
+      expect(normalizeConfig({ pluginViewWindowBounds: { [key]: entry, [badKey]: entry } }).pluginViewWindowBounds).toEqual({ [key]: entry });
+    }
+  });
   const key = 'salesforce/salesforce@p-1';
 
   it('does not add omitted plugin view state', () => {
@@ -573,6 +619,10 @@ describe('normalizeConfig — catch-up summary flags', () => {
       expect(normalizeConfig({ dockableThreadToolsEnabled: value }).dockableThreadToolsEnabled).toBeUndefined();
     }
     expect(normalizeConfig({}).dockableThreadToolsEnabled).toBeUndefined();
+  });
+
+  it.each([true, false, 'true', undefined])('drops the retired inset workspace flag (%s)', value => {
+    expect(normalizeConfig({ insetWorkspaceEnabled: value } as unknown as AppConfig)).not.toHaveProperty('insetWorkspaceEnabled');
   });
 
   it('passes through a boolean heldQuestionsEnabled, drops non-booleans', () => {

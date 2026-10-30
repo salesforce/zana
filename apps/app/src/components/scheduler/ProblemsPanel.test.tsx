@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project, ScheduledTask, ScheduleRun } from '@zana-ai/zcc-domain/product';
 
 const h = vi.hoisted(() => ({
-  terminals: {} as Record<string, Array<{ id: string }>>,
+  terminals: {} as Record<string, Array<{ id: string; status?: string }>>,
   pushToast: vi.fn(), retryRuns: vi.fn(), dismissRuns: vi.fn()
 }));
 vi.mock('../../lib/product-client.js', () => ({ product: { scheduler: { retryRuns: h.retryRuns, dismissRuns: h.dismissRuns } } }));
@@ -24,8 +24,8 @@ const make = (id: string, runs: Partial<ScheduleRun>[], over: Partial<ScheduledT
 }) as unknown as ScheduledTask;
 const failed = (id: string, over: Partial<ScheduleRun> = {}): Partial<ScheduleRun> => ({ id, at: ago(HOUR), result: 'error', reasonCode: 'exit-nonzero', ...over });
 
-function mount(tasks: ScheduledTask[]) {
-  const props = { tasks, projects, onOpenSchedule: vi.fn(), onOpenSession: vi.fn(), onTurnOnRecovery: vi.fn() };
+function mount(tasks: ScheduledTask[], extra: Record<string, unknown> = {}) {
+  const props = { tasks, projects, onOpenSchedule: vi.fn(), onOpenSession: vi.fn(), onTurnOnRecovery: vi.fn(), ...extra };
   render(<ProblemsPanel {...props} />);
   return props;
 }
@@ -260,5 +260,42 @@ describe('ProblemsPanel', () => {
     cleanup();
     mount([make('Recovery', [])]);
     expect(screen.queryByText(/Turn on recovery/)).toBeNull();
+  });
+
+  describe('Resume', () => {
+    const conversation = { profile: 'claude', id: 'conv-1', cwd: '/p', startedAt: ago(HOUR) };
+    const resumableFailure = (id: string, over: Partial<ScheduleRun> = {}) => failed(id, { sessionId: `${id}-pty`, conversation, ...over } as Partial<ScheduleRun>);
+
+    it('shows Resume only on a closed resumable row, and passes the task and run id', () => {
+      const onResumeRun = vi.fn();
+      mount([make('A', [resumableFailure('r1')]), make('B', [failed('r2', { sessionId: 'x' })])], { onResumeRun });
+      const buttons = screen.getAllByRole('button', { name: /^Resume / });
+      expect(buttons).toHaveLength(1);
+      expect(buttons[0]!.textContent?.trim()).toBe('Resume');
+      expect(buttons[0]!.querySelector('svg')).not.toBeNull();
+      fireEvent.click(buttons[0]!);
+      expect(onResumeRun).toHaveBeenCalledWith(expect.objectContaining({ id: 'A' }), 'r1');
+    });
+
+    it('keeps Open session for a live row instead of Resume', () => {
+      h.terminals = { p1: [{ id: 'r1-pty', status: 'running' }] };
+      mount([make('A', [resumableFailure('r1')])], { onResumeRun: vi.fn() });
+      expect(screen.queryByRole('button', { name: /^Resume / })).toBeNull();
+      expect(screen.getByRole('button', { name: /^Open session / })).toBeTruthy();
+    });
+
+    it('offers Resume when the run tab is still listed but has exited, like the Overview and schedule panel do', () => {
+      h.terminals = { p1: [{ id: 'r1-pty', status: 'exited' }] };
+      mount([make('A', [resumableFailure('r1')])], { onResumeRun: vi.fn() });
+      expect(screen.getByRole('button', { name: /^Resume / })).toBeTruthy();
+    });
+
+    it('never shows for Squads, markers or without a handler', () => {
+      mount([make('Squad', [resumableFailure('r1')], { kind: 'team' })], { onResumeRun: vi.fn() });
+      expect(screen.queryByRole('button', { name: /^Resume / })).toBeNull();
+      cleanup();
+      mount([make('A', [resumableFailure('r1')])]);
+      expect(screen.queryByRole('button', { name: /^Resume / })).toBeNull();
+    });
   });
 });

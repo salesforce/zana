@@ -260,6 +260,21 @@ describe('authorizeTeamLaunch', () => {
       .toMatchObject({ ok: false, code: 'DENIED', message: 'unknown persona: w2' });
   });
 
+  it('rejects automated skill selection for CLI Teams', () => {
+    const slots = tasks();
+    slots[0] = { ...slots[0], automatedSkillIds: ['zcc:built-in/test'] };
+    expect(authorizeTeamLaunch('c', 'team1', 'p1', reqId(), {}, slots))
+      .toMatchObject({ ok: false, code: 'INVALID', message: 'automated skill selection requires Modern Team transport' });
+  });
+
+  it('rejects duplicate automated skill ids before authorization', () => {
+    h.teams[0] = { ...h.teams[0], transport: 'MODERN' };
+    const slots = tasks();
+    slots[0] = { ...slots[0], automatedSkillIds: ['zcc:built-in/test', 'zcc:built-in/test'] };
+    expect(authorizeTeamLaunch('c', 'team1', 'p1', reqId(), {}, slots))
+      .toMatchObject({ ok: false, code: 'INVALID', message: 'invalid initial task' });
+  });
+
   it('issues per-slot authorizations, deadline, admission digest and honours native recovery', () => {
     const slots = tasks();
     const result = authorizeTeamLaunch('c', 'team1', 'p1', reqId(), { deadlineMs: 60_000 }, slots, 'freeform', 'digest-1', [
@@ -347,6 +362,14 @@ describe('launchTeam validation failures', () => {
       .toMatchObject({ ok: false, message: 'invalid initial task' });
     expect(await launchTeam('team1', 'p1', { ...base, policy: { maxLaunches: 2 }, slots: ok }))
       .toMatchObject({ ok: false, code: 'RESOURCE_LIMIT' });
+  });
+
+  it('rejects duplicate automated skill ids before launch', async () => {
+    h.teams[0] = { ...h.teams[0], transport: 'MODERN' };
+    const slots = SLOT_IDS.map((slotId) => ({ slotId, initialTask: 'x' }));
+    slots[0] = { ...slots[0], automatedSkillIds: ['zcc:built-in/test', 'zcc:built-in/test'] };
+    expect(await launchTeam('team1', 'p1', { callerPrincipalId: 'c', launchRequestId: reqId(), slots }))
+      .toMatchObject({ ok: false, code: 'INVALID', message: 'invalid initial task' });
   });
 });
 
@@ -680,6 +703,16 @@ describe('launchTeam Modern structured path', () => {
     expect(h.runtime.createSquadMember).toHaveBeenCalledTimes(4);
     expect(h.runtime.stopSquadMember).not.toHaveBeenCalled();
     expect(h.creates).toEqual([]);
+  });
+
+  it('passes each modern task slot automated skill selection to its runtime request', async () => {
+    const automatedSkillIds = ['zcc:built-in/test'];
+    const req = structuredReq();
+    req.slots[1] = { ...req.slots[1], automatedSkillIds };
+    expect((await launchTeam('team1', 'p1', req)).ok).toBe(true);
+    const created = h.runtime.createSquadMember.mock.calls.map(([request]) => request);
+    expect(created[1].automatedSkillIds).toEqual(automatedSkillIds);
+    expect(created.filter((_, index) => index !== 1).every((request) => request.automatedSkillIds === undefined)).toBe(true);
   });
 
   it.each(['runtime', 'provider'] as const)('refuses %s preflight for every slot before any ACP create or PTY', async (refusal) => {

@@ -52,6 +52,7 @@ describe('agent runtime thread adapter', () => {
       await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
       finish({ providerThreadId: 'provider-thread' }); await starting;
       expect(status()).toBe('idle');
+      expect(runtimeOptions.additionalWorkspaceWriteRoots).toEqual([join(cwd, 'thread-storage')]);
       const live = vi.spyOn(runtime, 'getLiveThreadIds').mockReturnValue([threadId]);
       expect(status()).toBe('active');
       live.mockReturnValue([]);
@@ -125,6 +126,25 @@ describe('agent runtime thread adapter', () => {
     expect(events.some((event) => event.threadId === threadId)).toBe(true);
     await adapter.stopWork({ threadId });
     adapter.dispose();
+  });
+
+  it('uses an empty catalog for an unattended start', async () => {
+    const root = join(cwd, 'skills-generated', 'demo');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'SKILL.md'), 'demo');
+    let runtime!: ReturnType<typeof createAgentRuntimeWithAdapters>;
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      createRuntime: options => {
+        runtime = createAgentRuntimeWithAdapters({ ...options, adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath }) });
+        return runtime;
+      }
+    });
+    try {
+      await adapter.startWork({ threadId: randomUUID(), environmentId: randomUUID(), projectId: 'p1', providerId: 'fake', input: prompt('hello'), cwd, headless: true });
+      expect(runtime.getLiveThreadIds()).toHaveLength(1);
+    } finally { adapter.dispose(); }
   });
 
   it('cancels only the expected live plan and keeps the thread usable', async () => {

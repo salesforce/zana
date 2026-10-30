@@ -823,6 +823,7 @@ function ThreadDetailBody({
           onAddTool={dockEnabled ? kind => addTool(side, kind) : undefined}
           canAddBrowser={hasDesktopBridge()}
           onCloseTab={panel.closeTab}
+          onCloseTabs={panel.closeTabs}
           onActivateTab={activateTool}
           onToggleMaximized={side === 'bottom' ? () => toolDock.update(current => ({ ...current, maximized: !current.maximized, collapsed: false })) : panel.toggleMaximized}
           onHide={panel.close}

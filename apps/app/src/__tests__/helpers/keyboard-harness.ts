@@ -12,6 +12,8 @@ interface Chord {
   meta?: boolean;
   ctrl?: boolean;
   shift?: boolean;
+  alt?: boolean;
+  target?: unknown;
   /** DOM `code` (e.g. 'Digit1'); defaults to '' — set for digit/bracket chords. */
   code?: string;
 }
@@ -61,7 +63,8 @@ export function installKeyboardHarness(): KeyboardHarness {
       metaKey: !!chord.meta,
       ctrlKey: !!chord.ctrl,
       shiftKey: !!chord.shift,
-      altKey: false,
+      altKey: !!chord.alt,
+      target: chord.target ?? null,
       preventDefault
     } as unknown as KeyboardEvent;
     for (const fn of [...listeners]) fn(e);

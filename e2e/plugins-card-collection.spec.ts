@@ -3,6 +3,45 @@ import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
 test.use({ initialConfig: { theme: 'light', sponsorPromptDismissed: true } });
 
+test('brand logos load in installed rows, detail pages and offline Browse in both themes', async ({ app }, testInfo) => {
+  test.setTimeout(180_000);
+  const win = app.window;
+  const navigate = (path: string) => win.evaluate(path => { history.pushState({}, '', path); dispatchEvent(new PopStateEvent('popstate')); }, path);
+  const expectImage = async (image: ReturnType<typeof win.locator>) => {
+    await expect(image).toBeVisible();
+    await expect.poll(() => image.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+  };
+  await navigate('/extensions/plugins');
+  const collection = win.locator('.ext-installed-collection');
+  const codingAgents = collection.getByRole('button', { name: /^Coding agents/ });
+  await codingAgents.click();
+  for (const id of ['slack-bridge-2ff2', 'harness-claude', 'harness-codex', 'provider-claude-code', 'provider-codex']) {
+    await expectImage(win.getByTestId(`plugin-row-${id}`).locator('img.plugin-brand-icon'));
+  }
+  const codex = win.getByTestId('plugin-row-provider-codex');
+  for (const theme of ['dark', 'light'] as const) {
+    await win.evaluate(theme => window.cc.config.set({ theme }), theme);
+    await expect(win.locator('html')).toHaveAttribute('data-theme', theme);
+    expect(await codex.locator('.ext-installed-icon').evaluate(el => getComputedStyle(el).backgroundColor)).toBe('rgb(255, 255, 255)');
+    await codex.scrollIntoViewIfNeeded();
+    await captureElectronScreenshot(app.electron, win, testInfo.outputPath(`plugin-brands-${theme}.png`));
+  }
+  await codex.getByRole('button', { name: /plugin details/ }).click();
+  await expectImage(win.locator('.ext-hub-about-icon-wrap img.plugin-brand-icon'));
+  await win.getByRole('button', { name: 'Back to Plugins' }).click();
+  await win.evaluate(() => window.cc.pluginApps.setEnabled('harness-codex', false));
+  const disabled = win.getByTestId('plugin-row-harness-codex').locator('img.plugin-brand-icon');
+  await expectImage(disabled);
+  expect(await disabled.evaluate(async (img: HTMLImageElement) => (await fetch(img.src)).status)).toBe(200);
+  await win.getByRole('navigation', { name: 'Plugin collections' }).getByRole('button', { name: 'Browse', exact: true }).click();
+  await expectImage(win.getByTestId('plugin-card-github').locator('img.plugin-brand-icon'));
+  const card = win.getByTestId('plugin-card-provider-codex');
+  await expectImage(card.locator('img.plugin-brand-icon'));
+  await expect(card.locator('img')).toHaveAttribute('src', /^data:image\/svg\+xml;base64,/);
+  await win.getByTestId('plugin-card-github').getByRole('button', { name: /plugin details/ }).click();
+  await expectImage(win.locator('.ext-catalog-detail-logo img.plugin-brand-icon'));
+});
+
 test('installed plugin rows support search, grouping, status changes and details in built Electron', async ({ app }, testInfo) => {
   const win = app.window;
   const browserWindow = await app.electron.browserWindow(win);

@@ -16,7 +16,9 @@
 .thread-tool-menu { z-index:10050; padding:6px; border:1px solid var(--border); border-radius:8px; background:var(--bg-panel); color:var(--text-primary); box-shadow:0 8px 28px #0003; overflow:auto; }
 .thread-tool-menu-title { padding:4px 8px 6px; font-size:10px; color:var(--text-muted); overflow-wrap:anywhere; }
 .thread-tool-menu button { display:flex; align-items:center; gap:9px; width:100%; padding:8px; border:0; border-radius:4px; background:transparent; color:inherit; font:inherit; font-size:12px; text-align:left; cursor:pointer; }
-.thread-tool-menu button:hover,.thread-tool-menu button:focus { background:var(--bg-hover); outline:none; }
+.thread-tool-menu button:not(:disabled):hover,.thread-tool-menu button:focus { background:var(--bg-hover); outline:none; }
+.thread-tool-menu button:disabled { opacity:.45; cursor:default; }
+.thread-tool-menu-separator { height:1px; margin:4px 2px; background:var(--border); }
 .thread-tool-menu button:focus-visible { outline:2px solid var(--accent-blue); outline-offset:-2px; }
 .thread-tool-menu button>svg { flex-shrink:0; width:15px; height:15px; color:var(--text-muted); }
 .thread-tool-menu small { display:block; font-size:10px; color:var(--text-muted); margin-top:3px; line-height:1.4; }

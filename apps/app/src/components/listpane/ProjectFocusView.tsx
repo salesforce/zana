@@ -20,8 +20,10 @@ import {
   useAgentCardActions,
   AgentCardMenu,
   clampMenuAnchor,
-  cliAgentDeleteConfirm,
-  cliAgentRemoveLabel
+  cliAgentKeepsHistory,
+  cliAgentRemoveConfirm,
+  cliAgentRemoveLabel,
+  cliAgentRemoveTitle
 } from '../agentCardActions.js';
 import { PromptModal } from '../PromptModal.js';
 import type { AgentCard } from '../AgentBoard.js';
@@ -353,13 +355,13 @@ export function ProjectFocusView({ project }: { project: Project }) {
                           <button
                             type="button"
                             className="project-terminal-close"
-                            aria-label={`${cliAgentRemoveLabel(exited)} ${t.title}`}
-                            title={exited ? cliAgentRemoveLabel(true) : 'Delete (ends the process)'}
+                            aria-label={`${cliAgentRemoveLabel(t)} ${t.title}`}
+                            title={cliAgentRemoveTitle(t, 'focus')}
                             onClick={(e) => {
                               e.stopPropagation();
                               if (
                                 !exited &&
-                                !window.confirm(cliAgentDeleteConfirm(t.title))
+                                !window.confirm(cliAgentRemoveConfirm(t, cliAgentKeepsHistory(t, project)))
                               ) {
                                 return;
                               }

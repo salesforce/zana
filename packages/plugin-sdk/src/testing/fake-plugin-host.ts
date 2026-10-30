@@ -309,6 +309,8 @@ export interface FakePluginInspectionState {
   readonly realtimeSignals: FakeRealtimeSignal[];
   /** Every `zcc.status.needsConfiguration` message, in order. */
   readonly needsConfigurationMessages: string[];
+  /** How many times the plugin called `zcc.status.configured()`. */
+  readonly configuredCount: number;
   /**
    * How many times the plugin called
    * `zcc.experimental_hooks.recheck()` — the wake it asks core for when a
@@ -1646,6 +1648,7 @@ function createFakePluginHostInternal(
 
   // --- status ---
   const needsConfigurationMessages: string[] = [];
+  let configuredCalls = 0;
   const status: PluginStatusApi = {
     needsConfiguration(message) {
       assertLive();
@@ -1654,6 +1657,10 @@ function createFakePluginHostInternal(
           ? message
           : "needs configuration",
       );
+    },
+    configured() {
+      assertLive();
+      configuredCalls += 1;
     },
   };
 
@@ -2091,6 +2098,9 @@ function createFakePluginHostInternal(
     logEntries,
     realtimeSignals,
     needsConfigurationMessages,
+    get configuredCount() {
+      return configuredCalls;
+    },
     get recheckCount() {
       return requestedDrains;
     },

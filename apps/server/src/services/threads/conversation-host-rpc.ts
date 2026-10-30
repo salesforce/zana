@@ -13,6 +13,7 @@ import {
 import { claudeCodePermissionModeForTurn } from './conversation-execution-mode.js';
 import { threadPermissionMode } from './thread-permission-mode.js';
 import { readLastThreadExecution } from './thread-last-execution.js';
+import { threadAutomatedSkillIds } from './thread-automated-skill-selection.js';
 
 export function isUnknownThreadHostError(error: unknown): boolean {
   return Boolean(
@@ -49,6 +50,7 @@ export async function threadResumeFields(
     ...(claudeCodePermissionMode ? { claudeCodePermissionMode } : {}),
     plugins: ctx.plugins
   });
+  const automatedSkillIds = threadAutomatedSkillIds(ctx.db, thread.id);
   return {
     projectId: thread.projectId,
     providerId: thread.providerId,
@@ -62,6 +64,7 @@ export async function threadResumeFields(
     ...(acpMode ? { acpMode } : {}),
     ...(serviceTier ? { serviceTier } : {}),
     ...(providerOptions ? { providerOptions } : {}),
+    ...(automatedSkillIds !== undefined ? { automatedSkillIds } : {}),
     ...(getThreadProvider(thread.providerId)?.capabilities.fork === 'checkpoint'
       ? (() => {
         const checkpoint = getLatestConversationCheckpoint(ctx.db, thread.id);

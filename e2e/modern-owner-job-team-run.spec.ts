@@ -55,6 +55,7 @@ test.use({
   // The polyglot fake `opencode` (e2e/fixtures/bin/opencode) speaks the ACP
   // bridge so the owner thread reaches a LIVE status with no model call.
   launchEnv: {
+    ANTHROPIC_API_KEY: 'modern-owner-job-team-e2e-key',
     PATH: `${fixtureBin}${delimiter}${process.env.PATH ?? ''}`,
     FAKE_ACP_MODEL_CONFIG: '1',
     FAKE_ACP_MODE_CONFIG: '1',

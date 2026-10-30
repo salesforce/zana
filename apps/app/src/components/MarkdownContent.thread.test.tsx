@@ -48,6 +48,15 @@ describe('MarkdownContent thread extras', () => {
     expect(html).not.toContain('node=');
   });
 
+  it('turns Windows file URLs into in-app preview links', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent text="[guide](file:///D:/Dev/code/zana/docs/guide.md)" threadId="t1" />
+    );
+    expect(html).toContain('inbox-md-file-link');
+    expect(html).toContain('Preview guide.md');
+    expect(html).not.toContain('target="_blank"');
+  });
+
   it('does not spread Markdown syntax nodes onto DOM elements', () => {
     const html = renderToStaticMarkup(<MarkdownContent text={'[Link](https://example.com)\n\n| A | B |\n| - | - |\n| 1 | 2 |\n\n```\ntext\n```'} />);
     expect(html).not.toContain('node=');
@@ -76,6 +85,14 @@ describe('MarkdownContent thread extras', () => {
     expect(html).toContain('aria-label="Preview student-to-software-engineer.md"');
     expect(html).toContain('title="docs/student-to-software-engineer.md"');
     expect(html).toContain('student-to-software-engineer.md');
+  });
+
+  it('passes normalized inline code paths to the preview link', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent text={'Preview ` **guide.md** `'} threadId="t1" />
+    );
+    expect(html).toContain('aria-label="Preview guide.md"');
+    expect(html).toContain('>**guide.md**</button>');
   });
 
   it('leaves inline file chips inert without a thread, when exporting, or when not a path', () => {

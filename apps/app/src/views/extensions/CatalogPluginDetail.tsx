@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Download } from 'lucide-react';
 import type { MarketplaceEntry } from '@zana-ai/zcc-domain/product';
 import { PERMISSION_LABELS } from '../../components/ExtensionConsent.js';
-import { resolveIcon } from '../../lib/resolveIcon.js';
+import { PluginBrandIcon } from './PluginBrandIcon.js';
 import { catalogRowAction, marketplaceProvenance } from './PluginCatalogCard.js';
 import { PluginOverviewMarkdown } from './PluginOverviewMarkdown.js';
 import { entriesByAuthor } from './plugin-browse-discovery.js';
@@ -42,7 +42,6 @@ export function PluginMoreFromAuthor({
       <h3>More from this author</h3>
       <div className="ext-plugin-more-list">
         {related.map((row) => {
-          const Icon = resolveIcon(row.icon ?? 'Package');
           return (
             <button
               key={row.id}
@@ -52,7 +51,7 @@ export function PluginMoreFromAuthor({
               aria-label={`${row.title} plugin details`}
             >
               <span className="ext-browse-card-icon">
-                <Icon size={16} />
+                <PluginBrandIcon src={row.iconUrl} icon={row.icon ?? 'Package'} size={16} />
               </span>
               <span className="ext-plugin-more-copy">
                 <span className="ext-plugin-more-title">{row.title}</span>
@@ -172,7 +171,6 @@ export function CatalogPluginDetail({
   onOpenAuthor?: (author: string) => void;
   onManage?: () => void;
 }) {
-  const Icon = resolveIcon(entry.icon ?? 'Package');
   const provenance = marketplaceProvenance(entry);
   const action = catalogRowAction(entry, busy);
   const capabilities = catalogCapabilityRows(entry);
@@ -181,7 +179,7 @@ export function CatalogPluginDetail({
     <div className="ext-catalog-detail" data-testid="catalog-plugin-detail">
       <header className="ext-catalog-detail-header">
         <span className="ext-browse-card-icon ext-catalog-detail-logo">
-          <Icon size={22} />
+          <PluginBrandIcon src={entry.iconUrl} icon={entry.icon ?? 'Package'} size={22} />
         </span>
         <div className="ext-catalog-detail-heading">
           <h2>{entry.title}</h2>

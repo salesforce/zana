@@ -258,6 +258,20 @@ test('thread tabs and tool docks preserve live terminals, browser documents, dra
       const { sessions } = await (await fetch('/api/v1/terminals')).json();
       return sessions.filter((row: { projectId: string; status: string }) => row.projectId === id && row.status !== 'exited').length;
     }, projectId)).toBe(1);
+    // Bulk close follows the real terminal shutdown and native browser cleanup paths.
+    await bottom.getByRole('button', { name: 'Bottom panel actions' }).click();
+    await page.getByRole('menuitem', { name: /^Close all tabs/ }).click();
+    await expect(bottom.locator('.thread-secondary-tab:not(.is-pinned)')).toHaveCount(0);
+    await expect(bottom.getByTestId('thread-info-pin')).toBeVisible();
+    await expect.poll(() => page.evaluate(async id => {
+      const { sessions } = await (await fetch('/api/v1/terminals')).json();
+      return sessions.find((session: { id: string }) => session.id === id)?.status ?? 'exited';
+    }, sessionId)).toBe('exited');
+    await expect.poll(async () => (await browserState())?.visible).toBe(true);
+    await right.getByRole('button', { name: 'Right panel actions' }).click();
+    await page.getByRole('menuitem', { name: 'Close all tabs', exact: true }).click();
+    await expect(right.locator('.thread-secondary-tab:not(.is-pinned)')).toHaveCount(0);
+    await expect.poll(browserState).toBeNull();
     expect(errors).toEqual([]);
   } finally {
     await page.evaluate(async id => {

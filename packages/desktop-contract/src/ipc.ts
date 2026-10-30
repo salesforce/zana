@@ -401,7 +401,8 @@ export const IPC = {
     applyUpdate: 'pluginApps:applyUpdate',
     applyAllUpdates: 'pluginApps:applyAllUpdates',
     remove: 'pluginApps:remove',
-    reload: 'pluginApps:reload'
+    reload: 'pluginApps:reload',
+    repair: 'pluginApps:repair'
   },
   /**
    * Configured plugin marketplace catalogs (`plugins/marketplaces.json`).
@@ -600,6 +601,9 @@ export const IPC = {
     openProject: 'windows:openProject',
     openPluginView: 'windows:openPluginView',
     closePluginView: 'windows:closePluginView',
+    pluginViewCloseReady: 'windows:pluginViewCloseReady',
+    pluginViewCloseComplete: 'windows:pluginViewCloseComplete',
+    onPluginViewCloseRequest: 'windows:onPluginViewCloseRequest',
     listPluginViews: 'windows:listPluginViews',
     onPluginViewsChanged: 'windows:onPluginViewsChanged',
     openThreadView: 'windows:openThreadView',
@@ -712,6 +716,7 @@ export const IPC = {
     runNow: 'scheduler:runNow',
     queryRuns: 'scheduler:queryRuns',
     retryRuns: 'scheduler:retryRuns',
+    resumeRun: 'scheduler:resumeRun',
     dismissRuns: 'scheduler:dismissRuns',
     reconcile: 'scheduler:reconcile',
     onChanged: 'scheduler:onChanged',

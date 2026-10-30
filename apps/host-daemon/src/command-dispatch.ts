@@ -135,6 +135,7 @@ export type ThreadResumeInput = {
   dynamicTools?: ThreadStartFields['dynamicTools'];
   instructions?: ThreadStartFields['instructions'];
   sessionKind?: 'automated';
+  automatedSkillIds?: ThreadStartFields['automatedSkillIds'];
 };
 
 export type ThreadRewindPrepareInput = {
@@ -150,6 +151,7 @@ export type ThreadRewindPrepareInput = {
   permissionMode?: ThreadStartFields['permissionMode'];
   model?: string;
   reasoningLevel?: ThreadWorkInput['reasoningLevel'];
+  automatedSkillIds?: ThreadStartFields['automatedSkillIds'];
 };
 
 export type ThreadArchiveInput = {
@@ -447,7 +449,8 @@ async function applyThreadResume(
       providerOptions: command.providerOptions,
       dynamicTools: command.dynamicTools,
       instructions: command.instructions,
-      sessionKind: command.sessionKind
+      sessionKind: command.sessionKind,
+      automatedSkillIds: command.automatedSkillIds
     });
     providerThreadId = resumed?.providerThreadId ?? providerThreadId;
   }
@@ -828,7 +831,8 @@ export async function dispatchHostCommand(
         bridgeLaunch: command.bridgeLaunch,
         permissionMode: command.permissionMode,
         model: command.model,
-        reasoningLevel: command.reasoningLevel
+        reasoningLevel: command.reasoningLevel,
+        automatedSkillIds: command.automatedSkillIds
       });
       return {
         threadId: command.threadId,

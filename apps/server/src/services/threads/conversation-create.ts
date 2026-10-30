@@ -105,6 +105,7 @@ export interface CreateConversationInput {
   visibility?: 'visible' | 'hidden';
   originPluginId?: string | null;
   pluginMetadata?: import('@zana-ai/zcc-domain/thread-runtime').JsonObject;
+  automatedSkillIds?: string[];
 }
 
 const THREAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -263,6 +264,7 @@ async function startConversationOnHost(
         ...(providerOptions ? { providerOptions } : {}),
         ...(clientRequestId ? { clientRequestId } : {}),
         ...(checkpoint ? { providerCheckpointId: checkpoint } : {}),
+        ...(args.input.automatedSkillIds !== undefined ? { automatedSkillIds: args.input.automatedSkillIds } : {}),
         ...sessionTooling,
         ...(args.remoteToolProxy ? {
           remote: threadLaunchRemote(

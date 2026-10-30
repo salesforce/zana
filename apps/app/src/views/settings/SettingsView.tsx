@@ -169,6 +169,9 @@ export function SettingsView() {
       if (typeof patch.catchUpSummaryEnabled === 'boolean') {
         useData.getState().setCatchUpSummaryEnabled(patch.catchUpSummaryEnabled);
       }
+      if (typeof patch.closeWrapUpEnabled === 'boolean') {
+        useData.getState().setCloseWrapUpEnabled(patch.closeWrapUpEnabled);
+      }
       if (typeof patch.dockableThreadToolsEnabled === 'boolean') {
         useData.getState().setDockableThreadToolsEnabled(patch.dockableThreadToolsEnabled);
       }

@@ -151,3 +151,13 @@ it('reads completed journals after generation cleanup through canonical filesyst
   expect(() => canonicalPluginPath(join(f.dir, 'dangling/child'))).toThrow('dangling');
   await expect(f.store.phase({ ...journal, candidate: { ...f.candidate, rootDir: join(f.dir, 'outside/missing') } }, 'committed')).rejects.toThrow('outside managed');
 });
+
+
+it('permits a path-recovery snapshot only inside managed storage', async () => {
+  const f = await fixture();
+  const previous = { ...f.previous, sourceKind: 'path' as const };
+  const candidate = { ...f.candidate, sourceKind: 'path' as const };
+  const journal = await f.store.prepare(previous, candidate, 0);
+  expect((await f.store.list())[0]?.candidate.sourceKind).toBe('path');
+  await expect(f.store.phase({ ...journal, candidate: { ...candidate, rootDir: f.dir } }, 'committed')).rejects.toThrow('outside managed');
+});

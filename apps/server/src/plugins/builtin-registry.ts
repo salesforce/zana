@@ -106,13 +106,6 @@ export const BUILTIN_PLUGINS: BundledPluginDefinition[] = [
     category: 'Context & knowledge'
   },
   {
-    name: 'salesforce',
-    pluginId: 'salesforce',
-    autoInstall: true,
-    defaultEnabled: true,
-    category: 'Developer tools'
-  },
-  {
     name: 'custom-instructions',
     pluginId: 'custom-instructions',
     autoInstall: true,
@@ -308,3 +301,9 @@ export const RECLAIM_UNINSTALLED_AUTOINSTALL_IDS = [
 export function isRetiredFirstPartyPluginId(id: string): boolean {
   return (RETIRED_FIRST_PARTY_PLUGIN_IDS as readonly string[]).includes(id);
 }
+
+/** Former bundled identities with a host-owned independent distribution source.
+ * Keep these registrations for upgrades that skip the transition release. */
+export const EXTERNALIZED_PLUGINS = [
+  { name: 'salesforce', pluginId: 'salesforce', url: 'https://github.com/grebmann1/zcc-plugin-salesforce.git', ref: 'runtime' }
+] as const;

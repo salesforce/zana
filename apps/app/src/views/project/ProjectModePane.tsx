@@ -163,6 +163,7 @@ export function ProjectModePane({
           <div className="project-topbar-tabs">
             {isTerminals ? (
               <TabBar
+                projectId={project.id}
                 tabs={terminalTabs}
                 activeTabId={activeTab?.id}
                 onSelect={(id) => selectTab(project.id, id)}
@@ -293,7 +294,7 @@ export function ProjectModePane({
         )}
         {isAgents && <AgentsBoard scope={{ kind: 'project', project }} />}
       </div>
-      <div className="statusbar">
+      {slotTab?.statusbar !== 'hidden' && <div className="statusbar">
         <span>{project.path}</span>
         {gitStatus && (gitStatus.branch || gitStatus.detached) && (
           <span
@@ -325,7 +326,7 @@ export function ProjectModePane({
             <span>{activeTab.status}</span>
           </>
         )}
-      </div>
+      </div>}
     </div>
   );
 }

@@ -532,6 +532,8 @@ async function handlePrompt(message) {
   } else if (text.includes("slow")) {
     notifyUpdate(messageChunk(`echo:${text}`));
     await sleep(300);
+  } else if (text.includes("echo-permission-env")) {
+    notifyUpdate(messageChunk(`permission:${process.env.OPENCODE_PERMISSION ?? "unset"}`));
   } else if (text.includes("echo-argv")) {
     // Lets bridge tests assert the launch args (e.g. the --model pin).
     notifyUpdate(messageChunk(`argv:${process.argv.slice(2).join(" ")}`));
@@ -607,7 +609,12 @@ async function handleMessage(message) {
               ? { mcpCapabilities: { http: true } }
               : {}),
             promptCapabilities: { image: false },
-            ...(forkSession ? { sessionCapabilities: { fork: {} } } : {}),
+            ...(forkSession || process.env.FAKE_ACP_ADDITIONAL_DIRECTORIES
+              ? { sessionCapabilities: {
+                  ...(forkSession ? {fork:{}} : {}),
+                  ...(process.env.FAKE_ACP_ADDITIONAL_DIRECTORIES ? {additionalDirectories: process.env.FAKE_ACP_ADDITIONAL_DIRECTORIES === "null" ? null : {}} : {}),
+                } }
+              : {}),
           },
           ...(authMethods.length > 0
             ? { authMethods: authMethods.map((id) => ({ id })) }

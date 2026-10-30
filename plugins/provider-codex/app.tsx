@@ -1,3 +1,4 @@
+import { CodexMcpElicitationView } from "./src/mcp-elicitation-view.js";
 import { definePluginApp } from "@zana-ai/zcc-plugin-sdk/app";
 
 /**
@@ -5,7 +6,13 @@ import { definePluginApp } from "@zana-ai/zcc-plugin-sdk/app";
  * The manifest's `branding.icon` SVG is fetched through `<img>`, a separate
  * document where `currentColor` is black — invisible on dark themes.
  */
-function CodexIcon({ className, size = 14 }: { className?: string; size?: number }) {
+function CodexIcon({
+  className,
+  size = 14,
+}: {
+  className?: string;
+  size?: number;
+}) {
   return (
     <svg
       fill="currentColor"
@@ -23,6 +30,12 @@ function CodexIcon({ className, size = 14 }: { className?: string; size?: number
 }
 
 export default definePluginApp((app) => {
+  app.slots.pendingInteraction({
+    id: "mcp-elicitation",
+    component: (props) => (
+      <CodexMcpElicitationView key={props.interaction.id} {...props} />
+    ),
+  });
   app.slots.experimental_providerIcon({
     providerId: "codex",
     icon: CodexIcon,

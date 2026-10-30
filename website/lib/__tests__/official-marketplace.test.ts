@@ -20,9 +20,15 @@ describe('official marketplace.json', () => {
     expect(index.schemaVersion).toBe(1);
     expect(index.name).toBe('official');
     expect(index.plugins.length).toBeGreaterThanOrEqual(7);
-    expect(
-      index.plugins.every((plugin) => plugin.source.git?.subdir === `plugins/${plugin.id}`)
-    ).toBe(true);
+    for (const plugin of index.plugins) {
+      expect(plugin.source.git?.url).toMatch(/^https:\/\//);
+      if (plugin.source.git?.url === 'https://github.com/salesforce/zana.git') {
+        expect(plugin.source.git.subdir).toBe(`plugins/${plugin.id}`);
+      }
+    }
+    expect(index.plugins.find(plugin => plugin.id === 'salesforce')?.source.git).toEqual({
+      url: 'https://github.com/grebmann1/zcc-plugin-salesforce.git', ref: 'runtime'
+    });
     expect(
       marketplaceCardsFromIndex(index).some((card) => card.id === 'docs' || card.id === 'memory')
     ).toBe(true);

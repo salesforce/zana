@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { storedEventsToMeta, conversationOutline, conversationTimeline, resetTimelineLatestRowsCache } from './conversation-timeline.js';
+import { storedEventsToMeta, conversationMessageTexts, conversationOutline, conversationTimeline, resetTimelineLatestRowsCache } from './conversation-timeline.js';
 import { registerThreadProvider } from './thread-provider-catalog.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
 
@@ -405,6 +405,60 @@ describe('conversationOutline', () => {
     const outline = conversationOutline({ db: { sqlite: { prepare: () => ({ get: () => ({ changes: 0 }) }), pragma: () => 1 } }, dataDir: '/tmp' } as unknown as ProductHttpContext, '11111111-1111-4111-8111-111111111111');
     expect(outline.items).toEqual([]);
     expect(outline.maxSeq).toBe(0);
+  });
+});
+
+describe('conversationMessageTexts', () => {
+  const threadId = '11111111-1111-4111-8111-111111111111';
+  const ctx = { db: { sqlite: { prepare: () => ({ get: () => ({ changes: 0 }) }), pragma: () => 1 } }, dataDir: '/tmp' } as unknown as ProductHttpContext;
+
+  it('is empty when the thread has no messages', () => {
+    vi.mocked(listConversationThreadEvents).mockReturnValueOnce([]);
+    expect(conversationMessageTexts(ctx, threadId)).toEqual([]);
+  });
+
+  it('returns the full raw text and role of each message in outline order', () => {
+    const long = `${'word '.repeat(120)}end`;
+    const rows = [{
+      id: 'evt-1',
+      threadId,
+      sequence: 1,
+      type: 'item/agentMessage/delta',
+      payload: {
+        type: 'item/agentMessage/delta',
+        threadId,
+        providerThreadId: 'p1',
+        scope: { kind: 'turn', turnId: 'turn-1' },
+        itemId: 'assistant-1',
+        delta: long
+      },
+      createdAt: 1
+    }];
+    vi.mocked(listConversationThreadEvents).mockReturnValue(rows as never);
+    try {
+      const texts = conversationMessageTexts(ctx, threadId);
+      const outline = conversationOutline(ctx, threadId);
+      expect(texts.map((t) => t.id)).toEqual(outline.items.map((i) => i.id));
+      expect(texts).toHaveLength(1);
+      expect(texts[0]).toMatchObject({ role: 'assistant', text: long });
+      expect(texts[0].text.length).toBeGreaterThan(outline.items[0].preview.length);
+    } finally {
+      vi.mocked(listConversationThreadEvents).mockReturnValue([]);
+    }
+  });
+});
+
+describe('conversationMessageTextsFromRows', () => {
+  it('collects conversation rows including turn children, defaulting a missing role, seq and text', async () => {
+    const { conversationMessageTextsFromRows } = await import('./conversation-timeline.js');
+    expect(conversationMessageTextsFromRows([
+      { kind: 'system', id: 's' },
+      { kind: 'turn', id: 't', children: [{ kind: 'conversation', id: 'u1', role: 'user', text: '  hello\nworld  ', sourceSeqStart: 3 }] },
+      { kind: 'conversation', id: 'a1' }
+    ])).toEqual([
+      { id: 'u1', seq: 3, role: 'user', text: '  hello\nworld  ' },
+      { id: 'a1', seq: 0, role: 'assistant', text: '' }
+    ]);
   });
 });
 

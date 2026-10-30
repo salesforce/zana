@@ -36,7 +36,7 @@ const peerCommand = {
 describe('peer.forward v2 contract', () => {
   it('round-trips the flat command and envelope with separate protocol versions', () => {
     const { type: _type, method: _method, body: _body, timeoutMs: _timeout, ...envelope } = peerCommand;
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(49);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(50);
     expect(PeerRequestEnvelopeSchema.parse(envelope)).toEqual(envelope);
     expect(PeerForwardCommandSchema.parse(peerCommand)).toEqual(peerCommand);
     expect(HostRpcCommandSchema.parse(peerCommand)).toEqual(peerCommand);
@@ -188,6 +188,23 @@ describe('host-rpc contract', () => {
     }).success).toBe(false);
   });
 
+  it('requires the new host protocol before exact-name preview searches can be dispatched', () => {
+    const request = {
+      type: 'host-rpc.request', requestId: 'preview-search',
+      command: {
+        type: 'host.list_paths', path: 'D:\\repo', exactName: 'guide.md', timeoutMs: 4500,
+        limit: 50, includeFiles: true, includeDirectories: false
+      }
+    };
+    expect(HostRpcRequestMessageSchema.parse({ ...request, protocolVersion: HOST_RPC_PROTOCOL_VERSION }))
+      .toMatchObject({ command: request.command });
+    expect(HostRpcRequestMessageSchema.safeParse({ ...request, protocolVersion: 49 }).success).toBe(false);
+    expect(HostReadyMessageSchema.safeParse({
+      type: 'host.ready', protocolVersion: 49, hostId, instanceId,
+      runtime: { threads: [], loadedEnvironments: [] }
+    }).success).toBe(false);
+  });
+
   it('accepts project-bound plugin host calls at the current protocol', () => {
     const command = {
       type: 'plugin.host.call', pluginId: 'fixture', generation: 'g1',
@@ -195,7 +212,7 @@ describe('host-rpc contract', () => {
       callId: 'call-1', method: 'echo', input: {}, timeoutMs: 1000,
       projectRoot: '/registered/project'
     };
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(49);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(50);
     expect(HostRpcRequestMessageSchema.parse({
       type: 'host-rpc.request', protocolVersion: HOST_RPC_PROTOCOL_VERSION,
       requestId: 'r1', command
@@ -945,7 +962,7 @@ describe('host-rpc contract', () => {
   });
 
   it('parses desktop.browser commands, results, and a non-UUID thread payload', () => {
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(49);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(50);
     expect(HostRpcCommandSchema.parse({
       type: 'desktop.browser.list_instances'
     }).type).toBe('desktop.browser.list_instances');
@@ -1004,7 +1021,7 @@ describe('host.environment.replace', () => {
   const entry = { name: 'GH_TOKEN', value: 'token-value' };
 
   it('retains protocol 44 environment forwarding in the combined protocol and parses a bounded, strict entry list', () => {
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(49);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(50);
     const command = {
       type: 'host.environment.replace',
       entries: [

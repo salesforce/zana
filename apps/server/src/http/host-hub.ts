@@ -53,6 +53,7 @@ import {
 } from '../services/threads/conversation-host-recovery.js';
 import {
   conversationLifecycleEventForHostEvent,
+  isRootConversationCompactionCompleted,
   isNestedConversationTurnCompletion
 } from '../services/threads/conversation-host-event-status.js';
 import { shouldSyncPlanForConversationEvent, syncPlanFromLatestEvents } from '../services/threads/conversation-plan.js';
@@ -122,6 +123,9 @@ export interface ConnectedHostSession {
 }
 
 const DEFAULT_RPC_TIMEOUT_MS = 30_000;
+// Managed provisioning can run a setup script for its entire configured
+// timeout, after fetching/checkout/include copy and before discovery/rollback.
+const WORKTREE_PREPARATION_ALLOWANCE_MS = 2 * 60_000;
 /** Turn-length host RPCs (`thread.start`, `turn.submit`) wait for `runTurn()`. */
 export const LIVE_TURN_COMMAND_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
@@ -509,7 +513,9 @@ export function createHostHub(
             payload: stored.payload
           });
           if (shouldSyncPlanForConversationEvent(eventType)) planThreads.add(event.threadId);
-          if (isBackgroundTaskLifecyclePayload(eventType, event.payload)) {
+          if (isBackgroundTaskLifecyclePayload(eventType, event.payload)
+            || isRootConversationCompactionCompleted(eventType, event.payload,
+              turnId => getConversationTurnStart(db, conversation.id, turnId))) {
             const threadId = event.threadId;
             afterCommit.push(() => options?.onConversationEvent?.({
               threadId,
@@ -632,7 +638,9 @@ export function createHostHub(
       const timer = setTimeout(() => {
         pending.delete(`${input.hostId}:${requestId}`);
         reject(new HostUnavailableError(`host rpc timed out: ${command.type}`));
-      }, input.timeoutMs ?? DEFAULT_RPC_TIMEOUT_MS);
+      }, input.timeoutMs ?? (command.type === 'environment.provision' && command.workspaceProvisionType === 'managed-worktree'
+        ? command.setupTimeoutMs + WORKTREE_PREPARATION_ALLOWANCE_MS
+        : DEFAULT_RPC_TIMEOUT_MS));
       pending.set(`${input.hostId}:${requestId}`, {
         commandType: command.type,
         resolve: (value) => resolve(value as T),

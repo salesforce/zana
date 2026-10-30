@@ -55,7 +55,10 @@ function WindowPanel() {
   const navigate = useZccNavigate();
   const context = useZccContext();
   return (
-    <button type="button" onClick={() => void navigate.openInWindow?.('p1', { tabId: 'studio' })}>
+    <button type="button" onClick={() => {
+      navigate.setPanelScope?.({ id: context.resourceId ?? 'default', view: 'editor' });
+      void navigate.openInWindow?.('p1', { tabId: 'studio', ...(context.resourceId ? { resourceId: context.resourceId } : {}) });
+    }}>
       {context.surface ?? 'no surface'}
     </button>
   );
@@ -201,9 +204,12 @@ describe('loadPluginApp + renderSlot', () => {
         })
       )
     );
-    const slot = renderSlot(app.navPanels[0]!, { pluginId: 'notes', subPath: '' }, { context: { surface: 'plugin-view' } });
+    const slot = renderSlot(app.navPanels[0]!, { pluginId: 'notes', subPath: '' }, { context: { surface: 'plugin-view', resourceId: 'Help.agent' } });
     slot.getByRole('button', { name: 'plugin-view' }).click();
-    expect(slot.inspection.navigateCalls).toEqual([{ method: 'openInWindow', projectId: 'p1', options: { tabId: 'studio' } }]);
+    expect(slot.inspection.navigateCalls).toEqual([
+      { method: 'setPanelScope', scope: { id: 'Help.agent', view: 'editor' } },
+      { method: 'openInWindow', projectId: 'p1', options: { tabId: 'studio', resourceId: 'Help.agent' } }
+    ]);
     slot.lifecycle.unmount();
     const plain = renderSlot(app.navPanels[0]!, { pluginId: 'notes', subPath: '' });
     expect(plain.getByRole('button', { name: 'no surface' })).toBeTruthy();

@@ -1,8 +1,9 @@
-import { copyFile, lstat, mkdir, readFile, readdir } from 'node:fs/promises';
-import { dirname, join, relative, sep } from 'node:path';
+import { constants } from 'node:fs';
+import { copyFile, lstat, mkdir, readFile } from 'node:fs/promises';
+import { dirname, join, sep } from 'node:path';
 import { isWithin } from '@zana-ai/zcc-path-confine';
 import { WORKTREE_INCLUDE_FILE_NAME } from '@zana-ai/zcc-domain';
-import { pathExists } from './git.js';
+import { pathExists, runGit } from './git.js';
 
 export interface CopyWorktreeIncludeResult {
   copied: string[];
@@ -10,102 +11,50 @@ export interface CopyWorktreeIncludeResult {
   errors: string[];
 }
 
-interface IncludePattern {
-  negate: boolean;
-  directoryOnly: boolean;
-  raw: string;
-}
-
-function parseIncludeFile(contents: string): IncludePattern[] {
-  const patterns: IncludePattern[] = [];
-  for (const line of contents.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const negate = trimmed.startsWith('!');
-    const body = negate ? trimmed.slice(1) : trimmed;
-    const directoryOnly = body.endsWith('/');
-    patterns.push({ negate, directoryOnly, raw: directoryOnly ? body.slice(0, -1) : body });
-  }
-  return patterns;
-}
-
-function globToRegExp(pattern: string): RegExp {
-  const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*\*/g, '::DS::')
-    .replace(/\*/g, '[^/]*')
-    .replace(/::DS::/g, '.*')
-    .replace(/\?/g, '[^/]');
-  return new RegExp(`^${escaped}$`);
-}
-
-function matches(relPath: string, isDir: boolean, patterns: IncludePattern[]): boolean {
-  let included = false;
-  for (const pattern of patterns) {
-    if (pattern.directoryOnly && !isDir && !relPath.startsWith(`${pattern.raw}/`) && relPath !== pattern.raw) {
-      const dirMatch = globToRegExp(pattern.raw.replace(/\/$/, '')).test(relPath.split('/')[0] ?? '');
-      if (!dirMatch && !relPath.startsWith(pattern.raw)) continue;
-    }
-    const matcher = globToRegExp(pattern.raw.replace(/^\//, ''));
-    const hit = matcher.test(relPath) || matcher.test(relPath.split('/').pop() ?? '');
-    if (!hit) continue;
-    included = !pattern.negate;
-  }
-  return included;
-}
-
-async function walkFiles(root: string, dir: string, files: string[]): Promise<void> {
-  let entries;
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries) {
-    if (entry.name === '.git') continue;
-    const abs = join(dir, entry.name);
-    const rel = relative(root, abs).split(sep).join('/');
-    let stat;
+async function hasSymlinkComponent(root: string, rel: string): Promise<boolean> {
+  let path = root;
+  for (const part of rel.split('/')) {
+    path = join(path, part);
     try {
-      stat = await lstat(abs);
-    } catch {
-      continue;
+      if ((await lstat(path)).isSymbolicLink()) return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw error;
     }
-    if (stat.isSymbolicLink()) continue;
-    if (stat.isDirectory()) {
-      await walkFiles(root, abs, files);
-      continue;
-    }
-    if (stat.isFile()) files.push(rel);
   }
+  return false;
 }
 
-export async function copyWorktreeIncludeFiles(sourcePath: string, targetPath: string): Promise<CopyWorktreeIncludeResult> {
+export async function copyWorktreeIncludeFiles(sourcePath: string, targetPath: string, signal?: AbortSignal): Promise<CopyWorktreeIncludeResult> {
   const result: CopyWorktreeIncludeResult = { copied: [], skipped: [], errors: [] };
+  signal?.throwIfAborted();
   const includeFile = join(sourcePath, WORKTREE_INCLUDE_FILE_NAME);
   if (!(await pathExists(includeFile))) return result;
-  let patterns: IncludePattern[];
+  let contents: string;
   try {
-    patterns = parseIncludeFile(await readFile(includeFile, 'utf8'));
+    contents = await readFile(includeFile, 'utf8');
   } catch (error) {
     result.errors.push(error instanceof Error ? error.message : String(error));
     return result;
   }
-  if (patterns.length === 0) return result;
-  const files: string[] = [];
-  await walkFiles(sourcePath, sourcePath, files);
-  for (const rel of files) {
-    if (rel === WORKTREE_INCLUDE_FILE_NAME) continue;
-    if (!matches(rel, false, patterns)) continue;
-    const from = join(sourcePath, rel);
-    const to = join(targetPath, rel);
-    if (!isWithin(from, sourcePath) || !isWithin(to, targetPath)) {
+  if (!contents.split(/\r?\n/).some(line => line.trim() && !line.trim().startsWith('#'))) return result;
+
+  // Git applies the include file as ignore rules, listing only matching
+  // untracked files (including gitignored ones). Its native walker skips nested
+  // repositories and avoids a JS lstat for every dependency/build artifact.
+  // runGit bounds both execution time and output; never accept a partial list.
+  const listing = await runGit(sourcePath, ['ls-files', '--others', '--ignored', `--exclude-from=${includeFile}`, '-z']);
+  signal?.throwIfAborted();
+  for (const rel of listing.stdout.split('\0')) {
+    signal?.throwIfAborted();
+    if (!rel || rel === WORKTREE_INCLUDE_FILE_NAME) continue;
+    const from = join(sourcePath, rel), to = join(targetPath, rel);
+    if (!isWithin(from, sourcePath) || !isWithin(to, targetPath) || rel.split(/[\\/]/).includes('..')) {
       result.errors.push(`refused path escape: ${rel}`);
       continue;
     }
     try {
-      const fromStat = await lstat(from);
-      if (fromStat.isSymbolicLink()) {
+      if (await hasSymlinkComponent(sourcePath, rel) || !(await lstat(from)).isFile()) {
         result.skipped.push(rel);
         continue;
       }
@@ -113,11 +62,17 @@ export async function copyWorktreeIncludeFiles(sourcePath: string, targetPath: s
         result.skipped.push(rel);
         continue;
       }
+      const parent = dirname(rel).split(sep).join('/');
+      if (await hasSymlinkComponent(targetPath, parent)) {
+        result.errors.push(`refused symlink destination: ${rel}`);
+        continue;
+      }
       await mkdir(dirname(to), { recursive: true });
-      await copyFile(from, to);
+      await copyFile(from, to, constants.COPYFILE_EXCL);
       result.copied.push(rel);
     } catch (error) {
-      result.errors.push(`${rel}: ${error instanceof Error ? error.message : String(error)}`);
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') result.skipped.push(rel);
+      else result.errors.push(`${rel}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   return result;

@@ -103,7 +103,7 @@ const CODEX_ADAPTER: TrustedHarnessAdapter = {
       modelLevelMapping: { low: 'gpt-4o-mini', medium: 'gpt-4o', high: 'gpt-4o', 'extra-high': 'o1' },
       executionStateMapping: {
         plan: 'read-only + on-request',
-        interactive: 'workspace-write + untrusted',
+        interactive: 'workspace-write + on-request',
         'accept-edits': 'default',
         autonomous: 'danger-full-access + never'
       }
@@ -250,7 +250,7 @@ export class CodexProvider extends BaseLaunchProvider {
     if (state === 'accept-edits') return {};
     const policies = {
       plan: ['read-only', 'on-request'],
-      interactive: ['workspace-write', 'untrusted'],
+      interactive: ['workspace-write', 'on-request'],
       autonomous: ['danger-full-access', 'never']
     } as const;
     const [sandbox, approval] = policies[state];

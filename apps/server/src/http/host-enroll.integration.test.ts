@@ -311,6 +311,95 @@ describe('host enroll hub and thread create', () => {
     await send(); expect(persist).toHaveBeenCalledTimes(2);
     persist.mockRestore(); publish.mockRestore(); socket.close();
   });
+  it('publishes root compaction only after commit and ignores nested compaction', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'zcc-compaction-commit-'));
+    const { enrollToken } = await startServer(root);
+    const instanceId = randomUUID();
+    const enrolled = await enrollHost(enrollToken, 'alpha', instanceId);
+    let socket = await openHostSocket(
+      enrolled,
+      instanceId,
+      defaultRpcHandler(root),
+    );
+    await waitForHost(enrolled.hostId);
+    const response = await fetch(`${server!.url}api/v1/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'proj-1',
+        providerId: 'claude',
+        input: ['hi'],
+      }),
+    });
+    expect(response.status).toBe(201);
+    const { thread } = (await response.json()) as { thread: { id: string } };
+    const publish = vi.spyOn(server!.ctx.hub, 'emit');
+    const compaction = (nested: boolean) => ({
+      type: 'host.event',
+      protocolVersion: HOST_RPC_PROTOCOL_VERSION,
+      hostId: enrolled.hostId,
+      instanceId,
+      batchId: randomUUID(),
+      events: [
+        {
+          threadId: thread.id,
+          kind: 'thread.event',
+          payload: {
+            type: 'thread/compacted',
+            scope: { kind: 'turn', turnId: nested ? 'child' : 'root' },
+            ...(nested ? { parentToolCallId: 'tool-child' } : {}),
+          },
+        },
+      ],
+    });
+    const send = (batch: ReturnType<typeof compaction>) =>
+      new Promise<void>((resolve) => {
+        const listener = (raw: WebSocket.RawData) => {
+          if (JSON.parse(String(raw)).type !== 'host.event-ack') return;
+          socket.off('message', listener);
+          resolve();
+        };
+        socket.on('message', listener);
+        socket.send(JSON.stringify(batch));
+      });
+    const updates = () =>
+      publish.mock.calls.filter(
+        ([type, payload]) =>
+          type === 'threads:updated' &&
+          (payload as { id?: string })?.id === thread.id,
+      );
+    await send(compaction(true));
+    expect(updates()).toHaveLength(0);
+    const before = listConversationThreadEvents(server!.ctx.db, thread.id).length;
+    const batch = compaction(false);
+    server!.ctx.db.sqlite.exec(
+      "CREATE TEMP TRIGGER fail_compaction_commit BEFORE INSERT ON host_event_receipts BEGIN SELECT RAISE(ABORT, 'disk failure'); END",
+    );
+    const closed = new Promise<number>((resolve) =>
+      socket.once('close', resolve),
+    );
+    socket.send(JSON.stringify(batch));
+    expect(await closed).toBe(1011);
+    expect(updates()).toHaveLength(0);
+    expect(listConversationThreadEvents(server!.ctx.db, thread.id)).toHaveLength(
+      before,
+    );
+    server!.ctx.db.sqlite.exec('DROP TRIGGER fail_compaction_commit');
+    socket = await openHostSocket(enrolled, instanceId, defaultRpcHandler(root), [
+      thread.id,
+    ]);
+    await waitForHost(enrolled.hostId);
+    publish.mockClear();
+    await send(batch);
+    expect(updates()).toHaveLength(1);
+    expect(listConversationThreadEvents(server!.ctx.db, thread.id)).toHaveLength(
+      before + 1,
+    );
+    await send(batch);
+    expect(updates()).toHaveLength(1);
+    publish.mockRestore();
+  });
+
   it('recovers terminal ownership and deduplicates acknowledged history after a server restart', async () => {
     const root = mkdtempSync(join(tmpdir(), 'zcc-terminal-recovery-'));
     const { dataDir, enrollToken } = await startServer(root);

@@ -92,7 +92,7 @@ Unit tests need no running ZCC app and no `zcc plugin dev`.
 
 Day-one host APIs that are implemented (not stubs): `settings.define` (persisted + Settings UI),
 `storage.kv` (on disk), `rpc.method` (callable from the app via `callPluginRpc`), `realtime.publish`,
-`background.schedule`, `status.needsConfiguration`, `agents.contributeSkills` / `contributeInstructions`.
+`background.schedule`, `status.needsConfiguration` / `status.configured`, `agents.contributeSkills` / `contributeInstructions`.
 `zcc.services.provide` / `zcc.services.use` / `zcc.services.has` is experimental plugin-to-plugin SDK sharing — see `docs/api_to_audit.md`.
 `agents.experimental_registerProvider` and `agents.experimental_registerPtyHarness` are experimental — see `docs/api_to_audit.md`.
 

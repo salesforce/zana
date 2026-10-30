@@ -95,8 +95,8 @@ import {
 // 46: canonical v2 peer forwarding and encrypted control, combined with host environment forwarding.
 // 47: bounded directory inspection for remote project registration and availability.
 // 48: durable machine project catalogue publication and bounded registration.
-// 49: provider bridge JSON options and opt-in host-owned live model inventories.
-export const HOST_RPC_PROTOCOL_VERSION = 49;
+// 50: exact-name file listing and host-owned listing deadlines.
+export const HOST_RPC_PROTOCOL_VERSION = 50;
 export const HOST_HEARTBEAT_INTERVAL_MS = 5_000;
 export const HOST_LEASE_TIMEOUT_MS = 30_000;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
@@ -399,7 +399,9 @@ export const ThreadStartCommandSchema = z.object({
   /** Plugin-registered ACP tools attached via zcc for this session. */
   dynamicTools: z.array(dynamicToolSchema).max(128).optional(),
   instructions: z.string().max(100_000).optional(),
-  providerCheckpointId: z.string().min(1).max(200).optional()
+  providerCheckpointId: z.string().min(1).max(200).optional(),
+  /** Main-authorized automated catalog selection. Absence keeps interactive behavior. */
+  automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional()
 }).strict();
 
 export const ThreadResizeCommandSchema = z.object({
@@ -449,7 +451,8 @@ export const ThreadResumeFieldsSchema = z.object({
   instructions: z.string().max(100_000).optional(),
   /** Carries unattended-session admission to a restored provider session. */
   sessionKind: z.literal('automated').optional(),
-  providerCheckpointId: z.string().min(1).max(200).optional()
+  providerCheckpointId: z.string().min(1).max(200).optional(),
+  automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional()
 }).strict();
 export type ThreadResumeFields = z.infer<typeof ThreadResumeFieldsSchema>;
 
@@ -490,7 +493,8 @@ export const ThreadRewindPrepareCommandSchema = z.object({
   bridgeLaunch: HostBridgeLaunchSchema.optional(),
   permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional(),
   model: z.string().min(1).max(200).optional(),
-  reasoningLevel: reasoningLevelSchema.optional()
+  reasoningLevel: reasoningLevelSchema.optional(),
+  automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional()
 }).strict();
 
 export const ThreadRewindDiscardCommandSchema = z.object({
@@ -655,6 +659,8 @@ export const HostListPathsCommandSchema = z.object({
   type: z.literal('host.list_paths'),
   path: PathSchema,
   query: z.string().max(FILE_LIST_QUERY_MAX_LENGTH).optional(),
+  exactName: z.string().min(1).max(FILE_LIST_QUERY_MAX_LENGTH).optional(),
+  timeoutMs: z.number().int().positive().max(5000).optional(),
   limit: z.number().int().positive().max(FILE_LIST_LIMIT_MAX),
   includeFiles: z.boolean(),
   includeDirectories: z.boolean()

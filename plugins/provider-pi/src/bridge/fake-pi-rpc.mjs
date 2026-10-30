@@ -192,6 +192,7 @@ if (requestedModel !== undefined && !ignoreRequestedModel) {
 let thinkingLevel = flag("--thinking") ?? "medium";
 let isStreaming = false;
 let isCompacting = false;
+let announceCompaction = null;
 let leafCounter = 0;
 let leafId = null;
 let turnCounter = 0;
@@ -344,6 +345,20 @@ async function runPrompt(text) {
     // An agent_before_settle extension asking for one more provider request:
     // pi runs a second agent_start..agent_end before it settles.
     await runAgent("continued by extension");
+  }
+  if (text === "/compact-on-settle" || text === "/compact-on-settle-late") {
+    isCompacting = true;
+    const announce = () => { announceCompaction = null; event({type:"compaction_start",reason:"manual"}); };
+    if (text === "/compact-on-settle") announce();
+    else announceCompaction = announce;
+    void (async () => {
+      const releasePath = process.env.FAKE_PI_COMPACTION_RELEASE_FILE;
+      while (releasePath !== undefined && !existsSync(releasePath)) await sleep(10);
+      announceCompaction?.();
+      if (process.env.FAKE_PI_DIE_AFTER_COMPACTION === "1") process.exit(0);
+      event({type:"compaction_end",reason:"manual",aborted:false});
+      isCompacting = false;
+    })();
   }
   event({ type: "agent_settled" });
 }
@@ -569,6 +584,11 @@ async function handle(command) {
       });
       return;
     case "prompt": {
+      if (isCompacting || process.env.FAKE_PI_ALWAYS_REJECT_COMPACTION === "1") {
+        respondError(id,"prompt","Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.");
+        announceCompaction?.();
+        return;
+      }
       if (promptDumpPath) {
         writeFileSync(promptDumpPath, JSON.stringify(command), "utf8");
       }

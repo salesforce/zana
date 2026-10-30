@@ -139,7 +139,9 @@ vi.mock('@zana-ai/zcc-db', () => {
   listDeferredThreadMessages: vi.fn(() => []),
   deleteDeferredThreadMessage: vi.fn(() => false),
   getDeferredThreadMessage: vi.fn(() => null),
-  getEnvironment: vi.fn(() => ({ id: thread.environmentId, path: '/tmp/proj' })),
+   getEnvironment: vi.fn(() => ({ id: thread.environmentId, path: '/tmp/proj' })),
+   getThreadPluginMetadata: vi.fn(() => ({ metadata: {}, corrupt: false })),
+   patchThreadPluginMetadata: vi.fn(() => ({ ok: true })),
   getThreadPlanByRootThread: vi.fn(() => null),
   getThreadExecutionState: vi.fn(() => null),
   latestThreadPlanRevision: vi.fn(() => null),
@@ -184,6 +186,7 @@ import {
   deleteDeferredThreadMessagesForThread,
   getConversationThread,
   getEnvironment,
+  getThreadPluginMetadata,
   archiveConversationThread,
   listConversationThreadEvents,
   listConversationThreadEventsWindow,
@@ -200,6 +203,7 @@ import {
   recordDispatchAdmissionWait,
   clearDispatchAdmissionGeneration,
   consumeDispatchAdmissionOverride,
+  patchThreadPluginMetadata,
   getDeferredThreadMessage,
   listDueDeferredThreadMessages,
   listOpenSessionConversationThreadsForHost,
@@ -280,6 +284,7 @@ beforeEach(() => {
   });
   vi.mocked(listConversationThreadEventsWindow).mockImplementation(() => listConversationThreadEvents());
   vi.mocked(getHost).mockReturnValue({ id: 'host-1', maxPermissionMode: 'full' } as never);
+  vi.mocked(getThreadPluginMetadata).mockReturnValue({ metadata: {}, corrupt: false } as never);
   vi.mocked(setConversationProviderThreadId).mockReset();
   vi.mocked(createDeferredThreadMessage).mockClear();
   vi.mocked(countActiveConversationTurns).mockReturnValue(0);
@@ -748,6 +753,40 @@ describe('conversation lifecycle', () => {
         providerId: 'claude-code'
       })
     }));
+  });
+
+  it('reloads main-authorized skill selection for resume and copies it to forks', async () => {
+    const automatedSkillIds = ['zcc:built-in/test'];
+    vi.mocked(getThreadPluginMetadata).mockReturnValue({ metadata: { automatedSkillIds }, corrupt: false } as never);
+    const rpc = vi.fn(async () => ({ threadId: thread.id, resumed: true, providerThreadId: 'prov-1' }));
+    await resumeConversation(ctx(rpc), thread.id);
+    expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ command: expect.objectContaining({
+      type: 'thread.resume', automatedSkillIds
+    }) }));
+    await forkConversation(ctx(async () => ({})), thread.id);
+    expect(patchThreadPluginMetadata).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      set: { automatedSkillIds }
+    }));
+  });
+
+  it('keeps an empty automated skill selection through resume and forks', async () => {
+    const automatedSkillIds: string[] = [];
+    vi.mocked(getThreadPluginMetadata).mockReturnValue({ metadata: { automatedSkillIds }, corrupt: false } as never);
+    const rpc = vi.fn(async () => ({ threadId: thread.id, resumed: true, providerThreadId: 'prov-1' }));
+    await resumeConversation(ctx(rpc), thread.id);
+    expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ command: expect.objectContaining({
+      type: 'thread.resume', automatedSkillIds
+    }) }));
+    await forkConversation(ctx(async () => ({})), thread.id);
+    expect(patchThreadPluginMetadata).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      set: { automatedSkillIds }
+    }));
+  });
+
+  it('fails closed when persisted automated skill selection is corrupt', async () => {
+    vi.mocked(getThreadPluginMetadata).mockReturnValue({ metadata: {}, corrupt: true } as never);
+    await expect(resumeConversation(ctx(vi.fn()), thread.id)).rejects.toThrow('automated skill metadata is corrupt');
+    await expect(forkConversation(ctx(vi.fn()), thread.id)).rejects.toThrow('automated skill metadata is corrupt');
   });
 
   it('packs plugin tools onto thread.resume and turn.submit resume', async () => {
@@ -1266,6 +1305,24 @@ describe('conversation lifecycle', () => {
       })
     }));
     expect(setConversationProviderThreadId).toHaveBeenCalledWith(expect.anything(), forkId, 'prov-fork');
+  });
+
+  it('starts a fork with an empty automated skill selection', async () => {
+    const forkId = '33333333-3333-4333-8333-333333333333';
+    vi.mocked(getConversationThread).mockReturnValue({
+      ...thread,
+      id: forkId,
+      originKind: 'fork' as const,
+      parentThreadId: thread.id,
+      providerThreadId: null,
+      status: 'idle' as const
+    });
+    vi.mocked(getThreadPluginMetadata).mockReturnValue({ metadata: { automatedSkillIds: [] }, corrupt: false } as never);
+    const callHostOnlineRpc = vi.fn(async () => ({ threadId: forkId, started: true, providerThreadId: 'prov-fork' }));
+    await sendConversationTurn(ctx(callHostOnlineRpc), forkId, [{ type: 'text', text: 'continue' }]);
+    expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({ command: expect.objectContaining({
+      type: 'thread.start', automatedSkillIds: []
+    }) }));
   });
 
   it('starts a fork:none thread without cloning the source session', async () => {

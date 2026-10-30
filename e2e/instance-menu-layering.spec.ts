@@ -14,7 +14,7 @@ test('modal and palette backdrops dim and block the computer switcher', async ({
   for (const kind of ['modal', 'palette'] as const) {
     if (kind === 'modal') {
       await summary.click();
-      await menu.getByRole('button', { name: 'Open another Zana…', exact: true }).click();
+      await menu.getByRole('button', { name: 'Open another computer…', exact: true }).click();
     } else {
       await window.keyboard.press(process.platform === 'darwin' ? 'Meta+/' : 'Control+/');
     }
@@ -35,7 +35,7 @@ test('modal and palette backdrops dim and block the computer switcher', async ({
 
   // The menu remains usable above the page once the overlay has closed.
   await summary.click();
-  await expect(menu.getByRole('button', { name: 'Open another Zana…', exact: true })).toBeVisible();
+  await expect(menu.getByRole('button', { name: 'Open another computer…', exact: true })).toBeVisible();
   await window.keyboard.press('Escape');
   await expect(menu).not.toHaveAttribute('open');
 });

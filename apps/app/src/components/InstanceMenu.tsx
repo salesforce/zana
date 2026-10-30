@@ -31,12 +31,12 @@ export function InstanceMenu() {
     }} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) menu.current!.open = false; }}>
       <summary aria-label="Zana switcher: This computer" title="This computer · Switch Zana"><Laptop size={14} aria-hidden="true" /><span>This computer</span><ChevronDown size={11} aria-hidden="true" /></summary>
       <div className="instance-menu-popover">
-        <div className="instance-menu-current"><small>You’re using</small><strong><Laptop size={17} aria-hidden="true" />This computer</strong><p>Local projects and agents</p></div>
-        <button type="button" aria-label="Open another Zana…" onClick={() => { menu.current!.open = false; setPicking(true); }}><Globe size={16} aria-hidden="true" /><span>Open another Zana…<small>Choose from your account.</small></span></button>
+        <div className="instance-menu-current"><small>You’re using</small><strong><Laptop size={17} aria-hidden="true" />This computer</strong><p>Projects and agents run on this computer.</p></div>
+        <button type="button" aria-label="Open another computer…" onClick={() => { menu.current!.open = false; setPicking(true); }}><Globe size={16} aria-hidden="true" /><span>Open another computer…<small>Open its projects and agents.</small></span></button>
         <div className="instance-menu-separator" />
         <button type="button" aria-label="Quit Zana" onClick={() => { menu.current!.open = false; void product.menubar.quit(); }}><Power size={16} aria-hidden="true" /><span>Quit Zana<small>Close the desktop app on this computer.</small></span></button>
       </div>
     </details>
-    {picking && <Modal title="Open another Zana" className="instance-picker-modal" onClose={() => setPicking(false)}><SharedInstancePicker onOpened={() => setPicking(false)} /></Modal>}
+    {picking && <Modal title="Open another computer" className="instance-picker-modal" onClose={() => setPicking(false)}><SharedInstancePicker onOpened={() => setPicking(false)} /></Modal>}
   </>;
 }

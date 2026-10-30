@@ -248,6 +248,99 @@ describe('inbox MCP server (end-to-end)', () => {
     expect(claimWork).toHaveBeenCalledOnce();
   });
 
+  it('does not expose remote work tools to a member without persisted remote capability', async () => {
+    handle = await startMcpServer({
+      inboxStore: createMemoryInboxStore(), suggestionsStore: createMemorySuggestionsStore(),
+      projects: { get: () => makeProject('proj-1', 'My Project') },
+      executionService: {} as never,
+      validateExecutionRouteIdentity: async () => true,
+      resolveExecutionCohortBinding: async () => ({
+        executionId: 'execution-1', projectId: 'proj-1', role: 'worker' as const, slotId: 'worker-1',
+        memberFence: { bindingId: 'binding-1', generation: 1 }
+      }),
+      runRemoteCommand: vi.fn(),
+      remoteFs: { readFile: vi.fn(), writeFile: vi.fn(), listDir: vi.fn(), glob: vi.fn(), grep: vi.fn() },
+      log: () => {}
+    });
+    const client = await connectClient(handle.url, `proj-1/thread-1/${controlCredentialForSession('thread-1')}/member/binding-1/1`);
+    clients.push(client);
+    const names = (await client.listTools()).tools.map((tool) => tool.name);
+    expect(names).not.toContain('remote_exec');
+    expect(names).not.toContain('remote_read');
+  });
+
+  it('uses host-persisted member catalogue provenance for discovery and calls', async () => {
+    const resolveAutomatedMcpCatalogue = vi.fn(async () => ({
+      version: 1 as const,
+      role: 'worker' as const,
+      capabilities: [],
+      tools: ['execution.snapshot'],
+      digest: 'a'.repeat(64)
+    }));
+    handle = await startMcpServer({
+      inboxStore: createMemoryInboxStore(), suggestionsStore: createMemorySuggestionsStore(),
+      projects: { get: () => makeProject('proj-1', 'My Project') },
+      executionService: {} as never,
+      validateExecutionRouteIdentity: async () => true,
+      resolveExecutionCohortBinding: async () => ({
+        executionId: 'execution-1', projectId: 'proj-1', role: 'worker' as const, slotId: 'worker-1',
+        memberFence: { bindingId: 'binding-1', generation: 1 }
+      }),
+      resolveAutomatedMcpCatalogue,
+      log: () => {}
+    });
+    const client = await connectClient(handle.url, `proj-1/thread-1/${controlCredentialForSession('thread-1')}/member/binding-1/1`);
+    clients.push(client);
+    const names = (await client.listTools()).tools.map((tool) => tool.name);
+    expect(names).toContain('execution.snapshot');
+    expect(names).not.toContain('execution.work.claim');
+    expect(names).not.toContain('inbox_push');
+    expect((await client.callTool({ name: 'execution.work.claim', arguments: { executionId: 'execution-1', workUnitId: 'unit-1' } })).isError).toBe(true);
+    expect(resolveAutomatedMcpCatalogue).toHaveBeenCalled();
+  });
+
+  it('fails closed to an empty member tool surface when catalogue resolution fails', async () => {
+    const log = vi.fn();
+    handle = await startMcpServer({
+      inboxStore: createMemoryInboxStore(), suggestionsStore: createMemorySuggestionsStore(),
+      projects: { get: () => makeProject('proj-1', 'My Project') },
+      executionService: {} as never,
+      validateExecutionRouteIdentity: async () => true,
+      resolveExecutionCohortBinding: async () => ({
+        executionId: 'execution-1', projectId: 'proj-1', role: 'worker' as const, slotId: 'worker-1',
+        memberFence: { bindingId: 'binding-1', generation: 1 }
+      }),
+      resolveAutomatedMcpCatalogue: async () => { throw new Error('store unavailable'); },
+      log
+    });
+    const client = await connectClient(handle.url, `proj-1/thread-1/${controlCredentialForSession('thread-1')}/member/binding-1/1`);
+    clients.push(client);
+    await expect(client.listTools()).rejects.toMatchObject({ code: -32601 });
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('catalogue resolution failed for execution execution-1, slot worker-1'));
+  });
+
+  it('allows only individually catalogued remote filesystem tools to a member', async () => {
+    handle = await startMcpServer({
+      inboxStore: createMemoryInboxStore(), suggestionsStore: createMemorySuggestionsStore(),
+      projects: { get: () => makeProject('proj-1', 'My Project') },
+      executionService: {} as never,
+      validateExecutionRouteIdentity: async () => true,
+      resolveExecutionCohortBinding: async () => ({
+        executionId: 'execution-1', projectId: 'proj-1', role: 'worker' as const, slotId: 'worker-1',
+        memberFence: { bindingId: 'binding-1', generation: 1 }
+      }),
+      resolveAutomatedMcpCatalogue: async () => ({
+        version: 1 as const, role: 'worker' as const, capabilities: ['remote_fs'],
+        tools: ['remote_grep'], digest: 'a'.repeat(64)
+      }),
+      remoteFs: { readFile: vi.fn(), writeFile: vi.fn(), listDir: vi.fn(), glob: vi.fn(), grep: vi.fn(async () => ({ ok: true as const, output: '', truncated: false })) },
+      log: () => {}
+    });
+    const client = await connectClient(handle.url, `proj-1/thread-1/${controlCredentialForSession('thread-1')}/member/binding-1/1`);
+    clients.push(client);
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(['remote_grep']);
+  });
+
   it('rejects forged member credentials before resolving async binding', async () => {
     const resolveExecutionCohortBinding = vi.fn(async () => undefined);
     handle = await startMcpServer({
@@ -258,7 +351,7 @@ describe('inbox MCP server (end-to-end)', () => {
     });
     const client = await connectClient(handle.url, 'proj-1/thread-1/forged/member/binding-1/1');
     clients.push(client);
-    expect((await client.callTool({ name: 'execution.delivery.pull', arguments: {} })).isError).toBe(true);
+    await expect(client.callTool({ name: 'execution.delivery.pull', arguments: {} })).rejects.toMatchObject({ code: -32601 });
     expect(resolveExecutionCohortBinding).not.toHaveBeenCalled();
   });
 

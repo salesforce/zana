@@ -35,6 +35,27 @@ describe('createConfigStore', () => {
     });
   });
 
+  it('clears the wrap-up instructions only when the patch sets the key to undefined', () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'zcc-config-store-wrap-up-'));
+    const configFile = join(homeDir, '.zcc', 'config.json');
+    const config = createConfigStore(
+      { homeDir, configFile },
+      {
+        normalizeConfig: (input) => input,
+        projectConfigCompatibility: (input) => input,
+        canonicalConfigForWrite: (input) => input,
+        harnessEnabled: (_input, id) => id === 'claude'
+      }
+    );
+
+    config.setConfig({ closeWrapUpEnabled: true, closeWrapUpInstructions: 'Just summarise.' });
+    expect(config.setConfig({ theme: 'dark' })).toMatchObject({ closeWrapUpInstructions: 'Just summarise.' });
+
+    expect(config.setConfig({ closeWrapUpInstructions: undefined })).not.toHaveProperty('closeWrapUpInstructions');
+    expect(JSON.parse(readFileSync(configFile, 'utf8')) as AppConfig).not.toHaveProperty('closeWrapUpInstructions');
+    expect(config.getConfig()).toMatchObject({ closeWrapUpEnabled: true });
+  });
+
   it('defaults claim-recovery enforcement on and a 5-minute plan startup grace', () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'zcc-config-store-durable-'));
     const configFile = join(homeDir, '.zcc', 'config.json');

@@ -191,6 +191,10 @@ describe('waitUntilAlive', () => {
       'HTTP_ERROR',
       'DENIED: Structured execution unavailable: no matching consent'
     ))).toBe(true);
+    expect(isUnattendedPolicyDeny(new ControlError(
+      'HTTP_ERROR',
+      'DENIED: Structured execution unavailable: OpenCode does not support high model level'
+    ))).toBe(true);
     expect(isUnattendedPolicyDeny(new ControlError('TIMEOUT', 'nope'))).toBe(false);
   });
 });

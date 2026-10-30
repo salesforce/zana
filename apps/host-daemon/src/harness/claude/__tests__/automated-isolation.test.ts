@@ -46,15 +46,17 @@ describe('automated claude isolation', () => {
       expect(lstatSync(join(plan.configDir, 'projects')).isSymbolicLink()).toBe(true);
     });
 
-    it('falls back to a null plan and removes the leaf for an OAuth-only home', () => {
+    it('blocks an OAuth-only home and removes the leaf', () => {
       writeFileSync(join(sourceDir, 'settings.json'), JSON.stringify({ hooks: { a: 1 }, env: { OTEL_X: '1' } }));
       writeFileSync(join(sourceDir, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@b.c' } }));
-      expect(planAutomatedClaudeLaunch({ ownerId: 'oauth', env: {}, dataDir, sourceConfigDir: sourceDir })).toBeNull();
+      expect(() => planAutomatedClaudeLaunch({ ownerId: 'oauth', env: {}, dataDir, sourceConfigDir: sourceDir }))
+        .toThrow(/authentication-unavailable/);
       expect(existsSync(join(dataDir, 'claude-automated-config', 'oauth'))).toBe(false);
     });
 
-    it('falls back to a null plan when the real settings are missing and no env auth is set', () => {
-      expect(planAutomatedClaudeLaunch({ ownerId: 's1', env: {}, dataDir, sourceConfigDir: sourceDir })).toBeNull();
+    it('blocks when the real settings are missing and no env auth is set', () => {
+      expect(() => planAutomatedClaudeLaunch({ ownerId: 's1', env: {}, dataDir, sourceConfigDir: sourceDir }))
+        .toThrow(/authentication-unavailable/);
     });
 
     it.each([
@@ -74,13 +76,28 @@ describe('automated claude isolation', () => {
 
     it('does not conjure a missing Claude home', () => {
       const missing = join(sourceDir, 'nope');
-      planAutomatedClaudeLaunch({ ownerId: 's1', env: {}, dataDir, sourceConfigDir: missing });
+      expect(() => planAutomatedClaudeLaunch({ ownerId: 's1', env: {}, dataDir, sourceConfigDir: missing }))
+        .toThrow(/authentication-unavailable/);
       expect(existsSync(missing)).toBe(false);
     });
 
-    it('falls back to a null plan (launch unchanged) for a hostile owner id', () => {
-      expect(planAutomatedClaudeLaunch({ ownerId: '..', env: {}, dataDir, sourceConfigDir: sourceDir })).toBeNull();
-      expect(planAutomatedClaudeLaunch({ ownerId: '', env: {}, dataDir, sourceConfigDir: sourceDir })).toBeNull();
+    it('blocks with config-unavailable for a hostile owner id', () => {
+      expect(() => planAutomatedClaudeLaunch({ ownerId: '..', env: {}, dataDir, sourceConfigDir: sourceDir }))
+        .toThrow(/config-unavailable/);
+      expect(() => planAutomatedClaudeLaunch({ ownerId: '', env: {}, dataDir, sourceConfigDir: sourceDir }))
+        .toThrow(/config-unavailable/);
+    });
+
+    it('preserves the preparation failure as the config admission cause', () => {
+      const blocker = join(dataDir, 'not-a-directory');
+      writeFileSync(blocker, 'x');
+      let thrown: unknown;
+      try {
+        planAutomatedClaudeLaunch({ ownerId: 'blocked', env: {}, dataDir: blocker, sourceConfigDir: sourceDir });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toMatchObject({ message: expect.stringMatching(/config-unavailable/), cause: expect.any(Error) });
     });
 
     it('sanitizes path separators in the owner id', () => {

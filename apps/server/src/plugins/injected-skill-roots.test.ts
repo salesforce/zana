@@ -38,6 +38,24 @@ describe('builtinSkillsRootPath', () => {
     expect(readFileSync(join(root, 'zcc-preview', 'SKILL.md'), 'utf8')).toMatch(/^---\nname: zcc-preview\n/);
     expect(existsSync(join(root, 'zcc-terminal', 'SKILL.md'))).toBe(true);
     expect(readFileSync(join(root, 'zcc-terminal', 'SKILL.md'), 'utf8')).toMatch(/^---\nname: zcc-terminal\n/);
+    const pluginAuthoring = readFileSync(join(root, 'zcc-plugin-authoring', 'SKILL.md'), 'utf8');
+    const center = readFileSync(join(root, 'zcc-center', 'SKILL.md'), 'utf8');
+    expect(Buffer.byteLength(pluginAuthoring, 'utf8')).toBeGreaterThanOrEqual(2_048);
+    expect(Buffer.byteLength(pluginAuthoring, 'utf8')).toBeLessThanOrEqual(4_096);
+    expect(Buffer.byteLength(center, 'utf8')).toBeGreaterThanOrEqual(2_048);
+    expect(Buffer.byteLength(center, 'utf8')).toBeLessThanOrEqual(4_096);
+    expect(existsSync(join(root, 'zcc-plugin-authoring', 'references', 'server-sdk.md'))).toBe(true);
+    expect(existsSync(join(root, 'zcc-center', 'references', 'schedules.md'))).toBe(true);
+    for (const [skillName, referenceFiles] of Object.entries({
+      'zcc-plugin-authoring': ['workflow.md', 'server-sdk.md', 'app-slots.md', 'skills-and-approvals.md', 'testing.md'],
+      'zcc-center': ['schedules.md', 'templates.md', 'personas.md', 'squads.md', 'run-reporting.md']
+    })) {
+      const core = readFileSync(join(root, skillName, 'SKILL.md'), 'utf8');
+      for (const file of referenceFiles) {
+        expect(existsSync(join(root, skillName, 'references', file))).toBe(true);
+        expect(core).toContain(`references/${file}`);
+      }
+    }
     expect(existsSync(join(root, 'harness-authoring', 'SKILL.md'))).toBe(false);
   });
 });

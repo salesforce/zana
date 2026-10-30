@@ -158,7 +158,8 @@ export function createConfigStore(
       'defaultHarness', 'harnessRouting', 'claudeAppendSystemPrompt',
       'claudeExtraArgs', 'claudeAddDirs', 'claudeAllowedTools',
       'claudeDeniedTools', 'defaultCodexSandbox', 'defaultCodexApproval',
-      'defaultExecutionState', 'piProvider', 'piModel', 'piThinking', 'customModels'
+      'defaultExecutionState', 'piProvider', 'piModel', 'piThinking', 'customModels',
+      'closeWrapUpInstructions'
     ] as const;
     for (const key of optionalHarnessKeys) {
       if (Object.prototype.hasOwnProperty.call(patch, key) && patch[key] === undefined) {

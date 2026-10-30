@@ -57,6 +57,7 @@ export interface LaunchAuthorizationBinding {
   evidenceDigest?: string;
   admissionDigest?: string;
   initialTaskDigest: string;
+  automatedSkillIds?: string[];
   consentReservation?: { id: string; scope: string };
   scope: 'local' | 'remote';
   storeRevision: string;

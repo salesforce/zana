@@ -86,6 +86,8 @@ import { moveConversationToProject } from '../services/threads/conversation-move
 import { moveThreadRequestSchema } from '@zana-ai/zcc-server-contract';
 import { stopConversationBackgroundTasks } from '../services/threads/conversation-background-stop.js';
 import { closeConversationWithFollowup } from '../services/threads/thread-close-followup.js';
+import { previewPathRequestSchema } from '@zana-ai/zcc-server-contract';
+import { resolveThreadPreviewPath } from '../services/threads/thread-preview-resolution.js';
 import { conversationPromptHistory, pagedConversationPromptHistory } from '../services/threads/conversation-prompt-history.js';
 import { conversationNextTurnView } from '../services/threads/conversation-next-turn.js';
 import {
@@ -1261,7 +1263,12 @@ export async function handleProductHttp(
 
     const panelThreads = routeParams(path, '/api/v1/plugins/:id/panel-threads');
     if (panelThreads && method === 'GET') {
-      const listed = pluginPanelThreads(ctx.db, ctx.plugins, panelThreads.id ?? '', requestUrl.searchParams.get('limit'), requestUrl.searchParams.get('panel'));
+      const projectId = requestUrl.searchParams.get('projectId');
+      const view = requestUrl.searchParams.get('view');
+      const scope = projectId !== null || view !== null
+        ? { ...(projectId !== null ? { projectId } : {}), ...(view !== null ? { view } : {}) }
+        : undefined;
+      const listed = pluginPanelThreads(ctx.db, ctx.plugins, panelThreads.id ?? '', requestUrl.searchParams.get('limit'), requestUrl.searchParams.get('panel'), scope);
       if (!listed.ok) {
         sendJson(response, listed.status, { error: listed.message });
         return true;
@@ -1575,6 +1582,25 @@ export async function handleProductHttp(
         sendJson(response, 200, conversationOutline(ctx, threadOutline.id, parsed.data.q));
       } catch (error) {
         if (error instanceof ThreadCreateError) {
+          sendJson(response, error.status, { error: error.code, message: error.message });
+          return true;
+        }
+        sendHostFailure(response, error);
+      }
+      return true;
+    }
+
+    const threadPreviewPath = routeParams(path, '/api/v1/threads/:id/preview-path/resolve');
+    if (threadPreviewPath && method === 'POST') {
+      try {
+        const parsed = previewPathRequestSchema.safeParse(await readJsonBody(request));
+        if (!parsed.success) {
+          sendJson(response, 400, { error: 'invalid-request', message: 'Invalid preview path request' });
+          return true;
+        }
+        sendJson(response, 200, await resolveThreadPreviewPath(ctx, threadPreviewPath.id, parsed.data));
+      } catch (error) {
+        if (error instanceof ProjectFsError) {
           sendJson(response, error.status, { error: error.code, message: error.message });
           return true;
         }

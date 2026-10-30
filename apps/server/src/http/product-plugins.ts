@@ -510,12 +510,14 @@ export function bundledPluginsRootFromDataDir(dataDir: string, override?: string
   return override ?? join(dataDir, '..', 'plugins');
 }
 
-/** Contained plugin root for `/plugins/:id/assets/*`, or null when that id has no renderer bundle. */
+/** Branding remains available for disabled and headless plugins. */
 export function pluginAssetRootFromService(
   plugins: PluginService | undefined,
-  pluginId: string
+  pluginId: string,
+  assetPath?: string
 ): string | null {
   const row = plugins?.get(pluginId);
+  if (row?.icon.startsWith('./') && /\.(svg|png|webp|jpe?g|gif)$/i.test(row.icon) && assetPath === row.icon.slice(2)) return row.rootDir;
   return row?.enabled && row.appEntry && plugins?.appUrl(pluginId) ? row.rootDir : null;
 }
 

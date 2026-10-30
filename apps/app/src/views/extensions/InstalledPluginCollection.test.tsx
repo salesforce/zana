@@ -37,6 +37,7 @@ it('renders cards and counts with a collapsible coding-agent section and real na
   expect(screen.getByText('4 of 4 plugins')).toBeTruthy();
   expect(screen.queryByRole('list', { name: 'Installed coding agents' })).toBeNull();
   const group = screen.getByRole('button', { name: /^Coding agents/ });
+  expect(screen.getAllByRole('region').map(section => section.getAttribute('aria-label'))).toEqual(['Coding agents', 'Tools & integrations']);
   expect(group.getAttribute('aria-expanded')).toBe('false');
   fireEvent.click(group);
   expect(screen.getByRole('list', { name: 'Installed coding agents' })).toBeTruthy();
@@ -84,6 +85,7 @@ it('shows updates across both groups and clears filters when switching collectio
   fireEvent.change(screen.getByLabelText('Search installed plugins'), { target: { value: 'Beta' } });
   fireEvent.click(collectionButton('Updates'));
   expect(screen.getByRole('heading', { name: 'Ready for a refresh' })).toBeTruthy();
+  expect(screen.getAllByRole('region').map(section => section.getAttribute('aria-label'))).toEqual(['Coding agents', 'Plugin updates', 'Update delivery']);
   expect(screen.getByRole('button', { name: 'Gamma' })).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Beta' })).toBeNull();
   expect((screen.getByLabelText('Search installed plugins') as HTMLInputElement).value).toBe('');

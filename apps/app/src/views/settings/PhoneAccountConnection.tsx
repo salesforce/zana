@@ -64,7 +64,7 @@ export function PhoneAccountConnection({ status, onSaved, browserAccess = false,
   </label>;
   return <div className="phone-account-connection">
     {pending ? <>
-      <p role="status">Approve this computer in your browser to finish connecting.</p>
+      <p role="status">Approve this computer in your browser, then return here to finish remote access setup.</p>
       <div className="remote-access-actions"><a className="btn" href={pending.verificationUrl} target="_blank" rel="noreferrer">Open sign-in</a>
       <button type="button" className="btn" disabled={busy} onClick={() => void cancel()}>Cancel</button></div>
     </> : revoked ? <>

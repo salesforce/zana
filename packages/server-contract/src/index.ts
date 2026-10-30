@@ -1,5 +1,6 @@
 export * from "./api-types.js";
 export * from "./api/notifications.js";
+export * from "./api/preview-path.js";
 export * from "./api/thread-tabs.js";
 export * from "./common.js";
 export * from "./errors.js";

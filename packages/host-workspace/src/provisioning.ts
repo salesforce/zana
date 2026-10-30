@@ -188,15 +188,14 @@ export async function createWorktree(args: CreateWorktreeArgs): Promise<{ path: 
   );
   emit(args.onProgress, { type: 'step', key: 'worktree', text: 'Worktree created', status: 'completed' });
 
-  const copied = await copyWorktreeIncludeFiles(sourcePath, targetPath);
-  emit(args.onProgress, {
-    type: 'step',
-    key: 'include',
-    text: `Copied ${copied.copied.length} include file(s)`,
-    status: 'completed'
-  });
-
   try {
+    const copied = await copyWorktreeIncludeFiles(sourcePath, targetPath, args.signal);
+    emit(args.onProgress, {
+      type: 'step',
+      key: 'include',
+      text: `Copied ${copied.copied.length} include file(s)`,
+      status: 'completed'
+    });
     await runSetupScript(targetPath, args.timeoutMs ?? DEFAULT_SETUP_TIMEOUT_MS, args.onProgress, args.signal);
   } catch (error) {
     await removeWorktree({ path: targetPath, sourcePath, force: true });

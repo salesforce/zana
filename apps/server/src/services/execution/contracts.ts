@@ -29,6 +29,8 @@ export interface ExecutionUsageObservationV1 {
   provider: string;
   model?: string;
   routingIdentity: string;
+  /** Latest host-observed context window occupancy; point-in-time, not cumulative usage. */
+  contextTokens?: number;
   cumulative: ExecutionUsageCountersV1;
   delta: ExecutionUsageCountersV1;
   completeness: UsageCompleteness;

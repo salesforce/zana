@@ -452,6 +452,7 @@ describe('listMarketplace', () => {
         apiRange: '^1.0.0',
         title: 'GUS',
         icon: 'Ticket',
+        iconUrl: 'data:image/png;base64,YQ==',
         permissions: ['exec'],
         category: 'Developer tools'
       }
@@ -462,6 +463,7 @@ describe('listMarketplace', () => {
       version: '0.2.1',
       title: 'GUS',
       icon: 'Ticket',
+      iconUrl: 'data:image/png;base64,YQ==',
       permissions: ['exec'],
       hasUpdate: false,
       compatible: true,

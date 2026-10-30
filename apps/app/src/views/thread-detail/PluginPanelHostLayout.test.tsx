@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { useEffect, useLayoutEffect } from 'react';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 
@@ -26,10 +27,11 @@ vi.mock('../../plugins/plugin-slots.js', () => ({
   listNewThreadPanelActions: () => emptyActions
 }));
 vi.mock('../../components/thread/secondary-panel/PanelAgentTab.js', () => ({
-  PanelAgentTab: ({ threadId, draft, draftProjectId, pluginPanel, onCreated, onOpenConversation }: {
+  PanelAgentTab: ({ threadId, draft, draftProjectId, projectId, pluginPanel, onCreated, onOpenConversation }: {
     threadId?: string;
     draft?: string;
     draftProjectId?: string;
+    projectId?: string;
     pluginPanel?: { pluginId: string; panel: string; view?: string };
     onCreated: (threadId: string) => void;
     onOpenConversation?: (conversation: { id: string; title: string | null; updatedAt: number }) => void;
@@ -44,6 +46,7 @@ vi.mock('../../components/thread/secondary-panel/PanelAgentTab.js', () => ({
             data-binding={`${pluginPanel?.pluginId}/${pluginPanel?.panel}/${pluginPanel?.view ?? '-'}`}
             data-draft={draft ?? ''}
             data-draft-project={draftProjectId ?? ''}
+            data-project={projectId ?? ''}
             onClick={() => onCreated('t-new')}
           >Send</button>
           <button type="button" data-testid="agent-reopen-old" onClick={() => onOpenConversation?.({ id: 'old', title: 'Old chat', updatedAt: 1 })}>old</button>
@@ -82,7 +85,7 @@ vi.mock('../../lib/app-surface.js', () => ({
 
 import { pluginPanelOwnerId, PluginPanelHostLayout } from './PluginPanelHostLayout.js';
 import { parsePanelAgentTarget, requestPluginPanelAgent } from '../../plugins/plugin-panel-agent.js';
-import { requestPluginPanelTool, usePluginPagePanel, usePluginPagePanelOpen } from '../../plugins/plugin-page-panel.js';
+import { requestPluginPanelScope, requestPluginPanelTool, usePluginPagePanel, usePluginPagePanelOpen } from '../../plugins/plugin-page-panel.js';
 import { addClosableTab, loadSecondaryPanelState, persistSecondaryPanelState } from '../../components/thread/secondary-panel/threadSecondaryPanelState.js';
 
 beforeEach(() => {
@@ -543,6 +546,139 @@ describe('PluginPanelHostLayout', () => {
     expect(screen.getByTestId('agent-chat').textContent).toBe('project-two');
   });
 
+
+  it('switches resource panels without remounting the editor or copying tools and assistant selection', () => {
+    pageActions.push({ pluginId: 'salesforce', id: 'studio-graph', title: 'Graph', scopes: ['plugin-page'] });
+    const mounted = vi.fn();
+    const unmounted = vi.fn();
+    let select!: (id: string | null) => void;
+    function Editor() {
+      const page = usePluginPagePanel()!;
+      useEffect(() => { mounted(); return () => { unmounted(); }; }, []);
+      select = id => { requestPluginPanelScope('salesforce', id ? { id, view: id } : null, page); };
+      return <input aria-label="Script text" defaultValue="unsaved source" />;
+    }
+    render(<PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="project"><Editor /></PluginPanelHostLayout>);
+    act(() => select('agents/a.agent'));
+    expect(screen.getByTestId('plugin-panel-host-layout').dataset.panelResource).toBe('agents/a.agent');
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    expect(screen.getByTestId('agent-composer').dataset).toMatchObject({ binding: 'salesforce/salesforce/agents/a.agent', project: 'project' });
+    act(() => requestPluginPanelAgent({ pluginId: 'salesforce', threadId: 'thread-a' }));
+    fireEvent.click(screen.getByTestId('thread-secondary-maximize'));
+    act(() => select('agents/b.agent'));
+    expect(screen.queryByTestId('agent-chat')).toBeNull();
+    expect(screen.getByTestId('plugin-panel-host-layout').classList.contains('is-secondary-maximized')).toBe(false);
+    act(() => requestPluginPanelTool('salesforce', { actionId: 'studio-graph', params: { path: 'agents/b.agent' } }));
+    expect(screen.getByTestId('plugin-tool').dataset.project).toBe('project');
+    act(() => select('agents/a.agent'));
+    expect(screen.getByTestId('agent-chat').textContent).toBe('thread-a');
+    expect(screen.getByTestId('plugin-panel-host-layout').classList.contains('is-secondary-maximized')).toBe(true);
+    act(() => select('agents/b.agent'));
+    expect(screen.getByTestId('plugin-tool').dataset.params).toBe('{"path":"agents/b.agent"}');
+    expect(mounted).toHaveBeenCalledTimes(1);
+    expect(unmounted).not.toHaveBeenCalled();
+    expect((screen.getByLabelText('Script text') as HTMLInputElement).value).toBe('unsaved source');
+    act(() => select(null));
+    expect(screen.getByTestId('plugin-panel-host-layout').dataset.panelResource).toBe('');
+    expect(screen.queryByTestId('plugin-tool')).toBeNull();
+    expect(screen.getByTestId('plugin-panel-agent-show')).toBeTruthy();
+  });
+
+  it('routes commands sent in the same update as a scope switch to the new resource', () => {
+    pageActions.push({ pluginId: 'salesforce', id: 'studio-graph', title: 'Graph', scopes: ['plugin-page'] });
+    let select!: (id: string) => void;
+    let openFor!: (id: string) => void;
+    function Editor() {
+      const page = usePluginPagePanel()!;
+      select = id => { requestPluginPanelScope('salesforce', { id, view: id }, page); };
+      openFor = id => {
+        select(id);
+        expect(requestPluginPanelTool('salesforce', { actionId: 'studio-graph', params: { path: id } }, page)).toBe(true);
+        expect(requestPluginPanelAgent({ pluginId: 'salesforce', threadId: `thread-${id}` }, page)).toBe(true);
+      };
+      return null;
+    }
+    render(<PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="p"><Editor /></PluginPanelHostLayout>);
+    act(() => openFor('a'));
+    expect(screen.getByTestId('agent-chat').textContent).toBe('thread-a');
+    act(() => openFor('b'));
+    expect(screen.getByTestId('agent-chat').textContent).toBe('thread-b');
+    act(() => select('a'));
+    expect(screen.getByTestId('agent-chat').textContent).toBe('thread-a');
+    expect(tabLabels()).toEqual(['Close Graph', 'Close Agent']);
+    act(() => select('b'));
+    expect(screen.getByTestId('agent-chat').textContent).toBe('thread-b');
+    expect(tabLabels()).toEqual(['Close Graph', 'Close Agent']);
+  });
+
+  it('restores independent widths and binds id-only resources to their own assistant view', () => {
+    for (const [id, widthPx] of [['a', 420], ['b', 600]] as const) {
+      const owner = pluginPanelOwnerId('salesforce', JSON.stringify(['salesforce', 'p', id]));
+      persistSecondaryPanelState(owner, { ...loadSecondaryPanelState(owner), widthPx });
+    }
+    let select!: (id: string) => void;
+    function Editor() {
+      const page = usePluginPagePanel()!;
+      select = id => { requestPluginPanelScope('salesforce', { id }, page); };
+      return null;
+    }
+    render(<PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="p"><Editor /></PluginPanelHostLayout>);
+    act(() => select('a'));
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    expect(screen.getByTestId('agent-composer').dataset.binding).toBe('salesforce/salesforce/a');
+    expect(screen.getByTestId('plugin-panel-host-layout').style.getPropertyValue('--thread-secondary-width')).toBe('420px');
+    act(() => select('b'));
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    expect(screen.getByTestId('agent-composer').dataset.binding).toBe('salesforce/salesforce/b');
+    expect(screen.getByTestId('plugin-panel-host-layout').style.getPropertyValue('--thread-secondary-width')).toBe('600px');
+    act(() => select('a'));
+    expect(screen.getByTestId('plugin-panel-host-layout').style.getPropertyValue('--thread-secondary-width')).toBe('420px');
+  });
+
+  it('keeps a long generic resource identity without sending an oversized assistant view', () => {
+    render(<PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="p" resourceId={'x'.repeat(501)} separateWindow><div /></PluginPanelHostLayout>);
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    expect(screen.getByTestId('agent-composer').dataset.binding).toBe('salesforce/salesforce/-');
+  });
+
+  it('receives an initial resource selection from the editor layout effect before host subscription', () => {
+    function Editor() {
+      const page = usePluginPagePanel()!;
+      useLayoutEffect(() => { requestPluginPanelScope('salesforce', { id: 'a', view: 'a' }, page); }, [page]);
+      return null;
+    }
+    render(<PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="p"><Editor /></PluginPanelHostLayout>);
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    expect(screen.getByTestId('agent-composer').dataset.binding).toBe('salesforce/salesforce/a');
+  });
+
+  it('restores a resource workspace when moved into its own window and keeps other resources separate', () => {
+    const ui = (resourceId: string, separateWindow: boolean) => <PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="project" resourceId={resourceId} separateWindow={separateWindow}><div>editor</div></PluginPanelHostLayout>;
+    let view = render(ui('agents/a.agent', false));
+    act(() => requestPluginPanelAgent({ pluginId: 'salesforce', threadId: 'thread-a' }));
+    view.unmount();
+    view = render(ui('agents/a.agent', true));
+    expect(screen.getByTestId('agent-chat').textContent).toBe('thread-a');
+    view.unmount();
+    view = render(ui('agents/b.agent', true));
+    expect(screen.queryByTestId('agent-chat')).toBeNull();
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    expect(screen.getByTestId('agent-composer').dataset.binding).toBe('salesforce/salesforce/agents/b.agent');
+    view.unmount();
+    view = render(ui('agents/a.agent', false));
+    expect(screen.getByTestId('agent-chat').textContent).toBe('thread-a');
+  });
+
+  it('does not let a different selection retarget the assistant of a dedicated resource window', () => {
+    function Editor() {
+      const page = usePluginPagePanel()!;
+      useEffect(() => { requestPluginPanelScope('salesforce', { id: 'other', view: 'other' }, page); }, [page]);
+      return null;
+    }
+    render(<PluginPanelHostLayout pluginId="salesforce" panelPath="salesforce" scopeId="p" resourceId="locked" separateWindow><Editor /></PluginPanelHostLayout>);
+    fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
+    expect(screen.getByTestId('agent-composer').dataset.binding).toBe('salesforce/salesforce/locked');
+  });
   it('refuses an empty or oversized draft', () => {
     expect(requestPluginPanelAgent({ pluginId: 'design-docs', draft: { prompt: '   ' } })).toBe(false);
     expect(requestPluginPanelAgent({ pluginId: 'design-docs', draft: { prompt: 'x'.repeat(20_001) } })).toBe(false);
@@ -550,7 +686,7 @@ describe('PluginPanelHostLayout', () => {
   });
 
   it('keeps a draft but drops a view it cannot record', () => {
-    expect(parsePanelAgentTarget({ draft: { prompt: 'p', view: 'v'.repeat(257) } })).toEqual({ draft: 'p' });
+    expect(parsePanelAgentTarget({ draft: { prompt: 'p', view: 'v'.repeat(501) } })).toEqual({ draft: 'p' });
     expect(parsePanelAgentTarget({ draft: { prompt: 'p', view: 42 } })).toEqual({ draft: 'p' });
     expect(parsePanelAgentTarget({ draft: { prompt: 'p', view: '  ' } })).toEqual({ draft: 'p' });
     expect(parsePanelAgentTarget({ draft: { prompt: 'p', view: 'dd_1/a.md' } })).toEqual({ draft: 'p', view: 'dd_1/a.md' });

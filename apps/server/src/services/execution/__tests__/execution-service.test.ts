@@ -1226,7 +1226,7 @@ describe('execution usage and typed completion', () => {
 
   it('replays unchanged heartbeat exactly and captures USD for at-budget admission', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
-    const readSessionStats = vi.fn(async () => ({ tokens: { input: 4, output: 1, cacheRead: 0, cacheWrite: 0 }, costUsd: 2, files: [], queue: [] }));
+    const readSessionStats = vi.fn(async () => ({ contextTokens: 32, tokens: { input: 4, output: 1, cacheRead: 0, cacheWrite: 0 }, costUsd: 2, files: [], queue: [] }));
     let now = 10;
     const service = new ExecutionService(deps(filePath, {
       store, readSessionStats, now: () => now++,
@@ -1239,7 +1239,7 @@ describe('execution usage and typed completion', () => {
     await service.observeSessionUsage('execution-1', 'worker', 'outcome');
     const record = (await store.get('execution-1'))!;
     expect(record.usageObservations).toHaveLength(2);
-    expect(record.usageObservations?.[0]).toMatchObject({ cumulative: { providerCostUsd: 2 }, completeness: 'complete' });
+    expect(record.usageObservations?.[0]).toMatchObject({ contextTokens: 32, cumulative: { providerCostUsd: 2 }, completeness: 'complete' });
     expect(record.state).toBe('BLOCKED');
     expect(record.resourceBlock).toMatchObject({ kind: 'usage-budget' });
   }));
@@ -4206,15 +4206,16 @@ describe('SquadExecutionService', () => {
   }));
 
   it('prefers caller job title and launches only after durable reservation and authorization', async () => fixture(async (filePath) => {
+    const automatedSkillIds = ['zcc:built-in/test'];
     const authorizeTeamLaunch = vi.fn(() => ({ ok: true as const, value: {
-      teamId: 'team-1', projectId: 'project-1', slots: [{ slotId: 'slot-1', personaId: 'persona-1', initialTask: 'Run tests', authorizationId: 'auth-1' }],
+      teamId: 'team-1', projectId: 'project-1', slots: [{ slotId: 'slot-1', personaId: 'persona-1', initialTask: 'Run tests', automatedSkillIds, authorizationId: 'auth-1' }],
       context: { version: 1 as const, principalId: 'team:team-1:session-1:request-1', authorizedAt: 10, expiresAt: 20, slots: [{ slotId: 'slot-1', personaId: 'persona-1', authorizationIdDigest: 'sha256:auth' }] }
     } }));
     const launchTeam = vi.fn(async () => ({ ok: true }));
     const service = new SquadExecutionService(deps(filePath, { authorizeTeamLaunch, launchTeam }));
-    const result = await service.start('session-1', 'project-1', { ...request, jobTitle: 'Caller title' });
-    expect(result).toMatchObject({ ok: true, value: { id: 'execution-1', jobTitle: 'Caller title', state: 'RUNNING', authorizationContext: { principalId: 'team:team-1:session-1:request-1' }, authorizationContextDigest: expect.any(String), launchIntent: { slots: [{ slotId: 'slot-1', personaId: 'persona-1', initialTaskDigest: expect.any(String) }] } } });
-    expect(authorizeTeamLaunch).toHaveBeenCalledWith('session-1', 'team-1', 'project-1', 'request-1', {}, request.slots, request.coordinationMode, expect.stringMatching(/^launch-v1:/));
+    const result = await service.start('session-1', 'project-1', { ...request, jobTitle: 'Caller title', slots: [{ initialTask: 'Run tests', automatedSkillIds }] });
+    expect(result).toMatchObject({ ok: true, value: { id: 'execution-1', jobTitle: 'Caller title', state: 'RUNNING', authorizationContext: { principalId: 'team:team-1:session-1:request-1' }, authorizationContextDigest: expect.any(String), launchIntent: { slots: [{ slotId: 'slot-1', personaId: 'persona-1', initialTaskDigest: expect.any(String), automatedSkillIds }] } } });
+    expect(authorizeTeamLaunch).toHaveBeenCalledWith('session-1', 'team-1', 'project-1', 'request-1', {}, [{ initialTask: 'Run tests', automatedSkillIds }], request.coordinationMode, expect.stringMatching(/^launch-v1:/));
     expect(launchTeam).toHaveBeenCalledWith('team-1', 'project-1', expect.objectContaining({ requirePreauthorization: true }));
   }));
 
@@ -4235,22 +4236,23 @@ describe('SquadExecutionService', () => {
   }));
 
   it('retries a pre-dispatch authorization block with a fresh Team launch request', async () => fixture(async (filePath) => {
+    const automatedSkillIds = ['zcc:built-in/test'];
     let calls = 0;
     const authorizeTeamLaunch = vi.fn((_caller: string, _team: string, _project: string, launchRequestId: string) => {
       calls += 1;
       if (calls === 1) return { ok: false as const, code: 'DENIED', message: 'team temporarily disabled' };
       return { ok: true as const, value: {
-        teamId: 'team-1', projectId: 'project-1', slots: [{ slotId: 'slot-1', personaId: 'persona-1', initialTask: 'Run tests', authorizationId: 'fresh-auth' }],
+        teamId: 'team-1', projectId: 'project-1', slots: [{ slotId: 'slot-1', personaId: 'persona-1', initialTask: 'Run tests', automatedSkillIds, authorizationId: 'fresh-auth' }],
         context: { version: 1 as const, principalId: `team:team-1:session-1:${launchRequestId}`, authorizedAt: 10, expiresAt: 20, slots: [{ slotId: 'slot-1', personaId: 'persona-1', authorizationIdDigest: 'sha256:fresh' }] }
       } };
     });
     const launchTeam = vi.fn(async () => ({ ok: true }));
     const service = new SquadExecutionService(deps(filePath, { authorizeTeamLaunch, launchTeam }));
-    await expect(service.start('session-1', 'project-1', request)).resolves.toMatchObject({ ok: false, code: 'DENIED' });
+    await expect(service.start('session-1', 'project-1', { ...request, slots: [{ initialTask: 'Run tests', automatedSkillIds }] })).resolves.toMatchObject({ ok: false, code: 'DENIED' });
     const blocked = await service.status('session-1', 'project-1', 'execution-1');
     if (!blocked) throw new Error('missing blocked execution');
-    await expect(service.retry('session-1', 'project-1', 'execution-1', blocked.stateVersion)).resolves.toMatchObject({ ok: true, value: { id: 'execution-1', attempt: 2, state: 'RUNNING', teamLaunchRequestId: 'execution-1:attempt:2' } });
-    expect(authorizeTeamLaunch).toHaveBeenLastCalledWith('session-1', 'team-1', 'project-1', 'execution-1:attempt:2', {}, request.slots, undefined, expect.stringMatching(/^launch-v1:/));
+    await expect(service.retry('session-1', 'project-1', 'execution-1', blocked.stateVersion)).resolves.toMatchObject({ ok: true, value: { id: 'execution-1', attempt: 2, state: 'RUNNING', teamLaunchRequestId: 'execution-1:attempt:2', launchIntent: { slots: [{ automatedSkillIds }] } } });
+    expect(authorizeTeamLaunch).toHaveBeenLastCalledWith('session-1', 'team-1', 'project-1', 'execution-1:attempt:2', {}, [{ initialTask: 'Run tests', automatedSkillIds }], undefined, expect.stringMatching(/^launch-v1:/));
     expect(launchTeam).toHaveBeenCalledWith('team-1', 'project-1', expect.objectContaining({ launchRequestId: 'execution-1:attempt:2', executionId: 'execution-1', executionJobTitle: 'Build release' }));
   }));
 

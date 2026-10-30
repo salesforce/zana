@@ -3,13 +3,22 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({ views: [] as any[] }));
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events');
+  const { Window } = await import('happy-dom');
   return { WebContentsView: class {
     options: unknown;
     webContents = Object.assign(new EventEmitter(), {
       url: '', destroyed: false,
       setWindowOpenHandler: vi.fn(),
       getURL() { return this.url; },
-      async loadURL(url: string) { this.url = url; },
+      html: '',
+      async loadURL(url: string) { this.url = url; this.html = ''; },
+      executeJavaScript: vi.fn(async function (this: any, code: string) {
+        const dom = new Window({ url: this.url });
+        dom.document.write(this.html || decodeURIComponent(this.url.split(',').slice(1).join(',')));
+        dom.eval(code);
+        this.html = dom.document.documentElement.outerHTML;
+        await dom.happyDOM.close();
+      }),
       isDestroyed() { return this.destroyed; },
       focus: vi.fn(),
       close: vi.fn()
@@ -25,7 +34,7 @@ const selected = { id: 'instance-id', instanceId: 'authority-id', name: 'Studio 
 let win: any, chrome: SharedInstanceChrome;
 let actions: { list: ReturnType<typeof vi.fn>; signIn: ReturnType<typeof vi.fn>; select: ReturnType<typeof vi.fn>; local: ReturnType<typeof vi.fn>; retry: ReturnType<typeof vi.fn>; quit: ReturnType<typeof vi.fn> };
 const view = () => h.views.at(-1);
-const html = () => decodeURIComponent(view().webContents.url.split(',').slice(1).join(','));
+const html = () => view().webContents.html || decodeURIComponent(view().webContents.url.split(',').slice(1).join(','));
 async function command(url: string) {
   const event = { preventDefault: vi.fn() };
   view().webContents.emit('will-navigate', event, url);
@@ -34,7 +43,7 @@ async function command(url: string) {
 }
 beforeEach(() => {
   h.views.length = 0;
-  win = Object.assign(new EventEmitter(), { destroyed: false, isDestroyed() { return this.destroyed; }, getContentSize: () => [1360, 900], contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } });
+  win = Object.assign(new EventEmitter(), { destroyed: false, isDestroyed() { return this.destroyed; }, getContentSize: () => [1360, 900], webContents: Object.assign(new EventEmitter(), { getURL: () => selected.url }), contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } });
   actions = { list: vi.fn().mockResolvedValue([selected]), signIn: vi.fn().mockResolvedValue(undefined), select: vi.fn().mockResolvedValue(undefined), local: vi.fn(), retry: vi.fn().mockResolvedValue(undefined), quit: vi.fn() };
   chrome = new SharedInstanceChrome(win, selected, false, actions);
 });
@@ -43,7 +52,7 @@ afterEach(() => chrome.close());
 it('owns an isolated, preload-free view with bounded placement and releases it on window close', async () => {
   expect(view().options.webPreferences).toEqual({ sandbox: true, contextIsolation: true, nodeIntegration: false, webviewTag: false });
   expect(win.contentView.addChildView).toHaveBeenCalledWith(view());
-  expect(view().setBounds).toHaveBeenLastCalledWith({ x: 1096, y: 0, width: 164, height: 32 });
+  expect(view().setBounds).toHaveBeenLastCalledWith({ x: 900, y: 0, width: 360, height: 32 });
   expect(view().webContents.setWindowOpenHandler.mock.calls[0][0]()).toEqual({ action: 'deny' });
   for (const name of ['will-redirect', 'will-attach-webview']) {
     const preventDefault = vi.fn(); view().webContents.emit(name, { preventDefault }); expect(preventDefault).toHaveBeenCalled();
@@ -72,7 +81,7 @@ it('returns and quits without a remote dependency, including unavailable states'
 it('lists account instances and revalidates selections through the main authority', async () => {
   await command('zcc-instance://pick'); expect(actions.list).not.toHaveBeenCalled();
   await command('zcc-instance://toggle'); await command('zcc-instance://pick');
-  expect(html()).toContain('Open another Zana'); expect(html()).toContain('Refresh instances');
+  expect(html()).toContain('Open another computer'); expect(html()).toContain('Refresh computers');
   await command('zcc-instance://select/forged'); expect(actions.select).not.toHaveBeenCalled();
   await command('zcc-instance://select/instance-id'); expect(actions.select).toHaveBeenCalledWith('instance-id');
   await command('zcc-instance://refresh'); expect(actions.list).toHaveBeenCalledTimes(2);
@@ -84,9 +93,9 @@ it('lists account instances and revalidates selections through the main authorit
 it('offers browser sign-in on expiry and handles empty, unavailable and non-Error responses', async () => {
   await command('zcc-instance://toggle');
   actions.list.mockRejectedValueOnce(new Error('Sign in to your Zana account'));
-  await command('zcc-instance://pick'); expect(html()).toContain('Sign in to browse Zanas');
+  await command('zcc-instance://pick'); expect(html()).toContain('Sign in to find your computers');
   actions.list.mockResolvedValueOnce([]);
-  await command('zcc-instance://signin'); expect(actions.signIn).toHaveBeenCalledOnce(); expect(html()).toContain('No Zana instances found');
+  await command('zcc-instance://signin'); expect(actions.signIn).toHaveBeenCalledOnce(); expect(html()).toContain('No computers found');
   actions.list.mockRejectedValueOnce('offline');
   await command('zcc-instance://refresh'); expect(html()).toContain('Check your connection');
   actions.signIn.mockRejectedValueOnce(new Error('browser unavailable'));
@@ -126,8 +135,8 @@ it('escapes account text and error messages while keeping the chrome CSP strict'
   expect(result).not.toContain('<img'); expect(result).not.toContain('<script>');
   expect(result).toContain('&lt;script&gt;&quot;&amp;&#39;&lt;/script&gt;');
   expect(result).toContain("default-src 'none'"); expect(result).toContain('nonce-');
-  expect(result).toContain('Sign in to browse Zanas');
-  expect(sharedChromeHtml({ ...state, selected: undefined, busy: true })).toContain('Another Zana');
+  expect(result).toContain('Sign in to find your computers');
+  expect(sharedChromeHtml({ ...state, selected: undefined, busy: true })).toContain('Another computer');
   expect(sharedChromeHtml({ ...state, expanded: false })).not.toContain('class="panel"');
   chrome.close(); view().webContents.destroyed = true; win.destroyed = true; chrome.close();
 });
@@ -174,4 +183,50 @@ it('recovers its blur dismissal after a rejected document load', async () => {
   await command('zcc-instance://toggle');
   wc.emit('blur');
   expect(html()).toContain('aria-expanded="false"');
+});
+
+it('shows connection progress until the selected product document finishes loading', async () => {
+  await new Promise(resolve => setImmediate(resolve));
+  expect(html()).toContain('Connecting to Studio Mac');
+  win.webContents.getURL = () => 'https://zana-ide.com/connect/';
+  win.webContents.emit('did-finish-load'); expect(html()).toContain('Connecting to Studio Mac');
+  win.webContents.getURL = () => selected.url + '/_connect/callback?code=public';
+  win.webContents.emit('did-finish-load'); expect(html()).toContain('Connecting to Studio Mac');
+  win.webContents.getURL = () => selected.url + '/';
+  win.webContents.emit('did-finish-load');
+  await new Promise(resolve => setImmediate(resolve));
+  expect(html()).toContain('Connected to Studio Mac');
+  chrome.unavailable(); expect(html()).toContain('Unavailable');
+  win.webContents.getURL = () => 'invalid'; win.webContents.emit('did-finish-load');
+  expect(html()).toContain('Unavailable');
+  chrome.close(); expect(win.webContents.listenerCount('did-finish-load')).toBe(0);
+});
+
+it('updates status without replacing the frame or losing a simultaneous menu action', async () => {
+  await new Promise(resolve => setImmediate(resolve));
+  const wc = view().webContents;
+  const displayed = wc.url;
+  wc.loadURL = vi.fn(async () => {});
+  win.webContents.emit('did-finish-load');
+  expect(wc.url).toBe(displayed);
+  await command('zcc-instance://local'); expect(actions.local).toHaveBeenCalledOnce();
+  expect(html()).toContain('Connected to Studio Mac');
+  win.webContents.emit('did-finish-load');
+  expect(wc.loadURL).not.toHaveBeenCalled();
+  expect(wc.executeJavaScript).toHaveBeenCalledOnce();
+  wc.url = 'https://attacker.example';
+  await command('zcc-instance://local');
+  expect(actions.local).toHaveBeenCalledOnce();
+});
+
+it('applies a queued connection update after its frame settles and contains closed-frame failures', async () => {
+  // Constructor render is still pending when this event arrives.
+  win.webContents.emit('did-finish-load');
+  await new Promise(resolve => setImmediate(resolve));
+  expect(html()).toContain('Connected to Studio Mac');
+  expect(view().webContents.executeJavaScript).toHaveBeenCalledOnce();
+  chrome.unavailable(); await new Promise(resolve => setImmediate(resolve));
+  view().webContents.executeJavaScript.mockRejectedValueOnce(new Error('frame closed'));
+  win.webContents.emit('did-finish-load');
+  await new Promise(resolve => setImmediate(resolve));
 });

@@ -22,13 +22,71 @@ const { createIsolatedPluginRuntime, PLUGIN_HEARTBEAT_TIMEOUT_MS } = await impor
 
 afterEach(() => { vi.useRealTimers(); state.activeCommits = 0; state.workers.length = 0; });
 
-function start(timeout: { heartbeatTimeoutMs?: number } = { heartbeatTimeoutMs: 1_000 }) {
+function initialize(options: { entry?: string; heartbeatTimeoutMs?: number; startupTimeoutMs?: number } = {}) {
   const onFailure = vi.fn();
-  const runtime = createIsolatedPluginRuntime({ api: {} as never, entry: 'x', generation: 1, databasePath: 'db', onFailure, ...timeout });
+  const runtime = createIsolatedPluginRuntime({ api: {} as never, entry: 'x', generation: 1, databasePath: 'db', onFailure, ...options });
   const worker = state.workers.at(-1) as EventEmitter;
-  worker.emit('message', { kind: 'ready' });
   return { runtime, onFailure, worker };
 }
+
+function start(timeout: { heartbeatTimeoutMs?: number } = { heartbeatTimeoutMs: 1_000 }) {
+  const f = initialize(timeout);
+  f.worker.emit('message', { kind: 'ready' });
+  return f;
+}
+
+it.each(['server.ts', 'server.tsx'])('allows a cold source import to finish after the compiled deadline: %s', async entry => {
+  vi.useFakeTimers();
+  const f = initialize({ entry });
+  await vi.advanceTimersByTimeAsync(15_000);
+  expect(f.onFailure).not.toHaveBeenCalled();
+  f.worker.emit('message', { kind: 'ready' });
+  await expect(f.runtime.started).resolves.toBeUndefined();
+  // A slow source import must not extend the watchdog once the plugin is ready.
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(f.onFailure).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(250);
+  expect(f.onFailure).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: 'Plugin event loop stopped responding' }));
+  await f.runtime.dispose();
+});
+
+it.each(['server.mjs', 'server.js', 'server.ts.mjs'])('keeps the compiled startup deadline at ten seconds: %s', async entry => {
+  vi.useFakeTimers();
+  const f = initialize({ entry });
+  await vi.advanceTimersByTimeAsync(9_999);
+  expect(f.onFailure).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  await expect(f.runtime.started).rejects.toThrow('Plugin factory timed out');
+  expect(f.onFailure).toHaveBeenCalledOnce();
+  await f.runtime.dispose();
+});
+
+it('still terminates a source factory that exceeds its bounded startup allowance', async () => {
+  vi.useFakeTimers();
+  const f = initialize({ entry: 'server.ts' });
+  // Heartbeats during imports do not waive the absolute startup deadline.
+  for (let i = 0; i < 3; i++) {
+    await vi.advanceTimersByTimeAsync(5_000);
+    f.worker.emit('message', { kind: 'heartbeat' });
+  }
+  await vi.advanceTimersByTimeAsync(4_999);
+  expect(f.onFailure).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  await expect(f.runtime.started).rejects.toThrow('Plugin factory timed out');
+  expect(f.onFailure).toHaveBeenCalledOnce();
+  await f.runtime.dispose();
+});
+
+it.each(['server.ts', 'server.mjs'])('honors an explicit startup deadline for %s', async entry => {
+  vi.useFakeTimers();
+  const f = initialize({ entry, startupTimeoutMs: 700 });
+  await vi.advanceTimersByTimeAsync(699);
+  expect(f.onFailure).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  await expect(f.runtime.started).rejects.toThrow('Plugin factory timed out');
+  expect(f.onFailure).toHaveBeenCalledOnce();
+  await f.runtime.dispose();
+});
 
 it('tolerates bounded synchronous plugin work by default and still fails a wedged worker', async () => {
   vi.useFakeTimers();

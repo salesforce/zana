@@ -45,6 +45,66 @@ describe('isTerminalExecutionState', () => {
 });
 
 describe('execution store', () => {
+  const catalogueProvenance = {
+    role: 'worker' as const,
+    capabilities: [],
+    tools: ['execution.work.claim', 'execution.work.complete'],
+    digest: 'a'.repeat(64)
+  };
+
+  it('persists automated MCP catalogue provenance keyed by slot across reload', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+
+    await expect(store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', catalogueProvenance))
+      .resolves.toEqual({ version: 1, ...catalogueProvenance });
+    await expect(createExecutionStore({ filePath }).get(record.id)).resolves.toMatchObject({
+      automatedMcpCatalogueProvenance: { 'worker-1': { version: 1, ...catalogueProvenance } }
+    });
+  }));
+
+  it('returns existing automated MCP catalogue provenance for an exact retry', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+
+    const first = await store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', catalogueProvenance);
+    const replay = await store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', catalogueProvenance);
+    expect(replay).toEqual(first);
+  }));
+
+  it('compares automated MCP catalogue provenance by explicit fields, not object serialization order', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+    await store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', catalogueProvenance);
+
+    await expect(store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', {
+      digest: catalogueProvenance.digest,
+      tools: [...catalogueProvenance.tools],
+      capabilities: [...catalogueProvenance.capabilities],
+      role: catalogueProvenance.role
+    })).resolves.toEqual({ version: 1, ...catalogueProvenance });
+  }));
+
+  it('rejects changed automated MCP catalogue provenance for an existing slot', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+
+    await store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', catalogueProvenance);
+    await expect(store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', {
+      ...catalogueProvenance, digest: 'b'.repeat(64)
+    })).rejects.toThrow('automated MCP catalogue provenance mismatch for slot worker-1');
+  }));
+
+  it('caps automated MCP catalogue provenance slots', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+    for (let index = 0; index < 100; index++) {
+      await store.recordAutomatedMcpCatalogueProvenance(record.id, `worker-${index}`, catalogueProvenance);
+    }
+    await expect(store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-overflow', catalogueProvenance))
+      .rejects.toThrow('automated MCP catalogue provenance slot limit reached');
+  }));
+
   it('grants one fixed blocker deadline grace then stops with a durable reason', async () => fixture(async (filePath) => {
     let now = 1_000;
     const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
@@ -830,6 +890,23 @@ describe('execution store', () => {
     await expect(store.claim({
       ...request(), launchRequestId: 'request-3',
       request: { version: 1, slots: [{ initialTask: 'é'.repeat(Math.floor(MAX_TEAM_INITIAL_TASK_BYTES / 2) + 1) }], resolvedModels: [] }
+    })).rejects.toThrow('invalid execution request snapshot');
+  }));
+  it('persists bounded automated skill selections in request and launch intent snapshots', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let record = (await store.claim({
+      ...request(),
+      request: { version: 1, slots: [{ initialTask: 'Run tests', automatedSkillIds: ['zcc:built-in/test'] }], resolvedModels: [] }
+    })).record;
+    expect(record.request.slots[0].automatedSkillIds).toEqual(['zcc:built-in/test']);
+    record = await store.prepareLaunchIntent(record.id, record.stateVersion, {
+      version: 1, authorizationContextDigest: 'sha256:context',
+      slots: [{ slotId: 'slot-1', personaId: 'worker', initialTaskDigest: 'sha256:task', automatedSkillIds: ['zcc:built-in/test'] }]
+    });
+    expect(record.launchIntent?.slots[0].automatedSkillIds).toEqual(['zcc:built-in/test']);
+    await expect(store.claim({
+      ...request(), launchRequestId: 'request-2',
+      request: { version: 1, slots: [{ initialTask: 'Run tests', automatedSkillIds: Array(65).fill('zcc:built-in/test') }], resolvedModels: [] }
     })).rejects.toThrow('invalid execution request snapshot');
   }));
   it('defaults generic launch metadata to Team and rejects unknown durable launch kinds', async () => fixture(async (filePath) => {

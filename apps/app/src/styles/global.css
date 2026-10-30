@@ -16327,6 +16327,13 @@ body.resizing-col .explorer-resizer::after {
   vertical-align: baseline;
 }
 
+.inbox-md .inbox-md-file-link {
+  color: var(--accent-gold);
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
 .inbox-md .inbox-md-file-chip:hover,
 .inbox-md .inbox-md-file-chip:focus-visible {
   text-decoration: underline;
@@ -22294,6 +22301,23 @@ body.resizing-col .gus-rail-resizer::after {
   border: 1px solid var(--border-strong);
   border-radius: 14px;
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+}
+/* Intro step: the 16:9 clip replaces the icon, so the card widens and the
+   Skip button moves off the video. */
+.walkthrough-card--media {
+  width: min(760px, 92vw);
+  max-height: calc(100vh - var(--titlebar-h) - 32px);
+  overflow-y: auto;
+  padding-top: 44px;
+}
+.walkthrough-video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #1b1b1b;
 }
 .walkthrough-skip {
   position: absolute;
@@ -36172,6 +36196,7 @@ body.split-frame-guard webview {
 }
 
 /* Sticky prompts need an opaque backing that matches their hosting surface. */
+.app-shell.shell-inset .thread-timeline-current-turn > .thread-timeline-item.is-user,
 .panel-agent-tab .thread-timeline-current-turn > .thread-timeline-item.is-user,
 .thread-detail-view--modal .thread-timeline-current-turn > .thread-timeline-item.is-user {
   background: var(--bg-panel);
@@ -36247,6 +36272,14 @@ body.split-frame-guard webview {
 .thread-timeline-row .inbox-mermaid-loading {
   width: 100%;
   box-sizing: border-box;
+}
+
+/* Keep small graphs at their natural scale and tall flows within the chat.
+   The SVG fits the bounded frame without cropping; Expand keeps details readable. */
+.thread-timeline-row .inbox-mermaid-frame.is-sized {
+  max-width: var(--mermaid-intrinsic-width);
+  max-height: min(480px, 60vh);
+  margin-inline: auto;
 }
 
 .thread-timeline-work {
@@ -38901,6 +38934,12 @@ body.split-frame-guard webview {
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
+}
+
+/* Keep the saved drag width inside the live container after a window shrinks.
+   This matches the shared panel's 70% drag limit without discarding its saved width. */
+.plugin-panel-host-layout:not(.is-secondary-maximized):not(.is-compact) > .thread-secondary-panel {
+  flex-basis: min(var(--thread-secondary-width, 22rem), 70%);
 }
 
 .plugin-panel-host-layout:is(.is-secondary-maximized, .is-compact.is-secondary-open) > .split-plugin-main {

@@ -78,6 +78,10 @@ import { bridgeLaunchForProvider, getThreadProvider, waitForThreadProvider } fro
 import { readLastThreadExecution } from './thread-last-execution.js';
 import { validateProviderModelSelection } from './provider-model-validation.js';
 import { threadPermissionMode } from './thread-permission-mode.js';
+import {
+  copyThreadAutomatedSkillIds,
+  threadAutomatedSkillIds
+} from './thread-automated-skill-selection.js';
 import { packConversationSessionTooling } from './conversation-session-tools.js';
 import { withResolvedPluginMentionContext } from '../../plugins/plugin-mentions.js';
 import {
@@ -773,6 +777,7 @@ export async function forkConversation(
     targetThreadId: forked.id,
     sourceSeqEnd: options?.sourceSeqEnd
   });
+  copyThreadAutomatedSkillIds(ctx.db, thread.id, forked.id);
   const pluginSeed = Array.isArray(options?.agentContextSeed) ? options.agentContextSeed : [];
   const transcript = canCloneProviderSession(forkCapability)
     ? null
@@ -1067,6 +1072,7 @@ async function threadStartCommandForFork(
     listConversationThreadEvents(ctx.db, thread.id, { omitPayloadTypes: ['turn/diff/updated'] }),
     getThreadProvider(thread.providerId)?.capabilities.fork
   );
+  const automatedSkillIds = threadAutomatedSkillIds(ctx.db, thread.id);
   return {
     type: 'thread.start',
     threadId: thread.id,
@@ -1089,6 +1095,7 @@ async function threadStartCommandForFork(
     ...(clientRequestId ? { clientRequestId } : {}),
     ...(fork?.sourceProviderThreadId ? { providerThreadId: fork.sourceProviderThreadId } : {}),
     ...(fork?.sourceProviderCheckpointId ? { providerCheckpointId: fork.sourceProviderCheckpointId } : {}),
+    ...(automatedSkillIds !== undefined ? { automatedSkillIds } : {}),
     ...sessionTooling
   };
 }

@@ -18,7 +18,10 @@ test('CLI Agent starts a durable Job Team, surfaces its question, and completes'
   const app = await launchApp(home, {
     e2e: true,
     allowLiveClaude: true,
-    env: { PATH: `${catalogDir}${delimiter}${process.env.PATH ?? ''}` },
+    env: {
+      ANTHROPIC_API_KEY: 'cli-agent-job-team-e2e-key',
+      PATH: `${catalogDir}${delimiter}${process.env.PATH ?? ''}`
+    },
     initialConfig: { teamJobLaunchEnabled: true, sponsorPromptDismissed: true }
   });
   const { window } = app;

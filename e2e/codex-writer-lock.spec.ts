@@ -68,8 +68,11 @@ test('Codex writer contention retries through the built provider and composer', 
     dispatchEvent(new PopStateEvent('popstate'));
   }, threadId);
   const timeline = window.getByTestId('thread-timeline');
-  await timeline.getByRole('button', { name: 'Show more', exact: true }).click();
-  await expect(timeline).toContainText(REPLY, { timeout: 30_000 });
+  await expect(timeline).toContainText('Codex output start', { timeout: 30_000 });
+  if (await timeline.getByText(REPLY, { exact: true }).count() === 0) {
+    await timeline.getByRole('button', { name: 'Show more', exact: true }).click();
+  }
+  await expect(timeline).toContainText(REPLY);
   await window.evaluate(async (id) => {
     const response = await fetch(`/api/v1/threads/${id}/stop`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
     if (!response.ok) throw new Error(await response.text());
@@ -86,8 +89,11 @@ test('Codex writer contention retries through the built provider and composer', 
       return existsSync(log) ? readFileSync(log, 'utf8') : '';
     }).toContain('writer-conflict:');
     unlinkSync(lock);
-    await timeline.getByRole('button', { name: 'Show more', exact: true }).click();
-    await expect(timeline.getByText(REPLY, { exact: true })).toHaveCount(2, { timeout: 30_000 });
+    await expect(timeline.getByText('Codex output start', { exact: false })).toHaveCount(2, { timeout: 30_000 });
+    if (await timeline.getByText(REPLY, { exact: true }).count() < 2) {
+      await timeline.getByRole('button', { name: 'Show more', exact: true }).last().click();
+    }
+    await expect(timeline.getByText(REPLY, { exact: true })).toHaveCount(2);
     const requests = readFileSync(join(home, 'codex-requests.log'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
     expect(requests.filter((entry) => entry.method === 'thread/resume').length).toBeGreaterThanOrEqual(2);
     // Omitting a model in product HTTP must preserve Codex's configured default,

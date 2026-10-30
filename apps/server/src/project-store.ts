@@ -2,7 +2,7 @@ import { isProjectIcon, type ProjectIcon } from '@zana-ai/zcc-domain';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, win32 } from 'node:path';
-import { atomicDurableWrite, createSerializedTransactionQueue } from './durable-store.js';
+import { atomicDurableWrite, createSerializedTransactionQueue, DurableWriteConflictError } from './durable-store.js';
 
 /**
  * Server-owned project mutation service (Runtime Migration Backlog, Durable
@@ -440,14 +440,23 @@ export function createProjectStore({ projectsFile, remotePlaceholderRoot }: Proj
 
     touch(id: string): Promise<ProjectRecord | null> {
       return queue.run(async () => {
-        const { file, hash } = readSnapshot();
-        const projects = backfillProjectMetadata(file.projects);
-        const index = projects.findIndex((project) => project.id === id);
-        if (index === -1) return null;
-        const project = { ...projects[index], lastActiveAt: Date.now() };
-        projects[index] = project;
-        writeProjects(projects, hash);
-        return project;
+        // Touch is activity-only. A concurrent legacy/project mutation must win;
+        // reread its result and retry rather than failing a project switch.
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const { file, hash } = readSnapshot();
+          const projects = backfillProjectMetadata(file.projects);
+          const index = projects.findIndex((project) => project.id === id);
+          if (index === -1) return null;
+          const project = { ...projects[index], lastActiveAt: Date.now() };
+          projects[index] = project;
+          try {
+            writeProjects(projects, hash);
+            return project;
+          } catch (error) {
+            if (!(error instanceof DurableWriteConflictError) || attempt === 2) throw error;
+          }
+        }
+        return null;
       });
     },
 

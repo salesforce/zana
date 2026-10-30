@@ -242,6 +242,10 @@ export async function launchApp(home: string, opts: LaunchOptions = {}): Promise
     ...isolatedKeychainEnv(preserveHome),
     ZCC_DATA_DIR: dataDir,
     ZCC_EXTENSIONS_DIR: join(home, '.zcc', 'extensions'),
+    // Deterministic fake Claude binaries still cross unattended launch admission.
+    // This non-secret fixture token keeps those launches isolated without copying
+    // real authentication into the sandbox.
+    ...(opts.e2e ? { ANTHROPIC_AUTH_TOKEN: 'e2e-fake-agent-auth' } : {}),
     // Tests opt into fixture catalogs explicitly; do not clone live defaults.
     ZCC_COMMUNITY_MARKETPLACE_SOURCE: 'off',
     ZCC_INTERNAL_MARKETPLACE_SOURCE: 'off',

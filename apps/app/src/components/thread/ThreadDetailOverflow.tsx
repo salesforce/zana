@@ -10,7 +10,8 @@ import { getAgentsRoutePath, getProjectRoutePath, getThreadRoutePath } from '../
 import { useRouteState } from '../../hooks/useRouteState.js';
 import { useThreads } from '../../thread-store.js';
 import { withRunningProcessWarning } from '../../lib/thread-running-processes.js';
-import { errorMessage, useUi } from '../../store.js';
+import { threadCloseFollowupConfirm, threadCloseFollowupToast } from '../../lib/thread-close-followup.js';
+import { errorMessage, useData, useUi } from '../../store.js';
 import { MobileActionSheet } from '../MobilePageHeader.js';
 import { useCompactLayout } from '../../hooks/useCompactLayout.js';
 import { PromptModal } from '../PromptModal.js';
@@ -254,9 +255,16 @@ export function ThreadDetailOverflow({
       }}
       onCloseFollowup={() => {
         close();
-        if (!window.confirm(withRunningProcessWarning(`Close “${title}” and file a follow-up if work is left?`, currentThread()))) return;
+        const prompt = threadCloseFollowupConfirm(title, useData.getState().closeWrapUpEnabled);
+        if (!window.confirm(withRunningProcessWarning(prompt, currentThread()))) return;
         void product.threads.closeFollowup(threadId).then((result) => {
           if (result && result.ok === false) return;
+          // Kept open, or wrapping up (the thread archives itself when it finishes): stay on it.
+          const leftInPlace = threadCloseFollowupToast(title, result);
+          if (leftInPlace) {
+            useUi.getState().pushToast(leftInPlace, 'info');
+            return;
+          }
           remove(threadId);
           navigate(scopedProjectId ? getProjectRoutePath(scopedProjectId) : getAgentsRoutePath());
         }).catch((error) => reportFailure(error, 'Failed to close agent'));

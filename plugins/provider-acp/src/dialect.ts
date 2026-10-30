@@ -60,6 +60,7 @@ export interface AcpDelegationReport {
 export interface AcpDialect {
   /** Stable id, for logs and tests. */
   readonly id: string;
+  launchEnv?(permissionMode: "accept-edits" | "full"): Readonly<Record<string, string>>;
   /**
    * The tool identity a tool_call / tool_call_update carries in the agent's
    * side channel, if any. The translator fills an absent protocol `name` and
@@ -526,6 +527,19 @@ function normalizeOpenCodeCommandEvent(
 
 export const OPENCODE_ACP_DIALECT: AcpDialect = {
   id: "opencode",
+  launchEnv(permissionMode) {
+    const outsideEdits = permissionMode === "full" ? "allow" : "ask";
+    return {
+      OPENCODE_CLIENT: "acp",
+      OPENCODE_ENABLE_QUESTION_TOOL: "false",
+      OPENCODE_PERMISSION: JSON.stringify({
+        edit: "allow",
+        bash: outsideEdits,
+        webfetch: outsideEdits,
+        external_directory: outsideEdits,
+      }),
+    };
+  },
   classifyToolCall: openCodeClassifyToolCall,
   normalizeCommandEvent: normalizeOpenCodeCommandEvent,
 };

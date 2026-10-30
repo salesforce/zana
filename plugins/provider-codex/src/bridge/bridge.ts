@@ -3,8 +3,6 @@
 import { createHash } from "node:crypto";
 import {
   isStandaloneBuiltinCompactCommand,
-  approvalInteractionOutcomeSchema,
-  userQuestionInteractionOutcomeSchema,
   type DynamicTool,
   type PromptInput,
   type ThreadDelta,
@@ -55,7 +53,7 @@ import {
   summarizeCodexMacOsPermissions,
 } from "../extension-kinds.js";
 import {
-  buildCodexInteractiveResponse,
+  buildCodexInteractiveResult,
   decodeCodexInteractiveRequest,
   extractCodexMacOsPermissionRequest,
   type CodexMacOsPermissionRequest,
@@ -760,19 +758,10 @@ function handleChildRequest(
     payload: request.payload,
     providerNativeIds: true,
   })
-    .then((result) => {
-      const outcome =
-        request.payload.kind === "user_question"
-          ? userQuestionInteractionOutcomeSchema.parse({
-              payload: request.payload,
-              resolution: result,
-            })
-          : approvalInteractionOutcomeSchema.parse({
-              payload: request.payload,
-              resolution: result,
-            });
-      responder.result(buildCodexInteractiveResponse(outcome));
-    })
+    .then(
+      (value) => responder.result(buildCodexInteractiveResult(request.payload, { status: "fulfilled", value })),
+      (reason: unknown) => responder.result(buildCodexInteractiveResult(request.payload, { status: "rejected", reason })),
+    )
     .catch((error: unknown) => {
       responder.error(
         BRIDGE_JSON_RPC_ERRORS.BRIDGE_ERROR,

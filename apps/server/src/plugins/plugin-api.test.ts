@@ -1048,6 +1048,30 @@ describe('agents.registerTool', () => {
     }
   });
 
+  it('routes plugin status calls to onPluginStatus and keeps core messages on onNeedsConfiguration', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-status-'));
+    try {
+      const reported: Array<string | null> = [];
+      const core: string[] = [];
+      const handle = createPluginApi('demo', dir, {
+        onPluginStatus: (message) => reported.push(message),
+        onNeedsConfiguration: (message) => core.push(message)
+      });
+      handle.api.status.needsConfiguration('Sign in');
+      handle.api.status.configured();
+      expect(reported).toEqual(['Sign in', null]);
+      expect(core).toEqual([]);
+
+      const legacy: string[] = [];
+      const fallback = createPluginApi('demo', dir, { onNeedsConfiguration: (message) => legacy.push(message) });
+      fallback.api.status.needsConfiguration('Old host');
+      fallback.api.status.configured();
+      expect(legacy).toEqual(['Old host']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('accepts inputSchema as a deprecated alias and skips a cross-plugin collision', () => {
     const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-tools-alias-'));
     try {

@@ -95,6 +95,7 @@ describe('PtyManager.create — unattended Claude config isolation', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     for (const key of ENV_KEYS) {
       if (saved[key] === undefined) delete process.env[key];
       else process.env[key] = saved[key];
@@ -126,6 +127,20 @@ describe('PtyManager.create — unattended Claude config isolation', () => {
   it('releases the config dir when the spawn throws', () => {
     spawnControl.failNext = true;
     expect(() => create(new PtyManager(), { scheduled: true })).toThrow('spawn failed');
+    const parent = join(dataDir, 'claude-automated-config');
+    expect(existsSync(parent) ? readdirSync(parent) : []).toEqual([]);
+  });
+
+  it('blocks an unattended Claude run without isolated authentication', () => {
+    writeFileSync(join(claudeHome, 'settings.json'), JSON.stringify({ hooks: { Stop: [{ command: 'x' }] } }));
+    for (const key of Object.keys(process.env)) {
+      if (/^(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_USE_[A-Z_]+)$/.test(key)) {
+        vi.stubEnv(key, undefined);
+      }
+    }
+
+    expect(() => create(new PtyManager(), { scheduled: true })).toThrow(/authentication-unavailable/);
+    expect(spawned).toEqual([]);
     const parent = join(dataDir, 'claude-automated-config');
     expect(existsSync(parent) ? readdirSync(parent) : []).toEqual([]);
   });

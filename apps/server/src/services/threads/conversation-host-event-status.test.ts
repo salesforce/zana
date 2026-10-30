@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { conversationLifecycleEventForHostEvent, isNestedConversationTurnCompletion } from './conversation-host-event-status.js';
+import { isRootConversationCompactionCompleted, conversationLifecycleEventForHostEvent, isNestedConversationTurnCompletion } from './conversation-host-event-status.js';
 
 describe('conversationLifecycleEventForHostEvent', () => {
   it('does not emit a lifecycle event while a provider error is retrying', () => {
@@ -129,4 +129,43 @@ describe('conversationLifecycleEventForHostEvent', () => {
       expect(findStart).not.toHaveBeenCalled();
     }
   );
+});
+
+describe('root compaction completion', () => {
+  const payload = {
+    type: 'thread/compacted',
+    scope: { kind: 'turn', turnId: 'root' },
+  };
+  it('accepts root maintenance after its user turn settled', () => {
+    expect(
+      isRootConversationCompactionCompleted(
+        'thread/compacted',
+        payload,
+        () => null,
+      ),
+    ).toBe(true);
+  });
+  it('ignores unrelated events', () => {
+    const find = vi.fn();
+    expect(
+      isRootConversationCompactionCompleted('item/completed', payload, find),
+    ).toBe(false);
+    expect(find).not.toHaveBeenCalled();
+  });
+  it('ignores a nested completion even when only its start records ancestry', () => {
+    expect(
+      isRootConversationCompactionCompleted(
+        'thread/compacted',
+        { ...payload, parentToolCallId: 'child-tool' },
+        () => null,
+      ),
+    ).toBe(false);
+    expect(
+      isRootConversationCompactionCompleted(
+        'thread/compacted',
+        payload,
+        () => ({ payload: { parentToolCallId: 'child-tool' } }),
+      ),
+    ).toBe(false);
+  });
 });

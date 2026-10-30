@@ -62,6 +62,8 @@ export interface PluginProjectTabRegistration extends PluginSlotBase {
   global?: boolean;
   /** Own the toolbar instead of adding a host title row. Render the supplied headerActions in it. */
   header?: 'custom';
+  /** Omit the host project-path/Git footer for this tab. Other project views keep it. */
+  statusbar?: 'hidden';
   /**
    * Let the user open this tab in its own OS window (desktop only). While it is
    * open there, the tab is not mounted in other windows; they show
@@ -85,6 +87,8 @@ export interface PluginDetachedTabProps {
 export interface ZccNavigateToProjectOptions {
   /** Open this plugin's `projectTab` with the given slot id. */
   tabId?: string;
+  /** Route to the main window tab even when that tab has a detached window. */
+  inMainWindow?: boolean;
 }
 
 export interface PluginProjectMenuActionContext {
@@ -395,6 +399,8 @@ export interface PluginMessageDirectiveProps {
 }
 
 export interface PluginMessageDirectiveRegistration extends PluginSlotBase {
+  /** Hide this navigation card in the assistant beside its own plugin page. */
+  hideInAssistant?: boolean;
   component: ComponentType<PluginMessageDirectiveProps>;
 }
 
@@ -843,6 +849,10 @@ export type PluginRealtimeConnectionState = 'connecting' | 'connected' | 'reconn
 export type ZccSurface = 'main' | 'project-window' | 'plugin-view';
 
 export interface ZccContext {
+  /** Opaque resource selection for this plugin page or detached window; not a filesystem grant. */
+  resourceId?: string;
+  /** Changes for each main-window resource navigation, including repeated requests for the same resource. */
+  resourceRequestId?: string;
   projectId: string | null;
   threadId: string | null;
   /** Absent on hosts that predate detachable tabs. */
@@ -877,6 +887,13 @@ export interface ZccWindowTitle {
   badge?: string;
   /** Defaults to `neutral`. */
   tone?: ZccWindowTitleTone;
+}
+
+export interface ZccPanelScope {
+  /** Stable page resource identity. Does not grant access to that resource. */
+  id: string;
+  /** Optional view identity, e.g. a tool group within the resource. */
+  view?: string;
 }
 
 export interface ZccNavigate {
@@ -914,12 +931,14 @@ export interface ZccNavigate {
    * match. Absent on older hosts.
    */
   openPanelTool?(options: ZccPanelToolOptions): boolean;
+  /** Select the resource whose independent host side panel this page displays. Null restores the page default. */
+  setPanelScope?(scope: ZccPanelScope | null): void;
   /**
    * Open one of this plugin's `detachable` project tabs in its own window, or
    * focus that window when it is already open. Resolves `false` outside the
    * desktop app or when the tab is not detachable. Absent on older hosts.
    */
-  openInWindow?(projectId: string, options?: ZccNavigateToProjectOptions): Promise<boolean>;
+  openInWindow?(projectId: string, options?: ZccNavigateToProjectOptions & { resourceId?: string }): Promise<boolean>;
 }
 
 /** Why a pasted deep link was not routed. `unavailable` outside the desktop app and on older hosts. */
@@ -1109,6 +1128,8 @@ export interface PluginSdkApp {
   /** Deep links for the calling plugin. Absent on hosts that predate them. */
   useZccDeepLinks?(): ZccDeepLinks;
   useWindowTitle(title: ZccWindowTitle | null | undefined): void;
+  /** Await durable document/run handoff before a detached window closes. Rejection keeps it open. */
+  useWindowCloseHandler?(handler: ((signal: AbortSignal) => void | Promise<void>) | null): void;
   useComposer(): PluginComposerApi;
   useComposerView(): ComposerView;
   experimental_useSidebarThreads(): { status: 'loading' | 'ready' | 'error'; threads: PluginSidebarThread[]; projects: { id: string; name: string }[] };
@@ -1607,6 +1628,7 @@ export function collectPluginApp(
         set.messageDirectives.push(
           stamp({
             id: registration.id,
+            ...(registration.hideInAssistant === true ? { hideInAssistant: true } : {}),
             component: requireComponent(kind, 'component', registration.component)
           })
         );

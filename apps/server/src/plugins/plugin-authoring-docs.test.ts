@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import * as pluginSdkApp from '@zana-ai/zcc-plugin-sdk/app';
@@ -50,6 +51,21 @@ const FRONTEND_RUNTIME_EXPORT_NAMES = Object.keys(pluginSdkApp).sort();
 const SKILL_PATH = fileURLToPath(
   new URL('./builtin-skills/zcc-plugin-authoring/SKILL.md', import.meta.url)
 );
+
+const REFERENCE_FILES = [
+  'workflow.md',
+  'server-sdk.md',
+  'app-slots.md',
+  'skills-and-approvals.md',
+  'testing.md'
+] as const;
+
+function readSkillDocumentation(): string {
+  return [
+    readFileSync(SKILL_PATH, 'utf8'),
+    ...REFERENCE_FILES.map((file) => readFileSync(join(dirname(SKILL_PATH), 'references', file), 'utf8'))
+  ].join('\n\n');
+}
 
 const ZCC_PLUGIN_API_KEYS = [
   'pluginId',
@@ -342,10 +358,26 @@ const FRONTEND_SLOT_PROP_FIELDS = {
 };
 
 describe('zcc-plugin-authoring skill', () => {
-  const skill = readFileSync(SKILL_PATH, 'utf8');
+  const core = readFileSync(SKILL_PATH, 'utf8');
+  const skill = readSkillDocumentation();
 
   it('has frontmatter naming the skill after its directory', () => {
-    expect(skill).toMatch(/^---\nname: zcc-plugin-authoring\n/);
+    expect(core).toMatch(/^---\nname: zcc-plugin-authoring\n/);
+  });
+
+  it('ships every declared reference', () => {
+    for (const file of REFERENCE_FILES) {
+      expect(existsSync(join(dirname(SKILL_PATH), 'references', file)), `declared skill reference is missing: ${file}`).toBe(true);
+    }
+  });
+
+  it('keeps default instructions as a small router with explicit references', () => {
+    const bytes = Buffer.byteLength(core, 'utf8');
+    expect(bytes).toBeGreaterThanOrEqual(2_048);
+    expect(bytes).toBeLessThanOrEqual(4_096);
+    for (const file of REFERENCE_FILES) {
+      expect(core).toContain(`references/${file}`);
+    }
   });
 
   it('documents every ZccPluginApi property', () => {
@@ -477,7 +509,7 @@ describe('zcc-plugin-authoring skill', () => {
   });
 
   it('documents Testing a plugin with renderSlot and loadPluginApp', () => {
-    expect(skill).toContain('## Testing a plugin');
+    expect(skill).toContain('# Plugin Testing');
     expect(skill).toContain('renderSlot');
     expect(skill).toContain('loadPluginApp');
     expect(skill).toContain('LIVE_TEST.md');

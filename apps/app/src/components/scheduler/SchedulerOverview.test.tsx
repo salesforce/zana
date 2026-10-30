@@ -55,6 +55,15 @@ describe('schedule filtering and health', () => {
 });
 
 describe('SchedulerOverview', () => {
+  it('says off, Disable and Enable for turning schedules on and off', () => {
+    const { props, inventory } = mount([task('Alpha'), task('Beta', { enabled: false })]);
+    expect(screen.getByText('1 enabled · 1 off')).toBeTruthy();
+    expect(within(inventory()).getByText('off')).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'Off' }).getAttribute('value')).toBe('paused');
+    fireEvent.click(screen.getAllByLabelText('Disable Alpha')[0]!);
+    expect(props.onToggle).toHaveBeenCalledOnce();
+    expect(screen.getAllByLabelText('Enable Beta').length).toBeGreaterThan(0);
+  });
   it('reviews attention schedules without changing their enabled state', () => {
     const { props, inventory } = mount([task('Missing', { projectId: 'gone' }), withRun('Failed', 'error'), task('Healthy')]);
     expect(screen.getByText('2 schedules need attention')).toBeTruthy();
@@ -174,5 +183,30 @@ describe('SchedulerOverview', () => {
     const { props } = mount([task('Classic')], { onTurnOnRecovery: vi.fn() });
     fireEvent.click(await screen.findByRole('button', { name: 'Review' }));
     expect(props.onTurnOnRecovery).toHaveBeenCalledOnce();
+  });
+});
+
+describe('SchedulerOverview Resume this run', () => {
+  const conversation = { profile: 'claude', id: 'conv-1', cwd: '/p', startedAt: '2026-01-01T00:00:00Z' };
+  const resumable = (id: string, extras: Partial<ScheduledTask> = {}) =>
+    ({ ...withRun(id, 'success', { id: `${id}-run`, sessionId: `${id}-pty`, conversation } as Partial<ScheduleRun>), ...extras });
+
+  it('offers the icon on closed resumable runs only and passes the task and run id', () => {
+    const idless = { ...withRun('Idless', 'success', { id: undefined, sessionId: 'idless-pty', conversation } as Partial<ScheduleRun>) };
+    const { props } = mount([resumable('Alpha'), withRun('Plain', 'success'), resumable('Squad', { kind: 'team' }), idless], { onResumeRun: vi.fn() });
+    const buttons = screen.getAllByRole('button', { name: 'Resume this run' });
+    expect(buttons).toHaveLength(1);
+    fireEvent.click(buttons[0]!);
+    expect(props.onResumeRun).toHaveBeenCalledWith(expect.objectContaining({ id: 'Alpha' }), 'Alpha-run');
+  });
+
+  it('hides the icon while the run\'s session is still open, or when no handler is wired', () => {
+    state.terminals = { p1: [{ id: 'Alpha-pty', status: 'running' }] };
+    mount([resumable('Alpha')], { onResumeRun: vi.fn() });
+    expect(screen.queryByRole('button', { name: 'Resume this run' })).toBeNull();
+    cleanup();
+    state.terminals = {};
+    mount([resumable('Alpha')]);
+    expect(screen.queryByRole('button', { name: 'Resume this run' })).toBeNull();
   });
 });

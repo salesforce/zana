@@ -123,6 +123,7 @@ it('applies config patches to the store and flashes Saved', async () => {
     cliRemoteToolProxyEnabled: true,
     followUpsEnabled: true,
     catchUpSummaryEnabled: true,
+    closeWrapUpEnabled: true,
     classicSessionViewEnabled: true,
     threadTabsEnabled: false,
     dockableThreadToolsEnabled: false,
@@ -153,7 +154,7 @@ it('applies config patches to the store and flashes Saved', async () => {
   const setters = [
     'setFontSize', 'setTerminalTheme', 'setInboxGuidanceEnabled', 'setTerminalWheelArrowsEnabled',
     'setHeartbeatEnabled', 'setGoalsEnabled', 'setCliRemoteToolProxyEnabled', 'setFollowUpsEnabled',
-    'setCatchUpSummaryEnabled', 'setClassicSessionViewEnabled', 'setThreadTabsEnabled', 'setDockableThreadToolsEnabled', 'setCatchUpSummaryDelaySeconds',
+    'setCatchUpSummaryEnabled', 'setCloseWrapUpEnabled', 'setClassicSessionViewEnabled', 'setThreadTabsEnabled', 'setDockableThreadToolsEnabled', 'setCatchUpSummaryDelaySeconds',
     'setFeedNoiseClassifierEnabled', 'setTerminalClipboardWriteEnabled', 'setTerminalCtrlVPasteEnabled',
     'setStructuredQuestionsEnabled',
     'setWorktreeIsolationDefault', 'setAgentListNeedsYouFromTriage', 'setVoiceInputEnabled',

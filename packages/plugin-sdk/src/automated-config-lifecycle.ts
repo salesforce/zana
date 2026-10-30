@@ -4,13 +4,12 @@ import {
   mkdirSync,
   readdirSync,
   renameSync,
-  rmSync,
   statSync,
   symlinkSync,
-  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { removeTreeWithoutFollowingLinks } from '@zana-ai/zcc-agent-process-utils';
 
 export interface ConfinedConfigLeafInput {
   dataDir: string;
@@ -112,15 +111,9 @@ export function removeConfinedConfigLeaf(dataDir: string, parentName: string, le
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
     throw error;
   }
-  try {
-    if (lstatSync(resolved).isSymbolicLink()) {
-      unlinkSync(resolved);
-      return;
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-  }
-  rmSync(resolved, { recursive: true, force: true });
+  // The leaf's `projects` links to the user's real transcripts. A recursive
+  // `rmSync` walks a Windows junction and empties its target (#528).
+  removeTreeWithoutFollowingLinks(resolved);
 }
 
 export function sweepConfinedConfigLeaves(input: SweepConfinedConfigLeavesInput): string[] {

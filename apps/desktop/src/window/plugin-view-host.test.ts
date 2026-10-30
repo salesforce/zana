@@ -55,6 +55,22 @@ beforeEach(() => {
 });
 
 describe('open', () => {
+  it('opens resources independently, deduplicates overlapping requests and closes only the addressed resource', async () => {
+    const host = createPluginViewHost(deps);
+    const a = { ...target, resourceId: 'agents/Help.agent' };
+    const b = { ...target, resourceId: 'agents/Quote.agent' };
+    await Promise.all([host.open(a), host.open(a), host.open(b), host.open(target)]);
+    expect(deps.createWindow).toHaveBeenCalledTimes(3);
+    expect(host.list()).toEqual([a, b, target]);
+    const entries = [...windows.values()].filter((entry) => entry.view);
+    expect(host.close({ ...a, resourceId: 'missing' })).toBe(false);
+    expect(host.close(a)).toBe(true);
+    expect(entries[0]!.win.close).toHaveBeenCalledTimes(1);
+    expect(entries[1]!.win.close).not.toHaveBeenCalled();
+    expect(entries[2]!.win.close).not.toHaveBeenCalled();
+    await expect(host.open({ ...a, resourceId: 'bad\n' })).resolves.toBe(false);
+    expect(deps.createWindow).toHaveBeenCalledTimes(3);
+  });
   it('opens one window per authorized tab and focuses it the next time', async () => {
     const host = createPluginViewHost(deps);
     await expect(host.open({ ...target, extra: 'x' })).resolves.toBe(true);

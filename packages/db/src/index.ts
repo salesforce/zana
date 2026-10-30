@@ -198,6 +198,7 @@ export {
   retryDeferredThreadMessage,
   postponeDeferredThreadRetry,
   recoverInterruptedDeferredThreadMessages,
+  claimDeferredThreadMessageGroup,
   markDeferredThreadMessageDispatching,
   holdDeferredThreadMessage,
   clearLapsedDeferredEditHolds,

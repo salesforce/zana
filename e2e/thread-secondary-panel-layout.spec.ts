@@ -2,6 +2,51 @@ import { openThreadToolLauncher } from './fixtures/thread-tool-panel.js';
 import { test, expect } from './fixtures/app.js';
 import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
+test('panel menus close tab groups without affecting the other dock or pinned views', async ({ app }, testInfo) => {
+  const page = app.window;
+  await page.evaluate(() => {
+    const owner = 'e2e-panel-bulk-close';
+    localStorage.setItem(`zcc.secondaryPanel.${owner}`, JSON.stringify({
+      version: 1, isOpen: true, isMaximized: false, widthPx: 500, activeId: 'first',
+      tabs: ['first', 'middle', 'last', 'bottom-first', 'bottom-last'].map(id => ({ id, kind: 'new-tab', title: id }))
+    }));
+    localStorage.setItem('zcc.thread-tool-docks.v1', JSON.stringify([{ owner, dock: {
+      bottomIds: ['bottom-first', 'bottom-last'], bottomActiveId: 'bottom-last', rightActiveId: 'first',
+      heightPx: 240, collapsed: false, maximized: false
+    } }]));
+    history.pushState({}, '', `/threads/${owner}`); dispatchEvent(new PopStateEvent('popstate'));
+  });
+  const right = page.getByTestId('thread-secondary-panel'), bottom = page.getByTestId('thread-bottom-panel');
+  const tools = (panel: typeof right) => panel.locator('.thread-secondary-tab:not(.is-pinned)');
+  await expect(tools(right)).toHaveCount(3); await expect(tools(bottom)).toHaveCount(2);
+  await right.getByRole('button', { name: 'middle', exact: true }).click({ button: 'right' });
+  await expect(right.getByRole('button', { name: 'first', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await captureElectronScreenshot(app.electron, page, testInfo.outputPath('panel-bulk-close-menu.png'));
+  await page.getByRole('menuitem', { name: 'Close tabs to the right', exact: true }).click();
+  await expect(tools(right)).toHaveCount(2); await expect(right.getByRole('button', { name: 'last', exact: true })).toHaveCount(0);
+  await expect(tools(bottom)).toHaveCount(2);
+  await right.getByRole('button', { name: 'middle', exact: true }).press('Shift+F10');
+  await expect(page.getByRole('menuitem', { name: 'Close tabs to the right', exact: true })).toBeDisabled();
+  await page.getByRole('menuitem', { name: 'Close tabs to the left', exact: true }).click();
+  await expect(tools(right)).toHaveCount(1); await expect(right.getByTestId('thread-info-pin')).toBeVisible();
+  await bottom.getByRole('button', { name: 'Bottom panel actions' }).click();
+  await page.getByRole('menuitem', { name: 'Close other tabs', exact: true }).click();
+  await expect(tools(bottom)).toHaveCount(1); await expect(bottom.getByRole('button', { name: 'bottom-last', exact: true })).toBeVisible();
+  await right.getByRole('button', { name: 'Right panel actions' }).click();
+  await page.getByRole('menuitem', { name: 'Close all tabs', exact: true }).click();
+  await expect(tools(right)).toHaveCount(0); await expect(tools(bottom)).toHaveCount(1);
+  await right.getByRole('button', { name: 'Right panel actions' }).click();
+  await expect(page.getByRole('menuitem', { name: 'Close all tabs', exact: true })).toBeDisabled();
+  await page.keyboard.press('End');
+  await expect(page.getByRole('menuitem', { name: /^Hide right panel/ })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await bottom.getByRole('button', { name: 'Bottom panel actions' }).click();
+  await page.getByRole('menuitem', { name: 'Close all tabs', exact: true }).click();
+  await expect(bottom).toHaveCount(0);
+  await page.reload(); await expect(tools(right)).toHaveCount(0);
+  await expect(right.getByTestId('thread-info-pin')).toBeVisible(); await expect(bottom).toHaveCount(0);
+});
+
 test('secondary panel tabs scroll without overlapping fixed controls in small windows', async ({ app }, testInfo) => {
   const { window, electron } = app;
   const titles = ['browser-with-a-very-long-title-that-should-stay-compact.html', 'native-build-configuration.ts', 'deployment-notes.md', 'integration-results.md'];

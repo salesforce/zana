@@ -14,3 +14,19 @@ it.each([undefined, 'project /#?'])('sends the optional project scope without ch
   expect(url.searchParams.get('path')).toBe(file.path);
   expect(url.searchParams.get('projectId')).toBe(projectId ?? null);
 });
+
+it('resolves preview path through the thread preview-path endpoint', async () => {
+  const responseData = { kind: 'resolved' as const, path: 'docs/guide.md' };
+  const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => Response.json(responseData));
+  vi.stubGlobal('fetch', fetchMock);
+
+  const request = { path: 'guide.md', hints: ['docs/guide.md'], projectId: 'proj-1' };
+  await expect(product.threads.resolvePreviewPath('session /1', request)).resolves.toEqual(responseData);
+
+  const [rawUrl, init] = fetchMock.mock.calls[0]!;
+  const url = new URL(String(rawUrl), 'http://localhost');
+  expect(url.pathname).toBe('/api/v1/threads/session%20%2F1/preview-path/resolve');
+  expect(init?.method).toBe('POST');
+  expect(new Headers(init?.headers).get('content-type')).toBe('application/json');
+  expect(JSON.parse(String(init?.body))).toEqual(request);
+});
