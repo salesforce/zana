@@ -331,6 +331,7 @@ let canonicalSessionSerial = 0;
  */
 let configuredSkillRoots: AcpSkillRoot[] | null = null;
 const ACP_CANONICAL_PROVIDER_ID = "acp";
+const OPENCODE_PROVIDER_ID = "acp-opencode";
 
 function createSessionTranslator(
   cwd: string,
@@ -3163,6 +3164,16 @@ async function handleRequest(
     case "thread/start":
     case "thread/resume":
     case "thread/fork": {
+      if (request.params.sessionKind === "automated") {
+        // Generic ACP launch specifications cannot prove isolated plugin and MCP
+        // configuration. Reject before discovery or process spawn.
+        sendError(
+          request.id,
+          BRIDGE_JSON_RPC_ERRORS.INVALID_PARAMS,
+          "Automated ACP sessions are unsupported because isolated configuration cannot be verified",
+        );
+        return;
+      }
       if (
         request.method === "thread/fork" &&
         request.params.sourceProviderCheckpointId !== undefined

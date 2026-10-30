@@ -1168,6 +1168,45 @@ describe('agent runtime thread adapter', () => {
     } finally { adapter.dispose(); }
   });
 
+  it('forwards automated session admission through starts, forks, and resumes', async () => {
+    const captured: Record<string, unknown>[] = [];
+    const adapter = createAgentRuntimeAdapter({
+      dataDir: cwd,
+      emit: () => {},
+      createRuntime: options => {
+        const runtime = createAgentRuntimeWithAdapters({
+          ...options,
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
+        });
+        vi.spyOn(runtime, 'startThread').mockImplementation(async input => {
+          captured.push(input);
+          return { providerThreadId: 'provider-thread' };
+        });
+        vi.spyOn(runtime, 'resumeThread').mockImplementation(async input => {
+          captured.push(input);
+          return { providerThreadId: 'provider-resumed' };
+        });
+        return runtime;
+      }
+    });
+    try {
+      const shared = {
+        providerId: 'fake',
+        cwd,
+        environmentId: 'env-one',
+        projectId: 'project'
+      };
+      await adapter.startWork({ ...shared, threadId: 'thread-start', input: [], headless: true });
+      await adapter.startWork({ ...shared, threadId: 'thread-fork', input: [], scheduled: true, providerThreadId: 'source-thread' });
+      await adapter.resumeWork({ ...shared, threadId: 'thread-resume', providerThreadId: 'provider-thread', sessionKind: 'automated' });
+
+      expect(captured).toHaveLength(3);
+      for (const input of captured) expect(input.sessionKind).toBe('automated');
+    } finally {
+      adapter.dispose();
+    }
+  });
+
   it('lists fake provider models through AgentRuntime', async () => {
     const adapter = createAgentRuntimeAdapter({
       emit: () => undefined,

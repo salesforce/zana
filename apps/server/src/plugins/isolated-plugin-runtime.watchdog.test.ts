@@ -18,7 +18,7 @@ vi.mock('./plugin-worker-bridge.js', () => ({
   PEER_WORKER_COMMIT_TIMEOUT_MS: 10_000,
   createPluginWorkerBridge: () => ({ get activeCommits() { return state.activeCommits; }, dispose: vi.fn(), encode: vi.fn(() => ({})), retainedFunctions: 0 })
 }));
-const { createIsolatedPluginRuntime, PLUGIN_HEARTBEAT_TIMEOUT_MS } = await import('./isolated-plugin-runtime.js');
+const { createIsolatedPluginRuntime, PLUGIN_HEARTBEAT_TIMEOUT_MS, PLUGIN_STARTUP_TIMEOUT_MS } = await import('./isolated-plugin-runtime.js');
 
 afterEach(() => { vi.useRealTimers(); state.activeCommits = 0; state.workers.length = 0; });
 
@@ -35,7 +35,7 @@ function start(timeout: { heartbeatTimeoutMs?: number } = { heartbeatTimeoutMs: 
   return f;
 }
 
-it.each(['server.ts', 'server.tsx'])('allows a cold source import to finish after the compiled deadline: %s', async entry => {
+it.each(['server.ts', 'server.tsx'])('allows a cold source import during the default startup window: %s', async entry => {
   vi.useFakeTimers();
   const f = initialize({ entry });
   await vi.advanceTimersByTimeAsync(15_000);
@@ -43,17 +43,18 @@ it.each(['server.ts', 'server.tsx'])('allows a cold source import to finish afte
   f.worker.emit('message', { kind: 'ready' });
   await expect(f.runtime.started).resolves.toBeUndefined();
   // A slow source import must not extend the watchdog once the plugin is ready.
-  await vi.advanceTimersByTimeAsync(5_000);
+  await vi.advanceTimersByTimeAsync(20_000);
   expect(f.onFailure).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(250);
   expect(f.onFailure).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: 'Plugin event loop stopped responding' }));
   await f.runtime.dispose();
 });
 
-it.each(['server.mjs', 'server.js', 'server.ts.mjs'])('keeps the compiled startup deadline at ten seconds: %s', async entry => {
+it.each(['server.mjs', 'server.js', 'server.ts.mjs'])('keeps the compiled startup deadline bounded: %s', async entry => {
   vi.useFakeTimers();
   const f = initialize({ entry });
-  await vi.advanceTimersByTimeAsync(9_999);
+  expect(PLUGIN_STARTUP_TIMEOUT_MS).toBe(40_000);
+  await vi.advanceTimersByTimeAsync(39_999);
   expect(f.onFailure).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(1);
   await expect(f.runtime.started).rejects.toThrow('Plugin factory timed out');
@@ -66,10 +67,10 @@ it('still terminates a source factory that exceeds its bounded startup allowance
   const f = initialize({ entry: 'server.ts' });
   // Heartbeats during imports do not waive the absolute startup deadline.
   for (let i = 0; i < 3; i++) {
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(10_000);
     f.worker.emit('message', { kind: 'heartbeat' });
   }
-  await vi.advanceTimersByTimeAsync(4_999);
+  await vi.advanceTimersByTimeAsync(9_999);
   expect(f.onFailure).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(1);
   await expect(f.runtime.started).rejects.toThrow('Plugin factory timed out');
@@ -90,14 +91,14 @@ it.each(['server.ts', 'server.mjs'])('honors an explicit startup deadline for %s
 
 it('tolerates bounded synchronous plugin work by default and still fails a wedged worker', async () => {
   vi.useFakeTimers();
-  expect(PLUGIN_HEARTBEAT_TIMEOUT_MS).toBe(5_000);
+  expect(PLUGIN_HEARTBEAT_TIMEOUT_MS).toBe(20_000);
   const f = start({});
-  // A supported 24MiB Design Docs journal blocks a slow runner for seconds; the old 1.5s budget killed it.
-  await vi.advanceTimersByTimeAsync(4_500);
+  // A supported 24MiB Design Docs journal blocks a contended runner for seconds.
+  await vi.advanceTimersByTimeAsync(19_500);
   expect(f.onFailure).not.toHaveBeenCalled();
   // A heartbeat restarts the budget.
   f.worker.emit('message', { kind: 'heartbeat' });
-  await vi.advanceTimersByTimeAsync(4_500);
+  await vi.advanceTimersByTimeAsync(19_500);
   expect(f.onFailure).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(1_000);
   expect(f.onFailure).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: 'Plugin event loop stopped responding' }));

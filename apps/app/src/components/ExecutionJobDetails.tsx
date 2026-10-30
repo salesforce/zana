@@ -81,9 +81,9 @@ function usageLines(usage: ExecutionProjection['usage']): string[] {
   const lines: string[] = ['Usage:'];
   if (!usage) { lines.push('  (unavailable)'); return lines; }
   lines.push(`  completeness: ${usage.completeness} · observations: ${usage.observationCount} · gaps: ${usage.gapCount}`);
-  lines.push(`  tokens: input ${usage.inputTokens ?? '—'} · output ${usage.outputTokens ?? '—'} · cacheRead ${usage.cacheReadTokens ?? '—'} · cacheWrite ${usage.cacheWriteTokens ?? '—'} · cost ${formatCost(usage.providerCostUsd)}`);
+  lines.push(`  tokens: input ${usage.inputTokens ?? '—'} · output ${usage.outputTokens ?? '—'} · cacheRead ${usage.cacheReadTokens ?? '—'} · cacheWrite ${usage.cacheWriteTokens ?? '—'} · provider-reported cost ${formatCost(usage.providerCostUsd)}`);
   for (const role of usage.byRole) {
-    lines.push(`    ${role.role}: input ${role.inputTokens ?? '—'} · output ${role.outputTokens ?? '—'} · cacheRead ${role.cacheReadTokens ?? '—'} · cacheWrite ${role.cacheWriteTokens ?? '—'} · cost ${formatCost(role.providerCostUsd)}`);
+    lines.push(`    ${role.role}: input ${role.inputTokens ?? '—'} · output ${role.outputTokens ?? '—'} · cacheRead ${role.cacheReadTokens ?? '—'} · cacheWrite ${role.cacheWriteTokens ?? '—'} · provider-reported cost ${formatCost(role.providerCostUsd)}`);
   }
   return lines;
 }
@@ -487,7 +487,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
       }}><summary>{artifact.name} · {artifact.mediaType} · {artifact.contentDigest}</summary>{artifactContent[artifact.id] && boundedText(artifactContent[artifact.id]).length < artifactContent[artifact.id].length ? <LargeTextPreview text={artifactContent[artifact.id]} /> : <pre>{artifactContent[artifact.id] ?? 'Loading…'}</pre>}</details>)}
       <h4>Usage</h4>
       <p>Attribution: {execution.usage?.completeness ?? 'unavailable'} · Observations {execution.usage?.observationCount ?? 0} · Gaps {execution.usage?.gapCount ?? 0}</p>
-      {execution.usage?.byRole.map((usage) => <p key={usage.role}>{usage.role}: input {usage.inputTokens ?? 'unknown'} · output {usage.outputTokens ?? 'unknown'} · cache read {usage.cacheReadTokens ?? 'unknown'} · cache write {usage.cacheWriteTokens ?? 'unknown'} · provider cost {usage.providerCostUsd === undefined ? 'unknown' : `$${usage.providerCostUsd.toFixed(4)}`}</p>)}
+       {execution.usage?.byRole.map((usage) => <p key={usage.role}>{usage.role}: input {usage.inputTokens ?? 'unknown'} · output {usage.outputTokens ?? 'unknown'} · cache read {usage.cacheReadTokens ?? 'unknown'} · cache write {usage.cacheWriteTokens ?? 'unknown'} · provider-reported cost {usage.providerCostUsd === undefined ? 'unknown' : `$${usage.providerCostUsd.toFixed(4)}`}</p>)}
       <h4>Assembled result</h4>
       {execution.assembledResult ? <div>
         <p>{execution.assembledResult.outcome} · <code>{execution.assembledResult.digest}</code></p>

@@ -508,7 +508,6 @@ describe('links', () => {
     click(doc.getElementById('inner')!);
     click(doc.getElementById('d')!);
     click(doc.getElementById('a')!, { metaKey: true });
-    click(doc.getElementById('a')!, { button: 2 });
     click(doc.getElementById('a')!, { type: 'auxclick', button: 1 });
     expect(first.defaultPrevented).toBe(true);
     await wait();

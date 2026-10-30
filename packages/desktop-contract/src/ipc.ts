@@ -319,7 +319,8 @@ export const IPC = {
    * lands in a follow-up PR.
    */
   usage: {
-    getSummary: 'usage:getSummary'
+    getSummary: 'usage:getSummary',
+    getMemoCounters: 'usage:getMemoCounters'
   },
   /**
    * Suggested Actions launcher (afl-03). `list` reads the store scoped to a

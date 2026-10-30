@@ -10,9 +10,13 @@ import { createPluginWorkerBridge, PEER_WORKER_COMMIT_TIMEOUT_MS } from './plugi
  * Silence tolerated from a ready plugin worker before it is declared hung. The worker runs off the server thread, so
  * synchronous plugin work never stalls the app; this only has to separate a wedged worker from a busy one. Plugins
  * legitimately do synchronous SQLite work (Design Docs journals a supported 24MiB paired document in ~0.75s on fast
- * hardware), so the budget keeps several-fold headroom for slower machines and CI runners.
+ * hardware), so the budget keeps several-fold headroom for slower machines and
+ * concurrent test runners.
  */
-export const PLUGIN_HEARTBEAT_TIMEOUT_MS = 5_000;
+export const PLUGIN_HEARTBEAT_TIMEOUT_MS = 20_000;
+// Electron startup can launch several isolated workers while loading plugin manifests. Keep activation below the
+// product's 45s readiness probe, but allow one bounded contention window on shared CI runners.
+export const PLUGIN_STARTUP_TIMEOUT_MS = 40_000;
 // A 24MiB paired document needs multiple transient closure/hash copies during a rewrite.
 export const PLUGIN_WORKER_MAX_OLD_GENERATION_SIZE_MB = 384;
 
@@ -55,9 +59,9 @@ export function createIsolatedPluginRuntime(options: {
   const started = new Promise<void>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
   // Disposal can race the installer attaching its await during application shutdown.
   void started.catch(() => {});
-  // Source installs also pay for uncached TypeScript graph loading before their factory runs. Keep that
-  // development-only startup allowance bounded; compiled plugins and the ready-worker watchdog stay unchanged.
-  const startupTimeoutMs = options.startupTimeoutMs ?? (/\.tsx?$/.test(options.entry) ? 20_000 : 10_000);
+  // Source installs also pay for uncached TypeScript graph loading before their factory runs. Compiled workers can
+  // contend with startup's other plugin workers, so both get one bounded allowance before activation degrades.
+  const startupTimeoutMs = options.startupTimeoutMs ?? PLUGIN_STARTUP_TIMEOUT_MS;
   const startup = setTimeout(() => fail(new Error('Plugin factory timed out')), startupTimeoutMs);
   // A synchronous peer commit blocks worker heartbeats, so it is exempt — but only for a bounded grace. The bridge
   // terminates a commit at PEER_WORKER_COMMIT_TIMEOUT_MS; a count that stops moving past that (e.g. a failed

@@ -840,6 +840,69 @@ describe('host bootstrap wiring', () => {
     expect(typeof h.followupDeps.followupsFromIdle()).toBe('boolean');
   });
 
+  it('clears memoized inbox summaries when config or prompt changes invalidate reuse', async () => {
+    const c = ctx();
+    await c.inboxStore.append({ projectId: project.id, comments: 'Memo lifecycle fixture' });
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    const run = vi.spyOn(c.llmService, 'run').mockResolvedValue({
+      ok: true,
+      text: JSON.stringify({ headline: 'Ready', done: [], attention: [] }),
+      provider: 'claude-cli',
+      ms: 1
+    });
+    const summaryCalls = () => run.mock.calls.filter(([, , dedupeKey]) => dedupeKey === 'inbox-summary:all');
+    try {
+      for (const [expectedCalls, invalidate] of [
+        undefined,
+        () => c.invalidateLlmReuse(),
+        () => c.promptRegistry.emit('changed')
+      ].map((invalidate, index) => [index + 1, invalidate] as const)) {
+        invalidate?.();
+        await expect(c.inboxSummary.summarize(null)).resolves.toMatchObject({ ok: true, digest: { headline: 'Ready' } });
+        await expect(c.inboxSummary.summarize(null)).resolves.toMatchObject({ ok: true, digest: { headline: 'Ready' } });
+        expect(summaryCalls()).toHaveLength(expectedCalls);
+      }
+      expect(c.memoCounters()['inbox-summary']).toMatchObject({ requests: 6, hits: 3, misses: 3, providerCalls: 3 });
+    } finally {
+      run.mockRestore();
+      clock.mockRestore();
+    }
+  });
+
+  it('wires memo identities and remote read offsets through main-owned services', async () => {
+    const c = ctx();
+    const entry = { id: 'builtin:test', userTemplate: '{{entries}}' };
+    const get = vi.spyOn(c.promptRegistry, 'get');
+    const identity = vi.spyOn(c.llmService, 'requestIdentity').mockReturnValue('identity');
+    const config = store.getConfig();
+    const getConfig = vi.spyOn(store, 'getConfig');
+    try {
+      get.mockReturnValue(entry);
+      expect(c.inboxSummary['deps'].requestIdentity('inbox')).toBe('identity');
+      expect(c.feedNoiseClassifier['deps'].requestIdentity('noise')).toBe('identity');
+      expect(c.feedSummary['deps'].requestIdentity('feed')).toBe('identity');
+      get.mockReturnValue(undefined);
+      expect(c.inboxSummary['deps'].requestIdentity('inbox')).toBe('');
+      expect(c.feedNoiseClassifier['deps'].requestIdentity('noise')).toBe('');
+      expect(c.feedSummary['deps'].requestIdentity('feed')).toBe('');
+
+      getConfig.mockReturnValue({ ...config, claudeBinary: 'claude-one' });
+      c.llmService.requestIdentity(entry, { entries: 'one' });
+      getConfig.mockReturnValue({ ...config, claudeBinary: 'claude-two' });
+      c.llmService.requestIdentity(entry, { entries: 'two' });
+      expect(c.llmService.invalidateProviderIdentity).toBeDefined();
+
+      await expect(h.mcpDeps.remoteFs.readFile(project.id, 'remote.txt', 42)).resolves.toMatchObject({
+        ok: false,
+        message: 'Not a remote project'
+      });
+    } finally {
+      get.mockRestore();
+      identity.mockRestore();
+      getConfig.mockRestore();
+    }
+  });
+
   it('parses overseer hook bodies and rejects malformed ones', async () => {
     const hook = h.mcpDeps.onOverseerHook;
     h.ptys.sessions.set('ov', sessionFixture({ id: 'ov', projectId: project.id }));

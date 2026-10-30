@@ -4,6 +4,7 @@ import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
 import { harnessVerifyState } from './shared.js';
 import { reconcileHarnessConfig } from './config-harness-refresh.js';
+import { mainClaudeBinary } from '../main-claude-binary.js';
 import { presentAppConfig } from '@zana-ai/zcc-server/http/public-app-url';
 import { store } from '@zana-ai/zcc-server/services/projects/store';
 import type { AppConfig, OverseerAuditEntry, ProjectSettings } from '@zana-ai/zcc-domain/product';
@@ -31,6 +32,7 @@ export function registerConfigIpc(): void {
       } = patch;
       const previous = store.getConfig();
       const next = presentAppConfig(store.setConfig(safePatch));
+      if (mainClaudeBinary(previous) !== mainClaudeBinary(next)) ctx.invalidateLlmReuse();
       reconcileHarnessConfig(previous, next, {
         invalidate: () => { harnessVerifyState.cache = undefined; }
       });
@@ -107,4 +109,3 @@ export function registerConfigIpc(): void {
         })()
   );
 }
-

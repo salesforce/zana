@@ -1094,7 +1094,7 @@ describe('inbox MCP server (end-to-end)', () => {
     expect((res as { isError?: boolean }).isError).toBeFalsy();
     expect(seen).toEqual(['proj-1:README.md']);
     const text = (res as { content?: Array<{ text?: string }> }).content?.[0]?.text;
-    expect(text).toBe('from-remote');
+    expect(text).toBe(JSON.stringify({ content: 'from-remote', bytes: 11, truncated: false }));
 
     await client.close();
     clients.pop();

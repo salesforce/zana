@@ -1573,6 +1573,17 @@ export interface CcApi {
      * throws — an unexpected failure resolves to an empty summary.
      */
     getSummary(): Promise<UsageSummary>;
+    /** Point-in-time process-local inference memo counters. No request payload. */
+    getMemoCounters(): Promise<Record<string, {
+      requests: number;
+      hits: number;
+      misses: number;
+      inFlightJoins: number;
+      activeLimitSkips: number;
+      evictions: number;
+      providerCalls: number;
+      failures: number;
+    }>>;
   };
   /**
    * Suggested Actions launcher (afl-03) — a SIBLING to the inbox, not a feed

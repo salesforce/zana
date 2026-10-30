@@ -82,7 +82,9 @@ it('gates selective jobs on successful planning and keeps all required checks lo
   expect(builder.steps.find((step: any) => step.uses === 'actions/upload-artifact@v7').with.overwrite).toBe(true);
   const archive = builder.steps.find((step: any) => step.name?.startsWith('Archive')).run;
   for (const path of ['out', 'plugins', 'resources', 'packages/cli/dist', 'packages/plugin-sdk/dist', 'apps/host-daemon/dist']) expect(archive).toContain(path);
-  expect(archive).toContain("--exclude='*/node_modules'");
+  expect(archive).toContain("--exclude='plugins/*/node_modules'");
+  // The bundled npm runtime needs its nested node_modules (graceful-fs etc.).
+  expect(archive).not.toContain("--exclude='*/node_modules'");
   const download = workflow.jobs.e2e.steps.find((step: any) => step.uses === 'actions/download-artifact@v7');
   expect(download.with.name).toBe('electron-e2e-build');
   expect(download.with['run-id']).toBeUndefined(); // Same run and merge commit only.

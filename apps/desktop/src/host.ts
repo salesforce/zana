@@ -335,8 +335,8 @@ import { createDoctor, hasMissingDeps, type Doctor } from '@zana-ai/zcc-server/s
 import { TemplateStore } from '@zana-ai/zcc-server/services/library/template-store';
 import { QuickPromptStore } from '@zana-ai/zcc-server/services/library/quick-prompt-store';
 import { resolveRulesGuidance } from '@zana-ai/zcc-server/services/projects/rules-file';
-import { mainClaudeBinaryGetter } from './main-claude-binary.js';
-import { PromptRegistry, LlmService, ClaudeCliProvider, OpenAiProvider, GeminiProvider, resolveNamedTitle, runTabNamerOnce, redactTranscript, type LlmProvider } from '@zana-ai/zcc-llm';
+import { mainClaudeBinary, mainClaudeBinaryGetter } from './main-claude-binary.js';
+import { PromptRegistry, LlmService, WorkloadMemo, ClaudeCliProvider, OpenAiProvider, GeminiProvider, resolveNamedTitle, runTabNamerOnce, redactTranscript, type LlmProvider } from '@zana-ai/zcc-llm';
 import { VoiceService } from './native/voice/voice-service.js';
 import { OpenAiVoiceProvider } from './native/voice/openai-provider.js';
 import { getOpenAiKey, getGeminiKey } from './native/voice/secrets.js';
@@ -1495,7 +1495,9 @@ const promptRegistry = new PromptRegistry({
   homeDir: () => app.getPath('home'),
   revealPath: (path) => shell.openPath(path)
 });
-const llmService = new LlmService(new Map<LlmProviderId, LlmProvider>());
+const llmService = new LlmService(new Map<LlmProviderId, LlmProvider>(), refreshLlmReuseForProviderConfig);
+const microCallMemo = new WorkloadMemo();
+promptRegistry.on('changed', () => microCallMemo.clear());
 /** Single provider-registration path. Rebuilds the LLM providers from config.
  *  `claude-cli` resolves its binary from `store.getConfig()` on every run
  *  (config.json is re-read, so a change from any writer applies without a
@@ -2469,6 +2471,11 @@ const inboxSummary = new InboxSummaryService({
       return r;
     });
   },
+  requestIdentity: (entries) => {
+    const entry = promptRegistry.get('builtin:inbox-summary');
+    return entry ? llmService.requestIdentity(entry, { entries }) : '';
+  },
+  memo: microCallMemo,
   runDetailedSummary: (entries, dedupeKey) => {
     const entry = promptRegistry.get('builtin:inbox-summary-detailed');
     if (!entry) {
@@ -2537,7 +2544,12 @@ const feedNoiseClassifier = new FeedNoiseClassifier({
       if (!r.ok) logMainError('feed-noise-classifier', `${r.error ?? 'unknown'} (${r.ms}ms)`);
       return r;
     });
-  }
+  },
+  requestIdentity: (entries) => {
+    const entry = promptRegistry.get('builtin:feed-noise-classifier');
+    return entry ? llmService.requestIdentity(entry, { entries }) : '';
+  },
+  memo: microCallMemo
 });
 /** The "Approve for me" reviewer — a fail-closed micro-call that may downgrade an
  *  otherwise-denied extension capability request to auto-approve. DI + never-throws,
@@ -2563,6 +2575,18 @@ const reviewerApproval = new ReviewerApprovalService({
       });
   }
 });
+promptRegistry.on('changed', () => reviewerApproval.clear());
+let activeClaudeBinary: string | undefined;
+function invalidateLlmReuse(): void {
+  llmService.invalidateProviderIdentity();
+  microCallMemo.clear();
+  reviewerApproval.clear();
+}
+function refreshLlmReuseForProviderConfig(): void {
+  const next = mainClaudeBinary(store.getConfig());
+  if (activeClaudeBinary !== undefined && activeClaudeBinary !== next) invalidateLlmReuse();
+  activeClaudeBinary = next;
+}
 /** Per-project Activity Feed — the PERSISTED slice (git commits + extension /
  *  project lifecycle) that has no other durable home. All other feed events are
  *  DERIVED live by {@link FeedService} from the inbox / followups / goals /
@@ -2619,7 +2643,12 @@ const feedSummary = new FeedSummaryService({
       });
     }
     return llmService.run(entry, { entries }, dedupeKey);
-  }
+  },
+  requestIdentity: (entries) => {
+    const entry = promptRegistry.get('builtin:feed-digest');
+    return entry ? llmService.requestIdentity(entry, { entries }) : '';
+  },
+  memo: microCallMemo
 });
 /** Stamp a greenfield feed event (project / extension lifecycle) into the
  *  persisted slice. Best-effort + idempotent via dedupeKey — a write failure or
@@ -7901,6 +7930,8 @@ function registerIpc() {
     get inboxActionRegistry() { return inboxActionRegistry; },
     get planCorrection() { return planCorrection; },
     get inboxSummary() { return inboxSummary; },
+    get memoCounters() { return () => microCallMemo.snapshot(); },
+    get invalidateLlmReuse() { return invalidateLlmReuse; },
     get isTeamWorkerRestore() { return isTeamWorkerRestore; },
     get keepAwake() { return keepAwake; },
     get launchAuthorizedTerminal() { return launchAuthorizedTerminal; },
@@ -9386,8 +9417,8 @@ async function bootstrapNormal() {
         execOpts
       ),
     remoteFs: {
-      readFile: (projectId, path) =>
-        resolveAndReadRemote(remoteFsDeps(), projectId, path),
+      readFile: (projectId, path, byteOffset) =>
+        resolveAndReadRemote(remoteFsDeps(), projectId, path, byteOffset),
       writeFile: (projectId, path, content) =>
         resolveAndWriteRemote(remoteFsDeps(), projectId, path, content),
       listDir: (projectId, path) =>

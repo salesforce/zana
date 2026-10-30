@@ -55,6 +55,15 @@ it('requires confirmation and starts core recovery, then displays partial failur
   expect(screen.getByText('local: No published source')).toBeTruthy();
 });
 
+it('dismisses restore confirmation with Escape without starting recovery', async () => {
+  render(<DevelopmentView config={{} as AppConfig} onUpdate={vi.fn()} />);
+  await waitFor(() => expect(h.status).toHaveBeenCalledOnce());
+  fireEvent.click(screen.getByRole('button', { name: 'Restore plugins…' }));
+  fireEvent.keyDown(screen.getByRole('dialog', { name: 'Restore plugins?' }), { key: 'Escape' });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(h.start).not.toHaveBeenCalled();
+});
+
 it.each([new Error('offline'), 'offline'])('reports recovery request failures: %s', async reason => {
   h.start.mockRejectedValue(reason);
   render(<DevelopmentView config={{} as AppConfig} onUpdate={vi.fn()} />);

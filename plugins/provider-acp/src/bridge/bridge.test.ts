@@ -269,6 +269,8 @@ interface StartThreadArgs extends AgentLaunchArgs {
   serviceTier?: "default" | "fast";
   additionalWorkspaceWriteRoots?: string[];
   acpMode?: string;
+  providerId?: string;
+  sessionKind?: "automated";
 }
 
 async function startThread(args?: StartThreadArgs): Promise<{
@@ -278,6 +280,7 @@ async function startThread(args?: StartThreadArgs): Promise<{
   nextThreadSerial += 1;
   const bbThreadId = `thread-${nextThreadSerial}`;
   const id = sendRequest("thread/start", {
+    providerId: args?.providerId ?? "fake",
     threadId: bbThreadId,
     cwd: workspaceDir,
     instructionMode: "append",
@@ -307,6 +310,7 @@ async function startThread(args?: StartThreadArgs): Promise<{
       },
     }),
     ...(args?.dynamicTools ? { dynamicTools: args.dynamicTools } : {}),
+    ...(args?.sessionKind ? { sessionKind: args.sessionKind } : {}),
   });
   const response = await waitForResponse(id);
   if (response.error) {
@@ -3656,6 +3660,39 @@ describe("acp bridge", () => {
     expect(response.error?.message).toMatch(/cannot fork at a checkpoint/u);
     expect(existsSync(forkLog)).toBe(false);
     expect(notifications("thread/identity")).toEqual([]);
+  });
+
+  it.each([
+    ["thread/start", {}, "acp-opencode"],
+    ["thread/resume", { providerThreadId: "source-session" }, "acp-cursor"],
+    ["thread/fork", { sourceProviderThreadId: "source-session" }, undefined],
+  ])(
+    "fails closed for automated ACP %s before starting an ACP session",
+    async (method, extra, providerId) => {
+      const id = sendRequest(method, {
+        ...(providerId ? { providerId } : {}),
+        threadId: `automated-${method}`,
+        cwd: workspaceDir,
+        instructionMode: "append",
+        sessionKind: "automated",
+        options: executionOptions({
+          providerOptions: { acpLaunchSpec: acpLaunchSpec({}) },
+        }),
+        ...extra,
+      });
+
+      const response = await waitForResponse(id);
+      expect(response.error).toMatchObject({
+        code: -32602,
+          message: expect.stringContaining("Automated ACP sessions are unsupported"),
+      });
+      expect(notifications("thread/identity")).toEqual([]);
+    },
+  );
+
+  it("allows an interactive OpenCode ACP session", async () => {
+    const started = await startThread({ providerId: "acp-opencode" });
+    expect(started.providerThreadId).toMatch(/^fake-sess-/u);
   });
 
   it("rejects a fork result that reuses the source session id", async () => {
