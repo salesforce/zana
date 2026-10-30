@@ -276,7 +276,7 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=6144
       - name: Archive runtime and generated plugin assets
         run: >-
-          tar --exclude='*/node_modules' --exclude='*/.git'
+          tar --exclude='plugins/*/node_modules' --exclude='*/.git'
           -czf "$RUNNER_TEMP/electron-e2e-build.tgz"
           out plugins resources packages/cli/dist packages/plugin-sdk/dist apps/host-daemon/dist
       - uses: actions/upload-artifact@v7
