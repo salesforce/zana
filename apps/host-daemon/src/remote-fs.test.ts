@@ -229,6 +229,62 @@ describe('remote-fs over a fake ssh', () => {
     expect(second.nextByteOffset).toBeUndefined();
   });
 
+  it.each([
+    ['two-byte', 'é'],
+    ['three-byte', '€'],
+    ['four-byte', '😀']
+  ])('keeps an incomplete %s UTF-8 character for the next page', async (_name, character) => {
+    const f = join(workDir, 'utf8-boundary.txt');
+    await writeFile(f, `${'a'.repeat(2 * 1024 * 1024 - 1)}${character}`);
+
+    const first = await readFileRemote(remote, workDir, f);
+
+    expect(first).toMatchObject({ ok: true, truncated: true, binary: false });
+    expect(first.content).toBe('a'.repeat(2 * 1024 * 1024 - 1));
+    expect(first.nextByteOffset).toBe(2 * 1024 * 1024 - 1);
+  });
+
+  it('rejects invalid byte cursors before opening an SSH connection', async () => {
+    const file = join(workDir, 'cursor.txt');
+    await writeFile(file, 'content');
+
+    await expect(readFileRemote(remote, workDir, file, -1)).resolves.toEqual({
+      ok: false,
+      message: 'Invalid byte offset'
+    });
+    await expect(readFileRemote(remote, workDir, file, Number.MAX_SAFE_INTEGER + 1)).resolves.toEqual({
+      ok: false,
+      message: 'Invalid byte offset'
+    });
+  });
+
+  it('returns an empty terminal page without a continuation cursor', async () => {
+    const file = join(workDir, 'cursor-eof.txt');
+    await writeFile(file, 'content');
+
+    await expect(readFileRemote(remote, workDir, file, 7)).resolves.toMatchObject({
+      ok: true,
+      content: '',
+      bytes: 7,
+      truncated: false,
+      binary: false
+    });
+  });
+
+  it('uses the returned page length when a remote file reports a non-numeric size', async () => {
+    const fakeSsh = join(binDir, 'ssh');
+    await writeFile(fakeSsh, ['#!/bin/sh', "printf 'not-a-size\\npage'", ''].join('\n'), 'utf8');
+    await chmod(fakeSsh, 0o755);
+
+    await expect(readFileRemote(remote, workDir, join(workDir, 'ignored.txt'), 4)).resolves.toEqual({
+      ok: true,
+      content: 'page',
+      bytes: 8,
+      truncated: false,
+      binary: false
+    });
+  });
+
   it('does not issue an EOF continuation for a trailing incomplete UTF-8 sequence', async () => {
     const f = join(workDir, 'trailing-invalid.txt');
     await writeFile(f, Buffer.from([0x61, 0xc3]));

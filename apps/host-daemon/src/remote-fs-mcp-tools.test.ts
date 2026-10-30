@@ -71,6 +71,18 @@ describe('registerRemoteFsTools', () => {
     });
   });
 
+  it('defaults missing complete-page metadata', async () => {
+    const { tools } = register({
+      readFile: async () => ({ ok: true, binary: false })
+    });
+
+    const result = await tools.get('remote_read')!({ path: 'README.md' });
+
+    expect(JSON.parse(payload(result))).toEqual({
+      content: '', bytes: 0, truncated: false
+    });
+  });
+
   it('surfaces a non-remote / unknown project as isError', async () => {
     const { tools } = register({
       readFile: async () => ({ ok: false, message: 'Not a remote project' })
@@ -78,6 +90,20 @@ describe('registerRemoteFsTools', () => {
     const res = await tools.get('remote_read')!({ path: 'README.md' });
     expect(res.isError).toBe(true);
     expect(payload(res)).toContain('Not a remote project');
+  });
+
+  it('reports binary reads and read failures without serializing a page', async () => {
+    const binary = await register({
+      readFile: async () => ({ ok: true, binary: true, bytes: 3 })
+    }).tools.get('remote_read')!({ path: 'image.bin' });
+    expect(binary).toMatchObject({ isError: true });
+    expect(payload(binary)).toContain('Binary file');
+
+    const thrown = await register({
+      readFile: async () => { throw new Error('ssh unavailable'); }
+    }).tools.get('remote_read')!({ path: 'README.md' });
+    expect(thrown).toMatchObject({ isError: true });
+    expect(payload(thrown)).toContain('ssh unavailable');
   });
 
   it('writes using the closed-over project id', async () => {

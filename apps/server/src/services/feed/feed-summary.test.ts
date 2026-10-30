@@ -6,7 +6,7 @@ import {
   type FeedSummaryDeps
 } from './feed-summary.js';
 import type { FeedEvent, LlmRunResult } from '@zana-ai/zcc-domain/product';
-import { WorkloadMemo } from '@zana-ai/zcc-llm';
+import { WorkloadMemo, WORKLOAD_MEMO_SKIPPED } from '@zana-ai/zcc-llm';
 
 const NOW = 1_700_000_000_000;
 
@@ -118,5 +118,44 @@ describe('FeedSummaryService.summarize', () => {
     identity = 'second';
     await service.summarize('p1');
     expect(runSummary).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to the direct provider when the memo skips the workload', async () => {
+    const runSummary = vi.fn(async () => ({ ok: true, text: '{"headline":"Direct","highlights":[]}', provider: 'claude-cli' as const, ms: 1 }));
+    const memo = {
+      getOrCompute: vi.fn(async (_workload, _key, _ttl, compute) => {
+        await compute();
+        return WORKLOAD_MEMO_SKIPPED;
+      })
+    };
+
+    const result = await svc({ runSummary, memo }).summarize('p1');
+
+    expect(result).toEqual({ ok: true, digest: { headline: 'Direct', highlights: [] }, eventCount: 1 });
+    expect(runSummary).toHaveBeenCalledTimes(2);
+    expect(memo.getOrCompute).toHaveBeenCalledWith('feed-digest', expect.stringContaining('feed-digest:p1:'), 300_000, expect.any(Function));
+  });
+
+  it('returns a memo hit with the current event count without invoking the provider', async () => {
+    const runSummary = vi.fn();
+    const result = await svc({
+      readEvents: async () => [ev(), ev({ id: 'e2' })],
+      runSummary,
+      memo: { getOrCompute: async () => ({ headline: 'Cached', highlights: ['a'] }) }
+    }).summarize('p1');
+
+    expect(result).toEqual({ ok: true, digest: { headline: 'Cached', highlights: ['a'] }, eventCount: 2 });
+    expect(runSummary).not.toHaveBeenCalled();
+  });
+
+  it('reports summary-failed when the memo cannot produce a digest', async () => {
+    const runSummary = vi.fn();
+    const result = await svc({
+      runSummary,
+      memo: { getOrCompute: async () => undefined }
+    }).summarize('p1');
+
+    expect(result).toEqual({ ok: false, reason: 'summary-failed' });
+    expect(runSummary).not.toHaveBeenCalled();
   });
 });

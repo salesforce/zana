@@ -24,6 +24,20 @@ it('exposes Send now through the authorized UI-send IPC channel', async () => {
   expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.uiSend, 'thread/one', 'item two');
 });
 
+it('exposes memo counters through the dedicated usage IPC channel', async () => {
+  await import('./preload.js');
+  const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
+  const counters = { 'inbox-summary': { requests: 2, hits: 1 } };
+  electron.invoke.mockClear();
+  electron.invoke.mockResolvedValueOnce(counters);
+
+  await expect(api.usage.getMemoCounters()).resolves.toBe(counters);
+  expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.usage.getMemoCounters);
+  electron.invoke.mockClear();
+  await api.usage.getSummary();
+  expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.usage.getSummary);
+});
+
 it('forwards skill-state batches and propagates persistence failures to the caller', async () => {
   await import('./preload.js');
   const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
