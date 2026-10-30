@@ -517,7 +517,7 @@ export function pluginAssetRootFromService(
   assetPath?: string
 ): string | null {
   const row = plugins?.get(pluginId);
-  if (row?.icon.startsWith('./') && /\.(svg|png|webp|jpe?g|gif)$/i.test(row.icon) && assetPath === row.icon.slice(2)) return row.rootDir;
+  if (row?.icon?.startsWith('./') && /\.(svg|png|webp|jpe?g|gif)$/i.test(row.icon) && assetPath === row.icon.slice(2)) return row.rootDir;
   return row?.enabled && row.appEntry && plugins?.appUrl(pluginId) ? row.rootDir : null;
 }
 

@@ -169,6 +169,15 @@ describe('attachProductPluginService', () => {
     expect(pluginAssetRootFromService(undefined, 'branding-test', 'icons/My Logo.svg')).toBeNull();
   });
 
+  it('does not require an icon before serving a plugin app asset', () => {
+    const row = { enabled: true, appEntry: './app.js', rootDir: '/plugin' };
+    const plugins = {
+      get: () => row,
+      appUrl: () => '/plugins/notes/assets/app.js'
+    };
+    expect(pluginAssetRootFromService(plugins as never, 'notes', 'app.js')).toBe('/plugin');
+  });
+
   it('serves contained plugin renderer assets from the product listener', async () => {
     const dataDir = tempDir();
     const bundled = tempDir();
