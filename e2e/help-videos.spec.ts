@@ -48,25 +48,23 @@ test('the title-bar Help menu keeps page hints and plays the bundled video catal
   await expect(video).toHaveAttribute('aria-label', 'Use Zana everywhere');
   expect(await video.evaluate((node: HTMLVideoElement) => node.muted)).toBe(false);
 
-  // macOS transitions are asynchronous: wait for native completion events,
-  // rather than querying isFullScreen before the animation has finished.
-  await app.electron.evaluate(({ BrowserWindow }) => {
-    const window = BrowserWindow.getAllWindows().find(win => win.webContents.getURL().startsWith('http://127.0.0.1:'))!;
-    window.once('enter-full-screen', () => Reflect.set(window, 'helpEnteredFullscreen', true));
-    window.once('leave-full-screen', () => Reflect.set(window, 'helpLeftFullscreen', true));
+  // HTML video fullscreen has its own events; it need not enter native window
+  // fullscreen. Observe the exact renderer window, including on macOS.
+  await nativeWindow.evaluate((win) => {
+    win.once('enter-html-full-screen', () => Reflect.set(win, 'helpEnteredFullscreen', true));
+    win.once('leave-html-full-screen', () => Reflect.set(win, 'helpLeftFullscreen', true));
   });
   await library.getByRole('button', { name: 'Full screen' }).click();
-  await expect.poll(() => app.electron.evaluate(({ BrowserWindow }) =>
-    BrowserWindow.getAllWindows().some(win => Reflect.get(win, 'helpEnteredFullscreen') === true))).toBe(true);
+  await expect.poll(() => nativeWindow.evaluate((win) => Reflect.get(win, 'helpEnteredFullscreen'))).toBe(true);
   await expect.poll(() => page.evaluate(() => document.fullscreenElement?.getAttribute('data-testid') ?? null)).toBe('help-video-player');
   await page.evaluate(() => document.exitFullscreen());
-  await expect.poll(() => app.electron.evaluate(({ BrowserWindow }) =>
-    BrowserWindow.getAllWindows().some(win => Reflect.get(win, 'helpLeftFullscreen') === true))).toBe(true);
+  await expect.poll(() => nativeWindow.evaluate((win) => Reflect.get(win, 'helpLeftFullscreen'))).toBe(true);
   await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBeNull();
   await expect(library).toBeVisible();
   // fullscreenElement clears before fullscreenchange restores focus. Wait for
   // that handler so Chromium's video controls do not consume the next Escape.
   await expect(library.getByRole('button', { name: 'Full screen' })).toBeFocused();
+  await expect.poll(() => page.evaluate(() => document.hasFocus())).toBe(true);
 
   await page.keyboard.press('Escape');
   await expect(library).toHaveCount(0);
