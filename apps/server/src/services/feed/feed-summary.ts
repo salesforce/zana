@@ -21,6 +21,7 @@ import type {
   FeedEvent,
   LlmRunResult
 } from '@zana-ai/zcc-domain/product';
+import { WORKLOAD_MEMO_SKIPPED } from '@zana-ai/zcc-llm';
 
 /** Upper bound on how many recent events feed the recap — bounds the prompt
  *  size (and token cost) regardless of how busy the project has been. */
@@ -33,7 +34,7 @@ export interface FeedSummaryDeps {
   runSummary: (entries: string, dedupeKey: string) => Promise<LlmRunResult>;
   /** Complete effective prompt/provider identity, supplied by trusted main wiring. */
   requestIdentity?: (entries: string) => string;
-  memo?: { getOrCompute<T>(workload: string, key: string, ttlMs: number, compute: () => Promise<T | undefined>): Promise<T | undefined> };
+  memo?: { getOrCompute<T>(workload: string, key: string, ttlMs: number, compute: () => Promise<T | undefined>): Promise<T | undefined | typeof WORKLOAD_MEMO_SKIPPED> };
 }
 
 const FEED_SUMMARY_MEMO_TTL_MS = 5 * 60_000;
@@ -134,7 +135,9 @@ export class FeedSummaryService {
         const result = await this.deps.runSummary(text, `feed-digest:${projectId}`);
         return result.ok && result.text.trim() ? parseFeedDigest(result.text) ?? undefined : undefined;
       });
-      return digest ? { ok: true, digest, eventCount: events.length } : { ok: false, reason: 'summary-failed' };
+      if (digest !== WORKLOAD_MEMO_SKIPPED) {
+        return digest ? { ok: true, digest, eventCount: events.length } : { ok: false, reason: 'summary-failed' };
+      }
     }
     const result = await this.deps.runSummary(text, `feed-digest:${projectId}`);
     const digest = result.ok && result.text.trim() ? parseFeedDigest(result.text) : null;

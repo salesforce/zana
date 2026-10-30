@@ -67,14 +67,17 @@ export function UsageView() {
         {!loaded && !summary ? (
           <DelayedStencilList label="Loading usage" className="scheduler-empty" />
         ) : empty ? (
-          <div className="scheduler-empty">
-            <BarChart3 size={28} className="scheduler-empty-icon" />
-            <div className="scheduler-empty-title">No usage yet</div>
-            <div className="scheduler-empty-hint">
-              Run a Claude session in one of your projects and its activity will show
-              up here.
+          <>
+            <div className="scheduler-empty">
+              <BarChart3 size={28} className="scheduler-empty-icon" />
+              <div className="scheduler-empty-title">No usage yet</div>
+              <div className="scheduler-empty-hint">
+                Run a Claude session in one of your projects and its activity will show
+                up here.
+              </div>
             </div>
-          </div>
+            <MemoCounters counters={memoCounters} />
+          </>
         ) : summary ? (
           <div className="usage-body">
             <section className="usage-kpis" aria-label="Totals">

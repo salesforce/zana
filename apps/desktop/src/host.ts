@@ -2471,8 +2471,8 @@ const inboxSummary = new InboxSummaryService({
       return r;
     });
   },
-  requestIdentity: (kind, entries) => {
-    const entry = promptRegistry.get(kind === 'summary' ? 'builtin:inbox-summary' : 'builtin:inbox-summary-detailed');
+  requestIdentity: (entries) => {
+    const entry = promptRegistry.get('builtin:inbox-summary');
     return entry ? llmService.requestIdentity(entry, { entries }) : '';
   },
   memo: microCallMemo,

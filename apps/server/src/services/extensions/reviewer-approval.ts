@@ -59,7 +59,7 @@ interface CacheEntry { verdict: ReviewerVerdict; ts: number }
 
 export class ReviewerApprovalService {
   private readonly cache = new Map<string, CacheEntry>();
-  private readonly inflight = new Set<string>();
+  private readonly inflight = new Map<string, symbol>();
   private generation = 0;
   constructor(
     private readonly deps: ReviewerDeps,
@@ -86,7 +86,8 @@ export class ReviewerApprovalService {
   /** Async warm. Never throws → 'ask' on any failure. Writes the cache; evicts on cap/TTL. */
   async consult(key: string, req: ReviewerRequest): Promise<ReviewerVerdict> {
     if (this.inflight.has(key)) return 'ask';
-    this.inflight.add(key);
+    const token = Symbol(key);
+    this.inflight.set(key, token);
     const generation = this.generation;
     let verdict: ReviewerVerdict = 'ask';
     try {
@@ -95,9 +96,10 @@ export class ReviewerApprovalService {
     } catch {
       verdict = 'ask';
     } finally {
-      this.inflight.delete(key);
+      if (this.inflight.get(key) === token) this.inflight.delete(key);
     }
-    if (generation === this.generation) this.set(key, verdict);
+    if (generation !== this.generation) return 'ask';
+    this.set(key, verdict);
     return verdict;
   }
 
@@ -105,6 +107,7 @@ export class ReviewerApprovalService {
   clear(): void {
     this.generation++;
     this.cache.clear();
+    this.inflight.clear();
   }
 
   private set(key: string, verdict: ReviewerVerdict): void {

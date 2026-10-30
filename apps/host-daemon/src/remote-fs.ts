@@ -329,7 +329,9 @@ export async function readFileRemote(
     return { ok: true, binary: true, bytes: Number.isFinite(fullBytes) ? fullBytes : content.length };
   }
   const bytes = Number.isFinite(fullBytes) ? fullBytes : byteOffset + content.length;
-  const page = content.subarray(0, completeUtf8PrefixLength(content));
+  const page = content.length === MAX_FILE_BYTES
+    ? content.subarray(0, completeUtf8PrefixLength(content))
+    : content;
   const nextByteOffset = byteOffset + page.length;
   return {
     ok: true,

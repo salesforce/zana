@@ -25,6 +25,10 @@ const EMPTY_COUNTERS: WorkloadMemoCounters = {
   failures: 0
 };
 
+export const WORKLOAD_MEMO_SKIPPED = Symbol('workload-memo-skipped');
+const MAX_COUNTER_WORKLOADS = 8;
+const OTHER_WORKLOAD = 'other';
+
 export class WorkloadMemo {
   private readonly values = new Map<string, { value: unknown; expiresAt: number; bytes: number }>();
   private readonly inFlight = new Map<string, Promise<unknown | undefined>>();
@@ -45,7 +49,7 @@ export class WorkloadMemo {
     key: string,
     ttlMs: number,
     compute: () => Promise<T | undefined>
-  ): Promise<T | undefined> {
+  ): Promise<T | undefined | typeof WORKLOAD_MEMO_SKIPPED> {
     const counters = this.counterFor(workload);
     counters.requests++;
     const hit = this.values.get(key);
@@ -64,7 +68,7 @@ export class WorkloadMemo {
     }
     if (this.activeCalls >= this.maxInFlight) {
       counters.activeLimitSkips++;
-      return undefined;
+      return WORKLOAD_MEMO_SKIPPED;
     }
 
     counters.misses++;
@@ -75,6 +79,7 @@ export class WorkloadMemo {
       // A configuration invalidation can happen while work is in flight. Its
       // result may satisfy its original caller, but never repopulates reuse.
       if (value !== undefined && generation === this.generation) this.set(key, value, ttlMs, counters);
+      if (value === undefined) counters.failures++;
       return value;
     }, (error) => {
       counters.failures++;
@@ -105,10 +110,13 @@ export class WorkloadMemo {
   }
 
   private counterFor(workload: string): WorkloadMemoCounters {
-    let counters = this.counters.get(workload);
+    const counterWorkload = this.counters.has(workload) || this.counters.size < MAX_COUNTER_WORKLOADS
+      ? workload
+      : OTHER_WORKLOAD;
+    let counters = this.counters.get(counterWorkload);
     if (!counters) {
       counters = { ...EMPTY_COUNTERS };
-      this.counters.set(workload, counters);
+      this.counters.set(counterWorkload, counters);
     }
     return counters;
   }

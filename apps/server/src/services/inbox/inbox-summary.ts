@@ -27,6 +27,7 @@ import type {
   InboxEntry,
   LlmRunResult
 } from '@zana-ai/zcc-domain/product';
+import { WORKLOAD_MEMO_SKIPPED } from '@zana-ai/zcc-llm';
 
 /** Upper bound on how many recent entries feed the digest — bounds the prompt
  *  size (and so the token cost) regardless of how big the inbox has grown. */
@@ -57,8 +58,8 @@ export interface InboxSummaryDeps {
   /** Run the inbox-summary prompt over the rendered digest text; never throws. */
   runSummary: (entries: string, dedupeKey: string) => Promise<LlmRunResult>;
   /** Complete effective prompt/provider identity, supplied by trusted main wiring. */
-  requestIdentity?: (kind: 'summary' | 'detailed', entries: string) => string;
-  memo?: { getOrCompute<T>(workload: string, key: string, ttlMs: number, compute: () => Promise<T | undefined>): Promise<T | undefined> };
+  requestIdentity?: (entries: string) => string;
+  memo?: { getOrCompute<T>(workload: string, key: string, ttlMs: number, compute: () => Promise<T | undefined>): Promise<T | undefined | typeof WORKLOAD_MEMO_SKIPPED> };
   /** Project display label for an id, or undefined to fall back to the id. */
   projectLabel: (projectId: string) => string | undefined;
   /**
@@ -280,13 +281,15 @@ export class InboxSummaryService {
     });
     if (!text.trim()) return { ok: false, reason: 'empty' };
 
-    const identity = this.deps.requestIdentity?.('summary', text) ?? text;
+    const identity = this.deps.requestIdentity?.(text) ?? text;
     if (this.deps.memo) {
       const digest = await this.deps.memo.getOrCompute('inbox-summary', `inbox-summary:${projectId ?? 'all'}:${identity}`, INBOX_SUMMARY_MEMO_TTL_MS, async () => {
         const result = await this.deps.runSummary(text, `inbox-summary:${projectId ?? 'all'}`);
         return result.ok && result.text.trim() ? parseInboxDigest(result.text) ?? undefined : undefined;
       });
-      return digest ? { ok: true, digest, entryCount: entries.length } : { ok: false, reason: 'summary-failed' };
+      if (digest !== WORKLOAD_MEMO_SKIPPED) {
+        return digest ? { ok: true, digest, entryCount: entries.length } : { ok: false, reason: 'summary-failed' };
+      }
     }
     const result = await this.deps.runSummary(text, `inbox-summary:${projectId ?? 'all'}`);
     const digest = result.ok && result.text.trim() ? parseInboxDigest(result.text) : null;

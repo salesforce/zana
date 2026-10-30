@@ -26,6 +26,7 @@
  */
 
 import type { InboxEntry, LlmRunResult } from '@zana-ai/zcc-domain/product';
+import { WORKLOAD_MEMO_SKIPPED } from '@zana-ai/zcc-llm';
 import { entryGist } from '../inbox/inbox-summary.js';
 import { isDemotionCandidate } from '@zana-ai/zcc-domain/feed-categories';
 
@@ -56,7 +57,7 @@ export interface FeedNoiseDeps {
   /** Run the feed-noise-classifier prompt over the rendered candidate text; never throws. */
   runClassify: (entries: string, dedupeKey: string) => Promise<LlmRunResult>;
   requestIdentity?: (entries: string) => string;
-  memo?: { getOrCompute<T>(workload: string, key: string, ttlMs: number, compute: () => Promise<T | undefined>): Promise<T | undefined> };
+  memo?: { getOrCompute<T>(workload: string, key: string, ttlMs: number, compute: () => Promise<T | undefined>): Promise<T | undefined | typeof WORKLOAD_MEMO_SKIPPED> };
 }
 
 const FEED_NOISE_MEMO_TTL_MS = 5 * 60_000;
@@ -137,23 +138,24 @@ export class FeedNoiseClassifier {
     if (!text.trim()) return { routineIds: [], candidateCount: candidates.length };
 
     const validIds = new Set(candidates.map((c) => c.id));
-    const identity = this.deps.requestIdentity?.(text) ?? text;
-    const routineIds = await this.deps.memo?.getOrCompute('feed-noise', `feed-noise:${projectId ?? 'all'}:${identity}`, FEED_NOISE_MEMO_TTL_MS, async () => {
+    const classifyOnce = async (): Promise<string[] | undefined> => {
       const result = await this.deps.runClassify(text, `feed-noise:${projectId ?? 'all'}`);
       if (!result.ok || !result.text.trim()) return undefined;
       return parseRoutineIds(result.text, validIds) ?? undefined;
-    });
-    if (routineIds !== undefined) {
+    };
+    const resultFor = (ids: string[] | undefined): FeedNoiseResult => ids === undefined
+      ? { routineIds: [], candidateCount: candidates.length, failed: true }
+      : { routineIds: ids, candidateCount: candidates.length };
+    if (!this.deps.memo) return resultFor(await classifyOnce());
+
+    const identity = this.deps.requestIdentity?.(text) ?? text;
+    const routineIds = await this.deps.memo.getOrCompute('feed-noise', `feed-noise:${projectId ?? 'all'}:${identity}`, FEED_NOISE_MEMO_TTL_MS, classifyOnce);
+    if (routineIds === WORKLOAD_MEMO_SKIPPED) return resultFor(await classifyOnce());
+    if (routineIds === undefined) return resultFor(undefined);
+    {
       // The effective prompt can omit candidate text; preserve the deterministic
       // output fence even when a cached valid reply is reused.
       return { routineIds: routineIds.filter((id) => validIds.has(id)), candidateCount: candidates.length };
     }
-    if (this.deps.memo) return { routineIds: [], candidateCount: candidates.length, failed: true };
-    const result = await this.deps.runClassify(text, `feed-noise:${projectId ?? 'all'}`);
-    if (!result.ok || !result.text.trim()) return { routineIds: [], candidateCount: candidates.length, failed: true };
-    const parsed = parseRoutineIds(result.text, validIds);
-    return parsed === null
-      ? { routineIds: [], candidateCount: candidates.length, failed: true }
-      : { routineIds: parsed, candidateCount: candidates.length };
   }
 }

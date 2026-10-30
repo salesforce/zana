@@ -3663,14 +3663,14 @@ describe("acp bridge", () => {
   });
 
   it.each([
-    ["thread/start", {}],
-    ["thread/resume", { providerThreadId: "source-session" }],
-    ["thread/fork", { sourceProviderThreadId: "source-session" }],
+    ["thread/start", {}, "acp-opencode"],
+    ["thread/resume", { providerThreadId: "source-session" }, "acp-cursor"],
+    ["thread/fork", { sourceProviderThreadId: "source-session" }, undefined],
   ])(
-    "fails closed for automated OpenCode %s before starting an ACP session",
-    async (method, extra) => {
+    "fails closed for automated ACP %s before starting an ACP session",
+    async (method, extra, providerId) => {
       const id = sendRequest(method, {
-        providerId: "acp-opencode",
+        ...(providerId ? { providerId } : {}),
         threadId: `automated-${method}`,
         cwd: workspaceDir,
         instructionMode: "append",
@@ -3684,7 +3684,7 @@ describe("acp bridge", () => {
       const response = await waitForResponse(id);
       expect(response.error).toMatchObject({
         code: -32602,
-        message: expect.stringContaining("Automated OpenCode sessions are unsupported"),
+          message: expect.stringContaining("Automated ACP sessions are unsupported"),
       });
       expect(notifications("thread/identity")).toEqual([]);
     },

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { WorkloadMemo } from './workload-memo.js';
+import { WorkloadMemo, WORKLOAD_MEMO_SKIPPED } from './workload-memo.js';
 
 describe('WorkloadMemo', () => {
   it('reuses successful values and does not retain failures', async () => {
@@ -13,6 +13,7 @@ describe('WorkloadMemo', () => {
     await memo.getOrCompute('test', 'failed', 1_000, failed);
     await memo.getOrCompute('test', 'failed', 1_000, failed);
     expect(failed).toHaveBeenCalledTimes(2);
+    expect(memo.snapshot().test.failures).toBe(2);
   });
 
   it('coalesces matching work and expires values', async () => {
@@ -51,7 +52,7 @@ describe('WorkloadMemo', () => {
     let resolve!: (value: string) => void;
     const memo = new WorkloadMemo(() => 0, 128, 1024, 1);
     const first = memo.getOrCompute('test', 'one', 10, () => new Promise<string>((done) => { resolve = done; }));
-    expect(await memo.getOrCompute('test', 'two', 10, async () => 'two')).toBeUndefined();
+    expect(await memo.getOrCompute('test', 'two', 10, async () => 'two')).toBe(WORKLOAD_MEMO_SKIPPED);
     const joined = memo.getOrCompute('test', 'one', 10, async () => 'wrong');
     resolve('one');
     await expect(Promise.all([first, joined])).resolves.toEqual(['one', 'one']);
@@ -93,9 +94,16 @@ describe('WorkloadMemo', () => {
     let resolve!: (value: string) => void;
     const stale = memo.getOrCompute('summary', 'stale', 10, () => new Promise<string>((done) => { resolve = done; }));
     memo.clear();
-    await expect(memo.getOrCompute('summary', 'fresh', 10, async () => 'fresh')).resolves.toBeUndefined();
+    await expect(memo.getOrCompute('summary', 'fresh', 10, async () => 'fresh')).resolves.toBe(WORKLOAD_MEMO_SKIPPED);
     resolve('stale');
     await stale;
     await expect(memo.getOrCompute('summary', 'fresh', 10, async () => 'fresh')).resolves.toBe('fresh');
+  });
+
+  it('bounds distinct counter buckets', async () => {
+    const memo = new WorkloadMemo();
+    for (let i = 0; i < 10; i++) await memo.getOrCompute(`workload-${i}`, 'key', 10, async () => 'value');
+    expect(Object.keys(memo.snapshot())).toHaveLength(9);
+    expect(memo.snapshot().other.requests).toBe(2);
   });
 });

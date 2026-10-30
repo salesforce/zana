@@ -229,6 +229,14 @@ describe('remote-fs over a fake ssh', () => {
     expect(second.nextByteOffset).toBeUndefined();
   });
 
+  it('does not issue an EOF continuation for a trailing incomplete UTF-8 sequence', async () => {
+    const f = join(workDir, 'trailing-invalid.txt');
+    await writeFile(f, Buffer.from([0x61, 0xc3]));
+    await expect(readFileRemote(remote, workDir, f)).resolves.toMatchObject({
+      ok: true, content: 'a�', truncated: false, binary: false
+    });
+  });
+
   it('refuses to read a directory as a file', async () => {
     await mkdir(join(workDir, 'adir'));
     const res = await readFileRemote(remote, workDir, join(workDir, 'adir'));

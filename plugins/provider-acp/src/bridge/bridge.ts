@@ -3164,17 +3164,13 @@ async function handleRequest(
     case "thread/start":
     case "thread/resume":
     case "thread/fork": {
-      if (
-        request.params.providerId === OPENCODE_PROVIDER_ID &&
-        request.params.sessionKind === "automated"
-      ) {
-        // OpenCode config overlays merge with user configuration, so this ACP
-        // bridge cannot prove plugins and MCP registrations are excluded.
-        // Reject before launch/config discovery instead of widening access.
+      if (request.params.sessionKind === "automated") {
+        // Generic ACP launch specifications cannot prove isolated plugin and MCP
+        // configuration. Reject before discovery or process spawn.
         sendError(
           request.id,
           BRIDGE_JSON_RPC_ERRORS.INVALID_PARAMS,
-          "Automated OpenCode sessions are unsupported because isolated configuration cannot be verified",
+          "Automated ACP sessions are unsupported because isolated configuration cannot be verified",
         );
         return;
       }

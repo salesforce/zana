@@ -82,8 +82,21 @@ describe('ReviewerApprovalService', () => {
     const consult = svc.consult('k', req);
     svc.clear();
     resolve(ok('{"decision":"approve","confidence":0.9}'));
-    await consult;
+    await expect(consult).resolves.toBe('ask');
     expect(svc.peek('k', req)).toBe('ask');
+  });
+  it('allows a replacement consult after clear while stale work settles', async () => {
+    let resolve!: (result: LlmRunResult) => void;
+    const runReview = vi.fn()
+      .mockImplementationOnce(() => new Promise<LlmRunResult>((done) => { resolve = done; }))
+      .mockResolvedValueOnce(ok('{"decision":"approve","confidence":0.9}'));
+    const svc = new ReviewerApprovalService({ runReview });
+    const stale = svc.consult('k', req);
+    svc.clear();
+    await expect(svc.consult('k', req)).resolves.toBe('approve');
+    resolve(ok('{"decision":"approve","confidence":0.9}'));
+    await expect(stale).resolves.toBe('ask');
+    expect(svc.peek('k', req)).toBe('approve');
   });
   it('exposes REVIEWER_MIN_CONFIDENCE = 0.8', () => {
     expect(REVIEWER_MIN_CONFIDENCE).toBe(0.8);
