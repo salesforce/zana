@@ -36196,6 +36196,7 @@ body.split-frame-guard webview {
 }
 
 /* Sticky prompts need an opaque backing that matches their hosting surface. */
+.app-shell.shell-inset .thread-timeline-current-turn > .thread-timeline-item.is-user,
 .panel-agent-tab .thread-timeline-current-turn > .thread-timeline-item.is-user,
 .thread-detail-view--modal .thread-timeline-current-turn > .thread-timeline-item.is-user {
   background: var(--bg-panel);
