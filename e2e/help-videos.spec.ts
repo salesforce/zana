@@ -4,6 +4,8 @@ test.use({ e2e: true, launchEnv: { ZCC_E2E_HELP_VIDEOS_ORIGIN: 'http://127.0.0.1
 
 test('the title-bar Help menu keeps page hints and plays the bundled video catalogue', async ({ app }, testInfo) => {
   const page = app.window;
+  const nativeWindow = await app.electron.browserWindow(page);
+  await nativeWindow.evaluate((win) => { win.focus(); win.webContents.focus(); });
   const help = page.getByTestId('titlebar-help-toggle');
   await expect(help).toHaveClass(/is-active/);
   await help.click();
@@ -62,6 +64,9 @@ test('the title-bar Help menu keeps page hints and plays the bundled video catal
     BrowserWindow.getAllWindows().some(win => Reflect.get(win, 'helpLeftFullscreen') === true))).toBe(true);
   await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBeNull();
   await expect(library).toBeVisible();
+  // fullscreenElement clears before fullscreenchange restores focus. Wait for
+  // that handler so Chromium's video controls do not consume the next Escape.
+  await expect(library.getByRole('button', { name: 'Full screen' })).toBeFocused();
 
   await page.keyboard.press('Escape');
   await expect(library).toHaveCount(0);
