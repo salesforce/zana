@@ -37,7 +37,7 @@ function start(timeout: { heartbeatTimeoutMs?: number } = { heartbeatTimeoutMs: 
 
 it.each(['server.ts', 'server.tsx'])('allows a cold source import to finish after the compiled deadline: %s', async entry => {
   vi.useFakeTimers();
-  const f = initialize({ entry });
+  const f = initialize({ entry, heartbeatTimeoutMs: 5_000 });
   await vi.advanceTimersByTimeAsync(15_000);
   expect(f.onFailure).not.toHaveBeenCalled();
   f.worker.emit('message', { kind: 'ready' });
