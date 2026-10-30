@@ -14,6 +14,9 @@ import { createPluginWorkerBridge, PEER_WORKER_COMMIT_TIMEOUT_MS } from './plugi
  * concurrent test runners.
  */
 export const PLUGIN_HEARTBEAT_TIMEOUT_MS = 20_000;
+// Electron startup can launch several isolated workers while loading plugin manifests. Keep activation below the
+// product's 45s readiness probe, but allow one bounded contention window on shared CI runners.
+export const PLUGIN_STARTUP_TIMEOUT_MS = 40_000;
 // A 24MiB paired document needs multiple transient closure/hash copies during a rewrite.
 export const PLUGIN_WORKER_MAX_OLD_GENERATION_SIZE_MB = 384;
 
@@ -58,7 +61,7 @@ export function createIsolatedPluginRuntime(options: {
   void started.catch(() => {});
   // Source installs also pay for uncached TypeScript graph loading before their factory runs. Compiled workers can
   // contend with startup's other plugin workers, so both get one bounded allowance before activation degrades.
-  const startupTimeoutMs = options.startupTimeoutMs ?? 20_000;
+  const startupTimeoutMs = options.startupTimeoutMs ?? PLUGIN_STARTUP_TIMEOUT_MS;
   const startup = setTimeout(() => fail(new Error('Plugin factory timed out')), startupTimeoutMs);
   // A synchronous peer commit blocks worker heartbeats, so it is exempt — but only for a bounded grace. The bridge
   // terminates a commit at PEER_WORKER_COMMIT_TIMEOUT_MS; a count that stops moving past that (e.g. a failed
