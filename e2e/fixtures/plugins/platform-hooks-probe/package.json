@@ -14,7 +14,6 @@
     },
     "server": "./server.ts",
     "toolPolicy": true,
-    "app": "./app.tsx",
     "host": "./host.ts",
     "skills": ["skills"],
     "projectTab": {
