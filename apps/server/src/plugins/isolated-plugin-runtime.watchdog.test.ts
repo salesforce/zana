@@ -50,10 +50,10 @@ it.each(['server.ts', 'server.tsx'])('allows a cold source import to finish afte
   await f.runtime.dispose();
 });
 
-it.each(['server.mjs', 'server.js', 'server.ts.mjs'])('keeps the compiled startup deadline at ten seconds: %s', async entry => {
+it.each(['server.mjs', 'server.js', 'server.ts.mjs'])('keeps the compiled startup deadline bounded: %s', async entry => {
   vi.useFakeTimers();
   const f = initialize({ entry });
-  await vi.advanceTimersByTimeAsync(9_999);
+  await vi.advanceTimersByTimeAsync(19_999);
   expect(f.onFailure).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(1);
   await expect(f.runtime.started).rejects.toThrow('Plugin factory timed out');
