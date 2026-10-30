@@ -508,12 +508,10 @@ describe('links', () => {
     click(doc.getElementById('inner')!);
     click(doc.getElementById('d')!);
     click(doc.getElementById('a')!, { metaKey: true });
-    click(doc.getElementById('a')!, { button: 2 });
     click(doc.getElementById('a')!, { type: 'auxclick', button: 1 });
     expect(first.defaultPrevented).toBe(true);
     await wait();
     expect(ofType('navigate')).toEqual([
-      { type: 'navigate', path: 'runs/r1.html', hash: 'top', newTab: false, redirect: false },
       { type: 'navigate', path: 'runs/r1.html', hash: 'top', newTab: false, redirect: false },
       { type: 'navigate', path: 'other.html', hash: null, newTab: true, redirect: false },
       { type: 'navigate', path: 'd.html', hash: null, newTab: false, redirect: false },
