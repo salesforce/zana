@@ -118,12 +118,6 @@ export function InstalledPluginCollection({ rows, onOpen, onBrowse, headerAction
               : 'No plugins match these filters.'}
           </p>
         ) : <>
-          {tools.length > 0 ? <section aria-label={updatesOnly ? 'Plugin updates' : 'Tools & integrations'}>
-            <div className="ext-installed-section-heading"><h4>{updatesOnly ? 'Ready for a refresh' : 'Tools & integrations'}</h4>
-              <span className="ext-installed-section-count">{tools.length}</span></div>
-            <div className="ext-installed-table-heading" aria-hidden="true"><span>Plugin</span><span>What it adds</span><span>Installed from</span><span>Status</span><span /><span /></div>
-            <div className="ext-installed-panel" role="list" aria-label="Installed plugins">{tools.map(renderCard)}</div>
-          </section> : null}
           {agents.length > 0 ? <section className="ext-installed-agents" aria-label="Coding agents">
             <button type="button" className="ext-installed-group-toggle" aria-expanded={showAgents} aria-controls={agentsId}
               onClick={() => setAgentsExpanded(!showAgents)}>
@@ -135,6 +129,12 @@ export function InstalledPluginCollection({ rows, onOpen, onBrowse, headerAction
             <div id={agentsId} hidden={!showAgents}>
               <div className="ext-installed-panel" role="list" aria-label="Installed coding agents">{agents.map(renderCard)}</div>
             </div>
+          </section> : null}
+          {tools.length > 0 ? <section aria-label={updatesOnly ? 'Plugin updates' : 'Tools & integrations'}>
+            <div className="ext-installed-section-heading"><h4>{updatesOnly ? 'Ready for a refresh' : 'Tools & integrations'}</h4>
+              <span className="ext-installed-section-count">{tools.length}</span></div>
+            <div className="ext-installed-table-heading" aria-hidden="true"><span>Plugin</span><span>What it adds</span><span>Installed from</span><span>Status</span><span /><span /></div>
+            <div className="ext-installed-panel" role="list" aria-label="Installed plugins">{tools.map(renderCard)}</div>
           </section> : null}
         </>}
         {updatesOnly ? <section className="ext-plugin-update-policies" aria-label="Update delivery">

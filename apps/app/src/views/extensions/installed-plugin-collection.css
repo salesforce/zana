@@ -150,7 +150,7 @@
 .ext-installed-collection .ext-installed-switch input:checked + .ext-installed-switch-ui::after { transform: translateX(12px); }
 .ext-installed-row-toggle { display: flex; align-items: center; }
 .ext-installed-chevron { width: 20px; height: 26px; }
-.ext-installed-agents { margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--border); }
+.ext-installed-agents { margin-bottom: 26px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
 .ext-installed-group-toggle {
   display: flex;
   align-items: center;
