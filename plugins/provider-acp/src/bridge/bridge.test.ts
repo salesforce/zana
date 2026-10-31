@@ -1036,6 +1036,29 @@ describe("acp bridge", () => {
     });
   });
 
+  it.each(["1", "0"])("never opens a browser during Cursor model discovery (saved credentials: %s)", async (authenticated) => {
+    const requestLog = join(workspaceDir, "cursor-auth-discovery.jsonl");
+    const browserLog = join(workspaceDir, "cursor-browser-opened");
+    const modelListId = sendModelList({
+      envVars: {
+        FAKE_ACP_AUTH_METHODS: "cursor_login",
+        FAKE_ACP_CURSOR_LOGIN_MISSING: authenticated === "1" ? "0" : "1",
+        FAKE_ACP_BROWSER_LOG: browserLog,
+        FAKE_ACP_MODEL_CONFIG: "1",
+        FAKE_ACP_REQUEST_LOG: requestLog,
+        NO_OPEN_BROWSER: "",
+      },
+    });
+    const response = await waitForResponse(modelListId);
+    expect(loggedAcpRequests(requestLog).map((request) => request.method)).toContain("authenticate");
+    expect(existsSync(browserLog)).toBe(false);
+    if (authenticated === "1") {
+      expect(response.result).toMatchObject({ models: [{ id: "fake/default" }, { id: "fake/strong" }] });
+    } else {
+      expect(response.error?.message).toBe("ACP agent is not authenticated.");
+    }
+  });
+
   it("probes per-model reasoning across large catalogs instead of falling back", async () => {
     const modelListId = sendModelList({
       envVars: {
@@ -2508,6 +2531,51 @@ describe("acp bridge", () => {
     await waitForTurnCompleted();
 
     expect(agentMessageTexts()).toContain(`auth-method:${methodId}`);
+  });
+
+  it.each(["1", "0"])("never opens a browser during Cursor session creation (saved credentials: %s)", async (authenticated) => {
+    const requestLog = join(workspaceDir, "cursor-auth-session.jsonl");
+    const browserLog = join(workspaceDir, "cursor-browser-opened");
+    const launch = {
+      envVars: {
+        FAKE_ACP_AUTH_METHODS: "cursor_login",
+        FAKE_ACP_CURSOR_LOGIN_MISSING: authenticated === "1" ? "0" : "1",
+        FAKE_ACP_BROWSER_LOG: browserLog,
+        FAKE_ACP_REQUEST_LOG: requestLog,
+        NO_OPEN_BROWSER: "",
+      },
+    };
+    if (authenticated === "1") {
+      const { providerThreadId } = await startThread(launch);
+      const turnId = sendTurnRequest("turn/start", providerThreadId, {
+        input: [{ type: "text", text: "hello", mentions: [] }],
+      });
+      await waitForResponse(turnId);
+      await waitForTurnCompleted();
+      expect(agentMessageTexts()).toContain("echo:hello");
+    } else {
+      const response = await waitForResponse(sendRequest("thread/start", {
+        threadId: `thread-${++nextThreadSerial}`,
+        cwd: workspaceDir,
+        instructionMode: "append",
+        options: executionOptions({ providerOptions: { acpLaunchSpec: acpLaunchSpec(launch) } }),
+      }));
+      expect(response.error?.message).toBe("ACP agent is not authenticated.");
+    }
+    expect(loggedAcpRequests(requestLog).map((request) => request.method)).toContain("authenticate");
+    expect(existsSync(browserLog)).toBe(false);
+  });
+
+  it.each(["cached_token", "cursor_login"])("preserves unrelated %s authentication failures", async (methodId) => {
+    const response = await waitForResponse(sendRequest("thread/start", {
+      threadId: `thread-${++nextThreadSerial}`,
+      cwd: workspaceDir,
+      instructionMode: "append",
+      options: executionOptions({ providerOptions: { acpLaunchSpec: acpLaunchSpec({
+        envVars: { FAKE_ACP_AUTH_METHODS: methodId, FAKE_ACP_AUTH_ERROR: "Network unavailable" },
+      }) } }),
+    }));
+    expect(response.error?.message).toBe("Network unavailable");
   });
 
   it("authenticates Codex-style api-key when OPENAI_API_KEY is available", async () => {

@@ -987,11 +987,18 @@ async function authenticateAcpAgent(args: {
   if (methodId === undefined) {
     return;
   }
-  await args.connection.request({
-    method: "authenticate",
-    params: { methodId, _meta: { headless: true } },
-    resultSchema: z.unknown(),
-  });
+  try {
+    await args.connection.request({
+      method: "authenticate",
+      params: { methodId, _meta: { headless: true } },
+      resultSchema: z.unknown(),
+    });
+  } catch (error) {
+    if (methodId === "cursor_login" && error instanceof Error && error.message.includes("Failed to open browser for login")) {
+      throw new AcpModelListAuthRequiredError();
+    }
+    throw error;
+  }
 }
 
 /**
@@ -1090,6 +1097,9 @@ async function loadSessionDiscoveredModels(
   const childEnv = {
     ...withoutBridgeRuntimeEnv(process.env),
     ...(agent.envVars ?? {}),
+    // Cursor ignores authenticate's _meta.headless but honors this setting.
+    // Model refreshes must never open a browser when saved credentials expire.
+    NO_OPEN_BROWSER: "1",
   };
   const connection = createAcpAgentConnection({
     command: agent.command,
@@ -1207,6 +1217,7 @@ async function loadSessionDiscoveredModels(
       ...(acpMode ? { acpMode } : {}),
     };
   } catch (error) {
+    if (error instanceof AcpModelListAuthRequiredError) throw error;
     process.stderr.write(
       `acp bridge: ACP-native model discovery for "${agent.command}" failed: ${
         error instanceof Error ? error.message : String(error)
@@ -2244,6 +2255,8 @@ async function startAgentSession(
     ...withoutBridgeRuntimeEnv(process.env),
     ...params.envVars,
     ...dialect.launchEnv?.(params.permissionMode),
+    // Sign-in is an explicit user action, never a provider subprocess side effect.
+    NO_OPEN_BROWSER: "1",
   };
   const connection = createAcpAgentConnection({
     command: params.agent.command,
