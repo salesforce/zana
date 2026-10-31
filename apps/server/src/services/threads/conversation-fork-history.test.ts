@@ -150,6 +150,35 @@ describe('resolveConversationForkPoint', () => {
     })).toThrow(/only fork at the end of a session/);
   });
 
+  it('rejects an explicit anchor in an unfinished turn', () => {
+    const rows = [...completed, event(5, 'turn/started', { scope: { kind: 'turn', turnId: 'open' } }),
+      event(6, 'item/completed', { scope: { kind: 'turn', turnId: 'open' } })];
+    expect(selectInheritedForkEventRows(rows, 6)).toEqual([]);
+    expect(() => resolveConversationForkPoint({ events: rows, forkCapability: 'checkpoint',
+      sourceProviderThreadId: 'prov-source', sourceSeqEnd: 6 })).toThrow(/no turn has completed/);
+    expect(resolveConversationForkPoint({ events: rows, forkCapability: 'checkpoint',
+      sourceProviderThreadId: 'prov-source' })).toEqual({ sourceProviderThreadId: 'prov-source', sourceProviderCheckpointId: 'cp-2' });
+  });
+
+  it.each(['turn/completed', 'turn.completed'])('does not treat an unrelated payload as a %s completion', (storedType) => {
+    const rows = [event(1, storedType, { type: 'item/completed', scope: { kind: 'turn', turnId: 't1' } })];
+    expect(lastCompletedTurnSequence(rows)).toBeNull();
+    expect(selectInheritedForkEventRows(rows)).toEqual([]);
+  });
+
+  it('rejects a completed anchor without a provider session or checkpoint', () => {
+    const rows = [event(1, 'turn/completed', { scope: { kind: 'turn', turnId: 't1' } })];
+    expect(() => resolveConversationForkPoint({ events: rows, forkCapability: 'checkpoint',
+      sourceProviderThreadId: null, sourceSeqEnd: 1 })).toThrow(/no provider session/);
+    expect(() => resolveConversationForkPoint({ events: rows, forkCapability: 'checkpoint',
+      sourceProviderThreadId: 'prov-source', sourceSeqEnd: 1 })).toThrow(/no provider checkpoint/);
+    expect(resolveConversationForkPoint({ events: rows, forkCapability: 'tip',
+      sourceProviderThreadId: 'prov-source', sourceSeqEnd: 1 })).toEqual({ sourceProviderThreadId: 'prov-source' });
+    expect(resolveConversationForkPoint({ events: rows, forkCapability: 'checkpoint', sourceProviderThreadId: null })).toBeNull();
+    expect(describeCopiedForkStart(rows, 'checkpoint')).toBeNull();
+    expect(describeCopiedForkStart([], 'checkpoint')).toBeNull();
+  });
+
   it('reads the clone point from copied fork history', () => {
     expect(describeCopiedForkStart([
       event(1, 'turn/started', {
@@ -165,6 +194,38 @@ describe('resolveConversationForkPoint', () => {
       sourceProviderThreadId: 'prov-source',
       sourceProviderCheckpointId: 'cp-9'
     });
+  });
+
+  it.each(['turn/completed', 'turn.completed'])('inherits real host completions stored as %s', (storedType) => {
+    const rows = completed.map((row) => row.type === 'turn/completed' ? { ...row, type: storedType } : row);
+    expect(lastCompletedTurnSequence(rows)).toBe(4);
+    expect(lastCompletedTurnSequence(rows, 2)).toBe(2);
+    expect(selectInheritedForkEventRows(rows).map((row) => row.sequence)).toEqual([1, 2, 3, 4]);
+    expect(resolveConversationForkPoint({
+      events: rows,
+      forkCapability: 'checkpoint',
+      sourceProviderThreadId: 'prov-source',
+      sourceSeqEnd: 2
+    })).toEqual({ sourceProviderThreadId: 'prov-source', sourceProviderCheckpointId: 'cp-1' });
+    expect(describeCopiedForkStart(rows, 'checkpoint')).toEqual({
+      sourceProviderThreadId: 'prov-source', sourceProviderCheckpointId: 'cp-2'
+    });
+  });
+
+  it.each(['turn/completed', 'turn.completed'])('anchors an assistant message to its containing %s turn', (storedType) => {
+    const rows = [
+      event(1, 'turn/started', { scope: { kind: 'turn', turnId: 't1' } }),
+      event(2, 'item/completed', { scope: { kind: 'turn', turnId: 't1' } }),
+      event(3, storedType, { type: 'turn/completed', scope: { kind: 'turn', turnId: 't1' }, providerCheckpointId: 'cp-1' }),
+      event(4, 'turn/started', { scope: { kind: 'turn', turnId: 't2' } }),
+      event(5, 'item/completed', { scope: { kind: 'turn', turnId: 't2' } }),
+      event(6, storedType, { type: 'turn/completed', scope: { kind: 'turn', turnId: 't2' }, providerCheckpointId: 'cp-2' })
+    ];
+    for (const [sourceSeqEnd, checkpoint] of [[2, 'cp-1'], [5, 'cp-2']] as const) {
+      expect(resolveConversationForkPoint({
+        events: rows, forkCapability: 'checkpoint', sourceProviderThreadId: 'prov-source', sourceSeqEnd
+      })).toEqual({ sourceProviderThreadId: 'prov-source', sourceProviderCheckpointId: checkpoint });
+    }
   });
 });
 

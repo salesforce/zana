@@ -36063,9 +36063,10 @@ body.split-frame-guard webview {
   width: 100%;
 }
 
+/* Message actions extend below their row and must stay above the next sticky prompt. */
 .thread-timeline-item:hover,
 .thread-timeline-item:focus-within {
-  z-index: 1;
+  z-index: 5;
 }
 
 .thread-timeline-item.is-user,
