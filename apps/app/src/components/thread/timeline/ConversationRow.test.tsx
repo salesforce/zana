@@ -445,3 +445,14 @@ describe('ConversationRow desktop prompt collapse', () => {
     expect(container.querySelector('.thread-message-collapsible')).toBeNull();
   });
 });
+
+it('renders recorded context as a compact inspectable snapshot',async()=>{
+ const {contextReferencePrompt}=await import('@zana-ai/zcc-domain/thread-runtime');
+ const reference={version:1 as const,label:'Passage',text:'exact original paragraph'};
+ const block=contextReferencePrompt(reference);
+ render(<ConversationRow row={{...userRow,text:'Explain '+block+' please',references:[{start:8,end:8+block.length,reference}]}} />);
+ expect(screen.getByTestId('thread-user-text').textContent).not.toContain(reference.text);
+ fireEvent.click(screen.getByRole('button',{name:'Inspect Passage'}));
+ expect(screen.getByRole('dialog').textContent).toContain(reference.text);
+ expect(screen.queryByRole('button',{name:'Remove Passage'})).toBeNull();
+});

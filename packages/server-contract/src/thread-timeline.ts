@@ -6,6 +6,7 @@ import {
   pendingInteractionUserAnswerSchema,
   pendingInteractionUserQuestionQuestionSchema,
   promptTextMentionSchema,
+  promptTextReferenceSchema,
   systemMessageKindSchema,
   systemMessageSubjectSchema,
   threadEventItemPresentationSchema,
@@ -126,6 +127,7 @@ export const timelineUserConversationRowSchema =
     systemMessageSubject: systemMessageSubjectSchema.nullable(),
     turnRequest: timelineConversationTurnRequestSchema,
     mentions: z.array(promptTextMentionSchema),
+    references: z.array(promptTextReferenceSchema).max(24).optional(),
   });
 export type TimelineUserConversationRow = z.infer<
   typeof timelineUserConversationRowSchema

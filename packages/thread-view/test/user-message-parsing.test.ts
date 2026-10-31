@@ -613,3 +613,11 @@ describe("user message parsing", () => {
     });
   });
 });
+
+it('projects only verified copied snapshots with shifted multipart offsets',async()=>{
+ const {contextReferencePrompt}=await import('@zana-ai/zcc-domain/thread-runtime');
+ const reference={version:1 as const,label:'Passage',text:'exact'};const text=contextReferencePrompt(reference);
+ const parsed=parsePromptInput([{type:'text',text:'Prefix',mentions:[]},{type:'text',text,mentions:[],references:[{start:0,end:text.length,reference}]}]);
+ expect(parsed?.references).toEqual([{start:6,end:6+text.length,reference}]);
+ expect(parsePromptInput([{type:'text',text:'old ordinary',mentions:[]}])?.references).toBeUndefined();
+});

@@ -1,3 +1,4 @@
+import type { ContextReference } from '@zana-ai/zcc-plugin-sdk/app';
 import { browserPreviewIdentity } from '@zana-ai/zcc-desktop-contract';
 import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
 import type { EditorSelection } from '@zana-ai/zcc-plugin-sdk/app';
@@ -41,6 +42,7 @@ export interface ClosableSecondaryTab {
   draftSelection?: EditorSelection;
   /** Agent tab: the project the draft's composer starts on. */
   draftProjectId?: string;
+  draftReferences?: ContextReference[];
   /** Agent tab: the view the draft is about, recorded on the thread it starts. */
   draftView?: string;
   /** Bumped whenever `draft` is replaced, so the composer re-seeds its text. */
@@ -231,8 +233,12 @@ export function loadSecondaryPanelState(
 export function persistSecondaryPanelState(ownerId: string, state: ThreadSecondaryPanelState): void {
   if (typeof localStorage === 'undefined') return;
   try {
-    const tabs = state.tabs.map(({ draft, draftSelection, draftProjectId, draftView, draftRevision, ...tab }) => tab);
-    localStorage.setItem(storageKeyForOwner(ownerId), JSON.stringify({ ...state, tabs }));
+    const persisted = {
+      ...state,
+      tabs: state.tabs.map(({ draft: _draft, draftSelection: _selection, draftReferences: _references,
+        draftProjectId: _project, draftView: _view, draftRevision: _revision, ...tab }) => tab)
+    };
+    localStorage.setItem(storageKeyForOwner(ownerId), JSON.stringify(persisted));
   } catch {
     /* quota / private mode */
   }
@@ -408,9 +414,9 @@ export function activateClosableTab(
  */
 export function openAgentDraft(
   state: ThreadSecondaryPanelState,
-  input: { title: string; draft: string; projectId?: string; view?: string; selection?: EditorSelection }
+  input: { title: string; draft: string; projectId?: string; view?: string; references?: ContextReference[]; selection?: EditorSelection }
 ): ThreadSecondaryPanelState {
-  const seeded = { title: input.title, draft: input.draft, draftProjectId: input.projectId, draftView: input.view, draftSelection: input.selection };
+  const seeded = { draftReferences: input.references, draftSelection: input.selection, title: input.title, draft: input.draft, draftProjectId: input.projectId, draftView: input.view };
   const blank = state.tabs.find((tab) => tab.kind === 'agent' && !tab.threadId);
   if (!blank) return addClosableTab(state, { kind: 'agent', ...seeded });
   return {

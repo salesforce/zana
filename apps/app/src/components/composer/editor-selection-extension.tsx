@@ -4,11 +4,19 @@ import { closeHistory } from '@tiptap/pm/history';
 import { Node, mergeAttributes } from '@tiptap/core';
 import { NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from '@tiptap/react';
 import { FileCode2, X } from 'lucide-react';
-import { editorSelectionLabel, editorSelectionPrompt, parseEditorSelection } from '@zana-ai/zcc-plugin-sdk/app';
+import { contextReferenceFromEditorSelection, contextReferenceLocation, contextReferencePrompt, parseContextReference, parseEditorSelection, type ContextReference } from '@zana-ai/zcc-plugin-sdk/app';
 import './editor-selection-chip.css';
 
-export function EditorSelectionView({ node, deleteNode, editor }: NodeViewProps) {
-  const selection = parseEditorSelection(node.attrs.selection);
+export function contextReferenceForNode(node: { attrs?: Record<string, unknown> }): ContextReference | null {
+  const reference = parseContextReference(node.attrs?.reference);
+  if (reference) return reference;
+  const legacy = parseEditorSelection(node.attrs?.selection);
+  return legacy ? contextReferenceFromEditorSelection(legacy) : null;
+}
+
+export function ContextReferenceBadge({ reference: selection, onRemove, onConvert }: {
+  reference: ContextReference; onRemove?: () => void; onConvert?: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const chip = useRef<HTMLButtonElement>(null);
   const preview = useRef<HTMLDivElement>(null);
@@ -26,13 +34,12 @@ export function EditorSelectionView({ node, deleteNode, editor }: NodeViewProps)
     document.addEventListener('keydown', escape, true);
     return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', escape, true); };
   }, [open]);
-  if (!selection) return null;
-  const label = editorSelectionLabel(selection);
+  const label = selection.label;
   const close = () => { setOpen(false); chip.current?.focus(); };
   return (
-    <NodeViewWrapper as="span" className="editor-selection-node" contentEditable={false}>
+    <span className="editor-selection-node" contentEditable={false}>
       <span className="editor-selection-chip">
-        <button ref={chip} type="button" className="editor-selection-label" title={selection.path} aria-label={`Inspect ${label}`} aria-expanded={open}
+        <button ref={chip} type="button" className="editor-selection-label" title={contextReferenceLocation(selection)} aria-label={`Inspect ${label}`} aria-expanded={open}
           onClick={() => {
             const box = chip.current!.getBoundingClientRect();
             const above = box.top >= 180;
@@ -45,33 +52,49 @@ export function EditorSelectionView({ node, deleteNode, editor }: NodeViewProps)
           }}>
           <FileCode2 size={13} aria-hidden /> <span>{label}</span>
         </button>
-        <button type="button" className="editor-selection-remove" aria-label={`Remove ${label}`} onClick={() => { editor.view.dispatch(closeHistory(editor.state.tr)); deleteNode(); editor.commands.focus(); }}><X size={12} aria-hidden /></button>
+        {onRemove ? <button type="button" className="editor-selection-remove" aria-label={`Remove ${label}`} onClick={onRemove}><X size={12} aria-hidden /></button> : null}
       </span>
       {open && createPortal(
         <div ref={preview} tabIndex={-1} role="dialog" aria-label={`Copied selection: ${label}`} className="editor-selection-preview" style={position}>
           <div className="editor-selection-preview-heading"><strong>{label}</strong><button type="button" aria-label="Close selection preview" onClick={close}><X size={14} /></button></div>
-          <div className="editor-selection-path">{selection.path}</div>
+          <div className="editor-selection-path">{contextReferenceLocation(selection)}</div>
           <pre tabIndex={0}>{selection.text}</pre>
           <small>Copied selection · includes edits at copy time</small>
+          {onConvert ? <button type="button" className="editor-selection-convert" onClick={() => { setOpen(false); onConvert(); }}>Convert to text</button> : null}
         </div>, document.body
       )}
-    </NodeViewWrapper>
+    </span>
   );
+}
+
+export function EditorSelectionView({ node, deleteNode, editor, getPos }: NodeViewProps) {
+  const reference = contextReferenceForNode(node);
+  if (!reference) return null;
+  return <NodeViewWrapper as="span" className="editor-selection-node" contentEditable={false}>
+    <ContextReferenceBadge reference={reference}
+      onRemove={() => { editor.view.dispatch(closeHistory(editor.state.tr)); deleteNode(); editor.commands.focus(); }}
+      onConvert={() => {
+        const pos = getPos();
+        if (typeof pos !== 'number') return;
+        const tr = closeHistory(editor.state.tr).replaceWith(pos, pos + node.nodeSize, editor.schema.text(reference.text));
+        editor.view.dispatch(tr); editor.commands.focus();
+      }} />
+  </NodeViewWrapper>;
 }
 
 export const EditorSelectionExtension = Node.create({
   name: 'editorSelection',
   group: 'inline', inline: true, atom: true,
-  addAttributes: () => ({ selection: { default: null, rendered: false } }),
+  addAttributes: () => ({ selection: { default: null, rendered: false }, reference: { default: null, rendered: false } }),
   // Validated clipboard snapshots and plugin drafts create these nodes; arbitrary HTML does not.
   parseHTML: () => [],
   renderHTML({ node, HTMLAttributes }) {
-    const selection = parseEditorSelection(node.attrs.selection);
-    return ['span', mergeAttributes(HTMLAttributes, { class: 'editor-selection-chip' }), selection ? editorSelectionLabel(selection) : ''];
+    const selection = contextReferenceForNode(node);
+    return ['span', mergeAttributes(HTMLAttributes, { class: 'editor-selection-chip' }), selection ? selection.label : ''];
   },
   renderText({ node }) {
-    const selection = parseEditorSelection(node.attrs.selection);
-    return selection ? editorSelectionPrompt(selection) : '';
+    const selection = contextReferenceForNode(node);
+    return selection ? contextReferencePrompt(selection) : '';
   },
   addNodeView: () => ReactNodeViewRenderer(EditorSelectionView)
 });

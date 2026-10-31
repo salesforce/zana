@@ -1,11 +1,12 @@
-import { parseEditorSelection, editorSelectionPrompt } from '@zana-ai/zcc-plugin-sdk/app';
+import { parseEditorSelection, editorSelectionPrompt, parseContextReference, contextReferencePrompt } from '@zana-ai/zcc-plugin-sdk/app';
 import type { JSONContent } from '@tiptap/react';
-import type { PromptTextMention } from '@zana-ai/zcc-domain/thread-runtime';
+import type { PromptTextReference, PromptTextMention } from '@zana-ai/zcc-domain/thread-runtime';
 import { promptMentionResourceSchema } from '@zana-ai/zcc-domain/thread-runtime';
 
 export interface SerializedPrompt {
   text: string;
   mentions: PromptTextMention[];
+  references?: PromptTextReference[];
 }
 
 function parseMentionResource(value: unknown) {
@@ -39,6 +40,13 @@ function serializeChildren(acc: SerializedPrompt, nodes: JSONContent[] | undefin
 
 function serializeNode(acc: SerializedPrompt, node: JSONContent): void {
   if (node.type === 'editorSelection') {
+    const reference = parseContextReference(node.attrs?.reference);
+    if (reference) {
+      const start = acc.text.length;
+      acc.text += contextReferencePrompt(reference);
+      (acc.references ??= []).push({ start, end: acc.text.length, reference });
+      return;
+    }
     const selection = parseEditorSelection(node.attrs?.selection);
     if (selection) acc.text += editorSelectionPrompt(selection);
     return;

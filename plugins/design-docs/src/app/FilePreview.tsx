@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type MutableRefObject } from 'react';
+import { copyContextSelection, MAX_CONTEXT_REFERENCE_TEXT } from '@zana-ai/zcc-plugin-sdk/app';
+import { passageContext } from '../shared/passage-context.js';
 import { Markdown } from '@zana-ai/zcc-plugin-sdk/app';
 import { MessageSquarePlus, Sparkles } from 'lucide-react';
 import type { DesignDocFileMeta } from '../shared/contract.js';
@@ -96,6 +98,7 @@ export function FilePreview({
   onOpenPath,
   onQuote,
   onAskAbout,
+  onAddToThread,
   handleRef,
   draft = false,
   kind
@@ -108,6 +111,7 @@ export function FilePreview({
   onOpenPath?(path: string): void;
   onQuote?(text: string): void;
   onAskAbout?(text: string): void;
+  onAddToThread?(text: string): void;
   handleRef?: MutableRefObject<PreviewHandle | null>;
   /** `file.content` is not the saved file (an editor draft, an old revision). */
   draft?: boolean;
@@ -195,21 +199,19 @@ export function FilePreview({
   };
 
   const onMouseUp = (event: ReactMouseEvent) => {
-    // A native mouseup precedes click. Keep the action mounted until its
-    // click handler consumes the captured passage, even if selection collapsed.
     if ((event.target as Element).closest?.('.dd-selection-chip')) return;
-    if (!onQuote) return;
+    if (!onQuote && !onAskAbout && !onAddToThread) return;
     const selection = globalThis.getSelection?.();
     const scroller = scrollRef.current;
-    const text = selection?.toString().trim() ?? '';
-    if (!selection || selection.isCollapsed || !text || !scroller || !contentRef.current?.contains(selection.anchorNode)) {
+    const text = selection?.toString() ?? '';
+    if (!selection || selection.isCollapsed || !text.trim() || text.length > MAX_CONTEXT_REFERENCE_TEXT || !scroller || !contentRef.current?.contains(selection.anchorNode) || !contentRef.current.contains(selection.focusNode)) {
       setChip(null);
       return;
     }
     const rect = selection.getRangeAt(0).getBoundingClientRect();
     const box = scroller.getBoundingClientRect();
     setChip({
-      text: text.slice(0, MAX_QUOTE_LENGTH),
+      text,
       top: Math.max(4, rect.top - box.top + scroller.scrollTop - 36),
       left: Math.min(Math.max(80, rect.left - box.left + rect.width / 2), Math.max(80, box.width - 80))
     });
@@ -235,6 +237,7 @@ export function FilePreview({
         onOpenPath={onOpenPath}
         onQuote={onQuote}
         onAskAbout={onAskAbout}
+        onAddToThread={onAddToThread}
         handleRef={handleRef}
         kind={kind}
       />
@@ -274,6 +277,9 @@ export function FilePreview({
     <div
       className={`dd-preview dd-preview-${file.kind}`}
       ref={scrollRef}
+      onCopy={(event) => {
+        if (contentRef.current) copyContextSelection(event, contentRef.current, passageContext(docId, file.path, ''));
+      }}
       onMouseUp={onMouseUp}
       onMouseDown={(event) => {
         if (!(event.target as Element).closest?.('.dd-selection-chip')) setChip(null);
@@ -282,10 +288,11 @@ export function FilePreview({
       {body}
       {chip ? (
         <div className="dd-selection-chip" style={{ top: chip.top, left: chip.left }}>
-          <button type="button" onClick={() => applyChip(onQuote)}>
+          <button type="button" onClick={() => applyChip(text => onQuote?.(text.trim().slice(0, MAX_QUOTE_LENGTH)))}>
             <MessageSquarePlus size={13} aria-hidden />
             Comment
           </button>
+          {onAddToThread ? <button type="button" onClick={() => applyChip(onAddToThread)}>Add to thread</button> : null}
           {onAskAbout ? (
             <button type="button" onClick={() => applyChip(onAskAbout)}>
               <Sparkles size={13} aria-hidden />

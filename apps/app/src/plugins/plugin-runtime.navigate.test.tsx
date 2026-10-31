@@ -1,3 +1,5 @@
+import { registerThreadContextTarget } from './thread-context-target.js';
+import { ThreadPanelOwnerProvider } from './thread-panel-owner.js';
 /**
  * @vitest-environment happy-dom
  */
@@ -53,6 +55,10 @@ describe('navigate.openPanelAgent', () => {
     expect(parsePanelAgentTarget({ draft: { prompt: 'Explain', selection } })).toEqual({ draft: 'Explain', selection });
     expect(parsePanelAgentTarget({ draft: { prompt: 'Explain', selection: { ...selection, startLine: -1 } } })).toEqual({ draft: 'Explain' });
     expect(parsePanelAgentTarget({ draft: { prompt: 'Explain', selection: { ...selection, text: 'x'.repeat(100001) } } })).toEqual({ draft: 'Explain' });
+    const reference = { version: 1, label: 'Log', text: 'snapshot' };
+    expect(parsePanelAgentTarget({ draft: { prompt: 'Explain', selection, references: [reference] } })).toEqual({ draft: 'Explain', selection, references: [reference] });
+    expect(parsePanelAgentTarget({ draft: { prompt: 'Explain', selection, references: Array(24).fill(reference) } })).toBeNull();
+    expect(parsePanelAgentTarget({ draft: { prompt: 'Explain', selection, references: Array(4).fill({ ...reference, text: 'x'.repeat(100000) }) } })).toBeNull();
   });
   it('reports false when no side panel listens for the plugin', () => {
     expect(renderNavigate('notes').openPanelAgent({ threadId: 'thread-1', title: 'Doc' })).toBe(false);
@@ -126,4 +132,29 @@ describe('navigate.openPanelTool', () => {
       off();
     }
   });
+});
+
+it('validates and carries immutable context in panel drafts',()=>{
+ const show=vi.fn();const off=onPluginPanelAgentRequest('notes',show);
+ try {
+  const navigate=renderNavigate('notes');const reference={version:1 as const,label:'Passage',text:'copied'};
+  expect(navigate.supportsContextReferences).toBe(true);
+  expect(navigate.openPanelAgent({draft:{prompt:'Explain',references:[reference]}})).toBe(true);
+  expect(show).toHaveBeenLastCalledWith({draft:'Explain',references:[reference]});
+  expect(navigate.openPanelAgent({draft:{prompt:'Explain',references:[{...reference,version:2}]}} as never)).toBe(false);
+  expect(navigate.addThreadContext?.(reference)).toBe(false);
+ } finally {off();}
+});
+
+it('adds context to the visible panel owner and rejects unrelated page assistants',()=>{
+ const reference={version:1 as const,label:'Record',text:'copied'};const insert=vi.fn(()=>true);
+ const off=registerThreadContextTarget('visible-thread',insert);
+ try {
+  const host=renderRuntime('notes',children=><ThreadPanelOwnerProvider ownerId="visible-thread">{children}</ThreadPanelOwnerProvider>);
+  expect(host.context.threadId).toBe('visible-thread');expect(host.navigate.addThreadContext?.(reference)).toBe(true);
+  expect(insert).toHaveBeenCalledWith(reference);cleanup();
+  const page={pluginId:'notes',page:'notes'};
+  const other=renderRuntime('notes',children=><PluginPagePanelProvider page={page}>{children}</PluginPagePanelProvider>);
+  expect(other.navigate.addThreadContext?.(reference)).toBe(false);
+ } finally {off();}
 });

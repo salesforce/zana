@@ -32,7 +32,8 @@ import {
   openPluginViewWindow,
   showInMainWindow
 } from './plugin-view-windows.js';
-import { ComposerViewContext, getActiveComposerApi, getActiveComposerView, setPluginLaunchPatch } from './plugin-composer-api.js';
+import { addThreadContext } from './thread-context-target.js';
+import { ComposerApiContext, ComposerViewContext, getActiveComposerApi, getActiveComposerView, setPluginLaunchPatch } from './plugin-composer-api.js';
 import { usePluginRuntimeContext } from './PluginSlotBoundary.js';
 import { openPluginThreadPanel } from './plugin-thread-panel.js';
 import { registerPluginWindowCloseHandler } from './plugin-window-close.js';
@@ -118,6 +119,7 @@ function useRealtimeConnectionStateImpl() {
 
 function useZccContextImpl(): ZccContext {
   const location = useLocation();
+  const panelOwnerId = useThreadPanelOwnerId();
   const route = useRouteState();
   const { pluginId } = usePluginRuntimeContext();
   // Only the page's own plugin gets its side panel; another plugin's slot nested in it does not.
@@ -132,7 +134,7 @@ function useZccContextImpl(): ZccContext {
   return {
     ...(resourceId === undefined ? {} : { resourceId, resourceRequestId: location.key }),
     projectId: route.focusedProjectId,
-    threadId: route.threadId,
+    threadId: panelOwnerId ?? route.threadId,
     surface: isScopedWindow() ? 'project-window' : 'main',
     ...sidePanel
   };
@@ -245,6 +247,11 @@ function useZccNavigateImpl(): ZccNavigate {
           params: options.params ?? null
         });
       },
+      supportsContextReferences: true,
+      addThreadContext(reference) {
+        if (view || enclosing) return false;
+        return addThreadContext(resolveThreadPanelOwnerId([panelOwnerId, route.threadId]), reference);
+      },
       openPanelAgent(options) {
         return requestPluginPanelAgent({ ...options, pluginId }, sidePanel);
       },
@@ -255,7 +262,7 @@ function useZccNavigateImpl(): ZccNavigate {
         return requestPluginPanelTool(pluginId, options, sidePanel);
       }
     };
-  }, [navigate, panelOwnerId, pluginId, route.sessionId, route.threadId, sidePanel]);
+  }, [navigate, panelOwnerId, pluginId, route.sessionId, route.threadId, sidePanel, enclosing]);
 }
 
 function useZccDeepLinksImpl(): ZccDeepLinks {
@@ -335,7 +342,10 @@ export function installPluginRuntime(): void {
     useWindowCloseHandler: useWindowCloseHandlerImpl,
     useComposer: () => {
       const { pluginId } = usePluginRuntimeContext();
-      const api = getActiveComposerApi() ?? composerFallback;
+      const scoped = useContext(ComposerApiContext);
+      const active = getActiveComposerApi() ?? composerFallback;
+      // New insertion is scoped; retain legacy global behavior for older APIs.
+      const api = scoped ?? { ...active, insertContextReference: undefined };
       return {
         ...api,
         experimental_setLaunchPatch(patch) {

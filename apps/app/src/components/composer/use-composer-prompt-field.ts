@@ -1,4 +1,6 @@
-import { editorSelectionFromClipboard, parseEditorSelection, type EditorSelection } from '@zana-ai/zcc-plugin-sdk/app';
+import { closeHistory } from '@tiptap/pm/history';
+import { NodeSelection, TextSelection } from '@tiptap/pm/state';
+import { parseEditorSelection, contextReferenceFromEditorSelection, type EditorSelection, contextReferenceFromClipboard, parseContextReferences, parseContextReference, type ContextReference } from '@zana-ai/zcc-plugin-sdk/app';
 import { nativeCapabilities } from '../../lib/native-capabilities.js';
 import { promptEditorDocument } from './restore-prompt-editor.js';
 import { promptInputSchema, type PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
@@ -84,6 +86,7 @@ export interface UseComposerPromptFieldArgs {
   autoFocus?: boolean;
   initialText?: string;
   initialSelection?: EditorSelection;
+  initialReferences?: readonly ContextReference[];
   slashCatalog: ComposerSlashCatalog;
   onSubmit: (opts?: { modifierEnter?: boolean }) => void;
   interceptKeyDown?: ComposerKeyInterceptor;
@@ -105,6 +108,7 @@ export function useComposerPromptField({
   autoFocus = false,
   initialText,
   initialSelection,
+  initialReferences,
   slashCatalog,
   onSubmit,
   interceptKeyDown,
@@ -251,6 +255,10 @@ export function useComposerPromptField({
     slashCatalog.providerId
   ]);
 
+  const editorRef = useRef<ReturnType<typeof useEditor>>(null);
+  // A node view can flush React effects before TipTap emits onUpdate. Ignore
+  // snapshots already superseded by the transaction currently being rendered.
+  const localTransaction = useRef<{ draft: ComposerSession; editor: ReturnType<typeof useEditor>; revision: number } | null>(null);
   const editor = useEditor({
     immediatelyRender: false,
     content: snapshot.document,
@@ -269,10 +277,16 @@ export function useComposerPromptField({
       handlePaste: (view, event) => {
         const plain = pastePlainTextRef.current;
         pastePlainTextRef.current = false;
-        const selection = plain ? null : editorSelectionFromClipboard(event.clipboardData);
+        const selection = plain ? null : contextReferenceFromClipboard(event.clipboardData);
         if (!disabled && selection) {
-          const node = view.state.schema.nodes.editorSelection!.create({ selection });
-          view.dispatch(view.state.tr.replaceSelectionWith(node).scrollIntoView());
+          const current = serializePromptEditor(editorRef.current?.getJSON()).references?.map(ref => ref.reference) ?? [];
+          if (!parseContextReferences([...current, selection])) {
+            onErrorRef.current?.('Too much copied context. Remove a reference or paste as plain text.');
+            event.preventDefault(); return true;
+          }
+          const node = view.state.schema.nodes.editorSelection!.create({ reference: selection });
+          view.dispatch(closeHistory(view.state.tr).replaceSelectionWith(node).scrollIntoView());
+          view.dispatch(closeHistory(view.state.tr));
           event.preventDefault();
           return true;
         }
@@ -362,15 +376,26 @@ export function useComposerPromptField({
     }
   }, [ariaLabel, markdownInPrompt, placeholder, testId, draft]);
 
+  useEffect(() => {
+    if (!editor) return;
+    const before = ({ transaction }: { transaction: import('@tiptap/pm/state').Transaction }) => {
+      if (transaction.docChanged) localTransaction.current = { draft, editor, revision: draft.getSnapshot().revision };
+    };
+    editor.on('beforeTransaction', before);
+    return () => { editor.off('beforeTransaction', before); };
+  }, [draft, editor]);
+
   // Other mounted panes and late send completions can update this same session.
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;
+    const local = localTransaction.current;
+    if (local?.draft === draft && local.editor === editor && snapshot.revision <= local.revision) return;
     if (snapshot.document && JSON.stringify(editor.getJSON()) !== JSON.stringify(snapshot.document)) {
       editor.commands.setContent(snapshot.document, { emitUpdate: false });
       syncTrigger(editor);
       setEditorRevision(current => current + 1);
     }
-  }, [editor, snapshot.document, syncTrigger]);
+  }, [draft, editor, snapshot.document, snapshot.revision, syncTrigger]);
   useEffect(() => {
     if (!editor || draft.getSnapshot().document !== undefined) return;
     // Even an untouched empty composer is initialized; a later seed must not
@@ -385,14 +410,18 @@ export function useComposerPromptField({
     if (selection) editor.commands.setTextSelection({ from: Math.min(selection.from, editor.state.doc.content.size), to: Math.min(selection.to, editor.state.doc.content.size) });
   }, [draft, editor]);
 
+  editorRef.current = editor;
+
   // A surface session outlives one seed (Inbox/Library "Spawn agent" reuse the
   // project's launcher). A new seed replaces an empty or unedited earlier seed;
   // the same seed, or anything the user typed, is kept across navigation.
   const seededFor = useRef<{ draft: ComposerSession; text: string } | null>(null);
   useEffect(() => {
-    if (!editor || !initialText) return;
+    if (!editor || (!initialText && !initialReferences?.length && !initialSelection)) return;
     const selection = parseEditorSelection(initialSelection);
-    const seed = selection ? JSON.stringify([initialText, selection]) : initialText;
+    const references = parseContextReferences([...(initialReferences ?? []), ...(selection ? [contextReferenceFromEditorSelection(selection)] : [])]);
+    if (!references) { onErrorRef.current?.('Invalid copied context.'); return; }
+    const seed = references.length ? JSON.stringify([initialText ?? '', references]) : initialText!;
     if (seededFor.current?.draft === draft && seededFor.current.text === seed) return;
     seededFor.current = { draft, text: seed };
     const current = draft.getSnapshot();
@@ -401,12 +430,12 @@ export function useComposerPromptField({
       || isEmptyComposerDocument(current.document)
       || draft.getSeed()?.revision === current.revision;
     if (!replaceable) return;
-    const chain = editor.chain().clearContent().insertContent(initialText);
-    if (selection) chain.insertContent({ type: 'editorSelection', attrs: { selection } }).insertContent(' ');
+    const chain = editor.chain().clearContent().insertContent(initialText ?? '');
+    for (const reference of references) chain.insertContent({ type: 'editorSelection', attrs: { reference } }).insertContent(' ');
     if (autoFocus) chain.focus();
     chain.run();
     draft.setSeed({ text: seed, revision: draft.getSnapshot().revision });
-  }, [autoFocus, draft, editor, initialText, initialSelection]);
+  }, [autoFocus, draft, editor, initialText, initialReferences, initialSelection]);
 
   useEffect(() => {
     if (!editor || !autoFocus || initialText) return;
@@ -564,6 +593,25 @@ export function useComposerPromptField({
     }
   };
 
+  const insertContextReference = useCallback((value: ContextReference): boolean => {
+    const reference = parseContextReference(value);
+    if (!editor || disabled || !reference) return false;
+    const current = serializePromptEditor(editor.getJSON()).references?.map(ref => ref.reference) ?? [];
+    if (!parseContextReferences([...current, reference])) {
+      onErrorRef.current?.('Too much copied context. Remove a reference or paste as plain text.');
+      return false;
+    }
+    const node = editor.state.schema.nodes.editorSelection!.create({ reference });
+    const tr = closeHistory(editor.state.tr);
+    // Inspecting an inline badge can select its atom. A source toolbar adds
+    // context after that badge instead of replacing the inspected snapshot.
+    if (tr.selection instanceof NodeSelection) tr.setSelection(TextSelection.near(tr.doc.resolve(tr.selection.to)));
+    editor.view.dispatch(tr.replaceSelectionWith(node).scrollIntoView());
+    editor.view.dispatch(closeHistory(editor.state.tr));
+    editor.commands.focus();
+    return true;
+  }, [editor, disabled]);
+
   const insertText = useCallback((text: string) => {
     editor?.chain().focus().insertContent(text.endsWith(' ') ? text : `${text} `).run();
   }, [editor]);
@@ -629,12 +677,18 @@ export function useComposerPromptField({
     editor?.commands.setContent(next);
   }, [editor]);
 
-  const replacePrompt = useCallback((input: readonly PromptInput[]) => {
+  const restoreText = useCallback((input: readonly PromptInput[]) => {
     const parts = input.map(part => promptInputSchema.parse(part));
     const document = promptEditorDocument(parts);
-    draft.setContent({ document, images: [], attachments: parts.filter(part => part.type !== 'text') });
+    draft.setContent({ document });
     if (editor && !editor.isDestroyed) editor.commands.setContent(document, { emitUpdate: false });
   }, [draft, editor]);
+
+  const replacePrompt = useCallback((input: readonly PromptInput[]) => {
+    const parts = input.map(part => promptInputSchema.parse(part));
+    restoreText(parts);
+    draft.setContent({ images: [], attachments: parts.filter(part => part.type !== 'text') });
+  }, [draft, restoreText]);
 
   const focus = useCallback(() => {
     editor?.commands.focus();
@@ -683,6 +737,7 @@ export function useComposerPromptField({
     images,
     restoredAttachments,
     replacePrompt,
+    restoreText,
     removeRestoredAttachment: (index: number) => setRestoredAttachments(rows => rows.filter((_,i) => i !== index)),
     removeImage,
     dropOver,
@@ -690,6 +745,7 @@ export function useComposerPromptField({
     canAttach,
     attachPickedFiles,
     insertText,
+    insertContextReference,
     serialize,
     clear,
     captureRevision,

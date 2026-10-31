@@ -156,6 +156,11 @@
       "source": "./src/workspace-diff.ts",
       "default": "./src/workspace-diff.ts"
     },
+    "./context-reference": {
+      "types": "./src/context-reference.ts",
+      "source": "./src/context-reference.ts",
+      "default": "./src/context-reference.ts"
+    },
     "./thread-runtime": {
       "types": "./src/thread-runtime.ts",
       "source": "./src/thread-runtime.ts",

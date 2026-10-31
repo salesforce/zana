@@ -94,6 +94,85 @@
     else api.registry.delete(name);
   }
 
+  // ../../packages/domain/src/bb-thread/context-reference.ts
+  var MAX_CONTEXT_REFERENCE_TEXT = 1e5;
+  function record(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
+  }
+  function label(value, max) {
+    return typeof value === "string" && !!value.trim() && value.length <= max && !/[\r\n\0]/.test(value);
+  }
+  function parseContextReference(value) {
+    const data = record(value);
+    if (!data || data.version !== 1 || !label(data.label, 240) || typeof data.text !== "string" || !data.text.length || data.text.length > MAX_CONTEXT_REFERENCE_TEXT) return null;
+    const result = { version: 1, label: data.label, text: data.text };
+    if (data.source === void 0) return result;
+    const source = record(data.source);
+    if (!source) return null;
+    if (source.kind === "file") {
+      if (!label(source.path, 4096)) return null;
+      const hasLines = source.startLine !== void 0 || source.endLine !== void 0;
+      if (hasLines && (!Number.isSafeInteger(source.startLine) || !Number.isSafeInteger(source.endLine) || source.startLine < 1 || source.endLine < source.startLine || source.endLine > 1e7)) return null;
+      result.source = { kind: "file", path: source.path, ...hasLines ? { startLine: source.startLine, endLine: source.endLine } : {} };
+      for (const key of ["projectId", "hostId"]) {
+        if (source[key] !== void 0) {
+          if (!label(source[key], 100)) return null;
+          result.source[key] = source[key];
+        }
+      }
+    } else if (source.kind === "plugin") {
+      if (!label(source.pluginId, 160) || !/^[a-zA-Z0-9._-]+$/.test(source.pluginId) || !label(source.resourceId, 500)) return null;
+      result.source = { kind: "plugin", pluginId: source.pluginId, resourceId: source.resourceId };
+      for (const key of ["path", "revision", "heading"]) {
+        if (source[key] !== void 0) {
+          if (!label(source[key], key === "path" ? 4096 : 500)) return null;
+          result.source[key] = source[key];
+        }
+      }
+    } else return null;
+    return result;
+  }
+
+  // ../../packages/plugin-sdk/src/editor-selection.ts
+  var EDITOR_SELECTION_MIME = "application/x-zcc-editor-selection";
+  var MAX_EDITOR_SELECTION_TEXT = 1e5;
+  function parseEditorSelection(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const data = value;
+    const hasLines = data.startLine !== void 0 || data.endLine !== void 0;
+    if (data.version !== 1 || typeof data.path !== "string" || !data.path.trim() || data.path.length > 4096 || /[\r\n\0]/.test(data.path) || hasLines && (!Number.isSafeInteger(data.startLine) || !Number.isSafeInteger(data.endLine) || data.startLine < 1 || data.endLine < data.startLine || data.endLine > 1e7) || typeof data.text !== "string" || !data.text.length || data.text.length > MAX_EDITOR_SELECTION_TEXT) return null;
+    return { version: 1, path: data.path, ...hasLines ? { startLine: data.startLine, endLine: data.endLine } : {}, text: data.text };
+  }
+
+  // ../../packages/plugin-sdk/src/context-reference.ts
+  var CONTEXT_REFERENCE_MIME = "application/x-zcc-context-reference";
+  function writeContextReference(event, value) {
+    const reference = parseContextReference(value);
+    if (!reference || !event.clipboardData) return false;
+    try {
+      event.clipboardData.setData(CONTEXT_REFERENCE_MIME, JSON.stringify(reference));
+      const source = reference.source;
+      if (source?.kind === "file") {
+        const legacy = parseEditorSelection({ version: 1, ...source, text: reference.text });
+        if (legacy) event.clipboardData.setData(EDITOR_SELECTION_MIME, JSON.stringify(legacy));
+      }
+      event.clipboardData.setData("text/plain", reference.text);
+      event.preventDefault();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function copyContextSelection(event, root, reference) {
+    const selection = root.ownerDocument.defaultView?.getSelection();
+    if (!selection || selection.isCollapsed || !root.contains(selection.anchorNode) || !root.contains(selection.focusNode)) return false;
+    for (const node of [selection.anchorNode, selection.focusNode]) {
+      const element = node?.nodeType === 1 ? node : node?.parentElement;
+      if (element?.closest('input, textarea, [contenteditable]:not([contenteditable="false"])')) return false;
+    }
+    return writeContextReference(event, { ...reference, text: selection.toString() });
+  }
+
   // src/shared/limits.ts
   var MAX_TEXT_FILE_BYTES = 2 * 1024 * 1024;
   var MAX_BINARY_FILE_BYTES = 2 * 1024 * 1024;
@@ -101,7 +180,6 @@
   var MAX_TEMPLATE_BUNDLE_BYTES = 64 * 1024 * 1024;
   var LARGE_TEXT_FILE_BYTES = 256 * 1024;
   var MAX_HISTORY_BYTES_PER_DOC = 48 * 1024 * 1024;
-  var MAX_QUOTE_LENGTH = 500;
 
   // src/shared/frame-protocol.ts
   var PAGE_CONFIG_ID = "dd-page";
@@ -109,6 +187,19 @@
   var PAGE_HELLO = "dd-page-hello";
   var MAX_PAGE_PROBLEMS = 50;
   var MAX_PAGE_STORAGE_CHARS = 256 * 1024;
+
+  // src/shared/contract.ts
+  var PLUGIN_ID = "design-docs";
+
+  // src/shared/passage-context.ts
+  function passageContext(docId, path, text) {
+    return {
+      version: 1,
+      label: `${path.split("/").pop() || path} (selection)`,
+      text,
+      source: { kind: "plugin", pluginId: PLUGIN_ID, resourceId: docId, path }
+    };
+  }
 
   // src/shared/paths.ts
   var MAX_PATH_LENGTH = 160;
@@ -286,11 +377,11 @@
   var OPENABLE = /^(https?|mailto):$/;
   var HIGHLIGHT_CSS = `::highlight(${COMMENT_HIGHLIGHT}) { background-color: rgba(212, 160, 23, 0.28); text-decoration: underline 2px rgb(212, 160, 23); }
 ::highlight(${FOCUS_HIGHLIGHT}) { background-color: rgba(212, 160, 23, 0.55); }`;
-  function record(value) {
+  function record2(value) {
     return value && typeof value === "object" && !Array.isArray(value) ? value : null;
   }
   function isPageFile(value) {
-    const file = record(value);
+    const file = record2(value);
     return !!file && typeof file.content === "string" && (file.encoding === "utf8" || file.encoding === "base64") && typeof file.kind === "string";
   }
   function takeJson(doc, id) {
@@ -304,9 +395,9 @@
     }
   }
   function readPageConfig(doc) {
-    const raw = record(takeJson(doc, PAGE_CONFIG_ID)) ?? {};
+    const raw = record2(takeJson(doc, PAGE_CONFIG_ID)) ?? {};
     const strings = (value) => Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : void 0;
-    const scroll = record(raw.scroll);
+    const scroll = record2(raw.scroll);
     const config = {
       mode: raw.mode === "standalone" ? "standalone" : "frame",
       docId: typeof raw.docId === "string" ? raw.docId : "",
@@ -318,13 +409,13 @@
     if (strings(raw.quotes)) config.quotes = strings(raw.quotes);
     if (typeof raw.hash === "string") config.hash = raw.hash;
     if (scroll && Number.isFinite(scroll.x) && Number.isFinite(scroll.y)) config.scroll = { x: scroll.x, y: scroll.y };
-    const storage = record(raw.storage);
+    const storage = record2(raw.storage);
     if (storage) config.storage = Object.fromEntries(Object.entries(storage).filter((entry) => typeof entry[1] === "string"));
     return config;
   }
   function readPack(doc) {
     const pack = /* @__PURE__ */ new Map();
-    for (const [path, file] of Object.entries(record(takeJson(doc, PAGE_FILES_ID)) ?? {})) {
+    for (const [path, file] of Object.entries(record2(takeJson(doc, PAGE_FILES_ID)) ?? {})) {
       if (isPageFile(file)) pack.set(path, file);
     }
     return pack;
@@ -617,14 +708,14 @@
       return nativeOpen.call(win, url, target, features);
     };
     const scriptUrl = options.scriptUrl ?? ((code) => win.URL.createObjectURL(new win.Blob([code], { type: "text/javascript" })));
-    const addScript = (code, label, extra = {}) => {
+    const addScript = (code, label2, extra = {}) => {
       const script = doc.createElement("script");
       for (const attribute of extra.attributes ?? []) script.setAttribute(attribute.name, attribute.value);
       if (extra.module) script.type = "module";
       script.async = !!extra.async;
       const url = scriptUrl(`${code}
-//# sourceURL=dd:${encodeURIComponent(label)}`);
-      labels.set(url, label);
+//# sourceURL=dd:${encodeURIComponent(label2)}`);
+      labels.set(url, label2);
       if (url.startsWith("blob:")) script.addEventListener("load", () => win.URL.revokeObjectURL(url), { once: true });
       script.src = url;
       (doc.head ?? doc.documentElement).appendChild(script);
@@ -715,11 +806,11 @@ ${entry.code}
       let inline = 0;
       for (const block of doc.querySelectorAll(SCRIPT_BLOCK)) {
         if (block.hasAttribute("data-dd-missing")) continue;
-        const label = block.getAttribute("data-dd-src") ?? `${config.path} (inline script ${inline += 1})`;
+        const label2 = block.getAttribute("data-dd-src") ?? `${config.path} (inline script ${inline += 1})`;
         const module = block.getAttribute("data-dd-type") === "module";
         const async = block.hasAttribute("data-dd-async");
         const attributes = [...block.attributes].filter((entry) => entry.name.startsWith("data-") && !entry.name.startsWith("data-dd-"));
-        const run = () => addScript(block.textContent ?? "", label, { module, async, attributes });
+        const run = () => addScript(block.textContent ?? "", label2, { module, async, attributes });
         if (async) later.push(run);
         else if (module || block.hasAttribute("data-dd-defer")) deferred.push(run);
         else ordered.push(run);
@@ -856,8 +947,8 @@ ${entry.code}
     let selected = "";
     const reportSelection = () => {
       const selection = win.getSelection();
-      const text = selection && !selection.isCollapsed && selection.rangeCount ? selection.toString().trim().slice(0, MAX_QUOTE_LENGTH) : "";
-      if (!text) {
+      const text = selection && !selection.isCollapsed && selection.rangeCount ? selection.toString() : "";
+      if (!text.trim() || text.length > MAX_CONTEXT_REFERENCE_TEXT) {
         if (selected) post({ type: "selection", text: "", rect: null });
         selected = "";
         return;
@@ -890,6 +981,7 @@ ${entry.code}
       style.setAttribute("data-dd-runtime", "");
       style.textContent = HIGHLIGHT_CSS;
       (doc.head ?? doc.documentElement).appendChild(style);
+      doc.addEventListener("copy", (event) => copyContextSelection(event, doc.body, passageContext(config.docId, config.path, "")));
       doc.addEventListener("selectionchange", debounce(win, REPORT_DELAY_MS, reportSelection));
       win.addEventListener("scroll", reportScroll, { passive: true });
       const reportHash = () => post({ type: "hash", hash: win.location.hash ? safeDecode(win.location.hash.slice(1)) : null });
@@ -897,7 +989,7 @@ ${entry.code}
       win.addEventListener("popstate", reportHash);
       if (port) {
         port.onmessage = (event) => {
-          const message = record(event.data);
+          const message = record2(event.data);
           if (message?.type === "file") pending.get(message.id)?.(isPageFile(message.file) ? message.file : null);
           else if (message?.type === "highlight" && Array.isArray(message.quotes)) {
             quotes = message.quotes.filter((quote) => typeof quote === "string");

@@ -9,6 +9,7 @@ import type {
   PendingInteractionUserQuestionQuestion,
   ProviderErrorInfo,
   PromptTextMention,
+  PromptTextReference,
   SystemMessageKind,
   SystemMessageSubject,
   Thread,
@@ -105,6 +106,7 @@ export interface EventProjectionUserMessage extends EventProjectionMessageBase {
   turnRequest: EventProjectionTurnRequest;
   text: string;
   mentions: PromptTextMention[];
+  references?: PromptTextReference[];
   attachments?: {
     webImages: number;
     localImages: number;

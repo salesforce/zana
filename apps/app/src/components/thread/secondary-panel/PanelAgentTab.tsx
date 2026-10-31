@@ -1,3 +1,4 @@
+import type { ContextReference } from '@zana-ai/zcc-plugin-sdk/app';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ExternalLink, MessageSquare } from 'lucide-react';
@@ -48,6 +49,7 @@ export function PanelAgentTab({
   draft,
   draftSelection,
   draftProjectId,
+  draftReferences,
   projectId,
   resourceLabel,
   pluginPanel,
@@ -60,6 +62,7 @@ export function PanelAgentTab({
   draftSelection?: EditorSelection;
   /** Project the prefilled composer starts on; the user can still change it. */
   draftProjectId?: string;
+  draftReferences?: readonly ContextReference[];
   /** The page's own project: new threads run there, with no project or machine to pick. */
   projectId?: string;
   /** Human-readable identity of the page resource this assistant belongs to. */
@@ -97,6 +100,7 @@ export function PanelAgentTab({
         navigateOnCreate={false}
         initialText={draft}
         initialSelection={draftSelection}
+        initialReferences={draftReferences}
         project={project}
         composerProjectId={draftProjectId ?? projectId}
         pluginPanel={pluginPanel}

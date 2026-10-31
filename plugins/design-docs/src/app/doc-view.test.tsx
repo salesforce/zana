@@ -343,6 +343,7 @@ describe('previewing files', () => {
     const selection = {
       isCollapsed: false,
       anchorNode: text.firstChild,
+      focusNode: text.firstChild,
       toString: () => ' expires hourly ',
       getRangeAt: () => ({ getBoundingClientRect: () => ({ top: 100, left: 50, width: 40, height: 10 }) }),
       removeAllRanges
@@ -371,10 +372,9 @@ describe('previewing files', () => {
     fireEvent.click(askSelection);
     const prompt = (await screen.findByPlaceholderText(/^Or describe what you want/)) as HTMLTextAreaElement;
     expect(prompt.value).toBe('');
-    expect(screen.getByText('README.md (1)')).toBeTruthy();
-    expect(document.querySelector('.dd-ask-context pre')?.textContent).toBe('expires hourly');
-    fireEvent.click(screen.getByRole('button', { name: 'Remove selected passage' }));
-    expect(document.querySelector('.dd-ask-context')).toBeNull();
+    expect(document.querySelector('.dd-passage-reference')!.textContent).toContain(' expires hourly ');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove README.md (selection)' }));
+    expect(document.querySelector('.dd-passage-reference')).toBeNull();
 
     // A collapsed selection clears the chip, and pressing elsewhere hides it.
     selection.isCollapsed = false;
@@ -387,26 +387,28 @@ describe('previewing files', () => {
     expect(chip()).toBeNull();
   });
 
-  it.each([true, false])('hands the captured passage to the agent without quoting it into the request (panel=%s)', async (panelAgent) => {
-    const harness = createHarness({ panelAgent });
+  it.each([[true, false], [true, true], [false, false], [false, true]])('hands the captured passage to the agent without quoting it into the request (panel=%s, preset=%s)', async (panelAgent, preset) => {
+    const harness = createHarness({ panelAgent, contextReferences: true });
     const doc = simpleDoc(harness, 'Tokens expire hourly.');
     renderDoc(harness, doc.id);
     const readme = await findPane('README.md');
     const text = await within(readme).findByText('Tokens expire hourly.');
     vi.stubGlobal('getSelection', () => ({
-      isCollapsed: false, anchorNode: text.firstChild, toString: () => 'Tokens expire hourly.',
+      isCollapsed: false, anchorNode: text.firstChild, focusNode: text.firstChild, toString: () => 'Tokens expire hourly.',
       getRangeAt: () => ({ getBoundingClientRect: () => ({ top: 100, left: 50, width: 40, height: 10 }) }),
       removeAllRanges: vi.fn()
     }));
     fireEvent.mouseUp(readme.querySelector('.dd-preview')!);
     fireEvent.click(within(readme.querySelector('.dd-selection-chip')!).getByRole('button', { name: 'Ask agent' }));
     fireEvent.change(await screen.findByPlaceholderText(/^Or describe what you want/), { target: { value: 'Explain this policy' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Start', exact: true }));
+    if (preset) fireEvent.click(screen.getByRole('menuitem', { name: /^Review/ }));
+    else fireEvent.click(screen.getByRole('button', { name: 'Start', exact: true }));
+    const instruction = preset ? 'Review this design doc critically' : 'Explain this policy';
     if (panelAgent) {
       await waitFor(() => expect(harness.navigateCalls).toHaveLength(1));
       expect(harness.navigateCalls[0]).toMatchObject({ method: 'openPanelAgent', options: { draft: {
-        selection: { path: 'README.md', text: 'Tokens expire hourly.', startLine: 1, endLine: 1 },
-        prompt: expect.stringContaining('Explain this policy')
+        references: [{ version: 1, label: 'README.md (selection)', text: 'Tokens expire hourly.', source: { kind: 'plugin', pluginId: 'design-docs', resourceId: doc.id, path: 'README.md' } }],
+        prompt: expect.stringContaining(instruction)
       } } });
       const draft = (harness.navigateCalls[0] as { options: { draft: { prompt: string } } }).options.draft;
       expect(draft.prompt).not.toContain('Tokens expire hourly.');
@@ -414,7 +416,7 @@ describe('previewing files', () => {
     } else {
       await waitFor(() => expect(harness.spawn).toHaveBeenCalledTimes(1));
       expect(harness.spawn.mock.calls[0]![0]).toMatchObject({ prompt: expect.stringContaining('Tokens expire hourly.') });
-      expect(harness.spawn.mock.calls[0]![0]).toMatchObject({ prompt: expect.stringContaining('Explain this policy') });
+      expect(harness.spawn.mock.calls[0]![0]).toMatchObject({ prompt: expect.stringContaining(instruction) });
     }
   });
 });
@@ -1293,4 +1295,28 @@ describe('draftDocAgent', () => {
     expect(draft).not.toHaveProperty('projectId');
     expect(draft.prompt).toContain('Explain it');
   });
+});
+
+it('copies rendered Markdown as a snapshot alongside interoperable plain text',async()=>{
+ const harness=createHarness();const doc=simpleDoc(harness,'Exact rendered passage.');renderDoc(harness,doc.id);
+ const readme=await findPane('README.md');const element=await within(readme).findByText('Exact rendered passage.');
+ const range=document.createRange();range.selectNodeContents(element);window.getSelection()!.removeAllRanges();window.getSelection()!.addRange(range);
+ const values:Record<string,string>={};const event=new Event('copy',{bubbles:true,cancelable:true});
+ Object.defineProperty(event,'clipboardData',{value:{setData:(type:string,value:string)=>{values[type]=value;}}});
+ fireEvent(element,event);
+ expect(event.defaultPrevented).toBe(true);expect(values['text/plain']).toBe('Exact rendered passage.');
+ expect(JSON.parse(values['application/x-zcc-context-reference']!)).toMatchObject({version:1,label:'README.md (selection)',source:{resourceId:doc.id,path:'README.md'}});
+ window.getSelection()!.removeAllRanges();
+});
+
+it('hands snapshot arrays to capable hosts and includes exact text for older hosts',()=>{
+ const doc={id:'doc-1',title:'Spec'};
+ const reference={version:1 as const,label:'Passage',text:'  Exact original\nparagraph'};
+ const openPanelAgent=vi.fn(()=>true);
+ expect(draftDocAgent({openPanelAgent,supportsContextReferences:true} as never,doc,{prompt:'Explain',references:[reference]})).toBe(true);
+ expect(openPanelAgent).toHaveBeenLastCalledWith(expect.objectContaining({draft:expect.objectContaining({references:[reference]})}));
+ expect((openPanelAgent.mock.lastCall![0] as {draft:{prompt:string}}).draft.prompt).not.toContain(reference.text);
+ expect(draftDocAgent({openPanelAgent} as never,doc,{prompt:'Explain',references:[reference]})).toBe(true);
+ expect((openPanelAgent.mock.lastCall![0] as {draft:{prompt:string}}).draft.prompt).toContain(reference.text);
+ expect((openPanelAgent.mock.lastCall![0] as {draft:unknown}).draft).not.toHaveProperty('references');
 });

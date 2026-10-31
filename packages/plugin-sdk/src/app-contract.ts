@@ -702,6 +702,8 @@ export interface PluginComposerApi {
   setInputLock(locked: boolean): void;
   addQuote(text: string): void;
   insertMention(mention: PluginComposerMention): void;
+  /** Insert an immutable snapshot at this composer's caret; false when unavailable or over limits. */
+  insertContextReference?(reference: import('./context-reference.js').ContextReference): boolean;
   focus(): void;
   /**
    * Overlay spawn options for this plugin. Pass `null` to clear. The host
@@ -921,6 +923,9 @@ export interface ZccNavigate {
    * tools or older hosts; hosts before drafts also return false for a
    * draft); fall back to `openThreadPanel`, `toThread` or `toCompose`.
    */
+  supportsContextReferences?: true;
+  /** Adds a copied snapshot to the owning thread's draft, without sending. */
+  addThreadContext?(reference: import('./context-reference.js').ContextReference): boolean;
   openPanelAgent(options: ZccPanelAgentOptions): boolean;
   /**
    * Open one of this plugin's `threadPanelAction` tabs in this page's side
@@ -1006,7 +1011,7 @@ export type ZccPanelAgentOptions =
        * doc id); it is recorded as the agent's starting view in place of the page's
        * current route, so a page without routes (a project tab) can still name it.
        */
-      draft: { prompt: string; projectId?: string; view?: string; selection?: import('./editor-selection.js').EditorSelection };
+      draft: { prompt: string; projectId?: string; view?: string; selection?: import('./editor-selection.js').EditorSelection; references?: readonly import('./context-reference.js').ContextReference[] };
       title?: string;
     };
 

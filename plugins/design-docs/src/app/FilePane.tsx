@@ -9,8 +9,6 @@ import { RevisionView } from './HistoryPane.js';
 import { useFile } from './hooks.js';
 import { ActorLabel, FileIcon, IconButton, Spinner, TimeAgo } from './ui.js';
 import type { DocKind } from './api.js';
-import type { EditorSelection } from '@zana-ai/zcc-plugin-sdk/app';
-import { passageContext } from './passage-context.js';
 
 export type ViewMode = 'preview' | 'edit' | 'split';
 
@@ -58,6 +56,7 @@ export function FilePane({
   onOpenPath,
   onQuote,
   onAskAbout,
+  onAddToThread,
   onEditorState,
   leading,
   kind
@@ -73,7 +72,8 @@ export function FilePane({
   previewHandle: MutableRefObject<PreviewHandle | null>;
   onOpenPath(path: string): void;
   onQuote(text: string): void;
-  onAskAbout(selection: EditorSelection): void;
+  onAskAbout(text: string): void;
+  onAddToThread?(text: string): void;
   onEditorState(state: EditorState): void;
   /** Extra toolbar content before the path (the compact file switcher). */
   leading?: ReactNode;
@@ -113,7 +113,8 @@ export function FilePane({
         quotes={quotes}
         onOpenPath={onOpenPath}
         onQuote={onQuote}
-          onAskAbout={(text) => onAskAbout(passageContext(file.path, file.content, text))}
+          onAskAbout={onAskAbout}
+          onAddToThread={onAddToThread}
           handleRef={previewHandle}
           kind={kind}
       />

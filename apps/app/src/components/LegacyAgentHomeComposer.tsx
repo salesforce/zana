@@ -759,6 +759,7 @@ export function LegacyAgentHomeComposer({
       scope={{ kind: 'cli-agent', projectId: projectId || null }}
       text={field.text}
       setText={field.setText}
+      insertContextReference={field.insertContextReference}
       focus={field.focus}
       familyId={familyId || undefined}
       providerId={selectedProviderId || undefined}

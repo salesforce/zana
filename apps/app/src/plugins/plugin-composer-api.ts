@@ -6,6 +6,8 @@ import type {
 import { createContext } from 'react';
 import type { HarnessModelRoutingV1 } from '@zana-ai/zcc-domain/product';
 
+export const ComposerApiContext = createContext<PluginComposerApi | null>(null);
+
 export const ComposerViewContext = createContext<ComposerView | null>(null);
 
 const composerApiRef: { current: PluginComposerApi | null } = { current: null };

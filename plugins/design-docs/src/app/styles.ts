@@ -774,6 +774,10 @@ textarea.dd-doc-summary { display: block; }
 ::highlight(dd-comment) { background-color: color-mix(in srgb, var(--accent-gold) 28%, transparent); text-decoration: underline; text-decoration-color: var(--accent-gold); text-decoration-thickness: 2px; }
 ::highlight(dd-comment-focus) { background-color: color-mix(in srgb, var(--accent-gold) 55%, transparent); }
 
+.dd-passage-reference { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; padding: 6px 9px; border-radius: 6px; background: var(--bg-hover); font-size: 12px; }
+.dd-passage-reference details { flex: 1; min-width: 0; }
+.dd-passage-reference summary { cursor: pointer; }
+.dd-passage-reference button { border: 0; background: transparent; color: inherit; cursor: pointer; }
 .dd-selection-chip {
   position: absolute;
   z-index: 20;

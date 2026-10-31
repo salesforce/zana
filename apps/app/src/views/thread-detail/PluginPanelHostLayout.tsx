@@ -179,7 +179,7 @@ function PluginResourceSidePanel({
       if (request.kind === 'tool') openPluginTool({ pluginId, ...request.target });
       else {
         const target = request.target;
-        if ('draft' in target) openAgentDraft({ title: target.title ?? 'Agent', draft: target.draft, projectId: target.projectId, view: target.view, selection: target.selection });
+        if ('draft' in target) openAgentDraft({ title: target.title ?? 'Agent', draft: target.draft, references: target.references, selection: target.selection, projectId: target.projectId, view: target.view });
         else addTab({ kind: 'agent', title: target.title ?? 'Agent', threadId: target.threadId });
         widenAgent();
       }
@@ -198,11 +198,12 @@ function PluginResourceSidePanel({
         threadId={closable.threadId}
         draft={closable.draft}
         draftSelection={closable.draftSelection}
+        draftReferences={closable.draftReferences}
         draftProjectId={closable.draftProjectId}
         projectId={scopeId}
         resourceLabel={resourceLabel}
         pluginPanel={{ pluginId, panel: panelPath, ...(view ? { view } : {}) }}
-        onCreated={(threadId) => panel.patchTab(tabId, { threadId, draft: undefined, draftSelection: undefined, draftProjectId: undefined, draftView: undefined })}
+        onCreated={(threadId) => panel.patchTab(tabId, { threadId, draft: undefined, draftReferences: undefined, draftSelection: undefined, draftProjectId: undefined, draftView: undefined })}
         onOpenConversation={({ id, title }) => {
           // Reopening a conversation already in a tab focuses it, not a duplicate.
           const open = panel.state.tabs.find((tab) => tab.kind === 'agent' && tab.threadId === id);

@@ -471,7 +471,7 @@ export type PluginSdkInbox = PluginSdk['inbox'];
         resolve(itemId: string): { context: string } | Promise<{ context: string }>;
       }): void;
     };
-    readonly status: { needsConfiguration(message: string): void };
+    readonly status: { needsConfiguration(message: string): void; configured(): void };
     readonly sdk: {
       system: { defaultHost(): Promise<{ id: string } | null> };
       threads: {
@@ -595,6 +595,51 @@ export type PluginSdkInbox = PluginSdk['inbox'];
 }
 
 declare module '@zana-ai/zcc-plugin-sdk/app' {
+  export interface ContextReference {
+  version: 1;
+  label: string;
+  text: string;
+  source?:
+    | { kind: 'file'; path: string; startLine?: number; endLine?: number; projectId?: string; hostId?: string }
+    | { kind: 'plugin'; pluginId: string; resourceId: string; path?: string; revision?: string; heading?: string };
+}
+
+  export const CONTEXT_REFERENCE_MIME: 'application/x-zcc-context-reference';
+  export const MAX_CONTEXT_REFERENCE_TEXT: 100000;
+  export const MAX_CONTEXT_REFERENCES: 24;
+  export const MAX_CONTEXT_REFERENCES_TEXT: 400000;
+  export function parseContextReference(value: unknown): ContextReference | null;
+  export function parseContextReferences(value: unknown): ContextReference[] | null;
+  export function contextReferenceLocation(reference: ContextReference): string;
+  export function contextReferencePrompt(reference: ContextReference): string;
+  export function contextReferenceFromClipboard(data: Pick<DataTransfer, 'getData'> | null): ContextReference | null;
+  export function writeContextReference(event: Pick<ClipboardEvent, 'clipboardData' | 'preventDefault'>, reference: ContextReference): boolean;
+  export function copyContextSelection(event: Pick<ClipboardEvent, 'clipboardData' | 'preventDefault'>, root: HTMLElement, metadata: Omit<ContextReference, 'text'>): boolean;
+
+  export function contextReferenceFromEditorSelection(selection: { version: 1; path: string; text: string; startLine?: number; endLine?: number }): ContextReference;
+  export interface PluginComposerApi {
+    readonly text: string;
+    setText(next: string): void;
+    updateText(updater: (current: string) => string): void;
+    clear(): void;
+    focus(): void;
+    insertContextReference?(reference: ContextReference): boolean;
+  }
+  export type ZccPanelAgentOptions =
+    | { threadId: string; title?: string }
+    | { draft: { prompt: string; projectId?: string; view?: string; references?: readonly ContextReference[]; selection?: { version: 1; path: string; text: string; startLine?: number; endLine?: number } }; title?: string };
+  export interface ZccNavigate {
+    toThread(threadId: string): void;
+    toProject(projectId: string, options?: { tabId?: string; inMainWindow?: boolean }): void;
+    toPluginPanel(path: string, options?: { subPath?: string; replace?: boolean }): void;
+    toCompose(options?: { initialPrompt?: string; focusPrompt?: boolean }): void;
+    supportsContextReferences?: true;
+    addThreadContext?(reference: ContextReference): boolean;
+    openPanelAgent(options: ZccPanelAgentOptions): boolean;
+  }
+  export function useComposer(): PluginComposerApi;
+  export function useZccNavigate(): ZccNavigate;
+
   /** Read-only fleet projection shared with the built-in Agents views. */
   export interface PluginFleetMember {
     /** Opaque, kind-qualified key. Pass this to onInspect. */

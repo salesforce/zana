@@ -142,7 +142,7 @@ test('selected passages stay compact, inspectable and removable in a roomy Ask a
   await passage.dispatchEvent('mouseup');
   await win.locator('.dd-selection-chip').getByRole('button', { name: 'Ask agent' }).click();
   const menu = win.locator('.dd-ask');
-  await expect(menu.getByText('README.md (3)')).toBeVisible();
+  await expect(menu.getByText('README.md (selection)')).toBeVisible();
   const bounds = await menu.boundingBox();
   expect(bounds!.width).toBeGreaterThanOrEqual(480);
   expect(bounds!.x).toBeGreaterThanOrEqual(0);
@@ -151,14 +151,14 @@ test('selected passages stay compact, inspectable and removable in a roomy Ask a
   await menu.getByRole('textbox').fill('Explain this expiry policy.');
   await menu.getByRole('button', { name: 'Start', exact: true }).click();
   const composer = win.getByTestId('panel-agent-tab-composer');
-  const chip = composer.getByRole('button', { name: 'Inspect README.md (3)' });
+  const chip = composer.getByRole('button', { name: 'Inspect README.md (selection)' });
   await expect(chip).toBeVisible();
   expect((await win.getByTestId('thread-secondary-chrome').boundingBox())!.width).toBeGreaterThanOrEqual(550);
   await expect(composer.getByTestId('thread-command-input')).not.toContainText('Tokens expire after one hour.');
   await chip.click();
-  await expect(win.getByRole('dialog', { name: 'Copied selection: README.md (3)' })).toContainText('Tokens expire after one hour.');
+  await expect(win.getByRole('dialog', { name: 'Copied selection: README.md (selection)' })).toContainText('Tokens expire after one hour.');
   await win.getByRole('button', { name: 'Close selection preview' }).click();
-  await composer.getByRole('button', { name: 'Remove README.md (3)' }).click();
+  await composer.getByRole('button', { name: 'Remove README.md (selection)' }).click();
   await expect(chip).toHaveCount(0);
   await composer.getByTestId('thread-command-input').press('ControlOrMeta+z');
   await expect(chip).toBeVisible();

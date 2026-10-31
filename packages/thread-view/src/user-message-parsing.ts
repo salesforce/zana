@@ -1,5 +1,7 @@
 import {
   type PromptInput,
+  validPromptReferences,
+  type PromptTextReference,
   type PromptTextMention,
   type ThreadEvent,
 } from "@zana-ai/zcc-domain/thread-runtime";
@@ -28,6 +30,7 @@ export function parsePromptInput(
   localImagePaths: string[];
   localFilePaths: string[];
   mentions: PromptTextMention[];
+  references?: PromptTextReference[];
 } | null {
   if (!Array.isArray(input) || input.length === 0) return null;
 
@@ -39,6 +42,7 @@ export function parsePromptInput(
   const localImagePaths: string[] = [];
   const localFilePaths: string[] = [];
   const mentions: PromptTextMention[] = [];
+  const references: PromptTextReference[] = [];
   let textOffset = 0;
 
   for (const part of input) {
@@ -61,6 +65,9 @@ export function parsePromptInput(
                 end: textOffset + mention.end,
               });
             }
+          }
+          for (const reference of validPromptReferences(part.text, part.references)) {
+            references.push({...reference, start: textOffset + reference.start, end: textOffset + reference.end});
           }
           textParts.push(part.text);
           textOffset += part.text.length;
@@ -101,6 +108,7 @@ export function parsePromptInput(
     localImagePaths,
     localFilePaths,
     mentions,
+    ...(references.length ? { references } : {}),
   };
 }
 
@@ -325,6 +333,7 @@ function buildClientUserMessage({
     turnRequest,
     text: parsedInput.text,
     mentions: parsedInput.mentions,
+    ...(parsedInput.references ? { references: parsedInput.references } : {}),
     attachments: buildAttachments(parsedInput),
   };
 }

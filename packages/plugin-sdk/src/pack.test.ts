@@ -56,7 +56,17 @@ describe('npm pack @zana-ai/zcc-plugin-sdk', () => {
 import { PROJECT_ICONS, defineRpcContract, type ProjectIcon, type PluginProviderDeclaration, type PluginProviderReasoningLevel } from '@zana-ai/zcc-plugin-sdk';
 import { PROJECT_ICONS as SERVER_ICONS, type ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import { createFakePluginHost } from '@zana-ai/zcc-plugin-sdk/testing';
-import { definePluginApp, type PluginAgentsViewProps, type PluginFleetMember } from '@zana-ai/zcc-plugin-sdk/app';
+import { definePluginApp, copyContextSelection, writeContextReference, contextReferencePrompt, useComposer, useZccNavigate, type ContextReference, type PluginAgentsViewProps, type PluginFleetMember } from '@zana-ai/zcc-plugin-sdk/app';
+const reference: ContextReference = { version: 1, label: 'Log', text: 'copied snapshot', source: {kind: 'plugin', pluginId: 'builds', resourceId: '1'} };
+contextReferencePrompt(reference);
+useComposer().insertContextReference?.(reference);
+const navigate = useZccNavigate();
+navigate.addThreadContext?.(reference);
+if (navigate.supportsContextReferences) navigate.openPanelAgent({draft:{prompt:'Review', references:[reference]}});
+navigate.openPanelAgent({draft:{prompt:'Legacy selection', selection:{version:1,path:'README.md',text:'snapshot'}}});
+declare const copyEvent: ClipboardEvent, contentRoot: HTMLElement;
+writeContextReference(copyEvent, reference);
+copyContextSelection(copyEvent, contentRoot, reference);
 const member: PluginFleetMember = { key: 'thread:1', kind: 'thread', title: 'Review', projectId: 'p', status: 'needs-you', detail: 'Needs you', live: true, scheduled: false };
 definePluginApp((app) => app.slots.experimental_agentsView({ id: 'world', title: 'World', component: (props: PluginAgentsViewProps) => { props.onInspect(member.key); return null; } }));
 // @ts-expect-error A plan is not a live member.

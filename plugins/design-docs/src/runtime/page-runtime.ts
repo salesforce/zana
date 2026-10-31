@@ -30,7 +30,8 @@ import {
   type PageProblem,
   type ToPage
 } from '../shared/frame-protocol.js';
-import { MAX_QUOTE_LENGTH } from '../shared/limits.js';
+import { copyContextSelection, MAX_CONTEXT_REFERENCE_TEXT } from '@zana-ai/zcc-plugin-sdk/app';
+import { passageContext } from '../shared/passage-context.js';
 import { PAGE_ORIGIN, pageTargetOf, pageUrl, type PageTarget } from '../shared/page.js';
 import { fileKindOf, mediaTypeOf } from '../shared/paths.js';
 
@@ -763,8 +764,8 @@ export function startPageRuntime(win: PageWindow, options: RuntimeOptions = {}):
   let selected = '';
   const reportSelection = () => {
     const selection = win.getSelection();
-    const text = selection && !selection.isCollapsed && selection.rangeCount ? selection.toString().trim().slice(0, MAX_QUOTE_LENGTH) : '';
-    if (!text) {
+    const text = selection && !selection.isCollapsed && selection.rangeCount ? selection.toString() : '';
+    if (!text.trim() || text.length > MAX_CONTEXT_REFERENCE_TEXT) {
       if (selected) post({ type: 'selection', text: '', rect: null });
       selected = '';
       return;
@@ -801,6 +802,7 @@ export function startPageRuntime(win: PageWindow, options: RuntimeOptions = {}):
     style.setAttribute('data-dd-runtime', '');
     style.textContent = HIGHLIGHT_CSS;
     (doc.head ?? doc.documentElement).appendChild(style);
+    doc.addEventListener('copy', event => copyContextSelection(event, doc.body, passageContext(config.docId, config.path, '')));
     doc.addEventListener('selectionchange', debounce(win, REPORT_DELAY_MS, reportSelection));
     win.addEventListener('scroll', reportScroll, { passive: true });
     const reportHash = () => post({ type: 'hash', hash: win.location.hash ? safeDecode(win.location.hash.slice(1)) : null });

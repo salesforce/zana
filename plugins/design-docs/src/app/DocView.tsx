@@ -1,3 +1,5 @@
+import { useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
+import { passageContext } from '../shared/passage-context.js';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, FileWarning, History, MessageSquare, Bot, PanelLeftOpen, X } from 'lucide-react';
 import type { DesignDocComment, DesignDocDetail, DesignDocRevision } from '../shared/contract.js';
@@ -212,6 +214,8 @@ export function DocView({
   const [pendingQuote, setPendingQuote] = useState<PendingQuote | null>(null);
   // Here rather than in the rail so it survives switching tabs or closing a floating rail.
   const [commentDraft, setCommentDraft] = useState('');
+  const contextNavigate = useZccNavigate();
+  const threadContext = useZccContext();
   const [askRequest, setAskRequest] = useState<AskRequest | null>(null);
   const [revision, setRevision] = useState<DesignDocRevision | null>(null);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
@@ -403,7 +407,10 @@ export function DocView({
               setTab('comments');
               setRailOpen(true);
             }}
-            onAskAbout={(selection) => setAskRequest({ prompt: '', selection, nonce: Date.now() })}
+            onAskAbout={(text) => setAskRequest({ prompt: '', references: [passageContext(docId, activePath!, text)], nonce: Date.now() })}
+            onAddToThread={threadContext.threadId && contextNavigate.addThreadContext ? (text) => {
+              if (!contextNavigate.addThreadContext?.(passageContext(docId, activePath!, text))) toast('Open this document beside a thread to add the selection.', 'error');
+            } : undefined}
             onEditorState={onEditorState}
             kind={kind === 'template' ? kind : undefined}
             leading={

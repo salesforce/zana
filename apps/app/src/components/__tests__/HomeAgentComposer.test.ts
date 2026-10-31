@@ -123,7 +123,7 @@ describe('ThreadCommandComposer initial text', () => {
     expect(source).toContain('initialText,');
     expect(source).toContain('useComposerPromptField');
     expect(field).toContain('seededFor');
-    expect(field).toContain('editor.chain().clearContent().insertContent(initialText)');
+    expect(field).toContain("editor.chain().clearContent().insertContent(initialText ?? '')");
     expect(field).toContain('if (autoFocus) chain.focus()');
   });
 

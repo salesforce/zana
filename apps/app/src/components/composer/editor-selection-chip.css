@@ -8,5 +8,9 @@
 .editor-selection-preview-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .editor-selection-preview-heading button { display: inline-flex; background: none; border: 0; padding: 3px; color: inherit; cursor: pointer; }
 .editor-selection-path { color: var(--text-muted); overflow-wrap: anywhere; margin-top: 4px; }
-.editor-selection-preview pre { overflow: auto; max-height: 220px; padding: 8px; border-radius: 4px; background: var(--bg-base); font: 12px/1.6 ui-monospace, monospace; tab-size: 4; }
+.editor-selection-preview pre { overflow: auto; max-height: 220px; padding: 8px; border-radius: 4px; background: var(--bg-base); font: 12px/1.6 ui-monospace, monospace; tab-size: 4; white-space: pre-wrap; overflow-wrap: anywhere; }
 .editor-selection-preview small { color: var(--text-muted); }
+
+.editor-selection-convert { margin-top: 10px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; color: var(--text-primary); background: var(--bg-base); cursor: pointer; }
+.context-reference-message > .inbox-md { display: contents; }
+.context-reference-message > .inbox-md > p:only-child { display: inline; }
