@@ -85,6 +85,7 @@ export const eventProjectionTurnRequestStatusValues = [
   "pending",
   "accepted",
   "rejected",
+  "cancelled",
 ] as const;
 export type EventProjectionTurnRequestStatus =
   (typeof eventProjectionTurnRequestStatusValues)[number];

@@ -1750,14 +1750,17 @@ describe("buildThreadTimelineFromEvents", () => {
     ).toHaveLength(0);
   });
 
-  it("uses rejected context to render a failed steer across a page boundary", () => {
+  it.each([
+    ["command_failed", "rejected"],
+    ["send_cancelled", "cancelled"],
+  ] as const)("uses %s context across a page boundary", (reason, status) => {
     const event = createTimelineEventFactory({ threadId: "thread-1" });
     const steerRequest = event.clientTurnRequested({
       target: { kind: "steer", expectedTurnId: "turn-1" },
       text: "Late steer",
     });
     const rejectedContext = fromRows([
-      event.clientTurnRejected({ requestId: steerRequest.data.requestId }),
+      event.clientTurnRejected({ requestId: steerRequest.data.requestId, reason }),
     ]);
 
     const rows = buildTimelineRowsWithRejectedContext(
@@ -1769,7 +1772,7 @@ describe("buildThreadTimelineFromEvents", () => {
       rows.find((row) => row.kind === "conversation" && row.role === "user"),
     ).toMatchObject({
       text: "Late steer",
-      turnRequest: { status: "rejected" },
+      turnRequest: { status },
     });
   });
 

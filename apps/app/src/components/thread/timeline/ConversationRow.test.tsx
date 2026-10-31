@@ -337,6 +337,11 @@ describe('ConversationRow request labels', () => {
     expect(screen.queryByTestId('thread-message-request-label')).toBeNull();
   });
 
+  it.each(['message', 'steer'] as const)('labels a cancelled %s without calling it rejected', kind => {
+    render(<ConversationRow row={{ ...userRow, turnRequest: { isGrouped: false, kind, status: 'cancelled' } }} />);
+    expect(screen.getByTestId('thread-message-request-label').textContent).toBe(kind === 'steer' ? 'Steer cancelled' : 'Cancelled');
+  });
+
   it('labels a rejected message and a steer', () => {
     const { rerender } = render(
       <ConversationRow

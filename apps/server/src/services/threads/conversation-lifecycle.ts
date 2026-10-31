@@ -434,8 +434,16 @@ async function dispatchTurnSubmit(
     );
     await dispatch(command);
   } catch (error) {
-    if (args.lease.cancelled || (error instanceof ThreadCreateError && error.code === 'stale_plan')) settleLiveTurnCommandFailure(ctx, { thread: args.thread, commandType: 'turn.submit', clientRequestId: args.clientRequestId, error });
-    throw error;
+    const failure = args.lease.cancelled
+      ? new ThreadCreateError(409, 'send_cancelled', 'Send cancelled by Stop or Archive')
+      : error;
+    if (args.lease.cancelled || (error instanceof ThreadCreateError && error.code === 'stale_plan')) {
+      settleLiveTurnCommandFailure(ctx, {
+        thread: args.thread, commandType: 'turn.submit', clientRequestId: args.clientRequestId,
+        error: failure
+      });
+    }
+    throw failure;
   }
 }
 
@@ -460,9 +468,19 @@ async function recoverOrSettleTurnSubmit(
   error: unknown,
   commandType: 'thread.start' | 'turn.submit'
 ): Promise<void> {
+  // Recovery awaits can race Stop/Archive too; classify at settlement time.
+  const settleFailure = (failure: unknown) => {
+    const cancelled = args.lease.cancelled;
+    settleLiveTurnCommandFailure(ctx, {
+      thread: args.thread, commandType, clientRequestId: args.clientRequestId,
+      error: cancelled
+        ? new ThreadCreateError(409, 'send_cancelled', 'Send cancelled by Stop or Archive')
+        : failure
+    });
+    if (args.drain && !cancelled) throw failure;
+  };
   if (args.lease.cancelled) {
-    settleLiveTurnCommandFailure(ctx, { thread: args.thread, commandType, clientRequestId: args.clientRequestId,
-      error: new ThreadCreateError(409, 'send_cancelled', 'Send cancelled by Stop or Archive') });
+    settleFailure(error);
     return;
   }
   if (isHostOfflineError(error) && !isHostRpcTimeout(error) && !args.drain) {
@@ -490,23 +508,11 @@ async function recoverOrSettleTurnSubmit(
       });
       return;
     } catch (resumeError) {
-      settleLiveTurnCommandFailure(ctx, {
-        thread: args.thread,
-        commandType: 'turn.submit',
-        clientRequestId: args.clientRequestId,
-        error: resumeError
-      });
-      if (args.drain) throw resumeError;
+      settleFailure(resumeError);
       return;
     }
   }
-  settleLiveTurnCommandFailure(ctx, {
-    thread: args.thread,
-    commandType,
-    clientRequestId: args.clientRequestId,
-    error
-  });
-  if (args.drain) throw error;
+  settleFailure(error);
 }
 
 export async function stopConversation(
