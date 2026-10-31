@@ -21,6 +21,7 @@ import { startProductServer, type ProductServer } from './product-server.js';
 import { getThreadProvider, registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
 import { buildPluginHost } from '@zana-ai/zcc-plugin-build';
 import { HostUnavailableError } from './host-hub.js';
+import { openDatabase, upsertHost } from '@zana-ai/zcc-db';
 
 let server: ProductServer | null = null;
 const dirs: string[] = [];
@@ -493,13 +494,32 @@ describe('plugin spawn harness helpers', () => {
   });
 
   it('reports UNAVAILABLE_DEFAULT when the host is not connected', async () => {
+    const db = openDatabase(join(tempDir(), 'hosts.sqlite'));
+    upsertHost(db, { id: 'primary', name: 'Primary', hostKeyHash: 'primary' });
     const ctx = {
+      db,
       dataDir: tempDir(),
       hostHub: hubWith(async () => { throw new HostUnavailableError(); }),
       config: { getConfig: () => baseConfig },
       toProjects: () => [{ id: 'p1', name: 'P', path: '/tmp/p1', createdAt: 0, lastActiveAt: 0 }]
     } as never;
     await expect(productProjectHarnessDefault(ctx, 'p1')).resolves.toMatchObject({ ok: false, code: 'UNAVAILABLE_DEFAULT' });
+    db.close();
+  });
+
+  it('probes the primary host for local projects without a host binding, never an arbitrary connected host', async () => {
+    const db = openDatabase(join(tempDir(), 'hosts.sqlite'));
+    upsertHost(db, { id: 'primary', name: 'Primary', hostKeyHash: 'primary' });
+    const resolve = vi.fn((id?: string) => { if (!id) throw new Error('ambiguous-host'); return id; });
+    const hub = { resolveHostId: resolve, callHostOnlineRpc: vi.fn(async () => status([{ family: 'codex', enabled: true, installed: true }])) };
+    const ctx = { db, dataDir: tempDir(), hostHub: hub, config: { getConfig: () => ({ ...baseConfig, defaultHarness: 'codex', harnessCodexEnabled: true }) }, toProjects: () => [{ id: 'p1', path: '/local', name: 'Local' }] } as never;
+    try {
+      await expect(productProjectHarnessDefault(ctx, 'p1')).resolves.toMatchObject({ ok: true, family: 'codex' });
+      expect(hub.callHostOnlineRpc).toHaveBeenLastCalledWith({ hostId: 'primary', command: { type: 'provider.status' } });
+      resolve.mockImplementation(() => { throw new HostUnavailableError('Primary offline'); });
+      expect(() => productProjectHarnessDefault(ctx, 'p1')).toThrow('Primary offline');
+      expect(hub.callHostOnlineRpc).toHaveBeenCalledTimes(1);
+    } finally { db.close(); }
   });
 
   it('lists providers with availability from the host probe, or bridge state when unprobeable', async () => {

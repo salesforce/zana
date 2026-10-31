@@ -1,4 +1,4 @@
-import { editorSelectionFromClipboard } from '@zana-ai/zcc-plugin-sdk/app';
+import { editorSelectionFromClipboard, parseEditorSelection, type EditorSelection } from '@zana-ai/zcc-plugin-sdk/app';
 import { nativeCapabilities } from '../../lib/native-capabilities.js';
 import { promptEditorDocument } from './restore-prompt-editor.js';
 import { promptInputSchema, type PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
@@ -83,6 +83,7 @@ export interface UseComposerPromptFieldArgs {
   disabled?: boolean;
   autoFocus?: boolean;
   initialText?: string;
+  initialSelection?: EditorSelection;
   slashCatalog: ComposerSlashCatalog;
   onSubmit: (opts?: { modifierEnter?: boolean }) => void;
   interceptKeyDown?: ComposerKeyInterceptor;
@@ -103,6 +104,7 @@ export function useComposerPromptField({
   disabled = false,
   autoFocus = false,
   initialText,
+  initialSelection,
   slashCatalog,
   onSubmit,
   interceptKeyDown,
@@ -389,19 +391,22 @@ export function useComposerPromptField({
   const seededFor = useRef<{ draft: ComposerSession; text: string } | null>(null);
   useEffect(() => {
     if (!editor || !initialText) return;
-    if (seededFor.current?.draft === draft && seededFor.current.text === initialText) return;
-    seededFor.current = { draft, text: initialText };
+    const selection = parseEditorSelection(initialSelection);
+    const seed = selection ? JSON.stringify([initialText, selection]) : initialText;
+    if (seededFor.current?.draft === draft && seededFor.current.text === seed) return;
+    seededFor.current = { draft, text: seed };
     const current = draft.getSnapshot();
-    if (draft.getSeed()?.text === initialText && current.document !== undefined) return;
+    if (draft.getSeed()?.text === seed && current.document !== undefined) return;
     const replaceable = current.document === undefined
       || isEmptyComposerDocument(current.document)
       || draft.getSeed()?.revision === current.revision;
     if (!replaceable) return;
     const chain = editor.chain().clearContent().insertContent(initialText);
+    if (selection) chain.insertContent({ type: 'editorSelection', attrs: { selection } }).insertContent(' ');
     if (autoFocus) chain.focus();
     chain.run();
-    draft.setSeed({ text: initialText, revision: draft.getSnapshot().revision });
-  }, [autoFocus, draft, editor, initialText]);
+    draft.setSeed({ text: seed, revision: draft.getSnapshot().revision });
+  }, [autoFocus, draft, editor, initialText, initialSelection]);
 
   useEffect(() => {
     if (!editor || !autoFocus || initialText) return;

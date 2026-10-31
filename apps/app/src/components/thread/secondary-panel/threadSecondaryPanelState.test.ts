@@ -468,7 +468,12 @@ describe('openAgentDraft', () => {
 
   it('never touches a started conversation and never persists the draft', () => {
     const started = addClosableTab(emptySecondaryPanelState(), { kind: 'agent', title: 'Chat', threadId: 't1' });
-    const next = openAgentDraft(started, { title: 'Doc', draft: 'Review' });
+    const selection = { version: 1 as const, path: 'README.md', text: 'Private snapshot' };
+    const next = openAgentDraft(started, { title: 'Doc', draft: 'Review', selection });
+    expect(next.tabs[1]?.draftSelection).toEqual(selection);
+    persistSecondaryPanelState('selection', next);
+    expect(localStorage.getItem('zcc.secondaryPanel.selection')).not.toContain('Private snapshot');
+    expect(localStorage.getItem('zcc.secondaryPanel.selection')).not.toContain('draft');
     expect(next.tabs).toHaveLength(2);
     expect(next.tabs[0]).toMatchObject({ threadId: 't1', title: 'Chat' });
     expect(next.tabs[0]).not.toHaveProperty('draft');

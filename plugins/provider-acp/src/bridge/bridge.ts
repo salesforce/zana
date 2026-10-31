@@ -967,6 +967,11 @@ function resolveAcpAuthMethodId(
   if (methodIds.has("cached_token")) {
     return "cached_token";
   }
+  // Cursor still requires an ACP authenticate call after `cursor-agent login`;
+  // this method loads that existing CLI login before session/new.
+  if (methodIds.has("cursor_login")) {
+    return "cursor_login";
+  }
   return undefined;
 }
 

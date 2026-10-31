@@ -28,7 +28,7 @@ describe("Cursor ACP maintenance", () => {
     expect(readKeychain).not.toHaveBeenCalled();
   });
 
-  it.each([
+  it.each<{ env: Record<string, string>; expectedHome: string }>([
     { env: { HOME: "/launch-home", USERPROFILE: "/launch-profile" }, expectedHome: "/launch-profile" },
     { env: { HOME: "/launch-home" }, expectedHome: "/launch-home" },
   ])("uses Windows launch home precedence: $expectedHome", async ({ env, expectedHome }) => {

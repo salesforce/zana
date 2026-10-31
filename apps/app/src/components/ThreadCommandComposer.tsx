@@ -101,6 +101,7 @@ export interface ThreadCommandComposerProps extends ComposerProjectSelectionProp
   acpMode?: string | null;
   permissionMode?: string | null;
   initialText?: string;
+  initialSelection?: import('@zana-ai/zcc-plugin-sdk/app').EditorSelection;
   /** Focus the prompt after mounting (hub/browse create-plugin seed). */
   autoFocus?: boolean;
   onCreated?: (threadId: string) => void;
@@ -148,6 +149,7 @@ function ThreadComposerContent({
   acpMode: initialAcpMode,
   permissionMode: initialPermissionMode,
   initialText,
+  initialSelection,
   autoFocus = false,
   onCreated,
   navigateOnCreate: navigateOnCreateOverride,
@@ -426,6 +428,7 @@ function ThreadComposerContent({
     disabled: busy,
     autoFocus: autoFocus && !compact,
     initialText,
+    initialSelection,
     slashCatalog: {
       kind: 'thread',
       localCommands,

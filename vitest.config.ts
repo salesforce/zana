@@ -17,6 +17,8 @@ const rootExclude = [
   'website/.next/**',
   'e2e/**',
   'e2e-web/**',
+  // Documentation media includes archived Playwright recording scripts.
+  'docs/media/**',
   '.claude/worktrees/**',
   '.worktrees/**',
   // pnpm may cache complete checkouts, including tests from other branches.

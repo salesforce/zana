@@ -403,7 +403,7 @@ export function DocView({
               setTab('comments');
               setRailOpen(true);
             }}
-            onAskAbout={(text) => setAskRequest({ prompt: `About this passage in ${activePath}:\n> ${text.replace(/\n/g, '\n> ')}\n\n`, nonce: Date.now() })}
+            onAskAbout={(text, selection) => setAskRequest({ prompt: '', selection: selection ?? { version: 1, path: activePath!, text }, nonce: Date.now() })}
             onEditorState={onEditorState}
             kind={kind === 'template' ? kind : undefined}
             leading={

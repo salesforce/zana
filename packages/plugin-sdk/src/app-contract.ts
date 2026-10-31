@@ -1006,7 +1006,7 @@ export type ZccPanelAgentOptions =
        * doc id); it is recorded as the agent's starting view in place of the page's
        * current route, so a page without routes (a project tab) can still name it.
        */
-      draft: { prompt: string; projectId?: string; view?: string };
+      draft: { prompt: string; projectId?: string; view?: string; selection?: import('./editor-selection.js').EditorSelection };
       title?: string;
     };
 

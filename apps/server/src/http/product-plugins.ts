@@ -49,6 +49,7 @@ import {
 import { pluginEffectiveHarnessDefault, productPluginSpawnRouting } from './plugin-harness-routing.js';
 import { slashPlanPromptInput } from './plugin-thread-routing.js';
 import { ThreadCreateError } from './thread-create.js';
+import { resolveProjectHost } from './project-host.js';
 import { InteractionService } from '../services/interactions/interaction-service.js';
 import { startInteractionMaintenance } from '../services/interactions/interaction-maintenance.js';
 
@@ -171,17 +172,18 @@ function toPluginThreadSummary(row: {
 
 /** The project's effective AI harness, resolved like `GET /api/v1/harness/effective-default`. */
 export function productProjectHarnessDefault(
-  ctx: Pick<ProductHttpContext, 'toProjects' | 'hostHub' | 'config' | 'dataDir'>,
+  ctx: Pick<ProductHttpContext, 'toProjects' | 'hostHub' | 'config' | 'dataDir' | 'db'>,
   projectId: string,
   hostId?: string
 ) {
   const project = ctx.toProjects().find((row) => row.id === projectId);
+  if (!project) return Promise.resolve({ ok: false as const, code: 'NOT_FOUND' as const, message: 'Project not found' });
   return harnessEffectiveDefault({
     hub: ctx.hostHub,
     project,
     config: ctx.config.getConfig(),
     personas: listJsonFiles(join(ctx.dataDir, 'personas')) as Persona[],
-    hostId: hostId ?? project?.hostId
+    hostId: resolveProjectHost(ctx, hostId ?? project?.hostId)
   });
 }
 
@@ -391,6 +393,13 @@ export function createAttachedProductPluginService(
       serviceTier,
       pluginMetadata
     }) => {
+      // Local projects created before host binding belong to the primary
+      // machine. Probe and route on the same host thread creation will use,
+      // even when several other machines are connected.
+      if (harness === 'project-default') {
+        const project = ctx.toProjects().find((row) => row.id === projectId);
+        hostId = resolveProjectHost(ctx, project?.remote ? project.hostId : hostId ?? project?.hostId);
+      }
       const resolved = await resolvePluginSpawnProvider({
         providerId,
         harness,

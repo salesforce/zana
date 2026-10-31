@@ -1011,10 +1011,10 @@ describe("acp bridge", () => {
     });
   });
 
-  it("authenticates before ACP-native model discovery", async () => {
+  it.each(["cached_token", "cursor_login"])("authenticates with %s before ACP-native model discovery", async (methodId) => {
     const modelListId = sendModelList({
       envVars: {
-        FAKE_ACP_AUTH_METHODS: "cached_token",
+        FAKE_ACP_AUTH_METHODS: methodId,
         FAKE_ACP_MODEL_CONFIG: "1",
       },
     });
@@ -2496,9 +2496,9 @@ describe("acp bridge", () => {
     expect(agentMessageTexts()).toContain("echo:hello there");
   });
 
-  it("authenticates ACP sessions with cached tokens when advertised", async () => {
+  it.each(["cached_token", "cursor_login"])("authenticates ACP sessions with %s when advertised", async (methodId) => {
     const { providerThreadId } = await startThread({
-      envVars: { FAKE_ACP_AUTH_METHODS: "cached_token" },
+      envVars: { FAKE_ACP_AUTH_METHODS: methodId },
     });
 
     const turnId = sendTurnRequest("turn/start", providerThreadId, {
@@ -2507,7 +2507,7 @@ describe("acp bridge", () => {
     await waitForResponse(turnId);
     await waitForTurnCompleted();
 
-    expect(agentMessageTexts()).toContain("auth-method:cached_token");
+    expect(agentMessageTexts()).toContain(`auth-method:${methodId}`);
   });
 
   it("authenticates Codex-style api-key when OPENAI_API_KEY is available", async () => {

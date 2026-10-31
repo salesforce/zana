@@ -63,7 +63,7 @@ export const EditorSelectionExtension = Node.create({
   name: 'editorSelection',
   group: 'inline', inline: true, atom: true,
   addAttributes: () => ({ selection: { default: null, rendered: false } }),
-  // Only the validated clipboard format creates these nodes; arbitrary HTML does not.
+  // Validated clipboard snapshots and plugin drafts create these nodes; arbitrary HTML does not.
   parseHTML: () => [],
   renderHTML({ node, HTMLAttributes }) {
     const selection = parseEditorSelection(node.attrs.selection);

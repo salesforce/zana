@@ -3,6 +3,14 @@ import { EDITOR_SELECTION_MIME, MAX_EDITOR_SELECTION_TEXT, parseEditorSelection,
 const selection = { version: 1 as const, path: 'force-app/Review.agent', startLine: 2, endLine: 3, text: '  topic main:\n    description: "Review"' };
 const clipboard = (metadata: string, text = selection.text) => ({ getData: (type: string) => type === EDITOR_SELECTION_MIME ? metadata : text });
 describe('editor selection clipboard', () => {
+  it('represents a rendered passage without inventing source lines', () => {
+    const passage = { version: 1 as const, path: 'README.md', text: 'A rendered passage' };
+    expect(parseEditorSelection(passage)).toEqual(passage);
+    expect(editorSelectionLabel(passage)).toBe('README.md (selection)');
+    expect(editorSelectionPrompt(passage)).toContain('README.md (copied selection)\n```\nA rendered passage\n```');
+    expect(parseEditorSelection({ ...passage, startLine: 2 })).toBeNull();
+    expect(parseEditorSelection({ ...passage, endLine: 2 })).toBeNull();
+  });
   it('preserves a bounded copied snapshot and its location', () => {
     expect(editorSelectionFromClipboard(clipboard(JSON.stringify(selection)))).toEqual(selection);
     expect(editorSelectionFromClipboard(clipboard(JSON.stringify(selection), selection.text.replace(/\n/g, '\r\n')))).toEqual(selection);

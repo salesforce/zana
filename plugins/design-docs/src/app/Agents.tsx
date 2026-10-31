@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { useZccNavigate, type ZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
-import { AtSign, Bot, ChevronDown, Sparkles, Unlink } from 'lucide-react';
+import { editorSelectionLabel, editorSelectionPrompt, useZccNavigate, type EditorSelection, type ZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
+import { AtSign, Bot, ChevronDown, FileText, Sparkles, Unlink, X } from 'lucide-react';
 import { AGENT_ACTIONS, agentActionById, buildAgentPrompt, MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
 import type { DesignDocDetail, ThreadRole } from '../shared/contract.js';
 import { defaultAgentProject, errorMessage, toast, useApi } from './api.js';
@@ -36,7 +36,7 @@ export function showDocAgent(navigate: ZccNavigate, doc: { id: string; title: st
 export function draftDocAgent(
   navigate: ZccNavigate,
   doc: { id: string; title: string },
-  request: { action?: string | null; prompt?: string; path?: string | null; projectId?: string | null }
+  request: { action?: string | null; prompt?: string; path?: string | null; projectId?: string | null; selection?: EditorSelection | null }
 ): boolean {
   if (!navigate.openPanelAgent) return false;
   const prompt = buildAgentPrompt({
@@ -47,7 +47,7 @@ export function draftDocAgent(
   });
   return navigate.openPanelAgent({
     // The doc id is the page's view, so the conversation joins this doc's Agents list.
-    draft: { prompt, view: doc.id, ...(request.projectId ? { projectId: request.projectId } : {}) },
+    draft: { prompt, view: doc.id, ...(request.projectId ? { projectId: request.projectId } : {}), ...(request.selection ? { selection: request.selection } : {}) },
     title: doc.title
   });
 }
@@ -117,6 +117,7 @@ export function AgentsPane({
 
 export interface AskRequest {
   prompt: string;
+  selection?: EditorSelection;
   /** Changes on every request so the same text can be asked twice. */
   nonce: number;
 }
@@ -144,6 +145,7 @@ export function AskAgentButton({
   const navigate = useZccNavigate();
   const [open, setOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
+  const [selection, setSelection] = useState<EditorSelection | null>(null);
   const [focusFile, setFocusFile] = useState(false);
   const [projectId, setProjectId] = useState<string>(contextProjectId ?? '');
   const [busy, setBusy] = useState<string | null>(null);
@@ -156,6 +158,7 @@ export function AskAgentButton({
   useEffect(() => {
     if (!request) return;
     setPrompt(request.prompt);
+    setSelection(request.selection ?? null);
     setFocusFile(true);
     setOpen(true);
     requestAnimationFrame(() => {
@@ -180,18 +183,20 @@ export function AskAgentButton({
       action,
       prompt: action ? undefined : prompt.trim() || undefined,
       path: focusFile ? activePath : null,
-      projectId: chosenProject || null
+      projectId: chosenProject || null,
+      selection
     };
     if (draftDocAgent(navigate, doc, request)) {
       setOpen(false);
       setPrompt('');
+      setSelection(null);
       return;
     }
     setBusy(action ?? 'custom');
     try {
       const result = await api.askAgent(doc.id, {
         ...(action ? { action } : {}),
-        ...(prompt.trim() && !action ? { prompt: prompt.trim() } : {}),
+        ...((!action && prompt.trim()) || selection ? { prompt: [!action ? prompt.trim() : '', selection ? editorSelectionPrompt(selection) : ''].filter(Boolean).join('\n\n') } : {}),
         path: focusFile ? activePath : null,
         ...(needsProject ? { projectId: chosenProject } : {})
       });
@@ -199,6 +204,7 @@ export function AskAgentButton({
       toast(`Agent started on “${doc.title}”. Its edits appear here live.`);
       setOpen(false);
       setPrompt('');
+      setSelection(null);
     } catch (error) {
       toast(`Could not start the agent: ${errorMessage(error)}`, 'error');
     } finally {
@@ -259,11 +265,20 @@ export function AskAgentButton({
         })}
       </div>
       <div className="dd-ask-custom">
+        {selection ? (
+          <div className="dd-ask-context">
+            <details>
+              <summary><FileText size={14} aria-hidden />{editorSelectionLabel(selection)}</summary>
+              <pre>{selection.text}</pre>
+            </details>
+            <button type="button" className="icon-btn" aria-label="Remove selected passage" onClick={() => setSelection(null)}><X size={13} aria-hidden /></button>
+          </div>
+        ) : null}
         <textarea
           ref={inputRef}
           className="dd-input"
           rows={3}
-          maxLength={MAX_AGENT_PROMPT_LENGTH}
+          maxLength={Math.max(0, MAX_AGENT_PROMPT_LENGTH - (selection ? editorSelectionPrompt(selection).length + 2 : 0))}
           placeholder="Or describe what you want… e.g. “Compare two caching strategies and recommend one”"
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}

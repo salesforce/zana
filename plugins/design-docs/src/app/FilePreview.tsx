@@ -194,7 +194,10 @@ export function FilePreview({
     else toast(`${target} is not a file in this design doc`, 'error');
   };
 
-  const onMouseUp = () => {
+  const onMouseUp = (event: ReactMouseEvent) => {
+    // A native mouseup precedes click. Keep the action mounted until its
+    // click handler consumes the captured passage, even if selection collapsed.
+    if ((event.target as Element).closest?.('.dd-selection-chip')) return;
     if (!onQuote) return;
     const selection = globalThis.getSelection?.();
     const scroller = scrollRef.current;

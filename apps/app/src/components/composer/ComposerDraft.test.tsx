@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ComposerDraftProvider, useComposerSession, useComposerSetting, useRetainedText } from './ComposerDraft.js';
 import { ComposerSession, composerSession, resetComposerSessions, MAX_COMPOSER_SESSIONS } from './composer-session.js';
 import { useComposerPromptField } from './use-composer-prompt-field.js';
-import { EDITOR_SELECTION_MIME } from '@zana-ai/zcc-plugin-sdk/app';
+import { EDITOR_SELECTION_MIME, type EditorSelection } from '@zana-ai/zcc-plugin-sdk/app';
 import { mentionAttrsForSuggestion } from './mention-attrs.js';
 
 vi.mock('../../lib/fetch-with-app-surface.js', () => ({ apiJson: async () => ({}) }));
@@ -24,15 +24,15 @@ vi.mock('./use-composer-suggestions.js', () => ({
 }));
 
 let field: ReturnType<typeof useComposerPromptField>;
-function Probe({ initialText }: { initialText?: string }) {
+function Probe({ initialText, initialSelection }: { initialText?: string; initialSelection?: EditorSelection }) {
   field = useComposerPromptField({
     placeholder: 'Prompt', testId: 'prompt', projectId: 'project', projects: [],
-    initialText, slashCatalog: { kind: 'cli' }, onSubmit: () => {}
+    initialText, initialSelection, slashCatalog: { kind: 'cli' }, onSubmit: () => {}
   });
   return <EditorContent editor={field.editor} />;
 }
-function Surface({ mode, initialText, sessionKey }: { mode: string; initialText?: string; sessionKey?: string }) {
-  return <ComposerDraftProvider sessionKey={sessionKey}><Probe key={mode} initialText={initialText} /></ComposerDraftProvider>;
+function Surface({ mode, initialText, initialSelection, sessionKey }: { mode: string; initialText?: string; initialSelection?: EditorSelection; sessionKey?: string }) {
+  return <ComposerDraftProvider sessionKey={sessionKey}><Probe key={mode} initialText={initialText} initialSelection={initialSelection} /></ComposerDraftProvider>;
 }
 const ready = () => waitFor(() => expect(field.editor).not.toBeNull());
 beforeEach(() => { localStorage.clear(); resetComposerSessions(); });
@@ -294,6 +294,24 @@ function pasteSelection(metadata = JSON.stringify(copiedSelection), text = copie
 }
 
 describe('pasted editor selection references', () => {
+  it('seeds a passage chip, sends its snapshot and preserves removal across remounts', async () => {
+    const selection = { version: 1 as const, path: 'README.md', text: 'Tokens expire after one hour.' };
+    const view = render(<Surface mode="modern" sessionKey="doc-selection" initialText="Explain this" initialSelection={selection} />);
+    await ready();
+    const chip = await screen.findByRole('button', { name: 'Inspect README.md (selection)' });
+    expect(screen.getByTestId('prompt').textContent).not.toContain(selection.text);
+    expect(field.serialize().text).toContain(selection.text);
+    fireEvent.click(chip);
+    expect(screen.getByRole('dialog').textContent).toContain(selection.text);
+    fireEvent.click(screen.getByRole('button', { name: 'Close selection preview' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove README.md (selection)' }));
+    expect(field.serialize().text).not.toContain(selection.text);
+    view.unmount();
+    render(<Surface mode="modern" sessionKey="doc-selection" initialText="Explain this" initialSelection={selection} />);
+    await ready();
+    expect(screen.queryByRole('button', { name: 'Inspect README.md (selection)' })).toBeNull();
+    expect(field.text).toBe('Explain this ');
+  });
   it('pastes an inline chip with its exact snapshot, inspects, dismisses, removes and undoes', async () => {
     render(<Surface mode="modern" sessionKey="code-selection" />);
     await ready();

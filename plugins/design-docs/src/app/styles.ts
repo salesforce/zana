@@ -615,16 +615,16 @@ textarea.dd-doc-summary { display: block; }
 .dd-publish-intro { margin: 0 0 14px; font-size: 12px; line-height: 1.5; }
 .dd-publish-fields { display: flex; flex-direction: column; gap: 12px; }
 .dd-publish-problem { margin: 10px 0 0; font-size: 12px; color: var(--danger); }
-.dd-ask { width: 360px; padding: 0; }
-.dd-ask-head { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px 8px; }
+.dd-ask { width: min(560px, calc(100vw - 24px)); max-height: calc(100vh - 100px); overflow-y: auto; padding: 0; }
+.dd-ask-head { display: flex; flex-direction: column; gap: 6px; padding: 18px 20px 14px; }
 .dd-ask-head .dd-muted { font-size: 12px; }
 .dd-ask-title { font-weight: 650; }
-.dd-ask-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 0 8px 8px; }
+.dd-ask-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 8px; padding: 0 16px 16px; }
 .dd-ask-action {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  padding: 8px;
+  padding: 12px;
   border: 1px solid var(--border);
   border-radius: 7px;
   background: var(--bg-panel);
@@ -635,9 +635,14 @@ textarea.dd-doc-summary { display: block; }
 .dd-ask-action:disabled { opacity: 0.6; cursor: default; }
 .dd-ask-action-icon { display: grid; place-items: center; flex: 0 0 auto; width: 22px; height: 22px; border-radius: 6px; background: color-mix(in srgb, var(--accent-blue) 14%, transparent); color: var(--accent-blue); }
 .dd-ask-action-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.dd-ask-action-label { font-size: 12.5px; font-weight: 600; }
-.dd-ask-action-desc { color: var(--text-muted); font-size: 11px; line-height: 1.35; }
-.dd-ask-custom { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
+.dd-ask-action-label { font-size: 14px; font-weight: 600; }
+.dd-ask-action-desc { color: var(--text-muted); font-size: 12px; line-height: 1.5; }
+.dd-ask-custom { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-top: 1px solid var(--border); }
+.dd-ask-custom textarea { min-height: 132px; font-size: 14px; line-height: 1.6; }
+.dd-ask-context { display: flex; align-items: flex-start; gap: 4px; padding: 5px 8px; border-radius: 6px; background: color-mix(in srgb, var(--accent-blue) 16%, var(--bg-panel)); color: var(--accent-blue); }
+.dd-ask-context details { min-width: 0; flex: 1; }
+.dd-ask-context summary { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; overflow-wrap: anywhere; }
+.dd-ask-context pre { margin: 8px 0 0; max-height: 160px; overflow: auto; white-space: pre-wrap; color: var(--text-primary); font: 12px/1.6 var(--font-mono, monospace); }
 .dd-ask-options { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 
 /* ── File tree ──────────────────────────────────────────────────────── */

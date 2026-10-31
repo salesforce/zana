@@ -16,6 +16,7 @@ vi.mock('./plugin-slots.js', async (importOriginal) => ({
 import { installPluginRuntime } from './plugin-runtime.js';
 import { PluginRuntimeContext } from './PluginSlotBoundary.js';
 import { onPluginPanelAgentRequest } from './plugin-panel-agent.js';
+import { parsePanelAgentTarget } from './plugin-panel-agent.js';
 import { onPluginPanelToolRequest, PluginPagePanelProvider } from './plugin-page-panel.js';
 
 afterEach(cleanup);
@@ -47,6 +48,12 @@ function renderNavigate(pluginId: string): ZccNavigate {
 }
 
 describe('navigate.openPanelAgent', () => {
+  it('accepts bounded selection snapshots and drops malformed metadata', () => {
+    const selection = { version: 1, path: 'README.md', text: 'Selected passage' };
+    expect(parsePanelAgentTarget({ draft: { prompt: 'Explain', selection } })).toEqual({ draft: 'Explain', selection });
+    expect(parsePanelAgentTarget({ draft: { prompt: 'Explain', selection: { ...selection, startLine: -1 } } })).toEqual({ draft: 'Explain' });
+    expect(parsePanelAgentTarget({ draft: { prompt: 'Explain', selection: { ...selection, text: 'x'.repeat(100001) } } })).toEqual({ draft: 'Explain' });
+  });
   it('reports false when no side panel listens for the plugin', () => {
     expect(renderNavigate('notes').openPanelAgent({ threadId: 'thread-1', title: 'Doc' })).toBe(false);
   });

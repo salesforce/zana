@@ -9,6 +9,7 @@ import { useData } from '../../../store.js';
 import { getThreadRoutePath } from '../../../lib/route-paths.js';
 import { getPluginViewTarget } from '../../../lib/pluginViewSurface.js';
 import { showInMainWindow } from '../../../plugins/plugin-view-windows.js';
+import type { EditorSelection } from '@zana-ai/zcc-plugin-sdk/app';
 
 const ThreadDetailLazy = lazy(async () => {
   const mod = await import('../../../views/threads/ThreadDetailView.js');
@@ -45,6 +46,7 @@ export interface PanelConversation {
 export function PanelAgentTab({
   threadId,
   draft,
+  draftSelection,
   draftProjectId,
   projectId,
   resourceLabel,
@@ -55,6 +57,7 @@ export function PanelAgentTab({
   threadId?: string;
   /** Text the plugin page prefilled; the user still picks the harness and sends. */
   draft?: string;
+  draftSelection?: EditorSelection;
   /** Project the prefilled composer starts on; the user can still change it. */
   draftProjectId?: string;
   /** The page's own project: new threads run there, with no project or machine to pick. */
@@ -93,6 +96,7 @@ export function PanelAgentTab({
         autoFocus
         navigateOnCreate={false}
         initialText={draft}
+        initialSelection={draftSelection}
         project={project}
         composerProjectId={draftProjectId ?? projectId}
         pluginPanel={pluginPanel}

@@ -1,5 +1,6 @@
 import { browserPreviewIdentity } from '@zana-ai/zcc-desktop-contract';
 import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
+import type { EditorSelection } from '@zana-ai/zcc-plugin-sdk/app';
 
 export const SECONDARY_PANEL_STORAGE_PREFIX = 'zcc.secondaryPanel.';
 export const LEGACY_THREAD_STORAGE_PREFIX = 'zcc.thread.secondaryPanel.';
@@ -36,6 +37,8 @@ export interface ClosableSecondaryTab {
    * like any unsent composer text, so it is never persisted.
    */
   draft?: string;
+  /** Unsent context snapshot; never persisted with the tab. */
+  draftSelection?: EditorSelection;
   /** Agent tab: the project the draft's composer starts on. */
   draftProjectId?: string;
   /** Agent tab: the view the draft is about, recorded on the thread it starts. */
@@ -228,7 +231,8 @@ export function loadSecondaryPanelState(
 export function persistSecondaryPanelState(ownerId: string, state: ThreadSecondaryPanelState): void {
   if (typeof localStorage === 'undefined') return;
   try {
-    localStorage.setItem(storageKeyForOwner(ownerId), JSON.stringify(state));
+    const tabs = state.tabs.map(({ draft, draftSelection, draftProjectId, draftView, draftRevision, ...tab }) => tab);
+    localStorage.setItem(storageKeyForOwner(ownerId), JSON.stringify({ ...state, tabs }));
   } catch {
     /* quota / private mode */
   }
@@ -404,9 +408,9 @@ export function activateClosableTab(
  */
 export function openAgentDraft(
   state: ThreadSecondaryPanelState,
-  input: { title: string; draft: string; projectId?: string; view?: string }
+  input: { title: string; draft: string; projectId?: string; view?: string; selection?: EditorSelection }
 ): ThreadSecondaryPanelState {
-  const seeded = { title: input.title, draft: input.draft, draftProjectId: input.projectId, draftView: input.view };
+  const seeded = { title: input.title, draft: input.draft, draftProjectId: input.projectId, draftView: input.view, draftSelection: input.selection };
   const blank = state.tabs.find((tab) => tab.kind === 'agent' && !tab.threadId);
   if (!blank) return addClosableTab(state, { kind: 'agent', ...seeded });
   return {

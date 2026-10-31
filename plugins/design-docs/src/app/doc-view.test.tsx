@@ -346,11 +346,21 @@ describe('previewing files', () => {
     await waitFor(() => expect(document.querySelector('.dd-composer-quote')).toBeNull());
 
     fireEvent.mouseUp(preview);
-    fireEvent.click(within(chip()!).getByRole('button', { name: 'Ask agent' }));
+    const askSelection = within(chip()!).getByRole('button', { name: 'Ask agent' });
+    fireEvent.mouseDown(askSelection);
+    selection.isCollapsed = true;
+    fireEvent.mouseUp(askSelection);
+    expect(chip()).not.toBeNull();
+    fireEvent.click(askSelection);
     const prompt = (await screen.findByPlaceholderText(/^Or describe what you want/)) as HTMLTextAreaElement;
-    expect(prompt.value).toBe('About this passage in README.md:\n> expires hourly\n\n');
+    expect(prompt.value).toBe('');
+    expect(screen.getByText('README.md (1)')).toBeTruthy();
+    expect(document.querySelector('.dd-ask-context pre')?.textContent).toBe('expires hourly');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove selected passage' }));
+    expect(document.querySelector('.dd-ask-context')).toBeNull();
 
     // A collapsed selection clears the chip, and pressing elsewhere hides it.
+    selection.isCollapsed = false;
     fireEvent.mouseUp(preview);
     expect(chip()).not.toBeNull();
     fireEvent.mouseDown(preview);
@@ -358,6 +368,37 @@ describe('previewing files', () => {
     selection.isCollapsed = true;
     fireEvent.mouseUp(preview);
     expect(chip()).toBeNull();
+  });
+
+  it.each([true, false])('hands the captured passage to the agent without quoting it into the request (panel=%s)', async (panelAgent) => {
+    const harness = createHarness({ panelAgent });
+    const doc = simpleDoc(harness, 'Tokens expire hourly.');
+    renderDoc(harness, doc.id);
+    const readme = await findPane('README.md');
+    const text = await within(readme).findByText('Tokens expire hourly.');
+    vi.stubGlobal('getSelection', () => ({
+      isCollapsed: false, anchorNode: text.firstChild, toString: () => 'Tokens expire hourly.',
+      getRangeAt: () => ({ getBoundingClientRect: () => ({ top: 100, left: 50, width: 40, height: 10 }) }),
+      removeAllRanges: vi.fn()
+    }));
+    fireEvent.mouseUp(readme.querySelector('.dd-preview')!);
+    fireEvent.click(within(readme.querySelector('.dd-selection-chip')!).getByRole('button', { name: 'Ask agent' }));
+    fireEvent.change(await screen.findByPlaceholderText(/^Or describe what you want/), { target: { value: 'Explain this policy' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Start', exact: true }));
+    if (panelAgent) {
+      await waitFor(() => expect(harness.navigateCalls).toHaveLength(1));
+      expect(harness.navigateCalls[0]).toMatchObject({ method: 'openPanelAgent', options: { draft: {
+        selection: { path: 'README.md', text: 'Tokens expire hourly.', startLine: 1, endLine: 1 },
+        prompt: expect.stringContaining('Explain this policy')
+      } } });
+      const draft = (harness.navigateCalls[0] as { options: { draft: { prompt: string } } }).options.draft;
+      expect(draft.prompt).not.toContain('Tokens expire hourly.');
+      expect(harness.spawn).not.toHaveBeenCalled();
+    } else {
+      await waitFor(() => expect(harness.spawn).toHaveBeenCalledTimes(1));
+      expect(harness.spawn.mock.calls[0]![0]).toMatchObject({ prompt: expect.stringContaining('Tokens expire hourly.') });
+      expect(harness.spawn.mock.calls[0]![0]).toMatchObject({ prompt: expect.stringContaining('Explain this policy') });
+    }
   });
 });
 

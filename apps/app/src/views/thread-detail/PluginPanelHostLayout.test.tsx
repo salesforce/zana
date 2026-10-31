@@ -626,13 +626,13 @@ describe('PluginPanelHostLayout', () => {
     act(() => select('a'));
     fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
     expect(screen.getByTestId('agent-composer').dataset.binding).toBe('salesforce/salesforce/a');
-    expect(screen.getByTestId('plugin-panel-host-layout').style.getPropertyValue('--thread-secondary-width')).toBe('420px');
+    expect(screen.getByTestId('plugin-panel-host-layout').style.getPropertyValue('--thread-secondary-width')).toBe('560px');
     act(() => select('b'));
     fireEvent.click(screen.getByTestId('plugin-panel-agent-show'));
     expect(screen.getByTestId('agent-composer').dataset.binding).toBe('salesforce/salesforce/b');
     expect(screen.getByTestId('plugin-panel-host-layout').style.getPropertyValue('--thread-secondary-width')).toBe('600px');
     act(() => select('a'));
-    expect(screen.getByTestId('plugin-panel-host-layout').style.getPropertyValue('--thread-secondary-width')).toBe('420px');
+    expect(screen.getByTestId('plugin-panel-host-layout').style.getPropertyValue('--thread-secondary-width')).toBe('560px');
   });
 
   it('keeps a long generic resource identity without sending an oversized assistant view', () => {

@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Bot, PanelRight } from 'lucide-react';
 import { useCompactLayout } from '../../hooks/useCompactLayout.js';
 import { getBrowserUrlHost } from '../../lib/browser-url.js';
@@ -155,11 +155,12 @@ function PluginResourceSidePanel({
   }, [isOpen, isMaximized, widthPx, onPresentation]);
   const closable = activeClosableTab(panel.state);
   const panelOpen = panel.state.isOpen;
-  const newAgent = () => panel.addTab({ kind: 'agent', title: 'Agent' });
+  const widenAgent = useCallback(() => panel.setWidth(Math.max(panel.state.widthPx, 560), viewRef.current?.clientWidth || 1200), [panel.setWidth, panel.state.widthPx, viewRef]);
+  const newAgent = () => { panel.addTab({ kind: 'agent', title: 'Agent' }); widenAgent(); };
   // Return to the latest conversation rather than stacking blank composers.
   const showAgent = () => {
     const latest = panel.state.tabs.filter((tab) => tab.kind === 'agent').at(-1);
-    if (latest) panel.activateTab(latest.id);
+    if (latest) { panel.activateTab(latest.id); widenAgent(); }
     else newAgent();
   };
   // The page asked to show a conversation (`navigate.openPanelAgent`); an open
@@ -178,11 +179,12 @@ function PluginResourceSidePanel({
       if (request.kind === 'tool') openPluginTool({ pluginId, ...request.target });
       else {
         const target = request.target;
-        if ('draft' in target) openAgentDraft({ title: target.title ?? 'Agent', draft: target.draft, projectId: target.projectId, view: target.view });
+        if ('draft' in target) openAgentDraft({ title: target.title ?? 'Agent', draft: target.draft, projectId: target.projectId, view: target.view, selection: target.selection });
         else addTab({ kind: 'agent', title: target.title ?? 'Agent', threadId: target.threadId });
+        widenAgent();
       }
     }
-  }), [connect, ownerId, openPluginTool, pluginId, openAgentDraft, addTab]);
+  }), [connect, ownerId, openPluginTool, pluginId, openAgentDraft, addTab, widenAgent]);
 
   let panelBody = null;
   if (closable?.kind === 'agent') {
@@ -195,11 +197,12 @@ function PluginResourceSidePanel({
         key={`${tabId}:${closable.draftRevision ?? 0}`}
         threadId={closable.threadId}
         draft={closable.draft}
+        draftSelection={closable.draftSelection}
         draftProjectId={closable.draftProjectId}
         projectId={scopeId}
         resourceLabel={resourceLabel}
         pluginPanel={{ pluginId, panel: panelPath, ...(view ? { view } : {}) }}
-        onCreated={(threadId) => panel.patchTab(tabId, { threadId, draft: undefined, draftProjectId: undefined, draftView: undefined })}
+        onCreated={(threadId) => panel.patchTab(tabId, { threadId, draft: undefined, draftSelection: undefined, draftProjectId: undefined, draftView: undefined })}
         onOpenConversation={({ id, title }) => {
           // Reopening a conversation already in a tab focuses it, not a duplicate.
           const open = panel.state.tabs.find((tab) => tab.kind === 'agent' && tab.threadId === id);

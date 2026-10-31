@@ -70,8 +70,9 @@ describe('PanelAgentTab', () => {
   });
 
   it('seeds the composer with a page draft and leaves the harness to the user', () => {
-    render(<PanelAgentTab pluginPanel={binding} draft="Review this doc" draftProjectId="proj-1" onCreated={vi.fn()} />);
-    expect(composerProps.last).toMatchObject({ initialText: 'Review this doc', composerProjectId: 'proj-1', pluginPanel: binding });
+    const selection = { version: 1 as const, path: 'README.md', text: 'Selected passage' };
+    render(<PanelAgentTab pluginPanel={binding} draft="Review this doc" draftSelection={selection} draftProjectId="proj-1" onCreated={vi.fn()} />);
+    expect(composerProps.last).toMatchObject({ initialText: 'Review this doc', initialSelection: selection, composerProjectId: 'proj-1', pluginPanel: binding });
     expect(composerProps.last).not.toHaveProperty('providerId');
   });
 
