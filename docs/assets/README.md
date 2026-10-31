@@ -9,7 +9,6 @@ pearl white, blue/lavender wings, and a warm golden spark.
 | Asset | Purpose |
 | :--- | :--- |
 | [agent-city-demo.gif](agent-city-demo.gif) | README opening: a 10-second, 900×620 recording of the San Francisco demo, Checkout interior, two floors, and return to the city. Sample data; no sound. |
-| [zana-tour-poster.jpg](zana-tour-poster.jpg) | Poster for the narrated product tour. Copied from `website/public/media/zana-tour-poster.jpg`; the website provides captions. |
 | [zana-readme-hero.svg](zana-readme-hero.svg) | Retained banner master. Fairy geometry comes from `resources/icon.svg`. |
 | [zana-architecture.svg](zana-architecture.svg) | Editable architecture master in the README’s expandable architecture section. |
 | [zana-architecture.png](zana-architecture.png) | 2× PNG export for slides, documents, and sharing. |
@@ -41,8 +40,15 @@ Keep the result below 2 MB and inspect the overview, both interior floors,
 and loop boundary. The current asset is about 0.9 MB.
 
 The narrated tour is the existing `website/public/media/zana-tour.mp4`, uploaded
-as a GitHub attachment for native README playback rather than copied into Git
-again. Keep a link to `https://zana-ide.com/#demo` beside it for captions.
+as a public GitHub attachment for native README playback rather than copied
+into Git again. Its attachment URL lives in the README and PR #621. Place the
+bare URL in its own paragraph so GitHub renders a player. Keep a link to
+`https://zana-ide.com/#demo` beside it for captions.
+
+To replace it, attach the new recording to the update PR with `gh pr create`
+or `gh pr edit --attach /path/to/tour.mp4`; copy the resulting
+`https://github.com/user-attachments/assets/...` URL from the PR body. Verify
+playback in the actual GitHub README before removing the previous reference.
 
 ## Architecture scope
 

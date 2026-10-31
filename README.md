@@ -37,11 +37,7 @@
 
 Start a task, follow your agents, and review the result in this two-minute recording of the app.
 
-<p align="center">
-  <a href="https://zana-ide.com/#demo">
-    <img src="docs/assets/zana-tour-poster.jpg" alt="Watch the two-minute Zana product tour" width="900">
-  </a>
-</p>
+https://github.com/user-attachments/assets/e740fdf8-50f7-4823-b956-976904ff364e
 
 [Watch with captions on the website →](https://zana-ide.com/#demo)
 
