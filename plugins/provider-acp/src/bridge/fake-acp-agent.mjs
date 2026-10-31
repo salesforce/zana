@@ -58,6 +58,9 @@
  *                              (exercises large-catalog reasoning discovery)
  * - FAKE_ACP_AUTH_METHODS    → comma-separated auth method ids to advertise;
  *                              session creation requires authenticate first
+ * - FAKE_ACP_CURSOR_LOGIN_MISSING=1 → cursor_login needs a browser login
+ * - FAKE_ACP_BROWSER_LOG    → record unwanted browser login attempts
+ * - FAKE_ACP_AUTH_ERROR     → fail authenticate with this message
  * - FAKE_ACP_WRITE_PATH      → target path for the "write-file" prompt
  * - FAKE_ACP_SCRIPT          → JSON reply played when a prompt contains its
  *                              `match`: { match, steps: [{ say } | { pause } |
@@ -686,6 +689,10 @@ async function handleMessage(message) {
       return;
     case "authenticate": {
       const methodId = message.params?.methodId;
+      if (process.env.FAKE_ACP_AUTH_ERROR) {
+        send({ jsonrpc: "2.0", id: message.id, error: { code: -32602, message: process.env.FAKE_ACP_AUTH_ERROR } });
+        return;
+      }
       if (!authMethods.includes(methodId)) {
         send({
           jsonrpc: "2.0",
@@ -701,6 +708,14 @@ async function handleMessage(message) {
           error: { code: -32001, message: "XAI_API_KEY is required" },
         });
         return;
+      }
+      if (methodId === "cursor_login" && process.env.FAKE_ACP_CURSOR_LOGIN_MISSING === "1") {
+        // Cursor ignores _meta.headless. Its browser helper checks this env var.
+        if (process.env.NO_OPEN_BROWSER) {
+          send({ jsonrpc: "2.0", id: message.id, error: { code: -32602, message: "Invalid params", data: { message: "Failed to open browser for login. Please visit: https://example.test/login" } } });
+          return;
+        }
+        if (process.env.FAKE_ACP_BROWSER_LOG) writeFileSync(process.env.FAKE_ACP_BROWSER_LOG, "opened\n");
       }
       authenticatedMethod = methodId;
       send({ jsonrpc: "2.0", id: message.id, result: null });
