@@ -19,14 +19,6 @@
   <sub>Free and open source · macOS (Apple Silicon &amp; Intel) · Windows x64</sub>
 </p>
 
-<p align="center">
-  <a href="https://zana-ide.com/">
-    <img src="docs/assets/agent-city-demo.gif" alt="Agent City demo: explore a miniature San Francisco, enter the Checkout project, and visit two floors of sample agents." width="900">
-  </a>
-  <br>
-  <sub>Every building is a project. Every agent has a place. <a href="https://zana-ide.com/">Explore the interactive demo →</a><br>Agent City plugin · Recorded with sample data</sub>
-</p>
-
 ## Keep your work moving
 
 - **Your agents, together.** Use Claude Code, Codex, Cursor, OpenCode, and Pi in structured conversations or native CLI sessions across your projects.
