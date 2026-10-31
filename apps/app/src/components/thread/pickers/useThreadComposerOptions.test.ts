@@ -268,6 +268,28 @@ describe('composer host cache subscriptions', () => {
     expect(view.result.current.selectionError).toBeNull();
   });
 
+  it('restores inherited reasoning when a temporary model cannot support it', async () => {
+    const effort = (reasoningEffort: string) => ({ reasoningEffort, description: reasoningEffort });
+    const providers = [{ id: 'codex', displayName: 'Codex', capabilities: { permissionModes: ['auto'] } }];
+    let discoveredHigh = false;
+    resetThreadModelCatalog(async () => ({
+      providers,
+      models: [
+        { model: 'persisted', displayName: 'Persisted', supportedReasoningEfforts: discoveredHigh ? [effort('medium'), effort('high')] : [effort('medium')], defaultReasoningEffort: 'medium' }
+      ],
+      selectedOnlyModels: [], modelLoadError: null
+    }) as never);
+    const view = renderHook(() => useThreadComposerOptions({
+      threadId: 'restored', lockedProviderId: 'codex',
+      initialModel: 'persisted', initialReasoningLevel: 'high'
+    }));
+    await waitFor(() => expect(view.result.current.catalogSettled).toBe(true));
+    expect(view.result.current.reasoningLevel).toBe('medium');
+    discoveredHigh = true;
+    await act(async () => view.result.current.refreshModels());
+    expect(view.result.current.reasoningLevel).toBe('high');
+  });
+
   it('does not report a saved role as unavailable until discovery settles', async () => {
     let resolveDiscovery!: (value: unknown) => void;
     const discovery = new Promise((resolve) => { resolveDiscovery = resolve; });

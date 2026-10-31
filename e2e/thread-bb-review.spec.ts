@@ -60,7 +60,11 @@ test('thread options survive public create, follow-up, stop and resume', async (
   }, id);
   await expect.poll(settings).toEqual([expect.objectContaining({ model: 'chosen-model', reasoningLevel: 'high', serviceTier: 'fast' })]);
   await win.evaluate(async id => { await fetch(`/api/v1/threads/${id}/stop`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); await fetch(`/api/v1/threads/${id}/resume`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); }, id);
+  await expect.poll(() => win.evaluate(async id => (await (await fetch(`/api/v1/threads/${id}`)).json()).thread, id))
+    .toMatchObject({ model: 'chosen-model', reasoningLevel: 'high', serviceTier: 'fast' });
   await win.evaluate(id => { history.pushState({}, '', `/threads/${id}`); dispatchEvent(new PopStateEvent('popstate')); }, id);
+  // The composer mounts before the persisted thread options finish loading.
+  await expect(win.getByRole('button', { name: 'Thinking: High', exact: true })).toBeVisible();
   await win.getByTestId('thread-command-input').fill('report_execution_snapshot resumed');
   await expect(win.getByTestId('thread-command-send')).toBeEnabled();
   await expect(win.getByRole('combobox', { name: 'Service tier', exact: true })).toHaveCount(0);

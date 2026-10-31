@@ -281,9 +281,14 @@ export function useThreadComposerOptions(input: {
       activeModel.supportedReasoningEfforts.map((effort) => effort.reasoningEffort)
     );
     if (supported.length === 0) return;
-    const next = reconcileReasoningLevel(reasoningLevel, supported);
+    // Discovery may temporarily show a default model with fewer levels. Keep
+    // the thread's inherited preference until the user picks a model or level.
+    const preferred = !hasModel && input.initialReasoningLevel
+      ? asReasoningLevel(input.initialReasoningLevel, reasoningLevel)
+      : reasoningLevel;
+    const next = reconcileReasoningLevel(preferred, supported);
     if (next !== reasoningLevel) setReasoningLevelState(next);
-  }, [hasReasoning, activeModel, reasoningLevel]);
+  }, [hasReasoning, hasModel, input.initialReasoningLevel, activeModel, reasoningLevel]);
 
   const providerOptions: PickerOption<string>[] = providers.map((row) => ({
     value: row.id,

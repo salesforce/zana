@@ -1750,6 +1750,15 @@ describe("buildThreadTimelineFromEvents", () => {
     ).toHaveLength(0);
   });
 
+  it("does not invent a user row for a rejection whose request is outside the page", () => {
+    const event = createTimelineEventFactory({ threadId: "thread-1" });
+    const rows = buildTimelineRows(fromRows([
+      event.clientTurnRejected({ requestId: event.clientTurnRequested({ text: "Outside page" }).data.requestId, reason: "send_cancelled" }),
+    ]));
+
+    expect(rows.filter((row) => row.kind === "conversation" && row.role === "user")).toHaveLength(0);
+  });
+
   it.each([
     ["command_failed", "rejected"],
     ["send_cancelled", "cancelled"],
