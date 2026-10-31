@@ -58,6 +58,7 @@ interface MountOptions {
   path?: string;
   draft?: string;
   quotes?: string[];
+  addToThread?: boolean;
   files?: DesignDocFileMeta[];
 }
 
@@ -65,6 +66,7 @@ function mount(harness: Harness, docId: string, options: MountOptions = {}) {
   const onOpenPath = vi.fn();
   const onQuote = vi.fn();
   const onAskAbout = vi.fn();
+  const onAddToThread = vi.fn();
   const handleRef: MutableRefObject<PreviewHandle | null> = { current: null };
   const element = (next: MountOptions) => {
     const path = next.path ?? 'index.html';
@@ -79,6 +81,7 @@ function mount(harness: Harness, docId: string, options: MountOptions = {}) {
         onOpenPath={onOpenPath}
         onQuote={onQuote}
         onAskAbout={onAskAbout}
+        onAddToThread={next.addToThread ? onAddToThread : undefined}
         handleRef={handleRef}
       />
     );
@@ -89,6 +92,7 @@ function mount(harness: Harness, docId: string, options: MountOptions = {}) {
     onOpenPath,
     onQuote,
     onAskAbout,
+    onAddToThread,
     handleRef,
     rerender(next: MountOptions = {}) {
       current = { ...current, ...next };
@@ -595,4 +599,15 @@ describe('PageFrame', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open in browser' }));
     await waitFor(() => expect(harness.toasts).toContainEqual({ message: 'standalone pages are not served here', kind: 'error' }));
   });
+});
+
+it('adds the exact iframe selection to the owning thread and clears the selection', async () => {
+  const {harness, doc} = setup();
+  const view = mount(harness, doc.id, {addToThread: true});
+  const port = hello(await findFrame());
+  port.emit({type: 'selection', text: '  exact\n  passage  ', rect: {top: 80, left: 20, bottom: 100, right: 140}});
+  fireEvent.click(screen.getByRole('button', {name: 'Add to thread'}));
+  expect(view.onAddToThread).toHaveBeenCalledWith('  exact\n  passage  ');
+  expect(view.onAskAbout).not.toHaveBeenCalled();
+  expect(port.ofType('clear-selection')).toHaveLength(1);
 });

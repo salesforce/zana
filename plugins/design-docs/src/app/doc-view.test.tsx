@@ -1320,3 +1320,26 @@ it('hands snapshot arrays to capable hosts and includes exact text for older hos
  expect((openPanelAgent.mock.lastCall![0] as {draft:{prompt:string}}).draft.prompt).toContain(reference.text);
  expect((openPanelAgent.mock.lastCall![0] as {draft:unknown}).draft).not.toHaveProperty('references');
 });
+
+it.each([true, false])('adds the selected rendered snapshot only to the owning thread, reporting a rejected destination (%s)', async accepted => {
+  const harness = createHarness({context: {threadId: 'visible'}, contextReferences: true});
+  const runtime = (globalThis as any).__ZCC_PLUGIN_RUNTIME__;
+  const navigate = runtime.useZccNavigate();
+  const add = vi.fn(() => accepted);
+  runtime.useZccNavigate = () => ({...navigate, addThreadContext: add});
+  const doc = simpleDoc(harness, 'Exact rendered passage.');
+  renderDoc(harness, doc.id);
+  const readme = await findPane('README.md');
+  const element = await within(readme).findByText('Exact rendered passage.');
+  const selection = {isCollapsed: false, anchorNode: element.firstChild, focusNode: element.firstChild, toString: () => '  exact passage  ',
+    getRangeAt: () => ({getBoundingClientRect: () => ({top: 100, left: 50, width: 40, height: 10})}), removeAllRanges: vi.fn()};
+  vi.stubGlobal('getSelection', () => selection);
+  fireEvent.mouseUp(element);
+  fireEvent.click(screen.getByRole('button', {name: 'Add to thread'}));
+  expect(add).toHaveBeenCalledWith(expect.objectContaining({text: '  exact passage  ', source: expect.objectContaining({resourceId: doc.id, path: 'README.md'})}));
+  expect(selection.removeAllRanges).toHaveBeenCalled();
+  expect(harness.toasts.some(item => item.message.includes('beside a thread'))).toBe(!accepted);
+  vi.stubGlobal('getSelection', () => undefined);
+  fireEvent.mouseUp(element);
+  expect(screen.queryByRole('button', {name: 'Add to thread'})).toBeNull();
+});

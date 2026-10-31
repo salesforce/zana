@@ -621,3 +621,15 @@ it('projects only verified copied snapshots with shifted multipart offsets',asyn
  expect(parsed?.references).toEqual([{start:6,end:6+text.length,reference}]);
  expect(parsePromptInput([{type:'text',text:'old ordinary',mentions:[]}])?.references).toBeUndefined();
 });
+
+it('preserves copied snapshot metadata in client requests alongside images and empty text segments', async () => {
+  const {contextReferencePrompt} = await import('@zana-ai/zcc-domain/thread-runtime');
+  const reference = {version: 1 as const, label: 'Record', text: 'exact'};
+  const text = contextReferencePrompt(reference);
+  const references = [{start: 0, end: text.length, reference}];
+  const input = [{type: 'text' as const, text: '', mentions: []}, {type: 'text' as const, text, mentions: [], references},
+    {type: 'image' as const, url: 'https://example.com/image.png'}, {type: 'localImage' as const, path: 'image.png'}];
+  const factory = createTimelineEventFactory({threadId: 'thread-1'});
+  const {event, meta} = decodeThreadEventRow(factory.clientTurnRequested({target: {kind: 'new-turn'}, text, input}));
+  expect(parseUserFromClientRequest({decoded: event, meta, options: standardProjectionOptions})).toMatchObject({text, references, attachments: {webImages: 1, localImages: 1}});
+});

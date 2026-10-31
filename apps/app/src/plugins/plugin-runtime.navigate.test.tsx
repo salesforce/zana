@@ -1,4 +1,5 @@
 import { registerThreadContextTarget } from './thread-context-target.js';
+import { ComposerApiContext, setActiveComposerApi } from './plugin-composer-api.js';
 import { ThreadPanelOwnerProvider } from './thread-panel-owner.js';
 /**
  * @vitest-environment happy-dom
@@ -157,4 +158,27 @@ it('adds context to the visible panel owner and rejects unrelated page assistant
   const other=renderRuntime('notes',children=><PluginPagePanelProvider page={page}>{children}</PluginPagePanelProvider>);
   expect(other.navigate.addThreadContext?.(reference)).toBe(false);
  } finally {off();}
+});
+
+it('exposes context insertion only through a scoped composer and preserves legacy global text access', () => {
+  installPluginRuntime();
+  const runtime = (globalThis as { __ZCC_PLUGIN_RUNTIME__?: PluginSdkApp }).__ZCC_PLUGIN_RUNTIME__!;
+  const insert = vi.fn(() => true);
+  const globalApi = { text: 'global draft', insertContextReference: insert } as any;
+  const scopedApi = { text: 'owned draft', insertContextReference: insert } as any;
+  let api: ReturnType<PluginSdkApp['useComposer']>;
+  function Probe() { api = runtime.useComposer(); return null; }
+  const element = (scoped: any) => <PluginRuntimeContext.Provider value={{ pluginId: 'notes', generation: 0 }}>
+    <ComposerApiContext.Provider value={scoped}><Probe /></ComposerApiContext.Provider>
+  </PluginRuntimeContext.Provider>;
+  setActiveComposerApi(globalApi);
+  const view = render(element(null));
+  expect(api!.text).toBe('global draft');
+  expect(api!.insertContextReference).toBeUndefined();
+  view.rerender(element(scopedApi));
+  expect(api!.text).toBe('owned draft');
+  expect(api!.insertContextReference).toBe(insert);
+  setActiveComposerApi(null);
+  view.rerender(element(null));
+  expect(api!.insertContextReference).toBeUndefined();
 });

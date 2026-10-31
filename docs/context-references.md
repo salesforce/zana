@@ -78,3 +78,9 @@ Rebased onto `origin/main` at `b6d717095c4449d196ed8f316dc62c1efb0b6e5d`, includ
 - **10 built-Electron scenarios passed** with the four-spec command above, including the selection-specific Ask agent scenario added on main. Actual clipboard copy/paste, scoped insertion, conversion, undo, sending, history reload, packaged-provider recovery and plugin authoring passed in isolated builds.
 
 The normal pre-push verification and GitHub checks run against the integrated branch before merge. Their final results and merge identity are recorded in the Design Doc and project handoff.
+
+### Merge-gate follow-up
+
+Added direct regression coverage for rich prompt-history restoration (including malformed history, stale responses and failed loads), new/existing thread snapshot submission, plugin insertion ownership and teardown, scoped versus legacy SDK access, Add to thread success/rejection, iframe selection insertion, edited-message offsets, and timeline/steer metadata. The CI changed-code statements/branches check passes locally against the combined coverage reports, including every modified production file.
+
+The first Linux CI run exposed top-level CDP keyboard dispatch failing to copy the sandboxed iframe selection. The test now explicitly focuses the frame, checks focus and exact selection, then invokes Electron's native Copy command for that focused frame. It still checks the actual OS clipboard, metadata paste and saved snapshots. The updated two-scenario built-Electron suite passed locally; Linux CI must pass this path before merge.

@@ -456,3 +456,22 @@ it('renders recorded context as a compact inspectable snapshot',async()=>{
  expect(screen.getByRole('dialog').textContent).toContain(reference.text);
  expect(screen.queryByRole('button',{name:'Remove Passage'})).toBeNull();
 });
+
+it('retains unchanged snapshots when editing surrounding text and when expanding a saved message', async () => {
+  const {contextReferencePrompt} = await import('@zana-ai/zcc-domain/thread-runtime');
+  const reference = {version: 1 as const, label: 'Saved passage', text: 'exact original'};
+  const block = contextReferencePrompt(reference);
+  const text = 'Before '+block;
+  const references = [{start: 7, end: text.length, reference}];
+  vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(400);
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(100);
+  const view = render(<ConversationRow threadId="t1" threadIdle row={{...userRow, text, references}} />);
+  fireEvent.click(screen.getAllByRole('button', {name: 'Show more'}).at(-1)!);
+  expect(screen.getByRole('button', {name: 'Inspect Saved passage'})).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', {name: 'Edit message'}));
+  fireEvent.change(screen.getByLabelText('Edit message'), {target: {value: 'Prefix '+text}});
+  fireEvent.submit(screen.getByTestId('thread-message-edit'));
+  await waitFor(() => expect(editMessage).toHaveBeenCalledWith('t1', expect.objectContaining({input: [expect.objectContaining({references: [{start: 14, end: text.length+7, reference}]})]})));
+  view.unmount();
+  vi.restoreAllMocks();
+});

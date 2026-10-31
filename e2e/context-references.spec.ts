@@ -56,8 +56,13 @@ test('rendered Markdown and sandboxed HTML copy through the native clipboard int
   const htmlPassage=win.frameLocator('iframe[title="passage.html"]').locator('#passage');
   await expect(htmlPassage).toBeVisible({timeout:30_000});
   await htmlPassage.click();
-  await htmlPassage.evaluate(element=>{const selection=window.getSelection()!;selection.removeAllRanges();const range=document.createRange();range.selectNodeContents(element);selection.addRange(range);});
-  await win.keyboard.press('ControlOrMeta+c');
+  await win.locator('iframe[title="passage.html"]').focus();
+  await htmlPassage.evaluate(element=>{window.focus();const selection=window.getSelection()!;selection.removeAllRanges();const range=document.createRange();range.selectNodeContents(element);selection.addRange(range);});
+  await expect.poll(() => htmlPassage.evaluate(() => document.hasFocus())).toBe(true);
+  await expect.poll(() => htmlPassage.evaluate(() => window.getSelection()?.toString())).toBe(html);
+  // Route Copy through Electron's native edit command for the focused frame.
+  // CDP keyboard dispatch to the top-level page does not consistently reach a sandboxed child on Linux.
+  await app.electron.evaluate(({BrowserWindow}, url) => BrowserWindow.getAllWindows().find(window => window.webContents.getURL() === url)!.webContents.copy(), win.url());
   await expect.poll(()=>app.electron.evaluate(({clipboard})=>clipboard.readText())).toBe(html);
   await input.focus();await input.press('ControlOrMeta+End');await input.press('ArrowRight');await input.press('ControlOrMeta+v');
   await expect(input.getByRole('button',{name:'Inspect passage.html (selection)'})).toBeVisible();

@@ -2967,3 +2967,16 @@ describe("buildThreadTimelineFromEvents", () => {
     expect(rows[0]?.change.path).toBe("/etc/hosts");
   });
 });
+
+it.each([false, true])('retains copied context metadata in timeline messages and steers (steer=%s)', async steer => {
+  const {contextReferencePrompt} = await import('@zana-ai/zcc-domain/thread-runtime');
+  const reference = {version: 1 as const, label: 'Record', text: 'exact'};
+  const text = contextReferencePrompt(reference);
+  const references = [{start: 0, end: text.length, reference}];
+  const event = createTimelineEventFactory({threadId: 'thread-1'});
+  const rows = buildTimelineRows(fromRows([
+    ...(steer ? [event.turnStarted({turnId: 'turn-1'})] : []),
+    event.clientTurnRequested({target: steer ? {kind: 'steer', expectedTurnId: 'turn-1'} : {kind: 'new-turn'}, text, input: [{type: 'text', text, mentions: [], references}]})
+  ]), steer ? 'active' : 'idle');
+  expect(rows.find(row => row.kind === 'conversation' && row.role === 'user')).toMatchObject({text, references});
+});
