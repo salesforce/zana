@@ -124,7 +124,6 @@ describe('ThreadCommandComposer initial text', () => {
     expect(source).toContain('useComposerPromptField');
     expect(field).toContain('seededFor');
     expect(field).toContain("editor.chain().clearContent().insertContent(initialText ?? '')");
-    expect(field).toContain('if (autoFocus) chain.focus()');
   });
 
   it('stays on the project thread URL after create from a workspace', () => {
@@ -328,7 +327,6 @@ describe('ThreadCommandComposer submit path', () => {
     expect(field).toContain('setEditable');
     expect(field).toContain('editor.setEditable(!disabled)');
     expect(field).toContain('restoreFocusAfterSubmitRef');
-    expect(field).toContain("editor.commands.focus('end'");
 
     const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
     const sendingStart = css.indexOf('.thread-command-composer .thread-command-send.is-sending,');

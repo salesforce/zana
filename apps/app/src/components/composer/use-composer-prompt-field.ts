@@ -2,6 +2,7 @@ import { closeHistory } from '@tiptap/pm/history';
 import { NodeSelection, TextSelection } from '@tiptap/pm/state';
 import { parseEditorSelection, contextReferenceFromEditorSelection, type EditorSelection, contextReferenceFromClipboard, parseContextReferences, parseContextReference, type ContextReference } from '@zana-ai/zcc-plugin-sdk/app';
 import { nativeCapabilities } from '../../lib/native-capabilities.js';
+import { canAutomaticallyFocus } from '../../lib/automatic-focus.js';
 import { promptEditorDocument } from './restore-prompt-editor.js';
 import { promptInputSchema, type PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type DragEvent as ReactDragEvent, type SetStateAction } from 'react';
@@ -432,14 +433,18 @@ export function useComposerPromptField({
     if (!replaceable) return;
     const chain = editor.chain().clearContent().insertContent(initialText ?? '');
     for (const reference of references) chain.insertContent({ type: 'editorSelection', attrs: { reference } }).insertContent(' ');
-    if (autoFocus) chain.focus();
     chain.run();
     draft.setSeed({ text: seed, revision: draft.getSnapshot().revision });
   }, [autoFocus, draft, editor, initialText, initialReferences, initialSelection]);
 
   useEffect(() => {
-    if (!editor || !autoFocus || initialText) return;
-    editor.commands.focus();
+    if (!editor || !autoFocus) return;
+    const frame = requestAnimationFrame(() => {
+      // Check at the moment of focus, including late mounts and pane updates.
+      // Tiptap's focus command defers again, leaving a race with another input.
+      if (!editor.isDestroyed && canAutomaticallyFocus(editor.view.dom)) editor.view.focus();
+    });
+    return () => cancelAnimationFrame(frame);
   }, [autoFocus, editor, initialText]);
 
   useEffect(() => {
@@ -447,9 +452,10 @@ export function useComposerPromptField({
     editor.setEditable(!disabled);
     if (disabled || !restoreFocusAfterSubmitRef.current) return;
     const frame = requestAnimationFrame(() => {
-      if (editor.isDestroyed) return;
       restoreFocusAfterSubmitRef.current = false;
-      editor.commands.focus('end', { scrollIntoView: false });
+      if (editor.isDestroyed || !canAutomaticallyFocus(editor.view.dom)) return;
+      editor.commands.setTextSelection(editor.state.doc.content.size);
+      editor.view.focus();
     });
     return () => cancelAnimationFrame(frame);
   }, [disabled, editor]);

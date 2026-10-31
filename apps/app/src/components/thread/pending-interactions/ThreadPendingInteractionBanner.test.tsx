@@ -363,6 +363,35 @@ afterEach(() => {
 });
 
 describe('ThreadPendingInteractionBanner keyboard', () => {
+  it.each(['input', 'textarea', 'div', 'button'])('keeps focus in a %s when a new approval arrives', (tag) => {
+    const active = document.createElement(tag);
+    if (tag === 'div') active.contentEditable = 'true';
+    active.tabIndex = 0;
+    document.body.append(active);
+    active.focus();
+    const view = render(<MemoryRouter>
+      <ThreadPendingInteractionBanner interaction={commandInteraction()} threadId="thr-1" />
+    </MemoryRouter>);
+    expect(document.activeElement).toBe(active);
+    view.rerender(<MemoryRouter>
+      <ThreadPendingInteractionBanner interaction={{ ...commandInteraction(), id: 'another-agent-approval' }} threadId="thr-1" />
+    </MemoryRouter>);
+    expect(document.activeElement).toBe(active);
+    active.remove();
+  });
+
+  it('keeps the focused decision when another agent requests approval', () => {
+    const view = render(<MemoryRouter>
+      <ThreadPendingInteractionBanner interaction={commandInteraction()} threadId="thr-1" />
+    </MemoryRouter>);
+    const first = document.activeElement;
+    view.rerender(<MemoryRouter>
+      <ThreadPendingInteractionBanner interaction={commandInteraction()} threadId="thr-1" />
+      <ThreadPendingInteractionBanner interaction={{ ...commandInteraction(), id: 'second' }} threadId="thr-2" />
+    </MemoryRouter>);
+    expect(document.activeElement).toBe(first);
+  });
+
   it('auto-focuses the primary decision and moves with arrows', () => {
     render(
       <MemoryRouter>
