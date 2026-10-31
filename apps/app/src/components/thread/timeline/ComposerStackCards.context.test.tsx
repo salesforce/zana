@@ -1,7 +1,15 @@
 // @vitest-environment happy-dom
 import { act, cleanup, createEvent, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { PromptContextBanner } from './ComposerStackCards.js';
+import type { ComponentProps } from 'react';
+import { PromptContextBanner as ContextBanner } from './ComposerStackCards.js';
+import { useLiveThreadContext } from '../useLiveThreadContext.js';
+
+// Exercise the shared live value with its real composer presentation.
+function PromptContextBanner(props: ComponentProps<typeof ContextBanner> & { environmentId?: string | null }) {
+  const { displayedBranch, pullRequest } = useLiveThreadContext(props);
+  return <ContextBanner {...props} branchName={displayedBranch} pullRequest={pullRequest} />;
+}
 
 const api = vi.hoisted(() => ({ status: vi.fn(), pullRequest: vi.fn(), handleHttpLinkClick: vi.fn() }));
 vi.mock('../../../lib/product-client.js', () => ({ product: { environments: api } }));

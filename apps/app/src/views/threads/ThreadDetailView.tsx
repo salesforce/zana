@@ -20,6 +20,7 @@ import {
 } from '../../components/thread/thread-timeline-model.js';
 import { ThreadDetailActions, ThreadDetailHeading, ThreadPromptModeCard, ThreadStatusBadge, ThreadTodoCard } from '../../components/thread/timeline/ThreadBanners.js';
 import { ThreadDetailContext } from '../../components/thread/ThreadDetailContext.js';
+import { useLiveThreadContext } from '../../components/thread/useLiveThreadContext.js';
 import {
   BackgroundCommandsCard,
   ModelFallbackCard,
@@ -240,6 +241,7 @@ function ThreadDetailBody({
   const [environmentId, setEnvironmentId] = useState<string | null>(null);
   const [isWorktree, setIsWorktree] = useState(false);
   const [branchName, setBranchName] = useState<string | null>(null);
+  const { displayedBranch, pullRequest } = useLiveThreadContext({ threadId, environmentId, branchName });
   const [archivedAt, setArchivedAt] = useState<number | null>(null);
   const [threadProviderId, setThreadProviderId] = useState<string | null>(null);
   const [threadModel, setThreadModel] = useState<string | null>(null);
@@ -691,7 +693,7 @@ function ThreadDetailBody({
         projectId={projectId}
         isWorktree={isWorktree}
         cwd={cwd}
-        branchName={branchName}
+        branchName={displayedBranch ?? null}
         environmentId={environmentId}
         model={threadModel}
         reasoningLevel={threadReasoning}
@@ -986,7 +988,7 @@ function ThreadDetailBody({
               projectName: project?.name ?? null,
               machineName: executionLocation.machineName,
               machineRemote: executionLocation.remote,
-              branchName
+              branchName: displayedBranch ?? null
             }} />}
           />
           <ThreadDetailActions target={mobileControlsTarget}>
@@ -1093,12 +1095,12 @@ function ThreadDetailBody({
             <div className="thread-composer-dock">
               {!compact && <PromptContextBanner
                 threadId={threadId}
-                branchName={branchName}
+                branchName={displayedBranch ?? null}
                 isWorktree={isWorktree}
                 parentThreadId={parentThreadId}
                 originKind={originKind}
                 childCount={childThreads.length}
-                environmentId={environmentId}
+                pullRequest={pullRequest}
               />}
               <QueuedMessagesCard threadId={threadId} />
               <ModelFallbackCard fallback={modelFallback} />
