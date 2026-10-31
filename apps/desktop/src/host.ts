@@ -68,7 +68,7 @@ import {
 } from './squad-session-lifecycle.js';
 import { createSquadWorktreeRuntime, trustedSquadWorktreeRoot, isWithinSquadWorktreeBase, SQUAD_WORKTREE_ACTION } from './squad-worktree-runtime.js';
 import { createTriggeredSquadLauncher, goalSquadTrigger, scheduledSquadTrigger } from './triggered-squad.js';
-import { MAX_HANDOFF_FILE_BYTES, TeamPlanHandoff, authoredPlanRelPath, correctedPlanRelPath, correctionProseRelPath, createPlanTraceSink, cleanupHandoffFiles, readAuthoredPlan, writeSourceMirror } from './team-plan-handoff.js';
+import { MAX_HANDOFF_FILE_BYTES, TeamPlanHandoff, authoredPlanRelPath, correctedPlanRelPath, correctionProseRelPath, createPlanTraceSink, cleanupHandoffFiles, handoffPromptPath, readAuthoredPlan, writeSourceMirror } from './team-plan-handoff.js';
 import { PlanCorrectionService } from './plan-correction/service.js';
 import { planCorrectionSubmitter } from './plan-correction/wiring.js';
 import { onOrchestratorIdle } from './coordinator-idle.js';
@@ -5435,7 +5435,8 @@ async function prepareCoordinatorHandoff(args: {
   const planWriteAbsPaths = planFileAbsPath
     ? [planFileAbsPath, ...[correctedPlanRelPath(args.executionId), correctionProseRelPath(args.executionId)].map(confined).filter((abs): abs is string => !!abs)]
     : undefined;
-  const base = { planFilePath, ...(planFileAbsPath ? { planFileAbsPath, planWriteAbsPaths } : {}) };
+  // The prompt names the absolute file: the coordinator's cwd can differ from the handoff root.
+  const base = { planFilePath: handoffPromptPath(handoffRoot, planFilePath), planFileAbsPath, planWriteAbsPaths };
   const bundle = args.sourceBundle;
   // The durable record carries only stripped metadata; reconstruct the raw
   // requirement text host-side from the immutable content store so the mirror has
