@@ -66,3 +66,15 @@ it('isolates a throwing plugin observer from accepted submissions', async () => 
   off();
   stop();
 });
+
+it('rejects malformed updates and does not let stale controls remove the replacement',async()=>{
+ const {registerThreadContextControls,updateThreadContext,focusThreadComposer}=await import('./thread-context-target.js');
+ const release=registerThreadContextTarget('replacement',()=>true);
+ expect(updateThreadContext('replacement','p','r',null)).toBe(false);
+ focusThreadComposer('replacement');focusThreadComposer('absent');
+ const old=registerThreadContextControls('replacement',{update:()=>false,focus:()=>{}});
+ const update=vi.fn(()=>true);const stop=registerThreadContextControls('replacement',{update,focus:()=>{}});
+ old();expect(updateThreadContext('replacement','p','r',{version:2} as never)).toBe(false);
+ expect(updateThreadContext('replacement','p','r',null)).toBe(true);expect(update).toHaveBeenCalledOnce();
+ stop();release();
+});

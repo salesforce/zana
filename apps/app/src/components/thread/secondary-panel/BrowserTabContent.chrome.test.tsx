@@ -412,3 +412,16 @@ describe('BrowserTabContent visibility', () => {
     expect(h.api.navigate).toHaveBeenCalledWith({ tabId: 'browser:test', url: 'http://127.0.0.1:3003/next' });
   });
 });
+
+it('mounts browser plugin actions only after the browser has an owning thread',async()=>{
+ const {definePluginApp}=await import('@zana-ai/zcc-plugin-sdk');
+ const {interpretPluginApp,clearPluginSlots}=await import('../../../plugins/plugin-slots.js');
+ const harness=createHarness();vi.stubGlobal('cc',{browser:harness.api});
+ interpretPluginApp('thread-scope-check',definePluginApp(app=>app.slots.experimental_browserToolbarAction({id:'annotate',title:'Annotate',component:()=> <button>Scoped annotation</button>})));
+ try{
+ const view=render(<BrowserTabContent tabId="browser:test" initialUrl="https://example.com" canShowNativeBrowserView visibilityCoordinator={null} onUpdate={()=>{}} />);
+ expect(screen.queryByRole('button',{name:'Scoped annotation'})).toBeNull();
+ view.rerender(<BrowserTabContent tabId="browser:test" threadId="thread-1" initialUrl="https://example.com" canShowNativeBrowserView visibilityCoordinator={null} onUpdate={()=>{}} />);
+ expect(screen.getByRole('button',{name:'Scoped annotation'})).toBeTruthy();
+ }finally{clearPluginSlots('thread-scope-check');}
+});

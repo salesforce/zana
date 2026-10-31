@@ -764,7 +764,7 @@ function ThreadComposerContent({
             acpMode: selectedComposerMode?.usesSlashPlan ? undefined : selectedComposerMode?.nativeValue
           });
           field.clearIfRevision(revision);
-          if (threadId) notifyThreadSubmitted(threadId);
+          notifyThreadSubmitted(threadId);
           dispatchThreadMessageSent(threadId);
         } catch (error) {
           dispatchOptimisticUserMessage(threadId, null);
@@ -792,7 +792,6 @@ function ThreadComposerContent({
       }
       upsertThread(created.value);
       field.clearIfRevision(revision);
-      if (threadId) notifyThreadSubmitted(threadId);
       if (currentVoiceOwner.current !== voiceOwner) return;
       onCreated?.(created.value.id);
       if (navigateOnCreate) {

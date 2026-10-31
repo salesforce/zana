@@ -1,9 +1,9 @@
 import { expect, it, vi } from 'vitest';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 
-const electron = vi.hoisted(() => ({ expose: vi.fn(), invoke: vi.fn() }));
+const electron = vi.hoisted(() => ({ expose: vi.fn(), invoke: vi.fn(), on: vi.fn(), off: vi.fn() }));
 vi.mock('electron', () => ({
-  ipcRenderer: { invoke: electron.invoke, setMaxListeners: vi.fn(), on: vi.fn() },
+  ipcRenderer: { invoke: electron.invoke, setMaxListeners: vi.fn(), on: electron.on, off: electron.off },
   contextBridge: { exposeInMainWorld: electron.expose }, webFrame: { getZoomFactor: () => 1 }, webUtils: { getPathForFile: vi.fn() },
 }));
 
@@ -43,3 +43,17 @@ it('forwards only the installed id and recovery action through the plugin bridge
   await expect(api.pluginApps.repair('example', 'locate')).resolves.toEqual({ ok: true, value: true });
   expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.pluginApps.repair, 'example', 'locate');
 });
+
+ it('forwards browser evaluation and releases the exact page message listener', async () => {
+  await import('./preload.js');
+  const api = electron.expose.mock.calls.find(([name]) => name === 'cc')![1];
+  const request = {tabId:'tab',threadId:'thread',expression:'1',world:'isolated'};
+  electron.invoke.mockClear(); electron.invoke.mockResolvedValueOnce(42);
+  await expect(api.browser.evaluate(request)).resolves.toBe(42);
+  expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.browser.evaluate, request);
+  const listener=vi.fn(); const off=api.browser.onPageMessage(listener);
+  const handler=electron.on.mock.calls.find(([name])=>name===IPC.browser.pageMessage)![1];
+  const message={tabId:'tab',threadId:'thread',data:{type:'pin'}};
+  handler({},message); expect(listener).toHaveBeenCalledExactlyOnceWith(message);
+  off(); expect(electron.off).toHaveBeenCalledExactlyOnceWith(IPC.browser.pageMessage,handler);
+ });
