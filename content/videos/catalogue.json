@@ -77,6 +77,56 @@
         "sha256": "55d86127134c8796c9229807959114af260c771e42e036ff11031d5e61fdde7f",
         "bytes": 771
       }
+    },
+    {
+      "id": "build-an-agentforce-agent",
+      "group": "Agentforce",
+      "title": "How to build an Agentforce Agent in Zana",
+      "description": "Use Pi with the SF-Pi plugin in a thread: it writes and compiles the agent, previews it, fixes the policy, writes five test scenarios and runs them, then opens it all in Agentforce Studio.",
+      "duration": "1:31",
+      "details": "English voiceover and captions",
+      "fileName": "zana-build-an-agentforce-agent.mp4",
+      "silent": false,
+      "src": {
+        "path": "content/videos/media/build-an-agentforce-agent-997bd29b743123061de0a88fe86aa907e40ef71471095f190a84eab2089a5a06.mp4",
+        "sha256": "997bd29b743123061de0a88fe86aa907e40ef71471095f190a84eab2089a5a06",
+        "bytes": 7373989
+      },
+      "poster": {
+        "path": "content/videos/media/build-an-agentforce-agent-c6235a4afc7202d3f3da3ab05ccb310b0b4fa9bc0dbeedc6fc4b8e6ea321c056.jpg",
+        "sha256": "c6235a4afc7202d3f3da3ab05ccb310b0b4fa9bc0dbeedc6fc4b8e6ea321c056",
+        "bytes": 92682
+      },
+      "captions": {
+        "path": "content/videos/media/build-an-agentforce-agent-4eda97915219239f514f3c21b819c12e773ac167376d90c94d9d8d5f6e648408.vtt",
+        "sha256": "4eda97915219239f514f3c21b819c12e773ac167376d90c94d9d8d5f6e648408",
+        "bytes": 1663
+      }
+    },
+    {
+      "id": "agentforce-studio-tour",
+      "group": "Agentforce",
+      "title": "Agentforce Studio in Zana",
+      "description": "Open an agent in Agentforce Studio: Agent Script with its graph, Apex, Flow and Lightning Type, a preview, AI-written test scenarios run as a batch, and a self-healing fix reviewed as a diff.",
+      "duration": "1:45",
+      "details": "English voiceover and captions",
+      "fileName": "zana-agentforce-studio.mp4",
+      "silent": false,
+      "src": {
+        "path": "content/videos/media/agentforce-studio-tour-d70083cd80cb5bf76f6910b9212059283eb0c3037c59bdc99a4cc36e05306026.mp4",
+        "sha256": "d70083cd80cb5bf76f6910b9212059283eb0c3037c59bdc99a4cc36e05306026",
+        "bytes": 10341101
+      },
+      "poster": {
+        "path": "content/videos/media/agentforce-studio-tour-8b647b453c1ad52349250201cb8befe87d294941f1b9e079d533cabf822d0d28.jpg",
+        "sha256": "8b647b453c1ad52349250201cb8befe87d294941f1b9e079d533cabf822d0d28",
+        "bytes": 91392
+      },
+      "captions": {
+        "path": "content/videos/media/agentforce-studio-tour-0a9bbd3ad946e2f8d8694a8ad4bfaa089e0ab723151d2a5fb07ce95e25eeb8ea.vtt",
+        "sha256": "0a9bbd3ad946e2f8d8694a8ad4bfaa089e0ab723151d2a5fb07ce95e25eeb8ea",
+        "bytes": 1797
+      }
     }
   ]
 }
