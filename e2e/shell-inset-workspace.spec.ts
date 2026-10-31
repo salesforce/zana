@@ -37,6 +37,13 @@ test('inset workspace is the standard desktop design and ignores retired opt-out
   expect(inset.rightGap).toBeGreaterThanOrEqual(6);
   expect(inset.bottomGap).toBeGreaterThanOrEqual(6);
 
+  // Light panels share the white content surface; dark panels keep their quieter tone.
+  const panel = page.getByTestId('thread-secondary-panel');
+  await page.evaluate(() => window.cc.config.set({ theme: 'light' }));
+  await expect(panel).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await page.evaluate(() => window.cc.config.set({ theme: 'dark' }));
+  await expect(panel).toHaveCSS('background-color', 'rgb(26, 26, 26)');
+
   // The sheet must not take over overflow: long panels keep their own scroller.
   await page.evaluate(() => { history.pushState({}, '', '/settings/experimental'); dispatchEvent(new PopStateEvent('popstate')); });
   const settings = page.locator('.shell-main > .settings-panel');

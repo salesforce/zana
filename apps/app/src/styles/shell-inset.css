@@ -20,7 +20,7 @@
 
 :root[data-theme='light'] .app-shell.shell-inset {
   --inset-chrome: #edf0f4;
-  --inset-side-bg: #fafbfc;
+  --inset-side-bg: var(--bg-panel);
 }
 
 .app-shell.shell-inset .titlebar,
@@ -78,8 +78,8 @@
   margin-left: var(--inset-gap);
 }
 
-/* The thread side panel shares the sheet; a quieter tone separates it from
- * the conversation without a second card. */
+/* The thread side panel shares the sheet. Dark mode uses a quieter tone;
+ * light mode keeps the same white surface as the conversation. */
 .app-shell.shell-inset .thread-secondary-panel {
   background: var(--inset-side-bg);
 }
