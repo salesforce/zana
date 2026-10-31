@@ -35,7 +35,7 @@
 
 ## Watch the tour
 
-Start a task, follow your agents, and review the result in this two-minute recording of the app.
+Start a task, follow your agents, and review the result in this 80-second recording of the app.
 
 https://github.com/user-attachments/assets/e740fdf8-50f7-4823-b956-976904ff364e
 
