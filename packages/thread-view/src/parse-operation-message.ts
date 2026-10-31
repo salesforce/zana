@@ -586,7 +586,10 @@ export function parseOperationMessage(
     // linger as "Plugin interaction pending" after submission.
     if (
       decoded.operation === "plugin_interaction" ||
-      decoded.operation === "edit_message"
+      decoded.operation === "edit_message" ||
+      // The interruption event reports Stop's outcome; Stop itself is not
+      // an operation that was interrupted.
+      decoded.operation === "thread.stop"
     ) {
       return null;
     }

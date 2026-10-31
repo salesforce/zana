@@ -1142,7 +1142,8 @@ function buildPendingSteerRowsFromEvents(
       pendingSteerRows.push(
         ...parseRejectedUsersFromClientRequest({
           decoded: event,
-          meta: rejectedMeta,
+          meta: rejectedMeta.meta,
+          reason: rejectedMeta.reason,
           options,
         }).map((rejectedSteer) =>
           convertSteerMessage(rejectedSteer, ROOT_TIMELINE_ROW_ID_PREFIX),

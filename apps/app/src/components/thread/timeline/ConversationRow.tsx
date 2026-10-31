@@ -40,6 +40,7 @@ function userRequestLabel(row: Extract<ThreadTimelineViewRow, { kind: 'conversat
     return row.systemMessageKind.replace(/-/g, ' ');
   }
   const request = row.turnRequest;
+  if (request.status === 'cancelled') return request.kind === 'steer' ? 'Steer cancelled' : 'Cancelled';
   if (request.kind === 'steer') return request.status === 'rejected' ? 'Steer rejected' : 'Steer';
   if (request.status === 'rejected') return 'Rejected';
   return null;

@@ -182,6 +182,7 @@ export interface ParsePendingSteerFromClientRequestArgs extends ParseUserFromCli
 export interface ParseRejectedUsersFromClientRequestArgs {
   decoded: ThreadEvent;
   meta: EventMeta;
+  reason?: string;
   options?: BuildEventProjectionMessagesOptions;
 }
 
@@ -520,7 +521,7 @@ export function parseRejectedUsersFromClientRequest(
         idSuffix: clientUserMessageIdSuffix(visibleMessageIndex),
         input,
         meta,
-        requestStatus: "rejected",
+        requestStatus: args.reason === "send_cancelled" ? "cancelled" : "rejected",
       }),
     );
   }
