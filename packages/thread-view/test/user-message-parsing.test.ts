@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import {eventProjectionTurnRequestKindValues, eventProjectionTurnRequestStatusValues} from "../src/event-projection-message.js";
 import { turnScope, type PromptTextMention } from "@zana-ai/zcc-domain/thread-runtime";
 import {
   createTimelineEventFactory,
@@ -631,5 +632,8 @@ it('preserves copied snapshot metadata in client requests alongside images and e
     {type: 'image' as const, url: 'https://example.com/image.png'}, {type: 'localImage' as const, path: 'image.png'}];
   const factory = createTimelineEventFactory({threadId: 'thread-1'});
   const {event, meta} = decodeThreadEventRow(factory.clientTurnRequested({target: {kind: 'new-turn'}, text, input}));
-  expect(parseUserFromClientRequest({decoded: event, meta, options: standardProjectionOptions})).toMatchObject({text, references, attachments: {webImages: 1, localImages: 1}});
+  const message = parseUserFromClientRequest({decoded: event, meta, options: standardProjectionOptions});
+  expect(message).toMatchObject({text, references, attachments: {webImages: 1, localImages: 1}});
+  expect(eventProjectionTurnRequestKindValues).toContain(message!.turnRequest.kind);
+  expect(eventProjectionTurnRequestStatusValues).toContain(message!.turnRequest.status);
 });
