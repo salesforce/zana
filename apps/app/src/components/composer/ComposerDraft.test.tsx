@@ -468,3 +468,31 @@ it('adds context after a selected badge without replacing the inspected snapshot
   act(() => field.editor!.commands.undo());
   expect(field.serialize().references?.map(row => row.reference)).toEqual([first]);
 });
+
+it('edits thread annotation comments, links to the source, undoes edits and preserves comments on conversion', async () => {
+ render(<Surface mode="modern" sessionKey="annotations" />); await ready();
+ const reference: ContextReference = {version:1,label:'Introduction',text:'Original introduction',comment:'Shorten this.',source:{kind:'thread',threadId:'source',messageId:'msg',sourceSeqEnd:9}};
+ act(()=>{field.insertContextReference(reference);});
+ fireEvent.click(await screen.findByRole('button',{name:'Inspect Introduction'}));
+ expect(screen.getByRole('link',{name:'Show in thread'}).getAttribute('href')).toBe('/threads/source?message=9');
+ fireEvent.change(screen.getByRole('textbox',{name:'Edit annotation comment'}),{target:{value:'Use a chat opening.'}});
+ fireEvent.click(screen.getByRole('button',{name:'Save change'}));
+ expect(field.serialize().references?.[0]?.reference.comment).toBe('Use a chat opening.');
+ act(()=>{field.editor!.commands.undo();});
+ expect(field.serialize().references?.[0]?.reference.comment).toBe('Shorten this.');
+ fireEvent.click(await screen.findByRole('button',{name:'Inspect Introduction'}));
+ fireEvent.click(screen.getByRole('button',{name:'Convert to text'}));
+ expect(field.text).toContain('User comment:\nShorten this.');
+ expect(field.serialize().references ?? []).toEqual([]);
+});
+
+it('updates and removes only matching plugin references while preserving unrelated text and history',async()=>{
+ render(<Surface mode="modern"/>);await ready();
+ const reference:ContextReference={version:1,label:'Pin',text:'old comment',source:{kind:'plugin',pluginId:'tools',resourceId:'pin'}};
+ act(()=>{field.editor!.commands.insertContent('Keep this ');field.insertContextReference(reference);field.insertContextReference({...reference,source:{kind:'plugin',pluginId:'other',resourceId:'pin'}});});
+ act(()=>{expect(field.updateContextReference('tools','pin',{...reference,text:'new comment'})).toBe(true);});
+ expect(field.serialize().references?.map(row=>row.reference.text)).toEqual(['new comment','old comment']);
+ act(()=>{expect(field.updateContextReference('missing','pin',null)).toBe(false);expect(field.updateContextReference('tools','pin',{...reference,version:2} as never)).toBe(false);expect(field.updateContextReference('tools','pin',null)).toBe(true);});
+ expect(field.serialize().references).toHaveLength(1);expect(field.text).toContain('Keep this ');
+ act(()=>{field.editor!.commands.undo();});expect(field.serialize().references).toHaveLength(2);
+});

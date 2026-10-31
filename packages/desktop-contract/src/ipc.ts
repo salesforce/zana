@@ -838,6 +838,8 @@ export const IPC = {
    * resize snapshots, and agent-open requests.
    */
   browser: {
+    evaluate: 'desktop:browser:evaluate',
+    pageMessage: 'desktop:browser:page-message',
     attach: 'desktop:browser:attach',
     detach: 'desktop:browser:detach',
     navigate: 'desktop:browser:navigate',

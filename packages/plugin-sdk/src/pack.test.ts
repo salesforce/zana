@@ -56,9 +56,12 @@ describe('npm pack @zana-ai/zcc-plugin-sdk', () => {
 import { PROJECT_ICONS, defineRpcContract, type ProjectIcon, type PluginProviderDeclaration, type PluginProviderReasoningLevel } from '@zana-ai/zcc-plugin-sdk';
 import { PROJECT_ICONS as SERVER_ICONS, type ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import { createFakePluginHost } from '@zana-ai/zcc-plugin-sdk/testing';
-import { definePluginApp, copyContextSelection, writeContextReference, contextReferencePrompt, useComposer, useZccNavigate, type ContextReference, type PluginAgentsViewProps, type PluginFleetMember } from '@zana-ai/zcc-plugin-sdk/app';
+import { definePluginApp, copyContextSelection, writeContextReference, contextReferencePrompt, useComposer, useZccNavigate, type PluginBrowserToolbarActionProps, type ContextReference, type PluginAgentsViewProps, type PluginFleetMember } from '@zana-ai/zcc-plugin-sdk/app';
 const reference: ContextReference = { version: 1, label: 'Log', text: 'copied snapshot', source: {kind: 'plugin', pluginId: 'builds', resourceId: '1'} };
 contextReferencePrompt(reference);
+const annotation: ContextReference = {version:1,label:'Intro',text:'snapshot',comment:'Shorten',source:{kind:'thread',threadId:'t',messageId:'m',sourceSeqEnd:1}};
+function BrowserAction(props: PluginBrowserToolbarActionProps) { props.page?.evaluate('1'); props.composer.insert(reference); return null; }
+definePluginApp(app => app.slots.experimental_browserToolbarAction({id:'annotate',title:'Annotate',component:BrowserAction}));
 useComposer().insertContextReference?.(reference);
 const navigate = useZccNavigate();
 navigate.addThreadContext?.(reference);

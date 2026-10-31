@@ -618,6 +618,18 @@ export function useComposerPromptField({
     return true;
   }, [editor, disabled]);
 
+  const updateContextReference = useCallback((pluginId:string,resourceId:string,value:ContextReference|null):boolean => {
+    const reference=value===null ? null : parseContextReference(value);
+    if (!editor || disabled || (value!==null && !reference)) return false;
+    const refs=serializePromptEditor(editor.getJSON()).references?.map(row=>row.reference)??[];
+    const matches=(ref:ContextReference)=>ref.source?.kind==='plugin' && ref.source.pluginId===pluginId && ref.source.resourceId===resourceId;
+    if (reference && !parseContextReferences(refs.map(ref=>matches(ref)?reference:ref)))return false;
+    const tr=closeHistory(editor.state.tr); let found=false;
+    editor.state.doc.descendants((node,pos)=>{const ref=parseContextReference(node.attrs.reference);if(node.type.name==='editorSelection' && ref && matches(ref)){found=true;if(reference)tr.setNodeMarkup(pos,undefined,{...node.attrs,reference});else tr.delete(tr.mapping.map(pos),tr.mapping.map(pos+node.nodeSize));}});
+    if(found){editor.view.dispatch(tr);editor.view.dispatch(closeHistory(editor.state.tr));}
+    return found;
+  },[editor,disabled]);
+
   const insertText = useCallback((text: string) => {
     editor?.chain().focus().insertContent(text.endsWith(' ') ? text : `${text} `).run();
   }, [editor]);
@@ -752,6 +764,7 @@ export function useComposerPromptField({
     attachPickedFiles,
     insertText,
     insertContextReference,
+    updateContextReference,
     serialize,
     clear,
     captureRevision,

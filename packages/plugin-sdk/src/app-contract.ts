@@ -748,7 +748,25 @@ export interface PluginAppContentScripts {
   ): void;
 }
 
+export interface PluginBrowserPage {
+ evaluate(expression:string, options?:{world?:'main'|'isolated'}):Promise<unknown>;
+ onMessage(listener:(data:unknown)=>void):()=>void;
+}
+export interface PluginBrowserComposer {
+ insert(reference:import('./context-reference.js').ContextReference):boolean;
+ update(resourceId:string, reference:import('./context-reference.js').ContextReference | null):boolean;
+ onSubmitted(listener:()=>void):()=>void;
+ focus():void;
+}
+export interface PluginBrowserToolbarActionProps {
+ pluginId:string; threadId:string; tabId:string; url:string;
+ page:PluginBrowserPage|null; composer:PluginBrowserComposer;
+}
+export interface PluginBrowserToolbarActionRegistration extends PluginSlotBase {
+ title:string; component:ComponentType<PluginBrowserToolbarActionProps>;
+}
 export interface PluginAppSlots {
+  experimental_browserToolbarAction(registration:Omit<PluginBrowserToolbarActionRegistration,'generation'|'pluginId'>):void;
   navPanel(registration: Omit<PluginNavPanelRegistration, 'generation' | 'pluginId'>): void;
   settingsSection(registration: Omit<PluginSettingsSectionRegistration, 'generation' | 'pluginId'>): void;
   homepageSection(registration: Omit<PluginHomepageSectionRegistration, 'generation' | 'pluginId'>): void;
@@ -823,6 +841,7 @@ export interface PluginRegistrationSet {
   newThreadPanelActions: PluginNewThreadPanelActionRegistration[];
   threadLists: PluginThreadListRegistration[];
   threadHeaderActions: PluginThreadHeaderActionRegistration[];
+  browserToolbarActions: PluginBrowserToolbarActionRegistration[];
   fileOpeners: PluginFileOpenerRegistration[];
   messageDirectives: PluginMessageDirectiveRegistration[];
   messageActions: PluginMessageActionRegistration[];
@@ -1175,6 +1194,7 @@ export function emptyRegistrationSet(pluginId: string, generation: number): Plug
     newThreadPanelActions: [],
     threadLists: [],
     threadHeaderActions: [],
+    browserToolbarActions: [],
     fileOpeners: [],
     messageDirectives: [],
     messageActions: [],
@@ -1294,6 +1314,7 @@ export function collectPluginApp(
     projectStatusbarItem: new Set<string>(),
     threadList: new Set<string>(),
     threadHeaderAction: new Set<string>(),
+    browserToolbarAction: new Set<string>(),
     fileOpener: new Set<string>(),
     messageDirective: new Set<string>(),
     messageAction: new Set<string>(),
@@ -1579,6 +1600,12 @@ export function collectPluginApp(
             component: requireComponent(kind, 'component', registration.component)
           })
         );
+      },
+      experimental_browserToolbarAction: (registration) => {
+        const kind='slots.experimental_browserToolbarAction';
+        const id=requireSlotId(kind,registration.id);
+        requireUniqueId(kind,seen.browserToolbarAction,id);
+        set.browserToolbarActions.push(stamp({id,title:requireNonEmptyString(kind,'title',registration.title),component:requireComponent(kind,'component',registration.component)}));
       },
       experimental_threadHeaderAction: (registration) => {
         const kind = 'slots.experimental_threadHeaderAction';

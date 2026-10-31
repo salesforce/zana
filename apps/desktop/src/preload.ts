@@ -176,6 +176,12 @@ function createDesktopBrowserApi(): DesktopBrowserApi {
       browserClosedListeners.add(listener);
       return () => { browserClosedListeners.delete(listener); };
     },
+    evaluate(request) { return ipcRenderer.invoke(IPC.browser.evaluate, request); },
+    onPageMessage(listener) {
+      const handler = (_event: Electron.IpcRendererEvent, message: import('@zana-ai/zcc-desktop-contract').DesktopBrowserPageMessage) => listener(message);
+      ipcRenderer.on(IPC.browser.pageMessage, handler);
+      return () => { ipcRenderer.off(IPC.browser.pageMessage, handler); };
+    },
     getClosedTabs() {
       return ipcRenderer.invoke(IPC.browser.getClosedTabs);
     },

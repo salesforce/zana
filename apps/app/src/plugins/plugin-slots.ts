@@ -30,6 +30,7 @@ import type {
   PluginSidebarFooterActionRegistration,
   PluginProjectStatusbarItemRegistration,
   PluginThreadHeaderActionRegistration,
+  PluginBrowserToolbarActionRegistration,
   PluginThreadListRegistration,
   PluginThreadPanelActionRegistration,
   PluginTimelineRendererRegistration
@@ -67,6 +68,7 @@ function emptySnapshot() {
     newThreadPanelActions: [] as PluginNewThreadPanelActionRegistration[],
     threadLists: [] as PluginThreadListRegistration[],
     threadHeaderActions: [] as PluginThreadHeaderActionRegistration[],
+    browserToolbarActions: [] as PluginBrowserToolbarActionRegistration[],
     fileOpeners: [] as PluginFileOpenerRegistration[],
     messageDirectives: [] as PluginMessageDirectiveRegistration[],
     messageActions: [] as PluginMessageActionRegistration[],
@@ -102,6 +104,7 @@ function rebuildSnapshot(): void {
     newThreadPanelActions: orderedSets.flatMap((set) => set.newThreadPanelActions),
     threadLists: orderedSets.flatMap((set) => set.threadLists),
     threadHeaderActions: orderedSets.flatMap((set) => set.threadHeaderActions),
+    browserToolbarActions: orderedSets.flatMap((set) => set.browserToolbarActions ?? []),
     fileOpeners: orderedSets.flatMap((set) => set.fileOpeners),
     messageDirectives: orderedSets.flatMap((set) => set.messageDirectives),
     messageActions: orderedSets.flatMap((set) => set.messageActions),
@@ -308,3 +311,5 @@ export function arrangePluginNavPanels(
 export function listAgentsViews(): PluginAgentsViewRegistration[] {
   return snapshot.agentsViews;
 }
+
+export function listBrowserToolbarActions(): PluginBrowserToolbarActionRegistration[] { return snapshot.browserToolbarActions; }

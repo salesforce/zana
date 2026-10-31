@@ -1,3 +1,4 @@
+import { ThreadAnnotationSelection } from './ThreadAnnotationSelection.js';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import {
@@ -275,6 +276,7 @@ export function ThreadTimeline({
 
   return (
     <div className="thread-detail-timeline-shell">
+      {threadId && <ThreadAnnotationSelection rootRef={paneRef} threadId={threadId} />}
       <div className="thread-banner-stack">
         <ThreadGoalBanner goal={goal} />
         <ThreadTimelineLoadError message={loadError} onRetry={onRetryLoad} />

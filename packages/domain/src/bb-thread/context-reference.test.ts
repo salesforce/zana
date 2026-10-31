@@ -43,3 +43,15 @@ describe('context references', () => {
     expect((cleaned.type === 'text' ? cleaned.references : undefined)?.[0]?.reference).toEqual(reference);
   });
 });
+
+const annotated: ContextReference = { version: 1, label: 'Intro', text: 'Original introduction', comment: 'Shorten this.', source: { kind: 'thread', threadId: 'thread-1', messageId: 'message-2', sourceSeqEnd: 7 } };
+it('validates and serializes thread annotations as immutable snapshots', () => {
+ expect(parseContextReference(annotated)).toEqual(annotated);
+ expect(contextReferenceLocation(annotated)).toBe('Thread thread-1 / message 7');
+ expect(contextReferencePrompt(annotated)).toContain('User comment:\nShorten this.');
+ const text = contextReferencePrompt(annotated);
+ expect(validPromptReferences(text, [{start:0,end:text.length,reference:annotated}])).toHaveLength(1);
+ for (const comment of [3, 'x'.repeat(4001), 'a\0b']) expect(parseContextReference({...annotated,comment})).toBeNull();
+ for (const patch of [{threadId:''},{threadId:'a\nb'},{messageId:''},{messageId:'x'.repeat(501)},{sourceSeqEnd:0},{sourceSeqEnd:1.5}]) expect(parseContextReference({...annotated,source:{...annotated.source,...patch}})).toBeNull();
+ expect(parseContextReferences(Array(4).fill({...annotated,text:'x'.repeat(100000)}))).toBeNull();
+});

@@ -22,6 +22,7 @@ vi.mock('../../store.js', () => ({
   useData: (selector: (s: { projects: unknown[] }) => unknown) => selector({ projects: [] })
 }));
 vi.mock('../../plugins/plugin-slots.js', () => ({
+  listBrowserToolbarActions: () => emptyActions,
   subscribePluginSlots: () => () => undefined,
   listThreadPanelActions: () => pageActions,
   listNewThreadPanelActions: () => emptyActions

@@ -7,9 +7,12 @@ export interface ContextReference {
   version: 1;
   label: string;
   text: string;
+  /** A new user instruction paired with the captured snapshot. */
+  comment?: string;
   source?:
     | { kind: 'file'; path: string; startLine?: number; endLine?: number; projectId?: string; hostId?: string }
-    | { kind: 'plugin'; pluginId: string; resourceId: string; path?: string; revision?: string; heading?: string };
+    | { kind: 'plugin'; pluginId: string; resourceId: string; path?: string; revision?: string; heading?: string }
+    | { kind: 'thread'; threadId: string; messageId: string; sourceSeqEnd: number };
 }
 
 export interface PromptTextReference {
@@ -31,6 +34,10 @@ export function parseContextReference(value: unknown): ContextReference | null {
   if (!data || data.version !== 1 || !label(data.label, 240) || typeof data.text !== 'string'
     || !data.text.length || data.text.length > MAX_CONTEXT_REFERENCE_TEXT) return null;
   const result: ContextReference = { version: 1, label: data.label, text: data.text };
+  if (data.comment !== undefined) {
+    if (typeof data.comment !== 'string' || data.comment.length > 4000 || data.comment.includes('\0')) return null;
+    result.comment = data.comment;
+  }
   if (data.source === undefined) return result;
   const source = record(data.source);
   if (!source) return null;
@@ -56,6 +63,10 @@ export function parseContextReference(value: unknown): ContextReference | null {
         result.source[key] = source[key];
       }
     }
+  } else if (source.kind === 'thread') {
+    if (!label(source.threadId, 100) || !label(source.messageId, 500)
+      || !Number.isSafeInteger(source.sourceSeqEnd) || (source.sourceSeqEnd as number) < 1) return null;
+    result.source = { kind: 'thread', threadId: source.threadId, messageId: source.messageId, sourceSeqEnd: source.sourceSeqEnd as number };
   } else return null;
   return result;
 }
@@ -66,7 +77,7 @@ export function parseContextReferences(value: unknown): ContextReference[] | nul
   let size = 0;
   for (const entry of value) {
     const ref = parseContextReference(entry);
-    if (!ref || (size += ref.text.length) > MAX_CONTEXT_REFERENCES_TEXT) return null;
+    if (!ref || (size += ref.text.length + (ref.comment?.length ?? 0)) > MAX_CONTEXT_REFERENCES_TEXT) return null;
     refs.push(ref);
   }
   return refs;
@@ -75,6 +86,7 @@ export function parseContextReferences(value: unknown): ContextReference[] | nul
 export function contextReferenceLocation(reference: ContextReference): string {
   const source = reference.source;
   if (!source) return reference.label;
+  if (source.kind === 'thread') return `Thread ${source.threadId} / message ${source.sourceSeqEnd}`;
   if (source.kind === 'plugin') return [source.pluginId, source.resourceId, source.path, source.heading].filter(Boolean).join(' / ');
   return source.startLine === undefined ? source.path : `${source.path}:${source.startLine}–${source.endLine}`;
 }
@@ -84,7 +96,7 @@ export function contextReferencePrompt(reference: ContextReference): string {
   let length = 3;
   for (const match of reference.text.matchAll(/`+/g)) length = Math.max(length, match[0].length + 1);
   const fence = '`'.repeat(length);
-  return `\n\n${reference.label} — ${contextReferenceLocation(reference)} (copied selection)\n${fence}\n${reference.text}\n${fence}\n\n`;
+  return `\n\n${reference.label} — ${contextReferenceLocation(reference)} (copied selection)\n${fence}\n${reference.text}\n${fence}\n${reference.comment ? `\nUser comment:\n${reference.comment}\n` : ''}\n`;
 }
 
 /** Invalid metadata must never hide or replace ordinary message text. */
@@ -98,7 +110,7 @@ export function validPromptReferences(text: string, value: unknown): PromptTextR
     if (!reference || !Number.isSafeInteger(entry.start) || !Number.isSafeInteger(entry.end)
       || entry.start < end || entry.end <= entry.start || entry.end > text.length
       || text.slice(entry.start, entry.end) !== contextReferencePrompt(reference)
-      || (size += reference.text.length) > MAX_CONTEXT_REFERENCES_TEXT) return [];
+      || (size += reference.text.length + (reference.comment?.length ?? 0)) > MAX_CONTEXT_REFERENCES_TEXT) return [];
     refs.push({ start: entry.start, end: entry.end, reference });
     end = entry.end;
   }

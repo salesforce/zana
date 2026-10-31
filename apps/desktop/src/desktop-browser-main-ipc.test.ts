@@ -13,3 +13,13 @@ it('confines closed-tab reconciliation to the sender window and denies non-windo
   expect(invoke({ sender: { id: 99 } })).toEqual([]);
   expect(getClosedTabs).toHaveBeenCalledTimes(1);
 });
+it('rejects invalid evaluation and tabs outside the authenticated window and thread', async () => {
+ f.window={webContents:{id:42}};
+ const getAutomationTabs=vi.fn(()=>[]);
+ registerDesktopBrowserIpc({getAutomationTabs} as never);
+ const invoke=f.handlers.get(IPC.browser.evaluate)!;
+ await expect(invoke({sender:{id:42}},{tabId:'x',threadId:'t',expression:'1',hostWebContentsId:99})).rejects.toThrow('Invalid');
+ await expect(invoke({sender:{id:42}},{tabId:'x',threadId:'t',expression:'1'})).rejects.toThrow('unavailable');
+ expect(getAutomationTabs).toHaveBeenCalledExactlyOnceWith({hostWebContentsId:42,threadId:'t'});
+ f.window=null;await expect(invoke({sender:{id:42}},{tabId:'x',threadId:'t',expression:'1'})).rejects.toThrow('Invalid');
+});

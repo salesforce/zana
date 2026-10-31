@@ -150,3 +150,7 @@ controls, preserves metadata in saved prompts, and expands snapshots into ordina
 text on send. Limits are 100,000 characters per snapshot, 24 references and 400,000 snapshot
 characters per composer. Ordinary clipboard text stays ordinary; paste as plain text bypasses
 metadata. Compact display does not reduce model tokens. See `docs/context-references.md`.
+
+### Browser toolbar actions
+
+Register `app.slots.experimental_browserToolbarAction({ id, title, component })` to mount a control in each thread browser toolbar. The component receives `PluginBrowserToolbarActionProps`: a desktop-only `page` (`evaluate`, `onMessage`) and a thread-scoped `composer` (`insert`, `update`, `onSubmitted`, `focus`). Page expressions can use `bridge.postMessage(data)`; messages are untrusted and must be schema-validated by the plugin. Evaluation defaults to an isolated world, with an explicit main-world option for framework inspection. Main confines operations to an existing tab owned by the sender window and thread and refuses active control leases. Keep a reference's plugin source id equal to the supplied `pluginId`; update/remove uses that plugin's resource id. See `docs/thread-annotations.md` for lifecycle and limits.

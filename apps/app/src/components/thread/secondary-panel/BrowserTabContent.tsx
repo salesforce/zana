@@ -1,3 +1,4 @@
+import { PluginBrowserToolbarActions } from '../../../plugins/PluginBrowserToolbarActions.js';
 import {
   useCallback,
   useEffect,
@@ -120,7 +121,8 @@ function BrowserChrome({
   onBack,
   onForward,
   onReloadOrStop,
-  onOpenExternal
+  onOpenExternal,
+  pluginActions
 }: {
   addressDraft: string;
   isEditing: boolean;
@@ -135,6 +137,7 @@ function BrowserChrome({
   onForward: () => void;
   onReloadOrStop: () => void;
   onOpenExternal: () => void;
+  pluginActions?: ReactNode;
 }) {
   const isLoading = state?.isLoading ?? false;
   const security = getBrowserUrlSecurity(currentUrl);
@@ -172,6 +175,7 @@ function BrowserChrome({
           spellCheck={false}
         />
       </form>
+      {pluginActions}
       <NavButton label="Open in external browser" disabled={currentUrl.length === 0} onClick={onOpenExternal}>
         <ExternalLink size={14} />
       </NavButton>
@@ -196,6 +200,7 @@ function BrowserPageLoadError({
 }: {
   errorText: string;
   onOpenExternal: () => void;
+  pluginActions?: ReactNode;
   onRetry: () => void;
   url: string;
 }) {
@@ -546,6 +551,7 @@ export function BrowserTabContent({
         </div>
       ) : null}
       <BrowserChrome
+        pluginActions={threadId ? <PluginBrowserToolbarActions threadId={threadId} tabId={tabId} url={currentUrl} /> : null}
         addressDraft={addressDraft}
         isEditing={isEditing}
         state={state}

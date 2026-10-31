@@ -330,7 +330,8 @@ export const ConversationRow = memo(function ConversationRow({
             </form>
           ) : text ? (
             row.role === 'assistant' ? (
-              streamingSplit ? (
+              <div data-thread-annotation-prose="" data-message-id={row.id} data-source-seq-end={row.sourceSeqEnd}>
+              {streamingSplit ? (
                 <>
                   <PluginMarkdownDirectives
                     text={streamingSplit.settled}
@@ -360,7 +361,8 @@ export const ConversationRow = memo(function ConversationRow({
                   threadMentions
                   filePathHints={filePathHints}
                 />
-              )
+              )}
+              </div>
             ) : (
               <div
                 ref={collapsibleRef}
