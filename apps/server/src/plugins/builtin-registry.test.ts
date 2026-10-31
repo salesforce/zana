@@ -30,6 +30,7 @@ it('accepts the engine requirements of every automatically installed bundled plu
 const EXPECTED_CATEGORIES: Record<string, (typeof PLUGIN_CATALOG_CATEGORIES)[number]> = {
   'slack-bridge-2ff2': 'Agent interaction',
   'ask-user-question': 'Agent interaction',
+  'agent-city': 'Interface',
   automations: 'Workflow management',
   connect: 'Host access',
   'browser-automation': 'Host access',
@@ -71,6 +72,7 @@ const EXPECTED_CATEGORIES: Record<string, (typeof PLUGIN_CATALOG_CATEGORIES)[num
 const EXPECTED_ICONS: Record<string, string> = {
   'slack-bridge-2ff2': './icons/slack.png',
   'ask-user-question': 'CircleHelp',
+  'agent-city': 'Building2',
   automations: 'Workflow',
   connect: 'Cable',
   'browser-automation': 'Globe',

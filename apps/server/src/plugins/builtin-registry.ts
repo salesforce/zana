@@ -258,6 +258,13 @@ export const OFFICIAL_PLUGINS: BundledPluginDefinition[] = [
     category: 'Host access'
   },
   {
+    name: 'agent-city',
+    pluginId: 'agent-city',
+    autoInstall: false,
+    defaultEnabled: true,
+    category: 'Interface'
+  },
+  {
     name: 'browser-automation',
     pluginId: 'browser-automation',
     autoInstall: false,

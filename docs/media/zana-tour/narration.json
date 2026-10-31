@@ -1,0 +1,16 @@
+[
+  {"id": "projects", "line": "Start with your projects. Add a folder once, and every agent, file, and conversation stays organized around it."},
+  {"id": "agents", "line": "Then pick any agent: Claude Code, Codex, OpenCode, and more, all from one composer. Let's ask for a pricing page."},
+  {"id": "preview", "line": "The agent writes the page into your project, and the result opens right beside the conversation."},
+  {"id": "squads", "line": "For bigger goals, just ask for a Squad. The agent launches it: an orchestrator plans the work and hands tasks to agents working in parallel."},
+  {"id": "flow", "line": "Flow view shows how the work hands off, from the plan to the review, until the Squad is done."},
+  {"id": "plugins", "line": "And Zana is modular: everything beyond the core is a plugin. Add one from the marketplace, in one click."},
+  {"id": "folder", "line": "Or install your own, straight from a folder. Here, our team's GUS plugin."},
+  {"id": "tickets", "line": "GUS opens as a panel with my sprint board: every ticket I'm working on."},
+  {"id": "work", "line": "Open a ticket, press Work with agent, and the agent starts with the whole ticket as context."},
+  {"id": "change", "line": "And because plugins are just code, an agent can change them too. Let's add a dashboard."},
+  {"id": "dashboard", "line": "It edits the plugin, Zana rebuilds it, and the new Dashboard tab is live: tickets by status, the sprint countdown, and what's blocked."},
+  {"id": "share", "line": "To share it, just ask. The agent pushes it to your team's repository, and colleagues install it from Plugins."},
+  {"id": "everywhere", "line": "And Zana goes where you go: the same app on your phone, with Slack on the way."},
+  {"id": "outro", "line": "That's Zana: every agent, one command center."}
+]

@@ -3087,6 +3087,74 @@ describe("acp bridge", () => {
     expect(readFileSync(targetPath, "utf8")).toBe("{}\n");
   });
 
+  it("plays scripted zcc tool calls over HTTP MCP, filling captured values into later steps", async () => {
+    const scriptPath = join(workspaceDir, "tool-script.json");
+    writeFileSync(scriptPath, JSON.stringify({
+      match: "Draft a doc",
+      steps: [
+        { tool: { name: "design_doc_create", arguments: { title: "Pricing" }, capture: { doc: "Created design doc (\\S+)" } } },
+        { tool: { name: "design_doc_comment", arguments: { doc: "{{doc}}", resolve: "c_1" } } },
+        { say: "::design-doc{id=\"{{doc}}\"} {{missing}}", wordMs: 0 },
+      ],
+    }));
+    const { providerThreadId } = await startThread({
+      dynamicTools: [
+        { name: "design_doc_create", description: "Create.", inputSchema: { type: "object" } },
+        { name: "design_doc_comment", description: "Comment.", inputSchema: { type: "object" } },
+      ],
+      envVars: { FAKE_ACP_SCRIPT: scriptPath, FAKE_ACP_HTTP_MCP: "1" },
+    });
+    const turnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "Draft a doc", mentions: [] }],
+    });
+    const answered = new Set<string | number>();
+    const answer = async (tool: string, text: string, isError = false) => {
+      const call = await waitFor(
+        () => output.messages.find((message) =>
+          message.method === "item/tool/call" && message.id !== undefined && !answered.has(message.id) &&
+          (message.params as { tool?: string } | undefined)?.tool === tool),
+        `forwarded ${tool}`,
+      );
+      answered.add(call.id!);
+      handleLine(JSON.stringify({ jsonrpc: "2.0", id: call.id, result: { success: !isError, contentItems: [{ type: "inputText", text }] } }));
+      return call.params as { arguments?: Record<string, unknown> };
+    };
+    expect((await answer("design_doc_create", "Created design doc dd_42 (\"Pricing\").")).arguments).toEqual({ title: "Pricing" });
+    expect((await answer("design_doc_comment", "No such comment", true)).arguments).toEqual({ doc: "dd_42", resolve: "c_1" });
+    await waitForResponse(turnId);
+    await waitForTurnCompleted();
+
+    expect(agentMessageTexts().join("")).toContain("::design-doc{id=\"dd_42\"} {{missing}}");
+    const tools = threadEventsOfType("item/completed")
+      .map((event) => event.item as { type?: string; tool?: string; status?: string })
+      .filter((item) => item.type === "toolCall");
+    expect(tools.map((item) => item.tool)).toEqual(["design_doc_create", "design_doc_comment"]);
+
+    // A later turn still sees what the first one captured.
+    writeFileSync(scriptPath, JSON.stringify({ match: "Again", steps: [{ say: "again {{doc}}", wordMs: 0 }] }));
+    const second = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "Again", mentions: [] }],
+    });
+    await waitForResponse(second);
+    await waitFor(() => agentMessageTexts().join("").includes("again dd_42") || undefined, "second turn reuses dd_42");
+  });
+
+  it("reports a scripted tool call as failed when no HTTP MCP server was offered", async () => {
+    const scriptPath = join(workspaceDir, "tool-script-no-mcp.json");
+    writeFileSync(scriptPath, JSON.stringify({
+      match: "Use a tool",
+      steps: [{ tool: { name: "design_doc_create" } }, { say: "after", wordMs: 0 }],
+    }));
+    const { providerThreadId } = await startThread({ envVars: { FAKE_ACP_SCRIPT: scriptPath } });
+    const turnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "Use a tool", mentions: [] }],
+    });
+    await waitForResponse(turnId);
+    await waitForTurnCompleted();
+    expect(agentMessageTexts().join("")).toContain("after");
+    expect(output.messages.some((message) => message.method === "item/tool/call")).toBe(false);
+  });
+
   it("denies client fs writes outside the workspace in accept-edits mode", async () => {
     const outsideDir = mkdtempSync(join(tmpdir(), "bb-acp-outside-"));
     const targetPath = join(outsideDir, "outside.txt");

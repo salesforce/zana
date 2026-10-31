@@ -63,7 +63,13 @@
  *                              `match`: { match, steps: [{ say } | { pause } |
  *                              { write: { path, content, title? } }] }; `say`
  *                              streams word by word, `write` is a client fs
- *                              write (relative paths resolve against the cwd)
+ *                              write (relative paths resolve against the cwd);
+ *                              `{ tool: { name, arguments, capture? } }` calls a
+ *                              zcc tool through the bridge's HTTP MCP server
+ *                              (needs FAKE_ACP_HTTP_MCP=1). `capture` maps a
+ *                              variable to a regex whose first match in the
+ *                              result fills `{{variable}}` in later steps,
+ *                              including later turns of the same process
  * - FAKE_ACP_LAUNCH_LOG      → append one line per process launch (used to
  *                              count model-discovery spawns in cache/TTL tests)
  * - FAKE_ACP_PROMPT_LOG      → append one JSON-encoded prompt text per request
@@ -401,9 +407,43 @@ function scriptedSteps(text) {
   return text.includes(script.match) ? script.steps : null;
 }
 
+/** Replace `{{name}}` in every string of a step with a captured value. */
+function fillScriptVars(value, vars) {
+  if (typeof value === "string") {
+    return value.replace(/\{\{(\w+)\}\}/g, (match, name) => vars[name] ?? match);
+  }
+  if (Array.isArray(value)) return value.map((item) => fillScriptVars(item, vars));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, fillScriptVars(item, vars)]));
+  }
+  return value;
+}
+
+/** A zcc tool call over the bridge's HTTP MCP server, as a real agent makes one. */
+async function callScriptTool(name, args) {
+  const server = currentMcpServers.find((entry) => entry?.type === "http" && typeof entry.url === "string");
+  if (!server) return { text: "no HTTP MCP server", isError: true };
+  const headers = Object.fromEntries((server.headers ?? []).map((header) => [header.name, header.value]));
+  const response = await fetch(server.url, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...headers },
+    body: JSON.stringify({ jsonrpc: "2.0", id: `script-${name}`, method: "tools/call", params: { name, arguments: args } }),
+  });
+  const body = await response.json().catch(() => ({}));
+  const text = (body.result?.content ?? []).map((item) => item?.text ?? "").join("\n");
+  return { text: text || body.error?.message || `HTTP ${response.status}`, isError: !response.ok || !!body.error || body.result?.isError === true };
+}
+
+// Captured script values last for the agent process, so a later turn can
+// refer to what an earlier one created.
+const scriptVars = {};
+
 async function playScript(steps) {
   let writes = 0;
-  for (const step of steps) {
+  let tools = 0;
+  const vars = scriptVars;
+  for (const raw of steps) {
+    const step = fillScriptVars(raw, vars);
     if (step.pause) await sleep(step.pause);
     if (step.say) {
       for (const word of step.say.split(/(?<= )/)) {
@@ -433,6 +473,28 @@ async function playScript(steps) {
         status = "failed";
       }
       notifyUpdate({ sessionUpdate: "tool_call_update", toolCallId, status });
+    }
+    if (step.tool) {
+      const toolCallId = `script-tool-${++tools}`;
+      notifyUpdate({
+        sessionUpdate: "tool_call",
+        toolCallId,
+        title: `MCP: ${step.tool.name}`,
+        kind: "other",
+        status: "pending",
+        rawInput: step.tool.arguments ?? {},
+      });
+      const result = await callScriptTool(step.tool.name, step.tool.arguments ?? {});
+      for (const [name, pattern] of Object.entries(step.tool.capture ?? {})) {
+        const match = result.text.match(new RegExp(pattern));
+        if (match) vars[name] = match[1] ?? match[0];
+      }
+      notifyUpdate({
+        sessionUpdate: "tool_call_update",
+        toolCallId,
+        status: result.isError ? "failed" : "completed",
+        content: [{ type: "content", content: { type: "text", text: result.text } }],
+      });
     }
   }
 }

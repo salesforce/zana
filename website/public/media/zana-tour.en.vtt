@@ -14,33 +14,33 @@ more, all from one composer. Let's ask for a pricing page.
 The agent writes the page into your project, and
 the result opens right beside the conversation.
 
-00:00:26.701 --> 00:00:33.957
-For bigger goals, launch a Squad. An orchestrator plans
-the work and hands tasks to agents working in parallel.
+00:00:26.700 --> 00:00:36.123
+For bigger goals, just ask for a Squad. The agent launches it: an
+orchestrator plans the work and hands tasks to agents working in parallel.
 
-00:00:33.840 --> 00:00:39.300
+00:00:37.323 --> 00:00:42.783
 Flow view shows how the work hands off, from the
 plan to the review, until the Squad is done.
 
-00:00:40.500 --> 00:00:48.767
+00:00:43.983 --> 00:00:51.605
 And Zana is modular: everything beyond the core is a
-plugin. Add Agent City from the marketplace, in one click.
+plugin. Add one from the marketplace, in one click.
 
-00:00:48.649 --> 00:00:53.842
+00:00:51.487 --> 00:00:56.680
 Or install your own, straight from a
 folder. Here, our team's GUS plugin.
 
-00:00:53.725 --> 00:00:59.789
+00:00:56.561 --> 00:01:02.625
 And because plugins are just code, an agent
 can change them too. Let's add a dashboard.
 
-00:01:00.989 --> 00:01:09.816
+00:01:03.825 --> 00:01:12.652
 It edits the plugin, Zana rebuilds it, and the new Dashboard tab is
 live: tickets by status, the sprint countdown, and what's blocked.
 
-00:01:09.699 --> 00:01:14.449
+00:01:12.533 --> 00:01:17.283
 And Zana goes where you go: the same app
 on your phone, with Slack on the way.
 
-00:01:15.649 --> 00:01:19.274
+00:01:18.483 --> 00:01:22.108
 That's Zana: every agent, one command center.

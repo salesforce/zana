@@ -1,0 +1,58 @@
+[
+  {
+    "id": "projects",
+    "ms": 7432
+  },
+  {
+    "id": "agents",
+    "ms": 9230
+  },
+  {
+    "id": "preview",
+    "ms": 5589
+  },
+  {
+    "id": "squads",
+    "ms": 9423
+  },
+  {
+    "id": "flow",
+    "ms": 5460
+  },
+  {
+    "id": "plugins",
+    "ms": 7622
+  },
+  {
+    "id": "folder",
+    "ms": 5193
+  },
+  {
+    "id": "tickets",
+    "ms": 4834
+  },
+  {
+    "id": "work",
+    "ms": 5648
+  },
+  {
+    "id": "change",
+    "ms": 6064
+  },
+  {
+    "id": "dashboard",
+    "ms": 8827
+  },
+  {
+    "id": "share",
+    "ms": 6401
+  },
+  {
+    "id": "everywhere",
+    "ms": 4750
+  },
+  {
+    "id": "outro",
+    "ms": 3625
+  }
+]
