@@ -1,18 +1,48 @@
 # README artwork
 
-The README uses self-contained SVG masters: crisp at any size, editable as
-text or in a vector editor, and independent of external fonts or image hosts.
+The README opens with a recorded Agent City animation and a product tour.
+The supporting diagrams use self-contained SVG masters: crisp at any size,
+editable as text or in a vector editor, and independent of external fonts or image hosts.
 They follow the [Zana Fairy identity](../../resources/README.md): midnight blue,
 pearl white, blue/lavender wings, and a warm golden spark.
 
 | Asset | Purpose |
 | :--- | :--- |
-| [zana-readme-hero.svg](zana-readme-hero.svg) | README banner. Fairy geometry comes from `resources/icon.svg`. |
-| [zana-architecture.svg](zana-architecture.svg) | Editable architecture master used in the README. |
+| [agent-city-demo.gif](agent-city-demo.gif) | README opening: a 10-second, 900×620 recording of the San Francisco demo, Checkout interior, two floors, and return to the city. Sample data; no sound. |
+| [zana-tour-poster.jpg](zana-tour-poster.jpg) | Poster for the narrated product tour. Copied from `website/public/media/zana-tour-poster.jpg`; the website provides captions. |
+| [zana-readme-hero.svg](zana-readme-hero.svg) | Retained banner master. Fairy geometry comes from `resources/icon.svg`. |
+| [zana-architecture.svg](zana-architecture.svg) | Editable architecture master in the README’s expandable architecture section. |
 | [zana-architecture.png](zana-architecture.png) | 2× PNG export for slides, documents, and sharing. |
 | [zana-plugins.svg](zana-plugins.svg) | Editable plugin explainer: package, runtime contributions, agent capabilities, and development loop. |
 | [zana-plugins.png](zana-plugins.png) | 2× plugin explainer export for slides, documents, and sharing. |
-| [product-demo.gif](product-demo.gif) | Existing product tour used in the README. |
+| [product-demo.gif](product-demo.gif) | Previous product animation, retained for existing links. |
+
+## Refresh the Agent City recording
+
+Record the public [Agent City demo](https://zana-ide.com/) with sample data. Keep
+its heading and sample-data caption visible, and make the first frame useful
+when animation is disabled. The README links the recording to the live demo;
+the GIF itself is not interactive.
+
+The current sequence is 3 seconds of city, 3 seconds on Checkout floor 1,
+2 seconds on floor 2, then 2 seconds back in the city. Frames were captured at
+8 fps with a 900×620 crop; roster rows were hidden only in the recording layout
+to keep the image height fixed. No product source was changed for the capture.
+Encode numbered PNG frames with a shared palette, then optimize losslessly:
+
+```bash
+ffmpeg -framerate 8 -i /path/to/frames/%03d.png \
+  -filter_complex '[0:v]split[a][b];[a]palettegen=max_colors=192:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=3:diff_mode=rectangle' \
+  -loop 0 agent-city-demo.gif
+gifsicle -O3 agent-city-demo.gif -o docs/assets/agent-city-demo.gif
+```
+
+Keep the result below 2 MB and inspect the overview, both interior floors,
+and loop boundary. The current asset is about 0.9 MB.
+
+The narrated tour is the existing `website/public/media/zana-tour.mp4`, uploaded
+as a GitHub attachment for native README playback rather than copied into Git
+again. Keep a link to `https://zana-ide.com/#demo` beside it for captions.
 
 ## Architecture scope
 
