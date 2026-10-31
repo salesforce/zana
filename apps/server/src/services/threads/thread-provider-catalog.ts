@@ -192,13 +192,17 @@ export function canonicalThreadProviderId(providerId: string): string {
 }
 
 export function permissionModeForLaunchProfile(providerId: string): 'accept-edits' | 'auto' | 'full' {
-  return providerId === 'claude-yolo'
+  if (providerId === 'claude-yolo'
     || providerId === 'opencode-yolo'
     || providerId === 'grok-yolo'
     || providerId === 'mastracode-yolo'
-    || providerId === 'afcode-yolo'
-    ? 'full'
-    : 'accept-edits';
+    || providerId === 'afcode-yolo') return 'full';
+
+  const supported = getThreadProvider(providerId)?.capabilities.permissionModes;
+  // Omitted permissions must still be legal for the provider. Prefer the least
+  // privileged supported mode; the host ceiling is applied by the caller.
+  return (['accept-edits', 'auto', 'full'] as const)
+    .find((mode) => supported?.includes(mode)) ?? 'accept-edits';
 }
 
 export const DEFAULT_PLAN_COMMAND = { trigger: '/', name: 'plan' } as const;

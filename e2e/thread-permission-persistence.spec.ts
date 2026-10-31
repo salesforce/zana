@@ -65,3 +65,60 @@ for (const initial of [{ mode: 'auto', label: 'Auto' }, { mode: 'full', label: '
     await window.unrouteAll({ behavior: 'ignoreErrors' });
   });
 }
+
+test('omitted permissions use a single-mode provider default through creation and follow-ups', async ({ app }) => {
+  const { window } = app;
+  // CLI and SDK callers can omit permissionMode. The deterministic provider,
+  // like other full-only providers, must not receive the generic Edits default.
+  const id = await window.evaluate(async () => {
+    const { projects } = await (await fetch('/api/v1/projects')).json();
+    const response = await fetch('/api/v1/threads', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: projects[0].id,
+        providerId: 'fake',
+        title: 'Provider permission default',
+        input: 'Start without an explicit permission mode'
+      })
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return (await response.json()).thread.id as string;
+  });
+  const readExecution = () => window.evaluate(async (threadId) => {
+    const { thread } = await (await fetch(`/api/v1/threads/${threadId}`)).json();
+    return { status: thread.status, permissionMode: thread.permissionMode };
+  }, id);
+  await expect.poll(readExecution).toEqual({ status: 'idle', permissionMode: 'full' });
+
+  await window.evaluate((threadId) => {
+    history.pushState({}, '', `/threads/${threadId}`);
+    dispatchEvent(new PopStateEvent('popstate'));
+  }, id);
+  const detail = window.getByTestId('thread-detail');
+  const timeline = detail.getByTestId('thread-timeline');
+  await expect(timeline).toContainText('Response to: Start without an explicit permission mode');
+
+  await window.evaluate(async (threadId) => {
+    const response = await fetch(`/api/v1/threads/${threadId}/send`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ input: 'Follow up without an explicit permission mode' })
+    });
+    if (!response.ok) throw new Error(await response.text());
+  }, id);
+  await expect(timeline).toContainText('Response to: Follow up without an explicit permission mode');
+  await expect.poll(readExecution).toEqual({ status: 'idle', permissionMode: 'full' });
+
+  await window.reload();
+  const composer = detail.locator('.thread-command-composer');
+  await expect(composer.getByTestId('thread-command-send')).toBeEnabled();
+  await expect.poll(readExecution).toEqual({ status: 'idle', permissionMode: 'full' });
+  await composer.getByTestId('thread-command-input').fill('Continue from the composer');
+  const request = window.waitForRequest((r) => r.url().endsWith(`/threads/${id}/send`) && r.method() === 'POST');
+  await composer.getByTestId('thread-command-input').press('Enter');
+  expect((await request).postDataJSON().permissionMode).toBe('full');
+  await expect(timeline).toContainText('Response to: Continue from the composer');
+  await expect.poll(readExecution).toEqual({ status: 'idle', permissionMode: 'full' });
+  await expect(window.locator('.thread-status-badge.is-error')).toHaveCount(0);
+});

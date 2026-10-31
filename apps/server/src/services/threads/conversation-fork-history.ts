@@ -19,11 +19,19 @@ export const INHERITED_FORK_EVENT_TYPES = [
   'item/completed',
   'item/backgroundTask/completed',
   'turn/completed',
+  'turn.completed',
   'thread/compacted',
   'system/manager/user_message'
 ] as const;
 
 const inheritedTypeSet = new Set<string>(INHERITED_FORK_EVENT_TYPES);
+
+function isCompletedTurn(row: ConversationThreadEventRow): boolean {
+  // Host lifecycle envelopes use the dotted type while their provider payload
+  // and copied historical events can use the canonical slash form.
+  return (row.type === 'turn/completed' || row.type === 'turn.completed')
+    && payloadRecord(row.payload)?.type === 'turn/completed';
+}
 
 function payloadRecord(payload: unknown): Record<string, unknown> | null {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
@@ -77,7 +85,7 @@ export function lastCompletedTurnSequence(
   const cap = atOrBefore ?? Number.POSITIVE_INFINITY;
   let last: number | null = null;
   for (const row of rows) {
-    if (row.type === 'turn/completed' && row.sequence <= cap) last = row.sequence;
+    if (isCompletedTurn(row) && row.sequence <= cap) last = row.sequence;
   }
   return last;
 }
@@ -92,9 +100,9 @@ function historyEndSequenceForFork(
   const turnId = last ? eventTurnId(last.payload) : null;
   if (turnId) {
     const completed = rows.find(
-      (row) => row.type === 'turn/completed' && eventTurnId(row.payload) === turnId
+      (row) => isCompletedTurn(row) && eventTurnId(row.payload) === turnId
     );
-    if (completed) return completed.sequence;
+    return completed?.sequence ?? null;
   }
   return lastCompletedTurnSequence(atOrBefore);
 }
@@ -112,11 +120,12 @@ export function selectInheritedForkEventRows(
   if (historyEndSequence == null) return [];
   const window = rows.filter(
     (row) => row.sequence <= historyEndSequence && inheritedTypeSet.has(row.type)
+      && (!['turn/completed', 'turn.completed'].includes(row.type) || isCompletedTurn(row))
   );
   const completedTurnIds = new Set<string>();
   const acceptedClientRequestIds = new Set<string>();
   for (const row of window) {
-    if (row.type === 'turn/completed') {
+    if (isCompletedTurn(row)) {
       const turnId = eventTurnId(row.payload);
       if (turnId) completedTurnIds.add(turnId);
     } else if (row.type === 'turn/input/accepted') {
@@ -248,7 +257,7 @@ function lastCompletedRow(
   const cap = atOrBefore ?? Number.POSITIVE_INFINITY;
   let last: ConversationThreadEventRow | null = null;
   for (const row of rows) {
-    if (row.type === 'turn/completed' && row.sequence <= cap) last = row;
+    if (isCompletedTurn(row) && row.sequence <= cap) last = row;
   }
   return last;
 }
@@ -270,7 +279,10 @@ export function resolveConversationForkPoint(args: {
 }): ConversationForkDescriptor | null {
   const { events, forkCapability, sourceSeqEnd } = args;
   if (sourceSeqEnd !== undefined) {
-    const completion = lastCompletedRow(events, sourceSeqEnd);
+    // The UI anchors a fork to an assistant item, which precedes its turn's
+    // completion event. Clone the same containing turn that history copies.
+    const historyEnd = historyEndSequenceForFork(events, sourceSeqEnd);
+    const completion = historyEnd == null ? null : lastCompletedRow(events, historyEnd);
     if (!completion) {
       forkPointUnavailable(
         `Cannot fork at sequence ${sourceSeqEnd}: no turn has completed at or before it`
