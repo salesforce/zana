@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect } from './fixtures/app.js';
+import { waitForThreadProvider } from './fixtures/thread-providers.js';
 
 for (const signedIn of [true, false]) {
   test.describe(signedIn ? 'Cursor with saved credentials' : 'Cursor signed out', () => {
@@ -28,6 +29,7 @@ await import(${JSON.stringify(fixture)});
 
     test('model refresh uses saved credentials without opening a login flow', async ({ app, home }) => {
       const win = app.window;
+      await waitForThreadProvider(win, 'acp-cursor');
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const options = await win.evaluate(async () => {
           const response = await fetch('/api/v1/system/execution-options?providerId=acp-cursor&refresh=1');
