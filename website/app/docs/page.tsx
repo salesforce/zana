@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { DocLayout } from './DocLayout';
-import { DOCS, renderDoc } from '@/lib/docs';
+import { DOCS, renderDoc } from '../../lib/docs';
 import { AuroraGrid } from '../components/AuroraGrid';
 
 export const metadata: Metadata = {
