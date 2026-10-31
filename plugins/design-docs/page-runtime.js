@@ -106,6 +106,10 @@
     const data = record(value);
     if (!data || data.version !== 1 || !label(data.label, 240) || typeof data.text !== "string" || !data.text.length || data.text.length > MAX_CONTEXT_REFERENCE_TEXT) return null;
     const result = { version: 1, label: data.label, text: data.text };
+    if (data.comment !== void 0) {
+      if (typeof data.comment !== "string" || data.comment.length > 4e3 || data.comment.includes("\0")) return null;
+      result.comment = data.comment;
+    }
     if (data.source === void 0) return result;
     const source = record(data.source);
     if (!source) return null;
@@ -129,6 +133,9 @@
           result.source[key] = source[key];
         }
       }
+    } else if (source.kind === "thread") {
+      if (!label(source.threadId, 100) || !label(source.messageId, 500) || !Number.isSafeInteger(source.sourceSeqEnd) || source.sourceSeqEnd < 1) return null;
+      result.source = { kind: "thread", threadId: source.threadId, messageId: source.messageId, sourceSeqEnd: source.sourceSeqEnd };
     } else return null;
     return result;
   }

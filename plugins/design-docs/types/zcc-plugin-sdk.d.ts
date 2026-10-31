@@ -595,15 +595,32 @@ export type PluginSdkInbox = PluginSdk['inbox'];
 }
 
 declare module '@zana-ai/zcc-plugin-sdk/app' {
+  export function useRpc(): { call<T = unknown>(method: string, input?: unknown): Promise<T> };
   export interface ContextReference {
   version: 1;
+  comment?: string;
   label: string;
   text: string;
   source?:
+    | { kind: 'thread'; threadId: string; messageId: string; sourceSeqEnd: number }
     | { kind: 'file'; path: string; startLine?: number; endLine?: number; projectId?: string; hostId?: string }
     | { kind: 'plugin'; pluginId: string; resourceId: string; path?: string; revision?: string; heading?: string };
 }
 
+  export interface PluginBrowserPage {
+    evaluate(expression: string, options?: { world?: 'main' | 'isolated' }): Promise<unknown>;
+    onMessage(listener: (data: unknown) => void): () => void;
+  }
+  export interface PluginBrowserComposer {
+    insert(reference: ContextReference): boolean;
+    update(resourceId: string, reference: ContextReference | null): boolean;
+    onSubmitted(listener: () => void): () => void;
+    focus(): void;
+  }
+  export interface PluginBrowserToolbarActionProps {
+    pluginId: string; threadId: string; tabId: string; url: string;
+    page: PluginBrowserPage | null; composer: PluginBrowserComposer;
+  }
   export const CONTEXT_REFERENCE_MIME: 'application/x-zcc-context-reference';
   export const MAX_CONTEXT_REFERENCE_TEXT: 100000;
   export const MAX_CONTEXT_REFERENCES: 24;
@@ -737,6 +754,7 @@ declare module '@zana-ai/zcc-plugin-sdk/testing/app' {
     generation: number;
     providerIcons: Array<{ pluginId: string; generation: number; providerId: string; icon: unknown }>;
     navPanels: Array<{ id: string; title: string; component: unknown }>;
+    browserToolbarActions: Array<{ id: string; title: string; component: unknown }>;
     settingsSections: Array<{ id: string; title?: string }>;
     pendingInteractions: Array<{ id: string }>;
   };
@@ -754,6 +772,7 @@ declare module '@zana-ai/zcc-plugin-sdk/testing/app' {
   ): Promise<{
     pluginId: string;
     navPanels: Array<{ id: string; title: string; component: unknown }>;
+    browserToolbarActions: Array<{ id: string; title: string; component: unknown }>;
   }>;
   export function renderSlot(
     registration: { component: unknown },
@@ -761,7 +780,7 @@ declare module '@zana-ai/zcc-plugin-sdk/testing/app' {
     options?: {
       rpc?: Record<string, (input: unknown) => unknown | Promise<unknown>>;
     }
-  ): {
+  ): import('@testing-library/react').RenderResult & {
     findByText: (text: string | RegExp) => Promise<unknown>;
     inspection: {
       rpcCalls: Array<{ method: string; input: unknown }>;
