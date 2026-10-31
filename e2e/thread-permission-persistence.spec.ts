@@ -1,17 +1,23 @@
 import { test, expect } from './fixtures/app.js';
+import { waitForThreadProvider } from './fixtures/thread-providers.js';
 
 test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { sponsorPromptDismissed: true } });
 
 for (const initial of [{ mode: 'auto', label: 'Auto' }, { mode: 'full', label: 'Full' }]) {
   test(`${initial.label} survives creation, follow-ups, reload, and an explicit change to Edits`, async ({ app }) => {
     const { window } = app;
-    // Use the normal multi-mode composer with the deterministic runtime. Hide the
-    // single-mode fake catalogue entry in every catalog response (including
-    // provider-specific refreshes); the host still uses the real fake adapter.
+    await waitForThreadProvider(window, 'fake');
+    // The fake runtime supports all three modes. Expose them to the composer
+    // without requiring a separately installed/authenticated provider in CI.
     await window.route('**/api/v1/system/execution-options*', async (route) => {
       const response = await route.fetch();
       const body = await response.json();
-      if (Array.isArray(body.providers)) body.providers = body.providers.filter((p: { id: string }) => p.id === 'codex');
+      if (Array.isArray(body.providers)) {
+        body.providers = body.providers.filter((p: { id: string }) => p.id === 'fake')
+          .map((p: { capabilities: Record<string, unknown> }) => ({
+            ...p, capabilities: { ...p.capabilities, permissionModes: ['accept-edits', 'auto', 'full'] }
+          }));
+      }
       // Reload can cancel an in-flight catalog request before its response arrives.
       await route.fulfill({ response, json: body }).catch((error: unknown) => {
         if (!(error instanceof Error) || !error.message.includes('Route is already handled')) throw error;
@@ -21,15 +27,15 @@ for (const initial of [{ mode: 'auto', label: 'Auto' }, { mode: 'full', label: '
     await window.getByTestId('nav-home').click();
     const home = window.locator('.thread-command-composer').first();
     await expect(home.getByTestId('thread-command-send')).toBeEnabled({ timeout: 30_000 });
-    if (initial.mode === 'full') {
-      await home.getByLabel('Permission mode', { exact: true }).click();
-      await window.getByRole('option', { name: /^Full Access/ }).click();
-    }
+    await home.getByLabel('Permission mode', { exact: true }).click();
+    await window.getByRole('option', { name: initial.mode === 'full' ? /^Full Access/ : /^Approve for me/ }).click();
     await expect(home.getByLabel('Permission mode', { exact: true })).toContainText(initial.label);
     await home.getByTestId('thread-command-input').fill(`First message with ${initial.label}`);
     const createdResponse = window.waitForResponse((r) => r.url().endsWith('/api/v1/threads') && r.request().method() === 'POST');
     await home.getByTestId('thread-command-send').click();
     const response = await createdResponse;
+    expect(response.ok()).toBe(true);
+    expect(response.request().postDataJSON().providerId).toBe('fake');
     expect(response.request().postDataJSON().permissionMode).toBe(initial.mode);
     const created = await response.json();
     const id = (created.value ?? created.thread).id as string;
@@ -68,6 +74,7 @@ for (const initial of [{ mode: 'auto', label: 'Auto' }, { mode: 'full', label: '
 
 test('omitted permissions use a single-mode provider default through creation and follow-ups', async ({ app }) => {
   const { window } = app;
+  await waitForThreadProvider(window, 'fake');
   // CLI and SDK callers can omit permissionMode. The deterministic provider,
   // like other full-only providers, must not receive the generic Edits default.
   const id = await window.evaluate(async () => {
