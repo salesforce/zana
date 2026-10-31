@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { resolve, join } from 'node:path';
+import { resolve, join, dirname } from 'node:path';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { boundarySpecs, changedLines, codeLines, coverageFailures, runVerification, mergeCoverage } from './ci-verification.mjs';
@@ -254,6 +254,25 @@ it('leaves compiled plugin bundles and declared runtime assets to their sources'
       'plugins/fixture/scripts/other.mjs: missing coverage',
       'plugins/fixture/kitchen.js: missing coverage',
       'plugins/broken/source.js: missing coverage'
+    ]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+it('leaves only the generated Agent City snapshot to its parity-checked sources', () => {
+  const root = mkdtempSync(join(tmpdir(), 'zcc-city-coverage-'));
+  const files = [
+    ...['scene', 'theme-scene', 'model', 'themes', 'commuters', 'interior', 'interior-scene', 'use-city'].map(name => `website/lib/agent-city/${name}.js`),
+    'website/lib/agent-city/custom.js', 'website/app/components/AgentCityDemo.tsx', 'plugins/agent-city/scene.js'
+  ];
+  for (const file of files) {
+    mkdirSync(dirname(join(root, file)), { recursive: true });
+    writeFileSync(join(root, file), 'export const value = 1;');
+  }
+  try {
+    expect(coverageFailures(new Map(files.map(file => [file, new Set([1])])), {}, root)).toEqual([
+      'website/lib/agent-city/custom.js: missing coverage',
+      'website/app/components/AgentCityDemo.tsx: missing coverage',
+      'plugins/agent-city/scene.js: missing coverage'
     ]);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

@@ -32,9 +32,12 @@ export function changedLines(diff) {
 /**
  * What a plugin's build emits is verified through its sources, not on its own:
  * the compiled `app.js`/`server.mjs` and anything the manifest ships as
- * `zcc.extra.runtimeAssets`. The build scripts themselves still need coverage.
+ * `zcc.extra.runtimeAssets`. The Agent City website snapshot is also generated;
+ * sync-agent-city.test.ts verifies byte parity with the tested plugin sources.
+ * The build scripts and authored website controls still need coverage.
  */
 function pluginBuildFile(path, root) {
+  if (/^website\/lib\/agent-city\/(?:scene|theme-scene|model|themes|commuters|interior|interior-scene|use-city)\.js$/.test(path)) return true;
   const match = /^plugins\/([^/]+)\/(.+)$/.exec(path);
   if (!match) return false;
   const [, id, rel] = match;
