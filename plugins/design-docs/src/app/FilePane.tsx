@@ -73,7 +73,7 @@ export function FilePane({
   previewHandle: MutableRefObject<PreviewHandle | null>;
   onOpenPath(path: string): void;
   onQuote(text: string): void;
-  onAskAbout(text: string, selection?: EditorSelection): void;
+  onAskAbout(selection: EditorSelection): void;
   onEditorState(state: EditorState): void;
   /** Extra toolbar content before the path (the compact file switcher). */
   leading?: ReactNode;
@@ -113,7 +113,7 @@ export function FilePane({
         quotes={quotes}
         onOpenPath={onOpenPath}
         onQuote={onQuote}
-          onAskAbout={(text) => onAskAbout(text, passageContext(file.path, file.content, text))}
+          onAskAbout={(text) => onAskAbout(passageContext(file.path, file.content, text))}
           handleRef={previewHandle}
           kind={kind}
       />

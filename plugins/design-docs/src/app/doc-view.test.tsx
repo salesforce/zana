@@ -194,6 +194,23 @@ describe('metadata consent', () => {
 });
 
 describe('previewing files', () => {
+  it('keeps Ask agent available when a doc has no files to select', async () => {
+    const harness = createHarness({ panelAgent: true });
+    const doc = simpleDoc(harness);
+    vi.spyOn(harness.store, 'get').mockReturnValue({ ...doc, files: [] });
+    renderDoc(harness, doc.id);
+    expect(await screen.findByText('This doc has no files')).toBeTruthy();
+    expect(document.querySelector('.dd-selection-chip')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Ask agent/ }));
+    expect(screen.queryByRole('checkbox', { name: /Focus on/ })).toBeNull();
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Fill the gaps/ }));
+    await waitFor(() => expect(harness.navigateCalls).toHaveLength(1));
+    expect(harness.navigateCalls[0]).toMatchObject({ method: 'openPanelAgent', options: { draft: {
+      view: doc.id, prompt: expect.stringContaining(doc.id)
+    } } });
+    expect(harness.spawn).not.toHaveBeenCalled();
+  });
+
   it('renders each kind of file and follows links inside the doc', async () => {
     const harness = createHarness();
     const doc = richDoc(harness);
