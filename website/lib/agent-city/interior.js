@@ -2,10 +2,10 @@
 import { alongRoute, harnessStyle, routeLength,            } from './commuters.js';
 import { floors, projectPoint,                   } from './model.js';
 
-                                                                                                                                                    
-                                                                                                                                             
-                                                                                                                                                                      
-                                                                
+
+
+
+
 export const ROOM_WIDTH = 620, ROOM_DEPTH = 420, DESKS_PER_PAGE = 4;
 
 export function interiorOccupants(building              )                     {

@@ -16,6 +16,7 @@ describe('website Agent City artwork snapshot', () => {
       const content = await readFile(join(out, file), 'utf8');
       expect(content).toBe(await readFile(resolve('website/lib/agent-city', file), 'utf8'));
       expect(content).not.toContain('@zana-ai/zcc-plugin-sdk');
+      expect(content).not.toMatch(/[ \t]+$/m);
     }
   });
   it('keeps the committed artwork in website-only builds and fails if neither source exists', async () => {

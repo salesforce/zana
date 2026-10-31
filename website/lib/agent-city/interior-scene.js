@@ -2,7 +2,7 @@
 import { interiorLayout, interiorScreen, interiorWorker, ROOM_DEPTH, ROOM_WIDTH,                    } from './interior.js';
 import { projectPoint } from './model.js';
 
-                                                                                                     
+
 /** Isometric cutaway, drawn in the city's existing bounded animation loop. */
 export function drawInterior(ctx                          , model               , width        , height        , time        , moving         , palette                        , entrance = 1)                {
   const hits                = [], layout = interiorLayout(width, height, entrance);
