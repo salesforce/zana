@@ -267,10 +267,11 @@ function presetBody(opts: FakeAgentOptions): string {
  * no re-asking the human. The test answers the question out-of-band via
  * `executionBoard.respond`.
  */
-export type JobTeamScenario = 'success' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' | 'kickoff-churn' | 'peer-handoff' | 'plan-correction' | 'plan-correction-silent' | 'api-error-nudge' | 'api-error-restart' | 'api-error-permanent';
+export type JobTeamScenario = 'success' | 'unattended' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' | 'kickoff-churn' | 'peer-handoff' | 'plan-correction' | 'plan-correction-silent' | 'api-error-nudge' | 'api-error-restart' | 'api-error-permanent';
 
 /** The behavior gates the generated coordinator script keys its behavior off. */
 interface JobTeamScenarioFlags {
+  unattended: boolean;
   failedDag: boolean;
   stalled: boolean;
   streaming: boolean;
@@ -286,6 +287,7 @@ interface JobTeamScenarioFlags {
 /** Map a scenario name to the script's behavior flags (exactly one true, or none for 'success'). */
 function resolveScenarioFlags(scenario?: JobTeamScenario): JobTeamScenarioFlags {
   return {
+    unattended: scenario === 'unattended',
     failedDag: scenario === 'failed-dag',
     stalled: scenario === 'stalled-worker',
     streaming: scenario === 'streaming-worker',
@@ -360,6 +362,9 @@ const IS_OWNER = ANSWERS_REPORTS || /E2E start Job Team/.test(PROMPT);
 // 'E2E launch Squad' is the same role for specs whose entries use squad_launch (see proposer()).
 const IS_PROPOSER = /E2E (propose|launch) Squad/.test(PROMPT);
 const FAILED_DAG = ${JSON.stringify(flags.failedDag)};
+// Unattended (demo recordings): the success DAG, but the navigation label is decided by the
+// worker instead of a human question, so the run goes straight to done.
+const UNATTENDED = ${JSON.stringify(flags.unattended)};
 // Stuck-worker reclaim repro (run df216947): the worker claims its unit, goes
 // ✻ working (NON-restful), and holds forever — never completes/blocks/idles. The
 // only escape is the wall-clock backstop (owner sets a small maxClaimWallClockMs);
@@ -479,7 +484,9 @@ async function status() {
 const SUCCESS_PLAN = [
   { id: 'home', title: 'Write Home', task: 'Create home.txt containing HOME: ready', dependencies: [], files: ['home.txt'], verification: ['home.txt present'] },
   { id: 'about', title: 'Write About', task: 'Create about.txt containing ABOUT: ready', dependencies: [], files: ['about.txt'], verification: ['about.txt present'] },
-  { id: 'navigation-label', title: 'Ask Navigation Label', task: 'Raise a durable human question with two label choices', dependencies: ['home', 'about'], readOnly: true, verification: ['durable question answered'] },
+  UNATTENDED
+    ? { id: 'navigation-label', title: 'Shared Navigation', task: 'Choose the shared navigation label', dependencies: ['home', 'about'], readOnly: true, verification: ['label chosen'] }
+    : { id: 'navigation-label', title: 'Ask Navigation Label', task: 'Raise a durable human question with two label choices', dependencies: ['home', 'about'], readOnly: true, verification: ['durable question answered'] },
   { id: 'assemble', title: 'Assemble Result', task: 'Write result.txt from both worker outputs and the chosen label', dependencies: ['navigation-label'], files: ['result.txt'], verification: ['cat result.txt'] }
 ];
 const FAILED_DAG_PLAN = [
@@ -752,6 +759,8 @@ async function doUnit(unitId) {
     const fence = (assignText[unitId] || '').match(/Claim fence: claimId=([^;\n]+); claimGeneration=(\d+)/);
     if (!fence) throw new Error('assignment missing claim fence');
     const outcomeFence = { claimId: fence[1], claimGeneration: Number(fence[2]) };
+    // Unattended runs are watched: let each unit read as working for a moment.
+    if (UNATTENDED) await sleep(2500);
     if (unitId === 'fail-root') {
       await mcp('execution.work.fail', { executionId: EXECUTION_ID, workUnitId: unitId, failureCode: 'VALIDATION_FAILED', failure: 'Deterministic E2E validation failure', ...outcomeFence });
     } else if (unitId === 'independent') {
@@ -778,7 +787,7 @@ async function doUnit(unitId) {
       const note = fs.readFileSync(path.join(CWD, 'note.txt'), 'utf8').trim();
       await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: 'reviewed: ' + note, ...outcomeFence });
     } else if (unitId === 'navigation-label') {
-      const chosenLabel = await handleNavigationLabel(outcomeFence);
+      const chosenLabel = UNATTENDED ? 'About Atlas' : await handleNavigationLabel(outcomeFence);
       // Complete with the chosen label as the unit result. The engine inherits
       // this into the 'assemble' worker's assignment text — NO side file.
       await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: 'navigation-label', result: chosenLabel, ...outcomeFence });

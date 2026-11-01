@@ -1,3 +1,4 @@
+import { readCatalogIcon } from './catalog-icon.js';
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, watch } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
@@ -63,6 +64,7 @@ import { registerThreadProvider, trackThreadProviderStartup } from '../services/
 import { discoverPluginSkillNames } from './plugin-skills.js';
 import {
   BUILTIN_PLUGINS,
+  EXTERNALIZED_PLUGINS,
   OFFICIAL_PLUGINS,
   RECLAIM_UNINSTALLED_AUTOINSTALL_IDS,
   bundledPluginByName,
@@ -141,7 +143,7 @@ import { createPluginServicesRegistry } from '@zana-ai/zcc-plugin-sdk/server';
 import { createSerializedTransactionQueue } from '../durable-store.js';
 import { createPluginPackService, type PluginPackService } from './plugin-packs.js';
 import type { PluginRecoveryState } from '@zana-ai/zcc-domain/product';
-import { copyRecoveryRollbackRuntime, createOfficialPluginRecovery } from './plugin-recovery-runtime.js';
+import { copyRecoveryRollbackRuntime, copyBundledPluginRuntime } from './plugin-recovery-runtime.js';
 
 export interface CatalogSearchHit {
   marketplace: string;
@@ -169,6 +171,7 @@ export interface PluginService {
   disable(id: string): Promise<InstalledPluginRow>;
   remove(id: string): Promise<void>;
   reload(id: string): Promise<InstalledPluginRow>;
+  repair(id: string, path?: string): Promise<InstalledPluginRow>;
   hardReload(): Promise<PluginRecoveryState>;
   recoveryStatus(): PluginRecoveryState;
   refreshSafeMode(): Promise<void>;
@@ -276,6 +279,7 @@ export interface PluginUiSnapshot {
   availableVersion?: string;
   updateCheck?: import('@zana-ai/zcc-domain/product').PluginUpdateStatus;
   updatePolicy?: import('@zana-ai/zcc-domain/product').PluginUpdatePolicy;
+  sourceRecovery?: import('@zana-ai/zcc-domain/product').PluginAppEntry['sourceRecovery'];
 }
 
 export interface PluginThemeSnapshot {
@@ -302,6 +306,7 @@ export function toPluginAppSnapshot(row: PluginUiSnapshot) {
     status: row.status,
     statusDetail: row.statusDetail,
     appUrl: row.appUrl,
+    ...(row.sourceRecovery ? { sourceRecovery: row.sourceRecovery } : {}),
     ...(row.updateCheck ? { updateCheck: row.updateCheck } : {}),
     ...(row.updatePolicy ? { updatePolicy: row.updatePolicy } : {}),
     ...(row.availableVersion ? { availableVersion: row.availableVersion } : {}),
@@ -348,8 +353,6 @@ export interface PluginServiceOptions {
   cloneGit?: (url: string, dest: string, spec: string) => Promise<{ commit: string; refKind?: 'branch' | 'tag' | 'commit' }>;
   updateResolver?: Partial<PluginUpdateResolver>;
   fetchJson?: (url: string) => Promise<unknown>;
-  /** Internal transport seam for official compiled recovery artifacts. */
-  recoveryFetch?: typeof fetch;
   onAgentCapabilitiesChanged?: (contributors: PluginAgentContribution[]) => void | Promise<void>;
   /** Notify the runtime bridge after a plugin's visible app state changes. */
   onAppsChanged?: (apps: PluginUiSnapshot[]) => void | Promise<void>;
@@ -806,7 +809,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     const timer = setTimeout(() => {
       recoveryTimers.delete(id);
       if (stopped || !store.get(id)?.enabled) return;
-      void service.reload(id).then((row) => {
+      void reloadPlugin(id, false).then((row) => {
         if (row.status === 'degraded') scheduleWatchdogRecovery(id);
       }).catch((error) => {
         console.error(`[plugins] automatic recovery failed for ${id}:`, error instanceof Error ? error.message : error);
@@ -822,6 +825,35 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     if (starting) await starting;
     await ensureActivationRecovery();
     if (stopped) throw new Error('plugin service is stopped');
+  }
+
+  async function reloadPlugin(id: string, resetRecovery = true): Promise<InstalledPluginRow> {
+    await waitForStartup();
+    // Automatic recovery keeps its attempt budget; an explicit reload starts a fresh one.
+    cancelRecovery(id, resetRecovery);
+    bumpLifecycleEpoch(id);
+    const row = store.get(id);
+    if (!row) throw new Error(`plugin not installed: ${id}`);
+    assertBundledPluginInstall({ id, sourceKind: row.sourceKind, source: row.source, development: developmentEnabled() });
+    const epoch = lifecycleEpoch(id);
+    const overrides = {
+      provenance: row.provenance,
+      catalogMarketplace: row.catalogMarketplace,
+      catalogEntryId: row.catalogEntryId,
+      bundledRecoveryVersion: row.bundledRecoveryVersion
+    };
+    // Reload the installed artifact; mutable remote refs only move through Update.
+    const source = row.sourceKind === 'git' || row.sourceKind === 'npm' || row.bundledRecoveryVersion
+      ? { rootDir: row.rootDir, sourceKind: row.sourceKind, provenance: row.provenance, display: row.source,
+          sourceIntent: row.sourceIntent, npmResolvedVersion: row.npmResolvedVersion, npmIntegrity: row.npmIntegrity,
+          gitResolvedCommit: row.gitResolvedCommit, catalogMarketplace: row.catalogMarketplace, catalogEntryId: row.catalogEntryId }
+      : await materialize(parsePluginSource(row.source));
+    const next = await installFromMaterialized(source, row.enabled, overrides, id, epoch, pluginUpdateFingerprint(row, hostVersion, sdkVersion));
+    if (started) startBuiltinSourceWatchers();
+    await emitCapabilities();
+    await syncCliSkill();
+    await emitAppsChanged();
+    return next;
   }
 
   function removeUnreferencedGeneration(root: string) {
@@ -1820,7 +1852,11 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     }
     if (source.kind === 'builtin') {
       const def = bundledPluginByName(source.name);
-      if (!def) throw new Error(`unknown builtin/official plugin "${source.name}"`);
+      if (!def) {
+        const external = EXTERNALIZED_PLUGINS.find(plugin => plugin.name === source.name);
+        if (external) return materialize(parsePluginSource(`git:${external.url}@${external.ref}`));
+        throw new Error(`unknown builtin/official plugin "${source.name}"`);
+      }
       const rootDir = resolveBundledDir(opts.bundledRoot, def.name);
       return {
         rootDir,
@@ -1952,7 +1988,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     overrides: Partial<Pick<InstalledPluginRow, 'provenance' | 'catalogMarketplace' | 'catalogEntryId' | 'bundledRecoveryVersion'>> = {},
     expectedId?: string,
     expectedEpoch?: number,
-    expectedFingerprint?: string
+    expectedFingerprint?: string,
+    repairTransaction = false
   ): Promise<InstalledPluginRow> {
     let id: string;
     try {
@@ -1966,7 +2003,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     try {
       return await promotionQueue.run(() => withLifecycle(id, () => {
         entered = true;
-        return promoteMaterialized(materialized, enable, overrides, expectedId, expectedEpoch, expectedFingerprint);
+        return promoteMaterialized(materialized, enable, overrides, expectedId, expectedEpoch, expectedFingerprint, repairTransaction);
       }));
     } catch (error) {
       if (!entered && (materialized.sourceKind === 'git' || materialized.sourceKind === 'npm')) removeUnreferencedGeneration(materialized.rootDir);
@@ -1980,7 +2017,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     overrides: Partial<Pick<InstalledPluginRow, 'provenance' | 'catalogMarketplace' | 'catalogEntryId' | 'bundledRecoveryVersion'>>,
     expectedId?: string,
     expectedEpoch?: number,
-    expectedFingerprint?: string
+    expectedFingerprint?: string,
+    repairTransaction = false
   ): Promise<InstalledPluginRow> {
     let manifest: PluginManifest;
     try {
@@ -2058,6 +2096,32 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       try {
         // A crash before candidate activation must still name the managed
         // previous generation recorded by the durable rollback journal.
+        await store.upsert(previous);
+        await activateManaged(previous, row, expectedEpoch);
+        removeUnreferencedGeneration(existing.rootDir);
+      } finally { if (!recoveryBlocked.has(row.id)) removeUnreferencedGeneration(backupRoot); }
+      await emitCapabilities();
+      await syncCliSkill();
+      return store.get(row.id)!;
+    }
+    if (existing && repairTransaction) {
+      // Both journal registrations must remain in managed storage. The source
+      // pointer still names the selected working folder for subsequent reloads.
+      const backupRoot = await copyRecoveryRollbackRuntime(opts.dataDir, existing.rootDir);
+      const previous = { ...existing, rootDir: backupRoot };
+      try {
+        await store.upsert(previous);
+        await activateManaged(previous, row, expectedEpoch);
+        removeUnreferencedGeneration(existing.rootDir);
+      } finally { if (!recoveryBlocked.has(row.id)) removeUnreferencedGeneration(backupRoot); }
+      await emitCapabilities();
+      await syncCliSkill();
+      return store.get(row.id)!;
+    }
+    if (existing?.sourceKind === 'builtin' && EXTERNALIZED_PLUGINS.some(plugin => plugin.pluginId === row.id) && row.sourceKind === 'git') {
+      const backupRoot = await copyRecoveryRollbackRuntime(opts.dataDir, existing.rootDir);
+      const previous = { ...existing, rootDir: backupRoot };
+      try {
         await store.upsert(previous);
         await activateManaged(previous, row, expectedEpoch);
         removeUnreferencedGeneration(existing.rootDir);
@@ -2145,7 +2209,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         await store.upsert(restored);
         if (!stopped) {
           await loadOne(restored);
-          if (store.get(row.id)?.status === 'degraded') throw new Error('Previous plugin failed to reload; activation recovery remains pending');
+          if (store.get(row.id)?.status === 'degraded' && !sourceRecovery(previous)) throw new Error('Previous plugin failed to reload; activation recovery remains pending');
         }
         journal = await activations.phase(journal, 'restored');
         removeUnreferencedGeneration(row.rootDir);
@@ -2163,6 +2227,18 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       // Never delete a generation required by a pending recovery journal.
       if (!journal) removeUnreferencedGeneration(row.rootDir);
     }
+  }
+
+  function sourceRecovery(row: InstalledPluginRow): PluginUiSnapshot['sourceRecovery'] {
+    if (row.sourceKind !== 'path' && row.sourceKind !== 'builtin') return undefined;
+    try {
+      const source = row.sourceKind === 'path' ? parsePluginSource(row.source) : undefined;
+      loadManifestFromDir(source?.kind === 'path' ? source.path : row.rootDir);
+      return undefined;
+    } catch { /* missing or invalid manifest */ }
+    const canSwitchOfficial = EXTERNALIZED_PLUGINS.some(plugin => plugin.pluginId === row.id);
+    if (row.sourceKind === 'builtin' && !canSwitchOfficial) return undefined;
+    return { canLocate: row.sourceKind === 'path', canSwitchOfficial };
   }
 
   function snapshot(): PluginUiSnapshot[] {
@@ -2227,6 +2303,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         enabled: row.enabled,
         provenance: row.provenance,
         sourceKind: row.sourceKind,
+        sourceRecovery: sourceRecovery(row),
         status: row.status === 'running' && !live.get(row.id)?.handle ? 'degraded' : row.status,
         appEntry: row.appEntry,
         appUrl: live.get(row.id)?.handle ? appUrlFor(row) : null,
@@ -2479,8 +2556,6 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       hardReloadRunning = true;
       recoveryState = { phase: 'running', total: rows.length, restored: [], skipped: [], failed: [] };
       startBuiltinSourceWatchers();
-      const official = createOfficialPluginRecovery({ dataDir: opts.dataDir, hostVersion,
-        signal: sourceCommands.signal, fetcher: opts.recoveryFetch });
       void (async () => {
         const { ordered, cycles } = sortPluginsByRequires(rows.map(row => ({ id: row.id, requires: requiresOf(row), row })));
         const candidates = [...ordered.map(node => node.row), ...cycles.map(node => node.plugin.row)];
@@ -2501,7 +2576,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
             if (definition) {
               // A recovery runtime is still an official bundled identity. Ordinary
               // marketplace installs remain unable to claim these reserved ids.
-              root = await official(row.id);
+              root = await copyBundledPluginRuntime({ dataDir: opts.dataDir, bundledRoot: opts.bundledRoot,
+                name: definition.name, signal: sourceCommands.signal });
               materialized = { rootDir: root, sourceKind: 'builtin', provenance: row.provenance,
                 display: `builtin:${definition.name}`, npmResolvedVersion: null, npmIntegrity: null,
                 gitResolvedCommit: null, catalogMarketplace: null, catalogEntryId: null };
@@ -2681,34 +2757,69 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       await syncCliSkill();
       });
     },
-    async reload(id) {
+    reload: id => reloadPlugin(id),
+    async repair(id, path) {
       await waitForStartup();
-      cancelRecovery(id);
-      bumpLifecycleEpoch(id);
       const row = store.get(id);
       if (!row) throw new Error(`plugin not installed: ${id}`);
-      assertBundledPluginInstall({ id, sourceKind: row.sourceKind, source: row.source, development: developmentEnabled() });
+      const choices = sourceRecovery(row);
+      if (!choices || (path ? !choices.canLocate : !choices.canSwitchOfficial)) {
+        throw new Error('Plugin source recovery is no longer available; refresh Plugins');
+      }
+      const external = EXTERNALIZED_PLUGINS.find(plugin => plugin.pluginId === id);
+      const source = path ? { kind: 'path' as const, path } : parsePluginSource(`git:${external!.url}@${external!.ref}`);
       const epoch = lifecycleEpoch(id);
-      const overrides = {
-        provenance: row.provenance,
-        catalogMarketplace: row.catalogMarketplace,
-        catalogEntryId: row.catalogEntryId,
-        bundledRecoveryVersion: row.bundledRecoveryVersion
-      };
-      // Reload the installed artifact; mutable remote refs only move through Update.
-      const source = row.sourceKind === 'git' || row.sourceKind === 'npm' || row.bundledRecoveryVersion
-        ? { rootDir: row.rootDir, sourceKind: row.sourceKind, provenance: row.provenance, display: row.source,
-            sourceIntent: row.sourceIntent, npmResolvedVersion: row.npmResolvedVersion, npmIntegrity: row.npmIntegrity,
-            gitResolvedCommit: row.gitResolvedCommit, catalogMarketplace: row.catalogMarketplace, catalogEntryId: row.catalogEntryId }
-        : await materialize(parsePluginSource(row.source));
-      const next = await installFromMaterialized(source, row.enabled, overrides, id, epoch, pluginUpdateFingerprint(row, hostVersion, sdkVersion));
-      if (started) startBuiltinSourceWatchers();
-      await emitCapabilities();
-      await syncCliSkill();
-      await emitAppsChanged();
-      return next;
+      const fingerprint = pluginUpdateFingerprint(row, hostVersion, sdkVersion);
+      let candidate = await materialize(source);
+      if (path) {
+        // Reject a different identity before compiling or running any plugin code.
+        if (loadManifestFromDir(candidate.rootDir).id !== id) throw new Error(`Selected folder is not plugin ${id}`);
+        await ensureCompiledApp({ ...row, rootDir: candidate.rootDir, appEntry: loadManifestFromDir(candidate.rootDir).appEntry });
+        candidate = { ...candidate, rootDir: await copyRecoveryRollbackRuntime(opts.dataDir, candidate.rootDir) };
+      }
+      try {
+        const repaired = await installFromMaterialized(candidate, row.enabled, path ? {} : {
+          provenance: 'catalog', catalogMarketplace: 'official', catalogEntryId: id
+        }, id, epoch, fingerprint, true);
+        await emitAppsChanged();
+        return repaired;
+      } catch (error) {
+        if (!recoveryBlocked.has(id)) removeUnreferencedGeneration(candidate.rootDir);
+        throw error;
+      }
     },
     async reconcileBuiltins() {
+      // Migrate existing users only; fresh profiles never auto-install external plugins.
+      // Failed downloads/activation retain the prior registration and all user data.
+      for (const external of EXTERNALIZED_PLUGINS) {
+        let row = store.get(external.pluginId);
+        if (!row || row.sourceKind !== 'builtin' || uninstalled.has(row.id) || activationRecoveryDetail(row)) continue;
+        const epoch = lifecycleEpoch(row.id);
+        try {
+          // Preserve the last working bundled code before downloads or the next app upgrade.
+          // The registration roots the generation for retention and retries remain builtin.
+          const missing = sourceRecovery(row);
+          if (!isManagedGeneration(opts.dataDir, row.rootDir) || missing) {
+            // A direct upgrade can already have removed the old app resources.
+            // Packagers fetch this compiled fallback from the independent source.
+            const runtime = missing ? join(opts.bundledRoot, 'migration-runtimes', external.name) : row.rootDir;
+            if (existsSync(runtime)) {
+              const manifest = loadManifestFromDir(runtime);
+              assertEngines(manifest, hostVersion, sdkVersion);
+              const metadata = reconcileBundledPluginMetadata(row, runtime, manifest, now());
+              const rootDir = await copyRecoveryRollbackRuntime(opts.dataDir, runtime);
+              row = await store.upsert({ ...metadata, rootDir });
+            }
+          }
+          const candidate = await materialize(parsePluginSource(`git:${external.url}@${external.ref}`));
+          await installFromMaterialized(candidate, row.enabled, {
+            provenance: 'catalog', catalogMarketplace: 'official', catalogEntryId: row.id,
+            bundledRecoveryVersion: undefined
+          }, row.id, epoch, pluginUpdateFingerprint(row, hostVersion, sdkVersion));
+        } catch (error) {
+          console.error(`[plugins] independent migration pending for ${row.id}:`, error instanceof Error ? error.message : error);
+        }
+      }
       for (const id of RECLAIM_UNINSTALLED_AUTOINSTALL_IDS) {
         if (uninstalled.hasReclaimed(id)) continue;
         if (uninstalled.has(id)) await uninstalled.forget(id);
@@ -3183,6 +3294,7 @@ export interface BundledPluginCatalogEntry {
   apiRange: string;
   title: string;
   icon?: string;
+  iconUrl?: string;
   description?: string;
   author?: string;
   permissions: string[];
@@ -3232,6 +3344,7 @@ export function listBundledPluginCatalog(
           apiRange: '',
           title: manifest.name,
           icon: manifest.branding.icon,
+          iconUrl: readCatalogIcon(dir, manifest.branding.icon),
           description: manifest.description,
           permissions: [],
           skillNames: discoverPluginSkillNames(dir, manifest.skillsRootPaths),

@@ -23,6 +23,7 @@ import {
   skippedLastRunPill,
   isSessionAlive as isSessionOpen,
   formatCountdown,
+  cadenceLabel,
   PROFILE_LABEL
 } from './schedulerUtils.js';
 import { openScheduledLive } from './openScheduledLive.js';
@@ -184,7 +185,7 @@ export const ScheduleRow = React.memo(function ScheduleRow({
           <span className="scheduler-card-compact-meta">
             {isExternal
               ? `${task.source && task.source !== 'global' ? `${projectName} · ` : ''}Claude /loop · ${task.schedule.every}`
-              : `${projectName} · ${PROFILE_LABEL[task.profile]} · every ${task.schedule.every}`}
+              : `${projectName} · ${PROFILE_LABEL[task.profile]} · ${cadenceLabel(task.schedule)}`}
           </span>
         </div>
         <div className="scheduler-card-compact-when">

@@ -50,6 +50,7 @@ const h = vi.hoisted(() => {
     winDestroyed: false,
     contentsDestroyed: (() => false) as () => boolean,
     runtimeStart: undefined as any,
+    runtimeOptions: undefined as import('../runtime/runtime-supervisor.js').StartRuntimeSupervisorOptions | undefined,
     nativeTheme: Object.assign(new EventEmitter(), { shouldUseDarkColors: false, shouldUseHighContrastColors: false }),
     overlays: [] as unknown[]
   };
@@ -214,7 +215,11 @@ vi.mock('../runtime/runtime-supervisor.js', async importOriginal => {
       const real = actual.createProductRouteSquadRuntime(...args);
       return new Proxy(real, { get: (t, k) => (typeof k === 'string' && h.runtimeOverride[k]) || (t as any)[k] });
     },
-    startRuntimeSupervisor: async () => { if (h.runtimeStart) return h.runtimeStart; throw new Error('no runtime in unit test'); }
+    startRuntimeSupervisor: async (options: Parameters<typeof actual.startRuntimeSupervisor>[0]) => {
+      h.runtimeOptions = options;
+      if (h.runtimeStart) return h.runtimeStart;
+      throw new Error('no runtime in unit test');
+    }
   };
 });
 vi.mock('@zana-ai/zcc-server/mobile/manager', () => ({
@@ -277,6 +282,9 @@ describe('host bootstrap wiring', () => {
       expect(h.winOptions[0].backgroundColor).toBe('#f6f8fa');
       expect(h.winOptions[0].webPreferences.additionalArguments).toContain('--zcc-theme=light');
       expect(h.controlPlaneDeps.pluginCommands.runCliCommand).toBeTypeOf('function');
+      for (const action of ['enable', 'disable', 'remove', 'reload', 'update', 'updateAll']) {
+        expect(h.controlPlaneDeps.pluginCommands[action]).toBeTypeOf('function');
+      }
     } finally { vi.unstubAllEnvs(); configSpy.mockRestore(); }
     expect(h.mobileStart).toHaveBeenCalledOnce();
     await vi.waitFor(() => expect(vi.mocked(console.error).mock.calls.some(call => String(call[0]).includes('mobileGateway.start'))).toBe(true));
@@ -386,6 +394,7 @@ describe('host bootstrap wiring', () => {
       try { item.click({}, {}); } catch { /* menu click needs a window */ }
     }
     expect(items.some((i) => i.label === 'View on GitHub')).toBe(true);
+    expect(items.find((i) => i.role === 'pasteAndMatchStyle')).toMatchObject({ accelerator: 'CmdOrCtrl+Shift+V' });
     expect(shell).toBeDefined();
   });
 
@@ -756,6 +765,46 @@ describe('host bootstrap wiring', () => {
     }
   });
 
+  it('resolves and persists host-attested automated MCP catalogues', async () => {
+    const resolve = h.mcpDeps.resolveAutomatedMcpCatalogue;
+    const executionStore = ctx().executionStore;
+    const record = { id: 'execution-1' };
+    const binding = { executionId: 'execution-1', projectId: project.id, slotId: 'worker-1', role: 'worker' as const };
+    const get = vi.spyOn(executionStore, 'getInProject').mockResolvedValue(record);
+    const persist = vi.spyOn(executionStore, 'recordAutomatedMcpCatalogueProvenance').mockImplementation(async (_id: string, _slotId: string, provenance: unknown) => ({
+      version: 1 as const, ...(provenance as object)
+    }));
+    const projects = vi.spyOn(store, 'listProjects').mockReturnValue([{ ...project, remote: undefined }] as never);
+    try {
+      const local = await resolve(binding);
+      expect(local.tools).not.toContain('remote_exec');
+      expect(persist).toHaveBeenCalledWith('execution-1', 'worker-1', expect.objectContaining({ role: 'worker', capabilities: [] }));
+
+      projects.mockReturnValue([{ ...project, remote: { host: 'remote.test' } }] as never);
+      const remote = await resolve(binding);
+      expect(remote.tools).toContain('remote_exec');
+      expect(persist).toHaveBeenLastCalledWith('execution-1', 'worker-1', expect.objectContaining({ capabilities: ['remote_fs'] }));
+
+      get.mockResolvedValueOnce({ id: 'execution-1', automatedMcpCatalogueProvenance: {
+        'worker-1': { version: 1, role: 'worker', capabilities: [], tools: ['execution.snapshot'], digest: 'a'.repeat(64) }
+      } });
+      expect(await resolve(binding)).toMatchObject({ tools: ['execution.snapshot'] });
+      expect(persist).toHaveBeenCalledTimes(2);
+
+      get.mockResolvedValueOnce({ id: 'execution-1', automatedMcpCatalogueProvenance: {
+        'worker-1': { version: 1, role: 'orchestrator', capabilities: [], tools: ['execution.snapshot'], digest: 'a'.repeat(64) }
+      } });
+      await expect(resolve(binding)).rejects.toThrow('role mismatch');
+
+      get.mockResolvedValueOnce(undefined);
+      await expect(resolve(binding)).rejects.toThrow('unavailable');
+    } finally {
+      get.mockRestore();
+      persist.mockRestore();
+      projects.mockRestore();
+    }
+  });
+
   it('reports team task outcomes for known and unknown workers', async () => {
     expect(await host.reportTeamTask('worker-1', 'lr-1', 'slot-1', 'complete')).toMatchObject({ ok: false, code: 'NOT_FOUND' });
     vi.spyOn(h.lifecycleStore, 'list').mockResolvedValue([{ id: 'rec', launchRequestId: 'lr-1', workers: [{ sessionId: 'worker-1', slotId: 'slot-1' }] }]);
@@ -794,6 +843,69 @@ describe('host bootstrap wiring', () => {
     expect(h.followupDeps.resolveResume('f1')).toMatchObject({ claudeSessionId: 'cs', personaId: 'pp' });
     expect(h.followupDeps.resolveResume('zz')).toBeNull();
     expect(typeof h.followupDeps.followupsFromIdle()).toBe('boolean');
+  });
+
+  it('clears memoized inbox summaries when config or prompt changes invalidate reuse', async () => {
+    const c = ctx();
+    await c.inboxStore.append({ projectId: project.id, comments: 'Memo lifecycle fixture' });
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    const run = vi.spyOn(c.llmService, 'run').mockResolvedValue({
+      ok: true,
+      text: JSON.stringify({ headline: 'Ready', done: [], attention: [] }),
+      provider: 'claude-cli',
+      ms: 1
+    });
+    const summaryCalls = () => run.mock.calls.filter(([, , dedupeKey]) => dedupeKey === 'inbox-summary:all');
+    try {
+      for (const [expectedCalls, invalidate] of [
+        undefined,
+        () => c.invalidateLlmReuse(),
+        () => c.promptRegistry.emit('changed')
+      ].map((invalidate, index) => [index + 1, invalidate] as const)) {
+        invalidate?.();
+        await expect(c.inboxSummary.summarize(null)).resolves.toMatchObject({ ok: true, digest: { headline: 'Ready' } });
+        await expect(c.inboxSummary.summarize(null)).resolves.toMatchObject({ ok: true, digest: { headline: 'Ready' } });
+        expect(summaryCalls()).toHaveLength(expectedCalls);
+      }
+      expect(c.memoCounters()['inbox-summary']).toMatchObject({ requests: 6, hits: 3, misses: 3, providerCalls: 3 });
+    } finally {
+      run.mockRestore();
+      clock.mockRestore();
+    }
+  });
+
+  it('wires memo identities and remote read offsets through main-owned services', async () => {
+    const c = ctx();
+    const entry = { id: 'builtin:test', userTemplate: '{{entries}}' };
+    const get = vi.spyOn(c.promptRegistry, 'get');
+    const identity = vi.spyOn(c.llmService, 'requestIdentity').mockReturnValue('identity');
+    const config = store.getConfig();
+    const getConfig = vi.spyOn(store, 'getConfig');
+    try {
+      get.mockReturnValue(entry);
+      expect(c.inboxSummary['deps'].requestIdentity('inbox')).toBe('identity');
+      expect(c.feedNoiseClassifier['deps'].requestIdentity('noise')).toBe('identity');
+      expect(c.feedSummary['deps'].requestIdentity('feed')).toBe('identity');
+      get.mockReturnValue(undefined);
+      expect(c.inboxSummary['deps'].requestIdentity('inbox')).toBe('');
+      expect(c.feedNoiseClassifier['deps'].requestIdentity('noise')).toBe('');
+      expect(c.feedSummary['deps'].requestIdentity('feed')).toBe('');
+
+      getConfig.mockReturnValue({ ...config, claudeBinary: 'claude-one' });
+      c.llmService.requestIdentity(entry, { entries: 'one' });
+      getConfig.mockReturnValue({ ...config, claudeBinary: 'claude-two' });
+      c.llmService.requestIdentity(entry, { entries: 'two' });
+      expect(c.llmService.invalidateProviderIdentity).toBeDefined();
+
+      await expect(h.mcpDeps.remoteFs.readFile(project.id, 'remote.txt', 42)).resolves.toMatchObject({
+        ok: false,
+        message: 'Not a remote project'
+      });
+    } finally {
+      get.mockRestore();
+      identity.mockRestore();
+      getConfig.mockRestore();
+    }
   });
 
   it('parses overseer hook bodies and rejects malformed ones', async () => {
@@ -1292,7 +1404,7 @@ describe('host bootstrap wiring', () => {
     }
   });
 
-  it('connects bulk plugin updates to the production supervisor', async () => {
+  it('connects plugin updates and Modern-thread power activity to the production supervisor', async () => {
     const value = { updated: ['fixture'], failed: [] };
     const updateAllPlugins = vi.fn(async () => value);
     const noop = () => () => {};
@@ -1314,10 +1426,23 @@ describe('host bootstrap wiring', () => {
       expect(updateAllPlugins).toHaveBeenCalledOnce();
       updateAllPlugins.mockRejectedValueOnce(new Error('plugin host stopped'));
       await expect(h.controlPlaneDeps.pluginHost.updateAll()).rejects.toThrow('plugin host stopped');
+
+      const observe = vi.spyOn(ctx().keepAwake, 'observe');
+      try {
+        expect(h.runtimeOptions?.onLocalThreadWork).toBeTypeOf('function');
+        h.runtimeOptions!.onLocalThreadWork!(true);
+        expect(observe).toHaveBeenLastCalledWith('modern-threads', 'working');
+        h.runtimeOptions!.onLocalThreadWork!(false);
+        expect(observe).toHaveBeenLastCalledWith('modern-threads', 'idle');
+        expect(observe).toHaveBeenCalledTimes(2);
+      } finally {
+        observe.mockRestore();
+      }
     } finally {
       h.appHandlers.get('before-quit')?.[0]?.({ preventDefault: vi.fn() });
       await settle();
       h.runtimeStart = undefined;
+      h.runtimeOptions = undefined;
       if (rendererUrl === undefined) delete process.env.ELECTRON_RENDERER_URL;
       else process.env.ELECTRON_RENDERER_URL = rendererUrl;
     }

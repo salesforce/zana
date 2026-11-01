@@ -16327,6 +16327,13 @@ body.resizing-col .explorer-resizer::after {
   vertical-align: baseline;
 }
 
+.inbox-md .inbox-md-file-link {
+  color: var(--accent-gold);
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
 .inbox-md .inbox-md-file-chip:hover,
 .inbox-md .inbox-md-file-chip:focus-visible {
   text-decoration: underline;
@@ -36068,9 +36075,10 @@ body.split-frame-guard webview {
   width: 100%;
 }
 
+/* Message actions extend below their row and must stay above the next sticky prompt. */
 .thread-timeline-item:hover,
 .thread-timeline-item:focus-within {
-  z-index: 1;
+  z-index: 5;
 }
 
 .thread-timeline-item.is-user,
@@ -36201,6 +36209,7 @@ body.split-frame-guard webview {
 }
 
 /* Sticky prompts need an opaque backing that matches their hosting surface. */
+.app-shell.shell-inset .thread-timeline-current-turn > .thread-timeline-item.is-user,
 .panel-agent-tab .thread-timeline-current-turn > .thread-timeline-item.is-user,
 .thread-detail-view--modal .thread-timeline-current-turn > .thread-timeline-item.is-user {
   background: var(--bg-panel);
@@ -38940,6 +38949,12 @@ body.split-frame-guard webview {
   min-width: 0;
 }
 
+/* Keep the saved drag width inside the live container after a window shrinks.
+   This matches the shared panel's 70% drag limit without discarding its saved width. */
+.plugin-panel-host-layout:not(.is-secondary-maximized):not(.is-compact) > .thread-secondary-panel {
+  flex-basis: min(var(--thread-secondary-width, 22rem), 70%);
+}
+
 .plugin-panel-host-layout:is(.is-secondary-maximized, .is-compact.is-secondary-open) > .split-plugin-main {
   display: none;
 }
@@ -39629,6 +39644,21 @@ body.split-frame-guard webview {
 
 .composer-typeahead-section + .composer-typeahead-section {
   border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+/* Portalled menus escape the launcher's scroll clipping and backdrop layer. */
+.composer-typeahead-menu.composer-typeahead-menu--floating {
+  position: fixed;
+  right: auto;
+  top: auto;
+  bottom: auto;
+  z-index: 401;
+  box-sizing: border-box;
+  overscroll-behavior: contain;
+}
+
+.composer-typeahead-menu > .composer-typeahead-section {
+  flex-shrink: 0;
 }
 
 .composer-typeahead-heading {

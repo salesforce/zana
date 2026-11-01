@@ -269,6 +269,8 @@ interface StartThreadArgs extends AgentLaunchArgs {
   serviceTier?: "default" | "fast";
   additionalWorkspaceWriteRoots?: string[];
   acpMode?: string;
+  providerId?: string;
+  sessionKind?: "automated";
 }
 
 async function startThread(args?: StartThreadArgs): Promise<{
@@ -278,6 +280,7 @@ async function startThread(args?: StartThreadArgs): Promise<{
   nextThreadSerial += 1;
   const bbThreadId = `thread-${nextThreadSerial}`;
   const id = sendRequest("thread/start", {
+    providerId: args?.providerId ?? "fake",
     threadId: bbThreadId,
     cwd: workspaceDir,
     instructionMode: "append",
@@ -307,6 +310,7 @@ async function startThread(args?: StartThreadArgs): Promise<{
       },
     }),
     ...(args?.dynamicTools ? { dynamicTools: args.dynamicTools } : {}),
+    ...(args?.sessionKind ? { sessionKind: args.sessionKind } : {}),
   });
   const response = await waitForResponse(id);
   if (response.error) {
@@ -1007,10 +1011,10 @@ describe("acp bridge", () => {
     });
   });
 
-  it("authenticates before ACP-native model discovery", async () => {
+  it.each(["cached_token", "cursor_login"])("authenticates with %s before ACP-native model discovery", async (methodId) => {
     const modelListId = sendModelList({
       envVars: {
-        FAKE_ACP_AUTH_METHODS: "cached_token",
+        FAKE_ACP_AUTH_METHODS: methodId,
         FAKE_ACP_MODEL_CONFIG: "1",
       },
     });
@@ -1030,6 +1034,29 @@ describe("acp bridge", () => {
       ],
       selectedOnlyModels: [],
     });
+  });
+
+  it.each(["1", "0"])("never opens a browser during Cursor model discovery (saved credentials: %s)", async (authenticated) => {
+    const requestLog = join(workspaceDir, "cursor-auth-discovery.jsonl");
+    const browserLog = join(workspaceDir, "cursor-browser-opened");
+    const modelListId = sendModelList({
+      envVars: {
+        FAKE_ACP_AUTH_METHODS: "cursor_login",
+        FAKE_ACP_CURSOR_LOGIN_MISSING: authenticated === "1" ? "0" : "1",
+        FAKE_ACP_BROWSER_LOG: browserLog,
+        FAKE_ACP_MODEL_CONFIG: "1",
+        FAKE_ACP_REQUEST_LOG: requestLog,
+        NO_OPEN_BROWSER: "",
+      },
+    });
+    const response = await waitForResponse(modelListId);
+    expect(loggedAcpRequests(requestLog).map((request) => request.method)).toContain("authenticate");
+    expect(existsSync(browserLog)).toBe(false);
+    if (authenticated === "1") {
+      expect(response.result).toMatchObject({ models: [{ id: "fake/default" }, { id: "fake/strong" }] });
+    } else {
+      expect(response.error?.message).toBe("ACP agent is not authenticated.");
+    }
   });
 
   it("probes per-model reasoning across large catalogs instead of falling back", async () => {
@@ -2492,9 +2519,9 @@ describe("acp bridge", () => {
     expect(agentMessageTexts()).toContain("echo:hello there");
   });
 
-  it("authenticates ACP sessions with cached tokens when advertised", async () => {
+  it.each(["cached_token", "cursor_login"])("authenticates ACP sessions with %s when advertised", async (methodId) => {
     const { providerThreadId } = await startThread({
-      envVars: { FAKE_ACP_AUTH_METHODS: "cached_token" },
+      envVars: { FAKE_ACP_AUTH_METHODS: methodId },
     });
 
     const turnId = sendTurnRequest("turn/start", providerThreadId, {
@@ -2503,7 +2530,52 @@ describe("acp bridge", () => {
     await waitForResponse(turnId);
     await waitForTurnCompleted();
 
-    expect(agentMessageTexts()).toContain("auth-method:cached_token");
+    expect(agentMessageTexts()).toContain(`auth-method:${methodId}`);
+  });
+
+  it.each(["1", "0"])("never opens a browser during Cursor session creation (saved credentials: %s)", async (authenticated) => {
+    const requestLog = join(workspaceDir, "cursor-auth-session.jsonl");
+    const browserLog = join(workspaceDir, "cursor-browser-opened");
+    const launch = {
+      envVars: {
+        FAKE_ACP_AUTH_METHODS: "cursor_login",
+        FAKE_ACP_CURSOR_LOGIN_MISSING: authenticated === "1" ? "0" : "1",
+        FAKE_ACP_BROWSER_LOG: browserLog,
+        FAKE_ACP_REQUEST_LOG: requestLog,
+        NO_OPEN_BROWSER: "",
+      },
+    };
+    if (authenticated === "1") {
+      const { providerThreadId } = await startThread(launch);
+      const turnId = sendTurnRequest("turn/start", providerThreadId, {
+        input: [{ type: "text", text: "hello", mentions: [] }],
+      });
+      await waitForResponse(turnId);
+      await waitForTurnCompleted();
+      expect(agentMessageTexts()).toContain("echo:hello");
+    } else {
+      const response = await waitForResponse(sendRequest("thread/start", {
+        threadId: `thread-${++nextThreadSerial}`,
+        cwd: workspaceDir,
+        instructionMode: "append",
+        options: executionOptions({ providerOptions: { acpLaunchSpec: acpLaunchSpec(launch) } }),
+      }));
+      expect(response.error?.message).toBe("ACP agent is not authenticated.");
+    }
+    expect(loggedAcpRequests(requestLog).map((request) => request.method)).toContain("authenticate");
+    expect(existsSync(browserLog)).toBe(false);
+  });
+
+  it.each(["cached_token", "cursor_login"])("preserves unrelated %s authentication failures", async (methodId) => {
+    const response = await waitForResponse(sendRequest("thread/start", {
+      threadId: `thread-${++nextThreadSerial}`,
+      cwd: workspaceDir,
+      instructionMode: "append",
+      options: executionOptions({ providerOptions: { acpLaunchSpec: acpLaunchSpec({
+        envVars: { FAKE_ACP_AUTH_METHODS: methodId, FAKE_ACP_AUTH_ERROR: "Network unavailable" },
+      }) } }),
+    }));
+    expect(response.error?.message).toBe("Network unavailable");
   });
 
   it("authenticates Codex-style api-key when OPENAI_API_KEY is available", async () => {
@@ -3083,6 +3155,74 @@ describe("acp bridge", () => {
     expect(readFileSync(targetPath, "utf8")).toBe("{}\n");
   });
 
+  it("plays scripted zcc tool calls over HTTP MCP, filling captured values into later steps", async () => {
+    const scriptPath = join(workspaceDir, "tool-script.json");
+    writeFileSync(scriptPath, JSON.stringify({
+      match: "Draft a doc",
+      steps: [
+        { tool: { name: "design_doc_create", arguments: { title: "Pricing" }, capture: { doc: "Created design doc (\\S+)" } } },
+        { tool: { name: "design_doc_comment", arguments: { doc: "{{doc}}", resolve: "c_1" } } },
+        { say: "::design-doc{id=\"{{doc}}\"} {{missing}}", wordMs: 0 },
+      ],
+    }));
+    const { providerThreadId } = await startThread({
+      dynamicTools: [
+        { name: "design_doc_create", description: "Create.", inputSchema: { type: "object" } },
+        { name: "design_doc_comment", description: "Comment.", inputSchema: { type: "object" } },
+      ],
+      envVars: { FAKE_ACP_SCRIPT: scriptPath, FAKE_ACP_HTTP_MCP: "1" },
+    });
+    const turnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "Draft a doc", mentions: [] }],
+    });
+    const answered = new Set<string | number>();
+    const answer = async (tool: string, text: string, isError = false) => {
+      const call = await waitFor(
+        () => output.messages.find((message) =>
+          message.method === "item/tool/call" && message.id !== undefined && !answered.has(message.id) &&
+          (message.params as { tool?: string } | undefined)?.tool === tool),
+        `forwarded ${tool}`,
+      );
+      answered.add(call.id!);
+      handleLine(JSON.stringify({ jsonrpc: "2.0", id: call.id, result: { success: !isError, contentItems: [{ type: "inputText", text }] } }));
+      return call.params as { arguments?: Record<string, unknown> };
+    };
+    expect((await answer("design_doc_create", "Created design doc dd_42 (\"Pricing\").")).arguments).toEqual({ title: "Pricing" });
+    expect((await answer("design_doc_comment", "No such comment", true)).arguments).toEqual({ doc: "dd_42", resolve: "c_1" });
+    await waitForResponse(turnId);
+    await waitForTurnCompleted();
+
+    expect(agentMessageTexts().join("")).toContain("::design-doc{id=\"dd_42\"} {{missing}}");
+    const tools = threadEventsOfType("item/completed")
+      .map((event) => event.item as { type?: string; tool?: string; status?: string })
+      .filter((item) => item.type === "toolCall");
+    expect(tools.map((item) => item.tool)).toEqual(["design_doc_create", "design_doc_comment"]);
+
+    // A later turn still sees what the first one captured.
+    writeFileSync(scriptPath, JSON.stringify({ match: "Again", steps: [{ say: "again {{doc}}", wordMs: 0 }] }));
+    const second = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "Again", mentions: [] }],
+    });
+    await waitForResponse(second);
+    await waitFor(() => agentMessageTexts().join("").includes("again dd_42") || undefined, "second turn reuses dd_42");
+  });
+
+  it("reports a scripted tool call as failed when no HTTP MCP server was offered", async () => {
+    const scriptPath = join(workspaceDir, "tool-script-no-mcp.json");
+    writeFileSync(scriptPath, JSON.stringify({
+      match: "Use a tool",
+      steps: [{ tool: { name: "design_doc_create" } }, { say: "after", wordMs: 0 }],
+    }));
+    const { providerThreadId } = await startThread({ envVars: { FAKE_ACP_SCRIPT: scriptPath } });
+    const turnId = sendTurnRequest("turn/start", providerThreadId, {
+      input: [{ type: "text", text: "Use a tool", mentions: [] }],
+    });
+    await waitForResponse(turnId);
+    await waitForTurnCompleted();
+    expect(agentMessageTexts().join("")).toContain("after");
+    expect(output.messages.some((message) => message.method === "item/tool/call")).toBe(false);
+  });
+
   it("denies client fs writes outside the workspace in accept-edits mode", async () => {
     const outsideDir = mkdtempSync(join(tmpdir(), "bb-acp-outside-"));
     const targetPath = join(outsideDir, "outside.txt");
@@ -3656,6 +3796,39 @@ describe("acp bridge", () => {
     expect(response.error?.message).toMatch(/cannot fork at a checkpoint/u);
     expect(existsSync(forkLog)).toBe(false);
     expect(notifications("thread/identity")).toEqual([]);
+  });
+
+  it.each([
+    ["thread/start", {}, "acp-opencode"],
+    ["thread/resume", { providerThreadId: "source-session" }, "acp-cursor"],
+    ["thread/fork", { sourceProviderThreadId: "source-session" }, undefined],
+  ])(
+    "fails closed for automated ACP %s before starting an ACP session",
+    async (method, extra, providerId) => {
+      const id = sendRequest(method, {
+        ...(providerId ? { providerId } : {}),
+        threadId: `automated-${method}`,
+        cwd: workspaceDir,
+        instructionMode: "append",
+        sessionKind: "automated",
+        options: executionOptions({
+          providerOptions: { acpLaunchSpec: acpLaunchSpec({}) },
+        }),
+        ...extra,
+      });
+
+      const response = await waitForResponse(id);
+      expect(response.error).toMatchObject({
+        code: -32602,
+          message: expect.stringContaining("Automated ACP sessions are unsupported"),
+      });
+      expect(notifications("thread/identity")).toEqual([]);
+    },
+  );
+
+  it("allows an interactive OpenCode ACP session", async () => {
+    const started = await startThread({ providerId: "acp-opencode" });
+    expect(started.providerThreadId).toMatch(/^fake-sess-/u);
   });
 
   it("rejects a fork result that reuses the source session id", async () => {

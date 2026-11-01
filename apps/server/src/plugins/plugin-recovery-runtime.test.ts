@@ -1,113 +1,107 @@
-import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { gzipSync } from 'node:zlib';
 import { afterEach, expect, it, vi } from 'vitest';
-import { copyRecoveryRollbackRuntime, createOfficialPluginRecovery, fetchRecoveryBytes, pluginRecoveryUrl } from './plugin-recovery-runtime.js';
+import { copyBundledPluginRuntime, copyRecoveryRollbackRuntime } from './plugin-recovery-runtime.js';
+
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, copyFile: vi.fn(actual.copyFile) };
+});
 
 const roots: string[] = [];
-afterEach(() => { vi.unstubAllEnvs(); roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })); });
-const signal = () => new AbortController().signal;
-function fixture(overrides: { id?: string; files?: unknown[]; index?: Record<string, unknown>; checksum?: string } = {}) {
+afterEach(() => { vi.mocked(fs.copyFile).mockClear(); vi.restoreAllMocks(); roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })); });
+function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'plugin-recovery-')); roots.push(root);
-  const bytes = gzipSync(JSON.stringify({ version: 1, id: overrides.id ?? 'tasks', files: overrides.files ?? [
-    { path: 'package.json', base64: Buffer.from('{}').toString('base64'), executable: false },
-    { path: 'bin/run', base64: Buffer.from('hello').toString('base64'), executable: true }
-  ] }));
-  const index = { version: 1, zccVersion: '2.3.1', plugins: [{ id: 'tasks', file: 'plugin-recovery-tasks.json.gz', sha256: overrides.checksum ?? createHash('sha256').update(bytes).digest('hex') }], ...overrides.index };
-  const fetcher = vi.fn(async (url: URL) => new Response(url.pathname.endsWith('.gz') ? new Uint8Array(bytes) : JSON.stringify(index)));
-  const recover = createOfficialPluginRecovery({ dataDir: root, hostVersion: '2.3.1', signal: signal(), fetcher: fetcher as never });
-  return { root, index, bytes, fetcher, recover };
+  const bundledRoot = join(root, 'bundle'), source = join(bundledRoot, 'tasks');
+  mkdirSync(join(source, 'bin'), { recursive: true });
+  writeFileSync(join(source, 'package.json'), '{}');
+  writeFileSync(join(source, 'bin/run'), 'clean runtime', { mode: 0o700 });
+  const controller = new AbortController();
+  const args = { dataDir: join(root, 'data'), bundledRoot, name: 'tasks', signal: controller.signal };
+  return { root, source, args, controller, recover: () => copyBundledPluginRuntime(args) };
 }
 
-it('uses versioned official releases and honors the host mirror', () => {
-  vi.stubEnv('ZCC_PLUGIN_RECOVERY_URL', '');
-  expect(pluginRecoveryUrl('2.3.1')).toContain('/releases/download/v2.3.1/plugin-recovery-');
-  vi.stubEnv('ZCC_PLUGIN_RECOVERY_URL', 'https://mirror.test/index.json');
-  expect(pluginRecoveryUrl('2.3.1')).toBe('https://mirror.test/index.json');
-});
-
-it('downloads fresh runtime generations, reuses the index per run and preserves file bytes and permissions', async () => {
-  const { recover, fetcher } = fixture();
-  const first = await recover('tasks'), second = await recover('tasks');
+it('copies app runtimes into distinct managed generations offline and preserves nested bytes and executable permissions', async () => {
+  const { source, args, recover } = fixture();
+  const network = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('offline'));
+  const first = await recover(), second = await recover();
   expect(first).not.toBe(second);
-  expect(readFileSync(join(first, 'bin/run'), 'utf8')).toBe('hello');
+  expect(first.startsWith(join(args.dataDir, 'plugins/generations'))).toBe(true);
+  expect(readFileSync(join(first, 'bin/run'), 'utf8')).toBe('clean runtime');
   if (process.platform !== 'win32') expect(statSync(join(first, 'bin/run')).mode & 0o777).toBe(0o700);
-  expect(fetcher).toHaveBeenCalledTimes(3);
+  writeFileSync(join(first, 'bin/run'), 'damaged managed copy');
+  expect(readFileSync(join(source, 'bin/run'), 'utf8')).toBe('clean runtime');
+  expect(readFileSync(join(second, 'bin/run'), 'utf8')).toBe('clean runtime');
+  expect(network).not.toHaveBeenCalled();
 });
 
-it.each([
-  [{ index: { zccVersion: '9.0.0' } }, 'target Zana'],
-  [{ checksum: '0'.repeat(64) }, 'checksum'],
-  [{ id: 'different' }, 'identity'],
-  [{ index: { plugins: [] } }, 'No published'],
-])('rejects invalid official runtimes: %s', async (override, message) => {
-  const { recover } = fixture(override);
-  await expect(recover('tasks')).rejects.toThrow(message);
+it.each(['../escape', '/absolute', 'a/b', 'a\\b', '', '.'])('refuses unsafe bundle names: %s', async name => {
+  const { args } = fixture();
+  await expect(copyBundledPluginRuntime({ ...args, name })).rejects.toThrow('Invalid bundled plugin name');
+  expect(existsSync(args.dataDir)).toBe(false);
 });
 
-it('rejects duplicate plugin entries', async () => {
-  const { recover, index } = fixture();
-  index.plugins.push(index.plugins[0]!);
-  await expect(recover('tasks')).rejects.toThrow('Duplicate');
+it('reports missing app files with reinstall guidance and does not create a generation', async () => {
+  const { source, args, recover } = fixture();
+  rmSync(source, { recursive: true });
+  await expect(recover()).rejects.toThrow('Reinstall Zana');
+  expect(existsSync(args.dataDir)).toBe(false);
 });
 
-it.each(['../escape', '/absolute', 'a\\b', 'C:drive', 'a\0b', 'a//b', './a', 'a/../b'])('rejects unsafe paths and cleans candidate files: %s', async path => {
-  const { root, recover } = fixture({ files: [{ path: 'safe', base64: '', executable: false }, { path, base64: '', executable: false }] });
-  await expect(recover('tasks')).rejects.toThrow('file path');
-  expect(readdirSync(join(root, 'plugins/generations'))).toEqual([]);
+it('refuses a bundled plugin directory linked outside the app resources or back to their root', async () => {
+  const { root, source, args, recover } = fixture();
+  rmSync(source, { recursive: true });
+  const outside = join(root, 'outside'); mkdirSync(outside);
+  symlinkSync(outside, source, 'junction');
+  await expect(recover()).rejects.toThrow('escapes the app bundle');
+  rmSync(source);
+  symlinkSync(args.bundledRoot, source, 'junction');
+  await expect(recover()).rejects.toThrow('escapes the app bundle');
+  expect(existsSync(args.dataDir)).toBe(false);
 });
 
-it.each([
-  [{ path: 'A', base64: '', executable: false }, { path: 'a', base64: '', executable: false }],
-  [{ path: 'bad', base64: 'bad-base64!', executable: false }]
-])('rejects duplicate paths and invalid encodings', async (...files) => {
-  const { recover } = fixture({ files });
-  await expect(recover('tasks')).rejects.toThrow();
+it('rejects escaping descendants and excessive runtime sizes and removes failed generations', async () => {
+  const { root, source, args, recover } = fixture();
+  const outside = join(root, 'outside'); writeFileSync(outside, 'outside');
+  symlinkSync(outside, join(source, 'escape'));
+  await expect(recover()).rejects.toThrow('escapes');
+  expect(readdirSync(join(args.dataDir, 'plugins/generations'))).toEqual([]);
+  rmSync(join(source, 'escape'));
+  const large = join(source, 'large'); writeFileSync(large, ''); truncateSync(large, 65 * 1024 * 1024);
+  await expect(recover()).rejects.toThrow('size limit');
+  expect(readdirSync(join(args.dataDir, 'plugins/generations'))).toEqual([]);
 });
 
-it('cleans up when an output path conflicts with a file', async () => {
-  const { root, recover } = fixture({ files: [{ path: 'a', base64: '', executable: false }, { path: 'a/b', base64: '', executable: false }] });
-  await expect(recover('tasks')).rejects.toThrow();
-  expect(readdirSync(join(root, 'plugins/generations'))).toEqual([]);
+it('aborts before copying or midway through a snapshot and cleans partial output', async () => {
+  const before = fixture(); before.controller.abort(new Error('stopped'));
+  await expect(before.recover()).rejects.toThrow('stopped');
+  expect(existsSync(before.args.dataDir)).toBe(false);
+  const during = fixture();
+  const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+  vi.mocked(fs.copyFile).mockImplementationOnce(async (...args) => {
+    await actual.copyFile(...args);
+    during.controller.abort(new Error('stopped'));
+  });
+  await expect(during.recover()).rejects.toThrow('stopped');
+  expect(readdirSync(join(during.args.dataDir, 'plugins/generations'))).toEqual([]);
 });
 
-it('accepts safe HTTPS redirects and loopback mirrors and refuses other destinations', async () => {
-  const fetcher = vi.fn().mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: 'https://release-assets.githubusercontent.com/asset' } }))
-    .mockResolvedValueOnce(new Response('ok'));
-  expect((await fetchRecoveryBytes('https://github.com/release', 10, signal(), fetcher)).toString()).toBe('ok');
-  expect((await fetchRecoveryBytes('http://127.0.0.1:1234/index', 10, signal(), vi.fn(async () => new Response('ok')))).toString()).toBe('ok');
-  for (const url of ['http://example.test/index', 'https://user:secret@example.test/index', 'file:///tmp/index']) {
-    await expect(fetchRecoveryBytes(url, 10, signal(), fetcher)).rejects.toThrow('requires HTTPS');
-  }
-  await expect(fetchRecoveryBytes('https://github.com/index', 10, signal(), vi.fn(async () => new Response(null, { status: 302, headers: { location: 'https://evil.test/a' } })))).rejects.toThrow('requires HTTPS');
+it('cleans the candidate after a filesystem copy error', async () => {
+  const { args, recover } = fixture();
+  vi.mocked(fs.copyFile).mockRejectedValueOnce(new Error('disk full'));
+  await expect(recover()).rejects.toThrow('disk full');
+  expect(readdirSync(join(args.dataDir, 'plugins/generations'))).toEqual([]);
 });
 
-it('bounds bytes, redirects and response failures', async () => {
-  await expect(fetchRecoveryBytes('https://mirror.test/index', 1, signal(), vi.fn(async () => new Response('long')))).rejects.toThrow('size limit');
-  await expect(fetchRecoveryBytes('https://mirror.test/index', 10, signal(), vi.fn(async () => new Response(null, { status: 404 })))).rejects.toThrow('(404)');
-  await expect(fetchRecoveryBytes('https://mirror.test/index', 10, signal(), vi.fn(async () => new Response(null, { status: 302 })))).rejects.toThrow('no location');
-  await expect(fetchRecoveryBytes('https://mirror.test/index', 10, signal(), vi.fn(async () => new Response(null, { status: 302, headers: { location: '/again' } })))).rejects.toThrow('Too many');
-});
-
-it('aborts before writing runtime files', async () => {
-  const { root, fetcher } = fixture();
-  const controller = new AbortController(); controller.abort();
-  const recover = createOfficialPluginRecovery({ dataDir: root, hostVersion: '2.3.1', signal: controller.signal, fetcher: fetcher as never });
-  await expect(recover('tasks')).rejects.toThrow();
-  expect(existsSync(join(root, 'plugins/generations'))).toBe(false);
-});
-
-it('snapshots rollback files, handles missing code and rejects excessive or escaping trees', async () => {
-  const { root } = fixture();
-  const source = join(root, 'source'); mkdirSync(source);
-  writeFileSync(join(source, 'old.mjs'), 'old code');
+it('snapshots rollback files, allows missing old code and rejects escaping or excessive rollback trees', async () => {
+  const { root, source } = fixture();
   const backup = await copyRecoveryRollbackRuntime(root, source);
-  expect(readFileSync(join(backup, 'old.mjs'), 'utf8')).toBe('old code');
+  expect(readFileSync(join(backup, 'bin/run'), 'utf8')).toBe('clean runtime');
   expect(readdirSync(await copyRecoveryRollbackRuntime(root, join(root, 'missing')))).toEqual([]);
-  symlinkSync(join(root, 'outside'), join(source, 'escape'));
   writeFileSync(join(root, 'outside'), 'outside');
+  symlinkSync(join(root, 'outside'), join(source, 'escape'));
   await expect(copyRecoveryRollbackRuntime(root, source)).rejects.toThrow('escapes');
   rmSync(join(source, 'escape'));
   writeFileSync(join(source, 'large'), ''); truncateSync(join(source, 'large'), 65 * 1024 * 1024);

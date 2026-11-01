@@ -134,6 +134,7 @@ export type ThreadResumeInput = {
   providerOptions?: Record<string, unknown>;
   dynamicTools?: ThreadStartFields['dynamicTools'];
   instructions?: ThreadStartFields['instructions'];
+  sessionKind?: 'automated';
   automatedSkillIds?: ThreadStartFields['automatedSkillIds'];
 };
 
@@ -448,6 +449,7 @@ async function applyThreadResume(
       providerOptions: command.providerOptions,
       dynamicTools: command.dynamicTools,
       instructions: command.instructions,
+      sessionKind: command.sessionKind,
       automatedSkillIds: command.automatedSkillIds
     });
     providerThreadId = resumed?.providerThreadId ?? providerThreadId;

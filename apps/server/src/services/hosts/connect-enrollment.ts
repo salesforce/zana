@@ -14,7 +14,7 @@ export function usesConnect(ctx: ProductHttpContext): boolean { return connectio
 
 export function connectInstallCommand(issued: { accountUrl: string; serverId: string; code: string }): string {
   const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
-  return `(umask 077; f=$(mktemp); trap 'rm -f "$f"' EXIT; curl --proto '=https' -fsS --connect-timeout 10 --max-time 30 ${quote(issued.accountUrl + '/api/connect/host-installer')} -o "$f" && node "$f" --account ${quote(issued.accountUrl)} --server-id ${quote(issued.serverId)} --code ${quote(issued.code)})`;
+  return `(umask 077; d=$(mktemp -d); trap 'rm -rf "$d"' EXIT; f="$d/host-installer.mjs"; curl --proto '=https' -fsS --connect-timeout 10 --max-time 30 ${quote(issued.accountUrl + '/api/connect/host-installer')} -o "$f" && node "$f" --account ${quote(issued.accountUrl)} --server-id ${quote(issued.serverId)} --code ${quote(issued.code)})`;
 }
 
 export async function issueConnectHostCode(ctx: ProductHttpContext, input: unknown, fetcher?: ConnectFetch) {

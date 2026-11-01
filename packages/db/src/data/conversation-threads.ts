@@ -197,7 +197,8 @@ export function listPanelAgentThreads(
   db: ZccDatabase,
   pluginId: string,
   limit = 20,
-  panel?: string
+  panel?: string,
+  scope?: { projectId?: string; view?: string }
 ): ConversationThreadRow[] {
   const capped = Math.max(1, Math.min(Math.trunc(limit) || 20, 100));
   const sql = `SELECT threads.* FROM threads
@@ -208,8 +209,15 @@ export function listPanelAgentThreads(
         THEN json_type(meta.metadata_json, '$.panelAgent') END = 'object'
       ${panel === undefined ? '' : `AND CASE WHEN json_valid(meta.metadata_json)
         THEN json_extract(meta.metadata_json, '$.panelAgent.panel') END = ?`}
+      ${scope?.projectId === undefined ? '' : 'AND threads.project_id = ?'}
+      ${scope?.view === undefined ? '' : `AND CASE WHEN json_valid(meta.metadata_json)
+        THEN json_extract(meta.metadata_json, '$.panelAgent.view') END = ?`}
     ORDER BY threads.updated_at DESC, threads.id DESC LIMIT ?`;
-  const params = panel === undefined ? [pluginId, capped] : [pluginId, panel, capped];
+  const params: Array<string | number> = [pluginId];
+  if (panel !== undefined) params.push(panel);
+  if (scope?.projectId !== undefined) params.push(scope.projectId);
+  if (scope?.view !== undefined) params.push(scope.view);
+  params.push(capped);
   return (db.sqlite.prepare(sql).all(...params) as ConversationThreadSqlRow[]).map(toThread);
 }
 

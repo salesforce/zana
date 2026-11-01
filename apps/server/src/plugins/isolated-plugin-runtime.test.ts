@@ -191,7 +191,7 @@ it.skipIf(!!(globalThis as { __vitest_worker__?: { config?: { coverage?: { enabl
   const entry = pathToFileURL(fileURLToPath(new URL('../../../../e2e/fixtures/peer-design-docs-worker.ts', import.meta.url))).href;
   const source = `export { default } from ${JSON.stringify(entry)};`;
   // Sender fixture generation is not the commit under test; coverage adds heavy hashing overhead.
-  const a = await fixture(source, { heartbeatTimeoutMs: 10_000 }), b = await fixture(source);
+  const a = await fixture(source), b = await fixture(source);
   let phase = 'sender/receiver startup';
   try {
     await Promise.all([a.runtime.started, b.runtime.started]);

@@ -34,6 +34,7 @@ const chain = {
   run: vi.fn(() => true)
 };
 const editor = {
+  on: vi.fn(), off: vi.fn(),
   getJSON: () => editorState.json,
   state: {
     selection: { empty: true, from: 0, to: 0, $from: { parent: { textBetween: () => '' } } },

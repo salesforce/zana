@@ -46,13 +46,15 @@ export const bridgeRequestMethodValues = Object.values(
 
 /**
  * Whether a session is a human-driven (`interactive`) or non-interactive worker
- * (`automated`) session. Only the Claude Code bridge acts on it; every other
- * bridge ignores it. Absent or unknown values parse as absent (interactive).
+ * (`automated`) session. Bridges that cannot prove automated isolation reject
+ * the automated session before starting a provider process. Absent or unknown
+ * values parse as absent (interactive).
  */
 export const sessionKindSchema = z.enum(["interactive", "automated"]);
 
 const sessionConstructionFields = {
   sessionKind: sessionKindSchema.optional().catch(undefined),
+  providerId: z.string().min(1).optional(),
   threadId: z.string().min(1),
   cwd: z.string().min(1),
   options: bridgeExecutionOptionsSchema,

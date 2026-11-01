@@ -48,10 +48,10 @@ describe('parseFromPage', () => {
     });
   });
 
-  it('clips long selections', () => {
+  it('preserves full bounded selections', () => {
     expect(parseFromPage({ type: 'selection', text: 's'.repeat(MAX_QUOTE_LENGTH + 10), rect: null })).toEqual({
       type: 'selection',
-      text: 's'.repeat(MAX_QUOTE_LENGTH),
+      text: 's'.repeat(MAX_QUOTE_LENGTH + 10),
       rect: null
     });
   });
@@ -76,6 +76,7 @@ describe('parseFromPage', () => {
       { type: 'problem', problem: { kind: 'warn', message: 'm' } },
       { type: 'problem', problem: { kind: 'error', message: '' } },
       { type: 'selection', text: 3, rect: null },
+      { type: 'selection', text: 'x'.repeat(100001), rect: null },
       { type: 'selection', text: 't', rect: 'box' },
       { type: 'selection', text: 't', rect: { top: 1, left: 2, bottom: 3 } },
       { type: 'selection', text: 't', rect: { top: 1, left: 2, bottom: 3, right: NaN } },

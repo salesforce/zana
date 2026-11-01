@@ -1,3 +1,7 @@
+import { registerThreadContextControls, notifyThreadSubmitted } from '../plugins/thread-context-target.js';
+import { z } from 'zod';
+import { promptInputSchema, type PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
+import type { ContextReference } from '@zana-ai/zcc-plugin-sdk/app';
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { ArrowUp, Laptop, Loader2, Minimize2, Paperclip, Square } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -101,6 +105,8 @@ export interface ThreadCommandComposerProps extends ComposerProjectSelectionProp
   acpMode?: string | null;
   permissionMode?: string | null;
   initialText?: string;
+  initialSelection?: import('@zana-ai/zcc-plugin-sdk/app').EditorSelection;
+  initialReferences?: readonly ContextReference[];
   /** Focus the prompt after mounting (hub/browse create-plugin seed). */
   autoFocus?: boolean;
   onCreated?: (threadId: string) => void;
@@ -148,6 +154,8 @@ function ThreadComposerContent({
   acpMode: initialAcpMode,
   permissionMode: initialPermissionMode,
   initialText,
+  initialSelection,
+  initialReferences,
   autoFocus = false,
   onCreated,
   navigateOnCreate: navigateOnCreateOverride,
@@ -253,6 +261,8 @@ function ThreadComposerContent({
   const [blockedHint, setBlockedHint] = useState<string | null>(null);
   const submitRef = useRef<(opts?: { modifierEnter?: boolean }) => void>(() => undefined);
   const promptHistoryRef = useRef<string[]>([]);
+  const promptHistoryInputsRef = useRef<readonly PromptInput[][]>([]);
+  const promptHistoryRichDraftRef = useRef<PromptInput[]>([]);
   const promptHistoryIndexRef = useRef(-1);
   const promptHistoryDraftRef = useRef('');
   const promptHistoryHandlerRef = useRef<(event: {
@@ -426,6 +436,8 @@ function ThreadComposerContent({
     disabled: busy,
     autoFocus: autoFocus && !compact,
     initialText,
+    initialSelection,
+    initialReferences,
     slashCatalog: {
       kind: 'thread',
       localCommands,
@@ -488,26 +500,38 @@ function ThreadComposerContent({
       draft: promptHistoryDraftRef.current
     });
     if (!stepped) return false;
+    if (promptHistoryIndexRef.current === -1) {
+      const snapshot = field.serialize();
+      promptHistoryRichDraftRef.current = [{ type: 'text', ...snapshot }];
+    }
     promptHistoryIndexRef.current = stepped.index;
     promptHistoryDraftRef.current = stepped.draft;
-    field.setText(stepped.text);
+    const input = stepped.index < 0 ? promptHistoryRichDraftRef.current : promptHistoryInputsRef.current[stepped.index];
+    if (input) field.restoreText(input);
+    else field.setText(stepped.text);
     event.preventDefault?.();
     return true;
   };
 
   useEffect(() => {
-    if (!threadId) {
-      promptHistoryRef.current = [];
-      promptHistoryIndexRef.current = -1;
-      return;
-    }
+    promptHistoryRef.current = [];
+    promptHistoryInputsRef.current = [];
     promptHistoryIndexRef.current = -1;
+    if (!threadId) return;
+    let cancelled = false;
     void product.threads.promptHistory(threadId).then((body) => {
+      if (cancelled) return;
       const entries = Array.isArray(body?.entries) ? body.entries : [];
-      promptHistoryRef.current = promptHistoryTexts(entries);
+      const inputs = entries.flatMap(entry => {
+        const parsed = z.array(promptInputSchema).safeParse(entry.input);
+        return parsed.success && promptHistoryTexts([entry]).length ? [parsed.data] : [];
+      });
+      promptHistoryInputsRef.current = inputs;
+      promptHistoryRef.current = promptHistoryTexts(inputs.map(input => ({input})));
     }).catch(() => {
-      promptHistoryRef.current = [];
+      if (!cancelled) promptHistoryRef.current = [];
     });
+    return () => { cancelled = true; };
   }, [threadId]);
 
   const voiceOwner = JSON.stringify([threadId ?? null, projectId, hostId ?? null]);
@@ -610,7 +634,7 @@ function ThreadComposerContent({
       const text = applied.text;
       try {
         const paths = images.length ? await persistComposerImages(selected?.id ?? projectId!, images) : [];
-        const input = [{type:'text' as const, text, mentions:applied.mentions}, ...attachments, ...paths.map(path => ({type:'localImage' as const, path}))];
+        const input = [{type:'text' as const, text, mentions:applied.mentions, ...(applied.references ? {references:applied.references} : {})}, ...attachments, ...paths.map(path => ({type:'localImage' as const, path}))];
         if (threadId) {
           await product.threads.send(threadId, input, resolveThreadSendMode({pickerMode:composerSendMode, modifierEnter:false}), {
             permissionMode, serviceTier, model:options.model, reasoningLevel:options.reasoningLevel,
@@ -630,6 +654,7 @@ function ThreadComposerContent({
           }
         }
         field.clearIfRevision(revision);
+      if (threadId) notifyThreadSubmitted(threadId);
       } catch (error) {
         // The capture retains audio and the frozen submission for Retry.
         // Inserting text here would send the transcript twice on retry.
@@ -652,6 +677,7 @@ function ThreadComposerContent({
       try {
         await submitComposerTerminalCommand({ text: serialized.text, imageCount: field.images.length, runTerminal: onRunTerminal });
         field.clearIfRevision(revision);
+      if (threadId) notifyThreadSubmitted(threadId);
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Could not open terminal');
       } finally {
@@ -718,7 +744,7 @@ function ThreadComposerContent({
         });
       setUploadProgress(null);
       const input = [
-        ...(text.trim() ? [{ type: 'text' as const, text, mentions: applied.mentions }] : []),
+        ...(text.trim() ? [{ type: 'text' as const, text, mentions: applied.mentions, ...(applied.references ? { references: applied.references } : {}) }] : []),
         ...imagePaths.map((path) => ({ type: 'localImage' as const, path })),
         ...field.restoredAttachments
       ];
@@ -738,6 +764,7 @@ function ThreadComposerContent({
             acpMode: selectedComposerMode?.usesSlashPlan ? undefined : selectedComposerMode?.nativeValue
           });
           field.clearIfRevision(revision);
+          notifyThreadSubmitted(threadId);
           dispatchThreadMessageSent(threadId);
         } catch (error) {
           dispatchOptimisticUserMessage(threadId, null);
@@ -889,6 +916,7 @@ function ThreadComposerContent({
     </ComposerRunSettings>
   ) : undefined;
 
+  useEffect(() => threadId ? registerThreadContextControls(threadId, {update:field.updateContextReference,focus:field.focus}) : undefined, [threadId,field.updateContextReference,field.focus]);
   return (
     <>
     <PluginComposerChrome
@@ -896,6 +924,7 @@ function ThreadComposerContent({
       text={field.text}
       setText={field.setText}
       replacePrompt={field.replacePrompt}
+      insertContextReference={field.insertContextReference}
       focus={field.focus}
       providerId={resolvedProviderId}
       allowCreatePlugin={!pluginPanel}

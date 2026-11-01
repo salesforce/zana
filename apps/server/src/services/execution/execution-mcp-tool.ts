@@ -221,6 +221,8 @@ export interface RegisterExecutionToolOptions {
   approveHandoff?: (sourceSessionId: string, targetSessionId: string, projectId: string, executionId: string, operation: typeof EXECUTION_HANDOFF_OPERATION | typeof EXECUTION_RESUME_MONITOR_OPERATION) => Promise<boolean>;
   /** How this route's session receives a `[Squad report]`: a CLI Agent PTY (default) or a Modern thread. */
   reportKind?: 'pty' | 'thread';
+  /** Host-selected frozen catalogue for this authenticated member route. */
+  allowedToolNames?: ReadonlySet<string>;
   /**
    * The launch-approval policy that applies to a Squad in this project. `review`
    * makes `execution.start` refuse so the agent proposes the run for the user to
@@ -376,13 +378,16 @@ export function outcomeAck(record: ExecutionRecord, workUnitId: string) {
 export function registerExecutionTools(server: McpServer, options: RegisterExecutionToolOptions): void {
   const authorized = async (): Promise<boolean> => {
     if (!options.sessionId || (await options.validateRouteIdentity?.(options.sessionId, options.projectId)) !== true) return false;
-    return !!options.memberFence || !(await options.resolveCohortBinding?.(options.sessionId, options.projectId))?.memberFence;
+    if (options.memberFence) return true;
+    const cohortBinding = await options.resolveCohortBinding?.(options.sessionId, options.projectId);
+    return cohortBinding?.memberFence === undefined;
   };
   const ownerAuthorized = async (): Promise<boolean> => {
     if (!options.sessionId || options.memberFence) return false;
     const gate = options.validateOwnerRouteIdentity ?? options.validateRouteIdentity;
     if ((await gate?.(options.sessionId, options.projectId)) !== true) return false;
-    return !(await options.resolveCohortBinding?.(options.sessionId, options.projectId))?.memberFence;
+    const cohortBinding = await options.resolveCohortBinding?.(options.sessionId, options.projectId);
+    return cohortBinding?.memberFence === undefined;
   };
   const binding = async (correlationExecutionId?: string): Promise<ExecutionCohortBinding | undefined> => {
     const resolved = options.sessionId ? await options.resolveCohortBinding?.(options.sessionId, options.projectId, options.memberFence) : undefined;
@@ -418,7 +423,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   // internal failure never leaks a stack/message across the MCP boundary.
   const memberNames = new Set<string>(Object.values(EXECUTION_MEMBER_TOOL_NAMES).flat());
   const register: McpServer['registerTool'] = ((name: string, config: unknown, handler: (args: unknown) => unknown) => {
-    if (options.memberFence && !memberNames.has(name)) return;
+    if (options.memberFence && (!memberNames.has(name) || options.allowedToolNames && !options.allowedToolNames.has(name))) return;
     return server.registerTool(name as never, config as never, (async (args: unknown) => {
       try {
         if (options.memberFence) {
@@ -426,7 +431,9 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
           if (name === 'execution.event' && args && typeof args === 'object' && ('slotId' in args || 'producerRole' in args)) return denied(name);
           const bound = await binding((args as { executionId?: string }).executionId);
           if (!bound) return boundDenied(name);
-          if (!EXECUTION_MEMBER_TOOL_NAMES[bound.role]?.some((tool) => tool === name)) return denied(name);
+          const allowedByCatalogue = !options.allowedToolNames || options.allowedToolNames.has(name);
+          const allowedForRole = EXECUTION_MEMBER_TOOL_NAMES[bound.role]?.some((tool) => tool === name) === true;
+          if (!allowedByCatalogue || !allowedForRole) return denied(name);
         }
         return await (handler(args) as Promise<unknown>);
       } catch (error) {

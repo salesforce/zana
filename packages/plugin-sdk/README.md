@@ -115,3 +115,42 @@ plus parsed `body` for JSON. Response `body` accepts `Uint8Array` for binary dow
 Plugins can read a bounded inbox page with `sdk.inbox.search({ projectIds, query, unreadOnly, reportsOnly, limit, before })` and open an attached report with `sdk.inbox.read({ projectIds, entryId, documentIndex })`. Main validates every Project ID; report paths come from the stored inbox entry and are confined to its registered checkout, including symlinks. Reads preserve unread and archive state. Plugins remain responsible for authorizing the destination before sharing returned content.
 
 `sdk.assistant.complete({ instructions, prompt, signal })` provides a bounded text call through the configured Claude CLI and login. It runs outside Project checkouts with tools and ambient MCP servers disabled, a 30-second timeout, a 6,000-character output cap, and at most two concurrent calls. It never launches a Project worker.
+
+
+### Copied context references
+
+A plugin can opt a read-only surface into compact selection badges:
+
+```tsx
+import { copyContextSelection, type ContextReference } from '@zana-ai/zcc-plugin-sdk/app';
+
+<div ref={contentRoot} onCopy={event => {
+  if (contentRoot.current) copyContextSelection(event, contentRoot.current, {
+    version: 1,
+    label: 'Build log (selection)',
+    source: { kind: 'plugin', pluginId: 'builds', resourceId: buildId }
+  });
+}} />
+```
+
+The helper writes `text/plain` and `application/x-zcc-context-reference` synchronously.
+For an iframe, register the copy handler inside its document. Both selection endpoints
+must be in the supplied root; editable widgets keep native copy. Use `writeContextReference`
+for selections from editors or other non-DOM models. Keep the exact copied text.
+
+`useComposer().insertContextReference?.(reference)` inserts at the caret of the enclosing
+composer. `useZccNavigate().addThreadContext?.(reference)` targets the thread owning a
+plugin's panel; it returns false if that composer is unavailable or ambiguous. Neither sends.
+A page assistant accepts `openPanelAgent({ draft: { prompt, references: [reference] } })`;
+check `navigate.supportsContextReferences` before using that field on older hosts.
+
+References contain an immutable text snapshot, a label and an optional descriptive source.
+They never authorize a source read. The host validates packets, renders inspect/remove/convert
+controls, preserves metadata in saved prompts, and expands snapshots into ordinary provider
+text on send. Limits are 100,000 characters per snapshot, 24 references and 400,000 snapshot
+characters per composer. Ordinary clipboard text stays ordinary; paste as plain text bypasses
+metadata. Compact display does not reduce model tokens. See `docs/context-references.md`.
+
+### Browser toolbar actions
+
+Register `app.slots.experimental_browserToolbarAction({ id, title, component })` to mount a control in each thread browser toolbar. The component receives `PluginBrowserToolbarActionProps`: a desktop-only `page` (`evaluate`, `onMessage`) and a thread-scoped `composer` (`insert`, `update`, `onSubmitted`, `focus`). Page expressions can use `bridge.postMessage(data)`; messages are untrusted and must be schema-validated by the plugin. Evaluation defaults to an isolated world, with an explicit main-world option for framework inspection. Main confines operations to an existing tab owned by the sender window and thread and refuses active control leases. Keep a reference's plugin source id equal to the supplied `pluginId`; update/remove uses that plugin's resource id. See `docs/thread-annotations.md` for lifecycle and limits.

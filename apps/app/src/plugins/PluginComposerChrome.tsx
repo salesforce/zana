@@ -19,6 +19,8 @@ import {
   setActiveComposerApi,
   setActiveComposerView
 } from './plugin-composer-api.js';
+import { registerThreadContextTarget } from './thread-context-target.js';
+import { ComposerApiContext } from './plugin-composer-api.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
 import { CREATE_PLUGIN_PROMPT } from '../lib/create-resource-prompts.js';
 
@@ -27,6 +29,7 @@ export function PluginComposerChrome({
   text,
   setText,
   replacePrompt,
+  insertContextReference,
   focus,
   familyId,
   providerId,
@@ -37,6 +40,7 @@ export function PluginComposerChrome({
   text: string;
   setText: (next: string) => void;
   replacePrompt?: PluginComposerApi['experimental_replacePrompt'];
+  insertContextReference?: PluginComposerApi['insertContextReference'];
   focus: () => void;
   familyId?: string;
   providerId?: string;
@@ -83,8 +87,9 @@ export function PluginComposerChrome({
     },
     focus,
     experimental_setLaunchPatch() {},
+    ...(insertContextReference ? { insertContextReference } : {}),
     ...(replacePrompt ? {experimental_replacePrompt: replacePrompt} : {})
-  }), [focus, scope, setText, text, replacePrompt]);
+  }), [focus, scope, setText, text, replacePrompt, insertContextReference]);
 
   // Set before children render so `useComposerView()` in meta chips sees
   // `familyId` on the first paint, not only after a later state update.
@@ -101,6 +106,11 @@ export function PluginComposerChrome({
     setActiveComposerView(null);
     clearLaunchPatches();
   }, []);
+
+  useEffect(() => {
+    if (scope.kind !== 'thread' || !insertContextReference) return;
+    return registerThreadContextTarget(scope.threadId, insertContextReference);
+  }, [scope.kind, scope.kind === 'thread' ? scope.threadId : null, insertContextReference]);
 
   const pluginActions = matching.flatMap((row) =>
     (row.actions ?? []).map((action) => {
@@ -142,6 +152,7 @@ export function PluginComposerChrome({
   const hasActions = pluginActions.length > 0 || plusItems.length > 0 || showCreatePlugin;
 
   return (
+    <ComposerApiContext.Provider value={api}>
     <ComposerViewContext.Provider value={view}>
     <div className="plugin-composer-chrome">
       {matching.flatMap((row) =>
@@ -192,5 +203,6 @@ export function PluginComposerChrome({
       ) : null}
     </div>
     </ComposerViewContext.Provider>
+    </ComposerApiContext.Provider>
   );
 }

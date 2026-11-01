@@ -1,11 +1,11 @@
 import { expect, it, vi } from 'vitest';
-import { resolve, join } from 'node:path';
+import { resolve, join, dirname } from 'node:path';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { boundarySpecs, changedLines, codeLines, coverageFailures, runVerification, mergeCoverage } from './ci-verification.mjs';
 
 it('checks recovery through the built app whenever its UI, service or distribution changes', () => {
-  for (const path of ['apps/app/src/views/settings/DevelopmentView.tsx', 'apps/server/src/plugins/plugin-recovery-runtime.ts', 'apps/server/src/plugins/plugin-service.ts', 'scripts/plugin-recovery-artifacts.mjs', 'scripts/before-pack-plugins.mjs', '.github/workflows/release.yml']) {
+  for (const path of ['apps/app/src/views/settings/DevelopmentView.tsx', 'apps/server/src/plugins/plugin-recovery-runtime.ts', 'apps/server/src/plugins/plugin-service.ts', 'scripts/before-pack-plugins.mjs', '.github/workflows/release.yml']) {
     expect(boundarySpecs([path])).toContain('e2e/development-recovery.spec.ts');
   }
 });
@@ -258,6 +258,25 @@ it('leaves compiled plugin bundles and declared runtime assets to their sources'
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+it('leaves only the generated Agent City snapshot to its parity-checked sources', () => {
+  const root = mkdtempSync(join(tmpdir(), 'zcc-city-coverage-'));
+  const files = [
+    ...['scene', 'theme-scene', 'model', 'themes', 'commuters', 'interior', 'interior-scene', 'use-city'].map(name => `website/lib/agent-city/${name}.js`),
+    'website/lib/agent-city/custom.js', 'website/app/components/AgentCityDemo.tsx', 'plugins/agent-city/scene.js'
+  ];
+  for (const file of files) {
+    mkdirSync(dirname(join(root, file)), { recursive: true });
+    writeFileSync(join(root, file), 'export const value = 1;');
+  }
+  try {
+    expect(coverageFailures(new Map(files.map(file => [file, new Set([1])])), {}, root)).toEqual([
+      'website/lib/agent-city/custom.js: missing coverage',
+      'website/app/components/AgentCityDemo.tsx: missing coverage',
+      'plugins/agent-city/scene.js: missing coverage'
+    ]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 it('runs the private production app suite only for affected paths and fails missing coverage', () => {
   const io = { execute: vi.fn().mockReturnValue('+++ b/apps/app/src/App.tsx\n@@ -1 +1 @@'), read: vi.fn().mockReturnValue('{}'), log: vi.fn(), error: vi.fn() };
   expect(runVerification([], {}, io)).toBe(0);
@@ -279,10 +298,10 @@ it('runs the private production app suite only for affected paths and fails miss
   expect(runVerification(['--coverage', 'coverage.json'], {}, io)).toBe(0);
 });
 
-it('forwards a CI shard to the production app suite and rejects a malformed one', () => {
+it('selects a CI shard before building and rejects a malformed one', () => {
   const io = { execute: vi.fn().mockReturnValue('+++ b/apps/app/src/App.tsx\n@@ -1 +1 @@'), read: vi.fn(), log: vi.fn(), error: vi.fn() };
   expect(runVerification([], { CI_E2E_SHARD: '2/3' }, io)).toBe(0);
-  expect(io.execute.mock.calls[1][1]).toEqual(expect.arrayContaining(['e2e/smoke.spec.ts', '--shard=2/3', '--pass-with-no-tests']));
+  expect(io.execute.mock.calls[1][1]).toEqual(['test:e2e', '--', 'e2e/renderer-resource-budget.spec.ts']);
   io.execute.mockClear();
   expect(runVerification([], { CI_E2E_SHARD: '0/3' }, io)).toBe(1);
   expect(io.error).toHaveBeenCalledWith('Invalid CI_E2E_SHARD: 0/3');
@@ -344,12 +363,13 @@ it('combines complementary root and package coverage even when local ids differ'
 it('keeps the existing required CI check as an always-running gate over every job', () => {
   const workflow = readFileSync(resolve('.github/workflows/ci.yml'), 'utf8');
   expect(workflow).toContain('name: Typecheck and test');
-  expect(workflow).toContain('needs: [unit, unit-packages, coverage, e2e, connect-postgres]');
+  expect(workflow).toContain('needs: [plan, unit, unit-packages, coverage, e2e-build, e2e, preview-cross-platform, connect-postgres]');
   expect(workflow).toContain('if: always()');
   expect(workflow).toContain('test "$UNIT_RESULT" = success');
   expect(workflow).toContain('test "$PACKAGES_RESULT" = success');
   expect(workflow).toContain('test "$COVERAGE_RESULT" = success');
   expect(workflow).toContain('test "$BOUNDARY_RESULT" = success');
+  expect(workflow).toContain('test "$PREVIEW_MATRIX_RESULT" = success');
   expect(workflow).toContain('test "$POSTGRES_RESULT" = success');
   expect(workflow).toContain('ZCC_CONNECT_TEST_DATABASE_URL: postgres://');
   expect(workflow).toContain('vitest run website/connect/postgres.test.ts website/connect/machines.postgres.test.ts');
@@ -365,7 +385,7 @@ it('keeps the existing required CI check as an always-running gate over every jo
   expect(workflow).toContain('--config vitest.release-coverage.config.ts --coverage');
   expect(workflow).toContain('coverage/tasks/coverage-final.json coverage/pi/coverage-final.json coverage/release/coverage-final.json');
   expect(workflow).toContain("description: 'Optional comparison base for the full unpublished branch range'");
-  expect(workflow.match(/CI_BASE_SHA: \$\{\{ inputs\.base_sha \|\| github\.event\.pull_request\.base\.sha \|\| github\.event\.before \|\| 'HEAD\^' \}\}/g)).toHaveLength(2);
+  expect(workflow.match(/CI_BASE_SHA: \$\{\{ inputs\.base_sha \|\| github\.event\.pull_request\.base\.sha \|\| github\.event\.before \|\| 'HEAD\^' \}\}/g)).toHaveLength(3);
 });
 
 it('includes the Squad proposal flow in the job-team E2E runner', async () => {

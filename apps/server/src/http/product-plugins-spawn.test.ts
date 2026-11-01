@@ -16,6 +16,11 @@ const providers: Array<Record<string, any>> = [
   { id: 'codex', displayName: 'Codex', visibility: 'public', capabilities: { permissionModes: ['auto', 'accept-edits', 'full'], supportsServiceTier: false } }
 ];
 const harnessVerify = vi.fn(async (): Promise<Array<{ family: string; installed: boolean; enabled: boolean }>> => []);
+const primaryHost = vi.hoisted(() => ({ id: 'primary-host' }));
+vi.mock('@zana-ai/zcc-db', async (original) => ({
+  ...await original<typeof import('@zana-ai/zcc-db')>(),
+  getPrimaryHost: () => primaryHost
+}));
 
 vi.mock('../plugins/plugin-service.js', () => ({
   createPluginService: (options: Record<string, unknown>) => {
@@ -100,6 +105,17 @@ describe('attached plugin service: threads.spawn provider resolution', () => {
       'No usable AI harness: Default harness unavailable. Choose an installed, enabled harness in Settings → AI Harness.'
     );
     expect(createConversationFromRequest).not.toHaveBeenCalled();
+  });
+
+  it('uses the primary host for an unbound local project with multiple connected machines', async () => {
+    harnessEffectiveDefault.mockResolvedValue({ ok: true, family: 'codex', profile: 'codex', source: 'project-default' });
+    const service = attach();
+    await service.spawnThread({ projectId: 'home', prompt: 'Review', harness: 'project-default' });
+    expect(harnessEffectiveDefault).toHaveBeenCalledWith(expect.objectContaining({ hostId: 'primary-host' }));
+    expect(lastRequest()).toMatchObject({ hostId: 'primary-host', providerId: 'codex' });
+    await service.spawnThread({ projectId: 'home', hostId: 'explicit', prompt: 'Review', harness: 'project-default' });
+    expect(harnessEffectiveDefault).toHaveBeenLastCalledWith(expect.objectContaining({ hostId: 'explicit' }));
+    expect(lastRequest()).toMatchObject({ hostId: 'explicit' });
   });
 
   it('keeps explicit and legacy resolution without consulting the harness default', async () => {

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { useEffect, type ReactNode } from 'react';
 import type { Project } from '@zana-ai/zcc-domain/product';
+import { contextReferencePrompt } from '@zana-ai/zcc-domain/context-reference';
 import type { PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import { ThreadCommandComposer, type ThreadCommandComposerProps } from './ThreadCommandComposer.js';
 import { bootstrapOutcome, composerBootstrapErrorMessage } from './composer-host-status.js';
@@ -20,10 +21,13 @@ const h = vi.hoisted(() => {
     extraProjects: [] as Project[],
     project: { id: 'p1', name: 'Project', path: '/tmp/project' } as Project,
     text: 'Draft',
+    references: undefined as undefined | Array<{start: number; end: number; reference: {version: 1; label: string; text: string}}>,
+    promptHistory: vi.fn(async (): Promise<{entries: Array<{input: unknown}>}> => ({entries: []})),
+    restoreText: vi.fn(),
     images: [] as Array<{ id: string; name: string }>,
     attachments: [] as PromptInput[],
     editor: { isDestroyed: false },
-    fieldArgs: null as null | { onSubmit: (options?: { modifierEnter?: boolean }) => void; projectId?: string; projectRoot?: string; slashCatalog?: { composerActions?: string[] } },
+    fieldArgs: null as null | { onSubmit: (options?: { modifierEnter?: boolean }) => void; interceptKeyDown: (event: KeyboardEvent) => boolean; projectId?: string; projectRoot?: string; slashCatalog?: { composerActions?: string[] } },
     reloadCommands: vi.fn(),
     voiceArgs: null as null | { onTranscript: (text: string) => void; ownerKey?: string },
     frozenSend: null as null | ((text: string) => Promise<void>),
@@ -64,7 +68,7 @@ vi.mock('../lib/host-install-run.js', () => ({ runHostInstallWithDrawer: h.drawe
 vi.mock('../thread-store.js', () => ({ useThreads: (select: (state: unknown) => unknown) => select({ threads: h.threads, upsert: h.upsert }) }));
 vi.mock('../lib/product-client.js', () => ({ product: {
   hosts: { bootstrap: h.bootstrap, repair: h.repair, updateSshIdentity: h.updateSsh },
-  threads: { send: h.send, create: h.create, promptHistory: async () => ({ entries: [] }), compact: vi.fn(), stop: vi.fn() }
+  threads: { send: h.send, create: h.create, promptHistory: h.promptHistory, compact: vi.fn(), stop: vi.fn() }
 } }));
 vi.mock('../hooks/useHosts.js', () => ({ defaultHostId: () => 'host1', useHosts: () => h.hosts }));
 vi.mock('../hooks/useRouteState.js', () => ({ useRouteState: () => ({ isProjectFocused: false }) }));
@@ -87,12 +91,12 @@ vi.mock('./composer/use-composer-prompt-field.js', () => ({
     useEffect(() => { h.reloadCommands(); }, [args?.slashCatalog?.composerActions]);
     h.fieldArgs = args;
     return { editor: h.editor, text: h.text, images: h.images, restoredAttachments: h.attachments,
-      serialize: () => ({ text: h.text, mentions: [] }), clear: h.clear, insertText: h.insertText,
+      serialize: () => ({ text: h.text, mentions: [], references: h.references }), clear: h.clear, insertText: h.insertText,
       captureRevision: () => JSON.stringify([h.text, h.images, h.attachments]),
       clearIfRevision: (revision: string) => {
         if (revision === JSON.stringify([h.text, h.images, h.attachments])) h.clear();
       },
-      removeRestoredAttachment: h.removeAttachment, setText: vi.fn(), replacePrompt: vi.fn(), focus: vi.fn(),
+      restoreText: h.restoreText, removeRestoredAttachment: h.removeAttachment, setText: vi.fn(), replacePrompt: vi.fn(), focus: vi.fn(),
       markRestoreFocus: vi.fn(), handleChromeKeyDown: vi.fn(), dropHandlers: {},
       suggestions: [], typeaheadOpen: false, canAttach: false };
   }
@@ -128,6 +132,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.compact = false;
   h.extraProjects = []; h.locationProps = null; h.foreignLocation = false;
+  h.references = undefined; h.promptHistory.mockResolvedValue({entries: []});
   h.text = 'Draft'; h.images = []; h.attachments = []; h.editor.isDestroyed = false;
   h.voice.state = 'idle'; h.voice.canRetry = false; h.frozenSend = null;
   h.options.provider = { id: 'codex', displayName: 'Codex', permissionModes: ['full'], composerActions: ['plan'] };
@@ -691,5 +696,53 @@ describe('machine and project selection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(h.create).toHaveBeenCalled());
     expect((h.create.mock.calls as unknown[][])[0][0]).toEqual(expect.objectContaining({ projectId: 'p1', hostId: 'remote' }));
+  });
+});
+
+describe('context snapshot history and submission', () => {
+  const reference = { version: 1 as const, label: 'Log', text: 'exact snapshot' };
+  const text = contextReferencePrompt(reference);
+  const input = [{ type: 'text' as const, text, references: [{ start: 0, end: text.length, reference }] }];
+  const key = (value: string) => h.fieldArgs!.interceptKeyDown(new KeyboardEvent('keydown', {key: value, cancelable: true}));
+
+  it('restores valid history badges and returns to the unsent rich draft, ignoring malformed and textless entries', async () => {
+    h.references = input[0].references; h.text = text;
+    h.promptHistory.mockResolvedValue({ entries: [
+      {input: [{type: 'text', text: 'older'}]}, {input}, {input: [{type: 'bogus'}]},
+      {input: [{type: 'localImage', path: '/tmp/image.png'}]}
+    ]});
+    render(composer());
+    await act(async () => {});
+    act(() => { expect(key('ArrowUp')).toBe(true); });
+    expect(h.restoreText).toHaveBeenLastCalledWith(expect.arrayContaining([expect.objectContaining({text, references: input[0].references})]));
+    act(() => { expect(key('ArrowUp')).toBe(true); });
+    expect(h.restoreText).toHaveBeenLastCalledWith([expect.objectContaining({text: 'older'})]);
+    act(() => { key('ArrowDown'); key('ArrowDown'); });
+    expect(h.restoreText).toHaveBeenLastCalledWith([{type: 'text', text, mentions: [], references: input[0].references}]);
+  });
+
+  it('ignores delayed history from a previous conversation and handles loading failure', async () => {
+    let resolve!: (value: {entries: Array<{input: unknown}>}) => void;
+    h.promptHistory.mockImplementationOnce(() => new Promise(r => {resolve = r;}));
+    const view = render(composer());
+    view.rerender(composer({threadId: 't2'}));
+    await act(async () => { resolve({entries: [{input}]}); });
+    act(() => { expect(key('ArrowUp')).toBe(false); });
+    h.promptHistory.mockRejectedValueOnce(new Error('offline'));
+    view.rerender(composer({threadId: 't3'}));
+    await act(async () => {});
+    act(() => { expect(key('ArrowUp')).toBe(false); });
+    expect(h.restoreText).not.toHaveBeenCalled();
+  });
+
+  it('keeps reference offsets when submitting to an existing or a new thread', async () => {
+    h.text = text; h.references = input[0].references;
+    const view = render(composer());
+    fireEvent.click(screen.getByRole('button', {name: 'Send'}));
+    await waitFor(() => expect(h.send).toHaveBeenCalledWith('t1', [expect.objectContaining({text, references: input[0].references})], expect.anything(), expect.anything()));
+    view.unmount();
+    render(composer({threadId: undefined}));
+    fireEvent.click(screen.getByRole('button', {name: 'Send'}));
+    await waitFor(() => expect(h.create).toHaveBeenCalledWith(expect.objectContaining({input: [expect.objectContaining({text, references: input[0].references})]})));
   });
 });

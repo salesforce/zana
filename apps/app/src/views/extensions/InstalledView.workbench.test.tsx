@@ -141,3 +141,12 @@ it('restores the collection search and scroll position on Back', async () => {
   expect((search as HTMLInputElement).value).toBe('Example');
   expect(scroller.scrollTop).toBe(80);
 });
+
+it('offers source recovery instead of reloading a missing folder', async () => {
+  api.apps = [plugin({ status: 'degraded', statusDetail: 'plugin directory missing', sourceRecovery: { canLocate: true, canSwitchOfficial: true } })];
+  setup(); await screen.findByTestId('plugin-health');
+  expect(inspector().getByText('Plugin source folder is unavailable')).toBeTruthy();
+  expect(inspector().getByRole('button', { name: 'Locate moved plugin…' })).toBeTruthy();
+  expect(inspector().getByRole('button', { name: 'Switch to official distribution…' })).toBeTruthy();
+  expect(inspector().queryByRole('button', { name: 'Reload', exact: true })).toBeNull();
+});

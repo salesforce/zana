@@ -356,10 +356,11 @@ describe('dispatchOp', () => {
     const cliContributions = vi.fn(async () => [{ pluginId: 'fixture', name: 'fixture' }]);
     const runCliCommand = vi.fn(async () => ({ exitCode: 0, stdout: 'fallback works' }));
     const applyAllUpdates = vi.fn(async () => ({ updated: ['fixture'], failed: [] }));
+    const lifecycle = Object.fromEntries(['enable', 'disable', 'remove', 'reload', 'applyUpdate'].map(name => [name, vi.fn(async () => ({ id: 'fixture' }))]));
     vi.doMock('@zana-ai/zcc-server/plugins/plugin-service', () => ({
       defaultPluginDataDir: () => '/isolated-plugin-fixture',
       defaultBundledRoot: () => '/isolated-bundled-fixture',
-      createPluginService: () => ({ cliContributions, runCliCommand, applyAllUpdates })
+      createPluginService: () => ({ cliContributions, runCliCommand, applyAllUpdates, ...lifecycle })
     }));
     try {
       const deps = makeDeps();
@@ -368,6 +369,10 @@ describe('dispatchOp', () => {
       expect(runCliCommand).toHaveBeenCalledWith('fixture', ['run'], { threadId: 't' });
       expect(await dispatchOp('plugin.update', { all: true }, deps)).toEqual({ ok: true, value: { updated: ['fixture'], failed: [] } });
       expect(applyAllUpdates).toHaveBeenCalledOnce();
+      for (const action of ['enable', 'disable', 'remove', 'reload', 'update']) {
+        expect(await dispatchOp(`plugin.${action}`, { id: 'fixture' }, deps)).toMatchObject({ ok: true });
+        expect(lifecycle[action === 'update' ? 'applyUpdate' : action]).toHaveBeenCalledWith('fixture');
+      }
     } finally { vi.doUnmock('@zana-ai/zcc-server/plugins/plugin-service'); }
   });
 
@@ -380,6 +385,44 @@ describe('dispatchOp', () => {
     }
     expect(fallback.cliContributions).not.toHaveBeenCalled();
     expect(fallback.runCliCommand).not.toHaveBeenCalled();
+  });
+
+  it.each(['enable', 'disable', 'remove', 'reload', 'update'] as const)('routes dev plugin.%s to the authoritative runtime, preserving local-host mode', async action => {
+    const authoritative = vi.fn(async () => ({ id: 'fixture', enabled: false }));
+    const local = vi.fn(async () => ({ id: 'local' }));
+    const commands = { cliContributions: vi.fn(), runCliCommand: vi.fn(), [action]: authoritative };
+    const deps = makeDeps({ pluginCommands: commands, pluginHost: { [action]: local } as any });
+    expect(await dispatchOp(`plugin.${action}`, { id: 'fixture' }, deps)).toMatchObject({ ok: true });
+    expect(authoritative).toHaveBeenCalledWith('fixture');
+    expect(local).not.toHaveBeenCalled();
+    expect(await dispatchOp(`plugin.${action}`, { id: 'fixture' }, makeDeps({ pluginHost: { [action]: local } as any }))).toMatchObject({ ok: true });
+    expect(local).toHaveBeenCalledWith('fixture');
+    expect(await dispatchOp(`plugin.${action}`, { id: 'fixture' }, makeDeps({ pluginCommands: { cliContributions: vi.fn(), runCliCommand: vi.fn() }, pluginHost: { [action]: local } as any }))).toMatchObject({ ok: true });
+    expect(local).toHaveBeenCalledTimes(2);
+    expect(await dispatchOp(`plugin.${action}`, {}, deps)).toMatchObject({ ok: false, code: 'BAD_ARGS' });
+    expect(authoritative).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes dev bulk updates to the authoritative runtime and preserves failed results', async () => {
+    const value = { updated: [], failed: [{ id: 'fixture', message: 'offline' }] };
+    const updateAll = vi.fn(async () => value);
+    const local = vi.fn();
+    const deps = makeDeps({ pluginCommands: { cliContributions: vi.fn(), runCliCommand: vi.fn(), updateAll }, pluginHost: { updateAll: local } as any });
+    expect(await dispatchOp('plugin.update', { all: true }, deps)).toEqual({ ok: true, value });
+    expect(local).not.toHaveBeenCalled();
+    expect(await dispatchOp('plugin.update', { all: true, id: 'fixture' }, deps)).toMatchObject({ ok: false, code: 'BAD_ARGS' });
+    expect(updateAll).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['enable', 'disable', 'remove', 'reload', 'update', 'updateAll'] as const)('never retries failed authoritative %s against another runtime', async action => {
+    const fail = vi.fn(async () => { throw new Error('authoritative server unavailable'); });
+    const local = vi.fn();
+    const deps = makeDeps({ pluginCommands: { cliContributions: vi.fn(), runCliCommand: vi.fn(), [action]: fail }, pluginHost: { [action]: local } as any });
+    expect(await dispatchOp(action === 'updateAll' ? 'plugin.update' : `plugin.${action}`, action === 'updateAll' ? { all: true } : { id: 'fixture' }, deps)).toMatchObject({
+      ok: false, code: 'PLUGIN_ERROR', message: 'authoritative server unavailable'
+    });
+    expect(fail).toHaveBeenCalledOnce();
+    expect(local).not.toHaveBeenCalled();
   });
 
   it('term.close returns NOT_FOUND for an unknown session', async () => {
@@ -936,6 +979,40 @@ describe('startControlPlane (real socket)', () => {
     } finally {
       timers.mockRestore();
     }
+  });
+
+  it.each(['plugin.install', 'plugin.update', 'plugin.outdated'])('lets authenticated %s finish beyond the handshake deadline', async op => {
+    const nativeTimeout = globalThis.setTimeout;
+    const timers = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((...args: Parameters<typeof setTimeout>) => {
+      if (args[1] === 10_000) args[1] = 25;
+      return nativeTimeout(...args);
+    }) as typeof setTimeout);
+    try {
+      const work = vi.fn(async () => { await new Promise(resolve => nativeTimeout(resolve, 75)); return { id: 'fixture' }; });
+      const { socketPath, tokenPath } = await boot({ pluginHost: { install: work, update: work, outdated: work } as any });
+      const { token, nonce } = JSON.parse(readFileSync(tokenPath, 'utf8'));
+      const result = await rawRequest(socketPath, [JSON.stringify({ token, nonce, op, args: { id: 'fixture', source: 'git:https://example.com/plugin.git' } }) + '\n']);
+      expect(result).toEqual({ ok: true, value: { id: 'fixture' } });
+      expect(work).toHaveBeenCalledOnce();
+    } finally { timers.mockRestore(); }
+  });
+
+  it.each(['plugin.install', 'plugin.update', 'plugin.outdated'])('keeps a finite deadline for authenticated %s', async op => {
+    const nativeTimeout = globalThis.setTimeout;
+    const timers = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((...args: Parameters<typeof setTimeout>) => {
+      if (args[1] === 300_000) args[1] = 25;
+      return nativeTimeout(...args);
+    }) as typeof setTimeout);
+    let complete!: (value: unknown) => void;
+    try {
+      const work = vi.fn(() => new Promise(resolve => { complete = resolve; }));
+      const { socketPath, tokenPath } = await boot({ pluginHost: { install: work, update: work, outdated: work } as any });
+      const { token, nonce } = JSON.parse(readFileSync(tokenPath, 'utf8'));
+      const result = await rawRequest(socketPath, [JSON.stringify({ token, nonce, op, args: { id: 'fixture', source: 'git:https://example.com/plugin.git' } }) + '\n']);
+      expect(result).toMatchObject({ ok: false, code: 'TIMEOUT', message: 'plugin command timed out' });
+      expect(work).toHaveBeenCalledOnce();
+      complete({ id: 'fixture' });
+    } finally { timers.mockRestore(); }
   });
 
   it('removes the socket + token file on close', async () => {

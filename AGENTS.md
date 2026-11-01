@@ -53,6 +53,8 @@ Guide: `docs/tinynod-local-review.md`. Opt-in is `git config zana.tinynod.enable
 
 ## Cross-cutting invariants
 
+- **Help videos publish independently of app releases.** Add/revise the public catalogue and immutable media under `content/videos/`; read `content/videos/AGENTS.md` and `content/videos/README.md`. Merge content into `main` and run `pnpm exec tsx scripts/check-help-videos.ts`. Preserve stable IDs and compatibility bounds; do not add future videos only to the bundled renderer list or tag an app release just to publish a video.
+
 - **Core is portable; integrations are extensions.** No environment- or vendor-specific behavior in core. Integration points are the generic SSH parser (`apps/server/src/services/projects/ssh-config.ts`) and the extension SSH-host-provider seam; environment-specific integrations ship as separately distributed extensions, never in this tree.
 - **Plugins are full-trust in-process after install and never receive host-daemon tokens.**
 - **Verify child-process integrations at the real Electron production boundary**, not only via mocks, shell, or Node/Vitest — Electron main once truncated piped child stdout at exactly 8192 bytes while shell and Vitest saw the full payload. For every main-process CLI integration, test realistic output size, env/HOME, cwd, executable resolution, timeout, and exit/error behavior through the full IPC-to-UI flow in the built app. When pipes can't be proven complete, capture to uniquely named `0600` temp files with a size cap, timeout, concurrency bound, and cleanup on every path. Never swap a proven capture mechanism for `execFile` or piped `spawn` on unit-test or shell evidence. Example (OpenCode discovery): `apps/host-daemon/AGENTS.md`.

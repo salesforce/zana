@@ -12,6 +12,7 @@ vi.mock('next/navigation', () => ({ usePathname: () => route.path }));
 import Home from './page';
 import Features from './features/page';
 import Plugins from './extensions/page';
+import Architecture from './docs/architecture/page';
 import { Nav, Footer } from './components/Nav';
 
 beforeEach(() => {
@@ -31,6 +32,13 @@ afterEach(() => {
 });
 
 describe('Fairy page journeys', () => {
+  it('keeps architecture detail in documentation with the full diagram and source', () => {
+    const markup = renderToStaticMarkup(createElement(Architecture));
+    expect(markup).toContain('Threads use signed host commands. CLI Agents retain the desktop launch');
+    expect(markup).toContain('/artwork/zana-architecture.svg');
+    expect(markup).toContain('https://github.com/salesforce/zana');
+    expect(markup).toContain('Back to documentation');
+  });
   it('provides a complete product story and working destinations without JavaScript', () => {
     const markup = renderToStaticMarkup(createElement(Home));
     const dom = new DOMParser().parseFromString(markup, 'text/html');
@@ -39,10 +47,8 @@ describe('Fairy page journeys', () => {
     for (const id of [
       'hero-heading',
       'demo',
-      'inbox-heading',
-      'library-heading',
       'plugins-heading',
-      'architecture-heading'
+      'final-cta-heading'
     ])
       expect(dom.getElementById(id)).not.toBeNull();
     for (const href of [
@@ -50,16 +56,19 @@ describe('Fairy page journeys', () => {
       '#demo',
       '/features/',
       '/marketplace/',
-      '/extensions/',
-      '/docs/getting-started/',
-      '/artwork/zana-architecture.svg'
+      '/extensions/getting-started/',
+      '/docs/getting-started/'
     ])
       expect(dom.querySelector(`a[href="${href}"]`)).not.toBeNull();
-    expect(markup).toContain(
-      'Threads use signed host commands. CLI Agents retain the desktop launch path.'
-    );
-    expect(markup).toContain('Example workflow');
-    expect(markup).toContain('Example finding');
+    for (const id of ['inbox-heading', 'library-heading', 'architecture-heading', 'workflow-heading'])
+      expect(dom.getElementById(id)).toBeNull();
+    expect(dom.querySelectorAll('a[href="#demo"]')).toHaveLength(1);
+    expect(dom.querySelector('video')?.getAttribute('poster')).toBe('/media/zana-tour-poster.jpg');
+    expect(dom.querySelector('[aria-label="Why use Zana"]')?.children).toHaveLength(3);
+    expect(markup).toContain('San Francisco');
+    expect(markup).toContain('Sample data');
+    expect(markup).not.toContain('ZccPluginApi');
+    expect(markup).not.toContain('definePluginApp');
     const metadata = JSON.parse(
       dom.querySelector('script[type="application/ld+json"]')!.textContent!
     );
@@ -91,6 +100,7 @@ describe('Fairy page journeys', () => {
       'cli',
       'inbox',
       'plugins',
+      'library',
       'remote'
     ])
       expect(dom.getElementById(id)).not.toBeNull();

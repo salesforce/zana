@@ -1,105 +1,68 @@
 <p align="center">
-  <a href="https://zana-ide.com/">
-    <img src="docs/assets/zana-readme-hero.svg" alt="Zana — many agents, one clear view. Run, coordinate, and review AI coding agents across your projects." width="100%">
-  </a>
+  <img src="resources/icon.svg" alt="" width="64">
 </p>
 
 <h1 align="center">Zana</h1>
 
 <p align="center">
-  <strong>Your command center for AI coding agents.</strong><br>
-  Bring your tools, connect your projects, and keep the work moving.
+  <strong>Your agents. Your projects. All together.</strong><br>
+  Run the coding agents you already use. Follow their work and step in when they need you.
 </p>
 
 <p align="center">
-  <a href="https://github.com/salesforce/zana/releases/latest"><img src="https://img.shields.io/badge/Download-macOS-93dfff?style=for-the-badge&amp;labelColor=15233f" alt="Download Zana for macOS"></a>
-  <a href="https://zana-ide.com/"><img src="https://img.shields.io/badge/Explore-Website-c0b9ff?style=for-the-badge&amp;labelColor=15233f" alt="Explore the Zana website"></a>
-  <a href="LICENSE.txt"><img src="https://img.shields.io/badge/License-MIT-ffdb9e?style=for-the-badge&amp;labelColor=15233f" alt="MIT license"></a>
+  <a href="https://github.com/salesforce/zana/releases/latest"><strong>Download Zana</strong></a> ·
+  <a href="#watch-the-tour">Watch the tour</a> ·
+  <a href="https://zana-ide.com/">Try Agent City ↗</a>
 </p>
 
 <p align="center">
-  <a href="#get-started">Get started</a> ·
-  <a href="#built-for-the-way-you-work">Features</a> ·
-  <a href="#how-zana-fits-together">Architecture</a> ·
-  <a href="#make-it-yours">Plugins</a> ·
-  <a href="#develop-zana">Development</a>
+  <sub>Free and open source · macOS (Apple Silicon &amp; Intel) · Windows x64</sub>
 </p>
 
----
+## Keep your work moving
 
-Zana brings your coding agents into one desktop app. Start a conversation,
-launch a native CLI session, or coordinate a team across projects. See what is
-working, what needs your attention, and what is ready to review.
+- **Your agents, together.** Use Claude Code, Codex, Cursor, OpenCode, and Pi in structured conversations or native CLI sessions across your projects.
+- **Know what needs you.** See working, idle, and waiting agents. Answer questions from your Inbox and send the reply back to the agent.
+- **Review the result.** Read reports, diagrams, and diffs beside the conversation. Keep useful findings in your project Library.
 
-Questions arrive in your **Inbox**. Findings live in your **Library**. Proven
-ways of working become reusable **personas, teams, goals, and schedules**.
+## Watch the tour
 
-<p align="center">
-  <a href="https://zana-ide.com/">
-    <img src="docs/assets/product-demo.gif" alt="Zana product tour showing New Chat, the Agents board, and a conversation Thread" width="100%">
-  </a>
-  <br>
-  <sub>From the first prompt to the finished work, in one place.</sub>
-</p>
+Start a task, follow your agents, and review the result in this 80-second recording of the app.
 
-## Built for the way you work
+https://github.com/user-attachments/assets/e740fdf8-50f7-4823-b956-976904ff364e
 
-| Run your agents | Stay in control |
-| :--- | :--- |
-| **Your agents, together**<br>Use Claude Code, Codex, Cursor, OpenCode, and Pi. Choose structured Threads or a real terminal with CLI Agents. | **Every project in view**<br>Work across local repositories, enrolled machines, and SSH projects, with files and sessions in context. |
-| **A clear view of the fleet**<br>See which agents are working, idle, done, or waiting for you. Open the session that needs attention. | **Decisions that keep work moving**<br>Receive questions and reports in the Inbox, then send your answer back to the waiting agent. |
-| **Work you can repeat**<br>Reuse personas and teams, pursue goals with success criteria, and schedule recurring tasks with per-run reports. | **Knowledge that stays with you**<br>Keep findings in the Library. Review Markdown, diagrams, diffs, and attachments alongside the work. |
-
-**Zana for Slack comes pre-installed.** Open **Plugins → Zana for Slack → Configuration** to link your account, connect Project channels, and enable private report-inbox access. [Slack setup and controls](plugins/slack-bridge-2ff2/README.md).
-
-### From intent to outcome
-
-1. **Connect a project.** Add a local folder, an enrolled machine, or an SSH project.
-2. **Start the work.** Open **New Chat**, choose a Thread, CLI Agent, or Team, and give it a task.
-3. **Stay in the loop.** Watch the Agents board and answer questions from the Inbox.
-4. **Keep what matters.** Review the result, save the findings, and reuse the workflow.
+[Watch with captions on the website →](https://zana-ide.com/#demo)
 
 ## Get started
 
-**[Download Zana for macOS →](https://github.com/salesforce/zana/releases/latest)**
+**[Download for macOS or Windows →](https://github.com/salesforce/zana/releases/latest)**
 
-Choose the `.dmg` for **Apple Silicon** or **Intel**, install Zana, and add your
-first project. Releases are signed and notarized; the app checks for updates
-and applies downloaded updates when you quit.
+1. Install the `.dmg` for your Mac (**Apple Silicon** or **Intel**) or the **Windows x64** installer.
+2. Add your first project: a local folder, an enrolled machine, or an SSH project.
+3. Open **New Chat**, choose a Thread, CLI Agent, or Team, and give it a task.
 
-You’ll need **Node.js 20+**, **Git**, and the coding-agent CLI you want to use
-installed and authenticated. Use **Node.js 22+** for remote execution hosts
-and source development.
+You’ll need **Node.js 20+**, **Git**, and your chosen coding-agent CLI installed
+and authenticated. Remote execution hosts and source development use **Node.js 22+**.
+macOS releases are signed and notarized. The app checks for updates and applies
+downloaded updates when you quit.
 
 [First-run guide](docs/getting-started.md) ·
 [Daily workflows](docs/using-zana.md) ·
 [Multiple machines](docs/multiple-devices.md)
 
-## How Zana fits together
-
-The desktop UI, `zcc` CLI, and agent tools connect to Zana’s product services.
-The **product server** owns policy, projects, thread state, and the plugin
-host. **Host execution** runs the authorized work on your machines. Electron
-provides the desktop shell, supervises the local runtime, and retains
-compatibility adapters for native and CLI Agent operations.
-
-[![Zana architecture: clients connect to the product server and Electron desktop; Threads use signed host commands and provider bridges, while CLI Agents use the desktop compatibility path and PTY harnesses. Plugins run as full-trust server code.](docs/assets/zana-architecture.svg)](docs/assets/zana-architecture.svg)
-
-| Execution surface | How it runs |
-| :--- | :--- |
-| **Threads** | Structured conversations through the host daemon, agent runtime, and provider bridges: Claude Agent SDK, Codex app-server, Pi SDK, and ACP. |
-| **CLI Agents** | Native coding CLIs in real PTYs, using the desktop launch path and host harness modules. Shell terminals use PTYs too. |
-
-The renderer supplies intent; trusted server and desktop services authorize
-operations and confine paths. Installed plugins run **full-trust inside the
-product server** and can contribute UI. Install and enable are the trust
-decisions; plugins are not sandboxed guests.
-
-[Architecture guide](docs/architecture/high-level-architecture.md) ·
-[Runtime boundaries](docs/architecture/runtime-monorepo.md) ·
-[Editable diagram and exports](docs/assets/README.md)
-
 ## Make it yours
+
+Agent City is a plugin. Add the panels, tools, skills, and integrations that fit
+your work—or build your own with the [`@zana-ai/zcc-plugin-sdk`](packages/plugin-sdk).
+
+**Zana for Slack comes pre-installed.** Open **Plugins → Zana for Slack → Configuration** to link your account and connect Project channels. [Slack setup and controls](plugins/slack-bridge-2ff2/README.md).
+
+[Browse plugins](https://zana-ide.com/marketplace/) ·
+[Build your first plugin](docs/extensions-quickstart.md) ·
+[SDK reference](docs/extensions-sdk-reference.md)
+
+<details>
+<summary><strong>How plugins work</strong></summary>
 
 Add panels, project tabs, agent tools, skills, MCP servers, settings, and CLI
 commands through **Plugins**. Browse the in-app catalog or build your own
@@ -127,7 +90,10 @@ installed plugin as you edit.
 [Authoring guide](docs/extensions-authoring.md) ·
 [SDK reference](docs/extensions-sdk-reference.md)
 
-### Work from your terminal
+</details>
+
+<details>
+<summary><strong>Use Zana from your terminal</strong></summary>
 
 The `zcc` CLI and [Control SDK](docs/control-sdk.md) let you operate the running
 app from scripts and your terminal. With `zcc` on your `PATH`:
@@ -146,6 +112,43 @@ zcc thread list
 Live commands use the app’s authenticated control APIs. Selected commands,
 including `zcc guide`, plugin scaffolding, and Inbox file reads, also work
 offline. See the [CLI reference](docs/cli.md) for installation and all commands.
+
+</details>
+
+## How Zana fits together
+
+The desktop app, CLI, and agent tools connect through shared product services.
+Execution runs on your machines; plugins extend the app.
+
+[Architecture guide](docs/architecture/high-level-architecture.md) ·
+[Runtime boundaries](docs/architecture/runtime-monorepo.md)
+
+<details>
+<summary><strong>Explore the architecture</strong></summary>
+
+The desktop UI, `zcc` CLI, and agent tools connect to Zana’s product services.
+The **product server** owns policy, projects, thread state, and the plugin
+host. **Host execution** runs the authorized work on your machines. Electron
+provides the desktop shell, supervises the local runtime, and retains
+compatibility adapters for native and CLI Agent operations.
+
+[![Zana architecture: clients connect to the product server and Electron desktop; Threads use signed host commands and provider bridges, while CLI Agents use the desktop compatibility path and PTY harnesses. Plugins run as full-trust server code.](docs/assets/zana-architecture.svg)](docs/assets/zana-architecture.svg)
+
+| Execution surface | How it runs |
+| :--- | :--- |
+| **Threads** | Structured conversations through the host daemon, agent runtime, and provider bridges: Claude Agent SDK, Codex app-server, Pi SDK, and ACP. |
+| **CLI Agents** | Native coding CLIs in real PTYs, using the desktop launch path and host harness modules. Shell terminals use PTYs too. |
+
+The renderer supplies intent; trusted server and desktop services authorize
+operations and confine paths. Installed plugins run **full-trust inside the
+product server** and can contribute UI. Install and enable are the trust
+decisions; plugins are not sandboxed guests.
+
+[Architecture guide](docs/architecture/high-level-architecture.md) ·
+[Runtime boundaries](docs/architecture/runtime-monorepo.md) ·
+[Editable diagram and exports](docs/assets/README.md)
+
+</details>
 
 ## Develop Zana
 
@@ -198,8 +201,10 @@ and product API on port `8780`.
 
 </details>
 
-### Repository map
+<details>
+<summary><strong>Repository map, checks, and optional review</strong></summary>
 
+### Repository map
 | Path | Responsibility |
 | :--- | :--- |
 | [`apps/app`](apps/app) | React interface: projects, conversations, fleet views, and plugin surfaces. |
@@ -237,6 +242,8 @@ TINYNOD_SKIP_HOOK=1 git push                    # skip TinyNod for one push
 Setup for DevBar / AI Suite users and everyone else, reading results, having an
 AI fix findings, and troubleshooting are in
 [docs/tinynod-local-review.md](docs/tinynod-local-review.md).
+
+</details>
 
 ## Open source, yours to shape
 

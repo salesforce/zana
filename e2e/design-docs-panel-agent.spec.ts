@@ -119,3 +119,76 @@ test('Design Docs Ask agent opens the side panel composer from a project tab', a
   await askReviewAndSend(win, { docId, panel: 'design', owner: `design@${projectId}`, stayOn: tabPath });
   await captureElectronScreenshot(app.electron, win, testInfo.outputPath('design-docs-project-agent.png'));
 });
+
+test('selected passages stay compact, inspectable and removable in a roomy Ask agent composer', async ({ app, home }, testInfo) => {
+  test.setTimeout(120_000);
+  const win = app.window;
+  const { docId } = await setUpDoc(win, home, 'design-docs-selection');
+  await win.evaluate(async (doc) => {
+    const file = await window.cc.pluginApps.callRpc('design-docs', 'readFile', { doc, path: 'README.md' }) as { revision: number };
+    await window.cc.pluginApps.callRpc('design-docs', 'writeFile', { doc, path: 'README.md', content: '# Authentication\n\nTokens expire after one hour.\n', baseRevision: file.revision });
+  }, docId);
+  await win.getByRole('button', { name: /^Design Docs/ }).click();
+  await win.getByText('Panel agent doc').first().click();
+  const passage = win.getByText('Tokens expire after one hour.', { exact: true });
+  await expect(passage).toBeVisible();
+  await passage.evaluate(element => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
+  await passage.dispatchEvent('mouseup');
+  await win.locator('.dd-selection-chip').getByRole('button', { name: 'Ask agent' }).click();
+  const menu = win.locator('.dd-ask');
+  await expect(menu.getByText('README.md (selection)')).toBeVisible();
+  const bounds = await menu.boundingBox();
+  expect(bounds!.width).toBeGreaterThanOrEqual(480);
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  await menu.locator('summary').click();
+  await expect(menu.locator('pre')).toHaveText('Tokens expire after one hour.');
+  await menu.getByRole('textbox').fill('Explain this expiry policy.');
+  await menu.getByRole('button', { name: 'Start', exact: true }).click();
+  const composer = win.getByTestId('panel-agent-tab-composer');
+  const chip = composer.getByRole('button', { name: 'Inspect README.md (selection)' });
+  await expect(chip).toBeVisible();
+  expect((await win.getByTestId('thread-secondary-chrome').boundingBox())!.width).toBeGreaterThanOrEqual(550);
+  await expect(composer.getByTestId('thread-command-input')).not.toContainText('Tokens expire after one hour.');
+  await chip.click();
+  await expect(win.getByRole('dialog', { name: 'Copied selection: README.md (selection)' })).toContainText('Tokens expire after one hour.');
+  await win.getByRole('button', { name: 'Close selection preview' }).click();
+  await composer.getByRole('button', { name: 'Remove README.md (selection)' }).click();
+  await expect(chip).toHaveCount(0);
+  await composer.getByTestId('thread-command-input').press('ControlOrMeta+z');
+  await expect(chip).toBeVisible();
+  await captureElectronScreenshot(app.electron, win, testInfo.outputPath('design-docs-selection-composer.png'));
+  await composer.getByTestId('thread-command-send').click();
+  const chat = win.getByTestId('panel-agent-tab-chat');
+  await expect(chat.getByTestId('thread-timeline')).toContainText('Tokens expire after one hour.', { timeout: 30_000 });
+  await expect(chat.getByTestId('thread-timeline')).toContainText('Explain this expiry policy.');
+});
+
+
+test('artifact cards stay hidden in the doc assistant and reappear when opened as a thread', async ({ app, home }) => {
+  test.setTimeout(120_000);
+  const win = app.window;
+  const { docId } = await setUpDoc(win, home, 'design-docs-assistant-card');
+  await win.getByRole('button', { name: /^Design Docs/ }).click();
+  await win.getByText('Panel agent doc').first().click();
+  await expect(win.getByRole('button', { name: /Ask agent/ }).first()).toBeVisible();
+  await win.getByTestId('plugin-panel-agent-show').click();
+  const composer = win.getByTestId('panel-agent-tab-composer');
+  await expect(composer.getByTestId('thread-command-send')).toBeEnabled({ timeout: 30_000 });
+  // The deterministic provider echoes this text, including the real plugin directive.
+  await composer.getByTestId('thread-command-input').fill(`Compilation passed.\n\n::design-doc{id="${docId}"}\n\nLocal change only.`);
+  await composer.getByTestId('thread-command-send').click();
+  const chat = win.getByTestId('panel-agent-tab-chat');
+  await expect(chat.getByTestId('thread-timeline')).toContainText('Response to:', { timeout: 30_000 });
+  await expect(chat.getByTestId('thread-timeline')).toContainText('Local change only.');
+  await expect(chat.locator('.dd-card')).toHaveCount(0);
+  await chat.getByTestId('panel-agent-open-as-thread').click();
+  await expect(win.getByTestId('panel-agent-tab-chat')).toHaveCount(0);
+  await expect(win.locator('.dd-card').first()).toBeVisible({ timeout: 30_000 });
+  await expect(win.getByRole('button', { name: 'Open in Design Docs' }).first()).toBeVisible();
+});

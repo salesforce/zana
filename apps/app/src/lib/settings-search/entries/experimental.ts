@@ -27,25 +27,6 @@ export const entries: readonly SettingsSearchEntry[] = [
     value: onOff((c) => c.providerServiceTiersDisabled)
   },
   {
-    id: 'experimental.plugin-recovery',
-    section: 'experimental',
-    anchor: 'plugin-recovery',
-    label: 'Plugin recovery',
-    help: 'Temporarily suspend installed plugins while diagnosing a problem.',
-    keywords: ['troubleshoot', 'diagnose'],
-    kind: 'subsection'
-  },
-  {
-    id: 'experimental.plugin-safe-mode',
-    section: 'experimental',
-    anchor: 'plugin-recovery',
-    label: 'Plugin safe mode',
-    help: 'Suspend non-bundled plugins and their tools. Turning this off restores plugins that were enabled. Your plugin settings are preserved.',
-    keywords: ['disable plugins', 'suspend', 'crash', 'troubleshoot'],
-    kind: 'setting',
-    value: onOff((c) => c.pluginSafeMode)
-  },
-  {
     id: 'experimental.experimental-features',
     section: 'experimental',
     anchor: 'experimental-features',

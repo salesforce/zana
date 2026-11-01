@@ -1,5 +1,6 @@
 import type { RestoreCapability } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
 import type { ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
+import { isResumableExecutionState } from '@zana-ai/zcc-server/services/execution/storage/backend-policy';
 import type { TerminalSession } from '@zana-ai/zcc-domain/product';
 import { isTerminalSquadExecution } from './inbox-actions/squad-instruct.js';
 import {
@@ -120,7 +121,7 @@ export interface SessionExitTeardownDeps {
   teamPlanHandoff: { forget(executionId: string): void };
   inferredPlanCorrection: { forget(executionId: string): void };
   projects: { listProjects(): Array<{ id: string; path: string }> };
-  cleanupHandoffFiles(projectRoot: string, executionId: string): Promise<unknown>;
+  cleanupHandoffFiles(projectRoot: string, executionId: string, options?: { keepAuthoredPlan?: boolean }): Promise<unknown>;
   logError(context: string, error: unknown): void;
 }
 
@@ -142,6 +143,9 @@ export async function teardownTerminalExecutionOnExit(
 /**
  * Coordinator exit: release Flow B/C plan-handoff state and remove the transient
  * `.zana/` handoff files from the worktree that actually held them (Rule 3 / Rule 5).
+ * A planless run that a retry or recovery can still relaunch keeps the authored
+ * plan: every attempt reads the same per-execution file, so deleting it here left
+ * the next coordinator with "no plan file found" for a plan it had written.
  */
 export function cleanupOrchestratorOnExit(
   deps: SessionExitTeardownDeps,
@@ -153,6 +157,11 @@ export function cleanupOrchestratorOnExit(
   deps.inferredPlanCorrection.forget(executionId);
   return deps.executionStore.getInProject(exitedSession.projectId, executionId).then((execution) => {
     const handoffRoot = execution?.squadWorktree?.path ?? deps.projects.listProjects().find((candidate) => candidate.id === exitedSession.projectId)?.path;
-    if (handoffRoot) return deps.cleanupHandoffFiles(handoffRoot, executionId);
+    if (handoffRoot) return deps.cleanupHandoffFiles(handoffRoot, executionId, { keepAuthoredPlan: mayRelaunchPlanless(execution) });
   }).then(() => undefined).catch(() => {});
+}
+
+/** Still planless, not superseded, and in a state retry or recovery may relaunch. */
+function mayRelaunchPlanless(execution: ExecutionRecord | undefined): boolean {
+  return !!execution && !execution.workUnits?.length && !execution.successorExecutionId && isResumableExecutionState(execution);
 }

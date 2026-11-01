@@ -494,6 +494,8 @@ export function parseDesktopBrowserImportCookiesRequest(
 export type DesktopBrowserUnsubscribe = () => void;
 
 export interface DesktopBrowserApi {
+  evaluate?(request: DesktopBrowserEvaluateRequest): Promise<unknown>;
+  onPageMessage?(listener: (message: DesktopBrowserPageMessage) => void): DesktopBrowserUnsubscribe;
   attach(request: DesktopBrowserAttachRequest): void;
   detach(tabId: string): void;
   navigate(request: DesktopBrowserNavigateRequest): void;
@@ -532,4 +534,14 @@ export interface DesktopBrowserApi {
   ): Promise<import('./browser-import.js').DesktopBrowserImportOutcome>;
   openFullDiskAccessSettings?(): Promise<{ ok: boolean }>;
   releaseControl?(tabId: string): Promise<{ ok: boolean }>;
+}
+
+/** A page expression is confined to an existing browser tab owned by this window and thread. */
+export interface DesktopBrowserEvaluateRequest { tabId: string; threadId: string; expression: string; world?: 'main' | 'isolated' }
+export interface DesktopBrowserPageMessage { tabId: string; threadId: string; data: unknown }
+export function parseDesktopBrowserEvaluateRequest(value: unknown): ParseResult<DesktopBrowserEvaluateRequest> {
+ if (!isRecord(value) || extraKeys(value,['tabId','threadId','expression','world'])) return {success:false};
+ const tabId=parseBoundedString(value.tabId,1024,1), threadId=parseBoundedString(value.threadId,1024,1), expression=parseBoundedString(value.expression,131072,1);
+ if (!tabId || !threadId || !expression || (value.world !== undefined && value.world !== 'main' && value.world !== 'isolated')) return {success:false};
+ return {success:true,data:{tabId,threadId,expression,...(value.world ? {world:value.world} : {})}};
 }

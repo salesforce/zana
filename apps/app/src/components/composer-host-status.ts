@@ -3,6 +3,7 @@ import type { Project } from '@zana-ai/zcc-domain/product';
 
 export type ComposerHostAction =
   | { kind: 'ready' }
+  | { kind: 'restart'; reason: string }
   | { kind: 'install'; label: 'Install'; reason: string }
   | { kind: 'fix'; hostId: string; label: 'Fix'; reason: string; needsSshPick?: boolean }
   | { kind: 'blocked'; reason: string; needsPublicUrl?: boolean; hostId?: string };
@@ -61,6 +62,7 @@ export function hostPickerDescription(host: Host, project?: Project): string {
 
 export function composerHostActionChipLabel(action: ComposerHostAction): string | null {
   if (action.kind === 'ready') return null;
+  if (action.kind === 'restart') return 'Restart host daemon';
   if (action.kind === 'blocked' && action.needsPublicUrl) {
     return action.hostId ? 'Set URL' : null;
   }
@@ -97,7 +99,7 @@ export function resolveComposerHostAction(input: {
     return { kind: 'blocked', reason: 'The selected machine is no longer registered. Choose another machine.' };
   }
   const primary = input.hosts.find((host) => host.isPrimary) ?? input.hosts[0];
-  if (!primary || (primary.status !== 'connected' && !input.hosts.some(host => host.id === (input.selectedHostId ?? input.project?.hostId) && host.status === 'connected'))) {
+  if (!primary) {
     return { kind: 'blocked', reason: 'The selected machine’s host daemon is not connected.' };
   }
 
@@ -118,7 +120,7 @@ export function resolveComposerHostAction(input: {
   const selected = input.selectedHostId
     ? input.hosts.find((host) => host.id === input.selectedHostId)
     : undefined;
-  const executionHost = input.project?.remote ? boundHost : (selected ?? boundHost);
+  const executionHost = input.project?.remote ? boundHost : (selected ?? boundHost ?? primary);
   if (executionHost && executionHost.status !== 'connected' && !executionHost.isPrimary) {
     return {
       kind: 'fix',
@@ -146,6 +148,13 @@ export function resolveComposerHostAction(input: {
         reason: `This project lives on ${here}. Add a folder on ${executionHost.name} first.`
       };
     }
+  }
+
+  if (executionHost?.isPrimary && executionHost.status !== 'connected') {
+    return {
+      kind: 'restart',
+      reason: 'This machine’s host daemon is offline. Restarting may interrupt running agents and terminals.'
+    };
   }
 
   return { kind: 'ready' };

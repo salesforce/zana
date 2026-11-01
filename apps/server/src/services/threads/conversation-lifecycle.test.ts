@@ -402,7 +402,7 @@ describe('conversation lifecycle', () => {
     }));
   });
 
-  it('sends a follow-up turn through turn.submit', async () => {
+  it('sends a follow-up through turn.submit using the provider permission default', async () => {
     const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
     await sendConversationTurn(ctx(callHostOnlineRpc), thread.id, [{ type: 'text', text: 'follow up' }], 'queue-if-active');
     expect(applyConversationThreadLifecycleEvent).toHaveBeenCalledWith(...lifecycleCall('run.started'));
@@ -425,7 +425,7 @@ describe('conversation lifecycle', () => {
           providerThreadId: 'prov-1',
           providerId: 'claude-code',
           cwd: '/tmp/proj',
-          permissionMode: 'accept-edits'
+          permissionMode: 'full'
         }),
         permissionEscalation: 'ask'
       })
@@ -516,6 +516,62 @@ describe('conversation lifecycle', () => {
       type: 'client/turn/rejected', payload: expect.objectContaining({ reason: 'send_cancelled' })
     })));
     expect(rpc.mock.calls.map(([input]) => input.command.type)).toEqual(['turn.submit', 'thread.stop']);
+  });
+
+  it.each([
+    ['stop', 'resume', false], ['stop', 'retry', false],
+    ['archive', 'resume', false], ['archive', 'retry', false],
+    ['stop', 'resume', true], ['stop', 'retry', true]
+  ] as const)('classifies %s during %s recovery as cancellation (drain=%s)', async (action, phase, drain) => {
+    vi.mocked(appendConversationThreadEvent).mockClear();
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValue([]);
+    let reject!: (error: unknown) => void;
+    const pending = new Promise<unknown>((_resolve, fail) => { reject = fail; });
+    let submits = 0;
+    const rpc = vi.fn(async (input: { command: { type: string } }): Promise<unknown> => {
+      if (input.command.type === 'turn.submit') {
+        if (++submits === 1) throw Object.assign(new Error('released'), { code: 'unknown_thread' });
+        return pending;
+      }
+      if (input.command.type === 'thread.resume') {
+        return phase === 'resume' ? pending : { providerThreadId: 'prov-1' };
+      }
+      return {};
+    });
+    const context = ctx(rpc);
+    const sending = sendConversationTurn(context, thread.id, 'cancel this', 'start', undefined, { drain });
+    await vi.waitFor(() => expect(rpc.mock.calls.filter(([call]) => call.command.type === (phase === 'resume' ? 'thread.resume' : 'turn.submit'))).toHaveLength(phase === 'resume' ? 1 : 2));
+    if (action === 'stop') await stopConversation(context, thread.id);
+    else await archiveConversation(context, thread.id, { skipEnvironmentCleanup: true });
+    reject(new Error('session closed during recovery'));
+    await sending;
+    await vi.waitFor(() => expect(appendConversationThreadEvent).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      type: 'client/turn/rejected', payload: expect.objectContaining({ reason: 'send_cancelled' })
+    })));
+    expect(appendConversationThreadEvent).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: 'system/error' }));
+    expect(applyConversationThreadLifecycleEvent).not.toHaveBeenCalledWith(...lifecycleCall('run.failed'));
+    expect(submits).toBe(phase === 'resume' ? 1 : 2);
+  });
+
+  it('normalizes a preparation error arriving after Stop for both history and the caller', async () => {
+    vi.mocked(appendConversationThreadEvent).mockClear();
+    vi.mocked(listConversationThreadEventsWindow).mockReturnValue([]);
+    let reject!: (error: unknown) => void;
+    const pending = new Promise<undefined>((_resolve, fail) => { reject = fail; });
+    const rpc = vi.fn(async () => ({}));
+    const context = ctx(rpc);
+    vi.mocked(context.plugins.sessionTools).mockReturnValueOnce(pending);
+    const sending = sendConversationTurn(context, thread.id, 'cancel preparation');
+    const rejected = expect(sending).rejects.toMatchObject({ code: 'send_cancelled' });
+    await vi.waitFor(() => expect(context.plugins.sessionTools).toHaveBeenCalled());
+    await stopConversation(context, thread.id);
+    reject(new Error('plugin closed during Stop'));
+    await rejected;
+    expect(appendConversationThreadEvent).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      type: 'client/turn/rejected', payload: expect.objectContaining({ reason: 'send_cancelled' })
+    }));
+    expect(appendConversationThreadEvent).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: 'system/error' }));
+    expect(applyConversationThreadLifecycleEvent).not.toHaveBeenCalledWith(...lifecycleCall('run.failed'));
   });
 
   it('appends agent-only path mention context before turn.submit', async () => {

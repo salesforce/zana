@@ -12,9 +12,12 @@ vi.mock('@zana-ai/zcc-server/services/projects/store', () => ({ store: { getConf
 describe('inbox host action IPC', () => {
   type Handler = (window: BrowserWindow, ...args: unknown[]) => unknown;
   type Fallback = () => unknown;
+  type DirectHandler = (...args: unknown[]) => unknown;
   const window = { id: 1 } as BrowserWindow;
   let handlers: Map<string, Handler>;
   let fallbacks: Map<string, Fallback>;
+  let directHandlers: Map<string, DirectHandler>;
+  let directFallbacks: Map<string, Fallback>;
   let scopedProjectId: string | undefined;
   const entry = { id: 'entry-1', projectId: 'project-1', ts: 1, question: { options: [{ id: 'delete', label: 'Delete' }] } };
   const getEntry = vi.fn();
@@ -29,6 +32,8 @@ describe('inbox host action IPC', () => {
   beforeEach(() => {
     handlers = new Map();
     fallbacks = new Map();
+    directHandlers = new Map();
+    directFallbacks = new Map();
     scopedProjectId = 'project-2';
     run.mockClear();
     bound.mockReset();
@@ -39,8 +44,12 @@ describe('inbox host action IPC', () => {
       handlers.set(channel, handler);
       fallbacks.set(channel, fallback);
     }) as IpcCtx['safeHandleFromWindow'];
+    const safeHandle: IpcCtx['safeHandle'] = ((channel: string, handler: DirectHandler, fallback: Fallback) => {
+      directHandlers.set(channel, handler);
+      directFallbacks.set(channel, fallback);
+    }) as IpcCtx['safeHandle'];
     bindIpcCtx({
-      safeHandle: vi.fn(),
+      safeHandle,
       safeHandleFromWindow,
       windows: { get: () => ({ projectId: scopedProjectId }) },
       inboxStore: { read: async () => ({ entries: [entry] }), get: getEntry, onAppended: vi.fn(), onRemoved, onUpdated: vi.fn(), onPruned },
@@ -50,6 +59,7 @@ describe('inbox host action IPC', () => {
       inboxSummary: {},
       feedNoiseClassifier: {},
       usageService: {},
+      memoCounters: () => ({ 'inbox-summary': { requests: 2, hits: 1 } }),
       suggestionsStore: { onAppended: vi.fn(), onRemoved: vi.fn(), onUpdated: vi.fn(), onPruned: vi.fn() },
       handleLoudInboxEntry: vi.fn(),
       safeSend: vi.fn()
@@ -65,6 +75,13 @@ describe('inbox host action IPC', () => {
 
     await expect(read(window, 'entry-1', '.zana/execution-plan-corrected-e-1.md')).resolves.toEqual({ ok: true, value: { content: 'worktree artifact' } });
     expect(readArtifact).toHaveBeenCalledWith('private-ref', '.zana/execution-plan-corrected-e-1.md');
+  });
+
+  it('serves memo counters over the usage IPC with an empty error fallback', () => {
+    expect(directHandlers.get(IPC.usage.getMemoCounters)!()).toEqual({
+      'inbox-summary': { requests: 2, hits: 1 }
+    });
+    expect(directFallbacks.get(IPC.usage.getMemoCounters)!()).toEqual({});
   });
 
   it('uses a window-aware handler and rejects entries outside sender project scope', async () => {

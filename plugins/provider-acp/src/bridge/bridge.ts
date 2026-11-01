@@ -331,6 +331,7 @@ let canonicalSessionSerial = 0;
  */
 let configuredSkillRoots: AcpSkillRoot[] | null = null;
 const ACP_CANONICAL_PROVIDER_ID = "acp";
+const OPENCODE_PROVIDER_ID = "acp-opencode";
 
 function createSessionTranslator(
   cwd: string,
@@ -966,6 +967,11 @@ function resolveAcpAuthMethodId(
   if (methodIds.has("cached_token")) {
     return "cached_token";
   }
+  // Cursor still requires an ACP authenticate call after `cursor-agent login`;
+  // this method loads that existing CLI login before session/new.
+  if (methodIds.has("cursor_login")) {
+    return "cursor_login";
+  }
   return undefined;
 }
 
@@ -981,11 +987,18 @@ async function authenticateAcpAgent(args: {
   if (methodId === undefined) {
     return;
   }
-  await args.connection.request({
-    method: "authenticate",
-    params: { methodId, _meta: { headless: true } },
-    resultSchema: z.unknown(),
-  });
+  try {
+    await args.connection.request({
+      method: "authenticate",
+      params: { methodId, _meta: { headless: true } },
+      resultSchema: z.unknown(),
+    });
+  } catch (error) {
+    if (methodId === "cursor_login" && error instanceof Error && error.message.includes("Failed to open browser for login")) {
+      throw new AcpModelListAuthRequiredError();
+    }
+    throw error;
+  }
 }
 
 /**
@@ -1084,6 +1097,9 @@ async function loadSessionDiscoveredModels(
   const childEnv = {
     ...withoutBridgeRuntimeEnv(process.env),
     ...(agent.envVars ?? {}),
+    // Cursor ignores authenticate's _meta.headless but honors this setting.
+    // Model refreshes must never open a browser when saved credentials expire.
+    NO_OPEN_BROWSER: "1",
   };
   const connection = createAcpAgentConnection({
     command: agent.command,
@@ -1201,6 +1217,7 @@ async function loadSessionDiscoveredModels(
       ...(acpMode ? { acpMode } : {}),
     };
   } catch (error) {
+    if (error instanceof AcpModelListAuthRequiredError) throw error;
     process.stderr.write(
       `acp bridge: ACP-native model discovery for "${agent.command}" failed: ${
         error instanceof Error ? error.message : String(error)
@@ -2238,6 +2255,8 @@ async function startAgentSession(
     ...withoutBridgeRuntimeEnv(process.env),
     ...params.envVars,
     ...dialect.launchEnv?.(params.permissionMode),
+    // Sign-in is an explicit user action, never a provider subprocess side effect.
+    NO_OPEN_BROWSER: "1",
   };
   const connection = createAcpAgentConnection({
     command: params.agent.command,
@@ -3163,6 +3182,16 @@ async function handleRequest(
     case "thread/start":
     case "thread/resume":
     case "thread/fork": {
+      if (request.params.sessionKind === "automated") {
+        // Generic ACP launch specifications cannot prove isolated plugin and MCP
+        // configuration. Reject before discovery or process spawn.
+        sendError(
+          request.id,
+          BRIDGE_JSON_RPC_ERRORS.INVALID_PARAMS,
+          "Automated ACP sessions are unsupported because isolated configuration cannot be verified",
+        );
+        return;
+      }
       if (
         request.method === "thread/fork" &&
         request.params.sourceProviderCheckpointId !== undefined

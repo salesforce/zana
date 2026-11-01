@@ -319,7 +319,8 @@ export const IPC = {
    * lands in a follow-up PR.
    */
   usage: {
-    getSummary: 'usage:getSummary'
+    getSummary: 'usage:getSummary',
+    getMemoCounters: 'usage:getMemoCounters'
   },
   /**
    * Suggested Actions launcher (afl-03). `list` reads the store scoped to a
@@ -400,7 +401,8 @@ export const IPC = {
     applyUpdate: 'pluginApps:applyUpdate',
     applyAllUpdates: 'pluginApps:applyAllUpdates',
     remove: 'pluginApps:remove',
-    reload: 'pluginApps:reload'
+    reload: 'pluginApps:reload',
+    repair: 'pluginApps:repair'
   },
   /**
    * Configured plugin marketplace catalogs (`plugins/marketplaces.json`).
@@ -599,6 +601,9 @@ export const IPC = {
     openProject: 'windows:openProject',
     openPluginView: 'windows:openPluginView',
     closePluginView: 'windows:closePluginView',
+    pluginViewCloseReady: 'windows:pluginViewCloseReady',
+    pluginViewCloseComplete: 'windows:pluginViewCloseComplete',
+    onPluginViewCloseRequest: 'windows:onPluginViewCloseRequest',
     listPluginViews: 'windows:listPluginViews',
     onPluginViewsChanged: 'windows:onPluginViewsChanged',
     openThreadView: 'windows:openThreadView',
@@ -833,6 +838,8 @@ export const IPC = {
    * resize snapshots, and agent-open requests.
    */
   browser: {
+    evaluate: 'desktop:browser:evaluate',
+    pageMessage: 'desktop:browser:page-message',
     attach: 'desktop:browser:attach',
     detach: 'desktop:browser:detach',
     navigate: 'desktop:browser:navigate',

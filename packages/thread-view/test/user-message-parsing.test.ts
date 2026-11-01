@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import {eventProjectionTurnRequestKindValues, eventProjectionTurnRequestStatusValues} from "../src/event-projection-message.js";
 import { turnScope, type PromptTextMention } from "@zana-ai/zcc-domain/thread-runtime";
 import {
   createTimelineEventFactory,
@@ -612,4 +613,27 @@ describe("user message parsing", () => {
       turnRequest: { isGrouped: false, kind: "message", status: "pending" },
     });
   });
+});
+
+it('projects only verified copied snapshots with shifted multipart offsets',async()=>{
+ const {contextReferencePrompt}=await import('@zana-ai/zcc-domain/thread-runtime');
+ const reference={version:1 as const,label:'Passage',text:'exact'};const text=contextReferencePrompt(reference);
+ const parsed=parsePromptInput([{type:'text',text:'Prefix',mentions:[]},{type:'text',text,mentions:[],references:[{start:0,end:text.length,reference}]}]);
+ expect(parsed?.references).toEqual([{start:6,end:6+text.length,reference}]);
+ expect(parsePromptInput([{type:'text',text:'old ordinary',mentions:[]}])?.references).toBeUndefined();
+});
+
+it('preserves copied snapshot metadata in client requests alongside images and empty text segments', async () => {
+  const {contextReferencePrompt} = await import('@zana-ai/zcc-domain/thread-runtime');
+  const reference = {version: 1 as const, label: 'Record', text: 'exact'};
+  const text = contextReferencePrompt(reference);
+  const references = [{start: 0, end: text.length, reference}];
+  const input = [{type: 'text' as const, text: '', mentions: []}, {type: 'text' as const, text, mentions: [], references},
+    {type: 'image' as const, url: 'https://example.com/image.png'}, {type: 'localImage' as const, path: 'image.png'}];
+  const factory = createTimelineEventFactory({threadId: 'thread-1'});
+  const {event, meta} = decodeThreadEventRow(factory.clientTurnRequested({target: {kind: 'new-turn'}, text, input}));
+  const message = parseUserFromClientRequest({decoded: event, meta, options: standardProjectionOptions});
+  expect(message).toMatchObject({text, references, attachments: {webImages: 1, localImages: 1}});
+  expect(eventProjectionTurnRequestKindValues).toContain(message!.turnRequest.kind);
+  expect(eventProjectionTurnRequestStatusValues).toContain(message!.turnRequest.status);
 });

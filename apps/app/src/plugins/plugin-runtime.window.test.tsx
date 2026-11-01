@@ -8,12 +8,15 @@ import { definePluginApp } from '@zana-ai/zcc-plugin-sdk';
 import type { PluginSdkApp, ZccContext, ZccNavigate, ZccWindowTitle } from '@zana-ai/zcc-plugin-sdk/app';
 
 const h = vi.hoisted(() => ({
-  view: null as { pluginId: string; tabId: string; projectId: string } | null,
+  view: null as { pluginId: string; tabId: string; projectId: string; resourceId?: string } | null,
   scoped: false,
-  open: [] as Array<{ pluginId: string; tabId: string; projectId: string }>,
+  closeOff: vi.fn(),
+  registerClose: vi.fn(),
+  open: [] as Array<{ pluginId: string; tabId: string; projectId: string; resourceId?: string }>,
   openWindow: vi.fn(async () => true),
   showInMain: vi.fn(async () => true)
 }));
+vi.mock('./plugin-window-close.js', () => ({ registerPluginWindowCloseHandler: h.registerClose }));
 vi.mock('../lib/pluginViewSurface.js', () => ({ getPluginViewTarget: () => h.view }));
 vi.mock('../lib/windowScope.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/windowScope.js')>()),
@@ -30,7 +33,8 @@ import { installPluginRuntime } from './plugin-runtime.js';
 import { PluginRuntimeContext } from './PluginSlotBoundary.js';
 import { clearPluginSlots, interpretPluginApp } from './plugin-slots.js';
 import { getPluginViewTitle } from './plugin-view-title.js';
-import { PluginPagePanelProvider } from './plugin-page-panel.js';
+import { onPluginPanelScopeRequest, PluginPagePanelProvider } from './plugin-page-panel.js';
+import { hrefForPluginProjectTab } from './plugin-nav-href.js';
 
 const studio = { pluginId: 'sales', tabId: 'studio', projectId: 'p-1' };
 
@@ -45,11 +49,12 @@ function registerTabs() {
   );
 }
 
-function renderRuntime(path = '/', sidePanel = false) {
+function renderRuntime(path = '/', sidePanel = false, page = { pluginId: sidePanel ? 'sales' : 'other', page: 'studio' }, closeHandler: (() => void | Promise<void>) | null = null) {
   installPluginRuntime();
   const runtime = (globalThis as { __ZCC_PLUGIN_RUNTIME__?: PluginSdkApp }).__ZCC_PLUGIN_RUNTIME__!;
   const out = { navigate: null as ZccNavigate | null, context: null as ZccContext | null, path: '' };
   function Probe() {
+    runtime.useWindowCloseHandler?.(closeHandler);
     out.navigate = runtime.useZccNavigate();
     out.context = runtime.useZccContext();
     const location = useLocation();
@@ -58,7 +63,7 @@ function renderRuntime(path = '/', sidePanel = false) {
   }
   render(
     <MemoryRouter initialEntries={[path]}>
-      <PluginPagePanelProvider page={{ pluginId: sidePanel ? 'sales' : 'other', page: 'studio' }}>
+      <PluginPagePanelProvider page={page}>
         <PluginRuntimeContext.Provider value={{ pluginId: 'sales', generation: 0 }}>
           <Probe />
         </PluginRuntimeContext.Provider>
@@ -74,6 +79,8 @@ beforeEach(() => {
   h.open = [];
   h.openWindow.mockClear();
   h.showInMain.mockClear();
+  h.closeOff.mockClear();
+  h.registerClose.mockReset().mockReturnValue(h.closeOff);
   registerTabs();
 });
 afterEach(() => {
@@ -103,6 +110,13 @@ describe('plugin context surface', () => {
 });
 
 describe('navigate.openInWindow', () => {
+  it('forwards resource identity and exposes it in detached context', async () => {
+    h.view = { ...studio, resourceId: 'Help.agent' };
+    const out = renderRuntime();
+    expect(out.context?.resourceId).toBe('Help.agent');
+    await out.navigate!.openInWindow!('p-1', { tabId: 'studio', resourceId: 'Quote.agent' });
+    expect(h.openWindow).toHaveBeenCalledWith({ ...studio, resourceId: 'Quote.agent' });
+  });
   it('opens the named detachable tab', async () => {
     await expect(renderRuntime().navigate!.openInWindow!('p-1', { tabId: 'flows' })).resolves.toBe(true);
     expect(h.openWindow).toHaveBeenCalledWith({ pluginId: 'sales', tabId: 'flows', projectId: 'p-1' });
@@ -122,11 +136,26 @@ describe('navigate.openInWindow', () => {
 });
 
 describe('navigate in the main window', () => {
+  it('keeps project navigation in the main window while resources are detached', () => {
+    h.open = [{ ...studio, resourceId: 'Help.agent' }];
+    const out = renderRuntime();
+    act(() => out.navigate!.toProject('p-1', { tabId: 'studio' }));
+    expect(h.openWindow).not.toHaveBeenCalled();
+    expect(out.path).toContain('/projects/p-1');
+  });
   it('routes in place', () => {
     const out = renderRuntime();
     act(() => out.navigate!.toThread('t-1'));
     expect(out.path).toBe('/threads/t-1');
     expect(h.showInMain).not.toHaveBeenCalled();
+  });
+
+  it('can explicitly use the main tab while its detached window remains open', () => {
+    h.open = [studio];
+    const out = renderRuntime();
+    act(() => out.navigate!.toProject('p-1', { tabId: 'studio', inMainWindow: true }));
+    expect(h.openWindow).not.toHaveBeenCalled();
+    expect(out.path).toContain('/projects/p-1');
   });
 
   it('brings a detached tab window forward instead of routing to its placeholder', () => {
@@ -162,6 +191,14 @@ describe('navigate in a plugin view window', () => {
       '/threads/new?prompt=Fix+it&focus=1',
       expect.stringContaining('home')
     ]);
+    expect(out.path).toBe('/');
+  });
+
+  it('can request its own project tab in main without refocusing the detached window', () => {
+    const out = renderRuntime();
+    act(() => out.navigate!.toProject('p-1', { tabId: 'studio', inMainWindow: true }));
+    expect(h.openWindow).not.toHaveBeenCalled();
+    expect(h.showInMain).toHaveBeenCalledWith(expect.stringContaining('/projects/p-1'));
     expect(out.path).toBe('/');
   });
 
@@ -242,4 +279,42 @@ describe('useWindowTitle', () => {
     renderTitle({ title: 'Agentforce' }, 'other');
     expect(getPluginViewTitle()).toBeNull();
   });
+});
+
+it('exposes a return-to-main resource selection only on the matching plugin route', () => {
+  const path = hrefForPluginProjectTab('sales', 'p-1', 'studio', 'Help.agent');
+  expect(renderRuntime(path).context).toMatchObject({ resourceId: 'Help.agent', resourceRequestId: 'default' });
+  cleanup();
+  expect(renderRuntime('/threads/t-1?pluginResourceId=Help.agent').context?.resourceId).toBeUndefined();
+});
+
+it('delegates panel scope selection to the enclosing page only', () => {
+  const show = vi.fn();
+  const page = { pluginId: 'sales', page: 'studio' };
+  const off = onPluginPanelScopeRequest(page, show);
+  try {
+    const navigate = renderRuntime('/', true, page).navigate!;
+    navigate.setPanelScope?.({ id: 'Help.agent', view: 'editor' });
+    expect(show).toHaveBeenCalledWith({ id: 'Help.agent', view: 'editor' });
+    navigate.setPanelScope?.(null);
+    expect(show).toHaveBeenLastCalledWith(null);
+  } finally { off(); }
+});
+
+it('registers a close handler only for its own detached plugin and disposes it', async () => {
+  const callback = vi.fn(async () => undefined);
+  renderRuntime('/', false, undefined, callback);
+  expect(h.registerClose).not.toHaveBeenCalled();
+  cleanup();
+  h.view = { ...studio, pluginId: 'other' };
+  renderRuntime('/', false, undefined, callback);
+  expect(h.registerClose).not.toHaveBeenCalled();
+  cleanup();
+  h.view = studio;
+  renderRuntime('/', false, undefined, callback);
+  expect(h.registerClose).toHaveBeenCalledTimes(1);
+  await h.registerClose.mock.calls[0]![0]();
+  expect(callback).toHaveBeenCalledTimes(1);
+  cleanup();
+  expect(h.closeOff).toHaveBeenCalledTimes(1);
 });

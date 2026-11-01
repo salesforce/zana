@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { useZccNavigate, type ZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
+import { contextReferencePrompt, type ContextReference, useZccNavigate, type ZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { AtSign, Bot, ChevronDown, Sparkles, Unlink } from 'lucide-react';
 import { AGENT_ACTIONS, agentActionById, buildAgentPrompt, MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
 import type { DesignDocDetail, ThreadRole } from '../shared/contract.js';
@@ -36,18 +36,18 @@ export function showDocAgent(navigate: ZccNavigate, doc: { id: string; title: st
 export function draftDocAgent(
   navigate: ZccNavigate,
   doc: { id: string; title: string },
-  request: { action?: string | null; prompt?: string; path?: string | null; projectId?: string | null }
+  request: { action?: string | null; prompt?: string; path?: string | null; projectId?: string | null; references?: readonly ContextReference[] }
 ): boolean {
   if (!navigate.openPanelAgent) return false;
   const prompt = buildAgentPrompt({
     doc,
     action: request.action ? agentActionById(request.action) : null,
-    prompt: request.prompt,
+    prompt: `${request.prompt ?? ''}${navigate.supportsContextReferences ? '' : (request.references ?? []).map(contextReferencePrompt).join('')}` || undefined,
     path: request.path
   });
   return navigate.openPanelAgent({
     // The doc id is the page's view, so the conversation joins this doc's Agents list.
-    draft: { prompt, view: doc.id, ...(request.projectId ? { projectId: request.projectId } : {}) },
+    draft: { prompt, ...(navigate.supportsContextReferences && request.references?.length ? { references: request.references } : {}), view: doc.id, ...(request.projectId ? { projectId: request.projectId } : {}) },
     title: doc.title
   });
 }
@@ -117,6 +117,7 @@ export function AgentsPane({
 
 export interface AskRequest {
   prompt: string;
+  references?: ContextReference[];
   /** Changes on every request so the same text can be asked twice. */
   nonce: number;
 }
@@ -144,6 +145,7 @@ export function AskAgentButton({
   const navigate = useZccNavigate();
   const [open, setOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
+  const [references, setReferences] = useState<ContextReference[]>([]);
   const [focusFile, setFocusFile] = useState(false);
   const [projectId, setProjectId] = useState<string>(contextProjectId ?? '');
   const [busy, setBusy] = useState<string | null>(null);
@@ -156,6 +158,7 @@ export function AskAgentButton({
   useEffect(() => {
     if (!request) return;
     setPrompt(request.prompt);
+    setReferences(request.references ?? []);
     setFocusFile(true);
     setOpen(true);
     requestAnimationFrame(() => {
@@ -180,18 +183,20 @@ export function AskAgentButton({
       action,
       prompt: action ? undefined : prompt.trim() || undefined,
       path: focusFile ? activePath : null,
-      projectId: chosenProject || null
+      projectId: chosenProject || null,
+      references
     };
     if (draftDocAgent(navigate, doc, request)) {
       setOpen(false);
       setPrompt('');
+      setReferences([]);
       return;
     }
     setBusy(action ?? 'custom');
     try {
       const result = await api.askAgent(doc.id, {
         ...(action ? { action } : {}),
-        ...(prompt.trim() && !action ? { prompt: prompt.trim() } : {}),
+        ...((!action && prompt.trim()) || references.length ? { prompt: `${!action ? prompt.trim() : ''}${references.map(contextReferencePrompt).join('')}` } : {}),
         path: focusFile ? activePath : null,
         ...(needsProject ? { projectId: chosenProject } : {})
       });
@@ -199,6 +204,7 @@ export function AskAgentButton({
       toast(`Agent started on “${doc.title}”. Its edits appear here live.`);
       setOpen(false);
       setPrompt('');
+      setReferences([]);
     } catch (error) {
       toast(`Could not start the agent: ${errorMessage(error)}`, 'error');
     } finally {
@@ -259,6 +265,10 @@ export function AskAgentButton({
         })}
       </div>
       <div className="dd-ask-custom">
+        {references.map((reference, index) => <div key={index} className="dd-passage-reference">
+          <details><summary>{reference.label}</summary><pre style={{whiteSpace: 'pre-wrap', maxHeight: 180, overflow: 'auto'}}>{reference.text}</pre></details>
+          <button type="button" aria-label={`Remove ${reference.label}`} onClick={() => setReferences(items => items.filter((_, i) => i !== index))}>×</button>
+        </div>)}
         <textarea
           ref={inputRef}
           className="dd-input"

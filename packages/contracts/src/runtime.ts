@@ -447,6 +447,11 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
     pluginId: z.string().min(1).max(128)
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugins-repair'),
+    pluginId: z.string().min(1).max(128),
+    path: z.string().min(1).max(4096).optional()
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('plugins-reload'),
     pluginId: z.string().min(1).max(128)
   }).strict(),
@@ -542,11 +547,19 @@ export const RuntimeMcpReadySchema = z.object({
   teamJobLaunchEnabled: z.boolean().optional()
 }).strict();
 
+/** Product registry identity, learned after the private terminal transport boots. */
+const RuntimeLocalHostSchema = z.object({
+  type: z.literal('local-host'),
+  protocolVersion: ServerRuntimeProtocolVersionSchema,
+  hostId: z.string().uuid()
+}).strict();
+
 export const ServerRuntimeInboundSchema = z.discriminatedUnion('type', [
   ServerRuntimeStartSchema,
   ServerRuntimeRequestSchema,
   RuntimeStopSchema,
-  RuntimeMcpReadySchema
+  RuntimeMcpReadySchema,
+  RuntimeLocalHostSchema
 ]);
 
 export const RuntimeReadySchema = z.object({
@@ -584,7 +597,8 @@ export const ProjectSettingsChangedMessageSchema = z.object({
 }).strict();
 export const MenubarThreadsChangedMessageSchema = z.object({
   type: z.literal('menubar-threads-changed'),
-  protocolVersion: ServerRuntimeProtocolVersionSchema
+  protocolVersion: ServerRuntimeProtocolVersionSchema,
+  localThreadsWorking: z.boolean()
 }).strict();
 
 const PluginCapabilityMcpServerSchema = z.object({
@@ -627,6 +641,7 @@ export const PluginAppSnapshotSchema = z.object({
   enabled: z.boolean(),
   provenance: z.enum(['builtin', 'direct', 'catalog']),
   sourceKind: z.enum(['builtin', 'path', 'git', 'npm']).optional(),
+  sourceRecovery: z.object({ canLocate: z.boolean(), canSwitchOfficial: z.boolean() }).strict().optional(),
   collection: z.literal('coding-agents').optional(),
   status: z.enum(['running', 'disabled', 'degraded', 'needs-configuration']),
   statusDetail: z.string().max(4096).nullable().optional(),

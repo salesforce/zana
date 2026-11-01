@@ -41,6 +41,7 @@ export interface HarnessOptions {
   threadPanel?: boolean;
   /** Whether the page has a side panel for agents (`navigate.openPanelAgent`). */
   panelAgent?: boolean;
+  contextReferences?: boolean;
   context?: { projectId?: string | null; threadId?: string | null };
   /** Serve standalone pages at this URL (`pageLink`); unset, the RPC refuses. */
   pageUrl?(docId: string, path: string): string;
@@ -137,6 +138,10 @@ export function createHarness(options: HarnessOptions = {}): Harness {
   Object.assign(rpc, options.rpcOverrides);
   const installed = installTestPluginRuntime({ rpc, deepLinkBase: options.deepLinkBase, context: options.context ?? {}, panelAgent: options.panelAgent });
   const runtime = (globalThis as { __ZCC_PLUGIN_RUNTIME__?: Record<string, unknown> }).__ZCC_PLUGIN_RUNTIME__!;
+  if (options.contextReferences) {
+    const navigate = (runtime.useZccNavigate as () => Record<string, unknown>)();
+    runtime.useZccNavigate = () => ({ ...navigate, supportsContextReferences: true });
+  }
   const toasts: Toast[] = [];
   runtime.toast = (message: string, kind: 'info' | 'error' = 'info') => {
     toasts.push({ message, kind });

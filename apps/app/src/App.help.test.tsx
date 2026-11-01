@@ -142,6 +142,24 @@ it('switches titlebar navigation live and retains compact chrome', () => {
   fixtures.compact = false;
 });
 
+it('always applies the inset workspace design on desktop and retains compact chrome', () => {
+  fixtures.compact = false;
+  const view = render(<MemoryRouter><App /></MemoryRouter>);
+  const shell = () => view.container.querySelector('.app-shell')!;
+  try {
+    expect(shell().classList.contains('shell-inset')).toBe(true);
+    fixtures.compact = true;
+    view.rerender(<MemoryRouter><App /></MemoryRouter>);
+    expect(shell().classList.contains('shell-inset')).toBe(false);
+    fixtures.compact = false;
+    view.rerender(<MemoryRouter><App /></MemoryRouter>);
+    expect(shell().classList.contains('shell-inset')).toBe(true);
+  } finally {
+    fixtures.compact = false;
+    view.unmount();
+  }
+});
+
 it('promotes an existing thread inspector when thread tabs are enabled', async () => {
   fixtures.compact = false;
   const original = store.useUi.getState();

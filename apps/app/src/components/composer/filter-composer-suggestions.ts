@@ -200,7 +200,7 @@ export function buildCommandSuggestions(
   }));
   // Rank within the catalog, then Commands before Skills so keyboard order
   // matches the sectioned menu.
-  return rankSuggestions(items, query.replace(/^\//, ''), COMPOSER_SUGGESTION_LIMIT)
+  return rankSuggestions(items, query.replace(/^\//, ''), items.length)
     .slice()
     .sort((left, right) => {
       if (left.kind !== 'command' || right.kind !== 'command') return 0;

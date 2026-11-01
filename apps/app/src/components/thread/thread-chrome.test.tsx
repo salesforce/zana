@@ -991,6 +991,8 @@ describe('expandable row and chips', () => {
     expect(stickyUser).toContain('top: 0;');
     expect(stickyUser).toContain('z-index: 4;');
     expect(stickyUser).toContain('background: var(--bg-base);');
+    expect(stickyUser).toContain('.app-shell.shell-inset .thread-timeline-current-turn > .thread-timeline-item.is-user,');
+    expect(stickyUser).toContain('background: var(--bg-panel);');
     expect(stickyUser).toContain('.thread-timeline-current-turn > .thread-timeline-item.is-user[data-sticky-prompt] {\n  position: sticky;');
     expect(stickyUser.split('}')[0]).not.toContain('position: sticky;');
     const assistantBubble = css.slice(
@@ -1006,7 +1008,9 @@ describe('expandable row and chips', () => {
     expect(userBubble).toContain('border: 1px solid var(--border);');
     expect(userBubble).toContain('background: var(--bg-elevated, var(--bg-background));');
     expect(userBubble).toContain('border-radius: 12px;');
-    expect(css).toContain('.thread-timeline-item:hover,\n.thread-timeline-item:focus-within {\n  z-index: 1;');
+    const hover = css.match(/\.thread-timeline-item:hover,\s*\.thread-timeline-item:focus-within\s*\{[^}]*z-index:\s*(\d+)/)?.[1];
+    const sticky = css.match(/\.thread-timeline-current-turn > \.thread-timeline-item\.is-user\[data-sticky-prompt\]\s*\{[^}]*z-index:\s*(\d+)/)?.[1];
+    expect(Number(hover)).toBeGreaterThan(Number(sticky));
     expect(css).toContain('.thread-detail-timeline {\n  user-select: text;');
     expect(css).not.toContain('.thread-toc');
   });

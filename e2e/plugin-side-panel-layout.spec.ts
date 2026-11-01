@@ -12,12 +12,10 @@ test('plugin pages share the rail, tabs, resizing and maximize layout across glo
   const pages = [
     ['pr-monitor', '/plugins/pr-monitor/main'],
     ['design-docs', '/plugins/design-docs/design-docs'],
-    ['salesforce', '/plugins/salesforce/orgs'],
     ['tasks', '/plugins/tasks/tasks'],
     ['storage-retention', '/plugins/storage-retention/storage'],
     ['plugin-guide', '/extensions/pages/plugin-guide/plugin-guide']
   ];
-  // A missing Salesforce CLI degrades server tools while its page remains available.
   for (const [id] of [...pages, ['docs', '']]) {
     expect(await win.evaluate((id) => window.cc.extensions.install({ kind: 'bundled', id }), id)).toMatchObject({ ok: true });
     await expect.poll(() => win.evaluate(async (id) => (await window.cc.pluginApps.list()).find(row => row.id === id)?.status, id), { timeout: 30_000 }).toMatch(/running|needs-configuration|degraded/);
@@ -33,7 +31,6 @@ test('plugin pages share the rail, tabs, resizing and maximize layout across glo
     ...pages.map(([, path]) => path),
     '/plugins/docs/panel',
     `/projects/${projectId}/design-docs`,
-    `/projects/${projectId}/salesforce`,
     `/projects/${projectId}/library`
   ];
   for (const [index, destination] of destinations.entries()) {

@@ -2,9 +2,9 @@
 import { act,cleanup,fireEvent,render,screen,waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach,describe,expect,it,vi } from 'vitest';
-const h=vi.hoisted(() => ({event:(_:any) => {},updated:(_:any) => {},reconnect:() => {},off:vi.fn(),get:vi.fn(),timeline:vi.fn(),upsert:vi.fn(),panelOpen:false}));
+const h=vi.hoisted(() => ({event:(_:any) => {},updated:(_:any) => {},reconnect:() => {},off:vi.fn(),get:vi.fn(),timeline:vi.fn(),upsert:vi.fn(),status:vi.fn(),pullRequest:vi.fn(),panelOpen:false}));
 vi.mock('../../hooks/useHosts.js', () => ({ useHosts: () => [] }));
-vi.mock('../../lib/product-client.js',() => ({product:{threads:{get:h.get,timeline:h.timeline,onEvent:(fn:any) => {h.event=fn;return h.off;},onUpdated:(fn:any) => {h.updated=fn;return h.off;}}}}));
+vi.mock('../../lib/product-client.js',() => ({product:{environments:{status:h.status,pullRequest:h.pullRequest},threads:{get:h.get,timeline:h.timeline,onEvent:(fn:any) => {h.event=fn;return h.off;},onUpdated:(fn:any) => {h.updated=fn;return h.off;}}}}));
 vi.mock('../../lib/product-ws.js',() => ({subscribeProductReconnect:(fn:any) => {h.reconnect=fn;return h.off;}}));
 vi.mock('../../thread-store.js',async original => ({...await original<any>(),useThreads:Object.assign((pick:any) => pick({threads:[],upsert:h.upsert}),{getState:() => ({threads:[],upsert:h.upsert})})}));
 vi.mock('../../store.js',() => ({useData:(pick:any) => pick({projects:[]})}));
@@ -25,13 +25,46 @@ vi.mock('../../components/thread/ThreadTimeline.js',() => ({ThreadTimeline:({row
 vi.mock('../../components/thread/ThreadWorkspaceBanner.js',() => ({ThreadWorkspaceBanner:() => null}));
 vi.mock('../../components/thread/ThreadDetailOverflow.js',() => ({ThreadDetailOverflow:() => null}));
 vi.mock('../../components/thread/ThreadDetailSearch.js',() => ({ThreadDetailSearch:() => null}));
-vi.mock('../../components/thread/timeline/ThreadBanners.js',() => ({ThreadDetailHeading:({title}:any) => <h1>{title}</h1>,ThreadDetailActions:({children}:any) => children,ThreadPromptModeCard:() => null,ThreadStatusBadge:() => null,ThreadTodoCard:() => null}));
-vi.mock('../../components/thread/timeline/ComposerStackCards.js',() => ({BackgroundCommandsCard:() => null,ModelFallbackCard:() => null,PromptContextBanner:() => null,QueuedMessagesCard:() => null}));
+vi.mock('../../components/thread/timeline/ThreadBanners.js',() => ({ThreadDetailHeading:({title,metadata}:any) => <><h1>{title}</h1>{metadata}</>,ThreadDetailActions:({children}:any) => children,ThreadPromptModeCard:() => null,ThreadStatusBadge:() => null,ThreadTodoCard:() => null}));
+vi.mock('../../components/thread/timeline/ComposerStackCards.js',() => ({BackgroundCommandsCard:() => null,ModelFallbackCard:() => null,PromptContextBanner:({branchName}:any) => <div data-testid="composer-branch">{branchName}</div>,QueuedMessagesCard:() => null}));
 vi.mock('../../components/thread/pending-interactions/ChildThreadPendingBanners.js',() => ({ChildThreadPendingBanners:() => null}));
 vi.mock('../../plugins/PluginThreadHeaderActions.js',() => ({PluginThreadHeaderActions:() => null}));
 vi.mock('../../plugins/thread-panel-owner.js',() => ({ThreadPanelOwnerProvider:({children}:any) => children}));
 import { ThreadDetail } from './ThreadDetailView.js';
 afterEach(() => {cleanup();vi.useRealTimers();vi.clearAllMocks();h.panelOpen=false;});
+
+it('shares one live checkout read between the header, open popover and composer', async () => {
+  vi.useFakeTimers();
+  h.get.mockResolvedValue({ thread: { id: 'a', title: 'Branch context', status: 'idle', environmentId: 'env', branchName: 'stored', providerId: 'codex' } });
+  h.timeline.mockResolvedValue({ rows: [], maxSeq: 0, status: 'idle' });
+  h.status.mockResolvedValue({ branchName: 'live' });
+  h.pullRequest.mockResolvedValue({ pullRequest: null });
+  const view = render(<MemoryRouter><ThreadDetail threadId="a" embedded/></MemoryRouter>);
+  await act(async () => {});
+  const header = screen.getByTestId('thread-header-meta');
+  expect(header.textContent).toContain('live');
+  expect(header.textContent).not.toContain('stored');
+  expect(screen.getByTestId('composer-branch').textContent).toBe('live');
+  expect(h.status).toHaveBeenCalledExactlyOnceWith('env');
+  fireEvent.click(screen.getByRole('button', { name: 'Thread context' }));
+
+  h.status.mockResolvedValue({ branchName: 'switched' });
+  await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+  expect(header.textContent).toContain('switched');
+  expect(screen.getByRole('dialog').textContent).toContain('switched');
+  expect(screen.getByTestId('composer-branch').textContent).toBe('switched');
+  expect(h.status).toHaveBeenCalledTimes(2);
+
+  h.status.mockResolvedValue({ branchName: null });
+  await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+  expect(header.querySelector('.thread-context-branch')).toBeNull();
+  expect(screen.getByRole('dialog').textContent).not.toContain('Branch');
+  expect(screen.getByTestId('composer-branch').textContent).toBe('');
+  view.unmount();
+  await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+  expect(h.status).toHaveBeenCalledTimes(3);
+});
+
 it('wires bounded continuous refresh, matching filters, reconnect and unmount cancellation through the real detail effect',async () => {
   vi.useFakeTimers();
   h.get.mockResolvedValue({thread:{id:'a',title:'Loaded thread',status:'idle',createdAt:1}});

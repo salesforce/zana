@@ -75,6 +75,15 @@ describe('tryServePluginAsset', () => {
     await expect(fetch(`${url}plugins/notes/main`).then((r) => r.status)).resolves.toBe(404);
   });
 
+  it.each([['png', 'image/png'], ['webp', 'image/webp'], ['jpg', 'image/jpeg'], ['jpeg', 'image/jpeg'], ['gif', 'image/gif']])('serves %s logos with an image MIME type', async (extension, mime) => {
+    const root = mkdtempSync(join(tmpdir(), 'zcc-plugin-image-'));
+    writeFileSync(join(root, `logo.${extension}`), 'image bytes');
+    const url = await listen(root);
+    const response = await fetch(`${url}plugins/notes/assets/logo.${extension}`);
+    expect(response.headers.get('content-type')).toBe(mime);
+    expect(await response.text()).toBe('image bytes');
+  });
+
   it('serves playground html, wasm, and font MIME types', async () => {
     const root = mkdtempSync(join(tmpdir(), 'zcc-plugin-asset-mime-'));
     mkdirSync(join(root, 'playground', 'dist'), { recursive: true });

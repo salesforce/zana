@@ -49,3 +49,8 @@ it('sends a find-in-thread query to the conversation outline only when given', a
   await product.threads.conversationOutline('t/1', 'a&b c');
   expect(http.apiJson).toHaveBeenLastCalledWith('/threads/t%2F1/conversation-outline?q=a%26b%20c');
 });
+
+it('explains that native folder recovery requires the desktop app', async () => {
+  await expect(product.pluginApps.repair('example', 'locate')).resolves.toMatchObject({ ok: false, code: 'DESKTOP_REQUIRED' });
+  expect(http.apiJson).not.toHaveBeenCalled();
+});

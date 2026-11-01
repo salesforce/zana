@@ -199,6 +199,12 @@ describe('CLI session workspace previews', () => {
       .rejects.toMatchObject({ status });
   });
 
+  it('includes the authorized checkout and relative path when a workspace file is missing', async () => {
+    read.mockRejectedValue({ code: 'path_not_found' });
+    await expect(readThreadHostFile(ctx, 'cli-session', 'output/report.md', 'p1'))
+      .rejects.toMatchObject({ message: expect.stringContaining('/project/output/report.md') });
+  });
+
   it('preserves host availability errors', async () => {
     const error = new Error('host is offline');
     resolveHostId.mockImplementationOnce(() => { throw error; });

@@ -19,8 +19,6 @@
 .terminal-session-portal.is-docked { display:grid; }
 .terminal-session-portal > .term.drop-over { outline:2px dashed var(--accent-blue); outline-offset:-4px; }
 /* Retain the two visible areas on desktop; compact navigation uses the existing drawer. */
-.thread-detail-view.has-tool-dock:not(.is-secondary-maximized) .thread-detail-split > .thread-secondary-panel { position:relative; inset:auto; width:auto; max-width:60%; box-shadow:none; }
+/* Match clampWidth: a drag can grow to 70%, with a 288px floor in small containers. */
+.thread-detail-view.has-tool-dock:not(.is-secondary-maximized) .thread-detail-split > .thread-secondary-panel { position:relative; inset:auto; width:auto; max-width:max(288px,70%); box-shadow:none; }
 .thread-detail-view.is-secondary-maximized .thread-tool-main { display:none; }
-@media (max-width:1100px) {
-  .thread-detail-view.has-tool-dock:not(.is-secondary-maximized) .thread-detail-split > .thread-secondary-panel { max-width:45%; }
-}

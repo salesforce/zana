@@ -30,6 +30,7 @@ it('accepts the engine requirements of every automatically installed bundled plu
 const EXPECTED_CATEGORIES: Record<string, (typeof PLUGIN_CATALOG_CATEGORIES)[number]> = {
   'slack-bridge-2ff2': 'Agent interaction',
   'ask-user-question': 'Agent interaction',
+  'agent-city': 'Interface',
   automations: 'Workflow management',
   connect: 'Host access',
   'browser-automation': 'Host access',
@@ -61,7 +62,6 @@ const EXPECTED_CATEGORIES: Record<string, (typeof PLUGIN_CATALOG_CATEGORIES)[num
   'provider-codex': 'Agent interaction',
   'provider-pi': 'Agent interaction',
   'provider-retry': 'Agent interaction',
-  salesforce: 'Developer tools',
   secrets: 'Host access',
   'side-chat': 'Agent interaction',
   'storage-retention': 'Host access',
@@ -70,15 +70,16 @@ const EXPECTED_CATEGORIES: Record<string, (typeof PLUGIN_CATALOG_CATEGORIES)[num
 };
 
 const EXPECTED_ICONS: Record<string, string> = {
-  'slack-bridge-2ff2': 'MessageSquare',
+  'slack-bridge-2ff2': './icons/slack.png',
   'ask-user-question': 'CircleHelp',
+  'agent-city': 'Building2',
   automations: 'Workflow',
   connect: 'Cable',
   'browser-automation': 'Globe',
   'custom-instructions': 'ScrollText',
   'design-docs': 'DraftingCompass',
   docs: 'Library',
-  github: 'Github',
+  github: './icons/github.png',
   'harness-claude': './icons/claude-code.svg',
   'harness-codex': './icons/codex.svg',
   'harness-cursor': './icons/cursor.svg',
@@ -103,7 +104,6 @@ const EXPECTED_ICONS: Record<string, string> = {
   'provider-codex': './icons/codex.svg',
   'provider-pi': './icons/pi.svg',
   'provider-retry': 'RotateCcw',
-  salesforce: 'Cloud',
   secrets: 'KeyRound',
   'side-chat': 'MessagesSquare',
   'storage-retention': 'DatabaseBackup',
@@ -162,8 +162,9 @@ describe('bundled plugin registry invariants', () => {
     }
   });
 
-  it('installs Design Docs and Salesforce enabled by default', () => {
-    for (const pluginId of ['design-docs', 'salesforce']) {
+  it('installs Design Docs enabled by default and leaves independent plugins optional', () => {
+    expect(BUILTIN_PLUGINS.some(plugin => plugin.pluginId === 'salesforce')).toBe(false);
+    for (const pluginId of ['design-docs']) {
       expect(BUILTIN_PLUGINS.find(plugin => plugin.pluginId === pluginId)).toMatchObject({
         autoInstall: true, defaultEnabled: true
       });
@@ -222,7 +223,7 @@ describe('bundled plugin registry invariants', () => {
 
       const icon = manifest.branding.icon;
       if (icon?.startsWith('./')) {
-        expect(icon.toLowerCase().endsWith('.svg'), `${plugin.name} path icon must be svg`).toBe(true);
+        expect(icon, `${plugin.name} path icon must be an image`).toMatch(/\.(svg|png|webp|jpe?g|gif)$/i);
         expect(existsSync(resolvePluginPath(root, icon)), `${plugin.name} missing ${icon}`).toBe(true);
       }
 

@@ -9,6 +9,7 @@ import {
 } from '@zana-ai/zcc-domain/thread-runtime';
 import { MarkdownContent } from '../../MarkdownContent.js';
 import { product } from '../../../lib/product-client.js';
+import { canAutomaticallyFocus } from '../../../lib/automatic-focus.js';
 import {
   approvalDecisionIndexForKey,
   approvalDecisionLabel,
@@ -128,10 +129,9 @@ function ApprovalPendingInteractionBanner({
     setActiveIndex(initialApprovalDecisionIndex(decisions));
   }
   useEffect(() => {
-    const alreadyFocused = document.activeElement?.closest('[data-testid="thread-pending-decision-toolbar"]');
-    if (alreadyFocused) return;
-    buttonRefs.current[initialApprovalDecisionIndex(decisions)]?.focus();
-  }, [interaction.id]); // eslint-disable-line react-hooks/exhaustive-deps -- only steal focus when a new prompt appears
+    const button = buttonRefs.current[initialApprovalDecisionIndex(decisions)];
+    if (button && canAutomaticallyFocus(button)) button.focus();
+  }, [interaction.id]); // eslint-disable-line react-hooks/exhaustive-deps -- only consider autofocus for a new prompt
   if (!payload) return null;
   const title = payload.subject.kind === 'command'
     ? 'Waiting for approval'

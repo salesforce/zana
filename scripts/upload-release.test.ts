@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 
-it('publishes recovery indexes and archives alongside feed artifacts without copying unrelated dist files', async () => {
+it('publishes only updater files, ignoring stale recovery assets and unrelated dist files', async () => {
   const root = mkdtempSync(join(tmpdir(), 'zcc-release-upload-'));
   const dist = join(root, 'dist'), target = join(root, 'published');
   mkdirSync(dist);
@@ -22,8 +22,8 @@ it('publishes recovery indexes and archives alongside feed artifacts without cop
   vi.spyOn(console, 'log').mockImplementation(() => {});
   try {
     await import('./upload-release.mjs');
-    expect(readdirSync(target).sort()).toEqual(Object.keys(files).sort());
-    for (const [name, value] of Object.entries(files)) expect(readFileSync(join(target, name), 'utf8')).toBe(value);
+    expect(readdirSync(target).sort()).toEqual(['Zana.zip', 'latest-mac.yml']);
+    for (const name of ['Zana.zip', 'latest-mac.yml'] as const) expect(readFileSync(join(target, name), 'utf8')).toBe(files[name]);
   } finally {
     vi.restoreAllMocks(); vi.unstubAllEnvs();
     rmSync(root, { recursive: true, force: true });

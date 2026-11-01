@@ -1,4 +1,5 @@
 import { createMachineProjectSync, type MachineProjectSync } from '../services/hosts/machine-project-sync.js';
+import { HelpVideoCatalogueService } from '../services/help-video-catalogue.js';
 import { closeThreadReads } from '../services/threads/thread-reads.js';
 import { closeQueuedMessages } from '../services/threads/queued-messages.js';
 import { previewService, disposePreviews } from '../services/previews/preview-service.js';
@@ -104,6 +105,7 @@ export interface ProductTerminalRecord extends TerminalSession {
 }
 
 export interface ProductHttpContext {
+  helpVideos?: HelpVideoCatalogueService;
   productInstanceId: string;
   origins: LocalAppOriginArgs;
   dataDir: string;
@@ -627,6 +629,7 @@ export function createProductHttpContext(
     (error) => console.warn(`[zcc] remote project reconcile failed: ${error instanceof Error ? error.message : 'unknown error'}`)
   );
   ctx = {
+    helpVideos: new HelpVideoCatalogueService(dataDir),
     productInstanceId,
     origins: options.origins,
     dataDir,
@@ -675,6 +678,7 @@ export function createProductHttpContext(
     dispose: () => {
       if (disposed) return remoteProjectReconciler.dispose();
       disposed = true;
+      ctx.helpVideos?.dispose();
       stopPeerAuthority();
       ctx.peerInstaller?.dispose();
       ctx.peerLinks?.dispose();

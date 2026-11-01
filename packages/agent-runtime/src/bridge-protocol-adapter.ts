@@ -294,6 +294,7 @@ export function createBridgeProtocolAdapter(
             kind: "request",
             method: BRIDGE_REQUEST_METHODS.threadStart,
             params: {
+              providerId: options.id,
               threadId: command.threadId,
               cwd: command.cwd,
               ...(command.input !== undefined ? { input: command.input } : {}),
@@ -318,6 +319,7 @@ export function createBridgeProtocolAdapter(
             kind: "request",
             method: BRIDGE_REQUEST_METHODS.threadResume,
             params: {
+              providerId: options.id,
               threadId: command.threadId,
               cwd: command.cwd,
               providerThreadId: command.providerThreadId,
@@ -361,6 +363,7 @@ export function createBridgeProtocolAdapter(
             kind: "request",
             method: BRIDGE_REQUEST_METHODS.threadFork,
             params: {
+              providerId: options.id,
               threadId: command.threadId,
               cwd: command.cwd,
               sourceProviderThreadId: command.sourceProviderThreadId,

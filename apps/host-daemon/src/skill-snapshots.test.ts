@@ -6,6 +6,7 @@ import { createSkillSnapshotStore, SKILL_SNAPSHOT_MAX_BYTES } from './skill-snap
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const run of cleanup.splice(0).reverse()) await run(); });
+
 async function setup() {
   const dir = await mkdtemp(join(tmpdir(), 'zcc-skill-snapshot-'));
   cleanup.push(() => rm(dir, { recursive: true, force: true }));

@@ -141,18 +141,18 @@ describe('Windows release pipeline', () => {
     expect(workflow.jobs.checks.steps.some((step: any) => step.run === 'pnpm run check:release-notes')).toBe(true);
   });
 
-  it('ships compiled plugin recovery runtimes with both platforms and publishes every recovery asset', () => {
+  it('publishes installers and updater files without separate plugin recovery assets', () => {
     for (const job of [workflow.jobs.build, workflow.jobs['build-windows']]) {
       const upload = job.steps.find((step: any) => step.uses?.startsWith('actions/upload-artifact@') && step.with?.name?.startsWith('release-'));
-      expect(upload.with.path).toContain('dist/plugin-recovery-*.json');
-      expect(upload.with.path).toContain('dist/plugin-recovery-*.json.gz');
+      expect(upload.with.path).not.toContain('plugin-recovery-');
     }
     const stage = workflow.jobs.release.steps.find((step: any) => step.id === 'meta').run;
-    expect(stage).toContain('artifacts/release-arm64/plugin-recovery-*');
-    expect(stage).toContain('artifacts/release-x64/plugin-recovery-*');
-    expect(stage).toContain('artifacts/release-windows-x64/plugin-recovery-*');
+    expect(stage).not.toContain('plugin-recovery-');
     const publish = workflow.jobs.release.steps.find((step: any) => step.uses?.startsWith('softprops/action-gh-release@'));
-    expect(publish.with.files).toContain('merged/plugin-recovery-*.json.gz');
+    expect(publish.with.files).not.toContain('plugin-recovery-');
+    for (const pattern of ['merged/*.dmg', 'merged/*.zip', 'merged/*.exe', 'merged/*.blockmap', 'merged/latest-mac.yml', 'merged/latest.yml']) {
+      expect(publish.with.files).toContain(pattern);
+    }
   });
 
   it('builds natively and tests the actual Windows package before uploading', () => {

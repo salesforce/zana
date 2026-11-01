@@ -1582,13 +1582,13 @@ export class ExecutionService {
     const completeness = usageCompleteness(stats, record.request.policy?.usageBudget);
     const duplicate = completeness !== 'complete' || !retainedPrevious ? undefined : matchingUsageObservation(record, (item) => usageCursorIdentity(item) === cursorKey && item.sampleKind === sampleKind
        && item.workUnitId === unit?.id && item.workAttempt === (unit?.attempt ?? 0) && item.claimGeneration === (unit?.claimGeneration ?? 0)
-       && JSON.stringify(item.cumulative) === JSON.stringify(cumulative) && item.completeness === completeness);
+      && item.contextTokens === stats?.contextTokens && JSON.stringify(item.cumulative) === JSON.stringify(cumulative) && item.completeness === completeness);
     const sequence = duplicate?.sequence ?? (previous?.sequence ?? 0) + 1;
     const observation: Omit<ExecutionUsageObservationV1, 'version' | 'delta'> = {
       observationId: duplicate?.observationId ?? `${executionId}:usage:${sessionId}:${sequence}`, executionAttempt: record.attempt, role, slotId, sessionId,
       ...(unit ? { workUnitId: unit.id } : {}), workAttempt: unit?.attempt ?? 0, claimGeneration: unit?.claimGeneration ?? 0,
       adapterEpoch: previous?.adapterEpoch ?? 0, sampleKind, sequence, provider,
-      ...(model ? { model } : {}), routingIdentity, cumulative, completeness,
+      ...(model ? { model } : {}), routingIdentity, ...(stats?.contextTokens === undefined ? {} : { contextTokens: stats.contextTokens }), cumulative, completeness,
       observedAt: duplicate?.observedAt ?? (this.deps.now ?? Date.now)(), ...(completeness !== 'complete' ? { gap: 'missing' as const } : {})
     };
     await this.deps.store.appendUsageObservation(record.id, observation, { telemetryGapGraceSamples: TELEMETRY_GAP_GRACE_SAMPLES });

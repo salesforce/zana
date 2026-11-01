@@ -1,0 +1,10 @@
+flowchart LR
+  S[Plugin or module selection] --> C[Copy event inside source]
+  C --> P[text/plain fallback]
+  C --> M[Context reference metadata]
+  M --> V[Shared validation]
+  V --> B[Inline composer badge]
+  B --> T[Expanded text and reference offsets]
+  T --> D[Validated stored prompt]
+  D --> A[Agent receives copied text]
+  D --> H[Compact history and restored drafts]

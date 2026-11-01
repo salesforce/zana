@@ -214,6 +214,8 @@ export interface PluginViewTarget {
   /** The tab's slot id (`app.slots.projectTab({ id })`). */
   tabId: string;
   projectId: string;
+  /** Opaque resource identity for deduplication and layout; grants no filesystem access. */
+  resourceId?: string;
 }
 
 /** One thread and its side panel shown in its own window (`windows.openThreadView`). */
@@ -662,7 +664,7 @@ export interface CcApi {
     unread(threadId: string): Promise<{ thread: Record<string, unknown> }>;
     rename(threadId: string, title: string): Promise<{ thread: Record<string, unknown> }>;
     /** A plugin panel's side-panel conversations (hidden until opened as threads), newest first. */
-    panelConversations(pluginId: string, panel?: string): Promise<Array<{
+    panelConversations(pluginId: string, panel?: string, scope?: { projectId?: string; view?: string }): Promise<Array<{
       id: string;
       projectId: string;
       title: string | null;
@@ -703,6 +705,12 @@ export interface CcApi {
       encoding: 'utf8' | 'base64';
       contentType: string | null;
     }>;
+    resolvePreviewPath(threadId: string, body: { path: string; hints?: string[]; projectId?: string }): Promise<
+      | { kind: 'resolved'; path: string }
+      | { kind: 'ambiguous'; paths: string[] }
+      | { kind: 'incomplete'; paths: string[] }
+      | { kind: 'not_found'; path: string; checkedPath?: string }
+    >;
     storageFiles(threadId: string): Promise<{
       files: Array<{ path: string; name: string }>;
       truncated: boolean;
@@ -1398,6 +1406,10 @@ export interface CcApi {
     openPluginView(target: PluginViewTarget): Promise<boolean>;
     /** Close the window showing this tab, if one is open. */
     closePluginView(target: PluginViewTarget): Promise<boolean>;
+    /** Registers this renderer's bounded close preflight. Main derives the owning window from the IPC sender. */
+    pluginViewCloseReady(ready: boolean): Promise<boolean>;
+    pluginViewCloseComplete(requestId: string, result: { ok: boolean; error?: string }): Promise<boolean>;
+    onPluginViewCloseRequest(cb: (request: { requestId?: string; error?: string }) => void): () => void;
     /** The plugin view windows open now. */
     listPluginViews(): Promise<PluginViewTarget[]>;
     /** Pushed to every window when a plugin view window opens or closes. */
@@ -1561,6 +1573,17 @@ export interface CcApi {
      * throws — an unexpected failure resolves to an empty summary.
      */
     getSummary(): Promise<UsageSummary>;
+    /** Point-in-time process-local inference memo counters. No request payload. */
+    getMemoCounters(): Promise<Record<string, {
+      requests: number;
+      hits: number;
+      misses: number;
+      inFlightJoins: number;
+      activeLimitSkips: number;
+      evictions: number;
+      providerCalls: number;
+      failures: number;
+    }>>;
   };
   /**
    * Suggested Actions launcher (afl-03) — a SIBLING to the inbox, not a feed
@@ -1704,6 +1727,7 @@ export interface CcApi {
     applyAllUpdates(): Promise<Result<import('@zana-ai/zcc-domain/product').PluginUpdateAllResult>>;
     remove(id: string): Promise<Result<true>>;
     reload(id: string): Promise<Result<true>>;
+    repair(id: string, action: 'locate' | 'official'): Promise<Result<true>>;
   };
   /**
    * Runtime extensions discovered under `~/.zcc/extensions/<id>/`.

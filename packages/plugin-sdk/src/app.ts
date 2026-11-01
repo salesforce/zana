@@ -1,3 +1,5 @@
+export * from './context-reference.js';
+export { EDITOR_SELECTION_MIME, MAX_EDITOR_SELECTION_TEXT, parseEditorSelection, editorSelectionFromClipboard, editorSelectionLabel, editorSelectionPrompt, type EditorSelection } from './editor-selection.js';
 import type {
   ComposerView,
   HarnessRoutingEditorProps,
@@ -84,6 +86,7 @@ export type {
   ZccNavigateToProjectOptions,
   ZccPanelAgentOptions,
   ZccPanelToolOptions,
+  ZccPanelScope,
   PluginProviderIconRegistration,
   PluginRegistrationSet,
   PluginSdkApp,
@@ -100,6 +103,10 @@ export type {
   PluginSlotBase,
   PluginThreadHeaderActionProps,
   PluginThreadHeaderActionRegistration,
+  PluginBrowserToolbarActionRegistration,
+  PluginBrowserToolbarActionProps,
+  PluginBrowserPage,
+  PluginBrowserComposer,
   PluginThreadListProps,
   PluginSidebarThread,
   PluginSidebarThreadActions,
@@ -258,6 +265,10 @@ export function useZccDeepLinks(): ZccDeepLinks {
  */
 export function useWindowTitle(title: ZccWindowTitle | null | undefined): void {
   pluginRuntime().useWindowTitle?.(title);
+}
+
+export function useWindowCloseHandler(handler: ((signal: AbortSignal) => void | Promise<void>) | null): void {
+  pluginRuntime().useWindowCloseHandler?.(handler);
 }
 
 export function useComposer(): PluginComposerApi {

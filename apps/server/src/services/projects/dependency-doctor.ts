@@ -9,7 +9,6 @@
  *   - Mastra Code CLI (`mastracode`) — INSTALLABLE (`npm i -g mastracode`).
  *   - Pi CLI (`pi`)                  — INSTALLABLE (`npm i -g @earendil-works/pi-coding-agent`).
  *   - Codex CLI (`codex`)            — INSTALLABLE (`npm i -g @openai/codex`).
- *   - SF CLI (`sf`)                  — INSTALLABLE (`npm i -g @salesforce/cli`).
  *
  * Optional CLIs (everything except Claude Code) appear in the checklist but
  * do not auto-open it — most machines will not have every harness.
@@ -144,17 +143,6 @@ const COMPANIONS: readonly CompanionSpec[] = [
     versionArgs: ['--version'],
     manualCommand: 'npm install -g @openai/codex@latest',
     install: npmGlobalInstall('@openai/codex')
-  },
-  {
-    id: 'sf-cli',
-    label: 'SF CLI',
-    detail: 'The `sf` command — Salesforce CLI.',
-    kind: 'installable',
-    required: false,
-    bin: 'sf',
-    versionArgs: ['--version'],
-    manualCommand: 'npm install -g @salesforce/cli@latest',
-    install: npmGlobalInstall('@salesforce/cli')
   }
 ];
 

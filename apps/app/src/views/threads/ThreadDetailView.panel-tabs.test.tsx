@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach,expect,it,vi } from 'vitest';
 const h=vi.hoisted(() => ({event:(_:any) => {},updated:(_:any) => {},reconnect:() => {},off:vi.fn(),get:vi.fn(),createTerminal:vi.fn(),addTab:vi.fn(),selectPin:vi.fn(),panelProps:null as any,bottomProps:null as any,diffProps:null as any,activateTab:vi.fn(),dockEnabled:false,timeline:vi.fn(),upsert:vi.fn(),state:{tabs:[] as any[],isOpen:true,isMaximized:false,activeId:'info' as string | null,widthPx:320}}));
 vi.mock('../../hooks/useHosts.js', () => ({ useHosts: () => [] }));
-vi.mock('../../lib/product-client.js',() => ({product:{terminals:{create:h.createTerminal},threads:{get:h.get,timeline:h.timeline,onEvent:(fn:any) => {h.event=fn;return h.off;},onUpdated:(fn:any) => {h.updated=fn;return h.off;}}}}));
+vi.mock('../../lib/product-client.js',() => ({product:{environments:{status:vi.fn(async () => ({branchName:null})),pullRequest:vi.fn(async () => ({pullRequest:null}))},terminals:{create:h.createTerminal},threads:{get:h.get,timeline:h.timeline,onEvent:(fn:any) => {h.event=fn;return h.off;},onUpdated:(fn:any) => {h.updated=fn;return h.off;}}}}));
 vi.mock('../../lib/product-ws.js',() => ({subscribeProductReconnect:(fn:any) => {h.reconnect=fn;return h.off;}}));
 vi.mock('../../thread-store.js',async original => ({...await original<any>(),useThreads:Object.assign((pick:any) => pick({threads:[],upsert:h.upsert}),{getState:() => ({threads:[],upsert:h.upsert})})}));
 vi.mock('../../store.js',() => ({useData:(pick:any) => pick({projects:[],dockableThreadToolsEnabled:h.dockEnabled})}));

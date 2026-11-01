@@ -122,6 +122,17 @@ describe('ScheduleRow', () => {
     expect(onOpenInSplit).toHaveBeenCalledTimes(1);
   });
 
+  it('shows the cadence of cron and interval schedules in the meta line', () => {
+    const meta = (t: ScheduledTask) => {
+      const view = render(<MemoryRouter><ScheduleRow task={t} projectName="Demo" onOpen={vi.fn()} onOpenInSplit={vi.fn()} onDuplicate={vi.fn()} onAskDelete={vi.fn()} /></MemoryRouter>);
+      const text = view.container.querySelector('.scheduler-card-compact-meta')?.textContent;
+      view.unmount();
+      return text;
+    };
+    expect(meta({ ...task, schedule: { cron: '0 8 * * 1-5', tz: 'Australia/Sydney' } })).toBe('Demo · claude · cron 0 8 * * 1-5');
+    expect(meta(task)).toBe('Demo · claude · every 1h');
+  });
+
   it('says off in the next column of a disabled schedule', () => {
     const view = render(<MemoryRouter><ScheduleRow task={{ ...task, enabled: false }} projectName="Demo" onOpen={vi.fn()} onOpenInSplit={vi.fn()} onDuplicate={vi.fn()} onAskDelete={vi.fn()} /></MemoryRouter>);
     expect(view.container.querySelector('.scheduler-card-compact-next--muted')?.textContent).toBe('off');

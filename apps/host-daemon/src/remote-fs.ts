@@ -290,15 +290,25 @@ export async function listDirRemote(remote: ProjectRemote, root: string, absPath
  * heuristic locally. The byte count comes first on its own line so we can split
  * it off the content.
  */
-export async function readFileRemote(remote: ProjectRemote, root: string, absPath: string): Promise<FsReadResult> {
+export async function readFileRemote(
+  remote: ProjectRemote,
+  root: string,
+  absPath: string,
+  byteOffset = 0
+): Promise<FsReadResult> {
   const file = confineRemote(root, absPath);
   if (!file) return { ok: false, message: 'Path is outside the project' };
+  if (!Number.isSafeInteger(byteOffset) || byteOffset < 0) {
+    return { ok: false, message: 'Invalid byte offset' };
+  }
   const q = shellQuote(file);
   // Refuse non-regular files up front; then print "<size>\n" followed by the
-  // capped bytes. `cat` of a missing/dir path exits non-zero → handled below.
+  // capped page. The byte cursor is only issued after a complete UTF-8 code
+  // point, so each next page resumes without dropping a split trailing glyph.
+  // A changed file is intentionally best-effort: each page observes current size.
   const cmd =
     `test -f ${q} || { echo "__ZCC_NOTFILE__"; exit 0; }; ` +
-    `wc -c < ${q}; head -c ${MAX_FILE_BYTES} ${q}`;
+    `wc -c < ${q}; tail -c +${byteOffset + 1} ${q} | head -c ${MAX_FILE_BYTES}`;
   const res = await runRemote(remote, cmd);
   if (!res.ok) return { ok: false, message: res.message };
 
@@ -318,14 +328,37 @@ export async function readFileRemote(remote: ProjectRemote, root: string, absPat
   if (probe.includes(0)) {
     return { ok: true, binary: true, bytes: Number.isFinite(fullBytes) ? fullBytes : content.length };
   }
-  const bytes = Number.isFinite(fullBytes) ? fullBytes : content.length;
+  const bytes = Number.isFinite(fullBytes) ? fullBytes : byteOffset + content.length;
+  const page = content.length === MAX_FILE_BYTES
+    ? content.subarray(0, completeUtf8PrefixLength(content))
+    : content;
+  const nextByteOffset = byteOffset + page.length;
   return {
     ok: true,
-    content: content.toString('utf8'),
+    content: page.toString('utf8'),
     bytes,
-    truncated: bytes > MAX_FILE_BYTES,
+    truncated: bytes > nextByteOffset,
+    ...(bytes > nextByteOffset ? { nextByteOffset } : {}),
     binary: false
   };
+}
+
+/** Keep an incomplete trailing UTF-8 code point for the next byte page. */
+function completeUtf8PrefixLength(content: Buffer): number {
+  if (content.length === 0) return 0;
+  let continuationBytes = 0;
+  for (let i = content.length - 1; i >= 0 && continuationBytes < 3; i -= 1) {
+    if ((content[i] & 0xc0) !== 0x80) break;
+    continuationBytes += 1;
+  }
+  const leadIndex = content.length - continuationBytes - 1;
+  if (leadIndex < 0) return content.length;
+  const lead = content[leadIndex];
+  const sequenceLength = lead >= 0xf0 && lead <= 0xf4 ? 4
+    : lead >= 0xe0 && lead <= 0xef ? 3
+      : lead >= 0xc2 && lead <= 0xdf ? 2
+        : 1;
+  return sequenceLength > continuationBytes + 1 ? leadIndex : content.length;
 }
 
 // --- Mutations (Phase 2) ----------------------------------------------------
@@ -589,7 +622,7 @@ export async function resolveRemoteAnchor(
 }
 
 export interface RemoteFsResolveDeps extends RemoteExecResolveDeps {
-  readFile: (remote: ProjectRemote, root: string, absPath: string) => Promise<FsReadResult>;
+  readFile: (remote: ProjectRemote, root: string, absPath: string, byteOffset?: number) => Promise<FsReadResult>;
   writeFile: (remote: ProjectRemote, root: string, absPath: string, content: string) => Promise<FsWriteResult>;
   createFile: (remote: ProjectRemote, root: string, absPath: string) => Promise<FsMutateResult>;
   listDir: (remote: ProjectRemote, root: string, absPath: string) => Promise<FsEntry[]>;
@@ -610,11 +643,12 @@ export interface RemoteFsResolveDeps extends RemoteExecResolveDeps {
 export async function resolveAndReadRemote(
   deps: RemoteFsResolveDeps,
   projectId: string,
-  path: string
+  path: string,
+  byteOffset?: number
 ): Promise<FsReadResult> {
   const anchored = await resolveRemoteAnchor(deps, projectId);
   if (!anchored.ok) return { ok: false, message: anchored.message };
-  return deps.readFile(anchored.remote, anchored.root, path);
+  return deps.readFile(anchored.remote, anchored.root, path, byteOffset);
 }
 
 export async function resolveAndWriteRemote(

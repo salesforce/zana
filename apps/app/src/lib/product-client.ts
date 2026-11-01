@@ -7,6 +7,7 @@ import { sharedExtensions } from './shared-extensions.js';
 import type { SystemVoiceStatusResponse } from '@zana-ai/zcc-server-contract';
 import type { CcApi } from '@zana-ai/zcc-desktop-contract';
 import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
+import type { PreviewPathRequest, PreviewPathResult } from '@zana-ai/zcc-server-contract';
 import type { CreatePeerConnectionResponse, PausePeerLinkResponse, PeerConnection, PeerConnectionListResponse, PeerLeftover, PeerLeftoverListResponse, PeerLinkActivityResponse, PeerLinkListResponse, PeerRemoteLoginCheckResponse, RemovePeerLinkResponse, RemovePeerLinkResult, RepairPeerLinkResponse } from '@zana-ai/zcc-server-contract';
 import type {
   AgentMessage,
@@ -851,8 +852,12 @@ function httpProduct(): Pick<
           method: 'PATCH',
           body: JSON.stringify({ title })
         }),
-      panelConversations: async (pluginId, panel) => {
-        const query = panel ? `?${new URLSearchParams({ panel })}` : '';
+      panelConversations: async (pluginId, panel, scope) => {
+        const params = new URLSearchParams();
+        if (panel) params.set('panel', panel);
+        if (scope?.projectId !== undefined) params.set('projectId', scope.projectId);
+        if (scope?.view !== undefined) params.set('view', scope.view);
+        const query = params.size ? `?${params}` : '';
         const body = await apiJson<{ threads: Awaited<ReturnType<CcApi['threads']['panelConversations']>> }>(
           `/plugins/${encodeURIComponent(pluginId)}/panel-threads${query}`
         );
@@ -900,6 +905,12 @@ function httpProduct(): Pick<
       editMessage: async (threadId, body) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/edit-message`, {
           method: 'POST',
+          body: JSON.stringify(body)
+        }),
+      resolvePreviewPath: async (threadId: string, body: PreviewPathRequest): Promise<PreviewPathResult> =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/preview-path/resolve`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
           body: JSON.stringify(body)
         }),
       hostFileContent: async (threadId, path, projectId) =>
@@ -1143,6 +1154,7 @@ function httpProduct(): Pick<
       forget: (identity) => apiJson('/plugin-packs/forget', { method: 'POST', body: JSON.stringify(identity) })
     },
     pluginApps: {
+      repair: async () => ({ ok: false as const, code: 'DESKTOP_REQUIRED', message: 'Open the desktop app to recover this plugin source' }),
       list: async () => {
         const body = await apiJson<{ apps?: PluginAppEntry[] }>('/plugin-apps');
         return Array.isArray(body.apps) ? body.apps : [];

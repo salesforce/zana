@@ -7,7 +7,7 @@ import type { ProductHttpContext } from '../../http/product-context.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import { ProjectFsError } from '../../http/project-fs-via-host.js';
 import { isSafeRelPath } from '../../http/library-via-host.js';
-import { confinePathToRoot } from './thread-path-confine.js';
+import { confinePathToRoot, threadPathApi } from './thread-path-confine.js';
 import { threadLocalPreviewRoots } from './thread-preview-roots.js';
 import { PROMPT_ATTACHMENT_MAX_BYTES } from '@zana-ai/zcc-domain/thread-runtime';
 
@@ -112,7 +112,8 @@ export async function readThreadHostFile(
     };
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && (error as { code: string }).code === 'path_not_found') {
-      throw new ProjectFsError(404, 'path_not_found', 'file not found');
+      const attempted = threadPathApi(root).resolve(root, relPath);
+      throw new ProjectFsError(404, 'path_not_found', `File not found: ${relPath} (checked ${attempted})`);
     }
     if (error && typeof error === 'object' && 'code' in error && (error as { code: string }).code === 'too_large') {
       throw new ProjectFsError(413, 'too_large', 'file exceeds the read cap');

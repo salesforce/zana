@@ -1226,7 +1226,7 @@ describe('execution usage and typed completion', () => {
 
   it('replays unchanged heartbeat exactly and captures USD for at-budget admission', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
-    const readSessionStats = vi.fn(async () => ({ tokens: { input: 4, output: 1, cacheRead: 0, cacheWrite: 0 }, costUsd: 2, files: [], queue: [] }));
+    const readSessionStats = vi.fn(async () => ({ contextTokens: 32, tokens: { input: 4, output: 1, cacheRead: 0, cacheWrite: 0 }, costUsd: 2, files: [], queue: [] }));
     let now = 10;
     const service = new ExecutionService(deps(filePath, {
       store, readSessionStats, now: () => now++,
@@ -1239,7 +1239,7 @@ describe('execution usage and typed completion', () => {
     await service.observeSessionUsage('execution-1', 'worker', 'outcome');
     const record = (await store.get('execution-1'))!;
     expect(record.usageObservations).toHaveLength(2);
-    expect(record.usageObservations?.[0]).toMatchObject({ cumulative: { providerCostUsd: 2 }, completeness: 'complete' });
+    expect(record.usageObservations?.[0]).toMatchObject({ contextTokens: 32, cumulative: { providerCostUsd: 2 }, completeness: 'complete' });
     expect(record.state).toBe('BLOCKED');
     expect(record.resourceBlock).toMatchObject({ kind: 'usage-budget' });
   }));

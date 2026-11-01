@@ -994,14 +994,22 @@ describe('host command dispatch', () => {
   it('forwards plugin dynamicTools from thread.start and thread.resume', async () => {
     const project = mkdtempSync(join(tmpdir(), 'zcc-thread-tools-'));
     const started: Array<{ dynamicTools?: Array<{ name: string }>; instructions?: string }> = [];
-    const resumed: Array<{ dynamicTools?: Array<{ name: string }>; instructions?: string }> = [];
+    const resumed: Array<{
+      dynamicTools?: Array<{ name: string }>;
+      instructions?: string;
+      sessionKind?: 'automated';
+    }> = [];
     const runtime = createCommandRuntime({
       verifyProviders: async () => installedClaude,
       startWork: async (input) => {
         started.push({ dynamicTools: input.dynamicTools, instructions: input.instructions });
       },
       resumeWork: async (input) => {
-        resumed.push({ dynamicTools: input.dynamicTools, instructions: input.instructions });
+        resumed.push({
+          dynamicTools: input.dynamicTools,
+          instructions: input.instructions,
+          sessionKind: input.sessionKind
+        });
       }
     });
     const environmentId = randomUUID();
@@ -1040,10 +1048,41 @@ describe('host command dispatch', () => {
       providerThreadId: 'prov-1',
       cwd: project,
       dynamicTools,
-      instructions: 'Use sf_soql.'
+      instructions: 'Use sf_soql.',
+      sessionKind: 'automated'
     });
     expect(started).toEqual([{ dynamicTools, instructions: 'Use sf_soql.' }]);
-    expect(resumed).toEqual([{ dynamicTools, instructions: 'Use sf_soql.' }]);
+    expect(resumed).toEqual([{
+      dynamicTools,
+      instructions: 'Use sf_soql.',
+      sessionKind: 'automated'
+    }]);
+  });
+
+  it('resumes an automated thread when runtime has no resume hook', async () => {
+    const project = mkdtempSync(join(tmpdir(), 'zcc-thread-resume-'));
+    const runtime = createCommandRuntime({ resumeWork: undefined });
+    const environmentId = randomUUID();
+    try {
+      await dispatchHostCommand(runtime, {
+        type: 'environment.provision',
+        environmentId,
+        workspaceProvisionType: 'unmanaged',
+        path: project
+      });
+      await expect(dispatchHostCommand(runtime, {
+        type: 'thread.resume',
+        threadId: randomUUID(),
+        environmentId,
+        projectId: 'proj-1',
+        providerId: 'claude',
+        providerThreadId: 'prov-1',
+        cwd: project,
+        sessionKind: 'automated'
+      })).resolves.toMatchObject({ resumed: true });
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
   });
 
   it('starts and drives a confined terminal session', async () => {

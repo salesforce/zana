@@ -3502,6 +3502,8 @@ export interface FsEntry {
 export interface FsReadResult {
   ok: boolean;
   content?: string;
+  /** Byte cursor for the next page when a text read is truncated. */
+  nextByteOffset?: number;
   bytes?: number;
   binary?: boolean;
   truncated?: boolean;
@@ -5753,6 +5755,8 @@ export interface PluginAppEntry {
   collection?: 'coding-agents';
   status: 'running' | 'disabled' | 'degraded' | 'needs-configuration';
   statusDetail?: string | null;
+  /** Host-derived recovery choices; local paths and replacement sources remain private. */
+  sourceRecovery?: { canLocate: boolean; canSwitchOfficial: boolean };
   appUrl: string | null;
   /** Compatible remote release from the last persisted source check, when any. */
   availableVersion?: string;
@@ -6108,6 +6112,8 @@ export interface MarketplaceEntry {
   author?: string;
   /** Lucide icon name (resolved renderer-side, like a manifest icon). */
   icon?: string;
+  /** Inert, bounded branding image supplied by the host. */
+  iconUrl?: string;
   /** Permissions the release declares — previewed before install. */
   permissions?: string[];
   /** True when an extension with this id is already installed on disk. */

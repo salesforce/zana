@@ -12,9 +12,19 @@ export const entries: readonly SettingsSearchEntry[] = [
     keywords: ['relaunch', 'harness', 'machine', 'host deamon'], kind: 'action'
   },
   {
-    id: 'development.hard-plugin-reload', section: 'development', anchor: 'recovery', label: 'Hard Plugin reload',
-    help: 'Fetch fresh plugin files and preserve settings, credentials, data and enabled states.',
-    keywords: ['repair plugins', 'reset plugins', 'corrupted', 'marketplace', 'restore', 'agent provider'], kind: 'action'
+    id: 'development.hard-plugin-reload', section: 'development', anchor: 'recovery', label: 'Restore plugins',
+    help: 'Restore bundled plugins from the app and reinstall third-party plugins while preserving settings, credentials, data and enabled states.',
+    keywords: ['hard plugin reload', 'offline restore', 'repair plugins', 'reset plugins', 'corrupted', 'marketplace', 'restore', 'agent provider'], kind: 'action'
+  },
+  {
+    id: 'development.plugin-safe-mode',
+    section: 'development',
+    anchor: 'recovery',
+    label: 'Plugin safe mode',
+    help: 'Suspend non-bundled plugins and their tools. Turning this off restores plugins that were enabled. Your plugin settings are preserved.',
+    keywords: ['disable plugins', 'suspend', 'crash', 'troubleshoot'],
+    kind: 'setting',
+    value: s => s.config.pluginSafeMode ? 'On' : 'Off'
   },
   {
     id: 'development.bundled-plugins',

@@ -9,7 +9,7 @@ async function customRegistrations(plugin: typeof sourcePlugin, entries: unknown
   plugin(host.zcc);
   await Promise.resolve();
   host.harness.setSettings({ customAgents: JSON.stringify(entries) });
-  return host.harness.registrations.providerRegistrations.filter(entry => entry.id.startsWith('fixture-'));
+  return host.harness.providers.filter(entry => entry.id.startsWith('fixture-'));
 }
 
 describe('packaged ACP server entry', () => {

@@ -238,7 +238,7 @@ export interface StartThreadArgs {
   dynamicTools?: DynamicTool[];
   disallowedTools?: readonly string[];
   instructionMode?: InstructionMode;
-  /** Only the Claude Code bridge acts on it; absent means interactive. */
+  /** Absent means interactive. Bridges enforce automated isolation themselves. */
   sessionKind?: AgentSessionKind;
   /** JSON Schema constraining the session's structured output. Session-level
    *  structured output is claude-code only (SDK `outputFormat` is fixed at
@@ -298,7 +298,7 @@ export interface ResumeThreadArgs {
   dynamicTools?: DynamicTool[];
   disallowedTools?: readonly string[];
   instructionMode?: InstructionMode;
-  /** Only the Claude Code bridge acts on it; absent means interactive. */
+  /** Absent means interactive. Bridges enforce automated isolation themselves. */
   sessionKind?: AgentSessionKind;
 }
 

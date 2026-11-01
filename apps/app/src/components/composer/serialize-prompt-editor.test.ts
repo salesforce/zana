@@ -95,3 +95,18 @@ describe('serializePromptEditor', () => {
     expect(result).toEqual({ text: '@x', mentions: [] });
   });
 });
+
+
+it('expands a selection snapshot at its inline position without granting path access', () => {
+  const selection = { version: 1, path: 'Review.agent', startLine: 12, endLine: 13, text: 'unsaved code\n  keep whitespace' };
+  const result = serializePromptEditor({ type: 'doc', content: [{ type: 'paragraph', content: [
+    { type: 'text', text: 'Explain ' },
+    { type: 'editorSelection', attrs: { selection } },
+    { type: 'text', text: ' please' },
+    { type: 'editorSelection', attrs: { selection: { ...selection, startLine: -1 } } }
+  ] }] });
+  expect(result.text).toContain('Explain \n\nReview.agent:12–13 (copied selection)');
+  expect(result.text).toContain('unsaved code\n  keep whitespace');
+  expect(result.text).toMatch(/ please$/);
+  expect(result.mentions).toEqual([]);
+});

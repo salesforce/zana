@@ -19,9 +19,9 @@ import {
   rewriteLocalhostLinkHref
 } from '../lib/localhost-link-rewrite-preference.js';
 import { handleHttpLinkClick } from '../lib/in-app-browser-link-preference.js';
-import { parseLocalFileMarkdownHref, resolveThreadFilePreviewPath } from './markdown-local-file.js';
+import { parseInlineFileCodePath, parseLocalFileMarkdownHref, resolveThreadFilePreviewPath } from './markdown-local-file.js';
+import { MarkdownFileLink } from './MarkdownFileLink.js';
 import { parseThreadMentionHref, remarkThreadMentions } from './markdown-thread-mentions.js';
-import { dispatchThreadOpenFile } from './thread/secondary-panel/useThreadOpenFileSignal.js';
 import { getThreadRoutePath } from '../lib/route-paths.js';
 import { conversationImageSrc } from '../lib/prompt-attachments.js';
 import { ThreadDisplayedImage } from './thread/timeline/ThreadDisplayedImage.js';
@@ -279,13 +279,19 @@ export const MarkdownContent = memo(function MarkdownContent({
               typeof props.href === 'string' ? props.href : undefined
             );
             if (localPath) {
+              if (threadId) {
+                return (
+                  <MarkdownFileLink token={localPath} href={props.href} title={localPath} threadId={threadId} projectId={projectId} hints={filePathHints} link>
+                    {props.children}
+                  </MarkdownFileLink>
+                );
+              }
               return (
                 <a
                   {...props}
                   href={props.href}
                   onClick={(event) => {
                     event.preventDefault();
-                    if (threadId) dispatchThreadOpenFile(threadId, localPath);
                   }}
                 />
               );
@@ -326,26 +332,21 @@ export const MarkdownContent = memo(function MarkdownContent({
             const className = typeof props.className === 'string' ? props.className : '';
             const fenced = /(^|\s)language-/.test(className) || /(^|\s)hljs(\s|$)/.test(className);
             const token = inlineCodeText(props.children);
-            const path = !fenced && !exportable && threadId
-              ? resolveThreadFilePreviewPath(token, filePathHints)
+            const rawPath = !fenced && !exportable && threadId
+              ? parseInlineFileCodePath(token)
               : null;
-            if (path && threadId) {
-              const name = path.split(/[/\\]/u).pop() ?? path;
+            if (rawPath && threadId) {
+              const previewPath = resolveThreadFilePreviewPath(token, filePathHints);
               return (
-                <button
-                  type="button"
-                  className="inbox-md-file-chip"
-                  data-testid="inbox-md-file-chip"
-                  aria-label={`Preview ${name}`}
-                  title={path}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    dispatchThreadOpenFile(threadId, path);
-                  }}
+                <MarkdownFileLink
+                  token={rawPath}
+                  title={previewPath ?? rawPath}
+                  threadId={threadId}
+                  projectId={projectId}
+                  hints={filePathHints}
                 >
                   {props.children}
-                </button>
+                </MarkdownFileLink>
               );
             }
             return <code className={className || undefined}>{props.children}</code>;

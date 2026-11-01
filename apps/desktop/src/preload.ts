@@ -90,16 +90,17 @@ const browserControlListeners = new Set<(state: DesktopBrowserControlState) => v
 const browserFindResultListeners = new Set<(result: DesktopBrowserFindResult) => void>();
 const browserAppCommandListeners = new Set<(command: string) => void>();
 
+// Round inward so the native view never paints over the borders around it.
 function browserViewBoundsAtWindowScale(bounds: DesktopBrowserViewBounds): DesktopBrowserViewBounds {
   const zoomFactor = webFrame.getZoomFactor();
   if (zoomFactor === 1) return bounds;
-  const x = Math.round(bounds.x * zoomFactor);
-  const y = Math.round(bounds.y * zoomFactor);
+  const x = Math.ceil(bounds.x * zoomFactor);
+  const y = Math.ceil(bounds.y * zoomFactor);
   return {
     x,
     y,
-    width: Math.max(0, Math.round((bounds.x + bounds.width) * zoomFactor) - x),
-    height: Math.max(0, Math.round((bounds.y + bounds.height) * zoomFactor) - y)
+    width: Math.max(0, Math.floor((bounds.x + bounds.width) * zoomFactor) - x),
+    height: Math.max(0, Math.floor((bounds.y + bounds.height) * zoomFactor) - y)
   };
 }
 
@@ -174,6 +175,12 @@ function createDesktopBrowserApi(): DesktopBrowserApi {
     onClosed(listener) {
       browserClosedListeners.add(listener);
       return () => { browserClosedListeners.delete(listener); };
+    },
+    evaluate(request) { return ipcRenderer.invoke(IPC.browser.evaluate, request); },
+    onPageMessage(listener) {
+      const handler = (_event: Electron.IpcRendererEvent, message: import('@zana-ai/zcc-desktop-contract').DesktopBrowserPageMessage) => listener(message);
+      ipcRenderer.on(IPC.browser.pageMessage, handler);
+      return () => { ipcRenderer.off(IPC.browser.pageMessage, handler); };
     },
     getClosedTabs() {
       return ipcRenderer.invoke(IPC.browser.getClosedTabs);
@@ -541,6 +548,9 @@ const api: CcApi = {
     hostFileContent: async () => {
       throw new Error('threads require the product server');
     },
+    resolvePreviewPath: async () => {
+      throw new Error('threads require the product server');
+    },
     storageFiles: async () => ({ files: [], truncated: false, storageRootPath: '' }),
     storageContent: async () => {
       throw new Error('threads require the product server');
@@ -864,7 +874,8 @@ const api: CcApi = {
     }
   },
   usage: {
-    getSummary: () => ipcRenderer.invoke(IPC.usage.getSummary)
+    getSummary: () => ipcRenderer.invoke(IPC.usage.getSummary),
+    getMemoCounters: () => ipcRenderer.invoke(IPC.usage.getMemoCounters)
   },
   suggestions: {
     list: (projectId) => ipcRenderer.invoke(IPC.suggestions.list, projectId ?? undefined),
@@ -1060,6 +1071,7 @@ const api: CcApi = {
     applyAllUpdates: () => ipcRenderer.invoke(IPC.pluginApps.applyAllUpdates),
     remove: (id) => ipcRenderer.invoke(IPC.pluginApps.remove, id),
     reload: (id) => ipcRenderer.invoke(IPC.pluginApps.reload, id),
+    repair: (id, action) => ipcRenderer.invoke(IPC.pluginApps.repair, id, action),
     onChanged: (cb) => {
       const handler = (_e: unknown, entries: PluginAppEntry[]) => cb(entries);
       ipcRenderer.on(IPC.pluginApps.onChanged, handler);
@@ -1365,6 +1377,13 @@ const api: CcApi = {
       ipcRenderer.invoke(IPC.windows.openPluginView, target),
     closePluginView: (target: PluginViewTarget) =>
       ipcRenderer.invoke(IPC.windows.closePluginView, target),
+    pluginViewCloseReady: (ready: boolean) => ipcRenderer.invoke(IPC.windows.pluginViewCloseReady, ready),
+    pluginViewCloseComplete: (requestId: string, result: { ok: boolean; error?: string }) => ipcRenderer.invoke(IPC.windows.pluginViewCloseComplete, requestId, result),
+    onPluginViewCloseRequest: (cb: (request: { requestId?: string; error?: string }) => void) => {
+      const handler = (_e: unknown, request: { requestId?: string; error?: string }) => cb(request);
+      ipcRenderer.on(IPC.windows.onPluginViewCloseRequest, handler);
+      return () => ipcRenderer.off(IPC.windows.onPluginViewCloseRequest, handler);
+    },
     listPluginViews: () => ipcRenderer.invoke(IPC.windows.listPluginViews),
     onPluginViewsChanged: (cb: (views: PluginViewTarget[]) => void) => {
       const handler = (_e: unknown, views: PluginViewTarget[]) => cb(views);

@@ -84,6 +84,17 @@ describe('buildMentionSuggestions', () => {
 });
 
 describe('buildCommandSuggestions', () => {
+  it('keeps the full command catalogue browsable, including matches beyond eight rows', () => {
+    const catalog = Array.from({ length: 24 }, (_, index) => ({
+      name: `/command-${index}`, description: 'Available command'
+    }));
+    expect(buildCommandSuggestions(catalog, '')).toHaveLength(24);
+    expect(buildCommandSuggestions(catalog, 'command')).toHaveLength(24);
+    expect(buildCommandSuggestions(catalog, 'command-23')).toContainEqual({
+      kind: 'command', ...catalog[23]
+    });
+  });
+
   it('filters the provider catalog by query and hides non-matches', () => {
     expect(buildCommandSuggestions([
       { name: '/plan', description: 'Enter plan mode' },

@@ -88,6 +88,8 @@ describe('peer-daemon commands', () => {
       expect(cmd).toContain('umask 077');
       expect(cmd).toContain('trap');
       expect(cmd).toContain('"$node_bin" "$f"');
+      expect(cmd).toContain('f="$d/host-installer.mjs"');
+      expect(cmd).not.toContain('f=$(mktemp)');
       expect(cmd).toContain('/nix/store/*-nodejs-22.*/bin/node');
       expect(cmd).not.toContain('--join-code');
       return { code: 0, stdout: 'Installed ' + connect.code };

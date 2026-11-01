@@ -2,7 +2,7 @@ import type { MarketplaceEntry } from '@zana-ai/zcc-domain/product';
 import { AlertTriangle, ArrowUpCircle, CheckCircle2, Download } from 'lucide-react';
 import type { ReactElement, ReactNode } from 'react';
 import { catalogCapabilities } from './plugin-presentation.js';
-import { resolveIcon } from '../../lib/resolveIcon.js';
+import { PluginBrandIcon } from './PluginBrandIcon.js';
 
 export function marketplaceProvenance(entry: MarketplaceEntry): 'official' | 'community' {
   return entry.source === 'bundled' || entry.tags?.includes('official') ? 'official' : 'community';
@@ -62,7 +62,6 @@ export function PluginCatalogCard({
   onInstall: () => void;
   onOpenAuthor?: (author: string) => void;
 }) {
-  const Icon = resolveIcon(entry.icon ?? 'Package');
   const action = catalogRowAction(entry, busy);
   const provenance = marketplaceProvenance(entry);
   const author = entry.author?.trim();
@@ -77,7 +76,7 @@ export function PluginCatalogCard({
           aria-label={`${entry.title} plugin details`}
         >
           <span className="ext-browse-card-icon" data-category={entry.category}>
-            <Icon size={18} />
+            <PluginBrandIcon src={entry.iconUrl} icon={entry.icon ?? 'Package'} size={18} />
           </span>
           <span className="ext-browse-card-body">
             <span className="ext-market-item-head">

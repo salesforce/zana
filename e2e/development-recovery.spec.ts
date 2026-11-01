@@ -1,18 +1,17 @@
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test, expect, launchApp, closeApp } from './fixtures/app.js';
 import { preparePluginRuntime } from '../packages/plugin-build/src/prepare-plugin-runtime.js';
-import { writePluginRecoveryArtifacts } from '../scripts/plugin-recovery-artifacts.mjs';
 
-test('core Development recovery restores a corrupt provider, preserves plugin state across restart and relaunches the daemon', async ({ home }) => {
+test('core Development recovery restores a corrupt managed provider offline, preserves state across restart and reports damaged app resources', async ({ home }) => {
   test.setTimeout(180_000);
   const build = process.env.ZCC_E2E_APP_ROOT ?? fileURLToPath(new URL('../', import.meta.url));
   const version = JSON.parse(readFileSync(join(build, 'package.json'), 'utf8')).version;
-  const clean = join(home, 'clean-runtimes'), broken = join(home, 'broken-runtimes'), feed = join(home, 'recovery-feed');
+  const clean = join(home, 'app-runtimes');
   await preparePluginRuntime(join(build, 'plugins/provider-codex'), join(clean, 'provider-codex'), version);
   const tasks = join(clean, 'tasks'); mkdirSync(tasks, { recursive: true });
   writeFileSync(join(tasks, 'package.json'), JSON.stringify({ name: '@zcc-ext/tasks', version: '1.0.0', type: 'module',
@@ -23,69 +22,70 @@ test('core Development recovery restores a corrupt provider, preserves plugin st
     zcc.rpc.method('save', () => zcc.storage.kv.set('data', 'preserved'));
     zcc.rpc.method('read', () => zcc.storage.kv.get('data'));
   };\n// ${'large production-boundary payload '.repeat(600)}`);
-  await writePluginRecoveryArtifacts(clean, feed, version);
-  cpSync(clean, broken, { recursive: true });
-  writeFileSync(join(broken, 'provider-codex/dist/host.js'), 'corrupt provider artifact');
-  const requested: string[] = [];
-  let failDownloads = false;
-  const server = createServer((request, response) => {
-    const name = (request.url ?? '').slice(1);
-    requested.push(name);
-    if (failDownloads || !/^plugin-recovery-[a-zA-Z0-9._-]+\.json(?:\.gz)?$/.test(name)) { response.writeHead(503).end(); return; }
-    try { response.end(readFileSync(join(feed, name))); } catch { response.writeHead(404).end(); }
-  });
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address() as { port: number };
-  const env = { ZCC_BUNDLED_PLUGINS_DIR: broken, ZCC_PLUGIN_RECOVERY_URL: `http://127.0.0.1:${address.port}/plugin-recovery-${process.platform}-${process.arch}.json`,
+  const env = { ZCC_BUNDLED_PLUGINS_DIR: clean,
     ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD: '0', ZCC_OFFICIAL_MARKETPLACE_URL: 'off', ZCC_INTERNAL_MARKETPLACE_SOURCE: 'off', ZCC_COMMUNITY_MARKETPLACE_SOURCE: 'off', NODE_PATH: '' };
-  // These source-free release artifacts recover without compiling or fetching a toolchain.
+  // Dependency-free app resources restore without network access or a toolchain.
   const options = { env, initialConfig: { sponsorPromptDismissed: true, pluginDevelopmentEnabled: false } };
   let app: Awaited<ReturnType<typeof launchApp>> | undefined;
   try {
     app = await launchApp(home, options);
-    const win = app.window;
+    let win = app.window;
     const provider = () => win.evaluate(async () => (await (await fetch('/api/v1/threads/providers')).json()).providers.find((row: { id: string }) => row.id === 'codex'));
-    await expect.poll(provider).toMatchObject({ id: 'codex', available: false });
+    await expect.poll(provider).toMatchObject({ id: 'codex', available: true });
     expect(await win.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'tasks' }))).toMatchObject({ ok: true });
     await win.evaluate(() => window.cc.pluginApps.callRpc('tasks', 'save'));
     await win.evaluate(() => window.cc.pluginApps.setSettings('tasks', { name: 'preserved', token: 'fixture-secret' }));
     await win.evaluate(() => window.cc.pluginApps.setEnabled('tasks', false));
     await win.getByRole('link', { name: 'Settings', exact: true }).click();
     await win.getByTestId('settings-nav-development').click();
-    await win.getByRole('button', { name: 'Hard Plugin reload…' }).click();
-    await expect(win.getByRole('dialog', { name: 'Fetch fresh plugin files?' })).toBeVisible();
+    await win.getByRole('button', { name: 'Restart host daemon', exact: true }).click();
+    await expect(win.getByText('Host daemon relaunched. Waiting machines reconnect automatically.')).toBeVisible();
+    await expect.poll(() => win.evaluate(async () => (await (await fetch('/api/v1/hosts')).json()).some((row: { isPrimary: boolean; status: string }) => row.isPrimary && row.status === 'connected'))).toBe(true);
+    // First restore creates managed copies. Damage only the mutable provider copy.
+    await win.evaluate(async () => { await fetch('/api/v1/plugin-apps/hard-reload', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); });
+    await expect.poll(() => win.evaluate(async () => (await (await fetch('/api/v1/plugin-apps/recovery')).json()).phase)).toBe('complete');
+    const installed = JSON.parse(readFileSync(join(home, '.zcc/plugins/installed.json'), 'utf8')).plugins;
+    const managedProvider = installed.find((row: { id: string }) => row.id === 'provider-codex');
+    expect(managedProvider.rootDir).toContain('generations');
+    writeFileSync(join(managedProvider.rootDir, 'dist/host.js'), 'corrupt managed provider artifact');
+    await closeApp(app.electron); app = undefined;
+    app = await launchApp(home, options);
+    win = app.window;
+    await expect.poll(provider).toMatchObject({ id: 'codex', available: false });
+    await win.route('https://**/*', route => route.abort('internetdisconnected'));
+    await win.getByRole('link', { name: 'Settings', exact: true }).click();
+    await win.getByTestId('settings-nav-development').click();
+    await win.getByRole('button', { name: 'Restore plugins…' }).click();
+    await expect(win.getByRole('dialog', { name: 'Restore plugins?' })).toBeVisible();
     await win.getByRole('button', { name: 'Cancel', exact: true }).click();
-    expect(requested).toEqual([]);
-    await win.getByRole('button', { name: 'Hard Plugin reload…' }).click();
-    await win.getByRole('button', { name: 'Fetch and reload', exact: true }).click();
+    await win.getByRole('button', { name: 'Restore plugins…' }).click();
+    await win.getByRole('button', { name: 'Restore and reload', exact: true }).click();
+    await expect(win.getByRole('button', { name: 'Restoring plugins…', exact: true })).toBeVisible();
     await expect(win.getByText('Recovery complete: 2 restored, 0 failed, 0 skipped.')).toBeVisible({ timeout: 60_000 });
-    await expect.poll(provider).toMatchObject({ id: 'codex', available: true });
-    expect(requested.filter(name => name.endsWith('.gz'))).toHaveLength(2);
+    await expect.poll(provider).toMatchObject({ id: 'codex', available: true, unavailableReason: null });
+    expect(existsSync(join(clean, 'provider-codex/dist/host.js'))).toBe(true);
     expect(await win.evaluate(async () => (await window.cc.pluginApps.list()).find(row => row.id === 'tasks'))).toMatchObject({ enabled: false });
     await win.evaluate(() => window.cc.pluginApps.setEnabled('tasks', true));
     expect(await win.evaluate(() => window.cc.pluginApps.callRpc('tasks', 'read'))).toBe('preserved');
     expect(await win.evaluate(() => window.cc.pluginApps.getSettings('tasks'))).toMatchObject({ values: { name: 'preserved', token: 'fixture-secret' } });
-    await win.getByRole('button', { name: 'Restart host daemon', exact: true }).click();
-    await expect(win.getByText('Host daemon relaunched. Waiting machines reconnect automatically.')).toBeVisible();
-    await expect.poll(() => win.evaluate(async () => (await (await fetch('/api/v1/hosts')).json()).some((row: { isPrimary: boolean; status: string }) => row.isPrimary && row.status === 'connected'))).toBe(true);
     await closeApp(app.electron); app = undefined;
-    // Neither the broken local bundle nor its source watcher can reclaim the id.
+    // Managed restorations survive restarting the app.
     app = await launchApp(home, options);
     await expect.poll(() => app!.window.evaluate(async () => (await (await fetch('/api/v1/threads/providers')).json()).providers.find((row: { id: string }) => row.id === 'codex')))
       .toMatchObject({ available: true });
     expect(await app.window.evaluate(() => window.cc.pluginApps.callRpc('tasks', 'read'))).toBe('preserved');
     expect(await app.window.evaluate(() => window.cc.pluginApps.getSettings('tasks'))).toMatchObject({ values: { name: 'preserved', token: 'fixture-secret' } });
-    // An offline recovery keeps working code and reports each failure.
-    failDownloads = true;
+    // Missing app resources require reinstalling Zana and preserve working code.
+    rmSync(clean, { recursive: true });
     await app.window.getByRole('link', { name: 'Settings', exact: true }).click();
     await app.window.getByTestId('settings-nav-development').click();
-    await app.window.getByRole('button', { name: 'Hard Plugin reload…' }).click();
-    await app.window.getByRole('button', { name: 'Fetch and reload', exact: true }).click();
+    await app.window.getByRole('button', { name: 'Restore plugins…' }).click();
+    await app.window.getByRole('button', { name: 'Restore and reload', exact: true }).click();
     await expect(app.window.getByText('Recovery complete: 0 restored, 2 failed, 0 skipped.')).toBeVisible({ timeout: 30_000 });
+    await expect(app.window.getByText(/Reinstall Zana/).first()).toBeVisible();
     expect(await app.window.evaluate(() => window.cc.pluginApps.callRpc('tasks', 'read'))).toBe('preserved');
   } finally {
     if (app) await closeApp(app.electron);
-    await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });
 
@@ -146,8 +146,8 @@ test('core recovery fetches Git and pinned npm packages through real Electron ch
     writeFileSync(join(oldGit.rootDir, 'server.mjs'), 'corrupt installed dist');
     await win.getByRole('link', { name: 'Settings', exact: true }).click();
     await win.getByTestId('settings-nav-development').click();
-    await win.getByRole('button', { name: 'Hard Plugin reload…' }).click();
-    await win.getByRole('button', { name: 'Fetch and reload', exact: true }).click();
+    await win.getByRole('button', { name: 'Restore plugins…' }).click();
+    await win.getByRole('button', { name: 'Restore and reload', exact: true }).click();
     await expect(win.getByText('Recovery complete: 2 restored, 0 failed, 0 skipped.')).toBeVisible({ timeout: 90_000 });
     expect(tarDownloads).toBe(npmBefore + 1);
     expect(await win.evaluate(() => window.cc.pluginApps.callRpc('remote-git', 'version'))).toBe('1.1.0');

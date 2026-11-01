@@ -328,7 +328,7 @@ describe('BrowserTabContent visibility', () => {
     expect(h.api.reload).not.toHaveBeenCalled();
   });
 
-  it.each(['thread-tool-drag-shield', 'thread-tool-menu', 'thread-context-popover'])('releases the native browser under %s and restores the same page', async className => {
+  it.each(['thread-tool-drag-shield', 'thread-tool-menu', 'thread-context-popover', 'help-menu-popover'])('releases the native browser under %s and restores the same page', async className => {
     const h = setup();
     render(h.browser);
     const shield = document.createElement('div');
@@ -379,6 +379,10 @@ describe('BrowserTabContent visibility', () => {
     fireEvent(window, new Event('resize'));
     expect(h.api.setBounds).toHaveBeenCalledTimes(1);
     expect(h.api.setBounds).toHaveBeenCalledWith({ tabId: 'browser:test', bounds: { x: 300, y: 20, width: 200, height: 300 } });
+    // Fractional layout rounds inward so the native view never covers the panel border.
+    vi.spyOn(contents[1]!, 'getBoundingClientRect').mockReturnValue(new DOMRect(300.4, 20.6, 200.5, 299.2));
+    fireEvent(window, new Event('resize'));
+    expect(h.api.setBounds).toHaveBeenLastCalledWith({ tabId: 'browser:test', bounds: { x: 301, y: 21, width: 199, height: 298 } });
     rerender(<main>{h.browser}</main>);
     await act(async () => {});
     expect(h.api.setVisible).toHaveBeenLastCalledWith({ tabId: 'browser:test', visible: true });
@@ -407,4 +411,17 @@ describe('BrowserTabContent visibility', () => {
     fireEvent.submit(address.closest('form')!);
     expect(h.api.navigate).toHaveBeenCalledWith({ tabId: 'browser:test', url: 'http://127.0.0.1:3003/next' });
   });
+});
+
+it('mounts browser plugin actions only after the browser has an owning thread',async()=>{
+ const {definePluginApp}=await import('@zana-ai/zcc-plugin-sdk');
+ const {interpretPluginApp,clearPluginSlots}=await import('../../../plugins/plugin-slots.js');
+ const harness=createHarness();vi.stubGlobal('cc',{browser:harness.api});
+ interpretPluginApp('thread-scope-check',definePluginApp(app=>app.slots.experimental_browserToolbarAction({id:'annotate',title:'Annotate',component:()=> <button>Scoped annotation</button>})));
+ try{
+ const view=render(<BrowserTabContent tabId="browser:test" initialUrl="https://example.com" canShowNativeBrowserView visibilityCoordinator={null} onUpdate={()=>{}} />);
+ expect(screen.queryByRole('button',{name:'Scoped annotation'})).toBeNull();
+ view.rerender(<BrowserTabContent tabId="browser:test" threadId="thread-1" initialUrl="https://example.com" canShowNativeBrowserView visibilityCoordinator={null} onUpdate={()=>{}} />);
+ expect(screen.getByRole('button',{name:'Scoped annotation'})).toBeTruthy();
+ }finally{clearPluginSlots('thread-scope-check');}
 });

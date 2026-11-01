@@ -371,6 +371,8 @@ export interface ExecutionRecord {
   recoveryDeadlineAt?: number;
   /** Trusted-host capture only. Never contains a session token or transcript. */
   nativeRecoverySnapshots?: ExecutionNativeRecoverySnapshotV1[];
+  /** Immutable trusted-host MCP catalogue attestation, keyed by execution slot. */
+  automatedMcpCatalogueProvenance?: Record<string, ExecutionSlotMcpCatalogueProvenanceV1>;
   workUnits?: ExecutionWorkUnit[];
   blockers?: ExecutionBlocker[];
   deliveries?: ExecutionDeliveryRecord[];
@@ -468,8 +470,17 @@ export interface ExecutionNativeRecoverySnapshotV1 {
   capturedAt: number;
 }
 
+/** Trusted host's frozen automated MCP tool surface for one execution member. */
+export interface ExecutionSlotMcpCatalogueProvenanceV1 {
+  version: 1;
+  role: 'worker' | 'orchestrator';
+  capabilities: string[];
+  tools: string[];
+  digest: string;
+}
+
 export type ExecutionClaimInput = Omit<ExecutionRecord,
-  'id' | 'teamLaunchRequestId' | 'attempt' | 'attemptStartedAt' | 'state' | 'stateVersion' | 'reportNoticeVersion' | 'proposalNoticeVersion' | 'reportedBlockerIds' | 'localReport' | 'createdAt' | 'updatedAt' | 'workUnits' | 'blockers'
+  'id' | 'teamLaunchRequestId' | 'attempt' | 'attemptStartedAt' | 'state' | 'stateVersion' | 'reportNoticeVersion' | 'proposalNoticeVersion' | 'reportedBlockerIds' | 'localReport' | 'createdAt' | 'updatedAt' | 'workUnits' | 'blockers' | 'automatedMcpCatalogueProvenance'
 > & { workUnits?: ExecutionWorkUnitInput[] };
 
 export interface ExecutionRequestSnapshotV1 {
@@ -649,6 +660,8 @@ export const MAX_REPORTED_BLOCKER_IDS = 100;
 const MAX_UNIT_LIST = 100;
 const MAX_DELIVERIES_PER_EXECUTION = 128;
 const MAX_COORDINATOR_WAKES = 100;
+const MAX_AUTOMATED_MCP_CATALOGUE_SLOTS = 100;
+const MAX_AUTOMATED_MCP_CATALOGUE_TOOLS = 32;
 export const MAX_USAGE_OBSERVATIONS_PER_EXECUTION = 1_000;
 export const MAX_ROUTING_DECISIONS_PER_EXECUTION = 256;
 const MAX_DELIVERY_TEXT_BYTES = 16 * 1024;
@@ -749,6 +762,7 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.recoveryDeadlineAt === undefined || typeof record.recoveryDeadlineAt === 'number' && Number.isFinite(record.recoveryDeadlineAt))
     && (record.terminalWorktreeEffectsStateVersion === undefined || validNonNegativeInteger(record.terminalWorktreeEffectsStateVersion))
     && (record.nativeRecoverySnapshots === undefined || Array.isArray(record.nativeRecoverySnapshots) && record.nativeRecoverySnapshots.length <= 100 && record.nativeRecoverySnapshots.every(validNativeRecoverySnapshot))
+    && (record.automatedMcpCatalogueProvenance === undefined || validAutomatedMcpCatalogueProvenanceMap(record.automatedMcpCatalogueProvenance))
     && (record.workUnits === undefined || Array.isArray(record.workUnits) && record.workUnits.length <= MAX_WORK_UNITS && record.workUnits.every(validWorkUnit))
     && (record.blockers === undefined || Array.isArray(record.blockers) && record.blockers.length <= MAX_WORK_UNITS && record.blockers.every(validExecutionBlocker))
     && (record.deliveries === undefined || Array.isArray(record.deliveries) && record.deliveries.length <= MAX_DELIVERIES_PER_EXECUTION && record.deliveries.every(validExecutionDelivery))
@@ -791,6 +805,41 @@ function validNativeRecoverySnapshot(value: unknown): value is ExecutionNativeRe
     && (snapshot.personaId !== undefined || snapshot.profileId !== undefined)
     && validString(snapshot.nativeConversationId)
     && typeof snapshot.capturedAt === 'number' && Number.isFinite(snapshot.capturedAt);
+}
+
+function validAutomatedMcpCatalogueProvenanceMap(value: unknown): value is Record<string, ExecutionSlotMcpCatalogueProvenanceV1> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const entries = Object.entries(value);
+  return entries.length <= MAX_AUTOMATED_MCP_CATALOGUE_SLOTS
+    && entries.every(([slotId, provenance]) => validString(slotId) && validAutomatedMcpCatalogueProvenance(provenance));
+}
+
+function validAutomatedMcpCatalogueProvenance(value: unknown): value is ExecutionSlotMcpCatalogueProvenanceV1 {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const provenance = value as Partial<ExecutionSlotMcpCatalogueProvenanceV1>;
+  return hasOnlyKeys(value as Record<string, unknown>, ['version', 'role', 'capabilities', 'tools', 'digest'])
+    && provenance.version === 1 && (provenance.role === 'worker' || provenance.role === 'orchestrator')
+    && Array.isArray(provenance.capabilities) && provenance.capabilities.length <= MAX_AUTOMATED_MCP_CATALOGUE_TOOLS
+    && provenance.capabilities.every(validString)
+    && Array.isArray(provenance.tools) && provenance.tools.length <= MAX_AUTOMATED_MCP_CATALOGUE_TOOLS
+    && provenance.tools.every(validString) && validSha256Hex(provenance.digest);
+}
+
+function equalAutomatedMcpCatalogueProvenance(
+  left: ExecutionSlotMcpCatalogueProvenanceV1,
+  right: ExecutionSlotMcpCatalogueProvenanceV1
+): boolean {
+  return left.version === right.version
+    && left.role === right.role
+    && left.digest === right.digest
+    && left.capabilities.length === right.capabilities.length
+    && left.capabilities.every((capability, index) => capability === right.capabilities[index])
+    && left.tools.length === right.tools.length
+    && left.tools.every((tool, index) => tool === right.tools[index]);
+}
+
+function validSha256Hex(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 }
 
 function validWorkUnit(value: unknown): value is ExecutionWorkUnit {
@@ -1016,6 +1065,7 @@ function validUsageObservation(value: unknown): value is ExecutionUsageObservati
     && ['delivery', 'heartbeat', 'outcome', 'reclaim', 'terminal'].includes(observation.sampleKind ?? '')
     && validNonNegativeInteger(observation.sequence) && validString(observation.provider)
     && (observation.model === undefined || validString(observation.model)) && validString(observation.routingIdentity)
+    && (observation.contextTokens === undefined || validNonNegativeInteger(observation.contextTokens))
     && validUsageCounters(observation.cumulative) && validUsageCounters(observation.delta)
     && (observation.completeness === 'complete' || observation.completeness === 'partial' || observation.completeness === 'unavailable')
     && typeof observation.observedAt === 'number' && Number.isFinite(observation.observedAt)
@@ -1969,6 +2019,42 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       append(snapshot.state, record, record.state, 'info', 'Native recovery snapshot captured', record.updatedAt);
       persist(snapshot.state, snapshot.hash);
       return clone(record);
+    });
+  }
+
+  /**
+   * Record the trusted host's first automated MCP catalogue selection for a slot.
+   * Retries return that exact value; any changed selection is a durable conflict.
+   */
+  async function recordAutomatedMcpCatalogueProvenance(
+    executionId: string,
+    slotId: string,
+    input: Omit<ExecutionSlotMcpCatalogueProvenanceV1, 'version'>
+  ): Promise<ExecutionSlotMcpCatalogueProvenanceV1> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      const safeSlotId = string(slotId, 'slot id');
+      const provenance = { version: 1 as const, ...clone(input) };
+      if (!validAutomatedMcpCatalogueProvenance(provenance)) throw new Error('invalid automated MCP catalogue provenance');
+      const existing = record.automatedMcpCatalogueProvenance?.[safeSlotId];
+      if (existing) {
+        if (!equalAutomatedMcpCatalogueProvenance(existing, provenance)) {
+          throw new Error(`automated MCP catalogue provenance mismatch for slot ${safeSlotId}`);
+        }
+        return clone(existing);
+      }
+      if (Object.keys(record.automatedMcpCatalogueProvenance ?? {}).length >= MAX_AUTOMATED_MCP_CATALOGUE_SLOTS) {
+        throw new Error('automated MCP catalogue provenance slot limit reached');
+      }
+      record.automatedMcpCatalogueProvenance = {
+        ...record.automatedMcpCatalogueProvenance,
+        [safeSlotId]: provenance
+      };
+      record.updatedAt = now();
+      persist(snapshot.state, snapshot.hash);
+      return clone(provenance);
     });
   }
 
@@ -3410,7 +3496,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, markReported, markBlockerReported, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, recordWorkerRecovery, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, countActiveOwned, listInProject, listActive, listUndisposedSquadWorktrees, listUnreportedExecutions, listUnreportedBlockers, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, markReported, markBlockerReported, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, recordAutomatedMcpCatalogueProvenance, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, recordWorkerRecovery, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, countActiveOwned, listInProject, listActive, listUndisposedSquadWorktrees, listUnreportedExecutions, listUnreportedBlockers, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 function normalizeModelSnapshot(snapshot: ResolvedModelSnapshotV1): ResolvedModelSnapshotV1 {

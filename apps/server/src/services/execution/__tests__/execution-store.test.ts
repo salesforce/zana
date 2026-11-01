@@ -45,6 +45,66 @@ describe('isTerminalExecutionState', () => {
 });
 
 describe('execution store', () => {
+  const catalogueProvenance = {
+    role: 'worker' as const,
+    capabilities: [],
+    tools: ['execution.work.claim', 'execution.work.complete'],
+    digest: 'a'.repeat(64)
+  };
+
+  it('persists automated MCP catalogue provenance keyed by slot across reload', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+
+    await expect(store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', catalogueProvenance))
+      .resolves.toEqual({ version: 1, ...catalogueProvenance });
+    await expect(createExecutionStore({ filePath }).get(record.id)).resolves.toMatchObject({
+      automatedMcpCatalogueProvenance: { 'worker-1': { version: 1, ...catalogueProvenance } }
+    });
+  }));
+
+  it('returns existing automated MCP catalogue provenance for an exact retry', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+
+    const first = await store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', catalogueProvenance);
+    const replay = await store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', catalogueProvenance);
+    expect(replay).toEqual(first);
+  }));
+
+  it('compares automated MCP catalogue provenance by explicit fields, not object serialization order', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+    await store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', catalogueProvenance);
+
+    await expect(store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', {
+      digest: catalogueProvenance.digest,
+      tools: [...catalogueProvenance.tools],
+      capabilities: [...catalogueProvenance.capabilities],
+      role: catalogueProvenance.role
+    })).resolves.toEqual({ version: 1, ...catalogueProvenance });
+  }));
+
+  it('rejects changed automated MCP catalogue provenance for an existing slot', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+
+    await store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', catalogueProvenance);
+    await expect(store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', {
+      ...catalogueProvenance, digest: 'b'.repeat(64)
+    })).rejects.toThrow('automated MCP catalogue provenance mismatch for slot worker-1');
+  }));
+
+  it('caps automated MCP catalogue provenance slots', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+    for (let index = 0; index < 100; index++) {
+      await store.recordAutomatedMcpCatalogueProvenance(record.id, `worker-${index}`, catalogueProvenance);
+    }
+    await expect(store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-overflow', catalogueProvenance))
+      .rejects.toThrow('automated MCP catalogue provenance slot limit reached');
+  }));
+
   it('grants one fixed blocker deadline grace then stops with a durable reason', async () => fixture(async (filePath) => {
     let now = 1_000;
     const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });

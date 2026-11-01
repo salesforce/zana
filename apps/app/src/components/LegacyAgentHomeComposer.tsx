@@ -97,6 +97,8 @@ import { threadModelCatalogForHost } from './thread/pickers/thread-model-catalog
 import { useHosts } from '../hooks/useHosts.js';
 import { cliAgentCatalogScope } from './cli-agent-catalog-scope.js';
 import { RemoteComposerConnection } from './RemoteComposerConnection.js';
+import { ComposerDaemonRestart } from './ComposerDaemonRestart.js';
+import { resolveComposerHostAction } from './composer-host-status.js';
 import { effectiveWorktreeIsolation } from '../lib/workspace-choice.js';
 import { sortCatalogueByName } from '../lib/catalogue-sort.js';
 
@@ -202,6 +204,7 @@ export function LegacyAgentHomeComposer({
   const hosts = useHosts();
   const catalogScope = cliAgentCatalogScope(project, hosts);
   const executionHostId = catalogScope.executionHostId;
+  const hostRecovery = resolveComposerHostAction({ hosts, project, selectedHostId: executionHostId });
   const selectedHarness = descriptors.find((descriptor) => descriptor.id === familyId);
   const unrestrictedId = unrestrictedProfileId(selectedHarness?.profiles);
 
@@ -756,6 +759,7 @@ export function LegacyAgentHomeComposer({
       scope={{ kind: 'cli-agent', projectId: projectId || null }}
       text={field.text}
       setText={field.setText}
+      insertContextReference={field.insertContextReference}
       focus={field.focus}
       familyId={familyId || undefined}
       providerId={selectedProviderId || undefined}
@@ -948,6 +952,7 @@ export function LegacyAgentHomeComposer({
               disabled={launching}
             />
           ) : null}
+          {!project?.remote && hostRecovery.kind === 'restart' && <ComposerDaemonRestart reason={hostRecovery.reason} />}
           <button
             type="button"
             className="launch-advanced-toggle"
