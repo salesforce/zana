@@ -19670,7 +19670,7 @@ body.resizing-col .explorer-resizer::after {
   font-variant-numeric: tabular-nums;
   text-align: right;
   min-width: 88px;
-  max-width: 45%;
+  max-width: 40%;
 }
 
 /* ---- Follow-ups: kind-typed leading tile + structured meta row ------------ */
