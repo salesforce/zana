@@ -335,7 +335,8 @@ function deriveNameFromGitOrigin(dir: string): string | null {
   try {
     const origin = execFileSync('git', ['-C', dir, 'remote', 'get-url', 'origin'], {
       timeout: 5_000,
-      stdio: ['ignore', 'pipe', 'ignore']
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true
     })
       .toString('utf8')
       .trim();
