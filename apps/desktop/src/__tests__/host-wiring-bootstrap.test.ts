@@ -50,6 +50,7 @@ const h = vi.hoisted(() => {
     winDestroyed: false,
     contentsDestroyed: (() => false) as () => boolean,
     runtimeStart: undefined as any,
+    runtimeOptions: undefined as import('../runtime/runtime-supervisor.js').StartRuntimeSupervisorOptions | undefined,
     nativeTheme: Object.assign(new EventEmitter(), { shouldUseDarkColors: false, shouldUseHighContrastColors: false }),
     overlays: [] as unknown[]
   };
@@ -214,7 +215,11 @@ vi.mock('../runtime/runtime-supervisor.js', async importOriginal => {
       const real = actual.createProductRouteSquadRuntime(...args);
       return new Proxy(real, { get: (t, k) => (typeof k === 'string' && h.runtimeOverride[k]) || (t as any)[k] });
     },
-    startRuntimeSupervisor: async () => { if (h.runtimeStart) return h.runtimeStart; throw new Error('no runtime in unit test'); }
+    startRuntimeSupervisor: async (options: Parameters<typeof actual.startRuntimeSupervisor>[0]) => {
+      h.runtimeOptions = options;
+      if (h.runtimeStart) return h.runtimeStart;
+      throw new Error('no runtime in unit test');
+    }
   };
 });
 vi.mock('@zana-ai/zcc-server/mobile/manager', () => ({
@@ -1399,7 +1404,7 @@ describe('host bootstrap wiring', () => {
     }
   });
 
-  it('connects bulk plugin updates to the production supervisor', async () => {
+  it('connects plugin updates and Modern-thread power activity to the production supervisor', async () => {
     const value = { updated: ['fixture'], failed: [] };
     const updateAllPlugins = vi.fn(async () => value);
     const noop = () => () => {};
@@ -1421,10 +1426,23 @@ describe('host bootstrap wiring', () => {
       expect(updateAllPlugins).toHaveBeenCalledOnce();
       updateAllPlugins.mockRejectedValueOnce(new Error('plugin host stopped'));
       await expect(h.controlPlaneDeps.pluginHost.updateAll()).rejects.toThrow('plugin host stopped');
+
+      const observe = vi.spyOn(ctx().keepAwake, 'observe');
+      try {
+        expect(h.runtimeOptions?.onLocalThreadWork).toBeTypeOf('function');
+        h.runtimeOptions!.onLocalThreadWork!(true);
+        expect(observe).toHaveBeenLastCalledWith('modern-threads', 'working');
+        h.runtimeOptions!.onLocalThreadWork!(false);
+        expect(observe).toHaveBeenLastCalledWith('modern-threads', 'idle');
+        expect(observe).toHaveBeenCalledTimes(2);
+      } finally {
+        observe.mockRestore();
+      }
     } finally {
       h.appHandlers.get('before-quit')?.[0]?.({ preventDefault: vi.fn() });
       await settle();
       h.runtimeStart = undefined;
+      h.runtimeOptions = undefined;
       if (rendererUrl === undefined) delete process.env.ELECTRON_RENDERER_URL;
       else process.env.ELECTRON_RENDERER_URL = rendererUrl;
     }
