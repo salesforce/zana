@@ -402,7 +402,7 @@ describe('conversation lifecycle', () => {
     }));
   });
 
-  it('sends a follow-up turn through turn.submit', async () => {
+  it('sends a follow-up through turn.submit using the provider permission default', async () => {
     const callHostOnlineRpc = vi.fn(async () => ({ threadId: thread.id, accepted: true }));
     await sendConversationTurn(ctx(callHostOnlineRpc), thread.id, [{ type: 'text', text: 'follow up' }], 'queue-if-active');
     expect(applyConversationThreadLifecycleEvent).toHaveBeenCalledWith(...lifecycleCall('run.started'));
@@ -425,7 +425,7 @@ describe('conversation lifecycle', () => {
           providerThreadId: 'prov-1',
           providerId: 'claude-code',
           cwd: '/tmp/proj',
-          permissionMode: 'accept-edits'
+          permissionMode: 'full'
         }),
         permissionEscalation: 'ask'
       })
