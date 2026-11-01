@@ -54,6 +54,32 @@ describe('filterSchedules', () => {
   });
 });
 
+describe('filterSchedules: skipped last run', () => {
+  const NOW = Date.parse('2026-10-14T12:00:00Z');
+  const overlap = (at: number) => ({ id: 'o', at: new Date(at).toISOString(), result: 'skipped', reasonCode: 'overlap' });
+  const skipped = make({ id: 'a', name: 'Alpha' }, [overlap(NOW - 3_600_000)]);
+  const ran = make({ id: 'b', name: 'Beta' }, [{ id: 'ok', at: new Date(NOW).toISOString(), result: 'success' }]);
+  const off = make({ id: 'c', name: 'Gamma', enabled: false }, [overlap(NOW - 3_600_000)]);
+  it('keeps only schedules that skipped their last run', () => {
+    expect(filterSchedules([skipped, ran, off], projects, '', 'skipped', NOW)).toEqual([skipped]);
+  });
+  it('combines with the search', () => {
+    expect(filterSchedules([skipped, ran], projects, 'beta', 'skipped', NOW)).toEqual([]);
+    expect(filterSchedules([skipped, ran], projects, 'alp', 'skipped', NOW)).toEqual([skipped]);
+  });
+  it('judges the gap signal at the time it is given', () => {
+    const daily = make({ id: 'd', name: 'Daily', schedule: { cron: '0 9 * * *', tz: 'UTC' }, createdAt: '2026-10-01T00:00:00Z' }, [
+      { id: 'ok', at: '2026-10-13T09:00:00.000Z', result: 'success' }
+    ]);
+    expect(filterSchedules([daily], projects, '', 'skipped', Date.parse('2026-10-14T09:01:00Z'))).toEqual([]);
+    expect(filterSchedules([daily], projects, '', 'skipped', Date.parse('2026-10-14T09:03:00Z'))).toEqual([daily]);
+  });
+  it('leaves the other filters alone', () => {
+    expect(filterSchedules([skipped, ran, off], projects, '', 'all', NOW)).toEqual([skipped, ran, off]);
+    expect(filterSchedules([skipped, ran, off], projects, '', 'enabled', NOW)).toEqual([skipped, ran]);
+  });
+});
+
 describe('missed-run wording', () => {
   it('says turning a schedule back on runs the missed time', () => {
     const original = missedRunChoices('cron', true).find((c) => c.value === 'original');

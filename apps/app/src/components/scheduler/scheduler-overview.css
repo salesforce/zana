@@ -38,6 +38,7 @@
 .schedule-search:focus-within { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
 .schedule-filters select { max-width: 100%; min-height: 38px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-panel); color: var(--text-primary); padding: 0 10px; font: inherit; font-size: 12px; }
 .schedule-issue-label { font-size: 11px; color: var(--danger, #c43c35); }
+.schedule-issue-label--skipped { color: var(--warning, #d29922); }
 .schedule-pagination { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 14px; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 12px; }
 .schedule-pagination > div { display: flex; gap: 8px; }
 .scheduler-overview .overview-activity-item { flex-wrap: wrap; }

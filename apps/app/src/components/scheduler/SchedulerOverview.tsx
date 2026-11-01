@@ -20,6 +20,7 @@ import { filterSchedules, scheduleIssue, type ScheduleFilter } from './schedule-
 import { ScheduleFilters } from './ScheduleFilters.js';
 import { RecoveryCard } from './RecoveryOptIn.js';
 import { countOpenProblems } from '@zana-ai/zcc-domain/schedule-health';
+import { skippedLastRunPill } from './schedulerUtils.js';
 import './scheduler-overview.css';
 import { KpiCard } from './KpiCard.js';
 import { ProjectDot } from '../listpane/ProjectDot.js';
@@ -520,6 +521,7 @@ export function SchedulerOverview({
               const nextValid = nextRun && !Number.isNaN(nextRun.getTime());
               const external = t.external?.kind === 'claude-loop';
               const issue = scheduleIssue(t, projectMap);
+              const skippedLabel = skippedLastRunPill(t, Date.now());
               const { liveSessionId, lastReportRun } = rowActionState.get(t.id) ?? {
                 liveSessionId: null,
                 lastReportRun: null
@@ -553,6 +555,7 @@ export function SchedulerOverview({
                   >
                     <div className="overview-item-name">{t.name}</div>
                     {issue && <span className="schedule-issue-label">{issue}</span>}
+                    {skippedLabel && <span className="schedule-issue-label schedule-issue-label--skipped" title={skippedLabel.title}>{skippedLabel.text}</span>}
                     <div className="overview-item-meta">
                       {project?.name ?? 'Project missing'} · {PROFILE_LABEL[t.profile]} · {cadenceLabel(t.schedule)}
                     </div>
