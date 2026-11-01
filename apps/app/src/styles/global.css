@@ -39634,6 +39634,21 @@ body.split-frame-guard webview {
   border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
 }
 
+/* Portalled menus escape the launcher's scroll clipping and backdrop layer. */
+.composer-typeahead-menu.composer-typeahead-menu--floating {
+  position: fixed;
+  right: auto;
+  top: auto;
+  bottom: auto;
+  z-index: 401;
+  box-sizing: border-box;
+  overscroll-behavior: contain;
+}
+
+.composer-typeahead-menu > .composer-typeahead-section {
+  flex-shrink: 0;
+}
+
 .composer-typeahead-heading {
   position: sticky;
   top: 0;

@@ -127,6 +127,7 @@ export function ThreadTimeline({
   const paneRef = useRef<HTMLDivElement>(null);
   const lastPinnedTopRef = useRef<number | null>(null);
   const lastPinnedHeightRef = useRef<number | null>(null);
+  const lastPinnedContentHeightRef = useRef<number | null>(null);
   const scrollbarIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pinnedAway, setPinnedAway] = useState(false);
   const [initialOpen, setInitialOpen] = useState(true);
@@ -173,6 +174,7 @@ export function ThreadTimeline({
     pinScrollToBottom(pane);
     lastPinnedTopRef.current = pane.scrollTop;
     lastPinnedHeightRef.current = pane.clientHeight;
+    lastPinnedContentHeightRef.current = pane.scrollHeight;
   }, []);
 
   useLayoutEffect(() => {
@@ -241,10 +243,11 @@ export function ThreadTimeline({
     const pane = paneRef.current;
     if (!pane) return;
     markTransientScrollbarScrolling(pane, scrollbarIdleRef);
-    // WebKit may clamp/pan the scroll position as the keyboard changes the
-    // scrollport, before ResizeObserver can pin it. That is not scrollback.
+    // WebKit may adjust scroll before ResizeObserver when the keyboard resizes
+    // the pane or a width change rewraps its rows. That is not scrollback.
     // Once the user has released following, resizing must preserve their place.
-    if (stick && lastPinnedHeightRef.current !== pane.clientHeight) {
+    if (stick && (lastPinnedHeightRef.current !== pane.clientHeight
+      || lastPinnedContentHeightRef.current !== pane.scrollHeight)) {
       pin();
       return;
     }
