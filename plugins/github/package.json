@@ -12,7 +12,7 @@
     "name": "GitHub",
     "description": "Browse issues and pull requests from a GitHub repository.",
     "branding": {
-      "icon": "Github"
+      "icon": "./icons/github.png"
     },
     "server": "./server.mjs",
     "app": "./app.js",

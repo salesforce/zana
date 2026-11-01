@@ -8,10 +8,13 @@ import { SquadExecutionService } from '@zana-ai/zcc-server/services/execution/se
 import { createExecutionStore } from '@zana-ai/zcc-server/services/execution/store';
 import { createExecutionArtifactStore } from '@zana-ai/zcc-server/services/execution/artifact-store';
 import { onOrchestratorIdle, type OrchestratorIdleSession } from '../coordinator-idle.js';
-import { PLAN_CORRECTION_STALL_IDLE_EDGES, PlanCorrectionService, runPlanCorrectionHostAction } from '../plan-correction/service.js';
+import {
+  PLAN_CORRECTION_HELD_MESSAGE, PLAN_CORRECTION_MAX_RETRIES, PLAN_CORRECTION_STALL_IDLE_EDGES, PlanCorrectionService, runPlanCorrectionHostAction
+} from '../plan-correction/service.js';
 import { INFERRED_PLAN_NUDGE_BUDGET, createInferredPlanCorrection } from '../inferred-plan-correction.js';
 import { resolveSquadPlan } from '../team-trigger-semantics.js';
 import { PlanCorrectionLaunchBinding } from '../plan-correction/launch-binding.js';
+import { planCorrectionSubmitter } from '../plan-correction/wiring.js';
 import type { PlanCorrectionRecord } from '../plan-correction/store.js';
 import {
   TeamPlanHandoff, authoredPlanRelPath, cleanupHandoffFiles, correctedPlanRelPath, readAuthoredPlan, readCorrectedPlan, readHandoffArtifact
@@ -50,7 +53,7 @@ const VALID_PLAN = [
   ''
 ].join('\n');
 
-type Script = 'valid' | 'nothing' | 'invalid' | 'recoverable';
+type Script = 'valid' | 'nothing' | 'invalid' | 'recoverable' | 'fixes-after-feedback';
 
 function setup(script: Script) {
   // Infer mode: coordinator-authored plan, no provided plan, so no launch binding.
@@ -72,10 +75,14 @@ function setup(script: Script) {
   // FakeCoordinator: reacts to delivered correction text, like the model would.
   const coordinatorReceives = (text: string) => {
     coordinatorTexts.push(text);
+    if (script === 'fixes-after-feedback' && text.includes('is still invalid:')) {
+      writeArtifact(correctedPlanRelPath(EXECUTION_ID), VALID_PLAN);
+      return;
+    }
     if (!text.includes('The supplied execution plan was rejected')) return;
     if (script === 'valid') writeArtifact(correctedPlanRelPath(EXECUTION_ID), VALID_PLAN);
     if (script === 'recoverable') writeArtifact(correctedPlanRelPath(EXECUTION_ID), VALID_PLAN.replace('### write:', '### U1:'));
-    if (script === 'invalid') writeArtifact(correctedPlanRelPath(EXECUTION_ID), '### broken <!-- executable-step -->\n- Work: nope\n');
+    if (script === 'invalid' || script === 'fixes-after-feedback') writeArtifact(correctedPlanRelPath(EXECUTION_ID), '### broken <!-- executable-step -->\n- Work: nope\n');
   };
 
   const store = createExecutionStore({ filePath: join(dataDir, 'executions.json'), id: () => EXECUTION_ID });
@@ -109,7 +116,10 @@ function setup(script: Script) {
     getAgentState: (sessionId: string) => (sessionId === COORDINATOR ? coordinatorState : 'idle') as never,
     resolveExactNativeRecoverySnapshots: () => [],
     logError: (message, error) => errors.push([message, error]),
-    authorizePlanRegistration: (record, units) => correction.authorizeRegistration(record.id, units)
+    // Same wiring as host.ts: a bound coordinator submission may become the correction candidate.
+    authorizePlanRegistration: (record, units, submitter) => correction.authorizeRegistration(
+      record.id, units, planCorrectionSubmitter(record, submitter, (projectId) => (projectId === PROJECT_ID ? root : undefined))
+    )
   } as never);
   const originalStop = squad.stopForPlanCorrection.bind(squad);
   vi.spyOn(squad, 'stopForPlanCorrection').mockImplementation(async (id: string) => {
@@ -334,6 +344,81 @@ describe('Squad plan-correction flow (real service, wake queue, handoff and exec
     });
   });
 
+  describe('Modern coordinator: execution.plan.register is the correction offer trigger', () => {
+    beforeEach(() => { ctx = setup('nothing'); });
+    const coordinatorBinding = { role: 'orchestrator' as const, slotId: 'orchestrator', executionId: EXECUTION_ID, projectId: PROJECT_ID, principalId: COORDINATOR };
+    const unit = (task: string) => [{ id: 'write', title: 'Write output', task, dependencies: [], files: ['output.txt'], verification: ['Read output.'] }];
+
+    it('holds the refused register as one review card, requests changes, and registers only the approved digest', async () => {
+      await ctx.launchParked();
+      // No PTY idle edge on Modern. The coordinator's own register is the trigger.
+      const first = await ctx.squad.registerPlan(coordinatorBinding, unit('Create output.'));
+      expect(first).toMatchObject({ ok: false, message: expect.stringContaining(PLAN_CORRECTION_HELD_MESSAGE) });
+      expect(await ctx.workUnits()).toHaveLength(0);
+      expect(ctx.inbox).toHaveLength(1);
+      expect(ctx.optionIds(0)).toEqual(['approve', 'changes', 'cancel']);
+      expect(ctx.inbox[0]!.comments).toContain('Problem with the supplied plan: mutating work unit requires file scope');
+      expect(ctx.inbox[0]!.comments).toContain('Proposed corrected plan: 1 step');
+      // The candidate is a captured submission: no corrected-file paths on the card.
+      expect(ctx.inbox[0]!.decisionGuidance).not.toHaveProperty('correctedPlanPath');
+      expect(JSON.parse(ctx.bound.get('inbox-1')!.ref)).toMatchObject({ digest: launchDigest(unit('Create output.')) });
+
+      // A duplicate (or different) register while the offer is open adds no card and keeps the offer.
+      const duplicate = await ctx.squad.registerPlan(coordinatorBinding, unit('Something else.'));
+      expect(duplicate).toMatchObject({ ok: false, message: expect.stringContaining(PLAN_CORRECTION_HELD_MESSAGE) });
+      expect(ctx.inbox).toHaveLength(1);
+      expect(ctx.records.get(EXECUTION_ID)?.offeredDigest).toBe(launchDigest(unit('Create output.')));
+      // An inadmissible submission is refused by admission and never becomes a candidate.
+      const inadmissible = await ctx.squad.registerPlan(coordinatorBinding, [{ id: 'write', title: 'Write output', task: 'x', dependencies: [], files: ['output.txt'] }]);
+      expect(inadmissible).toMatchObject({ ok: false, message: expect.stringContaining('verification') });
+      expect(ctx.inbox).toHaveLength(1);
+
+      // Request changes wakes the coordinator with the register-channel instruction.
+      await ctx.respond(0, 'changes');
+      expect(ctx.coordinatorTexts).toHaveLength(1);
+      expect(ctx.coordinatorTexts[0]).toContain('execution.plan.register');
+      expect(ctx.coordinatorTexts[0]).not.toContain(correctedPlanRelPath(EXECUTION_ID));
+      // The consumed first offer can no longer be approved.
+      await expect(ctx.respond(0, 'approve')).rejects.toThrow(/rejected or superseded/);
+
+      const revised = unit('Create output with a header.');
+      await ctx.squad.registerPlan(coordinatorBinding, revised);
+      expect(ctx.inbox).toHaveLength(2);
+      expect(ctx.optionIds(1)).toEqual(['approve', 'changes', 'cancel']);
+      expect(await ctx.workUnits()).toHaveLength(0);
+
+      // Approve: no corrected file exists, the captured snapshot is registered host-side.
+      await ctx.respond(1, 'approve');
+      expect((await ctx.workUnits()).map((u) => [u.id, u.task])).toEqual([['write', 'Create output with a header.']]);
+      expect(ctx.updateScheduledPrompt).toHaveBeenCalledWith(expect.objectContaining({ sessionId: COORDINATOR }), revised);
+      // The coordinator's own register of the approved digest is authorized; another digest is not.
+      await expect(ctx.correction.authorizeRegistration(EXECUTION_ID, revised)).resolves.toEqual({ ok: true });
+      await expect(ctx.correction.authorizeRegistration(EXECUTION_ID, unit('Create output.'))).resolves.toMatchObject({ ok: false });
+      expect(ctx.stopForPlanCorrection).not.toHaveBeenCalled();
+      expectNoFallbackLaunch();
+    });
+
+    it('Cancel on the held offer stops the run; a later register stays refused without a new card', async () => {
+      await ctx.launchParked();
+      await ctx.squad.registerPlan(coordinatorBinding, unit('Create output.'));
+      await ctx.respond(0, 'cancel');
+      expect(ctx.stopForPlanCorrection).toHaveBeenCalledWith(EXECUTION_ID);
+      const after = await ctx.squad.registerPlan(coordinatorBinding, unit('Create output.'));
+      expect(after.ok).toBe(false);
+      expect(ctx.inbox).toHaveLength(1);
+      expect(await ctx.workUnits()).toHaveLength(0);
+    });
+
+    it('an unattended (retries exhausted) correction never publishes a card', async () => {
+      await ctx.launchParked();
+      await ctx.correction.begin(EXECUTION_ID, 'mutating work unit requires file scope', true);
+      const held = await ctx.squad.registerPlan(coordinatorBinding, unit('Create output.'));
+      expect(held).toMatchObject({ ok: false, message: expect.stringContaining('plan correction approval is pending') });
+      expect(ctx.inbox).toHaveLength(0);
+      expect(ctx.records.get(EXECUTION_ID)?.retries).toBe(PLAN_CORRECTION_MAX_RETRIES);
+    });
+  });
+
   describe('substantive vs recoverable provided plans', () => {
     beforeEach(() => { ctx = setup('valid'); });
 
@@ -460,6 +545,48 @@ describe('Squad plan-correction flow (real service, wake queue, handoff and exec
       expect(await ctx.workUnits()).toHaveLength(0);
       expect(ctx.inbox.every((entry) => !entry.questions![0]!.options.some((option) => option.id === 'approve'))).toBe(true);
       expect(ctx.updateScheduledPrompt).not.toHaveBeenCalled();
+      expectNoFallbackLaunch();
+    });
+
+    it('feeds the parser reason back to the coordinator, then escalates with it instead of "no plan written"', async () => {
+      await ctx.launchParked();
+      await ctx.idleEdge();
+      await ctx.respond(0, 'changes');
+
+      await ctx.idleEdge();
+      expect(ctx.inbox).toHaveLength(1);
+      // The wake queue delivers the feedback on the same idle edge it was queued.
+      await ctx.idleEdge();
+      const feedback = ctx.coordinatorTexts.find((text) => text.includes('is still invalid:'));
+      expect(feedback).toContain(correctedPlanRelPath(EXECUTION_ID));
+      expect(ctx.inbox).toHaveLength(2);
+      expect(ctx.inbox[1]!.comments).toContain("The coordinator's corrected plan is still invalid:");
+      expect(ctx.inbox[1]!.comments).not.toContain('without writing a corrected plan');
+      expect(ctx.optionIds(1)).toEqual(['changes', 'cancel']);
+      expect(await ctx.workUnits()).toHaveLength(0);
+      expectNoFallbackLaunch();
+    });
+  });
+
+  describe('coordinator fixes its invalid corrected plan after feedback', () => {
+    beforeEach(() => { ctx = setup('fixes-after-feedback'); });
+
+    it('offers the fixed plan for approval and registers it on approve', async () => {
+      await ctx.launchParked();
+      await ctx.idleEdge();
+      await ctx.respond(0, 'changes');
+      // Edge 1: corrected file is invalid -> feedback queued (no new card).
+      await ctx.idleEdge();
+      expect(ctx.inbox).toHaveLength(1);
+      // Edge 2: feedback delivered; the coordinator rewrites the file.
+      await ctx.idleEdge();
+      // Edge 3 (if needed): the host rereads the fixed file and offers it.
+      if (!ctx.inbox.some((entry) => entry.questions![0]!.options.some((option) => option.id === 'approve'))) await ctx.idleEdge();
+      const offer = ctx.inbox.findIndex((entry) => entry.questions![0]!.options.some((option) => option.id === 'approve'));
+      expect(offer).toBeGreaterThan(0);
+      expect(ctx.inbox[offer]!.comments).not.toContain('still invalid');
+      await ctx.respond(offer, 'approve');
+      expect((await ctx.workUnits()).length).toBeGreaterThan(0);
       expectNoFallbackLaunch();
     });
   });

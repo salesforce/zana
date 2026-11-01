@@ -1,7 +1,8 @@
+import { useState } from 'react';
 import { Download } from 'lucide-react';
 import type { MarketplaceEntry } from '@zana-ai/zcc-domain/product';
 import { PERMISSION_LABELS } from '../../components/ExtensionConsent.js';
-import { resolveIcon } from '../../lib/resolveIcon.js';
+import { PluginBrandIcon } from './PluginBrandIcon.js';
 import { catalogRowAction, marketplaceProvenance } from './PluginCatalogCard.js';
 import { PluginOverviewMarkdown } from './PluginOverviewMarkdown.js';
 import { entriesByAuthor } from './plugin-browse-discovery.js';
@@ -41,7 +42,6 @@ export function PluginMoreFromAuthor({
       <h3>More from this author</h3>
       <div className="ext-plugin-more-list">
         {related.map((row) => {
-          const Icon = resolveIcon(row.icon ?? 'Package');
           return (
             <button
               key={row.id}
@@ -51,7 +51,7 @@ export function PluginMoreFromAuthor({
               aria-label={`${row.title} plugin details`}
             >
               <span className="ext-browse-card-icon">
-                <Icon size={16} />
+                <PluginBrandIcon src={row.iconUrl} icon={row.icon ?? 'Package'} size={16} />
               </span>
               <span className="ext-plugin-more-copy">
                 <span className="ext-plugin-more-title">{row.title}</span>
@@ -159,7 +159,8 @@ export function CatalogPluginDetail({
   error,
   onInstall,
   onOpenPlugin,
-  onOpenAuthor
+  onOpenAuthor,
+  onManage
 }: {
   entry: MarketplaceEntry;
   catalog: MarketplaceEntry[];
@@ -168,16 +169,17 @@ export function CatalogPluginDetail({
   onInstall: (entry: MarketplaceEntry) => void;
   onOpenPlugin: (entry: MarketplaceEntry) => void;
   onOpenAuthor?: (author: string) => void;
+  onManage?: () => void;
 }) {
-  const Icon = resolveIcon(entry.icon ?? 'Package');
   const provenance = marketplaceProvenance(entry);
   const action = catalogRowAction(entry, busy);
   const capabilities = catalogCapabilityRows(entry);
+  const [section, setSection] = useState('overview');
   return (
     <div className="ext-catalog-detail" data-testid="catalog-plugin-detail">
       <header className="ext-catalog-detail-header">
         <span className="ext-browse-card-icon ext-catalog-detail-logo">
-          <Icon size={22} />
+          <PluginBrandIcon src={entry.iconUrl} icon={entry.icon ?? 'Package'} size={22} />
         </span>
         <div className="ext-catalog-detail-heading">
           <h2>{entry.title}</h2>
@@ -202,10 +204,8 @@ export function CatalogPluginDetail({
           </div>
         </div>
         {action.label === 'Installed' && !entry.hasUpdate ? (
-          <span className="ext-browse-installed-pill">
-            {action.icon}
-            Installed
-          </span>
+          onManage ? <button type="button" className="settings-btn" onClick={onManage}>{action.icon} Manage</button> :
+          <span className="ext-browse-installed-pill">{action.icon} Installed</span>
         ) : (
           <button
             type="button"
@@ -220,17 +220,29 @@ export function CatalogPluginDetail({
       </header>
       {error ? <p className="modal-error">{error}</p> : null}
       {entry.description ? <PluginOverviewLead description={entry.description} /> : null}
-      <div className="ext-plugin-detail-stack">
+      <nav className="ext-plugin-detail-tabs" role="tablist" aria-label="Marketplace detail sections" onKeyDown={(event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const next = event.key === 'Home' ? 'overview' : event.key === 'End' ? 'source' : section === 'overview' ? 'source' : 'overview';
+        setSection(next);
+        document.getElementById(`catalog-detail-tab-${next}`)?.focus();
+      }}>
+        {['overview', 'source'].map((tab) => <button key={tab} type="button" role="tab" id={`catalog-detail-tab-${tab}`}
+          aria-controls={`catalog-detail-${tab}`} tabIndex={section === tab ? 0 : -1} aria-selected={section === tab} onClick={() => setSection(tab)}>{tab === 'overview' ? 'Overview' : 'Source'}</button>)}
+      </nav>
+      <div className="ext-plugin-detail-stack" id="catalog-detail-overview" role="tabpanel" aria-labelledby="catalog-detail-tab-overview" hidden={section !== 'overview'}>
         {entry.overview ? (
           <section className="ext-plugin-section" data-resource-detail-section="overview">
             <h3>Overview</h3>
             <PluginOverviewMarkdown markdown={entry.overview} />
           </section>
         ) : null}
-        <PluginDetailsSection entry={entry} />
-        <PluginMoreFromAuthor entry={entry} catalog={catalog} onOpen={onOpenPlugin} />
-        <PluginReleaseSection version={entry.version} delivery={entry.source === 'bundled' ? 'Updates with Zana releases' : 'Automatic checks; manual updates'} />
         <PluginCapabilitiesSection rows={capabilities} />
+        <PluginMoreFromAuthor entry={entry} catalog={catalog} onOpen={onOpenPlugin} />
+      </div>
+      <div className="ext-plugin-detail-stack" id="catalog-detail-source" role="tabpanel" aria-labelledby="catalog-detail-tab-source" hidden={section !== 'source'}>
+        <PluginDetailsSection entry={entry} />
+        <PluginReleaseSection version={entry.version} delivery={entry.source === 'bundled' ? 'Updates with Zana releases' : 'Automatic checks; manual updates'} />
       </div>
     </div>
   );

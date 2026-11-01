@@ -6,7 +6,7 @@ import { openDatabase } from '../connection.js';
 import { createConversationThread } from './conversation-threads.js';
 import { createEnvironment } from './environments.js';
 import { upsertHost } from './hosts.js';
-import { createDeferredThreadMessage, deleteDeferredThreadMessage, getDeferredThreadMessage, holdDeferredThreadMessage, markDeferredThreadMessageDispatching, pauseDeferredThreadMessagesForThread } from './deferred-thread-messages.js';
+import { claimDeferredThreadMessageGroup, holdDeferredThreadMessageForEdit, createDeferredThreadMessage, deleteDeferredThreadMessage, getDeferredThreadMessage, holdDeferredThreadMessage, markDeferredThreadMessageDispatching, pauseDeferredThreadMessagesForThread } from './deferred-thread-messages.js';
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'zcc-queue-approval-'));
@@ -44,5 +44,31 @@ it('requires explicit failed-row retry and retains a stopped row on plugin wait 
     deleteDeferredThreadMessage(db, key);
     expect(holdDeferredThreadMessage(db, { ...key, payload })).toBe(false);
     expect(getDeferredThreadMessage(db, key)).toBeNull();
+  } finally { cleanup(); }
+});
+
+
+it('claims a whole group or no rows, preserving revisions and edit holds', () => {
+  const { db, row, key, cleanup } = fixture();
+  try {
+    const next = createDeferredThreadMessage(db, { threadId: key.threadId, kind: 'send', payload: '{}' });
+    const claim = (rows = [row, next], extra = {}) => claimDeferredThreadMessageGroup(db, { threadId: key.threadId, rows, ...extra });
+    expect(claim([])).toBe(false);
+    expect(claim(Array(51).fill(row))).toBe(false);
+    expect(claim([row, row])).toBe(false);
+    expect(claim([row, { ...next, id: 'missing' }])).toBe(false);
+    expect(claim([row, { ...next, updatedAt: next.updatedAt - 1 }])).toBe(false);
+    holdDeferredThreadMessageForEdit(db, { id: next.id, threadId: key.threadId, heldUntil: 100_000 });
+    expect(claim([row, next], { now: 50_000 })).toBe(false);
+    expect(getDeferredThreadMessage(db, key)?.status).toBe('queued');
+    expect(claim([row, next], { now: 50_000, overrideEditHold: true })).toBe(true);
+    expect(getDeferredThreadMessage(db, { id: next.id, threadId: key.threadId })).toMatchObject({ status: 'dispatching', editHeldUntil: null });
+    expect(claim()).toBe(false);
+    const after = createDeferredThreadMessage(db, { threadId: key.threadId, kind: 'send', payload: '{}' });
+    expect(claim([after])).toBe(false);
+    deleteDeferredThreadMessage(db, key);
+    deleteDeferredThreadMessage(db, { id: next.id, threadId: key.threadId });
+    db.sqlite.prepare("UPDATE deferred_thread_messages SET status = 'failed' WHERE id = ?").run(after.id);
+    expect(claim([after])).toBe(false);
   } finally { cleanup(); }
 });

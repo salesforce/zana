@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Moon, X } from 'lucide-react';
+import { useData } from '../store.js';
 import type { AgentCard } from './AgentBoard.js';
 
 interface Props {
@@ -59,6 +60,7 @@ export function CloseIdleAgentsDialog({
   onConfirm
 }: Props) {
   const readOnly = action === 'summarize';
+  const wrapUpClose = useData((s) => s.closeWrapUpEnabled);
   const [summarize, setSummarize] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const n = agents.length;
@@ -170,6 +172,12 @@ export function CloseIdleAgentsDialog({
                   Folds each agent’s “what it did / what’s left” into one inbox entry and files a
                   follow-up for anything unfinished. Runs one quick claude call per agent.
                 </small>
+                {wrapUpClose && summarize && (
+                  <small>
+                    Each agent first wraps up: it saves what it learnt and tidies up. Agents that ask
+                    you something stay open.
+                  </small>
+                )}
               </span>
             </label>
           )}

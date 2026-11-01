@@ -25,7 +25,7 @@ vi.mock('./LibraryAssetPreview.js', () => ({ LibraryAssetPreview: ({ doc }: any)
 vi.mock('../../../components/MermaidDiagram', () => ({ MermaidDiagram: ({ code }: any) => <div>Diagram: {code}</div> }));
 vi.mock('./LibraryMarkdownEditor.js', () => ({
   LibraryMarkdownEditor: ({ value, onChange }: { value: string; onChange: (value: string) => void }) => (
-    <textarea aria-label="Edit note" value={value} onChange={(e) => onChange(e.target.value)} />
+    <><textarea aria-label="Edit note" value={value} onChange={(e) => onChange(e.target.value)} /><a href="linked.md">Linked from editor</a></>
   )
 }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
@@ -140,9 +140,12 @@ it('ignores a late save acknowledgement even after navigating away and back', as
 it('requires another review if the reviewed version also changed before a merged save', async () => {
   mocks.write.mockResolvedValueOnce({ ok: false, message: 'Changed again' } as any).mockResolvedValueOnce({ ok: false, message: 'Changed again' } as any);
   const view = render(<DocPreview doc={note} />); await view.findByRole('button', { name: 'Edit' });
-  fireEvent.click(view.getByRole('button', { name: 'Edit' })); fireEvent.click(view.getByRole('button', { name: 'Save' }));
-  await view.findByTestId('library-save-recovery'); fireEvent.click(view.getByRole('button', { name: 'Review latest version' }));
-  await view.findByRole('button', { name: 'Save merged draft' }); fireEvent.click(view.getByRole('button', { name: 'Save merged draft' }));
+  fireEvent.click(view.getByRole('button', { name: 'Edit' }));
+  await act(async () => { fireEvent.click(view.getByRole('button', { name: 'Save' })); });
+  await view.findByTestId('library-save-recovery');
+  await act(async () => { fireEvent.click(view.getByRole('button', { name: 'Review latest version' })); });
+  await view.findByRole('button', { name: 'Save merged draft' });
+  await act(async () => { fireEvent.click(view.getByRole('button', { name: 'Save merged draft' })); });
   await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(2));
   expect(view.queryByRole('button', { name: 'Save merged draft' })).toBeNull();
   expect((view.getByLabelText('Edit note') as HTMLTextAreaElement).value).toBe('# Saved note');
@@ -190,4 +193,36 @@ it('handles a rejected read and a document with no path', async () => {
 it('renders fenced text and Mermaid while preserving the source text for editing', async () => {
   mocks.read.mockResolvedValueOnce({ ok: true, content: '```text\nplain code\n```\n\n```mermaid\ngraph TD; A-->B;\n```', sha256: 'a'.repeat(64) });
   const view = render(<DocPreview doc={note} />); await view.findByText('plain code'); await view.findByText(/Diagram: graph TD/);
+});
+
+it('opens preview links inside the library, including bare and file hrefs', async () => {
+  mocks.read.mockResolvedValueOnce({ ok: true, content: '[B](linked.md#section-2) [File](file:///project/linked.md)', sha256: 'a'.repeat(64) });
+  const open = vi.fn();
+  const view = render(<DocPreview doc={note} onOpenDocument={open} />);
+  fireEvent.click(await view.findByRole('link', { name: 'B' }));
+  expect(open).toHaveBeenLastCalledWith({ path: 'linked.md', fragment: 'section-2' });
+  fireEvent.click(view.getByRole('link', { name: 'File' }));
+  expect(open).toHaveBeenLastCalledWith({ path: '/project/linked.md', fragment: '' });
+});
+
+it('intercepts rich editor links and keeps unsaved changes until discard is confirmed', async () => {
+  const open = vi.fn();
+  const previousConfirm = window.confirm;
+  const confirm = vi.fn(() => false);
+  window.confirm = confirm;
+  try {
+    const view = render(<DocPreview doc={note} onOpenDocument={open} />);
+    fireEvent.click(await view.findByRole('button', { name: 'Edit' }));
+    fireEvent.click(view.getByRole('link', { name: 'Linked from editor' }));
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledTimes(1);
+    fireEvent.change(view.getByLabelText('Edit note'), { target: { value: '# Unsaved' } });
+    fireEvent.click(view.getByRole('link', { name: 'Linked from editor' }));
+    expect(confirm).toHaveBeenCalledWith('Discard unsaved changes?');
+    expect(open).toHaveBeenCalledTimes(1);
+    expect((view.getByLabelText('Edit note') as HTMLTextAreaElement).value).toBe('# Unsaved');
+    confirm.mockReturnValue(true);
+    fireEvent.click(view.getByRole('link', { name: 'Linked from editor' }));
+    expect(open).toHaveBeenCalledTimes(2);
+  } finally { window.confirm = previousConfirm; }
 });

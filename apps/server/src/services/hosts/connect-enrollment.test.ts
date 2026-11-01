@@ -1,5 +1,6 @@
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -48,6 +49,21 @@ it('binds enrollment to this instance, cleans failures, and preserves a repaired
     await expect(revokeConnectHost(ctx, issued.hostId, (async () => new Response('', { status: 503 })) as typeof fetch)).rejects.toThrow('503');
     expect(connectInstallCommand({ accountUrl, serverId, code: "quote'code" })).toContain("quote'\\''code");
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+it('runs the downloaded ES-module installer from a .mjs path and removes its temp directory', () => {
+  // Linux `mktemp` names files `tmp.XXXXXXXXXX`; Node's ESM loader rejects that suffix as an unknown extension.
+  const dir = mkdtempSync(join(tmpdir(), 'connect-install-cmd-')), bin = join(dir, 'bin'), tmp = join(dir, 'tmp');
+  try {
+    for (const sub of [bin, tmp]) execFileSync('mkdir', ['-p', sub]);
+    const curl = join(bin, 'curl');
+    writeFileSync(curl, `#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ "$1" = -o ]; then out=$2; fi; shift; done\nprintf '%s\\n' "import { argv } from 'node:process';" "console.log(argv[1].endsWith('/host-installer.mjs') ? 'mjs' : 'other', argv.slice(2).join(' '));" > "$out"\n`);
+    chmodSync(curl, 0o755);
+    const command = connectInstallCommand({ accountUrl: 'https://zana-ide.com', serverId: 'server', code: 'CODE' });
+    const out = execFileSync('/bin/sh', ['-c', command], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, TMPDIR: tmp } });
+    expect(out.trim()).toBe('mjs --account https://zana-ide.com --server-id server --code CODE');
+    expect(readdirSync(tmp)).toEqual([]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 it('exposes the persisted Connect enrollment to main-side peer grants', async () => {

@@ -7,8 +7,8 @@
  * held `prevent-app-suspension` block keeps the SYSTEM awake (the display may
  * still sleep — fine while locked) so a long Claude turn keeps running.
  *
- * This service drives that blocker off the SAME resolved-status edge as
- * {@link HeartbeatService} / the mail-drain (`agentStatus.on('status')`):
+ * The owner feeds CLI resolved-status edges (`agentStatus.on('status')`) and
+ * the product runtime's aggregate local Modern-thread activity snapshot:
  *  - a session entering `working` adds it to the live set and acquires the
  *    blocker if not already held;
  *  - a session leaving `working` removes it; when the set empties we DON'T
@@ -86,8 +86,8 @@ export class KeepAwakeService {
   }
 
   /**
-   * Feed a session's newly-resolved agent state (called from the same
-   * `agentStatus.on('status')` edge as the other add-ons). Adds/removes the
+   * Feed a session's newly-resolved agent state, or the aggregate Modern-thread
+   * state under its own key. Adds/removes the
    * session from the working set and acquires/(grace-)releases the blocker.
    * Cheap and synchronous on the hot path.
    */

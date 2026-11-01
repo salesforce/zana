@@ -1,0 +1,1 @@
+It writes the squad definition straight into your project.

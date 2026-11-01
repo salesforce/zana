@@ -73,6 +73,7 @@ import type {
   AgentRuntimeProviderRecoveryHint,
   ReapedIdleProviderSession,
   AgentRuntimeSkillRoot,
+  AgentSessionKind,
 } from "./types.js";
 import { buildThreadShellEnvironment } from "./thread-shell-environment.js";
 import {
@@ -247,6 +248,7 @@ interface ThreadRuntimeConfig {
   disallowedTools?: readonly string[];
   environmentId: string;
   instructionMode: InstructionMode;
+  sessionKind?: AgentSessionKind;
   /**
    * The instructions the live provider session was constructed with. Frozen
    * until the next session construction (start, resume, fork).
@@ -1143,6 +1145,9 @@ function createAgentRuntimeInternal(
         ? { disallowedTools: currentConfig.disallowedTools }
         : {}),
       instructionMode: currentConfig.instructionMode,
+      ...(currentConfig.sessionKind !== undefined
+        ? { sessionKind: currentConfig.sessionKind }
+        : {}),
     });
   }
 
@@ -1293,6 +1298,9 @@ function createAgentRuntimeInternal(
       dynamicTools: currentConfig.dynamicTools,
       disallowedTools: currentConfig.disallowedTools,
       instructionMode: currentConfig.instructionMode,
+      ...(currentConfig.sessionKind !== undefined
+        ? { sessionKind: currentConfig.sessionKind }
+        : {}),
     };
     const plan = proc.adapter.buildCommandPlan(adapterCommand);
     // The replacement session reports its own restore support. An updated
@@ -1688,6 +1696,7 @@ function createAgentRuntimeInternal(
       dynamicTools,
       disallowedTools,
       instructionMode = "append",
+      sessionKind,
       outputSchema,
       fork,
     }) {
@@ -1732,6 +1741,7 @@ function createAgentRuntimeInternal(
             disallowedTools,
             environmentId,
             instructionMode,
+            ...(sessionKind !== undefined ? { sessionKind } : {}),
             instructions,
             options: effectiveExecOpts,
             processKey,
@@ -1772,6 +1782,7 @@ function createAgentRuntimeInternal(
                 dynamicTools,
                 disallowedTools,
                 instructionMode,
+                ...(sessionKind !== undefined ? { sessionKind } : {}),
               }
             : {
                 type: "thread/start",
@@ -1781,6 +1792,7 @@ function createAgentRuntimeInternal(
                 dynamicTools,
                 disallowedTools,
                 instructionMode,
+                ...(sessionKind !== undefined ? { sessionKind } : {}),
                 ...(outputSchema !== undefined ? { outputSchema } : {}),
               };
           let resolved: string;
@@ -2080,6 +2092,7 @@ function createAgentRuntimeInternal(
       dynamicTools,
       disallowedTools,
       instructionMode = "append",
+      sessionKind,
     }) {
       return runThreadOperation({
         threadId,
@@ -2122,6 +2135,7 @@ function createAgentRuntimeInternal(
             disallowedTools,
             environmentId,
             instructionMode,
+            ...(sessionKind !== undefined ? { sessionKind } : {}),
             instructions,
             options: effectiveExecOpts,
             processKey,
@@ -2162,6 +2176,7 @@ function createAgentRuntimeInternal(
             dynamicTools,
             disallowedTools,
             instructionMode,
+            ...(sessionKind !== undefined ? { sessionKind } : {}),
           };
           const plan = proc.adapter.buildCommandPlan(adapterCommand);
           if (plan.kind === "noop") {

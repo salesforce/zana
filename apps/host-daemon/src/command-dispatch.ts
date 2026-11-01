@@ -1,9 +1,12 @@
+import { ProjectCatalogue } from './project-catalogue.js';
 import { listHostCommands } from "./native-root-scan.js";
+import { inspectDirectories } from './inspect-directories.js';
 import { discoverCliOnHost } from './cli-discovery.js';
 import type { CliTerminalStartCommand } from '@zana-ai/zcc-contracts/cli-terminal';
 import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { realpath, stat as asyncStat, opendir, open } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
+import { homedir } from 'node:os';
 import { resolveZccDataDir } from './host-config.js';
 import { isWithin, resolveContainedReal } from '@zana-ai/zcc-path-confine';
 import type {
@@ -51,7 +54,7 @@ import {
 } from '@zana-ai/zcc-host-workspace';
 import { probeExtraAcpAgents } from './extra-acp-agent-probes.js';
 import { verifyHarnesses } from './harness/harness-verify.js';
-import { registrationFor, invalidateHarnessModelCatalog } from './harness/registry.js';
+import { registrationFor, invalidateHarnessModelCatalog, discoverHarnessModelInventories } from './harness/registry.js';
 import { HostCommandError } from './host-command-error.js';
 import { readConfinedFileRange } from './read-file-range.js';
 import { transcribeCodexVoice } from './codex-voice-transcribe.js';
@@ -131,6 +134,8 @@ export type ThreadResumeInput = {
   providerOptions?: Record<string, unknown>;
   dynamicTools?: ThreadStartFields['dynamicTools'];
   instructions?: ThreadStartFields['instructions'];
+  sessionKind?: 'automated';
+  automatedSkillIds?: ThreadStartFields['automatedSkillIds'];
 };
 
 export type ThreadRewindPrepareInput = {
@@ -146,6 +151,7 @@ export type ThreadRewindPrepareInput = {
   permissionMode?: ThreadStartFields['permissionMode'];
   model?: string;
   reasoningLevel?: ThreadWorkInput['reasoningLevel'];
+  automatedSkillIds?: ThreadStartFields['automatedSkillIds'];
 };
 
 export type ThreadArchiveInput = {
@@ -158,6 +164,7 @@ export type ThreadArchiveInput = {
 };
 
 export interface CommandRuntime {
+  projectCatalogue?: ProjectCatalogue;
   previewTunnel?: import('./preview-tunnel.js').HostPreviewTunnel;
   pluginHosts?: PluginHostManager;
   dataDir: string;
@@ -441,7 +448,9 @@ async function applyThreadResume(
       claudeCodePermissionMode: command.claudeCodePermissionMode,
       providerOptions: command.providerOptions,
       dynamicTools: command.dynamicTools,
-      instructions: command.instructions
+      instructions: command.instructions,
+      sessionKind: command.sessionKind,
+      automatedSkillIds: command.automatedSkillIds
     });
     providerThreadId = resumed?.providerThreadId ?? providerThreadId;
   }
@@ -597,8 +606,13 @@ export async function dispatchHostCommand(
   switch (command.type) {
     case 'provider.cli_discovery':
       return discoverCliOnHost(command, runtime.loadConfig());
-    case 'provider.status':
-      return runtime.verifyProviders();
+    case 'provider.status': {
+      const status = await runtime.verifyProviders();
+      if (!command.includeModelInventory) return status;
+      return { ...status, modelInventories: await discoverHarnessModelInventories(status.providers, {
+        cwd: homedir(), config: runtime.loadConfig()
+      }) };
+    }
     case 'provider.agent_descriptors': {
       const profile = parseProfile(command.profile);
       if (!profile) {
@@ -817,7 +831,8 @@ export async function dispatchHostCommand(
         bridgeLaunch: command.bridgeLaunch,
         permissionMode: command.permissionMode,
         model: command.model,
-        reasoningLevel: command.reasoningLevel
+        reasoningLevel: command.reasoningLevel,
+        automatedSkillIds: command.automatedSkillIds
       });
       return {
         threadId: command.threadId,
@@ -1054,6 +1069,8 @@ export async function dispatchHostCommand(
       return browseHostDirectory(command);
     case 'host.paths_exist':
       return checkHostPathsExist(command);
+    case 'host.inspect_directories':
+      return inspectDirectories(command.paths);
     case 'host.list_paths':
       return listHostPaths(command);
     case 'host.read_path':
@@ -1170,11 +1187,15 @@ export async function dispatchHostCommand(
       });
       return { killed };
     }
+    case 'project.catalogue.list':
+      return (runtime.projectCatalogue ??= new ProjectCatalogue(runtime.dataDir, undefined)).page(command.offset, command.limit);
+    case 'project.catalogue.register':
+      return { projects: await (runtime.projectCatalogue ??= new ProjectCatalogue(runtime.dataDir, undefined)).register(command.projects) };
     case 'project.clone_default_path':
       return { path: await resolveCloneDefaultPath(runtime.dataDir, command.projectSlug) };
     case 'project.clone':
       try {
-        return await cloneProject({
+        const cloned = await cloneProject({
           dataDir: runtime.dataDir,
           projectSlug: command.projectSlug,
           remoteUrl: command.remoteUrl,
@@ -1183,6 +1204,8 @@ export async function dispatchHostCommand(
             runtime.emit({ kind: 'project.clone.progress', payload: { text } });
           }
         });
+        await (runtime.projectCatalogue ??= new ProjectCatalogue(runtime.dataDir, undefined)).register([{ path: cloned.path }]);
+        return cloned;
       } catch (error) {
         mapWorkspaceError(error);
       }

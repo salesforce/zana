@@ -4,9 +4,10 @@ test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
 
 test('desktop skill policy persists each load state and rejects unsupported owners', async ({ app }) => {
   const skill = await app.window.evaluate(async () =>
-    (await (await fetch('/api/v1/skills/native-capabilities')).json()).skills.find((entry: { id: string }) => entry.id.startsWith('zcc:'))
+    (await (await fetch('/api/v1/skills/native-capabilities')).json()).skills.find((entry: { id: string; name: string }) => entry.id.startsWith('zcc:') && entry.name === 'zana-ui-proposals')
   );
-  expect(skill, 'a bundled or plugin-injected skill is available').toBeTruthy();
+  expect(skill, 'the shipped UI proposal skill is available without personal configuration').toBeTruthy();
+  expect(skill.toggle.state).toBe('on');
 
   for (const state of ['manual', 'off', 'on'] as const) {
     const result = await app.window.evaluate(async ({ skill, state }) => {

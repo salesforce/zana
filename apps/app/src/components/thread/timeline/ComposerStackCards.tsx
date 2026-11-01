@@ -9,7 +9,6 @@ import {
 import type { TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
 import { product } from '../../../lib/product-client.js';
 import { handleHttpLinkClick } from '../../../lib/in-app-browser-link-preference.js';
-import { loadWorkspaceMeta } from '../secondary-panel/threadSecondaryPanelLogic.js';
 import { formatWorkingElapsed } from '../thread-timeline-model.js';
 import { useUi } from '../../../store.js';
 import { nextTurnItemText, queuedMessagePreview } from './queued-message-text.js';
@@ -568,8 +567,6 @@ function withStopStates(
   return next;
 }
 
-const PROMPT_CONTEXT_POLL_MS = 3_000;
-
 export function PromptContextBanner({
   threadId,
   branchName,
@@ -577,7 +574,7 @@ export function PromptContextBanner({
   parentThreadId,
   originKind,
   childCount,
-  environmentId
+  pullRequest
 }: {
   threadId?: string;
   branchName?: string | null;
@@ -585,34 +582,8 @@ export function PromptContextBanner({
   parentThreadId?: string | null;
   originKind?: string | null;
   childCount?: number;
-  environmentId?: string | null;
+  pullRequest?: GitHostPullRequest | null;
 }) {
-  const [pullRequest, setPullRequest] = useState<GitHostPullRequest | null>(null);
-
-  useEffect(() => {
-    if (!environmentId) {
-      setPullRequest(null);
-      return;
-    }
-    let cancelled = false;
-    const refresh = () => {
-      void loadWorkspaceMeta(
-        product.environments.status,
-        product.environments.pullRequest,
-        environmentId
-      ).then(({ pullRequest: nextPr }) => {
-        if (cancelled) return;
-        setPullRequest((nextPr as GitHostPullRequest | null) ?? null);
-      });
-    };
-    refresh();
-    const timer = window.setInterval(refresh, PROMPT_CONTEXT_POLL_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [environmentId]);
-
   const bits = [
     branchName ? `git: ${branchName}` : null,
     isWorktree ? 'worktree' : null,
@@ -629,10 +600,10 @@ export function PromptContextBanner({
           href={pullRequest.url}
           target="_blank"
           rel="noreferrer"
-            onClick={(event) => {
-              if (event.shiftKey || event.altKey) return;
-              if (handleHttpLinkClick(pullRequest.url, { event, ownerId: threadId })) event.preventDefault();
-            }}
+          onClick={(event) => {
+            if (event.shiftKey || event.altKey) return;
+            if (handleHttpLinkClick(pullRequest.url, { event, ownerId: threadId })) event.preventDefault();
+          }}
         >
           PR #{pullRequest.number}
         </a>

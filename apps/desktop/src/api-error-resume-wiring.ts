@@ -56,11 +56,12 @@ export function createApiErrorResume(deps: ApiErrorResumeWiringDeps): ApiErrorRe
  * not touch the scheduler or goals: a failed turn is not a finished run.
  */
 export function handleApiErrorStop(
-  deps: Pick<ApiErrorResumeWiringDeps, 'agentStatus' | 'logMainError'> & { service: ApiErrorResumeService },
+  deps: Pick<ApiErrorResumeWiringDeps, 'agentStatus' | 'logMainError'> & { service?: ApiErrorResumeService },
   sessionId: string,
   event: { error: string; text: string }
 ): void {
   deps.agentStatus.turnFinished(sessionId);
   deps.agentStatus.clearToolsInFlight(sessionId);
-  void deps.service.onApiErrorStop(sessionId, event).catch((err) => deps.logMainError('api-error-resume', err));
+  // No service: the caller routes the error elsewhere (a Squad worker's engine recovery).
+  void deps.service?.onApiErrorStop(sessionId, event).catch((err) => deps.logMainError('api-error-resume', err));
 }

@@ -719,3 +719,18 @@ describe('harness family <-> thread provider table', () => {
     expect(harnessFamilyForThreadProviderId('claude')).toBeNull();
   });
 });
+
+describe('native History capability', () => {
+  it('is true for every posture of a harness with a History adapter', async () => {
+    const { profileHasNativeHistory } = await import('./launch-provider.js');
+    for (const p of ['claude', 'claude-yolo', 'cursor-resume', 'codex', 'pi', 'opencode-yolo', 'grok'] as const) {
+      expect(profileHasNativeHistory(p)).toBe(true);
+    }
+  });
+  it('is false for Mastra Code, Agentforce Code and shell', async () => {
+    const { profileHasNativeHistory } = await import('./launch-provider.js');
+    for (const p of ['mastracode', 'mastracode-yolo', 'afcode', 'afcode-resume', 'shell'] as const) {
+      expect(profileHasNativeHistory(p)).toBe(false);
+    }
+  });
+});

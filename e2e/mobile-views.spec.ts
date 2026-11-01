@@ -5,7 +5,7 @@ import { chromium, type Page, type Route } from '@playwright/test';
 import { test, expect } from './fixtures/app.js';
 import { startMobileGateway } from '../apps/server/src/mobile/gateway.js';
 
-test.use({ initialConfig: { sponsorPromptDismissed: true, agentsBoardView: 'flow', classicSessionViewEnabled: false, inboxGrouping: 'time', voiceInputEnabled: true }, launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
+test.use({ initialConfig: { sponsorPromptDismissed: true, agentsBoardView: 'flow', classicSessionViewEnabled: false, threadTabsEnabled: false, inboxGrouping: 'time', voiceInputEnabled: true }, launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
 
 test.beforeEach(async ({ home }) => {
   const project = join(home, 'responsive-project');
@@ -316,7 +316,7 @@ test('Main views and populated Inbox fit phone and tablet screens', async ({ app
           const composer = page.getByLabel('Message', { exact: true });
           await composer.tap();
           const permission = page.getByRole('button', { name: 'Permission mode', exact: true });
-          const project = page.getByRole('button', { name: 'Project', exact: true });
+          const project = page.getByRole('button', { name: 'Machine and project', exact: true });
           const runSettings = page.getByRole('button', { name: /^Run settings:/ });
           await expect(page.getByTestId('composer-create-plugin')).toBeHidden();
           await expect(page.locator('.new-thread-view > .aurora-grid')).toBeHidden();

@@ -5,7 +5,7 @@ import { splitPicklistOptions, type PopoverPicklistOption, type PopoverPicklistP
 import './mobile-project-picker.css';
 
 /** A stable scrollport with actions outside it, even with the phone keyboard open. */
-export function MobileProjectPicker({ value, options, onChange, placeholder, disabled, title, triggerIcon, ariaLabel, emptyHint }: PopoverPicklistProps<string>) {
+export function MobileProjectPicker({ value, options, onChange, placeholder, disabled, title, triggerIcon, ariaLabel, emptyHint, className, searchPlaceholder = 'Search projects' }: PopoverPicklistProps<string>) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -30,8 +30,14 @@ export function MobileProjectPicker({ value, options, onChange, placeholder, dis
     {option.value === value && <Check size={20} aria-hidden="true" />}
   </button>;
   return <>
-    <button type="button" className="launch-model-picker-trigger" disabled={disabled} title={title}
+    <button type="button" className={`launch-model-picker-trigger ${className ?? ''}`} disabled={disabled} title={title}
       aria-label={ariaLabel} aria-haspopup="dialog" aria-expanded={open}
+      onPointerDown={event => {
+        if (event.button !== 0) return;
+        // Native press focus can expand the composer and move this control
+        // before click. Keep it in place until the completed tap opens its sheet.
+        event.preventDefault();
+      }}
       onClick={event => { event.currentTarget.focus(); setOpen(true); }}>
       {triggerIcon}<span>{selected?.label ?? placeholder}</span><ChevronDown size={14} aria-hidden="true" />
     </button>
@@ -43,7 +49,7 @@ export function MobileProjectPicker({ value, options, onChange, placeholder, dis
       footer={sticky.length > 0 ? <div className="mobile-project-picker-actions">{sticky.map(row)}</div> : undefined}>
       <label className="mobile-project-picker-search">
         <Search size={18} aria-hidden="true" />
-        <input type="search" aria-label="Search projects" placeholder="Search projects" value={query}
+        <input type="search" aria-label={searchPlaceholder} placeholder={searchPlaceholder} value={query}
           onChange={event => setQuery(event.target.value)} />
       </label>
       <div className="mobile-project-picker-list" aria-label="Projects">

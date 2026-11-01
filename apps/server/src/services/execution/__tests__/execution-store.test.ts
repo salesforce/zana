@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createExecutionStore, EXECUTION_RECOVERY_TTL_MS, isTerminalExecutionState, KICKOFF_FAILURE_BLOCK_THRESHOLD } from '../store.js';
+import { createExecutionStore, EXECUTION_RECOVERY_TTL_MS, isTerminalExecutionState, isUserOwnedSquadWorktree, KICKOFF_FAILURE_BLOCK_THRESHOLD } from '../store.js';
 import { usageRollup } from '../contracts.js';
 import { MAX_TEAM_INITIAL_TASK_BYTES } from '../../launch/team-lifecycle-store.js';
 
@@ -45,6 +45,66 @@ describe('isTerminalExecutionState', () => {
 });
 
 describe('execution store', () => {
+  const catalogueProvenance = {
+    role: 'worker' as const,
+    capabilities: [],
+    tools: ['execution.work.claim', 'execution.work.complete'],
+    digest: 'a'.repeat(64)
+  };
+
+  it('persists automated MCP catalogue provenance keyed by slot across reload', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+
+    await expect(store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', catalogueProvenance))
+      .resolves.toEqual({ version: 1, ...catalogueProvenance });
+    await expect(createExecutionStore({ filePath }).get(record.id)).resolves.toMatchObject({
+      automatedMcpCatalogueProvenance: { 'worker-1': { version: 1, ...catalogueProvenance } }
+    });
+  }));
+
+  it('returns existing automated MCP catalogue provenance for an exact retry', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+
+    const first = await store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', catalogueProvenance);
+    const replay = await store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', catalogueProvenance);
+    expect(replay).toEqual(first);
+  }));
+
+  it('compares automated MCP catalogue provenance by explicit fields, not object serialization order', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+    await store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', catalogueProvenance);
+
+    await expect(store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', {
+      digest: catalogueProvenance.digest,
+      tools: [...catalogueProvenance.tools],
+      capabilities: [...catalogueProvenance.capabilities],
+      role: catalogueProvenance.role
+    })).resolves.toEqual({ version: 1, ...catalogueProvenance });
+  }));
+
+  it('rejects changed automated MCP catalogue provenance for an existing slot', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+
+    await store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', catalogueProvenance);
+    await expect(store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-1', {
+      ...catalogueProvenance, digest: 'b'.repeat(64)
+    })).rejects.toThrow('automated MCP catalogue provenance mismatch for slot worker-1');
+  }));
+
+  it('caps automated MCP catalogue provenance slots', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(request())).record;
+    for (let index = 0; index < 100; index++) {
+      await store.recordAutomatedMcpCatalogueProvenance(record.id, `worker-${index}`, catalogueProvenance);
+    }
+    await expect(store.recordAutomatedMcpCatalogueProvenance(record.id, 'worker-overflow', catalogueProvenance))
+      .rejects.toThrow('automated MCP catalogue provenance slot limit reached');
+  }));
+
   it('grants one fixed blocker deadline grace then stops with a durable reason', async () => fixture(async (filePath) => {
     let now = 1_000;
     const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now });
@@ -832,6 +892,23 @@ describe('execution store', () => {
       request: { version: 1, slots: [{ initialTask: 'é'.repeat(Math.floor(MAX_TEAM_INITIAL_TASK_BYTES / 2) + 1) }], resolvedModels: [] }
     })).rejects.toThrow('invalid execution request snapshot');
   }));
+  it('persists bounded automated skill selections in request and launch intent snapshots', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    let record = (await store.claim({
+      ...request(),
+      request: { version: 1, slots: [{ initialTask: 'Run tests', automatedSkillIds: ['zcc:built-in/test'] }], resolvedModels: [] }
+    })).record;
+    expect(record.request.slots[0].automatedSkillIds).toEqual(['zcc:built-in/test']);
+    record = await store.prepareLaunchIntent(record.id, record.stateVersion, {
+      version: 1, authorizationContextDigest: 'sha256:context',
+      slots: [{ slotId: 'slot-1', personaId: 'worker', initialTaskDigest: 'sha256:task', automatedSkillIds: ['zcc:built-in/test'] }]
+    });
+    expect(record.launchIntent?.slots[0].automatedSkillIds).toEqual(['zcc:built-in/test']);
+    await expect(store.claim({
+      ...request(), launchRequestId: 'request-2',
+      request: { version: 1, slots: [{ initialTask: 'Run tests', automatedSkillIds: Array(65).fill('zcc:built-in/test') }], resolvedModels: [] }
+    })).rejects.toThrow('invalid execution request snapshot');
+  }));
   it('defaults generic launch metadata to Team and rejects unknown durable launch kinds', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const claimed = await store.claim({ ...request(), launchDisplay: { label: 'Release execution' }, request: { version: 1, slots: [{ initialTask: 'Run tests' }], resolvedModels: [], launchDisplay: { label: 'Release execution' } } });
@@ -1597,6 +1674,102 @@ describe('execution store', () => {
     });
   }));
 
+  it('persists a user-owned target selector and ownership, and never deletes it (B8)', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const base = request();
+    const claimed = await store.claim({ ...base, request: { ...base.request, target: { kind: 'worktree' as const, branch: 'feat' } } });
+    if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+    expect(claimed.record.request.target).toEqual({ kind: 'worktree', branch: 'feat' });
+    const prepared = await store.setSquadWorktree(claimed.record.id, claimed.record.stateVersion, {
+      path: '/repo/checkouts/feat', branch: 'feat', ownership: 'user', targetKind: 'worktree'
+    });
+    expect(prepared.squadWorktree).toEqual({ path: '/repo/checkouts/feat', branch: 'feat', ownership: 'user', targetKind: 'worktree' });
+    // Same target reattaches idempotently; a managed claim on the same branch is a conflict.
+    await expect(store.setSquadWorktree(prepared.id, prepared.stateVersion, {
+      path: '/repo/checkouts/feat', branch: 'feat', ownership: 'user', targetKind: 'worktree'
+    })).resolves.toMatchObject({ stateVersion: prepared.stateVersion });
+    await expect(store.setSquadWorktree(prepared.id, prepared.stateVersion, { path: '/repo/checkouts/feat', branch: 'feat' }))
+      .rejects.toThrow('squad worktree already differs');
+    const starting = await store.transition(prepared.id, prepared.stateVersion, 'STARTING', 'info', 'Starting');
+    const stopped = await store.transition(starting.id, starting.stateVersion, 'STOPPED', 'info', 'Stopped');
+    await expect(store.disposeSquadWorktree(stopped.id, stopped.stateVersion, 'deleted')).rejects.toThrow('never deleted');
+    await expect(store.disposeSquadWorktree(stopped.id, stopped.stateVersion, 'left')).resolves.toMatchObject({ squadWorktreeDisposition: 'left' });
+
+    const restarted = createExecutionStore({ filePath, id: () => 'other' });
+    await expect(restarted.get(stopped.id)).resolves.toMatchObject({
+      request: { target: { kind: 'worktree', branch: 'feat' } },
+      squadWorktree: { ownership: 'user', targetKind: 'worktree' }
+    });
+  }));
+
+  it('rejects invalid ownership fields and keeps legacy records managed (B8)', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const claimed = await store.claim(request());
+    if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+    const id = claimed.record.id;
+    const version = claimed.record.stateVersion;
+    await expect(store.setSquadWorktree(id, version, { path: '/r', branch: 'b', ownership: 'other' as never })).rejects.toThrow('invalid squad worktree ownership');
+    await expect(store.setSquadWorktree(id, version, { path: '/r', branch: 'b', ownership: 'user' })).rejects.toThrow('invalid squad worktree target kind');
+    const legacy = await store.setSquadWorktree(id, version, { path: '/repo/.worktrees/x', branch: 'zcc/x', ownership: 'managed' });
+    expect(legacy.squadWorktree).toEqual({ path: '/repo/.worktrees/x', branch: 'zcc/x' });
+    expect(isUserOwnedSquadWorktree(legacy.squadWorktree)).toBe(false);
+    expect(isUserOwnedSquadWorktree(undefined)).toBe(false);
+    await expect(store.setSquadWorktree(id, legacy.stateVersion, { path: '/repo/.worktrees/x', branch: 'zcc/x', ownership: 'user', targetKind: 'worktree' }))
+      .rejects.toThrow('squad worktree already differs');
+  }));
+
+  it('validates squad worktree strings and ownership shape on writes', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const claimed = await store.claim(request());
+    if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+    const id = claimed.record.id;
+    const version = claimed.record.stateVersion;
+    const oversized = 'x'.repeat(2_049);
+    for (const value of [
+      { path: '', branch: 'b' },
+      { path: '/r', branch: ' ' },
+      { path: oversized, branch: 'b' },
+      { path: '/r', branch: oversized },
+      { path: '/r', branch: 'b', baseBranch: oversized },
+      { path: '/r', branch: 'b', ownership: 'managed', targetKind: 'worktree' }
+    ] as any[]) {
+      await expect(store.setSquadWorktree(id, version, value)).rejects.toThrow();
+    }
+    await expect(store.setSquadWorktree(id, version, { path: '/r', branch: 'b', baseBranch: ' ' })).rejects.toThrow();
+  }));
+
+  it('rejects malformed persisted squad worktree records on load', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const claimed = await store.claim(request());
+    if (claimed.outcome !== 'claimed') throw new Error('expected claim');
+    const prepared = await store.setSquadWorktree(claimed.record.id, claimed.record.stateVersion, {
+      path: '/repo/.worktrees/x', branch: 'zcc/x'
+    });
+    const invalidRecords = [
+      { path: '', branch: 'b' },
+      { path: '/r', branch: 'b'.repeat(2_049) },
+      { path: '/r', branch: 'b', baseBranch: ' ' },
+      { path: '/r', branch: 'b', ownership: 'other' },
+      { path: '/r', branch: 'b', ownership: 'user' },
+      { path: '/r', branch: 'b', ownership: 'managed', targetKind: 'worktree' }
+    ];
+    for (const squadWorktree of invalidRecords) {
+      const durable = JSON.parse(await readFile(filePath, 'utf8'));
+      durable.records[0].squadWorktree = squadWorktree;
+      await writeFile(filePath, JSON.stringify(durable));
+      await expect(createExecutionStore({ filePath }).get(prepared.id)).rejects.toThrow('corrupt execution store');
+      // Restore a valid file before the next case.
+      durable.records[0].squadWorktree = { path: '/repo/.worktrees/x', branch: 'zcc/x' };
+      await writeFile(filePath, JSON.stringify(durable));
+    }
+  }));
+
+  it('refuses to persist an invalid target selector snapshot (B8)', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const base = request();
+    await expect(store.claim({ ...base, request: { ...base.request, target: { kind: 'path', path: '/tmp' } as never } })).rejects.toThrow();
+  }));
+
   it('refuses to dismiss active executions', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const claimed = await store.claim(request());
@@ -2056,5 +2229,63 @@ describe('execution store dispatchReady (engine-cascade auto-assign)', () => {
     ]);
     expect((await deliveryStore.dispatchReady(delivery.id, { enforceRouting: true })).assignments)
       .toEqual([expect.objectContaining({ workUnitId: 'review', slotId: '1:builtin:squad-worker-high:0' })]);
+  }));
+});
+
+describe('local Composer durable report mark', () => {
+  const local = (over: Record<string, unknown> = {}) => ({ ...request(), callerPrincipalId: 'interactive:local', ...over });
+  async function terminal(store: ReturnType<typeof createExecutionStore>, input: ReturnType<typeof local>) {
+    let record = (await store.claim(input as never)).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    return store.transition(record.id, record.stateVersion, 'STOPPED', 'info', 'stop');
+  }
+
+  it('flags only target-less local claims', async () => fixture(async (filePath) => {
+    let n = 0;
+    const store = createExecutionStore({ filePath, id: () => `e-${++n}` });
+    expect((await store.claim(local({ launchRequestId: 'a' }) as never)).record.localReport).toBe(true);
+    expect((await store.claim(request() as never)).record.localReport).toBeUndefined();
+    expect((await store.claim(local({ launchRequestId: 'c', reportTo: { kind: 'pty', id: 's', role: 'owner' } }) as never)).record.localReport).toBeUndefined();
+  }));
+
+  it('lists an unmarked terminal local run, marks it atomically, and survives reload without re-listing', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'e-1' });
+    const stopped = await terminal(store, local());
+    expect((await store.listUnreportedExecutions()).map((r) => r.id)).toEqual(['e-1']);
+    await expect(store.markReported('e-1', stopped.attempt + 1)).rejects.toThrow('stale execution attempt');
+    const marked = await store.markReported('e-1', stopped.attempt);
+    expect(marked.reportNoticeVersion).toBe(stopped.attempt);
+    expect(marked.proposalNoticeVersion).toBeUndefined();
+    expect(marked.stateVersion).toBe(stopped.stateVersion);
+    expect(await store.markReported('e-1', stopped.attempt)).toEqual(marked);
+    const reloaded = createExecutionStore({ filePath });
+    expect(await reloaded.listUnreportedExecutions()).toEqual([]);
+    expect((await reloaded.get('e-1'))?.localReport).toBe(true);
+  }));
+
+  it('does not list non-terminal runs, legacy local runs without the flag, or plan-correction stops', async () => fixture(async (filePath) => {
+    let n = 0;
+    const store = createExecutionStore({ filePath, id: () => `e-${++n}` });
+    await store.claim(local({ launchRequestId: 'live' }) as never);
+    const legacy = await terminal(store, local({ launchRequestId: 'legacy' }));
+    const corrected = await store.claim(local({ launchRequestId: 'pc' }) as never);
+    await store.stopForPlanCorrection(corrected.record.id);
+    const durable = JSON.parse(await readFile(filePath, 'utf8'));
+    delete durable.records.find((r: { id: string }) => r.id === legacy.id).localReport;
+    await writeFile(filePath, JSON.stringify(durable));
+    const reloaded = createExecutionStore({ filePath });
+    expect(await reloaded.listUnreportedExecutions()).toEqual([]);
+    await expect(reloaded.markReported(legacy.id, legacy.attempt)).rejects.toThrow('terminal report target is unavailable');
+    await expect(reloaded.markReported(corrected.record.id, 1)).rejects.toThrow('terminal report target is unavailable');
+  }));
+
+  it('rejects a malformed localReport on load', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'e-1' });
+    await store.claim(local() as never);
+    const durable = JSON.parse(await readFile(filePath, 'utf8'));
+    durable.records[0].localReport = false;
+    await writeFile(filePath, JSON.stringify(durable));
+    await expect(createExecutionStore({ filePath }).get('e-1')).rejects.toThrow('corrupt execution store');
   }));
 });

@@ -11,6 +11,9 @@ vi.mock('./plugin-slots.js', () => ({
 
 import {
   onPluginPanelToolRequest,
+  onPluginPanelScopeRequest,
+  parsePluginPanelScope,
+  requestPluginPanelScope,
   PANEL_TOOL_TITLE_MAX_LENGTH,
   PluginPagePanelProvider,
   requestPluginPanelTool,
@@ -123,5 +126,56 @@ describe('requestPluginPanelTool', () => {
     window.dispatchEvent(new CustomEvent('zcc:plugin-panel-tool-open'));
     expect(show).not.toHaveBeenCalled();
     off();
+  });
+});
+
+
+describe('plugin page resource scopes', () => {
+  it('accepts a bounded identity, optional recorded view, or an explicit reset', () => {
+    expect(parsePluginPanelScope({ id: 'agents/support.agent', view: 'agents/support.agent' })).toEqual({ id: 'agents/support.agent', view: 'agents/support.agent' });
+    expect(parsePluginPanelScope({ id: 'a', view: 'v'.repeat(500) })?.view).toHaveLength(500);
+    expect(parsePluginPanelScope({ id: 'a' })).toEqual({ id: 'a' });
+    expect(parsePluginPanelScope(null)).toBeNull();
+    for (const value of [undefined, [], {}, 'a', { id: 1 }, { id: ' ' }, { id: 'a'.repeat(4097) }, { id: 'a\n' }, { id: 'a', view: ' ' }, { id: 'a', view: 1 }, { id: 'a', view: 'v'.repeat(501) }, { id: 'a', view: 'a\u0000b' }]) {
+      expect(parsePluginPanelScope(value)).toBeUndefined();
+    }
+  });
+
+  it('routes changes only to the enclosing page and ignores malformed events', () => {
+    const ownPage = { ...page };
+    const otherPage = { ...page };
+    const show = vi.fn();
+    const other = vi.fn();
+    const off = onPluginPanelScopeRequest(ownPage, show);
+    const offOther = onPluginPanelScopeRequest(otherPage, other);
+    expect(show).toHaveBeenCalledWith(null);
+    show.mockClear(); other.mockClear();
+    expect(requestPluginPanelScope('salesforce', { id: 'a' }, ownPage)).toBe(true);
+    expect(show).toHaveBeenCalledWith({ id: 'a' });
+    expect(other).not.toHaveBeenCalled();
+    expect(requestPluginPanelScope('gus', { id: 'a' }, ownPage)).toBe(false);
+    expect(requestPluginPanelScope('salesforce', { id: 'a' })).toBe(false);
+    expect(requestPluginPanelScope('salesforce', { id: '' }, ownPage)).toBe(false);
+    window.dispatchEvent(new CustomEvent('zcc:plugin-panel-scope'));
+    window.dispatchEvent(new CustomEvent('zcc:plugin-panel-scope', { detail: { page: ownPage, scope: { id: '' } } }));
+    expect(show).toHaveBeenCalledTimes(1);
+    expect(requestPluginPanelScope('salesforce', null, ownPage)).toBe(true);
+    expect(show).toHaveBeenLastCalledWith(null);
+    off(); offOther();
+    expect(requestPluginPanelScope('salesforce', { id: 'b' }, ownPage)).toBe(false);
+  });
+
+  it('remembers a selection published by the plugin before its host subscribes', () => {
+    const earlyPage = { ...page };
+    requestPluginPanelScope('salesforce', { id: 'a', view: 'a' }, earlyPage);
+    const show = vi.fn();
+    const off = onPluginPanelScopeRequest(earlyPage, show);
+    expect(show).toHaveBeenCalledWith({ id: 'a', view: 'a' });
+    off();
+    // A later selection replaces the earlier one rather than accumulating state.
+    requestPluginPanelScope('salesforce', null, earlyPage);
+    const offReset = onPluginPanelScopeRequest(earlyPage, show);
+    expect(show).toHaveBeenLastCalledWith(null);
+    offReset();
   });
 });

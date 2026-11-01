@@ -26,8 +26,16 @@ export function projectFileRoot(ctx: ProductHttpContext, scope: ProjectFileScope
   if (!project) throw new ProjectFsError(404, 'unknown-project', 'project is not registered');
   if (scope.environmentId) {
     const environment = getEnvironment(ctx.db, scope.environmentId);
-    if (!environment || environment.projectId !== project.id || environment.hostId !== scope.hostId || !environment.path || environment.status !== 'ready') {
+    if (!environment || environment.projectId !== project.id || environment.hostId !== scope.hostId || !environment.path) {
       throw new ProjectFsError(409, 'environment-unavailable', 'environment does not belong to this project and machine');
+    }
+    if (environment.status !== 'ready') {
+      const message = environment.status === 'provisioning'
+        ? 'Environment preparation is still in progress'
+        : environment.status === 'failed'
+          ? 'Environment preparation failed. Create a new worktree or choose another checkout.'
+          : `Environment is unavailable (${environment.status})`;
+      throw new ProjectFsError(409, 'environment-unavailable', message);
     }
     return { root: environment.path, hostId: scope.hostId };
   }

@@ -50,7 +50,7 @@ export interface StartStaticHostOptions {
    * `/plugins/:id/assets/*`, the host asks this callback for the plugin root
    * and serves a contained file from that tree (never the host-daemon).
    */
-  pluginAssetRoot?: (pluginId: string) => string | null;
+  pluginAssetRoot?: (pluginId: string, assetPath: string) => string | null;
   /**
    * Loopback product API + `/ws` (renderer) and `/internal/hosts` (daemon enroll).
    * Origin-guarded; host-daemon tokens never reach the renderer.
@@ -367,7 +367,12 @@ export async function startStaticHost(options: StartStaticHostOptions): Promise<
     expectedOrigin = url.slice(0, -1);
     if (options.product) {
       options.product.origins.serverPort = address.port;
-      unregister = await registerBoundLocalPeerApp(server, options.product.dataDir, options.product.productInstanceId);
+      // Peers are optional: a failed endpoint registration leaves peer forwarding off, never the core server.
+      try {
+        unregister = await registerBoundLocalPeerApp(server, options.product.dataDir, options.product.productInstanceId);
+      } catch (error) {
+        console.warn(`[zcc] local peer app registration failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
       // SSH reverse tunnels target this allowlist-only port. Without it, tunnel
       // installs and reopens fail closed; they never expose serverPort.
       try {

@@ -8,9 +8,11 @@ import {
   readRawFile
 } from '../harness-routing/storage.js';
 import type { WorkflowPolicyResultV1 } from './policy-result.js';
-import { EXECUTION_FAILURE_CODES, isDurableCoordination } from '@zana-ai/zcc-domain/product';
+import { EXECUTION_FAILURE_CODES, isDurableCoordination, isSquadExecutionTargetSelector } from '@zana-ai/zcc-domain/product';
+import type { SquadExecutionTargetSelector, SquadWorktreeOwnership } from '@zana-ai/zcc-domain/product';
 import type { ExecutionFailureCode, ExecutionSourceSnapshot, TeamLaunchAuthorizationContextV1 } from '@zana-ai/zcc-domain/product';
 import type { SquadBundleWorkflowMetadataV1, TeamLaunchAuthorizationInputSlot, TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
+import { SQUAD_GOAL_MAX_CHARS, SQUAD_SUMMARY_MAX_CHARS, squadStoredFieldTooLong } from '@zana-ai/zcc-domain/squad-proposal';
 import { MAX_TEAM_INITIAL_TASK_BYTES } from '../launch/team-lifecycle-store.js';
 import { normalizeExecutionPlan } from '../launch/preflight.js';
 import type { ExecutionDatabase } from '@zana-ai/zcc-db';
@@ -81,6 +83,91 @@ export class WorkUnitRecoveryGuardError extends Error {
     super(message);
     this.name = 'WorkUnitRecoveryGuardError';
   }
+}
+
+/** Ordered steps of Zana's automatic recovery of a worker that stopped on an API error. */
+export const WORKER_RECOVERY_STEPS = ['waiting', 'nudged', 'restarted', 'resumed', 'restart-failed', 'exhausted'] as const;
+export type WorkerRecoveryStep = typeof WORKER_RECOVERY_STEPS[number];
+
+const MAX_RECOVERY_KIND = 64;
+const MAX_RECOVERY_TEXT = 500;
+const MAX_RECOVERY_DETAIL = 300;
+const MAX_RECOVERY_STEPS = 8;
+/** Length of the last-error excerpt quoted in the blocker question. */
+const MAX_BLOCKER_ERROR_EXCERPT = 300;
+
+/** Steps at which Zana is still working through the ladder: the claim is held and the board shows it. */
+const LIVE_RECOVERY_STEPS: ReadonlySet<WorkerRecoveryStep> = new Set(['waiting', 'nudged', 'restarted']);
+/** Unfinished steps the blocker may close: the live ones plus a failed restart ('resumed' and 'exhausted' are finished). */
+const BLOCKABLE_RECOVERY_STEPS: ReadonlySet<WorkerRecoveryStep> = new Set([...LIVE_RECOVERY_STEPS, 'restart-failed']);
+
+/** Durable record of one claim's API-error recovery; only meaningful while it names the unit's current claim. */
+export interface WorkerApiErrorRecovery {
+  claimId: string;
+  claimGeneration: number;
+  slotId: string;
+  executionAttempt: number;
+  step: WorkerRecoveryStep;
+  errorKind?: string;
+  errorText?: string;
+  startedAt: number;
+  updatedAt: number;
+  deadlineAt?: number;
+  steps: Array<{ step: WorkerRecoveryStep; at: number; detail?: string }>;
+}
+
+export interface RecordWorkerRecoveryInput {
+  workUnitId: string;
+  claimId: string;
+  claimGeneration: number;
+  slotId: string;
+  step: WorkerRecoveryStep;
+  errorKind?: string;
+  errorText?: string;
+  deadlineAt?: number;
+  detail?: string;
+  severity: 'info' | 'warning';
+  summary: string;
+}
+
+/** Steps at which a recovery is unfinished: a 'resumed' or 'exhausted' recovery must not be blocked as unrecovered. */
+function isWorkerRecoveryActiveStep(step: WorkerRecoveryStep): boolean {
+  return BLOCKABLE_RECOVERY_STEPS.has(step);
+}
+
+/** True while Zana is still recovering the unit's CURRENT claim (not a stale or finished attempt). */
+export function isWorkerRecoveryActive(unit: ExecutionWorkUnit): boolean {
+  const recovery = unit.apiErrorRecovery;
+  return unit.state === 'CLAIMED' && recovery !== undefined && unit.claimId !== undefined
+    && recovery.claimId === unit.claimId && recovery.claimGeneration === unit.claimGeneration
+    && LIVE_RECOVERY_STEPS.has(recovery.step);
+}
+
+/** {@link isWorkerRecoveryActive} and before its deadline: past it nothing more will be tried, so ordinary reclaim applies. */
+export function isWorkerRecoveryLive(unit: ExecutionWorkUnit, now: number): boolean {
+  const deadlineAt = unit.apiErrorRecovery?.deadlineAt;
+  return isWorkerRecoveryActive(unit) && deadlineAt !== undefined && now < deadlineAt;
+}
+
+/** Local HH:MM used in blocker text that tells a human when recovery was tried. */
+export function formatRecoveryClock(at: number): string {
+  const date = new Date(at);
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function validWorkerApiErrorRecovery(value: unknown): value is WorkerApiErrorRecovery {
+  if (!value || typeof value !== 'object') return false;
+  const recovery = value as Partial<WorkerApiErrorRecovery>;
+  const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
+  return validString(recovery.claimId) && validNonNegativeInteger(recovery.claimGeneration) && validString(recovery.slotId)
+    && validNonNegativeInteger(recovery.executionAttempt)
+    && (WORKER_RECOVERY_STEPS as readonly unknown[]).includes(recovery.step)
+    && (recovery.errorKind === undefined || validString(recovery.errorKind) && recovery.errorKind.length <= MAX_RECOVERY_KIND)
+    && (recovery.errorText === undefined || validString(recovery.errorText) && recovery.errorText.length <= MAX_RECOVERY_TEXT)
+    && finite(recovery.startedAt) && finite(recovery.updatedAt) && (recovery.deadlineAt === undefined || finite(recovery.deadlineAt))
+    && Array.isArray(recovery.steps) && recovery.steps.length <= MAX_RECOVERY_STEPS
+    && recovery.steps.every((entry) => !!entry && (WORKER_RECOVERY_STEPS as readonly unknown[]).includes(entry.step)
+      && finite(entry.at) && (entry.detail === undefined || validString(entry.detail) && entry.detail.length <= MAX_RECOVERY_DETAIL));
 }
 
 /** Backend-neutral label captured with a durable execution request. */
@@ -156,6 +243,8 @@ export interface ExecutionWorkUnit extends ExecutionWorkUnitInput {
    * completeWork}. Runtime-only (stripped by {@link stripWorkUnitState}).
    */
   reclaimedClaim?: { slotId: string; claimId: string; claimGeneration: number };
+  /** Zana's API-error recovery of this unit's worker; inactive once the claim changes ({@link isWorkerRecoveryActive}). */
+  apiErrorRecovery?: WorkerApiErrorRecovery;
   attempt: number;
   failureCode?: ExecutionFailureCode;
   failure?: string;
@@ -282,6 +371,8 @@ export interface ExecutionRecord {
   recoveryDeadlineAt?: number;
   /** Trusted-host capture only. Never contains a session token or transcript. */
   nativeRecoverySnapshots?: ExecutionNativeRecoverySnapshotV1[];
+  /** Immutable trusted-host MCP catalogue attestation, keyed by execution slot. */
+  automatedMcpCatalogueProvenance?: Record<string, ExecutionSlotMcpCatalogueProvenanceV1>;
   workUnits?: ExecutionWorkUnit[];
   blockers?: ExecutionBlocker[];
   deliveries?: ExecutionDeliveryRecord[];
@@ -320,6 +411,11 @@ export interface ExecutionRecord {
   proposalNoticeVersion?: number;
   /** Blockers already reported to `reportTo`, so a restart neither repeats nor drops one. Newest last, at most {@link MAX_REPORTED_BLOCKER_IDS}. */
   reportedBlockerIds?: string[];
+  /**
+   * Set at claim on a local Composer run (principal {@link LOCAL_COMPOSER_PRINCIPAL}, no report target) so its
+   * terminal Inbox result can be marked reported durably. Absent on older records, which are never replayed.
+   */
+  localReport?: true;
   createdAt: number;
   updatedAt: number;
   /** User hid terminal history from board; durable evidence remains retained. */
@@ -346,6 +442,14 @@ export function executionReportTarget(record: Pick<ExecutionRecord, 'reportTo' |
   } : undefined;
 }
 
+/** Principal of a run launched from the local Composer (no proposer, no `reportTo`). */
+export const LOCAL_COMPOSER_PRINCIPAL = 'interactive:local';
+
+/** A local Composer run whose terminal result is tracked by the durable reported mark. A plan-correction stop is not a result. */
+export function isLocalReportRecord(record: Pick<ExecutionRecord, 'localReport' | 'reportTo' | 'proposal' | 'timeoutReason'>): boolean {
+  return record.localReport === true && !executionReportTarget(record) && record.timeoutReason !== 'plan-correction-cancelled';
+}
+
 /** The attempt whose terminal report was handled, under either key. */
 export function reportedAttempt(record: Pick<ExecutionRecord, 'reportNoticeVersion' | 'proposalNoticeVersion'>): number | undefined {
   return record.reportNoticeVersion ?? record.proposalNoticeVersion;
@@ -366,8 +470,17 @@ export interface ExecutionNativeRecoverySnapshotV1 {
   capturedAt: number;
 }
 
+/** Trusted host's frozen automated MCP tool surface for one execution member. */
+export interface ExecutionSlotMcpCatalogueProvenanceV1 {
+  version: 1;
+  role: 'worker' | 'orchestrator';
+  capabilities: string[];
+  tools: string[];
+  digest: string;
+}
+
 export type ExecutionClaimInput = Omit<ExecutionRecord,
-  'id' | 'teamLaunchRequestId' | 'attempt' | 'attemptStartedAt' | 'state' | 'stateVersion' | 'reportNoticeVersion' | 'proposalNoticeVersion' | 'reportedBlockerIds' | 'createdAt' | 'updatedAt' | 'workUnits' | 'blockers'
+  'id' | 'teamLaunchRequestId' | 'attempt' | 'attemptStartedAt' | 'state' | 'stateVersion' | 'reportNoticeVersion' | 'proposalNoticeVersion' | 'reportedBlockerIds' | 'localReport' | 'createdAt' | 'updatedAt' | 'workUnits' | 'blockers' | 'automatedMcpCatalogueProvenance'
 > & { workUnits?: ExecutionWorkUnitInput[] };
 
 export interface ExecutionRequestSnapshotV1 {
@@ -386,8 +499,10 @@ export interface ExecutionRequestSnapshotV1 {
   /** Explicit execution API override. Undefined defers to project then Team defaults. */
   worktree?: boolean;
   onComplete?: 'leave' | 'merge' | 'delete';
-  /** Opt-in terminal inbox notice for runs without an owner report target. */
-  completionInboxNotice?: boolean;
+    /** Opt-in terminal inbox notice for runs without an owner report target. */
+    completionInboxNotice?: boolean;
+    /** Trusted selector for an existing user-owned target; absent keeps the legacy generated-worktree flag. */
+    target?: SquadExecutionTargetSelector;
 }
 
 /** Minimal durable identity for one shared squad checkout. */
@@ -395,6 +510,18 @@ export interface SquadWorktreeRecord {
   path: string;
   branch: string;
   baseBranch?: string;
+  /**
+   * Lifecycle owner. Absent on records written before selectors existed: only the
+   * generated-worktree path wrote those, so absent is read as `managed`.
+   */
+  ownership?: SquadWorktreeOwnership;
+  /** Selector kind that resolved a user-owned target. */
+  targetKind?: SquadExecutionTargetSelector['kind'];
+}
+
+/** A user-owned target is never deleted, merged, branched, cleaned, reset, or force-deleted. */
+export function isUserOwnedSquadWorktree(worktree: SquadWorktreeRecord | undefined): boolean {
+  return worktree?.ownership === 'user';
 }
 
 export interface ExecutionPolicyV1 extends NonNullable<TeamLaunchRequestInput['policy']> {
@@ -413,7 +540,7 @@ export interface ExecutionPolicyV1 extends NonNullable<TeamLaunchRequestInput['p
 export interface ExecutionLaunchIntentV1 {
   version: 1;
   authorizationContextDigest: string;
-  slots: Array<{ slotId: string; personaId: string; initialTaskDigest: string }>;
+  slots: Array<{ slotId: string; personaId: string; initialTaskDigest: string; automatedSkillIds?: string[] }>;
   preparedAt: number;
 }
 
@@ -533,6 +660,8 @@ export const MAX_REPORTED_BLOCKER_IDS = 100;
 const MAX_UNIT_LIST = 100;
 const MAX_DELIVERIES_PER_EXECUTION = 128;
 const MAX_COORDINATOR_WAKES = 100;
+const MAX_AUTOMATED_MCP_CATALOGUE_SLOTS = 100;
+const MAX_AUTOMATED_MCP_CATALOGUE_TOOLS = 32;
 export const MAX_USAGE_OBSERVATIONS_PER_EXECUTION = 1_000;
 export const MAX_ROUTING_DECISIONS_PER_EXECUTION = 256;
 const MAX_DELIVERY_TEXT_BYTES = 16 * 1024;
@@ -595,6 +724,19 @@ function validNoticeIntent(intent: unknown): intent is ExecutionNoticeIntent {
     && typeof value.createdAt === 'number' && typeof value.updatedAt === 'number';
 }
 
+function validSquadWorktree(value: unknown): value is SquadWorktreeRecord {
+  if (!value || typeof value !== 'object') return false;
+  const worktree = value as Partial<SquadWorktreeRecord>;
+  return hasOnlyKeys(value as Record<string, unknown>, ['path', 'branch', 'baseBranch', 'ownership', 'targetKind'])
+    && validString(worktree.path) && worktree.path.trim().length > 0
+    && validString(worktree.branch) && worktree.branch.trim().length > 0
+    && (worktree.baseBranch === undefined || validString(worktree.baseBranch) && worktree.baseBranch.trim().length > 0)
+    && (worktree.ownership === undefined || worktree.ownership === 'managed' || worktree.ownership === 'user')
+    && (worktree.ownership === 'user'
+      ? worktree.targetKind === 'project-root' || worktree.targetKind === 'worktree'
+      : worktree.targetKind === undefined);
+}
+
 function validRecord(value: unknown): value is ExecutionRecord {
   if (!value || typeof value !== 'object') return false;
   const record = value as Partial<ExecutionRecord>;
@@ -613,12 +755,14 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.authorizationContext === undefined || validAuthorizationContext(record.authorizationContext))
     && (record.authorizationContextDigest === undefined || validString(record.authorizationContextDigest))
     && (record.launchIntent === undefined || validLaunchIntent(record.launchIntent))
+    && (record.squadWorktree === undefined || validSquadWorktree(record.squadWorktree))
     && (record.policyResult === undefined || validPolicyResult(record.policyResult))
     && (record.effectiveOwnerPrincipalIds === undefined || Array.isArray(record.effectiveOwnerPrincipalIds) && record.effectiveOwnerPrincipalIds.every(validString))
     && (record.recoveryGeneration === undefined || Number.isInteger(record.recoveryGeneration) && record.recoveryGeneration >= 0)
     && (record.recoveryDeadlineAt === undefined || typeof record.recoveryDeadlineAt === 'number' && Number.isFinite(record.recoveryDeadlineAt))
     && (record.terminalWorktreeEffectsStateVersion === undefined || validNonNegativeInteger(record.terminalWorktreeEffectsStateVersion))
     && (record.nativeRecoverySnapshots === undefined || Array.isArray(record.nativeRecoverySnapshots) && record.nativeRecoverySnapshots.length <= 100 && record.nativeRecoverySnapshots.every(validNativeRecoverySnapshot))
+    && (record.automatedMcpCatalogueProvenance === undefined || validAutomatedMcpCatalogueProvenanceMap(record.automatedMcpCatalogueProvenance))
     && (record.workUnits === undefined || Array.isArray(record.workUnits) && record.workUnits.length <= MAX_WORK_UNITS && record.workUnits.every(validWorkUnit))
     && (record.blockers === undefined || Array.isArray(record.blockers) && record.blockers.length <= MAX_WORK_UNITS && record.blockers.every(validExecutionBlocker))
     && (record.deliveries === undefined || Array.isArray(record.deliveries) && record.deliveries.length <= MAX_DELIVERIES_PER_EXECUTION && record.deliveries.every(validExecutionDelivery))
@@ -643,6 +787,7 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.proposal === undefined || validProposal(record.proposal))
     && (record.reportTo === undefined || validReportTarget(record.reportTo))
     && (record.reportNoticeVersion === undefined || validNonNegativeInteger(record.reportNoticeVersion))
+    && (record.localReport === undefined || record.localReport === true)
     && (record.proposalNoticeVersion === undefined || validNonNegativeInteger(record.proposalNoticeVersion))
     && (record.reportedBlockerIds === undefined || Array.isArray(record.reportedBlockerIds) && record.reportedBlockerIds.length <= MAX_REPORTED_BLOCKER_IDS && record.reportedBlockerIds.every(validString))
     && typeof record.createdAt === 'number' && typeof record.updatedAt === 'number'
@@ -660,6 +805,41 @@ function validNativeRecoverySnapshot(value: unknown): value is ExecutionNativeRe
     && (snapshot.personaId !== undefined || snapshot.profileId !== undefined)
     && validString(snapshot.nativeConversationId)
     && typeof snapshot.capturedAt === 'number' && Number.isFinite(snapshot.capturedAt);
+}
+
+function validAutomatedMcpCatalogueProvenanceMap(value: unknown): value is Record<string, ExecutionSlotMcpCatalogueProvenanceV1> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const entries = Object.entries(value);
+  return entries.length <= MAX_AUTOMATED_MCP_CATALOGUE_SLOTS
+    && entries.every(([slotId, provenance]) => validString(slotId) && validAutomatedMcpCatalogueProvenance(provenance));
+}
+
+function validAutomatedMcpCatalogueProvenance(value: unknown): value is ExecutionSlotMcpCatalogueProvenanceV1 {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const provenance = value as Partial<ExecutionSlotMcpCatalogueProvenanceV1>;
+  return hasOnlyKeys(value as Record<string, unknown>, ['version', 'role', 'capabilities', 'tools', 'digest'])
+    && provenance.version === 1 && (provenance.role === 'worker' || provenance.role === 'orchestrator')
+    && Array.isArray(provenance.capabilities) && provenance.capabilities.length <= MAX_AUTOMATED_MCP_CATALOGUE_TOOLS
+    && provenance.capabilities.every(validString)
+    && Array.isArray(provenance.tools) && provenance.tools.length <= MAX_AUTOMATED_MCP_CATALOGUE_TOOLS
+    && provenance.tools.every(validString) && validSha256Hex(provenance.digest);
+}
+
+function equalAutomatedMcpCatalogueProvenance(
+  left: ExecutionSlotMcpCatalogueProvenanceV1,
+  right: ExecutionSlotMcpCatalogueProvenanceV1
+): boolean {
+  return left.version === right.version
+    && left.role === right.role
+    && left.digest === right.digest
+    && left.capabilities.length === right.capabilities.length
+    && left.capabilities.every((capability, index) => capability === right.capabilities[index])
+    && left.tools.length === right.tools.length
+    && left.tools.every((tool, index) => tool === right.tools[index]);
+}
+
+function validSha256Hex(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 }
 
 function validWorkUnit(value: unknown): value is ExecutionWorkUnit {
@@ -692,6 +872,7 @@ function validWorkUnit(value: unknown): value is ExecutionWorkUnit {
       && unit.noProgressSlots.every((entry) => validString(entry.slotId) && validNonNegativeInteger(entry.executionAttempt)
         && validNonNegativeInteger(entry.unitAttempt) && validNonNegativeInteger(entry.claimGeneration)
         && isNoProgressReason(entry.reason) && typeof entry.reclaimedAt === 'number' && Number.isFinite(entry.reclaimedAt)))
+    && (unit.apiErrorRecovery === undefined || validWorkerApiErrorRecovery(unit.apiErrorRecovery))
     && (unit.failureCode === undefined || failureCodes.has(unit.failureCode))
     && (unit.failure === undefined || validString(unit.failure)) && (unit.result === undefined || validString(unit.result))
     && (unit.structuredResult === undefined || validStructuredJson(unit.structuredResult))
@@ -740,6 +921,7 @@ function resetRetainedWork(record: ExecutionRecord): void {
     unit.structuredResult = undefined;
     unit.reclaimedClaim = undefined;
     unit.noProgressSlots = undefined;
+    unit.apiErrorRecovery = undefined;
   }
   record.blockers = [];
   record.deliveries = [];
@@ -883,6 +1065,7 @@ function validUsageObservation(value: unknown): value is ExecutionUsageObservati
     && ['delivery', 'heartbeat', 'outcome', 'reclaim', 'terminal'].includes(observation.sampleKind ?? '')
     && validNonNegativeInteger(observation.sequence) && validString(observation.provider)
     && (observation.model === undefined || validString(observation.model)) && validString(observation.routingIdentity)
+    && (observation.contextTokens === undefined || validNonNegativeInteger(observation.contextTokens))
     && validUsageCounters(observation.cumulative) && validUsageCounters(observation.delta)
     && (observation.completeness === 'complete' || observation.completeness === 'partial' || observation.completeness === 'unavailable')
     && typeof observation.observedAt === 'number' && Number.isFinite(observation.observedAt)
@@ -969,15 +1152,23 @@ function validRequestSnapshot(value: unknown): value is ExecutionRequestSnapshot
     && (request.launchDisplay === undefined || validLaunchDisplay(request.launchDisplay))
     && Array.isArray(request.slots) && request.slots.length > 0
     && request.slots.every((slot) => !!slot && typeof slot === 'object'
-      && validUtf8String((slot as { initialTask?: unknown }).initialTask, MAX_TEAM_INITIAL_TASK_BYTES))
+      && validUtf8String((slot as { initialTask?: unknown }).initialTask, MAX_TEAM_INITIAL_TASK_BYTES)
+      && ((slot as { automatedSkillIds?: unknown }).automatedSkillIds === undefined
+        || validAutomatedSkillIds((slot as { automatedSkillIds?: unknown }).automatedSkillIds)))
     && Array.isArray(request.resolvedModels) && request.resolvedModels.every(validModelSnapshot)
     && (request.objective === undefined || validString(request.objective))
     && (request.worktree === undefined || typeof request.worktree === 'boolean')
     && (request.onComplete === undefined || ['leave', 'merge', 'delete'].includes(request.onComplete))
     && (request.completionInboxNotice === undefined || typeof request.completionInboxNotice === 'boolean')
+    && (request.target === undefined || isSquadExecutionTargetSelector(request.target))
     && (request.sourceBundle === undefined || validSourceBundle(request.sourceBundle))
     && (request.policy === undefined || validExecutionPolicy(request.policy))
     && (request.workflow === undefined || typeof request.workflow === 'object');
+}
+
+function validAutomatedSkillIds(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length <= 64
+    && value.every((skillId) => typeof skillId === 'string' && skillId.length > 0 && skillId.length <= 256);
 }
 
 function validSourceBundle(value: unknown): boolean {
@@ -1031,7 +1222,9 @@ function validLaunchIntent(value: unknown): value is ExecutionLaunchIntentV1 {
     && Array.isArray(intent.slots) && intent.slots.every((slot) => !!slot && typeof slot === 'object'
       && validString((slot as { slotId?: unknown }).slotId)
       && validString((slot as { personaId?: unknown }).personaId)
-      && validString((slot as { initialTaskDigest?: unknown }).initialTaskDigest));
+      && validString((slot as { initialTaskDigest?: unknown }).initialTaskDigest)
+      && ((slot as { automatedSkillIds?: unknown }).automatedSkillIds === undefined
+        || validAutomatedSkillIds((slot as { automatedSkillIds?: unknown }).automatedSkillIds)));
 }
 
 function validEvent(value: unknown): value is ExecutionEvent {
@@ -1262,6 +1455,9 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   async function claim(input: ExecutionClaimInput) {
     if (input.launchKind !== undefined && input.launchKind !== 'team') throw new Error('invalid execution launch kind');
     const request = normalizeRequest(input.request);
+    if (typeof input.summary === 'string' && input.summary.length > SQUAD_SUMMARY_MAX_CHARS) {
+      throw new Error(squadStoredFieldTooLong('summary', input.summary.length));
+    }
     const workUnits = input.workUnits === undefined ? undefined : normalizePlan(input.workUnits, isDurableCoordination(input.coordinationMode));
     if (input.launchKind !== undefined && input.launchKind !== request.launchKind) {
       throw new Error('execution launch kind disagrees with request snapshot');
@@ -1297,6 +1493,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         ...(input.reportTo.title === undefined ? {} : { title: string(input.reportTo.title, 'report target title') })
       } } : {})
     };
+    const localReport = !bounded.reportTo && !bounded.proposal && bounded.callerPrincipalId === LOCAL_COMPOSER_PRINCIPAL;
     return storeQueue.run(async () => {
       const snapshot = read();
       const existing = snapshot.state.records.find((record) =>
@@ -1311,7 +1508,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       }
       const timestamp = now();
       const record: ExecutionRecord = {
-        ...bounded, id: string(id(), 'id'), teamLaunchRequestId: bounded.launchRequestId, attempt: 1, attemptStartedAt: timestamp, state: 'READY', stateVersion: 0, lastEventSequence: 0,
+        ...bounded, ...(localReport ? { localReport: true as const } : {}), id: string(id(), 'id'), teamLaunchRequestId: bounded.launchRequestId, attempt: 1, attemptStartedAt: timestamp, state: 'READY', stateVersion: 0, lastEventSequence: 0,
         deliveries: [], noticeIntents: [], recoveryGeneration: 0, recoveryDeadlineAt: timestamp + EXECUTION_RECOVERY_TTL_MS, createdAt: timestamp, updatedAt: timestamp
       };
       snapshot.state.records.push(record);
@@ -1382,18 +1579,37 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
       if (!record) throw new Error('execution not found');
       if (record.stateVersion !== expectedStateVersion) throw new Error('stale execution state');
+      if (!squadWorktree || typeof squadWorktree !== 'object'
+        || !hasOnlyKeys(squadWorktree as unknown as Record<string, unknown>, ['path', 'branch', 'baseBranch', 'ownership', 'targetKind'])) {
+        throw new Error('invalid squad worktree record');
+      }
       const reattachingWorktree = record.squadWorktree !== undefined;
+      const ownership = squadWorktree.ownership ?? 'managed';
+      if (ownership !== 'managed' && ownership !== 'user') throw new Error('invalid squad worktree ownership');
+      if (ownership === 'user' && squadWorktree.targetKind !== 'project-root' && squadWorktree.targetKind !== 'worktree') {
+        throw new Error('invalid squad worktree target kind');
+      }
+      if (ownership === 'managed' && squadWorktree.targetKind !== undefined) throw new Error('invalid squad worktree target kind');
+      const path = string(squadWorktree.path, 'squad worktree path');
+      const branch = string(squadWorktree.branch, 'squad worktree branch');
+      if (!path.trim() || !branch.trim()) throw new Error('invalid squad worktree record');
+      const baseBranch = squadWorktree.baseBranch === undefined
+        ? undefined
+        : string(squadWorktree.baseBranch, 'squad worktree base branch');
+      if (baseBranch !== undefined && !baseBranch.trim()) throw new Error('invalid squad worktree record');
       if (record.squadWorktree) {
-        if (record.squadWorktree.branch !== squadWorktree.branch) {
+        if (record.squadWorktree.branch !== branch
+          || (record.squadWorktree.ownership ?? 'managed') !== ownership) {
           throw new Error('squad worktree already differs');
         }
-        if (record.squadWorktree.path === squadWorktree.path &&
-          (record.squadWorktree.baseBranch || !squadWorktree.baseBranch)) return clone(record);
+        if (record.squadWorktree.path === path &&
+          (record.squadWorktree.baseBranch || !baseBranch)) return clone(record);
       }
       record.squadWorktree = {
-        path: string(squadWorktree.path, 'squad worktree path'),
-        branch: string(squadWorktree.branch, 'squad worktree branch'),
-        ...(squadWorktree.baseBranch ? { baseBranch: string(squadWorktree.baseBranch, 'squad worktree base branch') } : {})
+        path,
+        branch,
+        ...(baseBranch !== undefined ? { baseBranch } : {}),
+        ...(ownership === 'user' ? { ownership, targetKind: squadWorktree.targetKind } : {})
       };
       record.stateVersion += 1;
       record.updatedAt = now();
@@ -1431,7 +1647,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       const snapshot = read();
       const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
       if (!record) throw new Error('execution not found');
-      if (!terminalStates.has(record.state) || !executionReportTarget(record)) throw new Error('terminal report target is unavailable');
+      if (!terminalStates.has(record.state) || !(executionReportTarget(record) || isLocalReportRecord(record))) throw new Error('terminal report target is unavailable');
       if (record.attempt !== attempt) throw new Error('stale execution attempt');
       if (reportedAttempt(record) === attempt) return clone(record);
       record.reportNoticeVersion = attempt;
@@ -1478,6 +1694,9 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       if (!record) throw new Error('execution not found');
       if (record.stateVersion !== expectedStateVersion) throw new Error('stale execution state');
       if (!terminalStates.has(record.state) || !record.squadWorktree) throw new Error('terminal squad worktree is unavailable');
+      if (disposition === 'deleted' && isUserOwnedSquadWorktree(record.squadWorktree)) {
+        throw new Error('a user-owned squad target is never deleted');
+      }
       if (disposition === 'left') record.squadWorktreeDisposition = 'left';
       else {
         record.squadWorktree = undefined;
@@ -1800,6 +2019,42 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       append(snapshot.state, record, record.state, 'info', 'Native recovery snapshot captured', record.updatedAt);
       persist(snapshot.state, snapshot.hash);
       return clone(record);
+    });
+  }
+
+  /**
+   * Record the trusted host's first automated MCP catalogue selection for a slot.
+   * Retries return that exact value; any changed selection is a durable conflict.
+   */
+  async function recordAutomatedMcpCatalogueProvenance(
+    executionId: string,
+    slotId: string,
+    input: Omit<ExecutionSlotMcpCatalogueProvenanceV1, 'version'>
+  ): Promise<ExecutionSlotMcpCatalogueProvenanceV1> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      const safeSlotId = string(slotId, 'slot id');
+      const provenance = { version: 1 as const, ...clone(input) };
+      if (!validAutomatedMcpCatalogueProvenance(provenance)) throw new Error('invalid automated MCP catalogue provenance');
+      const existing = record.automatedMcpCatalogueProvenance?.[safeSlotId];
+      if (existing) {
+        if (!equalAutomatedMcpCatalogueProvenance(existing, provenance)) {
+          throw new Error(`automated MCP catalogue provenance mismatch for slot ${safeSlotId}`);
+        }
+        return clone(existing);
+      }
+      if (Object.keys(record.automatedMcpCatalogueProvenance ?? {}).length >= MAX_AUTOMATED_MCP_CATALOGUE_SLOTS) {
+        throw new Error('automated MCP catalogue provenance slot limit reached');
+      }
+      record.automatedMcpCatalogueProvenance = {
+        ...record.automatedMcpCatalogueProvenance,
+        [safeSlotId]: provenance
+      };
+      record.updatedAt = now();
+      persist(snapshot.state, snapshot.hash);
+      return clone(provenance);
     });
   }
 
@@ -2378,6 +2633,54 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   }
 
   /**
+   * Durably record one step of Zana's automatic recovery of a worker that stopped
+   * on an API error. Store-initiated like {@link blockKickoffFailure} (no cohort
+   * authority, no CAS version) and fenced on the exact claim, so a late recovery
+   * decision can never touch a unit that was reclaimed or re-claimed. Appends
+   * exactly ONE event.
+   */
+  async function recordWorkerRecovery(executionId: string, input: RecordWorkerRecoveryInput): Promise<ExecutionRecord> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      assertActive(record);
+      const unit = findUnit(record, input.workUnitId);
+      if (unit.state !== 'CLAIMED' || unit.claimId !== input.claimId || unit.claimGeneration !== input.claimGeneration
+        || unit.assignedSlotId !== input.slotId) throw new WorkUnitRecoveryGuardError('work unit claim does not match the recovery');
+      if (!(WORKER_RECOVERY_STEPS as readonly string[]).includes(input.step)) throw new Error('invalid worker recovery step');
+      const timestamp = now();
+      const detail = input.detail ? input.detail.slice(0, MAX_RECOVERY_DETAIL) : undefined;
+      const errorKind = input.errorKind ? input.errorKind.slice(0, MAX_RECOVERY_KIND) : undefined;
+      const errorText = input.errorText ? input.errorText.slice(0, MAX_RECOVERY_TEXT) : undefined;
+      const entry = { step: input.step, at: timestamp, ...(detail ? { detail } : {}) };
+      const existing = unit.apiErrorRecovery;
+      if (existing && existing.claimId === input.claimId && existing.claimGeneration === input.claimGeneration) {
+        existing.step = input.step;
+        existing.updatedAt = timestamp;
+        if (errorKind) existing.errorKind = errorKind;
+        if (errorText) existing.errorText = errorText;
+        if (input.deadlineAt !== undefined) existing.deadlineAt = input.deadlineAt;
+        existing.steps = [...existing.steps, entry].slice(-MAX_RECOVERY_STEPS);
+      } else {
+        unit.apiErrorRecovery = {
+          claimId: input.claimId, claimGeneration: input.claimGeneration, slotId: input.slotId, executionAttempt: record.attempt,
+          step: input.step, ...(errorKind ? { errorKind } : {}), ...(errorText ? { errorText } : {}),
+          startedAt: timestamp, updatedAt: timestamp, ...(input.deadlineAt !== undefined ? { deadlineAt: input.deadlineAt } : {}),
+          steps: [entry]
+        };
+      }
+      record.stateVersion += 1;
+      record.updatedAt = timestamp;
+      // A summary can carry a restart error message; over MAX_STRING it would fail the whole persist.
+      append(snapshot.state, record, record.state, input.severity, input.summary.slice(0, MAX_STRING), timestamp,
+        { kind: 'event', eventType: 'progress', slotId: input.slotId, ...(detail ? { detail } : {}) });
+      persist(snapshot.state, snapshot.hash);
+      return clone(record);
+    });
+  }
+
+  /**
    * Kickoff-churn escape hatch. A unit reclaimed {@link
    * KICKOFF_FAILURE_BLOCK_THRESHOLD} times while its worker never reported a
    * completed turn (`kickoffFailures`) is stuck at delivery, not making progress —
@@ -2391,27 +2694,49 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
    * spuriously bumps the version / appends an event / re-cascades (mirrors {@link
    * escalateBlockerToHuman}); the service caller catches and ignores.
    */
-  async function blockKickoffFailure(executionId: string, workUnitId: string): Promise<ExecutionRecord> {
+  async function blockKickoffFailure(executionId: string, workUnitId: string, apiError?: { claimId: string; claimGeneration: number }): Promise<ExecutionRecord> {
     return mutateRecord(executionId, undefined, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
       if (unit.state === 'BLOCKED' || unit.state === 'COMPLETED' || unit.state === 'FAILED') throw new WorkUnitRecoveryGuardError('work unit is not blockable for kickoff failure');
-      if (!(unit.noProgressSlots ?? []).some((entry) => entry.executionAttempt === record.attempt)
+      const recovery = unit.apiErrorRecovery;
+      if (apiError) {
+        if (unit.state !== 'CLAIMED' || unit.claimId !== apiError.claimId || unit.claimGeneration !== apiError.claimGeneration
+          || !recovery || recovery.claimId !== apiError.claimId || recovery.claimGeneration !== apiError.claimGeneration
+          || !isWorkerRecoveryActiveStep(recovery.step)) {
+          throw new WorkUnitRecoveryGuardError('work unit has no API-error recovery for this claim');
+        }
+      } else if (!(unit.noProgressSlots ?? []).some((entry) => entry.executionAttempt === record.attempt)
         && (unit.kickoffFailures ?? 0) < KICKOFF_FAILURE_BLOCK_THRESHOLD) throw new WorkUnitRecoveryGuardError('kickoff failures below block threshold');
       const blockerId = `no-progress:${record.attempt}:${unit.id}:${unit.attempt}`;
       if (record.blockers?.some((blocker) => blocker.id === blockerId)) throw new WorkUnitRecoveryGuardError('duplicate kickoff blocker');
       const slotId = unit.assignedSlotId ?? 'engine';
+      const lastError = recovery ? `${recovery.errorKind ?? 'unknown'}: ${(recovery.errorText ?? 'no details').slice(0, MAX_BLOCKER_ERROR_EXCERPT)}` : '';
+      let question: string;
+      if (apiError && recovery) {
+        const tried = recovery.steps.flatMap((entry) => entry.step === 'nudged' ? [`nudged it at ${formatRecoveryClock(entry.at)}`]
+          : entry.step === 'restarted' ? [`restarted its session at ${formatRecoveryClock(entry.at)}`]
+          : entry.step === 'restart-failed' ? [`could not restart its session at ${formatRecoveryClock(entry.at)}`] : []);
+        const what = tried.length ? tried.join(' and ') : 'did not retry it because this kind of error is not temporary';
+        // A long unit title must not push the question past MAX_STRING, which would fail the persist and leave the unit unblocked.
+        question = `Work unit \`${unit.id}\` (${unit.title}) stopped after an API error on ${slotId} and did not recover. Zana ${what}. Last error: ${lastError}. Check the worker terminal, then retry the unit or restart the run.`.slice(0, MAX_STRING);
+        recovery.step = 'exhausted';
+        recovery.updatedAt = timestamp;
+        recovery.steps = [...recovery.steps, { step: 'exhausted' as const, at: timestamp }].slice(-MAX_RECOVERY_STEPS);
+      } else {
+        const earlier = recovery && recovery.executionAttempt === record.attempt
+          ? ` Earlier, Zana tried to recover ${recovery.slotId} after an API error: ${recovery.steps.map((entry) => entry.step).join(', ')}. Last error: ${lastError}.`
+          : '';
+        question = `Work unit ${unit.id}${unit.title ? ` (${unit.title})` : ''} made no progress on every eligible worker slot; its worker never started a turn.${earlier} Check the worker terminal, then retry the unit or restart the run.`;
+        if (earlier) question = question.slice(0, MAX_STRING);
+      }
       unit.state = 'BLOCKED';
-      unit.history.push({ action: 'blocked', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp, detail: 'kickoff delivery produced no worker turn' });
+      unit.history.push({ action: 'blocked', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp, detail: apiError ? 'stopped after an API error' : 'kickoff delivery produced no worker turn' });
       clearClaim(unit);
       unit.assignedSlotId = undefined;
       record.blockers ??= [];
-      record.blockers.push({
-        id: blockerId, workUnitId: unit.id, slotId,
-        question: `Work unit ${unit.id}${unit.title ? ` (${unit.title})` : ''} made no progress on every eligible worker slot; its worker never started a turn. Check the worker terminal, then retry the unit or restart the run.`,
-        audience: 'human', resolved: false, createdAt: timestamp
-      });
+      record.blockers.push({ id: blockerId, workUnitId: unit.id, slotId, question, audience: 'human', resolved: false, createdAt: timestamp });
       record.state = 'BLOCKED';
-    }, `Work unit blocked after repeated kickoff failure: ${workUnitId}`);
+    }, `Work unit blocked after ${apiError ? 'an unrecovered API error' : 'repeated kickoff failure'}: ${workUnitId}`);
   }
 
   /**
@@ -2480,6 +2805,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       // worker, so a prior kickoff-churn block must not immediately re-block.
       unit.kickoffFailures = undefined;
       unit.noProgressSlots = undefined;
+      unit.apiErrorRecovery = undefined;
       unit.history.push({ action: 'retried', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp });
       for (const blocker of record.blockers ?? []) {
         if (blocker.workUnitId === unit.id && !blocker.resolved) {
@@ -3070,7 +3396,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
 
   async function listUnreportedExecutions(): Promise<ExecutionRecord[]> {
     return storeQueue.run(async () => clone(read().state.records.filter((record) =>
-      executionReportTarget(record) !== undefined && terminalStates.has(record.state) && reportedAttempt(record) !== record.attempt
+      (executionReportTarget(record) !== undefined || isLocalReportRecord(record)) && terminalStates.has(record.state) && reportedAttempt(record) !== record.attempt
     )));
   }
 
@@ -3170,7 +3496,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, markReported, markBlockerReported, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, countActiveOwned, listInProject, listActive, listUndisposedSquadWorktrees, listUnreportedExecutions, listUnreportedBlockers, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, markReported, markBlockerReported, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, command, producerEvent, setPolicyResult, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, recordAutomatedMcpCatalogueProvenance, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, recordWorkerRecovery, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, countActiveOwned, listInProject, listActive, listUndisposedSquadWorktrees, listUnreportedExecutions, listUnreportedBlockers, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 function normalizeModelSnapshot(snapshot: ResolvedModelSnapshotV1): ResolvedModelSnapshotV1 {
@@ -3227,6 +3553,10 @@ function failActiveDeliveries(record: ExecutionRecord, blockerId: string, reason
 }
 
 function normalizeRequest(input: ExecutionRequestSnapshotV1): ExecutionRequestSnapshotV1 {
+  const objective = (input as { objective?: unknown } | null | undefined)?.objective;
+  if (typeof objective === 'string' && objective.length > SQUAD_GOAL_MAX_CHARS) {
+    throw new Error(squadStoredFieldTooLong('goal', objective.length));
+  }
   if (!validRequestSnapshot(input)) throw new Error('invalid execution request snapshot');
   return { ...clone(input), launchKind: input.launchKind ?? 'team' };
 }
@@ -3246,7 +3576,7 @@ function normalizePlan(inputs: ExecutionWorkUnitInput[], requireComplete = false
 }
 
 function stripWorkUnitState(unit: ExecutionWorkUnit): ExecutionWorkUnitInput {
-  const { state: _state, assignedSlotId: _assignedSlotId, claimGeneration: _claimGeneration, claimId: _claimId, claimedBy: _claimedBy, claimedAt: _claimedAt, leaseExpiresAt: _leaseExpiresAt, heartbeatAt: _heartbeatAt, progressAt: _progressAt, turnCount: _turnCount, kickoffFailures: _kickoffFailures, reclaimedClaim: _reclaimedClaim, attempt: _attempt, failureCode: _failureCode, failure: _failure, result: _result, structuredResult: _structuredResult, repairDigests: _repairDigests, history: _history, ...input } = unit;
+  const { state: _state, assignedSlotId: _assignedSlotId, claimGeneration: _claimGeneration, claimId: _claimId, claimedBy: _claimedBy, claimedAt: _claimedAt, leaseExpiresAt: _leaseExpiresAt, heartbeatAt: _heartbeatAt, progressAt: _progressAt, turnCount: _turnCount, kickoffFailures: _kickoffFailures, reclaimedClaim: _reclaimedClaim, apiErrorRecovery: _apiErrorRecovery, attempt: _attempt, failureCode: _failureCode, failure: _failure, result: _result, structuredResult: _structuredResult, repairDigests: _repairDigests, history: _history, ...input } = unit;
   return input;
 }
 
@@ -3356,7 +3686,7 @@ function append(
   severity: ExecutionEvent['severity'],
   summary: string,
   createdAt: number,
-  metadata: Pick<ExecutionEvent, 'kind' | 'fromState' | 'toState' | 'slotId'> = {}
+  metadata: Pick<ExecutionEvent, 'kind' | 'fromState' | 'toState' | 'slotId' | 'eventType' | 'detail'> = {}
 ): void {
   const sequence = (record.lastEventSequence ?? nextSequence(state, record.id) - 1) + 1;
   record.lastEventSequence = sequence;

@@ -27,6 +27,7 @@ import {
   experimental_defineProviderBridge,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { join as joinPath, resolve as resolvePath } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -120,6 +121,19 @@ import {
   getSuggestedRules,
   toPendingInteractionPermissionProfile,
 } from "../interactive-contract.js";
+import {
+  createAutomatedConfigDir,
+  AutomatedConfigAdmissionError,
+  removeAutomatedConfigDir,
+  sweepAutomatedConfigDirs,
+} from "./automated-config-dir.js";
+import {
+  type ClaudeSessionAdmission,
+  type ClaudeSessionKind,
+  normalizeClaudeSessionKind,
+  resolveBridgeDataDir,
+} from "./session-kind.js";
+import { writeSessionKindTelemetry } from "./session-kind-telemetry.js";
 
 const promptInputItemSchema = z.discriminatedUnion("type", [
   z.object({
@@ -244,7 +258,24 @@ interface ThreadSession {
   permissionEscalationByToolUseId: Map<string, PermissionEscalation | null>;
 }
 
+interface SessionIsolation {
+  /** What the caller asked for; reused when a resume omits `sessionKind`. */
+  requestedKind: ClaudeSessionKind;
+  kind: ClaudeSessionKind;
+  admission: ClaudeSessionAdmission;
+  dataDir: string;
+  configDir: string | null;
+  /** The generated per-run `settings.json` exists, so it is the one setting source. */
+  seeded: boolean;
+  startedAt: number;
+  firstTurnInputTokens: number | null;
+  firstTurnCachedInputTokens: number | null;
+  errored: boolean;
+  endRecorded: boolean;
+}
+
 interface ThreadAttachment {
+  isolation: SessionIsolation;
   envSignature: string;
   sessionConstructionConfig: SessionConstructionConfig;
   sessionOptions: SdkSessionOptions;
@@ -264,6 +295,7 @@ interface ThreadAttachment {
 }
 
 interface CreateThreadAttachmentArgs {
+  isolation: SessionIsolation;
   permissionEscalation: PermissionEscalation | null;
   permissionMode: ClaudePermissionMode;
   liveSettings: ClaudeLiveSessionSettings;
@@ -597,6 +629,15 @@ async function closeThreadSession(args: {
       }
     })
     .finally(() => {
+      if (!attachment.isolation.endRecorded) {
+        attachment.isolation.endRecorded = true;
+        recordSessionKindTelemetry(
+          "end",
+          attachment.isolation,
+          attachment.sessionOptions,
+          attachment.sessionConstructionConfig.dynamicTools?.length ?? 0,
+        );
+      }
       if (threadAttachments.get(args.threadId) === attachment) {
         threadAttachments.delete(args.threadId);
       }
@@ -877,6 +918,7 @@ function emitForSession(
     { threadId },
   );
   sendThreadDeltas(threadId, deltas);
+  trackSessionUsage(threadSession.attachment.isolation, deltas);
   for (const delta of deltas) {
     if (delta.kind === "provider.error" && delta.willRetry !== true) {
       const category = delta.errorInfo?.category;
@@ -1112,6 +1154,7 @@ function createThreadAttachment(
   args: CreateThreadAttachmentArgs,
 ): ThreadAttachment {
   const attachment: ThreadAttachment = {
+    isolation: args.isolation,
     envSignature: environmentSignature(
       readConfigEnvOverrides(args.sessionConstructionConfig.config),
     ),
@@ -1784,13 +1827,148 @@ async function closeClaudeThreadSession(
   }
 }
 
+/** Leaves untouched this long and not owned by a live thread are swept. */
+const AUTOMATED_CONFIG_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+let automatedConfigSwept = false;
+
+/** Once per process: remove config dirs left by crashed bridges. */
+function sweepStaleAutomatedConfigDirsOnce(dataDir: string): void {
+  if (automatedConfigSwept) return;
+  automatedConfigSwept = true;
+  try {
+    sweepAutomatedConfigDirs({
+      dataDir,
+      liveOwnerIds: new Set(threadAttachments.keys()),
+      ttlMs: AUTOMATED_CONFIG_TTL_MS,
+    });
+  } catch {
+    // best effort: retried on the next process
+  }
+}
+
+function beginSessionIsolation(args: {
+  params: SessionConstructionParams;
+  threadId: string;
+  previous?: SessionIsolation | undefined;
+}): SessionIsolation {
+  const requested: unknown =
+    args.params.sessionKind ?? args.previous?.requestedKind;
+  const dataDir = resolveBridgeDataDir();
+  const normalized = normalizeClaudeSessionKind({
+    requested,
+  });
+  let { kind, admission } = normalized;
+  let configDir: string | null = null;
+  if (kind === "automated") {
+    sweepStaleAutomatedConfigDirsOnce(dataDir);
+    configDir = createAutomatedConfigDir(dataDir, args.threadId);
+  }
+  return {
+    requestedKind: requested === "automated" ? "automated" : "interactive",
+    kind,
+    admission,
+    dataDir,
+    configDir,
+    seeded:
+      configDir !== null && existsSync(joinPath(configDir, "settings.json")),
+    startedAt: Date.now(),
+    firstTurnInputTokens: null,
+    firstTurnCachedInputTokens: null,
+    errored: false,
+    endRecorded: false,
+  };
+}
+
+function admitOrReject(
+  id: string | number,
+  admit: () => SessionIsolation,
+): SessionIsolation | null {
+  try {
+    return admit();
+  } catch (error) {
+    if (!(error instanceof AutomatedConfigAdmissionError)) throw error;
+    sendError(id, -32000, error.message);
+    return null;
+  }
+}
+
+function recordSessionKindTelemetry(
+  event: "start" | "end",
+  isolation: SessionIsolation,
+  sessionOptions: SdkSessionOptions,
+  dynamicToolCount: number,
+): void {
+  void writeSessionKindTelemetry(isolation.dataDir, {
+    event,
+    sessionKind: isolation.kind,
+    admission: isolation.admission,
+    inputTokens: isolation.firstTurnInputTokens,
+    cachedInputTokens: isolation.firstTurnCachedInputTokens,
+    durationMs: event === "end" ? Date.now() - isolation.startedAt : null,
+    outcome:
+      event === "start"
+        ? "unknown"
+        : isolation.errored
+          ? "error"
+          : isolation.firstTurnInputTokens !== null
+            ? "completed"
+            : "unknown",
+    retry: null,
+    settingSources: sessionOptions.settingSources ?? [
+      "user",
+      "project",
+      "local",
+    ],
+    isolatedConfig: isolation.configDir !== null,
+    pluginRootCount: sessionOptions.plugins?.length ?? 0,
+    dynamicToolCount,
+    skillCatalogBytes: null,
+  });
+}
+
+function finishSessionIsolation(
+  isolation: SessionIsolation,
+  sessionOptions: SdkSessionOptions,
+  dynamicToolCount: number,
+): void {
+  if (isolation.kind === "automated") {
+    // With CLAUDE_CONFIG_DIR pointed at the per-run dir, the "user" source is
+    // the Zana-generated settings.json; project/local sources stay excluded.
+    sessionOptions.settingSources = isolation.seeded ? ["user"] : [];
+  }
+  recordSessionKindTelemetry(
+    "start",
+    isolation,
+    sessionOptions,
+    dynamicToolCount,
+  );
+}
+
+function trackSessionUsage(
+  isolation: SessionIsolation,
+  deltas: readonly ThreadDelta[],
+): void {
+  for (const delta of deltas) {
+    if (delta.kind === "usage" && isolation.firstTurnInputTokens === null) {
+      isolation.firstTurnInputTokens = delta.last.inputTokens;
+      isolation.firstTurnCachedInputTokens = delta.last.cachedInputTokens;
+    } else if (delta.kind === "provider.error" && delta.willRetry !== true) {
+      isolation.errored = true;
+    }
+  }
+}
+
 function buildSessionEnv(
   envOverrides: Record<string, string>,
+  configDir: string | null = null,
 ): NodeJS.ProcessEnv {
   const sessionEnv: NodeJS.ProcessEnv = {
     ...withoutBridgeRuntimeEnv(process.env),
     ...envOverrides,
     CLAUDE_CODE_ENTRYPOINT: "cli",
+    // Automated sessions always use their own per-run config dir; a caller
+    // supplied CLAUDE_CONFIG_DIR must not re-import the user's cascade.
+    ...(configDir !== null ? { CLAUDE_CONFIG_DIR: configDir } : {}),
   };
   delete sessionEnv.CLAUDE_AGENT_SDK_CLIENT_APP;
   return withClaudeTodoToolsEnv(
@@ -1839,7 +2017,10 @@ function applyTurnEnvironment(
     ...attachment.sessionConstructionConfig,
     config,
   };
-  attachment.sessionOptions.env = buildSessionEnv(envOverrides);
+  attachment.sessionOptions.env = buildSessionEnv(
+    envOverrides,
+    attachment.isolation.configDir,
+  );
   if (attachment.residentSession) {
     attachment.residentSession.restartBeforeNextTurn = {
       reason:
@@ -2382,9 +2563,12 @@ async function handleRequest(request: ClaudeCodeJsonRpcRequest): Promise<void> {
     case "thread/stop":
       await handleThreadStop(request.id, request.params);
       break;
-    case "thread/discard":
+    case "thread/discard": {
+      const discarded = threadAttachments.get(request.params.threadId)?.isolation;
       sendResult(request.id, await closeThreadForStop(request.params.threadId));
+      discardAutomatedConfigDir(discarded);
       break;
+    }
     case "thread/backgroundTask/stop":
       await handleBackgroundTaskStop(request.id, request.params);
       break;
@@ -2413,7 +2597,14 @@ async function handleThreadStart(
     });
   }
 
-  const env = buildSessionEnv(readConfigEnvOverrides(params.config));
+  const isolation = admitOrReject(id, () =>
+    beginSessionIsolation({ params, threadId: threadIdRef.current }),
+  );
+  if (!isolation) return;
+  const env = buildSessionEnv(
+    readConfigEnvOverrides(params.config),
+    isolation.configDir,
+  );
   const sessionOptions = buildTrackedSessionOptions(params, env, threadIdRef);
   const providerThreadId = randomUUID();
   sessionOptions.sessionId = providerThreadId;
@@ -2427,8 +2618,14 @@ async function handleThreadStart(
     sessionOptions.allowedTools = getAllowedToolNames(params.dynamicTools);
   }
   enableClaudePlanChecklistTools(sessionOptions);
+  finishSessionIsolation(
+    isolation,
+    sessionOptions,
+    params.dynamicTools?.length ?? 0,
+  );
 
   const attachment = createThreadAttachment({
+    isolation,
     liveSettings: toInitialLiveSessionSettings(params),
     idleQueryReleaseEnabled: params.idleQueryReleaseEnabled,
     permissionEscalation: params.permissionEscalation,
@@ -2515,7 +2712,14 @@ async function handleThreadResume(
     });
   }
 
-  const env = buildSessionEnv(readConfigEnvOverrides(params.config));
+  const isolation = admitOrReject(id, () =>
+    beginSessionIsolation({ params, threadId, previous: existing?.isolation }),
+  );
+  if (!isolation) return;
+  const env = buildSessionEnv(
+    readConfigEnvOverrides(params.config),
+    isolation.configDir,
+  );
   const threadIdRef = { current: threadId };
   const sessionOptions = buildTrackedSessionOptions(params, env, threadIdRef);
   sessionOptions.canUseTool = createCanUseTool(threadIdRef);
@@ -2528,7 +2732,13 @@ async function handleThreadResume(
     sessionOptions.allowedTools = getAllowedToolNames(params.dynamicTools);
   }
   enableClaudePlanChecklistTools(sessionOptions);
+  finishSessionIsolation(
+    isolation,
+    sessionOptions,
+    params.dynamicTools?.length ?? 0,
+  );
   const attachment = createThreadAttachment({
+    isolation,
     liveSettings: toInitialLiveSessionSettings(params),
     idleQueryReleaseEnabled: params.idleQueryReleaseEnabled,
     permissionEscalation: params.permissionEscalation,
@@ -2560,6 +2770,7 @@ async function handleThreadFork(
   const threadId = params.threadId;
 
   const existing = threadAttachments.get(threadId);
+
   if (existing) {
     await closeThreadSession({
       graceful: false,
@@ -2567,6 +2778,9 @@ async function handleThreadFork(
       threadId,
     });
   }
+
+  const isolation = admitOrReject(id, () => beginSessionIsolation({ params, threadId }));
+  if (!isolation) return;
 
   let forkedProviderThreadId: string;
   try {
@@ -2577,12 +2791,16 @@ async function handleThreadFork(
     });
     forkedProviderThreadId = forkResult.sessionId;
   } catch (error) {
+    discardAutomatedConfigDir(isolation);
     const message = error instanceof Error ? error.message : String(error);
     sendError(id, -32000, message);
     return;
   }
 
-  const env = buildSessionEnv(readConfigEnvOverrides(params.config));
+  const env = buildSessionEnv(
+    readConfigEnvOverrides(params.config),
+    isolation.configDir,
+  );
   const threadIdRef = { current: threadId };
   const sessionOptions = buildTrackedSessionOptions(params, env, threadIdRef);
   sessionOptions.canUseTool = createCanUseTool(threadIdRef);
@@ -2595,7 +2813,13 @@ async function handleThreadFork(
     sessionOptions.allowedTools = getAllowedToolNames(params.dynamicTools);
   }
   enableClaudePlanChecklistTools(sessionOptions);
+  finishSessionIsolation(
+    isolation,
+    sessionOptions,
+    params.dynamicTools?.length ?? 0,
+  );
   const attachment = createThreadAttachment({
+    isolation,
     liveSettings: toInitialLiveSessionSettings(params),
     idleQueryReleaseEnabled: params.idleQueryReleaseEnabled,
     permissionEscalation: params.permissionEscalation,
@@ -2629,6 +2853,7 @@ function toClaudeSessionParams(
     dynamicTools: params.dynamicTools,
     disallowedTools: params.disallowedTools,
     skillRoots: configuredSkillRoots ?? undefined,
+    sessionKind: params.sessionKind,
   });
 }
 
@@ -2801,6 +3026,15 @@ async function handleTurnSteer(
       providerThreadId: params.providerThreadId,
     },
   );
+}
+
+function discardAutomatedConfigDir(isolation: SessionIsolation | undefined): void {
+  if (isolation?.configDir == null) return;
+  try {
+    removeAutomatedConfigDir(isolation.dataDir, isolation.configDir);
+  } catch {
+    // best effort: a leftover leaf is swept later
+  }
 }
 
 async function closeThreadForStop(

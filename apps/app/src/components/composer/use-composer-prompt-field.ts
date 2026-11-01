@@ -1,4 +1,8 @@
+import { closeHistory } from '@tiptap/pm/history';
+import { NodeSelection, TextSelection } from '@tiptap/pm/state';
+import { parseEditorSelection, contextReferenceFromEditorSelection, type EditorSelection, contextReferenceFromClipboard, parseContextReferences, parseContextReference, type ContextReference } from '@zana-ai/zcc-plugin-sdk/app';
 import { nativeCapabilities } from '../../lib/native-capabilities.js';
+import { canAutomaticallyFocus } from '../../lib/automatic-focus.js';
 import { promptEditorDocument } from './restore-prompt-editor.js';
 import { promptInputSchema, type PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type DragEvent as ReactDragEvent, type SetStateAction } from 'react';
@@ -82,6 +86,8 @@ export interface UseComposerPromptFieldArgs {
   disabled?: boolean;
   autoFocus?: boolean;
   initialText?: string;
+  initialSelection?: EditorSelection;
+  initialReferences?: readonly ContextReference[];
   slashCatalog: ComposerSlashCatalog;
   onSubmit: (opts?: { modifierEnter?: boolean }) => void;
   interceptKeyDown?: ComposerKeyInterceptor;
@@ -102,6 +108,8 @@ export function useComposerPromptField({
   disabled = false,
   autoFocus = false,
   initialText,
+  initialSelection,
+  initialReferences,
   slashCatalog,
   onSubmit,
   interceptKeyDown,
@@ -145,6 +153,7 @@ export function useComposerPromptField({
   const insertDroppedMentionsRef = useRef<(event: DragEvent) => boolean>(() => false);
   const attachImagesRef = useRef<(files: File[]) => boolean>(() => false);
   const restoreFocusAfterSubmitRef = useRef(false);
+  const pastePlainTextRef = useRef(false);
   const [dropOver, setDropOver] = useState(false);
   const [, setEditorRevision] = useState(0);
   const dropOverRef = useRef(false);
@@ -247,6 +256,10 @@ export function useComposerPromptField({
     slashCatalog.providerId
   ]);
 
+  const editorRef = useRef<ReturnType<typeof useEditor>>(null);
+  // A node view can flush React effects before TipTap emits onUpdate. Ignore
+  // snapshots already superseded by the transaction currently being rendered.
+  const localTransaction = useRef<{ draft: ComposerSession; editor: ReturnType<typeof useEditor>; revision: number } | null>(null);
   const editor = useEditor({
     immediatelyRender: false,
     content: snapshot.document,
@@ -262,7 +275,22 @@ export function useComposerPromptField({
         event.stopPropagation();
         return true;
       },
-      handlePaste: (_view, event) => {
+      handlePaste: (view, event) => {
+        const plain = pastePlainTextRef.current;
+        pastePlainTextRef.current = false;
+        const selection = plain ? null : contextReferenceFromClipboard(event.clipboardData);
+        if (!disabled && selection) {
+          const current = serializePromptEditor(editorRef.current?.getJSON()).references?.map(ref => ref.reference) ?? [];
+          if (!parseContextReferences([...current, selection])) {
+            onErrorRef.current?.('Too much copied context. Remove a reference or paste as plain text.');
+            event.preventDefault(); return true;
+          }
+          const node = view.state.schema.nodes.editorSelection!.create({ reference: selection });
+          view.dispatch(closeHistory(view.state.tr).replaceSelectionWith(node).scrollIntoView());
+          view.dispatch(closeHistory(view.state.tr));
+          event.preventDefault();
+          return true;
+        }
         const files = imageFilesFromClipboard(event.clipboardData);
         if (files.length === 0) return false;
         event.preventDefault();
@@ -270,6 +298,7 @@ export function useComposerPromptField({
         return true;
       },
       handleDOMEvents: {
+        keyup: () => { pastePlainTextRef.current = false; return false; },
         dragover: (_view, event) => {
           const types = Array.from(event.dataTransfer?.types ?? []);
           if (!types.includes(PROJECT_DRAG_MIME) && !isComposerPathDrag(types)) return false;
@@ -283,6 +312,8 @@ export function useComposerPromptField({
         }
       },
       handleKeyDown: (_view, event) => {
+        // Electron may consume the V accelerator; Shift itself still reaches the editor.
+        pastePlainTextRef.current = event.shiftKey || event.key === 'Shift';
         if (interceptKeyDownRef.current?.(event)) return true;
         const menu = typeaheadRef.current;
         if (menu.open) {
@@ -313,6 +344,13 @@ export function useComposerPromptField({
             return true;
           }
         }
+        // Cmd/Ctrl+Enter submits through the composer chrome (handleChromeKeyDown).
+        // Claim it here so the editor's hard-break shortcut does not also insert a
+        // line break, which stayed in the prompt whenever the submit was refused.
+        if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.isComposing) {
+          event.preventDefault();
+          return true;
+        }
         if (
           event.key === 'Enter'
           && !event.shiftKey
@@ -339,15 +377,26 @@ export function useComposerPromptField({
     }
   }, [ariaLabel, markdownInPrompt, placeholder, testId, draft]);
 
+  useEffect(() => {
+    if (!editor) return;
+    const before = ({ transaction }: { transaction: import('@tiptap/pm/state').Transaction }) => {
+      if (transaction.docChanged) localTransaction.current = { draft, editor, revision: draft.getSnapshot().revision };
+    };
+    editor.on('beforeTransaction', before);
+    return () => { editor.off('beforeTransaction', before); };
+  }, [draft, editor]);
+
   // Other mounted panes and late send completions can update this same session.
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;
+    const local = localTransaction.current;
+    if (local?.draft === draft && local.editor === editor && snapshot.revision <= local.revision) return;
     if (snapshot.document && JSON.stringify(editor.getJSON()) !== JSON.stringify(snapshot.document)) {
       editor.commands.setContent(snapshot.document, { emitUpdate: false });
       syncTrigger(editor);
       setEditorRevision(current => current + 1);
     }
-  }, [editor, snapshot.document, syncTrigger]);
+  }, [draft, editor, snapshot.document, snapshot.revision, syncTrigger]);
   useEffect(() => {
     if (!editor || draft.getSnapshot().document !== undefined) return;
     // Even an untouched empty composer is initialized; a later seed must not
@@ -362,29 +411,40 @@ export function useComposerPromptField({
     if (selection) editor.commands.setTextSelection({ from: Math.min(selection.from, editor.state.doc.content.size), to: Math.min(selection.to, editor.state.doc.content.size) });
   }, [draft, editor]);
 
+  editorRef.current = editor;
+
   // A surface session outlives one seed (Inbox/Library "Spawn agent" reuse the
   // project's launcher). A new seed replaces an empty or unedited earlier seed;
   // the same seed, or anything the user typed, is kept across navigation.
   const seededFor = useRef<{ draft: ComposerSession; text: string } | null>(null);
   useEffect(() => {
-    if (!editor || !initialText) return;
-    if (seededFor.current?.draft === draft && seededFor.current.text === initialText) return;
-    seededFor.current = { draft, text: initialText };
+    if (!editor || (!initialText && !initialReferences?.length && !initialSelection)) return;
+    const selection = parseEditorSelection(initialSelection);
+    const references = parseContextReferences([...(initialReferences ?? []), ...(selection ? [contextReferenceFromEditorSelection(selection)] : [])]);
+    if (!references) { onErrorRef.current?.('Invalid copied context.'); return; }
+    const seed = references.length ? JSON.stringify([initialText ?? '', references]) : initialText!;
+    if (seededFor.current?.draft === draft && seededFor.current.text === seed) return;
+    seededFor.current = { draft, text: seed };
     const current = draft.getSnapshot();
-    if (draft.getSeed()?.text === initialText && current.document !== undefined) return;
+    if (draft.getSeed()?.text === seed && current.document !== undefined) return;
     const replaceable = current.document === undefined
       || isEmptyComposerDocument(current.document)
       || draft.getSeed()?.revision === current.revision;
     if (!replaceable) return;
-    const chain = editor.chain().clearContent().insertContent(initialText);
-    if (autoFocus) chain.focus();
+    const chain = editor.chain().clearContent().insertContent(initialText ?? '');
+    for (const reference of references) chain.insertContent({ type: 'editorSelection', attrs: { reference } }).insertContent(' ');
     chain.run();
-    draft.setSeed({ text: initialText, revision: draft.getSnapshot().revision });
-  }, [autoFocus, draft, editor, initialText]);
+    draft.setSeed({ text: seed, revision: draft.getSnapshot().revision });
+  }, [autoFocus, draft, editor, initialText, initialReferences, initialSelection]);
 
   useEffect(() => {
-    if (!editor || !autoFocus || initialText) return;
-    editor.commands.focus();
+    if (!editor || !autoFocus) return;
+    const frame = requestAnimationFrame(() => {
+      // Check at the moment of focus, including late mounts and pane updates.
+      // Tiptap's focus command defers again, leaving a race with another input.
+      if (!editor.isDestroyed && canAutomaticallyFocus(editor.view.dom)) editor.view.focus();
+    });
+    return () => cancelAnimationFrame(frame);
   }, [autoFocus, editor, initialText]);
 
   useEffect(() => {
@@ -392,9 +452,10 @@ export function useComposerPromptField({
     editor.setEditable(!disabled);
     if (disabled || !restoreFocusAfterSubmitRef.current) return;
     const frame = requestAnimationFrame(() => {
-      if (editor.isDestroyed) return;
       restoreFocusAfterSubmitRef.current = false;
-      editor.commands.focus('end', { scrollIntoView: false });
+      if (editor.isDestroyed || !canAutomaticallyFocus(editor.view.dom)) return;
+      editor.commands.setTextSelection(editor.state.doc.content.size);
+      editor.view.focus();
     });
     return () => cancelAnimationFrame(frame);
   }, [disabled, editor]);
@@ -538,6 +599,37 @@ export function useComposerPromptField({
     }
   };
 
+  const insertContextReference = useCallback((value: ContextReference): boolean => {
+    const reference = parseContextReference(value);
+    if (!editor || disabled || !reference) return false;
+    const current = serializePromptEditor(editor.getJSON()).references?.map(ref => ref.reference) ?? [];
+    if (!parseContextReferences([...current, reference])) {
+      onErrorRef.current?.('Too much copied context. Remove a reference or paste as plain text.');
+      return false;
+    }
+    const node = editor.state.schema.nodes.editorSelection!.create({ reference });
+    const tr = closeHistory(editor.state.tr);
+    // Inspecting an inline badge can select its atom. A source toolbar adds
+    // context after that badge instead of replacing the inspected snapshot.
+    if (tr.selection instanceof NodeSelection) tr.setSelection(TextSelection.near(tr.doc.resolve(tr.selection.to)));
+    editor.view.dispatch(tr.replaceSelectionWith(node).scrollIntoView());
+    editor.view.dispatch(closeHistory(editor.state.tr));
+    editor.commands.focus();
+    return true;
+  }, [editor, disabled]);
+
+  const updateContextReference = useCallback((pluginId:string,resourceId:string,value:ContextReference|null):boolean => {
+    const reference=value===null ? null : parseContextReference(value);
+    if (!editor || disabled || (value!==null && !reference)) return false;
+    const refs=serializePromptEditor(editor.getJSON()).references?.map(row=>row.reference)??[];
+    const matches=(ref:ContextReference)=>ref.source?.kind==='plugin' && ref.source.pluginId===pluginId && ref.source.resourceId===resourceId;
+    if (reference && !parseContextReferences(refs.map(ref=>matches(ref)?reference:ref)))return false;
+    const tr=closeHistory(editor.state.tr); let found=false;
+    editor.state.doc.descendants((node,pos)=>{const ref=parseContextReference(node.attrs.reference);if(node.type.name==='editorSelection' && ref && matches(ref)){found=true;if(reference)tr.setNodeMarkup(pos,undefined,{...node.attrs,reference});else tr.delete(tr.mapping.map(pos),tr.mapping.map(pos+node.nodeSize));}});
+    if(found){editor.view.dispatch(tr);editor.view.dispatch(closeHistory(editor.state.tr));}
+    return found;
+  },[editor,disabled]);
+
   const insertText = useCallback((text: string) => {
     editor?.chain().focus().insertContent(text.endsWith(' ') ? text : `${text} `).run();
   }, [editor]);
@@ -603,12 +695,18 @@ export function useComposerPromptField({
     editor?.commands.setContent(next);
   }, [editor]);
 
-  const replacePrompt = useCallback((input: readonly PromptInput[]) => {
+  const restoreText = useCallback((input: readonly PromptInput[]) => {
     const parts = input.map(part => promptInputSchema.parse(part));
     const document = promptEditorDocument(parts);
-    draft.setContent({ document, images: [], attachments: parts.filter(part => part.type !== 'text') });
+    draft.setContent({ document });
     if (editor && !editor.isDestroyed) editor.commands.setContent(document, { emitUpdate: false });
   }, [draft, editor]);
+
+  const replacePrompt = useCallback((input: readonly PromptInput[]) => {
+    const parts = input.map(part => promptInputSchema.parse(part));
+    restoreText(parts);
+    draft.setContent({ images: [], attachments: parts.filter(part => part.type !== 'text') });
+  }, [draft, restoreText]);
 
   const focus = useCallback(() => {
     editor?.commands.focus();
@@ -657,6 +755,7 @@ export function useComposerPromptField({
     images,
     restoredAttachments,
     replacePrompt,
+    restoreText,
     removeRestoredAttachment: (index: number) => setRestoredAttachments(rows => rows.filter((_,i) => i !== index)),
     removeImage,
     dropOver,
@@ -664,6 +763,8 @@ export function useComposerPromptField({
     canAttach,
     attachPickedFiles,
     insertText,
+    insertContextReference,
+    updateContextReference,
     serialize,
     clear,
     captureRevision,

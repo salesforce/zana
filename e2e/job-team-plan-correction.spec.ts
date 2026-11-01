@@ -92,9 +92,9 @@ async function launchProvidedPlan(window: Page, s: Setup, goal = `implement ${jo
   const teamPicker = modal.getByLabel('Squad', { exact: true });
   await teamPicker.click();
   await window.getByRole('listbox', { name: 'Squad' }).getByRole('option', { name: 'E2E Job Team' }).click();
-  const projectPicker = modal.getByRole('button', { name: 'Project', exact: true });
+  const projectPicker = modal.getByRole('button', { name: 'Machine and project', exact: true });
   await projectPicker.click();
-  await window.getByRole('listbox', { name: 'Project' }).getByRole('option', { name: s.projectName, exact: true }).click();
+  await window.getByRole('listbox', { name: 'Machine and project' }).getByRole('option', { name: s.projectName, exact: false }).click();
   await modal.getByLabel('Squad planning').click();
   await window.getByRole('option', { name: 'Plan provided in goal', exact: true }).click();
   const send = modal.getByTestId('team-command-send');

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // PtyManager imports node-pty (real subprocesses). Mock it with a fake IPty
 // that RECORDS the argv it was spawned with, so we can assert exactly what
@@ -59,6 +59,18 @@ const CONFIG: AppConfig = {
   fontSize: 13,
   lastProjectId: null
 };
+
+let priorAnthropicApiKey: string | undefined;
+
+beforeEach(() => {
+  priorAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = 'pty-extra-args-test-key';
+});
+
+afterEach(() => {
+  if (priorAnthropicApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+  else process.env.ANTHROPIC_API_KEY = priorAnthropicApiKey;
+});
 
 describe('cleanExtraArgs', () => {
   it('drops an empty-string opening prompt so no stray positional is emitted', () => {

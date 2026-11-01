@@ -1312,6 +1312,149 @@ describe("acp bridge", () => {
     ).toBe(true);
   });
 
+  it.each(["full", "accept-edits"] as const)(
+    "applies OpenCode policy from %s, restores mode changes, and avoids same-mode restarts",
+    async (initialMode) => {
+      const requestLog = join(workspaceDir, "permission-requests.jsonl");
+      const launch = {
+        dialectId: "opencode",
+        envVars: {
+          FAKE_ACP_LOAD_SESSION: "1",
+          FAKE_ACP_REQUEST_LOG: requestLog,
+          OPENCODE_PERMISSION: '{"bash":"allow"}',
+        },
+      };
+      const { providerThreadId } = await startThread({
+        ...launch,
+        permissionMode: initialMode,
+      });
+      for (const mode of [
+        initialMode,
+        initialMode,
+        initialMode === "full" ? "accept-edits" : "full",
+        initialMode,
+      ] as const) {
+        const outside = mode === "full" ? "allow" : "ask";
+        expect(
+          await completeTurnWith(
+            providerThreadId,
+            "echo-permission-env",
+            executionOptions({
+              permissionMode: mode,
+              providerOptions: launchProviderOptions(launch),
+            }),
+          ),
+        ).toBe(
+          `permission:${JSON.stringify({ edit: "allow", bash: outside, webfetch: outside, external_directory: outside })}`,
+        );
+      }
+      expect(
+        loggedAcpRequests(requestLog).filter((r) => r.method === "initialize"),
+      ).toHaveLength(3);
+      expect(notifications("session/replaced")).toHaveLength(2);
+      expect(notifications("session/replaced").at(-1)?.params).toMatchObject({
+        providerThreadId,
+        contextLost: false,
+      });
+    },
+  );
+
+  it.each(["full", "accept-edits"] as const)(
+    "applies the queued steer's %s policy before the replacement prompt",
+    async (permissionMode) => {
+      const launch = {
+        dialectId: "opencode",
+        envVars: { FAKE_ACP_LOAD_SESSION: "1" },
+      };
+      const { providerThreadId } = await startThread({
+        ...launch,
+        permissionMode: permissionMode === "full" ? "accept-edits" : "full",
+      });
+      const turn = sendTurnRequest("turn/start", providerThreadId, {
+        input: [{ type: "text", text: "hang", mentions: [] }],
+      });
+      expect((await waitForResponse(turn)).error).toBeUndefined();
+      const steer = sendTurnRequest("turn/steer", providerThreadId, {
+        expectedTurnId: "turn-1",
+        input: [{ type: "text", text: "echo-permission-env", mentions: [] }],
+        options: executionOptions({
+          permissionMode,
+          providerOptions: launchProviderOptions(launch),
+        }),
+      });
+      expect((await waitForResponse(steer)).error).toBeUndefined();
+      await waitFor(
+        () =>
+          agentMessageTexts()
+            .join("")
+            .includes(`"bash":"${permissionMode === "full" ? "allow" : "ask"}"`)
+            ? true
+            : undefined,
+        "queued steer reply",
+      );
+      await waitFor(
+        () =>
+          threadEventsOfType("turn/completed").some(
+            (event) => event.status === "completed",
+          )
+            ? true
+            : undefined,
+        "queued steer completion",
+      );
+      expect(agentMessageTexts().join("")).toContain(
+        `"bash":"${permissionMode === "full" ? "allow" : "ask"}"`,
+      );
+      expect(notifications("session/replaced").at(-1)?.params).toMatchObject({
+        contextLost: false,
+      });
+      expect(
+        threadEventsOfType("turn/completed").map((event) => event.status),
+      ).not.toContain("failed");
+    },
+  );
+
+  it("does not inject OpenCode policy or restart a generic agent when permission mode changes", async () => {
+    vi.stubEnv("OPENCODE_PERMISSION", "");
+    const requestLog = join(workspaceDir, "generic-requests.jsonl");
+    const { providerThreadId } = await startThread({
+      envVars: { FAKE_ACP_REQUEST_LOG: requestLog },
+    });
+    for (const permissionMode of ["full", "accept-edits", "full"] as const) {
+      expect(
+        await completeTurnWith(
+          providerThreadId,
+          "echo-permission-env",
+          executionOptions({ permissionMode }),
+        ),
+      ).toBe("permission:");
+    }
+    expect(
+      loggedAcpRequests(requestLog).filter((r) => r.method === "initialize"),
+    ).toHaveLength(1);
+    expect(notifications("session/replaced")).toHaveLength(0);
+  });
+
+  it("reports context loss when OpenCode cannot reload after a permission change", async () => {
+    const launch = {
+      dialectId: "opencode",
+      envVars: { FAKE_ACP_FAIL_LOAD: "1" },
+    };
+    const { providerThreadId } = await startThread(launch);
+    expect(
+      await completeTurnWith(
+        providerThreadId,
+        "echo-permission-env",
+        executionOptions({
+          permissionMode: "accept-edits",
+          providerOptions: launchProviderOptions(launch),
+        }),
+      ),
+    ).toContain('"bash":"ask"');
+    expect(notifications("session/replaced").at(-1)?.params).toMatchObject({
+      contextLost: true,
+    });
+  });
+
   it("launches ACP agents with a configured reasoning CLI flag", async () => {
     chmodSync(FAKE_AGENT_PATH, 0o755);
 
@@ -3374,6 +3517,134 @@ describe("acp bridge", () => {
     expect(notifications("error")).toEqual([]);
     startedProviderThreadIds.pop();
   }, 15_000);
+
+  it.each([
+    ["thread/start", "session/new", {}],
+    ["thread/resume", "session/load", { FAKE_ACP_LOAD_SESSION: "1" }],
+    ["thread/fork", "session/fork", { FAKE_ACP_FORK_SESSION: "1" }],
+  ] as const)(
+    "forwards only approved extra roots on %s for capable agents",
+    async (requestMethod, sessionMethod, capabilities) => {
+      const requestLog = join(workspaceDir, "root-requests.jsonl");
+      const extraRoot = join(workspaceDir, "extra");
+      const id = sendRequest(requestMethod, {
+        threadId: "thread-extra-dirs",
+        cwd: workspaceDir,
+        instructionMode: "append",
+        ...(requestMethod === "thread/resume"
+          ? { providerThreadId: "source-roots" }
+          : requestMethod === "thread/fork"
+            ? { sourceProviderThreadId: "source-roots" }
+            : {}),
+        options: executionOptions({
+          providerOptions: {
+            ...launchProviderOptions({
+              envVars: {
+                ...capabilities,
+                FAKE_ACP_ADDITIONAL_DIRECTORIES: "1",
+                FAKE_ACP_REQUEST_LOG: requestLog,
+              },
+            }),
+            additionalWorkspaceWriteRoots: [workspaceDir, extraRoot, extraRoot],
+          },
+        }),
+      });
+      const response = await waitForResponse(id);
+      expect(response.error).toBeUndefined();
+      const providerThreadId = (response.result as { providerThreadId: string })
+        .providerThreadId;
+      startedProviderThreadIds.push(providerThreadId);
+      const forwarded = loggedAcpRequests(requestLog).find(
+        (r) => r.method === sessionMethod,
+      );
+      expect(forwarded?.params).toMatchObject({
+        cwd: workspaceDir,
+        additionalDirectories: [extraRoot],
+      });
+    },
+  );
+
+  it.each([undefined, "null", "1"])(
+    "omits native directories when capability or extra roots are absent (%s)",
+    async (capability) => {
+      const requestLog = join(workspaceDir, "no-extra-dirs.jsonl");
+      await startThread({
+        additionalWorkspaceWriteRoots:
+          capability === "1" ? [workspaceDir] : [join(workspaceDir, "extra")],
+        envVars: {
+          FAKE_ACP_REQUEST_LOG: requestLog,
+          ...(capability ? { FAKE_ACP_ADDITIONAL_DIRECTORIES: capability } : {}),
+        },
+      });
+      expect(
+        loggedAcpRequests(requestLog).find((r) => r.method === "session/new")
+          ?.params,
+      ).not.toHaveProperty("additionalDirectories");
+    },
+  );
+
+  it("restores a capable session when only the approved write roots change", async () => {
+    const requestLog = join(workspaceDir, "changed-roots.jsonl");
+    const launch = {
+      envVars: {
+        FAKE_ACP_LOAD_SESSION: "1",
+        FAKE_ACP_ADDITIONAL_DIRECTORIES: "1",
+        FAKE_ACP_REQUEST_LOG: requestLog,
+      },
+    };
+    const { providerThreadId } = await startThread({
+      ...launch,
+      additionalWorkspaceWriteRoots: [join(workspaceDir, "old")],
+    });
+    for (const roots of [
+      [join(workspaceDir, "new")],
+      [join(workspaceDir, "new")],
+      [],
+    ]) {
+      await completeTurnWith(
+        providerThreadId,
+        "echo-argv",
+        executionOptions({
+          providerOptions: {
+            ...launchProviderOptions(launch),
+            additionalWorkspaceWriteRoots: roots,
+          },
+        }),
+      );
+    }
+    const lifecycles = loggedAcpRequests(requestLog).filter(
+      (r) => r.method === "session/new" || r.method === "session/load",
+    );
+    expect(lifecycles).toHaveLength(3);
+    expect(lifecycles[1]?.params?.additionalDirectories).toEqual([
+      join(workspaceDir, "new"),
+    ]);
+    expect(lifecycles[2]?.params).not.toHaveProperty("additionalDirectories");
+    expect(notifications("session/replaced").at(-1)?.params).toMatchObject({
+      providerThreadId,
+      contextLost: false,
+    });
+  });
+
+  it("does not restart an unsupported agent when approved write roots change", async () => {
+    const requestLog = join(workspaceDir, "unsupported-roots.jsonl");
+    const { providerThreadId } = await startThread({
+      envVars: { FAKE_ACP_REQUEST_LOG: requestLog },
+    });
+    await completeTurnWith(
+      providerThreadId,
+      "echo-argv",
+      executionOptions({
+        providerOptions: {
+          additionalWorkspaceWriteRoots: [join(workspaceDir, "new")],
+        },
+      }),
+    );
+    expect(
+      loggedAcpRequests(requestLog).filter((r) => r.method === "initialize"),
+    ).toHaveLength(1);
+    expect(notifications("session/replaced")).toHaveLength(0);
+  });
 
   it("forks an advertised ACP session with the target cwd and MCP servers", async () => {
     const forkLog = join(workspaceDir, "fork-params.json");

@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   acquireReviewLock,
   checkTinynodVersion,
+  ensureTinynodGateway,
   classifyReview,
   createReviewTree,
   deriveReviewBase,
@@ -403,6 +404,29 @@ describe('checkTinynodVersion', () => {
 
   it('really reports a missing binary', () => {
     expect(checkTinynodVersion({ command: join(tempDir(), 'absent-tinynod') })).toMatchObject({ ok: false, reason: expect.stringContaining('not found') });
+  });
+});
+
+describe('ensureTinynodGateway', () => {
+  it('keeps a working TinyNod gateway credential', () => {
+    const run = vi.fn(() => ({ status: 0, stdout: 'claude-opus-5-5\n' }));
+    expect(ensureTinynodGateway({ run })).toEqual({ ok: true, refreshed: false });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes an expired DevBar token and retries gateway access once', () => {
+    const run = vi.fn()
+      .mockReturnValueOnce({ status: 1 })
+      .mockReturnValueOnce({ status: 0, stdout: 'secret-token\n' })
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0, stdout: 'claude-opus-5-5\n' });
+    expect(ensureTinynodGateway({ run, devbar: 'devbar' })).toEqual({ ok: true, refreshed: true });
+    expect(run).toHaveBeenNthCalledWith(3, 'tinynod', ['config', 'set', 'ai.apiKey', 'secret-token'], expect.any(Object));
+  });
+
+  it('stays advisory when DevBar cannot repair gateway access', () => {
+    const run = vi.fn().mockReturnValueOnce({ status: 1 }).mockReturnValueOnce({ status: 1 });
+    expect(ensureTinynodGateway({ run, devbar: 'devbar' })).toEqual({ ok: false, reason: 'TinyNod gateway unavailable and DevBar token refresh failed' });
   });
 });
 

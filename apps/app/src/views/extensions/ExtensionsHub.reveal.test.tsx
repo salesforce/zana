@@ -6,7 +6,7 @@ vi.mock('@/modules', () => ({ useMergedModules: () => [] }));
 vi.mock('@/modules/ModulePanelHost', () => ({ getHost: vi.fn() }));
 vi.mock('@/plugins/plugin-app-loader', () => ({ reconcilePluginApps: vi.fn() }));
 vi.mock('@/plugins/PluginDefinedSettings', () => ({
-  PluginDefinedSettings: () => (
+  PluginSettingsForm: () => (
     <section id="plugin-configure" tabIndex={-1}>
       <div data-plugin-setting-key="relay"><input aria-label="Relay" /></div>
       <div data-plugin-setting-key="mode"><input aria-label="Mode" /></div>
@@ -18,6 +18,7 @@ vi.mock('./PluginHubIncludes.js', () => ({ PluginHubIncludes: () => null }));
 vi.mock('../../lib/product-client.js', () => ({ product: {
   extensions: { list: async () => [], onChanged: () => () => {}, marketplaceList: async () => ({ ok: true, value: [] }) },
   pluginApps: {
+    getSettings: async () => ({ descriptors: { relay: { type: 'string', label: 'Relay' } }, values: {} }),
     list: async () => [{ id: 'test', title: 'Test Plugin', name: 'Test Plugin', status: 'running', enabled: true, provenance: 'direct', appUrl: null }],
     onChanged: () => () => {}
   }
@@ -43,15 +44,17 @@ it('reveals the ?setting row when the plugin page opens on #plugin-configure', a
   expect(document.querySelector('[data-plugin-setting-key="mode"]')!.classList.contains('settings-search-flash')).toBe(false);
 });
 
-it('scrolls to the configure section but reveals no row without a ?setting key', async () => {
+it('focuses configuration without scrolling the page tabs away', async () => {
   open('/extensions/plugins/test#plugin-configure');
   await screen.findByLabelText('Relay');
-  expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+  expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+  expect(document.activeElement?.id).toBe('plugin-configure');
   expect(document.querySelector('.settings-search-flash')).toBeNull();
 });
 
 it('does nothing without the #plugin-configure hash', async () => {
   open('/extensions/plugins/test?setting=relay');
-  await screen.findByLabelText('Relay');
+  await waitFor(() => expect(document.querySelector('[aria-label="Relay"]')).toBeTruthy());
+  expect(screen.queryByRole('textbox', { name: 'Relay' })).toBeNull();
   expect(document.querySelector('.settings-search-flash')).toBeNull();
 });

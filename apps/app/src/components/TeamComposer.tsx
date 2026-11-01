@@ -7,7 +7,15 @@ import {
   ComposerIconButton,
   ComposerToolbar
 } from './ui/CommandComposer.js';
-import { planningToCoordinationMode, type SquadLaunchPrefill } from '@zana-ai/zcc-domain/squad-proposal';
+import {
+  planningToCoordinationMode,
+  SQUAD_GOAL_MAX_CHARS,
+  SQUAD_SUMMARY_MAX_CHARS,
+  squadGoalTooLongMessage,
+  squadSummaryTooLongMessage,
+  type SquadLaunchPrefill
+} from '@zana-ai/zcc-domain/squad-proposal';
+import { squadTextLimitView } from './team-composer-limit.js';
 import { VoiceRecordingBar } from './thread/voice/VoiceRecordingBar.js';
 import { useVoiceInput } from './thread/voice/useVoiceInput.js';
 import { VoiceMicButton } from './thread/voice/VoiceMicButton.js';
@@ -31,6 +39,8 @@ import {
   composerDropProjectRoot,
   stageRemoteComposerAttachments
 } from './legacy-agent-home.js';
+import { NO_TARGET, squadTargetOptions, squadTargetSelector } from './team-composer-target.js';
+import type { Worktree } from '@zana-ai/zcc-domain/product';
 import { platformShortcut } from '../lib/platformShortcut.js';
 import { sortCatalogueByName } from '../lib/catalogue-sort.js';
 
@@ -81,6 +91,8 @@ export function TeamComposer({
   const prefillSourcesGuardRef = useRef(Boolean(prefill?.sources.length));
   const [pickingSources, setPickingSources] = useState(false);
   const [launching, setLaunching] = useState(false);
+  const [targetValue, setTargetValue] = useState(NO_TARGET);
+  const [worktrees, setWorktrees] = useState<Worktree[]>([]);
   const [error, setError] = useState<string | null>(null);
   const jobSourcesRef = useRef(jobSources);
   jobSourcesRef.current = jobSources;
@@ -93,6 +105,22 @@ export function TeamComposer({
   const project = pinnedProject ?? launchProjects.find((candidate) => candidate.id === projectId);
   const sortedTeams = useMemo(() => sortCatalogueByName(teams), [teams]);
   const selectedTeam = teams.find((team) => team.id === teamId);
+
+  // The picker needs at least one linked worktree beyond Default + Project root. Existing worktrees are offered by branch only for local Projects; main re-resolves the selector at launch.
+  const projectPath = project?.path;
+  const projectIsRemote = Boolean(project?.remote);
+  useEffect(() => {
+    setTargetValue(NO_TARGET);
+    setWorktrees([]);
+    if (!projectPath || projectIsRemote) return;
+    let cancelled = false;
+    product.git.listWorktrees(projectPath).then(
+      (list) => { if (!cancelled) setWorktrees(list); },
+      () => undefined
+    );
+    return () => { cancelled = true; };
+  }, [projectPath, projectIsRemote]);
+  const targetOptions = useMemo(() => squadTargetOptions(worktrees), [worktrees]);
 
   const field = useComposerPromptField({
     placeholder: platformShortcut('Describe the GOAL for the squad to reach (⌘↵ to launch). Attach or drop supporting files.'),
@@ -169,7 +197,17 @@ export function TeamComposer({
   }, [project?.id]);
 
   const goalReady = field.text.trim().length > 0 || field.images.length > 0;
-  const canLaunch = Boolean(teamId && project && goalReady && !launching);
+  const goalLength = field.text.trim().length;
+  const summaryLength = summary.trim().length;
+  const goalView = squadTextLimitView(goalLength, SQUAD_GOAL_MAX_CHARS);
+  const summaryView = squadTextLimitView(summaryLength, SQUAD_SUMMARY_MAX_CHARS);
+  const textOverMessage = goalView.over
+    ? squadGoalTooLongMessage(goalLength)
+    : summaryView.over
+      ? squadSummaryTooLongMessage(summaryLength)
+      : null;
+  const canLaunch = Boolean(teamId && project && goalReady && !launching && !textOverMessage);
+  const sendLabel = launching ? 'Launching squad' : goalView.over ? 'Goal is too long for a Squad' : summaryView.over ? 'Summary is too long for a Squad' : 'Launch squad';
 
   const pickSources = async () => {
     if (!project) return;
@@ -202,6 +240,9 @@ export function TeamComposer({
     setError(null);
     setRequirementFailure(null);
     setAvailabilityUnknown(null);
+    // Over the limit, the limit message is the only one that applies: clear any
+    // error from an earlier attempt, then refuse.
+    if (textOverMessage) return;
     setLaunching(true);
     const revision = field.captureRevision();
     try {
@@ -237,12 +278,18 @@ export function TeamComposer({
         setError('Describe a goal for the squad');
         return;
       }
+      if (goal.length > SQUAD_GOAL_MAX_CHARS) {
+        // Attached image paths are appended to the goal, so it can pass the limit after the check above.
+        setError(squadGoalTooLongMessage(goal.length));
+        return;
+      }
       const res = await product.teams.startJob({
         teamId,
         projectId: project.id,
         goal,
         coordinationMode,
         ...(prefill ? { proposalId: prefill.proposalId } : {}),
+        ...(squadTargetSelector(targetValue) ? { target: squadTargetSelector(targetValue) } : {}),
         ...(title.trim() ? { title: title.trim() } : {}),
         ...(summary.trim() ? { summary: summary.trim() } : {}),
         ...(jobSources.length ? { sourceCapabilityIds: jobSources.map(({ id }) => id) } : {})
@@ -429,6 +476,18 @@ export function TeamComposer({
                     }}
                   />
                 </div>
+                {!projectIsRemote && targetOptions.length > 2 ? (
+                  <div className="thread-command-chip">
+                    <PopoverPicklist
+                      id="team-target"
+                      value={targetValue}
+                      ariaLabel="Squad target"
+                      searchable={targetOptions.length > 6}
+                      options={targetOptions}
+                      onChange={setTargetValue}
+                    />
+                  </div>
+                ) : null}
               </div>
               <div className="thread-command-footer-end">
                 <span className="composer-control-tooltip" data-tooltip={field.canAttach ? 'Attach files' : 'Attachments are unavailable while sending'}>
@@ -452,8 +511,8 @@ export function TeamComposer({
                 <VoiceMicButton voice={voice} />
                 <ComposerIconButton
                     className={`thread-command-send${launching ? ' is-sending' : ''}`}
-                    aria-label={launching ? 'Launching squad' : 'Launch squad'}
-                    title={launching ? 'Launching squad' : 'Launch squad'}
+                    aria-label={sendLabel}
+                    title={sendLabel}
                     aria-busy={launching}
                     data-testid="team-command-send"
                     disabled={!canLaunch}
@@ -471,6 +530,9 @@ export function TeamComposer({
           )}
         </ComposerToolbar>
       </CommandComposer>
+      {textOverMessage ? (
+        <p className="team-composer-limit-message" role="status" aria-live="polite" data-testid="team-goal-limit-message">{textOverMessage}</p>
+      ) : null}
       {jobSources.length > 0 ? (
         <ul className="launch-attachment-list" aria-label="Attached sources">
           {jobSources.map((source) => (
@@ -502,11 +564,16 @@ export function TeamComposer({
           />
         </label>
         <label className="workflow-arg-field" htmlFor="team-summary">
-          <span>Summary <span className="launch-optional">Optional</span></span>
+          <span>
+            Summary <span className="launch-optional">Optional</span>
+            {summaryView.show ? (
+              <span className={`team-composer-limit${summaryView.over ? ' is-over' : ''}`} data-testid="team-summary-count">{summaryView.label}</span>
+            ) : null}
+          </span>
           <textarea
             id="team-summary"
             rows={3}
-            maxLength={4000}
+            maxLength={SQUAD_SUMMARY_MAX_CHARS}
             value={summary}
             placeholder="Add context for this squad"
             onChange={(event) => setSummary(event.target.value)}
@@ -526,6 +593,9 @@ export function TeamComposer({
             />
           </div>
         </div>
+        {goalView.show ? (
+          <span className={`team-composer-limit${goalView.over ? ' is-over' : ''}`} data-testid="team-goal-count">{goalView.label}</span>
+        ) : null}
       </div>
     </div>
     </PluginComposerChrome>

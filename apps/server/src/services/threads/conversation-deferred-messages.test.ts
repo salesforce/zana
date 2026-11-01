@@ -76,6 +76,12 @@ vi.mock('@zana-ai/zcc-db', async (importOriginal) => {
     }),
     listDeferredThreadMessages: vi.fn(() => [...rows]),
     listDueDeferredThreadMessages: vi.fn(() => rows.filter((row) => row.status === 'queued' && !row.paused)),
+    claimDeferredThreadMessageGroup: vi.fn((_db, args: { rows: TestRow[]; threadId: string }) => {
+      if (rows.some(row => row.threadId === args.threadId && row.status === 'dispatching')) return false;
+      if (args.rows.some(row => row.status !== 'queued')) return false;
+      for (const row of args.rows) row.status = 'dispatching';
+      return true;
+    }),
     markDeferredThreadMessageDispatching: vi.fn((_db, args: { id: string }) => {
       const row = rows.find((entry) => entry.id === args.id);
       if (!row || row.status !== 'queued') return false;

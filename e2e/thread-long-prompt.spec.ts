@@ -48,6 +48,25 @@ async function expectReplyUncovered(timeline: Locator) {
   })).toBe(true);
 }
 
+test('sticky prompt backing blends into the thread sheet in both themes', async ({ app }) => {
+  const { detail } = await openThread(app);
+  const promptItem = detail.getByTestId('thread-user-text').first().locator('..');
+  for (const theme of ['light', 'dark'] as const) {
+    await app.window.evaluate(value => window.cc.config.set({ theme: value }), theme);
+    await expect(app.window.locator('html')).toHaveAttribute('data-theme', theme);
+    const surface = await promptItem.evaluate(node => {
+      for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+        const background = getComputedStyle(parent).backgroundColor;
+        if (background !== 'rgba(0, 0, 0, 0)') return background;
+      }
+      throw new Error('Thread has no opaque background');
+    });
+    await expect(promptItem).toHaveCSS('background-color', surface);
+    await expect(promptItem).toHaveCSS('position', 'sticky');
+    await expect(promptItem.locator('.thread-timeline-bubble')).not.toHaveCSS('background-color', surface);
+  }
+});
+
 test('an expanded long prompt cannot cover the completed agent reply (#201)', async ({ app }, testInfo) => {
   const { detail, threadId } = await openThread(app);
   const timeline = detail.getByTestId('thread-timeline');

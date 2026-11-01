@@ -36,6 +36,7 @@ vi.mock('@/views/settings/AgentsSettingsView', () => ({ AgentsTab: stub('agents'
 vi.mock('@/views/settings/HarnessView', () => ({ HarnessTab: stub('harness') }));
 vi.mock('@/views/settings/EditorView', () => ({ EditorTab: stub('editor') }));
 vi.mock('@/views/settings/ExperimentalView', () => ({ ExperimentalTab: stub('experimental') }));
+vi.mock('@/views/settings/DevelopmentView', () => ({ DevelopmentView: stub('development') }));
 vi.mock('@/views/settings/AboutView', () => ({ AboutTab: stub('about') }));
 vi.mock('@/views/settings/MachinesSettingsView', () => ({ MachinesTab: stub('machines') }));
 vi.mock('@/views/settings/ConnectivityView', () => ({ ConnectivityTab: stub('connectivity') }));
@@ -67,7 +68,7 @@ afterEach(cleanup);
 
 const TABS: SettingsTab[] = [
   'global', 'composer', 'keyboard', 'terminal', 'agents', 'prompts', 'harness', 'editor',
-  'personas', 'squads', 'usage', 'performance', 'experimental', 'about', 'machines',
+  'personas', 'squads', 'usage', 'performance', 'development', 'experimental', 'about', 'machines',
   'connectivity', 'remote-access', 'peers', 'phone', 'inbox', 'browser', 'project'
 ];
 
@@ -95,6 +96,19 @@ it('uses wide layout only for catalogue tabs', async () => {
   expect(second.container.querySelector('.settings-inner--wide')).toBeNull();
 });
 
+it('saves Development settings as instance config in a centered page', async () => {
+  useUi.setState({ settingsTab: 'development', settingsAnchor: null });
+  const { container } = mount();
+  await screen.findByText('tab-development');
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Development');
+  expect(container.querySelector('.settings-inner--wide')).toBeNull();
+  expect(screen.queryByText('tab-scope')).toBeNull();
+  await act(async () => { await h.props.development.onUpdate({ pluginDevelopmentEnabled: true }); });
+  expect(h.setMock).toHaveBeenCalledWith({ pluginDevelopmentEnabled: true });
+  expect(h.props.development.config.pluginDevelopmentEnabled).toBe(true);
+  expect(screen.getByText('Saved')).toBeTruthy();
+});
+
 it('applies config patches to the store and flashes Saved', async () => {
   useUi.setState({ settingsTab: 'global', settingsAnchor: null });
   mount();
@@ -109,7 +123,10 @@ it('applies config patches to the store and flashes Saved', async () => {
     cliRemoteToolProxyEnabled: true,
     followUpsEnabled: true,
     catchUpSummaryEnabled: true,
+    closeWrapUpEnabled: true,
     classicSessionViewEnabled: true,
+    threadTabsEnabled: false,
+    dockableThreadToolsEnabled: false,
     catchUpSummaryDelaySeconds: 9,
     feedNoiseClassifierEnabled: true,
     terminalClipboardWriteEnabled: true,
@@ -137,7 +154,7 @@ it('applies config patches to the store and flashes Saved', async () => {
   const setters = [
     'setFontSize', 'setTerminalTheme', 'setInboxGuidanceEnabled', 'setTerminalWheelArrowsEnabled',
     'setHeartbeatEnabled', 'setGoalsEnabled', 'setCliRemoteToolProxyEnabled', 'setFollowUpsEnabled',
-    'setCatchUpSummaryEnabled', 'setClassicSessionViewEnabled', 'setCatchUpSummaryDelaySeconds',
+    'setCatchUpSummaryEnabled', 'setCloseWrapUpEnabled', 'setClassicSessionViewEnabled', 'setThreadTabsEnabled', 'setDockableThreadToolsEnabled', 'setCatchUpSummaryDelaySeconds',
     'setFeedNoiseClassifierEnabled', 'setTerminalClipboardWriteEnabled', 'setTerminalCtrlVPasteEnabled',
     'setStructuredQuestionsEnabled',
     'setWorktreeIsolationDefault', 'setAgentListNeedsYouFromTriage', 'setVoiceInputEnabled',
@@ -155,6 +172,8 @@ it('applies config patches to the store and flashes Saved', async () => {
   await act(async () => { await h.props.global.onUpdate(patch); });
   expect(h.setMock).toHaveBeenCalledWith(patch);
   for (const spy of spies) expect(spy).toHaveBeenCalledTimes(1);
+  expect(useData.getState().setThreadTabsEnabled).toHaveBeenCalledWith(false);
+  expect(useData.getState().setDockableThreadToolsEnabled).toHaveBeenCalledWith(false);
   expect(useData.getState().nativeAgentDiscoveryEnabled).toBe(true);
   expect(await screen.findByText('Saved')).toBeTruthy();
   // second save re-arms the timer path

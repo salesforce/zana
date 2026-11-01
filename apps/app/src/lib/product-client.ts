@@ -7,6 +7,7 @@ import { sharedExtensions } from './shared-extensions.js';
 import type { SystemVoiceStatusResponse } from '@zana-ai/zcc-server-contract';
 import type { CcApi } from '@zana-ai/zcc-desktop-contract';
 import type { Host } from '@zana-ai/zcc-domain/thread-runtime';
+import type { PreviewPathRequest, PreviewPathResult } from '@zana-ai/zcc-server-contract';
 import type { CreatePeerConnectionResponse, PausePeerLinkResponse, PeerConnection, PeerConnectionListResponse, PeerLeftover, PeerLeftoverListResponse, PeerLinkActivityResponse, PeerLinkListResponse, PeerRemoteLoginCheckResponse, RemovePeerLinkResponse, RemovePeerLinkResult, RepairPeerLinkResponse } from '@zana-ai/zcc-server-contract';
 import type {
   AgentMessage,
@@ -144,6 +145,7 @@ function httpProduct(): Pick<
   | 'voice'
   | 'hosts'
   | 'marketplaces'
+  | 'pluginPacks'
   | 'cliSkills'
 > {
   let terminalRosterRead: Promise<{ sessions: TerminalSession[] }> | undefined;
@@ -193,12 +195,12 @@ function httpProduct(): Pick<
       },
       pickDirectory: async () => null,
       addRemote: async () => ({ ok: false, code: 'unavailable', message: 'remote projects require the desktop app' }),
-      clone: async (input: { url: string; name?: string }) => {
+      clone: async (input: { url: string; name?: string; hostId?: string }) => {
         try {
           const response = await fetchWithAppSurface('/api/v1/projects/clone', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ url: input.url, name: input.name })
+            body: JSON.stringify({ url: input.url, name: input.name, hostId: input.hostId })
           });
           const body = await response.json() as {
             ok?: boolean;
@@ -230,9 +232,9 @@ function httpProduct(): Pick<
           : payload;
         if (typeof text === 'string') cb(text);
       }),
-      cloneRoot: async () => {
+      cloneRoot: async (hostId?: string) => {
         try {
-          const body = await apiJson<{ path: string }>('/projects/clone-root');
+          const body = await apiJson<{ path: string }>(`/projects/clone-root${hostId ? `?hostId=${encodeURIComponent(hostId)}` : ''}`);
           return body.path;
         } catch {
           return '';
@@ -420,6 +422,7 @@ function httpProduct(): Pick<
       runNow: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
       queryRuns: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
       retryRuns: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
+      resumeRun: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
       dismissRuns: async () => ({ ok: false, code: 'unavailable', message: 'scheduling requires the desktop app' }),
       reconcile: async (): ReturnType<CcApi['scheduler']['reconcile']> => ({ ok: false, code: 'unavailable', message: 'Worker recovery requires the instance owner to be connected' }),
       listTemplates: async () => [],
@@ -849,8 +852,12 @@ function httpProduct(): Pick<
           method: 'PATCH',
           body: JSON.stringify({ title })
         }),
-      panelConversations: async (pluginId, panel) => {
-        const query = panel ? `?${new URLSearchParams({ panel })}` : '';
+      panelConversations: async (pluginId, panel, scope) => {
+        const params = new URLSearchParams();
+        if (panel) params.set('panel', panel);
+        if (scope?.projectId !== undefined) params.set('projectId', scope.projectId);
+        if (scope?.view !== undefined) params.set('view', scope.view);
+        const query = params.size ? `?${params}` : '';
         const body = await apiJson<{ threads: Awaited<ReturnType<CcApi['threads']['panelConversations']>> }>(
           `/plugins/${encodeURIComponent(pluginId)}/panel-threads${query}`
         );
@@ -898,6 +905,12 @@ function httpProduct(): Pick<
       editMessage: async (threadId, body) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/edit-message`, {
           method: 'POST',
+          body: JSON.stringify(body)
+        }),
+      resolvePreviewPath: async (threadId: string, body: PreviewPathRequest): Promise<PreviewPathResult> =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/preview-path/resolve`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
           body: JSON.stringify(body)
         }),
       hostFileContent: async (threadId, path, projectId) =>
@@ -1133,7 +1146,15 @@ function httpProduct(): Pick<
         body: JSON.stringify(input)
       })
     },
+    pluginPacks: {
+      list: () => apiJson('/plugin-packs'),
+      listInstalled: () => apiJson('/plugin-packs/installed'),
+      plan: (identity) => apiJson('/plugin-packs/plan', { method: 'POST', body: JSON.stringify(identity) }),
+      install: (request) => apiJson('/plugin-packs/install', { method: 'POST', body: JSON.stringify(request) }),
+      forget: (identity) => apiJson('/plugin-packs/forget', { method: 'POST', body: JSON.stringify(identity) })
+    },
     pluginApps: {
+      repair: async () => ({ ok: false as const, code: 'DESKTOP_REQUIRED', message: 'Open the desktop app to recover this plugin source' }),
       list: async () => {
         const body = await apiJson<{ apps?: PluginAppEntry[] }>('/plugin-apps');
         return Array.isArray(body.apps) ? body.apps : [];
@@ -1368,6 +1389,12 @@ export type { PeerLeftover, PeerLeftoverListResponse };
  * Core Peers hub: plugin links and the uses that justify them. Owner gestures only;
  * the server re-validates every request, so this client carries no authority.
  */
+/** Core recovery must remain usable when plugin UI and providers are broken. */
+export const pluginRecovery = {
+  status: () => apiJson<import('@zana-ai/zcc-domain/product').PluginRecoveryState>('/plugin-apps/recovery'),
+  start: () => apiJson<import('@zana-ai/zcc-domain/product').PluginRecoveryState>('/plugin-apps/hard-reload', { method: 'POST', body: '{}' })
+};
+
 export const peerLinks = {
   list: async (): Promise<PeerLinkListResponse> => apiJson<PeerLinkListResponse>('/peer-links'),
   removeUse: async (hostId: string, pluginId: string, scope?: string): Promise<RemovePeerLinkResponse> =>
@@ -1581,7 +1608,8 @@ function wrapDesktopProjects(desktop: CcApi['projects']): CcApi['projects'] {
     },
     clone: http.clone,
     onCloneProgress: http.onCloneProgress,
-    cloneRoot: async () => {
+    cloneRoot: async (hostId?: string) => {
+      if (hostId) return http.cloneRoot(hostId);
       const fromDesktop = await desktop.cloneRoot().catch(() => '');
       if (fromDesktop) return fromDesktop;
       return http.cloneRoot();

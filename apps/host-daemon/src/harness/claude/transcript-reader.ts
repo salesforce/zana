@@ -129,26 +129,32 @@ export function extractLastAssistantText(lines: TranscriptLine[], maxChars = 4_0
  *   - assistant tool_use → `Assistant ran: a, b`  (tool names, deduped per turn)
  * Tool *results* (large file dumps, command output) and `thinking` blocks are
  * dropped — they bloat the input without telling the model what happened. Each
- * block's text is clamped so one giant message can't crowd out the rest, then
- * the whole digest is capped to `maxChars` keeping the TAIL (recent turns carry
- * the current state). Pure; exported for tests.
+ * block's text is clamped so one giant message can't crowd out the rest (the
+ * agent's final prose block gets the larger `finalBlockChars`, since it is
+ * usually its own wrap-up), then the whole digest is capped to `maxChars`
+ * keeping the TAIL (recent turns carry the current state). Pure; exported for
+ * tests.
  */
 export function buildSessionDigest(
   lines: TranscriptLine[],
-  opts: { maxChars?: number; perBlockChars?: number } = {}
+  opts: { maxChars?: number; perBlockChars?: number; finalBlockChars?: number } = {}
 ): string {
   const maxChars = opts.maxChars ?? 12_000;
   const perBlockChars = opts.perBlockChars ?? 1_500;
-  const clamp = (s: string) =>
-    s.length > perBlockChars ? `${s.slice(0, perBlockChars)}…` : s;
+  const finalBlockChars = opts.finalBlockChars ?? 4_000;
+  const clamp = (s: string, max = perBlockChars) =>
+    s.length > max ? `${s.slice(0, max)}…` : s;
 
-  const parts: string[] = [];
+  // Collected unclamped first, so only the LAST assistant prose block can get
+  // the larger budget.
+  const parts: Array<{ label: string; text: string; clamped: boolean }> = [];
+  let lastProse = -1;
   for (const line of lines) {
     const content = line.message?.content;
     if (line.type === 'user') {
       // A typed prompt is a plain string; an array is tool_result echoes we skip.
       if (typeof content === 'string' && content.trim()) {
-        parts.push(`User: ${clamp(content.trim())}`);
+        parts.push({ label: 'User', text: content.trim(), clamped: true });
       }
       continue;
     }
@@ -162,11 +168,16 @@ export function buildSessionDigest(
         if (!tools.includes(block.name)) tools.push(block.name);
       }
     }
-    if (texts.length) parts.push(`Assistant: ${clamp(texts.join('\n'))}`);
-    if (tools.length) parts.push(`Assistant ran: ${tools.join(', ')}`);
+    if (texts.length) {
+      lastProse = parts.length;
+      parts.push({ label: 'Assistant', text: texts.join('\n'), clamped: true });
+    }
+    if (tools.length) parts.push({ label: 'Assistant ran', text: tools.join(', '), clamped: false });
   }
 
-  const digest = parts.join('\n\n');
+  const digest = parts
+    .map((p, i) => `${p.label}: ${p.clamped ? clamp(p.text, i === lastProse ? finalBlockChars : perBlockChars) : p.text}`)
+    .join('\n\n');
   // Keep the tail — the closing turns describe where the session actually ended.
   return digest.length > maxChars ? digest.slice(digest.length - maxChars) : digest;
 }

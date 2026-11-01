@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { upsertHost } from '@zana-ai/zcc-db';
+import { createConversationThread, createEnvironment, upsertHost } from '@zana-ai/zcc-db';
 import { channelHash } from '../services/peers/enrolled-peer-channels.js';
 
 const h = vi.hoisted(() => ({
@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   flushHeld: vi.fn(),
   heal: vi.fn(),
   outcome: vi.fn(),
+  idleFlush: vi.fn(),
   pluginStatus: vi.fn(),
   notifyChild: vi.fn()
 }));
@@ -41,7 +42,8 @@ vi.mock('../services/threads/conversation-host-recovery.js', () => ({
   healDisconnectedConversationThreadsForHost: (...a: unknown[]) => h.heal(...a)
 }));
 vi.mock('../services/threads/conversation-lifecycle-outcome.js', () => ({
-  publishConversationLifecycleOutcome: (...a: unknown[]) => h.outcome(...a)
+  publishConversationLifecycleOutcome: (...a: unknown[]) => h.outcome(...a),
+  scheduleConversationIdleFlush: (...a: unknown[]) => h.idleFlush(...a)
 }));
 vi.mock('../plugins/thread-events.js', () => ({
   emitPluginThreadStatus: (...a: unknown[]) => h.pluginStatus(...a)
@@ -150,7 +152,8 @@ describe('construction seams', () => {
       expect(deps.hasTranscript()).toBe(false);
       expect(await deps.readDigest()).toBe('');
       expect((await deps.runTurnSummary()).error).toBe('unused');
-      expect((await deps.runSessionSummary()).error).toBe('unused');
+      // Not run here: this suite does not mock the LLM.
+      expect(typeof deps.runSessionSummary).toBe('function');
     }
   });
 });
@@ -455,3 +458,40 @@ describe('lifecycle', () => {
     expect(existsSync(ctx.dataDir)).toBe(true);
   });
 });
+
+
+it.each(['idle', 'active', 'error'] as const)(
+  'root compaction wakes queued input only for an idle thread (%s)',
+  (status) => {
+    const ctx = make();
+    upsertHost(ctx.db, {
+      id: 'host-compaction',
+      name: 'fixture',
+      hostKeyHash: 'fixture',
+    });
+    const environment = createEnvironment(ctx.db, {
+      projectId: 'compaction-project',
+      hostId: 'host-compaction',
+    });
+    const thread = createConversationThread(ctx.db, {
+      projectId: 'compaction-project',
+      hostId: 'host-compaction',
+      environmentId: environment.id,
+      providerId: 'pi',
+      status,
+    });
+    h.hubOptions.onConversationEvent({
+      threadId: thread.id,
+      type: 'thread/compacted',
+    });
+    if (status === 'idle')
+      expect(h.idleFlush).toHaveBeenCalledWith(ctx, thread.id);
+    else expect(h.idleFlush).not.toHaveBeenCalled();
+    h.idleFlush.mockClear();
+    h.hubOptions.onConversationEvent({
+      threadId: thread.id,
+      type: 'item/completed',
+    });
+    expect(h.idleFlush).not.toHaveBeenCalled();
+  },
+);

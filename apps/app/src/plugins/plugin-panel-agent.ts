@@ -1,3 +1,4 @@
+import { contextReferenceFromEditorSelection, parseContextReferences, type ContextReference } from '@zana-ai/zcc-plugin-sdk/app';
 /**
  * `navigate.openPanelAgent`: a plugin page asks the side panel it is mounted
  * in to show a conversation, or a composer prefilled with a draft so the user
@@ -5,17 +6,19 @@
  * answers; with no layout listening (no desktop side panel) the request
  * reports false.
  */
+import { parseEditorSelection, type EditorSelection } from '@zana-ai/zcc-plugin-sdk/app';
+
 export const PLUGIN_PANEL_AGENT_EVENT = 'zcc:plugin-panel-agent-open';
 
 /** Bounds what a page can push into the composer: a draft is a request, not a document. */
 export const PANEL_AGENT_DRAFT_MAX_LENGTH = 20_000;
 
 /** Matches the server's bound on a recorded view; main still validates it. */
-export const PANEL_AGENT_VIEW_MAX_LENGTH = 256;
+export const PANEL_AGENT_VIEW_MAX_LENGTH = 500;
 
 export type PanelAgentTarget =
   | { threadId: string; title?: string }
-  | { draft: string; projectId?: string; view?: string; title?: string };
+  | { draft: string; projectId?: string; view?: string; title?: string; references?: ContextReference[]; selection?: EditorSelection };
 
 export interface PluginPanelAgentRequest {
   pluginId: string;
@@ -33,7 +36,7 @@ export function parsePanelAgentTarget(options: unknown): PanelAgentTarget | null
   const title = typeof raw.title === 'string' && raw.title.trim() ? { title: raw.title.trim() } : {};
   if (typeof raw.threadId === 'string' && raw.threadId) return { threadId: raw.threadId, ...title };
   const draft = raw.draft && typeof raw.draft === 'object'
-    ? raw.draft as { prompt?: unknown; projectId?: unknown; view?: unknown }
+    ? raw.draft as { prompt?: unknown; projectId?: unknown; view?: unknown; references?: unknown; selection?: unknown }
     : null;
   const prompt = draft?.prompt;
   if (typeof prompt === 'string' && prompt.trim() && prompt.length <= PANEL_AGENT_DRAFT_MAX_LENGTH) {
@@ -41,7 +44,11 @@ export function parsePanelAgentTarget(options: unknown): PanelAgentTarget | null
     const projectId = typeof draft?.projectId === 'string' && draft.projectId ? { projectId: draft.projectId } : {};
     const rawView = typeof draft?.view === 'string' ? draft.view.trim() : '';
     const view = rawView && rawView.length <= PANEL_AGENT_VIEW_MAX_LENGTH ? { view: rawView } : {};
-    return { draft: prompt, ...projectId, ...view, ...title };
+    const references = draft?.references === undefined ? undefined : parseContextReferences(draft.references);
+    if (references === null) return null;
+    const selection = parseEditorSelection(draft?.selection);
+    if (references && selection && !parseContextReferences([...references, contextReferenceFromEditorSelection(selection)])) return null;
+    return { ...(selection ? { selection } : {}), ...(references ? { references } : {}), draft: prompt, ...projectId, ...view, ...title };
   }
   return null;
 }

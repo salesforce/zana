@@ -8,8 +8,8 @@ import { PluginNewThreadActions } from '@/plugins/PluginNewThreadActions';
 import { composePromptSeedFrom } from '@/lib/compose-prompt-seed';
 
 /**
- * Composer-only create surface. Agents board and list navigate here instead of
- * embedding the prompt on the kanban. Submit already opens `/threads/:id`.
+ * Full-page create surface. Project New Chat offers the same launch modes as
+ * Home while keeping the project rail and a project-specific draft.
  *
  * From a workspace the project is locked: the nested `/projects/:id/threads/new`
  * route keeps the project rail, and the composer shows that workspace selected
@@ -21,6 +21,8 @@ export function NewThreadView({ project: projectProp }: { project?: Project } = 
   const [search] = useSearchParams();
   const seed = composePromptSeedFrom({ searchParams: search, state: location.state });
   const projectId = projectProp?.id ?? routeProjectId ?? search.get('project');
+  const locationProjectId = search.get('locationProject') ?? undefined;
+  const initialHostId = search.get('host') ?? undefined;
   const projects = useData((s) => s.projects);
   const project = useMemo(
     () => projectProp ?? (projectId ? projects.find((row) => row.id === projectId) : undefined),
@@ -31,9 +33,13 @@ export function NewThreadView({ project: projectProp }: { project?: Project } = 
     <section className="new-thread-view aurora-host" data-testid="new-thread-view">
       <AuroraGrid />
       <div className="new-thread-view-inner">
-        <h1 className="new-thread-view-heading">New agent</h1>
+        <h1 className="new-thread-view-heading">New Chat</h1>
         <HomeAgentComposer
-          draftScope="new-thread"
+          allowLegacyAgent={Boolean(project)}
+          key={`${locationProjectId ?? ''}:${initialHostId ?? ''}`}
+          draftScope={locationProjectId || initialHostId ? `new-thread:${locationProjectId ?? ''}:${initialHostId ?? ''}` : 'new-thread'}
+          composerProjectId={locationProjectId}
+          initialHostId={initialHostId}
           project={project}
           initialText={seed.initialText}
           autoFocus={seed.focusPrompt}

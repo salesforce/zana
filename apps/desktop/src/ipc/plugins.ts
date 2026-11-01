@@ -1,5 +1,6 @@
 // @ts-nocheck
-import { ipcMain } from 'electron';
+import { ipcMain, BrowserWindow } from 'electron';
+import { repairPluginSource } from './plugin-source-repair.js';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
 import { listMcpServersAll, revealMcpServer, setMcpServerEnabledById } from '@zana-ai/zcc-server/services/mcp/mcp-catalogue';
@@ -8,6 +9,7 @@ import { listPlugins, revealPlugin, setPluginEnabled } from '@zana-ai/zcc-server
 import { wantsSecretsOmitted, withoutSecretValues } from '@zana-ai/zcc-server/plugins/plugin-settings-redaction';
 import type { Result } from '@zana-ai/zcc-domain/product';
 import { classifyExpectedRpcError, toRpcErrorEnvelope } from '@zana-ai/zcc-contracts/rpc-error';
+import { registerPluginPacksIpc } from './plugin-packs.js';
 import {
   listPluginAppsFromProductServer,
   setPluginAppEnabledOnProductServer,
@@ -22,6 +24,11 @@ import {
 } from './plugin-apps-loopback.js';
 
 export function registerPluginsIpc(): void {
+  registerPluginPacksIpc();
+  ctx.safeHandle(IPC.pluginApps.repair,
+    (id: unknown, action: unknown) => repairPluginSource(ctx.runtimeSupervisor, id, action, BrowserWindow.getFocusedWindow() ?? ctx.mainWindow()),
+    (error): Result<true> => ({ ok: false, code: 'REPAIR_FAILED', message: error instanceof Error ? error.message : String(error) })
+  );
   
   ctx.safeHandle(
     IPC.mcp.list,

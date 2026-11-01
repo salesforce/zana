@@ -7,6 +7,7 @@ import type {
   SquadRuntimePreflightResult
 } from '@zana-ai/zcc-contracts/runtime';
 import type { TeamLifecycleRecord } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
+import { registerThreadProvider } from '@zana-ai/zcc-server/services/threads/thread-provider-catalog';
 
 /**
  * Drives host.ts `authorizeTeamLaunch` / `launchTeam` through their real paths with
@@ -187,8 +188,18 @@ mkdirSync(projectDir, { recursive: true });
 
 const persona = (id: string, extra: Record<string, unknown> = {}) => ({ id, name: id.toUpperCase(), baseProfile: 'claude', ...extra });
 let seq = 0;
+let threadProviderHandles: Array<{ unregister(): void }> = [];
 
 beforeEach(() => {
+  threadProviderHandles.forEach(handle => handle.unregister());
+  threadProviderHandles = [
+    registerThreadProvider('test', { id: 'claude-code', displayName: 'Claude Code',
+      capabilities: { supportsServiceTier: false, fork: 'none', supportsThreadArchive: false,
+        supportsThreadRename: false, permissionModes: ['accept-edits', 'auto', 'full'] }, composerActions: [] }),
+    registerThreadProvider('test', { id: 'acp-opencode', displayName: 'OpenCode',
+      capabilities: { supportsServiceTier: false, fork: 'none', supportsThreadArchive: false,
+        supportsThreadRename: false, permissionModes: ['accept-edits', 'full'] }, composerActions: [] })
+  ];
   seq += 1;
   h.projects = [{ id: 'p1', name: 'Proj', path: projectDir }];
   h.config = { version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null };
@@ -205,6 +216,7 @@ beforeEach(() => {
 });
 
 afterAll(() => {
+  threadProviderHandles.forEach(handle => handle.unregister());
   vi.unstubAllEnvs();
   rmSync(h.root, { recursive: true, force: true });
 });
@@ -246,6 +258,21 @@ describe('authorizeTeamLaunch', () => {
     h.personas = [persona('orch'), persona('w1')];
     expect(authorizeTeamLaunch('c', 'team1', 'p1', reqId(), {}, tasks()))
       .toMatchObject({ ok: false, code: 'DENIED', message: 'unknown persona: w2' });
+  });
+
+  it('rejects automated skill selection for CLI Teams', () => {
+    const slots = tasks();
+    slots[0] = { ...slots[0], automatedSkillIds: ['zcc:built-in/test'] };
+    expect(authorizeTeamLaunch('c', 'team1', 'p1', reqId(), {}, slots))
+      .toMatchObject({ ok: false, code: 'INVALID', message: 'automated skill selection requires Modern Team transport' });
+  });
+
+  it('rejects duplicate automated skill ids before authorization', () => {
+    h.teams[0] = { ...h.teams[0], transport: 'MODERN' };
+    const slots = tasks();
+    slots[0] = { ...slots[0], automatedSkillIds: ['zcc:built-in/test', 'zcc:built-in/test'] };
+    expect(authorizeTeamLaunch('c', 'team1', 'p1', reqId(), {}, slots))
+      .toMatchObject({ ok: false, code: 'INVALID', message: 'invalid initial task' });
   });
 
   it('issues per-slot authorizations, deadline, admission digest and honours native recovery', () => {
@@ -335,6 +362,14 @@ describe('launchTeam validation failures', () => {
       .toMatchObject({ ok: false, message: 'invalid initial task' });
     expect(await launchTeam('team1', 'p1', { ...base, policy: { maxLaunches: 2 }, slots: ok }))
       .toMatchObject({ ok: false, code: 'RESOURCE_LIMIT' });
+  });
+
+  it('rejects duplicate automated skill ids before launch', async () => {
+    h.teams[0] = { ...h.teams[0], transport: 'MODERN' };
+    const slots = SLOT_IDS.map((slotId) => ({ slotId, initialTask: 'x' }));
+    slots[0] = { ...slots[0], automatedSkillIds: ['zcc:built-in/test', 'zcc:built-in/test'] };
+    expect(await launchTeam('team1', 'p1', { callerPrincipalId: 'c', launchRequestId: reqId(), slots }))
+      .toMatchObject({ ok: false, code: 'INVALID', message: 'invalid initial task' });
   });
 });
 
@@ -644,11 +679,13 @@ describe('launchTeam Modern structured path', () => {
       });
       expect(request.prompt.trim()).not.toBe('');
       expect(request.model).toBeUndefined();
-      expect(request.permissionMode).toBeUndefined();
+      expect(request.permissionMode).toBe('accept-edits');
     }
     const preflights = h.runtime.preflightSquadRuntime.mock.calls.map(([request]) => request);
     expect(preflights.length).toBeGreaterThan(0);
     expect(new Set(preflights.flatMap((request) => request.providerIds))).toEqual(new Set(['claude-code', providerId]));
+    expect(preflights.flatMap((request) => request.selections.map(selection => selection.permissionMode)))
+      .toEqual(['accept-edits', 'accept-edits', 'accept-edits', 'accept-edits']);
     expect(Math.max(...h.runtime.preflightSquadRuntime.mock.invocationCallOrder))
       .toBeLessThan(h.runtime.createSquadMember.mock.invocationCallOrder[0]);
     const record = lifecycle(req.launchRequestId);
@@ -666,6 +703,16 @@ describe('launchTeam Modern structured path', () => {
     expect(h.runtime.createSquadMember).toHaveBeenCalledTimes(4);
     expect(h.runtime.stopSquadMember).not.toHaveBeenCalled();
     expect(h.creates).toEqual([]);
+  });
+
+  it('passes each modern task slot automated skill selection to its runtime request', async () => {
+    const automatedSkillIds = ['zcc:built-in/test'];
+    const req = structuredReq();
+    req.slots[1] = { ...req.slots[1], automatedSkillIds };
+    expect((await launchTeam('team1', 'p1', req)).ok).toBe(true);
+    const created = h.runtime.createSquadMember.mock.calls.map(([request]) => request);
+    expect(created[1].automatedSkillIds).toEqual(automatedSkillIds);
+    expect(created.filter((_, index) => index !== 1).every((request) => request.automatedSkillIds === undefined)).toBe(true);
   });
 
   it.each(['runtime', 'provider'] as const)('refuses %s preflight for every slot before any ACP create or PTY', async (refusal) => {
@@ -851,16 +898,30 @@ describe('launchTeam Modern structured path', () => {
       const result = await launchTeam('team1', 'p1', structuredReq());
       expect(result.ok).toBe(true);
       expect(h.runtime.createSquadMember.mock.calls.map(([request]) => request.permissionMode))
-        .toEqual(['full', 'full', 'accept-edits', undefined]);
+        .toEqual(['full', 'full', 'accept-edits', 'accept-edits']);
       expect(h.runtime.preflightSquadRuntime.mock.calls[0][0].selections.map(selection => selection.permissionMode))
-        .toEqual(['full', 'full', 'accept-edits', undefined]);
+        .toEqual(['full', 'full', 'accept-edits', 'accept-edits']);
     });
 
-    it('runs autonomous freeform squads in auto mode', async () => {
+    it('launches default-permission Modern personas with accept-edits for ACP preflight and create', async () => {
+      h.personas = [persona('orch', { permissionMode: 'default' }), persona('w1', { permissionMode: 'default' }), persona('w2', { permissionMode: 'default' })];
+      const result = await launchTeam('team1', 'p1', structuredReq());
+      expect(result).toMatchObject({ ok: true, value: { launched: 4, failedSlots: [] } });
+      expect(h.runtime.preflightSquadRuntime.mock.calls[0][0].selections.map(selection => selection.permissionMode))
+        .toEqual(['accept-edits', 'accept-edits', 'accept-edits', 'accept-edits']);
+      expect(h.runtime.createSquadMember.mock.calls.map(([request]) => request.permissionMode))
+        .toEqual(['accept-edits', 'accept-edits', 'accept-edits', 'accept-edits']);
+    });
+
+    it('falls back to accept-edits for autonomous OpenCode slots before preflight and create', async () => {
       h.config.teamLaunchEnabled = true;
+      h.personas[2] = persona('w2', { baseProfile: 'opencode' });
       const result = await launchTeam('team1', 'p1', { ...structuredReq(), coordinationMode: 'freeform' } as never);
       expect(result.ok).toBe(true);
-      expect(new Set(h.runtime.createSquadMember.mock.calls.map(([request]) => request.permissionMode))).toEqual(new Set(['auto']));
+      expect(h.runtime.preflightSquadRuntime.mock.calls[0][0].selections.map(selection => selection.permissionMode))
+        .toEqual(['auto', 'auto', 'accept-edits', 'auto']);
+      expect(h.runtime.createSquadMember.mock.calls.map(([request]) => request.permissionMode))
+        .toEqual(['auto', 'auto', 'accept-edits', 'auto']);
     });
   });
 
@@ -1026,5 +1087,62 @@ describe('launchTeam Modern structured path', () => {
       // Capacity stays held: neither observation is exact terminal evidence.
       expect(lifecycle(req.launchRequestId).workers.find(worker => worker.threadId === member.bindingId)).toMatchObject({ capacityReleased: false });
     });
+
+    it('planless durable Modern coordinator registers once via MCP and gets no plan-file handoff (B1)', async () => {
+      const execution = await claimExecution(`exec-${reqId()}`);
+      const req = { ...structuredReq(), executionId: execution.id, jobContext: { objective: 'List root files' } };
+      const result = await launchTeam('team1', 'p1', req as never);
+      expect(result.ok).toBe(true);
+      const orchestrator = h.runtime.createSquadMember.mock.calls.map(([request]) => request).find((request) => request.role === 'orchestrator')!;
+      expect(orchestrator.prompt).toContain('`execution.plan.register` EXACTLY ONCE');
+      expect(orchestrator.prompt).not.toContain('.zana/execution-plan-');
+      expect(orchestrator.prompt).not.toContain('file-write tool');
+      expect(h.creates).toEqual([]);
+    });
+  });
+});
+
+describe('launchTeam CLI planless durable coordinator plan-file grant (B2)', () => {
+  const claimExecution = async () => (await h.squadOpts.store.claim({
+    callerPrincipalId: `cli-owner-${seq}`, projectId: 'p1', teamId: 'team1', jobTitle: 'Work', requestDigest: `digest-${reqId()}`,
+    launchRequestId: `exec-${reqId()}`, resolvedModels: [], request: { version: 1, slots: [{ initialTask: 'Work' }], resolvedModels: [] }
+  })).record as { id: string };
+  const launchPlanless = async () => {
+    const execution = await claimExecution();
+    const result = await launchTeam('team1', 'p1', {
+      callerPrincipalId: 'owner', launchRequestId: reqId(), coordinationMode: 'freeform', executionId: execution.id,
+      jobContext: { objective: 'List root files' },
+      slots: SLOT_IDS.map((slotId) => ({ slotId, initialTask: `task ${slotId}` }))
+    } as never);
+    expect(result.ok).toBe(true);
+    return { execution, orchestrator: h.creates.find((create) => create.cohort?.role === 'orchestrator') };
+  };
+
+  it('grants the orchestrator exactly its own plan file and keeps the file handoff prompt', async () => {
+    const { execution, orchestrator } = await launchPlanless();
+    const rel = `.zana/execution-plan-${execution.id}.md`;
+    expect(orchestrator.authoredPlanPaths).toEqual([
+      join(projectDir, rel),
+      join(projectDir, `.zana/execution-plan-corrected-${execution.id}.md`),
+      join(projectDir, `.zana/execution-plan-correction-${execution.id}.md`)
+    ]);
+    // The prompt names the same absolute file the grant covers and the host reads.
+    expect(JSON.stringify([orchestrator.openingPrompt, orchestrator.extraArgs])).toContain(`Write your COMPLETE portable-executable plan to \`${join(projectDir, rel)}\``);
+    expect(orchestrator.autonomous).toBe(false);
+    for (const worker of h.creates.filter((create) => create.cohort?.role === 'worker')) {
+      expect(worker.authoredPlanPaths).toBeUndefined();
+    }
+  });
+
+  it('gives no grant when the orchestrator persona cannot write files', async () => {
+    h.personas = [persona('orch', { deniedTools: ['Edit'] }), persona('w1'), persona('w2')];
+    const { orchestrator } = await launchPlanless();
+    expect(orchestrator.authoredPlanPaths).toBeUndefined();
+  });
+
+  it('gives no grant to a remote project PTY', async () => {
+    h.projects = [{ id: 'p1', name: 'Remote', path: projectDir, hostId: 'other-host', remote: { host: 'ssh-box' } }];
+    const { orchestrator } = await launchPlanless();
+    expect(orchestrator.authoredPlanPaths).toBeUndefined();
   });
 });

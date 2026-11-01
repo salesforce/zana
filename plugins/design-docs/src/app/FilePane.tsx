@@ -56,6 +56,7 @@ export function FilePane({
   onOpenPath,
   onQuote,
   onAskAbout,
+  onAddToThread,
   onEditorState,
   leading,
   kind
@@ -72,6 +73,7 @@ export function FilePane({
   onOpenPath(path: string): void;
   onQuote(text: string): void;
   onAskAbout(text: string): void;
+  onAddToThread?(text: string): void;
   onEditorState(state: EditorState): void;
   /** Extra toolbar content before the path (the compact file switcher). */
   leading?: ReactNode;
@@ -112,6 +114,7 @@ export function FilePane({
         onOpenPath={onOpenPath}
         onQuote={onQuote}
           onAskAbout={onAskAbout}
+          onAddToThread={onAddToThread}
           handleRef={previewHandle}
           kind={kind}
       />

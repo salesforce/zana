@@ -1,11 +1,12 @@
 import { basename } from 'node:path';
-import type { Project, TeamJobLaunchResponse } from '@zana-ai/zcc-domain/product';
+import { validateSquadExecutionTarget, type Project, type SquadExecutionTargetSelector, type TeamJobLaunchResponse } from '@zana-ai/zcc-domain/product';
 import { AUTONOMOUS_DEFAULTS } from '@zana-ai/zcc-server/services/agents/autonomous-run-supervisor';
 import type { ExpandedTeamSlot } from '@zana-ai/zcc-server/services/agents/team-slot-expansion';
 import type { ExecutionRequestV1, SquadExecutionService } from '@zana-ai/zcc-server/services/execution/service';
 import { ExecutionSourceError, type createExecutionSourceRegistry, type ExecutionSourcePathDescriptor } from '@zana-ai/zcc-server/services/execution/source-registry';
 import { resolveSourcePolicy, type SourcePolicy } from '@zana-ai/zcc-server/services/execution/source-policy';
 import type { ExecutionRecord, ExecutionReportTarget } from '@zana-ai/zcc-server/services/execution/store';
+import { squadGoalTooLongMessage, squadLaunchTextProblem } from '@zana-ai/zcc-domain/squad-proposal';
 import { PlanCorrectionService } from './plan-correction/service.js';
 import { gateInvalidProvidedPlan, splitProposedGoalSources, teamJobFailureResponse, type ProvidedPlanGateDeps } from './team-launch-support.js';
 import { planNormalizationNote, resolveSquadPlan } from './team-trigger-semantics.js';
@@ -76,6 +77,8 @@ export interface SquadLaunchInput {
   goalSources: ExecutionSourcePathDescriptor[];
   /** Realpaths of the sources a reviewed proposal card listed. */
   reviewedSourcePaths?: readonly string[];
+  /** User-selected existing execution target; validated here, resolved and revalidated by main. */
+  target?: SquadExecutionTargetSelector;
 }
 
 export interface SquadLaunchContext {
@@ -163,6 +166,9 @@ export async function launchSquad(
 ): Promise<TeamJobLaunchResponse> {
   const { project } = input;
   const { owner } = ctx;
+  // Never fall back to a generated worktree when a selector is present but unusable.
+  const targetCheck = validateSquadExecutionTarget({ target: input.target });
+  if (!targetCheck.ok) return { ok: false, code: 'INVALID', message: targetCheck.message };
   // A proposed or agent-started launch attaches goal-named files outside the Project only when
   // they were listed: on the reviewed card, or in the agent's own sources.
   const sessionLaunch = ctx.sources?.kind === 'session';
@@ -200,7 +206,8 @@ export async function launchSquad(
       teamId: input.teamId, projectId: project.id, projectName: project.name, launchRequestId,
       coordinationMode: input.coordinationMode, slots: input.slots, attended: ctx.sources?.kind === 'window',
       goal: input.goal, title: input.title, summary: input.summary, completionInboxNotice: input.completionInboxNotice,
-      sourceBundle, goalSourceDescriptors: redactedGoalSources
+      sourceBundle, goalSourceDescriptors: redactedGoalSources,
+      ...(targetCheck.target ? { target: targetCheck.target } : {})
     });
     if (!built.ok) return built.response;
     const result = owner.proposal || owner.reportTo
@@ -258,12 +265,22 @@ async function buildSquadStartRequest(deps: SquadLaunchDeps, args: {
   completionInboxNotice: boolean;
   sourceBundle?: SquadSourceBundle;
   goalSourceDescriptors: ExecutionSourcePathDescriptor[];
+  target?: SquadExecutionTargetSelector;
 }): Promise<{ ok: true; request: ExecutionRequestV1 } | { ok: false; response: TeamJobLaunchResponse }> {
   const { sourceBundle, launchRequestId } = args;
   const capturedPathDescriptors = [...(sourceBundle?.pathDescriptors ?? []), ...args.goalSourceDescriptors];
-  const sanitizedGoal = (redactCapturedExecutionSourcePaths(args.goal, capturedPathDescriptors) ?? args.goal).slice(0, 4_000);
+  const sanitizedGoal = redactCapturedExecutionSourcePaths(args.goal, capturedPathDescriptors) ?? args.goal;
   const sanitizedExplicitTitle = redactCapturedExecutionSourcePaths(args.title, capturedPathDescriptors)?.slice(0, 256) || undefined;
-  const sanitizedSummary = redactCapturedExecutionSourcePaths(args.summary, capturedPathDescriptors)?.slice(0, 4_000) || undefined;
+  const sanitizedSummary = redactCapturedExecutionSourcePaths(args.summary, capturedPathDescriptors) || undefined;
+  // Measure the redacted text the store receives; refuse it rather than cut it.
+  const textProblem = squadLaunchTextProblem({ goal: sanitizedGoal, summary: sanitizedSummary });
+  if (textProblem) {
+    // The composer counts the raw goal; say so when redaction is what pushed it over.
+    const message = textProblem.code === 'GOAL_TOO_LONG' && sanitizedGoal.length !== args.goal.length
+      ? squadGoalTooLongMessage(sanitizedGoal.length, { afterSourceNames: true })
+      : textProblem.message;
+    return { ok: false, response: { ok: false, code: textProblem.code, message } };
+  }
   const sourceMetadata = sourceBundle?.sources.map(({ extractedText: _content, ...metadata }) => metadata);
   // One resolver for interactive and triggered launches: "Plan provided in goal"
   // (structured) must yield a complete durable DAG or park for plan correction;
@@ -310,6 +327,7 @@ async function buildSquadStartRequest(deps: SquadLaunchDeps, args: {
       completionInboxNotice: args.completionInboxNotice,
       slots: initialTask,
       ...(plannedWorkUnits ? { workUnits: plannedWorkUnits } : {}),
+      ...(args.target ? { target: args.target } : {}),
       ...(sourceBundle && sourceMetadata ? { sourceBundle: { contentRef: sourceBundle.contentRef, sources: sourceMetadata } } : {}),
       policy: {
         ...(autonomousTimeoutMs === 0 ? {} : { deadlineMs: autonomousTimeoutMs ?? AUTONOMOUS_DEFAULTS.timeoutMs })

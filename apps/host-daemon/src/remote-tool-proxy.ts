@@ -52,7 +52,8 @@ export const CLI_REMOTE_TOOL_PROXY_INSTRUCTIONS = [
 const PATH_SCHEMA = {
   type: 'object',
   properties: {
-    path: { type: 'string', description: 'Path under the remote project root.' }
+    path: { type: 'string', description: 'Path under the remote project root.' },
+    byte_offset: { type: 'integer', minimum: 0, description: 'Byte cursor returned by a truncated prior response.' }
   },
   required: ['path']
 } as const;
@@ -60,7 +61,7 @@ const PATH_SCHEMA = {
 export const REMOTE_TOOL_PROXY_DYNAMIC_TOOLS: DynamicTool[] = [
   {
     name: 'remote_read',
-    description: 'Read a file on the remote SSH project (capped). Native Read is disabled.',
+    description: 'Read a file on the remote SSH project. A truncated response includes nextByteOffset for continuation. Native Read is disabled.',
     inputSchema: PATH_SCHEMA
   },
   {
@@ -130,6 +131,10 @@ function asString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+function asByteOffset(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
 function argsRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -146,10 +151,21 @@ export async function executeRemoteProxyTool(
   if (tool === 'remote_read') {
     const path = asString(args.path);
     if (!path) return { success: false, text: 'path is required' };
-    const read = await readFileRemote(remote, root, path);
+    if (args.byte_offset !== undefined && asByteOffset(args.byte_offset) === undefined) {
+      return { success: false, text: 'byte_offset must be a non-negative integer' };
+    }
+    const read = await readFileRemote(remote, root, path, asByteOffset(args.byte_offset));
     if (!read.ok) return { success: false, text: read.message ?? 'read failed' };
     if (read.binary) return { success: false, text: 'Binary file' };
-    return { success: true, text: read.content ?? '' };
+    return {
+      success: true,
+      text: JSON.stringify({
+        content: read.content ?? '',
+        bytes: read.bytes ?? 0,
+        truncated: read.truncated ?? false,
+        ...(read.nextByteOffset === undefined ? {} : { nextByteOffset: read.nextByteOffset })
+      })
+    };
   }
   if (tool === 'remote_write') {
     const path = asString(args.path);

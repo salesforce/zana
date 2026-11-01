@@ -291,6 +291,8 @@ export function createPluginApi(
     acknowledgeInteraction?: (args: { pluginId: string } & InteractionAcknowledgement) => Promise<InteractionContract>;
     cancelInteraction?: (args: { pluginId: string } & InteractionAcknowledgement) => Promise<InteractionContract>;
     onNeedsConfiguration?: (message: string) => void;
+    /** `zcc.status` calls: a message marks the plugin, `null` clears its mark. Falls back to `onNeedsConfiguration`. */
+    onPluginStatus?: (message: string | null) => void;
     spawnThread?: (args: PluginSdkThreadSpawnArgs & { pluginId: string }) => Promise<{ id: string }>;
     getThread?: (args: { pluginId: string; threadId: string }) => Promise<PluginSdkThreadSummary | null>;
     listThreadEvents?: (args: {
@@ -2060,7 +2062,11 @@ export function createPluginApi(
     },
     status: {
       needsConfiguration: (message) => {
-        options?.onNeedsConfiguration?.(message);
+        if (options?.onPluginStatus) options.onPluginStatus(String(message));
+        else options?.onNeedsConfiguration?.(message);
+      },
+      configured: () => {
+        options?.onPluginStatus?.(null);
       }
     },
     services,

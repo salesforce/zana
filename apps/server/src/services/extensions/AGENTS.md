@@ -50,6 +50,24 @@ Guard: `e2e/packaged-provider-startup.spec.ts` covers retained source, compiled 
 
 When changing: Run E2E on these seams; verify packaging includes declared runtime assets; ensure failed bridge preserves last-good generation.
 
+## Core plugin recovery
+
+Settings > Development owns host-daemon relaunch and Restore plugins; neither action depends on a plugin RPC or launching an agent. Recovery copies bundled runtimes from the installed app into a fresh managed generation, without network access or compilation. Release packaging does not generate or publish separate plugin recovery assets. Missing or damaged app resources require reinstalling Zana; never fall back to an installed override as the recovery source.
+
+Bundled recovery generations retain their reserved identities and survive restart until the app version changes. Source watchers must not rebuild them. Ordinary marketplace installs still cannot replace reserved ids. Recovery honors independent installs' recorded sources and version pins; local-only plugins are skipped. Every replacement uses the durable activation/data rollback path; local source folders, plugin settings, secrets, data and enablement are preserved. Keep rollback roots inside managed storage, and keep journal-referenced generations until recovery finishes.
+
+Guard: `e2e/development-recovery.spec.ts` proves corrupt-provider recovery through core Settings, data/secrets/enablement preservation, daemon relaunch, restart, offline restoration and damaged-app failures at the built-Electron boundary. It also exercises real Git/npm children, large Git ref output, pinned npm integrity and a fresh npm archive download. Recovery must not reuse npm's ordinary cache.
+
+## Independent plugin migration and moved source recovery
+
+- `EXTERNALIZED_PLUGINS` is the host-owned successor registry. Startup migrates existing builtin rows only; fresh profiles and removed plugins stay optional.
+- Packaging fetches compiled compatibility runtimes from those independent repositories into `plugins/migration-runtimes/<name>`. These are absent from the auto-install catalogue. Missing or invalid fallback artifacts must fail packaging.
+- Before network migration, retain a managed runtime generation. When an upgrade already removed the previous app resources, seed that cache from the packaged compatibility runtime. Offline restarts keep using the cache; registration roots it against generation pruning.
+- A missing local source offers Locate / official-switch choices derived by the server. Electron main owns the folder picker and canonical containment check; the service checks the same plugin id, lifecycle and registration before activation. Never replace a healthy developer folder automatically.
+- Location recovery stages a runtime copy but retains the selected source pointer for Reload. Both journal roots remain managed; settings, secrets, KV and database state use the existing durable activation rollback. Original source folders are never deleted.
+
+Verification: `plugin-service.externalized.test.ts`, `plugin-source-repair.test.ts`, `scripts/package-migration-runtimes.test.ts`, and `pnpm test:e2e -- e2e/plugin-source-recovery.spec.ts e2e/packaged-provider-startup.spec.ts`.
+
 ## Plugin authoring must work outside checkout
 
 Invariants:
@@ -62,3 +80,13 @@ Why: Repo-local CLI test can hide missing packaged dependencies.
 Guard: `packages/cli/src/__tests__/bundled-bin.test.ts` and `e2e/plugin-authoring-live.spec.ts` copies CLI outside repo, verifies create/install, UI↔CLI, reload/persistence, broken builds, failed backend replacements in Electron.
 
 When changing: Run both bundled-bin unit test and live E2E for authoring-loop changes; verify `--once` returns nonzero on failure.
+
+## Plugin modals and full-window overlays
+
+Rule: Portal any full-window overlay (modal backdrop, dialog, popover) to `document.body`; never render `position: fixed; inset: 0` in place.
+
+Why: Plugin panels mount inside `.split-workspace` (`z-index: 0`, a stacking context). An in-place backdrop is trapped in it, so the sidebar and titlebar paint above it and stay undimmed regardless of its `z-index`. The host doesn't expose ReactDOM to disk bundles; see `plugins/design-docs/src/app/portal.ts`. Body-portaled content loses panel-scoped CSS variables, so add the overlay root to that plugin's token selector.
+
+Guard: `apps/app/src/__tests__/plugin-fullscreen-overlay-portal.guard.test.ts` fails a plugin that styles a full-window fixed overlay but has no portal helper.
+
+When changing: A plugin-level check, not per-file; verify the dim covers the sidebar and titlebar in the built app.

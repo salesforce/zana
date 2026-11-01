@@ -50,7 +50,7 @@ OpenCode agent discovery uses bounded temp-file capture (`opencode agent list` +
 
 CLI Agent picker no longer runs discovery — it sources native roles from the same ACP session-mode list the Modern composer uses (`catalogEntry.acpMode`, from `acp-opencode` `session/new` `mode` configOption), so both surfaces show identical, plain-named list. A picked mode that maps to a subagent (surfaced as a mode but not directly launchable) is offered in the picker yet rejected at preflight — deliberate.
 
-**A picked native role and a forced catalog `--model` are mutually exclusive — the role wins, carrying no model.** An OpenCode agent pins its own model; forcing a catalog model alongside `--agent <role>` overrides that pin and dies with `ProviderModelNotFoundError` (dead session / exit 64) on any install whose provider inventory differs from shipped static snapshot (e.g. `llmgw`-backed setup with stale `aisuite/*` catalog).
+**A picked native role and a forced catalog `--model` are mutually exclusive — the role wins, carrying no model.** An OpenCode agent pins its own model; forcing a catalog model alongside `--agent <role>` overrides that pin and dies with `ProviderModelNotFoundError` (dead session / exit 64) on any install whose provider inventory differs from a previously saved model selection.
 
 **Enforced at two layers** (forced model reaches argv from more than the composer):
 
@@ -60,9 +60,9 @@ CLI Agent picker no longer runs discovery — it sources native roles from the s
 
 Composer fix alone was insufficient — observed exit-64 came from global routing (`~/.zcc/config.json harnessRouting.byAdapter.opencode.modelTargetId`), which composer can't clear.
 
-**Launch-boundary fixture** (`e2e/fixtures/bin/opencode`) reproduces the failure: its bare TUI exits 64 when `--model` rides with `--agent` (any model id) or on bare `aisuite/*` `--model`, so positive `reviewer` launch passing proves the model was dropped.
+**Launch-boundary fixture** (`e2e/fixtures/bin/opencode`) reproduces the failure: its bare TUI exits 64 when `--model` rides with `--agent` (any model id) or on a retired provider namespace in a bare `--model`, so positive `reviewer` launch passing proves the model was dropped.
 
-**OpenCode model catalog** (`opencode/provider.ts targets`) is release-maintained snapshot of `opencode models`; it drifts (gateway renamed `aisuite/*` → `llmgw/*` with `-1M` gpt suffix). Suppression protects role launches from that drift; no-role path still needs correct catalog.
+**OpenCode model catalog** comes from the installed `opencode models` inventory for the current launch context. The shared adapter has no installation-specific provider IDs, model IDs or portable tier ladder. Provider grouping uses each exact model ID’s namespace; opaque model names do not establish capability tiers. Explicit model IDs and authorized model pins stay verbatim. A missing inventory invents no fallback catalog. Startup repair clears stale saved model/provider pins without guessing replacements across namespaces.
 
 **Why:** Electron child-process runtime differs from Node/shell. Piped stdout truncated at 8192 bytes in observed failure while shell/Vitest returned complete payload. Temp-file capture with explicit bounds + cleanup on every path is the proven mechanism. A native role pins its model; forced model conflicts must be suppressed at spawn, not only at composer.
 

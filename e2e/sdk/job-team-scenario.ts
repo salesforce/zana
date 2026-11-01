@@ -126,7 +126,7 @@ export async function launchJobTeamCliOwner(ctx: JobTeamContext, opts: {
   await instruction.click();
   await instruction.fill(prompt);
   await expect(instruction).toContainText(prompt);
-  await expect(modal.getByRole('button', { name: 'Project', exact: true })).toContainText(projectName);
+  await expect(modal.getByRole('button', { name: 'Machine and project', exact: true })).toContainText(projectName);
   const send = modal.getByTestId('legacy-agent-command-send');
   await expect(send).toBeEnabled({ timeout: 15_000 });
   await send.click();

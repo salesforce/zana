@@ -1,5 +1,5 @@
-import type { PluginManifest } from '@zana-ai/zcc-domain';
-import { BUNDLED_PLUGINS, bundledPluginByName } from './builtin-registry.js';
+import { parsePluginSource, type PluginManifest } from '@zana-ai/zcc-domain';
+import { BUNDLED_PLUGINS, EXTERNALIZED_PLUGINS, bundledPluginByName } from './builtin-registry.js';
 import type { InstalledPluginRow, PluginSourceKind } from './plugin-store.js';
 
 export function bundledPluginById(id: string) {
@@ -12,6 +12,15 @@ export function assertBundledPluginInstall(args: {
   source: string;
   development: boolean;
 }): void {
+  const external = EXTERNALIZED_PLUGINS.find(plugin => plugin.pluginId === args.id);
+  if (external) {
+    if (args.sourceKind === 'path' || (args.sourceKind === 'builtin' && args.source === `builtin:${external.name}`)) return;
+    if (args.sourceKind === 'git') {
+      const parsed = parsePluginSource(args.source);
+      if (parsed.kind === 'git' && parsed.url.replace(/\.git$/, '') === external.url.replace(/\.git$/, '')) return;
+    }
+    throw new Error(`Plugin id "${args.id}" is reserved for its independent repository: ${external.url}`);
+  }
   if (args.sourceKind === 'builtin') {
     const definition = bundledPluginByName(args.source.slice('builtin:'.length));
     if (!definition || definition.pluginId !== args.id) {
@@ -24,7 +33,7 @@ export function assertBundledPluginInstall(args: {
   if (args.sourceKind === 'path' && args.development) return;
   throw new Error(
     `Plugin id "${args.id}" is reserved by a bundled plugin. Install "builtin:${definition.name}"; ` +
-    'official plugins update with Zana releases. Local development requires ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD=1 on the host.'
+    'official plugins update with Zana releases. Local development requires Bundled plugin development in Settings > Development, or ZCC_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD=1 on the host.'
   );
 }
 
@@ -50,6 +59,7 @@ export function reconcileBundledPluginMetadata(
   assertBundledPluginInstall({ id: manifest.id, sourceKind: 'builtin', source: row.source, development: false });
   if (manifest.id !== row.id) throw new Error(`bundled plugin identity changed: expected ${row.id}, received ${manifest.id}`);
   const patch = {
+    bundledRecoveryVersion: undefined,
     rootDir,
     version: manifest.version,
     name: manifest.name,

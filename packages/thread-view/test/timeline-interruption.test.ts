@@ -64,6 +64,87 @@ function renderIdleTimeline(events: ThreadEventRow[]) {
 }
 
 describe("timeline interruption projection", () => {
+  it.each(["new-turn", "steer"] as const)("shows a stopped %s request as cancelled without a duplicate Stop operation", (kind) => {
+    const event = createTimelineEventFactory({ threadId: "thread-1" });
+    const requested = event.clientTurnRequested({
+      text: "Cancel this message",
+      target: kind === "steer" ? { kind, expectedTurnId: "turn-1" } : { kind },
+    });
+    const timeline = renderIdleTimeline([
+      requested,
+      event.systemOperation({ operation: "thread.stop", status: "started", message: "Stop requested" }),
+      event.systemThreadInterrupted(),
+      event.clientTurnRejected({ requestId: requested.data.requestId, reason: "send_cancelled" }),
+    ]);
+    expect(timeline.messages).toContainEqual(expect.objectContaining({
+      kind: "user", text: "Cancel this message",
+      turnRequest: expect.objectContaining({ status: "cancelled" }),
+    }));
+    expect(flattenTimelineRows(timeline.rows)).toContainEqual(expect.objectContaining({
+      kind: "conversation", role: "user", text: "Cancel this message",
+      turnRequest: expect.objectContaining({ status: "cancelled" }),
+    }));
+    expect(getTopLevelSystemRows(timeline.rows)).toEqual([
+      expect.objectContaining({ title: "Stopped manually" }),
+    ]);
+    expect(timeline.text).toContain(kind === "steer" ? "steer cancelled" : "cancelled");
+  });
+
+  it("renders a completed reply after Stop without accepting late deltas", () => {
+    const event = createTimelineEventFactory({ threadId: "thread-1" });
+    const stoppedEvents = [
+      event.turnStarted({ createdAt: 0 }),
+      event.systemThreadInterrupted({ createdAt: 1_000 }),
+      event.assistantDelta({
+        itemId: "reply-after-stop",
+        delta: "Discard this unfinished text.",
+        createdAt: 2_000,
+      }),
+    ];
+
+    expect(
+      renderIdleTimeline(stoppedEvents).messages.filter(
+        (message) => message.kind === "assistant-text",
+      ),
+    ).toEqual([]);
+
+    const timeline = renderIdleTimeline([
+      ...stoppedEvents,
+      event.assistantCompleted({
+        itemId: "reply-after-stop",
+        text: "Persisted reply.",
+        createdAt: 3_000,
+      }),
+      event.assistantDelta({
+        itemId: "another-late-reply",
+        delta: "This must not reopen the stopped turn.",
+        createdAt: 4_000,
+      }),
+      event.assistantCompleted({
+        itemId: "reply-after-stop",
+        text: "Duplicate completion must not replace the reply.",
+        createdAt: 5_000,
+      }),
+      event.turnCompleted({ status: "interrupted", createdAt: 6_000 }),
+    ]);
+
+    expect(
+      timeline.messages.filter((message) => message.kind === "assistant-text"),
+    ).toEqual([
+      expect.objectContaining({
+        text: "Persisted reply.",
+        status: "completed",
+      }),
+    ]);
+    expect(flattenTimelineRows(timeline.rows)).toContainEqual(
+      expect.objectContaining({
+        kind: "conversation",
+        role: "assistant",
+        text: "Persisted reply.",
+      }),
+    );
+  });
+
   it("keeps post-turn automatic compaction pending while the thread is idle", () => {
     const event = createTimelineEventFactory({ threadId: "thread-1" });
     const events = [

@@ -1,6 +1,8 @@
-import { useMemo } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import { File, Folder, FolderGit2, MessageSquare, Puzzle, Sparkles, Terminal } from 'lucide-react';
 import { suggestionKey, type TypeaheadSuggestion } from './types.js';
+import { placeTypeaheadMenu } from './typeahead-placement.js';
 
 function directoryFromPath(path: string): string {
   const index = path.lastIndexOf('/');
@@ -81,16 +83,85 @@ function RowIcon({ item }: { item: TypeaheadSuggestion }) {
 }
 
 export function ComposerTypeaheadMenu({
+  anchorRef,
   suggestions,
   selectedIndex,
   triggerKind,
   onApply
 }: {
+  anchorRef?: RefObject<HTMLElement | null>;
   suggestions: readonly TypeaheadSuggestion[];
   selectedIndex: number;
   triggerKind: 'mention' | 'command';
   onApply: (item: TypeaheadSuggestion) => void;
 }) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<ReturnType<typeof placeTypeaheadMenu> | null>(null);
+  const lastPosition = useRef(position);
+  const positioned = position !== null;
+  useLayoutEffect(() => {
+    const anchor = anchorRef?.current;
+    if (!anchor) return;
+    const viewport = window.visualViewport;
+    const update = () => {
+      const bounds = anchor.getBoundingClientRect();
+      const expanded = anchor.closest('[data-mobile-expanded="true"]');
+      // A fullscreen editor has no room outside its field. Let suggestions
+      // overlay its editing area, as the former expanded mobile CSS did.
+      const next = placeTypeaheadMenu(
+        expanded ? { left: bounds.left, width: bounds.width, top: bounds.top, bottom: bounds.top } : bounds,
+        {
+          width: viewport?.width ?? window.innerWidth,
+          height: viewport?.height ?? window.innerHeight,
+          offsetLeft: viewport?.offsetLeft,
+          offsetTop: viewport?.offsetTop,
+          layoutHeight: window.innerHeight
+        },
+        Boolean(anchor.closest('.launch-modal, .thread-detail-view, [data-mobile-expanded="true"]')) ||
+          Boolean(document.querySelector('.app-shell[data-mobile="true"]') && anchor.closest('.home-agent-composer'))
+      );
+      const previous = lastPosition.current;
+      if (previous &&
+        previous.left === next.left && previous.width === next.width &&
+        previous.top === next.top && previous.bottom === next.bottom &&
+        previous.maxHeight === next.maxHeight) return;
+      lastPosition.current = next;
+      setPosition(next);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(anchor);
+    window.addEventListener('resize', update);
+    viewport?.addEventListener('resize', update);
+    viewport?.addEventListener('scroll', update);
+    const onScroll = (event: Event) => {
+      // Manual menu scrolling must not snap back to the keyboard selection.
+      if (event.target instanceof Node && menuRef.current?.contains(event.target)) return;
+      update();
+    };
+    // Ancestor scroll containers do not bubble their scroll events.
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', onScroll, true);
+      viewport?.removeEventListener('resize', update);
+      viewport?.removeEventListener('scroll', update);
+    };
+  }, [anchorRef]);
+
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    const selected = menu?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!menu || !selected) return;
+    const bounds = menu.getBoundingClientRect();
+    const row = selected.getBoundingClientRect();
+    const heading = selected.closest('.composer-typeahead-section')?.querySelector('.composer-typeahead-heading');
+    const top = bounds.top + (heading?.getBoundingClientRect().height ?? 0);
+    if (row.bottom > bounds.bottom) menu.scrollTop += row.bottom - bounds.bottom;
+    else if (row.top < top) menu.scrollTop += row.top - top;
+  }, [selectedIndex, suggestions, positioned]);
+
   const sections = useMemo(() => {
     const grouped = new Map<SectionKind, TypeaheadSuggestion[]>();
     for (const item of suggestions) {
@@ -112,9 +183,12 @@ export function ComposerTypeaheadMenu({
     return map;
   }, [suggestions]);
 
-  return (
+  const content = (
     <div
-      className="mention-popover composer-typeahead-menu"
+      ref={menuRef}
+      className={`mention-popover composer-typeahead-menu${anchorRef ? ' composer-typeahead-menu--floating' : ''}`}
+      style={anchorRef ? { ...position, visibility: position ? undefined : 'hidden' } : undefined}
+      onMouseDown={(event) => event.stopPropagation()}
       role="listbox"
       data-testid="composer-typeahead-menu"
       aria-label={triggerKind === 'command' ? 'Commands' : 'Mentions'}
@@ -160,4 +234,5 @@ export function ComposerTypeaheadMenu({
       ))}
     </div>
   );
+  return anchorRef ? createPortal(content, document.body) : content;
 }

@@ -33,6 +33,7 @@ import { test, expect } from './fixtures/app.js';
 import type { Locator, Page } from '@playwright/test';
 import { makeFakeAgentBinary, makeFakeGenericHoldBinary } from './sdk/harness.js';
 import { stubNativeDialogs } from './sdk/native-dialog.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -244,7 +245,7 @@ for (const row of CLI_CASES) {
   }, async ({
     app,
     events
-  }) => {
+  }, testInfo) => {
     const { window } = app;
     // Edits is native/basic (no extra execution flags). Keep a Cancel stub for
     // any other native boxes that may appear during spawn.
@@ -293,11 +294,11 @@ for (const row of CLI_CASES) {
       await expect(instruction).toContainText('read /Users/test/project/zcc-smoke-check.md and report');
       await expect(modal.getByTestId('composer-typeahead-menu')).toHaveCount(0);
 
-      const targetProject = modal.getByRole('button', { name: 'Project' });
+      const targetProject = modal.getByRole('button', { name: 'Machine and project' });
       await targetProject.click();
       await window
-        .getByRole('listbox', { name: 'Project' })
-        .getByRole('option', { name: projectName, exact: true })
+        .getByRole('listbox', { name: 'Machine and project' })
+        .getByRole('option', { name: projectName, exact: false })
         .click();
       await expect(targetProject).toContainText(projectName);
 
@@ -347,12 +348,19 @@ for (const row of CLI_CASES) {
         await agentModal.getByTestId('thread-secondary-show').click();
         await expect(agentModal.getByTestId('thread-secondary-panel')).toBeVisible();
         await expect(agentModal.getByTestId('thread-info-pin')).toBeVisible();
-        await expect(agentModal.getByRole('button', { name: 'Delete' })).toBeVisible();
+        const archive = agentModal.getByRole('button', { name: 'Archive' });
+        await expect(archive).toBeVisible();
+        await expect(archive).toHaveAttribute(
+          'title',
+          'Stop the agent and remove it from the board. Its conversation stays in History.'
+        );
+        await expect(agentModal.getByRole('button', { name: 'Delete' })).toHaveCount(0);
+        await captureElectronScreenshot(app.electron, window, testInfo.outputPath('agent-modal-archive.png'), agentModal);
         await agentModal.getByTestId('thread-diff-pin').click();
         await expect(agentModal.getByTestId('thread-diff-pin')).toHaveAttribute('aria-pressed', 'true');
-        await expect(agentModal.getByRole('button', { name: 'Delete' })).toHaveCount(0);
+        await expect(agentModal.getByRole('button', { name: 'Archive' })).toHaveCount(0);
         await agentModal.getByTestId('thread-info-pin').click();
-        await expect(agentModal.getByRole('button', { name: 'Delete' })).toBeVisible();
+        await expect(agentModal.getByRole('button', { name: 'Archive' })).toBeVisible();
         await events.waitForEvent(
           (e) =>
             e.channel === 'terminals:onAgentStatus' &&
@@ -418,11 +426,11 @@ for (const row of PLAN_FAMILIES) {
       await instruction.fill('draft a plan for the smoke check');
       await expect(instruction).toContainText('draft a plan for the smoke check');
 
-      const targetProject = modal.getByRole('button', { name: 'Project' });
+      const targetProject = modal.getByRole('button', { name: 'Machine and project' });
       await targetProject.click();
       await window
-        .getByRole('listbox', { name: 'Project' })
-        .getByRole('option', { name: projectName, exact: true })
+        .getByRole('listbox', { name: 'Machine and project' })
+        .getByRole('option', { name: projectName, exact: false })
         .click();
       await expect(targetProject).toContainText(projectName);
 
@@ -509,11 +517,11 @@ test('launching a remembered Codex CLI Agent without re-clicking the harness tab
     await instruction.fill('read /Users/test/project/zcc-smoke-check.md and report');
     await expect(instruction).toContainText('read /Users/test/project/zcc-smoke-check.md and report');
 
-    const targetProject = modal.getByRole('button', { name: 'Project' });
+    const targetProject = modal.getByRole('button', { name: 'Machine and project' });
     await targetProject.click();
     await window
-      .getByRole('listbox', { name: 'Project' })
-      .getByRole('option', { name: projectName, exact: true })
+      .getByRole('listbox', { name: 'Machine and project' })
+      .getByRole('option', { name: projectName, exact: false })
       .click();
     await expect(targetProject).toContainText(projectName);
 

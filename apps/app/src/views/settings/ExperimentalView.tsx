@@ -1,10 +1,11 @@
+import { DEFAULT_CLOSE_WRAP_UP_INSTRUCTIONS } from '@zana-ai/zcc-domain/product';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { Section, Field, CheckboxField } from '@/components/settings/FormFields';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 
 /**
- * Experimental settings — opt-in features still under evaluation. Each is OFF by
- * default and lives here (not Global) so it's clear they're not yet first-class.
+ * Experimental settings — features still under evaluation. Each declares its
+ * default here and lives outside Global while its behavior is being evaluated.
  * Add a feature's master toggle AND its dependent settings to this tab so the
  * whole experiment is configured in one place.
  */
@@ -23,17 +24,26 @@ export function ExperimentalView({
         <CheckboxField searchId="experimental.disable-service-tiers" label="Disable non-default service tiers" checked={config.providerServiceTiersDisabled ?? false}
           help="Hide tier choices and reject non-default tier requests on this instance." onChange={v => onUpdate({providerServiceTiersDisabled:v})} />
       </Section>
-      <Section searchId="experimental.plugin-recovery" anchorId="plugin-recovery" title="Plugin recovery" help="Temporarily suspend installed plugins while diagnosing a problem.">
-        <CheckboxField searchId="experimental.plugin-safe-mode" label="Plugin safe mode"
-          help="Suspend non-bundled plugins and their tools. Turning this off restores plugins that were enabled. Your plugin settings are preserved."
-          checked={config.pluginSafeMode ?? false} onChange={v => onUpdate({ pluginSafeMode: v })} />
-      </Section>
       <Section
         searchId="experimental.experimental-features"
         anchorId="experimental-features"
         title="Experimental features"
-        help="Opt-in features under active evaluation. They’re off by default and may change or be removed. Enabling one reveals its own settings here."
+        help="Features under active evaluation. Defaults vary by feature; you can switch any experiment off. They may change or be removed."
       >
+        <CheckboxField
+          searchId="experimental.dockable-thread-tools"
+          label="Dockable thread tools"
+          help="Enabled by default on desktop. Drag tool tabs between the right panel and a resizable bottom panel. Each thread remembers its arrangement. Moving a terminal keeps its session running. Turn off to show all tools in the right panel."
+          checked={config.dockableThreadToolsEnabled ?? true}
+          onChange={(v) => onUpdate({ dockableThreadToolsEnabled: v })}
+        />
+        <CheckboxField
+          searchId="experimental.thread-tabs"
+          label="Thread tabs"
+          help="Enabled by default on desktop. Open threads in the main view and keep shortcuts across the title bar, with project names and live status. Closing a tab keeps the thread running. Turn off to restore inspector navigation (unless Classic session view is enabled)."
+          checked={config.threadTabsEnabled ?? true}
+          onChange={(v) => onUpdate({ threadTabsEnabled: v })}
+        />
         <CheckboxField
           searchId="experimental.goals"
           label="Goals"
@@ -49,9 +59,41 @@ export function ExperimentalView({
           onChange={(v) => onUpdate({ catchUpSummaryEnabled: v })}
         />
         <CheckboxField
+          searchId="experimental.close-wrap-up"
+          label="Wrap up before closing"
+          help="Close with follow-up, and Close idle with follow-ups, first ask each agent to save what it learnt and tidy up. Each agent is then closed with the same summary as Summarize to inbox, and a follow-up if work is left. When off, they close straight away with a short note."
+          checked={config.closeWrapUpEnabled ?? false}
+          onChange={(v) => onUpdate({ closeWrapUpEnabled: v })}
+        />
+        {config.closeWrapUpEnabled ? (
+          <>
+          <Field
+            searchId="experimental.close-wrap-up-instructions"
+            label="Instructions sent to the agent"
+            help="Typed into the agent when you choose Close with follow-up."
+          >
+            <textarea
+              className="settings-textarea"
+              rows={8}
+              value={config.closeWrapUpInstructions ?? DEFAULT_CLOSE_WRAP_UP_INSTRUCTIONS}
+              onChange={(event) => onConfigDraft({ ...config, closeWrapUpInstructions: event.target.value })}
+              onBlur={(event) => {
+                const text = event.target.value.trim();
+                onUpdate({
+                  closeWrapUpInstructions: text && text !== DEFAULT_CLOSE_WRAP_UP_INSTRUCTIONS ? text : undefined
+                });
+              }}
+            />
+          </Field>
+          <button type="button" className="settings-btn" onClick={() => onUpdate({ closeWrapUpInstructions: undefined })}>
+            Reset to default
+          </button>
+          </>
+        ) : null}
+        <CheckboxField
           searchId="experimental.classic-session-view"
           label="Classic session view"
-          help="Skip the inspector overlay. Opening a CLI agent or thread — from the Agents canvas, favorites, a launch peek, or the menu bar — goes to the full session or thread page. Off by default: a click still peeks without leaving the current surface."
+          help="Skip the inspector overlay. Opening a CLI agent or thread — from the Agents canvas, favorites, a launch peek, or the menu bar — goes to the full session or thread page. Off by default. With Thread tabs enabled, threads already open in the main view; this option also applies to CLI agents."
           checked={config.classicSessionViewEnabled ?? false}
           onChange={(v) => onUpdate({ classicSessionViewEnabled: v })}
         />

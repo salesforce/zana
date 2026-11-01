@@ -1,4 +1,5 @@
 import type { BrowserWindow } from 'electron';
+import type { WrapUpCloseService } from '@zana-ai/zcc-server/services/followups/wrap-up-close';
 
 type SafeHandle = <TArgs extends unknown[], TResult>(
   channel: string,
@@ -32,6 +33,7 @@ export interface IpcCtx {
   catchUpSummary: any;
   cloneAndRegisterProject: any;
   closeSummary: any;
+  wrapUpClose: WrapUpCloseService;
   conversationHistory: any;
   createInteractiveTerminal: any;
   createLocalExtension: any;
@@ -70,6 +72,8 @@ export interface IpcCtx {
   inboxActionRegistry: any;
   planCorrection: any;
   inboxSummary: any;
+  memoCounters: () => Record<string, import('@zana-ai/zcc-llm').WorkloadMemoCounters>;
+  invalidateLlmReuse: () => void;
   isTeamWorkerRestore: any;
   keepAwake: any;
   launchAuthorizedTerminal: any;

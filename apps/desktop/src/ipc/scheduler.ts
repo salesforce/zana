@@ -5,6 +5,10 @@ import { ctx } from './ctx.js';
 import { externalReject, isExternalId, listSchedulesForUi } from './shared.js';
 import { scheduleRunQuerySchema, scheduleRunRefsSchema, slimRunQueryResult } from '@zana-ai/zcc-server/services/scheduler/schedule-run-schemas';
 import { store } from '@zana-ai/zcc-server/services/projects/store';
+import { z } from 'zod';
+import { realpathSync } from 'node:fs';
+import { registrationFor } from '@zana-ai/zcc-host-daemon/harness/registry';
+import { resumeScheduledRun } from '../scheduler-resume-run.js';
 import type { FeedDigestResult, FollowUp, FollowUpCreateInput, FollowUpStatus, FollowUpUpdateInput, Goal, GoalCreateInput, GoalStatus, GoalUpdateInput, Result, ScheduleCreateInput, ScheduleGroup, ScheduleGroupInput, ScheduleRunQueryResult, ScheduleRunRef, ScheduleUpdateInput, ScheduledTask } from '@zana-ai/zcc-domain/product';
 
 export function registerSchedulerIpc(): void {
@@ -111,6 +115,30 @@ export function registerSchedulerIpc(): void {
       catch (err) { return { ok: false, code, message: String(err) }; }
     });
   }
+  // Reopen a finished run's conversation in a new tab. Desktop only: it starts an
+  // interactive terminal, so it is not a shared product family. Every dependency
+  // is read from ctx inside the handler (call time), never while registering.
+  const resumeRunSchema = z.object({ scheduleId: z.string().min(1).max(256), runId: z.string().min(1).max(256).optional() }).strict();
+  productHandle(IPC.scheduler.resumeRun, async (input: unknown): Promise<Result<unknown>> => {
+    const parsed = resumeRunSchema.safeParse(input);
+    if (!parsed.success) return { ok: false, code: 'BAD_INPUT', message: parsed.error.message };
+    if (isExternalId(parsed.data.scheduleId)) return externalReject();
+    try {
+      return await resumeScheduledRun(parsed.data, {
+        // `get` throws for an unknown id; the helper turns undefined into NOT_FOUND.
+        getTask: (id) => { try { return ctx.scheduler.get(id); } catch { return undefined; } },
+        listProjects: () => store.listProjects(),
+        listLiveSessions: (projectId) => ctx.ptys.list(projectId).filter((session) => session.status !== 'exited'),
+        createInteractiveTerminal: (req) => ctx.createInteractiveTerminal(req),
+        registrationFor: (profile) => registrationFor(profile),
+        realpath: (path) => realpathSync(path)
+      });
+    } catch (err) {
+      // The exception can carry paths and internals: keep it in the log, with the ids needed to find it.
+      ctx.logMainError(`scheduler resume run (scheduleId=${parsed.data.scheduleId}, runId=${parsed.data.runId ?? 'latest'})`, err);
+      return { ok: false, code: 'RESUME_FAILED', message: "Couldn't reopen this run's conversation. Try again in a moment." };
+    }
+  });
   // The UI list merges native schedules with Claude /loop rows read from disk,
   // which the manager doesn't track. 'changed' always publishes; each poll
   // ('polled') publishes only when the merged list differs from the last send.

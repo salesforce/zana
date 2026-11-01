@@ -62,6 +62,8 @@ export interface PluginProjectTabRegistration extends PluginSlotBase {
   global?: boolean;
   /** Own the toolbar instead of adding a host title row. Render the supplied headerActions in it. */
   header?: 'custom';
+  /** Omit the host project-path/Git footer for this tab. Other project views keep it. */
+  statusbar?: 'hidden';
   /**
    * Let the user open this tab in its own OS window (desktop only). While it is
    * open there, the tab is not mounted in other windows; they show
@@ -85,6 +87,8 @@ export interface PluginDetachedTabProps {
 export interface ZccNavigateToProjectOptions {
   /** Open this plugin's `projectTab` with the given slot id. */
   tabId?: string;
+  /** Route to the main window tab even when that tab has a detached window. */
+  inMainWindow?: boolean;
 }
 
 export interface PluginProjectMenuActionContext {
@@ -395,6 +399,8 @@ export interface PluginMessageDirectiveProps {
 }
 
 export interface PluginMessageDirectiveRegistration extends PluginSlotBase {
+  /** Hide this navigation card in the assistant beside its own plugin page. */
+  hideInAssistant?: boolean;
   component: ComponentType<PluginMessageDirectiveProps>;
 }
 
@@ -581,7 +587,7 @@ export interface PluginProviderIconRegistration {
   pluginId: string;
   generation: number;
   providerId: string;
-  icon: ComponentType<{ className?: string }>;
+  icon: ComponentType<{ className?: string; size?: number }>;
 }
 
 export const PLUGIN_COMPOSER_SCOPE_KINDS = [
@@ -696,6 +702,8 @@ export interface PluginComposerApi {
   setInputLock(locked: boolean): void;
   addQuote(text: string): void;
   insertMention(mention: PluginComposerMention): void;
+  /** Insert an immutable snapshot at this composer's caret; false when unavailable or over limits. */
+  insertContextReference?(reference: import('./context-reference.js').ContextReference): boolean;
   focus(): void;
   /**
    * Overlay spawn options for this plugin. Pass `null` to clear. The host
@@ -740,7 +748,25 @@ export interface PluginAppContentScripts {
   ): void;
 }
 
+export interface PluginBrowserPage {
+ evaluate(expression:string, options?:{world?:'main'|'isolated'}):Promise<unknown>;
+ onMessage(listener:(data:unknown)=>void):()=>void;
+}
+export interface PluginBrowserComposer {
+ insert(reference:import('./context-reference.js').ContextReference):boolean;
+ update(resourceId:string, reference:import('./context-reference.js').ContextReference | null):boolean;
+ onSubmitted(listener:()=>void):()=>void;
+ focus():void;
+}
+export interface PluginBrowserToolbarActionProps {
+ pluginId:string; threadId:string; tabId:string; url:string;
+ page:PluginBrowserPage|null; composer:PluginBrowserComposer;
+}
+export interface PluginBrowserToolbarActionRegistration extends PluginSlotBase {
+ title:string; component:ComponentType<PluginBrowserToolbarActionProps>;
+}
 export interface PluginAppSlots {
+  experimental_browserToolbarAction(registration:Omit<PluginBrowserToolbarActionRegistration,'generation'|'pluginId'>):void;
   navPanel(registration: Omit<PluginNavPanelRegistration, 'generation' | 'pluginId'>): void;
   settingsSection(registration: Omit<PluginSettingsSectionRegistration, 'generation' | 'pluginId'>): void;
   homepageSection(registration: Omit<PluginHomepageSectionRegistration, 'generation' | 'pluginId'>): void;
@@ -815,6 +841,7 @@ export interface PluginRegistrationSet {
   newThreadPanelActions: PluginNewThreadPanelActionRegistration[];
   threadLists: PluginThreadListRegistration[];
   threadHeaderActions: PluginThreadHeaderActionRegistration[];
+  browserToolbarActions: PluginBrowserToolbarActionRegistration[];
   fileOpeners: PluginFileOpenerRegistration[];
   messageDirectives: PluginMessageDirectiveRegistration[];
   messageActions: PluginMessageActionRegistration[];
@@ -843,6 +870,10 @@ export type PluginRealtimeConnectionState = 'connecting' | 'connected' | 'reconn
 export type ZccSurface = 'main' | 'project-window' | 'plugin-view';
 
 export interface ZccContext {
+  /** Opaque resource selection for this plugin page or detached window; not a filesystem grant. */
+  resourceId?: string;
+  /** Changes for each main-window resource navigation, including repeated requests for the same resource. */
+  resourceRequestId?: string;
   projectId: string | null;
   threadId: string | null;
   /** Absent on hosts that predate detachable tabs. */
@@ -879,6 +910,13 @@ export interface ZccWindowTitle {
   tone?: ZccWindowTitleTone;
 }
 
+export interface ZccPanelScope {
+  /** Stable page resource identity. Does not grant access to that resource. */
+  id: string;
+  /** Optional view identity, e.g. a tool group within the resource. */
+  view?: string;
+}
+
 export interface ZccNavigate {
   toThread(threadId: string): void;
   toProject(projectId: string, options?: ZccNavigateToProjectOptions): void;
@@ -904,6 +942,9 @@ export interface ZccNavigate {
    * tools or older hosts; hosts before drafts also return false for a
    * draft); fall back to `openThreadPanel`, `toThread` or `toCompose`.
    */
+  supportsContextReferences?: true;
+  /** Adds a copied snapshot to the owning thread's draft, without sending. */
+  addThreadContext?(reference: import('./context-reference.js').ContextReference): boolean;
   openPanelAgent(options: ZccPanelAgentOptions): boolean;
   /**
    * Open one of this plugin's `threadPanelAction` tabs in this page's side
@@ -914,12 +955,14 @@ export interface ZccNavigate {
    * match. Absent on older hosts.
    */
   openPanelTool?(options: ZccPanelToolOptions): boolean;
+  /** Select the resource whose independent host side panel this page displays. Null restores the page default. */
+  setPanelScope?(scope: ZccPanelScope | null): void;
   /**
    * Open one of this plugin's `detachable` project tabs in its own window, or
    * focus that window when it is already open. Resolves `false` outside the
    * desktop app or when the tab is not detachable. Absent on older hosts.
    */
-  openInWindow?(projectId: string, options?: ZccNavigateToProjectOptions): Promise<boolean>;
+  openInWindow?(projectId: string, options?: ZccNavigateToProjectOptions & { resourceId?: string }): Promise<boolean>;
 }
 
 /** Why a pasted deep link was not routed. `unavailable` outside the desktop app and on older hosts. */
@@ -987,7 +1030,7 @@ export type ZccPanelAgentOptions =
        * doc id); it is recorded as the agent's starting view in place of the page's
        * current route, so a page without routes (a project tab) can still name it.
        */
-      draft: { prompt: string; projectId?: string; view?: string };
+      draft: { prompt: string; projectId?: string; view?: string; selection?: import('./editor-selection.js').EditorSelection; references?: readonly import('./context-reference.js').ContextReference[] };
       title?: string;
     };
 
@@ -1109,6 +1152,8 @@ export interface PluginSdkApp {
   /** Deep links for the calling plugin. Absent on hosts that predate them. */
   useZccDeepLinks?(): ZccDeepLinks;
   useWindowTitle(title: ZccWindowTitle | null | undefined): void;
+  /** Await durable document/run handoff before a detached window closes. Rejection keeps it open. */
+  useWindowCloseHandler?(handler: ((signal: AbortSignal) => void | Promise<void>) | null): void;
   useComposer(): PluginComposerApi;
   useComposerView(): ComposerView;
   experimental_useSidebarThreads(): { status: 'loading' | 'ready' | 'error'; threads: PluginSidebarThread[]; projects: { id: string; name: string }[] };
@@ -1149,6 +1194,7 @@ export function emptyRegistrationSet(pluginId: string, generation: number): Plug
     newThreadPanelActions: [],
     threadLists: [],
     threadHeaderActions: [],
+    browserToolbarActions: [],
     fileOpeners: [],
     messageDirectives: [],
     messageActions: [],
@@ -1268,6 +1314,7 @@ export function collectPluginApp(
     projectStatusbarItem: new Set<string>(),
     threadList: new Set<string>(),
     threadHeaderAction: new Set<string>(),
+    browserToolbarAction: new Set<string>(),
     fileOpener: new Set<string>(),
     messageDirective: new Set<string>(),
     messageAction: new Set<string>(),
@@ -1554,6 +1601,12 @@ export function collectPluginApp(
           })
         );
       },
+      experimental_browserToolbarAction: (registration) => {
+        const kind='slots.experimental_browserToolbarAction';
+        const id=requireSlotId(kind,registration.id);
+        requireUniqueId(kind,seen.browserToolbarAction,id);
+        set.browserToolbarActions.push(stamp({id,title:requireNonEmptyString(kind,'title',registration.title),component:requireComponent(kind,'component',registration.component)}));
+      },
       experimental_threadHeaderAction: (registration) => {
         const kind = 'slots.experimental_threadHeaderAction';
         const id = requireSlotId(kind, registration.id);
@@ -1607,6 +1660,7 @@ export function collectPluginApp(
         set.messageDirectives.push(
           stamp({
             id: registration.id,
+            ...(registration.hideInAssistant === true ? { hideInAssistant: true } : {}),
             component: requireComponent(kind, 'component', registration.component)
           })
         );

@@ -2,6 +2,7 @@ import { boundedText, LargeTextPreview } from './LargeTextPreview.js';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { ExecutionBoardSnapshot } from '@zana-ai/zcc-domain/product';
 import { useUi } from '../store';
+import { usePersonas, useTeams } from '../stores/live.js';
 import { copyText } from '../lib/copy-text.js';
 import { startSerialPoll } from '../lib/serial-poll.js';
 import { mergeExecutionEvents } from './execution-event-tail.js';
@@ -49,6 +50,12 @@ function jobHeaderLines(projectId: string, execution: ExecutionProjection): stri
   return lines;
 }
 
+const RECOVERY_TEXT: Record<string, string> = {
+  waiting: 'waiting to nudge',
+  nudged: 'nudged, waiting for a new turn',
+  restarted: 'restarted, waiting for a new turn'
+};
+
 /** Work units + per-assignment claim/churn lines. */
 function workUnitLines(work: ExecutionProjection['work']): string[] {
   const lines: string[] = [];
@@ -62,6 +69,7 @@ function workUnitLines(work: ExecutionProjection['work']): string[] {
     lines.push(`      claimedAt: ${formatTimestamp(assignment.claimedAt)} · heartbeatAt: ${formatTimestamp(assignment.heartbeatAt)} · progressAt: ${formatTimestamp(assignment.progressAt)} · leaseExpiresAt: ${formatTimestamp(assignment.leaseExpiresAt)}`);
     lines.push(`      attempt: ${assignment.attempt ?? '—'} · turnCount: ${assignment.turnCount ?? '—'} · claimGeneration: ${assignment.claimGeneration ?? '—'} · claimId: ${assignment.claimId ?? '—'}`);
     lines.push(`      health: ${assignment.healthState ?? 'HEALTHY'} · reclaims: ${assignment.reclaimCount ?? 0} · attemptedSlots: ${assignment.attemptedSlots?.join(', ') || '—'} · quarantinedSlots: ${assignment.quarantinedSlots?.join(', ') || '—'}`);
+    if (assignment.recovery) lines.push(`      recovery: ${assignment.recovery.step}${assignment.recovery.errorKind ? ` (${assignment.recovery.errorKind})` : ''} since ${formatTimestamp(assignment.recovery.since)}`);
     if (assignment.dependencies?.length) lines.push(`      dependencies: ${assignment.dependencies.join(', ')}`);
     if (assignment.result) lines.push(`      result: ${assignment.result}`);
   }
@@ -73,9 +81,9 @@ function usageLines(usage: ExecutionProjection['usage']): string[] {
   const lines: string[] = ['Usage:'];
   if (!usage) { lines.push('  (unavailable)'); return lines; }
   lines.push(`  completeness: ${usage.completeness} · observations: ${usage.observationCount} · gaps: ${usage.gapCount}`);
-  lines.push(`  tokens: input ${usage.inputTokens ?? '—'} · output ${usage.outputTokens ?? '—'} · cacheRead ${usage.cacheReadTokens ?? '—'} · cacheWrite ${usage.cacheWriteTokens ?? '—'} · cost ${formatCost(usage.providerCostUsd)}`);
+  lines.push(`  tokens: input ${usage.inputTokens ?? '—'} · output ${usage.outputTokens ?? '—'} · cacheRead ${usage.cacheReadTokens ?? '—'} · cacheWrite ${usage.cacheWriteTokens ?? '—'} · provider-reported cost ${formatCost(usage.providerCostUsd)}`);
   for (const role of usage.byRole) {
-    lines.push(`    ${role.role}: input ${role.inputTokens ?? '—'} · output ${role.outputTokens ?? '—'} · cacheRead ${role.cacheReadTokens ?? '—'} · cacheWrite ${role.cacheWriteTokens ?? '—'} · cost ${formatCost(role.providerCostUsd)}`);
+    lines.push(`    ${role.role}: input ${role.inputTokens ?? '—'} · output ${role.outputTokens ?? '—'} · cacheRead ${role.cacheReadTokens ?? '—'} · cacheWrite ${role.cacheWriteTokens ?? '—'} · provider-reported cost ${formatCost(role.providerCostUsd)}`);
   }
   return lines;
 }
@@ -220,6 +228,10 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, string>>({});
   const [artifactContent, setArtifactContent] = useState<Record<string, string>>({});
   const [followUpInstruction, setFollowUpInstruction] = useState('');
+  // '' = the Squad's coordinator (main default). Main re-validates any pick against the roster.
+  const [followUpPersonaId, setFollowUpPersonaId] = useState('');
+  const teams = useTeams((state) => state.teams);
+  const personas = usePersonas((state) => state.personas);
   const recoveryReasonId = useId();
   const refresh = useCallback(async (after = 0) => {
     const scope = scopeRef.current;
@@ -313,6 +325,10 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
       .then(() => useUi.getState().pushToast('Job details copied', 'info'))
       .catch(() => useUi.getState().pushToast('Failed to copy job details', 'error'));
   };
+  // Offer only this Squad's own personas; the renderer list is advisory, main enforces the roster.
+  const followUpTeam = teams.find((team) => team.id === execution.teamId);
+  const followUpRosterIds = new Set([followUpTeam?.orchestratorPersonaId, ...(followUpTeam?.slots ?? []).map((slot) => slot.personaId)].filter((id): id is string => Boolean(id)));
+  const followUpRoster = personas.filter((persona) => followUpRosterIds.has(persona.id));
   const worktreeAction = async (action: 'leave' | 'instruct' | 'delete' | 'force-delete') => {
     if (!execution.retainedWorktree || execution.stateVersion === undefined) return;
     if ((action === 'delete' || action === 'force-delete') && !window.confirm(
@@ -324,7 +340,8 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
     }
     await mutate(() => window.cc.executionBoard.worktreeAction(
       projectId, executionId, execution.stateVersion!, action,
-      action === 'instruct' ? followUpInstruction.trim() : undefined
+      action === 'instruct' ? followUpInstruction.trim() : undefined,
+      action === 'instruct' && followUpPersonaId ? followUpPersonaId : undefined
     ));
     if (action === 'instruct') setFollowUpInstruction('');
   };
@@ -355,6 +372,12 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
          <p><code>{execution.retainedWorktree.path}</code> · {execution.retainedWorktree.branch}</p>
          {execution.retainedWorktree.disposition === 'left' ? <p role="status">Worktree left by user. No further lifecycle action is pending.</p> : <>
            <p>Leave preserves this checkout. Delete requires confirmation and refuses dirty worktrees.</p>
+           {followUpRoster.length > 0 && <label className="execution-follow-up-persona">Follow-up persona{' '}
+             <select aria-label="Follow-up persona" value={followUpPersonaId} onChange={(event) => setFollowUpPersonaId(event.target.value)}>
+               <option value="">Squad coordinator (default)</option>
+               {followUpRoster.map((persona) => <option key={persona.id} value={persona.id}>{persona.name ?? persona.id}</option>)}
+             </select>
+           </label>}
            <textarea aria-label="Follow-up agent instruction" value={followUpInstruction} onChange={(event) => setFollowUpInstruction(event.target.value)} placeholder="Describe the follow-up work…" rows={3} />
            <div className="execution-details-actions">
              <button className="btn" type="button" disabled={busy || !followUpInstruction.trim()} onClick={() => void worktreeAction('instruct')}>Instruct an agent</button>
@@ -376,6 +399,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
         const assignedSlotId = assignmentDrafts[assignment.workUnitId] ?? assignment.slotId ?? execution.work?.rosterSlotIds[0] ?? '';
         return <div key={assignment.workUnitId}>
           {assignment.title} → {assignment.slotId ?? 'unassigned'} · {assignment.state}
+          {assignment.recovery && <p role="status" className="execution-details-recovery-reason">Recovering engineer after API error: {RECOVERY_TEXT[assignment.recovery.step] ?? assignment.recovery.step}</p>}
           {!isTerminal && (assignment.state === 'FAILED' || assignment.state === 'BLOCKED') && <>
             <select aria-label={`Assignment for ${assignment.title}`} value={assignedSlotId} onChange={(event) => setAssignmentDrafts((current) => ({ ...current, [assignment.workUnitId]: event.target.value }))}>
               <option value="">Unassigned</option>{execution.work?.rosterSlotIds.map((slotId) => <option key={slotId} value={slotId}>{slotId}</option>)}
@@ -463,7 +487,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
       }}><summary>{artifact.name} · {artifact.mediaType} · {artifact.contentDigest}</summary>{artifactContent[artifact.id] && boundedText(artifactContent[artifact.id]).length < artifactContent[artifact.id].length ? <LargeTextPreview text={artifactContent[artifact.id]} /> : <pre>{artifactContent[artifact.id] ?? 'Loading…'}</pre>}</details>)}
       <h4>Usage</h4>
       <p>Attribution: {execution.usage?.completeness ?? 'unavailable'} · Observations {execution.usage?.observationCount ?? 0} · Gaps {execution.usage?.gapCount ?? 0}</p>
-      {execution.usage?.byRole.map((usage) => <p key={usage.role}>{usage.role}: input {usage.inputTokens ?? 'unknown'} · output {usage.outputTokens ?? 'unknown'} · cache read {usage.cacheReadTokens ?? 'unknown'} · cache write {usage.cacheWriteTokens ?? 'unknown'} · provider cost {usage.providerCostUsd === undefined ? 'unknown' : `$${usage.providerCostUsd.toFixed(4)}`}</p>)}
+       {execution.usage?.byRole.map((usage) => <p key={usage.role}>{usage.role}: input {usage.inputTokens ?? 'unknown'} · output {usage.outputTokens ?? 'unknown'} · cache read {usage.cacheReadTokens ?? 'unknown'} · cache write {usage.cacheWriteTokens ?? 'unknown'} · provider-reported cost {usage.providerCostUsd === undefined ? 'unknown' : `$${usage.providerCostUsd.toFixed(4)}`}</p>)}
       <h4>Assembled result</h4>
       {execution.assembledResult ? <div>
         <p>{execution.assembledResult.outcome} · <code>{execution.assembledResult.digest}</code></p>

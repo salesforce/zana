@@ -6,6 +6,13 @@ const target = { pluginId: 'salesforce', tabId: 'studio', projectId: 'p-1' };
 const query = (extra = '') => `?surface=plugin-view&projectId=p-1&pluginId=salesforce&tabId=studio${extra}`;
 
 describe('parsePluginViewSearch', () => {
+  it('round-trips an encoded resource without treating it as a path grant', () => {
+    expect(parsePluginViewSearch(query('&resourceId=agents%2FHelp%20%231.agent'))).toEqual({ ...target, resourceId: 'agents/Help #1.agent' });
+    for (const value of ['', '  ', 'bad\n', 'bad\x7f', 'a'.repeat(2049)]) {
+      expect(parsePluginViewSearch(query(`&resourceId=${encodeURIComponent(value)}`))).toBeNull();
+    }
+  });
+
   it('reads a plugin view target', () => {
     expect(parsePluginViewSearch(query('&x=1'))).toEqual(target);
   });
@@ -41,14 +48,14 @@ describe('getPluginViewTarget', () => {
   });
 
   it('reads the query and remembers it for a reload without one', async () => {
-    window.history.replaceState(null, '', `/${query()}`);
+    window.history.replaceState(null, '', `/${query('&resourceId=agents%2FHelp.agent')}`);
     const first = await load();
-    expect(first.getPluginViewTarget()).toEqual(target);
+    expect(first.getPluginViewTarget()).toEqual({ ...target, resourceId: 'agents/Help.agent' });
     expect(first.isPluginViewSurface()).toBe(true);
 
     window.history.replaceState(null, '', '/projects/p-1');
     vi.resetModules();
-    expect((await load()).getPluginViewTarget()).toEqual(target);
+    expect((await load()).getPluginViewTarget()).toEqual({ ...target, resourceId: 'agents/Help.agent' });
   });
 
   it('ignores a tampered remembered target', async () => {

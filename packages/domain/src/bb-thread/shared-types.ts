@@ -1,4 +1,16 @@
 import { z } from "zod";
+import { parseContextReference, validPromptReferences, MAX_CONTEXT_REFERENCES, type ContextReference } from './context-reference.js';
+export * from './context-reference.js';
+
+export const contextReferenceSchema = z.unknown().transform((value, ctx): ContextReference => {
+  const reference = parseContextReference(value);
+  if (reference) return reference;
+  ctx.addIssue({ code: 'custom', message: 'Invalid context reference' });
+  return z.NEVER;
+});
+export const promptTextReferenceSchema = z.object({
+  start: z.number().int().nonnegative(), end: z.number().int().nonnegative(), reference: contextReferenceSchema
+});
 
 /**
  * Order is load-bearing: `reasoningRank` (index) drives model-switch
@@ -300,8 +312,12 @@ export const promptInputSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("text"),
     text: z.string(),
+    references: z.array(promptTextReferenceSchema).max(MAX_CONTEXT_REFERENCES).optional(),
     mentions: z.array(promptTextMentionSchema).default([]),
     ...promptInputVisibilityFields,
+  }).superRefine((input, ctx) => {
+    if (input.references && validPromptReferences(input.text, input.references).length !== input.references.length)
+      ctx.addIssue({ code: 'custom', path: ['references'], message: 'Context references must match the copied text and fit within the prompt limits' });
   }),
   z.object({
     type: z.literal("image"),
@@ -501,6 +517,7 @@ function removeCommandMentionsFromTextInput(
   return {
     ...input,
     text,
+    ...(input.references ? { references: input.references.filter(ref => !ranges.some(range => ref.start < range.end && ref.end > range.start)).map(ref => ({ ...ref, start: ref.start - removedBefore(ranges, ref.start), end: ref.end - removedBefore(ranges, ref.end) })) } : {}),
     mentions: input.mentions
       .filter(
         (mention) =>

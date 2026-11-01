@@ -24,6 +24,20 @@ it('exposes Send now through the authorized UI-send IPC channel', async () => {
   expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.uiSend, 'thread/one', 'item two');
 });
 
+it('exposes memo counters through the dedicated usage IPC channel', async () => {
+  await import('./preload.js');
+  const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
+  const counters = { 'inbox-summary': { requests: 2, hits: 1 } };
+  electron.invoke.mockClear();
+  electron.invoke.mockResolvedValueOnce(counters);
+
+  await expect(api.usage.getMemoCounters()).resolves.toBe(counters);
+  expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.usage.getMemoCounters);
+  electron.invoke.mockClear();
+  await api.usage.getSummary();
+  expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.usage.getSummary);
+});
+
 it('forwards skill-state batches and propagates persistence failures to the caller', async () => {
   await import('./preload.js');
   const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
@@ -71,7 +85,7 @@ it('exposes schedule get and reload through their distinct product IPC channels'
   expect(electron.invoke.mock.calls).toEqual([[IPC.scheduler.get, 'schedule-1'], [IPC.scheduler.reload, 'schedule-1']]);
 });
 
-it('exposes run query, retry and dismiss through their own scheduler IPC channels', async () => {
+it('exposes run query, retry, resume and dismiss through their own scheduler IPC channels', async () => {
   await import('./preload.js');
   const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
   electron.invoke.mockClear();
@@ -79,10 +93,12 @@ it('exposes run query, retry and dismiss through their own scheduler IPC channel
   const refs = [{ scheduleId: 's1', runId: 'r1' }];
   await api.scheduler.queryRuns({ state: 'open' });
   await api.scheduler.retryRuns(refs);
+  await api.scheduler.resumeRun({ scheduleId: 's1', runId: 'r1' });
   await api.scheduler.dismissRuns(refs);
   expect(electron.invoke.mock.calls).toEqual([
     [IPC.scheduler.queryRuns, { state: 'open' }],
     [IPC.scheduler.retryRuns, refs],
+    [IPC.scheduler.resumeRun, { scheduleId: 's1', runId: 'r1' }],
     [IPC.scheduler.dismissRuns, refs]
   ]);
 });
@@ -134,8 +150,8 @@ it('exposes squad worktree, resume and inbox host-action channels with coerced r
   electron.invoke.mockClear();
   electron.invoke.mockResolvedValue({ ok: true });
 
-  await api.executionBoard.worktreeAction('p', 'e', 2, 'instruct', 'go');
-  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.executionBoard.worktreeAction, 'p', 'e', 2, 'instruct', 'go');
+  await api.executionBoard.worktreeAction('p', 'e', 2, 'instruct', 'go', 'pers');
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.executionBoard.worktreeAction, 'p', 'e', 2, 'instruct', 'go', 'pers');
   await api.executionBoard.recoverRetainedSquad('p', 'e', 2, 'fresh-plan');
   expect(electron.invoke).toHaveBeenLastCalledWith(IPC.executionBoard.recoverRetained, 'p', 'e', 2, 'fresh-plan');
 

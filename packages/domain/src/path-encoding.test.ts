@@ -7,8 +7,8 @@ describe('encodeProjectCwd', () => {
     expect(encodeProjectCwd('/Users/grebmann/Documents/claude-workspace/zana-command-center')).toBe(
       '-Users-grebmann-Documents-claude-workspace-zana-command-center'
     );
-    expect(encodeProjectCwd('/Users/grebmann/.aisuite/notebook')).toBe(
-      '-Users-grebmann--aisuite-notebook'
+    expect(encodeProjectCwd('/Users/grebmann/.legacy-provider/notebook')).toBe(
+      '-Users-grebmann--legacy-provider-notebook'
     );
     expect(encodeProjectCwd('/Users/grebmann/.npm/_npx/x/node_modules')).toBe(
       '-Users-grebmann--npm--npx-x-node-modules'

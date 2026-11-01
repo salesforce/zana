@@ -25,6 +25,10 @@ describe('builtinSkillsRootPath', () => {
     expect(existsSync(join(root, 'zcc-cli', 'SKILL.md'))).toBe(true);
     expect(existsSync(join(root, 'zcc-inbox', 'SKILL.md'))).toBe(true);
     expect(existsSync(join(root, 'zcc-preview', 'SKILL.md'))).toBe(true);
+    expect(discoverSkillsInRoot(root)).toContainEqual({
+      name: 'zana-ui-proposals',
+      description: expect.stringContaining('interactive UI proposals')
+    });
     const browser = readFileSync(join(root, 'zcc-browser', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
     expect(browser).toMatch(/^---\nname: zcc-browser\n/);
     expect(browser).toContain('zcc browser create');
@@ -34,6 +38,24 @@ describe('builtinSkillsRootPath', () => {
     expect(readFileSync(join(root, 'zcc-preview', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n')).toMatch(/^---\nname: zcc-preview\n/);
     expect(existsSync(join(root, 'zcc-terminal', 'SKILL.md'))).toBe(true);
     expect(readFileSync(join(root, 'zcc-terminal', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n')).toMatch(/^---\nname: zcc-terminal\n/);
+    const pluginAuthoring = readFileSync(join(root, 'zcc-plugin-authoring', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
+    const center = readFileSync(join(root, 'zcc-center', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
+    expect(Buffer.byteLength(pluginAuthoring, 'utf8')).toBeGreaterThanOrEqual(2_048);
+    expect(Buffer.byteLength(pluginAuthoring, 'utf8')).toBeLessThanOrEqual(4_096);
+    expect(Buffer.byteLength(center, 'utf8')).toBeGreaterThanOrEqual(2_048);
+    expect(Buffer.byteLength(center, 'utf8')).toBeLessThanOrEqual(4_096);
+    expect(existsSync(join(root, 'zcc-plugin-authoring', 'references', 'server-sdk.md'))).toBe(true);
+    expect(existsSync(join(root, 'zcc-center', 'references', 'schedules.md'))).toBe(true);
+    for (const [skillName, referenceFiles] of Object.entries({
+      'zcc-plugin-authoring': ['workflow.md', 'server-sdk.md', 'app-slots.md', 'skills-and-approvals.md', 'testing.md'],
+      'zcc-center': ['schedules.md', 'templates.md', 'personas.md', 'squads.md', 'run-reporting.md']
+    })) {
+      const core = readFileSync(join(root, skillName, 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
+      for (const file of referenceFiles) {
+        expect(existsSync(join(root, skillName, 'references', file))).toBe(true);
+        expect(core).toContain(`references/${file}`);
+      }
+    }
     expect(existsSync(join(root, 'harness-authoring', 'SKILL.md'))).toBe(false);
   });
 });
@@ -89,21 +111,21 @@ describe('selectBuiltinSkillDirectoryRoots', () => {
     })).toEqual([]);
   });
 
-  it('stages only enabled skills when some are opted out', () => {
+  it.each(['zcc-cli', 'zana-ui-proposals'])('stages only enabled skills when %s is opted out', (disabledSkill) => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-injected-partial-'));
     dirs.push(dataDir);
     const roots = selectBuiltinSkillDirectoryRoots({
       dataDir,
-      disabledBundledSkills: ['zcc-cli']
+      disabledBundledSkills: [disabledSkill]
     });
     expect(roots).toHaveLength(1);
     expect(roots[0]).not.toBe(builtinSkillsRootPath());
     expect(existsSync(join(roots[0]!, 'zcc-inbox', 'SKILL.md'))).toBe(true);
-    expect(existsSync(join(roots[0]!, 'zcc-cli', 'SKILL.md'))).toBe(false);
+    expect(existsSync(join(roots[0]!, disabledSkill, 'SKILL.md'))).toBe(false);
     writeInjectedSkillRootManifest(dataDir, roots);
     const manifest = JSON.parse(readFileSync(join(dataDir, 'injected-skill-roots.json'), 'utf8'));
     expect(manifest.builtinSkillTargets).toContain(realpathSync(join(builtinSkillsRootPath(), 'zcc-inbox')));
-    expect(manifest.builtinSkillTargets).not.toContain(realpathSync(join(builtinSkillsRootPath(), 'zcc-cli')));
+    expect(manifest.builtinSkillTargets).not.toContain(realpathSync(join(builtinSkillsRootPath(), disabledSkill)));
   });
 
   it('lists the same slugs as BUNDLED_PRODUCT_SKILL_IDS', async () => {

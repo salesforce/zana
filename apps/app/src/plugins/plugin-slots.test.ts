@@ -244,3 +244,12 @@ it('defaults panel categories to the plugin name while preserving explicit categ
   expect(interpretPluginApp('category-fixture', app).threadPanelActions[0].category).toBe('category-fixture');
   clearPluginSlots('category-fixture');
 });
+
+it('accepts older registration snapshots without browser toolbar contributions',async()=>{
+ const {collectPluginApp}=await import('@zana-ai/zcc-plugin-sdk');
+ const {replacePluginSlots,listBrowserToolbarActions}=await import('./plugin-slots.js');
+ const set=collectPluginApp('older-toolbar',1,definePluginApp(()=>{}));
+ delete (set as Partial<typeof set>).browserToolbarActions;
+ try{replacePluginSlots('older-toolbar',set);expect(listBrowserToolbarActions().filter(row=>row.pluginId==='older-toolbar')).toEqual([]);}
+ finally{clearPluginSlots('older-toolbar');}
+});

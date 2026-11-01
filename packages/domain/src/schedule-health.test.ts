@@ -16,7 +16,10 @@ import {
   taskOpenProblems,
   countOpenProblems,
   runManualRetry,
-  openRetryRefs
+  openRetryRefs,
+  isValidConversationId,
+  latestResumableRun,
+  resumableRun
 } from './schedule-health.js';
 
 const NOW = Date.parse('2026-10-14T12:00:00Z');
@@ -279,5 +282,59 @@ describe('collectRunRows', () => {
   it('tolerates empty input', () => {
     expect(collectRunRows([], undefined, NOW)).toEqual({ rows: [], total: 0, truncated: false });
     expect(collectRunRows(undefined as never, undefined, NOW).total).toBe(0);
+  });
+});
+
+describe('resumable runs', () => {
+  const conversation = { profile: 'claude' as const, id: 'abc-123', cwd: '/p', startedAt: iso(H) };
+  const resumable = (over: Partial<ScheduleRun> = {}) => run({ result: 'success', conversation, ...over });
+
+  it('accepts only conversation ids that are safe for an argv', () => {
+    expect(isValidConversationId('0199-abc_DEF')).toBe(true);
+    expect(isValidConversationId('--flag')).toBe(false);
+    expect(isValidConversationId('')).toBe(false);
+    expect(isValidConversationId('a'.repeat(129))).toBe(false);
+    expect(isValidConversationId(42)).toBe(false);
+  });
+
+  it('needs a recorded conversation and is never a Squad run', () => {
+    expect(resumableRun(resumable())).toBe(true);
+    expect(resumableRun(run({ result: 'success' }))).toBe(false);
+    expect(resumableRun(resumable({ launchKind: 'team' }))).toBe(false);
+    expect(resumableRun(resumable({ executionId: 'e1' }))).toBe(false);
+    expect(resumableRun(null as unknown as ScheduleRun)).toBe(false);
+    expect(resumableRun(resumable({ conversation: 'x' as never }))).toBe(false);
+  });
+
+  it('needs a valid recorded id, so a detected-id run that never found its id is not offered', () => {
+    expect(resumableRun(resumable({ conversation: { ...conversation, id: undefined } }))).toBe(false);
+    expect(resumableRun(resumable({ conversation: { ...conversation, id: '--resume' } }))).toBe(false);
+    expect(resumableRun(resumable({ conversation: { ...conversation, profile: 7 as never } }))).toBe(false);
+  });
+
+  it('applies the same launch checks to a single run as "latest" does', () => {
+    expect(resumableRun(resumable({ marker: true }))).toBe(false);
+    expect(resumableRun(resumable({ result: 'skipped' }))).toBe(false);
+    expect(resumableRun(resumable({ launchState: 'pending' }))).toBe(false);
+    expect(resumableRun(resumable({ launchState: 'failed' }))).toBe(false);
+    expect(resumableRun(resumable({ launchState: 'running', result: 'error' }))).toBe(true);
+  });
+
+  it('picks the newest resumable run, skipping markers, skipped, pending and failed', () => {
+    const newest = resumable({ id: 'newest', at: iso(2 * H) });
+    const runs = [
+      resumable({ id: 'marker', at: iso(0), marker: true }),
+      resumable({ id: 'skipped', at: iso(0.1 * H), result: 'skipped' }),
+      resumable({ id: 'pending', at: iso(0.2 * H), launchState: 'pending' }),
+      resumable({ id: 'failed', at: iso(0.3 * H), launchState: 'failed' }),
+      resumable({ id: 'older', at: iso(5 * H) }),
+      newest,
+      run({ id: 'noconv', at: iso(0.4 * H), result: 'success' })
+    ];
+    expect(latestResumableRun(runs)?.id).toBe('newest');
+    expect(latestResumableRun([])).toBeUndefined();
+    expect(latestResumableRun(undefined)).toBeUndefined();
+    expect(latestResumableRun([null as unknown as ScheduleRun])).toBeUndefined();
+    expect(latestResumableRun([resumable({ id: 'bad', at: 'nope' }), resumable({ id: 'good' })])?.id).toBe('good');
   });
 });

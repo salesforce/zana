@@ -9,7 +9,7 @@
     "zccPluginSdk": ">=0.1.0"
   },
   "scripts": {
-    "build": "node ../../packages/plugin-build/scripts/build-app.mjs .",
+    "build": "pnpm --dir ../.. exec node --conditions=source --import tsx packages/plugin-build/scripts/build-app.mjs plugins/provider-claude-code",
     "test": "vitest run --config vitest.config.ts",
     "typecheck": "tsc --noEmit"
   },
@@ -27,7 +27,7 @@
     "@anthropic-ai/claude-agent-sdk": "^0.3.245",
     "@zana-ai/zcc-plugin-sdk": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.32.0",
-    "zod": "^4.3.6"
+    "zod": "^4.6.6"
   },
   "zcc": {
     "name": "Claude Code provider",

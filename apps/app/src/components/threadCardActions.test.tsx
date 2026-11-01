@@ -16,6 +16,7 @@ import { useThreads, type ThreadListItem } from '../thread-store.js';
 import { countPanes, findPaneByThread, listPanes } from '../lib/split-layout/ops.js';
 import { createSinglePaneLayout, threadPaneContent } from '../lib/split-layout/splitThreadNavigation.js';
 import { useSplitWorkspace } from '../lib/split-layout/store.js';
+import { useData, useUi } from '../store.js';
 
 const thread: ThreadListItem = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -205,6 +206,50 @@ describe('runThreadMenuAction', () => {
     expect(c.archive).not.toHaveBeenCalled();
     expect(c.remove).toHaveBeenCalledWith(thread.id);
     expect(c.navigate).toHaveBeenCalledWith('/agents');
+  });
+
+  it('asks the wrap-up question and only toasts when the thread wraps up in the background', async () => {
+    useData.setState({ closeWrapUpEnabled: true });
+    const pushToast = vi.fn();
+    useUi.setState({ pushToast } as never);
+    try {
+      const c = ctx({
+        pathname: `/threads/${thread.id}`,
+        closeFollowup: vi.fn(async () => ({ ok: true, summarized: 0, followedUp: 0, wrappingUp: true }))
+      });
+      await runThreadMenuAction('close-followup', thread, c);
+      expect(c.confirm).toHaveBeenCalledWith('Close “hello” with follow-up? The agent first saves what it learnt and tidies up, then closes with a summary in your inbox. If it asks you something, it stays open.');
+      expect(pushToast).toHaveBeenCalledWith('Wrapping up… “hello” closes when it finishes.', 'info');
+      expect(c.remove).not.toHaveBeenCalled();
+      expect(c.navigate).not.toHaveBeenCalled();
+    } finally {
+      useData.setState({ closeWrapUpEnabled: false });
+    }
+  });
+
+  it('toasts that the thread is waiting on the user and keeps it when the route says it was left open', async () => {
+    useData.setState({ closeWrapUpEnabled: true });
+    const pushToast = vi.fn();
+    useUi.setState({ pushToast } as never);
+    try {
+      const c = ctx({
+        pathname: `/threads/${thread.id}`,
+        closeFollowup: vi.fn(async () => ({ ok: true, summarized: 0, followedUp: 0, keptOpen: 'asks-you' as const }))
+      });
+      await runThreadMenuAction('close-followup', thread, c);
+      expect(pushToast).toHaveBeenCalledWith('“hello” is waiting on your answer, so it was left open (see your inbox).', 'info');
+      expect(pushToast).not.toHaveBeenCalledWith(expect.stringContaining('Wrapping up'), expect.anything());
+      expect(c.remove).not.toHaveBeenCalled();
+      expect(c.navigate).not.toHaveBeenCalled();
+    } finally {
+      useData.setState({ closeWrapUpEnabled: false });
+    }
+  });
+
+  it('keeps today\'s confirm text with the experiment off', async () => {
+    const c = ctx();
+    await runThreadMenuAction('close-followup', thread, c);
+    expect(c.confirm).toHaveBeenCalledWith('Close “hello” and file a follow-up if work is left?');
   });
 
   it('does not close with follow-up when the user cancels', async () => {

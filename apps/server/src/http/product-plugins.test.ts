@@ -21,6 +21,7 @@ import { startProductServer, type ProductServer } from './product-server.js';
 import { getThreadProvider, registerThreadProvider } from '../services/threads/thread-provider-catalog.js';
 import { buildPluginHost } from '@zana-ai/zcc-plugin-build';
 import { HostUnavailableError } from './host-hub.js';
+import { openDatabase, upsertHost } from '@zana-ai/zcc-db';
 
 let server: ProductServer | null = null;
 const dirs: string[] = [];
@@ -142,6 +143,40 @@ describe('attachProductPluginService', () => {
     expect(getThreadProvider('acp-opencode')?.displayName).toBe('OpenCode');
     expect(server.ctx.plugins?.get('provider-acp')?.status).toBe('running');
     expect(server.ctx.pluginHostArtifacts.get('provider-acp')?.digest).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it('serves only declared branding for headless and disabled plugins', async () => {
+    const bundled = tempDir();
+    const root = join(bundled, 'branding-test');
+    mkdirSync(join(root, 'icons'), { recursive: true });
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'zcc-plugin-branding-test', version: '0.1.0',
+      engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' },
+      zcc: { name: 'Branding test', description: 'A headless logo', branding: { icon: './icons/My Logo.svg' }, server: './server.mjs' } }));
+    writeFileSync(join(root, 'server.mjs'), 'export default () => {};');
+    writeFileSync(join(root, 'icons/My Logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><path fill="#d97757" d="M0 0h24v24H0z"/></svg>');
+    server = await startProductServer({ dataDir: tempDir(), origins: { serverPort: 0, devAppPort: 5173 } });
+    await attachProductPluginService(server.ctx, { bundledRoot: bundled });
+    await server.ctx.plugins!.install(root);
+    for (const enabled of [true, false]) {
+      await server.ctx.plugins![enabled ? 'enable' : 'disable']('branding-test');
+      const response = await fetch(`${server.url}plugins/branding-test/assets/icons/My%20Logo.svg`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toBe('image/svg+xml');
+      expect(response.headers.get('content-security-policy')).toContain("default-src 'none'");
+      expect(await response.text()).toContain('#d97757');
+      expect(await fetch(`${server.url}plugins/branding-test/assets/server.mjs`).then(r => r.status)).toBe(404);
+      expect(pluginAssetRootFromService(server.ctx.plugins, 'branding-test')).toBeNull();
+    }
+    expect(pluginAssetRootFromService(undefined, 'branding-test', 'icons/My Logo.svg')).toBeNull();
+  });
+
+  it('does not require an icon before serving a plugin app asset', () => {
+    const row = { enabled: true, appEntry: './app.js', rootDir: '/plugin' };
+    const plugins = {
+      get: () => row,
+      appUrl: () => '/plugins/notes/assets/app.js'
+    };
+    expect(pluginAssetRootFromService(plugins as never, 'notes', 'app.js')).toBe('/plugin');
   });
 
   it('serves contained plugin renderer assets from the product listener', async () => {
@@ -459,13 +494,32 @@ describe('plugin spawn harness helpers', () => {
   });
 
   it('reports UNAVAILABLE_DEFAULT when the host is not connected', async () => {
+    const db = openDatabase(join(tempDir(), 'hosts.sqlite'));
+    upsertHost(db, { id: 'primary', name: 'Primary', hostKeyHash: 'primary' });
     const ctx = {
+      db,
       dataDir: tempDir(),
       hostHub: hubWith(async () => { throw new HostUnavailableError(); }),
       config: { getConfig: () => baseConfig },
       toProjects: () => [{ id: 'p1', name: 'P', path: '/tmp/p1', createdAt: 0, lastActiveAt: 0 }]
     } as never;
     await expect(productProjectHarnessDefault(ctx, 'p1')).resolves.toMatchObject({ ok: false, code: 'UNAVAILABLE_DEFAULT' });
+    db.close();
+  });
+
+  it('probes the primary host for local projects without a host binding, never an arbitrary connected host', async () => {
+    const db = openDatabase(join(tempDir(), 'hosts.sqlite'));
+    upsertHost(db, { id: 'primary', name: 'Primary', hostKeyHash: 'primary' });
+    const resolve = vi.fn((id?: string) => { if (!id) throw new Error('ambiguous-host'); return id; });
+    const hub = { resolveHostId: resolve, callHostOnlineRpc: vi.fn(async () => status([{ family: 'codex', enabled: true, installed: true }])) };
+    const ctx = { db, dataDir: tempDir(), hostHub: hub, config: { getConfig: () => ({ ...baseConfig, defaultHarness: 'codex', harnessCodexEnabled: true }) }, toProjects: () => [{ id: 'p1', path: '/local', name: 'Local' }] } as never;
+    try {
+      await expect(productProjectHarnessDefault(ctx, 'p1')).resolves.toMatchObject({ ok: true, family: 'codex' });
+      expect(hub.callHostOnlineRpc).toHaveBeenLastCalledWith({ hostId: 'primary', command: { type: 'provider.status' } });
+      resolve.mockImplementation(() => { throw new HostUnavailableError('Primary offline'); });
+      expect(() => productProjectHarnessDefault(ctx, 'p1')).toThrow('Primary offline');
+      expect(hub.callHostOnlineRpc).toHaveBeenCalledTimes(1);
+    } finally { db.close(); }
   });
 
   it('lists providers with availability from the host probe, or bridge state when unprobeable', async () => {

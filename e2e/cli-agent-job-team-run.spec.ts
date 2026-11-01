@@ -18,7 +18,10 @@ test('CLI Agent starts a durable Job Team, surfaces its question, and completes'
   const app = await launchApp(home, {
     e2e: true,
     allowLiveClaude: true,
-    env: { PATH: `${catalogDir}${delimiter}${process.env.PATH ?? ''}` },
+    env: {
+      ANTHROPIC_API_KEY: 'cli-agent-job-team-e2e-key',
+      PATH: `${catalogDir}${delimiter}${process.env.PATH ?? ''}`
+    },
     initialConfig: { teamJobLaunchEnabled: true, sponsorPromptDismissed: true }
   });
   const { window } = app;
@@ -83,7 +86,7 @@ test('CLI Agent starts a durable Job Team, surfaces its question, and completes'
     await instruction.click();
     await instruction.fill('E2E start Job Team');
     await expect(instruction).toContainText('E2E start Job Team');
-    await expect(modal.getByRole('button', { name: 'Project', exact: true })).toContainText(projectName);
+    await expect(modal.getByRole('button', { name: 'Machine and project', exact: true })).toContainText(projectName);
     const send = modal.getByTestId('legacy-agent-command-send');
     await expect(send).toBeEnabled({ timeout: 15_000 });
     await send.click();

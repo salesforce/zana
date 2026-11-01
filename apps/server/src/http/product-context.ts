@@ -1,6 +1,9 @@
+import { createMachineProjectSync, type MachineProjectSync } from '../services/hosts/machine-project-sync.js';
+import { HelpVideoCatalogueService } from '../services/help-video-catalogue.js';
 import { closeThreadReads } from '../services/threads/thread-reads.js';
 import { closeQueuedMessages } from '../services/threads/queued-messages.js';
 import { previewService, disposePreviews } from '../services/previews/preview-service.js';
+import { disposeThreadWrapUps } from '../services/threads/thread-wrap-up.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -47,7 +50,7 @@ import {
   reconcileStoppingConversationThreadsOnHostConnect,
   resumeOpenConversationSessionsAfterHostRestart
 } from '../services/threads/conversation-lifecycle.js';
-import { publishConversationLifecycleOutcome } from '../services/threads/conversation-lifecycle-outcome.js';
+import { publishConversationLifecycleOutcome, scheduleConversationIdleFlush } from '../services/threads/conversation-lifecycle-outcome.js';
 import { healDisconnectedConversationThreadsForHost } from '../services/threads/conversation-host-recovery.js';
 import { HOST_ACTIVE_WORK_DISCONNECT_GRACE_MS } from '../services/threads/conversation-runtime-display.js';
 import { retryDueConversationSends, wakeLapsedEditHolds } from '../services/threads/conversation-deferred-messages.js';
@@ -102,6 +105,7 @@ export interface ProductTerminalRecord extends TerminalSession {
 }
 
 export interface ProductHttpContext {
+  helpVideos?: HelpVideoCatalogueService;
   productInstanceId: string;
   origins: LocalAppOriginArgs;
   dataDir: string;
@@ -118,6 +122,7 @@ export interface ProductHttpContext {
   /** Per-project settings (Settings → Project), read from disk on every call. */
   projectSettings: Pick<ProjectSettingsStore, 'get' | 'getPluginHarnessRouting' | 'setPluginHarnessRouting'>;
   remoteProjectReconciler?: CoalescedReconciler;
+  machineProjectSync?: MachineProjectSync;
   config: ReturnType<typeof createConfigStore>;
   inbox: IInboxStore;
   inboxRead: IInboxReadStore;
@@ -276,6 +281,7 @@ export function createProductHttpContext(
       );
       restartedHosts.add(hostId);
     },
+    onProjectCatalogueChanged: hostId => { void ctx?.machineProjectSync?.request(hostId); },
     onHostConnected: (hostId) => {
       const timer = disconnectHealTimers.get(hostId);
       if (timer) {
@@ -287,6 +293,7 @@ export function createProductHttpContext(
       ctx.peerLinks?.onInboundConnected(hostId);
       if (getHost(db, hostId)?.enrollmentCapability !== 'execution') return;
       void ctx.remoteProjectReconciler?.request();
+      void ctx.machineProjectSync?.request(hostId);
       tunnelReopener.hostConnected(hostId);
       ctx.remoteEnvironment.hostConnected(hostId);
       void reconcileStoppingConversationThreadsOnHostConnect(ctx, hostId).catch(() => undefined);
@@ -308,10 +315,16 @@ export function createProductHttpContext(
         }
       }
     },
-    onConversationEvent: ({ threadId }) => {
+    onConversationEvent: ({ threadId, type }) => {
       const thread = getConversationThread(db, threadId);
       if (!thread) return;
       hub.emit('threads:updated', conversationThreadView(ctx, thread));
+      // Extension-started compaction can outlive its user turn. Its terminal
+      // turn event is then a duplicate lifecycle transition, so wake the queue
+      // from the committed root compaction event as well.
+      if (type === 'thread/compacted' && thread.status === 'idle') {
+        scheduleConversationIdleFlush(ctx, threadId);
+      }
     },
     onConversationLifecycle: ({ threadId, event, outcome }) => {
       if (!ctx) return;
@@ -426,7 +439,20 @@ export function createProductHttpContext(
     },
     runTurnSummary: async () => ({ ok: false, text: '', error: 'unused', provider: 'claude-cli', ms: 0 }),
     readDigest: async () => '',
-    runSessionSummary: async () => ({ ok: false, text: '', error: 'unused', provider: 'claude-cli', ms: 0 }),
+    runSessionSummary: (digest, dedupeKey) => {
+      const entry = promptRegistry.get('builtin:session-summary');
+      if (!entry) {
+        return Promise.resolve({
+          ok: false,
+          text: '',
+          error: 'no session-summary prompt',
+          provider: 'claude-cli',
+          ms: 0
+        });
+      }
+      llmService.setProvider(configuredClaudeProvider());
+      return llmService.run(entry, { digest }, dedupeKey);
+    },
     appendInbox: async (input) => {
       const entry = await inbox.append({
         projectId: input.projectId,
@@ -603,6 +629,7 @@ export function createProductHttpContext(
     (error) => console.warn(`[zcc] remote project reconcile failed: ${error instanceof Error ? error.message : 'unknown error'}`)
   );
   ctx = {
+    helpVideos: new HelpVideoCatalogueService(dataDir),
     productInstanceId,
     origins: options.origins,
     dataDir,
@@ -651,6 +678,7 @@ export function createProductHttpContext(
     dispose: () => {
       if (disposed) return remoteProjectReconciler.dispose();
       disposed = true;
+      ctx.helpVideos?.dispose();
       stopPeerAuthority();
       ctx.peerInstaller?.dispose();
       ctx.peerLinks?.dispose();
@@ -668,9 +696,10 @@ export function createProductHttpContext(
       ctx.peerControlReplay.dispose();
       ctx.pluginStorageEpochs?.dispose();
       options.peerKeyProvider?.dispose?.();
-      const reconcilerStopped = remoteProjectReconciler.dispose();
+      const reconcilerStopped = Promise.all([remoteProjectReconciler.dispose(), ctx.machineProjectSync?.dispose()]).then(() => undefined);
       closeThreadReads(dataDir); closeQueuedMessages(dataDir);
       disposePreviews(ctx);
+      disposeThreadWrapUps(ctx);
       disposeEnvironmentRetireTimers(ctx);
       stopHistoryMaintenance();
       ctx.cliCallbacks?.dispose();
@@ -697,6 +726,7 @@ export function createProductHttpContext(
       await Promise.all([ctx.peerPairs.whenIdle(), ctx.peerChannels.whenIdle(), ctx.peerControlReplay.whenIdle(), ctx.pluginStorageEpochs?.whenIdle()]);
     }
   };
+  ctx.machineProjectSync = createMachineProjectSync(ctx);
   previewService(ctx);
   const stopHistoryMaintenance = startConversationHistoryMaintenance(db);
   const stopRetries = startDeferredRetryLoop(async () => {

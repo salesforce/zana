@@ -13,7 +13,8 @@ vi.mock('./AgentSessionView.js', () => ({ AgentSessionView: () => null }));
 vi.mock('../lib/product-client.js', () => ({ product: { config: { set: vi.fn().mockResolvedValue({}) }, threads: { notificationLevel: vi.fn(() => new Promise(() => {})) } } }));
 
 import { AgentMonitor } from './AgentMonitor.js';
-import { agentFleetItem, threadFleetItem, type FleetItem } from './fleet-item.js';
+import { agentFleetItem, scheduleFleetItem, threadFleetItem, type FleetItem } from './fleet-item.js';
+import type { ScheduledTask } from '@zana-ai/zcc-domain/product';
 import { useData, useUi } from '../store.js';
 
 const NOW = Date.now();
@@ -146,4 +147,17 @@ it('groups Modern squad members into one team run and shows the member thread, n
   expect(useUi.getState().agentMonitor).toBeNull();
   fireEvent.contextMenu(member);
   expect(document.querySelector('[data-testid="thread-context-menu"]')).toBeTruthy();
+});
+
+it('labels a schedule row Armed when enabled and Off when disabled', () => {
+  const sched = (id: string, enabled: boolean) => scheduleFleetItem(
+    { id, name: `Job ${id}`, projectId: 'a', enabled, schedule: { every: '1h' }, status: { runCount: 0, runs: [] } } as unknown as ScheduledTask,
+    { name: 'proj-a' }
+  );
+  useData.setState({ includeScheduledAgentsInAgentView: true });
+  const { container } = render(monitor([sched('on', true), sched('off', false)]));
+  const rows = [...container.querySelectorAll('.agent-monitor-row.is-schedule')];
+  const dur = (title: string) => rows.find((r) => r.textContent?.includes(title))?.querySelector('.agent-monitor-row-dur')?.textContent;
+  expect(dur('Job on')).toBe('Armed');
+  expect(dur('Job off')).toBe('Off');
 });

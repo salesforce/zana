@@ -4,6 +4,8 @@ import type { Environment, SpawnEnvironmentChoice } from '@zana-ai/zcc-domain';
 import { product } from '../lib/product-client.js';
 import { apiJson } from '../lib/fetch-with-app-surface.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
+import { useHosts } from '../hooks/useHosts.js';
+import { computerLabel } from '@zana-ai/zcc-domain/computer-label';
 
 export type WorkspacePickerValue = SpawnEnvironmentChoice;
 
@@ -68,6 +70,9 @@ interface Props {
 }
 
 export function EnvironmentPicker({ projectId, hostId, value, onChange, allowPersonal, disabled }: Props) {
+  const hosts = useHosts();
+  const host = hostId ? hosts.find(row => row.id === hostId) : hosts.find(row => row.isPrimary);
+  const executionLabel = host ? `Run on ${computerLabel(host.name)}` : 'Run in project folder';
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [environmentsLoaded, setEnvironmentsLoaded] = useState(false);
   const [branches, setBranches] = useState<string[]>([]);
@@ -164,8 +169,9 @@ export function EnvironmentPicker({ projectId, hostId, value, onChange, allowPer
         options={[
           {
             value: 'unmanaged',
-            label: 'Work locally',
-            content: <span className="environment-picker-option"><Laptop size={14} /> Work locally</span>
+            label: executionLabel,
+            description: host ? `Use the project folder on ${host.name}` : 'Use the project’s registered computer',
+            content: <span className="environment-picker-option"><Laptop size={14} /> {executionLabel}</span>
           },
           {
             value: 'worktree',

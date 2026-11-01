@@ -344,6 +344,48 @@ it('keeps a closing shell tab until exit and deduplicates concurrent closes', as
   expect(useData.getState().terminals.p).toEqual([]);
 });
 
+it('bulk closes shared terminal references once and preserves tabs outside the requested group', async () => {
+  persistSecondaryPanel('agent', { ...emptySecondaryPanelState(), activeId: 'second', tabs: [
+    { id: 'first', kind: 'terminal', title: 'Shell', sessionId: 'shared-shell' },
+    { id: 'second', kind: 'terminal', title: 'Shell copy', sessionId: 'shared-shell' },
+    { id: 'keep', kind: 'new-tab', title: 'Keep' }
+  ] });
+  const view = renderHook(() => useSecondaryPanel('agent'));
+  await act(async () => view.result.current.closeTabs(['first', 'second']));
+  expect(closeTerminal).toHaveBeenCalledExactlyOnceWith('shared-shell');
+  expect(view.result.current.state.tabs.map(tab => tab.id)).toEqual(['keep']);
+  expect(view.result.current.state.activeId).toBe('info');
+});
+
+it('continues bulk close after a failure while preserving the failed terminal and reporting it', async () => {
+  persistSecondaryPanel('agent', { ...emptySecondaryPanelState(), tabs: [
+    { id: 'failed', kind: 'terminal', title: 'Shell', sessionId: 'shell' },
+    { id: 'file', kind: 'file-preview', title: 'Notes', path: 'notes.md' }
+  ] });
+  closeTerminal.mockResolvedValueOnce(false);
+  const view = renderHook(() => useSecondaryPanel('agent'));
+  await act(async () => view.result.current.closeTabs(['failed', 'file']));
+  expect(view.result.current.state.tabs.map(tab => tab.id)).toEqual(['failed']);
+  expect(useUi.getState().toasts).toHaveLength(1);
+});
+
+it.each(['switch', 'unmount'])('stops a pending bulk close on owner %s', async action => {
+  const saved = { ...emptySecondaryPanelState(), tabs: [
+    { id: 'shell', kind: 'terminal' as const, title: 'Shell', sessionId: 'shell' },
+    { id: 'same-id', kind: 'terminal' as const, title: 'Second shell', sessionId: 'second-shell' }
+  ] };
+  persistSecondaryPanel('agent', saved); persistSecondaryPanel('other', saved);
+  const pending = Promise.withResolvers<boolean>(); closeTerminal.mockReturnValueOnce(pending.promise);
+  const view = renderHook(({ owner }) => useSecondaryPanel(owner), { initialProps: { owner: 'agent' } });
+  let closing!: Promise<void>;
+  act(() => { closing = view.result.current.closeTabs(['shell', 'same-id']); });
+  if (action === 'switch') view.rerender({ owner: 'other' });
+  else view.unmount();
+  await act(async () => { pending.resolve(true); await closing; });
+  expect(closeTerminal).toHaveBeenCalledExactlyOnceWith('shell');
+  if (action === 'switch') expect(view.result.current.state.tabs).toEqual(saved.tabs);
+});
+
 it.each([new Error('offline'), 'offline'])('preserves a failed close and displays its failure %s', async failure => {
   persistSecondaryPanel('agent', { ...emptySecondaryPanelState(), tabs: [{ id: 'tab', kind: 'terminal', title: 'Shell', sessionId: 'shell' }] });
   closeTerminal.mockRejectedValueOnce(failure);

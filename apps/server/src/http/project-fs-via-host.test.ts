@@ -311,11 +311,22 @@ it('pins environment paths to their project and host, including historical sourc
       { projectId: 'p', hostId: primary.id, environmentId: ready.id },
       ...[
         { projectId: 'other', path: '/other', status: 'ready' as const },
-        { projectId: 'p', path: null, status: 'ready' as const },
-        { projectId: 'p', path: '/worktree', status: 'provisioning' as const }
+        { projectId: 'p', path: null, status: 'ready' as const }
       ].map(fields => ({ ...scope, environmentId: createEnvironment(db, { hostId: remote.id, ...fields }).id }))
     ];
     for (const input of invalid) expect(() => projectFileRoot(ctx, input)).toThrow('does not belong');
+    for (const [status, message] of [
+      ['provisioning', 'Environment preparation is still in progress'],
+      ['failed', 'Environment preparation failed'],
+      ['retiring', 'Environment is unavailable (retiring)'],
+      ['destroying', 'Environment is unavailable (destroying)'],
+      ['destroyed', 'Environment is unavailable (destroyed)']
+    ] as const) {
+      const environment = createEnvironment(db, { projectId: 'p', hostId: remote.id, path: '/state/' + status, status });
+      expect(() => projectFileRoot(ctx, { ...scope, environmentId: environment.id })).toThrow(message);
+      // An untrusted scope must still fail the ownership check first.
+      expect(() => projectFileRoot(ctx, { projectId: 'p', hostId: primary.id, environmentId: environment.id })).toThrow('does not belong');
+    }
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 it('surfaces host loss and ambiguous ownership without falling back to local files', async () => {

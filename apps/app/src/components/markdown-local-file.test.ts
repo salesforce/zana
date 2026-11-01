@@ -14,9 +14,26 @@ describe('parseLocalFileMarkdownHref', () => {
     expect(parseLocalFileMarkdownHref('./src/foo.ts')).toBe('./src/foo.ts');
   });
 
+  it('normalizes a local Windows drive file URL before preview confinement', () => {
+    expect(parseLocalFileMarkdownHref('file:///D:/Dev/code/zana/docs/getting-started.md'))
+      .toBe('D:/Dev/code/zana/docs/getting-started.md');
+  });
+
+  it('accepts absolute Windows drive paths without treating drive-relative paths as absolute', () => {
+    expect(parseLocalFileMarkdownHref('D:\\Dev\\code\\zana\\docs\\getting-started.md'))
+      .toBe('D:/Dev/code/zana/docs/getting-started.md');
+    expect(parseLocalFileMarkdownHref('D:docs\\getting-started.md')).toBeNull();
+  });
+
+  it('rejects non-local file URL authorities and encoded path separators', () => {
+    expect(parseLocalFileMarkdownHref('file://server/share/report.md')).toBeNull();
+    expect(parseLocalFileMarkdownHref('file:///workspace/docs%2Freport.md')).toBeNull();
+  });
+
   it('rejects http(s) and parent-segment escapes', () => {
     expect(parseLocalFileMarkdownHref('https://example.com/app.ts')).toBeNull();
     expect(parseLocalFileMarkdownHref('/tmp/../etc/passwd')).toBeNull();
+    expect(parseLocalFileMarkdownHref('file:///D:\\work\\repo\\..\\outside.md')).toBeNull();
   });
 });
 
@@ -83,10 +100,13 @@ describe('resolveThreadFilePreviewPath', () => {
     expect(resolveThreadFilePreviewPath('true')).toBeNull();
   });
 
-  it('maps a bare name onto the latest matching known path', () => {
+  it('maps a bare name only when the known path has one distinct basename match', () => {
     expect(
-      resolveThreadFilePreviewPath('foo.md', ['src/a.ts', 'docs/foo.md', 'lib/foo.md'])
-    ).toBe('lib/foo.md');
+      resolveThreadFilePreviewPath('foo.md', ['src/a.ts', 'docs/foo.md'])
+    ).toBe('docs/foo.md');
+    expect(
+      resolveThreadFilePreviewPath('foo.md', ['docs/foo.md', 'lib/foo.md'])
+    ).toBe('foo.md');
   });
 });
 

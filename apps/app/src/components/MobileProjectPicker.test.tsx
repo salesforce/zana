@@ -13,8 +13,13 @@ const options = [
 
 it('opens without focusing search, filters descriptions, and selects a project with focus restored', () => {
   const onChange = vi.fn();
-  render(<MobileProjectPicker ariaLabel="Project" value="one" options={options} onChange={onChange} />);
+  render(<MobileProjectPicker ariaLabel="Project" value="one" options={options} onChange={onChange} className="composer-location-picker" />);
   const trigger = screen.getByRole('button', { name: 'Project', exact: true });
+  expect(trigger.classList.contains('composer-location-picker')).toBe(true);
+  fireEvent.pointerDown(trigger, { button: 2 });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(fireEvent.pointerDown(trigger, { button: 0 })).toBe(false);
+  expect(screen.queryByRole('dialog')).toBeNull();
   fireEvent.click(trigger);
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close project picker' }));
   expect(screen.getByRole('button', { name: 'First project' }).getAttribute('aria-pressed')).toBe('true');

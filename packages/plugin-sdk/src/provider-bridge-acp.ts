@@ -45,6 +45,7 @@
 import type { AcpLaunchSpec } from "@zana-ai/zcc-provider-bridge-acp";
 
 export { acpProviderBridge as experimental_acpProviderBridge } from "@zana-ai/zcc-provider-bridge-acp";
+export { getAcpLaunchHealth as experimental_getAcpLaunchHealth } from "@zana-ai/zcc-provider-bridge-acp";
 export type {
   AcpClassifiedToolCall,
   AcpClientRequestOutcome,

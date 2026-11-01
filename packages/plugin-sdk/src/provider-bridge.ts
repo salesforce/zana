@@ -34,6 +34,19 @@
  * bundles it.
  */
 
+export {
+  confinedConfigParent as experimental_confinedConfigParent,
+  createConfinedConfigLeaf as experimental_createConfinedConfigLeaf,
+  linkProjects as experimental_linkProjects,
+  removeConfinedConfigLeaf as experimental_removeConfinedConfigLeaf,
+  sweepConfinedConfigLeaves as experimental_sweepConfinedConfigLeaves,
+  writeAtomic0600 as experimental_writeAtomic0600,
+} from './automated-config-lifecycle.js';
+export type {
+  ConfinedConfigLeafInput,
+  SweepConfinedConfigLeavesInput,
+} from './automated-config-lifecycle.js';
+
 // ---------------------------------------------------------------------------
 // 1. The bridge entry contract
 // ---------------------------------------------------------------------------
@@ -222,6 +235,13 @@ export {
 } from "@zana-ai/zcc-agent-process-utils";
 
 /**
+ * A bridge that links folders it does not own (a user's skills folder, say)
+ * removes those links with this, never a recursive `rmSync`: on Windows,
+ * Electron's `rmSync` walks a directory junction and empties its target.
+ */
+export { removeUnlessRealDirectory as experimental_removeUnlessRealDirectory } from "@zana-ai/zcc-agent-process-utils";
+
+/**
  * The ACP launch spec: the one core wire shape a bridge parses directly. It
  * arrives as provider-scoped static options (opaque to the runtime, meaningful
  * only to the bridge that declares the ACP tier), so its schema has to be
@@ -283,6 +303,8 @@ export {
   approvalInteractionOutcomeSchema,
   userQuestionInteractionOutcomeSchema,
   providerInteractionOutcomeSchema,
+  interactionRequestPayloadSchema,
+  PLUGIN_INTERACTION_MAX_TITLE_LENGTH,
   permissionEscalationValues,
   reasoningEffortsForLevels,
   reasoningLevelSchema,

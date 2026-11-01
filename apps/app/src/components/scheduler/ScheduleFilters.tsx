@@ -16,7 +16,7 @@ export function ScheduleFilters({ search, filter, onSearch, onFilter }: {
     <select aria-label="Filter schedules" value={filter} onChange={event => onFilter(event.target.value as ScheduleFilter)}>
       <option value="all">All schedules</option>
       <option value="enabled">Enabled</option>
-      <option value="paused">Paused</option>
+      <option value="paused">Off</option>
       <option value="attention">Needs attention</option>
     </select>
   </div>;

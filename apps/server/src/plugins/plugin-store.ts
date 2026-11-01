@@ -38,6 +38,8 @@ export interface InstalledPluginRow {
   updatedAt: number;
   toolPolicy?: ToolPolicyClassification;
   lastActivationFailure?: { version: string; at: number; detail: string };
+  /** A clean official runtime retained until the app itself is upgraded. */
+  bundledRecoveryVersion?: string;
 }
 
 interface PluginStoreFile {

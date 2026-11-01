@@ -1,3 +1,10 @@
+import { useHosts } from '../../hooks/useHosts.js';
+import { useProjectAvailability } from '../../hooks/useProjectAvailability.js';
+import { projectAvailabilityLabel } from '../../lib/machine-project-client.js';
+import { groupProjectsByMachine, machineProjectMatches, newThreadLocationPath, type MachineProjectGroup } from '../../lib/machine-projects.js';
+import { AddMachineProjectDialog } from '../AddMachineProjectDialog.js';
+import { MachineProjectsDialog } from '../MachineProjectsDialog.js';
+import './machine-projects.css';
 import { ProjectIconPicker } from './ProjectIconPicker.js';
 import { product } from '../../lib/product-client.js';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from 'react';
@@ -19,7 +26,7 @@ import {
   verticalListSortingStrategy
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus, Search, Trash2, X, Check, Pencil, FolderOpen, LayoutDashboard, Settings2, Network, GitBranch, Star, AppWindow, RefreshCw, Activity, ChevronRight, MoreHorizontal, ChevronUp, ChevronDown, ListFilter, MessageCirclePlus } from 'lucide-react';
+import { Plus, Search, Trash2, X, Check, Pencil, FolderOpen, LayoutDashboard, Settings2, Network, GitBranch, Star, AppWindow, RefreshCw, Activity, ChevronRight, MoreHorizontal, ChevronUp, ChevronDown, ListFilter, MessageCirclePlus, Laptop, Server } from 'lucide-react';
 import { ProjectOpenActions } from './ProjectOpenActions.js';
 import {
   useData,
@@ -70,6 +77,8 @@ import {
 
 interface MenuState {
   projectId: string;
+  machineId?: string;
+  returnFocus?: HTMLElement;
   x: number;
   y: number;
   /** Trigger top; when set, place below the control and flip above only if needed. */
@@ -107,6 +116,7 @@ function placeFixedMenu(
 }
 
 interface RailGroup {
+  machine?: MachineProjectGroup;
   projects: Project[];
 }
 
@@ -138,10 +148,12 @@ type FlatRailItem =
 
 function SortableProject({
   project,
+  sortId,
   disabled,
   children
 }: {
   project: Project;
+  sortId?: string;
   disabled: boolean;
   children: (dragHandle: {
     attributes: ReturnType<typeof useSortable>['attributes'];
@@ -149,7 +161,7 @@ function SortableProject({
   }) => ReactNode;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: project.id,
+    id: sortId ?? project.id,
     disabled
   });
   const style = {
@@ -181,6 +193,11 @@ export function ProjectsList({
   const dismissMobileNav = useMobileNavDismiss();
   const mobile = inSidebar && !!dismissMobileNav;
   const projects = useData((s) => s.projects);
+  const hosts = useHosts();
+  const folderAvailability = useProjectAvailability(inSidebar ? projects : [], hosts);
+  const [addingMachine, setAddingMachine] = useState<MachineProjectGroup | null>(null);
+  const [overviewMachineId, setOverviewMachineId] = useState<string | null>(null);
+  const collapsedSections = useUi(s => s.collapsedSections);
   const terminals = useData((s) => s.terminals);
   const projectNavigationOrganization = useData((s) => s.projectNavigationOrganization);
   const loadProjects = useData((s) => s.loadProjects);
@@ -404,6 +421,14 @@ export function ProjectsList({
     setAgentMenu({ card: sessionToCard(session, project), ...clampMenuAnchor(e) });
   };
 
+  const openMachineMenu = (machineId: string, heading: HTMLElement, x: number, y: number) => {
+    setAgentMenu(null);
+    setThreadMenu(null);
+    setSidebarAddOpen(false);
+    setSidebarOrganizeOpen(false);
+    setMenu({ projectId: '', machineId, x, y, returnFocus: heading.querySelector<HTMLButtonElement>('.machine-project-name') ?? undefined });
+  };
+
   const commitRename = () => {
     if (renamingId) {
       const v = renameValue.trim();
@@ -441,16 +466,6 @@ export function ProjectsList({
     projectRailTerminals(terminals[p.id]).length > 0 ||
     (liveThreadsByProject.get(p.id)?.length ?? 0) > 0;
 
-  const projectHasNestableSessions = (p: Project) =>
-    projectRailTerminals(terminals[p.id]).length > 0 ||
-    (railThreadsByProject.get(p.id)?.length ?? 0) > 0;
-
-  // Nested rows show live agents plus recent threads. Auto-expand any project
-  // that has something to nest so those sessions are visible without a click.
-  // An explicit collapse still wins.
-  const isProjectExpanded = (p: Project) =>
-    disclosure.isExpanded(p.id, projectHasNestableSessions(p));
-
   const visibleProjects = useMemo(() => {
     // A per-project window locks the rail to its one project — no other projects
     // are reachable in a scoped window, so neither filter nor idle-hide apply.
@@ -463,14 +478,15 @@ export function ProjectsList({
     }
     const q = filter.trim().toLowerCase();
     if (!q) return list;
+    const machines = groupProjectsByMachine(list, hosts);
     return list.filter(
-      (p) =>
+      (p) => machines.some(machine => machine.projects.includes(p) && machine.name.toLowerCase().includes(q)) ||
         composerProjectLabel(p).toLowerCase().includes(q) ||
         p.name.toLowerCase().includes(q) ||
         p.path.toLowerCase().includes(q) ||
         (p.tag?.toLowerCase().includes(q) ?? false)
     );
-  }, [sortedProjects, scopedProjectId, hideIdleProjects, selectedId, filter, terminals, liveThreadsByProject]);
+  }, [sortedProjects, scopedProjectId, hideIdleProjects, selectedId, filter, terminals, liveThreadsByProject, hosts]);
 
   // "Agents only" is a sidebar presentation; a scoped window keeps its tree.
   const agentsOnly = inSidebar && !scopedProjectId && sidebarProjectView === 'agents';
@@ -510,9 +526,18 @@ export function ProjectsList({
 
   // Keep every project in one uninterrupted tree. Display order stays stable
   // from the persisted project ordering or the selected sort preference.
+  const machineGroups = useMemo(() => groupProjectsByMachine(sortedProjects, hosts), [sortedProjects, hosts]);
   const railGroups = useMemo<RailGroup[]>(() => {
-    return [{ projects: visibleProjects }];
-  }, [visibleProjects]);
+    if (!inSidebar || scopedProjectId) return [{ projects: visibleProjects }];
+    return machineGroups.map(machine => ({ machine, projects: machine.projects.filter(project =>
+      (!hideIdleProjects || project.id === selectedId || (!isScratchWorkspaceProject(project) ? projectHasRunningAgents(project) : (liveThreadsByProject.get(project.id) ?? []).some(thread => thread.hostId === machine.hostId || (machine.primary && !thread.hostId)) || (machine.primary && projectRailTerminals(terminals[project.id]).length > 0)))
+      && machineProjectMatches(machine, project, filter)
+    ) })).filter(group => !filter.trim() || group.projects.length > 0);
+  }, [inSidebar, scopedProjectId, visibleProjects, machineGroups, filter, hideIdleProjects, selectedId, terminals, liveThreadsByProject]);
+  const openMachineThread = (group: MachineProjectGroup, project: Project) => {
+    navigate(newThreadLocationPath({ projectId: project.id, hostId: group.hostId }));
+    dismissMobileNav?.();
+  };
 
   // Reorder is allowed whenever the full unfiltered list is on screen. A
   // Recents/Created/A–Z sort still shows Move up/down — using them (or a
@@ -566,7 +591,15 @@ export function ProjectsList({
       setMenu(null);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMenu(null);
+      if (e.key === 'Escape') {
+        if (menu.machineId) {
+          e.preventDefault();
+          e.stopPropagation();
+          menu.returnFocus?.focus();
+        }
+        setMenu(null);
+      }
+      if (menu.machineId && e.key === 'Tab') setMenu(null);
     };
     window.addEventListener('mousedown', onDown);
     window.addEventListener('keydown', onKey);
@@ -686,15 +719,20 @@ export function ProjectsList({
   const renderProject = (group: RailGroup, p: Project) => {
     const sortable = !mobile && canReorder && renamingId !== p.id && !isScratchWorkspaceProject(p);
     const labelClass = sortable ? 'project-label project-label--sortable' : 'project-label';
+    const scratch = isScratchWorkspaceProject(p);
+    const projectedDefault = scratch && !!group.machine && !group.machine.primary && p.hostId !== group.machine.hostId;
     const liveList = projectNavigationSessions(
-      projectRailTerminals(terminals[p.id]),
+      projectedDefault ? [] : projectRailTerminals(terminals[p.id]),
       projectNavigationOrganization
     );
-    const railThreads = railThreadsByProject.get(p.id) ?? [];
+    const railThreads = (railThreadsByProject.get(p.id) ?? []).filter(thread => !scratch || !group.machine
+      || thread.hostId === group.machine.hostId || (group.machine.primary && !thread.hostId));
+    const disclosureId = scratch && group.machine ? `${group.machine.id}:${p.id}` : p.id;
+    const expanded = disclosure.isExpanded(disclosureId, liveList.length + railThreads.length > 0);
     const nestedCount = liveList.length + railThreads.length;
     const displayName = composerProjectLabel(p);
     return (
-    <SortableProject key={p.id} project={p} disabled={!sortable}>
+    <SortableProject key={p.id} project={p} sortId={projectedDefault ? `${group.machine!.id}:${p.id}` : p.id} disabled={!sortable}>
       {({ attributes, listeners }) => (
         <>
           <div
@@ -723,13 +761,14 @@ export function ProjectsList({
             }}
             onContextMenu={(e) => {
               e.preventDefault();
+              if (projectedDefault) return;
               setAgentMenu(null);
               setMenu({ projectId: p.id, x: e.clientX, y: e.clientY });
             }}
           >
             {(() => {
               const tooltip = [
-                p.path,
+                projectedDefault ? `Default Project on ${group.machine!.name}` : p.path,
                 p.tag ? `#${p.tag}` : null,
                 p.remote ? `Remote SSH: ${p.remote.user ? `${p.remote.user}@` : ''}${p.remote.host}` : null
               ]
@@ -740,6 +779,7 @@ export function ProjectsList({
               const projectMeta = (
                 <span className="project-meta project-meta--inline" title={tooltip || undefined}>
                   <span className="project-name">{displayName}</span>
+                  {!isScratchWorkspaceProject(p) && folderAvailability[p.id] && !['ready', 'unknown', 'offline'].includes(folderAvailability[p.id]) && <span className="project-folder-warning" title={projectAvailabilityLabel[folderAvailability[p.id]]} aria-hidden="true">!</span>}
                   {isRemoteWorkspaceProject(p) && <Network size={11} strokeWidth={2} className="project-remote-icon" aria-label="Remote SSH project" />}
                 </span>
               );
@@ -767,7 +807,6 @@ export function ProjectsList({
                   <Star size={11} fill={p.favorite ? 'currentColor' : 'none'} aria-hidden="true" />
                 </span>
               );
-              const expanded = isProjectExpanded(p);
               const treeChevron =
                 liveList.length === 0 && railThreads.length === 0 ? null : (
                   <button
@@ -777,7 +816,7 @@ export function ProjectsList({
                     aria-expanded={expanded}
                     onClick={(e) => {
                       e.stopPropagation();
-                      disclosure.setExpanded(p.id, !expanded);
+                      disclosure.setExpanded(disclosureId, !expanded);
                     }}
                   >
                     <ChevronRight size={14} />
@@ -827,19 +866,20 @@ export function ProjectsList({
                     aria-label={`Open ${displayName}`}
                     onClick={() => {
                       if (consumeProjectClick()) return;
-                      enterProjectFocus(p.id);
+                      if (projectedDefault) openMachineThread(group.machine!, p);
+                      else enterProjectFocus(p.id);
                     }}
-                    {...attributes}
+                    {...(sortable ? attributes : {})}
                   >
                     {projectDot}
                     {projectMeta}
                   </button>
-                  {favoriteStar}
+                  {!projectedDefault && favoriteStar}
                   {treeChevron}
                 </div>
               );
             })()}
-            {!isProjectExpanded(p) && <ProjectRollupDot projectId={p.id} />}
+            {!expanded && !projectedDefault && <ProjectRollupDot projectId={p.id} />}
             {nestedCount > 0 && (
               <span
                 className="project-badge"
@@ -848,7 +888,7 @@ export function ProjectsList({
                 {nestedCount}
               </span>
             )}
-            <button
+            {!projectedDefault && <button
               type="button"
               className="project-actions"
               aria-label={`Project actions for ${displayName}`}
@@ -860,7 +900,7 @@ export function ProjectsList({
               }}
             >
               <MoreHorizontal size={15} />
-            </button>
+            </button>}
             <button
               type="button"
               className="project-spawn"
@@ -868,7 +908,8 @@ export function ProjectsList({
               title="New agent"
               onClick={(e) => {
                 e.stopPropagation();
-                spawnDefaultAgent(p);
+                if (projectedDefault) openMachineThread(group.machine!, p);
+                else spawnDefaultAgent(p);
               }}
             >
               <MessageCirclePlus size={14} />
@@ -876,7 +917,7 @@ export function ProjectsList({
           </div>
           {(() => {
             if (!nestedCount) return null;
-            if (!isProjectExpanded(p)) return null;
+            if (!expanded) return null;
             const activeTab = selectedId === p.id ? selectedTabId[p.id] : undefined;
             return (
               <div className="project-terminals" role="list" aria-label={`Sessions in ${displayName}`}>
@@ -939,12 +980,12 @@ export function ProjectsList({
               if (mobile) setMobileProjectsOpen((open) => !open);
               else toggleSection(SIDEBAR_PROJECTS_SECTION_KEY);
             }}
-            aria-label={`${projectsCollapsed ? 'Expand' : 'Collapse'} Projects section`}
+            aria-label={`${projectsCollapsed ? 'Expand' : 'Collapse'} Machines section`}
             aria-controls={SIDEBAR_PROJECTS_TREE_ID}
             aria-expanded={!projectsCollapsed}
-            title={`${projectsCollapsed ? 'Expand' : 'Collapse'} Projects`}
+            title={`${projectsCollapsed ? 'Expand' : 'Collapse'} Machines`}
           >
-            <span>Projects</span>
+            <span>Machines</span>
             <ChevronRight
               size={14}
               aria-hidden="true"
@@ -1049,10 +1090,10 @@ export function ProjectsList({
               <div className="sidebar-projects-menu-wrap" ref={sidebarAddRef}>
                 <button
                   className="icon-btn"
-                  aria-label="Add project"
+                  aria-label="Add machine or project"
                   aria-haspopup="menu"
                   aria-expanded={sidebarAddOpen}
-                  title="Add project"
+                  title="Add machine or project"
                   onClick={() => {
                     setMenu(null);
                     setSidebarOrganizeOpen(false);
@@ -1062,7 +1103,8 @@ export function ProjectsList({
                   <Plus size={14} />
                 </button>
                 {sidebarAddOpen && (
-                  <div className="sidebar-projects-add-menu" role="group" aria-label="Add a project">
+                  <div className="sidebar-projects-add-menu" role="group" aria-label="Add a machine or project">
+                    <button type="button" onClick={() => { navigate('/settings/machines'); setSidebarAddOpen(false); }}><Server size={14} /><span>Connect a machine</span></button>
                     <button type="button" onClick={() => { setShowLocalDialog(true); setSidebarAddOpen(false); }}>
                       <FolderOpen size={14} />
                       <span>Add local folder</span>
@@ -1166,8 +1208,8 @@ export function ProjectsList({
           <div className={inSidebar ? 'sidebar-projects-filter list-filter' : 'list-filter'}>
             <Search size={14} className="list-filter-icon" aria-hidden="true" />
             <input
-              placeholder={agentsOnly ? 'Filter agents' : 'Filter projects'}
-              aria-label={agentsOnly ? 'Filter agents' : 'Filter projects'}
+              placeholder={agentsOnly ? 'Filter agents' : inSidebar && !scopedProjectId ? 'Filter machines or projects' : 'Filter projects'}
+              aria-label={agentsOnly ? 'Filter agents' : inSidebar && !scopedProjectId ? 'Filter machines or projects' : 'Filter projects'}
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               onKeyDown={(event) => {
@@ -1264,7 +1306,9 @@ export function ProjectsList({
               })}
             </div>
           )
-        ) : visibleProjects.length === 0 ? (
+        ) : inSidebar && railGroups.length === 0 ? (
+          <div className="list-empty" role="status">No machines or projects match &ldquo;{filter}&rdquo;.</div>
+        ) : railGroups.every(group => group.projects.length === 0) && !inSidebar ? (
           filter.trim() ? (
             <div className="list-empty" role="status">No projects match &ldquo;{filter}&rdquo;.</div>
           ) : (
@@ -1289,10 +1333,37 @@ export function ProjectsList({
             onDragEnd={handleDragEnd}
           >
             {railGroups.map((group) => (
-              <div key="projects" className="project-rail-group">
-                <SortableContext items={group.projects.map((project) => project.id)} strategy={verticalListSortingStrategy}>
-                  {group.projects.map((project) => renderProject(group, project))}
-                </SortableContext>
+              <div key={group.machine?.id ?? 'projects'} className={`project-rail-group${group.machine ? ' machine-project-group' : ''}`} data-machine-id={group.machine?.id}>
+                {group.machine && <div className="machine-project-heading"
+                  onContextMenu={event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openMachineMenu(group.machine!.id, event.currentTarget, event.clientX, event.clientY);
+                  }}
+                  onKeyDown={event => {
+                    if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    openMachineMenu(group.machine!.id, event.currentTarget, rect.left, rect.bottom);
+                  }}>
+                  <button type="button" className="machine-project-disclosure" aria-label={`${collapsedSections[`sidebar:machine:${group.machine.id}`] && !filter ? 'Expand' : 'Collapse'} ${group.machine.name}`} aria-expanded={!collapsedSections[`sidebar:machine:${group.machine.id}`] || Boolean(filter)} onClick={() => toggleSection(`sidebar:machine:${group.machine!.id}`)}>
+                    <ChevronRight size={13} className={!collapsedSections[`sidebar:machine:${group.machine.id}`] || filter ? 'open' : ''} />
+                  </button>
+                  <button type="button" className="machine-project-name" aria-label={group.machine.name} aria-expanded={!collapsedSections[`sidebar:machine:${group.machine.id}`] || Boolean(filter)} onClick={() => toggleSection(`sidebar:machine:${group.machine!.id}`)}>
+                    {group.machine.primary ? <Laptop size={15} /> : <Server size={15} />}
+                    <span>{group.machine.name}</span>
+                    <span className={`machine-project-status${group.machine.host?.status === 'connected' ? ' online' : ''}`} title={group.machine.host?.status === 'connected' ? 'Online' : group.machine.host ? 'Offline' : group.machine.hostId ? 'Unavailable' : group.machine.remote ? 'Setup needed' : 'Local'} />
+                    <small>{group.machine.projects.length}</small>
+                  </button>
+                  <button type="button" className="machine-project-add" aria-label={`Add project on ${group.machine.name}`} onClick={() => setAddingMachine(group.machine!)}><Plus size={13} /></button>
+                </div>}
+                {(!group.machine || !collapsedSections[`sidebar:machine:${group.machine.id}`] || Boolean(filter)) && <div className={group.machine ? 'machine-project-children' : undefined}>
+                  <SortableContext items={group.projects.map(project => isScratchWorkspaceProject(project) && group.machine && !group.machine.primary && project.hostId !== group.machine.hostId ? `${group.machine.id}:${project.id}` : project.id)} strategy={verticalListSortingStrategy}>
+                    {group.projects.map(project => renderProject(group, project))}
+                  </SortableContext>
+                  {group.machine && <button type="button" className="machine-project-add-child" onClick={() => setAddingMachine(group.machine!)}><Plus size={12} />Add project</button>}
+                </div>}
               </div>
             ))}
           </DndContext>
@@ -1312,10 +1383,18 @@ export function ProjectsList({
         <div
           ref={menuRef}
           className="project-menu"
+          role={menu.machineId ? 'menu' : undefined}
+          aria-label={menu.machineId ? 'Machine actions' : undefined}
           style={{ top: menu.y, left: menu.x }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          {!p && (
+          {menu.machineId && (
+            <button type="button" className="project-menu-item" role="menuitem" autoFocus onClick={() => { setOverviewMachineId(menu.machineId!); setMenu(null); }}>
+              <FolderOpen size={12} />
+              <span>View projects</span>
+            </button>
+          )}
+          {!p && !menu.machineId && (
             <button className="project-menu-item" onClick={() => { setMenu(null); void handleRefresh(); }}>
               <RefreshCw size={12} />
               <span>Refresh projects</span>
@@ -1507,6 +1586,14 @@ export function ProjectsList({
         />
       )}
       {!inSidebar && <ListPaneResizer />}
+      {overviewMachineId && machineGroups.find(group => group.id === overviewMachineId) && <MachineProjectsDialog
+        group={machineGroups.find(group => group.id === overviewMachineId)!}
+        onClose={() => setOverviewMachineId(null)}
+        onAdd={group => { setOverviewMachineId(null); setAddingMachine(group); }}
+        onNewThread={(group, project) => { setOverviewMachineId(null); openMachineThread(group, project); }}
+        onOpenProject={project => { setOverviewMachineId(null); enterProjectFocus(project.id); }}
+      />}
+      {addingMachine && <AddMachineProjectDialog group={addingMachine} onClose={() => setAddingMachine(null)} onAdded={project => { setAddingMachine(null); selectProject(project.id); }} />}
       {showRemoteDialog && (
         <AddRemoteProjectDialog
           onClose={() => setShowRemoteDialog(false)}

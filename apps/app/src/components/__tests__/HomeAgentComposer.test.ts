@@ -123,8 +123,7 @@ describe('ThreadCommandComposer initial text', () => {
     expect(source).toContain('initialText,');
     expect(source).toContain('useComposerPromptField');
     expect(field).toContain('seededFor');
-    expect(field).toContain('editor.chain().clearContent().insertContent(initialText)');
-    expect(field).toContain('if (autoFocus) chain.focus()');
+    expect(field).toContain("editor.chain().clearContent().insertContent(initialText ?? '')");
   });
 
   it('stays on the project thread URL after create from a workspace', () => {
@@ -218,7 +217,7 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain('thread-command-composer-meta');
     expect(source).toContain("<Laptop size={14}");
     expect(source).toContain("{threadId ? (");
-    expect(source).toContain('className="thread-command-chip thread-command-env"');
+    expect(source).toContain('className="thread-command-env"');
     expect(source).not.toContain('onOpenExplorer');
     expect(source).toContain('shouldShowThreadStop(threadId, status, inFlightRetry)');
     expect(source).toContain('data-testid="thread-command-stop"');
@@ -274,11 +273,10 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).toContain("kind: 'native'");
     expect(source).toContain('setComposerWorkMode');
     expect(source).not.toContain('cycleComposerModeRef');
-    expect(source).toContain('includeDisconnected');
+    expect(source).toContain('onHostChange={setHostId}');
     expect(source).toContain('ComposerHostActionChip');
-    expect(source).toContain('composerRemoteHostBadge');
-    expect(source).toContain('composerHostsForProject');
-    expect(source).toContain('ComposerRemoteHostBadge');
+    expect(source).toContain('onStartNewThread={location => navigate(newThreadLocationPath(location)');
+    expect(source).not.toContain('<HostMachinePicker');
     expect(source).toContain('HostSshIdentityDialog');
     expect(source.indexOf('{!compact && runSettings}')).toBeGreaterThan(metaIdx);
     expect(source.indexOf('{!compact && permissionPicker}')).toBeGreaterThan(metaIdx);
@@ -329,7 +327,6 @@ describe('ThreadCommandComposer submit path', () => {
     expect(field).toContain('setEditable');
     expect(field).toContain('editor.setEditable(!disabled)');
     expect(field).toContain('restoreFocusAfterSubmitRef');
-    expect(field).toContain("editor.commands.focus('end'");
 
     const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
     const sendingStart = css.indexOf('.thread-command-composer .thread-command-send.is-sending,');

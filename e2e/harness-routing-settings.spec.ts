@@ -1,9 +1,24 @@
 import { test, expect } from './fixtures/app.js';
 import type { Locator, Page } from '@playwright/test';
-import { makeFakeAgentBinary } from './sdk/harness.js';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
+
+test.use({
+  initialConfig: async ({ home }, use) => {
+    const binary = join(home, 'opencode-settings-fixture');
+    const fixture = new URL('./fixtures/bin/opencode', import.meta.url).href;
+    // Pin both the runtime and executable before the host's boot-time probe.
+    // A developer's native install must not make missing CI setup pass locally.
+    writeFileSync(binary, `#!${process.execPath}\nawait import(${JSON.stringify(fixture)});\n`, { mode: 0o700 });
+    await use({
+      sponsorPromptDismissed: true,
+      defaultHarness: 'opencode',
+      harnesses: { byId: { opencode: { binary, enabled: true } } },
+    });
+  },
+});
+
 async function selectPicklistOption(
   trigger: Locator,
   window: Page,
@@ -19,7 +34,6 @@ async function selectPicklistOption(
 
 test('Global and Project harness settings persist provider, model, execution, and reset flows', async ({ app }) => {
   const { window } = app;
-  const openCode = makeFakeAgentBinary({ profile: 'generic', sequence: 'plain-exit' });
   const projectDir = mkdtempSync(join(tmpdir(), 'zcc-routing-settings-'));
   const project = await window.evaluate((path) => window.cc.projects.add(path), projectDir);
   expect(project.ok).toBe(true);
@@ -28,22 +42,9 @@ test('Global and Project harness settings persist provider, model, execution, an
   const projectName = basename(projectDir);
 
   try {
-    await window.evaluate(() => window.cc.config.set({
-      harnessOpenCodeEnabled: true,
-      defaultHarness: 'opencode',
-      opencodeBinary: undefined
-    }));
-    await window.evaluate((bin) => window.cc.config.set({ opencodeBinary: bin }), openCode.path);
     await window.getByRole('link', { name: 'Settings' }).click();
     await window.locator('.settings-section-item').filter({ hasText: 'AI Harness' }).click();
     await expect(window.locator('.settings-header')).toContainText('AI Harness');
-
-    // Updating binary config does not retroactively change boot-time availability.
-    // Leave Settings (its section nav replaces the global rail) and re-open the
-    // tab so its mount-time probe sees our deterministic fake binary.
-    await window.locator('.settings-app-back').click();
-    await window.getByRole('link', { name: 'Settings' }).click();
-    await window.locator('.settings-section-item').filter({ hasText: 'AI Harness' }).click();
 
     await window.getByRole('tab', { name: 'CLI Agent' }).click();
     const globalOpenCode = window.getByTestId('harness-legacy-list').locator('.opener-row').filter({ hasText: 'OpenCode' });
@@ -51,18 +52,19 @@ test('Global and Project harness settings persist provider, model, execution, an
     const globalProvider = globalOpenCode.getByRole('button', { name: 'Default provider' });
     const globalModel = globalOpenCode.getByRole('button', { name: 'Default model level' });
     const globalExecution = globalOpenCode.getByRole('button', { name: 'Default execution state' });
-    await selectPicklistOption(globalProvider, window, 'Default provider', 'OpenAI');
-    await selectPicklistOption(globalModel, window, 'Default model level', 'Terra [Medium]', 'Terra');
+    await expect(globalProvider).toBeEnabled();
+    await selectPicklistOption(globalProvider, window, 'Default provider', 'fixture-provider');
+    await selectPicklistOption(globalModel, window, 'Default model level', 'fixture-provider/fixture-model', 'fixture-model');
     await selectPicklistOption(globalExecution, window, 'Default execution state', 'plan [Plan]');
-    await expect(globalProvider).toContainText('OpenAI');
-    await expect(globalModel).toContainText('Terra [Medium]');
+    await expect(globalProvider).toContainText('fixture-provider');
+    await expect(globalModel).toContainText('fixture-provider/fixture-model');
     await expect(globalExecution).toContainText('plan [Plan]');
     await expect.poll(() => window.evaluate(() => window.cc.config.get())).toMatchObject({
       harnessRouting: {
         byAdapter: {
           opencode: {
-            providerTargetId: 'openai',
-            modelTargetId: 'llmgw/gpt-5.6-terra-1M',
+            providerTargetId: 'fixture-provider',
+            modelTargetId: 'fixture-provider/fixture-model',
             executionState: 'plan'
           }
         }
@@ -99,18 +101,18 @@ test('Global and Project harness settings persist provider, model, execution, an
     const projectProvider = projectOpenCode.getByRole('button', { name: 'Default provider' });
     const projectModel = projectOpenCode.getByRole('button', { name: 'Default model level' });
     const projectExecution = projectOpenCode.getByRole('button', { name: 'Default execution state' });
-    await selectPicklistOption(projectProvider, window, 'Default provider', 'Google');
-    await selectPicklistOption(projectModel, window, 'Default model level', 'Gemini Flash [Low]', 'Gemini Flash');
+    await selectPicklistOption(projectProvider, window, 'Default provider', 'other-provider');
+    await selectPicklistOption(projectModel, window, 'Default model level', 'other-provider/fixture-model-two', 'fixture-model-two');
     await selectPicklistOption(projectExecution, window, 'Default execution state', 'build + auto-approve [Autonomous]');
-    await expect(projectProvider).toContainText('Google');
-    await expect(projectModel).toContainText('Gemini Flash [Low]');
+    await expect(projectProvider).toContainText('other-provider');
+    await expect(projectModel).toContainText('other-provider/fixture-model-two');
     await expect(projectExecution).toContainText('build + auto-approve [Autonomous]');
     await expect.poll(() => window.evaluate((id) => window.cc.projectSettings.get(id), projectId)).toMatchObject({
       harnessRouting: {
         byAdapter: {
           opencode: {
-            providerTargetId: 'google',
-            modelTargetId: 'llmgw/gemini-3.5-flash',
+            providerTargetId: 'other-provider',
+            modelTargetId: 'other-provider/fixture-model-two',
             executionState: 'autonomous'
           }
         }
@@ -120,11 +122,7 @@ test('Global and Project harness settings persist provider, model, execution, an
     await expect(projectProvider).toContainText('Use global default');
     await expect(projectModel).toContainText('Use global default');
   } finally {
-    await window.evaluate(async (id) => {
-      await window.cc.projects.remove(id);
-      await window.cc.config.set({ defaultHarness: undefined, harnessRouting: undefined, opencodeBinary: undefined });
-    }, projectId);
-    openCode.cleanup();
+    await window.evaluate((id) => window.cc.projects.remove(id), projectId);
     rmSync(projectDir, { recursive: true, force: true });
   }
 });

@@ -1750,14 +1750,26 @@ describe("buildThreadTimelineFromEvents", () => {
     ).toHaveLength(0);
   });
 
-  it("uses rejected context to render a failed steer across a page boundary", () => {
+  it("does not invent a user row for a rejection whose request is outside the page", () => {
+    const event = createTimelineEventFactory({ threadId: "thread-1" });
+    const rows = buildTimelineRows(fromRows([
+      event.clientTurnRejected({ requestId: event.clientTurnRequested({ text: "Outside page" }).data.requestId, reason: "send_cancelled" }),
+    ]));
+
+    expect(rows.filter((row) => row.kind === "conversation" && row.role === "user")).toHaveLength(0);
+  });
+
+  it.each([
+    ["command_failed", "rejected"],
+    ["send_cancelled", "cancelled"],
+  ] as const)("uses %s context across a page boundary", (reason, status) => {
     const event = createTimelineEventFactory({ threadId: "thread-1" });
     const steerRequest = event.clientTurnRequested({
       target: { kind: "steer", expectedTurnId: "turn-1" },
       text: "Late steer",
     });
     const rejectedContext = fromRows([
-      event.clientTurnRejected({ requestId: steerRequest.data.requestId }),
+      event.clientTurnRejected({ requestId: steerRequest.data.requestId, reason }),
     ]);
 
     const rows = buildTimelineRowsWithRejectedContext(
@@ -1769,7 +1781,7 @@ describe("buildThreadTimelineFromEvents", () => {
       rows.find((row) => row.kind === "conversation" && row.role === "user"),
     ).toMatchObject({
       text: "Late steer",
-      turnRequest: { status: "rejected" },
+      turnRequest: { status },
     });
   });
 
@@ -2966,4 +2978,17 @@ describe("buildThreadTimelineFromEvents", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.change.path).toBe("/etc/hosts");
   });
+});
+
+it.each([false, true])('retains copied context metadata in timeline messages and steers (steer=%s)', async steer => {
+  const {contextReferencePrompt} = await import('@zana-ai/zcc-domain/thread-runtime');
+  const reference = {version: 1 as const, label: 'Record', text: 'exact'};
+  const text = contextReferencePrompt(reference);
+  const references = [{start: 0, end: text.length, reference}];
+  const event = createTimelineEventFactory({threadId: 'thread-1'});
+  const rows = buildTimelineRows(fromRows([
+    ...(steer ? [event.turnStarted({turnId: 'turn-1'})] : []),
+    event.clientTurnRequested({target: steer ? {kind: 'steer', expectedTurnId: 'turn-1'} : {kind: 'new-turn'}, text, input: [{type: 'text', text, mentions: [], references}]})
+  ]), steer ? 'active' : 'idle');
+  expect(rows.find(row => row.kind === 'conversation' && row.role === 'user')).toMatchObject({text, references});
 });

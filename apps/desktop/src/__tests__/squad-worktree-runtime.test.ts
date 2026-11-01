@@ -675,3 +675,350 @@ describe('squadWorktreeAction (Squad details IPC)', () => {
     expect(await runtime.squadWorktreeAction('proj', r.id, 3, 'leave')).toEqual({ ok: false, code: 'UNAVAILABLE', message: 'squad worktree action failed' });
   });
 });
+
+/**
+ * squad-bugs: retained follow-up success / denial / race. A fake launcher honors
+ * the lifecycle contract exactly as `launchAuthorizedTerminal` does (maySpawn,
+ * claimRunning, withSpawnLock, onSessionCreated) and counts real spawns.
+ */
+describe('retained follow-up lifecycle (squad-bugs)', () => {
+  const run = (runtime: any, r: any, text = 'go') =>
+    runtime.runSquadWorktreeAction({ executionId: r.id, phase: 'choose', stateVersion: 3 }, { optionId: 'instruct', text });
+
+  function honoringLauncher(deps: any, onBeforeSpawn?: () => Promise<void> | void) {
+    const spawns: string[] = [];
+    deps.launchFollowUpTerminal.mockImplementation(async (_request: any, lifecycle: any) => {
+      if (!(await lifecycle.maySpawn())) return { ok: false, message: 'cancelled before spawn' };
+      if (!(await lifecycle.claimRunning())) return { ok: false, message: 'cancelled before claim' };
+      await onBeforeSpawn?.();
+      return lifecycle.withSpawnLock(async () => {
+        const session = { id: `sess-${spawns.length + 1}` };
+        spawns.push(session.id);
+        lifecycle.onSessionCreated(session);
+        claimed.push([_request.executionId ?? lifecycleExecutionId(deps), session.id]);
+        return { ok: true, value: session };
+      });
+    });
+    return spawns;
+  }
+  const lifecycleExecutionId = (deps: any) => deps.launchFollowUpTerminal.mock.calls.at(-1)[2];
+
+  it('success spawns exactly one follow-up in the retained worktree', async () => {
+    const { deps, runtime } = setup();
+    const r = rec();
+    serve(deps, r);
+    const spawns = honoringLauncher(deps);
+    await run(runtime, r);
+    expect(spawns).toHaveLength(1);
+    expect(deps.launchFollowUpTerminal.mock.calls[0][0].worktreeInfo).toMatchObject({ path: WT, branch: 'zcc/w' });
+  });
+
+  it('a denied structured-execution preflight reaches the operator as an operator error carrying the reason', async () => {
+    const { deps, runtime } = setup();
+    const r = rec();
+    serve(deps, r);
+    const reason = 'Structured execution unavailable: persona cannot register plans';
+    deps.launchFollowUpTerminal.mockResolvedValue({ ok: false, message: reason });
+    const failure = await run(runtime, r).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(InboxActionOperatorError);
+    expect((failure as Error).message).toContain(reason);
+    expect(await runtime.squadWorktreeAction('proj', r.id, 3, 'instruct', 'go')).toMatchObject({ ok: false, code: 'CONFLICT', message: expect.stringContaining(reason) });
+  });
+
+  it('sanitizes and bounds the surfaced denial reason without retrying under another persona', async () => {
+    const { deps, runtime } = setup();
+    const r = rec();
+    serve(deps, r);
+    deps.launchFollowUpTerminal.mockResolvedValue({ ok: false, message: `bad\u0007\nreason ${'x'.repeat(400)}` });
+    const failure = await run(runtime, r).catch((error: unknown) => error) as Error;
+    expect(failure).toBeInstanceOf(InboxActionOperatorError);
+    expect(failure.message).toMatch(/^Follow-up agent was not launched: bad reason x+…$/);
+    expect(failure.message.length).toBeLessThanOrEqual('Follow-up agent was not launched: '.length + 300);
+    expect(deps.launchFollowUpTerminal).toHaveBeenCalledTimes(1);
+    deps.launchFollowUpTerminal.mockResolvedValue({ ok: false, message: ' \n ' });
+    await expect(run(runtime, r)).rejects.toThrow('Follow-up agent was not launched: launch was refused');
+  });
+
+  it('a missing coordinator persona refuses with no spawn instead of dropping to a bare profile', async () => {
+    const { deps, runtime } = setup({ personas: [] });
+    const r = rec();
+    serve(deps, r);
+    await expect(run(runtime, r)).rejects.toThrow("coordinator persona is no longer available");
+    expect(deps.launchFollowUpTerminal).not.toHaveBeenCalled();
+  });
+
+  it('a deleted Squad refuses with no spawn', async () => {
+    const { deps, runtime } = setup({ team: null });
+    const r = rec();
+    serve(deps, r);
+    await expect(run(runtime, r)).rejects.toBeInstanceOf(InboxActionOperatorError);
+    expect(deps.launchFollowUpTerminal).not.toHaveBeenCalled();
+  });
+
+  describe('explicit follow-up persona', () => {
+    const team = { id: 'team', orchestratorPersonaId: 'per', slots: [{ personaId: 'wrk', quantity: 1 }] };
+    const runAs = (runtime: any, r: any, personaId: string) =>
+      runtime.runSquadWorktreeAction({ executionId: r.id, phase: 'choose', stateVersion: 3 }, { optionId: 'instruct', text: 'go', personaId });
+
+    it('spawns exactly one retained-cwd terminal as a Squad roster persona', async () => {
+      const { deps, runtime } = setup({ team, personas: [{ id: 'per' }, { id: 'wrk' }] });
+      const r = rec();
+      serve(deps, r);
+      const spawns = honoringLauncher(deps);
+      await runAs(runtime, r, 'wrk');
+      expect(spawns).toHaveLength(1);
+      expect(deps.launchFollowUpTerminal.mock.calls[0][0]).toMatchObject({ personaId: 'wrk', profile: 'codex', worktreeInfo: { path: WT } });
+      expect(deps.resolveTeamProfile.mock.calls[0][2]).toMatchObject({ id: 'wrk' });
+    });
+
+    it('refuses a persona outside the roster or no longer configured, with no spawn', async () => {
+      const { deps, runtime } = setup({ team, personas: [{ id: 'per' }, { id: 'other' }] });
+      const r = rec();
+      serve(deps, r);
+      await expect(runAs(runtime, r, 'other')).rejects.toThrow('not a member of this Squad');
+      await expect(runAs(runtime, r, 'wrk')).rejects.toThrow('selected persona is no longer available');
+      expect(deps.launchFollowUpTerminal).not.toHaveBeenCalled();
+    });
+
+    const action = (r: any, phase: string) => JSON.stringify({ executionId: r.id, phase, stateVersion: r.stateVersion });
+    it('Inbox host action forwards a valid personaId and rejects malformed ones', async () => {
+      const { deps, runtime } = setup({ team, personas: [{ id: 'per' }, { id: 'wrk' }] });
+      const r = rec();
+      serve(deps, r);
+      await runtime.handleInboxAction({ ref: action(r, 'choose'), input: { optionId: 'instruct', text: 'go', personaId: 'wrk' } });
+      expect(deps.launchFollowUpTerminal.mock.calls[0][0].personaId).toBe('wrk');
+      for (const personaId of ['', '   ', 'x'.repeat(201), 5 as unknown as string]) {
+        await expect(runtime.handleInboxAction({ ref: action(r, 'choose'), input: { optionId: 'instruct', text: 'go', personaId } })).rejects.toThrow('invalid squad worktree action');
+      }
+    });
+
+    it('Squad-details IPC forwards the pick for instruct only and maps refusals to CONFLICT', async () => {
+      const { deps, runtime } = setup({ team, personas: [{ id: 'per' }, { id: 'wrk' }] });
+      const r = rec();
+      serve(deps, r);
+      expect(await runtime.squadWorktreeAction('proj', r.id, 3, 'instruct', 'go', 'wrk')).toEqual({ ok: true, value: true });
+      expect(deps.launchFollowUpTerminal.mock.calls[0][0].personaId).toBe('wrk');
+      releaseSquadWorktreeFollowUp(r.id, 'sess');
+      expect(await runtime.squadWorktreeAction('proj', r.id, 3, 'instruct', 'go', 'ghost')).toMatchObject({ ok: false, code: 'CONFLICT', message: expect.stringContaining('not a member') });
+      expect(await runtime.squadWorktreeAction('proj', r.id, 3, 'leave', undefined, 'ghost')).toEqual({ ok: true, value: true });
+    });
+  });
+
+  it('a resume between preflight and spawn spawns zero follow-ups', async () => {
+    const { deps, runtime } = setup();
+    const r = rec();
+    serve(deps, r);
+    const spawns = honoringLauncher(deps, () => {
+      // Execution resumed while the launcher was preparing: stateVersion advanced.
+      deps.executionStore.get.mockResolvedValue({ ...r, stateVersion: 4, state: 'RUNNING' });
+    });
+    await expect(run(runtime, r)).rejects.toBeInstanceOf(InboxActionOperatorError);
+    expect(spawns).toHaveLength(0);
+  });
+
+  it('two concurrent instructs spawn exactly one follow-up and refuse the other as active', async () => {
+    const { deps, runtime } = setup();
+    const r = rec();
+    serve(deps, r);
+    const spawns = honoringLauncher(deps);
+    const results = await Promise.allSettled([run(runtime, r, 'a'), run(runtime, r, 'b')]);
+    expect(spawns).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const rejected = results.find((result) => result.status === 'rejected') as PromiseRejectedResult;
+    expect(rejected.reason).toBeInstanceOf(InboxActionOperatorError);
+  });
+
+  it('a retained worktree that vanished before spawn spawns zero follow-ups', async () => {
+    const { deps, runtime } = setup();
+    const r = rec();
+    serve(deps, r);
+    const spawns = honoringLauncher(deps, () => { deps.git.getGitStatus.mockResolvedValue(undefined); });
+    await expect(run(runtime, r)).rejects.toBeInstanceOf(InboxActionOperatorError);
+    expect(spawns).toHaveLength(0);
+  });
+});
+
+describe('trusted registered target (squad-bugs B8)', () => {
+  const USER_WT = '/p/checkouts/feat';
+  const userWt = { path: USER_WT, head: 'abc', branch: 'feat', detached: false, bare: false, isMain: false };
+  const mainWt = { path: ROOT, head: 'abc', branch: 'main', detached: false, bare: false, isMain: true };
+
+  function targetSetup(over: Parameters<typeof setup>[0] & { worktrees?: any[]; trusted?: (p: string) => boolean } = {}) {
+    const s = setup(over);
+    s.deps.git.listWorktrees = vi.fn(async () => over.worktrees ?? [mainWt, userWt]);
+    s.deps.git.gitCommonDir = vi.fn(async () => '/p/.git');
+    s.deps.git.getGitStatus.mockImplementation(async (path: string) => ({ branch: path === ROOT ? 'main' : 'feat', detached: false }));
+    if (over.trusted) s.deps.isTrustedWorkspacePath = over.trusted;
+    // Rebuild with the extended deps.
+    return { deps: s.deps, runtime: createSquadWorktreeRuntime(s.deps) };
+  }
+  const fresh = (target: any, extra: Record<string, unknown> = {}) =>
+    rec({ state: 'STARTING', squadWorktree: undefined, request: { target, ...extra } });
+  const userRecord = (target: any, worktree: any) => rec({ request: { target }, squadWorktree: worktree });
+
+  it('binds the project root as a user-owned target without creating a worktree', async () => {
+    const { deps, runtime } = targetSetup();
+    const r = fresh({ kind: 'project-root' });
+    serve(deps, r);
+    await runtime.prepareSquadWorktree(r, { target: { kind: 'project-root' } });
+    expect(deps.executionStore.setSquadWorktree).toHaveBeenCalledWith(r.id, 3, { path: ROOT, branch: 'main', ownership: 'user', targetKind: 'project-root' });
+    expect(deps.git.createWorktree).not.toHaveBeenCalled();
+    expect(deps.git.setWorktreePushProtection).not.toHaveBeenCalled();
+  });
+
+  it('binds a project-contained worktree of the same repo by branch', async () => {
+    const { deps, runtime } = targetSetup();
+    const r = fresh({ kind: 'worktree', branch: 'feat' });
+    serve(deps, r);
+    await runtime.prepareSquadWorktree(r, { target: { kind: 'worktree', branch: 'feat' } });
+    expect(deps.executionStore.setSquadWorktree).toHaveBeenCalledWith(r.id, 3, { path: USER_WT, branch: 'feat', ownership: 'user', targetKind: 'worktree' });
+  });
+
+  it('accepts a worktree in a main-managed workspace and rejects an arbitrary outside path', async () => {
+    const outside = { ...userWt, path: '/elsewhere/feat' };
+    let s = targetSetup({ worktrees: [mainWt, outside], trusted: (p) => p.startsWith('/elsewhere') });
+    let r = fresh({ kind: 'worktree', branch: 'feat' });
+    serve(s.deps, r);
+    await s.runtime.prepareSquadWorktree(r, { target: { kind: 'worktree', branch: 'feat' } });
+    expect(s.deps.executionStore.setSquadWorktree).toHaveBeenCalled();
+
+    s = targetSetup({ worktrees: [mainWt, outside] });
+    r = fresh({ kind: 'worktree', branch: 'feat' });
+    serve(s.deps, r);
+    await expect(s.runtime.prepareSquadWorktree(r, { target: { kind: 'worktree', branch: 'feat' } })).rejects.toThrow('TARGET_UNAVAILABLE');
+    expect(s.deps.executionStore.setSquadWorktree).not.toHaveBeenCalled();
+    expect(s.deps.git.createWorktree).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['unknown branch', (s: any) => s.deps.git.listWorktrees.mockResolvedValue([mainWt])],
+    ['main checkout named as worktree', (s: any) => s.deps.git.listWorktrees.mockResolvedValue([{ ...mainWt, branch: 'feat' }])],
+    ['detached worktree', (s: any) => s.deps.git.listWorktrees.mockResolvedValue([mainWt, { ...userWt, detached: true }])],
+    ['different repository', (s: any) => s.deps.git.gitCommonDir.mockImplementation(async (p: string) => (p === ROOT ? '/p/.git' : '/other/.git'))],
+    ['missing common dir', (s: any) => s.deps.git.gitCommonDir.mockResolvedValue(null)],
+    ['branch moved under the worktree', (s: any) => s.deps.git.getGitStatus.mockResolvedValue({ branch: 'other', detached: false })],
+    ['realpath escapes the project', (s: any) => { s.deps.fs.realpathSync = (p: string) => (p === USER_WT ? '/escape/feat' : p); }],
+    ['worktree resolves to the project root', (s: any) => { s.deps.fs.realpathSync = (p: string) => (p === USER_WT ? ROOT : p); }]
+  ])('rejects %s with no generated fallback', async (_name, mutate) => {
+    const s = targetSetup();
+    mutate(s);
+    const runtime = createSquadWorktreeRuntime(s.deps);
+    const r = fresh({ kind: 'worktree', branch: 'feat' });
+    serve(s.deps, r);
+    await expect(runtime.prepareSquadWorktree(r, { target: { kind: 'worktree', branch: 'feat' } })).rejects.toThrow('TARGET_UNAVAILABLE');
+    expect(s.deps.executionStore.setSquadWorktree).not.toHaveBeenCalled();
+    expect(s.deps.git.createWorktree).not.toHaveBeenCalled();
+  });
+
+  it('rejects remote, quick-agent, missing projects, a detached root, and missing git ops', async () => {
+    for (const project of [{ id: 'proj', path: ROOT, remote: { host: 'h' } }, { id: 'proj', path: ROOT, quickAgent: true }, null]) {
+      const s = targetSetup({ project });
+      const r = fresh({ kind: 'project-root' });
+      serve(s.deps, r);
+      await expect(s.runtime.prepareSquadWorktree(r, { target: { kind: 'project-root' } })).rejects.toThrow('TARGET_UNAVAILABLE');
+    }
+    let s = targetSetup();
+    s.deps.git.getGitStatus.mockResolvedValue({ branch: null, detached: true });
+    let r = fresh({ kind: 'project-root' });
+    serve(s.deps, r);
+    await expect(s.runtime.prepareSquadWorktree(r, { target: { kind: 'project-root' } })).rejects.toThrow('TARGET_UNAVAILABLE');
+    s = setup();
+    r = fresh({ kind: 'project-root' });
+    serve(s.deps, r);
+    await expect(s.runtime.prepareSquadWorktree(r, { target: { kind: 'project-root' } })).rejects.toThrow('TARGET_UNAVAILABLE');
+  });
+
+  it('re-applies admission rules: conflicting generated flag or auto disposition rejects', async () => {
+    const { deps, runtime } = targetSetup();
+    const r = fresh({ kind: 'project-root' });
+    serve(deps, r);
+    await expect(runtime.prepareSquadWorktree(r, { worktree: true, target: { kind: 'project-root' } })).rejects.toThrow('TARGET_UNAVAILABLE');
+    await expect(runtime.prepareSquadWorktree(r, { onComplete: 'delete', target: { kind: 'project-root' } })).rejects.toThrow('TARGET_UNAVAILABLE');
+    await expect(runtime.prepareSquadWorktree(r, { target: { kind: 'worktree', branch: '../x' } as any })).rejects.toThrow('TARGET_UNAVAILABLE');
+    expect(deps.executionStore.setSquadWorktree).not.toHaveBeenCalled();
+  });
+
+  it('uses persisted target conflicts when partial selector request omits worktree and disposition', async () => {
+    for (const request of [
+      { worktree: true, target: { kind: 'project-root' } },
+      { onComplete: 'delete', target: { kind: 'project-root' } }
+    ] as const) {
+      const { deps, runtime } = targetSetup();
+      const r = fresh({ kind: 'project-root' }, request);
+      serve(deps, r);
+      await expect(runtime.prepareSquadWorktree(r, { target: { kind: 'project-root' } })).rejects.toThrow('TARGET_UNAVAILABLE');
+      expect(deps.executionStore.setSquadWorktree).not.toHaveBeenCalled();
+    }
+  });
+
+  it('never rebinds a generated worktree record to a user target, and refuses a racing bind', async () => {
+    let s = targetSetup();
+    let r = rec({ state: 'STARTING', request: { target: { kind: 'project-root' } } });
+    serve(s.deps, r);
+    await expect(s.runtime.prepareSquadWorktree(r, { target: { kind: 'project-root' } })).rejects.toThrow('TARGET_UNAVAILABLE');
+
+    s = targetSetup();
+    r = fresh({ kind: 'project-root' });
+    s.deps.executionStore.get.mockResolvedValueOnce(r).mockResolvedValueOnce({ ...r, stateVersion: 4 });
+    await expect(s.runtime.prepareSquadWorktree(r, { target: { kind: 'project-root' } })).rejects.toThrow('TARGET_UNAVAILABLE');
+  });
+
+  it('reattaches a recorded user target only when it still resolves identically', async () => {
+    const recorded = { path: USER_WT, branch: 'feat', ownership: 'user', targetKind: 'worktree' };
+    let s = targetSetup();
+    let r = userRecord({ kind: 'worktree', branch: 'feat' }, recorded);
+    serve(s.deps, r);
+    expect(await s.runtime.prepareSquadWorktree(r, { target: { kind: 'worktree', branch: 'feat' } })).toBe(r);
+    expect(s.deps.git.setWorktreePushProtection).not.toHaveBeenCalled();
+    expect(await s.runtime.revalidateUserTarget(r)).toEqual(recorded);
+
+    s = targetSetup();
+    r = userRecord({ kind: 'worktree', branch: 'feat' }, { ...recorded, path: '/p/checkouts/old' });
+    serve(s.deps, r);
+    await expect(s.runtime.prepareSquadWorktree(r, {})).rejects.toThrow('TARGET_UNAVAILABLE');
+    await expect(s.runtime.revalidateUserTarget(rec())).rejects.toThrow('TARGET_UNAVAILABLE');
+    await expect(s.runtime.revalidateUserTarget(userRecord(undefined, recorded))).rejects.toThrow('TARGET_UNAVAILABLE');
+  });
+
+  it('rejects a supplied selector that differs from durable user target before revalidation', async () => {
+    const { deps, runtime } = targetSetup();
+    const r = userRecord({ kind: 'worktree', branch: 'feat' }, {
+      path: USER_WT, branch: 'feat', ownership: 'user', targetKind: 'worktree'
+    });
+    serve(deps, r);
+    await expect(runtime.prepareSquadWorktree(r, { target: { kind: 'project-root' } })).rejects.toThrow('TARGET_UNAVAILABLE');
+    expect(deps.git.getGitStatus).not.toHaveBeenCalled();
+  });
+
+  it('terminal handling never push-guards, merges, or removes a user target', async () => {
+    const { deps, runtime } = targetSetup();
+    const r = userRecord({ kind: 'project-root' }, { path: ROOT, branch: 'main', ownership: 'user', targetKind: 'project-root' });
+    r.request.onComplete = 'merge';
+    serve(deps, r);
+    await expect(runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('kept');
+    expect(deps.git.setWorktreePushProtection).not.toHaveBeenCalled();
+    expect(deps.git.mergeWorktree).not.toHaveBeenCalled();
+    expect(deps.git.removeWorktree).not.toHaveBeenCalled();
+    expect(deps.executionStore.markSquadWorktreeTerminalEffects).toHaveBeenCalledWith(r.id, 3);
+  });
+
+  it('refuses delete, force-delete, and the delete confirmation for a user target', async () => {
+    const { deps, runtime } = targetSetup();
+    const r = userRecord({ kind: 'worktree', branch: 'feat' }, { path: USER_WT, branch: 'feat', ownership: 'user', targetKind: 'worktree' });
+    serve(deps, r);
+    for (const [phase, optionId] of [['choose', 'delete'], ['confirm', 'confirm-delete'], ['confirm', 'force-delete']]) {
+      await expect(runtime.runSquadWorktreeAction({ executionId: r.id, phase: phase as any, stateVersion: 3 }, { optionId }))
+        .rejects.toThrow('never deletes');
+    }
+    expect(deps.git.removeWorktree).not.toHaveBeenCalled();
+    expect(deps.executionStore.disposeSquadWorktree).not.toHaveBeenCalled();
+  });
+
+  it('a follow-up in a user target runs in the revalidated checkout', async () => {
+    const { deps, runtime } = targetSetup();
+    const r = userRecord({ kind: 'worktree', branch: 'feat' }, { path: USER_WT, branch: 'feat', ownership: 'user', targetKind: 'worktree' });
+    serve(deps, r);
+    await runtime.runSquadWorktreeAction({ executionId: r.id, phase: 'choose', stateVersion: 3 }, { optionId: 'instruct', text: 'go' });
+    expect(deps.launchFollowUpTerminal.mock.calls[0][0]).toMatchObject({ worktreeInfo: { path: USER_WT, branch: 'feat', ownership: 'user' } });
+  });
+});

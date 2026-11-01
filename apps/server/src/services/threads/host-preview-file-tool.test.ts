@@ -35,6 +35,7 @@ describe('mergeHostPreviewFileTooling', () => {
     expect(HOST_PREVIEW_FILE_INSTRUCTION).toContain('zcc guide browser');
     expect(HOST_PREVIEW_FILE_INSTRUCTION).toContain('unless the user explicitly requests an external browser');
     expect(HOST_PREVIEW_FILE_INSTRUCTION).toContain('automatic browser opening disabled');
+    expect(HOST_PREVIEW_FILE_INSTRUCTION).toContain('zana-ui-proposals');
   });
 
   it('offers preview_file even when no plugin tools are packed', () => {

@@ -41,7 +41,7 @@ import {
 } from './thread-path-confine.js';
 import { getThreadReadSeq } from './thread-reads.js';
 import { getDurableThreadPlanView } from './conversation-plan.js';
-import { projectAttachmentDir } from '../projects/attachments.js';
+import { threadLocalPreviewRoots } from './thread-preview-roots.js';
 import { getThreadExecutionState } from '@zana-ai/zcc-db';
 import { isPlanExecutionMode } from './conversation-execution-mode.js';
 import { conversationNextTurnView } from './conversation-next-turn.js';
@@ -131,7 +131,7 @@ function includeProviderUnhandledOperations(ctx: ProductHttpContext): boolean {
 
 /** Absolute roots, besides the environment, that `readThreadHostFile` opens. */
 function timelinePreviewRoots(ctx: ProductHttpContext, thread: ConversationThreadRow): string[] {
-  return thread.projectId ? [projectAttachmentDir(ctx.dataDir, thread.projectId)] : [];
+  return threadLocalPreviewRoots(ctx.dataDir, thread.projectId);
 }
 
 function requireThread(ctx: ProductHttpContext, threadId: string) {
@@ -441,6 +441,63 @@ export function conversationTimelineTurnSummaryDetails(
   }) : null };
 }
 
+function projectOutlineRows(ctx: ProductHttpContext, thread: ConversationThreadRow) {
+  const environment = thread.environmentId ? getEnvironment(ctx.db, thread.environmentId) : null;
+  const rows = listConversationThreadEvents(ctx.db, thread.id, {
+    omitPayloadTypes: ['turn/diff/updated', 'item/commandExecution/outputDelta'],
+    onlyItemTypes: ['agentMessage', 'userMessage']
+  });
+  const events = storedEventsToMeta(rows);
+  const timeline = buildThreadTimelineFromEvents({
+    acceptedClientRequestContext: EMPTY_ACCEPTED_CLIENT_REQUEST_CONTEXT,
+    contextWindowEvents: events,
+    events,
+    options: {
+      includeDebugRawEvents: false,
+      includeNestedRows: false,
+      includeProviderUnhandledOperations: includeProviderUnhandledOperations(ctx),
+      isLatestPage: true,
+      providerId: thread.providerId,
+      threadStatus: thread.status,
+      threadName: thread.title ?? '',
+      turnMessageDetail: 'full',
+      workspaceRoot: environment?.path ?? null,
+      previewRoots: timelinePreviewRoots(ctx, thread),
+      planCommand: planCommandForProvider(thread.providerId)
+    }
+  });
+  return { rows: timeline.rows, maxSeq: rows[rows.length - 1]?.sequence ?? 0 };
+}
+
+/**
+ * Every message in the thread, oldest first, with its full raw text and the
+ * sequence number it starts at. The same projection as {@link conversationOutline}
+ * (so the order matches), without the preview clamp. Backs the wrap-up digest.
+ */
+export function conversationMessageTexts(
+  ctx: ProductHttpContext,
+  threadId: string
+): ConversationMessageText[] {
+  const thread = requireThread(ctx, threadId);
+  return conversationMessageTextsFromRows(projectOutlineRows(ctx, thread).rows);
+}
+
+export interface ConversationMessageText {
+  id: string;
+  seq: number;
+  role: 'user' | 'assistant';
+  text: string;
+}
+
+export function conversationMessageTextsFromRows(rows: readonly OutlineSourceRow[]): ConversationMessageText[] {
+  return conversationRowsIn(rows).map((row) => ({
+    id: row.id,
+    seq: row.sourceSeqStart ?? 0,
+    role: row.role ?? 'assistant',
+    text: row.text ?? ''
+  }));
+}
+
 /**
  * Messages in the thread, oldest first. With a `query`, also `matches`: how
  * many find-in-thread matches each message's full text holds, so the renderer
@@ -449,32 +506,7 @@ export function conversationTimelineTurnSummaryDetails(
 export function conversationOutline(ctx: ProductHttpContext, threadId: string, query?: string) {
   const thread = requireThread(ctx, threadId);
   const environment = thread.environmentId ? getEnvironment(ctx.db, thread.environmentId) : null;
-  const projectRows = () => {
-    const rows = listConversationThreadEvents(ctx.db, threadId, {
-      omitPayloadTypes: ['turn/diff/updated', 'item/commandExecution/outputDelta'],
-      onlyItemTypes: ['agentMessage', 'userMessage']
-    });
-    const events = storedEventsToMeta(rows);
-    const timeline = buildThreadTimelineFromEvents({
-      acceptedClientRequestContext: EMPTY_ACCEPTED_CLIENT_REQUEST_CONTEXT,
-      contextWindowEvents: events,
-      events,
-      options: {
-        includeDebugRawEvents: false,
-        includeNestedRows: false,
-        includeProviderUnhandledOperations: includeProviderUnhandledOperations(ctx),
-        isLatestPage: true,
-        providerId: thread.providerId,
-        threadStatus: thread.status,
-        threadName: thread.title ?? '',
-        turnMessageDetail: 'full',
-        workspaceRoot: environment?.path ?? null,
-        previewRoots: timelinePreviewRoots(ctx, thread),
-        planCommand: planCommandForProvider(thread.providerId)
-      }
-    });
-    return { rows: timeline.rows, maxSeq: rows[rows.length - 1]?.sequence ?? 0 };
-  };
+  const projectRows = () => projectOutlineRows(ctx, thread);
   const context = JSON.stringify([
     thread.providerId, thread.status, thread.title, environment?.path, includeProviderUnhandledOperations(ctx), planCommandForProvider(thread.providerId)
   ]);

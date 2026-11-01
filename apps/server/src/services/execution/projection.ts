@@ -1,5 +1,5 @@
 import type { ExecutionBoardProjection, TerminalSession } from '@zana-ai/zcc-domain/product';
-import { MAX_DELIVERY_ATTEMPTS, type ExecutionRecord } from './store.js';
+import { isWorkerRecoveryLive, MAX_DELIVERY_ATTEMPTS, type ExecutionRecord, type ExecutionWorkUnit } from './store.js';
 import { usageRollup } from './contracts.js';
 import type { TeamLifecycleRecord } from '../launch/team-lifecycle-store.js';
 
@@ -35,7 +35,14 @@ function publicUsage<T extends NonNullable<ExecutionBoardProjection['usage']>>(u
 
 type WorkProjection = NonNullable<ExecutionBoardProjection['work']>;
 
-function workProjection(record: ExecutionRecord): WorkProjection {
+/** The unit's API-error recovery, only while Zana is still working through the ladder. */
+function recoveryProjection(unit: ExecutionWorkUnit, now: number): Pick<WorkProjection['assignments'][number], 'recovery'> {
+  const recovery = unit.apiErrorRecovery;
+  if (!recovery || !isWorkerRecoveryLive(unit, now)) return {};
+  return { recovery: { step: recovery.step, ...(recovery.errorKind ? { errorKind: recovery.errorKind } : {}), since: recovery.startedAt } };
+}
+
+function workProjection(record: ExecutionRecord, now: number): WorkProjection {
   const counts: WorkProjection['counts'] = {
     PENDING: 0, READY: 0, CLAIMED: 0, BLOCKED: 0, COMPLETED: 0, FAILED: 0, SKIPPED: 0
   };
@@ -57,6 +64,7 @@ function workProjection(record: ExecutionRecord): WorkProjection {
       ...(unit.turnCount !== undefined ? { turnCount: unit.turnCount } : {}),
       ...(unit.claimId !== undefined ? { claimId: unit.claimId } : {}),
       ...(unit.claimGeneration !== undefined ? { claimGeneration: unit.claimGeneration } : {})
+      , ...recoveryProjection(unit, now)
       , healthState: (unit.noProgressSlots?.some((entry) => entry.executionAttempt === record.attempt) ? 'NO_PROGRESS' : 'HEALTHY') as 'NO_PROGRESS' | 'HEALTHY'
       , reclaimCount: (unit.noProgressSlots ?? []).filter((entry) => entry.executionAttempt === record.attempt).length
       , attemptedSlots: [...new Set(unit.history.filter((entry) => entry.action === 'claimed' && entry.slotId).map((entry) => entry.slotId!))]
@@ -273,7 +281,8 @@ export function modernExecutionMembers(
 }
 
 export function executionBoardProjection(record: ExecutionRecord, orchestratorSessionId?: string): ExecutionBoardProjection {
-  const work = workProjection(record);
+  const now = Date.now();
+  const work = workProjection(record, now);
   const terminal = record.state === 'COMPLETED' || record.state === 'FAILED' || record.state === 'STOPPED';
   const terminalDuration = terminal && Number.isFinite(record.createdAt) && Number.isFinite(record.updatedAt) && record.updatedAt >= record.createdAt
     ? record.updatedAt - record.createdAt
@@ -329,7 +338,7 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
     ...(record.timeoutReason ? { timeoutReason: record.timeoutReason } : {}),
     ...(record.successorExecutionId ? { successorExecutionId: record.successorExecutionId } : {}),
     recovery: {
-      status: terminal ? 'terminal' : (record.recoveryDeadlineAt ?? 0) > Date.now() ? 'available' : 'expired',
+      status: terminal ? 'terminal' : (record.recoveryDeadlineAt ?? 0) > now ? 'available' : 'expired',
       ...(record.recoveryDeadlineAt === undefined ? {} : { deadlineAt: record.recoveryDeadlineAt }),
       actions: retainedRecoveryActions(record)
     }

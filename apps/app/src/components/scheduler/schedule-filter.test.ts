@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Project, ScheduledTask } from '@zana-ai/zcc-domain/product';
 import { filterSchedules, scheduleIssue } from './schedule-filter.js';
+import { missedRunChoices } from './schedulerUtils.js';
 
 const projects = new Map([['p1', { id: 'p1', name: 'Garden' } as Project]]);
 const make = (over: Partial<ScheduledTask> = {}, runs: unknown[] = []) => ({
@@ -50,5 +51,13 @@ describe('filterSchedules', () => {
   it('searches name and project', () => {
     expect(filterSchedules([a, b], projects, ' beta ', 'all')).toEqual([b]);
     expect(filterSchedules([a, b], projects, 'garden', 'all')).toEqual([a, b]);
+  });
+});
+
+describe('missed-run wording', () => {
+  it('says turning a schedule back on runs the missed time', () => {
+    const original = missedRunChoices('cron', true).find((c) => c.value === 'original');
+    expect(original?.hint).toContain('Turning a schedule back on also runs the time it missed.');
+    expect(original?.hint).not.toMatch(/paused/i);
   });
 });

@@ -67,7 +67,7 @@ export async function startProductServer(options: StartProductServerOptions): Pr
     if (await handleMainSquadRuntimeHttp(request, response, ctx)) return;
     if (await handleInstallHttp(request, response, ctx)) return;
     if (await handleProductHttp(request, response, ctx)) return;
-    if (await tryServePluginAsset(request, response, (pluginId) => pluginAssetRootFromService(ctx.plugins, pluginId))) {
+    if (await tryServePluginAsset(request, response, (pluginId, assetPath) => pluginAssetRootFromService(ctx.plugins, pluginId, assetPath))) {
       return;
     }
     if (options.fallback && (await options.fallback(request, response))) return;
@@ -118,7 +118,12 @@ export async function startProductServer(options: StartProductServerOptions): Pr
 
     const boundPort = address.port;
     ctx.origins.serverPort = boundPort;
-    unregister = await registerBoundLocalPeerApp(server, ctx.dataDir, ctx.productInstanceId);
+    // Peers are optional: a failed endpoint registration leaves peer forwarding off, never the core server.
+    try {
+      unregister = await registerBoundLocalPeerApp(server, ctx.dataDir, ctx.productInstanceId);
+    } catch (error) {
+      console.warn(`[zcc] local peer app registration failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
     // SSH reverse tunnels target this allowlist-only port. Without it, tunnel
     // installs and reopens fail closed; they never expose serverPort.
     try {

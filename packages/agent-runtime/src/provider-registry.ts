@@ -15,7 +15,7 @@ import {
   resolveBundledBridgeModulePath,
 } from "./shared/bridge-path.js";
 import {
-  BUILT_IN_ACP_LAUNCH_SPECS,
+  resolveBuiltInAcpLaunchSpec,
   BUILT_IN_ACP_MODEL_PICKER,
 } from "./acp-launch-specs.js";
 import type {
@@ -152,7 +152,6 @@ function buildPluginStaticProviderOptions(
   const acpLaunchSpec = resolveAcpLaunchSpec(providerId, options);
   const modelPicker = BUILT_IN_ACP_MODEL_PICKER[providerId];
   const staticProviderOptions = {
-    ...(acpLaunchSpec !== undefined ? { acpLaunchSpec } : {}),
     ...(modelPicker?.acpDialect !== undefined
       ? { acpDialect: modelPicker.acpDialect }
       : {}),
@@ -169,6 +168,8 @@ function buildPluginStaticProviderOptions(
           ],
         }
       : {}),
+    ...options.bridgeLaunch?.providerOptions,
+    ...(acpLaunchSpec !== undefined ? { acpLaunchSpec } : {}),
     ...(additionalWorkspaceWriteRoots.length > 0
       ? { additionalWorkspaceWriteRoots: [...additionalWorkspaceWriteRoots] }
       : {}),
@@ -187,7 +188,9 @@ function resolveAcpLaunchSpec(
   providerId: string,
   options: ProviderAdapterFactoryOptions,
 ): HostDaemonAcpLaunchSpec | undefined {
-  return options.acpLaunchSpec ?? BUILT_IN_ACP_LAUNCH_SPECS[providerId];
+  return options.acpLaunchSpec
+    ?? (options.bridgeLaunch?.providerOptions?.acpLaunchSpec as HostDaemonAcpLaunchSpec | undefined)
+    ?? resolveBuiltInAcpLaunchSpec(providerId);
 }
 
 export function createProviderForId(

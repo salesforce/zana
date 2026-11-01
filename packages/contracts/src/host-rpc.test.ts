@@ -36,7 +36,7 @@ const peerCommand = {
 describe('peer.forward v2 contract', () => {
   it('round-trips the flat command and envelope with separate protocol versions', () => {
     const { type: _type, method: _method, body: _body, timeoutMs: _timeout, ...envelope } = peerCommand;
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(46);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(50);
     expect(PeerRequestEnvelopeSchema.parse(envelope)).toEqual(envelope);
     expect(PeerForwardCommandSchema.parse(peerCommand)).toEqual(peerCommand);
     expect(HostRpcCommandSchema.parse(peerCommand)).toEqual(peerCommand);
@@ -188,6 +188,23 @@ describe('host-rpc contract', () => {
     }).success).toBe(false);
   });
 
+  it('requires the new host protocol before exact-name preview searches can be dispatched', () => {
+    const request = {
+      type: 'host-rpc.request', requestId: 'preview-search',
+      command: {
+        type: 'host.list_paths', path: 'D:\\repo', exactName: 'guide.md', timeoutMs: 4500,
+        limit: 50, includeFiles: true, includeDirectories: false
+      }
+    };
+    expect(HostRpcRequestMessageSchema.parse({ ...request, protocolVersion: HOST_RPC_PROTOCOL_VERSION }))
+      .toMatchObject({ command: request.command });
+    expect(HostRpcRequestMessageSchema.safeParse({ ...request, protocolVersion: 49 }).success).toBe(false);
+    expect(HostReadyMessageSchema.safeParse({
+      type: 'host.ready', protocolVersion: 49, hostId, instanceId,
+      runtime: { threads: [], loadedEnvironments: [] }
+    }).success).toBe(false);
+  });
+
   it('accepts project-bound plugin host calls at the current protocol', () => {
     const command = {
       type: 'plugin.host.call', pluginId: 'fixture', generation: 'g1',
@@ -195,7 +212,7 @@ describe('host-rpc contract', () => {
       callId: 'call-1', method: 'echo', input: {}, timeoutMs: 1000,
       projectRoot: '/registered/project'
     };
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(46);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(50);
     expect(HostRpcRequestMessageSchema.parse({
       type: 'host-rpc.request', protocolVersion: HOST_RPC_PROTOCOL_VERSION,
       requestId: 'r1', command
@@ -945,7 +962,7 @@ describe('host-rpc contract', () => {
   });
 
   it('parses desktop.browser commands, results, and a non-UUID thread payload', () => {
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(46);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(50);
     expect(HostRpcCommandSchema.parse({
       type: 'desktop.browser.list_instances'
     }).type).toBe('desktop.browser.list_instances');
@@ -1004,7 +1021,7 @@ describe('host.environment.replace', () => {
   const entry = { name: 'GH_TOKEN', value: 'token-value' };
 
   it('retains protocol 44 environment forwarding in the combined protocol and parses a bounded, strict entry list', () => {
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(46);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(50);
     const command = {
       type: 'host.environment.replace',
       entries: [
@@ -1071,5 +1088,31 @@ describe('host.environment.replace', () => {
       .toEqual({ applied: ['GH_TOKEN'], skipped: [] });
     expect(() => parseHostRpcResult('host.environment.replace', { applied: ['GH_TOKEN'], skipped: [], value: 'x' }))
       .toThrow();
+  });
+});
+
+
+describe('provider bridge options and host model inventories', () => {
+  const bridge = { pluginId: 'fixture-provider', source: { kind: 'daemon-bundled', id: 'fake' },
+    capabilities: { supportsServiceTier: false, permissionModes: ['full'], supportsThreadArchive: false,
+      supportsThreadRename: false, fork: 'tip' } };
+  it('preserves JSON launch declarations and rejects oversized or non-JSON options', () => {
+    const options = { acpLaunchSpec: { command: '/configured/agent', args: ['acp'], env: { CUSTOM: 'value' } },
+      nested: [true, null, 42] };
+    expect(HostBridgeLaunchSchema.parse({ ...bridge, providerOptions: options }).providerOptions).toEqual(options);
+    for (const providerOptions of [{ invalid: () => 1 }, { value: 'x'.repeat(256 * 1024) }, { value: Infinity }]) {
+      expect(HostBridgeLaunchSchema.safeParse({ ...bridge, providerOptions }).success).toBe(false);
+    }
+  });
+  it('makes inventory discovery explicit and validates bounded host results', () => {
+    expect(HostRpcCommandSchema.parse({ type: 'provider.status', includeModelInventory: true }))
+      .toEqual({ type: 'provider.status', includeModelInventory: true });
+    expect(parseHostRpcResult('provider.status', { providers: [], modelInventories: [
+      { family: 'fixture', models: ['native/model'] }
+    ] })).toMatchObject({ modelInventories: [{ models: ['native/model'] }] });
+    for (const modelInventories of [[{ family: 'fixture', models: Array(10001).fill('native/model') }],
+      [{ family: 'fixture', models: ['x'.repeat(513)] }], Array(33).fill({ family: 'fixture', models: [] })]) {
+      expect(() => parseHostRpcResult('provider.status', { providers: [], modelInventories })).toThrow();
+    }
   });
 });

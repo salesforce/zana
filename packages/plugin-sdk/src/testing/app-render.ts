@@ -19,6 +19,7 @@ import type {
   ZccNavigate,
   ZccPanelAgentOptions,
   ZccPanelToolOptions,
+  ZccPanelScope,
   ZccWindowTitle
 } from '../app-contract.js';
 import { collectTestPluginApp } from './app.js';
@@ -39,7 +40,8 @@ export type NavigateCall =
     }
   | { method: 'openPanelAgent'; options: ZccPanelAgentOptions }
   | { method: 'openPanelTool'; options: ZccPanelToolOptions }
-  | { method: 'openInWindow'; projectId: string; options?: { tabId?: string } };
+  | { method: 'setPanelScope'; scope: ZccPanelScope | null }
+  | { method: 'openInWindow'; projectId: string; options?: { tabId?: string; resourceId?: string } };
 
 export interface RenderSlotOptions {
   rpc?: Record<string, (input: unknown) => unknown | Promise<unknown>>;
@@ -141,6 +143,8 @@ export function installTestPluginRuntime(options: RenderSlotOptions = {}): {
     projectId: options.context?.projectId ?? null,
     threadId: options.context?.threadId ?? null,
     ...(options.context?.surface !== undefined ? { surface: options.context.surface } : {}),
+    ...(options.context?.resourceId !== undefined ? { resourceId: options.context.resourceId } : {}),
+    ...(options.context?.resourceRequestId !== undefined ? { resourceRequestId: options.context.resourceRequestId } : {}),
     ...(options.panelTools === true || options.context?.sidePanel !== undefined
       ? { sidePanel: options.context?.sidePanel ?? true }
       : {}),
@@ -200,6 +204,9 @@ export function installTestPluginRuntime(options: RenderSlotOptions = {}): {
     openPanelTool(toolOptions) {
       navigateCalls.push({ method: 'openPanelTool', options: toolOptions });
       return options.panelTools === true;
+    },
+    setPanelScope(scope) {
+      navigateCalls.push({ method: 'setPanelScope', scope });
     },
     openInWindow(projectId, windowOptions) {
       navigateCalls.push({
@@ -274,6 +281,7 @@ export function installTestPluginRuntime(options: RenderSlotOptions = {}): {
     useZccDeepLinks() {
       return deepLinks;
     },
+    useWindowCloseHandler() {},
     useWindowTitle(title) {
       const key = title ? JSON.stringify(title) : '';
       const slot = React.useRef<symbol | null>(null);

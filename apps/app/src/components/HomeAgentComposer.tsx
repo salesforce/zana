@@ -16,7 +16,7 @@ import { useShallow } from 'zustand/react/shallow';
 export { parseHomeLauncherPreferences } from './home-launcher-preferences.js';
 
 export interface HomeAgentComposerProps extends ThreadCommandComposerProps {
-  /** New Chat (`nav === 'home'`) only — New Thread stays on the HTTP thread path. */
+  /** Offer CLI Agent and Squad alongside Modern on New Chat surfaces. */
   allowLegacyAgent?: boolean;
   draftScope?: string;
 }
@@ -52,7 +52,7 @@ function HomeComposerContent({ allowLegacyAgent = false, project, ...props }: Ho
     ? walkthroughHomeMode
     : preferred;
   const showLaunchSwitcher = Boolean(walkthroughHomeMode) || visibleLaunchModeCount(available) > 1;
-  const [composerProjectId, setComposerProjectId] = useComposerSetting(session, 'projectId', project?.id ?? '');
+  const [composerProjectId, setComposerProjectId] = useComposerSetting(session, 'projectId', project?.id ?? props.composerProjectId ?? '');
   useEffect(() => {
     if (project?.id) setComposerProjectId(project.id);
   }, [project?.id]);

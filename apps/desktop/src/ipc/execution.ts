@@ -1,12 +1,13 @@
 // @ts-nocheck
 import { ipcMain } from 'electron';
+import { homedir } from 'node:os';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
 import { harnessVerifyState } from './shared.js';
 import { getHarnessAuthStatus, setHarnessAuth } from '@zana-ai/zcc-host-daemon/harness-auth';
 import { resolveEffectiveHarnessDefault } from '@zana-ai/zcc-host-daemon/harness/effective-default';
 import { verifyHarnesses } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
-import { harnessAdapterDescriptorsFromVerify, refreshDynamicHarnessCatalogs, registrationFor } from '@zana-ai/zcc-host-daemon/harness/registry';
+import { harnessAdapterDescriptorsFromVerify, refreshDynamicHarnessCatalogs, discoverHarnessModelInventories, registrationFor } from '@zana-ai/zcc-host-daemon/harness/registry';
 import { store } from '@zana-ai/zcc-server/services/projects/store';
 import type { HarnessAuthKey, HarnessAuthStatusInfo, LaunchProfileId } from '@zana-ai/zcc-domain/product';
 
@@ -56,7 +57,8 @@ export function registerExecutionIpc(): void {
     async () => {
       const results = await verifiedHarnesses();
       await refreshDynamicHarnessCatalogs(results);
-      return harnessAdapterDescriptorsFromVerify(results);
+      const inventories = await discoverHarnessModelInventories(results, { cwd: homedir(), config: store.getConfig() });
+      return harnessAdapterDescriptorsFromVerify(results, inventories);
     },
     () => []
   );
@@ -95,4 +97,3 @@ export function registerExecutionIpc(): void {
     () => ({ ok: false as const, code: 'UNAVAILABLE_DEFAULT' as const, message: 'Default harness unavailable' })
   );
 }
-

@@ -45,6 +45,7 @@ vi.mock('./shortcuts.js', () => ({ installShortcuts: () => () => {} }));
 vi.mock('./stores/agent-board-moves.js', () => ({ installAgentBoardMoves: () => () => {} }));
 vi.mock('./components/thread/secondary-panel/useThreadOpenFileSignal.js', () => ({ installThreadOpenFileSignals: () => () => {} }));
 vi.mock('./components/thread/secondary-panel/useThreadOpenTerminalSignal.js', () => ({ useCliAgentTerminalSignal: () => {} }));
+vi.mock('./components/ThreadModal.js', () => ({ ThreadModal: () => <div data-testid="thread-modal-shell" /> }));
 vi.mock('./modules/index.js', () => { const modules: never[] = []; return { useMergedModules: () => modules }; });
 vi.mock('./modules/loader.js', () => ({ initExtensionModules: async () => {}, reconcileExtensionModules: async () => {} }));
 vi.mock('./plugins/plugin-app-loader.js', () => ({ initPluginApps: async () => {}, reconcilePluginApps: fixtures.reconcilePlugins }));
@@ -87,7 +88,7 @@ const emptyComponents: Record<string, string[]> = {
   './modules/ModulePanelHost.js': ['ModulePanelHost'],
   './modules/ModuleBackgroundHost.js': ['ModuleBackgroundHost'],
   ...Object.fromEntries(['CommandPalette', 'QuickOpen', 'ResumePicker', 'SearchPanel',
-    'AgentTerminalModal', 'ThreadModal', 'FavoriteAgentsDrawer', 'NotificationsDrawer', 'HostInstallDrawer',
+    'AgentTerminalModal', 'FavoriteAgentsDrawer', 'NotificationsDrawer', 'HostInstallDrawer',
     'Walkthrough', 'Toaster', 'PendingLaunches', 'HostDialogs', 'UpdateBanner', 'SponsorNudge',
     'WhatsNewModal', 'ExtensionConsent', 'HashNavigationScroll'].map(name => [`./components/${name}.js`, [name]]))
 };
@@ -97,6 +98,7 @@ beforeAll(async () => {
   for (const [path, names] of Object.entries(emptyComponents)) {
     vi.doMock(path, () => Object.fromEntries(names.map(name => [name, ({ children }: any) => <>{children}</>])));
   }
+  vi.doMock('./components/TitlebarThreadTabs.js', () => ({ TitlebarThreadTabs: () => <div data-testid="thread-tabs-shell" /> }));
   vi.doMock('./components/ShortcutsHelp.js', () => ({
     ShortcutsHelp: ({ ctrlVPasteEnabled }: { ctrlVPasteEnabled?: boolean }) => <div data-testid="shortcuts-help">{String(ctrlVPasteEnabled)}</div>
   }));
@@ -108,6 +110,73 @@ afterEach(() => {
   cleanup(); localStorage.clear(); fixtures.drawer.mockClear();
   fixtures.pluginChanged = null;
   fixtures.recoverCatalogs.mockClear(); fixtures.recoverStale.mockClear(); fixtures.recoverAfterWake.mockClear(); fixtures.offWake.mockClear(); fixtures.reconcilePlugins.mockClear(); fixtures.unsubscribePlugins.mockClear();
+});
+
+it('keeps a project focus until the project list has loaded, then drops a removed one', () => {
+  const original = store.useUi.getState();
+  store.useData.setState({ projects: [], configLoaded: false });
+  store.useUi.setState({ focusedProjectId: 'p-removed' });
+  try {
+    render(<MemoryRouter><App /></MemoryRouter>);
+    expect(store.useUi.getState().focusedProjectId).toBe('p-removed');
+    act(() => store.useData.setState({ configLoaded: true }));
+    expect(store.useUi.getState().focusedProjectId).toBeNull();
+  } finally {
+    store.useUi.setState({ focusedProjectId: original.focusedProjectId, nav: original.nav });
+    store.useData.setState({ configLoaded: false });
+  }
+});
+
+it('switches titlebar navigation live and retains compact chrome', () => {
+  fixtures.compact = false;
+  store.useData.setState({ threadTabsEnabled: true });
+  const view = render(<MemoryRouter><App /></MemoryRouter>);
+  expect(screen.getByTestId('thread-tabs-shell')).toBeTruthy();
+  act(() => store.useData.setState({ threadTabsEnabled: false }));
+  expect(screen.queryByTestId('thread-tabs-shell')).toBeNull();
+  act(() => store.useData.setState({ threadTabsEnabled: true }));
+  expect(screen.getByTestId('thread-tabs-shell')).toBeTruthy();
+  fixtures.compact = true;
+  view.rerender(<MemoryRouter><App /></MemoryRouter>);
+  expect(screen.queryByTestId('thread-tabs-shell')).toBeNull();
+  fixtures.compact = false;
+});
+
+it('always applies the inset workspace design on desktop and retains compact chrome', () => {
+  fixtures.compact = false;
+  const view = render(<MemoryRouter><App /></MemoryRouter>);
+  const shell = () => view.container.querySelector('.app-shell')!;
+  try {
+    expect(shell().classList.contains('shell-inset')).toBe(true);
+    fixtures.compact = true;
+    view.rerender(<MemoryRouter><App /></MemoryRouter>);
+    expect(shell().classList.contains('shell-inset')).toBe(false);
+    fixtures.compact = false;
+    view.rerender(<MemoryRouter><App /></MemoryRouter>);
+    expect(shell().classList.contains('shell-inset')).toBe(true);
+  } finally {
+    fixtures.compact = false;
+    view.unmount();
+  }
+});
+
+it('promotes an existing thread inspector when thread tabs are enabled', async () => {
+  fixtures.compact = false;
+  const original = store.useUi.getState();
+  store.useData.setState({ threadTabsEnabled: false, classicSessionViewEnabled: false });
+  store.useUi.setState({ nav: 'agents', focusedProjectId: null, threadModal: { threadId: 'tabs-probe' } });
+  const view = render(<MemoryRouter initialEntries={['/agents']}><App /></MemoryRouter>);
+  try {
+    expect(screen.getByTestId('thread-modal-shell')).toBeTruthy();
+    await act(async () => store.useData.setState({ threadTabsEnabled: true }));
+    expect(screen.queryByTestId('thread-modal-shell')).toBeNull();
+    expect(store.useUi.getState().threadModal).toBeNull();
+    expect(screen.getByTestId('location').textContent).toBe('/threads/tabs-probe');
+  } finally {
+    view.unmount();
+    store.useUi.setState(original);
+    store.useData.setState({ threadTabsEnabled: true });
+  }
 });
 
 it('retries unavailable model catalogs on plugin changes and ignores late pushes after unmount', async () => {
@@ -193,13 +262,14 @@ it('shares Help between the titlebar and navigation and clears exploration on qu
   fixtures.compact = false; fixtures.unread = 0;
   render(<MemoryRouter><App /></MemoryRouter>);
   const toggle = screen.getByTestId('titlebar-help-toggle');
-  expect(toggle.getAttribute('aria-pressed')).toBe('true');
+  expect(toggle.className).toContain('is-active');
   fireEvent.click(screen.getByText('Explore project navigation'));
   expect(screen.getByTestId('active-hint').textContent).toBe('sidebar');
   fireEvent.click(screen.getByText('Change page query'));
   expect(screen.getByTestId('active-hint').textContent).toBe('');
   fireEvent.click(toggle);
-  expect(toggle.getAttribute('aria-pressed')).toBe('false');
+  fireEvent.click(screen.getByRole('switch', { name: /Page hints/ }));
+  expect(toggle.className).not.toContain('is-active');
   expect(screen.queryByTestId('mobile-help-toggle')).toBeNull();
 });
 it.each([0, 2, 105])('shares the mobile Help state and closes navigation for %s unread notifications', unread => {
@@ -207,10 +277,19 @@ it.each([0, 2, 105])('shares the mobile Help state and closes navigation for %s 
   const notifications = vi.fn(); store.useUi.setState({ toggleNotificationsDrawer: notifications });
   render(<MemoryRouter><App /></MemoryRouter>);
   fireEvent.click(screen.getByTestId('mobile-help-toggle'));
-  expect(screen.getByTestId('titlebar-help-toggle').getAttribute('aria-pressed')).toBe('false');
+  expect(screen.getByTestId('titlebar-help-toggle').className).not.toContain('is-active');
   const drawerButton = screen.getAllByRole('button', { name: unread ? `Notifications — ${unread} unread` : 'Notifications' }).find(button => button.textContent?.includes('Notifications'))!;
   fireEvent.click(drawerButton);
   expect(fixtures.drawer).toHaveBeenCalledWith(false);
   expect(notifications).toHaveBeenCalledOnce();
   if (unread) expect(drawerButton.textContent).toContain(unread > 99 ? '99+' : String(unread));
+});
+it('opens the video library from mobile navigation and closes the drawer', async () => {
+  fixtures.compact = true; fixtures.unread = 0;
+  const { useHelpVideos } = await import('./components/help/help-videos-store.js');
+  render(<MemoryRouter><App /></MemoryRouter>);
+  fireEvent.click(screen.getByTestId('mobile-help-videos'));
+  expect(fixtures.drawer).toHaveBeenCalledWith(false);
+  expect(useHelpVideos.getState().openId).toBe('guided-start');
+  act(() => useHelpVideos.getState().close());
 });

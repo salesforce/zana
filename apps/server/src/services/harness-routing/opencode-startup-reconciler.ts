@@ -30,23 +30,16 @@ export interface OpenCodeStartupReconcileDeps {
 type OpenCodeRoute = NonNullable<HarnessModelRoutingV1['byAdapter']['opencode']>;
 type ProjectedRoute = { outcome: Exclude<OpenCodeStartupReconcileOutcome, 'cas-give-up'>; route?: OpenCodeRoute };
 
-const AISUITE_PREFIX = 'aisuite/';
-const LLMGW_PREFIX = 'llmgw/';
-
 function cloneConfig(config: AppConfig): AppConfig {
   return JSON.parse(JSON.stringify(config)) as AppConfig;
-}
-
-function renameCandidate(modelTargetId: string): string | undefined {
-  if (!modelTargetId.startsWith(AISUITE_PREFIX)) return undefined;
-  return `${LLMGW_PREFIX}${modelTargetId.slice(AISUITE_PREFIX.length)}`;
 }
 
 function providerForModel(
   modelTargetId: string,
   catalog: readonly OpenCodeCatalogModel[] | undefined
 ): string | undefined {
-  return catalog?.find((entry) => entry.id === modelTargetId)?.provider;
+  return catalog?.find((entry) => entry.id === modelTargetId)?.provider
+    ?? (modelTargetId.includes('/') ? modelTargetId.slice(0, modelTargetId.indexOf('/')) : undefined);
 }
 
 function withOpenCodeRoute(config: AppConfig, nextRoute: OpenCodeRoute | undefined): AppConfig {
@@ -82,25 +75,6 @@ function applyCatalogProvider(
   return { outcome: 'no-op', route };
 }
 
-function projectStaleModel(
-  route: OpenCodeRoute,
-  live: ReadonlySet<string>,
-  catalogModels?: readonly OpenCodeCatalogModel[]
-): ProjectedRoute {
-  const next: OpenCodeRoute = { ...route };
-  const candidate = route.modelTargetId ? renameCandidate(route.modelTargetId) : undefined;
-  if (candidate && live.has(candidate)) {
-    next.modelTargetId = candidate;
-    const mappedProvider = providerForModel(candidate, catalogModels);
-    if (mappedProvider) next.providerTargetId = mappedProvider;
-    else delete next.providerTargetId;
-    return { outcome: 'remapped', route: next };
-  }
-  delete next.modelTargetId;
-  delete next.providerTargetId;
-  return { outcome: 'cleared-stale-model', route: next };
-}
-
 export function projectOpenCodeStartupRoute(
   route: OpenCodeRoute | undefined,
   liveModels: readonly string[] | undefined,
@@ -118,7 +92,10 @@ export function projectOpenCodeStartupRoute(
 
   if (hasModel && route.modelTargetId) {
     if (live.has(route.modelTargetId)) return applyCatalogProvider(route, route.modelTargetId, catalogModels);
-    return projectStaleModel(route, live, catalogModels);
+    const next = { ...route };
+    delete next.modelTargetId;
+    delete next.providerTargetId;
+    return { outcome: 'cleared-stale-model', route: next };
   }
 
   if (hasProvider && !hasModel) {

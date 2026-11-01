@@ -1,4 +1,5 @@
 import { prepareThreadReads } from './services/threads/thread-reads.js';
+import { presentAppConfig } from './http/public-app-url.js';
 import { discoverProjectCli } from './services/launch/cli-discovery.js';
 import { createProductCliCallbackAuthority } from './services/launch/cli-callback-authority.js';
 import { projectFeed } from './services/feed/project-feed.js';
@@ -40,6 +41,7 @@ import type { ZccDatabase } from '@zana-ai/zcc-db';
 import type { PluginService } from './plugins/plugin-service.js';
 import { decideMainOwnedToolPolicy } from './plugins/native-tool-policy.js';
 import { createMenubarThreadSource } from './services/threads/menubar-thread-source.js';
+import { hasLocalThreadWork } from './services/threads/local-thread-work.js';
 import { holdThreadProviderStartup } from './services/threads/thread-provider-catalog.js';
 import {
   bundledPluginsRootFromDataDir,
@@ -84,6 +86,8 @@ let threadDb: ZccDatabase | null = null;
 let menubarThreads: ReturnType<typeof createMenubarThreadSource> | null = null;
 let disposeMenubarThreadHints: (() => void) | null = null;
 let menubarThreadHintTimer: NodeJS.Timeout | null = null;
+let localProductHostId: string | null = null;
+let hintThreadActivity: (() => void) | null = null;
 // One process-wide monitor; started once the runtime log is installed so stalls land in server.log.
 const diagnostics = createRuntimeDiagnostics();
 parentPort.on('message', ({ data }) => {
@@ -136,13 +140,17 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
           menubarThreadHintTimer = null;
           parentPort.postMessage({
             type: 'menubar-threads-changed',
-            protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION
+            protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
+            localThreadsWorking: localProductHostId !== null && hasLocalThreadWork(product.db, localProductHostId)
           });
         }, 100);
       };
       const disposeStatusHints = product.hub.subscribe('threads:updated', hintThreadsChanged);
       const disposeProgressHints = product.hub.subscribe('threads:event', hintThreadsChanged);
       disposeMenubarThreadHints = () => { disposeStatusHints(); disposeProgressHints(); };
+      hintThreadActivity = hintThreadsChanged;
+      // Restore power state even when threads were already running at startup.
+      hintThreadsChanged();
       plugins = createAttachedProductPluginService(product, {
         bundledRoot: bundledPluginsRootFromDataDir(message.dataDir, message.bundledPluginsRoot),
         hostAgentToolSource: createModernTeamLaunchConfigSource({
@@ -176,7 +184,7 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
           // A browser never needs filesystem paths to render this landing view.
           projects: toBrowserProjectSummaries(projects?.list() ?? [])
         }),
-        pluginAssetRoot: (pluginId) => pluginAssetRootFromService(plugins ?? undefined, pluginId),
+        pluginAssetRoot: (pluginId, assetPath) => pluginAssetRootFromService(plugins ?? undefined, pluginId, assetPath),
         product,
         diagnostics
       });
@@ -226,6 +234,11 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
       peerKeyProvider.dispose();
       parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, message: error instanceof Error ? error.message : String(error) });
     }
+  }
+  if (message.type === 'local-host') {
+    localProductHostId = message.hostId;
+    hintThreadActivity?.();
+    return;
   }
   if (message.type === 'mcp-ready') {
     const next = {
@@ -446,7 +459,8 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
       if (message.channel === 'config:onChanged' || message.channel === 'product:reset') {
         // Read the owner's config; the forwarded renderer snapshot is advisory.
         await productContext?.plugins?.refreshSafeMode();
-        if (productContext) productHub?.emit('config:changed', productContext.config.getConfig());
+        await productContext?.plugins?.refreshDevelopmentMode();
+        if (productContext) productHub?.emit('config:changed', presentAppConfig(productContext.config.getConfig()));
       }
       if (productHub) forwardRuntimeProductEvent(productHub, message.channel, message.args);
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: true });
@@ -464,6 +478,18 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
     }
     if (message.operation === 'plugins-list') {
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: plugins?.list() ?? [] });
+    }
+    if (message.operation === 'plugin-packs-list' || message.operation === 'plugin-packs-installed' ||
+        message.operation === 'plugin-packs-plan' || message.operation === 'plugin-packs-install' ||
+        message.operation === 'plugin-packs-forget') {
+      if (!plugins) throw new Error('plugin host is unavailable');
+      const packs = plugins.pluginPacks;
+      const value = message.operation === 'plugin-packs-list' ? packs.list()
+        : message.operation === 'plugin-packs-installed' ? packs.listInstalled()
+        : message.operation === 'plugin-packs-plan' ? await packs.plan(message.identity)
+        : message.operation === 'plugin-packs-install' ? await packs.install(message.request)
+        : await packs.forget(message.identity);
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value });
     }
     if (message.operation === 'plugins-install') {
       if (!plugins) {
@@ -493,6 +519,11 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
       }
       await plugins.remove(message.pluginId);
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value: { ok: true } });
+    }
+    if (message.operation === 'plugins-repair') {
+      if (!plugins) throw new Error('plugin host is unavailable');
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id,
+        value: await plugins.repair(message.pluginId, message.path) });
     }
     if (message.operation === 'plugins-reload') {
       if (!plugins) {
@@ -642,6 +673,8 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
     }
   }
   if (message.type === 'stop') {
+    hintThreadActivity = null;
+    localProductHostId = null;
     disposeMenubarThreadHints?.();
     disposeMenubarThreadHints = null;
     if (menubarThreadHintTimer) clearTimeout(menubarThreadHintTimer);

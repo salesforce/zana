@@ -37,7 +37,8 @@ vi.mock('../mcp-config.js', () => ({
   alwaysOnPluginMcpAllowlist: () => []
 }));
 
-vi.mock('../tmux.js', () => ({
+vi.mock('../tmux.js', async importOriginal => ({
+  ...(await importOriginal<typeof import('../tmux.js')>()),
   isTmuxAvailable: () => false,
   buildLocalTmuxCommand: (_id: string, command: string, args: string[]) => ({ command, args }),
   wrapRemoteTmux: (_id: string, command: string) => command
@@ -149,12 +150,25 @@ describe('structured providers final local argv', () => {
 
   it('emits OpenCode model without auto-approve for accept-edits', () => {
     expect(spawn('opencode', routing('opencode', {
-      modelTargetId: 'llmgw/gpt-6.1-sol',
+      modelTargetId: 'fixture-provider/gpt-6.1-sol',
       executionState: 'accept-edits'
     }))).toEqual({
       command: 'opencode',
-      args: ['--model', 'llmgw/gpt-6.1-sol']
+      args: ['--model', 'fixture-provider/gpt-6.1-sol']
     });
+  });
+
+  it.each([false, true])('emits an explicit dynamic provider/model pair verbatim (remote=%s)', remote => {
+    new PtyManager().create({
+      projectId: 'proj1', profile: 'opencode', cwd: '/tmp/work', cols: 80, rows: 24, config: CONFIG,
+      harnessRouting: routing('opencode', {
+        providerTargetId: 'new-install-provider', modelTargetId: 'new-install-provider/model-v2'
+      }),
+      ...(remote ? { remote: { host: 'fixture-host', remotePath: '/remote/work' } } : {})
+    });
+    const args = spawns.at(-1)!.args.join(' ');
+    expect(args).toContain('--model');
+    expect(args).toContain('new-install-provider/model-v2');
   });
 
   it('maps an OpenCode portable level to the authorized pin of THIS launch only', () => {
@@ -168,30 +182,42 @@ describe('structured providers final local argv', () => {
       });
       return spawns.at(-1)!.args;
     };
-    expect(create('llmgw/gpt-7-luna')).toEqual(expect.arrayContaining(['--model', 'llmgw/gpt-7-luna']));
-    expect(create('llmgw/gpt-8-luna')).toEqual(expect.arrayContaining(['--model', 'llmgw/gpt-8-luna']));
-    expect(create('llmgw/gpt-7-luna')).not.toContain('llmgw/gpt-8-luna');
-    // No preflight pin: the reviewed snapshot mapping, exactly as before.
-    expect(create()).toEqual(expect.arrayContaining(['--model', 'llmgw/gpt-6-luna']));
+    expect(create('fixture-provider/gpt-7-luna')).toEqual(expect.arrayContaining(['--model', 'fixture-provider/gpt-7-luna']));
+    expect(create('fixture-provider/gpt-8-luna')).toEqual(expect.arrayContaining(['--model', 'fixture-provider/gpt-8-luna']));
+    expect(create('fixture-provider/gpt-7-luna')).not.toContain('fixture-provider/gpt-8-luna');
+    // Inventory names cannot authorize an unconfigured portable tier.
+    expect(() => create()).toThrow('does not support low model level');
   });
 
   it('a native role still suppresses an authorized model pin', () => {
     new PtyManager().create({
       projectId: 'proj1', profile: 'opencode', cwd: '/tmp/shared-worktree', cols: 80, rows: 24, config: CONFIG,
       harnessRouting: routing('opencode', { modelLevel: 'low', roleTargetId: 'reviewer' }),
-      authorizedModel: { adapterId: 'opencode', level: 'low', targetId: 'llmgw/gpt-7-luna' }
+      authorizedModel: { adapterId: 'opencode', level: 'low', targetId: 'fixture-provider/gpt-7-luna' }
     });
     expect(spawns.at(-1)!.args).not.toContain('--model');
   });
 
+  it.each([false, true])('launches a native role with an unsupported persona tier (remote=%s)', remote => {
+    new PtyManager().create({
+      projectId: 'proj1', profile: 'opencode', cwd: '/tmp/work', cols: 80, rows: 24, config: CONFIG,
+      persona: { id: 'p', name: 'P', modelLevel: 'low' },
+      harnessRouting: routing('opencode', { roleTargetId: 'reviewer' }),
+      ...(remote ? { remote: { host: 'fixture-host', remotePath: '/remote/work' } } : {})
+    });
+    const args = spawns.at(-1)!.args.join(' ');
+    expect(args).toContain('reviewer');
+    expect(args).not.toContain('--model');
+  });
+
   it('emits OpenCode auto-approve only for autonomous', () => {
     expect(spawn('opencode', routing('opencode', {
-      modelTargetId: 'llmgw/gpt-6.1-sol',
+      modelTargetId: 'fixture-provider/gpt-6.1-sol',
       executionState: 'autonomous'
     }))).toEqual({
       command: 'opencode',
       args: [
-        '--model', 'llmgw/gpt-6.1-sol',
+        '--model', 'fixture-provider/gpt-6.1-sol',
         '--agent', 'build', '--auto'
       ]
     });
@@ -231,7 +257,7 @@ describe('structured providers final local argv', () => {
     // alongside it dies with ProviderModelNotFoundError (exit 64) on any install
     // whose inventory differs from the shipped snapshot. The role wins, no model.
     expect(spawn('opencode', routing('opencode', {
-      modelTargetId: 'llmgw/gpt-6.1-sol',
+      modelTargetId: 'fixture-provider/gpt-6.1-sol',
       roleTargetId: 'custom-agent'
     }))).toEqual({
       command: 'opencode',
@@ -250,7 +276,7 @@ describe('structured providers final local argv', () => {
       cwd: '/tmp/work',
       cols: 80,
       rows: 24,
-      config: { ...CONFIG, harnessRouting: routing('opencode', { modelTargetId: 'llmgw/gpt-6.1-sol' }) },
+      config: { ...CONFIG, harnessRouting: routing('opencode', { modelTargetId: 'fixture-provider/gpt-6.1-sol' }) },
       harnessRouting: routing('opencode', { roleTargetId: 'custom-agent' })
     });
     const last = spawns.at(-1)!;

@@ -185,7 +185,11 @@ export function isUnattendedPolicyDeny(error: unknown): boolean {
   if (!(error instanceof ControlError)) return false;
   if (error.code !== 'HTTP_ERROR') return false;
   const message = error.message;
-  return message.includes('disallows unattended execution') || message.includes('no matching consent');
+  return message.includes('disallows unattended execution')
+    || message.includes('no matching consent')
+    // OpenCode intentionally has no portable model-level mapping. A structured
+    // launch denial proves that unsupported request did not reach the process.
+    || /OpenCode does not support .+ model level/.test(message);
 }
 
 export async function withLiveThread(

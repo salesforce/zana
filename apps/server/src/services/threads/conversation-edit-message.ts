@@ -13,7 +13,7 @@ import { recoverConversationProviderThreadId } from './conversation-provider-ide
 import { threadResumeFields } from './conversation-host-rpc.js';
 import { sendConversationTurn, stopConversation } from './conversation-lifecycle.js';
 import { providerSupportsSessionRewind } from './thread-host-commands.js';
-import { bridgeLaunchForProvider, permissionModeForLaunchProfile } from './thread-provider-catalog.js';
+import { bridgeLaunchForProvider } from './thread-provider-catalog.js';
 
 function checkpointFromPayload(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object') return null;
@@ -80,6 +80,9 @@ export async function editConversationMessage(
   const leaseId = randomUUID();
   try {
     const resume = await threadResumeFields(ctx, live);
+    if (!resume) {
+      throw new ThreadCreateError(409, 'not_resumable', 'thread has no provider session to resume');
+    }
     const prepared = await ctx.hostHub.callHostOnlineRpc<{
       threadId: string;
       prepared: true;
@@ -98,7 +101,8 @@ export async function editConversationMessage(
         cwd: environment.path,
         bridgeLaunch: resume?.bridgeLaunch
           ?? bridgeLaunchForProvider(live.providerId, ctx.pluginHostArtifacts),
-        permissionMode: resume?.permissionMode ?? permissionModeForLaunchProfile(live.providerId)
+        permissionMode: resume.permissionMode,
+        ...(resume?.automatedSkillIds !== undefined ? { automatedSkillIds: resume.automatedSkillIds } : {})
       }
     });
     setConversationProviderThreadId(ctx.db, live.id, prepared.providerThreadId);

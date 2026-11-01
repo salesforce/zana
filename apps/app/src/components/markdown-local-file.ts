@@ -32,17 +32,23 @@ export function parseLocalFileMarkdownHref(href: string | undefined): string | n
   if (!href) return null;
   const trimmed = href.trim();
   if (!trimmed || trimmed.startsWith('#') || BLOCKED_SCHEMES.test(trimmed)) return null;
-  if (trimmed.startsWith('file://')) {
+  if (/^file:\/\//iu.test(trimmed)) {
     try {
+      const rawPath = trimmed.replace(/^file:\/\//iu, '').split(/[?#]/u)[0] ?? '';
+      if (/%2f|%5c/iu.test(rawPath)) return null;
+      for (const segment of rawPath.split(/[/\\]/u)) {
+        if (decodeURIComponent(segment) === '..') return null;
+      }
       const url = new URL(trimmed);
       if (url.host && url.host !== 'localhost' && url.hostname !== '') return null;
-      const path = decodeURIComponent(url.pathname);
-      return looksLikeFilePath(path) ? path : path || null;
+      const path = decodeURIComponent(url.pathname).replace(/^\/([a-z]:\/)/iu, '$1');
+      return path && !path.includes('\0') ? path : null;
     } catch {
       return null;
     }
   }
   const path = trimmed.split('#')[0] ?? trimmed;
+  if (/^[a-z]:[\\/]/iu.test(path) && looksLikeFilePath(path)) return path.replace(/\\/gu, '/');
   if (path.startsWith('/') && !path.startsWith('//') && looksLikeFilePath(path)) return path;
   if ((/^\.{0,2}\//u.test(path) || /^[\w.-]+\/[\w./-]+$/u.test(path)) && looksLikeFilePath(path)) {
     return path;
@@ -87,9 +93,8 @@ export function parseInlineFileCodePath(text: string | undefined): string | null
 }
 
 /**
- * Map an inline file token onto a known workspace path. Bare names take the
- * latest matching basename from `knownPaths` (file-change / file-read rows);
- * slash paths and unmatched names pass through as-is.
+ * Map a bare filename onto a known workspace path only when its basename is
+ * unambiguous. Slash paths and unmatched names pass through as-is.
  */
 export function resolveThreadFilePreviewPath(
   token: string,
@@ -99,10 +104,9 @@ export function resolveThreadFilePreviewPath(
   if (!parsed) return null;
   if (/[/\\]/u.test(parsed)) return parsed;
   const base = fileBaseName(parsed);
-  for (let i = knownPaths.length - 1; i >= 0; i--) {
-    const path = knownPaths[i];
-    if (!path) continue;
-    if (fileBaseName(path) === base) return path;
-  }
+  const matches = [...new Set(knownPaths
+    .filter((path) => path && fileBaseName(path) === base)
+    .map((path) => path.replace(/\\/gu, '/').replace(/^(\.\/)+/u, '')))];
+  if (matches.length === 1) return matches[0]!;
   return parsed;
 }

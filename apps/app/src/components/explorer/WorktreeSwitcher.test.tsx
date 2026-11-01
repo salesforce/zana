@@ -50,6 +50,13 @@ function menuProps(over: Partial<Parameters<typeof WorktreeMenu>[0]> = {}) {
 }
 
 describe('WorktreeMenu', () => {
+  it('shows independent loading and error states for lazy checkout metadata', () => {
+    const view = render(<WorktreeMenu {...menuProps({ loading: true })} />);
+    expect(screen.getByRole('status').textContent).toBe('Loading checkouts…');
+    view.rerender(<WorktreeMenu {...menuProps({ error: 'Git unavailable' })} />);
+    expect(screen.getByRole('alert').textContent).toBe('Git unavailable');
+    expect(screen.queryByRole('status')).toBeNull();
+  });
   it('lists worktrees and switches to a branch that has a checkout', () => {
     const onSelectWorktree = vi.fn();
     render(<WorktreeMenu {...menuProps({ onSelectWorktree })} />);

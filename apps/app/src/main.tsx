@@ -69,6 +69,9 @@ if (!root) {
         startThreadViewMirror();
         startDesktopBrowserRevealQueue();
       }
+      // Routers render navigations as urgent updates, in the same pass as the
+      // store writes that go with them. As transitions, every store update
+      // restarted the route render, and Back took seconds under load (#532).
       let content: ReactElement;
       if (isRepair) {
         const { StartupRepair } = await import('./components/StartupRepair.js');
@@ -76,21 +79,21 @@ if (!root) {
       } else if (pluginView) {
         const { PluginViewApp } = await import('./views/plugin-view/PluginViewApp.js');
         content = (
-          <BrowserRouter>
+          <BrowserRouter useTransitions={false}>
             <PluginViewApp target={pluginView} />
           </BrowserRouter>
         );
       } else if (threadView) {
         const { ThreadViewApp } = await import('./views/thread-view/ThreadViewApp.js');
         content = (
-          <BrowserRouter>
+          <BrowserRouter useTransitions={false}>
             <ThreadViewApp target={threadView} />
           </BrowserRouter>
         );
       } else {
         const { App } = await import('./App.js');
         content = (
-          <BrowserRouter>
+          <BrowserRouter useTransitions={false}>
             <App />
           </BrowserRouter>
         );

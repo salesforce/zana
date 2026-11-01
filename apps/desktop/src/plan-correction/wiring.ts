@@ -1,3 +1,4 @@
+import type { CoordinatorHandoffContext } from '../team-plan-handoff.js';
 import { isResumableExecutionState } from '@zana-ai/zcc-server/services/execution/storage/backend-policy';
 
 interface ExecutionStateRecord {
@@ -25,4 +26,22 @@ export function createPlanCorrectionWarningLogger(
   logError: (label: string, error: unknown) => void
 ): (executionId: string, message: string, error: unknown) => void {
   return (executionId, message, error) => logError(`planCorrection:${executionId}: ${message}`, error);
+}
+
+/**
+ * Coordinator context for a bound `execution.plan.register` submission, so a
+ * refused correction candidate can be offered for review (Modern has no PTY idle
+ * reread). Only the execution's own coordinator binding qualifies, with the same
+ * project root the CLI idle handoff uses; anything else yields no submitter.
+ */
+export function planCorrectionSubmitter(
+  record: { id: string; projectId: string; squadWorktree?: { path: string } | null },
+  binding: { role: string; slotId: string; executionId: string; projectId: string; principalId?: string } | undefined,
+  projectPath: (projectId: string) => string | undefined
+): CoordinatorHandoffContext | undefined {
+  if (!binding || binding.role !== 'orchestrator' || !binding.principalId) return undefined;
+  if (binding.executionId !== record.id || binding.projectId !== record.projectId) return undefined;
+  const projectRoot = record.squadWorktree?.path ?? projectPath(record.projectId);
+  if (!projectRoot) return undefined;
+  return { sessionId: binding.principalId, projectId: record.projectId, projectRoot, executionId: record.id, slotId: binding.slotId };
 }

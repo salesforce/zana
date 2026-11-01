@@ -7,6 +7,7 @@ import { PhoneSignIn } from './PhoneSignIn';
 import { DesktopSignIn } from './DesktopSignIn';
 import { InstanceMachines } from './InstanceMachines';
 import { ComputerCode } from './ComputerCode';
+import { ComputerEnrollment, type Enrollment } from './ComputerEnrollment';
 
 interface Computer { id: string; name: string; serverUrl: string; browserUrl?: string | null; paired?: boolean; live: boolean; revoked: boolean }
 interface Device { id: string; label: string; revoked: boolean }
@@ -49,11 +50,12 @@ export function ConnectAccount() {
   const [account, setAccount] = useState<Account | null>(null);
   const [signIn, setSignIn] = useState(false);
   const [code, setCode] = useState('');
+  const [addressServerId, setAddressServerId] = useState('');
   const [refreshRevision, setRefreshRevision] = useState(0);
   const [phoneCode, setPhoneCode] = useState('');
   const [desktopCode, setDesktopCode] = useState('');
   const [browserCode, setBrowserCode] = useState('');
-  const [enrollment, setEnrollment] = useState<{ name: string; approved: boolean; denied: boolean } | null>(null);
+  const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(true);
@@ -68,6 +70,7 @@ export function ConnectAccount() {
       const value = await api('/account'); setAccount(value); setSignIn(false);
       const pending = new URL(window.location.href).searchParams.get('code') ?? '';
       setCode(pending);
+      setAddressServerId(new URL(window.location.href).searchParams.get('server') ?? '');
       setPhoneCode(new URL(window.location.href).searchParams.get('phone') ?? '');
       setDesktopCode(new URL(window.location.href).searchParams.get('desktop') ?? '');
       setRefreshRevision(value => value + 1);
@@ -84,12 +87,20 @@ export function ConnectAccount() {
     finally { setBusy(false); }
   };
   const computers = account?.servers.filter(s => !s.revoked) ?? [];
+  const setupServer = computers.find(server => server.id === (enrollment?.serverId ?? addressServerId));
+  const setupEnrollment = enrollment ?? (addressServerId && setupServer ? { name: setupServer.name, approved: true, denied: false, serverId: setupServer.id } : null);
+  useEffect(() => {
+    if (!setupEnrollment?.approved || !setupServer?.browserUrl || setupServer.live || refreshing || busy || error
+      || (enrollment?.expiresAt && enrollment.expiresAt <= Date.now())) return;
+    const timer = setTimeout(() => void refresh(), 3000);
+    return () => clearTimeout(timer);
+  }, [setupEnrollment?.approved, setupServer?.browserUrl, setupServer?.live, refreshing, busy, error, enrollment?.expiresAt, refresh]);
   const devices = account?.devices.filter(d => !d.revoked) ?? [];
   const online = computers.filter(s => s.live).length;
   const disabled = busy || refreshing;
   return <div className={`wrap ${styles.dashboard}`}>
     <header className={styles.heading}>
-      <div><h1>Your Zana</h1><p className={styles.subtitle}>Your agents and projects, reachable anywhere.</p></div>
+      <div><h1>{code || addressServerId ? 'Set up remote access' : 'Your Zana'}</h1><p className={styles.subtitle}>{code || addressServerId ? 'Connect this computer, choose its address, and check when it’s ready.' : 'Your agents and projects, reachable anywhere.'}</p></div>
       {account && <form action="/api/auth/logout/" method="post"><button className="zcc-btn zcc-btn-ghost zcc-btn-sm" type="submit"><Icon name="logout" />Sign out</button></form>}
     </header>
     {error && <div className={styles.error} role="alert"><span>{error}</span><button className="zcc-btn" disabled={disabled} onClick={() => void refresh()}>Try again</button></div>}
@@ -105,6 +116,9 @@ export function ConnectAccount() {
       {!desktopCode && phoneCode && <PhoneSignIn key={refreshRevision} code={phoneCode} api={api} onError={handleError} />}
       {!desktopCode && !phoneCode && <>
       {browserCode && <BrowserSignIn code={browserCode} api={api} onError={handleError} />}
+      {setupEnrollment && <ComputerEnrollment enrollment={setupEnrollment} computers={computers} domain={account.domain} api={api} disabled={disabled} onApprove={approved => void action('/device/approve', { code, approved })} onChanged={refresh} onError={handleError} />}
+      {addressServerId && !setupEnrollment && <section role="alert"><h2>This computer is no longer available</h2><p>Return to Remote access in the desktop app and sign in again.</p></section>}
+      {!code && !addressServerId && <>
       <div className={styles.instancePanel}>
         <Panel title="Zana instances" count={computers.length} icon="computer" description="Open your personal address to reach your agents and projects." actions={
           <button className="zcc-btn zcc-btn-ghost zcc-btn-sm" aria-label="Refresh" title="Refresh devices and execution machines" disabled={disabled} onClick={() => void refresh()}><Icon name="refresh" className={refreshing ? styles.spinning : ''} /><span>{refreshing ? 'Refreshing…' : 'Refresh'}</span></button>
@@ -121,11 +135,6 @@ export function ConnectAccount() {
         ? <details className={styles.instanceSetup}><summary>Create a separate Zana instance <Icon name="chevron" className={styles.chevron} /></summary><ComputerCode api={api} onError={handleError} onChanged={refresh} domain={account.domain ?? 'zana-ide.com'} computers={computers} /></details>
         : <ComputerCode api={api} onError={handleError} onChanged={refresh} domain={account.domain ?? 'zana-ide.com'} computers={computers} />)}
       <SlackLink computers={computers} />
-      {enrollment && <section className={styles.approval} aria-labelledby="connect-approval">
-        <span className={styles.panelIcon}><Icon name={enrollment.approved ? 'check' : 'computer'} /></span><div><p className={styles.eyebrow}>Computer connection</p><h2 id="connect-approval">{enrollment.denied ? 'Computer declined' : enrollment.approved ? 'Computer approved' : `Connect ${enrollment.name}?`}</h2>
-        {enrollment.approved || enrollment.denied ? <p>Return to the desktop app.</p> : <><p>Approve only if you started this request from Zana on this computer. Paired phones on your account will be able to use its agents and projects.</p><div className={styles.actions}><button className="zcc-btn zcc-btn-primary" disabled={disabled} onClick={() => void action('/device/approve', { code, approved: true })}>Approve computer <Icon name="check" /></button><button className="zcc-btn zcc-btn-ghost" disabled={disabled} onClick={() => void action('/device/approve', { code, approved: false })}>Decline</button></div></>}
-        </div>
-      </section>}
       {account.domain && !browserCode && <AddressPicker computers={computers} domain={account.domain} api={api} onChanged={refresh} onError={handleError} disabled={disabled} />}
       <dl className={styles.overview} aria-label="Device overview">
         <div><dt><Icon name="computer" />Computers</dt><dd>{computers.length}</dd></div>
@@ -144,6 +153,7 @@ export function ConnectAccount() {
         <ol><li><span>1</span><div><h3>Open Zana on your computer</h3><p>Choose the computer that will keep your shared Zana running. Other computers join it from Settings → Machines.</p><a className={styles.textLink} href="/download/">Download Zana <Icon name="arrow" /></a></div></li><li><span>2</span><div><h3>Connect your account</h3><p>In the desktop app, open <strong>Settings → Remote access</strong> and paste the connect code above.</p></div></li><li><span>3</span><div><h3>Pair your phone</h3><p>Open <strong>Zana Mobile</strong>, continue with GitHub, approve your phone, and choose your computer. Works over Wi-Fi or cellular internet.</p></div></li></ol>
       </details>
       </div>
+      </>}
       </>}
       <p className={styles.footnote}><Icon name="shield" />You’re in control. Disconnect a computer or revoke a phone’s access at any time.</p>
     </>}

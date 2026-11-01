@@ -316,8 +316,12 @@ it('resolves Windows pnpm to its exe or to the script its cmd shim runs, in PATH
     const npm = pnpmDirectory(root, 'npm', { 'pnpm.cmd': NPM_SHIM });
     const exe = pnpmDirectory(root, 'exe', { 'pnpm.exe': '' });
     const legacy = pnpmDirectory(root, 'legacy', { 'pnpm.cmd': '@"%~dp0\\node_modules\\pnpm\\bin\\pnpm.cjs" %*\r\n' });
+    // Real Corepack shim captured on Windows from `corepack enable` (%~dp0\node_modules\corepack\dist\pnpm.js):
+    const corepackShim = '@SETLOCAL\r\n@IF EXIST "%~dp0\\node.exe" (\r\n  "%~dp0\\node.exe"  "%~dp0\\node_modules\\corepack\\dist\\pnpm.js" %*\r\n) ELSE (\r\n  @SET PATHEXT=%PATHEXT:;.JS;=;%\r\n  node  "%~dp0\\node_modules\\corepack\\dist\\pnpm.js" %*\r\n)\r\n';
+    const corepack = pnpmDirectory(root, 'corepack', { 'pnpm.cmd': corepackShim });
     const unknown = pnpmDirectory(root, 'unknown', { 'pnpm.cmd': '@pnpm-launcher.exe %*\r\n' });
     expect(windowsPnpm(`${empty};"${npm}";${exe}`)).toEqual([process.execPath, join(npm, 'node_modules', 'pnpm', 'bin', 'pnpm.mjs')]);
+    expect(windowsPnpm(corepack)).toEqual([process.execPath, join(corepack, 'node_modules', 'corepack', 'dist', 'pnpm.js')]);
     expect(windowsPnpm(`${exe};${npm}`)).toEqual([join(exe, 'pnpm.exe')]);
     expect(windowsPnpm(`;${legacy}`)).toEqual([process.execPath, join(legacy, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')]);
     expect(windowsPnpm(unknown)).toEqual(['pnpm']);
@@ -898,6 +902,7 @@ function fakeAdapter(overrides: Record<string, unknown> = {}) {
     resolveEnablement: vi.fn(() => ({ enabled: true, source: 'test' })),
     deriveReviewTarget: vi.fn(() => ({ oid: OID, base: BASE })),
     checkTinynodVersion: vi.fn(() => ({ ok: true, version: '2.5.0' })),
+    ensureTinynodGateway: vi.fn(() => ({ ok: true, refreshed: false })),
     acquireReviewLock: vi.fn(() => lock),
     installAbortCleanup: vi.fn(() => cleanup),
     withRepoIdentityEnv: vi.fn((env: object) => ({ ...env, LOG_LEVEL: 'warn' })),
@@ -965,6 +970,20 @@ describe('prepareTinynodReview', () => {
     const context = base(adapter);
     expect(prepareTinynodReview(context as never)).toBeNull();
     expect(context.log).toHaveBeenCalledWith(expect.stringContaining(text));
+  });
+
+  it('refreshes TinyNod credentials before the enabled review', () => {
+    const { adapter } = fakeAdapter({ ensureTinynodGateway: () => ({ ok: true, refreshed: true }) });
+    const context = base(adapter);
+    expect(prepareTinynodReview(context as never)).not.toBeNull();
+    expect(context.log).toHaveBeenCalledWith('pre-push: tinynod review: refreshed DevBar gateway token');
+  });
+
+  it('skips the advisory review when the TinyNod gateway remains unavailable', () => {
+    const { adapter } = fakeAdapter({ ensureTinynodGateway: () => ({ ok: false, reason: 'gateway unavailable' }) });
+    const context = base(adapter);
+    expect(prepareTinynodReview(context as never)).toBeNull();
+    expect(context.log).toHaveBeenCalledWith('pre-push: tinynod review skipped: gateway unavailable');
   });
 
   it('never throws', () => {

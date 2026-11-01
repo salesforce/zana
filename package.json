@@ -1,7 +1,7 @@
 {
   "name": "zana-command-center",
   "productName": "Zana",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "private": true,
   "description": "Zana Command Center — multi-project terminal hub for Claude Code sessions",
   "author": "grebmann",
@@ -30,7 +30,9 @@
     "build": "node scripts/build-electron.mjs",
     "build:all": "turbo run build",
     "preview": "electron-vite preview",
+    "gen:seti-icons": "node scripts/generate-seti-icons.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "preverify:fast": "pnpm --filter zcc-plugin-slack-bridge-2ff2 package",
     "verify:fast": "pnpm run typecheck && pnpm exec vitest run --changed origin/main && pnpm exec vitest run $(fd -e ts 'guard\\.test')",
     "verify:full": "pnpm run typecheck && pnpm exec vitest run && pnpm exec vitest run --config plugins/tasks/vitest.config.ts && pnpm --dir plugins/provider-pi exec vitest run --config vitest.config.ts && pnpm exec vitest run --config vitest.release-coverage.config.ts",
     "test": "vitest run",
@@ -81,7 +83,7 @@
     "node-pty": "1.2.0-beta.15",
     "smol-toml": "^1.7.0",
     "ws": "^8.21.3",
-    "zod": "^4.0.0"
+    "zod": "^4.6.6"
   },
   "optionalDependencies": {
     "microsandbox": "0.6.10"
@@ -102,10 +104,10 @@
     "@vitest/coverage-v8": "^4.1.10",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
-    "electron": "^43.4.0",
+    "electron": "^43.8.1",
     "electron-builder": "^26.15.3",
     "electron-vite": "^6.0.0-beta.1",
-    "happy-dom": "^20.10.6",
+    "happy-dom": "^21.0.4",
     "js-yaml": "^4.1.0",
     "proper-lockfile": "^4.1.2",
     "qrcode-terminal": "^0.12.0",

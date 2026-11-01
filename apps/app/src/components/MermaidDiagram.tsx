@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { ChevronDown, Code2, Download, Expand, FileImage, Minus, Plus, RotateCcw, X } from 'lucide-react';
 import { rasterizeSvgString, downloadBlob } from '../lib/mermaidExport.js';
 import { mermaidSvgLayout } from '../lib/mermaid-svg-layout.js';
@@ -201,11 +201,14 @@ export const MermaidDiagram = memo(function MermaidDiagram({
         <pre className="inbox-md-code inbox-mermaid-source">{code}</pre>
       ) : (
         // mermaid output is its own trusted SVG (securityLevel 'strict'
-        // sanitizes the diagram source); inject it as markup. Aspect-ratio
-        // on the frame is the layout lock: the SVG cannot change the box.
+        // sanitizes the diagram source); inject it as markup. The frame owns
+        // sizing; thread CSS also bounds it by natural width and preview height.
         <div
           className={`inbox-mermaid-frame${layout.aspectRatio ? ' is-sized' : ''}`}
-          style={layout.aspectRatio ? { aspectRatio: layout.aspectRatio } : undefined}
+          style={layout.aspectRatio ? {
+            aspectRatio: layout.aspectRatio,
+            '--mermaid-intrinsic-width': `${layout.intrinsicWidth}px`
+          } as CSSProperties : undefined}
           dangerouslySetInnerHTML={{ __html: layout.svg }}
         />
       )}

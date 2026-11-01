@@ -90,3 +90,6 @@ export type {
   ParseDeepLinkOptions,
   ResolveDeepLinkChannelInput
 } from './deep-link.js';
+
+export { parseDesktopBrowserEvaluateRequest } from './browser.js';
+export type { DesktopBrowserEvaluateRequest, DesktopBrowserPageMessage } from './browser.js';

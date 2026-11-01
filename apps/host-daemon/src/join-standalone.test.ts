@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -272,24 +272,27 @@ describe('standalone joined-host protocol', () => {
 // Source-only verification can opt out of rebuilding generated bundles.
 describe.skipIf(process.env.ZCC_SKIP_JOIN_BUNDLE_TESTS === '1')('generated standalone bundle', () => {
   let run: typeof runJoinStandalone;
+  let shim: { PROTOCOL_VERSION: number; runJoinStandalone: typeof runJoinStandalone };
   beforeAll(async () => {
     const out = await mkdtemp(join(tmpdir(), 'zcc-standalone-build-'));
     try {
-      const build = spawnSync(process.execPath, ['apps/host-daemon/scripts/build-join.mjs', '--outfile', join(out, 'join.mjs')],
+      const build = spawnSync(process.execPath, ['apps/host-daemon/scripts/build-join.mjs', '--outfile', join(out, 'dist', 'join.mjs')],
         { cwd: new URL('../../../', import.meta.url), timeout: 60_000, encoding: 'utf8' });
       expect(build.status, build.stderr).toBe(0);
-      const bundle = await import(/* @vite-ignore */ pathToFileURL(join(out, 'join-standalone.mjs')).href);
+      const bundle = await import(/* @vite-ignore */ pathToFileURL(join(out, 'dist', 'join-standalone.mjs')).href);
       expect(bundle.PROTOCOL_VERSION).toBe(HOST_RPC_PROTOCOL_VERSION);
       run = bundle.runJoinStandalone;
-      expect(await readFile(new URL('./join-standalone.mjs', import.meta.url), 'utf8')).toContain("from '../dist/join-standalone.mjs'");
+      const shimSource = await readFile(new URL('./join-standalone.mjs', import.meta.url), 'utf8');
+      expect(shimSource).toContain("from '../dist/join-standalone.mjs'");
+      // Keep the production shim's exact relative import, but resolve it to this
+      // private fresh bundle rather than shared dist output or Vitest's cache.
+      await mkdir(join(out, 'src'));
+      const shimPath = join(out, 'src', 'join-standalone.mjs');
+      await writeFile(shimPath, shimSource);
+      shim = await import(/* @vite-ignore */ pathToFileURL(shimPath).href);
     } finally { await rm(out, { recursive: true, force: true }); }
   }, 60_000);
   it('the source shim re-exports the generated bundle and stays inert when imported', async () => {
-    // The shim imports ../dist; build the default (gitignored) output it points at.
-    const build = spawnSync(process.execPath, ['apps/host-daemon/scripts/build-join.mjs'],
-      { cwd: new URL('../../../', import.meta.url), timeout: 60_000, encoding: 'utf8' });
-    expect(build.status, build.stderr).toBe(0);
-    const shim = await import('./join-standalone.mjs');
     expect(shim.PROTOCOL_VERSION).toBe(HOST_RPC_PROTOCOL_VERSION);
     expect(typeof shim.runJoinStandalone).toBe('function');
   }, 60_000);

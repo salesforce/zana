@@ -35,6 +35,20 @@ export function withBlankedSessionCallbacks(
 }
 
 /**
+ * Drop every per-session callback var from a child env copied from `process.env`
+ * (mutates in place). When the app itself runs inside a Zana session (dev from a
+ * Zana tab, or E2E from an agent shell) the ambient env carries THAT session's
+ * `ZCC_MCP_URL` / hook URLs. A launch that does not set its own value for a key
+ * (codex carries MCP as a `-c` arg, so it never sets `ZCC_MCP_URL`) would hand
+ * the child the parent session's endpoint, and anything in the child that reads
+ * the var would call back as the wrong session. Each launch re-sets exactly the
+ * keys it owns after this runs. Idempotent.
+ */
+export function stripInheritedSessionCallbacks(env: Record<string, string | undefined>): void {
+  for (const key of SESSION_CALLBACK_ENV_KEYS) delete env[key];
+}
+
+/**
  * Per-session identity vars. Never put on the tmux argv (`-e` values are visible
  * in `ps`); delivered to the pane through a 0600 env file instead, so a 2nd+ pane
  * in a long-lived tmux server cannot inherit the first session's identity.

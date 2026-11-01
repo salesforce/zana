@@ -73,3 +73,22 @@ describe('bundled plugin ownership', () => {
     expect(reconcileBundledPluginMetadata(row(), '/new', { ...manifest, branding: {} }, 10).icon).toBe('Puzzle');
   });
 });
+
+
+describe('externalized plugin ownership', () => {
+  const install = (sourceKind: PluginSourceKind, source: string) => assertBundledPluginInstall({ id: 'salesforce', sourceKind, source, development: false });
+  it('accepts the independent repository, local development and retained legacy registrations', () => {
+    expect(() => install('git', 'git:https://github.com/grebmann1/zcc-plugin-salesforce.git@runtime')).not.toThrow();
+    expect(() => install('git', 'git:https://github.com/grebmann1/zcc-plugin-salesforce@v0.1.0')).not.toThrow();
+    expect(() => install('path', 'path:/local/salesforce')).not.toThrow();
+    expect(() => install('builtin', 'builtin:salesforce')).not.toThrow();
+    expect(bundledPluginById('salesforce')).toBeUndefined();
+  });
+  it.each([
+    ['git', 'git:https://github.com/attacker/salesforce.git@runtime'],
+    ['git', 'git:https://github.com/grebmann1/zcc-plugin-salesforce.git.evil@runtime'],
+    ['npm', 'npm:salesforce'], ['builtin', 'builtin:docs']
+  ] as [PluginSourceKind, string][])('rejects identity takeover from %s %s', (kind, source) => {
+    expect(() => install(kind, source)).toThrow(/reserved/);
+  });
+});

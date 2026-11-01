@@ -143,6 +143,7 @@ export interface ScheduleRun {
   retryOf?: string;
   resolvedBy?: string;
   dismissedAt?: string;
+  conversation?: { profile: LaunchProfileId; id?: string; cwd: string; startedAt: string };
 }
 
 export interface ScheduledTask {

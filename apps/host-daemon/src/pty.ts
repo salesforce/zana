@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { readdir as readdirAsync, stat as statAsync, unlink as unlinkAsync } from 'node:fs/promises';
-import { dirname, join, sep } from 'node:path';
+import { dirname, isAbsolute, join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { isWithin } from '@zana-ai/zcc-path-confine';
 import type { LaunchProfileId, TerminalSession, AppConfig, ProjectSettings, ProjectRemote, InboxNotifyLevel, Persona, SessionCohort, SessionWorktree, HarnessModelRoutingV1 } from '@zana-ai/zcc-domain/product';
@@ -24,6 +24,7 @@ import {
   SESSION_CALLBACK_ENV_KEYS,
   SESSION_IDENTITY_ENV_KEYS,
   sessionEnvFilePath,
+  stripInheritedSessionCallbacks,
   withBlankedSessionCallbacks,
   writeSessionEnvFile
 } from './tmux-session-env.js';
@@ -40,6 +41,12 @@ import {
   type ExecutionSession
 } from './harness/execution-environment.js';
 import { personaArgs_build } from './harness/claude/provider.js';
+import {
+  planAutomatedClaudeLaunch,
+  removeAutomatedConfigDir,
+  sweepStaleAutomatedConfigDirs
+} from './harness/claude/automated-isolation.js';
+import { resolveZccDataDir } from './host-config.js';
 import { shellQuote } from './harness/shell-quote.js';
 import { cleanExtraArgs, mergeAllowedTools, mergeDisallowedTools } from './harness/argv-utils.js';
 import {
@@ -510,6 +517,34 @@ export class PtyManager extends EventEmitter {
   private sessionMcpConfigFiles = new Map<string, string>();
   /** Tmux identity env files not yet consumed by the pane; unlinked on exit (the pane normally deletes it first). */
   private sessionEnvFiles = new Map<string, string>();
+  /** Per-run isolated CLAUDE_CONFIG_DIR of unattended Claude sessions, by session id; removed in {@link finalizeExit}. */
+  private automatedConfigDirs = new Map<string, string>();
+  private automatedConfigSwept = false;
+
+  /** Prepare an unattended Claude run's isolated config dir. Also sweeps stale leaves once per process. */
+  private planAutomatedClaude(sessionId: string, cwd: string): ReturnType<typeof planAutomatedClaudeLaunch> {
+    const plan = planAutomatedClaudeLaunch({ ownerId: sessionId, cwd });
+    this.automatedConfigDirs.set(sessionId, plan.configDir);
+    if (!this.automatedConfigSwept) {
+      this.automatedConfigSwept = true;
+      sweepStaleAutomatedConfigDirs({
+        dataDir: resolveZccDataDir(),
+        liveOwnerIds: new Set(this.automatedConfigDirs.keys())
+      });
+    }
+    return plan;
+  }
+
+  private releaseAutomatedConfigDir(sessionId: string): void {
+    const leaf = this.automatedConfigDirs.get(sessionId);
+    if (!leaf) return;
+    this.automatedConfigDirs.delete(sessionId);
+    try {
+      removeAutomatedConfigDir(resolveZccDataDir(), leaf);
+    } catch {
+      /* best-effort — swept by age on a later launch */
+    }
+  }
 
   /** Run scheduled commands through a native supervisor with stable child PID ownership. */
   private scheduledSupervisor(command: string, args: string[]): { command: string; args: string[] } {
@@ -824,7 +859,25 @@ export class PtyManager extends EventEmitter {
     }
   }
 
-  create(opts: {
+  /**
+   * Spawn a local session. A throw before the PTY exists never reaches
+   * {@link finalizeExit}, so any automated config dir registered during the
+   * failed call is released here instead of leaking for the process lifetime.
+   */
+  create(opts: Parameters<PtyManager['createUnguarded']>[0]): TerminalSession {
+    const before = new Set(this.automatedConfigDirs.keys());
+    try {
+      return this.createUnguarded(opts);
+    } catch (error) {
+      for (const id of [...this.automatedConfigDirs.keys()]) {
+        if (!before.has(id) && !this.live.has(id)) this.releaseAutomatedConfigDir(id);
+      }
+      throw error;
+    }
+  }
+
+  /** @internal Use {@link create}; this is its unguarded body. */
+  createUnguarded(opts: {
     /** Main coordinator-owned identity, allocated before authorization/commit. */
     preallocatedSessionId?: string;
     projectId: string;
@@ -895,6 +948,14 @@ export class PtyManager extends EventEmitter {
     autonomous?: boolean;
     /** Main-owned Team launch semantics; renderer cannot set this field. */
     coordinationMode?: import('@zana-ai/zcc-domain/product').TeamCoordinationMode;
+    /**
+     * Absolute paths of the durable coordinator's plan-handoff files (authored
+     * plan plus the host-named plan-correction files). MAIN-only. Each grants an
+     * exact-file `Edit(//abs)` rule (the Claude CLI ignores `Write(path)` rules;
+     * `Edit(path)` covers every file-editing tool) so the coordinator can write
+     * only those files without a broad edit permission.
+     */
+    authoredPlanPaths?: readonly string[];
     /** Opening task already composes persona kickoff, so delayed pty injection must stay off. */
     suppressPersonaInitialPrompt?: boolean;
     /**
@@ -1118,6 +1179,16 @@ export class PtyManager extends EventEmitter {
     // name the exact tab to close — without it, callbacks can only target
     // the project, not the specific session.
     const sessionId = opts.preallocatedSessionId ?? randomUUID();
+    // Unattended Claude runs (headless / scheduled / autonomous) load only a
+    // Zana-generated auth+gateway settings file from a per-run CLAUDE_CONFIG_DIR
+    // instead of the user's full hooks/plugins/project settings. A failed
+    // automated admission throws before any interactive launch state is built.
+    const automatedClaude =
+      caps.injectsClaudeMcpConfig &&
+      (opts.headless || opts.scheduled || opts.autonomous) &&
+      (!opts.environment || opts.environment === 'local' || opts.environment === 'runtime-host')
+        ? this.planAutomatedClaude(sessionId, opts.cwd)
+        : null;
     // The per-session zcc-inbox MCP server URL, with the project + session
     // identity baked into the path so callbacks (inbox_push, hooks) can stamp the
     // exact originating terminal. Null until the local MCP server has a base URL.
@@ -1557,13 +1628,21 @@ export class PtyManager extends EventEmitter {
           'mcp__zcc-inbox__execution.delivery.pull',
           'mcp__zcc-inbox__execution.delivery.ack',
           'mcp__zcc-inbox__execution.event',
-          'mcp__zcc-inbox__execution.artifact.put',
-          'mcp__zcc-inbox__execution.artifact.list',
           'mcp__zcc-inbox__execution.complete'
       ]
       : [];
     const jobTeamArgs = claudeJobTeamPolicy
       ? ['--disallowedTools', 'AskUserQuestion']
+      : [];
+    // Exact-file plan-authoring grant (`//` = absolute in Claude permission rules).
+    // Deny rules still win over this allow, so it never widens persona/managed policy.
+    // Every path is checked on its own; an unsafe entry is dropped, never widened.
+    const authoredPlanAllow = claudeJobTeamPolicy
+      ? (opts.authoredPlanPaths ?? [])
+          .filter((path) => typeof path === 'string' && isAbsolute(path)
+            && !/[(),*?\[\]]/.test(path)
+            && !path.split(/[\\/]/).includes('..'))
+          .map((path) => `Edit(/${path})`)
       : [];
     // Codex supports native MCP approval configuration via `-c`. Keep ordinary
     // sessions on their configured on-request policy; durable Job Teams get only
@@ -1618,9 +1697,10 @@ export class PtyManager extends EventEmitter {
           ...autonomousArgs,
           ...jobTeamArgs,
            ...lifecycleContribution.args,
+          ...(automatedClaude?.args ?? []),
           ...cleanedExtra
         ],
-        [...inboxAllow, ...(claudeJobTeamPolicy ? jobTeamAllow : [])]
+        [...inboxAllow, ...(claudeJobTeamPolicy ? jobTeamAllow : []), ...authoredPlanAllow]
       ),
       opts.remoteToolProxy && caps.injectsClaudeMcpConfig
         ? [...REMOTE_TOOL_PROXY_DISALLOWED_TOOLS]
@@ -1649,6 +1729,12 @@ export class PtyManager extends EventEmitter {
     // dev, but sanitizing at the source removes the footgun for good. See
     // stripInheritedClaudeSession.
     stripInheritedClaudeSession(env);
+    // Same footgun for Zana's own per-session callback URLs: an app launched from
+    // a Zana tab inherits that tab's ZCC_MCP_URL / hook URLs. A harness that does
+    // not re-set a key below (codex wires MCP via `-c`, not ZCC_MCP_URL) would
+    // otherwise call back into the PARENT session's route, which is not bound to
+    // this session's execution. Every key this launch owns is re-set later.
+    stripInheritedSessionCallbacks(env);
     ensureInteractiveTerminalEnv(env);
     // Per-harness auth env override: merge AFTER stripInheritedClaudeSession (it
     // touches only CLAUDE* session markers, never our auth vars) and AFTER the
@@ -1693,6 +1779,8 @@ export class PtyManager extends EventEmitter {
       env.CLAUDE_CODE_TRUST_ALL_WORKSPACES = '1';
     }
     Object.assign(env, lifecycleContribution.env);
+    // Last, so no ambient or stored value can redirect an isolated run's config dir.
+    if (automatedClaude) Object.assign(env, automatedClaude.env);
     if (mcpConfigPath && mcpServerUrl) {
       // Claude env-substitutes `${ZCC_MCP_URL}` into its `--mcp-config` file at
       // spawn. (codex bakes the same URL directly into `providerMcpArgs` instead,
@@ -1731,7 +1819,10 @@ export class PtyManager extends EventEmitter {
       // 2nd+ tmux-backed OpenCode agent would inherit the 1st's baked-in session URL
       // and mis-route its inbox callbacks. Undefined (omitted) for every non-OpenCode
       // launch. See providerMcpEnv above.
-      OPENCODE_CONFIG_CONTENT: env.OPENCODE_CONFIG_CONTENT
+      OPENCODE_CONFIG_CONTENT: env.OPENCODE_CONFIG_CONTENT,
+      // A tmux pane inherits the server's env, not this client's: hand the
+      // isolated config dir over explicitly (omitted for every other launch).
+      ...(automatedClaude ? automatedClaude.env : {})
     };
     // The provider MCP-config-file env var (OpenCode's `OPENCODE_CONFIG`) is
     // session-scoped exactly like the vars above — its file carries this session's
@@ -2179,6 +2270,7 @@ export class PtyManager extends EventEmitter {
         /* best-effort — the pane already consumed it */
       }
     }
+    this.releaseAutomatedConfigDir(sessionId);
     // Unlink this session's provider MCP config file (OpenCode's `OPENCODE_CONFIG`),
     // if we wrote one. Best-effort; a crash orphan is swept by age on next write.
     const mcpConfigFile = this.sessionMcpConfigFiles.get(sessionId);
@@ -2641,6 +2733,7 @@ export class PtyManager extends EventEmitter {
       TERM: 'xterm-256color'
     };
     spawnEnv.PATH = augmentPath(spawnEnv.PATH ?? process.env.PATH);
+    stripInheritedSessionCallbacks(spawnEnv);
     ensureInteractiveTerminalEnv(spawnEnv);
 
     (this.hostServices.prepareNativePty ?? ensureNodePtySpawnHelperExecutable)();

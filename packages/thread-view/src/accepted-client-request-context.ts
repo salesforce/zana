@@ -26,8 +26,8 @@ export const EMPTY_ACCEPTED_CLIENT_REQUEST_CONTEXT: AcceptedClientRequestContext
 export function buildRejectedClientRequestById(
   context: AcceptedClientRequestContext,
   events: readonly ThreadEventWithMetaLike[],
-): Map<ClientTurnRequestId, EventMeta> {
-  const rejectedRequestById = new Map<ClientTurnRequestId, EventMeta>();
+): Map<ClientTurnRequestId, { meta: EventMeta; reason: string }> {
+  const rejectedRequestById = new Map<ClientTurnRequestId, { meta: EventMeta; reason: string }>();
   for (const { event, meta } of [
     ...events,
     ...context.rejectedClientRequestEvents,
@@ -36,7 +36,7 @@ export function buildRejectedClientRequestById(
       event.type === "client/turn/rejected" &&
       !rejectedRequestById.has(event.requestId)
     ) {
-      rejectedRequestById.set(event.requestId, meta);
+      rejectedRequestById.set(event.requestId, { meta, reason: event.reason });
     }
   }
   return rejectedRequestById;

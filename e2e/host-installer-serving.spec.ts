@@ -11,6 +11,9 @@ test('built Electron serves the complete machine installer without source assets
   expect(script.startsWith('#!/bin/sh')).toBe(true);
   expect(script).toContain('--join-code');
   expect(script).toContain('--host-daemon-port');
+  expect(script).toContain('export ZCC_PROJECT_CATALOGUE_DATA_DIR');
+  expect(script).toContain('<key>ZCC_PROJECT_CATALOGUE_DATA_DIR</key>');
+  expect(script).toContain('Environment=ZCC_PROJECT_CATALOGUE_DATA_DIR=');
   expect(Buffer.byteLength(script)).toBe(Number(response.headers()['content-length']));
   const syntax = spawnSync('/bin/sh', ['-n'], { input: script, encoding: 'utf8' });
   expect(syntax.status, syntax.stderr).toBe(0);

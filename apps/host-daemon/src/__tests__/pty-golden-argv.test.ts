@@ -1,4 +1,22 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+
+// Automated launches create a per-run Claude config dir under the Zana data dir;
+// keep those out of the real user's ~/.zcc.
+const goldenDataDir = mkdtempSync(join(tmpdir(), 'pty-golden-'));
+// Isolation only applies when the isolated dir can authenticate, so pin an API
+// key to keep the snapshot independent of the machine's real Claude login.
+const priorEnv = { ZCC_DATA_DIR: process.env.ZCC_DATA_DIR, ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY };
+process.env.ZCC_DATA_DIR = goldenDataDir;
+process.env.ANTHROPIC_API_KEY = 'golden-test-key';
+afterAll(() => {
+  rmSync(goldenDataDir, { recursive: true, force: true });
+  for (const [key, value] of Object.entries(priorEnv)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+});
 
 /**
  * GOLDEN-ARGV REGRESSION NET for the harness-seam extraction.
@@ -90,7 +108,6 @@ vi.mock('../harness/claude/binary-identity.js', () => ({
 }));
 
 import { PtyManager, applyHeapCeiling } from '../pty.js';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type {
   AppConfig,
@@ -502,6 +519,24 @@ describe('golden argv — auto-mode + overseer variants', () => {
   });
 });
 
+describe('golden argv — durable job-team allowlist is result-only', () => {
+  beforeEach(() => {
+    spawns.length = 0;
+  });
+
+  it('grants unit-result tools but not execution.artifact.put/list', () => {
+    const mgr = new PtyManager();
+    mgr.setMcpBaseUrl(MCP_BASE);
+    mgr.create({
+      projectId: 'proj1', profile: 'claude', cwd: '/tmp/work', cols: 80, rows: 24,
+      config: BASE_CONFIG, autonomous: true, coordinationMode: 'job-team'
+    });
+    const joined = spawns[0].args.join(' ');
+    expect(joined).toContain('mcp__zcc-inbox__execution.work.complete');
+    expect(joined).not.toContain('execution.artifact');
+  });
+});
+
 describe('golden argv — caller-pinned session id', () => {
   beforeEach(() => {
     spawns.length = 0;
@@ -558,4 +593,88 @@ describe('golden command — remote buildRemoteCmd matrix', () => {
       });
     }
   }
+});
+
+describe('inherited parent-session callback env', () => {
+  // The app can itself run inside a Zana session (dev from a Zana tab, E2E from
+  // an agent shell). Its ambient ZCC_*_URL vars name THAT session. A harness that
+  // does not re-set a key (codex wires MCP with `-c`, never ZCC_MCP_URL) must not
+  // hand the child the parent's endpoint: the fake job-team codex cohort called
+  // the parent route and every bound execution tool returned "session is not
+  // bound to this execution".
+  const PARENT = 'http://127.0.0.1:61000/mcp/parent-proj/parent-session/parent-cred';
+  const AMBIENT = {
+    ZCC_MCP_URL: PARENT,
+    ZCC_HOOK_URL: `${PARENT}/hook`,
+    ZCC_NOTIFY_URL: `${PARENT}/notify`,
+    ZCC_NATIVETOOL_URL: `${PARENT}/nativetool`,
+    ZCC_TOOLACTIVITY_URL: `${PARENT}/toolactivity`
+  };
+
+  function withAmbient(run: () => void): void {
+    const env = process.env as Record<string, string | undefined>;
+    const saved = Object.fromEntries(Object.keys(AMBIENT).map((k) => [k, env[k]]));
+    Object.assign(env, AMBIENT);
+    try {
+      run();
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete env[k];
+        else env[k] = v;
+      }
+    }
+  }
+
+  beforeEach(() => {
+    spawns.length = 0;
+  });
+
+  for (const profile of ['codex', 'shell'] as const) {
+    it(`${profile} never inherits the parent session's callback URLs`, () => {
+      withAmbient(() => {
+        const mgr = new PtyManager();
+        mgr.setMcpBaseUrl(MCP_BASE);
+        const session = mgr.create({
+          projectId: 'proj1', profile, cwd: '/tmp/work', cols: 80, rows: 24, config: BASE_CONFIG
+        });
+        const call = spawns[spawns.length - 1]!;
+        for (const [key, parentValue] of Object.entries(AMBIENT)) {
+          expect(call.env[key], key).not.toBe(parentValue);
+        }
+        expect(call.env.ZCC_MCP_URL).toBeUndefined();
+        expect(call.env.ZCC_SESSION_ID).toBe(session.id);
+        if (profile === 'codex') {
+          const url = call.args.find((arg) => arg.startsWith('mcp_servers.zcc-inbox.url='));
+          expect(url).toContain(`/mcp/proj1/${session.id}/`);
+        }
+      });
+    });
+  }
+
+  it('claude replaces the inherited ZCC_MCP_URL with its own session route', () => {
+    withAmbient(() => {
+      const mgr = new PtyManager();
+      mgr.setMcpBaseUrl(MCP_BASE);
+      const session = mgr.create({
+        projectId: 'proj1', profile: 'claude', cwd: '/tmp/work', cols: 80, rows: 24, config: BASE_CONFIG
+      });
+      const call = spawns[spawns.length - 1]!;
+      expect(call.env.ZCC_MCP_URL).toContain(`${MCP_BASE}/mcp/proj1/${session.id}/`);
+      expect(call.env.ZCC_NOTIFY_URL).toContain(session.id);
+    });
+  });
+
+  it('a remote ssh launch does not carry the parent callback URLs on the local ssh env', () => {
+    withAmbient(() => {
+      const mgr = new PtyManager();
+      mgr.setMcpBaseUrl(MCP_BASE);
+      mgr.create({
+        projectId: 'proj1', profile: 'codex', cwd: '/tmp/work', cols: 80, rows: 24, config: BASE_CONFIG,
+        remote: { host: 'devbox', user: 'sfwork', remotePath: '/home/sfwork/core' }
+      });
+      const call = spawns[spawns.length - 1]!;
+      expect(call.command).toBe('ssh');
+      for (const key of Object.keys(AMBIENT)) expect(call.env[key], key).toBeUndefined();
+    });
+  });
 });

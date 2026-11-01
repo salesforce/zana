@@ -5,6 +5,7 @@ import {
   openPluginTool,
   closeClosableTab,
   closeSecondaryPanel,
+  clampWidth,
   emptySecondaryPanelState,
   INFO_PIN_ID,
   loadSecondaryPanelState,
@@ -51,6 +52,22 @@ describe('thread secondary panel state', () => {
   });
   afterEach(() => {
     if (typeof localStorage !== 'undefined') localStorage.clear();
+  });
+
+  it('clamps width between 288px floor and 70% container max', () => {
+    // Desktop container (1440px): 70% is 1008px
+    expect(clampWidth(500, 1440)).toBe(500);
+    expect(clampWidth(1200, 1440)).toBe(Math.floor(1440 * 0.7));
+    expect(clampWidth(100, 1440)).toBe(288);
+
+    // Compact container (1000px): 70% is 700px
+    expect(clampWidth(800, 1000)).toBe(700);
+    expect(clampWidth(650, 1000)).toBe(650);
+    expect(clampWidth(200, 1000)).toBe(288);
+
+    // Small container (350px): 70% is 245px (< 288px floor), so max is clamped to 288px
+    expect(clampWidth(150, 350)).toBe(288);
+    expect(clampWidth(400, 350)).toBe(288);
   });
 
   it('returns the same width state when the clamp is a no-op', () => {
@@ -468,11 +485,18 @@ describe('openAgentDraft', () => {
 
   it('never touches a started conversation and never persists the draft', () => {
     const started = addClosableTab(emptySecondaryPanelState(), { kind: 'agent', title: 'Chat', threadId: 't1' });
-    const next = openAgentDraft(started, { title: 'Doc', draft: 'Review' });
+    const selection = { version: 1 as const, path: 'README.md', text: 'Private snapshot' };
+    const next = openAgentDraft(started, { title: 'Doc', draft: 'Private unsent request', selection, references: [{ version: 1, label: 'Selection', text: 'Private snapshot' }] });
+    expect(next.tabs[1]?.draftSelection).toEqual(selection);
     expect(next.tabs).toHaveLength(2);
     expect(next.tabs[0]).toMatchObject({ threadId: 't1', title: 'Chat' });
     expect(next.tabs[0]).not.toHaveProperty('draft');
-    const restored = parseSecondaryPanelState(JSON.parse(JSON.stringify(next)));
+    persistSecondaryPanelState('draft-safety', next);
+    const raw = localStorage.getItem(storageKeyForThread('draft-safety'))!;
+    expect(raw).not.toContain('Private');
+    expect(raw).not.toContain('draft');
+    const restored = loadSecondaryPanelState('draft-safety');
+    expect(restored.tabs[0]).toMatchObject({ threadId: 't1', title: 'Chat' });
     expect(restored.tabs[1]).not.toHaveProperty('draft');
     expect(restored.tabs[1]).not.toHaveProperty('draftProjectId');
   });

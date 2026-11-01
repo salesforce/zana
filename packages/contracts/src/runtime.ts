@@ -6,6 +6,7 @@ import { LibraryDocumentRequestSchema } from './library-documents.js';
 import { SHARED_PRODUCT_EVENTS } from './shared-product.js';
 import { z } from 'zod';
 import { ProjectIdSchema, SessionIdSchema, PROJECT_ICONS } from '@zana-ai/zcc-domain';
+import { pluginPackIdentitySchema, pluginPackInstallRequestSchema } from '@zana-ai/zcc-domain';
 import { TerminalRequestCommandSchema, TerminalHostEventSchema } from './terminal-execution.js';
 import { ProjectSettingsPatchSchema } from './project-settings.js';
 import { ProjectMetadataRequestSchema, ProjectCatalogRequestSchema } from './project-metadata-records.js';
@@ -25,7 +26,7 @@ export const PRODUCT_EVENT_SNAPSHOT_CHANNELS: ReadonlySet<string> = new Set([
   'config:onChanged', 'scheduler:onChanged', 'scheduler:groups:onChanged', 'scheduler:onTemplatesChanged', 'goals:onChanged',
   'followups:onChanged', 'personas:onChanged', 'teams:onChanged', 'quickPrompts:onChanged', 'extensions:onChanged'
 ]);
-export const SERVER_RUNTIME_PROTOCOL_VERSION = 16;
+export const SERVER_RUNTIME_PROTOCOL_VERSION = 17;
 const ServerRuntimeProtocolVersionSchema = z.literal(SERVER_RUNTIME_PROTOCOL_VERSION);
 const RequestIdSchema = z.string().uuid();
 const DeadlineSchema = z.string().datetime();
@@ -207,7 +208,9 @@ export const SquadMemberRuntimeRequestSchema = z.object({
   title: z.string().min(1).max(120),
   model: z.string().min(1).max(256).optional(),
   reasoningLevel: z.enum(['none', 'low', 'medium', 'high', 'xhigh', 'ultra', 'max', 'ultracode']).optional(),
-  permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional()
+  permissionMode: z.enum(['accept-edits', 'auto', 'full']).optional(),
+  /** Main-authorized automated catalog selection. Never renderer input. */
+  automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional()
 }).strict();
 export type SquadMemberRuntimeRequest = z.infer<typeof SquadMemberRuntimeRequestSchema>;
 
@@ -410,6 +413,24 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
     operation: z.literal('plugins-list')
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugin-packs-list')
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugin-packs-installed')
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugin-packs-plan'),
+    identity: pluginPackIdentitySchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugin-packs-install'),
+    request: pluginPackInstallRequestSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugin-packs-forget'),
+    identity: pluginPackIdentitySchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('plugins-install'),
     source: z.string().min(1).max(4096)
   }).strict(),
@@ -424,6 +445,11 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('plugins-remove'),
     pluginId: z.string().min(1).max(128)
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('plugins-repair'),
+    pluginId: z.string().min(1).max(128),
+    path: z.string().min(1).max(4096).optional()
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('plugins-reload'),
@@ -521,11 +547,19 @@ export const RuntimeMcpReadySchema = z.object({
   teamJobLaunchEnabled: z.boolean().optional()
 }).strict();
 
+/** Product registry identity, learned after the private terminal transport boots. */
+const RuntimeLocalHostSchema = z.object({
+  type: z.literal('local-host'),
+  protocolVersion: ServerRuntimeProtocolVersionSchema,
+  hostId: z.string().uuid()
+}).strict();
+
 export const ServerRuntimeInboundSchema = z.discriminatedUnion('type', [
   ServerRuntimeStartSchema,
   ServerRuntimeRequestSchema,
   RuntimeStopSchema,
-  RuntimeMcpReadySchema
+  RuntimeMcpReadySchema,
+  RuntimeLocalHostSchema
 ]);
 
 export const RuntimeReadySchema = z.object({
@@ -563,7 +597,8 @@ export const ProjectSettingsChangedMessageSchema = z.object({
 }).strict();
 export const MenubarThreadsChangedMessageSchema = z.object({
   type: z.literal('menubar-threads-changed'),
-  protocolVersion: ServerRuntimeProtocolVersionSchema
+  protocolVersion: ServerRuntimeProtocolVersionSchema,
+  localThreadsWorking: z.boolean()
 }).strict();
 
 const PluginCapabilityMcpServerSchema = z.object({
@@ -606,6 +641,7 @@ export const PluginAppSnapshotSchema = z.object({
   enabled: z.boolean(),
   provenance: z.enum(['builtin', 'direct', 'catalog']),
   sourceKind: z.enum(['builtin', 'path', 'git', 'npm']).optional(),
+  sourceRecovery: z.object({ canLocate: z.boolean(), canSwitchOfficial: z.boolean() }).strict().optional(),
   collection: z.literal('coding-agents').optional(),
   status: z.enum(['running', 'disabled', 'degraded', 'needs-configuration']),
   statusDetail: z.string().max(4096).nullable().optional(),

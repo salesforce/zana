@@ -6,11 +6,16 @@ import {
 } from './components/thread/pickers/thread-model-catalog.js';
 import { ConversationHistoryDialog } from './components/history/ConversationHistoryDialog.js';
 import '@/lib/monaco-loader';
+import './styles/shell-inset.css';
 import { useEffect, useRef } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { Bell, Star } from 'lucide-react';
+import { Bell, PlayCircle, Star } from 'lucide-react';
 import { HelpProvider } from './components/help/HelpProvider.js';
 import { HelpToggle } from './components/help/HelpToggle.js';
+import { HelpMenu } from './components/help/HelpMenu.js';
+import { HelpVideoLibrary } from './components/help/HelpVideoLibrary.js';
+import { useHelpVideos } from './components/help/help-videos-store.js';
+import { InstanceMenu } from './components/InstanceMenu.js';
 import { Sidebar } from './components/Sidebar.js';
 import { MobileAgentNavigation } from './components/MobileAgentNavigation.js';
 import {
@@ -85,10 +90,12 @@ import {
 } from './store.js';
 import { useFavoriteCount } from './hooks/useAgentCards.js';
 import { useCompactLayout } from './hooks/useCompactLayout.js';
+import { useIsCompactViewport } from './hooks/useIsCompactViewport.js';
 import { focusInboxEntry } from './lib/inboxNavigation.js';
 import { projectDefaultLaunch } from './lib/launchProfile.js';
 import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
 import { ShellTitlebarTitle } from './components/TitlebarProjectButton.js';
+import { TitlebarThreadTabs } from './components/TitlebarThreadTabs.js';
 import { keepsProjectFocusRail, resolveShellLayout, shellTitlebarLabel } from './lib/shellLayout.js';
 import { installShortcuts } from './shortcuts.js';
 import { isLibraryPluginModule } from './lib/libraryPlugin.js';
@@ -224,6 +231,7 @@ export function App() {
 }
 
 function AppShell() {
+  const threadTabsEnabled = useData((s) => s.threadTabsEnabled);
   useRouteSync();
   useEffect(installAgentBoardMoves, []);
   const init = useData((s) => s.init);
@@ -248,6 +256,7 @@ function AppShell() {
   const selectedProjectId = useUi((s) => s.selectedProjectId);
   const selectedTabId = useUi((s) => s.selectedTabId);
   const projects = useData((s) => s.projects);
+  const projectsLoaded = useData((s) => s.configLoaded);
   const terminals = useData((s) => s.terminals);
   const suggestionsEnabled = useData((s) => s.suggestionsEnabled);
   useEffect(() => {
@@ -318,12 +327,13 @@ function AppShell() {
     : null;
 
   // A stale persisted focus must not strand the main workspace after a project
-  // is removed in another window.
+  // is removed in another window. Before the list loads every project looks
+  // removed: a project window's route lock and this exit would bounce forever.
   useEffect(() => {
-    if (focusedProjectId && !projects.some((project) => project.id === focusedProjectId)) {
+    if (projectsLoaded && focusedProjectId && !projects.some((project) => project.id === focusedProjectId)) {
       useUi.getState().exitProjectFocus();
     }
-  }, [focusedProjectId, projects]);
+  }, [focusedProjectId, projects, projectsLoaded]);
 
   // Reflect the current project + active tab into the OS window title so
   // ⌘-Tab / Mission Control disambiguates Zana across projects.
@@ -544,7 +554,8 @@ function AppShell() {
           if (tab?.pinned) return;
           // ⌘W hides the active tab (does NOT kill the process): a live session
           // detaches to the background, an exited tombstone is dismissed.
-          // Terminating is only via the tab's right-click → Delete. ⌘⇧T reopens.
+          // Terminating is only via the tab's right-click → Archive (Delete for
+          // a plain shell). ⌘⇧T reopens.
           if (tab && tab.status !== 'exited') {
             data.hideTerminal(activeId, projectId);
           } else {
@@ -747,7 +758,7 @@ function AppShell() {
     <div
       className={`app-shell nav-${nav} shell-rail-${shellLayout.rail} ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''} scoped-no-list ${
         updateBannerVisible ? 'has-update-banner' : ''
-      }`}
+      }${!mobileNavigation.isCompact ? ' shell-inset' : ''}`}
       data-mobile={mobileNavigation.isCompact}
       data-platform={shellChrome.platform}
       data-fullscreen={shellChrome.isFullScreen}
@@ -758,12 +769,15 @@ function AppShell() {
         {mobileNavigation.isCompact && <MobileSettingsBack hidden={mobileNavigation.drawerOpen} />}
         {/* Keep portal targets mounted while independent viewport subscribers update. */}
         <div id={MOBILE_THREAD_TITLE_ID} className="mobile-thread-title-slot" />
-        <ShellTitlebarTitle
-          project={titlebarProject}
-          label={titlebarLabel}
-          compact={mobileNavigation.isCompact}
-        />
-        <HelpToggle />
+        {threadTabsEnabled && !mobileNavigation.isCompact ? <TitlebarThreadTabs /> : (
+          <ShellTitlebarTitle
+            project={titlebarProject}
+            label={titlebarLabel}
+            compact={mobileNavigation.isCompact}
+          />
+        )}
+        <InstanceMenu />
+        <HelpMenu />
         <button
           type="button"
           className={`titlebar-fav ${favoriteCount > 0 ? 'has-favs' : ''} ${favoritesOpen ? 'active' : ''}`}
@@ -821,7 +835,13 @@ function AppShell() {
             <Bell size={18} aria-hidden="true" /> Notifications
             {unreadInbox > 0 && <span className="nav-badge" aria-hidden="true">{unreadInbox > 99 ? '99+' : unreadInbox}</span>}
           </button>
-          <HelpToggle variant="mobile" />
+          <HelpToggle />
+          <button type="button" className="mobile-nav-notifications" data-testid="mobile-help-videos" onClick={() => {
+            mobileNavigation.setDrawerOpen(false);
+            useHelpVideos.getState().open();
+          }}>
+            <PlayCircle size={18} aria-hidden="true" /> Videos
+          </button>
         </>}
         headerStart={nav === 'settings' ? <MobileSettingsBack onNavigate={() => mobileNavigation.setDrawerOpen(false)} /> : undefined}
       >
@@ -895,6 +915,7 @@ function AppShell() {
       <WalkthroughHost />
       <SetupChecklistHost />
       <WhatsNewModal />
+      <HelpVideoLibrary />
       <PendingLaunches />
       <HostDialogs />
       <Toaster />
@@ -1007,7 +1028,9 @@ function AgentModalHost() {
 
 function ThreadModalHost() {
   const classicSessionViewEnabled = useData((s) => s.classicSessionViewEnabled);
-  const fullPageView = useCompactLayout() || classicSessionViewEnabled;
+  const threadTabsEnabled = useData((s) => s.threadTabsEnabled);
+  const isCompact = useIsCompactViewport();
+  const fullPageView = useCompactLayout() || classicSessionViewEnabled || (threadTabsEnabled && !isCompact);
   const threadModal = useUi((s) => s.threadModal);
   const navigate = useNavigate();
   const close = () => useUi.getState().closeThreadModal();

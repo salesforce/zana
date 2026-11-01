@@ -11,6 +11,7 @@ import {
 } from '@zana-ai/zcc-agent-runtime/test';
 import {
   createAgentRuntimeAdapter,
+  isAutomatedThreadStart,
   mapRuntimeThreadEvent,
   mergeSessionTooling,
   resolveRuntimeBridgeLaunch,
@@ -51,6 +52,7 @@ describe('agent runtime thread adapter', () => {
       await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
       finish({ providerThreadId: 'provider-thread' }); await starting;
       expect(status()).toBe('idle');
+      expect(runtimeOptions.additionalWorkspaceWriteRoots).toEqual([join(cwd, 'thread-storage')]);
       const live = vi.spyOn(runtime, 'getLiveThreadIds').mockReturnValue([threadId]);
       expect(status()).toBe('active');
       live.mockReturnValue([]);
@@ -124,6 +126,25 @@ describe('agent runtime thread adapter', () => {
     expect(events.some((event) => event.threadId === threadId)).toBe(true);
     await adapter.stopWork({ threadId });
     adapter.dispose();
+  });
+
+  it('uses an empty catalog for an unattended start', async () => {
+    const root = join(cwd, 'skills-generated', 'demo');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'SKILL.md'), 'demo');
+    let runtime!: ReturnType<typeof createAgentRuntimeWithAdapters>;
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      createRuntime: options => {
+        runtime = createAgentRuntimeWithAdapters({ ...options, adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath }) });
+        return runtime;
+      }
+    });
+    try {
+      await adapter.startWork({ threadId: randomUUID(), environmentId: randomUUID(), projectId: 'p1', providerId: 'fake', input: prompt('hello'), cwd, headless: true });
+      expect(runtime.getLiveThreadIds()).toHaveLength(1);
+    } finally { adapter.dispose(); }
   });
 
   it('cancels only the expected live plan and keeps the thread usable', async () => {
@@ -1106,6 +1127,86 @@ describe('agent runtime thread adapter', () => {
     adapter.dispose();
   });
 
+  it('uses the current host native binary for ACP health, models, start and resume', async () => {
+    let binary = '/host/bin/opencode';
+    const captured: Record<string, unknown>[] = [];
+    const bridgeLaunch = {
+      pluginId: 'provider-fixture', source: { kind: 'daemon-bundled' as const, id: 'fake' },
+      capabilities: { supportsServiceTier: false, permissionModes: ['full'], supportsThreadArchive: false, supportsThreadRename: false, fork: 'tip' }
+    };
+    const adapter = createAgentRuntimeAdapter({
+      dataDir: cwd, emit: () => {},
+      loadConfig: () => ({ version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null,
+        harnesses: { byId: { opencode: { binary } } } }),
+      createRuntime: options => {
+        const runtime = createAgentRuntimeWithAdapters({ ...options, adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath }) });
+        vi.spyOn(runtime, 'providerHealth').mockImplementation(async input => { captured.push(input); return { supported: false }; });
+        vi.spyOn(runtime, 'listModels').mockImplementation(async input => { captured.push(input); return { models: [], selectedOnlyModels: [] }; });
+        vi.spyOn(runtime, 'startThread').mockImplementation(async input => { captured.push(input); return { providerThreadId: 'provider-thread' }; });
+        vi.spyOn(runtime, 'resumeThread').mockImplementation(async input => { captured.push(input); return { providerThreadId: 'provider-resumed' }; });
+        return runtime;
+      }
+    });
+    try {
+      await adapter.providerHealth({ providerId: 'acp-opencode', bridgeLaunch, cwd });
+      await adapter.listModels({ providerId: 'acp-opencode', bridgeLaunch, cwd });
+      await adapter.startWork({ providerId: 'acp-opencode', bridgeLaunch, cwd, threadId: 'thread-one', environmentId: 'env-one', projectId: 'project', input: [] });
+      await adapter.resumeWork({ providerId: 'acp-opencode', bridgeLaunch, cwd, threadId: 'thread-two', environmentId: 'env-one', projectId: 'project', providerThreadId: 'provider-thread' });
+      expect(captured).toHaveLength(4);
+      for (const input of captured) expect(input.acpLaunchSpec).toMatchObject({ command: binary, args: ['acp'] });
+      binary = '/host/updated/opencode';
+      await adapter.providerHealth({ providerId: 'acp-opencode', bridgeLaunch, cwd });
+      expect(captured.at(-1)?.acpLaunchSpec).toMatchObject({ command: binary });
+      expect(captured[0]?.acpLaunchSpec).toMatchObject({ command: '/host/bin/opencode' });
+      const declaration = { displayName: 'Explicit', command: '/declaration/bin/custom', args: ['serve'], env: { MODE: 'custom' } };
+      await adapter.providerHealth({ providerId: 'acp-opencode', bridgeLaunch: { ...bridgeLaunch, providerOptions: { acpLaunchSpec: declaration } }, cwd });
+      expect(captured.at(-1)?.acpLaunchSpec).toEqual(declaration);
+      const explicit = { ...declaration, command: '/command/bin/custom' };
+      await adapter.startWork({ providerId: 'acp-opencode', bridgeLaunch: { ...bridgeLaunch, providerOptions: { acpLaunchSpec: declaration } },
+        providerOptions: { acpLaunchSpec: explicit }, cwd, threadId: 'thread-three', environmentId: 'env-one', projectId: 'project', input: [] });
+      expect(captured.at(-1)?.acpLaunchSpec).toEqual(explicit);
+    } finally { adapter.dispose(); }
+  });
+
+  it('forwards automated session admission through starts, forks, and resumes', async () => {
+    const captured: Record<string, unknown>[] = [];
+    const adapter = createAgentRuntimeAdapter({
+      dataDir: cwd,
+      emit: () => {},
+      createRuntime: options => {
+        const runtime = createAgentRuntimeWithAdapters({
+          ...options,
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
+        });
+        vi.spyOn(runtime, 'startThread').mockImplementation(async input => {
+          captured.push(input);
+          return { providerThreadId: 'provider-thread' };
+        });
+        vi.spyOn(runtime, 'resumeThread').mockImplementation(async input => {
+          captured.push(input);
+          return { providerThreadId: 'provider-resumed' };
+        });
+        return runtime;
+      }
+    });
+    try {
+      const shared = {
+        providerId: 'fake',
+        cwd,
+        environmentId: 'env-one',
+        projectId: 'project'
+      };
+      await adapter.startWork({ ...shared, threadId: 'thread-start', input: [], headless: true });
+      await adapter.startWork({ ...shared, threadId: 'thread-fork', input: [], scheduled: true, providerThreadId: 'source-thread' });
+      await adapter.resumeWork({ ...shared, threadId: 'thread-resume', providerThreadId: 'provider-thread', sessionKind: 'automated' });
+
+      expect(captured).toHaveLength(3);
+      for (const input of captured) expect(input.sessionKind).toBe('automated');
+    } finally {
+      adapter.dispose();
+    }
+  });
+
   it('lists fake provider models through AgentRuntime', async () => {
     const adapter = createAgentRuntimeAdapter({
       emit: () => undefined,
@@ -1133,6 +1234,49 @@ describe('agent runtime thread adapter', () => {
     expect(listed.models.length).toBeGreaterThan(0);
     expect(listed.models[0]?.model).toBeTruthy();
     adapter.dispose();
+  });
+
+  it.each([
+    { healthFails: false, cleanupFails: false },
+    { healthFails: true, cleanupFails: false },
+    { healthFails: false, cleanupFails: true },
+    { healthFails: true, cleanupFails: true }
+  ])('releases one-shot health runtimes without hiding the outcome: %j', async ({ healthFails, cleanupFails }) => {
+    const shutdowns: ReturnType<typeof vi.fn>[] = [];
+    const adapter = createAgentRuntimeAdapter({
+      emit: () => undefined,
+      dataDir: cwd,
+      createRuntime: options => {
+        const runtime = createAgentRuntimeWithAdapters({ ...options, adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath }) });
+        vi.spyOn(runtime, 'providerHealth').mockImplementation(async () => {
+          if (healthFails) throw new Error('actionable health failure');
+          return { supported: false };
+        });
+        const shutdown = vi.spyOn(runtime, 'shutdown').mockImplementation(async () => {
+          if (cleanupFails) throw new Error('cleanup failed');
+        });
+        shutdowns.push(shutdown);
+        return runtime;
+      }
+    });
+    const input = {
+      providerId: 'fake', cwd,
+      bridgeLaunch: {
+        pluginId: 'provider-fake', source: { kind: 'daemon-bundled' as const, id: 'fake' },
+        capabilities: { supportsServiceTier: false, permissionModes: ['full'], supportsThreadArchive: false, supportsThreadRename: false, fork: 'checkpoint' }
+      }
+    };
+    try {
+      for (let check = 0; check < 2; check += 1) {
+        if (healthFails) await expect(adapter.providerHealth(input)).rejects.toThrow('actionable health failure');
+        else await expect(adapter.providerHealth(input)).resolves.toEqual({ supported: false });
+      }
+      expect(shutdowns).toHaveLength(2);
+      for (const shutdown of shutdowns) expect(shutdown).toHaveBeenCalledTimes(1);
+      expect(adapter.listLoadedEnvironments()).toEqual([]);
+    } finally { adapter.dispose(); }
+    // Completed health checks are no longer retained in the dispose tracker.
+    for (const shutdown of shutdowns) expect(shutdown).toHaveBeenCalledTimes(1);
   });
 
   it('reports unsupported health for the fake provider through AgentRuntime', async () => {
@@ -1527,5 +1671,18 @@ describe('mapRuntimeThreadEvent', () => {
       status: 'completed'
     } as ThreadEvent;
     expect(mapRuntimeThreadEvent(event).kind).toBe('turn.completed');
+  });
+});
+
+describe('isAutomatedThreadStart', () => {
+  it('is true for headless, scheduled, or autonomous starts', () => {
+    expect(isAutomatedThreadStart({ headless: true })).toBe(true);
+    expect(isAutomatedThreadStart({ scheduled: true })).toBe(true);
+    expect(isAutomatedThreadStart({ autonomous: true })).toBe(true);
+  });
+
+  it('is false for interactive starts', () => {
+    expect(isAutomatedThreadStart({})).toBe(false);
+    expect(isAutomatedThreadStart({ headless: false, scheduled: false, autonomous: false })).toBe(false);
   });
 });

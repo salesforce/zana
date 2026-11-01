@@ -1,0 +1,6 @@
+interface:
+  display_name: "Zana UI Proposals"
+  short_description: "Explore Zana UI with interactive design alternatives"
+  default_prompt: "Use $zana-ui-proposals to build an interactive preview comparing UI options for this Zana feature."
+policy:
+  allow_implicit_invocation: true

@@ -2,7 +2,8 @@ import type { ThreadHistoryQuery, ThreadHistoryPage, ConversationTranscript } fr
 import type { DesktopBrowserApi } from './browser.js';
 import type { SquadLaunchPrefill, SquadProposalErrorCode } from '@zana-ai/zcc-domain/squad-proposal';
 import type { MarketplaceCatalogRow } from '@zana-ai/zcc-domain';
-import type { CloseFollowupFailure } from '@zana-ai/zcc-domain/product';
+import type { PluginPackCatalogEntry, PluginPackIdentity, PluginPackInstallation, PluginPackInstallRequest, PluginPackPlan } from '@zana-ai/zcc-domain';
+import type { CloseFollowupFailure, CloseFollowupKeptOpen } from '@zana-ai/zcc-domain/product';
 import type { OwnNotificationLevel, ThreadNotificationState } from '@zana-ai/zcc-domain';
 import type {
   ProviderCliInstallActionKind,
@@ -213,6 +214,8 @@ export interface PluginViewTarget {
   /** The tab's slot id (`app.slots.projectTab({ id })`). */
   tabId: string;
   projectId: string;
+  /** Opaque resource identity for deduplication and layout; grants no filesystem access. */
+  resourceId?: string;
 }
 
 /** One thread and its side panel shown in its own window (`windows.openThreadView`). */
@@ -272,7 +275,7 @@ export interface CcApi {
     retryDelivery(projectId: string, executionId: string, expectedStateVersion: number, blockerId: string, deliveryId: string): Promise<Result<ExecutionBoardProjection>>;
     recoverTimedOut(projectId: string, executionId: string, expectedStateVersion: number, clientRequestId: string): Promise<Result<ExecutionBoardProjection>>;
     recoverRetainedSquad(projectId: string, executionId: string, expectedStateVersion: number, mode: 'exact-native' | 'fresh-plan'): Promise<Result<ExecutionBoardProjection>>;
-    worktreeAction(projectId: string, executionId: string, expectedStateVersion: number, action: 'leave' | 'instruct' | 'delete' | 'force-delete', instruction?: string): Promise<Result<true>>;
+    worktreeAction(projectId: string, executionId: string, expectedStateVersion: number, action: 'leave' | 'instruct' | 'delete' | 'force-delete', instruction?: string, personaId?: string): Promise<Result<true>>;
     clearResumeToken(projectId: string, executionId: string): Promise<Result<true>>;
     relaunchMonitor(projectId: string, executionId: string): Promise<Result<{ sessionId: string }>>;
   };
@@ -354,11 +357,11 @@ export interface CcApi {
      * Live progress lines arrive on `onCloneProgress`. On a DEST_EXISTS result
      * the folder already existed and was left untouched.
      */
-    clone(input: { url: string; name?: string }): Promise<CloneProjectResult>;
+    clone(input: { url: string; name?: string; hostId?: string }): Promise<CloneProjectResult>;
     /** Subscribe to `git clone --progress` lines for the in-flight clone. */
     onCloneProgress(cb: (line: string) => void): () => void;
     /** The absolute directory new clones land in (default `~/zcc-workspace`). */
-    cloneRoot(): Promise<string>;
+    cloneRoot(hostId?: string): Promise<string>;
     /**
      * Ensure the built-in Quick Agent scratch project exists (rooted at
      * `~/zcc-workspace`, created on first call) and return it. Idempotent.
@@ -487,7 +490,7 @@ export interface CcApi {
       boundLan: boolean;
       /** Last start failure (e.g. port in use), else null. */
       error: string | null;
-      connection?: { mode: 'unconfigured' | 'connect'; publicUrl?: string; hasRelayToken: boolean; accountUrl?: string };
+      connection?: { mode: 'unconfigured' | 'connect'; publicUrl?: string; hasRelayToken: boolean; accountUrl?: string; serverId?: string };
       relayState?: 'connecting' | 'connected' | 'reconnecting' | 'stopped';
       distribution?: { testFlightUrl: string | null };
       readySessions?: Array<{ id: string; label: string; platform: 'ios' | 'android'; appVersion: string; lastSeenAt: number }>;
@@ -661,7 +664,7 @@ export interface CcApi {
     unread(threadId: string): Promise<{ thread: Record<string, unknown> }>;
     rename(threadId: string, title: string): Promise<{ thread: Record<string, unknown> }>;
     /** A plugin panel's side-panel conversations (hidden until opened as threads), newest first. */
-    panelConversations(pluginId: string, panel?: string): Promise<Array<{
+    panelConversations(pluginId: string, panel?: string, scope?: { projectId?: string; view?: string }): Promise<Array<{
       id: string;
       projectId: string;
       title: string | null;
@@ -702,6 +705,12 @@ export interface CcApi {
       encoding: 'utf8' | 'base64';
       contentType: string | null;
     }>;
+    resolvePreviewPath(threadId: string, body: { path: string; hints?: string[]; projectId?: string }): Promise<
+      | { kind: 'resolved'; path: string }
+      | { kind: 'ambiguous'; paths: string[] }
+      | { kind: 'incomplete'; paths: string[] }
+      | { kind: 'not_found'; path: string; checkedPath?: string }
+    >;
     storageFiles(threadId: string): Promise<{
       files: Array<{ path: string; name: string }>;
       truncated: boolean;
@@ -788,6 +797,10 @@ export interface CcApi {
       followedUp: number;
       /** Why a step produced nothing; absent from older main. */
       failures?: CloseFollowupFailure[];
+      /** True when the thread is wrapping up in the background and will be archived when it finishes. */
+      wrappingUp?: boolean;
+      /** The thread already waits on the user, so it was left open (the inbox says why). */
+      keptOpen?: 'asks-you';
     }>;
     fork(threadId: string, options?: { sourceSeqEnd?: number }): Promise<Result<{
       id: string;
@@ -1097,6 +1110,8 @@ export interface CcApi {
       followedUp: number;
       /** Why a step produced nothing; absent from older main. */
       failures?: CloseFollowupFailure[];
+      /** Agents the wrap-up left open (asked a question, was typed in, or timed out); absent = every agent may be closed. */
+      keptOpen?: CloseFollowupKeptOpen[];
     }>;
   };
   config: {
@@ -1391,6 +1406,10 @@ export interface CcApi {
     openPluginView(target: PluginViewTarget): Promise<boolean>;
     /** Close the window showing this tab, if one is open. */
     closePluginView(target: PluginViewTarget): Promise<boolean>;
+    /** Registers this renderer's bounded close preflight. Main derives the owning window from the IPC sender. */
+    pluginViewCloseReady(ready: boolean): Promise<boolean>;
+    pluginViewCloseComplete(requestId: string, result: { ok: boolean; error?: string }): Promise<boolean>;
+    onPluginViewCloseRequest(cb: (request: { requestId?: string; error?: string }) => void): () => void;
     /** The plugin view windows open now. */
     listPluginViews(): Promise<PluginViewTarget[]>;
     /** Pushed to every window when a plugin view window opens or closes. */
@@ -1554,6 +1573,17 @@ export interface CcApi {
      * throws — an unexpected failure resolves to an empty summary.
      */
     getSummary(): Promise<UsageSummary>;
+    /** Point-in-time process-local inference memo counters. No request payload. */
+    getMemoCounters(): Promise<Record<string, {
+      requests: number;
+      hits: number;
+      misses: number;
+      inFlightJoins: number;
+      activeLimitSkips: number;
+      evictions: number;
+      providerCalls: number;
+      failures: number;
+    }>>;
   };
   /**
    * Suggested Actions launcher (afl-03) — a SIBLING to the inbox, not a feed
@@ -1653,6 +1683,14 @@ export interface CcApi {
     refresh(source: string): Promise<MarketplaceCatalogRow>;
     remove(source: string): Promise<{ ok: true }>;
   };
+  /** Reviewed installation groups; the host resolves every member source. */
+  pluginPacks: {
+    list(): Promise<PluginPackCatalogEntry[]>;
+    plan(identity: PluginPackIdentity): Promise<PluginPackPlan>;
+    install(request: PluginPackInstallRequest): Promise<PluginPackInstallation>;
+    listInstalled(): Promise<PluginPackInstallation[]>;
+    forget(identity: PluginPackIdentity): Promise<boolean>;
+  };
   cliSkills: {
     status(hostIds?: string[]): Promise<{
       machines: Array<{
@@ -1689,6 +1727,7 @@ export interface CcApi {
     applyAllUpdates(): Promise<Result<import('@zana-ai/zcc-domain/product').PluginUpdateAllResult>>;
     remove(id: string): Promise<Result<true>>;
     reload(id: string): Promise<Result<true>>;
+    repair(id: string, action: 'locate' | 'official'): Promise<Result<true>>;
   };
   /**
    * Runtime extensions discovered under `~/.zcc/extensions/<id>/`.
@@ -1860,6 +1899,12 @@ export interface CcApi {
     queryRuns(query: ScheduleRunQuery): Promise<Result<ScheduleRunQueryResult>>;
     /** Re-run failed or missed runs now (max 50). */
     retryRuns(refs: ScheduleRunRef[]): Promise<Result<ScheduleRetryResult[]>>;
+    /**
+     * Reopen a finished run's agent conversation in a new tab, sending nothing. `runId` omitted means
+     * the newest resumable run. `reused` is true when a live tab already holds that conversation.
+     * Desktop only: never part of the shared product families.
+     */
+    resumeRun(input: { scheduleId: string; runId?: string }): Promise<Result<{ session: TerminalSession; reused: boolean }>>;
     /** Mark runs as seen so they leave the open list (max 200). Resolves to the number dismissed. */
     dismissRuns(refs: ScheduleRunRef[]): Promise<Result<number>>;
     /** Check reserved workers without starting or enabling work. False means still unconfirmed. */

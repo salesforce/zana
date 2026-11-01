@@ -187,7 +187,7 @@ async function addRemoteProject(win: Page, name: string, remotePath: string): Pr
   if (await backToApp.count()) await backToApp.first().click();
   const heading = win.getByTestId('sidebar-projects-heading');
   if (await heading.count() && await heading.getAttribute('aria-expanded') === 'false') await heading.click();
-  await win.getByRole('button', { name: 'Add project', exact: true }).first().click();
+  await win.getByRole('button', { name: 'Add machine or project', exact: true }).first().click();
   await win.getByRole('button', { name: 'Add remote project' }).click();
   const dialog = win.getByRole('dialog', { name: 'Add remote project' });
   await dialog.getByRole('button', { name: new RegExp(`^${SSH_HOST}`) }).click();

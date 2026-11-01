@@ -73,6 +73,11 @@
       "types": "./src/rpc-error.ts",
       "source": "./src/rpc-error.ts",
       "default": "./src/rpc-error.ts"
+    },
+    "./machine-projects": {
+      "types": "./src/machine-projects.ts",
+      "source": "./src/machine-projects.ts",
+      "default": "./src/machine-projects.ts"
     }
   },
   "scripts": {
@@ -81,7 +86,7 @@
   "dependencies": {
     "@zana-ai/zcc-domain": "workspace:*",
     "@zana-ai/zcc-host-daemon-contract": "workspace:*",
-    "zod": "^4.0.0"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "typescript": "^7.0.2"

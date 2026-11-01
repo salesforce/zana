@@ -2241,6 +2241,19 @@ describe('product HTTP plugin side-panel conversations', () => {
     expect((await fetch(`${server.url}api/v1/plugins/ghost/panel-threads`)).status).toBe(404);
     expect((await fetch(`${server.url}api/v1/plugins/notes/panel-threads?limit=0`)).status).toBe(400);
 
+    const scoped = make('notes');
+    insertThreadPluginMetadata(server.ctx.db, { threadId: scoped.id, pluginId: 'notes', metadata: { panelAgent: { panel: 'board', view: 'force-app/Support.agent' } } });
+    const otherScript = make('notes');
+    insertThreadPluginMetadata(server.ctx.db, { threadId: otherScript.id, pluginId: 'notes', metadata: { panelAgent: { panel: 'board', view: 'force-app/Quote.agent' } } });
+    const otherProject = make('notes');
+    server.ctx.db.sqlite.prepare('UPDATE threads SET project_id = ? WHERE id = ?').run('proj-2', otherProject.id);
+    insertThreadPluginMetadata(server.ctx.db, { threadId: otherProject.id, pluginId: 'notes', metadata: { panelAgent: { panel: 'board', view: 'force-app/Support.agent' } } });
+    const filtered = await fetch(`${server.url}api/v1/plugins/notes/panel-threads?panel=board&projectId=proj-1&view=force-app%2FSupport.agent&limit=1`);
+    expect(filtered.status).toBe(200);
+    expect(((await filtered.json()) as { threads: Array<{ id: string }> }).threads.map(row => row.id)).toEqual([scoped.id]);
+    expect((await fetch(`${server.url}api/v1/plugins/notes/panel-threads?projectId=`)).status).toBe(400);
+    expect((await fetch(`${server.url}api/v1/plugins/notes/panel-threads?view=%0A`)).status).toBe(400);
+
     const updated: unknown[] = [];
     const dispose = server.ctx.hub.subscribe('threads:updated', (payload) => updated.push(payload));
     const post = (id: string) => fetch(`${server!.url}api/v1/threads/${id}/open-as-thread`, {
@@ -2257,6 +2270,40 @@ describe('product HTTP plugin side-panel conversations', () => {
 });
 
 describe('product HTTP plugins', () => {
+  it('routes plugin packs through the shared Origin and mutation content-type guards', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-packs-'));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    const identity = { marketplaceSource: 'path:/catalog', packId: 'starter' };
+    const list = vi.fn(() => [{ identity }]);
+    const plan = vi.fn(async () => ({ identity, planId: 'review' }));
+    server.ctx.plugins = { pluginPacks: { list, plan } } as never;
+    const url = `${server.url}api/v1/plugin-packs`;
+    const listed = await fetch(url);
+    expect(listed.status).toBe(200);
+    await expect(listed.json()).resolves.toEqual([{ identity }]);
+    expect(list).toHaveBeenCalledOnce();
+
+    const hostile = await fetch(`${url}/plan`, {
+      method: 'POST', headers: { Origin: 'https://evil.example', 'content-type': 'application/json' }, body: JSON.stringify(identity)
+    });
+    expect(hostile.status).toBe(403);
+    const nonJson = await fetch(`${url}/plan`, {
+      method: 'POST', headers: { Origin: 'http://127.0.0.1:5173', 'content-type': 'text/plain' }, body: JSON.stringify(identity)
+    });
+    expect(nonJson.status).toBe(415);
+    expect(plan).not.toHaveBeenCalled();
+
+    const reviewed = await fetch(`${url}/plan`, {
+      method: 'POST', headers: { Origin: 'http://127.0.0.1:5173', 'content-type': 'application/json' }, body: JSON.stringify(identity)
+    });
+    expect(reviewed.status).toBe(200);
+    await expect(reviewed.json()).resolves.toEqual({ identity, planId: 'review' });
+    expect(plan).toHaveBeenCalledWith(identity);
+
+    server.ctx.plugins = undefined as never;
+    expect((await fetch(url)).status).toBe(503);
+  });
+
   it('lists contributions and dispatches plugin CLI and HTTP', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugins-'));
     server = await startTestProductServer({
@@ -2722,6 +2769,24 @@ describe('product HTTP plugins', () => {
     await expect((await request()).json()).resolves.toEqual({ ok: true, value });
   });
 
+  it('runs core recovery without plugin RPC and exposes progress', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-plugin-recovery-'));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    const start = () => fetch(`${server.url}api/v1/plugin-apps/hard-reload`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    const status = () => fetch(`${server.url}api/v1/plugin-apps/recovery`);
+    server.ctx.plugins = undefined;
+    expect((await start()).status).toBe(503);
+    expect((await status()).status).toBe(503);
+    const value = { phase: 'running', total: 1, current: 'provider-codex', restored: [], failed: [], skipped: [] };
+    const hardReload = vi.fn(async () => value);
+    server.ctx.plugins = { hardReload, recoveryStatus: () => value } as never;
+    const response = await start();
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toEqual(value);
+    expect(hardReload).toHaveBeenCalledExactlyOnceWith();
+    await expect((await status()).json()).resolves.toEqual(value);
+  });
+
   it('adds, lists, refreshes, and removes marketplace catalogs', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-mp-'));
     server = await startTestProductServer({
@@ -3016,6 +3081,89 @@ describe('product HTTP thread file preview', () => {
       expect(denied.status).toBe(status);
     }
     expect(read).not.toHaveBeenCalled();
+  });
+});
+
+describe('product HTTP thread preview path resolution', () => {
+  it('resolves thread preview paths, validates inputs, and maps errors', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-preview-'));
+    const projectRoot = mkdtempSync(join(tmpdir(), 'zcc-product-preview-proj-'));
+    writeFileSync(
+      join(dataDir, 'projects.json'),
+      JSON.stringify({
+        version: 1,
+        projects: [{ id: 'proj-1', name: 'Alpha', path: projectRoot, createdAt: 1, lastActiveAt: 1 }]
+      })
+    );
+    server = await startTestProductServer({
+      dataDir,
+      origins: { serverPort: 0, devAppPort: 5173 }
+    });
+    const host = upsertHost(server.ctx.db, { name: 'laptop', hostKeyHash: 'h'.repeat(64) });
+    const environment = createEnvironment(server.ctx.db, {
+      projectId: 'proj-1',
+      hostId: host.id,
+      path: projectRoot
+    });
+    createConversationThread(server.ctx.db, {
+      id: 'sess-preview',
+      providerId: 'test',
+      projectId: 'proj-1',
+      environmentId: environment.id,
+      hostId: host.id,
+      title: 'Preview test'
+    });
+
+    vi.spyOn(server.ctx.hostHub, 'resolveHostId').mockReturnValue(host.id);
+    const rpc = vi.spyOn(server.ctx.hostHub, 'callHostOnlineRpc').mockImplementation(async (req: any) => {
+      if (req.command.type === 'host.file_metadata') {
+        if (req.command.path.endsWith('guide.md')) {
+          return { sizeBytes: 10, modifiedAtMs: 1 };
+        }
+        throw { code: 'path_not_found' };
+      }
+      return { paths: [], truncated: false };
+    });
+
+    const ok = await fetch(`${server.url}api/v1/threads/sess-preview/preview-path/resolve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: 'guide.md' })
+    });
+    expect(ok.status).toBe(200);
+    await expect(ok.json()).resolves.toMatchObject({ kind: 'resolved', path: 'guide.md' });
+
+    const withParentHints = await fetch(`${server.url}api/v1/threads/sess-preview/preview-path/resolve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: 'guide.md', hints: ['../secret/guide.md', 'guide.md'] })
+    });
+    expect(withParentHints.status).toBe(200);
+    await expect(withParentHints.json()).resolves.toMatchObject({ kind: 'resolved', path: 'guide.md' });
+
+    const invalid = await fetch(`${server.url}api/v1/threads/sess-preview/preview-path/resolve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: '../escape.txt' })
+    });
+    expect(invalid.status).toBe(400);
+    await expect(invalid.json()).resolves.toMatchObject({ error: 'invalid-request' });
+
+    const scopeMismatch = await fetch(`${server.url}api/v1/threads/sess-preview/preview-path/resolve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: 'guide.md', projectId: 'other-proj' })
+    });
+    expect(scopeMismatch.status).toBe(403);
+    await expect(scopeMismatch.json()).resolves.toMatchObject({ error: 'scope-mismatch' });
+
+    rpc.mockRejectedValueOnce(new Error('Connection dropped'));
+    const hostErr = await fetch(`${server.url}api/v1/threads/sess-preview/preview-path/resolve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: 'missing.md' })
+    });
+    expect(hostErr.status).toBe(500);
   });
 });
 
@@ -3512,19 +3660,21 @@ describe('async history and queue HTTP responsiveness', () => {
     }
   });
 
-  it('refreshes plugin safe mode only when the authoritative config flag changes', async () => {
+  it.each(['pluginSafeMode', 'pluginDevelopmentEnabled'] as const)('refreshes plugin policy only when %s changes', async key => {
     const dataDir = mkdtempSync(join(tmpdir(), 'safe-mode-config-http-'));
     server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
     const refreshSafeMode = vi.fn(async () => undefined);
+    const refreshDevelopmentMode = vi.fn(async () => undefined);
     const original = server.ctx.plugins;
-    server.ctx.plugins = { refreshSafeMode } as never;
+    server.ctx.plugins = { refreshSafeMode, refreshDevelopmentMode } as never;
     try {
       for (const [flag, expectedCalls] of [[true, 1], [true, 1], [false, 2]] as const) {
         const response = await fetch(`${server.url}api/v1/config`, { method: 'PATCH',
-          headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pluginSafeMode: flag }) });
+          headers: { 'content-type': 'application/json' }, body: JSON.stringify({ [key]: flag }) });
         expect(response.status).toBe(200);
-        expect((await response.json()).config.pluginSafeMode).toBe(flag);
-        expect(refreshSafeMode).toHaveBeenCalledTimes(expectedCalls);
+        expect((await response.json()).config[key]).toBe(flag);
+        expect(key === 'pluginSafeMode' ? refreshSafeMode : refreshDevelopmentMode).toHaveBeenCalledTimes(expectedCalls);
+        expect(key === 'pluginSafeMode' ? refreshDevelopmentMode : refreshSafeMode).not.toHaveBeenCalled();
       }
     } finally { server.ctx.plugins = original; }
   });

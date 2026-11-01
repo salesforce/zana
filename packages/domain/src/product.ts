@@ -1367,6 +1367,62 @@ export function isDurableCoordination(mode: TeamCoordinationMode | undefined): b
 }
 
 /**
+ * Trusted selector for an existing, user-owned execution target. It names a
+ * target by role and branch only — never by a raw host path — and main
+ * resolves it against the registered project's own git worktree list.
+ * `project-root` is the registered checkout; `worktree` is a non-main
+ * worktree of the same repository whose current branch is `branch`.
+ */
+export type SquadExecutionTargetSelector =
+  | { kind: 'project-root' }
+  | { kind: 'worktree'; branch: string };
+
+/** Who owns a squad execution target's lifecycle. Absent on legacy records means `managed`. */
+export type SquadWorktreeOwnership = 'managed' | 'user';
+
+const TARGET_BRANCH_MAX = 200;
+
+/** Shape check for a git branch name supplied in a target selector (no refspec tricks, no paths up). */
+export function isSafeTargetBranch(branch: unknown): branch is string {
+  if (typeof branch !== 'string' || !branch || branch.length > TARGET_BRANCH_MAX) return false;
+  if (branch.startsWith('-') || branch.startsWith('/') || branch.endsWith('/') || branch.endsWith('.')
+    || branch.endsWith('.lock') || branch.includes('..') || branch.includes('//') || branch.includes('@{')) return false;
+  return /^[A-Za-z0-9._/-]+$/.test(branch);
+}
+
+export function isSquadExecutionTargetSelector(value: unknown): value is SquadExecutionTargetSelector {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (record.kind === 'project-root') return keys.length === 1;
+  if (record.kind === 'worktree') return keys.length === 2 && isSafeTargetBranch(record.branch);
+  return false;
+}
+
+/**
+ * Deterministic admission rule for a target selector next to the legacy
+ * generated-worktree flag:
+ * - selector absent: legacy `worktree` boolean semantics are unchanged;
+ * - selector invalid: reject (never fall back to a generated worktree);
+ * - selector + `worktree: true`: reject as conflicting;
+ * - selector + `worktree: false`: the selector wins (false only opts out of generation);
+ * - selector + `onComplete` `merge`/`delete`: reject, a user-owned target is never merged or removed.
+ */
+export function validateSquadExecutionTarget(input: {
+  target?: unknown;
+  worktree?: boolean;
+  onComplete?: 'leave' | 'merge' | 'delete';
+}): { ok: true; target?: SquadExecutionTargetSelector } | { ok: false; message: string } {
+  if (input.target === undefined) return { ok: true };
+  if (!isSquadExecutionTargetSelector(input.target)) return { ok: false, message: 'invalid execution target selector' };
+  if (input.worktree === true) return { ok: false, message: 'execution target conflicts with a generated worktree request' };
+  if (input.onComplete === 'merge' || input.onComplete === 'delete') {
+    return { ok: false, message: `a user-owned execution target cannot use onComplete '${input.onComplete}'` };
+  }
+  return { ok: true, target: input.target };
+}
+
+/**
  * Canonical name for a PTY-spawned coding agent. Same shape as
  * {@link TerminalSession}; Threads use a separate domain type and must not
  * share this map, RPC, or event log.
@@ -1759,6 +1815,34 @@ export interface Shelf {
   id: ShelfId;
   label: string;
   rows: ShelfRow[];
+}
+
+/**
+ * Default instructions typed into an agent by "Wrap up before closing" (see
+ * {@link AppConfig.closeWrapUpEnabled}). One line per step; CLI agents get them
+ * collapsed to a single line, threads keep the line breaks.
+ */
+export const DEFAULT_CLOSE_WRAP_UP_INSTRUCTIONS = [
+  'Wrap up this session; it will be closed when you finish.',
+  '1. Summarise: what you set out to do, what you did (files, decisions, messages sent), and what is left or waiting on someone.',
+  '2. Self-learn: save anything a future session should know to memory (update an existing entry rather than adding a duplicate), and write a short retro to the project library if there were lessons worth keeping.',
+  '3. Tidy up: resolve or update the follow-ups this session owns, and stop background tasks, monitors and pollers you started. Do not commit, push or send anything I have not asked for.',
+  "4. Don't push a summary to the inbox; Zana adds one when it closes this session.",
+  '5. If something needs my decision before closing, ask it as your final message and stop. Otherwise end with the summary.'
+].join('\n');
+
+/** Longest custom wrap-up instructions text kept by `normalizeConfig`. */
+export const CLOSE_WRAP_UP_INSTRUCTIONS_MAX = 4_000;
+
+/** How long a wrap-up may run before the agent or thread is left open; also named in the inbox note. */
+export const CLOSE_WRAP_UP_TIMEOUT_MINUTES = 15;
+
+/** The wrap-up instructions to send: the configured text when it has any, else the default. */
+export function resolveCloseWrapUpInstructions(
+  config: Pick<AppConfig, 'closeWrapUpInstructions'> | null | undefined
+): string {
+  const custom = config?.closeWrapUpInstructions?.trim();
+  return custom ? custom : DEFAULT_CLOSE_WRAP_UP_INSTRUCTIONS;
 }
 
 export interface AppConfig {
@@ -2368,6 +2452,20 @@ export interface AppConfig {
    */
   catchUpSummaryEnabled?: boolean;
   /**
+   * Wrap up before closing (EXPERIMENTAL). When ON, Close with follow-up (and
+   * Close idle with follow-ups) first asks each agent to save what it learnt and
+   * tidy up, then closes it with the same summary as Summarize to inbox and a
+   * follow-up if work is left; an agent that asks a question stays open. Default
+   * OFF / absent — Close with follow-up keeps today's quick note and closes at once.
+   */
+  closeWrapUpEnabled?: boolean;
+  /**
+   * Custom text typed into the agent by {@link closeWrapUpEnabled}. Absent or
+   * empty means {@link DEFAULT_CLOSE_WRAP_UP_INSTRUCTIONS}; trimmed and capped at
+   * {@link CLOSE_WRAP_UP_INSTRUCTIONS_MAX} characters in `normalizeConfig`.
+   */
+  closeWrapUpInstructions?: string;
+  /**
    * Skip the agent/thread inspector overlay (EXPERIMENTAL). When ON, opening a
    * CLI agent or thread — from the Agents canvas, favorites, a launch peek, or
    * the menu bar — navigates to the full session or thread page instead of a
@@ -2375,6 +2473,10 @@ export interface AppConfig {
    * surface.
    */
   classicSessionViewEnabled?: boolean;
+  /** Desktop title-bar shortcuts for opened threads. Enabled by default. */
+  threadTabsEnabled?: boolean;
+  /** Drag thread tools between right and bottom panels. Defaults on. */
+  dockableThreadToolsEnabled?: boolean;
   /**
    * Idle / blocked dwell (seconds) before the catch-up-summary add-on fires its
    * micro-call. On the working/blocked → idle edge (or entering 'blocked'), the
@@ -2399,6 +2501,8 @@ export interface AppConfig {
   feedNoiseClassifierEnabled?: boolean;
   /** Suspend installed non-bundled plugins without changing their enabled preference. */
   pluginSafeMode?: boolean;
+  /** Allow local bundled-plugin overrides and source watching. Saved choices override the startup flag. */
+  pluginDevelopmentEnabled?: boolean;
   /** Suppress non-default service tiers for this instance. */
   providerServiceTiersDisabled?: boolean;
   /**
@@ -2517,6 +2621,25 @@ export interface AppConfig {
    * Clamped in {@link normalizeConfig}; read live on each sweep.
    */
   threadSessionReleaseMinutes?: number;
+  /**
+   * Code minimap in the Explorer file preview (see {@link EXPLORER_MINIMAP_DEFAULTS}).
+   * `explorerMinimapEnabled` shows/hides it; `explorerMinimapWidth` is its width.
+   * Absent ⇒ the default. Unknown values are dropped in {@link normalizeConfig};
+   * read live by the Explorer viewer and editable from its right-click menu.
+   */
+  explorerMinimapEnabled?: boolean;
+  explorerMinimapWidth?: ExplorerMinimapWidth;
+  explorerMinimapRenderCharacters?: boolean;
+  explorerMinimapVerticalSize?: ExplorerMinimapVerticalSize;
+  explorerMinimapSlider?: ExplorerMinimapSlider;
+  explorerMinimapSide?: ExplorerMinimapSide;
+  /**
+   * How files are marked in the Explorer, Changes list, Quick Open and Library
+   * (see {@link EXPLORER_FILE_ICON_THEME_CHOICES}). `seti` shows VS Code's default
+   * per-type icons, `minimal` one plain file glyph, `none` no file/folder icons.
+   * Absent ⇒ `seti`. Unknown values are dropped in {@link normalizeConfig}.
+   */
+  explorerFileIconTheme?: ExplorerFileIconTheme;
   /**
    * When an idle agent is auto-closed (see {@link autoCloseIdleEnabled}), also
    * drop a folded breadcrumb into the inbox's collapsed "Agent closed" section.
@@ -2970,6 +3093,101 @@ export function threadSessionReleaseLabel(minutes: number): string {
   return `After ${minutes} minutes`;
 }
 
+/** File icon themes for file lists; see {@link AppConfig.explorerFileIconTheme}. */
+export const EXPLORER_FILE_ICON_THEME_CHOICES = ['seti', 'minimal', 'none'] as const;
+export type ExplorerFileIconTheme = (typeof EXPLORER_FILE_ICON_THEME_CHOICES)[number];
+export const EXPLORER_FILE_ICON_THEME_DEFAULT: ExplorerFileIconTheme = 'seti';
+export const EXPLORER_FILE_ICON_THEME_LABELS: Record<ExplorerFileIconTheme, string> = {
+  seti: 'Seti (VS Code)',
+  minimal: 'Minimal',
+  none: 'None'
+};
+
+export function resolveExplorerFileIconTheme(
+  config: Pick<AppConfig, 'explorerFileIconTheme'>
+): ExplorerFileIconTheme {
+  const v = config.explorerFileIconTheme;
+  return v !== undefined && (EXPLORER_FILE_ICON_THEME_CHOICES as readonly string[]).includes(v)
+    ? v
+    : EXPLORER_FILE_ICON_THEME_DEFAULT;
+}
+
+/** Explorer preview minimap options; see {@link AppConfig.explorerMinimapWidth}. */
+export type ExplorerMinimapWidth = 'narrow' | 'default' | 'wide';
+export type ExplorerMinimapVerticalSize = 'proportional' | 'fill' | 'fit';
+export type ExplorerMinimapSlider = 'mouseover' | 'always';
+export type ExplorerMinimapSide = 'right' | 'left';
+
+export const EXPLORER_MINIMAP_WIDTH_CHOICES = ['narrow', 'default', 'wide'] as const;
+export const EXPLORER_MINIMAP_VERTICAL_SIZE_CHOICES = ['proportional', 'fill', 'fit'] as const;
+export const EXPLORER_MINIMAP_SLIDER_CHOICES = ['mouseover', 'always'] as const;
+export const EXPLORER_MINIMAP_SIDE_CHOICES = ['right', 'left'] as const;
+
+/** Resolved minimap preferences (every field filled). */
+export interface ExplorerMinimapPrefs {
+  enabled: boolean;
+  width: ExplorerMinimapWidth;
+  renderCharacters: boolean;
+  verticalSize: ExplorerMinimapVerticalSize;
+  slider: ExplorerMinimapSlider;
+  side: ExplorerMinimapSide;
+}
+
+export const EXPLORER_MINIMAP_DEFAULTS: ExplorerMinimapPrefs = {
+  enabled: true,
+  width: 'default',
+  renderCharacters: true,
+  verticalSize: 'proportional',
+  slider: 'mouseover',
+  side: 'right'
+};
+
+/** Monaco `minimap.maxColumn` per width. */
+export const EXPLORER_MINIMAP_MAX_COLUMN: Record<ExplorerMinimapWidth, number> = {
+  narrow: 60,
+  default: 120,
+  wide: 200
+};
+
+/** The minimap is hidden when the editor is narrower than this many px. */
+export const EXPLORER_MINIMAP_MIN_EDITOR_WIDTH = 480;
+
+export const EXPLORER_MINIMAP_LABELS = {
+  narrow: 'Narrow',
+  default: 'Default',
+  wide: 'Wide',
+  proportional: 'Proportional',
+  fill: 'Fill',
+  fit: 'Fit',
+  mouseover: 'Mouse Over',
+  always: 'Always',
+  right: 'Right',
+  left: 'Left'
+} as const;
+
+/** The `AppConfig.explorerMinimap*` keys. */
+export type ExplorerMinimapConfig = Pick<
+  AppConfig,
+  | 'explorerMinimapEnabled'
+  | 'explorerMinimapWidth'
+  | 'explorerMinimapRenderCharacters'
+  | 'explorerMinimapVerticalSize'
+  | 'explorerMinimapSlider'
+  | 'explorerMinimapSide'
+>;
+
+export function resolveExplorerMinimap(config: ExplorerMinimapConfig): ExplorerMinimapPrefs {
+  const d = EXPLORER_MINIMAP_DEFAULTS;
+  return {
+    enabled: config.explorerMinimapEnabled ?? d.enabled,
+    width: config.explorerMinimapWidth ?? d.width,
+    renderCharacters: config.explorerMinimapRenderCharacters ?? d.renderCharacters,
+    verticalSize: config.explorerMinimapVerticalSize ?? d.verticalSize,
+    slider: config.explorerMinimapSlider ?? d.slider,
+    side: config.explorerMinimapSide ?? d.side
+  };
+}
+
 /** Launch-surface default revision. See {@link AppConfig.composerLaunchSurfacesRev}. */
 export const COMPOSER_LAUNCH_SURFACES_REV = 2;
 
@@ -3284,6 +3502,8 @@ export interface FsEntry {
 export interface FsReadResult {
   ok: boolean;
   content?: string;
+  /** Byte cursor for the next page when a text read is truncated. */
+  nextByteOffset?: number;
   bytes?: number;
   binary?: boolean;
   truncated?: boolean;
@@ -3707,6 +3927,21 @@ export interface ScheduleCatchUp { mode: 'once' | 'skip' | 'all'; max?: number }
 /** Opt-in auto-retry policy for failed runs. */
 export interface ScheduleRetryPolicy { attempts: number; delayMinutes: number }
 
+/**
+ * The agent conversation a scheduled run started, so the run can be reopened
+ * later. Written by the scheduler at launch from the session it spawned.
+ * `id` is absent until a harness that detects its id after launch (Codex,
+ * OpenCode) has been resolved. Validated before use: project schedule files
+ * are editable.
+ */
+export interface ScheduleRunConversation {
+  profile: LaunchProfileId;
+  id?: string;
+  cwd: string;
+  /** ISO-8601 time the run's session was created. */
+  startedAt: string;
+}
+
 export interface ScheduleRun {
   /** Durable spawn reservation; pending launches must never be replayed. */
   launchState?: 'pending' | 'running' | 'failed';
@@ -3779,6 +4014,8 @@ export interface ScheduleRun {
   resolvedBy?: string;
   /** ISO time the user dismissed this problem. */
   dismissedAt?: string;
+  /** The agent conversation this run started; absent for runs that cannot be reopened. */
+  conversation?: ScheduleRunConversation;
 }
 
 export interface ScheduleStatus {
@@ -4305,12 +4542,14 @@ export type SquadTransport = 'CLI' | 'MODERN';
 export interface TeamLaunchTaskSlot {
   slotId: string;
   initialTask: string;
+  automatedSkillIds?: string[];
   authorizationId?: string;
   nativeRecovery?: TeamLaunchAuthorizationInputSlot['nativeRecovery'];
 }
 
 export interface TeamLaunchAuthorizationInputSlot {
   initialTask: string;
+  automatedSkillIds?: string[];
   /** Trusted native recovery identity, injected only by ExecutionService. */
   nativeRecovery?: {
     role: 'worker' | 'orchestrator';
@@ -4351,6 +4590,8 @@ export interface TeamLaunchRequestInput {
   worktree?: boolean;
   /** Main-owned terminal disposition for an execution-owned shared worktree. */
   onComplete?: 'leave' | 'merge' | 'delete';
+  /** Main-resolved existing user-owned target; see {@link validateSquadExecutionTarget}. */
+  target?: SquadExecutionTargetSelector;
   /** Main-only immutable execution display title for Team session cohorts. */
   executionJobTitle?: string;
   /** Main-derived admission digest; launch revalidates it before spawning. */
@@ -5165,6 +5406,14 @@ export interface CloseFollowupFailure {
   detail?: string;
 }
 
+/** Why Close with follow-up left an agent open after a wrap-up request. */
+export type CloseFollowupKeptOpenReason = 'asks-you' | 'typed' | 'timeout' | 'turn-error';
+
+export interface CloseFollowupKeptOpen {
+  sessionId: string;
+  reason: CloseFollowupKeptOpenReason;
+}
+
 export interface FollowUpUpdateInput {
   title?: string;
   detail?: string;
@@ -5475,6 +5724,15 @@ export interface PluginUpdateAllResult {
   failed: Array<{ id: string; message: string }>;
 }
 
+export interface PluginRecoveryState {
+  phase: 'idle' | 'running' | 'complete';
+  total: number;
+  current?: string;
+  restored: string[];
+  skipped: Array<{ id: string; message: string }>;
+  failed: Array<{ id: string; message: string }>;
+}
+
 export interface PluginUpdateStatus {
   checkedAt: number;
   outcome: 'current' | 'available' | 'pinned' | 'incompatible' | 'unavailable';
@@ -5497,6 +5755,8 @@ export interface PluginAppEntry {
   collection?: 'coding-agents';
   status: 'running' | 'disabled' | 'degraded' | 'needs-configuration';
   statusDetail?: string | null;
+  /** Host-derived recovery choices; local paths and replacement sources remain private. */
+  sourceRecovery?: { canLocate: boolean; canSwitchOfficial: boolean };
   appUrl: string | null;
   /** Compatible remote release from the last persisted source check, when any. */
   availableVersion?: string;
@@ -5852,6 +6112,8 @@ export interface MarketplaceEntry {
   author?: string;
   /** Lucide icon name (resolved renderer-side, like a manifest icon). */
   icon?: string;
+  /** Inert, bounded branding image supplied by the host. */
+  iconUrl?: string;
   /** Permissions the release declares — previewed before install. */
   permissions?: string[];
   /** True when an extension with this id is already installed on disk. */
@@ -6146,6 +6408,8 @@ export interface ExecutionBoardProjection {
        reclaimCount?: number;
        attemptedSlots?: string[];
        quarantinedSlots?: string[];
+       /** Present only while Zana is recovering this unit's worker after an API error. */
+       recovery?: { step: string; errorKind?: string; since: number };
     }>;
     rosterSlotIds: string[];
   };
@@ -6284,6 +6548,8 @@ export interface TeamJobLaunchInput {
   coordinationMode?: Extract<TeamCoordinationMode, 'structured' | 'freeform'>;
   /** Main-held Squad proposal id. Only valid from a desktop window; main re-authorizes it. */
   proposalId?: string;
+  /** Existing user-owned execution target by role/branch. Absent keeps legacy behavior; main resolves and revalidates it. */
+  target?: SquadExecutionTargetSelector;
 }
 
 /** Safe renderer projection for a main-owned, short-lived selected-file capability. */

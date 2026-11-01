@@ -75,8 +75,10 @@ export interface FakeAgentBinary {
  * (`discoverRoleTargets`) must see `build` as a directly-launchable primary or
  * the spawn is blocked (`role target unavailable`). Answer `agent list` /
  * `debug agent` the same way the catalog fixture does, then hold.
- * Other catalog probes (`--list-models`, `app-server`, `acp`) exit 0 so
- * `refreshCatalog` / ACP `list_models` do not hang, then `cat`.
+ * Other catalog probes (`--list-models`, `app-server`, `acp`, and Grok's ACP
+ * model list `models`) exit 0 so `refreshCatalog` / ACP `list_models` do not
+ * hang, then `cat`. ACP runs the configured native binary, so an unanswered
+ * `models` would hold Check status until the bridge's 30 s list timeout.
  * Do not use {@link makeFakeOpenCodeBinary} here — that fixture exits 64 on spawn.
  */
 export function makeFakeGenericHoldBinary(version = '2026.09.02'): FakeAgentBinary {
@@ -93,7 +95,7 @@ export function makeFakeGenericHoldBinary(version = '2026.09.02'): FakeAgentBina
       '  echo "{\\"name\\":\\"$3\\",\\"permission\\":{\\"read\\":true},\\"tools\\":{\\"bash\\":true}}"',
       '  exit 0',
       'fi',
-      'if [ "$1" = "--list-models" ] || [ "$1" = "app-server" ] || [ "$1" = "agent" ] || [ "$1" = "acp" ]; then exit 0; fi',
+      'if [ "$1" = "--list-models" ] || [ "$1" = "models" ] || [ "$1" = "app-server" ] || [ "$1" = "agent" ] || [ "$1" = "acp" ]; then exit 0; fi',
       'echo "generic agent running"',
       'cat'
     ].join('\n')
@@ -265,10 +267,11 @@ function presetBody(opts: FakeAgentOptions): string {
  * no re-asking the human. The test answers the question out-of-band via
  * `executionBoard.respond`.
  */
-export type JobTeamScenario = 'success' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' | 'kickoff-churn' | 'peer-handoff' | 'plan-correction' | 'plan-correction-silent';
+export type JobTeamScenario = 'success' | 'unattended' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' | 'kickoff-churn' | 'peer-handoff' | 'plan-correction' | 'plan-correction-silent' | 'api-error-nudge' | 'api-error-restart' | 'api-error-permanent';
 
 /** The behavior gates the generated coordinator script keys its behavior off. */
 interface JobTeamScenarioFlags {
+  unattended: boolean;
   failedDag: boolean;
   stalled: boolean;
   streaming: boolean;
@@ -276,18 +279,25 @@ interface JobTeamScenarioFlags {
   handoff: boolean;
   planCorrection: boolean;
   planCorrectionSilent: boolean;
+  apiErrorNudge: boolean;
+  apiErrorRestart: boolean;
+  apiErrorPermanent: boolean;
 }
 
 /** Map a scenario name to the script's behavior flags (exactly one true, or none for 'success'). */
 function resolveScenarioFlags(scenario?: JobTeamScenario): JobTeamScenarioFlags {
   return {
+    unattended: scenario === 'unattended',
     failedDag: scenario === 'failed-dag',
     stalled: scenario === 'stalled-worker',
     streaming: scenario === 'streaming-worker',
     churn: scenario === 'kickoff-churn',
     handoff: scenario === 'peer-handoff',
     planCorrection: scenario === 'plan-correction',
-    planCorrectionSilent: scenario === 'plan-correction-silent'
+    planCorrectionSilent: scenario === 'plan-correction-silent',
+    apiErrorNudge: scenario === 'api-error-nudge',
+    apiErrorRestart: scenario === 'api-error-restart',
+    apiErrorPermanent: scenario === 'api-error-permanent'
   };
 }
 
@@ -341,7 +351,7 @@ const BT = String.fromCharCode(96);
 const ESC = String.fromCharCode(27);
 const BEL = String.fromCharCode(7);
 const execMatch = PROMPT.match(new RegExp('execution ' + BT + '([^' + BT + ']+)' + BT));
-const EXECUTION_ID = execMatch ? execMatch[1] : null;
+let EXECUTION_ID = execMatch ? execMatch[1] : null;
 const IS_ORCHESTRATOR = /coordinator of Team/.test(PROMPT);
 const IS_WORKER = /worker standby/.test(PROMPT);
 // Owner that started the run itself: 'E2E own Squad reports' also answers the blocker its
@@ -352,6 +362,9 @@ const IS_OWNER = ANSWERS_REPORTS || /E2E start Job Team/.test(PROMPT);
 // 'E2E launch Squad' is the same role for specs whose entries use squad_launch (see proposer()).
 const IS_PROPOSER = /E2E (propose|launch) Squad/.test(PROMPT);
 const FAILED_DAG = ${JSON.stringify(flags.failedDag)};
+// Unattended (demo recordings): the success DAG, but the navigation label is decided by the
+// worker instead of a human question, so the run goes straight to done.
+const UNATTENDED = ${JSON.stringify(flags.unattended)};
 // Stuck-worker reclaim repro (run df216947): the worker claims its unit, goes
 // ✻ working (NON-restful), and holds forever — never completes/blocks/idles. The
 // only escape is the wall-clock backstop (owner sets a small maxClaimWallClockMs);
@@ -389,8 +402,23 @@ const HANDOFF = ${JSON.stringify(flags.handoff)};
 // writing it (stalled-card path).
 const PLAN_CORRECTION = ${JSON.stringify(flags.planCorrection)};
 const PLAN_CORRECTION_SILENT = ${JSON.stringify(flags.planCorrectionSilent)};
+// API-error recovery (#416): the worker runs the REAL UserPromptSubmit / StopFailure hook commands
+// main injected into --settings, as Claude Code does. NUDGE: the Continue line completes the unit.
+// RESTART: the first process ignores it; a process started with --resume (the restarted session,
+// no launch prompt) completes the re-delivered assignment. PERMANENT: it never completes.
+const API_ERROR_NUDGE = ${JSON.stringify(flags.apiErrorNudge)};
+const API_ERROR_RESTART = ${JSON.stringify(flags.apiErrorRestart)};
+const API_ERROR_PERMANENT = ${JSON.stringify(flags.apiErrorPermanent)};
+const APIERR = API_ERROR_NUDGE || API_ERROR_RESTART || API_ERROR_PERMANENT;
+const RESUMED = process.argv.includes('--resume');
+// The MCP URL's session segment survives an in-place restart (the restarted process gets a new
+// ZCC_SESSION_ID but the same MCP binding), so key the EXECUTION_ID file on it.
+function execFileFor() {
+  const sid = String(MCP_URL).split('/').slice(-2)[0] || process.env.ZCC_SESSION_ID;
+  return path.join(__dirname, 'exec-' + sid);
+}
 
-const ROLE = IS_ORCHESTRATOR ? 'ORCH' : IS_WORKER ? 'WORK' : IS_OWNER ? 'OWNR' : IS_PROPOSER ? 'PROP' : 'UNKN';
+const ROLE = IS_ORCHESTRATOR ? 'ORCH' : (IS_WORKER || (APIERR && RESUMED)) ? 'WORK' : IS_OWNER ? 'OWNR' : IS_PROPOSER ? 'PROP' : 'UNKN';
 // Progress goes to stderr (Playwright captures it on failure) and a per-process
 // log in the project cwd. Each line carries role + pid so the 3-process cohort
 // interleaves legibly.
@@ -456,7 +484,9 @@ async function status() {
 const SUCCESS_PLAN = [
   { id: 'home', title: 'Write Home', task: 'Create home.txt containing HOME: ready', dependencies: [], files: ['home.txt'], verification: ['home.txt present'] },
   { id: 'about', title: 'Write About', task: 'Create about.txt containing ABOUT: ready', dependencies: [], files: ['about.txt'], verification: ['about.txt present'] },
-  { id: 'navigation-label', title: 'Ask Navigation Label', task: 'Raise a durable human question with two label choices', dependencies: ['home', 'about'], readOnly: true, verification: ['durable question answered'] },
+  UNATTENDED
+    ? { id: 'navigation-label', title: 'Shared Navigation', task: 'Choose the shared navigation label', dependencies: ['home', 'about'], readOnly: true, verification: ['label chosen'] }
+    : { id: 'navigation-label', title: 'Ask Navigation Label', task: 'Raise a durable human question with two label choices', dependencies: ['home', 'about'], readOnly: true, verification: ['durable question answered'] },
   { id: 'assemble', title: 'Assemble Result', task: 'Write result.txt from both worker outputs and the chosen label', dependencies: ['navigation-label'], files: ['result.txt'], verification: ['cat result.txt'] }
 ];
 const FAILED_DAG_PLAN = [
@@ -473,7 +503,10 @@ const STREAMING_PLAN = [
 const HANDOFF_PLAN = [
   { id: 'handoff-unit', title: 'Handoff Unit', task: 'Claim this unit; the first holder is stopped, so a surviving peer completes it', dependencies: [], files: ['handoff.txt'], verification: ['handoff.txt present'] }
 ];
-const PLAN = FAILED_DAG ? FAILED_DAG_PLAN : (STALLED || CHURN) ? STALLED_PLAN : STREAMING ? STREAMING_PLAN : HANDOFF ? HANDOFF_PLAN : SUCCESS_PLAN;
+const API_ERROR_PLAN = [
+  { id: 'api-error-unit', title: 'API Error Unit', task: 'Write api-error.txt containing RECOVERED: ready', dependencies: [], files: ['api-error.txt'], verification: ['api-error.txt present'] }
+];
+const PLAN = APIERR ? API_ERROR_PLAN : FAILED_DAG ? FAILED_DAG_PLAN : (STALLED || CHURN) ? STALLED_PLAN : STREAMING ? STREAMING_PLAN : HANDOFF ? HANDOFF_PLAN : SUCCESS_PLAN;
 
 async function owner() {
   log('owner start');
@@ -481,7 +514,7 @@ async function owner() {
     version: 1,
     teamId: 'e2e-job-team',
     launchRequestId: 'e2e-cli-agent-job-' + process.pid,
-    jobTitle: ANSWERS_REPORTS ? 'CLI Agent reporting job' : CHURN ? 'CLI Agent kickoff churn job' : STALLED ? 'CLI Agent stalled job' : STREAMING ? 'CLI Agent streaming job' : HANDOFF ? 'CLI Agent handoff job' : 'CLI Agent durable job',
+    jobTitle: ANSWERS_REPORTS ? 'CLI Agent reporting job' : APIERR ? 'CLI Agent API error job' : CHURN ? 'CLI Agent kickoff churn job' : STALLED ? 'CLI Agent stalled job' : STREAMING ? 'CLI Agent streaming job' : HANDOFF ? 'CLI Agent handoff job' : 'CLI Agent durable job',
     summary: 'Full Job Team route started by a CLI Agent owner.',
     workUnits: PLAN,
     ...(ANSWERS_REPORTS ? { notify: true } : {}),
@@ -497,7 +530,7 @@ async function owner() {
     // CHURN and HANDOFF deliberately fall to the else branch below (1 coordinator
     // + 2 WORKER slots): the second worker slot is the untried peer that WS1
     // reassigns onto (CHURN) or that completes the re-dispatched unit (HANDOFF).
-    slots: STALLED || STREAMING
+    slots: STALLED || STREAMING || APIERR
       ? [
           { initialTask: 'Coordinate the durable execution.' },
           { initialTask: 'Run assigned work from the durable execution.' }
@@ -726,6 +759,8 @@ async function doUnit(unitId) {
     const fence = (assignText[unitId] || '').match(/Claim fence: claimId=([^;\n]+); claimGeneration=(\d+)/);
     if (!fence) throw new Error('assignment missing claim fence');
     const outcomeFence = { claimId: fence[1], claimGeneration: Number(fence[2]) };
+    // Unattended runs are watched: let each unit read as working for a moment.
+    if (UNATTENDED) await sleep(2500);
     if (unitId === 'fail-root') {
       await mcp('execution.work.fail', { executionId: EXECUTION_ID, workUnitId: unitId, failureCode: 'VALIDATION_FAILED', failure: 'Deterministic E2E validation failure', ...outcomeFence });
     } else if (unitId === 'independent') {
@@ -739,6 +774,9 @@ async function doUnit(unitId) {
     } else if (unitId === 'about') {
       fs.writeFileSync(path.join(CWD, 'about.txt'), 'ABOUT: ready\n');
       await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: 'about', result: 'ABOUT: ready', ...outcomeFence });
+    } else if (unitId === 'api-error-unit') {
+      fs.writeFileSync(path.join(CWD, 'api-error.txt'), 'RECOVERED: ready\n');
+      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: 'recovered', ...outcomeFence });
     } else if (unitId === 'write') {
       fs.writeFileSync(path.join(CWD, 'output.txt'), 'output ready\n');
       await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: 'output ready', ...outcomeFence });
@@ -749,7 +787,7 @@ async function doUnit(unitId) {
       const note = fs.readFileSync(path.join(CWD, 'note.txt'), 'utf8').trim();
       await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: 'reviewed: ' + note, ...outcomeFence });
     } else if (unitId === 'navigation-label') {
-      const chosenLabel = await handleNavigationLabel(outcomeFence);
+      const chosenLabel = UNATTENDED ? 'About Atlas' : await handleNavigationLabel(outcomeFence);
       // Complete with the chosen label as the unit result. The engine inherits
       // this into the 'assemble' worker's assignment text — NO side file.
       await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: 'navigation-label', result: chosenLabel, ...outcomeFence });
@@ -884,8 +922,128 @@ async function handoffWorker() {
   await new Promise(function () {}); // stay alive; work is push-driven
 }
 
+
+// API-error worker (#416). Writes its EXECUTION_ID where a restarted process (no launch prompt)
+// can read it, runs the injected hook commands with /bin/sh like Claude Code, and logs every
+// typed line that is not an assignment to typed.log next to this script.
+function apiErrorHooks() {
+  const at = process.argv.indexOf('--settings');
+  const settings = at >= 0 ? JSON.parse(process.argv[at + 1]) : { hooks: {} };
+  const hooks = settings.hooks || {};
+  const commands = function (event) {
+    return (hooks[event] || []).flatMap(function (entry) { return (entry.hooks || []).map(function (hook) { return hook.command; }); });
+  };
+  return {
+    has: function (event) { return commands(event).length > 0; },
+    run: function (event, body) {
+      commands(event).forEach(function (command) {
+        require('child_process').spawnSync('/bin/sh', ['-c', command], { input: JSON.stringify(body), env: process.env, timeout: 15000, encoding: 'utf8' });
+      });
+    }
+  };
+}
+
+// What the API-error fake reports on StopFailure: a permanent authentication failure, or the
+// temporary proxy 400 from #416.
+function apiErrorProfile() {
+  return API_ERROR_PERMANENT
+    ? { permanent: true, kind: 'authentication_failed', detail: 'Invalid API key' }
+    : { permanent: false, kind: 'invalid_request', detail: '400 litellm.BadRequestError: LLM Provider NOT provided. Error doing the fallback: Provider anthropic not found' };
+}
+
+// One worker turn as Claude Code reports it: UserPromptSubmit at submit time, while the tab still
+// shows its resting title, then 'working' long enough to pass the 250 ms status debounce.
+function apiErrorTurns(hooks) {
+  return {
+    start: async function () {
+      hooks.run('UserPromptSubmit', { hook_event_name: 'UserPromptSubmit', prompt: 'work' });
+      setWorking();
+      await sleep(400);
+    },
+    finish: async function (unitId) {
+      await doUnit(unitId);
+      await sleep(300);
+      setIdle();
+      hooks.run('Stop', { hook_event_name: 'Stop' });
+    }
+  };
+}
+
+// Splits what the engine types into assignments and other lines. An assignment (and the restart
+// preface before a redelivered one) is buffered until its closing sentence has arrived.
+function apiErrorInput(onAssignment, onLine) {
+  const ASSIGN_RE = new RegExp('assigned work unit ' + BT + '([^' + BT + ']+)' + BT);
+  const END = 'coordinator.';
+  let buf = '';
+  let inAssignment = false;
+  return function consume(chunk) {
+    const s = String(chunk).replace(/\x1b\[20[01]~/g, '');
+    if (!inAssignment && !ASSIGN_RE.test(s) && s.indexOf('Zana restarted your session') === -1) {
+      s.split(/[\r\n]+/).map(function (line) { return line.trim(); }).filter(Boolean).forEach(function (line) { onLine(line); });
+      return;
+    }
+    inAssignment = true;
+    buf += s;
+    let m;
+    while ((m = buf.match(ASSIGN_RE)) !== null) {
+      const endIdx = buf.indexOf(END, m.index);
+      if (endIdx === -1) return; // still arriving
+      const end = endIdx + END.length;
+      assignText[m[1]] = buf.slice(m.index, end);
+      buf = buf.slice(end);
+      inAssignment = false;
+      onAssignment(m[1]);
+    }
+  };
+}
+
+async function apiErrorWorker() {
+  log('api-error worker start', EXECUTION_ID, 'resumed=' + RESUMED, 'sid=' + process.env.ZCC_SESSION_ID, 'argv=' + JSON.stringify(process.argv.slice(2).filter(function (a) { return a.length < 40; })));
+  if (EXECUTION_ID) fs.writeFileSync(execFileFor(), EXECUTION_ID);
+  const typedLog = path.join(__dirname, 'typed.log');
+  const hooks = apiErrorHooks();
+  const profile = apiErrorProfile();
+  if (!RESUMED && !hooks.has('StopFailure')) {
+    log('fatal: the injected --settings has no StopFailure hook');
+    process.stderr.write('API-error worker: no StopFailure hook in --settings\n');
+    process.exit(70);
+  }
+  const turns = apiErrorTurns(hooks);
+  const seen = Object.create(null);
+  let failedOnce = false;
+  let nudged = false;
+  async function onAssignment(id) {
+    if (seen[id]) return;
+    seen[id] = true;
+    await turns.start();
+    if (!RESUMED && !failedOnce) {
+      failedOnce = true;
+      hooks.run('StopFailure', { hook_event_name: 'StopFailure', error: profile.kind, error_details: profile.detail });
+      setIdle();
+      log('api-error: stopped on ' + profile.kind + ', not completing');
+      return;
+    }
+    if (RESUMED && !profile.permanent) await turns.finish(id);
+  }
+  function onLine(line) {
+    fs.appendFileSync(typedLog, line + '\n');
+    if (line.indexOf('Continue with your current assignment') === -1 || !API_ERROR_NUDGE || RESUMED || nudged) return;
+    nudged = true;
+    turns.start().then(function () { return turns.finish('api-error-unit'); })
+      .catch(function (e) { log('nudge error', String((e && e.message) || e)); });
+  }
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', apiErrorInput(function (id) {
+    onAssignment(id).catch(function (e) { log('assignment error', String((e && e.message) || e)); });
+  }, onLine));
+  process.stdin.resume();
+  setIdle();
+  await new Promise(function () {});
+}
+
 async function worker() {
   if (HANDOFF) return handoffWorker();
+  if (APIERR) return apiErrorWorker();
   if (STALLED || CHURN) return stalledWorker();
   if (STREAMING) return streamingWorker();
   log('worker start', EXECUTION_ID);
@@ -999,13 +1157,16 @@ async function worker() {
 }
 
 (async function () {
-  log('boot', 'mcp=' + (MCP_URL ? 'yes' : 'no'), 'exec=' + EXECUTION_ID, 'promptHead=' + JSON.stringify(PROMPT.slice(0, 120)));
+  if (!EXECUTION_ID && APIERR && RESUMED) {
+    try { EXECUTION_ID = fs.readFileSync(execFileFor(), 'utf8').trim() || null; } catch (e) { /* guard below reports it */ }
+  }
+  log('boot', 'mcp=' + (MCP_URL ? 'yes' : 'no'), 'exec=' + EXECUTION_ID, 'resumed=' + RESUMED, 'sid=' + process.env.ZCC_SESSION_ID, 'promptHead=' + JSON.stringify(PROMPT.slice(0, 120)));
   if (!MCP_URL || (!EXECUTION_ID && !IS_OWNER && !IS_PROPOSER)) { log('missing MCP_URL/EXECUTION_ID', MCP_URL, EXECUTION_ID); await hold(); return; }
   try {
     if (IS_OWNER) await owner();
     else if (IS_PROPOSER) await proposer();
     else if (IS_ORCHESTRATOR) await (PLAN_CORRECTION || PLAN_CORRECTION_SILENT ? planCorrectionOrchestrator() : orchestrator());
-    else if (IS_WORKER) await worker();
+    else if (IS_WORKER || (APIERR && RESUMED)) await worker();
     else { log('unknown role; prompt head:', PROMPT.slice(0, 200)); await hold(); }
   } catch (e) { log('fatal', String((e && e.stack) || e)); await hold(); }
 })();

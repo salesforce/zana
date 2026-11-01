@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
+  authorizeTeamLaunchInputSchema,
+  launchTeamInputSchema,
   registerLaunchTeamTool,
   type RegisterLaunchTeamToolOpts
 } from './launch-team-mcp-tool.js';
@@ -64,6 +66,16 @@ const structuredLaunchArgs = {
 };
 
 describe('registerLaunchTeamTool', () => {
+  it('bounds automated skill selections on authorization and launch inputs', () => {
+    const automatedSkillIds = ['zcc:built-in/test'];
+    expect(authorizeTeamLaunchInputSchema.slots.safeParse([{ initialTask: 'Task', automatedSkillIds }]).success).toBe(true);
+    expect(launchTeamInputSchema.slots.safeParse([{ ...structuredLaunchArgs.slots[0], automatedSkillIds }]).success).toBe(true);
+    expect(authorizeTeamLaunchInputSchema.slots.safeParse([{ initialTask: 'Task', automatedSkillIds: Array(65).fill('zcc:built-in/test') }]).success).toBe(false);
+    expect(launchTeamInputSchema.slots.safeParse([{ ...structuredLaunchArgs.slots[0], automatedSkillIds: Array(65).fill('zcc:built-in/test') }]).success).toBe(false);
+    expect(authorizeTeamLaunchInputSchema.slots.safeParse([{ initialTask: 'Task', automatedSkillIds: ['zcc:built-in/test', 'zcc:built-in/test'] }]).success).toBe(false);
+    expect(launchTeamInputSchema.slots.safeParse([{ ...structuredLaunchArgs.slots[0], automatedSkillIds: ['zcc:built-in/test', 'zcc:built-in/test'] }]).success).toBe(false);
+  });
+
   it('revalidates admission digest between authorization and launch', async () => {
     const { server, tools } = fakeServer();
     let calls = 0;

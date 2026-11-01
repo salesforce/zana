@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExecutionBoardSnapshot } from '@zana-ai/zcc-domain/product';
 import { ExecutionJobDetails } from './ExecutionJobDetails.js';
 import { useUi } from '../store';
+import { usePersonas, useTeams } from '../stores/live.js';
 
 /**
  * MT-3 steps 2, 5, 6, 7 at the renderer seam: retained-worktree controls on a
@@ -46,6 +47,8 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   useUi.setState({ toasts: [] });
+  useTeams.setState({ teams: [] });
+  usePersonas.setState({ personas: [] });
 });
 
 describe('retained Squad worktree controls', () => {
@@ -74,20 +77,20 @@ describe('retained Squad worktree controls', () => {
   it('confirmed Delete sends the exact terminal stateVersion with action delete', async () => {
     mount();
     fireEvent.click(await screen.findByRole('button', { name: 'Delete worktree' }));
-    await waitFor(() => expect(worktreeAction).toHaveBeenCalledWith('project-1', 'execution-1', 7, 'delete', undefined));
+    await waitFor(() => expect(worktreeAction).toHaveBeenCalledWith('project-1', 'execution-1', 7, 'delete', undefined, undefined));
   });
 
   it('Force delete uses distinct confirmation copy and the force-delete action', async () => {
     mount();
     fireEvent.click(await screen.findByRole('button', { name: 'Force delete unmerged work' }));
     expect(String(confirmSpy.mock.calls[0]?.[0])).toContain('Force delete unmerged worktree?');
-    await waitFor(() => expect(worktreeAction).toHaveBeenCalledWith('project-1', 'execution-1', 7, 'force-delete', undefined));
+    await waitFor(() => expect(worktreeAction).toHaveBeenCalledWith('project-1', 'execution-1', 7, 'force-delete', undefined, undefined));
   });
 
   it('Leave needs no confirmation', async () => {
     mount();
     fireEvent.click(await screen.findByRole('button', { name: 'Leave worktree' }));
-    await waitFor(() => expect(worktreeAction).toHaveBeenCalledWith('project-1', 'execution-1', 7, 'leave', undefined));
+    await waitFor(() => expect(worktreeAction).toHaveBeenCalledWith('project-1', 'execution-1', 7, 'leave', undefined, undefined));
     expect(confirmSpy).not.toHaveBeenCalled();
   });
 
@@ -99,8 +102,35 @@ describe('retained Squad worktree controls', () => {
     fireEvent.change(box, { target: { value: '  push this branch to origin  ' } });
     expect(instruct.disabled).toBe(false);
     fireEvent.click(instruct);
-    await waitFor(() => expect(worktreeAction).toHaveBeenCalledWith('project-1', 'execution-1', 7, 'instruct', 'push this branch to origin'));
+    await waitFor(() => expect(worktreeAction).toHaveBeenCalledWith('project-1', 'execution-1', 7, 'instruct', 'push this branch to origin', undefined));
     await waitFor(() => expect(box.value).toBe(''));
+  });
+
+  it('offers only roster personas, defaults to the coordinator, and sends the pick', async () => {
+    useTeams.setState({ teams: [{ id: 'team-1', orchestratorPersonaId: 'lead', slots: [{ personaId: 'dev' }] }] as never });
+    usePersonas.setState({ personas: [{ id: 'lead', name: 'Lead' }, { id: 'dev', name: 'Dev' }, { id: 'outsider', name: 'Outsider' }] as never });
+    mount();
+    const picker = await screen.findByLabelText('Follow-up persona') as HTMLSelectElement;
+    expect(picker.value).toBe('');
+    expect(Array.from(picker.options).map((o) => o.value)).toEqual(['', 'lead', 'dev']);
+    fireEvent.change(screen.getByLabelText('Follow-up agent instruction'), { target: { value: 'go' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Instruct an agent' }));
+    await waitFor(() => expect(worktreeAction).toHaveBeenLastCalledWith('project-1', 'execution-1', 7, 'instruct', 'go', undefined));
+    fireEvent.change(picker, { target: { value: 'dev' } });
+    fireEvent.change(screen.getByLabelText('Follow-up agent instruction'), { target: { value: 'again' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Instruct an agent' }));
+    await waitFor(() => expect(worktreeAction).toHaveBeenLastCalledWith('project-1', 'execution-1', 7, 'instruct', 'again', 'dev'));
+  });
+
+  it('shows the sanitized launch denial from main and omits the picker without a roster', async () => {
+    mount();
+    await screen.findByLabelText('Retained Squad worktree');
+    expect(screen.queryByLabelText('Follow-up persona')).toBeNull();
+    const message = 'Follow-up agent was not launched: harness unavailable';
+    worktreeAction.mockResolvedValueOnce({ ok: false, message });
+    fireEvent.change(screen.getByLabelText('Follow-up agent instruction'), { target: { value: 'go' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Instruct an agent' }));
+    await waitFor(() => expect(useUi.getState().toasts.some((t) => t.message === `Squad control failed: ${message}`)).toBe(true));
   });
 
   it.each([

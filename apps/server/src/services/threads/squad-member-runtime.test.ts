@@ -138,6 +138,38 @@ describe('trusted Modern member runtime', () => {
     expect(commands.filter(command => command.type === 'thread.start')).toHaveLength(1);
   });
 
+  it('persists main-authorized skill selection and sends it at activation', async () => {
+    const automatedSkillIds = ['zcc:built-in/test'];
+    const request = { ...member, automatedSkillIds };
+    await createSquadMemberConversation(ctx, request);
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({ automatedSkillIds });
+    await activateSquadMemberConversation(ctx, request);
+    await vi.waitFor(() => expect(commands.find(command => command.type === 'thread.start')).toMatchObject({ automatedSkillIds }));
+  });
+
+  it('persists the squad execution id for a member', async () => {
+    const executionId = '44444444-4444-4444-8444-444444444444';
+    await createSquadMemberConversation(ctx, { ...member, executionId });
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({
+      squadExecution: executionId
+    });
+  });
+
+  it('persists and sends an empty automated skill selection by default', async () => {
+    await createSquadMemberConversation(ctx, member);
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({ automatedSkillIds: [] });
+    await activateSquadMemberConversation(ctx, member);
+    await vi.waitFor(() => expect(commands.find(command => command.type === 'thread.start')).toMatchObject({ automatedSkillIds: [] }));
+  });
+
+  it('persists and sends an explicit empty automated skill selection', async () => {
+    const request = { ...member, automatedSkillIds: [] };
+    await createSquadMemberConversation(ctx, request);
+    expect(getThreadPluginMetadata(db, bindingId, privateNamespace).metadata).toMatchObject({ automatedSkillIds: [] });
+    await activateSquadMemberConversation(ctx, request);
+    await vi.waitFor(() => expect(commands.find(command => command.type === 'thread.start')).toMatchObject({ automatedSkillIds: [] }));
+  });
+
   it('single-flights concurrent activation before async preflight without duplicate starts', async () => {
     await createSquadMemberConversation(ctx, member);
     const preflight = Promise.withResolvers<void>();

@@ -17,7 +17,8 @@ export const PLUGIN_VIEW_MIN_SIZE = { width: 720, height: 480 } as const;
 const PLUGIN_ID = /^[a-z0-9][a-z0-9-]{0,127}$/;
 const TAB_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_PROJECT_ID = 256;
-const MAX_MAIN_PATH = 2048;
+const MAX_MAIN_PATH = 32768;
+const MAX_RESOURCE_ID = 2048;
 
 export type PluginViewBoundsRecord = NonNullable<AppConfig['pluginViewWindowBounds']>;
 type WindowBounds = NonNullable<AppConfig['windowBounds']>;
@@ -42,20 +43,24 @@ function hasControlCharacter(value: string): boolean {
 /** Validate a renderer-supplied view target. Anything malformed is `null`. */
 export function parsePluginViewTarget(input: unknown): PluginViewTarget | null {
   if (!input || typeof input !== 'object') return null;
-  const { pluginId, tabId, projectId } = input as Record<string, unknown>;
+  const { pluginId, tabId, projectId, resourceId } = input as Record<string, unknown>;
   if (typeof pluginId !== 'string' || !PLUGIN_ID.test(pluginId)) return null;
   if (typeof tabId !== 'string' || !TAB_ID.test(tabId)) return null;
   if (typeof projectId !== 'string' || !projectId.trim() || projectId.length > MAX_PROJECT_ID) return null;
   if (hasControlCharacter(projectId)) return null;
-  return { pluginId, tabId, projectId };
+  if (resourceId !== undefined && (typeof resourceId !== 'string' || !resourceId.trim() || resourceId.length > MAX_RESOURCE_ID || hasControlCharacter(resourceId))) return null;
+  return { pluginId, tabId, projectId, ...(resourceId === undefined ? {} : { resourceId }) };
 }
 
 export function pluginViewKey(target: PluginViewTarget): string {
-  return `${target.pluginId}/${target.tabId}@${target.projectId}`;
+  // Preserve legacy geometry keys; resource windows use an unambiguous tuple.
+  return target.resourceId === undefined
+    ? `${target.pluginId}/${target.tabId}@${target.projectId}`
+    : JSON.stringify([target.pluginId, target.tabId, target.projectId, target.resourceId]);
 }
 
 export function samePluginView(a: PluginViewTarget | undefined, b: PluginViewTarget): boolean {
-  return !!a && a.pluginId === b.pluginId && a.tabId === b.tabId && a.projectId === b.projectId;
+  return !!a && a.pluginId === b.pluginId && a.tabId === b.tabId && a.projectId === b.projectId && a.resourceId === b.resourceId;
 }
 
 /** Main's checks before it opens a view window (Rule 1: the renderer is untrusted). */
@@ -79,7 +84,8 @@ export function pluginViewRendererParams(target: PluginViewTarget): Record<strin
     projectId: target.projectId,
     surface: PLUGIN_VIEW_SURFACE,
     pluginId: target.pluginId,
-    tabId: target.tabId
+    tabId: target.tabId,
+    ...(target.resourceId === undefined ? {} : { resourceId: target.resourceId })
   };
 }
 

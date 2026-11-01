@@ -1,7 +1,9 @@
-import { isDurableCoordination, isRestfulAgentState, type AgentState, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SessionStats, type SquadBundleWorkflowMetadataV1, type TeamAvailabilityUnknown, type TeamCoordinationMode, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput, type TeamRequirementFailure } from '@zana-ai/zcc-domain/product';
+import { isDurableCoordination, isRestfulAgentState, validateSquadExecutionTarget, type SquadExecutionTargetSelector, type AgentState, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SessionStats, type SquadBundleWorkflowMetadataV1, type TeamAvailabilityUnknown, type TeamCoordinationMode, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput, type TeamRequirementFailure } from '@zana-ai/zcc-domain/product';
+import { squadLaunchTextProblem } from '@zana-ai/zcc-domain/squad-proposal';
+import { fitRecoveryObjective } from './recovery-objective.js';
 import { createHash } from 'node:crypto';
 import { launchDigest } from '../launch/digest.js';
-import { EXECUTION_RETENTION_MS, KICKOFF_FAILURE_BLOCK_THRESHOLD, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
+import { EXECUTION_RETENTION_MS, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
 import type { createExecutionStore } from './store.js';
 import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './artifact-store.js';
 import { validateWorkflowPolicyResult, type WorkflowPolicyResultV1 } from './policy-result.js';
@@ -10,11 +12,12 @@ import type { createExecutionSourceRegistry } from './source-registry.js';
 import { buildInboxQuestion } from '../inbox/inbox-question-schema.js';
 import type { InboxEntry, InboxInput } from '../inbox/inbox-store.js';
 import { ExecutionDeadlineWatchdog, executionProgressAnchor } from './deadline-watchdog.js';
-import { PlanReadinessWatchdog } from './plan-readiness-watchdog.js';
+import { PlanReadinessWatchdog, type PlanReadinessExpiryReason } from './plan-readiness-watchdog.js';
 import { evaluateTeamAdmission, type TeamAdmissionInput, type TeamAdmissionResultV1 } from '../launch/preflight.js';
 import { evaluateSlotEligibility } from './routing-policy.js';
 import { transitionCircuit, type CircuitState } from './retry-policy.js';
 import { usageCursorIdentity, usageRollup, validateStructuredJson, validateStructuredResult, type ExecutionUsageObservationV1, type UsageSampleKind } from './contracts.js';
+import { CoordinatorWakeConfirmations, type CoordinatorWakeConfirmation, type PendingWakeConfirmation } from './coordinator-wake-confirmation.js';
 
 /** Wall-clock ceiling for a single bounded snapshot read. */
 const SNAPSHOT_TIMEOUT_MS = 15_000;
@@ -178,8 +181,13 @@ export interface ExecutionRequestV1 {
   worktree?: boolean;
   /** Terminal disposition for an execution-owned shared worktree. */
   onComplete?: 'leave' | 'merge' | 'delete';
-  /** Opt-in terminal inbox notice for runs without an owner report target. */
-  completionInboxNotice?: boolean;
+    /** Opt-in terminal inbox notice for runs without an owner report target. */
+    completionInboxNotice?: boolean;
+  /**
+   * Trusted selector for an existing user-owned target (main resolves it; never a raw path).
+   * Rules: {@link validateSquadExecutionTarget}.
+   */
+    target?: SquadExecutionTargetSelector;
 }
 
 /** @deprecated Use ExecutionRequestV1. Retained for Team backend callers. */
@@ -251,7 +259,7 @@ export interface ExecutionServiceDeps {
    * checked here, rather than only in a handoff caller, so coordinator MCP calls
    * and host-side file handoffs share the same authority boundary.
    */
-  authorizePlanRegistration?: (record: ExecutionRecord, workUnits: readonly ExecutionWorkUnitInput[]) =>
+  authorizePlanRegistration?: (record: ExecutionRecord, workUnits: readonly ExecutionWorkUnitInput[], submitter?: ExecutionCohortBinding) =>
     Promise<{ ok: true } | { ok: false; message: string }> | { ok: true } | { ok: false; message: string };
   /** Main-owned snapshot resolver. Agent/renderer model claims never authorize routing. */
   resolveTeamModelSnapshots?: (projectId: string, request: Pick<ExecutionRequestV1, 'teamId' | 'slots'>) => Promise<ResolvedModelSnapshotV1[]> | ResolvedModelSnapshotV1[];
@@ -274,8 +282,20 @@ export interface ExecutionServiceDeps {
   claimRecoveryEnforceEnabled?: () => boolean;
   /** Grace (ms) a durable execution may stay planless before the watchdog fails it. `0`/absent disables. */
   planStartupGraceMs?: () => number;
+  /**
+   * True while a human plan-correction decision is open for the execution. The
+   * planless watchdog pauses while it holds (fresh grace on resolution, 24h
+   * absolute cap). Throw/reject = not open. Absent = never paused.
+   */
+  isPlanCorrectionOpen?: (executionId: string) => boolean | Promise<boolean>;
   /** Main-owned agent status used to detect a live process whose assigned turn ended silently. */
   getAgentState?: (sessionId: string) => AgentState;
+  /**
+   * True when main feeds this session's agent-status edges into
+   * {@link SquadExecutionService.observeCoordinatorState}, so a confirmation-required
+   * wake can wait for consumption evidence. Absent/false = acknowledge on write.
+   */
+  confirmsWakeConsumption?: (sessionId: string) => boolean;
   /**
    * Main-owned INNER-agent liveness, distinct from the outer `worker.process` (the
    * shell/tmux wrapper) and from {@link getAgentState} (the OSC/screen status). A
@@ -523,6 +543,15 @@ export function dependencyResultsSection(record: ExecutionRecord, workUnitId: st
   return `\n\nUpstream results (outputs of your completed dependencies — use these, do NOT re-ask the human for information already decided here):\n${lines.join('\n')}`;
 }
 
+/** The text a worker receives for an assignment; shared by first delivery and recovery redelivery. */
+export function assignmentText(record: ExecutionRecord, assignment: ExecutionDispatchAssignment): string {
+  const upstream = dependencyResultsSection(record, assignment.workUnitId);
+  const claim = assignment.claimId && assignment.claimGeneration
+    ? `\nClaim fence: claimId=${assignment.claimId}; claimGeneration=${assignment.claimGeneration}. Include both in execution.work.heartbeat and every structured work outcome.`
+    : '';
+  return `You are assigned work unit \`${assignment.workUnitId}\`${assignment.title ? ` — ${assignment.title}` : ''}.\nTask: ${assignment.task}${assignment.files?.length ? `\nFile scope: ${assignment.files.join(', ')}` : ''}${upstream}${claim}\n\nClose the unit through exactly one structured outcome: execution.work.complete, execution.work.block, execution.work.fail, or execution.work.release. Do not send routine progress or results to the coordinator.`;
+}
+
 /** Build renderer-safe, resolved capability gaps from admission checks before any execution is claimed. */
 export function requirementFailureFromAdmission(
   workUnits: readonly ExecutionWorkUnitInput[] | undefined,
@@ -561,8 +590,14 @@ export class ExecutionService {
   private activeClaimCursor?: ActiveClaimCursor;
   private activeReconcileRunning = false;
   private readonly routeFactCircuits = new Map<string, { state: CircuitState; openedAt?: number }>();
+  private readonly wakeConfirmations: CoordinatorWakeConfirmations;
 
   constructor(private readonly deps: ExecutionServiceDeps) {
+    this.wakeConfirmations = new CoordinatorWakeConfirmations({
+      setTimer: deps.setTimer ?? setTimeout,
+      clearTimer: deps.clearTimer ?? clearTimeout,
+      onExpire: (entry) => { void this.expireCoordinatorWake(entry); }
+    });
     this.deadlineWatchdog = new ExecutionDeadlineWatchdog({
       now: deps.now ?? Date.now,
       setTimer: deps.setTimer ?? setTimeout,
@@ -574,7 +609,8 @@ export class ExecutionService {
       setTimer: deps.setTimer ?? setTimeout,
       clearTimer: deps.clearTimer ?? clearTimeout,
       graceMs: () => deps.planStartupGraceMs?.() ?? 0,
-      onGraceExpired: async (executionId) => { await this.failPlanlessExecution(executionId); }
+      ...(deps.isPlanCorrectionOpen ? { isSuspended: deps.isPlanCorrectionOpen } : {}),
+      onGraceExpired: async (executionId, reason) => { await this.failPlanlessExecution(executionId, reason); }
     });
   }
 
@@ -604,6 +640,10 @@ export class ExecutionService {
       || !request.teamId?.trim() || !request.launchRequestId?.trim() || !request.slots?.length) {
       return { ok: false, code: 'INVALID', message: 'invalid execution request' };
     }
+    // An invalid or conflicting target selector rejects before any durable state:
+    // there is never a fallback to a generated worktree.
+    const targetCheck = validateSquadExecutionTarget(request);
+    if (!targetCheck.ok) return { ok: false, code: 'INVALID', message: targetCheck.message };
     // Fail fast on an unregistered owner project. A `projectId` that never
     // resolved to a registered project can still reach here (the MCP route
     // parses it straight from the URL and validates only that the calling
@@ -614,6 +654,8 @@ export class ExecutionService {
     if (this.deps.isRegisteredProject && !this.deps.isRegisteredProject(projectId)) {
       return { ok: false, code: 'UNKNOWN_PROJECT', message: 'owner project is not registered' };
     }
+    const textProblem = squadLaunchTextProblem({ goal: request.objective, summary: request.summary?.trim() || undefined });
+    if (textProblem) return { ok: false, code: textProblem.code, message: textProblem.message };
     let resolvedModels: ResolvedModelSnapshotV1[];
     try {
       resolvedModels = (await this.withResolvedRouteFacts(projectId, request)).resolvedModels ?? [];
@@ -663,7 +705,7 @@ export class ExecutionService {
         ...(opts?.proposal ? { proposal: opts.proposal } : {}),
         ...(opts?.reportTo ? { reportTo: opts.reportTo } : {}),
         launchRequestId: request.launchRequestId,
-        request: { version: 1, launchKind: request.launchKind ?? 'team', ...(request.launchDisplay ? { launchDisplay: request.launchDisplay } : {}), slots: request.slots, policy: effectivePolicy, workflow: request.workflow, resolvedModels, sourceBundle: request.sourceBundle, objective: request.objective, ...(request.worktree === undefined ? {} : { worktree: request.worktree }), ...(request.onComplete === undefined ? {} : { onComplete: request.onComplete }), completionInboxNotice: request.completionInboxNotice === true },
+        request: { version: 1, launchKind: request.launchKind ?? 'team', ...(request.launchDisplay ? { launchDisplay: request.launchDisplay } : {}), slots: request.slots, policy: effectivePolicy, workflow: request.workflow, resolvedModels, sourceBundle: request.sourceBundle, objective: request.objective, ...(request.worktree === undefined ? {} : { worktree: request.worktree }), ...(request.onComplete === undefined ? {} : { onComplete: request.onComplete }), ...(request.target === undefined ? {} : { target: request.target }), completionInboxNotice: request.completionInboxNotice === true },
         ...(request.workUnits ? { workUnits: request.workUnits } : {}),
         resolvedModels,
         requestDigest: launchDigest({ callerPrincipalId, projectId, request: { ...withoutDefaultLaunchKind(resolvedRequest), jobTitle, summary } })
@@ -753,10 +795,11 @@ export class ExecutionService {
       record = await this.deps.store.prepareLaunchIntent(record.id, record.stateVersion, {
         version: 1,
         authorizationContextDigest: record.authorizationContextDigest!,
-        slots: authorization.value.slots.map(({ slotId, personaId, initialTask }) => ({
+        slots: authorization.value.slots.map(({ slotId, personaId, initialTask, automatedSkillIds }) => ({
           slotId,
           personaId,
-          initialTaskDigest: launchDigest(initialTask)
+          initialTaskDigest: launchDigest(initialTask),
+          ...(automatedSkillIds === undefined ? {} : { automatedSkillIds })
         }))
       });
       let revalidatedAdmission: TeamAdmissionResultV1;
@@ -785,6 +828,7 @@ export class ExecutionService {
         policy: request.policy, requirePreauthorization: true, executionId: record.id, executionJobTitle: record.jobTitle,
         ...(request.worktree === undefined ? {} : { worktree: request.worktree }),
         ...(request.onComplete === undefined ? {} : { onComplete: request.onComplete }),
+        ...(request.target === undefined ? {} : { target: request.target }),
         ...(request.coordinationMode ? { coordinationMode: request.coordinationMode } : {}),
         ...(request.origin ? { origin: request.origin } : {}),
         ...(isDurableCoordination(request.coordinationMode) ? { jobContext: {
@@ -816,7 +860,7 @@ export class ExecutionService {
       await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
       const current = await this.failLaunch(record, `Team launch error: ${message}`);
       return current.state === 'FAILED'
-        ? { ok: false, code: 'TEAM_LAUNCH_FAILED', message }
+        ? { ok: false, code: message === 'TARGET_UNAVAILABLE' ? 'TARGET_UNAVAILABLE' : 'TEAM_LAUNCH_FAILED', message }
         : { ok: false, code: 'TEAM_LAUNCH_STATE_CONFLICT', message: `Team launch failed while execution is ${current.state.toLowerCase()}` };
     } finally {
       this.endStarting(claim.record.id);
@@ -948,6 +992,10 @@ export class ExecutionService {
     }
     if (unit.leaseExpiresAt === undefined || unit.leaseExpiresAt > now) return {};
     const state = worker.sessionId === undefined ? undefined : this.deps.getAgentState?.(worker.sessionId);
+    // Zana is recovering this worker from an API error (nudge, restart): keep the claim until its deadline.
+    if (isWorkerRecoveryLive(unit, now)) {
+      return { renewSlot: unit.assignedSlotId };
+    }
     if (state !== undefined && isRestfulAgentState(state)) return { claim: claimOf(SILENT_WORKER_CLAIM_REASON) };
     const maxStall = record.request.policy?.maxClaimStallMs;
     const lastProgressAt = unit.progressAt ?? unit.claimedAt;
@@ -1096,7 +1144,9 @@ export class ExecutionService {
     for (const unit of record.workUnits ?? []) {
       if (unit.state !== 'CLAIMED') continue;
       const lastProgressAt = unit.progressAt ?? unit.claimedAt;
-      const stalled = stallMs !== undefined && lastProgressAt !== undefined
+      // progressAt can predate the API error, so an active recovery before its deadline is live, not wedged.
+      const recovering = isWorkerRecoveryLive(unit, now);
+      const stalled = !recovering && stallMs !== undefined && lastProgressAt !== undefined
         && now - lastProgressAt >= stallMs;
       if (enforce && record.coordinatorState === 'PARKED' && stalled
         && unit.claimId !== undefined && unit.claimGeneration !== undefined) {
@@ -1215,14 +1265,60 @@ export class ExecutionService {
    * so a churning unit left neither reassigned nor blocked is visible.
    */
   private async blockKickoffToHuman(reclaimed: ExecutionRecord, unit: NonNullable<ExecutionRecord['workUnits']>[number]): Promise<boolean> {
+    return this.blockUnitToHuman(reclaimed.id, unit.id, () => this.deps.store.blockKickoffFailure(reclaimed.id, unit.id),
+      `NO_PROGRESS_EXHAUSTED: work unit ${unit.id} made no progress after attempts across every eligible worker slot — check the worker terminal or restart the run.`,
+      'kickoff-failure block');
+  }
+
+  /**
+   * A Squad worker stopped on an API error and Zana's recovery is exhausted (or the
+   * error is permanent): block the unit to a human, then re-dispatch whatever is ready.
+   */
+  async blockApiErrorToHuman(executionId: string, workUnitId: string, fence: { claimId: string; claimGeneration: number }): Promise<boolean> {
+    const blocked = await this.blockUnitToHuman(executionId, workUnitId, () => this.deps.store.blockKickoffFailure(executionId, workUnitId, fence),
+      `NO_PROGRESS_EXHAUSTED: work unit ${workUnitId} stopped after an API error and did not recover — check the worker terminal or restart the run.`,
+      'API-error block');
+    if (blocked) await this.cascadeDispatch(executionId);
+    return blocked;
+  }
+
+  /** The CLAIMED unit currently assigned to a slot, with its claim fence. */
+  async findWorkerClaim(executionId: string, slotId: string): Promise<{ workUnitId: string; claimId: string; claimGeneration: number } | undefined> {
+    const record = await this.deps.store.get(executionId);
+    const unit = record?.workUnits?.find((candidate) => candidate.state === 'CLAIMED' && candidate.assignedSlotId === slotId);
+    if (!unit || !unit.claimId || unit.claimGeneration === undefined) return undefined;
+    return { workUnitId: unit.id, claimId: unit.claimId, claimGeneration: unit.claimGeneration };
+  }
+
+  /** Send the assignment again, behind a preface, while the unit is still CLAIMED with this fence. */
+  async redeliverClaim(
+    executionId: string, workUnitId: string, fence: { claimId: string; claimGeneration: number }, sessionId: string, preface: string
+  ): Promise<boolean> {
+    const record = await this.deps.store.get(executionId);
+    const unit = record?.workUnits?.find((candidate) => candidate.id === workUnitId);
+    if (!record || !unit || unit.state !== 'CLAIMED' || unit.claimId !== fence.claimId
+      || unit.claimGeneration !== fence.claimGeneration || !unit.assignedSlotId) return false;
+    const text = assignmentText(record, {
+      workUnitId: unit.id, slotId: unit.assignedSlotId, title: unit.title ?? '', task: unit.task, files: unit.files,
+      claimId: unit.claimId, claimGeneration: unit.claimGeneration
+    });
+    return Boolean(await (this.deps.deliverToWorker ?? this.deps.replyToSession)(sessionId, `${preface}\n\n${text}`));
+  }
+
+  /**
+   * Shared tail of the two "block a unit to a human" paths: persist the block, wake the
+   * coordinator, fire the human blocker and append the Inbox entry. Returns true iff the
+   * unit was blocked; a guard rejection is logged and returns false.
+   */
+  private async blockUnitToHuman(
+    executionId: string, workUnitId: string, block: () => Promise<ExecutionRecord>, message: string, label: string
+  ): Promise<boolean> {
     try {
-      const updated = await this.deps.store.blockKickoffFailure(reclaimed.id, unit.id);
+      const updated = await block();
       await this.wakeCoordinator(updated, {
-        cause: 'NO_PROGRESS_EXHAUSTED',
-        message: `NO_PROGRESS_EXHAUSTED: work unit ${unit.id} made no progress after attempts across every eligible worker slot — check the worker terminal or restart the run.`,
-        workUnitId: unit.id, stateOrClaimGeneration: updated.state
+        cause: 'NO_PROGRESS_EXHAUSTED', message, workUnitId, stateOrClaimGeneration: updated.state
       });
-      const blocker = updated.blockers?.find((candidate) => candidate.workUnitId === unit.id && candidate.audience === 'human' && !candidate.resolved);
+      const blocker = updated.blockers?.find((candidate) => candidate.workUnitId === workUnitId && candidate.audience === 'human' && !candidate.resolved);
       if (blocker) {
         this.fireHumanBlocker(updated, blocker);
         void this.deps.inbox?.append({
@@ -1232,16 +1328,16 @@ export class ExecutionService {
           executionId: updated.id,
           blockerId: blocker.id
         }).catch((err) => {
-          (this.deps.logError ?? ((context: string, cause: unknown) => console.error(context, cause)))('Failed to append inbox entry for kickoff-failure block', err);
+          (this.deps.logError ?? ((context: string, cause: unknown) => console.error(context, cause)))(`Failed to append inbox entry for ${label}`, err);
         });
       }
       return true;
     } catch (error) {
       if (!(error instanceof WorkUnitRecoveryGuardError)) {
-        this.deps.logError?.(`Execution kickoff-failure block FAILED (persistence) for ${reclaimed.id}/${unit.id}`, error);
+        this.deps.logError?.(`Execution ${label} FAILED (persistence) for ${executionId}/${workUnitId}`, error);
       } else {
         // Guard rejection: below threshold / already blocked / duplicate → not an error.
-        this.deps.logError?.(`Execution kickoff-failure block skipped for ${reclaimed.id}/${unit.id}`, error);
+        this.deps.logError?.(`Execution ${label} skipped for ${executionId}/${workUnitId}`, error);
       }
       return false;
     }
@@ -1254,6 +1350,7 @@ export class ExecutionService {
     for (const timer of this.autoFinalizeTimers.values()) clearTimer(timer);
     this.autoFinalizeTimers.clear();
     this.routeFactCircuits.clear();
+    this.wakeConfirmations.dispose();
   }
 
   /** Main-only project projection. Never expose through owner-scoped MCP routes. */
@@ -1354,13 +1451,15 @@ export class ExecutionService {
   async registerPlan(binding: ExecutionCohortBinding, workUnits: ExecutionWorkUnitInput[]) {
     if (binding.role !== 'orchestrator') return deniedBound('only coordinator can register execution plan');
     const result = await this.mutateBound(binding, async (record) => {
-      const consent = await this.deps.authorizePlanRegistration?.(record, workUnits);
-      if (consent && !consent.ok) throw new Error(consent.message);
+      // Admission first: only an admissible plan may become a held correction
+      // candidate. The bound submitter lets main hold that candidate for review.
       const admission = await this.evaluateResolvedAdmission(record.projectId, this.planRegistrationRequest(record, workUnits));
       if (!admission.ready) {
         const failed = admission.checks.find((check) => check.required && check.status !== 'PASS');
         throw new Error(failed?.message ?? 'Team admission failed');
       }
+      const consent = await this.deps.authorizePlanRegistration?.(record, workUnits, binding);
+      if (consent && !consent.ok) throw new Error(consent.message);
       return this.deps.store.registerPlan(record.id, record.stateVersion, workUnits);
     });
     if (!result.ok) return result;
@@ -1402,7 +1501,8 @@ export class ExecutionService {
       coordinationMode: record.coordinationMode,
       origin: record.origin,
       worktree: record.request.worktree,
-      onComplete: record.request.onComplete
+      onComplete: record.request.onComplete,
+      ...(record.request.target === undefined ? {} : { target: record.request.target })
     };
   }
 
@@ -1482,13 +1582,13 @@ export class ExecutionService {
     const completeness = usageCompleteness(stats, record.request.policy?.usageBudget);
     const duplicate = completeness !== 'complete' || !retainedPrevious ? undefined : matchingUsageObservation(record, (item) => usageCursorIdentity(item) === cursorKey && item.sampleKind === sampleKind
        && item.workUnitId === unit?.id && item.workAttempt === (unit?.attempt ?? 0) && item.claimGeneration === (unit?.claimGeneration ?? 0)
-       && JSON.stringify(item.cumulative) === JSON.stringify(cumulative) && item.completeness === completeness);
+      && item.contextTokens === stats?.contextTokens && JSON.stringify(item.cumulative) === JSON.stringify(cumulative) && item.completeness === completeness);
     const sequence = duplicate?.sequence ?? (previous?.sequence ?? 0) + 1;
     const observation: Omit<ExecutionUsageObservationV1, 'version' | 'delta'> = {
       observationId: duplicate?.observationId ?? `${executionId}:usage:${sessionId}:${sequence}`, executionAttempt: record.attempt, role, slotId, sessionId,
       ...(unit ? { workUnitId: unit.id } : {}), workAttempt: unit?.attempt ?? 0, claimGeneration: unit?.claimGeneration ?? 0,
       adapterEpoch: previous?.adapterEpoch ?? 0, sampleKind, sequence, provider,
-      ...(model ? { model } : {}), routingIdentity, cumulative, completeness,
+      ...(model ? { model } : {}), routingIdentity, ...(stats?.contextTokens === undefined ? {} : { contextTokens: stats.contextTokens }), cumulative, completeness,
       observedAt: duplicate?.observedAt ?? (this.deps.now ?? Date.now)(), ...(completeness !== 'complete' ? { gap: 'missing' as const } : {})
     };
     await this.deps.store.appendUsageObservation(record.id, observation, { telemetryGapGraceSamples: TELEMETRY_GAP_GRACE_SAMPLES });
@@ -1802,11 +1902,7 @@ export class ExecutionService {
           continue;
         }
       }
-      const upstream = dependencyResultsSection(record, assignment.workUnitId);
-      const claim = assignment.claimId && assignment.claimGeneration
-        ? `\nClaim fence: claimId=${assignment.claimId}; claimGeneration=${assignment.claimGeneration}. Include both in execution.work.heartbeat and every structured work outcome.`
-        : '';
-      const text = `You are assigned work unit \`${assignment.workUnitId}\`${assignment.title ? ` — ${assignment.title}` : ''}.\nTask: ${assignment.task}${assignment.files?.length ? `\nFile scope: ${assignment.files.join(', ')}` : ''}${upstream}${claim}\n\nClose the unit through exactly one structured outcome: execution.work.complete, execution.work.block, execution.work.fail, or execution.work.release. Do not send routine progress or results to the coordinator.`;
+      const text = assignmentText(record, assignment);
       if (this.deps.deliverAssignment) {
         const correlation = assignmentCorrelation(record.id, assignment);
         if (!correlation) {
@@ -2180,7 +2276,10 @@ export class ExecutionService {
       let current = await this.deps.store.setAuthorizationContext(retry.id, retry.stateVersion, authorization.value.context, launchDigest(authorization.value.context));
       current = await this.deps.store.prepareLaunchIntent(current.id, current.stateVersion, {
         version: 1, authorizationContextDigest: current.authorizationContextDigest!,
-        slots: authorization.value.slots.map(({ slotId, personaId, initialTask }) => ({ slotId, personaId, initialTaskDigest: launchDigest(initialTask) }))
+        slots: authorization.value.slots.map(({ slotId, personaId, initialTask, automatedSkillIds }) => ({
+          slotId, personaId, initialTaskDigest: launchDigest(initialTask),
+          ...(automatedSkillIds === undefined ? {} : { automatedSkillIds })
+        }))
       });
       let revalidatedAdmission: TeamAdmissionResultV1;
       try {
@@ -2211,6 +2310,7 @@ export class ExecutionService {
         executionId: retry.id, executionJobTitle: retry.jobTitle,
         ...(request.worktree === undefined ? {} : { worktree: request.worktree }),
         ...(request.onComplete === undefined ? {} : { onComplete: request.onComplete }),
+        ...(request.target === undefined ? {} : { target: request.target }),
         ...(retry.coordinationMode ? { coordinationMode: retry.coordinationMode } : {}),
         ...(retry.origin ? { origin: retry.origin } : {}),
         ...(isDurableCoordination(retry.coordinationMode) ? { jobContext: {
@@ -2241,7 +2341,7 @@ export class ExecutionService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
-      return { ok: false as const, code: message === 'WORKTREE_UNAVAILABLE' ? 'WORKTREE_UNAVAILABLE' : 'TEAM_LAUNCH_FAILED', message, value: await this.failLaunch(retry, `Team retry launch error: ${message}`) };
+      return { ok: false as const, code: message === 'WORKTREE_UNAVAILABLE' || message === 'TARGET_UNAVAILABLE' ? message : 'TEAM_LAUNCH_FAILED', message, value: await this.failLaunch(retry, `Team retry launch error: ${message}`) };
     } finally {
       if (!retainedRecovery) this.endStarting(record.id);
     }
@@ -2331,18 +2431,23 @@ export class ExecutionService {
       .map((blocker) => `- ${blocker.question}${blocker.options?.length ? ` Options: ${blocker.options.join(' | ')}` : ''}`)
       .join('\n')
       .slice(0, 8_192);
+    const recoveryText = {
+      objective: reserved.request.objective,
+      header: 'Recovery run: completed read-only work must not be repeated.',
+      sections: [completedContext ? `Verified completed outputs:\n${completedContext}` : 'No completed unit outputs were retained.'],
+      pinnedSection: unresolvedBlockers
+        ? `Unresolved human input from the timed-out run:\n${unresolvedBlockers}\nAsk this again with execution.work.block before continuing; do not assume an answer or contact canceled workers.`
+        : undefined,
+      sourceExecutionId: reserved.id
+    };
     const request: ExecutionRequestV1 = {
       ...reserved.request,
       teamId: reserved.teamId,
       launchRequestId: reserved.successorLaunchRequestId!,
-      objective: [
-        reserved.request.objective,
-        'Recovery run: completed read-only work must not be repeated.',
-        completedContext ? `Verified completed outputs:\n${completedContext}` : 'No completed unit outputs were retained.',
-        unresolvedBlockers
-          ? `Unresolved human input from the timed-out run:\n${unresolvedBlockers}\nAsk this again with execution.work.block before continuing; do not assume an answer or contact canceled workers.`
-          : undefined
-      ].filter(Boolean).join('\n\n'),
+      // A bounded preview: the full outputs and open questions stay in the source
+      // execution's record. Members cannot read that record, so a shortened
+      // preview is lossy for the successor's coordinator by design.
+      objective: fitRecoveryObjective(recoveryText),
       workUnits: unfinished.map(({ state: _state, assignedSlotId: _assigned, attempt: _attempt, failureCode: _code, failure: _failure, result: _result, history: _history, ...unit }) => ({
         ...unit,
         dependencies: unit.dependencies.filter((dependency) => !completedIds.has(dependency))
@@ -2414,7 +2519,7 @@ export class ExecutionService {
     }
   }
 
-  private async wakeCoordinator(record: ExecutionRecord, wake: string | Parameters<ExecutionServiceDeps['store']['queueCoordinatorWake']>[1]): Promise<void> {
+  private async wakeCoordinator(record: ExecutionRecord, wake: string | Parameters<ExecutionServiceDeps['store']['queueCoordinatorWake']>[1], confirmation?: CoordinatorWakeConfirmation): Promise<void> {
     const logError = this.deps.logError ?? ((context: string, error: unknown) => console.error(context, error));
     let current: ExecutionRecord;
     try {
@@ -2422,6 +2527,12 @@ export class ExecutionService {
     } catch (error) {
       logError(`execution coordinator wake persistence failed for ${record.id}`, error);
       return;
+    }
+    if (confirmation && typeof wake !== 'string') {
+      // Same identity the store dedupes on (cause + unit + generation).
+      const queued = current.coordinatorWakes?.find((candidate) => candidate.cause === wake.cause
+        && (candidate.workUnitId ?? '') === (wake.workUnitId ?? '') && candidate.stateOrClaimGeneration === wake.stateOrClaimGeneration);
+      if (queued) this.wakeConfirmations.register(queued.id, current.projectId, current.id, confirmation);
     }
     try {
       const lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(current.callerPrincipalId, current.teamLaunchRequestId));
@@ -2464,8 +2575,25 @@ export class ExecutionService {
           if (state !== 'unknown') return;
           if ((this.deps.now ?? Date.now)() - wake.createdAt < COORDINATOR_WAKE_UNKNOWN_STALE_MS) return;
         }
+        // A confirmation-required wake written into a verifiably idle, status-fed
+        // coordinator stays queued until it is seen to leave idle (the TUI may have
+        // swallowed the text); its bounded window, not this drain, owns any retry.
+        const pending = this.wakeConfirmations.get(wake.id);
+        if (pending && pending.deliveries > 0) return;
+        const confirm = !!pending && state !== undefined && isRestfulAgentState(state)
+          && this.deps.confirmsWakeConsumption?.(sessionId) === true;
+        if (confirm && !this.wakeConfirmations.beginDelivery(pending, sessionId, record.attempt)) return;
         const delivered_ = await this.deps.replyToSession(sessionId, wake.message);
-        if (!delivered_) return;
+        if (!delivered_) {
+          if (confirm) this.wakeConfirmations.abortDelivery(pending);
+          return;
+        }
+        if (confirm) {
+          this.wakeConfirmations.arm(pending);
+          return;
+        }
+        // Unverifiable target (no status feed / `unknown`): acknowledge on write.
+        if (pending) this.wakeConfirmations.forget(pending);
         await this.deps.store.acknowledgeCoordinatorWake(record.id, wake.id);
       }
     } catch (error) {
@@ -2473,15 +2601,86 @@ export class ExecutionService {
     }
   }
 
-  /** Queue a durable operator correction for a parked coordinator. */
-  async wakeCoordinatorForPlanCorrection(executionId: string, message: string): Promise<void> {
+  /**
+   * Queue a durable operator correction for a parked coordinator. With a
+   * `confirmation` fence the wake is acknowledged only on consumption evidence
+   * (see {@link observeCoordinatorState}); the generation carries the message
+   * digest so a distinct correction never dedupes against an unconsumed one.
+   */
+  async wakeCoordinatorForPlanCorrection(executionId: string, message: string, confirmation?: CoordinatorWakeConfirmation): Promise<void> {
     const record = await this.deps.store.get(executionId);
     if (!record) throw new Error('execution not found');
     await this.wakeCoordinator(record, {
       cause: 'HUMAN_BLOCKER',
       message,
-      stateOrClaimGeneration: record.state
-    });
+      stateOrClaimGeneration: `${record.state}:${createHash('sha256').update(message).digest('hex').slice(0, 16)}`
+    }, confirmation);
+  }
+
+  /**
+   * Main-fed agent-status edge for a coordinator session. A delivered
+   * confirmation-required wake is consumed once its coordinator leaves idle;
+   * only then is it acknowledged out of the durable queue.
+   */
+  observeCoordinatorState(sessionId: string, state: AgentState): void {
+    for (const entry of this.wakeConfirmations.consumedBy(sessionId, state)) {
+      this.wakeConfirmations.forget(entry);
+      void this.deps.store.acknowledgeCoordinatorWake(entry.executionId, entry.wakeId).catch((error) =>
+        this.deps.logError?.(`execution coordinator wake ack failed for ${entry.executionId}`, error));
+    }
+  }
+
+  /**
+   * One-shot consumption window elapsed with no evidence the coordinator read the
+   * wake. Redeliver at most once, fenced to the same coordinator session, execution
+   * attempt and caller fence (offer); otherwise escalate. A stale wake (cancelled,
+   * approved, superseded, regenerated) is dropped and never redelivered.
+   */
+  private async expireCoordinatorWake(entry: PendingWakeConfirmation): Promise<void> {
+    const live = () => this.wakeConfirmations.get(entry.wakeId) === entry;
+    const drop = async () => {
+      this.wakeConfirmations.forget(entry);
+      await this.deps.store.acknowledgeCoordinatorWake(entry.executionId, entry.wakeId);
+    };
+    try {
+      const record = await this.deps.store.getInProject(entry.projectId, entry.executionId);
+      const queued = record?.coordinatorWakes?.find((wake) => wake.id === entry.wakeId);
+      const sessionId = entry.sessionId;
+      if (!record || !queued || !sessionId) {
+        this.wakeConfirmations.forget(entry);
+        return;
+      }
+      const state = this.deps.getAgentState?.(sessionId);
+      // Left idle without an observed edge: that is consumption, not loss.
+      if (state === 'working' || state === 'blocked') {
+        if (live()) await drop();
+        return;
+      }
+      const lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId));
+      const current = !isTerminalExecutionState(record.state)
+        && record.attempt === entry.attempt
+        && lifecycle?.orchestratorSessionId === sessionId
+        && await entry.confirmation.isCurrent();
+      if (!live()) return;
+      if (!current) {
+        await drop();
+        return;
+      }
+      const idle = state !== undefined && isRestfulAgentState(state);
+      if (idle && record.coordinatorWakes?.[0]?.id === entry.wakeId && this.wakeConfirmations.beginDelivery(entry, sessionId, record.attempt)) {
+        if (await this.deps.replyToSession(sessionId, queued.message)) {
+          this.wakeConfirmations.arm(entry);
+          return;
+        }
+      }
+      if (!live()) return;
+      // Budget spent (or the coordinator is no longer verifiably idle): drop the
+      // wake so it can never be typed again, and hand it to the caller's escalation.
+      await drop();
+      await entry.confirmation.onUnconsumed();
+    } catch (error) {
+      this.deps.logError?.(`execution coordinator wake confirmation failed for ${entry.executionId}`, error);
+    }
   }
 
   /**
@@ -3405,7 +3604,7 @@ export class ExecutionService {
    * and cancelling its workers. Mirrors {@link timeoutExecution}'s stale-version
    * re-arm so a concurrent transition just reschedules rather than throwing.
    */
-  private async failPlanlessExecution(executionId: string): Promise<void> {
+  private async failPlanlessExecution(executionId: string, reason?: PlanReadinessExpiryReason): Promise<void> {
     const record = await this.deps.store.get(executionId);
     if (!record) return;
     if (record.workUnits && record.workUnits.length > 0) return;
@@ -3425,7 +3624,9 @@ export class ExecutionService {
     }
     let failed: ExecutionRecord;
     try {
-      failed = await this.deps.store.transition(record.id, record.stateVersion, 'FAILED', 'error', 'No plan registered within startup grace');
+      failed = await this.deps.store.transition(record.id, record.stateVersion, 'FAILED', 'error', reason === 'suspension-cap'
+        ? 'No plan registered within the 24h safety cap while a plan-correction decision was pending'
+        : 'No plan registered within startup grace');
     } catch (error) {
       if (!(error instanceof Error) || error.message !== 'stale execution state') throw error;
       const current = await this.deps.store.get(executionId);

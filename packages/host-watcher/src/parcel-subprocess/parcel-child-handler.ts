@@ -12,6 +12,8 @@ import type {
   SerializedParcelEvent,
 } from "./messages.js";
 
+const MAX_EVENTS_PER_MESSAGE = 10_000;
+
 function serializeEvents(
   events: ParcelWatcherEventBatch,
 ): SerializedParcelEvent[] {
@@ -41,6 +43,10 @@ export function createParcelChildHandler(args: {
     if (entries.length === 0) {
       return;
     }
+    if (entries.length > MAX_EVENTS_PER_MESSAGE) {
+      args.send({ kind: "events-dropped", id, count: entries.length });
+      return;
+    }
     args.send({
       kind: "events",
       id,
@@ -68,6 +74,10 @@ export function createParcelChildHandler(args: {
                 ? "rescan-subscription"
                 : "recycle-child",
             });
+            return;
+          }
+          if (events.length > MAX_EVENTS_PER_MESSAGE) {
+            args.send({ kind: "events-dropped", id: message.id, count: events.length });
             return;
           }
           args.send({
@@ -137,4 +147,21 @@ export function createParcelChildHandler(args: {
       );
     },
   };
+}
+
+/** Native unsubscribe can hang after daemon disconnect; always exit by the deadline. */
+export function disposeThenExit(args: {
+  deadlineMs: number;
+  dispose: () => Promise<void>;
+  exit: () => void;
+}): void {
+  let exited = false;
+  const finish = () => {
+    if (exited) return;
+    exited = true;
+    clearTimeout(timer);
+    args.exit();
+  };
+  const timer = setTimeout(finish, args.deadlineMs);
+  void Promise.resolve().then(args.dispose).then(finish, finish);
 }

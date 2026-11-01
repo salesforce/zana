@@ -1,3 +1,4 @@
+import { MAX_QUOTE_LENGTH } from '../shared/limits.js';
 /**
  * An HTML page of a design doc, shown the way the published site will show
  * it. The server bundles the page (`renderPage`); the frame runs it with the
@@ -160,6 +161,7 @@ export function PageFrame({
   onOpenPath,
   onQuote,
   onAskAbout,
+  onAddToThread,
   handleRef,
   kind
 }: {
@@ -172,6 +174,7 @@ export function PageFrame({
   onOpenPath?(path: string): void;
   onQuote?(text: string): void;
   onAskAbout?(text: string): void;
+  onAddToThread?(text: string): void;
   handleRef?: MutableRefObject<PreviewHandle | null>;
   kind?: DocKind;
 }) {
@@ -350,7 +353,7 @@ export function PageFrame({
   const showChip = (text: string, rect: PageRect | null) => {
     const frame = frameRef.current;
     const viewport = viewportRef.current;
-    if (!onQuote || !text || !rect || !frame || !viewport) {
+    if ((!onQuote && !onAskAbout && !onAddToThread) || !text || !rect || !frame || !viewport) {
       setChip(null);
       return;
     }
@@ -613,10 +616,11 @@ export function PageFrame({
         )}
         {chip ? (
           <div className="dd-selection-chip" style={{ top: chip.top, left: chip.left }}>
-            <button type="button" onClick={() => applyChip(onQuote)}>
+            <button type="button" onClick={() => applyChip(text => onQuote?.(text.trim().slice(0, MAX_QUOTE_LENGTH)))}>
               <MessageSquarePlus size={13} aria-hidden />
               Comment
             </button>
+            {onAddToThread ? <button type="button" onClick={() => applyChip(onAddToThread)}>Add to thread</button> : null}
             {onAskAbout ? (
               <button type="button" onClick={() => applyChip(onAskAbout)}>
                 <Sparkles size={13} aria-hidden />

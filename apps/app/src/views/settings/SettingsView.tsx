@@ -7,7 +7,7 @@ import { buildSettingsSnapshot } from '@/lib/settings-search/snapshot';
 import { SETTINGS_SECTIONS } from './settings-navigation.js';
 export { SETTINGS_GROUPS, SETTINGS_SECTIONS, SETTINGS_SUBSECTIONS } from './settings-navigation.js';
 export type { SettingsGroup } from './settings-navigation.js';
-import type { AppConfig } from '@zana-ai/zcc-domain/product';
+import { resolveExplorerFileIconTheme, resolveExplorerMinimap, type AppConfig } from '@zana-ai/zcc-domain/product';
 import type { SettingsTab } from '@/store';
 import { applyTheme, useData, useUi } from '@/store';
 import { PromptsTab } from '@/views/settings/PromptsView';
@@ -18,6 +18,7 @@ import { AgentsTab } from '@/views/settings/AgentsSettingsView';
 import { HarnessTab } from '@/views/settings/HarnessView';
 import { EditorTab } from '@/views/settings/EditorView';
 import { ExperimentalTab } from '@/views/settings/ExperimentalView';
+import { DevelopmentView } from '@/views/settings/DevelopmentView';
 import { AboutTab } from '@/views/settings/AboutView';
 import { MachinesTab } from '@/views/settings/MachinesSettingsView';
 import { ConnectivityTab } from '@/views/settings/ConnectivityView';
@@ -147,6 +148,12 @@ export function SettingsView() {
       if (typeof patch.terminalWheelArrowsEnabled === 'boolean') {
         useData.getState().setTerminalWheelArrowsEnabled(patch.terminalWheelArrowsEnabled);
       }
+      if (patch.explorerFileIconTheme !== undefined) {
+        useData.getState().setExplorerFileIconTheme(resolveExplorerFileIconTheme(next));
+      }
+      if (Object.keys(patch).some((key) => key.startsWith('explorerMinimap'))) {
+        useData.getState().setExplorerMinimap(resolveExplorerMinimap(next));
+      }
       if (typeof patch.heartbeatEnabled === 'boolean') {
         useData.getState().setHeartbeatEnabled(patch.heartbeatEnabled);
       }
@@ -161,6 +168,15 @@ export function SettingsView() {
       }
       if (typeof patch.catchUpSummaryEnabled === 'boolean') {
         useData.getState().setCatchUpSummaryEnabled(patch.catchUpSummaryEnabled);
+      }
+      if (typeof patch.closeWrapUpEnabled === 'boolean') {
+        useData.getState().setCloseWrapUpEnabled(patch.closeWrapUpEnabled);
+      }
+      if (typeof patch.dockableThreadToolsEnabled === 'boolean') {
+        useData.getState().setDockableThreadToolsEnabled(patch.dockableThreadToolsEnabled);
+      }
+      if (typeof patch.threadTabsEnabled === 'boolean') {
+        useData.getState().setThreadTabsEnabled(patch.threadTabsEnabled);
       }
       if (typeof patch.classicSessionViewEnabled === 'boolean') {
         useData.getState().setClassicSessionViewEnabled(patch.classicSessionViewEnabled);
@@ -303,6 +319,8 @@ export function SettingsView() {
           <UsagePanel />
         ) : tab === 'performance' ? (
           <PerformanceSettingsView />
+        ) : tab === 'development' ? (
+          <DevelopmentView config={config} onUpdate={update} />
         ) : tab === 'experimental' ? (
           <ExperimentalTab
             config={config}

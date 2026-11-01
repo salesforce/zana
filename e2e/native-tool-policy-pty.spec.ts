@@ -141,11 +141,12 @@ function installProbePlugin(home: string): void {
 }
 
 async function waitForProbePlugin(win: Page): Promise<void> {
-  let pluginRow: unknown;
   await expect.poll(async () => {
-    pluginRow = await win.evaluate(async (id) => (await window.cc.pluginApps.list()).find((row) => row.id === id), PLUGIN_ID);
-    return (pluginRow as { status?: string } | undefined)?.status;
-  }, { timeout: 45_000, message: `probe plugin never ran: ${JSON.stringify(pluginRow)}` }).toBe('running');
+    const rows = await win.evaluate(async () => (await window.cc.pluginApps.list()).map((row) => ({
+      id: row.id, status: row.status, statusDetail: row.statusDetail
+    })));
+    return JSON.stringify(rows);
+  }, { timeout: 45_000, message: 'plugin startup did not settle' }).toContain(`"id":"${PLUGIN_ID}","status":"running"`);
 }
 
 /** Add a project and open one main-owned PTY on the stub; resolve once the stub has recorded its relay wiring. */

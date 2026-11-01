@@ -19,8 +19,8 @@ describe('encodeProjectCwd (shared canonical)', () => {
     expect(encodeProjectCwd('/Users/grebmann/Documents/claude-workspace/zana-command-center')).toBe(
       '-Users-grebmann-Documents-claude-workspace-zana-command-center'
     );
-    expect(encodeProjectCwd('/Users/grebmann/.aisuite/notebook')).toBe(
-      '-Users-grebmann--aisuite-notebook'
+    expect(encodeProjectCwd('/Users/grebmann/.legacy-provider/notebook')).toBe(
+      '-Users-grebmann--legacy-provider-notebook'
     );
     expect(encodeProjectCwd('/Users/grebmann/.npm/_npx/x/node_modules')).toBe(
       '-Users-grebmann--npm--npx-x-node-modules'
@@ -122,6 +122,34 @@ describe('buildSessionDigest', () => {
     });
     expect(digest).toContain('User: AAAAAAAAAA…');
     expect(digest).toContain('Assistant: short');
+  });
+
+  it('keeps a 3,000-character final message whole but clamps an earlier one to 1,500', () => {
+    const digest = buildSessionDigest([
+      userPrompt('go'),
+      asst({ type: 'text', text: 'E'.repeat(3_000) }),
+      asst({ type: 'text', text: 'F'.repeat(3_000) })
+    ]);
+    expect(digest).toContain(`Assistant: ${'E'.repeat(1_500)}…`);
+    expect(digest).not.toContain('E'.repeat(1_501));
+    expect(digest).toContain(`Assistant: ${'F'.repeat(3_000)}`);
+    expect(digest).not.toContain('F'.repeat(3_000) + '…');
+  });
+
+  it('honours an explicit finalBlockChars on the last assistant prose block only', () => {
+    const digest = buildSessionDigest(
+      [
+        userPrompt('U'.repeat(40)),
+        asst({ type: 'text', text: 'E'.repeat(40) }),
+        asst({ type: 'text', text: 'F'.repeat(40) }),
+        asst({ type: 'tool_use', name: 'Bash' })
+      ],
+      { perBlockChars: 10, finalBlockChars: 25 }
+    );
+    expect(digest).toContain(`User: ${'U'.repeat(10)}…`);
+    expect(digest).toContain(`Assistant: ${'E'.repeat(10)}…`);
+    expect(digest).toContain(`Assistant: ${'F'.repeat(25)}…`);
+    expect(digest).toContain('Assistant ran: Bash');
   });
 
   it('keeps the TAIL when the whole digest exceeds maxChars', () => {

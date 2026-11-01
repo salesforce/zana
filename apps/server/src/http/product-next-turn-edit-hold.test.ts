@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { request } from 'node:http';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   createConversationThread, createDeferredThreadMessage, createEnvironment, getDeferredThreadMessage,
@@ -150,11 +151,18 @@ it('validates the edit body and the revision it confirms against', async () => {
   const stale = await save(queued.id, { text: 'ok', expectedUpdatedAt: queued.updatedAt - 1 });
   expect(stale.status).toBe(409);
   await expect(stale.json()).resolves.toMatchObject({ error: 'queued-send-changed' });
-  // Fresh socket (Connection: close): reusing a keep-alive socket the server half-closed after the
-  // prior stale-409 above races into a read ECONNRESET under parallel-suite load. The route always
-  // answers with a status for malformed JSON, so the reset is purely a client socket-reuse flake.
-  const malformed = await fetch(url(queued.id), { method: 'PATCH', headers: { 'content-type': 'application/json', connection: 'close' }, body: '{not json' });
-  expect(malformed.status).toBeGreaterThanOrEqual(400);
+  // agent:false guarantees a dedicated socket. A Connection:close header on
+  // fetch still permits reuse of a pooled socket that the server is closing.
+  const malformedStatus = await new Promise<number>((resolve, reject) => {
+    const req = request(url(queued.id), { method: 'PATCH', headers: json, agent: false }, (response) => {
+      response.on('error', reject);
+      response.on('end', () => resolve(response.statusCode ?? 0));
+      response.resume();
+    });
+    req.on('error', reject);
+    req.end('{not json');
+  });
+  expect(malformedStatus).toBeGreaterThanOrEqual(400);
   expect(row(queued.id)).toEqual(queued);
 });
 

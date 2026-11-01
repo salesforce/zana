@@ -7,6 +7,7 @@ import { useCompactLayout } from '../../../hooks/useCompactLayout.js';
 import { createSecondaryPanelCommands } from './threadSecondaryPanelLogic.js';
 import {
   applySecondaryPanelOpenWidth,
+  closeClosableTab,
   closeSecondaryPanel,
   hasStoredSecondaryPanel,
   persistSecondaryPanel,
@@ -255,13 +256,27 @@ export function useSecondaryPanel(
           return !projectId || waitForPanelTerminalExit(id, () => product.terminals.list(projectId));
         },
         released: id => { forgetAgentTerminal(id); useData.getState().dismissTerminals([id]); },
-        remove: id => { if (mountedRef.current && owner === ownerRef.current) commands.closeTab(id); }
+        remove: id => {
+          if (mountedRef.current && owner === ownerRef.current) {
+            // The next bulk-close step may run before React renders this removal.
+            // Keep shared terminal references current so their final tab stops the shell.
+            stateRef.current = closeClosableTab(stateRef.current, id);
+            commands.closeTab(id);
+          }
+        }
       });
     } catch (error) {
       useUi.getState().pushToast(error instanceof Error ? error.message : 'Could not close terminal', 'error');
     } finally { closing.current.delete(tabId); }
   }, [commands]);
-  return useMemo(() => ({ state, ...commands, closeTab }), [commands, state, closeTab]);
+  const closeTabs = useCallback(async (tabIds: string[]) => {
+    const owner = ownerRef.current;
+    for (const id of tabIds) {
+      if (!mountedRef.current || owner !== ownerRef.current) return;
+      await closeTab(id);
+    }
+  }, [closeTab]);
+  return useMemo(() => ({ state, ...commands, closeTab, closeTabs }), [commands, state, closeTab, closeTabs]);
 }
 
 export function useThreadSecondaryPanel(

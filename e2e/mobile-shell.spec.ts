@@ -311,7 +311,8 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
     await expect(shellTitle).toHaveCount(0);
     await expect(threadHeader.getByRole('heading', { name: headerTitle, exact: true })).toBeVisible();
     await expect(threadHeader.getByTestId('thread-overflow-trigger')).toBeVisible();
-    await expect(phone.locator('.titlebar-title')).toBeVisible();
+    await expect(phone.getByTestId('titlebar-thread-tabs')).toBeVisible();
+    await expect(phone.getByRole('tablist', { name: 'Open threads' }).getByRole('tab', { selected: true })).toBeVisible();
     await expect(phone.getByTestId('thread-prompt-context')).toContainText('git: mobile-panel-theme');
     // The workspace status is host-backed and mounts for the first time on
     // desktop. Wait for the real dirty-workspace precondition before its UI.
@@ -473,7 +474,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
       await expect(drawer.getByRole('list', { name: 'Sessions in mobile-project' })).toBeVisible();
       const menuScroll = drawer.locator('.mobile-tools-section');
       const search = drawer.locator('.mobile-sticky-search');
-      const filter = drawer.getByPlaceholder('Filter projects');
+      const filter = drawer.getByPlaceholder('Filter machines or projects');
       await expect(filter).toBeVisible();
       await menuScroll.evaluate(element => { element.scrollTop = 250; });
       const menuTop = (await menuScroll.boundingBox())!.y;
@@ -490,7 +491,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
       await expect(drawer.getByRole('button', { name: 'Project actions for scroll-project-18', exact: true })).toBeVisible();
       await expect(drawer.getByRole('button', { name: 'Project actions for scroll-project-17', exact: true })).toHaveCount(0);
       await filter.fill('no-such-mobile-project');
-      await expect(drawer.getByRole('status')).toContainText('No projects match');
+      await expect(drawer.getByRole('status')).toContainText('No machines or projects match');
       await drawer.getByRole('button', { name: 'Clear filter', exact: true }).click();
       await menuScroll.evaluate(element => { element.scrollTop = 0; });
       const collapseProject = drawer.getByRole('button', { name: /Collapse sessions for mobile-project/ });
@@ -709,7 +710,13 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
       const actions = phone.locator('.thread-command-secondary-actions');
       const meter = phone.getByTestId('thread-context-window');
       await expect(options).toBeVisible();
-      await expect(options.locator('.thread-command-location')).toHaveText('Local');
+      const machineName = await app.window.evaluate(async () => {
+        const response = await fetch('/api/v1/hosts');
+        const hosts = await response.json() as Array<{ isPrimary: boolean; name: string }>;
+        return hosts.find(host => host.isPrimary)?.name;
+      });
+      expect(machineName).toBeTruthy();
+      await expect(options.locator('.thread-command-location')).toHaveText(machineName!);
       await expect(phone.getByTestId('thread-env-label')).toHaveCount(0);
       await expect(meter).toContainText('47%');
       await expect(actions.getByRole('button', { name: 'Start voice input', exact: true })).toBeVisible();

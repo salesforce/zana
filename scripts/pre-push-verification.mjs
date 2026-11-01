@@ -683,6 +683,12 @@ export function prepareTinynodReview({ tuples, selection, root, env = process.en
       log(`pre-push: tinynod review skipped: ${version.reason}`);
       return null;
     }
+    const gateway = a.ensureTinynodGateway({ env });
+    if (!gateway.ok) {
+      log(`pre-push: tinynod review skipped: ${gateway.reason}`);
+      return null;
+    }
+    if (gateway.refreshed) log('pre-push: tinynod review: refreshed DevBar gateway token');
     const common = gitOk(['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: root, env: withoutGitRouting(env) });
     if (!common) {
       log('pre-push: tinynod review skipped: no git common directory');

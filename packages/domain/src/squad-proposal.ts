@@ -4,7 +4,7 @@
  * launches it. No I/O; shared by main, the MCP tools and the renderer.
  */
 import { z } from 'zod';
-import type { Persona } from './product.js';
+import type { Persona, SquadTransport } from './product.js';
 
 /** How the Squad's plan is produced: the orchestrator infers it, or the goal/sources provide it. */
 export type SquadPlanning = 'infer' | 'provided';
@@ -28,10 +28,52 @@ export function resolveLaunchApproval(
   return squad?.launchApproval === 'review' || project?.launchApproval === 'review' ? 'review' : 'direct';
 }
 
+/** The execution store's persisted goal limit; not higher because an older Zana treats the whole execution store as corrupt when one record has a longer objective. */
+export const SQUAD_GOAL_MAX_CHARS = 2048;
+/** The execution store's persisted summary limit; not higher because an older Zana treats the whole execution store as corrupt when one record has a longer summary. */
+export const SQUAD_SUMMARY_MAX_CHARS = 2048;
+/** The share of a Squad text limit at which the composer starts showing its character counter. */
+export const SQUAD_LIMIT_COUNTER_RATIO = 0.9;
+/** The goal length from which the composer shows its character counter. */
+export const SQUAD_LIMIT_COUNTER_FROM = Math.ceil(SQUAD_GOAL_MAX_CHARS * SQUAD_LIMIT_COUNTER_RATIO);
+
+export type SquadLaunchLimitCode = 'GOAL_TOO_LONG' | 'SUMMARY_TOO_LONG';
+
+export function formatSquadChars(n: number): string {
+  return n.toLocaleString('en-US');
+}
+
+export function squadGoalTooLongMessage(length: number, options?: { afterSourceNames?: boolean }): string {
+  const base = `The goal is too long for a Squad (${formatSquadChars(length)} of ${formatSquadChars(SQUAD_GOAL_MAX_CHARS)} characters). Move details into an attached plan or source.`;
+  return options?.afterSourceNames ? `${base} File paths in the goal count after they are replaced by source names.` : base;
+}
+
+export function squadSummaryTooLongMessage(length: number): string {
+  return `The summary is too long for a Squad (${formatSquadChars(length)} of ${formatSquadChars(SQUAD_SUMMARY_MAX_CHARS)} characters). Shorten it or move details into an attached source.`;
+}
+
+export function squadStoredFieldTooLong(field: 'goal' | 'summary', length: number): string {
+  const max = field === 'goal' ? SQUAD_GOAL_MAX_CHARS : SQUAD_SUMMARY_MAX_CHARS;
+  return `Squad ${field} is ${formatSquadChars(length)} characters; the limit is ${formatSquadChars(max)}`;
+}
+
+/** Measures the strings exactly as given (no trimming): callers pass the text they will send. Goal is reported before summary. */
+export function squadLaunchTextProblem(
+  input: { goal?: string; summary?: string }
+): { code: SquadLaunchLimitCode; message: string } | undefined {
+  if (input.goal !== undefined && input.goal.length > SQUAD_GOAL_MAX_CHARS) {
+    return { code: 'GOAL_TOO_LONG', message: squadGoalTooLongMessage(input.goal.length) };
+  }
+  if (input.summary !== undefined && input.summary.length > SQUAD_SUMMARY_MAX_CHARS) {
+    return { code: 'SUMMARY_TOO_LONG', message: squadSummaryTooLongMessage(input.summary.length) };
+  }
+  return undefined;
+}
+
 export const SQUAD_PROPOSAL_LIMITS = {
-  goalChars: 2048,
+  goalChars: SQUAD_GOAL_MAX_CHARS,
   titleChars: 256,
-  summaryChars: 2048,
+  summaryChars: SQUAD_SUMMARY_MAX_CHARS,
   maxSources: 16,
   planTextBytes: 1_048_576,
   maxPendingPerProject: 20,
@@ -207,4 +249,35 @@ export function personaCanWriteFiles(
   if (p.executionState === 'plan') return false;
   if (p.codexSandbox === 'read-only') return false;
   return true;
+}
+
+/** How a planless coordinator hands its authored plan to the host on a given transport. */
+export type PlanAuthoringTransport = 'cli' | 'modern';
+
+export function planAuthoringTransportOf(transport: SquadTransport | undefined): PlanAuthoringTransport {
+  return transport === 'MODERN' ? 'modern' : 'cli';
+}
+
+const PLAN_REGISTER_DENIALS = [
+  'mcp__zcc-inbox__execution.plan.register',
+  'mcp__zcc-inbox__*',
+  'mcp__zcc-inbox'
+] as const;
+
+/**
+ * Whether a coordinator can both author a plan AND get it registered on its
+ * transport, i.e. whether "Infer plan from goal" can finish.
+ *  - CLI: the coordinator writes the plan file and the host rereads it on idle,
+ *    so it needs file-write ability ({@link personaCanWriteFiles}).
+ *  - Modern: the coordinator calls its bound `execution.plan.register` MCP tool
+ *    once and writes no file, so only a denied register tool blocks it.
+ */
+export function canAuthorAndRegisterPlan(
+  p: Pick<Persona, 'deniedTools' | 'permissionMode' | 'executionState' | 'codexSandbox'>,
+  ctx: { transport: PlanAuthoringTransport }
+): boolean {
+  const denied = p.deniedTools ?? [];
+  return ctx.transport === 'modern'
+    ? !PLAN_REGISTER_DENIALS.some((tool) => denied.includes(tool))
+    : personaCanWriteFiles(p);
 }

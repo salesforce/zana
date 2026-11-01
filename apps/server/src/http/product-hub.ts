@@ -14,6 +14,7 @@ export type ProductEventType =
   | 'suggestions:pruned'
   | 'config:changed'
   | 'projects:changed'
+  | 'projects:sync'
   | 'followups:changed'
   | 'saved:changed'
   | 'agent-status:changed'

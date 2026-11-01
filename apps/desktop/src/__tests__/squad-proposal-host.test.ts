@@ -170,6 +170,14 @@ describe('list_teams canInferPlan', () => {
     expect(host.canInferPlanForTeam({})).toBe(false);
     expect(host.canInferPlanForTeam({ orchestratorPersonaId: 'ghost' })).toBe(false);
   });
+
+  it('follows the effective transport: Modern registers via MCP, so a Write deny does not block it', () => {
+    h.personas = [{ id: 'orch', name: 'Orch', baseProfile: 'claude', deniedTools: ['Write'] }];
+    expect(host.canInferPlanForTeam({ orchestratorPersonaId: 'orch', transport: 'MODERN' })).toBe(true);
+    expect(host.canInferPlanForTeam({ orchestratorPersonaId: 'orch', transport: 'CLI' })).toBe(false);
+    h.personas = [{ id: 'orch', name: 'Orch', baseProfile: 'claude', deniedTools: ['mcp__zcc-inbox__execution.plan.register'] }];
+    expect(host.canInferPlanForTeam({ orchestratorPersonaId: 'orch', transport: 'MODERN' })).toBe(false);
+  });
 });
 
 describe('findExecutionForProposal', () => {

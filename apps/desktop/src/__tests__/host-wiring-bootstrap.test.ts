@@ -45,10 +45,12 @@ const h = vi.hoisted(() => {
     browserManager: undefined as any,
     mobileStart: vi.fn(),
     lastWin: undefined as any,
+    winOptions: [] as any[],
     sent: [] as unknown[][],
     winDestroyed: false,
     contentsDestroyed: (() => false) as () => boolean,
     runtimeStart: undefined as any,
+    runtimeOptions: undefined as import('../runtime/runtime-supervisor.js').StartRuntimeSupervisorOptions | undefined,
     nativeTheme: Object.assign(new EventEmitter(), { shouldUseDarkColors: false, shouldUseHighContrastColors: false }),
     overlays: [] as unknown[]
   };
@@ -72,7 +74,8 @@ vi.mock('electron', () => {
     static getAllWindows() { return []; }
     static getFocusedWindow() { return null; }
     static fromWebContents() { return null; }
-    constructor() {
+    constructor(options: unknown) {
+      h.winOptions.push(options);
       const fallback = { get: (target: Record<string, unknown>, key: string | symbol) =>
         key in target ? target[key as string] : loose() };
       const win = new Proxy({
@@ -212,7 +215,11 @@ vi.mock('../runtime/runtime-supervisor.js', async importOriginal => {
       const real = actual.createProductRouteSquadRuntime(...args);
       return new Proxy(real, { get: (t, k) => (typeof k === 'string' && h.runtimeOverride[k]) || (t as any)[k] });
     },
-    startRuntimeSupervisor: async () => { if (h.runtimeStart) return h.runtimeStart; throw new Error('no runtime in unit test'); }
+    startRuntimeSupervisor: async (options: Parameters<typeof actual.startRuntimeSupervisor>[0]) => {
+      h.runtimeOptions = options;
+      if (h.runtimeStart) return h.runtimeStart;
+      throw new Error('no runtime in unit test');
+    }
   };
 });
 vi.mock('@zana-ai/zcc-server/mobile/manager', () => ({
@@ -265,12 +272,19 @@ describe('host bootstrap wiring', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.stubEnv('ELECTRON_RENDERER_URL', 'http://127.0.0.1:5173');
     const realGetConfig = store.getConfig.bind(store);
-    const configSpy = vi.spyOn(store, 'getConfig').mockImplementation(() => ({ ...realGetConfig(), mobileGatewayEnabled: true }));
+    // Theme light: the boot window must open on the light background.
+    const configSpy = vi.spyOn(store, 'getConfig').mockImplementation(() => ({ ...realGetConfig(), mobileGatewayEnabled: true, theme: 'light' }));
     try {
       h.ready!();
       await vi.waitFor(() => expect(h.controlPlaneDeps, JSON.stringify(vi.mocked(console.error).mock.calls)).toBeDefined(), { timeout: 20000 });
       expect(h.controlPlaneDeps.pluginCommands.cliContributions).toBeTypeOf('function');
+      // The window paints the light --bg-base and its preload seeds data-theme=light.
+      expect(h.winOptions[0].backgroundColor).toBe('#f6f8fa');
+      expect(h.winOptions[0].webPreferences.additionalArguments).toContain('--zcc-theme=light');
       expect(h.controlPlaneDeps.pluginCommands.runCliCommand).toBeTypeOf('function');
+      for (const action of ['enable', 'disable', 'remove', 'reload', 'update', 'updateAll']) {
+        expect(h.controlPlaneDeps.pluginCommands[action]).toBeTypeOf('function');
+      }
     } finally { vi.unstubAllEnvs(); configSpy.mockRestore(); }
     expect(h.mobileStart).toHaveBeenCalledOnce();
     await vi.waitFor(() => expect(vi.mocked(console.error).mock.calls.some(call => String(call[0]).includes('mobileGateway.start'))).toBe(true));
@@ -380,6 +394,7 @@ describe('host bootstrap wiring', () => {
       try { item.click({}, {}); } catch { /* menu click needs a window */ }
     }
     expect(items.some((i) => i.label === 'View on GitHub')).toBe(true);
+    expect(items.find((i) => i.role === 'pasteAndMatchStyle')).toMatchObject({ accelerator: 'CmdOrCtrl+Shift+V' });
     expect(shell).toBeDefined();
   });
 
@@ -476,7 +491,8 @@ describe('host bootstrap wiring', () => {
     const launch = host.resolveEffectiveLaunch({ worktreeInfo: { path: `${squadBase}/squad-1`, branch: 'b' } } as never, project);
     expect(launch.worktree?.branch).toBe('b');
     expect(host.revalidateEffectiveLaunch(launch, project)).toEqual({ ok: true });
-    const outside = { ...launch, cwd: root, trustedPath: root };
+    // A user-owned squad target may be the project root itself; anything beyond the project stays rejected.
+    const outside = { ...launch, cwd: h.root, trustedPath: h.root };
     expect(host.revalidateEffectiveLaunch(outside, project)).toEqual({ ok: false, reason: 'effective launch path changed after preflight' });
     const escaped = host.resolveEffectiveLaunch({ worktreeInfo: { path: h.root, branch: 'b' } } as never, project);
     expect(escaped.worktree).toBeUndefined();
@@ -624,6 +640,7 @@ describe('host bootstrap wiring', () => {
     expect(typeof o.claimRecoveryObserveEnabled()).toBe('boolean');
     expect(typeof o.claimRecoveryEnforceEnabled()).toBe('boolean');
     expect(typeof o.planStartupGraceMs()).toBe('number');
+    await expect(o.isPlanCorrectionOpen('no-such-execution')).resolves.toBe(false);
     expect(typeof o.routeFitObserveEnabled()).toBe('boolean');
     const tryIt = (fn: () => unknown) => { try { return fn(); } catch { return undefined; } };
     tryIt(() => o.getAgentState('owner-live'));
@@ -748,6 +765,46 @@ describe('host bootstrap wiring', () => {
     }
   });
 
+  it('resolves and persists host-attested automated MCP catalogues', async () => {
+    const resolve = h.mcpDeps.resolveAutomatedMcpCatalogue;
+    const executionStore = ctx().executionStore;
+    const record = { id: 'execution-1' };
+    const binding = { executionId: 'execution-1', projectId: project.id, slotId: 'worker-1', role: 'worker' as const };
+    const get = vi.spyOn(executionStore, 'getInProject').mockResolvedValue(record);
+    const persist = vi.spyOn(executionStore, 'recordAutomatedMcpCatalogueProvenance').mockImplementation(async (_id: string, _slotId: string, provenance: unknown) => ({
+      version: 1 as const, ...(provenance as object)
+    }));
+    const projects = vi.spyOn(store, 'listProjects').mockReturnValue([{ ...project, remote: undefined }] as never);
+    try {
+      const local = await resolve(binding);
+      expect(local.tools).not.toContain('remote_exec');
+      expect(persist).toHaveBeenCalledWith('execution-1', 'worker-1', expect.objectContaining({ role: 'worker', capabilities: [] }));
+
+      projects.mockReturnValue([{ ...project, remote: { host: 'remote.test' } }] as never);
+      const remote = await resolve(binding);
+      expect(remote.tools).toContain('remote_exec');
+      expect(persist).toHaveBeenLastCalledWith('execution-1', 'worker-1', expect.objectContaining({ capabilities: ['remote_fs'] }));
+
+      get.mockResolvedValueOnce({ id: 'execution-1', automatedMcpCatalogueProvenance: {
+        'worker-1': { version: 1, role: 'worker', capabilities: [], tools: ['execution.snapshot'], digest: 'a'.repeat(64) }
+      } });
+      expect(await resolve(binding)).toMatchObject({ tools: ['execution.snapshot'] });
+      expect(persist).toHaveBeenCalledTimes(2);
+
+      get.mockResolvedValueOnce({ id: 'execution-1', automatedMcpCatalogueProvenance: {
+        'worker-1': { version: 1, role: 'orchestrator', capabilities: [], tools: ['execution.snapshot'], digest: 'a'.repeat(64) }
+      } });
+      await expect(resolve(binding)).rejects.toThrow('role mismatch');
+
+      get.mockResolvedValueOnce(undefined);
+      await expect(resolve(binding)).rejects.toThrow('unavailable');
+    } finally {
+      get.mockRestore();
+      persist.mockRestore();
+      projects.mockRestore();
+    }
+  });
+
   it('reports team task outcomes for known and unknown workers', async () => {
     expect(await host.reportTeamTask('worker-1', 'lr-1', 'slot-1', 'complete')).toMatchObject({ ok: false, code: 'NOT_FOUND' });
     vi.spyOn(h.lifecycleStore, 'list').mockResolvedValue([{ id: 'rec', launchRequestId: 'lr-1', workers: [{ sessionId: 'worker-1', slotId: 'slot-1' }] }]);
@@ -788,6 +845,69 @@ describe('host bootstrap wiring', () => {
     expect(typeof h.followupDeps.followupsFromIdle()).toBe('boolean');
   });
 
+  it('clears memoized inbox summaries when config or prompt changes invalidate reuse', async () => {
+    const c = ctx();
+    await c.inboxStore.append({ projectId: project.id, comments: 'Memo lifecycle fixture' });
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    const run = vi.spyOn(c.llmService, 'run').mockResolvedValue({
+      ok: true,
+      text: JSON.stringify({ headline: 'Ready', done: [], attention: [] }),
+      provider: 'claude-cli',
+      ms: 1
+    });
+    const summaryCalls = () => run.mock.calls.filter(([, , dedupeKey]) => dedupeKey === 'inbox-summary:all');
+    try {
+      for (const [expectedCalls, invalidate] of [
+        undefined,
+        () => c.invalidateLlmReuse(),
+        () => c.promptRegistry.emit('changed')
+      ].map((invalidate, index) => [index + 1, invalidate] as const)) {
+        invalidate?.();
+        await expect(c.inboxSummary.summarize(null)).resolves.toMatchObject({ ok: true, digest: { headline: 'Ready' } });
+        await expect(c.inboxSummary.summarize(null)).resolves.toMatchObject({ ok: true, digest: { headline: 'Ready' } });
+        expect(summaryCalls()).toHaveLength(expectedCalls);
+      }
+      expect(c.memoCounters()['inbox-summary']).toMatchObject({ requests: 6, hits: 3, misses: 3, providerCalls: 3 });
+    } finally {
+      run.mockRestore();
+      clock.mockRestore();
+    }
+  });
+
+  it('wires memo identities and remote read offsets through main-owned services', async () => {
+    const c = ctx();
+    const entry = { id: 'builtin:test', userTemplate: '{{entries}}' };
+    const get = vi.spyOn(c.promptRegistry, 'get');
+    const identity = vi.spyOn(c.llmService, 'requestIdentity').mockReturnValue('identity');
+    const config = store.getConfig();
+    const getConfig = vi.spyOn(store, 'getConfig');
+    try {
+      get.mockReturnValue(entry);
+      expect(c.inboxSummary['deps'].requestIdentity('inbox')).toBe('identity');
+      expect(c.feedNoiseClassifier['deps'].requestIdentity('noise')).toBe('identity');
+      expect(c.feedSummary['deps'].requestIdentity('feed')).toBe('identity');
+      get.mockReturnValue(undefined);
+      expect(c.inboxSummary['deps'].requestIdentity('inbox')).toBe('');
+      expect(c.feedNoiseClassifier['deps'].requestIdentity('noise')).toBe('');
+      expect(c.feedSummary['deps'].requestIdentity('feed')).toBe('');
+
+      getConfig.mockReturnValue({ ...config, claudeBinary: 'claude-one' });
+      c.llmService.requestIdentity(entry, { entries: 'one' });
+      getConfig.mockReturnValue({ ...config, claudeBinary: 'claude-two' });
+      c.llmService.requestIdentity(entry, { entries: 'two' });
+      expect(c.llmService.invalidateProviderIdentity).toBeDefined();
+
+      await expect(h.mcpDeps.remoteFs.readFile(project.id, 'remote.txt', 42)).resolves.toMatchObject({
+        ok: false,
+        message: 'Not a remote project'
+      });
+    } finally {
+      get.mockRestore();
+      identity.mockRestore();
+      getConfig.mockRestore();
+    }
+  });
+
   it('parses overseer hook bodies and rejects malformed ones', async () => {
     const hook = h.mcpDeps.onOverseerHook;
     h.ptys.sessions.set('ov', sessionFixture({ id: 'ov', projectId: project.id }));
@@ -798,6 +918,26 @@ describe('host bootstrap wiring', () => {
     expect(await hook(project.id, 'ov', JSON.stringify({ tool_input: {} }))).toBeNull();
     await hook(project.id, 'ov', JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'ls' } }));
     await hook(project.id, 'ov', JSON.stringify({ tool_name: 'Bash', tool_input: 'string-input' }));
+  });
+
+  it('maps native approval and interrupt bodies to agent-status transitions', async () => {
+    const hook = h.mcpDeps.onNotifyHook;
+    h.ptys.sessions.set('cx1', sessionFixture({ id: 'cx1', projectId: project.id, profile: 'codex' }));
+    const requested = vi.spyOn(ctx().agentStatus, 'inputRequested');
+    const resolved = vi.spyOn(ctx().agentStatus, 'inputResolved');
+    const finished = vi.spyOn(ctx().agentStatus, 'turnFinished');
+    try {
+      const approval = { turn_id: 't1', tool_name: 'Bash', tool_input: { command: 'ls' } };
+      hook(project.id, 'cx1', 'blocked', JSON.stringify({ hook_event_name: 'PermissionRequest', ...approval }));
+      expect(requested).toHaveBeenCalledWith('cx1', expect.stringMatching(/^approval:t1:Bash:/));
+      hook(project.id, 'cx1', 'unblocked', JSON.stringify({ hook_event_name: 'PostToolUse', tool_use_id: 'u1', ...approval }));
+      expect(resolved).toHaveBeenCalledWith('cx1', [expect.stringMatching(/^approval:t1:Bash:/)]);
+      hook(project.id, 'cx1', 'unblocked', JSON.stringify({ hook_event_name: 'Interrupt' }));
+      expect(finished).toHaveBeenCalledWith('cx1');
+      await settle();
+    } finally {
+      for (const spy of [requested, resolved, finished]) spy.mockRestore();
+    }
   });
 
   it('turns a StopFailure notify body into an API-error stop and cancels on new turns', async () => {
@@ -854,6 +994,260 @@ describe('host bootstrap wiring', () => {
     }
     expect(ctx().apiErrorResume.check).toBeTypeOf('function');
     expect(await ctx().apiErrorResume.check('nothing', [])).toEqual({ ruleId: null, skipped: [] });
+  });
+
+  it('feeds agent status to the wrap-up service, forgets it on exit and exposes it to IPC', async () => {
+    const observe = vi.spyOn(ctx().wrapUpClose, 'observe');
+    const forget = vi.spyOn(ctx().wrapUpClose, 'forget');
+    try {
+      h.ptys.sessions.set('wu1', sessionFixture({ id: 'wu1', projectId: project.id, profile: 'claude' }));
+      ctx().agentStatus.emit('status', 'wu1', 'working', 1);
+      expect(observe).toHaveBeenCalledWith('wu1', 'working');
+      h.ptys.emit('exit', 'wu1', 0);
+      await settle();
+      expect(forget).toHaveBeenCalledWith('wu1');
+    } finally {
+      observe.mockRestore();
+      forget.mockRestore();
+    }
+    expect(ctx().wrapUpClose.run).toBeTypeOf('function');
+  });
+
+  it('spares an agent from auto-close while it is wrapping up', async () => {
+    h.ptys.sessions.set('wu2', sessionFixture({ id: 'wu2', projectId: project.id, profile: 'claude' }));
+    const config = store.getConfig();
+    const cfg = vi.spyOn(store, 'getConfig').mockReturnValue({ ...config, autoCloseIdleEnabled: true });
+    const wrapping = vi.spyOn(ctx().wrapUpClose, 'isWrappingUp').mockReturnValue(true);
+    try {
+      const eligible = () => (ctx().autoCloseIdle as any).eligible('wu2') as boolean;
+      expect(eligible()).toBe(false);
+      wrapping.mockReturnValue(false);
+      expect(eligible()).toBe(true);
+    } finally {
+      wrapping.mockRestore();
+      cfg.mockRestore();
+    }
+  });
+
+  it('keeps heartbeat nudges away from an agent while it is wrapping up', async () => {
+    h.ptys.sessions.set('wu3', sessionFixture({ id: 'wu3', projectId: project.id, profile: 'claude', heartbeat: true } as never));
+    const config = store.getConfig();
+    const cfg = vi.spyOn(store, 'getConfig').mockReturnValue({ ...config, heartbeatEnabled: true });
+    const wrapping = vi.spyOn(ctx().wrapUpClose, 'isWrappingUp').mockReturnValue(true);
+    try {
+      const eligible = () => (ctx().heartbeat as any).eligible('wu3') as boolean;
+      expect(eligible()).toBe(false);
+      wrapping.mockReturnValue(false);
+      expect(eligible()).toBe(true);
+    } finally {
+      wrapping.mockRestore();
+      cfg.mockRestore();
+    }
+  });
+
+  it('tells the wrap-up service when an API error ends a Claude turn', async () => {
+    h.ptys.sessions.set('wu5', sessionFixture({ id: 'wu5', projectId: project.id, profile: 'claude' }));
+    const failed = vi.spyOn(ctx().wrapUpClose, 'onTurnFailed');
+    try {
+      const body = JSON.stringify({ hook_event_name: 'StopFailure', error: 'rate_limit', error_details: '429 slow down' });
+      h.mcpDeps.onNotifyHook(project.id, 'wu5', 'unblocked', body);
+      expect(failed).toHaveBeenCalledWith('wu5');
+      await settle();
+    } finally {
+      failed.mockRestore();
+    }
+  });
+
+  it('holds peer messages and mail for an agent while it wraps up', async () => {
+    h.ptys.sessions.set('wu6', sessionFixture({ id: 'wu6', projectId: project.id, profile: 'claude' }));
+    const reply = vi.fn(() => true);
+    h.ptys.reply = reply;
+    const wrapping = vi.spyOn(ctx().wrapUpClose, 'isWrappingUp').mockReturnValue(true);
+    const pull = vi.spyOn(h.mcpDeps.agentMessageLog, 'pull');
+    try {
+      expect(h.mcpDeps.injectToSession('wu6', 'hello')).toBe(false);
+      expect(reply).not.toHaveBeenCalled();
+      ctx().agentStatus.emit('status', 'wu6', 'working', 1);
+      ctx().agentStatus.emit('status', 'wu6', 'idle', 2);
+      expect(pull).not.toHaveBeenCalledWith('wu6');
+      wrapping.mockReturnValue(false);
+      expect(h.mcpDeps.injectToSession('wu6', 'hello')).toBe(true);
+      expect(reply).toHaveBeenCalledWith('wu6', 'hello');
+      ctx().agentStatus.emit('status', 'wu6', 'working', 3);
+      ctx().agentStatus.emit('status', 'wu6', 'idle', 4);
+      expect(pull).toHaveBeenCalledWith('wu6');
+      await settle();
+    } finally {
+      pull.mockRestore();
+      wrapping.mockRestore();
+      delete (h.ptys as { reply?: unknown }).reply;
+    }
+  });
+
+  it('tells the wrap-up service when a Claude turn starts and stops', async () => {
+    h.ptys.sessions.set('wu4', sessionFixture({ id: 'wu4', projectId: project.id, profile: 'claude' }));
+    const started = vi.spyOn(ctx().wrapUpClose, 'onTurnStarted');
+    const finished = vi.spyOn(ctx().wrapUpClose, 'onTurnFinished');
+    try {
+      h.mcpDeps.onNotifyHook(project.id, 'wu4', 'unblocked');
+      expect(started).toHaveBeenCalledWith('wu4');
+      h.mcpDeps.onNotifyHook(project.id, 'wu4', 'blocked');
+      expect(started).toHaveBeenCalledTimes(1);
+      h.mcpDeps.onStopHook(project.id, 'wu4');
+      expect(finished).toHaveBeenCalledWith('wu4');
+      await settle();
+    } finally {
+      started.mockRestore();
+      finished.mockRestore();
+    }
+  });
+
+  describe('Squad worker API-error recovery routing', () => {
+    const workerCohort = { executionId: 'e-api', role: 'worker', slotId: 'sl-api', cohortId: 'c-api', teamId: 't', teamName: 'T' };
+    const stopBody = JSON.stringify({ hook_event_name: 'StopFailure', error: 'rate_limit', error_details: '429 slow down' });
+    const claimRecovery = (on: boolean) => {
+      const config = store.getConfig();
+      return vi.spyOn(store, 'getConfig').mockReturnValue({
+        ...config, executionClaimRecoveryObserveEnabled: on, executionClaimRecoveryEnforceEnabled: on
+      });
+    };
+
+    it('sends a worker StopFailure to the engine and a plain session to the resume rules', async () => {
+      h.ptys.sessions.set('api-w', sessionFixture({ id: 'api-w', projectId: project.id, profile: 'claude', cohort: workerCohort }));
+      h.ptys.sessions.set('api-p', sessionFixture({ id: 'api-p', projectId: project.id, profile: 'claude' }));
+      const cfg = claimRecovery(true);
+      const engine = vi.spyOn(ctx().workerApiErrorRecovery, 'onApiErrorStop').mockResolvedValue(undefined);
+      const resume = vi.spyOn(ctx().apiErrorResume, 'onApiErrorStop').mockResolvedValue(undefined);
+      const turnFinished = vi.spyOn(ctx().agentStatus, 'turnFinished');
+      try {
+        h.mcpDeps.onNotifyHook(project.id, 'api-w', 'unblocked', stopBody);
+        expect(engine).toHaveBeenCalledWith('api-w', { executionId: 'e-api', slotId: 'sl-api' },
+          expect.objectContaining({ error: 'rate_limit', retryable: true }));
+        expect(resume).not.toHaveBeenCalled();
+        expect(turnFinished).toHaveBeenCalledWith('api-w');
+        h.mcpDeps.onNotifyHook(project.id, 'api-p', 'unblocked', stopBody);
+        expect(resume).toHaveBeenCalledTimes(1);
+        expect(engine).toHaveBeenCalledTimes(1);
+        await settle();
+      } finally {
+        for (const spy of [cfg, engine, resume, turnFinished]) spy.mockRestore();
+      }
+    });
+
+    it('keeps a worker on the resume rules when claim recovery is disabled', async () => {
+      h.ptys.sessions.set('api-off', sessionFixture({ id: 'api-off', projectId: project.id, profile: 'claude', cohort: workerCohort }));
+      const cfg = claimRecovery(false);
+      const engine = vi.spyOn(ctx().workerApiErrorRecovery, 'onApiErrorStop').mockResolvedValue(undefined);
+      const resume = vi.spyOn(ctx().apiErrorResume, 'onApiErrorStop').mockResolvedValue(undefined);
+      try {
+        h.mcpDeps.onNotifyHook(project.id, 'api-off', 'unblocked', stopBody);
+        expect(resume).toHaveBeenCalledTimes(1);
+        expect(engine).not.toHaveBeenCalled();
+        await settle();
+      } finally {
+        for (const spy of [cfg, engine, resume]) spy.mockRestore();
+      }
+    });
+
+    it('reads the claim-recovery switches from the live config', async () => {
+      const cfg = claimRecovery(false);
+      try {
+        await expect(ctx().workerApiErrorRecovery.onApiErrorStop('api-cfg', { executionId: 'e-api', slotId: 'sl-api' }, { error: 'x', text: '' }))
+          .resolves.toBeUndefined();
+        expect(cfg).toHaveBeenCalled();
+      } finally {
+        cfg.mockRestore();
+      }
+    });
+
+    it('tells the engine a turn started, with the state the session was in before it', async () => {
+      h.ptys.sessions.set('api-turn', sessionFixture({ id: 'api-turn', projectId: project.id, profile: 'claude', cohort: workerCohort }));
+      const started = vi.spyOn(ctx().workerApiErrorRecovery, 'onTurnStarted');
+      const state = vi.spyOn(ctx().agentStatus, 'get').mockReturnValue('idle');
+      const turnStarted = vi.spyOn(ctx().agentStatus, 'turnStarted');
+      try {
+        h.mcpDeps.onNotifyHook(project.id, 'api-turn', 'unblocked');
+        expect(started).toHaveBeenCalledWith('api-turn', 'idle');
+        expect(started.mock.invocationCallOrder[0]).toBeLessThan(turnStarted.mock.invocationCallOrder[0]);
+      } finally {
+        for (const spy of [started, state, turnStarted]) spy.mockRestore();
+      }
+    });
+
+    it('refuses to restart a session the terminal layer does not know', async () => {
+      await expect(ctx().squadWorkerRestarter.restart('no-such-session')).resolves.toEqual({ ok: false, reason: 'not-found' });
+    });
+
+    it('forgets the session on exit', async () => {
+      const forget = vi.spyOn(ctx().workerApiErrorRecovery, 'forget');
+      try {
+        h.ptys.sessions.set('api-exit', sessionFixture({ id: 'api-exit' }));
+        h.ptys.emit('exit', 'api-exit', 0);
+        await settle();
+        expect(forget).toHaveBeenCalledWith('api-exit');
+      } finally {
+        forget.mockRestore();
+      }
+    });
+  });
+
+  describe('Squad worker exit and in-place restart', () => {
+    const workerCohort = { executionId: 'e-restart', role: 'worker', slotId: 'sl', cohortId: 'c-restart', teamId: 't', teamName: 'T' };
+    const spies = () => {
+      const c = ctx();
+      return {
+        recover: vi.spyOn(c.squadExecutionService, 'recoverExitedWorker').mockResolvedValue(undefined),
+        lifecycle: vi.spyOn(h.lifecycleIntegration, 'onSessionExit').mockResolvedValue(undefined)
+      };
+    };
+    const makeWorker = (id: string, capabilityId?: string, stored = true) => {
+      if (capabilityId && stored) {
+        ctx().restoreCapabilities.put({
+          id: capabilityId, request: { projectId: project.id, cols: 80, rows: 24, profile: 'shell', personaId: 'p-worker', cohort: workerCohort },
+          sessionId: id, sessionProfile: 'shell', sessionTitle: 'T', createdAt: Date.now()
+        });
+      }
+      h.ptys.sessions.set(id, sessionFixture({ id, cohort: workerCohort, ...(capabilityId ? { restoreCapabilityId: capabilityId } : {}) }));
+    };
+
+    it('still recovers the worker on a normal exit', async () => {
+      const { recover, lifecycle } = spies();
+      try {
+        makeWorker('wr-normal');
+        h.ptys.emit('exit', 'wr-normal', 0);
+        await settle();
+        expect(lifecycle).toHaveBeenCalledWith('wr-normal', expect.anything());
+        expect(recover).toHaveBeenCalledWith('e-restart', 'sl');
+      } finally { recover.mockRestore(); lifecycle.mockRestore(); }
+    });
+
+    it('holds the engine back while a restart relaunches the worker', async () => {
+      const { recover, lifecycle } = spies();
+      try {
+        makeWorker('wr-ok', 'cap-wr-ok');
+        const restarted = ctx().squadWorkerRestarter.restart('wr-ok');
+        await settle();
+        h.ptys.emit('exit', 'wr-ok', 0);
+        expect(await restarted).toEqual({ ok: true });
+        expect(h.ptys.createCalls.at(-1)).toMatchObject({ preallocatedSessionId: 'wr-ok' });
+        expect(lifecycle).not.toHaveBeenCalled();
+        expect(recover).not.toHaveBeenCalled();
+      } finally { recover.mockRestore(); lifecycle.mockRestore(); }
+    });
+
+    it('tells the engine the worker is gone when the relaunch fails', async () => {
+      const { recover, lifecycle } = spies();
+      try {
+        makeWorker('wr-fail', 'cap-unstored', false);
+        const restarted = ctx().squadWorkerRestarter.restart('wr-fail');
+        await settle();
+        h.ptys.emit('exit', 'wr-fail', 0);
+        expect(await restarted).toMatchObject({ ok: false, reason: 'relaunch-failed' });
+        await settle();
+        expect(lifecycle).toHaveBeenCalledWith('wr-fail', expect.anything());
+        expect(recover).toHaveBeenCalledWith('e-restart', 'sl');
+      } finally { recover.mockRestore(); lifecycle.mockRestore(); }
+    });
   });
 
   it('spares an agent that rested on an API error from auto-close until its next turn', async () => {
@@ -1010,7 +1404,7 @@ describe('host bootstrap wiring', () => {
     }
   });
 
-  it('connects bulk plugin updates to the production supervisor', async () => {
+  it('connects plugin updates and Modern-thread power activity to the production supervisor', async () => {
     const value = { updated: ['fixture'], failed: [] };
     const updateAllPlugins = vi.fn(async () => value);
     const noop = () => () => {};
@@ -1032,10 +1426,23 @@ describe('host bootstrap wiring', () => {
       expect(updateAllPlugins).toHaveBeenCalledOnce();
       updateAllPlugins.mockRejectedValueOnce(new Error('plugin host stopped'));
       await expect(h.controlPlaneDeps.pluginHost.updateAll()).rejects.toThrow('plugin host stopped');
+
+      const observe = vi.spyOn(ctx().keepAwake, 'observe');
+      try {
+        expect(h.runtimeOptions?.onLocalThreadWork).toBeTypeOf('function');
+        h.runtimeOptions!.onLocalThreadWork!(true);
+        expect(observe).toHaveBeenLastCalledWith('modern-threads', 'working');
+        h.runtimeOptions!.onLocalThreadWork!(false);
+        expect(observe).toHaveBeenLastCalledWith('modern-threads', 'idle');
+        expect(observe).toHaveBeenCalledTimes(2);
+      } finally {
+        observe.mockRestore();
+      }
     } finally {
       h.appHandlers.get('before-quit')?.[0]?.({ preventDefault: vi.fn() });
       await settle();
       h.runtimeStart = undefined;
+      h.runtimeOptions = undefined;
       if (rendererUrl === undefined) delete process.env.ELECTRON_RENDERER_URL;
       else process.env.ELECTRON_RENDERER_URL = rendererUrl;
     }

@@ -10,7 +10,7 @@
     "name": "Zana for Slack",
     "description": "Connect your Projects to Slack. Start agents, follow their progress, and choose which answers and plugin tools to share.",
     "branding": {
-      "icon": "MessageSquare"
+      "icon": "./icons/slack.png"
     },
     "server": "./server.ts",
     "app": "./app.tsx",

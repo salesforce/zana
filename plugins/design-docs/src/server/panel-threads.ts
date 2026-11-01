@@ -1,5 +1,6 @@
 import type { PluginAgentConfigureContext, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import { AGENT_FALLBACK_LABEL, type DesignDocStore } from './store.js';
+import { TOOL_NAMES } from './tools.js';
 
 /**
  * The doc a side-panel conversation was started beside. The host records the
@@ -24,21 +25,25 @@ export function registerPanelThreadLinks(
   store: DesignDocStore,
   changed: (docId: string) => void
 ): void {
-  // configure() runs on every launch; link once so an Unlink sticks.
+  // configure() runs on every launch; link once so an Unlink sticks. A plugin
+  // with a configure() keeps only the tools it names, so every thread is given
+  // all the doc tools.
   const seen = new Set<string>();
+  const tools = { tools: [...TOOL_NAMES] };
   zcc.agents.configure((ctx) => {
     const threadId = ctx.thread?.id ?? ctx.threadId;
     const docId = panelDocId(ctx.pluginMetadata);
-    if (!threadId || !docId || seen.has(threadId)) return;
+    if (!threadId || !docId || seen.has(threadId)) return tools;
     seen.add(threadId);
     let id: string;
     try {
       id = store.summary(docId).id;
     } catch {
       // The view named no doc (the list page) or one since deleted.
-      return;
+      return tools;
     }
     store.linkThread(id, threadId, ctx.thread?.title?.trim() || AGENT_FALLBACK_LABEL, 'assistant');
     changed(id);
+    return tools;
   });
 }

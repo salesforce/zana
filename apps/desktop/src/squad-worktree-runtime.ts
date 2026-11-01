@@ -1,8 +1,9 @@
 import { existsSync as nodeExistsSync, realpathSync as nodeRealpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { isWithin } from '@zana-ai/zcc-path-confine';
-import type { LaunchProfileId, Persona, Project, ProjectSettings, Team, TerminalSession, CreateTerminalRequest, Result } from '@zana-ai/zcc-domain/product';
-import type { ExecutionRecord, SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
+import { validateSquadExecutionTarget } from '@zana-ai/zcc-domain/product';
+import type { LaunchProfileId, Persona, Project, ProjectSettings, Team, TerminalSession, CreateTerminalRequest, Result, SquadExecutionTargetSelector } from '@zana-ai/zcc-domain/product';
+import { isUserOwnedSquadWorktree, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
 import type * as GitModule from '@zana-ai/zcc-server/services/projects/git';
 import type { InboxInput } from '@zana-ai/zcc-server/services/inbox/inbox-store';
 import { InboxActionOperatorError } from './inbox-actions/registry.js';
@@ -31,6 +32,28 @@ export const SQUAD_WORKTREE_ACTION = 'squad-worktree-lifecycle';
 const ACTIVE_FOLLOW_UP_MESSAGE = 'Worktree is in use by an active follow-up agent. Wait for it to exit, then try again.';
 const RETAINED_UNAVAILABLE_MESSAGE = 'Retained Squad worktree or branch is unavailable.';
 const CONFIRMATION_UNAVAILABLE_MESSAGE = 'This confirmation is unavailable because the retained Squad worktree or branch no longer exists.';
+const FOLLOW_UP_REASON_MAX = 300;
+const USER_TARGET_NOT_DELETED_MESSAGE = 'This Squad ran in your own checkout. Zana never deletes, merges, or cleans a user-owned target.';
+/** Error message for any selected-target resolution failure; never falls back to a generated worktree. */
+export const TARGET_UNAVAILABLE = 'TARGET_UNAVAILABLE';
+
+function sameTargetSelector(
+  recorded: SquadExecutionTargetSelector | undefined,
+  supplied: SquadExecutionTargetSelector
+): boolean {
+  return recorded?.kind === supplied.kind
+    && (recorded.kind !== 'worktree' || supplied.kind === 'worktree' && recorded.branch === supplied.branch);
+}
+
+/**
+ * Operator-facing launch denial: the launcher's own reason with control characters
+ * stripped, whitespace collapsed and length capped, so it can be shown verbatim.
+ */
+export function followUpLaunchDeniedMessage(reason: string | undefined): string {
+  const cleaned = (reason ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const bounded = cleaned.length > FOLLOW_UP_REASON_MAX ? `${cleaned.slice(0, FOLLOW_UP_REASON_MAX - 1)}…` : cleaned;
+  return `Follow-up agent was not launched: ${bounded || 'launch was refused'}`;
+}
 
 /** Realpath of a project's managed squad worktree base, or undefined when absent. */
 export function squadWorktreeBaseRoot(projectRoot: string, realpath: (path: string) => string = nodeRealpathSync): string | undefined {
@@ -62,7 +85,9 @@ export function squadWorktreeSlug(
 }
 
 type GitOps = Pick<typeof GitModule,
-  'getGitStatus' | 'setWorktreePushProtection' | 'createWorktree' | 'mergeWorktree' | 'removeWorktree' | 'worktreeState' | 'isGitRepo' | 'sanitizeBranchSlug'>;
+  'getGitStatus' | 'setWorktreePushProtection' | 'createWorktree' | 'mergeWorktree' | 'removeWorktree' | 'worktreeState' | 'isGitRepo' | 'sanitizeBranchSlug'>
+  // Selected-target resolution only; when absent every selector is unavailable.
+  & Partial<Pick<typeof GitModule, 'listWorktrees' | 'gitCommonDir'>>;
 
 type SpawnLifecycle = {
   maySpawn: () => Promise<boolean>;
@@ -98,6 +123,8 @@ export interface SquadWorktreeRuntimeDeps {
   launchFollowUpTerminal(request: CreateTerminalRequest, lifecycle: SpawnLifecycle, executionId: string): Promise<Result<TerminalSession>>;
   git: GitOps;
   fs?: { existsSync(path: string): boolean; realpathSync(path: string): string };
+  /** Main's managed-workspace trust check for a canonical path outside the project checkout. */
+  isTrustedWorkspacePath?: (realPath: string) => boolean;
 }
 
 type RetainedActionRecord = ExecutionRecord & { squadWorktree: SquadWorktreeRecord };
@@ -114,7 +141,67 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
   const findProject = (projectId: string) => deps.projects.listProjects().find((candidate) => candidate.id === projectId);
   const withinBase = (candidate: string, projectRoot: string) => isWithinSquadWorktreeBase(candidate, projectRoot, fs.realpathSync);
 
-  async function prepareSquadWorktree(initial: ExecutionRecord, request: { worktree?: boolean }): Promise<ExecutionRecord> {
+  /**
+   * Resolve a trusted selector to one canonical, user-owned target of the registered
+   * local project's own repository. Every failure is TARGET_UNAVAILABLE: there is no
+   * fallback to the project root or a generated worktree.
+   */
+  async function resolveUserTarget(project: Project | undefined, selector: SquadExecutionTargetSelector | undefined): Promise<SquadWorktreeRecord> {
+    try {
+      if (!project || project.remote || project.quickAgent || !selector) throw new Error(TARGET_UNAVAILABLE);
+      const root = fs.realpathSync(project.path);
+      const rootCommon = await git.gitCommonDir?.(root);
+      if (!rootCommon) throw new Error(TARGET_UNAVAILABLE);
+      let path = root;
+      if (selector.kind === 'worktree') {
+        const matches = (await git.listWorktrees?.(root) ?? []).filter((entry) =>
+          !entry.isMain && !entry.bare && !entry.detached && entry.branch === selector.branch);
+        if (matches.length !== 1) throw new Error(TARGET_UNAVAILABLE);
+        path = fs.realpathSync(matches[0]!.path);
+        if (path === root) throw new Error(TARGET_UNAVAILABLE);
+        // Project-contained, or inside a main-managed workspace; never an arbitrary host path.
+        if (!isWithin(path, root) && !deps.isTrustedWorkspacePath?.(path)) throw new Error(TARGET_UNAVAILABLE);
+        const common = await git.gitCommonDir?.(path);
+        if (!common || fs.realpathSync(common) !== fs.realpathSync(rootCommon)) throw new Error(TARGET_UNAVAILABLE);
+      }
+      const status = await git.getGitStatus(path);
+      if (!status?.branch || status.detached) throw new Error(TARGET_UNAVAILABLE);
+      if (selector.kind === 'worktree' && status.branch !== selector.branch) throw new Error(TARGET_UNAVAILABLE);
+      return { path, branch: status.branch, ownership: 'user', targetKind: selector.kind };
+    } catch {
+      throw new Error(TARGET_UNAVAILABLE);
+    }
+  }
+
+  /** Re-resolve a recorded user-owned target; it must still be the same canonical path and branch. */
+  async function revalidateUserTarget(record: ExecutionRecord): Promise<SquadWorktreeRecord> {
+    const recorded = record.squadWorktree;
+    if (!recorded || !isUserOwnedSquadWorktree(recorded)) throw new Error(TARGET_UNAVAILABLE);
+    const resolved = await resolveUserTarget(findProject(record.projectId), record.request.target);
+    if (resolved.path !== recorded.path || resolved.branch !== recorded.branch || resolved.targetKind !== recorded.targetKind) {
+      throw new Error(TARGET_UNAVAILABLE);
+    }
+    return resolved;
+  }
+
+  async function bindUserTarget(record: ExecutionRecord, project: Project | undefined, selector: SquadExecutionTargetSelector): Promise<ExecutionRecord> {
+    if (record.squadWorktree) {
+      // A record that already owns a generated worktree can never switch to a user target.
+      if (!isUserOwnedSquadWorktree(record.squadWorktree)) throw new Error(TARGET_UNAVAILABLE);
+      if (!sameTargetSelector(record.request.target, selector)) throw new Error(TARGET_UNAVAILABLE);
+      await revalidateUserTarget(record);
+      return record;
+    }
+    const resolved = await resolveUserTarget(project, selector);
+    const latest = await executionStore.get(record.id);
+    if (!latest || latest.stateVersion !== record.stateVersion || latest.squadWorktree) throw new Error(TARGET_UNAVAILABLE);
+    return executionStore.setSquadWorktree(record.id, record.stateVersion, resolved);
+  }
+
+  async function prepareSquadWorktree(
+    initial: ExecutionRecord,
+    request: { worktree?: boolean; onComplete?: 'leave' | 'merge' | 'delete'; target?: SquadExecutionTargetSelector }
+  ): Promise<ExecutionRecord> {
     return withSquadWorktreeLifecycleLock(initial.id, async () => {
       // Lifecycle lock precedes Git's existing worktree locks, avoiding inversion.
       const current = await executionStore.get(initial.id);
@@ -122,6 +209,17 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
       const record = current;
       const project = findProject(record.projectId);
       const retainedWorktree = record.squadWorktree;
+      const selector = request.target ?? record.request.target;
+      if (selector !== undefined || isUserOwnedSquadWorktree(retainedWorktree)) {
+        // Admission already applied this rule; repeat it so no caller can skip it.
+        const checked = validateSquadExecutionTarget({
+          target: selector,
+          worktree: request.worktree ?? record.request.worktree,
+          onComplete: request.onComplete ?? record.request.onComplete
+        });
+        if (!checked.ok || !checked.target) throw new Error(TARGET_UNAVAILABLE);
+        return bindUserTarget(record, project, checked.target);
+      }
       const team = deps.teams.list().find((candidate) => candidate.id === record.teamId);
       const projectSettings = project ? await deps.getProjectSettings(project.id) : undefined;
       const preparation = resolveSquadWorktreePreparation({
@@ -266,6 +364,11 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
       const worktree = latest.squadWorktree;
       if (!worktree) return;
       const project = findProject(record.projectId);
+      if (isUserOwnedSquadWorktree(worktree)) {
+        // A user-owned target is never push-guarded, merged, or removed by Zana.
+        await executionStore.markSquadWorktreeTerminalEffects(record.id, record.stateVersion);
+        return 'kept';
+      }
       // A crash can land after Git removes the checkout but before the durable
       // completion marker. Missing recorded checkout is the idempotent delete
       // result, never a reason to retry another terminal policy action.
@@ -325,6 +428,9 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
     }
     const project = findProject(record.projectId);
     if (!project || project.remote || project.quickAgent) throw new Error('retained squad worktree is unavailable');
+    if (isUserOwnedSquadWorktree(record.squadWorktree)) {
+      return { project, worktree: await revalidateUserTarget(record) };
+    }
     let path: string;
     try {
       if (fs.realpathSync(project.path) !== project.path) throw new Error('project path changed');
@@ -342,7 +448,36 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
     return { project, worktree: { ...record.squadWorktree, path } };
   }
 
-  async function instruct(record: RetainedActionRecord, currentRecord: () => Promise<RetainedActionRecord>, text: string | undefined): Promise<void> {
+  /**
+   * The one persona a follow-up may run as. An explicit pick must belong to this
+   * Squad's roster; otherwise the Squad's coordinator is inherited. A coordinator
+   * that no longer resolves refuses rather than falling back to a bare profile,
+   * which would drop the persona's restrictions.
+   */
+  function followUpPersona(record: RetainedActionRecord, personaId: string | undefined): Persona | undefined {
+    const team = deps.teams.list().find((candidate) => candidate.id === record.teamId);
+    if (!team) throw new InboxActionOperatorError('This Squad is no longer configured, so its follow-up agent cannot be chosen.');
+    const roster = new Set([team.orchestratorPersonaId, ...(team.slots ?? []).map((slot) => slot.personaId)].filter((id): id is string => Boolean(id)));
+    const wanted = personaId ?? team.orchestratorPersonaId;
+    if (personaId !== undefined && !roster.has(personaId)) {
+      throw new InboxActionOperatorError('The selected persona is not a member of this Squad. Choose one of its personas.');
+    }
+    if (!wanted) return undefined;
+    const persona = deps.personas.list().find((candidate) => candidate.id === wanted);
+    if (!persona) {
+      throw new InboxActionOperatorError(personaId === undefined
+        ? "This Squad's coordinator persona is no longer available. Choose another persona from the Squad for the follow-up."
+        : 'The selected persona is no longer available. Choose another persona from the Squad.');
+    }
+    return persona;
+  }
+
+  async function instruct(
+    record: RetainedActionRecord,
+    currentRecord: () => Promise<RetainedActionRecord>,
+    text: string | undefined,
+    personaId?: string
+  ): Promise<void> {
     if (squadWorktreeHasActiveFollowUp(record.id)) throw new InboxActionOperatorError(ACTIVE_FOLLOW_UP_MESSAGE);
     const instruction = text?.trim();
     if (!instruction) throw new Error('agent instruction is required');
@@ -353,10 +488,7 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
     } catch {
       throw new InboxActionOperatorError(RETAINED_UNAVAILABLE_MESSAGE, true);
     }
-    const team = deps.teams.list().find((candidate) => candidate.id === record.teamId);
-    const persona = team?.orchestratorPersonaId
-      ? deps.personas.list().find((candidate) => candidate.id === team.orchestratorPersonaId)
-      : undefined;
+    const persona = followUpPersona(record, personaId);
     const profile = persona ? deps.resolveTeamProfile(project, deps.personas.list(), persona) : 'claude';
     const launched = await deps.launchFollowUpTerminal({
       projectId: project.id,
@@ -400,7 +532,9 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
       }),
       onSessionCreated: (session) => claimSquadWorktreeFollowUp(record.id, session.id)
     }, record.id);
-    if (!launched.ok) throw new Error(launched.message);
+    // The launcher's preflight is the compatibility authority. A denial spawned
+    // nothing; surface its reason and never retry under another persona/profile.
+    if (!launched.ok) throw new InboxActionOperatorError(followUpLaunchDeniedMessage(launched.message));
   }
 
   async function deleteWorktree(
@@ -410,6 +544,7 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
   ): Promise<void> {
     await withSquadWorktreeLifecycleLock(record.id, async () => {
       const current = await currentRecord();
+      if (isUserOwnedSquadWorktree(current.squadWorktree)) throw new InboxActionOperatorError(USER_TARGET_NOT_DELETED_MESSAGE);
       if (squadWorktreeHasActiveFollowUp(current.id)) throw new InboxActionOperatorError(ACTIVE_FOLLOW_UP_MESSAGE);
       let retained: { project: Project; worktree: SquadWorktreeRecord };
       try {
@@ -441,7 +576,7 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
 
   async function runSquadWorktreeAction(
     fencedAction: RetainedSquadWorktreeAction,
-    input?: { optionId?: string; text?: string }
+    input?: { optionId?: string; text?: string; personaId?: string }
   ): Promise<void | { keepPending: true }> {
     const currentRecord = async (): Promise<RetainedActionRecord> => {
       try {
@@ -459,9 +594,12 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
       await executionStore.disposeSquadWorktree(record.id, record.stateVersion, 'left');
       return;
     }
-    if (disposition === 'instruct') return instruct(record, currentRecord, input?.text);
+    if (disposition === 'instruct') return instruct(record, currentRecord, input?.text, input?.personaId);
     const project = findProject(record.projectId);
     if (!project) throw new Error('project is unavailable');
+    if ((disposition === 'confirm' || disposition === 'delete' || disposition === 'force') && isUserOwnedSquadWorktree(record.squadWorktree)) {
+      throw new InboxActionOperatorError(USER_TARGET_NOT_DELETED_MESSAGE);
+    }
     if (disposition === 'confirm') {
       if (squadWorktreeHasActiveFollowUp(record.id)) throw new InboxActionOperatorError(ACTIVE_FOLLOW_UP_MESSAGE);
       await appendSquadWorktreeNotice(
@@ -481,10 +619,13 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
   }
 
   /** Inbox host-action handler: the ref is renderer-visible, so every field is revalidated. */
-  async function handleInboxAction({ ref, input }: { ref: string; input?: { optionId?: string; text?: string } }) {
+  async function handleInboxAction({ ref, input }: { ref: string; input?: { optionId?: string; text?: string; personaId?: string } }) {
     let action: Partial<RetainedSquadWorktreeAction>;
     try { action = JSON.parse(ref) as Partial<RetainedSquadWorktreeAction>; } catch { throw new Error('invalid squad worktree action'); }
     if (!action.executionId || !action.phase || !Number.isInteger(action.stateVersion)) throw new Error('invalid squad worktree action');
+    if (input?.personaId !== undefined && (typeof input.personaId !== 'string' || !input.personaId.trim() || input.personaId.length > 200)) {
+      throw new Error('invalid squad worktree action');
+    }
     return runSquadWorktreeAction(action as RetainedSquadWorktreeAction, input);
   }
 
@@ -494,14 +635,20 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
     executionId: string,
     stateVersion: number,
     action: 'leave' | 'instruct' | 'delete' | 'force-delete',
-    instruction?: string
+    instruction?: string,
+    /** Explicit follow-up persona; main confines it to the Squad roster. */
+    personaId?: string
   ): Promise<Result<true>> {
     const phase = action === 'instruct' ? 'choose' : 'confirm';
     const optionId = action === 'delete' ? 'confirm-delete' : action === 'force-delete' ? 'force-delete' : action;
     try {
       const record = await executionStore.getInProject(projectId, executionId);
       if (!record || record.stateVersion !== stateVersion) return { ok: false, code: 'CONFLICT', message: 'Squad run changed. Refresh details and try again.' };
-      await runSquadWorktreeAction({ executionId, phase, stateVersion }, { optionId, ...(instruction === undefined ? {} : { text: instruction }) });
+      await runSquadWorktreeAction({ executionId, phase, stateVersion }, {
+        optionId,
+        ...(instruction === undefined ? {} : { text: instruction }),
+        ...(action === 'instruct' && personaId !== undefined ? { personaId } : {})
+      });
       return { ok: true, value: true };
     } catch (error) {
       return { ok: false, code: error instanceof InboxActionOperatorError ? 'CONFLICT' : 'UNAVAILABLE', message: error instanceof Error ? error.message : 'squad worktree action failed' };
@@ -510,6 +657,7 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
 
   return {
     prepareSquadWorktree,
+    revalidateUserTarget,
     handleSquadWorktreeTerminal,
     replayUndisposedTerminalEffects,
     handleInboxAction,

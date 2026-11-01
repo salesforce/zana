@@ -174,7 +174,9 @@ describe('startTeamJobFromUi validation', () => {
     [{ teamId: 'team1', projectId: 3, goal: 'g' }, 'INVALID'],
     [{ teamId: 'team1', projectId: 'p1', goal: '   ' }, 'INVALID'],
     [{ teamId: 'nope', projectId: 'p1', goal: 'g' }, 'NOT_FOUND'],
-    [{ teamId: 'team1', projectId: 'nope', goal: 'g' }, 'NOT_FOUND']
+    [{ teamId: 'team1', projectId: 'nope', goal: 'g' }, 'NOT_FOUND'],
+    [{ teamId: 'team1', projectId: 'p1', goal: 'g', target: { kind: 'worktree', branch: '../x' } }, 'INVALID'],
+    [{ teamId: 'team1', projectId: 'p1', goal: 'g', target: { kind: 'path', path: '/etc' } }, 'INVALID']
   ])('rejects malformed input %j with %s', async (value, code) => {
     expect(await startTeamJobFromUi(value as never)).toMatchObject({ ok: false, code });
   });
@@ -214,6 +216,22 @@ describe('startTeamJobFromUi launches', () => {
     expect(h.creates).toHaveLength(3);
     expect(h.creates.at(-1).cohort).toMatchObject({ role: 'orchestrator', coordinationMode: 'freeform', executionJobTitle: 'My job' });
     expect(h.creates[0].cohort.role).toBe('worker');
+  });
+
+  it('refuses infer when the orchestrator cannot author and register a plan on the team transport', async () => {
+    h.personas = [persona('orch', { deniedTools: ['Write'] }), persona('w1')];
+    expect(await startTeamJobFromUi(input({ coordinationMode: 'freeform' }))).toMatchObject({ ok: false, code: 'ORCHESTRATOR_CANNOT_PLAN' });
+    expect(h.creates).toHaveLength(0);
+    h.personas = [persona('orch', { deniedTools: ['mcp__zcc-inbox__execution.plan.register'] }), persona('w1')];
+    h.teams = [{ ...h.teams[0], transport: 'MODERN' }];
+    expect(await startTeamJobFromUi(input({ coordinationMode: 'freeform' }))).toMatchObject({ ok: false, code: 'ORCHESTRATOR_CANNOT_PLAN' });
+  });
+
+  it('does not apply the infer gate to a Modern orchestrator that can register', async () => {
+    h.personas = [persona('orch', { deniedTools: ['Write'] }), persona('w1')];
+    h.teams = [{ ...h.teams[0], transport: 'MODERN' }];
+    const result = await startTeamJobFromUi(input({ coordinationMode: 'freeform' }));
+    expect(result).not.toMatchObject({ code: 'ORCHESTRATOR_CANNOT_PLAN' });
   });
 
   it('seeds a valid provided plan as durable work units (structured is the default mode)', async () => {

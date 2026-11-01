@@ -118,6 +118,7 @@ export interface FakePluginHarness {
     /** Call the registered provider the way the host would. Rejects when none is registered. */
     resolve(): Promise<unknown>;
   };
+  /** The current `zcc.status` message, or null once the plugin calls `configured()`. */
   needsConfiguration: string | null;
   setSettings(values: Record<string, PluginSettingValue | undefined>): void;
   callRpc(name: string, args?: unknown): Promise<unknown>;
@@ -1001,6 +1002,9 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
     status: {
       needsConfiguration(message) {
         needsConfiguration = message;
+      },
+      configured() {
+        needsConfiguration = null;
       }
     },
     services,

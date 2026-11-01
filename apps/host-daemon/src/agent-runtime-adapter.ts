@@ -7,13 +7,18 @@ import type { HostBridgeLaunch, HostEventEnvelope, ProviderHealthResult, Provide
 import type { HostDaemonAcpLaunchSpec } from '@zana-ai/zcc-host-daemon-contract';
 import {
   createAgentRuntime,
+  resolveBuiltInAcpLaunchSpec,
   type AgentRuntime,
   type AgentRuntimeBridgeLaunch,
   type AgentRuntimeOptions
 } from '@zana-ai/zcc-agent-runtime';
 import { ensurePluginProcessDataDir } from '@zana-ai/zcc-agent-process-utils';
 import { createFakeAgentRuntime, fakeProviderEnabled } from './fake-runtime.js';
-import { loadRuntimeSkillRoots, hashInjectedSkillCatalog } from './injected-skill-roots.js';
+import {
+  hashInjectedSkillCatalog,
+  loadRuntimeSkillRoots,
+  type AutomatedSkillSelection
+} from './injected-skill-roots.js';
 import { ensureCachedPluginHostArtifact, type FetchPluginHostArtifact } from './plugin-host-artifact-cache.js';
 import { silentArtifactCacheLogger, type ArtifactCacheLogger } from './node-artifact-cache.js';
 import {
@@ -56,6 +61,25 @@ export const DEFAULT_THREAD_EXECUTION_OPTIONS: RuntimeThreadExecutionOptions = {
   approvalReviewer: null,
   permissionEscalation: null
 };
+
+/**
+ * A thread start is an unattended worker when it is headless, scheduled, or an
+ * autonomous team run. Bridges use the resulting `sessionKind` to enforce
+ * their own automated-session admission policy.
+ */
+export function isAutomatedThreadStart(
+  input: Pick<ThreadWorkInput, 'headless' | 'scheduled' | 'autonomous'>
+): boolean {
+  return Boolean(input.headless || input.scheduled || input.autonomous);
+}
+
+function automatedSkillSelection(input: { automatedSkillIds?: readonly string[] }): AutomatedSkillSelection | undefined {
+  return input.automatedSkillIds ? { skillIds: input.automatedSkillIds } : undefined;
+}
+
+function skillSelectionForStart(input: ThreadWorkInput): AutomatedSkillSelection | undefined {
+  return automatedSkillSelection(input) ?? (isAutomatedThreadStart(input) ? { skillIds: [] } : undefined);
+}
 
 export function mergeSessionTooling(input: {
   remoteProxy: boolean;
@@ -189,6 +213,7 @@ function toRuntimeBridgeLaunch(
   return {
     pluginId: launch.pluginId,
     ...(launch.envPassthrough ? { envPassthrough: launch.envPassthrough } : {}),
+    ...(launch.providerOptions ? { providerOptions: launch.providerOptions } : {}),
     dataDir,
     source,
     capabilities: {
@@ -316,6 +341,15 @@ export function createAgentRuntimeAdapter(options: {
     });
   }
 
+  function effectiveAcpLaunchSpec(providerId: string, bridgeLaunch?: HostBridgeLaunch, providerOptions?: Record<string, unknown>): HostDaemonAcpLaunchSpec | undefined {
+    const explicit = acpLaunchSpecFromProviderOptions(providerOptions)
+      ?? acpLaunchSpecFromProviderOptions(bridgeLaunch?.providerOptions);
+    if (explicit !== undefined) return explicit;
+    const nativeBinaries = Object.fromEntries(Object.entries(options.loadConfig?.().harnesses?.byId ?? {})
+      .map(([id, value]) => [id, value.binary]));
+    return resolveBuiltInAcpLaunchSpec(providerId, nativeBinaries);
+  }
+
   function environmentHasThreads(environmentId: string): boolean {
     for (const location of threadLocation.values()) {
       if (location.environmentId === environmentId) return true;
@@ -327,6 +361,7 @@ export function createAgentRuntimeAdapter(options: {
     return createRuntime({
       workspacePath: cwd,
       threadStorageRootPath: storageRoot,
+      additionalWorkspaceWriteRoots: [storageRoot],
       skillRoots: loadRuntimeSkillRoots(skillDataDir),
       ...(bridgeBundleDir ? { bridgeBundleDir } : {}),
       onEvent: (event) => {
@@ -408,7 +443,8 @@ export function createAgentRuntimeAdapter(options: {
       bridgeLaunch: HostBridgeLaunch;
       cwd?: string;
     }): Promise<ProviderListModelsResult> {
-      return modelDiscovery.run(JSON.stringify(input), async () => {
+      const acpLaunchSpec = effectiveAcpLaunchSpec(input.providerId, input.bridgeLaunch);
+      return modelDiscovery.run(JSON.stringify({ ...input, acpLaunchSpec }), async () => {
         syncProviderBridgeRecording();
         const workspaceCwd = input.cwd ?? join(storageRoot, 'model-list', input.providerId);
         if (!input.cwd) mkdirSync(workspaceCwd, { recursive: true });
@@ -418,6 +454,7 @@ export function createAgentRuntimeAdapter(options: {
           const listed = await runtime.listModels({
             providerId: input.providerId,
             bridgeLaunch: await resolveLaunch(input.bridgeLaunch),
+            ...(acpLaunchSpec === undefined ? {} : { acpLaunchSpec }),
             ...(input.cwd ? { cwd: input.cwd } : {})
           });
           return {
@@ -436,18 +473,31 @@ export function createAgentRuntimeAdapter(options: {
       bridgeLaunch: HostBridgeLaunch;
       cwd?: string;
     }): Promise<ProviderHealthResult> {
-      syncProviderBridgeRecording();
-      const workspaceCwd = input.cwd ?? join(storageRoot, 'provider-health', input.providerId);
-      if (!input.cwd) mkdirSync(workspaceCwd, { recursive: true });
-      const runtime = runtimeFor(`provider-health:${input.providerId}`, workspaceCwd, false);
-      return runtime.providerHealth({
-        providerId: input.providerId,
-        bridgeLaunch: await resolveLaunch(input.bridgeLaunch),
-        ...(input.cwd ? { cwd: input.cwd } : {})
+      const acpLaunchSpec = effectiveAcpLaunchSpec(input.providerId, input.bridgeLaunch);
+      return modelDiscovery.run(JSON.stringify({ operation: 'health', ...input, acpLaunchSpec }), async () => {
+        syncProviderBridgeRecording();
+        const workspaceCwd = input.cwd ?? join(storageRoot, 'provider-health', input.providerId);
+        if (!input.cwd) mkdirSync(workspaceCwd, { recursive: true });
+        // Health owns no threads. Release its bridge after every check rather
+        // than retaining an idle process for each changed executable setting.
+        const runtime = createEnvironmentRuntime(workspaceCwd);
+        discoveryRuntimes.add(runtime);
+        try {
+          return await runtime.providerHealth({
+            providerId: input.providerId,
+            ...(acpLaunchSpec === undefined ? {} : { acpLaunchSpec }),
+            bridgeLaunch: await resolveLaunch(input.bridgeLaunch),
+            ...(input.cwd ? { cwd: input.cwd } : {})
+          });
+        } finally {
+          try { await runtime.shutdown(); } catch { /* Preserve the health result or its actionable failure. */ }
+          discoveryRuntimes.delete(runtime);
+        }
       });
     },
     async startWork(input: ThreadWorkInput) {
       syncProviderBridgeRecording();
+      const acpLaunchSpec = effectiveAcpLaunchSpec(input.providerId, input.bridgeLaunch, input.providerOptions);
       const runtime = runtimeFor(input.environmentId, input.cwd);
       threadLocation.set(input.threadId, { environmentId: input.environmentId, cwd: input.cwd, status: 'active' });
       const remoteProxy = usesRemoteToolProxy(input);
@@ -461,7 +511,7 @@ export function createAgentRuntimeAdapter(options: {
       }
       try {
         const result = await runtime.startThread({
-          skillRoots: await skillSnapshots.capture(runtime),
+          skillRoots: await skillSnapshots.capture(runtime, skillSelectionForStart(input)),
           environmentId: input.environmentId,
           threadId: input.threadId,
           projectId: input.projectId,
@@ -477,8 +527,8 @@ export function createAgentRuntimeAdapter(options: {
             claudeCodePermissionMode: input.claudeCodePermissionMode,
             providerOptions: input.providerOptions
           }),
-          ...(acpLaunchSpecFromProviderOptions(input.providerOptions)
-            ? { acpLaunchSpec: acpLaunchSpecFromProviderOptions(input.providerOptions) }
+          ...(acpLaunchSpec !== undefined
+            ? { acpLaunchSpec }
             : {}),
           ...(input.providerThreadId ? {
             fork: {
@@ -489,6 +539,7 @@ export function createAgentRuntimeAdapter(options: {
             }
           } : {}),
           ...(input.bridgeLaunch ? { bridgeLaunch: await resolveLaunch(input.bridgeLaunch) } : {}),
+          ...(isAutomatedThreadStart(input) ? { sessionKind: 'automated' as const } : {}),
           ...mergeSessionTooling({
             remoteProxy,
             dynamicTools: input.dynamicTools,
@@ -539,11 +590,12 @@ export function createAgentRuntimeAdapter(options: {
     },
     async resumeWork(input: ThreadResumeInput) {
       syncProviderBridgeRecording();
+      const acpLaunchSpec = effectiveAcpLaunchSpec(input.providerId, input.bridgeLaunch, input.providerOptions);
       const runtime = runtimeFor(input.environmentId, input.cwd);
       threadLocation.set(input.threadId, { environmentId: input.environmentId, cwd: input.cwd, status: 'active' });
       try {
         const result = await runtime.resumeThread({
-          skillRoots: await skillSnapshots.capture(runtime),
+          skillRoots: await skillSnapshots.capture(runtime, automatedSkillSelection(input)),
           environmentId: input.environmentId,
           threadId: input.threadId,
           projectId: input.projectId,
@@ -558,10 +610,11 @@ export function createAgentRuntimeAdapter(options: {
             claudeCodePermissionMode: input.claudeCodePermissionMode,
             providerOptions: input.providerOptions
           }),
-          ...(acpLaunchSpecFromProviderOptions(input.providerOptions)
-            ? { acpLaunchSpec: acpLaunchSpecFromProviderOptions(input.providerOptions) }
+          ...(acpLaunchSpec !== undefined
+            ? { acpLaunchSpec }
             : {}),
           ...(input.bridgeLaunch ? { bridgeLaunch: await resolveLaunch(input.bridgeLaunch) } : {}),
+          ...(input.sessionKind === 'automated' ? { sessionKind: 'automated' as const } : {}),
           ...mergeSessionTooling({
             remoteProxy: false,
             dynamicTools: input.dynamicTools,
@@ -609,7 +662,7 @@ export function createAgentRuntimeAdapter(options: {
     async prepareRewind(input: ThreadRewindPrepareInput) {
       const runtime = runtimeFor(input.environmentId, input.cwd);
       const result = await runtime.prepareThreadRewind({
-        skillRoots: await skillSnapshots.capture(runtime),
+          skillRoots: await skillSnapshots.capture(runtime, automatedSkillSelection(input)),
         environmentId: input.environmentId,
         threadId: input.threadId,
         leaseId: input.leaseId,

@@ -2,10 +2,11 @@ import { product } from '../lib/product-client.js';
 import { hasDesktopBridge } from '../lib/app-surface.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, Search, X } from 'lucide-react';
-import type { SshHostEntry } from '@zana-ai/zcc-domain/product';
+import type { Project, SshHostEntry } from '@zana-ai/zcc-domain/product';
 import { StencilList } from './ui/Skeleton.js';
 
 interface AddRemoteProjectDialogProps {
+  fixedTarget?: Project['remote'];
   onClose: () => void;
   onSubmit: (input: {
     host: string;
@@ -23,16 +24,16 @@ interface AddRemoteProjectDialogProps {
  * installed later from the composer.
  * No mutation of the user's ssh config — read-only list.
  */
-export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemoteProjectDialogProps) {
+export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess, fixedTarget }: AddRemoteProjectDialogProps) {
   const [hosts, setHosts] = useState<SshHostEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
-  const [picked, setPicked] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string | null>(fixedTarget?.host ?? null);
   const [name, setName] = useState('');
-  const [user, setUser] = useState('');
+  const [user, setUser] = useState(fixedTarget?.user ?? '');
   const [remotePath, setRemotePath] = useState('');
-  const [proxyJump, setProxyJump] = useState('');
+  const [proxyJump, setProxyJump] = useState(fixedTarget?.proxyJump ?? '');
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(false);
   const loadSeq = useRef(0);
@@ -69,11 +70,12 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemo
   }, []);
 
   useEffect(() => {
-    loadHosts(false);
+    if (fixedTarget) setHosts([{ alias: fixedTarget.host, user: fixedTarget.user, proxyJump: fixedTarget.proxyJump }]);
+    else loadHosts(false);
     return () => {
       loadSeq.current++;
     };
-  }, [loadHosts]);
+  }, [loadHosts, fixedTarget]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -96,7 +98,7 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemo
   }, [filter, hosts]);
 
   const pickHost = (alias: string) => {
-    if (submitting) return;
+    if (submitting || fixedTarget) return;
     setPicked(alias);
     if (!name.trim()) setName(alias);
     const entry = hosts?.find((h) => h.alias === alias);
@@ -112,9 +114,9 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemo
     try {
       const project = await onSubmit({
         host: picked,
-        user: user.trim() || undefined,
+        user: fixedTarget?.user ?? (user.trim() || undefined),
         remotePath: remotePath.trim() || undefined,
-        proxyJump: proxyJump.trim() || undefined,
+        proxyJump: fixedTarget?.proxyJump ?? (proxyJump.trim() || undefined),
         name: name.trim() || undefined
       });
       if (!project) {
@@ -123,6 +125,8 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemo
       }
       onSuccess(project.id);
       onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not add remote project');
     } finally {
       setSubmitting(false);
     }
@@ -130,8 +134,9 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemo
 
   return (
     <AddRemoteProjectDialogView
+      fixedMachineName={fixedTarget?.host}
       hosts={hosts}
-      filtered={filtered}
+      filtered={fixedTarget ? [{ alias: fixedTarget.host, user: fixedTarget.user, proxyJump: fixedTarget.proxyJump }] : filtered}
       filter={filter}
       loading={loading}
       warning={warning}
@@ -157,6 +162,7 @@ export function AddRemoteProjectDialog({ onClose, onSubmit, onSuccess }: AddRemo
 }
 
 export function AddRemoteProjectDialogView({
+  fixedMachineName,
   hosts,
   filtered,
   filter,
@@ -180,6 +186,7 @@ export function AddRemoteProjectDialogView({
   onSubmit,
   onClose
 }: {
+  fixedMachineName?: string;
   hosts: SshHostEntry[] | null;
   filtered: SshHostEntry[];
   filter: string;
@@ -210,16 +217,16 @@ export function AddRemoteProjectDialogView({
         if (e.target === e.currentTarget && !busy) onClose();
       }}
     >
-      <div className="modal remote-project-modal" role="dialog" aria-modal="true" aria-label="Add remote project">
+      <div className="modal remote-project-modal" role="dialog" aria-modal="true" aria-label={fixedMachineName ? `Add project on ${fixedMachineName}` : 'Add remote project'}>
         <div className="modal-header">
-          <h3>Add remote project</h3>
+          <h3>{fixedMachineName ? `Add project on ${fixedMachineName}` : 'Add remote project'}</h3>
           <button className="icon-btn" onClick={onClose} aria-label="Close" disabled={busy}>
             <X size={14} />
           </button>
         </div>
 
         <div className="modal-body">
-          <div className="list-filter">
+          {fixedMachineName ? <p className="modal-hint">Machine: <strong>{fixedMachineName}</strong></p> : <><div className="list-filter">
             <Search size={12} className="list-filter-icon" />
             <input
               placeholder="Filter hosts"
@@ -271,6 +278,7 @@ export function AddRemoteProjectDialogView({
             ))}
           </div>
 
+          </>}
           {error && <div className="modal-error">{error}</div>}
           {!error && warning && <div className="modal-warning">{warning}</div>}
 
@@ -290,7 +298,7 @@ export function AddRemoteProjectDialogView({
                 value={user}
                 onChange={(e) => onUserChange(e.target.value)}
                 placeholder="defaults to ~/.ssh/config"
-                disabled={!picked || busy}
+                disabled={Boolean(fixedMachineName) || !picked || busy}
               />
             </label>
             <label className="remote-form-row">
@@ -308,7 +316,7 @@ export function AddRemoteProjectDialogView({
                 value={proxyJump}
                 onChange={(e) => onProxyJumpChange(e.target.value)}
                 placeholder="bastion for double-hop SSH, e.g. user@bastion"
-                disabled={!picked || busy}
+                disabled={Boolean(fixedMachineName) || !picked || busy}
               />
             </label>
             <p className="modal-hint">

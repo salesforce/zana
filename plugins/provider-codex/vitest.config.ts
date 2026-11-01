@@ -4,7 +4,7 @@ export default defineWorkspaceTestConfig({
   test: {
     silent: "passed-only",
     name: "zcc-plugin-provider-codex",
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     exclude: [
       "node_modules/**",
       "dist/**",

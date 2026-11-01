@@ -1,3 +1,4 @@
+import type { PromptTextReference } from '@zana-ai/zcc-domain/thread-runtime';
 import type { PromptTextMention } from '@zana-ai/zcc-domain/thread-runtime';
 
 export type ComposerWorkMode = 'agent' | 'plan' | 'goal';
@@ -117,12 +118,14 @@ function composerWorkModeCommandMention(mode: 'plan' | 'goal', start: number): P
 
 /** Insert a real `/plan` or `/goal` command mention so the harness stays in that mode. */
 export function applyComposerWorkMode(
-  serialized: { text: string; mentions: PromptTextMention[] },
+  serialized: { text: string; mentions: PromptTextMention[]; references?: PromptTextReference[] },
   mode: ComposerWorkMode
-): { text: string; mentions: PromptTextMention[] } {
+): { text: string; mentions: PromptTextMention[]; references?: PromptTextReference[] } {
   if (mode === 'agent') return serialized;
   const command = `/${mode}`;
-  const trimmed = serialized.text.trimStart();
+  const whitespace = serialized.text.length - serialized.text.trimStart().length;
+  const removable = Math.min(whitespace, ...(serialized.references ?? []).map(ref => ref.start));
+  const trimmed = serialized.text.slice(removable);
   const lower = trimmed.toLowerCase();
   const already = lower === command || lower.startsWith(`${command} `) || lower.startsWith(`${command}\n`);
   const lead = serialized.text.length - trimmed.length;
@@ -135,7 +138,7 @@ export function applyComposerWorkMode(
       && item.end === mention.end
     ));
     if (hasMention) return serialized;
-    return { text: serialized.text, mentions: [mention, ...serialized.mentions] };
+    return { ...serialized, text: serialized.text, mentions: [mention, ...serialized.mentions] };
   }
   const prefix = `${command} `;
   const mention = composerWorkModeCommandMention(mode, 0);
@@ -146,6 +149,7 @@ export function applyComposerWorkMode(
   }));
   return {
     text: `${prefix}${trimmed}`,
+    ...(serialized.references ? { references: serialized.references.map(ref => ({ ...ref, start: ref.start - lead + prefix.length, end: ref.end - lead + prefix.length })) } : {}),
     mentions: [mention, ...shifted]
   };
 }

@@ -6,12 +6,12 @@ import {
   Drama,
   Users,
   BarChart3,
+  Code2,
   Info,
   TerminalSquare,
   SquareArrowOutUpRight,
   Laptop,
   Network,
-  Smartphone,
   Inbox,
   Keyboard,
   PenLine,
@@ -41,9 +41,7 @@ export const SETTINGS_GROUPS: Array<{ id: SettingsGroup; label: string }> = [
   { id: 'agents', label: 'Agents & Automation' },
   { id: 'catalogues', label: 'Catalogues' },
   { id: 'labs', label: 'Labs' },
-  // Trailing group: app-level meta (version, updates, credits, release notes) — not
-  // configuration/behaviour, so it sits apart from the config groups, like the
-  // Project group the picker appends after this loop.
+  // App maintenance, development, and version information.
   { id: 'app', label: 'App' }
 ];
 
@@ -65,9 +63,8 @@ export const SETTINGS_SECTIONS: Array<{
   { id: 'harness', label: 'AI Harness', icon: Bot, desc: 'Manage coding agents, model availability, and session defaults.', group: 'config' },
   { id: 'editor', label: 'Editor', icon: SquareArrowOutUpRight, desc: 'Open-in-editor & terminal buttons', group: 'config' },
   { id: 'prompts', label: 'Prompts', icon: Sparkles, desc: 'LLM micro-call prompts', group: 'config' },
-  { id: 'machines', label: 'Machines', icon: Laptop, desc: 'Pair remote host daemons', group: 'remote' },
+  { id: 'machines', label: 'Machines', icon: Laptop, desc: 'Computers that run projects and agents for this Zana', group: 'remote' },
   { id: 'connectivity', label: 'Connectivity', icon: Network, desc: 'Unpaired SSH fallback', group: 'remote' },
-  { id: 'phone', label: 'Mobile', icon: Smartphone, desc: 'Use Zana from your mobile browser', group: 'remote' },
   { id: 'peers', label: 'Peers', icon: Link2, desc: 'Peers are linked computers that can be used by Plugins to communicate between the computers. They are different from Machines which describe Computers where Agents can be run. Connections will not be used until a Plugin is configured to use the Connection.', group: 'remote' },
   { id: 'remote-access', label: 'Remote access', icon: Globe, desc: 'Open this computer from any browser', group: 'remote' },
   { id: 'agents', label: 'Agents', icon: Bot, desc: 'Attention, automation, heartbeat & Overseer', group: 'agents' },
@@ -76,6 +73,7 @@ export const SETTINGS_SECTIONS: Array<{
   { id: 'usage', label: 'Usage', icon: BarChart3, desc: 'Session activity rollup', group: 'catalogues' },
   { id: 'experimental', label: 'Experimental', icon: FlaskConical, desc: 'Opt-in features under evaluation', group: 'labs' },
   { id: 'performance', label: 'Performance', icon: BarChart3, desc: 'Host daemon resources, workload, and connection health', group: 'app' },
+  { id: 'development', label: 'Development', icon: Code2, desc: 'Develop plugins and recover the runtime', group: 'app' },
   { id: 'about', label: 'About', icon: Info, desc: 'Version, updates, credits & release notes', group: 'app' }
 ];
 
@@ -93,6 +91,10 @@ export function visibleSettingsSections(hidden: ReadonlySet<string>): typeof SET
  * blocks to target.
  */
 export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: string; label: string }>>> = {
+  development: [
+    { id: 'recovery', label: 'Recovery' },
+    { id: 'bundled-plugins', label: 'Bundled plugins' }
+  ],
   performance: [
     { id: 'performance-trends', label: 'Daemon trends' },
     { id: 'performance-work', label: 'Current work' },
@@ -158,7 +160,6 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
     { id: 'connectivity-remote', label: 'Remote SSH' }
   ],
   phone: [
-    { id: 'phone', label: 'Mobile' }
   ],
   peers: [
     { id: 'peers', label: 'Peer links' }

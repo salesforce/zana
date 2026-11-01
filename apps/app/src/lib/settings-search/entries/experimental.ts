@@ -27,32 +27,33 @@ export const entries: readonly SettingsSearchEntry[] = [
     value: onOff((c) => c.providerServiceTiersDisabled)
   },
   {
-    id: 'experimental.plugin-recovery',
-    section: 'experimental',
-    anchor: 'plugin-recovery',
-    label: 'Plugin recovery',
-    help: 'Temporarily suspend installed plugins while diagnosing a problem.',
-    keywords: ['troubleshoot', 'diagnose'],
-    kind: 'subsection'
-  },
-  {
-    id: 'experimental.plugin-safe-mode',
-    section: 'experimental',
-    anchor: 'plugin-recovery',
-    label: 'Plugin safe mode',
-    help: 'Suspend non-bundled plugins and their tools. Turning this off restores plugins that were enabled. Your plugin settings are preserved.',
-    keywords: ['disable plugins', 'suspend', 'crash', 'troubleshoot'],
-    kind: 'setting',
-    value: onOff((c) => c.pluginSafeMode)
-  },
-  {
     id: 'experimental.experimental-features',
     section: 'experimental',
     anchor: 'experimental-features',
     label: 'Experimental features',
-    help: 'Opt-in features under active evaluation. They’re off by default and may change or be removed. Enabling one reveals its own settings here.',
+    help: 'Features under active evaluation. Defaults vary by feature; you can switch any experiment off. They may change or be removed.',
     keywords: ['labs', 'beta', 'opt-in'],
     kind: 'subsection'
+  },
+  {
+    id: 'experimental.dockable-thread-tools',
+    section: 'experimental',
+    anchor: 'experimental-features',
+    label: 'Dockable thread tools',
+    help: 'Enabled by default on desktop. Drag tool tabs between the right panel and a resizable bottom panel. Each thread remembers its arrangement. Moving a terminal keeps its session running. Turn off to show all tools in the right panel.',
+    keywords: ['dock', 'terminal', 'bottom', 'side panel', 'drag', 'resize', 'tools'],
+    kind: 'setting',
+    value: onOff((c) => c.dockableThreadToolsEnabled, true)
+  },
+  {
+    id: 'experimental.thread-tabs',
+    section: 'experimental',
+    anchor: 'experimental-features',
+    label: 'Thread tabs',
+    help: 'Enabled by default on desktop. Open threads in the main view and keep shortcuts across the title bar, with project names and live status. Closing a tab keeps the thread running. Turn off to restore inspector navigation (unless Classic session view is enabled).',
+    keywords: ['navigation', 'title bar', 'open threads', 'switch threads', 'project tabs'],
+    kind: 'setting',
+    value: onOff((c) => c.threadTabsEnabled, true)
   },
   {
     id: 'experimental.goals',
@@ -75,11 +76,31 @@ export const entries: readonly SettingsSearchEntry[] = [
     value: onOff((c) => c.catchUpSummaryEnabled)
   },
   {
+    id: 'experimental.close-wrap-up',
+    section: 'experimental',
+    anchor: 'experimental-features',
+    label: 'Wrap up before closing',
+    help: 'Close with follow-up, and Close idle with follow-ups, first ask each agent to save what it learnt and tidy up. Each agent is then closed with the same summary as Summarize to inbox, and a follow-up if work is left. When off, they close straight away with a short note.',
+    keywords: ['wrap up', 'self-learn', 'close with follow-up', 'summary'],
+    kind: 'setting',
+    value: onOff((c) => c.closeWrapUpEnabled)
+  },
+  {
+    id: 'experimental.close-wrap-up-instructions',
+    section: 'experimental',
+    anchor: 'experimental-features',
+    label: 'Instructions sent to the agent',
+    help: 'Typed into the agent when you choose Close with follow-up.',
+    keywords: ['wrap up', 'self-learn', 'close with follow-up', 'instructions'],
+    kind: 'setting',
+    dependsOn: 'experimental.close-wrap-up'
+  },
+  {
     id: 'experimental.classic-session-view',
     section: 'experimental',
     anchor: 'experimental-features',
     label: 'Classic session view',
-    help: 'Skip the inspector overlay. Opening a CLI agent or thread — from the Agents canvas, favorites, a launch peek, or the menu bar — goes to the full session or thread page. Off by default: a click still peeks without leaving the current surface.',
+    help: 'Skip the inspector overlay. Opening a CLI agent or thread — from the Agents canvas, favorites, a launch peek, or the menu bar — goes to the full session or thread page. Off by default. With Thread tabs enabled, threads already open in the main view; this option also applies to CLI agents.',
     keywords: ['inspector', 'peek', 'full page'],
     kind: 'setting',
     value: onOff((c) => c.classicSessionViewEnabled)

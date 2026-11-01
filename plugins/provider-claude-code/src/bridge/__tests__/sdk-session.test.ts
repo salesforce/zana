@@ -311,6 +311,18 @@ describe("SdkSession", () => {
     );
   });
 
+  it("passes an explicit settingSources override (automated sessions) instead of the cascade", () => {
+    const session = new SdkSession(
+      { ...defaultOptions, settingSources: [] },
+      vi.fn(),
+      vi.fn(),
+    );
+
+    session.start();
+
+    expect(queryMock.mock.calls[0]?.[0]?.options?.settingSources).toEqual([]);
+  });
+
   it("forwards max reasoning effort and thinking display to the SDK when configured", () => {
     const onMessage = vi.fn();
     const onDone = vi.fn();

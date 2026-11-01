@@ -8,6 +8,7 @@ import {
   Copy,
   FileText,
   History,
+  MessageSquareReply,
   MoreHorizontal,
   Play,
   Power,
@@ -23,11 +24,14 @@ import {
   isOpenProblem,
   isProblemRun,
   isRecoveryMode,
+  latestResumableRun,
   newestSuccessMs,
   runOutcome,
   runReason
 } from '@zana-ai/zcc-domain/schedule-health';
+import { useNavigate } from 'react-router-dom';
 import { RunOutcomeBadge } from './RunOutcomeBadge.js';
+import { canResumeRun, resumeScheduledRun } from './resumeScheduledRun.js';
 import './schedule-runs.css';
 import { product } from '../../lib/product-client.js';
 import { useData, useUi } from '../../store.js';
@@ -35,6 +39,7 @@ import {
   formatCountdown,
   formatDuration,
   formatRelative,
+  isSessionAlive as isSessionOpen,
   pickLiveRun
 } from './schedulerUtils.js';
 
@@ -64,7 +69,9 @@ export function ScheduleInfoPanel({
   onAskDelete?: () => void;
 }) {
   const terminals = useData((s) => s.terminals);
+  const projects = useData((s) => s.projects);
   const pushToast = useUi((s) => s.pushToast);
+  const navigate = useNavigate();
   const [tick, setTick] = useState(0);
   const [reportRun, setReportRun] = useState<ScheduleRun | null>(null);
   const [errorRun, setErrorRun] = useState<ScheduleRun | null>(null);
@@ -77,10 +84,7 @@ export function ScheduleInfoPanel({
   void tick;
 
   const projectTerminals = task ? terminals[task.projectId] ?? [] : [];
-  const isSessionAlive = (sessionId: string) =>
-    projectTerminals.some(
-      (s) => s.id === sessionId && (s.status === 'running' || s.status === 'starting')
-    );
+  const isSessionAlive = (sessionId: string) => isSessionOpen(projectTerminals, sessionId);
 
   const runs = task?.status.runs ?? [];
   // A later finished success closes earlier problems, also for history written before recovery existed.
@@ -91,6 +95,10 @@ export function ScheduleInfoPanel({
   const isWorking = !!liveRun && !liveRun.finishedAt;
   const isFinishedOpen = !!liveRun && !!liveRun.finishedAt;
   const isExternal = task?.external?.kind === 'claude-loop';
+  // Never for Squads or /loop rows. Read `projects` defensively: some tests mock the store with `terminals` only.
+  const canResume = !!task && !isExternal && task.kind !== 'team';
+  const projectMissing = !!task && Array.isArray(projects) && !projects.some((project) => project.id === task.projectId);
+  const latestResumable = canResume ? latestResumableRun(runs) : undefined;
   const nextRun = task?.status.nextRunAt ? new Date(task.status.nextRunAt) : null;
   const lastRun = task?.status.lastRunAt ? new Date(task.status.lastRunAt) : null;
 
@@ -182,7 +190,7 @@ export function ScheduleInfoPanel({
         <dl className="schedule-info-facts">
           <div>
             <dt>Enabled</dt>
-            <dd>{task.enabled ? 'On' : 'Paused'}</dd>
+            <dd>{task.enabled ? 'On' : 'Off'}</dd>
           </div>
           <div>
             <dt>Last run</dt>
@@ -194,7 +202,7 @@ export function ScheduleInfoPanel({
           </div>
           <div>
             <dt>Next</dt>
-            <dd>{task.enabled && nextRun ? `in ${formatCountdown(nextRun)}` : 'paused'}</dd>
+            <dd>{task.enabled && nextRun ? `in ${formatCountdown(nextRun)}` : 'off'}</dd>
           </div>
           <div>
             <dt>Runs</dt>
@@ -269,6 +277,18 @@ export function ScheduleInfoPanel({
                     <FileText size={13} strokeWidth={1.75} />
                   </button>
                 ) : null}
+                {run.id && canResumeRun(task, run)
+                  && !(run.sessionId && isSessionAlive(run.sessionId)) ? (
+                  <button
+                    type="button"
+                    className="scheduler-run-report-btn"
+                    title="Resume this run"
+                    aria-label="Resume this run"
+                    onClick={() => void resumeScheduledRun(task, run.id, navigate)}
+                  >
+                    <MessageSquareReply size={13} strokeWidth={1.75} />
+                  </button>
+                ) : null}
                 {retryable ? (
                   <span className="schedule-run-actions">
                     <button
@@ -316,6 +336,13 @@ export function ScheduleInfoPanel({
           enabled={task.enabled}
           pending={pending.length > 0}
           liveSessionId={liveSessionId}
+          resume={canResume && runs.length > 0 ? {
+            disabledReason: projectMissing
+              ? 'The project for this schedule is no longer registered'
+              : latestResumable ? undefined : "This run didn't record a conversation to reopen",
+            title: latestResumable ? `Reopen the agent from the run ${formatRelative(new Date(latestResumable.at))} with its conversation` : undefined,
+            onResume: () => void resumeScheduledRun(task, undefined, navigate)
+          } : undefined}
           onRunNow={() => void runNow()}
           onToggle={() => void toggle()}
           onDuplicate={onDuplicate}
@@ -356,6 +383,7 @@ function ScheduleInfoFooter({
   enabled,
   pending,
   liveSessionId,
+  resume,
   onRunNow,
   onToggle,
   onDuplicate,
@@ -364,6 +392,7 @@ function ScheduleInfoFooter({
   enabled: boolean;
   pending: boolean;
   liveSessionId: string | null;
+  resume?: { disabledReason?: string; title?: string; onResume: () => void };
   onRunNow: () => void;
   onToggle: () => void;
   onDuplicate?: () => void;
@@ -371,13 +400,24 @@ function ScheduleInfoFooter({
 }): ReactNode {
   return (
     <div className="schedule-info-actions">
+      {liveSessionId || !resume ? null : (
+        <button
+          type="button"
+          className="settings-btn"
+          disabled={!!resume.disabledReason}
+          title={resume.disabledReason ?? resume.title}
+          onClick={resume.onResume}
+        >
+          <MessageSquareReply size={13} /> Resume latest run
+        </button>
+      )}
       {liveSessionId ? null : (
         <button type="button" className="settings-btn" disabled={pending} onClick={onRunNow}>
           <Play size={13} /> Run now
         </button>
       )}
       <button type="button" className="settings-btn" disabled={pending && !enabled} onClick={onToggle}>
-        {enabled ? <><PowerOff size={13} /> Pause</> : <><Power size={13} /> Resume</>}
+        {enabled ? <><PowerOff size={13} /> Disable</> : <><Power size={13} /> Enable</>}
       </button>
       {onDuplicate ? (
         <button type="button" className="settings-btn" onClick={onDuplicate}>

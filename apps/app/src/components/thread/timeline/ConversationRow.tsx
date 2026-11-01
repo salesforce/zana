@@ -1,3 +1,5 @@
+import { validPromptReferences, relocatePromptReferences } from '@zana-ai/zcc-domain/thread-runtime';
+import { compactReferenceText, ContextReferenceMessage } from '../../composer/ContextReferenceMessage.js';
 import { memo, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useCompactLayout } from '../../../hooks/useCompactLayout.js';
 import { MobileMessagePreview } from './MobileMessagePreview.js';
@@ -38,6 +40,7 @@ function userRequestLabel(row: Extract<ThreadTimelineViewRow, { kind: 'conversat
     return row.systemMessageKind.replace(/-/g, ' ');
   }
   const request = row.turnRequest;
+  if (request.status === 'cancelled') return request.kind === 'steer' ? 'Steer cancelled' : 'Cancelled';
   if (request.kind === 'steer') return request.status === 'rejected' ? 'Steer rejected' : 'Steer';
   if (request.status === 'rejected') return 'Rejected';
   return null;
@@ -86,7 +89,8 @@ export const ConversationRow = memo(function ConversationRow({
   const [draft, setDraft] = useState(row.text ?? '');
   const [saving, setSaving] = useState(false);
   const [lightbox, setLightbox] = useState<{ src: string; name: string } | null>(null);
-  const extracted = useMemo(() => extractInlineThreadImages(row.text ?? ''), [row.text]);
+  const references = useMemo(() => validPromptReferences(row.text ?? '', row.role === 'user' ? row.references : undefined), [row]);
+  const extracted = useMemo(() => extractInlineThreadImages(compactReferenceText(row.text ?? '', references)), [row.text, references]);
   const text = extracted.text.trim();
   // User prompts collapse by rendered height (mobile has its own preview) and
   // keep a render cap for huge pastes; assistant replies always render in full.
@@ -295,7 +299,7 @@ export const ConversationRow = memo(function ConversationRow({
                 void product.threads.editMessage(threadId, {
                   operationId: row.id,
                   expectedRequestSequence: row.sourceSeqStart,
-                  input: [{ type: 'text', text: draft, mentions: [] }]
+                  input: [{ type: 'text', text: draft, mentions: [], ...(references.length ? { references: relocatePromptReferences(row.text ?? '', references, draft) } : {}) }]
                 }).then(() => setEditing(false)).finally(() => setSaving(false));
               }}
             >
@@ -327,7 +331,8 @@ export const ConversationRow = memo(function ConversationRow({
             </form>
           ) : text ? (
             row.role === 'assistant' ? (
-              streamingSplit ? (
+              <div data-thread-annotation-prose="" data-message-id={row.id} data-source-seq-end={row.sourceSeqEnd}>
+              {streamingSplit ? (
                 <>
                   <PluginMarkdownDirectives
                     text={streamingSplit.settled}
@@ -357,7 +362,8 @@ export const ConversationRow = memo(function ConversationRow({
                   threadMentions
                   filePathHints={filePathHints}
                 />
-              )
+              )}
+              </div>
             ) : (
               <div
                 ref={collapsibleRef}
@@ -365,7 +371,7 @@ export const ConversationRow = memo(function ConversationRow({
                 data-collapsed={collapsible && !expanded ? 'true' : undefined}
                 data-overflowing={showOverflowToggle && !expanded ? 'true' : undefined}
               >
-                <MarkdownContent text={visibleText} breaks threadId={threadId} projectId={projectId} filePathHints={filePathHints} />
+                {references.length ? <ContextReferenceMessage text={row.text ?? ''} references={references} threadId={threadId} projectId={projectId} maxTextChars={expanded ? undefined : USER_MESSAGE_CHAR_CAP} /> : <MarkdownContent text={visibleText} breaks threadId={threadId} projectId={projectId} filePathHints={filePathHints} />}
               </div>
             )
           ) : null}

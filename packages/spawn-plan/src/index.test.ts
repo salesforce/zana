@@ -31,6 +31,7 @@ describe('buildSystemPromptGuidance', () => {
   it.each([false, true])('keeps CLI previews inside the app, with the same guidance as Modern threads (scheduled=%s)', (scheduled) => {
     expect(buildSystemPromptGuidance(scheduled)).toContain(IN_APP_PREVIEW_GUIDANCE);
     expect(IN_APP_PREVIEW_GUIDANCE).toContain('preview_file');
+    expect(buildSystemPromptGuidance(scheduled)).toContain('zana-ui-proposals');
     expect(IN_APP_PREVIEW_GUIDANCE).toContain('zcc guide browser');
     expect(IN_APP_PREVIEW_GUIDANCE).toContain('unless the user explicitly requests an external browser');
   });

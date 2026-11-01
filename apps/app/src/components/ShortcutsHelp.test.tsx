@@ -19,6 +19,14 @@ describe('ShortcutsHelp', () => {
     }
   });
 
+  it('says Archive for agent tabs and keeps Delete for plain shells', () => {
+    render(<ShortcutsHelp onClose={() => undefined} />);
+    expect(screen.getByText('Archive active agent tab (a plain shell is deleted)')).toBeTruthy();
+    expect(screen.getByText('Stop the agent and remove the tab; its conversation stays in History')).toBeTruthy();
+    expect(screen.getByText('Plain shell: end it and remove the tab')).toBeTruthy();
+    expect(screen.queryByText('Delete active tab (terminates the process)')).toBeNull();
+  });
+
   it('lists the Inbox shortcuts', () => {
     render(<ShortcutsHelp onClose={() => undefined} />);
     expect(screen.getByRole('heading', { name: 'Inbox' })).toBeTruthy();
@@ -51,6 +59,29 @@ describe('ShortcutsHelp', () => {
     const keys = [...label.closest('.shortcut-row')!.querySelectorAll('kbd')].map((kbd) => kbd.textContent);
     expect(keys).toEqual(['Ctrl', 'Enter']);
     vi.restoreAllMocks();
+  });
+
+  it('lists the question panel keys next to its Ctrl+Enter row, per platform', () => {
+    const rowKeys = (label: string) => {
+      const row = screen.getByText(label).closest('.shortcut-row')!;
+      expect(row.closest('section')?.querySelector('h4')?.textContent).toBe('Thread');
+      return [...row.querySelectorAll('kbd')].map((kbd) => kbd.textContent);
+    };
+    const labels = [
+      'Agent question: Next, or Submit on the last question',
+      'Agent question: choose an option (focus in the panel)',
+      'Agent question: Next, or Submit, from a focused option'
+    ];
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('Win32');
+    render(<ShortcutsHelp onClose={() => undefined} />);
+    expect([...document.querySelectorAll('.shortcut-label')].map((el) => el.textContent).filter((text) => text?.startsWith('Agent question'))).toEqual(labels);
+    expect(rowKeys(labels[1])).toEqual(['1–9']);
+    expect(rowKeys(labels[2])).toEqual(['Enter']);
+    cleanup();
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
+    render(<ShortcutsHelp onClose={() => undefined} />);
+    expect(rowKeys(labels[0])).toEqual(['⌘', '↵']);
+    expect(rowKeys(labels[2])).toEqual(['↵']);
   });
 
   it('closes on Escape, the close button and the backdrop, but not inside the modal', () => {

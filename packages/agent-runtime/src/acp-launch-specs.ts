@@ -122,6 +122,28 @@ export const BUILT_IN_ACP_LAUNCH_SPECS: Readonly<
   },
 };
 
+/** Explicit relation to native CLI configuration; custom ACP agents remain independent. */
+const BUILT_IN_ACP_NATIVE_HARNESSES: Readonly<Record<string, string>> = {
+  "acp-cursor": "cursor",
+  "acp-opencode": "opencode",
+  "acp-grok": "grok",
+  "acp-mastracode": "mastracode",
+};
+
+export function resolveBuiltInAcpLaunchSpec(
+  providerId: string,
+  nativeBinaries: Readonly<Record<string, string | undefined>> = {},
+): HostDaemonAcpLaunchSpec | undefined {
+  const spec = Object.hasOwn(BUILT_IN_ACP_LAUNCH_SPECS, providerId) ? BUILT_IN_ACP_LAUNCH_SPECS[providerId] : undefined;
+  if (spec === undefined) return undefined;
+  const nativeHarnessId = BUILT_IN_ACP_NATIVE_HARNESSES[providerId];
+  const command = nativeHarnessId === undefined ? undefined : nativeBinaries[nativeHarnessId];
+  if (command === undefined || command.trim().length === 0) return spec;
+  // Commands are executable paths/names, never a shell command line.
+  if (/[\0\r\n]/u.test(command)) throw new Error(`Invalid executable configured for native harness "${nativeHarnessId}".`);
+  return { ...spec, command };
+}
+
 /**
  * Model-picker facts that ride next to the launch spec in the ACP bridge's
  * opaque provider options. Cursor needs these so `model/list` starts a

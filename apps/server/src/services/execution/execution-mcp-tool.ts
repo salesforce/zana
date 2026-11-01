@@ -19,7 +19,8 @@ const slotSchema = z.strictObject({
   initialTask: z.string().min(1).refine(
     (value) => Buffer.byteLength(value, 'utf8') <= MAX_TEAM_INITIAL_TASK_BYTES,
     { message: `initialTask must not exceed ${MAX_TEAM_INITIAL_TASK_BYTES} UTF-8 bytes` }
-  )
+  ),
+  automatedSkillIds: z.array(z.string().min(1).max(256)).max(64).optional()
 });
 const workflowSchema = z.strictObject({
   schemaVersion: z.literal(1),
@@ -71,6 +72,14 @@ const executionStartSchema = z.strictObject({
   maxClaimWallClockMs: z.number().int().min(1_000).max(24 * 60 * 60 * 1000).optional(),
   usageBudget: z.strictObject({ maxTokens: z.number().int().min(1).optional(), maxUsd: z.number().positive().optional() }).optional(),
   worktree: z.boolean().optional(),
+  /**
+   * Existing user-owned target, resolved by main against the registered project's own
+   * git worktrees. Names a branch, never a path; conflicts with `worktree: true`.
+   */
+  target: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('project-root') }),
+    z.strictObject({ kind: z.literal('worktree'), branch: z.string().min(1).max(200) })
+  ]).optional(),
   workflow: workflowSchema.optional(),
   workUnits: z.array(workUnitSchema).min(1).max(100).optional(),
   /**
@@ -212,6 +221,8 @@ export interface RegisterExecutionToolOptions {
   approveHandoff?: (sourceSessionId: string, targetSessionId: string, projectId: string, executionId: string, operation: typeof EXECUTION_HANDOFF_OPERATION | typeof EXECUTION_RESUME_MONITOR_OPERATION) => Promise<boolean>;
   /** How this route's session receives a `[Squad report]`: a CLI Agent PTY (default) or a Modern thread. */
   reportKind?: 'pty' | 'thread';
+  /** Host-selected frozen catalogue for this authenticated member route. */
+  allowedToolNames?: ReadonlySet<string>;
   /**
    * The launch-approval policy that applies to a Squad in this project. `review`
    * makes `execution.start` refuse so the agent proposes the run for the user to
@@ -367,13 +378,16 @@ export function outcomeAck(record: ExecutionRecord, workUnitId: string) {
 export function registerExecutionTools(server: McpServer, options: RegisterExecutionToolOptions): void {
   const authorized = async (): Promise<boolean> => {
     if (!options.sessionId || (await options.validateRouteIdentity?.(options.sessionId, options.projectId)) !== true) return false;
-    return !!options.memberFence || !(await options.resolveCohortBinding?.(options.sessionId, options.projectId))?.memberFence;
+    if (options.memberFence) return true;
+    const cohortBinding = await options.resolveCohortBinding?.(options.sessionId, options.projectId);
+    return cohortBinding?.memberFence === undefined;
   };
   const ownerAuthorized = async (): Promise<boolean> => {
     if (!options.sessionId || options.memberFence) return false;
     const gate = options.validateOwnerRouteIdentity ?? options.validateRouteIdentity;
     if ((await gate?.(options.sessionId, options.projectId)) !== true) return false;
-    return !(await options.resolveCohortBinding?.(options.sessionId, options.projectId))?.memberFence;
+    const cohortBinding = await options.resolveCohortBinding?.(options.sessionId, options.projectId);
+    return cohortBinding?.memberFence === undefined;
   };
   const binding = async (correlationExecutionId?: string): Promise<ExecutionCohortBinding | undefined> => {
     const resolved = options.sessionId ? await options.resolveCohortBinding?.(options.sessionId, options.projectId, options.memberFence) : undefined;
@@ -409,7 +423,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   // internal failure never leaks a stack/message across the MCP boundary.
   const memberNames = new Set<string>(Object.values(EXECUTION_MEMBER_TOOL_NAMES).flat());
   const register: McpServer['registerTool'] = ((name: string, config: unknown, handler: (args: unknown) => unknown) => {
-    if (options.memberFence && !memberNames.has(name)) return;
+    if (options.memberFence && (!memberNames.has(name) || options.allowedToolNames && !options.allowedToolNames.has(name))) return;
     return server.registerTool(name as never, config as never, (async (args: unknown) => {
       try {
         if (options.memberFence) {
@@ -417,7 +431,9 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
           if (name === 'execution.event' && args && typeof args === 'object' && ('slotId' in args || 'producerRole' in args)) return denied(name);
           const bound = await binding((args as { executionId?: string }).executionId);
           if (!bound) return boundDenied(name);
-          if (!EXECUTION_MEMBER_TOOL_NAMES[bound.role]?.some((tool) => tool === name)) return denied(name);
+          const allowedByCatalogue = !options.allowedToolNames || options.allowedToolNames.has(name);
+          const allowedForRole = EXECUTION_MEMBER_TOOL_NAMES[bound.role]?.some((tool) => tool === name) === true;
+          if (!allowedByCatalogue || !allowedForRole) return denied(name);
         }
         return await (handler(args) as Promise<unknown>);
       } catch (error) {
@@ -541,11 +557,12 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     if (approval === 'review') {
       return { isError: true, content: [{ type: 'text' as const, text: `execution.start failed: LAUNCH_REVIEW_REQUIRED: ${LAUNCH_REVIEW_REQUIRED_MESSAGE}` }] };
     }
-    const { version, launchKind, launchDisplay, teamId, launchRequestId, jobTitle, summary, slots, deadlineMs, maxConcurrent, maxLaunches, maxTurnsPerClaim, maxClaimWallClockMs, usageBudget, workflow, workUnits, worktree, notify } = start;
+    const { version, launchKind, launchDisplay, teamId, launchRequestId, jobTitle, summary, slots, deadlineMs, maxConcurrent, maxLaunches, maxTurnsPerClaim, maxClaimWallClockMs, usageBudget, workflow, workUnits, worktree, target, notify } = start;
     const request: ExecutionRequestV1 = {
       version, launchKind, ...(launchDisplay === undefined ? {} : { launchDisplay }), teamId, launchRequestId, jobTitle, summary, slots,
       ...(workflow === undefined ? {} : { workflow }), ...(workUnits === undefined ? {} : { workUnits }), coordinationMode: 'job-team',
       ...(worktree === undefined ? {} : { worktree }),
+      ...(target === undefined ? {} : { target }),
       policy: {
         ...(deadlineMs === undefined ? {} : { deadlineMs }),
         ...(maxConcurrent === undefined ? {} : { maxConcurrent }),

@@ -39,10 +39,20 @@ describe('ExecutionJobDetails phase 5 projection', () => {
   it('renders usage, assembled result, route fit, and final summary from projection', async () => {
     render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
     expect(await screen.findByText(/Attribution: partial · Observations 2 · Gaps 1/)).toBeTruthy();
-    expect(screen.getByText(/worker: input unknown · output unknown/)).toBeTruthy();
+    expect(screen.getByText(/worker: input unknown · output unknown.*provider-reported cost unknown/)).toBeTruthy();
     expect(screen.getByText('visible result')).toBeTruthy();
     expect(screen.getByText(/appropriate · legal route · inactive proposal/)).toBeTruthy();
     expect(screen.getByText('final result')).toBeTruthy();
+  });
+
+  it('identifies available cost as provider-reported', async () => {
+    const snapshot: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
+    snapshot.execution.usage!.byRole[0].providerCostUsd = 0.0123;
+    (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(snapshot);
+
+    render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+
+    expect(await screen.findByText(/worker: input unknown · output unknown.*provider-reported cost \$0\.0123/)).toBeTruthy();
   });
 
   it('offers recovery only for blocker timeouts and keeps terminal response disabled', async () => {
@@ -233,6 +243,7 @@ describe('ExecutionJobDetails copy job details', () => {
     expect(text).toContain('heartbeatAt:');
     expect(text).toMatch(/heartbeatAt: [^·]*· progressAt:/);
     expect(text).toContain('worker: input —');
+    expect(text).toContain('provider-reported cost —');
     expect(text).toContain('Assembled result:');
     expect(text).toContain('Final summary: final result');
     expect(text).toMatch(/Events \(last 0 of 0\)/);

@@ -8,7 +8,7 @@
  * drops the query still shows the same tab. Like window scope, this is a
  * display choice, not a security boundary: main authorizes the window.
  */
-export type PluginViewSurfaceTarget = { pluginId: string; tabId: string; projectId: string };
+export type PluginViewSurfaceTarget = { pluginId: string; tabId: string; projectId: string; resourceId?: string };
 
 const STORAGE_KEY = 'zcc.pluginViewTarget';
 const PLUGIN_ID = /^[a-z0-9][a-z0-9-]{0,127}$/;
@@ -20,17 +20,19 @@ export function parsePluginViewSearch(search: string): PluginViewSurfaceTarget |
   return parseTarget({
     pluginId: params.get('pluginId'),
     tabId: params.get('tabId'),
-    projectId: params.get('projectId')
+    projectId: params.get('projectId'),
+    resourceId: params.has('resourceId') ? params.get('resourceId') : undefined
   });
 }
 
 function parseTarget(value: unknown): PluginViewSurfaceTarget | null {
   if (!value || typeof value !== 'object') return null;
-  const { pluginId, tabId, projectId } = value as Record<string, unknown>;
+  const { pluginId, tabId, projectId, resourceId } = value as Record<string, unknown>;
   if (typeof pluginId !== 'string' || !PLUGIN_ID.test(pluginId)) return null;
   if (typeof tabId !== 'string' || !TAB_ID.test(tabId)) return null;
-  if (typeof projectId !== 'string' || !projectId.trim()) return null;
-  return { pluginId, tabId, projectId };
+  if (typeof projectId !== 'string' || !projectId.trim() || projectId.length > 256 || /[\x00-\x1f\x7f]/.test(projectId)) return null;
+  if (resourceId !== undefined && (typeof resourceId !== 'string' || !resourceId.trim() || resourceId.length > 2048 || /[\x00-\x1f\x7f]/.test(resourceId))) return null;
+  return { pluginId, tabId, projectId, ...(resourceId === undefined ? {} : { resourceId }) };
 }
 
 function readPluginViewTarget(): PluginViewSurfaceTarget | null {

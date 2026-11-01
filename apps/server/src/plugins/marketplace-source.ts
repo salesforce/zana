@@ -6,8 +6,10 @@ import { realpathSync } from 'node:fs';
 import { resolveContainedReal } from '@zana-ai/zcc-path-confine';
 import { parseMarketplaceIndex, type MarketplaceIndex } from './marketplace.js';
 import { defaultFetchJson } from './plugin-process.js';
+import { pluginPackIndexSchema, type PluginPackIndex } from '@zana-ai/zcc-domain';
 
 export const MARKETPLACE_MANIFEST_FILENAME = 'marketplace.json';
+export const MARKETPLACE_PACKS_FILENAME = 'packs.json';
 const SOURCE_FORMS = 'expected "https://<manifest-url>", "git:<url>[@<ref>]", or "path:<directory>"';
 const DEFAULT_GIT_TIMEOUT_MS = 30_000;
 const MAX_GIT_OUTPUT_BYTES = 64 * 1024;
@@ -154,6 +156,8 @@ export function marketplaceSourcesEqual(a: string, b: string): boolean {
 
 export interface MarketplaceMaterializeOptions {
   timeoutMs?: number;
+  /** Explicit catalogue refreshes load the optional, backwards-compatible sidecar. */
+  includePacks?: boolean;
   /** Seed path only: must not invoke terminal, askpass, or credential-helper UI. */
   nonInteractive?: boolean;
   /** Test seam for controlled Git lifecycle execution. */
@@ -245,22 +249,52 @@ async function readMarketplaceJson(directory: string): Promise<MarketplaceIndex>
   return parseMarketplaceIndex(JSON.parse(await readFile(manifest, 'utf8')) as unknown);
 }
 
+export interface MarketplacePackSidecar {
+  packs: PluginPackIndex | null;
+  packsError: string | null;
+}
+
+async function readMarketplacePacks(directory: string): Promise<MarketplacePackSidecar> {
+  try {
+    const realRoot = realpathSync(directory);
+    const file = await resolveContainedReal(realRoot, MARKETPLACE_PACKS_FILENAME);
+    if (!file) return { packs: null, packsError: null };
+    if ((await stat(file)).size > 1_048_576) throw new Error('sidecar too large');
+    return { packs: pluginPackIndexSchema.parse(JSON.parse(await readFile(file, 'utf8'))), packsError: null };
+  } catch {
+    // Optional packs must never invalidate the ordinary plugin catalogue.
+    return { packs: null, packsError: 'Unable to read a valid packs.json sidecar' };
+  }
+}
+
+async function fetchMarketplacePacks(manifestUrl: string, fetchJson: (url: string) => Promise<unknown>): Promise<MarketplacePackSidecar> {
+  try {
+    const url = new URL(MARKETPLACE_PACKS_FILENAME, manifestUrl).toString();
+    return { packs: pluginPackIndexSchema.parse(await fetchJson(url)), packsError: null };
+  } catch (error) {
+    const missing = error instanceof Error && /(?:fetch failed:|HTTP)\s*404\b/u.test(error.message);
+    return { packs: null, packsError: missing ? null : 'Unable to read a valid packs.json sidecar' };
+  }
+}
+
 export async function materializeMarketplaceSource(
   source: MarketplaceSource,
   fetchJson: (url: string) => Promise<unknown> = defaultFetchJson,
   options: MarketplaceMaterializeOptions = {}
-): Promise<{ source: MarketplaceSource; index: MarketplaceIndex }> {
+): Promise<{ source: MarketplaceSource; index: MarketplaceIndex } & Partial<MarketplacePackSidecar>> {
   if (source.kind === 'path') {
     const isDirectory = await stat(source.directory).then((entry) => entry.isDirectory()).catch(() => false);
     if (!isDirectory) throw new Error(`marketplace directory does not exist: ${source.directory}`);
-    return { source, index: await readMarketplaceJson(source.directory) };
+    const index = await readMarketplaceJson(source.directory);
+    return { source, index, ...(options.includePacks ? await readMarketplacePacks(source.directory) : {}) };
   }
   const candidates = resolveMarketplaceSource(source);
   let manifestError: unknown;
   for (const candidate of candidates) {
     if (candidate.kind === 'https') {
       try {
-        return { source: candidate, index: parseMarketplaceIndex(await fetchJson(candidate.manifestUrl)) };
+        const index = parseMarketplaceIndex(await fetchJson(candidate.manifestUrl));
+        return { source: candidate, index, ...(options.includePacks ? await fetchMarketplacePacks(candidate.manifestUrl, fetchJson) : {}) };
       } catch (error) {
         if (!isNotManifestError(error)) throw error;
         manifestError = error;
@@ -282,7 +316,8 @@ export async function materializeMarketplaceSource(
           if (candidate.ref !== 'HEAD') cloneArgs.push('--branch', candidate.ref);
           cloneArgs.push(candidate.url, staging);
           await (options.runGit ?? runGit)(cloneArgs, options);
-          return { source: candidate, index: await readMarketplaceJson(staging) };
+          const index = await readMarketplaceJson(staging);
+          return { source: candidate, index, ...(options.includePacks ? await readMarketplacePacks(staging) : {}) };
         } finally {
           await rm(staging, { recursive: true, force: true }).catch(() => undefined);
         }

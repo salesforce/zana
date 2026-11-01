@@ -1,4 +1,4 @@
-import { useSyncExternalStore, type ComponentType } from 'react';
+import { useSyncExternalStore } from 'react';
 import { Bot } from 'lucide-react';
 import { PluginSlotBoundary } from '../../../plugins/PluginSlotBoundary.js';
 import { listProviderIcons, subscribePluginSlots } from '../../../plugins/plugin-slots.js';
@@ -21,7 +21,7 @@ export function ProviderIcon({
   );
   const plugin = resolveProviderIcon(providerId, registrations);
   if (plugin) {
-    const Icon = plugin.icon as ComponentType<{ className?: string; size?: number }>;
+    const Icon = plugin.icon;
     return (
       <PluginSlotBoundary pluginId={plugin.pluginId} generation={plugin.generation}>
         <Icon className={className} size={size} />

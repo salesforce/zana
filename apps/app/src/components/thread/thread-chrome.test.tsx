@@ -44,6 +44,7 @@ import {
 } from './timeline/ThreadBanners.js';
 import { BackgroundCommandsCard } from './timeline/ComposerStackCards.js';
 import { readSourceText } from '../../__tests__/helpers/source-text.js';
+import { ThreadDetailContext } from './ThreadDetailContext.js';
 
 function file(overrides: Partial<WorkspaceFileStatus> & Pick<WorkspaceFileStatus, 'path'>): WorkspaceFileStatus {
   return {
@@ -700,16 +701,18 @@ describe('expandable row and chips', () => {
     expect(backgroundHtml).toContain('zcc plugin dev');
   });
 
-  it('keeps the thread title and overflow on the left, with search and status as actions', () => {
+  it('keeps status beside the balanced title, with quiet metadata below', () => {
     const html = renderToStaticMarkup(
       <ThreadDetailHeading
         title="Hello"
+        status={<ThreadStatusBadge status="active" thinking={{ id: 'th', text: '', startedAt: 1, updatedAt: 1 }} />}
+        metadata={<ThreadDetailContext agent={{ providerId: 'codex', model: null, projectName: 'zcc', branchName: 'fix/header' }} />}
         overflow={<button type="button" data-testid="thread-overflow-trigger">…</button>}
       />
     );
     expect(html).toContain('<h1 title="Hello">Hello</h1>');
     expect(html).toContain('data-testid="thread-overflow-trigger"');
-    expect(html).not.toContain('data-testid="thread-detail-status"');
+    expect(html).toContain('data-testid="thread-detail-status"');
     expect(html).not.toContain('data-testid="thread-detail-search"');
     expect(html).not.toContain('data-testid="thread-agents-crumb"');
 
@@ -722,7 +725,8 @@ describe('expandable row and chips', () => {
     expect(header).toContain('flex: 1 1 auto;');
     expect(header).toContain('font-weight: 600;');
     expect(header).not.toContain('.thread-detail-avatar');
-    expect(header).toContain('.thread-detail-meta-chip {');
+    expect(header).toContain('.thread-context-trigger {');
+    expect(header).toContain('@container thread-header (max-width: 480px)');
     expect(header).toContain('.thread-detail-search:focus-within input,');
     expect(header).toContain('.thread-detail-overflow-btn {');
     expect(header).toContain('.thread-detail-overflow-menu {');
@@ -730,40 +734,52 @@ describe('expandable row and chips', () => {
     expect(header).not.toContain('position: absolute;');
   });
 
-  it('shows the agent identity next to the title on desktop', () => {
+  it('shows agent, project, and branch as quiet metadata while keeping full context in a popover', () => {
     const html = renderToStaticMarkup(
-      <ThreadDetailHeading
-        title="Check my ticket"
+      <ThreadDetailContext
         agent={{ providerId: 'claude-code', model: 'claude-opus-5[1m]', projectName: 'zcc', branchName: 'fix/header' }}
       />
     );
-    expect(html).toContain('<h1 title="Check my ticket">Check my ticket</h1>');
-    expect(html).not.toContain('thread-detail-avatar');
     expect(html).toContain('Claude Code · Opus 5 (1M)');
-    expect(html).toContain('title="Project: zcc"');
-    expect(html).toContain('title="Branch: fix/header"');
+    expect(html).toContain('aria-haspopup="dialog"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('fix/header');
+    expect(html).toContain('Project: zcc');
+    expect(html).toContain('data-testid="thread-header-meta"');
   });
 
   it('omits empty identity', () => {
     const html = renderToStaticMarkup(
-      <ThreadDetailHeading
-        title="Agent"
+      <ThreadDetailContext
         agent={{ providerId: null, model: null, projectName: null, branchName: null }}
       />
     );
-    expect(html).toContain('title="Agent"');
-    expect(html).not.toContain('data-testid="thread-detail-meta"');
+    expect(html).toBe('');
   });
 
-  it('keeps location chips when the harness is unknown', () => {
+  it('keeps a context trigger when only the execution location is available', () => {
+    for (const machineRemote of [true, false]) {
+      const html = renderToStaticMarkup(<ThreadDetailContext agent={{
+        providerId: null, model: null, projectName: 'Default Project', branchName: null,
+        machineName: 'Devbox', machineRemote
+      }} />);
+      expect(html).toContain('aria-label="Thread context"');
+      expect(html).toContain('Default Project');
+    }
+    const html = renderToStaticMarkup(<ThreadDetailContext agent={{
+      providerId: null, model: null, projectName: null, branchName: null, machineName: 'Unavailable machine'
+    }} />);
+    expect(html).toContain('aria-label="Thread context"');
+  });
+
+  it('keeps the context trigger when only a project is known', () => {
     const chipsOnly = renderToStaticMarkup(
-      <ThreadDetailHeading
-        title="Agent"
+      <ThreadDetailContext
         agent={{ providerId: null, model: null, projectName: 'zcc', branchName: null }}
       />
     );
-    expect(chipsOnly).toContain('data-testid="thread-detail-meta"');
-    expect(chipsOnly).not.toContain('thread-detail-meta-identity');
+    expect(chipsOnly).toContain('data-testid="thread-context-trigger"');
+    expect(chipsOnly).not.toContain('data-testid="thread-detail-meta"');
     expect(chipsOnly).not.toContain('Branch:');
 
   });
@@ -791,7 +807,7 @@ describe('expandable row and chips', () => {
   it('opens the secondary panel Diff pin from Review', () => {
     const source = readSourceText(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)));
     expect(source).toContain("selectPin('diff')");
-    expect(source).toContain("selectPin('plan')");
+    expect(source).toContain("onOpenPlan={() => activateTool('plan')}");
     expect(source).toContain('<ThreadPlanPanel');
     expect(source).not.toContain('shouldAutoOpenThreadPlanPanel');
     expect(source).toContain('showPlanPin');
@@ -837,7 +853,7 @@ describe('expandable row and chips', () => {
     const source = readSourceText(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)));
     const splitAt = source.indexOf('className="thread-detail-split"');
     const mainAt = source.indexOf('className="thread-detail-main"');
-    const headerAt = source.indexOf('className="thread-detail-header"');
+    const headerAt = source.indexOf('className="thread-detail-header thread-detail-header--balanced"');
     const bodyAt = source.indexOf('className="thread-detail-body"');
     expect(splitAt).toBeGreaterThan(-1);
     expect(mainAt).toBeGreaterThan(splitAt);
@@ -975,6 +991,8 @@ describe('expandable row and chips', () => {
     expect(stickyUser).toContain('top: 0;');
     expect(stickyUser).toContain('z-index: 4;');
     expect(stickyUser).toContain('background: var(--bg-base);');
+    expect(stickyUser).toContain('.app-shell.shell-inset .thread-timeline-current-turn > .thread-timeline-item.is-user,');
+    expect(stickyUser).toContain('background: var(--bg-panel);');
     expect(stickyUser).toContain('.thread-timeline-current-turn > .thread-timeline-item.is-user[data-sticky-prompt] {\n  position: sticky;');
     expect(stickyUser.split('}')[0]).not.toContain('position: sticky;');
     const assistantBubble = css.slice(
@@ -990,7 +1008,9 @@ describe('expandable row and chips', () => {
     expect(userBubble).toContain('border: 1px solid var(--border);');
     expect(userBubble).toContain('background: var(--bg-elevated, var(--bg-background));');
     expect(userBubble).toContain('border-radius: 12px;');
-    expect(css).toContain('.thread-timeline-item:hover,\n.thread-timeline-item:focus-within {\n  z-index: 1;');
+    const hover = css.match(/\.thread-timeline-item:hover,\s*\.thread-timeline-item:focus-within\s*\{[^}]*z-index:\s*(\d+)/)?.[1];
+    const sticky = css.match(/\.thread-timeline-current-turn > \.thread-timeline-item\.is-user\[data-sticky-prompt\]\s*\{[^}]*z-index:\s*(\d+)/)?.[1];
+    expect(Number(hover)).toBeGreaterThan(Number(sticky));
     expect(css).toContain('.thread-detail-timeline {\n  user-select: text;');
     expect(css).not.toContain('.thread-toc');
   });

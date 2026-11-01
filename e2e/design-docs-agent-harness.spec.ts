@@ -101,7 +101,9 @@ test('Design Docs agents report an unusable project harness instead of starting 
   expect(await rpcError(win, 'setAgentSettings', { mode: 'provider', providerId: 'claude-code' })).not.toBe('unexpected success');
 
   const error = await rpcError(win, 'askAgent', { doc: docId, action: 'review' });
-  expect(error).toContain('No usable AI harness:');
+  const plugin = await win.evaluate(async () =>
+    (await window.cc.pluginApps.list()).find((plugin) => plugin.id === 'design-docs'));
+  expect(error, JSON.stringify(plugin)).toContain('No usable AI harness:');
   expect(error).toContain('Settings → AI Harness');
   // Nothing was spawned, so nothing was linked to the doc.
   const detail = await win.evaluate((doc) => window.cc.pluginApps.callRpc('design-docs', 'get', { doc }), docId) as { threads: unknown[] };

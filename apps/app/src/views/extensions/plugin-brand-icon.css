@@ -1,0 +1,6 @@
+.plugin-brand-icon { display: block; object-fit: contain; flex-shrink: 0; }
+/* A neutral tile keeps black and colored brand marks legible in either theme. */
+.ext-hub-shell :is(.ext-installed-icon, .ext-browse-card-icon, .ext-hub-about-icon-wrap):has(> img.plugin-brand-icon) {
+  background: #fff;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 8%);
+}

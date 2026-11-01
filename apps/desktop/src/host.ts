@@ -17,6 +17,7 @@ import { SHARED_PRODUCT_EVENTS } from '@zana-ai/zcc-contracts/shared-product';
 import { SharedClient, allowsSharedNavigation } from './window/shared-client.js';
 import { createHistoryProviders, invalidateHarnessModelCatalog } from '@zana-ai/zcc-host-daemon/harness/registry';
 import { RendererReadiness } from './window/renderer-readiness.js';
+import { installAppPermissions } from './window/app-permissions.js';
 import { runStartupDependencyDoctor } from './startup-dependency-doctor.js';
 /**
  * Compatibility IPC host. Window/tray/updater/preload live alongside this file
@@ -67,8 +68,9 @@ import {
 } from './squad-session-lifecycle.js';
 import { createSquadWorktreeRuntime, trustedSquadWorktreeRoot, isWithinSquadWorktreeBase, SQUAD_WORKTREE_ACTION } from './squad-worktree-runtime.js';
 import { createTriggeredSquadLauncher, goalSquadTrigger, scheduledSquadTrigger } from './triggered-squad.js';
-import { MAX_HANDOFF_FILE_BYTES, TeamPlanHandoff, authoredPlanRelPath, cleanupHandoffFiles, readAuthoredPlan, writeSourceMirror } from './team-plan-handoff.js';
+import { MAX_HANDOFF_FILE_BYTES, TeamPlanHandoff, authoredPlanRelPath, correctedPlanRelPath, correctionProseRelPath, createPlanTraceSink, cleanupHandoffFiles, handoffPromptPath, readAuthoredPlan, writeSourceMirror } from './team-plan-handoff.js';
 import { PlanCorrectionService } from './plan-correction/service.js';
+import { planCorrectionSubmitter } from './plan-correction/wiring.js';
 import { onOrchestratorIdle } from './coordinator-idle.js';
 import { finalSessionStats } from './session-stats-cache.js';
 import { applyPluginAgentCapabilities } from '@zana-ai/zcc-server/services/extensions/plugin-agent-sync';
@@ -95,7 +97,7 @@ import { sanitizeExtraArgs } from '@zana-ai/zcc-domain/launch-sanitize';
 import { teamRunNamerInput } from './team-run-title.js';
 import { MANAGED_WORKTREE_DIR_NAME, PERSONAL_WORKSPACE_DIR_NAME, type MenubarThreadAgent } from '@zana-ai/zcc-domain';
 import { providerCapabilities, harnessFamilyOf, isClaudeProfile, isCodexProfile, isOpenCodeProfile, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
-import { canonicalThreadProviderId } from '@zana-ai/zcc-server/services/threads/thread-provider-catalog';
+import { canonicalThreadProviderId, getThreadProvider } from '@zana-ai/zcc-server/services/threads/thread-provider-catalog';
 import { EXTENSION_PROJECT_CATEGORY, store, scratchWorkspaceRoot, worktreeRoot, worktreeTargetDir } from '@zana-ai/zcc-server/services/projects/store';
 import { electronZccDataDir } from '@zana-ai/zcc-server/electron-data-dir';
 import { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
@@ -114,7 +116,7 @@ import { launchExecutionScope, usesCliRemoteToolProxy } from './cli-remote-tool-
 import { createRestoreCapabilityStore, type RestoreCapability } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
 import { createTeamLifecycleIntegration, createTeamLifecycleStore, type TeamLifecycleRecord, type TeamModernWorkerObservation } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
 import { createRemoteReapLedger, remoteReapOrphans, type RemoteReapEntry } from '@zana-ai/zcc-server/services/launch/remote-reap-ledger';
-import { createExecutionStore, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
+import { createExecutionStore, isUserOwnedSquadWorktree, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
 import { KeyedColdStartSemaphore, SquadExecutionService, type ExecutionRequestV1 } from '@zana-ai/zcc-server/services/execution/service';
@@ -128,6 +130,8 @@ import { createExecutionHandoffStore } from '@zana-ai/zcc-server/services/execut
 import { createResumeGrantStore } from '@zana-ai/zcc-server/services/execution/resume-grant-store';
 import { createResumeTokenStore } from '@zana-ai/zcc-server/services/execution/resume-token-store';
 import { createInboxActionRegistry } from './inbox-actions/registry.js';
+import { createSquadWorkerRestarter } from './squad-worker-restart.js';
+import { lifecycleClaimOps } from './terminal-restore-launch.js';
 import { squadWorktreeHasActiveFollowUp, withSquadWorktreeLifecycleLock, type SquadWorktreeTerminalOutcome } from './squad-worktree-lifecycle.js';
 import { relaunchExecutionMonitor } from '@zana-ai/zcc-server/services/execution/relaunch-monitor';
 import { preflightWorkflowProfile } from '@zana-ai/zcc-server/services/agents/squad-bundle';
@@ -232,8 +236,8 @@ import { workerRecoveryEvidence, type InspectWorkerLaunch } from '@zana-ai/zcc-s
 import { exportInboxPdf } from './native/inbox-pdf.js';
 import { createSavedStore, type ISavedStore } from '@zana-ai/zcc-server';
 import { ABOUT_CREDITS, REPORT_BUG_URL, isDurableCoordination, type SavedRecord, type SavedRecordInput } from '@zana-ai/zcc-domain/product';
-import type { ExecutionBoardProjection, ExecutionBoardSnapshot, ExecutionSourceSnapshot } from '@zana-ai/zcc-domain/product';
-import { isRestfulAgentState, decayUnreliableAgentState } from '@zana-ai/zcc-domain/product';
+import type { ExecutionBoardProjection, ExecutionBoardSnapshot, ExecutionSourceSnapshot, SquadTransport } from '@zana-ai/zcc-domain/product';
+import { isRestfulAgentState, decayUnreliableAgentState, validateSquadExecutionTarget } from '@zana-ai/zcc-domain/product';
 import type { TeamJobLaunchInput, TeamJobLaunchResponse } from '@zana-ai/zcc-domain/product';
 import type { ConversationHistorySnapshot } from '@zana-ai/zcc-domain/product';
 import type { CancelTeamLaunchResult, LaunchTeamResult, TeamLaunchAuthorizationInputSlot, TeamLaunchAuthorizationResult, TeamLaunchRequestInput, TeamFailedWorkerSlot, TeamLaunchedWorker } from '@zana-ai/zcc-domain/product';
@@ -252,6 +256,7 @@ import {
   writePluginViewBounds
 } from './window/plugin-view-windows.js';
 import { createPluginViewHost } from './window/plugin-view-host.js';
+import { bindPluginViewCloseLifecycle, createPluginViewCloseGuard, registerPluginViewCloseIpc } from './window/plugin-view-close.js';
 import {
   cascadeThreadViewPosition,
   readThreadViewBounds,
@@ -261,6 +266,7 @@ import {
 import { createThreadViewHost } from './window/thread-view-host.js';
 import { findUnscopedWindow, isUnscopedRegistration } from './window/main-window-registry.js';
 import { createWindowsTitleBarOverlays } from './window/titlebar-overlay.js';
+import { resolveThemeSetting, windowThemeOptions } from './window/window-theme.js';
 import { registerPluginViewIpc, registerThreadViewIpc } from './ipc/windows.js';
 import { showApprovalSheet } from './window/approval-sheet.js';
 import { startPeerUsePrompts } from './ipc/peer-use-prompts.js';
@@ -297,7 +303,7 @@ import { listCommands } from '@zana-ai/zcc-server/services/skills/commands';
 import { ScheduleGroupsStore } from '@zana-ai/zcc-server/services/scheduler/schedule-groups-store';
 import { watch as fsWatch, mkdirSync, type FSWatcher } from 'node:fs';
 import { lstat, open as openFile, realpath, rm } from 'node:fs/promises';
-import { personaCanWriteFiles, resolveLaunchApproval, type SquadProposalInput } from '@zana-ai/zcc-domain/squad-proposal';
+import { canAuthorAndRegisterPlan, planAuthoringTransportOf, resolveLaunchApproval, type SquadProposalInput } from '@zana-ai/zcc-domain/squad-proposal';
 import { createSquadProposalStore } from './squad-proposals/store.js';
 import { createSquadProposalService, SQUAD_LAUNCH_PROPOSAL_ACTION, type SquadProposalServiceDeps } from './squad-proposals/service.js';
 import { createSquadProposalNotifier } from './squad-proposals/notifier.js';
@@ -329,8 +335,8 @@ import { createDoctor, hasMissingDeps, type Doctor } from '@zana-ai/zcc-server/s
 import { TemplateStore } from '@zana-ai/zcc-server/services/library/template-store';
 import { QuickPromptStore } from '@zana-ai/zcc-server/services/library/quick-prompt-store';
 import { resolveRulesGuidance } from '@zana-ai/zcc-server/services/projects/rules-file';
-import { mainClaudeBinaryGetter } from './main-claude-binary.js';
-import { PromptRegistry, LlmService, ClaudeCliProvider, OpenAiProvider, GeminiProvider, resolveNamedTitle, runTabNamerOnce, redactTranscript, type LlmProvider } from '@zana-ai/zcc-llm';
+import { mainClaudeBinary, mainClaudeBinaryGetter } from './main-claude-binary.js';
+import { PromptRegistry, LlmService, WorkloadMemo, ClaudeCliProvider, OpenAiProvider, GeminiProvider, resolveNamedTitle, runTabNamerOnce, redactTranscript, type LlmProvider } from '@zana-ai/zcc-llm';
 import { VoiceService } from './native/voice/voice-service.js';
 import { OpenAiVoiceProvider } from './native/voice/openai-provider.js';
 import { getOpenAiKey, getGeminiKey } from './native/voice/secrets.js';
@@ -342,7 +348,9 @@ import { Overseer, type OverseerToolEvent } from '@zana-ai/zcc-server/services/f
 import { OverseerAuditRing } from '@zana-ai/zcc-server/services/followups/overseer-audit';
 import { ContentScreen, type ContentScreenEvent, buildWarningText } from './window/content-screen.js';
 import { HeartbeatService } from '@zana-ai/zcc-server/services/followups/heartbeat';
-import { createApiErrorResume, handleApiErrorStop } from './api-error-resume-wiring.js';
+import { createApiErrorResume } from './api-error-resume-wiring.js';
+import { createWorkerApiErrorRecovery, routeApiErrorStop, workerApiErrorRecoveryEnabled } from './worker-api-error-recovery-wiring.js';
+import { createWrapUpClose } from './wrap-up-close-wiring.js';
 import { LocalExtensionWatcher } from '@zana-ai/zcc-server/services/extensions/local-extension-watcher';
 import { AutonomousRunSupervisor, AUTONOMOUS_DEFAULTS } from '@zana-ai/zcc-server/services/agents/autonomous-run-supervisor';
 import { AutoCloseIdleService } from '@zana-ai/zcc-server/services/followups/auto-close-idle';
@@ -585,14 +593,11 @@ export function logMainError(context: string, err: unknown) {
 
 /**
  * Resolve the stored tri-state `theme` to a concrete 'dark' | 'light' for
- * main-owned surfaces (tray, menubar popover) that can't read the renderer's
- * CSS cascade. 'system' follows the OS via electron `nativeTheme` (WARP-A2).
+ * main-owned surfaces (tray, menubar popover, a new window's background) that
+ * can't read the renderer's CSS cascade. 'system' follows the OS via electron `nativeTheme` (WARP-A2).
  */
 function resolveTheme(): 'dark' | 'light' {
-  const t = store.getConfig().theme;
-  if (t === 'light') return 'light';
-  if (t === 'dark') return 'dark';
-  return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+  return resolveThemeSetting(store.getConfig().theme, () => nativeTheme.shouldUseDarkColors);
 }
 
 /** Resolve `projectPath` (passed by the renderer) to listSkills options. */
@@ -1140,6 +1145,25 @@ function restorePrincipal(capability: { id: string; request: CreateTerminalReque
     : { kind: 'automation', id: `restore:${capability.id}` };
 }
 
+const squadWorkerRestarter = createSquadWorkerRestarter({
+  getSession: (id) => ptys.getSession(id) ?? undefined,
+  getProject: (projectId) => store.listProjects().find((project) => project.id === projectId),
+  getExecution: (projectId, executionId) => executionStore.getInProject(projectId, executionId),
+  teamLaunchEnabled: () => store.getConfig().teamLaunchEnabled === true,
+  restoreCapabilities,
+  followUp: lifecycleClaimOps((capability) => squadFollowUpClaims.restoreClaim(capability)),
+  restorePrincipal,
+  isTeamWorkerRestore,
+  launchAuthorizedTerminal,
+  closeSession: async (id) => {
+    ptys.closeExpected(id);
+    await killLocalTmuxSession(id);
+  },
+  sessionGone: async (id) => !(await listLocalTmuxSessionIds()).includes(id),
+  // The restarter refuses a session without a cohort, so a relaunched worker always has one.
+  onRelaunched: (session) => { teamLaunchSessions.set(session.id, session.cohort!.cohortId); }
+});
+
 async function withPreparedNativeSession<T extends { profile: LaunchProfileId; resumeSessionId?: string; extraArgs?: string[] }>(
   req: T,
   cwd: string,
@@ -1314,13 +1338,14 @@ const { planCorrection, launchBinding: planCorrectionLaunchBinding } = createPla
   inboxStore,
   inboxActionRegistry,
   nudge: (sessionId, text) => ptys.reply(sessionId, text),
-  wakeCoordinator: (executionId, text) => squadExecutionService.wakeCoordinatorForPlanCorrection(executionId, text),
+  wakeCoordinator: (executionId, text, confirmation) => squadExecutionService.wakeCoordinatorForPlanCorrection(executionId, text, confirmation),
   stopExecution: async (executionId) => { await squadExecutionService.stopForPlanCorrection(executionId); },
   resume: async (ctx) => teamPlanHandoff.onCoordinatorIdle(ctx),
   executionStore,
   get scheduler() { return scheduler; },
   get goals() { return goals; },
-  logError: logMainError
+  logError: logMainError,
+  logInfo: logMainInfo
 });
 const inboxReadStore: IInboxReadStore = createInboxReadStore({
   filePath: defaultInboxReadStateFile(defaultInboxFile()),
@@ -1450,6 +1475,7 @@ let updater: Updater | null = null;
 // consented via "Restart now"). Shared with `before-quit` so an in-flight
 // auto-update cannot be cancelled by the live-sessions prompt.
 let quitConfirmed = false;
+let windowShutdownStarted = false;
 let doctor: Doctor | null = null;
 /**
  * Pending "What's New" window, computed once at boot when the running version
@@ -1469,7 +1495,9 @@ const promptRegistry = new PromptRegistry({
   homeDir: () => app.getPath('home'),
   revealPath: (path) => shell.openPath(path)
 });
-const llmService = new LlmService(new Map<LlmProviderId, LlmProvider>());
+const llmService = new LlmService(new Map<LlmProviderId, LlmProvider>(), refreshLlmReuseForProviderConfig);
+const microCallMemo = new WorkloadMemo();
+promptRegistry.on('changed', () => microCallMemo.clear());
 /** Single provider-registration path. Rebuilds the LLM providers from config.
  *  `claude-cli` resolves its binary from `store.getConfig()` on every run
  *  (config.json is re-read, so a change from any writer applies without a
@@ -1974,7 +2002,8 @@ const heartbeat = new HeartbeatService({
   isEnabled: () => store.getConfig().heartbeatEnabled === true,
   getSession: (sessionId) => {
     const s = ptys.getSession(sessionId);
-    return s
+    // An agent that is wrapping up belongs to that close: no nudge, armed or new, may type into it.
+    return s && !wrapUpClose.isWrappingUp(sessionId)
       ? {
           heartbeat: s.heartbeat,
           scheduled: s.scheduled,
@@ -2221,7 +2250,7 @@ const autoCloseIdle = new AutoCloseIdleService({
     const s = ptys.getSession(sessionId);
     if (!s) return false;
     // An agent that rests on an API error hasn't finished; spare it until its next turn.
-    return favoriteAgentKeys.has(s.claudeSessionId ?? sessionId) || apiErrorResume.restedOnApiError(sessionId);
+    return favoriteAgentKeys.has(s.claudeSessionId ?? sessionId) || apiErrorResume.restedOnApiError(sessionId) || wrapUpClose.isWrappingUp(sessionId);
   },
   now: () => Date.now(),
   // Expected close ⇒ exit code 0 (this was the app's decision, not a crash).
@@ -2256,8 +2285,10 @@ const autoCloseIdle = new AutoCloseIdleService({
  * off the same resolved-state edge as idle-triage/heartbeat below.
  */
 const mailDrain = new AgentMailDrainService({
-  pending: (sessionId) =>
-    agentMessageLog.pull(sessionId).map((m) => ({ id: m.id, fromHandle: m.fromHandle })),
+  // Queued peer mail waits while the agent wraps up, and is delivered later if it stays open.
+  pending: (sessionId) => wrapUpClose.isWrappingUp(sessionId)
+    ? []
+    : agentMessageLog.pull(sessionId).map((m) => ({ id: m.id, fromHandle: m.fromHandle })),
   reply: (sessionId, text) => ptys.reply(sessionId, text)
 });
   const executionDeliveryDrain = new ExecutionDeliveryDrainService({
@@ -2406,6 +2437,8 @@ const closeSummary = new CloseSummaryService({
     }
   }
 });
+/** "Wrap up before closing" (Experimental): asks resting Claude agents to wrap up before Close with follow-up. */
+const wrapUpClose = createWrapUpClose({ store, ptys, agentStatus, closeSummary, providerCapabilities, isRemoteSession: isTrueSshRemoteSession, suppressesInteractiveBlocked });
 /** Backs the Inbox "AI Summary" card — reads main's own inbox store (the source
  *  of truth, not the renderer's filtered view) and runs the
  *  `builtin:inbox-summary` micro-call to distill a standup-style digest, whole
@@ -2438,6 +2471,11 @@ const inboxSummary = new InboxSummaryService({
       return r;
     });
   },
+  requestIdentity: (entries) => {
+    const entry = promptRegistry.get('builtin:inbox-summary');
+    return entry ? llmService.requestIdentity(entry, { entries }) : '';
+  },
+  memo: microCallMemo,
   runDetailedSummary: (entries, dedupeKey) => {
     const entry = promptRegistry.get('builtin:inbox-summary-detailed');
     if (!entry) {
@@ -2506,7 +2544,12 @@ const feedNoiseClassifier = new FeedNoiseClassifier({
       if (!r.ok) logMainError('feed-noise-classifier', `${r.error ?? 'unknown'} (${r.ms}ms)`);
       return r;
     });
-  }
+  },
+  requestIdentity: (entries) => {
+    const entry = promptRegistry.get('builtin:feed-noise-classifier');
+    return entry ? llmService.requestIdentity(entry, { entries }) : '';
+  },
+  memo: microCallMemo
 });
 /** The "Approve for me" reviewer — a fail-closed micro-call that may downgrade an
  *  otherwise-denied extension capability request to auto-approve. DI + never-throws,
@@ -2532,6 +2575,18 @@ const reviewerApproval = new ReviewerApprovalService({
       });
   }
 });
+promptRegistry.on('changed', () => reviewerApproval.clear());
+let activeClaudeBinary: string | undefined;
+function invalidateLlmReuse(): void {
+  llmService.invalidateProviderIdentity();
+  microCallMemo.clear();
+  reviewerApproval.clear();
+}
+function refreshLlmReuseForProviderConfig(): void {
+  const next = mainClaudeBinary(store.getConfig());
+  if (activeClaudeBinary !== undefined && activeClaudeBinary !== next) invalidateLlmReuse();
+  activeClaudeBinary = next;
+}
 /** Per-project Activity Feed — the PERSISTED slice (git commits + extension /
  *  project lifecycle) that has no other durable home. All other feed events are
  *  DERIVED live by {@link FeedService} from the inbox / followups / goals /
@@ -2588,7 +2643,12 @@ const feedSummary = new FeedSummaryService({
       });
     }
     return llmService.run(entry, { entries }, dedupeKey);
-  }
+  },
+  requestIdentity: (entries) => {
+    const entry = promptRegistry.get('builtin:feed-digest');
+    return entry ? llmService.requestIdentity(entry, { entries }) : '';
+  },
+  memo: microCallMemo
 });
 /** Stamp a greenfield feed event (project / extension lifecycle) into the
  *  persisted slice. Best-effort + idempotent via dedupeKey — a write failure or
@@ -3336,6 +3396,7 @@ async function ensureRendererStaticHost(): Promise<void> {
     runtimeDir: __dirname,
     version: resolvedAppVersion(),
     extraEnv: { ZCC_PRODUCT_SERVER_CREDENTIAL: ensureProductServerCredential() },
+    onLocalThreadWork: (working) => keepAwake.observe('modern-threads', working ? 'working' : 'idle'),
     onUnexpectedExit: runtimeRecovery.notify
   });
   runtimeSupervisor.onProjectSettingsChanged((projectId) => {
@@ -3531,6 +3592,7 @@ function openProjectWindow(projectId: string) {
 }
 
 /* v8 ignore next -- wiring to Electron windows; createPluginViewHost is unit-tested and the windows are covered by built-Electron E2E */
+const pluginViewCloseGuard = createPluginViewCloseGuard();
 const pluginViews = createPluginViewHost({
   windows,
   listApps: () => runtimeSupervisor ? runtimeSupervisor.listPluginApps() : listPluginAppsFromProductServer(),
@@ -4018,7 +4080,8 @@ export function resolveEffectiveLaunch(
   ) {
     try {
       const realWt = realpathSync(req.worktreeInfo.path);
-      if (isWithinTrustedWorkspace(realWt) || isWithinSquadWorktreeBase(realWt, projectRoot)) {
+      // A project-contained checkout (a user-owned squad target) is as trusted as the root.
+      if (isWithinTrustedWorkspace(realWt) || isWithinSquadWorktreeBase(realWt, projectRoot) || isWithin(realWt, projectRoot)) {
         return {
           projectRoot,
           cwd: realWt,
@@ -4073,6 +4136,7 @@ export function revalidateEffectiveLaunch(
       }
     }).find((root) => root && isWithin(effective.cwd, root))
       ?? trustedSquadWorktreeRoot(effective.cwd, effective.projectRoot)
+      ?? (isWithin(effective.cwd, effective.projectRoot) ? effective.projectRoot : null)
     : effective.projectRoot;
   if (!trustedRoot) {
     return { ok: false, reason: 'effective launch path changed after preflight' };
@@ -4100,6 +4164,8 @@ export function createTerminalConfined(
     autonomous?: boolean;
     coordinationMode?: import('@zana-ai/zcc-domain/product').TeamCoordinationMode;
     suppressPersonaInitialPrompt?: boolean;
+    /** Host-derived absolute plan-handoff files; MAIN-only exact-file edit grants. */
+    authoredPlanPaths?: readonly string[];
     /** Wake reconnect (remote only): original session id to re-attach as the
      *  remote `cc-<id>` tmux session. MAIN-only; never from the renderer req. */
     reconnectTmuxId?: string;
@@ -4281,6 +4347,7 @@ export function createTerminalConfined(
       // forbidden by managed policy). Never sourced from the renderer req.
       autonomous: opts?.autonomous === true,
       coordinationMode: opts?.coordinationMode,
+      ...(opts?.authoredPlanPaths?.length ? { authoredPlanPaths: opts.authoredPlanPaths } : {}),
       suppressPersonaInitialPrompt: opts?.suppressPersonaInitialPrompt,
       // MAIN-only wake-reconnect params (remote only). The pty layer UUID-checks
       // reconnectTmuxId before it reaches the tmux command string.
@@ -4958,7 +5025,7 @@ export function jobWorkerPrompt(input: {
   return [
     `Team worker standby. You are ${input.label} (${input.personaName}), slot \`${input.slotId}\`${input.executionId ? ` in execution \`${input.executionId}\`` : ''}.`,
     'Your working directory is the trusted project workspace. Wait for an assignment for this slot; each assignment carries a fully-specified work unit — its task is the complete instruction. When it arrives, EXECUTE it: do the task using the file scope, the upstream results included in the assignment, and your own reading of the project workspace. Do the work yourself; do not wait for extra "source context" to be pushed to you and do not ask the coordinator to re-explain a task you can carry out. Do not, however, start the overall job or units not assigned to this slot.',
-    'Do not poll `agent_inbox`. After your standby prompt settles, call `execution.snapshot` once for this execution. If it shows a work unit CLAIMED for your slot, execute that unit using its task and claim fence even when no pasted assignment is visible; this recovers a launch-time terminal-input race. Execute only bounded work assigned to this slot. Close every unit through exactly one structured outcome: `execution.work.complete`, `execution.work.fail`, `execution.work.block`, or `execution.work.release`. Call the ZCC execution MCP tool exposed in your own tool list, not an AI Suite Python bridge or a colon-form tool name. On OpenCode, `execution.work.complete` is exposed as `zcc-inbox_execution_work_complete`. Do not use `agent_send` for routine progress or results.',
+    'Do not poll `agent_inbox`. After your standby prompt settles, call `execution.snapshot` once for this execution. If it shows a work unit CLAIMED for your slot, execute that unit using its task and claim fence even when no pasted assignment is visible; this recovers a launch-time terminal-input race. Execute only bounded work assigned to this slot. Close every unit through exactly one structured outcome: `execution.work.complete`, `execution.work.fail`, `execution.work.block`, or `execution.work.release`. Call the ZCC execution MCP tool exposed in your own tool list, not a separate Python bridge or a colon-form tool name. On OpenCode, `execution.work.complete` is exposed as `zcc-inbox_execution_work_complete`. Do not use `agent_send` for routine progress or results.',
     'Use `execution.work.block` ONLY when you genuinely cannot proceed, and pick the audience: `audience: "coordinator"` when you need ONE specific, decidable plan/spec choice from the coordinator (e.g. which of two interfaces to target, an ambiguous path) — phrase it as a single concrete question the coordinator can answer, and the worker resumes automatically once answered; `audience: "human"` (the default) only when a real human decision or credential is required. Do not block just because a task looks large or under-detailed — attempt it. Do not use AskUserQuestion. While blocked, do not poll `execution.delivery.pull`. Responses inject when idle. Call `execution.delivery.pull` only after an injected notification. Delivery is at-least-once and may repeat after a crash: use the stable deliveryId as an idempotency key, apply side effects idempotently or transactionally where possible, and persist a completed-application marker only after successful application (or atomically with it). If that completed marker already exists, do not apply the payload again. A crash before that marker may replay delivery, so do not claim exactly-once processing. Then call `execution.delivery.ack` with the deliveryId and leaseId: set `delivered: true` once you have applied the response in this session, and set `delivered: false` with an error ONLY when applying the payload genuinely failed. Pulling then acking IS the entire way to consume a response — never call `execution.resume` or `execution.respond` to accept your own delivered answer. Those are owner-only control tools; a worker or coordinator calling them fails with "execution not found for caller", and that authorization denial is NOT an application failure — do not report it as a delivery `error` or you will loop the response forever.'
   ].join('\n\n');
 }
@@ -5182,8 +5249,14 @@ export function authorizeTeamLaunch(
   if (slots.length !== expectedSlots.length) {
     return { ok: false, code: 'INVALID', message: 'task count does not match host-expanded Team slots' };
   }
-  if (slots.some((slot) => !slot.initialTask.trim() || Buffer.byteLength(slot.initialTask, 'utf8') > 64 * 1_024)) {
+  if (slots.some((slot) => !slot.initialTask.trim() || Buffer.byteLength(slot.initialTask, 'utf8') > 64 * 1_024
+    || slot.automatedSkillIds !== undefined && (slot.automatedSkillIds.length > 64
+      || slot.automatedSkillIds.some((skillId) => !skillId.trim() || skillId.length > 256)
+      || new Set(slot.automatedSkillIds).size !== slot.automatedSkillIds.length))) {
     return { ok: false, code: 'INVALID', message: 'invalid initial task' };
+  }
+  if (team.transport !== 'MODERN' && slots.some((slot) => slot.automatedSkillIds !== undefined)) {
+    return { ok: false, code: 'INVALID', message: 'automated skill selection requires Modern Team transport' };
   }
   const principalRef = { kind: 'team' as const, id: `team:${team.id}:${callerPrincipalId}:${launchRequestId}` };
   const maxLaunches = Math.min(policy.maxLaunches ?? 32, 32);
@@ -5228,6 +5301,7 @@ export function authorizeTeamLaunch(
     const binding: LaunchAuthorizationBinding = {
       consumerKind: 'team-slot', teamId: team.id, slotId: expected.slotId, personaId: expected.personaId,
       profileId, initialTaskDigest: launchDigest(slots[index].initialTask),
+      ...(slots[index].automatedSkillIds === undefined ? {} : { automatedSkillIds: slots[index].automatedSkillIds }),
       scope: launchExecutionScope(project, {}, store.getConfig()),
       storeRevision: launchDigest({ team, personas: personaSnapshot }),
       projectIdentityDigest: projectIdentityDigest(project), autonomous, expiresAt, deadlineAt
@@ -5347,24 +5421,38 @@ async function prepareCoordinatorHandoff(args: {
   projectId: string;
   projectRoot?: string;
   sourceBundle?: { contentRef: string; sources: ReadonlyArray<{ id: string; name?: string }> };
-}): Promise<{ planFilePath: string; sourceFilePath?: string }> {
+}): Promise<{ planFilePath: string; planFileAbsPath?: string; planWriteAbsPaths?: string[]; sourceFilePath?: string }> {
   const planFilePath = authoredPlanRelPath(args.executionId);
   const handoffRoot = args.projectRoot ?? store.listProjects().find((candidate) => candidate.id === args.projectId)?.path;
+  // Host-derived from the registered root + the safe-token relative paths (never
+  // renderer input); used only for the exact-file plan-authoring grants: the
+  // authored plan plus the two plan-correction files the host asks the same
+  // coordinator to write (corrected plan, assumptions note).
+  const confined = (rel: string) => {
+    const abs = handoffRoot && isAbsolute(handoffRoot) ? resolve(handoffRoot, rel) : undefined;
+    return abs && isWithin(abs, handoffRoot!) ? abs : undefined;
+  };
+  const planFileAbsPath = confined(planFilePath);
+  const planWriteAbsPaths = planFileAbsPath
+    ? [planFileAbsPath, ...[correctedPlanRelPath(args.executionId), correctionProseRelPath(args.executionId)].map(confined).filter((abs): abs is string => !!abs)]
+    : undefined;
+  // The prompt names the absolute file: the coordinator's cwd can differ from the handoff root.
+  const base = { planFilePath: handoffPromptPath(handoffRoot, planFilePath), planFileAbsPath, planWriteAbsPaths };
   const bundle = args.sourceBundle;
   // The durable record carries only stripped metadata; reconstruct the raw
   // requirement text host-side from the immutable content store so the mirror has
   // real bodies to write (metadata alone would produce an empty file).
-  if (!(handoffRoot && bundle?.contentRef && bundle.sources.length)) return { planFilePath };
+  if (!(handoffRoot && bundle?.contentRef && bundle.sources.length)) return base;
   try {
     const handoffSources = await collectHandoffSourceTexts({ contentRef: bundle.contentRef, sources: bundle.sources });
     if (handoffSources.length) {
       const sourceFilePath = await writeSourceMirror(handoffRoot, args.executionId, handoffSources);
-      return { planFilePath, sourceFilePath };
+      return { ...base, sourceFilePath };
     }
   } catch (error) {
     logMainError('[team-launch] source mirror write failed', error instanceof Error ? error : new Error(String(error)));
   }
-  return { planFilePath };
+  return base;
 }
 
 export const squadWorktreeRuntime = createSquadWorktreeRuntime({
@@ -5382,7 +5470,8 @@ export const squadWorktreeRuntime = createSquadWorktreeRuntime({
     request, { kind: 'interactive-user', id: `squad-follow-up:${executionId}` }, { retainWorktree: true },
     undefined, undefined, undefined, undefined, undefined, false, lifecycle, executionId
   ),
-  git: { getGitStatus, setWorktreePushProtection, createWorktree, mergeWorktree, removeWorktree, worktreeState, isGitRepo, sanitizeBranchSlug }
+  git: { getGitStatus, setWorktreePushProtection, createWorktree, mergeWorktree, removeWorktree, worktreeState, isGitRepo, sanitizeBranchSlug, listWorktrees, gitCommonDir },
+  isTrustedWorkspacePath: isWithinTrustedWorkspace
 });
 inboxActionRegistry.register(SQUAD_WORKTREE_ACTION, squadWorktreeRuntime.handleInboxAction);
 
@@ -5468,9 +5557,24 @@ export async function launchTeam(
     // Bind consent before a coordinator can ever write or hand off a plan.
     await planCorrectionLaunchBinding.bindExecution(structured.launchRequestId, structured.executionId, planCorrection);
   }
-  const squadWorktree = durableCoordination && structured?.executionId
-    ? (await executionStore.getInProject(targetProjectId, structured.executionId))?.squadWorktree
+  const squadExecution = durableCoordination && structured?.executionId
+    ? await executionStore.getInProject(targetProjectId, structured.executionId)
     : undefined;
+  let squadWorktree: { path: string; branch: string; baseBranch?: string } | undefined = squadExecution?.squadWorktree;
+  if (squadExecution?.request.target && !isUserOwnedSquadWorktree(squadExecution.squadWorktree)) {
+    // A selected target that was never bound must not launch in any other checkout.
+    return { ok: false, code: 'TARGET_UNAVAILABLE', message: 'Selected Squad target was not prepared before launch.' };
+  }
+  if (squadExecution && isUserOwnedSquadWorktree(squadExecution.squadWorktree)) {
+    // Revalidate a user-owned target directly before any member spawns; it binds
+    // every member's cwd, and a moved or retargeted checkout refuses the launch.
+    try {
+      const target = await squadWorktreeRuntime.revalidateUserTarget(squadExecution);
+      squadWorktree = { path: target.path, branch: target.branch };
+    } catch {
+      return { ok: false, code: 'TARGET_UNAVAILABLE', message: 'Selected Squad target is unavailable or changed before launch.' };
+    }
+  }
   const cohortBase = {
     cohortId,
     teamId: team.id,
@@ -5562,8 +5666,14 @@ export async function launchTeam(
       ? undefined
       : `adapter "${provider.adapter.descriptor.id}" cannot bind initial task at spawn`;
   };
-  if (structured && structured.slots.some((slot) => !slot.initialTask.trim() || Buffer.byteLength(slot.initialTask, 'utf8') > 64 * 1_024)) {
+  if (structured && structured.slots.some((slot) => !slot.initialTask.trim() || Buffer.byteLength(slot.initialTask, 'utf8') > 64 * 1_024
+    || slot.automatedSkillIds !== undefined && (slot.automatedSkillIds.length > 64
+      || slot.automatedSkillIds.some((skillId) => !skillId.trim() || skillId.length > 256)
+      || new Set(slot.automatedSkillIds).size !== slot.automatedSkillIds.length))) {
     return { ok: false, code: 'INVALID', message: 'invalid initial task' };
+  }
+  if (team.transport !== 'MODERN' && structured?.slots.some((slot) => slot.automatedSkillIds !== undefined)) {
+    return { ok: false, code: 'INVALID', message: 'automated skill selection requires Modern Team transport' };
   }
   const authorizationBindings = expectedSlots.map(({ slotId, personaId, role }) => {
     const projection = recoveryFor(slotId, role, personaId);
@@ -5585,10 +5695,11 @@ export async function launchTeam(
       maxConcurrent: structured?.policy?.maxConcurrent ?? 32,
       maxLaunches: structured?.policy?.maxLaunches ?? 32
     },
-    slots: (structured?.slots ?? expectedSlots.map(({ slotId }) => ({ slotId, initialTask: taskFor(slotId) })))
+    slots: (structured?.slots ?? expectedSlots.map(({ slotId }) => ({ slotId, initialTask: taskFor(slotId), automatedSkillIds: undefined })))
       .map((slot, index) => ({
         slotId: slot.slotId,
         initialTask: slot.initialTask,
+        ...(slot.automatedSkillIds === undefined ? {} : { automatedSkillIds: slot.automatedSkillIds }),
         authorizationBinding: authorizationBindings[index]?.authorizationBinding
       })),
     admissionDigest: structured?.admissionDigest
@@ -5639,6 +5750,7 @@ export async function launchTeam(
           ? binding.deadlineAt !== undefined
           : binding.deadlineAt !== binding.expiresAt - TEAM_AUTHORIZATION_TTL_MS + structured.policy.deadlineMs)
         || binding.initialTaskDigest !== launchDigest(requested.initialTask)
+        || launchDigest(binding.automatedSkillIds ?? []) !== launchDigest(requested.automatedSkillIds ?? [])
         || binding.storeRevision !== currentStoreRevision
         || binding.projectIdentityDigest !== currentProjectIdentity
         || binding.admissionDigest !== structured.admissionDigest
@@ -5685,10 +5797,15 @@ export async function launchTeam(
         const execution = resolveExecutionState(provider, input);
         if (execution.state === 'plan' || persona.permissionMode === 'plan') throw new Error('Modern squad plan-only execution is not supported');
         const unrestricted = provider.adapter.descriptor.profiles.find(candidate => candidate.id === profile)?.posture === 'unrestricted';
+        // Modern threads have no manual-approval mode. Map the portable default
+        // onto ACP's least-permissive interactive equivalent instead of rejecting
+        // an otherwise valid squad before it can launch.
+        const providerId = canonicalThreadProviderId(harnessFamilyOf(profile) ?? profile);
+        const wantsAuto = autonomous || execution.state === 'autonomous';
+        const supportsAuto = getThreadProvider(providerId)?.capabilities.permissionModes.includes('auto') === true;
         const permissionMode = unrestricted || persona.permissionMode === 'bypassPermissions' ? 'full' as const
-          : autonomous || execution.state === 'autonomous' ? 'auto' as const
-            : execution.state === 'accept-edits' || persona.permissionMode === 'acceptEdits' ? 'accept-edits' as const : undefined;
-        modernSlots.set(slot.slotId, { providerId: canonicalThreadProviderId(harnessFamilyOf(profile) ?? profile),
+          : wantsAuto && supportsAuto ? 'auto' as const : 'accept-edits' as const;
+        modernSlots.set(slot.slotId, { providerId,
           model: resolveModelTarget(provider, input).targetId, permissionMode, systemPrompt: persona.appendSystemPrompt });
       }
       const preflight = await squadRuntime().preflightSquadRuntime({ projectId: targetProjectId,
@@ -5726,7 +5843,9 @@ export async function launchTeam(
   const launchSlot = async (
     expectedSlot: { slotId: string; personaId: string; label?: string; role: 'worker' | 'orchestrator' },
     request: CreateTerminalRequest,
-    tabNamerPrompt: string | null
+    tabNamerPrompt: string | null,
+    /** MAIN-only spawn extras for the CLI path (Modern ignores them). */
+    spawnExtras?: { authoredPlanPaths?: readonly string[] }
   ): Promise<Result<{ id: string }>> => {
     const { slotId, personaId } = expectedSlot;
     let authorizationId = structured?.slots.find((slot) => slot.slotId === slotId)?.authorizationId;
@@ -5743,7 +5862,11 @@ export async function launchTeam(
       launchPrincipals.set(principal.id, principal);
       const binding: LaunchAuthorizationBinding = {
         consumerKind: 'team-slot', teamId: team.id, slotId, personaId, profileId,
-        initialTaskDigest: launchDigest(request.prompt ?? ''), scope: launchExecutionScope(project, request, currentConfig),
+        initialTaskDigest: launchDigest(request.prompt ?? ''),
+        ...(structured?.slots.find((slot) => slot.slotId === slotId)?.automatedSkillIds === undefined ? {} : {
+          automatedSkillIds: structured.slots.find((slot) => slot.slotId === slotId)!.automatedSkillIds
+        }),
+        scope: launchExecutionScope(project, request, currentConfig),
         storeRevision: launchDigest({ team, personas: personaSnapshot }),
          projectIdentityDigest: projectIdentityDigest(project), autonomous, expiresAt, deadlineAt: launchDeadlineAt
       };
@@ -5804,6 +5927,7 @@ export async function launchTeam(
           projectId: targetProjectId, teamId: team.id, cohortId, hostId: modernHostId!, providerId: selected.providerId,
           role: expectedSlot.role, worktreePath: effective.cwd, executionId: structured?.executionId,
           model: selected.model, permissionMode: selected.permissionMode,
+          automatedSkillIds: structured?.slots.find((slot) => slot.slotId === slotId)?.automatedSkillIds,
           prompt: [selected.systemPrompt, !durableCoordination ? personaSnapshot.find(persona => persona.id === personaId)?.initialPrompt : undefined,
              request.prompt ?? 'Await squad instructions.'].filter(Boolean).join('\n\n'), title: (request.title ?? personaName(personaId)).slice(0, 120) };
         const created = await squadRuntime().createSquadMember(runtimeRequest);
@@ -5840,7 +5964,7 @@ export async function launchTeam(
     const result = await launchAuthorizedTerminal(
       request,
        teamPrincipalRef,
-       { autonomous, coordinationMode, suppressPersonaInitialPrompt: durableCoordination, tabNamerPrompt },
+       { autonomous, coordinationMode, suppressPersonaInitialPrompt: durableCoordination, tabNamerPrompt, ...spawnExtras },
        team.id,
        async (identity) => {
          const record = await teamLifecycle.addWorker(claim.record.id, {
@@ -5983,14 +6107,32 @@ export async function launchTeam(
     // captured source requirements + compute the plan-file path via the dedicated
     // handoff-prep helper (the sandbox-immune substitute for execution.source.read
     // + plan.register). Best-effort: a failure just omits the source file.
-    const { planFilePath, sourceFilePath } = durableCoordination && !planReady && structured?.executionId
+    // Modern has no host file reader but a bound `execution.plan.register` tool, so
+    // it gets the register-once kickoff and no handoff file at all.
+    const planTransport = planAuthoringTransportOf(team.transport);
+    const { planFilePath, planWriteAbsPaths, sourceFilePath } = durableCoordination && !planReady && structured?.executionId && planTransport === 'cli'
       ? await prepareCoordinatorHandoff({
           executionId: structured.executionId,
           projectId: targetProjectId,
           ...(squadWorktree ? { projectRoot: squadWorktree.path } : {}),
           sourceBundle: structured.jobContext?.sourceBundle
         })
-      : { planFilePath: undefined as string | undefined, sourceFilePath: undefined as string | undefined };
+      : { planFilePath: undefined as string | undefined, planWriteAbsPaths: undefined as string[] | undefined, sourceFilePath: undefined as string | undefined };
+    // CLI file handoff: pre-approve writing exactly the host-named plan files
+    // (authored plan + the plan-correction corrected/assumptions files), and only
+    // when the orchestrator may write files at all and runs locally (a remote PTY
+    // cannot resolve this host path). Otherwise no grant: the native approval
+    // prompt stays, never a broader edit permission.
+    const orchestratorPersona = personaSnapshot.find((candidate) => candidate.id === orchestratorId);
+    const authoredPlanPaths = planWriteAbsPaths?.length && !project.remote && orchestratorPersona
+      && canAuthorAndRegisterPlan(orchestratorPersona, { transport: 'cli' })
+      ? planWriteAbsPaths
+      : undefined;
+    // A rejected provided plan is already parked for the operator's correction
+    // decision: the coordinator must not author a plan at kickoff, only the exact
+    // corrected file a later correction wake names.
+    const planCorrectionPending = !planReady && !!structured?.executionId
+      && await planCorrection.isPending(structured.executionId).catch(() => false);
     const orchestratorTask = durableCoordination && structured?.jobContext
       ? jobCoordinatorPrompt({
           team,
@@ -6002,8 +6144,10 @@ export async function launchTeam(
            planReady,
             recoveryResume: orchestratorRecovery.recoveryResume,
           workUnits: seededWorkUnits,
+          transport: planTransport,
           ...(planFilePath ? { planFilePath } : {}),
-          ...(sourceFilePath ? { sourceFilePath } : {})
+          ...(sourceFilePath ? { sourceFilePath } : {}),
+          ...(planCorrectionPending ? { planCorrectionPending } : {})
         })
       : taskFor(orchestratorSlotId, orchestratorPrompt(team, roster, goal));
     const bindingFailure = taskBindingFailure(orchestratorId!);
@@ -6030,7 +6174,8 @@ export async function launchTeam(
         , ...(orchestratorRecovery.resumeSessionId ? { resumeSessionId: orchestratorRecovery.resumeSessionId } : {})
         , ...(orchestratorRecovery.extraArgs ? { extraArgs: orchestratorRecovery.extraArgs } : {})
       },
-      structured?.executionJobTitle ? null : titlePrompt
+      structured?.executionJobTitle ? null : titlePrompt,
+      authoredPlanPaths ? { authoredPlanPaths } : undefined
     );
     if (res.ok) {
       launched += 1;
@@ -6344,11 +6489,11 @@ export async function handleSquadTerminalWithReport(
   }
 }
 
-export function canInferPlanForTeam(team: { orchestratorPersonaId?: string }): boolean {
+export function canInferPlanForTeam(team: { orchestratorPersonaId?: string; transport?: SquadTransport }): boolean {
   const orchestrator = team.orchestratorPersonaId
     ? personas.list().find((persona) => persona.id === team.orchestratorPersonaId)
     : undefined;
-  return !!orchestrator && personaCanWriteFiles(orchestrator);
+  return !!orchestrator && canAuthorAndRegisterPlan(orchestrator, { transport: planAuthoringTransportOf(team.transport) });
 }
 
 /** `list_teams` MCP output: the summary plus whether the orchestrator can write a plan. */
@@ -6384,6 +6529,8 @@ const squadExecutionService = new SquadExecutionService({
     for (const id of authorizationIds) launchAuthorization.revoke(id);
   },
    replyToSession: replyToSquadMember,
+   // A PTY coordinator's agent-status edges feed observeCoordinatorState below.
+   confirmsWakeConsumption: (sessionId) => !!ptys.getSession(sessionId),
     deliverToWorker: (sessionId, text) => ptys.getSession(sessionId)
       ? workerInjector.deliver(sessionId, text) : replyToSquadMember(sessionId, text),
    deliverAssignment: async (sessionId, text, correlation) => {
@@ -6464,6 +6611,7 @@ const squadExecutionService = new SquadExecutionService({
   , claimRecoveryObserveEnabled: () => store.getConfig().executionClaimRecoveryObserveEnabled === true
   , claimRecoveryEnforceEnabled: () => store.getConfig().executionClaimRecoveryEnforceEnabled === true
   , planStartupGraceMs: () => store.getConfig().executionPlanStartupGraceMs ?? 0
+  , isPlanCorrectionOpen: (executionId) => planCorrection.isPending(executionId)
    , getAgentState: (sessionId) => modernMemberStatus.has(sessionId)
      ? modernMemberStatus.get(sessionId)?.status === 'idle' ? 'idle' : 'working' : agentStatus.get(sessionId)
    , getWorkerLiveness: (sessionId) => modernMemberStatus.has(sessionId)
@@ -6578,13 +6726,28 @@ const squadExecutionService = new SquadExecutionService({
       enforceRouting: routingRequested && workerRoutes.length > 0 && workerRoutes.every((slot) => !!slot.level)
     };
   }
-  , authorizePlanRegistration: (record, workUnits) => planCorrection.authorizeRegistration(record.id, workUnits)
+  , authorizePlanRegistration: (record, workUnits, submitter) => planCorrection.authorizeRegistration(
+    record.id,
+    workUnits,
+    planCorrectionSubmitter(record, submitter, (projectId) => store.listProjects().find((candidate) => candidate.id === projectId)?.path)
+  )
   , now: Date.now
+});
+
+const workerApiErrorRecovery = createWorkerApiErrorRecovery({
+  getConfig: () => store.getConfig(),
+  executionService: squadExecutionService,
+  executionStore,
+  agentStatus,
+  ptys,
+  workerInjector,
+  restarter: squadWorkerRestarter,
+  override: e2eTimingOverrideMs
 });
 
 /**
  * Flow B/C file handoff: when a durable coordinator cannot reach the execution
- * MCP bridge (AI Suite sandbox), it writes its authored plan to a project-
+ * MCP bridge in its sandbox, it writes its authored plan to a project-
  * confined `.zana/` file with its native file tool; the host reads that file on
  * coordinator-idle and registers it host-side through the SAME pipeline the
  * pre-launch seed uses. Subscribe-once (Rule 3) — one instance for the app.
@@ -6609,7 +6772,14 @@ teamPlanHandoff = new TeamPlanHandoff({
   nudge: (sessionId, text) => ptys.reply(sessionId, text),
   cleanup: (projectRoot, executionId) => cleanupHandoffFiles(projectRoot, executionId),
   logError: (message, error) => logMainError(message, error),
-  logInfo: logMainInfo
+  logInfo: logMainInfo,
+  trace: createPlanTraceSink({
+    generation: async (projectId, executionId) => {
+      const record = await executionStore.getInProject(projectId, executionId);
+      return record ? { attempt: record.attempt, stateVersion: record.stateVersion } : undefined;
+    },
+    log: logMainInfo
+  })
 });
 const squadSessionExit = {
   executionStore,
@@ -6682,6 +6852,17 @@ export async function startTeamJobFromUi(
   }
   const team = teams.list().find((candidate) => candidate.id === teamId);
   if (!team) return { ok: false, code: 'NOT_FOUND', message: 'team not found' };
+  // Infer is offered only when the coordinator can author AND register on its
+  // transport; a known incapable orchestrator is refused before any reservation.
+  const inferOrchestrator = coordinationMode === 'freeform' && team.orchestratorPersonaId
+    ? personas.list().find((persona) => persona.id === team.orchestratorPersonaId)
+    : undefined;
+  if (inferOrchestrator && !canInferPlanForTeam(team)) {
+    return {
+      ok: false, code: 'ORCHESTRATOR_CANNOT_PLAN',
+      message: `${inferOrchestrator.name} can't author and register a plan on this Squad's transport, so Infer plan from goal can't finish. Provide the plan in the goal instead.`
+    };
+  }
   const project = store.listProjects().find((candidate) => candidate.id === projectId);
   if (!project) {
     return { ok: false, code: 'NOT_FOUND', message: 'project not found' };
@@ -6707,6 +6888,9 @@ export async function startTeamJobFromUi(
   if (sourceCapabilityIds.length && !sourceContext) {
     return { ok: false, code: 'INVALID_CAPABILITY', message: 'Execution source capabilities require a trusted window' };
   }
+  // The renderer names a target by role/branch only; main resolves and revalidates it at launch.
+  const targetCheck = validateSquadExecutionTarget({ target: input.target });
+  if (!targetCheck.ok) return { ok: false, code: 'INVALID', message: targetCheck.message };
   const proposed = input.proposalId !== undefined;
   // Goal paths follow the one source policy. A proposed launch narrows them below, once its stored proposal is known.
   const sourceBases = squadSourceBases();
@@ -6724,7 +6908,8 @@ export async function startTeamJobFromUi(
   return withRenewedSources(() => withProposalLaunch(proposalLaunchDeps, proposalId, projectId, (proposal, reviewedSourcePaths) => launchSquad(squadLaunchDeps, {
     teamId, project, slots, goal: originalGoal, coordinationMode, title: originalJobTitle, summary: originalSummary,
     completionInboxNotice: true,
-    sourceCapabilityIds, goalSources: discoveredGoalSources, reviewedSourcePaths
+    sourceCapabilityIds, goalSources: discoveredGoalSources, reviewedSourcePaths,
+    ...(targetCheck.target ? { target: targetCheck.target } : {})
   }, {
     sources,
     // A proposed run reports back to the conversation that proposed it.
@@ -6896,6 +7081,9 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
     Object.assign(viewGeometry.options, cascadeThreadViewPosition({ x: viewGeometry.options.x, y: viewGeometry.options.y }, occupied));
   }
 
+  // Every window kind opens in the effective theme's background, and its
+  // preload seeds `<html data-theme>`, so a light window doesn't flash dark.
+  const windowTheme = windowThemeOptions(resolveTheme, logMainError);
   const win = new BrowserWindow({
     ...(viewGeometry
       ? viewGeometry.options
@@ -6910,7 +7098,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
         }),
     title: 'Zana',
     icon: productIconImage(),
-    backgroundColor: '#181818',
+    backgroundColor: windowTheme.backgroundColor,
     // E2E ONLY: never auto-show the window. Playwright drives the renderer over
     // CDP, so a hidden window still runs and is fully controllable, but a shown
     // one repeatedly steals macOS focus from the developer during a local run.
@@ -6940,15 +7128,19 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
       sandbox: true,
       webviewTag: true,
       zoomFactor: DEFAULT_RENDERER_ZOOM_FACTOR,
-      // The sandboxed preload can't reliably read process.env, so pass the e2e
-      // flag as an argv token it CAN read (process.argv). Only present when the
-      // tap is enabled; gates the window.__zccTest bridge in preload.
-      ...(E2E_TAP_ENABLED ? { additionalArguments: ['--zcc-e2e'] } : {})
+      // The sandboxed preload can't reliably read process.env, so pass argv
+      // tokens it CAN read (process.argv): the theme it seeds before first
+      // paint, and the e2e flag. The e2e flag is only present when the tap is
+      // enabled; it gates the window.__zccTest bridge in preload.
+      additionalArguments: [windowTheme.themeArg, ...(E2E_TAP_ENABLED ? ['--zcc-e2e'] : [])]
     }
   });
 
   windows.set(win.id, { win, projectId, view, threadView });
-  if (view) pluginViews.broadcast();
+  if (view) {
+    bindPluginViewCloseLifecycle(win, pluginViewCloseGuard, () => windowShutdownStarted);
+    pluginViews.broadcast();
+  }
   if (threadView) threadViews.broadcast();
   rendererReadiness.reset(win.id);
   /* v8 ignore next -- Electron navigation event is covered by boundary E2E; navigationStarted is unit-tested */
@@ -6998,6 +7190,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
     desktopBrowserViewManager.releaseWindow(hostWebContentsId);
     conversationHistory.releaseWindow(win.id);
     rendererReadiness.remove(win.id);
+    pluginViewCloseGuard.forget(win.id);
     windows.delete(win.id);
     boundsControllers.delete(win.id);
     if (view) pluginViews.broadcast();
@@ -7197,7 +7390,7 @@ function wireBridgeListeners() {
     void squadFollowUpClaims.releaseOnExit(sessionId);
     // Capture final counters before lifecycle reconciliation can make execution
     // terminal. Then forward exit detail so FAILED settlement includes provider cause.
-    void (async () => {
+    squadWorkerRestarter.onSessionExit(sessionId, async () => {
       if (exitedSession?.cohort?.executionId) {
         await squadExecutionService.observeSessionUsage(exitedSession.cohort.executionId, sessionId, 'terminal').catch((error) =>
           logMainError(`execution usage terminal ${sessionId}`, error)
@@ -7221,7 +7414,7 @@ function wireBridgeListeners() {
           logMainError(`execution coordinator exit ${sessionId}`, error)
         );
       }
-    })();
+    });
     if (exitedSession) {
       const cachedEntry = liveSessionStats.get(sessionId);
       const finalRead = readLiveSessionStats(exitedSession, { fresh: true });
@@ -7266,6 +7459,8 @@ function wireBridgeListeners() {
     // Same release for the OpenCode session-id resolver's cache (Rule 5).
     heartbeat.remove(sessionId);
     apiErrorResume.forget(sessionId);
+    workerApiErrorRecovery.forget(sessionId);
+    wrapUpClose.forget(sessionId);
     // Drop a session that exits while working so a dead pty can't pin the Mac
     // awake; releases (after grace) if it was the last working agent.
     keepAwake.remove(sessionId);
@@ -7416,6 +7611,8 @@ function wireBridgeListeners() {
     // safe to inject. Cheap no-op for non-idle states or an empty queue.
     workerInjector.onState(sessionId, state);
     squadProposalNotifier.onState(sessionId, state);
+    squadExecutionService.observeCoordinatorState(sessionId, state);
+    wrapUpClose.observe(sessionId, state);
     const session = ptys.getSession(sessionId);
     if (session) captureNativeRecoverySnapshot(session);
     if (state === 'idle' && session) {
@@ -7653,16 +7850,6 @@ export async function sendQueuedMessageNow(win: BrowserWindow, threadId: unknown
 
 function registerIpc() {
   safeHandleFromWindow(IPC.uiSend, sendQueuedMessageNow, err => { throw err; });
-  // A plugin asking to use a connection: core pushes the owed approval, main draws and signs the sheet (once, at init).
-  /* v8 ignore next -- started at built-Electron boot; startPeerUsePrompts is unit-tested */
-  stopPeerUsePrompts ??= startPeerUsePrompts({
-    secret: ensureProductServerCredential,
-    serverUrl: () => productServerUrl(),
-    listApps: () => runtimeSupervisor ? runtimeSupervisor.listPluginApps() : listPluginAppsFromProductServer(),
-    showSheet: (parent, view) => showApprovalSheet(parent, view, (options) => new BrowserWindow(options)),
-    pickParent: () => BrowserWindow.getFocusedWindow() ?? mainWindow(),
-    log: (message, error) => logMainError(message, error ?? 'peer use')
-  }).stop;
   // Plugin buttons with no thread (release actions) get a sheet main draws and signs.
   /* v8 ignore next -- registered at built-Electron boot; createPluginApprovalHandler is unit-tested */
   safeHandleFromWindow(IPC.pluginApprovals.request, createPluginApprovalHandler({
@@ -7672,6 +7859,7 @@ function registerIpc() {
   }), () => ({ approved: false as const, reason: 'unavailable' as const }));
   /* v8 ignore next -- registered at built-Electron boot; registerPluginViewIpc is unit-tested */
   registerPluginViewIpc(safeHandle, pluginViews);
+  registerPluginViewCloseIpc(safeHandleFromWindow, pluginViewCloseGuard, windows);
   registerDeepLinkIpc(safeHandleFromWindow, deepLinks);
   /* v8 ignore next -- registered at built-Electron boot; registerThreadViewIpc is unit-tested */
   registerThreadViewIpc(safeHandle, threadViews);
@@ -7703,6 +7891,7 @@ function registerIpc() {
     get catchUpSummary() { return catchUpSummary; },
     get cloneAndRegisterProject() { return cloneAndRegisterProject; },
     get closeSummary() { return closeSummary; },
+    get wrapUpClose() { return wrapUpClose; },
     get conversationHistory() { return conversationHistory; },
     get createInteractiveTerminal() { return createInteractiveTerminal; },
     get createLocalExtension() { return createLocalExtension; },
@@ -7743,6 +7932,8 @@ function registerIpc() {
     get inboxActionRegistry() { return inboxActionRegistry; },
     get planCorrection() { return planCorrection; },
     get inboxSummary() { return inboxSummary; },
+    get memoCounters() { return () => microCallMemo.snapshot(); },
+    get invalidateLlmReuse() { return invalidateLlmReuse; },
     get isTeamWorkerRestore() { return isTeamWorkerRestore; },
     get keepAwake() { return keepAwake; },
     get launchAuthorizedTerminal() { return launchAuthorizedTerminal; },
@@ -7765,6 +7956,8 @@ function registerIpc() {
     get openProjectWindow() { return openProjectWindow; },
     get overseerAudit() { return overseerAudit; },
     get apiErrorResume() { return apiErrorResume; },
+    get squadWorkerRestarter() { return squadWorkerRestarter; },
+    get workerApiErrorRecovery() { return workerApiErrorRecovery; },
     get packAndInstallLocal() { return packAndInstallLocal; },
     get pendingWhatsNew() { return pendingWhatsNew; },
     set pendingWhatsNew(value) { pendingWhatsNew = value; },
@@ -7885,6 +8078,7 @@ function buildAppMenu() {
         { role: 'cut' },
         { role: 'copy' },
         { role: 'paste' },
+        { role: 'pasteAndMatchStyle', accelerator: 'CmdOrCtrl+Shift+V' },
         { role: 'selectAll' }
       ]
     },
@@ -8606,6 +8800,7 @@ async function bootstrapNormal() {
        // A lifecycle Stop is the authoritative end of an interactive turn. The
        // tracker keeps fallback behaviour for harnesses that never send one.
        agentStatus.turnFinished(sessionId);
+       wrapUpClose.onTurnFinished(sessionId);
        apiErrorResume.cancel(sessionId);
        void scheduler.onAgentFinished(sessionId).catch(error => logMainError('scheduler Stop', error));
       // A goal worker finishing its turn is the trigger to evaluate + branch
@@ -8630,7 +8825,11 @@ async function bootstrapNormal() {
         if (event?.kind === 'requested') agentStatus.inputRequested(sessionId, event.key);
         else if (event?.kind === 'resolved') agentStatus.inputResolved(sessionId, event.keys);
         else if (event?.kind === 'interrupted') agentStatus.turnFinished(sessionId);
-        else if (event?.kind === 'api-error-stop') handleApiErrorStop({ service: apiErrorResume, agentStatus, logMainError }, sessionId, event);
+        else if (event?.kind === 'api-error-stop') {
+          // A wrap-up turn that an API error ended is not finished: it stays open, with an inbox note.
+          wrapUpClose.onTurnFailed(sessionId);
+          routeApiErrorStop({ service: apiErrorResume, recovery: workerApiErrorRecovery, enabled: () => workerApiErrorRecoveryEnabled(store.getConfig()), agentStatus, logMainError }, sessionId, session, event);
+        }
         return;
       }
       if (action === 'blocked') {
@@ -8650,7 +8849,9 @@ async function bootstrapNormal() {
         agentStatus.markBlocked(sessionId);
       } else {
         apiErrorResume.cancel(sessionId);
+        workerApiErrorRecovery.onTurnStarted(sessionId, agentStatus.get(sessionId));
         agentStatus.turnStarted(sessionId);
+        wrapUpClose.onTurnStarted(sessionId);
       }
       // Diagnostic: confirms the hook reached the main process. The emit to the
       // renderer is debounced (~250ms), so the red/grey dot is the real proof
@@ -8927,7 +9128,8 @@ async function bootstrapNormal() {
     // Phase 1 messaging: agent_send audits to the message log (never the user
     // inbox) and injects into the target pty via reply() when it's idle.
     agentMessageLog,
-    injectToSession: (sessionId: string, text: string) => ptys.reply(sessionId, text),
+    // A peer's message must not type into an agent that is wrapping up: it stays queued in the mail log.
+    injectToSession: (sessionId: string, text: string) => !wrapUpClose.isWrappingUp(sessionId) && ptys.reply(sessionId, text),
     // close_session / close_session_with_summary: let an agent end its own
     // session. Gated on the opt-in `agentSelfCloseEnabled` flag, read here at
     // boot: when off we pass `undefined`, so the tools are never registered and
@@ -9070,7 +9272,8 @@ async function bootstrapNormal() {
         const authorization = launchAuthorization.get(slot.authorizationId!);
         if (authorization?.principal.id !== principalId || authorization.projectId !== projectId) continue;
         if (authorization.binding.teamId !== teamId || authorization.binding.slotId !== slot.slotId) continue;
-        if (authorization.binding.initialTaskDigest !== launchDigest(slot.initialTask)) continue;
+        if (authorization.binding.initialTaskDigest !== launchDigest(slot.initialTask)
+          || launchDigest(authorization.binding.automatedSkillIds ?? []) !== launchDigest(slot.automatedSkillIds ?? [])) continue;
         launchAuthorization.revoke(authorization.id);
       }
     },
@@ -9095,6 +9298,27 @@ async function bootstrapNormal() {
         executionId: modern.executionId, projectId, slotId: modern.slotId, role: modern.role,
         principalId: sessionId, authorizationId: modern.authorizationId, memberFence: { bindingId: sessionId, generation: modern.generation }
       } : undefined;
+    },
+    resolveAutomatedMcpCatalogue: async (binding) => {
+      const record = await executionStore.getInProject(binding.projectId, binding.executionId);
+      if (!record) throw new Error('execution catalogue provenance unavailable');
+      const existing = record.automatedMcpCatalogueProvenance?.[binding.slotId];
+      if (existing) {
+        if (existing.role !== binding.role) throw new Error('execution catalogue provenance role mismatch');
+        return existing;
+      }
+      const { trustedAutomatedMcpCatalogue } = await import('../../server/src/services/mcp/trusted-automated-catalogue-policy.js');
+      const capabilities = store.listProjects().some((project) => project.id === binding.projectId && project.remote)
+        ? ['remote_fs']
+        : [];
+      const selected = trustedAutomatedMcpCatalogue({ member: { role: binding.role, capabilities } });
+      if (!selected.tools) throw new Error('execution catalogue provenance unavailable');
+      return executionStore.recordAutomatedMcpCatalogueProvenance(record.id, binding.slotId, {
+        role: binding.role,
+        capabilities,
+        tools: [...selected.tools],
+        digest: selected.digest
+      });
     },
     validateExecutionRecoveryBinding: async (sessionId, binding) => {
       if (binding.slotId !== 'orchestrator:recovery') return true;
@@ -9195,8 +9419,8 @@ async function bootstrapNormal() {
         execOpts
       ),
     remoteFs: {
-      readFile: (projectId, path) =>
-        resolveAndReadRemote(remoteFsDeps(), projectId, path),
+      readFile: (projectId, path, byteOffset) =>
+        resolveAndReadRemote(remoteFsDeps(), projectId, path, byteOffset),
       writeFile: (projectId, path, content) =>
         resolveAndWriteRemote(remoteFsDeps(), projectId, path, content),
       listDir: (projectId, path) =>
@@ -9300,21 +9524,28 @@ async function bootstrapNormal() {
   // One process-lifetime sweep bounds abandoned history snapshots even when no
   // renderer polls again. Window close/reload releases eagerly; this is fallback.
   conversationHistoryEvictTimer = setInterval(() => conversationHistory.evict(), 60_000);
-  // Allow media (microphone) access for voice-to-text; deny all other
-  // permission requests. Installed once at init (not in createWindow).
-  // getUserMedia consults BOTH the request handler (interactive grant) and the
-  // synchronous check handler — without the latter, Chromium can silently deny
-  // the mic even after entitlements are in place.
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(permission === 'media');
-  });
-  session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === 'media');
+  // Allow the microphone (voice-to-text) and HTML fullscreen (videos); deny
+  // all other permission requests. Installed once at init (not in createWindow).
+  /* v8 ignore next -- bootstrap wiring; installAppPermissions is unit-tested */
+  installAppPermissions(session.defaultSession);
   try {
     await ensureRendererStaticHost();
   } catch (error) {
     normalBootstrapStarted = false;
     throw error;
   }
+  // Subscribe only after the supervised origin exists. A healthy stream at the
+  // legacy :8780 fallback could belong to another running app and never reconnect.
+  // A plugin asking to use a connection: core pushes the owed approval, main draws and signs the sheet (once, at init).
+  /* v8 ignore next -- started at built-Electron boot; startPeerUsePrompts is unit-tested */
+  stopPeerUsePrompts ??= startPeerUsePrompts({
+    secret: ensureProductServerCredential,
+    serverUrl: () => productServerUrl(),
+    listApps: () => runtimeSupervisor ? runtimeSupervisor.listPluginApps() : listPluginAppsFromProductServer(),
+    showSheet: (parent, view) => showApprovalSheet(parent, view, (options) => new BrowserWindow(options)),
+    pickParent: () => BrowserWindow.getFocusedWindow() ?? mainWindow(),
+    log: (message, error) => logMainError(message, error ?? 'peer use')
+  }).stop;
   // Start the Zana Mobile gateway if the user has enabled phone access. It must
   // start only after ensureRendererStaticHost() has called
   // setProductionRendererOrigin(): the gateway resolves its loopback upstream
@@ -9727,6 +9958,7 @@ app.on('before-quit', (event) => {
   // Keep services alive while the authoritative activity probe and confirmation run.
   // Update restarts set quitConfirmed after their own consent and bypass this guard.
   if (!quitGuard.allowQuit(event)) return;
+  windowShutdownStarted = true;
   runtimeRecovery.dispose();
   // Quit can bypass a usable per-window close transition. Clear native maximize
   // state here too, so macOS cannot restore a maximized window on next launch.
@@ -9736,6 +9968,8 @@ app.on('before-quit', (event) => {
   goals.stopWatching();
   goals.stopAll();
   followups.stopWatching();
+  workerApiErrorRecovery.dispose();
+  squadWorkerRestarter.dispose();
   squadExecutionService.dispose();
   squadProposalNotifier.dispose();
   executionStorage.close();

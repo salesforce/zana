@@ -22,7 +22,7 @@ describe('install-machine.sh flags', () => {
     mkdirSync(bin); mkdirSync(data);
     writeFileSync(join(data, 'auth.json'), 'saved-auth');
     const stubs = {
-      node: 'case "$1" in -e) printf 22; exit 0;; -v) echo v22.0.0; exit 0;; esac\nprintf "%s\\n" "$*" >> "$TRACE"\ncase "$*" in *--check-enrollment*) exit 7;; esac',
+      node: 'case "$1" in -e) printf 22; exit 0;; -v) echo v22.0.0; exit 0;; esac\nprintf "%s\\n" "$*" "$ZCC_PROJECT_CATALOGUE_DATA_DIR" >> "$TRACE"\ncase "$*" in *--check-enrollment*) exit 7;; esac',
       curl: 'while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done\n: > "$out"; printf 200',
       tar: 'printf x > "$4/join.mjs"',
       launchctl: 'printf "launchctl %s\\n" "$*" >> "$TRACE"',
@@ -37,11 +37,12 @@ describe('install-machine.sh flags', () => {
     try {
       const result = spawnSync('sh', [script, '--host-id', 'host-1', '--join-code', 'code', '--server', 'https://example.com', ...(replace ? ['--replace-enrollment'] : [])], {
         encoding: 'utf8', env: { ...process.env, HOME: root, PATH: `${bin}:/usr/bin:/bin`, ZCC_NODE: join(bin, 'node'), ZCC_DATA_DIR: data, TRACE: trace,
-          ZCC_INSTALL_WAIT_ATTEMPTS: '1', ZCC_INSTALL_WAIT_DELAY: '0', ZCC_INSTALL_SKIP_SERVICE: '1' }
+          ZCC_INSTALL_WAIT_ATTEMPTS: '1', ZCC_INSTALL_WAIT_DELAY: '0', ZCC_INSTALL_SKIP_SERVICE: '1', ZCC_PROJECT_CATALOGUE_DATA_DIR: replace ? join(root, 'custom-app') : '' }
       });
       expect(result.status).toBe(7);
       const calls = readFileSync(trace, 'utf8');
       expect(calls).toContain('--check-enrollment');
+      expect(calls).toContain(replace ? join(root, 'custom-app') : join(root, '.zcc'));
       expect(calls.includes('--replace-enrollment')).toBe(replace);
       expect(calls).not.toMatch(/launchctl|systemctl/);
       expect(readFileSync(join(data, 'auth.json'), 'utf8')).toBe('saved-auth');

@@ -30,7 +30,7 @@ if (args[0] === 'debug' && args[1] === 'agent') {
 }
 
 if (args[0] === 'models') {
-  process.stdout.write(existsSync('.zcc-model-list') ? readFileSync('.zcc-model-list') : 'llmgw/fixture-model\n', () => process.exit(0));
+  process.stdout.write(existsSync('.zcc-model-list') ? readFileSync('.zcc-model-list') : 'fixture-provider/fixture-model\nother-provider/fixture-model-two\n', () => process.exit(0));
 } else if (args[0] === 'acp') {
   if (existsSync('.zcc-acp-model-count')) {
     process.env.FAKE_ACP_MODEL_COUNT = readFileSync('.zcc-acp-model-count', 'utf8').trim();
@@ -43,16 +43,16 @@ if (args[0] === 'models') {
 } else {
   // A native `--agent <role>` pins the agent's OWN model. A forced catalog
   // `--model` riding alongside it overrides that pin and, on any install whose
-  // provider inventory differs from the shipped snapshot (e.g. `llmgw`-only),
+  // provider inventory differs from a previous discovery result,
   // dies with ProviderModelNotFoundError. Reproduce BOTH failure shapes so the
   // launch-boundary spec proves the role wins and carries no model:
   //   1. `--model` co-present with `--agent` — the invariant the fix protects,
   //      robust to catalog refreshes (any model id, not just the stale prefix).
-  //   2. a bare `--model aisuite/*` — the stale-snapshot id on an llmgw install.
+  //   2. a bare `--model removed-provider/*` — a model from a removed provider.
   const modelFlag = args.indexOf('--model');
   const model = modelFlag >= 0 ? args[modelFlag + 1] : undefined;
   const hasAgent = args.includes('--agent');
-  if (model && (hasAgent || model.startsWith('aisuite/'))) {
+  if (model && (hasAgent || model.startsWith('removed-provider/'))) {
     process.stderr.write(`ProviderModelNotFoundError: Model not found: ${model}.\n`);
     process.exit(64);
   }

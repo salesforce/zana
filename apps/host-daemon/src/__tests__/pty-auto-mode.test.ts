@@ -56,6 +56,8 @@ const BASE: AppConfig = {
   lastProjectId: null,
 };
 
+let priorAnthropicApiKey: string | undefined;
+
 /** Pull the JSON payload from the last `--settings <json>` pair, or null. */
 function lastSettings(): Record<string, unknown> | null {
   const argv = spawned[spawned.length - 1].args;
@@ -99,6 +101,8 @@ const savedAmbient: Record<string, string | undefined> = {};
 describe('auto mode — launch wiring', () => {
   beforeEach(() => {
     spawned.length = 0;
+    priorAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'pty-auto-mode-test-key';
     for (const k of AMBIENT_KEYS) {
       savedAmbient[k] = process.env[k];
       delete process.env[k];
@@ -106,6 +110,8 @@ describe('auto mode — launch wiring', () => {
   });
 
   afterEach(() => {
+    if (priorAnthropicApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = priorAnthropicApiKey;
     for (const k of AMBIENT_KEYS) {
       if (savedAmbient[k] === undefined) delete process.env[k];
       else process.env[k] = savedAmbient[k];
@@ -201,6 +207,13 @@ describe('auto mode — launch wiring', () => {
 describe('autonomous flag gating — non-Claude harness', () => {
   beforeEach(() => {
     spawned.length = 0;
+    priorAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'pty-auto-mode-test-key';
+  });
+
+  afterEach(() => {
+    if (priorAnthropicApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = priorAnthropicApiKey;
   });
 
   // Regression: a Team/autonomous launch used to splice Claude-only
@@ -273,5 +286,119 @@ describe('buildClaudeAutoModeSettings', () => {
     expect(buildClaudeAutoModeSettings({ ...BASE, autoModeClassifyAllShell: true })).toEqual({
       classifyAllShell: true
     });
+  });
+});
+
+/**
+ * squad-bugs: a non-autonomous durable orchestrator must never receive broad edit
+ * permission. Plan authoring is allowed only through a path-scoped `Edit(//abs)`
+ * rule (the CLI ignores `Write(path)` rules and covers Write via `Edit`).
+ */
+describe('durable orchestrator permissions — no broad edit grant (squad-bugs)', () => {
+  beforeEach(() => {
+    spawned.length = 0;
+  });
+
+  function allowedTools(): string[] {
+    const argv = spawned[spawned.length - 1].args;
+    const out: string[] = [];
+    argv.forEach((arg, i) => {
+      if (arg === '--allowedTools' || arg === '--allowed-tools') {
+        for (let j = i + 1; j < argv.length && !argv[j].startsWith('--'); j++) out.push(...argv[j].split(',').map((s) => s.trim()).filter(Boolean));
+      }
+    });
+    return out;
+  }
+
+  it('freeform non-autonomous orchestrator gets no acceptEdits and no bare Write/Edit', () => {
+    make({ ...BASE, autoModeEnabled: false }, { coordinationMode: 'freeform', persona: { id: 'p', name: 'P' } });
+    expect(permModeValue()).not.toBe('acceptEdits');
+    const allowed = allowedTools();
+    expect(allowed).not.toContain('Write');
+    expect(allowed).not.toContain('Edit');
+    expect(allowed).not.toContain('MultiEdit');
+  });
+
+  it('grants only an exact-file Edit rule for the authored plan path, never Write(path) or acceptEdits', () => {
+    const planPath = '/tmp/proj1/.zana/execution-plan-exec-1.md';
+    make({ ...BASE, autoModeEnabled: false }, {
+      coordinationMode: 'freeform',
+      persona: { id: 'p', name: 'P' },
+      authoredPlanPaths: [planPath]
+    } as Partial<Parameters<PtyManager['create']>[0]>);
+    const allowed = allowedTools();
+    expect(allowed).toContain(`Edit(/${planPath})`);
+    expect(allowed.some((rule) => rule.startsWith('Write('))).toBe(false);
+    expect(allowed).not.toContain('Edit');
+    expect(permModeValue()).not.toBe('acceptEdits');
+  });
+
+  it('grants one exact-file Edit rule per plan-handoff path (authored + correction files)', () => {
+    const paths = [
+      '/tmp/proj1/.zana/execution-plan-exec-1.md',
+      '/tmp/proj1/.zana/execution-plan-corrected-exec-1.md',
+      '/tmp/proj1/.zana/execution-plan-correction-exec-1.md'
+    ];
+    make({ ...BASE, autoModeEnabled: false }, {
+      coordinationMode: 'freeform',
+      persona: { id: 'p', name: 'P' },
+      authoredPlanPaths: paths
+    } as Partial<Parameters<PtyManager['create']>[0]>);
+    const allowed = allowedTools();
+    for (const path of paths) expect(allowed).toContain(`Edit(/${path})`);
+    expect(allowed.filter((rule) => rule.startsWith('Edit('))).toHaveLength(3);
+    expect(allowed).not.toContain('Edit');
+    expect(permModeValue()).not.toBe('acceptEdits');
+  });
+});
+
+describe('authored plan grant guards (squad-bugs)', () => {
+  beforeEach(() => {
+    spawned.length = 0;
+  });
+  const allowedJoined = () => {
+    const argv = spawned[spawned.length - 1].args;
+    const i = argv.indexOf('--allowedTools');
+    return i >= 0 ? argv[i + 1] : '';
+  };
+
+  it('ignores the path outside a durable coordination launch', () => {
+    make({ ...BASE }, { authoredPlanPaths: ['/tmp/proj1/.zana/execution-plan-x.md'] } as Partial<Parameters<PtyManager['create']>[0]>);
+    expect(allowedJoined()).not.toContain('Edit(');
+  });
+
+  it.each([
+    'relative/.zana/plan.md', '/tmp/a(b)/plan.md', '/tmp/a,b/plan.md',
+    '/tmp/project/*.md', '/tmp/project/plan?.md', '/tmp/project/[draft].md',
+    '/tmp/project/../outside.md', '/tmp/project/sub/../../outside.md'
+  ])('refuses an unsafe or relative path %s', (path) => {
+    make({ ...BASE }, { coordinationMode: 'freeform', persona: { id: 'p', name: 'P' }, authoredPlanPaths: [path] } as Partial<Parameters<PtyManager['create']>[0]>);
+    expect(allowedJoined()).not.toContain('Edit(');
+  });
+
+  it('drops only the unsafe entry and keeps the safe exact-file rules', () => {
+    make({ ...BASE }, {
+      coordinationMode: 'freeform', persona: { id: 'p', name: 'P' },
+      authoredPlanPaths: ['/tmp/proj1/.zana/execution-plan-x.md', 'relative/plan.md', '/tmp/a(b)/plan.md']
+    } as Partial<Parameters<PtyManager['create']>[0]>);
+    expect(allowedJoined()).toContain('Edit(//tmp/proj1/.zana/execution-plan-x.md)');
+    expect(allowedJoined()).not.toContain('relative/plan.md');
+    expect(allowedJoined()).not.toContain('a(b)');
+  });
+
+  it('drops wildcard and traversal entries while keeping a safe sibling exact-file rule', () => {
+    make({ ...BASE }, {
+      coordinationMode: 'freeform', persona: { id: 'p', name: 'P' },
+      authoredPlanPaths: [
+        '/tmp/proj1/.zana/execution-plan-x.md', '/tmp/proj1/.zana/*.md',
+        '/tmp/proj1/.zana/plan?.md', '/tmp/proj1/.zana/[draft].md',
+        '/tmp/proj1/.zana/../outside.md'
+      ]
+    } as Partial<Parameters<PtyManager['create']>[0]>);
+    expect(allowedJoined()).toContain('Edit(//tmp/proj1/.zana/execution-plan-x.md)');
+    expect(allowedJoined()).not.toContain('*');
+    expect(allowedJoined()).not.toContain('?');
+    expect(allowedJoined()).not.toContain('[draft]');
+    expect(allowedJoined()).not.toContain('outside.md');
   });
 });

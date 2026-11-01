@@ -83,3 +83,14 @@ describe('handleApiErrorStop', () => {
     expect(deps.logMainError).toHaveBeenCalledWith('api-error-resume', expect.any(Error));
   });
 });
+
+describe('handleApiErrorStop without a resume service', () => {
+  it('still ends the turn and calls nothing else', () => {
+    const agentStatus = { turnFinished: vi.fn(), clearToolsInFlight: vi.fn() };
+    const logMainError = vi.fn();
+    handleApiErrorStop({ agentStatus, logMainError }, 's1', { error: 'x', text: 'y' });
+    expect(agentStatus.turnFinished).toHaveBeenCalledWith('s1');
+    expect(agentStatus.clearToolsInFlight).toHaveBeenCalledWith('s1');
+    expect(logMainError).not.toHaveBeenCalled();
+  });
+});

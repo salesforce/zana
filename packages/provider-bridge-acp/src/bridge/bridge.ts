@@ -182,6 +182,7 @@ interface AcpThreadSession {
   connection: AcpAgentConnection;
   supportsImageInput: boolean;
   supportsLoadSession: boolean;
+  supportsAdditionalDirectories: boolean;
   policy: AcpSessionPolicy;
   pendingInstructions: string | undefined;
   activePromptKind: "turn" | "compaction" | null;
@@ -1719,6 +1720,14 @@ type AcpSessionStartRequest =
       sourceProviderThreadId: string;
     };
 
+function additionalSessionDirectories(
+  params: AcpSessionParams,
+  supported: boolean,
+): { additionalDirectories?: string[] } {
+  const directories = [...new Set(params.workspaceWriteRoots.filter(root => root !== params.cwd))];
+  return supported && directories.length > 0 ? { additionalDirectories: directories } : {};
+}
+
 async function startAgentSession(
   request: AcpSessionStartRequest,
 ): Promise<AcpThreadSession> {
@@ -1771,7 +1780,7 @@ async function startAgentSession(
   const childEnv = {
     ...withoutBridgeRuntimeEnv(process.env),
     ...params.envVars,
-    ...dialect.launchEnv,
+    ...dialect.launchEnv?.(params.permissionMode),
   };
   const connection = createAcpAgentConnection({
     command: params.agent.command,
@@ -1812,6 +1821,7 @@ async function startAgentSession(
     connection,
     supportsImageInput: false,
     supportsLoadSession: false,
+    supportsAdditionalDirectories: false,
     policy: {
       permissionMode: params.permissionMode,
       workspaceWriteRoots: params.workspaceWriteRoots,
@@ -1863,6 +1873,8 @@ async function startAgentSession(
       );
     }
     session.supportsLoadSession = supportsLoadSession;
+    session.supportsAdditionalDirectories = initializeResult.agentCapabilities?.sessionCapabilities?.additionalDirectories != null;
+    const extraDirectories = additionalSessionDirectories(params, session.supportsAdditionalDirectories);
     const mcpServers = await buildSessionMcpServers(params);
     const mcpServer = mcpServers[0];
     if (mcpServer) {
@@ -1889,6 +1901,7 @@ async function startAgentSession(
           sessionId: request.sourceProviderThreadId,
           cwd: params.cwd,
           mcpServers,
+          ...extraDirectories,
         },
         resultSchema: acpSessionForkResultSchema,
       });
@@ -1914,6 +1927,7 @@ async function startAgentSession(
             sessionId: request.resumeProviderThreadId,
             cwd: params.cwd,
             mcpServers,
+            ...extraDirectories,
           },
           resultSchema: z.union([acpConfigStateResultSchema, z.null()]),
         });
@@ -1934,7 +1948,7 @@ async function startAgentSession(
       session.pendingLoadUsageUpdate = undefined;
       const newSession = await connection.request({
         method: "session/new",
-        params: { cwd: params.cwd, mcpServers },
+        params: { cwd: params.cwd, mcpServers, ...extraDirectories },
         resultSchema: acpSessionNewResultSchema,
       });
       sessionId = newSession.sessionId;
@@ -2281,6 +2295,10 @@ function reconcileExecutionSettings(
       ),
     ) ||
     !isDeepStrictEqual(
+      session.dialect.launchEnv?.(session.construction.permissionMode),
+      session.dialect.launchEnv?.(construction.permissionMode),
+    ) ||
+    !isDeepStrictEqual(
       launchModelSelection(session.construction),
       launchModelSelection(construction),
     );
@@ -2288,6 +2306,10 @@ function reconcileExecutionSettings(
     session.connection.exited ||
     session.restartAfterCancelError ||
     launchArgsChanged ||
+    !isDeepStrictEqual(
+      additionalSessionDirectories(session.construction, session.supportsAdditionalDirectories),
+      additionalSessionDirectories(construction, session.supportsAdditionalDirectories),
+    ) ||
     !isDeepStrictEqual(envVars ?? {}, session.construction.envVars ?? {});
   cancelPendingPermissions(session);
   session.policy = {
@@ -2651,11 +2673,13 @@ async function handleModelList(
 
 function decodeLaunchSpec(
   providerOptions: Record<string, unknown> | undefined,
+  cwd?: string,
 ): AcpLaunchSpec | null {
   const launchSpec = acpLaunchSpecSchema.safeParse(
     providerOptions?.["acpLaunchSpec"],
   );
-  return launchSpec.success ? launchSpec.data : null;
+  if (!launchSpec.success) return null;
+  return launchSpec.data.cwd === undefined && cwd ? { ...launchSpec.data, cwd } : launchSpec.data;
 }
 
 const acpProviderOptionsSchema = z
@@ -2746,7 +2770,7 @@ async function handleRequest(
       await handleModelList(
         request.id,
         buildAcpModelListParams(
-          decodeLaunchSpec(request.params.providerOptions),
+          decodeLaunchSpec(request.params.providerOptions, request.params.cwd),
           modelPicker,
         ),
         decodeDialectId(request.params.providerOptions),
@@ -2764,6 +2788,8 @@ async function handleRequest(
             launchSpec,
           ),
           command: launchSpec?.command ?? null,
+          ...(launchSpec?.cwd ?? request.params.cwd ? { cwd: launchSpec?.cwd ?? request.params.cwd } : {}),
+          ...(launchSpec?.env === undefined ? {} : { env: launchSpec.env }),
         }),
       );
       return;
@@ -3028,11 +3054,21 @@ if (process.argv.includes("--mcp-stdio")) {
   runAcpDynamicToolMcpServer();
 }
 
+let bridgeStopping = false;
+function shutdownBridge(): void {
+  if (bridgeStopping) return;
+  bridgeStopping = true;
+  const deadline = setTimeout(() => process.exit(0), 4000);
+  deadline.unref();
+  void stopAllSessions().catch(() => undefined).finally(() => {
+    clearTimeout(deadline);
+    process.exit(0);
+  });
+}
+
 export const experimental_providerBridge = experimental_defineProviderBridge({
   handleLine,
-  onClose: () => {
-    void stopAllSessions().finally(() => {
-      process.exit(0);
-    });
-  },
+  onClose: shutdownBridge,
+  onSigterm: shutdownBridge,
+  onSigint: shutdownBridge,
 });

@@ -36,10 +36,12 @@ import {
   PROVIDER_BRIDGE_PROTOCOL_VERSION,
   THREAD_DELTA_GRAMMAR_V3,
   THREAD_DELTA_NOTIFICATION_METHOD,
+  type BridgeExecutionOptions,
   type InitializeResult,
   type ThreadDelta,
   experimental_defineProviderBridge,
 } from "@zana-ai/zcc-plugin-sdk/provider-bridge";
+import { isDeepStrictEqual } from "node:util";
 import { execFile } from "node:child_process";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { promises as fs, readFileSync } from "node:fs";
@@ -178,6 +180,8 @@ interface PendingAcpPermission {
 }
 
 interface AcpThreadSession {
+  construction: AcpSessionParams;
+  dialect: ReturnType<typeof resolveAcpDialect>;
   bbThreadId: string;
   providerThreadId: string;
   /** Every session-scoped notification is translated through this. */
@@ -186,6 +190,7 @@ interface AcpThreadSession {
   agentLabel: string;
   supportsImageInput: boolean;
   supportsLoadSession: boolean;
+  supportsAdditionalDirectories: boolean;
   policy: AcpSessionPolicy;
   cwd: string;
   pendingInstructions: string | undefined;
@@ -197,6 +202,7 @@ interface AcpThreadSession {
   /** Steers waiting for the cancelled prompt to settle; accepted once re-prompted. */
   queuedInputs: Array<{
     input: PromptInput[];
+    options: BridgeExecutionOptions;
     clientRequestId: Extract<ThreadDelta, { kind: "input.accepted" }>["clientRequestId"];
   }>;
   /** True while a session/prompt request is outstanding. */
@@ -325,6 +331,7 @@ let canonicalSessionSerial = 0;
  */
 let configuredSkillRoots: AcpSkillRoot[] | null = null;
 const ACP_CANONICAL_PROVIDER_ID = "acp";
+const OPENCODE_PROVIDER_ID = "acp-opencode";
 
 function createSessionTranslator(
   cwd: string,
@@ -960,6 +967,11 @@ function resolveAcpAuthMethodId(
   if (methodIds.has("cached_token")) {
     return "cached_token";
   }
+  // Cursor still requires an ACP authenticate call after `cursor-agent login`;
+  // this method loads that existing CLI login before session/new.
+  if (methodIds.has("cursor_login")) {
+    return "cursor_login";
+  }
   return undefined;
 }
 
@@ -975,11 +987,18 @@ async function authenticateAcpAgent(args: {
   if (methodId === undefined) {
     return;
   }
-  await args.connection.request({
-    method: "authenticate",
-    params: { methodId, _meta: { headless: true } },
-    resultSchema: z.unknown(),
-  });
+  try {
+    await args.connection.request({
+      method: "authenticate",
+      params: { methodId, _meta: { headless: true } },
+      resultSchema: z.unknown(),
+    });
+  } catch (error) {
+    if (methodId === "cursor_login" && error instanceof Error && error.message.includes("Failed to open browser for login")) {
+      throw new AcpModelListAuthRequiredError();
+    }
+    throw error;
+  }
 }
 
 /**
@@ -1078,6 +1097,9 @@ async function loadSessionDiscoveredModels(
   const childEnv = {
     ...withoutBridgeRuntimeEnv(process.env),
     ...(agent.envVars ?? {}),
+    // Cursor ignores authenticate's _meta.headless but honors this setting.
+    // Model refreshes must never open a browser when saved credentials expire.
+    NO_OPEN_BROWSER: "1",
   };
   const connection = createAcpAgentConnection({
     command: agent.command,
@@ -1195,6 +1217,7 @@ async function loadSessionDiscoveredModels(
       ...(acpMode ? { acpMode } : {}),
     };
   } catch (error) {
+    if (error instanceof AcpModelListAuthRequiredError) throw error;
     process.stderr.write(
       `acp bridge: ACP-native model discovery for "${agent.command}" failed: ${
         error instanceof Error ? error.message : String(error)
@@ -2175,6 +2198,14 @@ type AcpSessionStartRequest =
       sourceProviderThreadId: string;
     };
 
+function additionalSessionDirectories(
+  params: AcpSessionParams,
+  supported: boolean,
+): { additionalDirectories?: string[] } {
+  const directories = [...new Set(params.workspaceWriteRoots.filter(root => root !== params.cwd))];
+  return supported && directories.length > 0 ? { additionalDirectories: directories } : {};
+}
+
 async function startAgentSession(
   request: AcpSessionStartRequest,
 ): Promise<AcpThreadSession> {
@@ -2216,9 +2247,16 @@ async function startAgentSession(
   // The connection handlers close over `session`; they only fire after the
   // child process emits events, by which point the session is constructed.
   let session: AcpThreadSession;
+  const dialect = resolveAcpDialect({
+    command: params.agent.command,
+    dialectId: params.dialectId,
+  });
   const childEnv = {
     ...withoutBridgeRuntimeEnv(process.env),
     ...params.envVars,
+    ...dialect.launchEnv?.(params.permissionMode),
+    // Sign-in is an explicit user action, never a provider subprocess side effect.
+    NO_OPEN_BROWSER: "1",
   };
   const connection = createAcpAgentConnection({
     command: params.agent.command,
@@ -2248,6 +2286,8 @@ async function startAgentSession(
     },
   });
   session = {
+    construction: params,
+    dialect,
     bbThreadId,
     providerThreadId: "",
     translator,
@@ -2255,6 +2295,7 @@ async function startAgentSession(
     agentLabel,
     supportsImageInput: false,
     supportsLoadSession: false,
+    supportsAdditionalDirectories: false,
     policy: {
       permissionMode: params.permissionMode,
       permissionEscalation: params.permissionEscalation,
@@ -2312,6 +2353,8 @@ async function startAgentSession(
       );
     }
     session.supportsLoadSession = supportsLoadSession;
+    session.supportsAdditionalDirectories = initializeResult.agentCapabilities?.sessionCapabilities?.additionalDirectories != null;
+    const extraDirectories = additionalSessionDirectories(params, session.supportsAdditionalDirectories);
     const mcpServers = await buildSessionMcpServers(
       params,
       initializeResult.agentCapabilities?.mcpCapabilities?.http === true,
@@ -2340,6 +2383,7 @@ async function startAgentSession(
           sessionId: request.sourceProviderThreadId,
           cwd: params.cwd,
           mcpServers,
+          ...extraDirectories,
         },
         resultSchema: acpSessionForkResultSchema,
       });
@@ -2368,6 +2412,7 @@ async function startAgentSession(
             sessionId: request.resumeProviderThreadId,
             cwd: params.cwd,
             mcpServers,
+            ...extraDirectories,
           },
           resultSchema: z.union([acpConfigStateResultSchema, z.null()]),
         });
@@ -2388,7 +2433,7 @@ async function startAgentSession(
       session.pendingLoadUsageUpdate = undefined;
       const newSession = await connection.request({
         method: "session/new",
-        params: { cwd: params.cwd, mcpServers },
+        params: { cwd: params.cwd, mcpServers, ...extraDirectories },
         resultSchema: acpSessionNewResultSchema,
       });
       sessionId = newSession.sessionId;
@@ -2541,7 +2586,11 @@ function finishTurn(
   });
 }
 
-function runTurn(session: AcpThreadSession, firstInput: PromptInput[]): void {
+function runTurn(
+  session: AcpThreadSession,
+  firstInput: PromptInput[],
+  firstOptions: BridgeExecutionOptions,
+): void {
   session.activePromptKind = "turn";
   emitForSession(session, ACP_TURN_STARTED_METHOD, {
     threadId: session.bbThreadId,
@@ -2549,6 +2598,7 @@ function runTurn(session: AcpThreadSession, firstInput: PromptInput[]): void {
 
   session.turnSettled = (async () => {
     let input = firstInput;
+    let options = firstOptions;
     for (;;) {
       if (session.stopping) {
         finishTurn(session, "cancelled");
@@ -2558,6 +2608,16 @@ function runTurn(session: AcpThreadSession, firstInput: PromptInput[]): void {
       let stopReason: z.infer<typeof acpStopReasonSchema>;
       session.cancelRequested = false;
       try {
+        const previousSession = session;
+        session = await reconcileSessionPolicy(session, options);
+        if (session.stopping) return;
+        session.activePromptKind = "turn";
+        session.turnSettled = previousSession.turnSettled;
+        if (session !== previousSession) {
+          emitForSession(session, ACP_TURN_STARTED_METHOD, {
+            threadId: session.bbThreadId,
+          });
+        }
         session.promptRequestPending = true;
         const promptResult = session.connection.request({
           method: "session/prompt",
@@ -2600,6 +2660,7 @@ function runTurn(session: AcpThreadSession, firstInput: PromptInput[]): void {
             { kind: "input.accepted", clientRequestId: next.clientRequestId },
           ]);
           input = next.input;
+          options = next.options;
           continue;
         }
       }
@@ -2608,6 +2669,90 @@ function runTurn(session: AcpThreadSession, firstInput: PromptInput[]): void {
       return;
     }
   })();
+}
+
+async function reconcileSessionPolicy(
+  session: AcpThreadSession,
+  options: BridgeExecutionOptions,
+): Promise<AcpThreadSession> {
+  if (options.permissionMode === "auto")
+    throw new Error('ACP does not support permission mode "auto".');
+  const construction: AcpSessionParams = {
+    ...session.construction,
+    permissionMode: options.permissionMode,
+    permissionEscalation: options.permissionEscalation,
+    workspaceWriteRoots:
+      options.providerOptions?.additionalWorkspaceWriteRoots !== undefined
+        ? [
+            session.cwd,
+            ...decodeAdditionalWorkspaceWriteRoots(options.providerOptions),
+          ]
+        : session.policy.workspaceWriteRoots,
+  };
+  const restart =
+    !isDeepStrictEqual(
+      session.dialect.launchEnv?.(session.construction.permissionMode),
+      session.dialect.launchEnv?.(construction.permissionMode),
+    ) ||
+    !isDeepStrictEqual(
+      permissionCliArgsForMode(
+        session.construction.permissionCli,
+        session.construction.permissionMode,
+      ),
+      permissionCliArgsForMode(
+        construction.permissionCli,
+        construction.permissionMode,
+      ),
+    );
+  const rootsChanged = !isDeepStrictEqual(
+    additionalSessionDirectories(
+      session.construction,
+      session.supportsAdditionalDirectories,
+    ),
+    additionalSessionDirectories(
+      construction,
+      session.supportsAdditionalDirectories,
+    ),
+  );
+  cancelPendingPermissions(session);
+  if (!restart && !rootsChanged) {
+    session.policy.workspaceWriteRoots = construction.workspaceWriteRoots;
+    session.policy.permissionMode = construction.permissionMode;
+    session.policy.permissionEscalation = construction.permissionEscalation;
+    session.construction = construction;
+    return session;
+  }
+  const previousProviderThreadId = session.providerThreadId;
+  const queuedInputs = session.queuedInputs.splice(0);
+  // The previous prompt has settled. Releasing this process must not cancel a
+  // continuation or wait on its own turnSettled promise.
+  session.activePromptKind = null;
+  const profile = decodeLaunchProfile(options.providerOptions);
+  if (profile !== null)
+    Object.assign(
+      construction,
+      buildAcpModelSelectionParam(
+        profile,
+        options,
+        decodeAcpModelPickerOptions(options.providerOptions)
+          .parameterizedModelPicker,
+        decodeDialectId(options.providerOptions),
+      ),
+    );
+  const replacement = await startAgentSession({
+    kind: "resume",
+    params: construction,
+    resumeProviderThreadId: previousProviderThreadId,
+  });
+  replacement.queuedInputs.push(...queuedInputs);
+  sendNotification(BRIDGE_NOTIFICATION_METHODS.sessionReplaced, {
+    threadId: session.bbThreadId,
+    providerThreadId: replacement.providerThreadId,
+    reason:
+      "Execution settings changed; the ACP session was rebuilt to apply them.",
+    contextLost: replacement.providerThreadId !== previousProviderThreadId,
+  });
+  return replacement;
 }
 
 // ---------------------------------------------------------------------------
@@ -2865,7 +3010,7 @@ function decodeLaunchProfile(
     return null;
   }
   const profile = acpProfileFromLaunchSpec(launchSpec.data, ACP_CANONICAL_PROVIDER_ID);
-  return cwd ? { ...profile, cwd } : profile;
+  return profile.cwd === undefined && cwd ? { ...profile, cwd } : profile;
 }
 
 const acpProviderOptionsSchema = z
@@ -2951,10 +3096,16 @@ async function handleAcpProviderMaintenance(
     }
   >,
 ): Promise<unknown> {
+  const profile = decodeLaunchProfile(request.params.providerOptions, request.params.cwd);
+  const launch = {
+    command: profile?.agentCommand.command ?? null,
+    ...(profile?.cwd === undefined ? {} : { cwd: profile.cwd }),
+    ...(profile?.env === undefined ? {} : { env: profile.env }),
+  };
   if (isCursorMaintenanceTarget(request.params)) {
     switch (request.method) {
       case "provider/health":
-        return getCursorProviderHealth();
+        return getCursorProviderHealth({}, launch);
       case "provider/usage":
         return getCursorProviderUsage();
       case "provider/installation/status":
@@ -2964,9 +3115,7 @@ async function handleAcpProviderMaintenance(
     }
   }
   if (request.method === "provider/health") {
-    return getGenericAcpProviderHealth(
-      decodeLaunchProfile(request.params.providerOptions)?.agentCommand.command ?? null,
-    );
+    return getGenericAcpProviderHealth(launch);
   }
   return { supported: false };
 }
@@ -3033,6 +3182,16 @@ async function handleRequest(
     case "thread/start":
     case "thread/resume":
     case "thread/fork": {
+      if (request.params.sessionKind === "automated") {
+        // Generic ACP launch specifications cannot prove isolated plugin and MCP
+        // configuration. Reject before discovery or process spawn.
+        sendError(
+          request.id,
+          BRIDGE_JSON_RPC_ERRORS.INVALID_PARAMS,
+          "Automated ACP sessions are unsupported because isolated configuration cannot be verified",
+        );
+        return;
+      }
       if (
         request.method === "thread/fork" &&
         request.params.sourceProviderCheckpointId !== undefined
@@ -3103,7 +3262,7 @@ async function handleRequest(
       // replaces the provider session id, but the zcc thread stays the stable
       // handle.
       const params = request.params;
-      const session = sessionsByBbThreadId.get(params.threadId);
+      let session = sessionsByBbThreadId.get(params.threadId);
       if (!session || session.stopping) {
         sendError(request.id, -32000, "No active ACP session");
         return;
@@ -3112,6 +3271,7 @@ async function handleRequest(
         sendError(request.id, -32000, "A turn is already active");
         return;
       }
+      session = await reconcileSessionPolicy(session, params.options);
       // Apply a model, effort, or service tier the host changed since the last
       // turn before the input is accepted: a model the agent refuses fails the
       // turn without leaving an accepted-input correlation behind.
@@ -3152,7 +3312,7 @@ async function handleRequest(
       if (isStandaloneBuiltinCompactCommand(params.input)) {
         startCompaction(session);
       } else {
-        runTurn(session, params.input);
+        runTurn(session, params.input, params.options);
       }
       sendResult(request.id, { threadId: params.threadId });
       return;
@@ -3177,6 +3337,7 @@ async function handleRequest(
       // acceptance is emitted when the re-prompt is sent, not before.
       session.queuedInputs.push({
         input: params.input,
+        options: params.options,
         clientRequestId: params.clientRequestId,
       });
       requestSteerCancel(session);
@@ -3286,13 +3447,23 @@ if (process.argv.includes("--mcp-stdio")) {
   runAcpDynamicToolMcpServer();
 }
 
+let bridgeStopping = false;
+function shutdownBridge(): void {
+  if (bridgeStopping) return;
+  bridgeStopping = true;
+  // Exit through Node's lifecycle so owned in-flight CLI probes are reaped.
+  // Keep a wedged MCP connection below the host's five-second kill deadline.
+  const deadline = setTimeout(() => process.exit(0), 4000);
+  deadline.unref();
+  void stopAllSessions().catch(() => undefined).finally(() => {
+    clearTimeout(deadline);
+    process.exit(0);
+  });
+}
+
 export const experimental_providerBridge = experimental_defineProviderBridge({
   handleLine,
-  onClose: () => {
-    // Stdin close is a process shutdown boundary; cancel and reap the agent
-    // subprocesses before the bridge exits so none outlive the daemon.
-    void stopAllSessions().finally(() => {
-      process.exit(0);
-    });
-  },
+  onClose: shutdownBridge,
+  onSigterm: shutdownBridge,
+  onSigint: shutdownBridge,
 });

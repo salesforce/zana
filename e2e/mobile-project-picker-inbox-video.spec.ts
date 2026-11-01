@@ -41,13 +41,14 @@ test('mobile project selection scrolls and fits the keyboard; inbox videos play 
     expect((await context.request.post(`${serverUrl}/_mobile/session`, { headers: { authorization: `Bearer ${credential.credential}` } })).ok()).toBe(true);
     const page = await context.newPage();
     await page.goto(`${serverUrl}/threads/new`);
-    const trigger = page.getByRole('button', { name: 'Project', exact: true });
+    const trigger = page.getByRole('button', { name: 'Machine and project', exact: true });
     for (const width of [320, 390, 820]) {
       await page.setViewportSize({ width, height: 844 });
       await trigger.tap();
       const dialog = page.getByRole('dialog', { name: 'Choose project', exact: true });
       await expect(dialog).toBeVisible();
       await expect(dialog.getByRole('button', { name: 'Close project picker' })).toBeFocused();
+      await expect(dialog.getByRole('button', { name: /› Default Project General tasks on/ })).toBeVisible();
       const list = dialog.locator('.mobile-project-picker-list');
       const box = (await list.boundingBox())!;
       const cdp = await context.newCDPSession(page);
@@ -63,10 +64,10 @@ test('mobile project selection scrolls and fits the keyboard; inbox videos play 
       await expect.poll(() => list.evaluate(node => node.scrollTop)).toBeGreaterThan(20);
       await expect(dialog).toBeVisible();
       await page.setViewportSize({ width, height: 360 });
-      const search = dialog.getByRole('searchbox', { name: 'Search projects' });
+      const search = dialog.getByRole('searchbox', { name: 'Search machines or projects…' });
       await search.fill('Project 34');
-      const project = dialog.getByRole('button', { name: 'Project 34 with a longer name', exact: true });
-      for (const control of [dialog, search, project, dialog.getByRole('button', { name: 'New project', exact: true }), dialog.getByRole('button', { name: "Don't work in a project", exact: true })]) {
+      const project = dialog.getByRole('button', { name: /› Project 34 with a longer name/ });
+      for (const control of [dialog, search, project, dialog.getByRole('button', { name: /^Add project on / })]) {
         const bounds = (await control.boundingBox())!;
         expect(bounds.x).toBeGreaterThanOrEqual(0);
         expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
@@ -110,8 +111,9 @@ test('mobile project selection scrolls and fits the keyboard; inbox videos play 
     await page.goto(`${serverUrl}/threads/new`);
     await page.setViewportSize({ width: 1280, height: 900 });
     await trigger.click();
-    await expect(page.getByRole('listbox', { name: 'Project', exact: true })).toBeVisible();
-    await expect(page.getByRole('dialog', { name: 'Choose project' })).toHaveCount(0);
+    await expect(page.getByRole('listbox', { name: 'Machine and project', exact: true })).toBeVisible();
+    await expect(page.locator('.mobile-project-picker')).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: 'Choose project' })).toHaveClass('desktop-project-picker');
   } finally {
     await browser.close();
     await gateway.close();

@@ -1,4 +1,4 @@
-import type { ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
+import { isUserOwnedSquadWorktree, type ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
 import { SQUAD_PROPOSAL_LIMITS } from '@zana-ai/zcc-domain/squad-proposal';
 import type { SquadWorktreeTerminalOutcome } from '../squad-worktree-lifecycle.js';
 
@@ -54,7 +54,10 @@ function branchText(record: ExecutionRecord, worktree: SquadWorktreeOutcome | un
     return `Branch ${branch} merged into ${trimTo(oneLine(recorded.baseBranch), BRANCH_CHARS) || 'the base branch'}`;
   }
   if (worktree === 'missing') return `Branch ${branch}; its worktree was already removed`;
-  return `Branch ${branch}, worktree kept at ${trimTo(oneLine(recorded.path), PATH_CHARS)}`;
+  const where = trimTo(oneLine(recorded.path), PATH_CHARS);
+  // A user-owned target is the user's own checkout: Squad never created or kept it.
+  if (isUserOwnedSquadWorktree(recorded)) return `Ran in your worktree ${branch} at ${where}`;
+  return `Branch ${branch}, worktree kept at ${where}`;
 }
 
 /** Last resort: keep the closing sentence whole and cut the text before it. */

@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { atomicDurableWrite, createSerializedTransactionQueue } from '../durable-store.js';
 import { parseMarketplaceIndex, marketplaceInstallSpec, type MarketplaceIndex, type MarketplaceEntry } from './marketplace.js';
 import { defaultFetchJson } from './plugin-process.js';
+import { pluginPackIndexSchema, type PluginPackIndex } from '@zana-ai/zcc-domain';
 import {
   marketplaceSourceDisplay,
   marketplaceSourceKey,
@@ -25,6 +26,9 @@ export interface MarketplaceCatalogRow {
   lastError: string | null;
   official: boolean;
   cachedIndex: MarketplaceIndex | null;
+  /** Optional packs.json cache, separate from the backwards-compatible index. */
+  cachedPacks?: PluginPackIndex | null;
+  packsError?: string | null;
   /** @deprecated Use `source`. Kept so v1 HTTPS rows still round-trip. */
   url?: string;
 }
@@ -38,10 +42,22 @@ interface MarketplaceStoreDocument {
 
 export interface MarketplaceStore {
   list(): MarketplaceCatalogRow[];
-  add(source: string, index: MarketplaceIndex, opts?: { official?: boolean }): Promise<MarketplaceCatalogRow>;
-  refresh(source: string, index: MarketplaceIndex): Promise<MarketplaceCatalogRow>;
+  add(source: string, index: MarketplaceIndex, opts?: { official?: boolean } & MarketplacePackCache): Promise<MarketplaceCatalogRow>;
+  refresh(source: string, index: MarketplaceIndex, packs?: MarketplacePackCache): Promise<MarketplaceCatalogRow>;
   recordRefreshError(source: string, error: string): Promise<MarketplaceCatalogRow | null>;
   remove(source: string): Promise<boolean>;
+}
+
+export interface MarketplacePackCache {
+  packs?: PluginPackIndex | null;
+  packsError?: string | null;
+}
+
+function packCacheFields(cache: MarketplacePackCache | undefined, existing?: MarketplaceCatalogRow) {
+  return {
+    ...(cache?.packs !== undefined ? { cachedPacks: cache.packs } : existing?.cachedPacks !== undefined ? { cachedPacks: existing.cachedPacks } : {}),
+    ...(cache?.packsError !== undefined ? { packsError: cache.packsError } : existing?.packsError !== undefined ? { packsError: existing.packsError } : {})
+  };
 }
 
 export function marketplaceStorePath(dataDir: string): string {
@@ -97,6 +113,7 @@ function migrateCatalog(raw: Record<string, unknown>): MarketplaceCatalogRow | n
   } catch {
     // A bad cache must not prevent its source row from being migrated.
   }
+  const packs = raw.cachedPacks === undefined ? undefined : pluginPackIndexSchema.safeParse(raw.cachedPacks);
   const canonicalSource = storedSource(parsedSource);
   return {
     source: canonicalSource,
@@ -112,6 +129,8 @@ function migrateCatalog(raw: Record<string, unknown>): MarketplaceCatalogRow | n
     lastError: typeof raw.lastError === 'string' ? raw.lastError : null,
     official: raw.official === true,
     cachedIndex,
+    ...(packs ? { cachedPacks: packs.success ? packs.data : null } : {}),
+    ...(raw.packsError !== undefined ? { packsError: typeof raw.packsError === 'string' ? raw.packsError : null } : {}),
     url: parsedSource.kind === 'https' ? canonicalSource : undefined
   };
 }
@@ -247,18 +266,20 @@ export function createMarketplaceStore(opts: { file: string }): MarketplaceStore
         const parsed = parseMarketplaceSource(source);
         const display = storedSource(parsed);
         const now = Date.now();
+        const existing = findCatalog(document.catalogs, source);
         const row: MarketplaceCatalogRow = {
           source: display,
           sourceKind: parsed.kind,
           name: index.name,
           displayName: index.displayName,
-          addedAt: now,
+          addedAt: existing?.addedAt ?? now,
           entryCount: index.plugins.length,
           lastRefreshAt: now,
           lastAttemptAt: now,
           lastError: null,
           official: extra?.official === true,
           cachedIndex: index,
+          ...packCacheFields(extra, existing),
           url: parsed.kind === 'https' ? display : undefined
         };
         const next = { ...document, catalogs: upsert(document, row), migrationNeeded: false };
@@ -267,7 +288,7 @@ export function createMarketplaceStore(opts: { file: string }): MarketplaceStore
         return row;
       });
     },
-    refresh(source, index) {
+    refresh(source, index, packs) {
       return queue.run(async () => {
         const existing = findCatalog(document.catalogs, source);
         const now = Date.now();
@@ -284,6 +305,7 @@ export function createMarketplaceStore(opts: { file: string }): MarketplaceStore
           lastError: null,
           official: existing?.official === true,
           cachedIndex: index,
+          ...packCacheFields(packs, existing),
           url: parsed.kind === 'https' ? marketplaceSourceDisplay(parsed) : undefined
         };
         const next = { ...document, catalogs: upsert(document, row), migrationNeeded: false };

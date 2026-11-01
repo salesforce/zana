@@ -1,25 +1,32 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 import type { ThreadListItem } from '../../thread-store.js';
 
 const h = vi.hoisted(() => ({
+  hosts: [] as import('@zana-ai/zcc-domain/thread-runtime').Host[],
   projects: [] as Project[],
   terminals: {} as Record<string, TerminalSession[]>,
   threads: [] as ThreadListItem[],
   hideIdleProjects: false,
+  enterProjectFocus: vi.fn(), selectProject: vi.fn(), toggleSection: vi.fn(),
+  addProjectByPath: vi.fn(async () => ({ id: 'added' })),
   noActions: [] as never[]
 }));
 
+vi.mock('../../hooks/useHosts.js', () => ({ useHosts: () => h.hosts }));
+
 vi.mock('../../store.js', () => ({
   useData: (select: (state: unknown) => unknown) => select({
-    projects: h.projects, terminals: h.terminals, projectNavigationOrganization: 'sessions', loadProjects: vi.fn()
+    projects: h.projects, terminals: h.terminals, projectNavigationOrganization: 'sessions', loadProjects: vi.fn(),
+    addProjectByPath: h.addProjectByPath
   }),
   useUi: (select: (state: unknown) => unknown) => select({
     selectedProjectId: null, focusedProjectId: null, selectedTabId: {}, unread: {}, projectExpanded: {},
-    hideIdleProjects: h.hideIdleProjects, collapsedSections: {}
+    hideIdleProjects: h.hideIdleProjects, collapsedSections: {}, enterProjectFocus: h.enterProjectFocus,
+    selectProject: h.selectProject, toggleSection: h.toggleSection
   }),
   useAgentStatus: (select: (state: unknown) => unknown) => select({ byId: {} }),
   useSubagents: (select: (state: unknown) => unknown) => select({ byId: {} }),
@@ -90,6 +97,7 @@ function chooseView(label: 'Projects' | 'Agents only') {
 
 beforeEach(() => {
   localStorage.clear();
+  h.hosts = [];
   h.hideIdleProjects = false;
   h.projects = [project('p1', 'local-core'), project('p2', 'zana-builder'), project('p3', 'empty-one')];
   h.threads = [
@@ -106,7 +114,7 @@ describe('ProjectsList agents-only view', () => {
     renderList();
     expect(screen.getByRole('button', { name: 'Open local-core' })).toBeTruthy();
     expect(screen.queryByRole('list', { name: 'Agents' })).toBeNull();
-    expect(screen.getByPlaceholderText('Filter projects')).toBeTruthy();
+    expect(screen.getByPlaceholderText('Filter machines or projects')).toBeTruthy();
   });
 
   it('hides project rows and lists every session newest-first, tagged with its project', () => {
@@ -185,5 +193,97 @@ describe('ProjectsList agents-only view', () => {
     chooseView('Projects');
     expect(screen.queryByRole('list', { name: 'Agents' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Open zana-builder' })).toBeTruthy();
+  });
+});
+
+
+describe('machine project hierarchy', () => {
+  it('opens projects and new threads from the overview, and completes machine-scoped folder registration', async () => {
+    h.hosts = [{ id: 'remote', name: 'Devbox', status: 'connected' }] as typeof h.hosts;
+    h.projects = [{ ...project('api', 'API'), hostId: 'remote' }]; h.threads = []; h.terminals = {};
+    renderList();
+    const machine = screen.getByRole('button', { name: 'Devbox', exact: true });
+    h.toggleSection.mockClear();
+    fireEvent.click(machine);
+    expect(h.toggleSection).toHaveBeenCalledWith('sidebar:machine:remote');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    const openOverview = () => {
+      fireEvent.contextMenu(machine, { clientX: 120, clientY: 180 });
+      expect(screen.queryByRole('dialog')).toBeNull();
+      fireEvent.click(screen.getByRole('menuitem', { name: 'View projects' }));
+      expect(screen.queryByRole('menu', { name: 'Machine actions' })).toBeNull();
+    };
+    openOverview();
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Devbox', exact: true })).getByRole('button', { name: 'Close', exact: true }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    openOverview();
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Devbox', exact: true })).getByRole('button', { name: 'API', exact: true }));
+    expect(h.enterProjectFocus).toHaveBeenCalledWith('api');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    openOverview();
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Devbox', exact: true })).getByRole('button', { name: 'New thread', exact: true }));
+    expect(screen.getByTestId('location').textContent).toBe('/threads/new');
+    openOverview();
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Devbox', exact: true })).getByRole('button', { name: 'Add project', exact: true }));
+    expect(screen.getByRole('dialog', { name: 'Add project on Devbox' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add project on Devbox', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: /Open existing folder/ }));
+    fireEvent.change(within(screen.getByRole('dialog', { name: 'Add project on Devbox' })).getByRole('textbox'), { target: { value: '/srv/another' } });
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Add project on Devbox' })).getByRole('button', { name: 'Add project', exact: true }));
+    await waitFor(() => expect(h.addProjectByPath).toHaveBeenCalledWith('/srv/another', { hostId: 'remote' }));
+    expect(h.selectProject).toHaveBeenCalledWith('added');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    const remote = document.querySelector('[data-machine-id="remote"]') as HTMLElement;
+    fireEvent.click(within(remote).getByRole('button', { name: 'Add project', exact: true }));
+    expect(screen.getByRole('dialog', { name: 'Add project on Devbox' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
+    fireEvent.click(within(remote).getByRole('button', { name: 'Collapse Devbox' }));
+    expect(h.toggleSection).toHaveBeenCalledWith('sidebar:machine:remote');
+  });
+
+  it('nests only the host-owned threads below each default and searches machines', () => {
+    h.hosts = [{ id: 'local', name: 'Laptop', isPrimary: true, status: 'connected' }, { id: 'remote', name: 'Devbox', status: 'connected' }] as typeof h.hosts;
+    h.projects = [{ ...project('default', 'Default Project'), quickAgent: true }, { ...project('api', 'API'), hostId: 'remote' }];
+    h.threads = [{ ...thread('local-thread', 'default', 'Local task', 2), hostId: 'local' }, { ...thread('remote-thread', 'default', 'Remote task', 3), hostId: 'remote' }];
+    h.terminals = {};
+    renderList();
+    const remote = document.querySelector('[data-machine-id="remote"]') as HTMLElement;
+    const local = document.querySelector('[data-machine-id="local"]') as HTMLElement;
+    expect(within(remote).getByRole('button', { name: 'Open Default Project' }).getAttribute('aria-disabled')).toBeNull();
+    expect(within(remote).getByRole('button', { name: 'Remote task' })).toBeTruthy();
+    expect(within(remote).queryByRole('button', { name: 'Local task' })).toBeNull();
+    expect(within(local).getByRole('button', { name: 'Local task' })).toBeTruthy();
+    expect(within(local).queryByRole('button', { name: 'Open API' })).toBeNull();
+    fireEvent.click(within(remote).getByRole('button', { name: 'Open Default Project' }));
+    expect(screen.getByTestId('location').textContent).toBe('/threads/new');
+    fireEvent.change(screen.getByPlaceholderText('Filter machines or projects'), { target: { value: 'Devbox' } });
+    expect(document.querySelector('[data-machine-id="local"]')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Open API' })).toBeTruthy();
+  });
+  it('opens the machine overview even when it only has a default project', () => {
+    h.hosts = [{ id: 'remote', name: 'Empty box', status: 'disconnected' }] as typeof h.hosts;
+    h.projects = [{ ...project('default', 'Default Project'), quickAgent: true }]; h.threads = []; h.terminals = {};
+    renderList();
+    const machine = screen.getByRole('button', { name: 'Empty box', exact: true });
+    for (const shortcut of [{ key: 'ContextMenu' }, { key: 'F10', shiftKey: true }]) {
+      fireEvent.keyDown(machine, shortcut);
+      expect(screen.getByRole('menuitem', { name: 'View projects' })).toBe(document.activeElement);
+      fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+      expect(screen.queryByRole('menu', { name: 'Machine actions' })).toBeNull();
+      expect(document.activeElement).toBe(machine);
+      expect(screen.queryByRole('dialog')).toBeNull();
+    }
+    fireEvent.contextMenu(machine);
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole('menu', { name: 'Machine actions' })).toBeNull();
+    fireEvent.contextMenu(machine);
+    fireEvent.keyDown(document.activeElement!, { key: 'Tab' });
+    expect(screen.queryByRole('menu', { name: 'Machine actions' })).toBeNull();
+    fireEvent.contextMenu(machine);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'View projects' }));
+    const dialog = screen.getByRole('dialog', { name: 'Empty box' });
+    expect(within(dialog).getByText('Ready to start')).toBeTruthy();
+    expect(within(dialog).getByText('No threads')).toBeTruthy();
   });
 });
