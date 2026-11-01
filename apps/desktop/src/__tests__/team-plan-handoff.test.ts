@@ -19,6 +19,7 @@ import {
   planUnitsDigest,
   correctedPlanRelPath,
   cleanupHandoffFiles,
+  handoffPromptPath,
   readAuthoredPlan,
   readCorrectedPlan,
   readHandoffArtifact,
@@ -100,6 +101,16 @@ describe('readAuthoredPlan / writeSourceMirror (filesystem)', () => {
     if (read.status === 'invalid') expect(read.reason).toContain('exceeds');
   });
 
+  it('names handoff files absolutely under an absolute root, else keeps the relative path', () => {
+    const rel = authoredPlanRelPath('exec-1');
+    expect(handoffPromptPath(root, rel)).toBe(join(root, rel));
+    expect(handoffPromptPath('relative/root', rel)).toBe(rel);
+    expect(handoffPromptPath('', rel)).toBe(rel);
+    expect(handoffPromptPath(undefined, rel)).toBe(rel);
+    // An escaping relative path never resolves outside the root.
+    expect(handoffPromptPath(root, '../outside.md')).toBe('../outside.md');
+  });
+
   it('sanitizes the executionId into the confined path (no traversal)', () => {
     // A hostile id cannot escape `.zana/` — separators are replaced.
     expect(authoredPlanRelPath('../../etc/passwd')).toBe('.zana/execution-plan-______etc_passwd.md');
@@ -107,13 +118,27 @@ describe('readAuthoredPlan / writeSourceMirror (filesystem)', () => {
   });
 
   it('mirrors sources round-trips through the confined file, then cleans up', async () => {
-    const rel = await writeSourceMirror(root, 'exec-1', [{ name: 'plan.md', extractedText: 'REQUIREMENTS BODY' }]);
-    expect(rel).toBe(sourceMirrorRelPath('exec-1'));
-    const body = await readFile(join(root, rel!), 'utf8');
+    const written = await writeSourceMirror(root, 'exec-1', [{ name: 'plan.md', extractedText: 'REQUIREMENTS BODY' }]);
+    // The absolute path, so the coordinator prompt names the file the host wrote.
+    expect(written).toBe(join(root, sourceMirrorRelPath('exec-1')));
+    const body = await readFile(written!, 'utf8');
     expect(body).toContain('## plan.md');
     expect(body).toContain('REQUIREMENTS BODY');
     await cleanupHandoffFiles(root, 'exec-1');
-    await expect(readFile(join(root, rel!), 'utf8')).rejects.toThrow();
+    await expect(readFile(written!, 'utf8')).rejects.toThrow();
+  });
+
+  it('keeps only the authored plan when cleanup is told to keep it', async () => {
+    await mkdir(join(root, '.zana'), { recursive: true });
+    await writeFile(join(root, authoredPlanRelPath('exec-1')), VALID_PLAN, 'utf8');
+    await writeFile(join(root, correctedPlanRelPath('exec-1')), VALID_PLAN, 'utf8');
+    const mirror = await writeSourceMirror(root, 'exec-1', [{ extractedText: 'REQUIREMENTS BODY' }]);
+    await cleanupHandoffFiles(root, 'exec-1', { keepAuthoredPlan: true });
+    expect((await readAuthoredPlan(root, 'exec-1')).status).toBe('ok');
+    expect(await readCorrectedPlan(root, 'exec-1')).toEqual({ status: 'missing' });
+    await expect(readFile(mirror!, 'utf8')).rejects.toThrow();
+    await cleanupHandoffFiles(root, 'exec-1');
+    expect(await readAuthoredPlan(root, 'exec-1')).toEqual({ status: 'missing' });
   });
 
   it('no-ops the source mirror when there is nothing to write', async () => {
@@ -122,8 +147,8 @@ describe('readAuthoredPlan / writeSourceMirror (filesystem)', () => {
   });
 
   it('truncates an oversize source mirror with a visible marker', async () => {
-    const rel = await writeSourceMirror(root, 'exec-1', [{ extractedText: 'y'.repeat(MAX_HANDOFF_FILE_BYTES * 2) }]);
-    const body = await readFile(join(root, rel!), 'utf8');
+    const written = await writeSourceMirror(root, 'exec-1', [{ extractedText: 'y'.repeat(MAX_HANDOFF_FILE_BYTES * 2) }]);
+    const body = await readFile(written!, 'utf8');
     expect(Buffer.byteLength(body, 'utf8')).toBeLessThanOrEqual(MAX_HANDOFF_FILE_BYTES);
     expect(body).toContain('TRUNCATED');
   });
@@ -131,8 +156,8 @@ describe('readAuthoredPlan / writeSourceMirror (filesystem)', () => {
   it('keeps the truncated mirror within the byte cap on a multibyte boundary (no U+FFFD)', async () => {
     // '𝕏' is a 4-byte UTF-8 sequence: a naive byte cut would split it and decode
     // to the 3-byte replacement char, pushing content+marker back over the cap.
-    const rel = await writeSourceMirror(root, 'exec-mb', [{ extractedText: '𝕏'.repeat(MAX_HANDOFF_FILE_BYTES) }]);
-    const body = await readFile(join(root, rel!), 'utf8');
+    const written = await writeSourceMirror(root, 'exec-mb', [{ extractedText: '𝕏'.repeat(MAX_HANDOFF_FILE_BYTES) }]);
+    const body = await readFile(written!, 'utf8');
     expect(Buffer.byteLength(body, 'utf8')).toBeLessThanOrEqual(MAX_HANDOFF_FILE_BYTES);
     expect(body).toContain('TRUNCATED');
     expect(body).not.toContain('�');
@@ -166,8 +191,8 @@ describe('handoff filesystem confinement (symlink-escape safe)', () => {
     await writeFile(join(outside, 'victim.md'), 'SECRET', 'utf8');
     const leaf = join(root, sourceMirrorRelPath('exec-1'));
     await symlink(join(outside, 'victim.md'), leaf, 'file');
-    const rel = await writeSourceMirror(root, 'exec-1', [{ extractedText: 'poison' }]);
-    expect(rel).toBe(sourceMirrorRelPath('exec-1'));
+    const written = await writeSourceMirror(root, 'exec-1', [{ extractedText: 'poison' }]);
+    expect(written).toBe(leaf);
     // The victim outside the project is untouched...
     expect(await readFile(join(outside, 'victim.md'), 'utf8')).toBe('SECRET');
     // ...and the leaf is now a regular confined file, not the symlink.
@@ -248,7 +273,11 @@ describe('TeamPlanHandoff.onCoordinatorIdle', () => {
     await handoff.onCoordinatorIdle(ctx);
     expect(register).not.toHaveBeenCalled();
     expect(nudge).toHaveBeenCalledOnce();
-    expect(nudge.mock.calls[0][1]).toContain(authoredPlanRelPath('exec-1'));
+    // Both the reason and the instruction name the absolute file the host reads,
+    // so a coordinator running in another cwd still writes where the host looks.
+    const absolute = `/root/${authoredPlanRelPath('exec-1')}`;
+    expect(nudge.mock.calls[0][1]).toContain(`no plan file found at \`${absolute}\``);
+    expect(nudge.mock.calls[0][1]).toContain(`to \`${absolute}\` using your file-write tool`);
   });
 
   it('nudges with the validation reason when the plan file is invalid', async () => {

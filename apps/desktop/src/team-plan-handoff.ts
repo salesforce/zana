@@ -1,7 +1,7 @@
 import { mkdir, open, realpath, rename, rm } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { isWithin, resolveContained, resolveContainedReal } from '@zana-ai/zcc-path-confine';
 import { parsePortablePlan } from '@zana-ai/zcc-server/services/execution/portable-plan';
@@ -151,6 +151,17 @@ export function correctionDiffRelPath(executionId: string): string {
   return `${TEAM_PLAN_HANDOFF_DIR}/execution-plan-diff-${safeToken(executionId)}.md`;
 }
 
+/**
+ * The path a coordinator prompt names for a handoff file: absolute under the
+ * host's handoff root. The coordinator's cwd can differ from that root (a launch
+ * that falls back from the Squad worktree to the project root), and a relative
+ * path then writes the plan where the host never reads it. A root that is not an
+ * absolute local path keeps the relative form.
+ */
+export function handoffPromptPath(handoffRoot: string | undefined, rel: string): string {
+  return (handoffRoot && isAbsolute(handoffRoot) && resolveContained(handoffRoot, rel)) || rel;
+}
+
 export type AuthoredPlanRead =
   /** `normalizations` lists recoverable defects the parser repaired; omitted when none. */
   /** `bodyDigest` is the digest of the exact bytes read, for correlation only. */
@@ -239,8 +250,10 @@ export async function readHandoffArtifact(projectRoot: string, rel: string): Pro
  * file the coordinator reads natively, replacing the blocked
  * `execution.source.read` MCP path. Bounded: sources are concatenated and the
  * whole file is truncated at {@link MAX_HANDOFF_FILE_BYTES} with an explicit
- * marker so a huge bundle degrades to a clear "truncated" rather than OOM. No-op
- * (returns undefined) when there is nothing to mirror or the path escapes.
+ * marker so a huge bundle degrades to a clear "truncated" rather than OOM. Returns
+ * the absolute path written, which the coordinator prompt names (see
+ * {@link handoffPromptPath}); undefined when there is nothing to mirror or the
+ * path escapes.
  */
 export async function writeSourceMirror(
   projectRoot: string,
@@ -277,16 +290,20 @@ export async function writeSourceMirror(
     const realParent = await confinedRealParent(projectRoot, target);
     if (!realParent) return undefined;
     await atomicConfinedWrite(realParent, basename(target), content);
-    return rel;
+    return target;
   } catch {
     return undefined;
   }
 }
 
-/** Best-effort removal of both handoff files (on successful register / dismissal). */
-export async function cleanupHandoffFiles(projectRoot: string, executionId: string): Promise<void> {
+/**
+ * Best-effort removal of the handoff files (on successful register / coordinator
+ * exit). `keepAuthoredPlan` leaves the coordinator's authored plan in place for a
+ * planless run that a retry or recovery can still pick up.
+ */
+export async function cleanupHandoffFiles(projectRoot: string, executionId: string, options: { keepAuthoredPlan?: boolean } = {}): Promise<void> {
   for (const rel of [
-    authoredPlanRelPath(executionId),
+    ...(options.keepAuthoredPlan ? [] : [authoredPlanRelPath(executionId)]),
     sourceMirrorRelPath(executionId),
     correctionProseRelPath(executionId),
     correctedPlanRelPath(executionId),
@@ -435,7 +452,7 @@ export class TeamPlanHandoff {
         await this.handleInvalid(entry, maxNudges, ctx, `host rejected plan: ${rejection}`, `the host rejected your plan (${rejection})`);
         return;
       }
-      const reason = read.status === 'invalid' ? read.reason : `no plan file found at \`${authoredPlanRelPath(ctx.executionId)}\``;
+      const reason = read.status === 'invalid' ? read.reason : `no plan file found at \`${handoffPromptPath(ctx.projectRoot, authoredPlanRelPath(ctx.executionId))}\``;
       await this.handleInvalid(entry, maxNudges, ctx, reason, reason);
     } catch (error) {
       this.deps.logError(`team plan handoff ${ctx.sessionId}`, error);
@@ -478,7 +495,7 @@ export class TeamPlanHandoff {
     this.emit(ctx, () => ({ stage: 'nudge', reason: boundTraceReason(reason), nudges: entry.nudges }));
     this.deps.nudge(
       ctx.sessionId,
-      `Your execution plan is not registered: ${reason}. Write your COMPLETE portable-executable plan (H3 \`id: Title <!-- executable-step -->\` headings with the fixed label bullets, every mutating step listing its Write scope and Verification) to \`${authoredPlanRelPath(ctx.executionId)}\` using your file-write tool, then end your turn. Do not call any execution.* tool.`
+      `Your execution plan is not registered: ${reason}. Write your COMPLETE portable-executable plan (H3 \`id: Title <!-- executable-step -->\` headings with the fixed label bullets, every mutating step listing its Write scope and Verification) to \`${handoffPromptPath(ctx.projectRoot, authoredPlanRelPath(ctx.executionId))}\` using your file-write tool, then end your turn. Do not call any execution.* tool.`
     );
   }
 

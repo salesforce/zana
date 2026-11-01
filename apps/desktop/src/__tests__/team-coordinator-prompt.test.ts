@@ -126,6 +126,15 @@ describe('jobCoordinatorPrompt — native recovery', () => {
     expect(prompt).toContain('Recovery resume: this coordinator reopened its trusted native session');
     expect(prompt).toContain('Do not recreate completed work, replace workers, or start a new plan.');
   });
+
+  it('tells a resumed planless coordinator to author its plan again, not resume one', () => {
+    const planFilePath = '/project/.zana/execution-plan-exec-1.md';
+    const prompt = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: baseJob, roster, planReady: false, recoveryResume: true, planFilePath });
+    expect(prompt).toContain('Recovery resume: this coordinator reopened its trusted native session');
+    expect(prompt).toContain('any plan you remember writing earlier was not received. Follow the kickoff below again from the start.');
+    expect(prompt).not.toContain('start a new plan');
+    expect(prompt).toContain(`Write your COMPLETE portable-executable plan to \`${planFilePath}\``);
+  });
 });
 
 describe('jobCoordinatorPrompt — self-heal (coordinator answers a coordinator-directed blocker)', () => {
