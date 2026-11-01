@@ -20,6 +20,7 @@ import { useNavigate } from 'react-router-dom';
 import { groupIcon, GROUP_FALLBACK_COLOR } from '../scheduleGroupMeta.js';
 import {
   pickLiveRun,
+  skippedLastRunPill,
   isSessionAlive as isSessionOpen,
   formatCountdown,
   cadenceLabel,
@@ -30,6 +31,7 @@ import { resumeScheduledRun } from './resumeScheduledRun.js';
 
 interface ScheduleRowProps {
   task: ScheduledTask;
+  nowMs?: number;
   projectName: string;
   group?: ScheduleGroup | null;
   onOpen: () => void;
@@ -40,6 +42,7 @@ interface ScheduleRowProps {
 
 export const ScheduleRow = React.memo(function ScheduleRow({
   task,
+  nowMs = Date.now(),
   projectName,
   group,
   onOpen,
@@ -49,6 +52,7 @@ export const ScheduleRow = React.memo(function ScheduleRow({
 }: ScheduleRowProps) {
   const isExternal = task.external?.kind === 'claude-loop';
   const nextRun = task.status.nextRunAt ? new Date(task.status.nextRunAt) : null;
+  const skippedLabel = skippedLastRunPill(task, nowMs);
   const terminals = useData((s) => s.terminals);
   const pushToast = useUi((s) => s.pushToast);
   const navigate = useNavigate();
@@ -187,6 +191,11 @@ export const ScheduleRow = React.memo(function ScheduleRow({
           </span>
         </div>
         <div className="scheduler-card-compact-when">
+          {skippedLabel && (
+            <span className="scheduler-pill scheduler-pill--skipped scheduler-pill--skipped-last" data-testid="schedule-skipped-last" title={skippedLabel.title}>
+              {skippedLabel.text}
+            </span>
+          )}
           {isExternal ? (
             <span className="scheduler-card-compact-next scheduler-card-compact-next--muted" title="Managed by Claude Code">
               {task.schedule.every}

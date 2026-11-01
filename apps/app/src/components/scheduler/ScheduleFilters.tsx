@@ -18,6 +18,7 @@ export function ScheduleFilters({ search, filter, onSearch, onFilter }: {
       <option value="enabled">Enabled</option>
       <option value="paused">Off</option>
       <option value="attention">Needs attention</option>
+      <option value="skipped">Skipped last run</option>
     </select>
   </div>;
 }

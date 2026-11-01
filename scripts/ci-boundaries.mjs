@@ -32,7 +32,7 @@ export function boundarySpecs(paths) {
     if (/opencode/.test(path)) add('opencode-launch-boundary');
     if (/desktop-browser/.test(path)) add('desktop-browser-broker');
     if (/mobile-relay|mobile\/|mobile-/.test(path)) add('mobile-shell', 'mobile-relay-upload');
-    if (/services\/scheduler\/|components\/scheduler\/|views\/scheduler\/|schedule-health|ipc\/scheduler\.ts|scheduler-resume-run/.test(path)) add('scheduler-self-healing', 'scheduler-overview', 'scheduler-detail', 'scheduler-cron', 'scheduler-resume-latest-run');
+    if (/services\/scheduler\/|components\/scheduler\/|views\/scheduler\/|schedule-health|schedule-skipped|ipc\/scheduler\.ts|scheduler-resume-run/.test(path)) add('scheduler-self-healing', 'scheduler-overview', 'scheduler-detail', 'scheduler-cron', 'scheduler-resume-latest-run');
     if (/squad-proposal|squad-worktree-runtime|squad-session-lifecycle|SquadEditor|team-store|TeamComposer|register-teams-mcp-tool|InboxDetail|(?:^|\/)AgentLauncher\.tsx|ExecutionJobDetails|modern-team-launch-tools|ipc\/execution-board|services\/execution\/(store|projection|source-policy|source-registry)/.test(path)) add('squad-proposal-flow', 'job-team-launch-ui');
     if (/squad-proposal|squad-worktree-runtime|squad-session-lifecycle|SquadEditor|team-store|TeamComposer|register-teams-mcp-tool|InboxDetail|(?:^|\/)AgentLauncher\.tsx|ExecutionJobDetails|modern-team-launch-tools|ipc\/execution-board|services\/execution\/(store|projection|execution-mcp-tool)/.test(path)) add('squad-proposal-flow', 'squad-direct-report', 'job-team-launch-ui');
     // Owner report-back: the service, the MCP server that carries execution.start, and the notifier/report text.

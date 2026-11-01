@@ -76,6 +76,11 @@
       "source": "./src/schedule-health.ts",
       "default": "./src/schedule-health.ts"
     },
+    "./schedule-skipped": {
+      "types": "./src/schedule-skipped.ts",
+      "source": "./src/schedule-skipped.ts",
+      "default": "./src/schedule-skipped.ts"
+    },
     "./squad-origin": {
       "types": "./src/squad-origin.ts",
       "source": "./src/squad-origin.ts",

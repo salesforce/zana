@@ -73,6 +73,18 @@ describe('SchedulerOverview', () => {
     expect(props.onToggle).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(inventory());
   });
+  it('labels a schedule that skipped its last run, and filters to it', () => {
+    const skipped = withRun('Overlapped', 'skipped', { reasonCode: 'overlap' });
+    const { inventory } = mount([skipped, withRun('Fine', 'success'), task('External', { external: { kind: 'claude-loop' } } as Partial<ScheduledTask>)]);
+    const labels = inventory().querySelectorAll('.schedule-issue-label--skipped');
+    expect(labels).toHaveLength(1);
+    expect(labels[0]!.textContent).toMatch(/^skipped .+ · Previous run still active$/);
+    expect(labels[0]!.getAttribute('title')).toContain("The previous run's session was still open");
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'skipped' } });
+    expect(within(inventory()).getAllByRole('checkbox')).toHaveLength(1);
+    expect(within(inventory()).getByText('Overlapped')).toBeTruthy();
+    expect(within(inventory()).queryByText('Fine')).toBeNull();
+  });
   it('paginates the inventory, resets on filters, and offers recovery from no matches', () => {
     const { inventory } = mount(Array.from({ length: 18 }, (_, i) => task(`Job ${String(i).padStart(2, '0')}`)));
     expect(within(inventory()).getAllByRole('checkbox')).toHaveLength(8);

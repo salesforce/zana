@@ -112,8 +112,9 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
 
   const projectMap = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects]);
 
-  const filteredTasks = useMemo(() => filterSchedules(scopedTasks,
-    new Map(projects.map(p => [p.id, p])), search, filter), [scopedTasks, projects, search, filter]);
+  // `tick` re-reads the clock, so a due time that passes while the list is open shows up as skipped.
+  const filteredTasks = useMemo(() => filterSchedules(scopedTasks, projectMap, search, filter, Date.now()),
+    [scopedTasks, projectMap, search, filter, tick]);
 
   const pauseAll = async () => {
     const pausable = scopedTasks.filter((t) => t.enabled && t.external?.kind !== 'claude-loop');
@@ -351,6 +352,7 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
                   <ScheduleRow
                     key={t.id}
                     task={t}
+                    nowMs={Date.now()}
                     projectName={
                       projects.find((p) => p.id === t.projectId)?.name ?? 'Project missing'
                     }
