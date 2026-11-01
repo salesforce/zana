@@ -547,11 +547,19 @@ export const RuntimeMcpReadySchema = z.object({
   teamJobLaunchEnabled: z.boolean().optional()
 }).strict();
 
+/** Product registry identity, learned after the private terminal transport boots. */
+const RuntimeLocalHostSchema = z.object({
+  type: z.literal('local-host'),
+  protocolVersion: ServerRuntimeProtocolVersionSchema,
+  hostId: z.string().uuid()
+}).strict();
+
 export const ServerRuntimeInboundSchema = z.discriminatedUnion('type', [
   ServerRuntimeStartSchema,
   ServerRuntimeRequestSchema,
   RuntimeStopSchema,
-  RuntimeMcpReadySchema
+  RuntimeMcpReadySchema,
+  RuntimeLocalHostSchema
 ]);
 
 export const RuntimeReadySchema = z.object({
@@ -589,7 +597,8 @@ export const ProjectSettingsChangedMessageSchema = z.object({
 }).strict();
 export const MenubarThreadsChangedMessageSchema = z.object({
   type: z.literal('menubar-threads-changed'),
-  protocolVersion: ServerRuntimeProtocolVersionSchema
+  protocolVersion: ServerRuntimeProtocolVersionSchema,
+  localThreadsWorking: z.boolean()
 }).strict();
 
 const PluginCapabilityMcpServerSchema = z.object({

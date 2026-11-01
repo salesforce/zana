@@ -229,9 +229,15 @@ describe('menubar runtime contracts', () => {
   });
 
   it('accepts changed hints', () => {
+    const localHost = { type: 'local-host', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, hostId: '00000000-0000-4000-8000-000000000001' };
+    expect(ServerRuntimeInboundSchema.safeParse(localHost).success).toBe(true);
+    expect(ServerRuntimeInboundSchema.safeParse({ ...localHost, hostId: 'invalid' }).success).toBe(false);
     expect(MenubarThreadsChangedMessageSchema.safeParse({
-      type: 'menubar-threads-changed', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION
+      type: 'menubar-threads-changed', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, localThreadsWorking: true
     }).success).toBe(true);
+    expect(MenubarThreadsChangedMessageSchema.safeParse({
+      type: 'menubar-threads-changed', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, localThreadsWorking: 'true'
+    }).success).toBe(false);
   });
 });
 

@@ -3396,6 +3396,7 @@ async function ensureRendererStaticHost(): Promise<void> {
     runtimeDir: __dirname,
     version: resolvedAppVersion(),
     extraEnv: { ZCC_PRODUCT_SERVER_CREDENTIAL: ensureProductServerCredential() },
+    onLocalThreadWork: (working) => keepAwake.observe('modern-threads', working ? 'working' : 'idle'),
     onUnexpectedExit: runtimeRecovery.notify
   });
   runtimeSupervisor.onProjectSettingsChanged((projectId) => {
