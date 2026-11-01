@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 import { reorderProjectIds } from './projectReordering.js';
+import { readSourceText } from '../../__tests__/helpers/source-text.js';
 
 describe('reorderProjectIds', () => {
   it('moves a project inside its visible group without disturbing other groups', () => {
@@ -20,7 +20,7 @@ describe('reorderProjectIds', () => {
 
 describe('project-row workspace actions', () => {
   it('uses the chat-plus affordance without leaving the current view', () => {
-    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
     expect(source).toContain('<MessageCirclePlus size={14} />');
     const start = source.indexOf('const spawnDefaultAgent = (p: Project) => {');
     const end = source.indexOf('};', start);
@@ -32,13 +32,13 @@ describe('project-row workspace actions', () => {
   });
 
   it('hands plugin project-menu actions a toProject navigator', () => {
-    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
     expect(source).toContain('projectMenuNavigateContext');
     expect(source).toContain('void action.run(projectMenuNavigateContext(action.pluginId, p.id');
   });
 
   it('falls back to the static title after a resolver failure without disabling the action', () => {
-    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
     expect(source).toContain('titles: { ...state.titles, [key]: action.title }');
     expect(source).toContain('disabled={Boolean(action.titleForProject) && !resolvedTitle}');
     expect(source).not.toContain('Action unavailable');
@@ -46,14 +46,14 @@ describe('project-row workspace actions', () => {
   });
 
   it('opens a workspace directly from its project row', () => {
-    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
     expect(source).toContain('if (consumeProjectClick()) return;');
     expect(source).toContain('enterProjectFocus(p.id);');
   });
 
   it('opens a CLI agent row as a session page, with the same split drag as threads', () => {
-    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
-    const rows = readFileSync(new URL('./project-session-rail-rows.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
+    const rows = readSourceText(new URL('./project-session-rail-rows.tsx', import.meta.url));
     expect(source).toContain('getAgentSessionRoutePath(t.id, scopedProjectId)');
     expect(source).not.toContain('openAgentModal');
     expect(source).toContain('routeProjectId={scopedProjectId}');
@@ -66,7 +66,7 @@ describe('project-row workspace actions', () => {
   });
 
   it('shows Default Project for the scratch folder without renaming the tag', () => {
-    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
     expect(source).toContain('composerProjectLabel');
     expect(source).toContain('<span className="project-name">{displayName}</span>');
     expect(source).toContain('isRemoteWorkspaceProject(p)');
@@ -75,7 +75,7 @@ describe('project-row workspace actions', () => {
   });
 
   it('opens the shared agent lifecycle menu from a nested session row', () => {
-    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
     expect(source).toContain('onContextMenu={(e) => openAgentCardMenu(e, t, p)}');
     expect(source).toContain('useAgentCardActions()');
     expect(source).toContain('<AgentCardMenu menu={agentMenu}');
@@ -83,20 +83,20 @@ describe('project-row workspace actions', () => {
   });
 
   it('lets nested agent rows fill the workspace panel on hover', () => {
-    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
     expect(css).toContain('.project-terminal-row {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  width: 100%;');
   });
 
   it('keeps nested session rows on a short tree indent in the sidebar', () => {
-    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
     expect(css).toContain('.sidebar-projects .project-terminals {\n  /* Sit just past the project color-dot, not under the name. The old 38px\n     inset plus the nested-panel padding ate a full icon column in the rail. */\n  margin: 1px 0 4px 8px;');
     expect(css).not.toContain('margin: 3px 3px 6px 38px');
     expect(css).not.toContain('margin: 3px 6px 8px 34px');
   });
 
   it('places the session disclosure chevron after the project name so row dots stay aligned', () => {
-    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
-    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
+    const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
     expect(source).toContain(
       '{projectDot}\n                    {projectMeta}\n                  </button>\n                  {!projectedDefault && favoriteStar}\n                  {treeChevron}'
     );
@@ -109,19 +109,19 @@ describe('project-row workspace actions', () => {
   });
 
   it('Overview opens the Agents dashboard instead of an unfocused Projects home', () => {
-    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
     expect(source).toContain("setNav('agents')");
   });
 
   it('Project settings… opens the project settings route, not global Settings', () => {
-    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
     expect(source).toContain('openProjectSettings(p.id)');
     expect(source).not.toContain("setSettingsTab('project');\n                  setNav('settings')");
   });
 
   it('copies the workspace path through the desktop clipboard bridge', () => {
-    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
-    const actions = readFileSync(new URL('./ProjectOpenActions.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
+    const actions = readSourceText(new URL('./ProjectOpenActions.tsx', import.meta.url));
     expect(source).toContain('<ProjectOpenActions project={p}');
     expect(actions).toContain('void copyText(project.path)');
     expect(source).not.toContain('navigator.clipboard');
@@ -130,7 +130,7 @@ describe('project-row workspace actions', () => {
 
 describe('project-row compact chrome', () => {
   it('drags from the name/chevron label instead of a 6-dot grip', () => {
-    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
     expect(source).not.toContain('GripVertical');
     expect(source).not.toContain('project-reorder-handle');
     expect(source).toContain('<div className={labelClass} {...listeners}>');
@@ -144,7 +144,7 @@ describe('project-row compact chrome', () => {
   });
 
   it('renders project actions before the new-agent control', () => {
-    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
     const actionsIdx = source.indexOf('className="project-actions"');
     const spawnIdx = source.indexOf('className="project-spawn"');
     expect(actionsIdx).toBeGreaterThan(-1);
@@ -152,7 +152,7 @@ describe('project-row compact chrome', () => {
   });
 
   it('flushes row actions to the trailing edge and uses a grab cursor when sortable', () => {
-    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
     expect(css).not.toContain('.project-reorder-handle');
     expect(css).toContain('.project-item {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  padding: 5px 2px 5px 8px;');
     expect(css).toContain('.sidebar-projects .project-item {\n  min-width: 0;\n  padding: 5px 2px 5px 6px;');
@@ -163,9 +163,8 @@ describe('project-row compact chrome', () => {
 
 describe('sidebar workspace scrolling', () => {
   it('keeps the workspace tree as the sidebar scroll owner', () => {
-    const source = readFileSync(
-      new URL('../../styles/global.css', import.meta.url),
-      'utf8'
+    const source = readSourceText(
+      new URL('../../styles/global.css', import.meta.url)
     );
     expect(source).toContain('.sidebar-sections {\n  display: flex;');
     expect(source).toContain('.sidebar-sections {\n  display: flex;\n  flex: 1 1 auto;\n  flex-direction: column;\n  min-height: 0;\n  overflow: hidden;');
@@ -187,11 +186,10 @@ describe('sidebar workspace scrolling', () => {
   });
 
   it('keeps collection header actions at heading density', () => {
-    const css = readFileSync(
-      new URL('../../styles/global.css', import.meta.url),
-      'utf8'
+    const css = readSourceText(
+      new URL('../../styles/global.css', import.meta.url)
     );
-    const tsx = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const tsx = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
     expect(css).toContain('.sidebar-agents-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  min-height: 30px;\n  padding: 0 0 6px 8px;\n}');
     expect(css).toContain('.sidebar-projects-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  min-height: 30px;\n  padding: 0 0 6px 8px;\n}');
     expect(css).toContain('.sidebar-projects .icon-btn {\n  width: 22px;\n  height: 22px;\n  padding: 0;\n  border: 0;');
@@ -207,7 +205,7 @@ describe('sidebar workspace scrolling', () => {
 
 describe('sidebar workspace header menus', () => {
   it('dismisses the add and organize popovers on outside mousedown and Escape', () => {
-    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
     expect(source).toContain('if (!sidebarAddOpen && !sidebarOrganizeOpen) return;');
     expect(source).toContain('sidebarAddRef.current?.contains(t) || sidebarOrganizeRef.current?.contains(t)');
     expect(source).toContain("if (e.key === 'Escape')");
@@ -217,16 +215,15 @@ describe('sidebar workspace header menus', () => {
   });
 
   it('keeps header menus in a fixed layer so a collapsed heading cannot clip them', () => {
-    const css = readFileSync(
-      new URL('../../styles/global.css', import.meta.url),
-      'utf8'
+    const css = readSourceText(
+      new URL('../../styles/global.css', import.meta.url)
     );
     expect(css).toContain('.sidebar-projects-add-menu {\n  position: fixed;\n  z-index: 20;');
     expect(css).toContain('.sidebar-projects-organize-menu {\n  position: fixed;\n  z-index: 20;');
   });
 
   it('renders plugin create-project actions in the add menu, not Organize', () => {
-    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
     expect(source).toContain('listCreateProjectActions');
     expect(source).toContain('launchCreateProjectAction(action)');
     expect(source).toContain('PluginCreateProjectDialog');
@@ -242,33 +239,32 @@ describe('sidebar workspace header menus', () => {
   });
 
   it('hosts plugin create-project dialogs in the local-project modal chrome', () => {
-    const source = readFileSync(
-      new URL('../../plugins/PluginCreateProjectDialog.tsx', import.meta.url),
-      'utf8'
+    const source = readSourceText(
+      new URL('../../plugins/PluginCreateProjectDialog.tsx', import.meta.url)
     );
     expect(source).toContain('className="local-project-modal plugin-create-project-modal"');
-    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
     expect(css).toContain('.plugin-create-project-actions {');
   });
 });
 
 describe('workspace move up/down', () => {
   it('opts into manual order instead of disabling Move up/down on Recents', () => {
-    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
     expect(source).toContain("if (inSidebar && sidebarProjectSort !== 'manual') setSidebarSort('manual')");
     expect(source).toContain('const canReorder = !scopedProjectId && !filter.trim() && !hideIdleProjects;');
     expect(source).not.toContain("hideIdleProjects && (!inSidebar || sidebarProjectSort === 'manual')");
   });
 
   it('does not dismiss the project menu on mousedown inside it', () => {
-    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
     expect(source).toContain('if (menuRef.current?.contains(t)) return;');
     expect(source).toMatch(/if \(e\.key === 'Escape'\) \{[\s\S]*?setMenu\(null\);/);
     expect(source).not.toContain('const close = () => setMenu(null);');
   });
 
   it('keeps Default Project pinned first and out of reorder', () => {
-    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
     expect(source).toContain('pinDefaultProjectFirst(pinFavoriteProjectsFirst(sorted))');
     expect(source).toContain('renamingId !== p.id && !isScratchWorkspaceProject(p)');
     expect(source).toContain('pinnedFirst || prevPinned || menuIndex <= 0');
@@ -278,8 +274,8 @@ describe('workspace move up/down', () => {
 
 describe('nested live threads', () => {
   it('nests live agents and recent threads under the owning project', () => {
-    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
-    const rows = readFileSync(new URL('./project-session-rail-rows.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
+    const rows = readSourceText(new URL('./project-session-rail-rows.tsx', import.meta.url));
     expect(source).toContain('railThreadsForProject');
     expect(source).toContain('threadIsLiveForRail');
     expect(source).toContain('ProjectAgentRailRow');
@@ -303,7 +299,7 @@ describe('nested live threads', () => {
     expect(rows).toContain('threadRailStatus');
     expect(rows).toContain('threadRailStatusClass');
     expect(source).toContain('projectRemote={Boolean(p.remote)}');
-    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
     const working = css.slice(
       css.indexOf('.agents-row-working {'),
       css.indexOf('.agents-row-badge {')
@@ -318,10 +314,10 @@ describe('nested live threads', () => {
     expect(source).not.toContain('AgentStatusDot');
     expect(css).toContain('.project-thread-row-wrap .project-terminal-close {\n  visibility: hidden;\n}');
     expect(css).toContain('.project-thread-row-wrap:hover .project-terminal-close,');
-    expect(readFileSync(new URL('./AgentRowDetail.tsx', import.meta.url), 'utf8')).toContain(
+    expect(readSourceText(new URL('./AgentRowDetail.tsx', import.meta.url))).toContain(
       'agentRowStateClass'
     );
-    expect(readFileSync(new URL('./AgentRowDetail.tsx', import.meta.url), 'utf8')).toContain(
+    expect(readSourceText(new URL('./AgentRowDetail.tsx', import.meta.url))).toContain(
       'agentCardRuntimeLabel'
     );
   });
@@ -329,7 +325,7 @@ describe('nested live threads', () => {
 
 describe('workspace row badge', () => {
   it('omits git branch and shows the nested agent count instead', () => {
-    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
     expect(source).not.toContain('project-git-branch');
     expect(source).not.toContain('project-git-ahead');
     expect(source).not.toContain('gitStatus[p.id]');
@@ -339,16 +335,16 @@ describe('workspace row badge', () => {
   });
 
   it('pins favorites first and shows a star on the workspace row', () => {
-    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
-    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
+    const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
     expect(source).toContain('project-favorite-star');
     expect(source).toContain("updateProject(p.id, { favorite: !p.favorite })");
     expect(css).toContain('.project-favorite-star.is-fav {\n  color: var(--accent-gold);\n}');
   });
 
   it('does not mark a workspace row as selected — hover is the only highlight', () => {
-    const source = readFileSync(new URL('./ProjectsList.tsx', import.meta.url), 'utf8');
-    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
+    const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
     expect(source).toContain('className="project-item"');
     expect(source).not.toContain("selectedId === p.id ? 'active'");
     expect(css).toContain('.project-item:hover {\n  background: var(--bg-hover);\n}');

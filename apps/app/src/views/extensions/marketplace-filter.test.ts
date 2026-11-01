@@ -1,7 +1,7 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { MarketplaceEntry } from '@zana-ai/zcc-domain/product';
 import { filterMarketplaceEntries, marketplaceTags } from './marketplace-filter.js';
+import { readSourceText } from '../../__tests__/helpers/source-text.js';
 
 const sampleEntries: MarketplaceEntry[] = [
   {
@@ -59,8 +59,8 @@ describe('marketplaceTags', () => {
 });
 
 describe('MarketplaceView presentation', () => {
-  const source = readFileSync(new URL('./MarketplaceView.tsx', import.meta.url), 'utf8');
-  const card = readFileSync(new URL('./PluginCatalogCard.tsx', import.meta.url), 'utf8');
+  const source = readSourceText(new URL('./MarketplaceView.tsx', import.meta.url));
+  const card = readSourceText(new URL('./PluginCatalogCard.tsx', import.meta.url));
 
   it('puts marketplace management in a dialog and categories in pill filters', () => {
     expect(source).toContain('data-testid="marketplace-catalogs"');
@@ -91,7 +91,7 @@ describe('MarketplaceView presentation', () => {
   });
 
   it('paints the catalog-source field with the theme input fill', () => {
-    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
     expect(source).toContain('className="settings-input"');
     expect(source).toContain('aria-label="Marketplace catalog source"');
     expect(css).toContain(

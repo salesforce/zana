@@ -1,15 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readSourceText } from '../../__tests__/helpers/source-text.js';
 
-const view = readFileSync(new URL('./ExtensionsView.tsx', import.meta.url), 'utf8');
-const marketplace = readFileSync(new URL('./MarketplaceView.tsx', import.meta.url), 'utf8');
-const hero = readFileSync(
-  new URL('../../components/plugin/browse-hero/BrowseHeroCarousel.tsx', import.meta.url),
-  'utf8'
+const view = readSourceText(new URL('./ExtensionsView.tsx', import.meta.url));
+const marketplace = readSourceText(new URL('./MarketplaceView.tsx', import.meta.url));
+const hero = readSourceText(
+  new URL('../../components/plugin/browse-hero/BrowseHeroCarousel.tsx', import.meta.url)
 );
 const hub = ['ExtensionsHub.tsx', 'InstalledPluginCard.tsx', 'InstalledPluginCollection.tsx']
-  .map((file) => readFileSync(new URL(`./${file}`, import.meta.url), 'utf8')).join('\n');
-const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+  .map((file) => readSourceText(new URL(`./${file}`, import.meta.url))).join('\n');
+const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
 
 describe('ExtensionsView plugin catalogue', () => {
   it('does not host the Home aurora grid on Plugins', () => {
@@ -86,7 +85,7 @@ describe('ExtensionsView plugin catalogue', () => {
   it('uses one Add plugin menu and compact responsive rows', () => {
     expect(hub).toContain('Add plugin');
     expect(hub).toContain('aria-label="Add a plugin"');
-    const collectionCss = readFileSync(new URL('./installed-plugin-collection.css', import.meta.url), 'utf8');
+    const collectionCss = readSourceText(new URL('./installed-plugin-collection.css', import.meta.url));
     expect(collectionCss).toContain('.ext-installed-row.is-selected');
     expect(collectionCss).toContain('@container plugin-collection (max-width: 950px)');
     expect(collectionCss).toContain('@container plugin-collection (max-width: 650px)');

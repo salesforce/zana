@@ -1,7 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
 
 const h = vi.hoisted(() => ({
   sidebarCollapsed: false,
@@ -23,6 +22,7 @@ vi.mock('../CollapsedUnreadThreads', () => ({
 }));
 
 import { SidebarTriggerOverlay } from '../SidebarTriggerOverlay.js';
+import { readSourceText } from '../../__tests__/helpers/source-text.js';
 
 function renderOverlay() {
   return renderToStaticMarkup(
@@ -66,7 +66,7 @@ describe('SidebarTriggerOverlay', () => {
     expect(markup).toContain('data-testid="sidebar-collapsed-new-chat"');
     expect(markup).toContain('aria-label="Search"');
     expect(markup).toContain('aria-label="New Chat"');
-    const source = readFileSync(new URL('../SidebarTriggerOverlay.tsx', import.meta.url), 'utf8');
+    const source = readSourceText(new URL('../SidebarTriggerOverlay.tsx', import.meta.url));
     expect(source).toContain('setPaletteOpen(true)');
     expect(source).toContain('getNewThreadRoutePath(projectId)');
     expect(source).toContain('getRootRoutePath()');
@@ -74,7 +74,7 @@ describe('SidebarTriggerOverlay', () => {
   });
 
   it('uses a root overlay beside history controls in Electron title-bar chrome', () => {
-    const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+    const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
 
     expect(css).toContain('.sidebar-trigger-overlay {\n  position: fixed;');
     expect(css).toContain(".app-shell[data-traffic-lights='true']");

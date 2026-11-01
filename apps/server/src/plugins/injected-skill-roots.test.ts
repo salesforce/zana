@@ -21,7 +21,7 @@ describe('builtinSkillsRootPath', () => {
     const root = builtinSkillsRootPath();
     const skill = join(root, 'zcc-plugin-authoring', 'SKILL.md');
     expect(existsSync(skill), `expected ${skill} to exist`).toBe(true);
-    expect(readFileSync(skill, 'utf8')).toMatch(/^---\nname: zcc-plugin-authoring\n/);
+    expect(readFileSync(skill, 'utf8').replace(/\r\n/g, '\n')).toMatch(/^---\nname: zcc-plugin-authoring\n/);
     expect(existsSync(join(root, 'zcc-cli', 'SKILL.md'))).toBe(true);
     expect(existsSync(join(root, 'zcc-inbox', 'SKILL.md'))).toBe(true);
     expect(existsSync(join(root, 'zcc-preview', 'SKILL.md'))).toBe(true);
@@ -29,17 +29,17 @@ describe('builtinSkillsRootPath', () => {
       name: 'zana-ui-proposals',
       description: expect.stringContaining('interactive UI proposals')
     });
-    const browser = readFileSync(join(root, 'zcc-browser', 'SKILL.md'), 'utf8');
+    const browser = readFileSync(join(root, 'zcc-browser', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
     expect(browser).toMatch(/^---\nname: zcc-browser\n/);
     expect(browser).toContain('zcc browser create');
     expect(browser).toContain('--reveal');
     expect(browser).toContain('have been retired');
     expect(browser).toContain('Do not silently switch to an external browser');
-    expect(readFileSync(join(root, 'zcc-preview', 'SKILL.md'), 'utf8')).toMatch(/^---\nname: zcc-preview\n/);
+    expect(readFileSync(join(root, 'zcc-preview', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n')).toMatch(/^---\nname: zcc-preview\n/);
     expect(existsSync(join(root, 'zcc-terminal', 'SKILL.md'))).toBe(true);
-    expect(readFileSync(join(root, 'zcc-terminal', 'SKILL.md'), 'utf8')).toMatch(/^---\nname: zcc-terminal\n/);
-    const pluginAuthoring = readFileSync(join(root, 'zcc-plugin-authoring', 'SKILL.md'), 'utf8');
-    const center = readFileSync(join(root, 'zcc-center', 'SKILL.md'), 'utf8');
+    expect(readFileSync(join(root, 'zcc-terminal', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n')).toMatch(/^---\nname: zcc-terminal\n/);
+    const pluginAuthoring = readFileSync(join(root, 'zcc-plugin-authoring', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
+    const center = readFileSync(join(root, 'zcc-center', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
     expect(Buffer.byteLength(pluginAuthoring, 'utf8')).toBeGreaterThanOrEqual(2_048);
     expect(Buffer.byteLength(pluginAuthoring, 'utf8')).toBeLessThanOrEqual(4_096);
     expect(Buffer.byteLength(center, 'utf8')).toBeGreaterThanOrEqual(2_048);
@@ -50,7 +50,7 @@ describe('builtinSkillsRootPath', () => {
       'zcc-plugin-authoring': ['workflow.md', 'server-sdk.md', 'app-slots.md', 'skills-and-approvals.md', 'testing.md'],
       'zcc-center': ['schedules.md', 'templates.md', 'personas.md', 'squads.md', 'run-reporting.md']
     })) {
-      const core = readFileSync(join(root, skillName, 'SKILL.md'), 'utf8');
+      const core = readFileSync(join(root, skillName, 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
       for (const file of referenceFiles) {
         expect(existsSync(join(root, skillName, 'references', file))).toBe(true);
         expect(core).toContain(`references/${file}`);

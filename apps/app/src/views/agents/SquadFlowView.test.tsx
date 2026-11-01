@@ -2,7 +2,6 @@
  * @vitest-environment happy-dom
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { SquadFlowGraph, SquadFlowNode } from '@zana-ai/zcc-domain/product';
@@ -59,14 +58,15 @@ vi.mock('@/components/SquadSwitcher', () => ({ SquadSwitcher: () => null }));
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }));
 
 import { nodeActivity, squadChipLabel, SquadFlowView, SquadGraph, squadHeaderLabel, STREAMING_FRESH_MS } from './SquadFlowView';
+import { readSourceText } from '../../__tests__/helpers/source-text.js';
 import { SOLO_GROUP_ICON, SOLO_GROUP_LABEL, type FlowGraph } from '@/lib/squadFlow';
 import { BLOCKER_H, NODE_H, nodeHeight } from './squadFlowLayout';
 
 // happy-dom rewrites import.meta.url to a non-file scheme, so resolve source
 // files from the repo root (vitest cwd) instead of a relative file URL.
-const view = readFileSync(join(process.cwd(), 'apps/app/src/views/agents/SquadFlowView.tsx'), 'utf8');
-const css = readFileSync(join(process.cwd(), 'apps/app/src/styles/global.css'), 'utf8');
-const layoutSource = readFileSync(join(process.cwd(), 'apps/app/src/views/agents/squadFlowLayout.ts'), 'utf8');
+const view = readSourceText(join(process.cwd(), 'apps/app/src/views/agents/SquadFlowView.tsx'));
+const css = readSourceText(join(process.cwd(), 'apps/app/src/styles/global.css'));
+const layoutSource = readSourceText(join(process.cwd(), 'apps/app/src/views/agents/squadFlowLayout.ts'));
 
 function flowNode(over: Partial<SquadFlowNode>): SquadFlowNode {
   const sessionId = over.sessionId ?? 's';

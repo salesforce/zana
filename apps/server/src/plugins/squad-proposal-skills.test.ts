@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const read = (path: string) => readFileSync(new URL(`./builtin-skills/${path}`, import.meta.url), 'utf8');
+const read = (path: string) => readFileSync(new URL(`./builtin-skills/${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const brainstorm = read('brainstorm/SKILL.md');
 const inbox = read('zcc-inbox/SKILL.md');
 const inboxReferences = ['inbox.md', 'library.md', 'remote.md', 'schedules.md', 'squads.md'];

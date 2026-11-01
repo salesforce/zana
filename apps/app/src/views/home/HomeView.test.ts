@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readSourceText } from '../../__tests__/helpers/source-text.js';
 
-const view = readFileSync(new URL('./HomeView.tsx', import.meta.url), 'utf8');
-const css = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8');
+const view = readSourceText(new URL('./HomeView.tsx', import.meta.url));
+const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
 
 describe('HomeView New Chat surface', () => {
   it('is a composer-only create surface with plugin CTAs under the prompt', () => {

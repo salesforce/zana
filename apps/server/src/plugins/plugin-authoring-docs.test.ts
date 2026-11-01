@@ -62,8 +62,8 @@ const REFERENCE_FILES = [
 
 function readSkillDocumentation(): string {
   return [
-    readFileSync(SKILL_PATH, 'utf8'),
-    ...REFERENCE_FILES.map((file) => readFileSync(join(dirname(SKILL_PATH), 'references', file), 'utf8'))
+    readFileSync(SKILL_PATH, 'utf8').replace(/\r\n/g, '\n'),
+    ...REFERENCE_FILES.map((file) => readFileSync(join(dirname(SKILL_PATH), 'references', file), 'utf8').replace(/\r\n/g, '\n'))
   ].join('\n\n');
 }
 
@@ -358,7 +358,7 @@ const FRONTEND_SLOT_PROP_FIELDS = {
 };
 
 describe('zcc-plugin-authoring skill', () => {
-  const core = readFileSync(SKILL_PATH, 'utf8');
+  const core = readFileSync(SKILL_PATH, 'utf8').replace(/\r\n/g, '\n');
   const skill = readSkillDocumentation();
 
   it('has frontmatter naming the skill after its directory', () => {
