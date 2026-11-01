@@ -31,6 +31,7 @@ import { resumeScheduledRun } from './resumeScheduledRun.js';
 
 interface ScheduleRowProps {
   task: ScheduledTask;
+  nowMs?: number;
   projectName: string;
   group?: ScheduleGroup | null;
   onOpen: () => void;
@@ -41,6 +42,7 @@ interface ScheduleRowProps {
 
 export const ScheduleRow = React.memo(function ScheduleRow({
   task,
+  nowMs = Date.now(),
   projectName,
   group,
   onOpen,
@@ -50,7 +52,7 @@ export const ScheduleRow = React.memo(function ScheduleRow({
 }: ScheduleRowProps) {
   const isExternal = task.external?.kind === 'claude-loop';
   const nextRun = task.status.nextRunAt ? new Date(task.status.nextRunAt) : null;
-  const skippedLabel = skippedLastRunPill(task, Date.now());
+  const skippedLabel = skippedLastRunPill(task, nowMs);
   const terminals = useData((s) => s.terminals);
   const pushToast = useUi((s) => s.pushToast);
   const navigate = useNavigate();

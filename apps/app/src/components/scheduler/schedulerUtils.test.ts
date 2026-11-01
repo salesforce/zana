@@ -49,6 +49,16 @@ describe('skippedLastRunLabel', () => {
     expect(skippedLastRunLabel({ slotAt: at(slot), reason: 'overlap' }, now).text)
       .toBe(`skipped ${slot.toLocaleDateString([], { day: 'numeric', month: 'short' })} · Previous run still active`);
   });
+  it('shows the date for the same weekday last week, even at a later clock time', () => {
+    const slot = new Date(2026, 9, 7, 13, 0);
+    expect(skippedLastRunLabel({ slotAt: at(slot) }, now).text)
+      .toBe(`skipped ${slot.toLocaleDateString([], { day: 'numeric', month: 'short' })}`);
+  });
+  it('keeps the weekday for a slot six calendar days ago', () => {
+    const slot = new Date(2026, 9, 8, 7, 40);
+    expect(skippedLastRunLabel({ slotAt: at(slot) }, now).text)
+      .toBe(`skipped ${slot.toLocaleDateString([], { weekday: 'short' })} ${time(slot)}`);
+  });
   it('words the overlap title for a Squad', () => {
     const slot = new Date(2026, 9, 14, 7, 40);
     expect(skippedLastRunLabel({ slotAt: at(slot), reason: 'overlap' }, now, true).title)

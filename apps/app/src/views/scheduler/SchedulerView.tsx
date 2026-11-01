@@ -352,6 +352,7 @@ export function SchedulerView({ projectId }: { projectId?: string } = {}) {
                   <ScheduleRow
                     key={t.id}
                     task={t}
+                    nowMs={Date.now()}
                     projectName={
                       projects.find((p) => p.id === t.projectId)?.name ?? 'Project missing'
                     }

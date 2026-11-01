@@ -238,6 +238,16 @@ describe('ScheduleRow skipped last run', () => {
     );
     expect(pill.className).toBe('scheduler-pill scheduler-pill--skipped scheduler-pill--skipped-last');
   });
+  it('refreshes a memoized row when the parent clock passes a due slot', () => {
+    const previous = new Date(slot.getTime() - 3_600_000).toISOString();
+    const t = { ...task, status: { runCount: 1, lastRunAt: previous, runs: [{ at: previous, result: 'success' as const }], nextRunAt: slot.toISOString() } };
+    const callbacks = { onOpen: vi.fn(), onOpenInSplit: vi.fn(), onDuplicate: vi.fn(), onAskDelete: vi.fn() };
+    const row = (nowMs: number) => <MemoryRouter><ul><ScheduleRow task={t} projectName="Demo" nowMs={nowMs} {...callbacks} /></ul></MemoryRouter>;
+    const view = render(row(slot.getTime() - 1));
+    expect(view.queryByTestId('schedule-skipped-last')).toBeNull();
+    view.rerender(row(slot.getTime() + 180_000));
+    expect(view.getByTestId('schedule-skipped-last').textContent).toBe(`skipped ${time}`);
+  });
 
   it('words the title for a Squad', () => {
     const view = mount({ ...task, kind: 'team', status: { runCount: 1, runs: [overlap] } });

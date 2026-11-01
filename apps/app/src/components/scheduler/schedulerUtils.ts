@@ -242,8 +242,11 @@ export function formatCountdown(d: Date): string {
 function skippedWhen(slotMs: number, nowMs: number): string {
   const slot = new Date(slotMs);
   const time = slot.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  if (slot.toDateString() === new Date(nowMs).toDateString()) return time;
-  if (nowMs - slotMs < 7 * 86_400_000) return `${slot.toLocaleDateString([], { weekday: 'short' })} ${time}`;
+  const now = new Date(nowMs);
+  const calendarDay = (date: Date) => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+  const daysAgo = (calendarDay(now) - calendarDay(slot)) / 86_400_000;
+  if (daysAgo === 0) return time;
+  if (daysAgo > 0 && daysAgo < 7) return `${slot.toLocaleDateString([], { weekday: 'short' })} ${time}`;
   return slot.toLocaleDateString([], { day: 'numeric', month: 'short' });
 }
 
