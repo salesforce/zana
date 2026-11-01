@@ -25,7 +25,7 @@ LINES = json.loads((OUT / 'narration.json').read_text())
 INTRO, XFADE, FPS = 11.0, 0.2, 30
 W, H = 1440, 900
 # A cut keeps these beats of the recording, each from its line to the next, joined by short fades.
-CUTS = {'exec': ['agents', 'preview', 'squads', 'flow', 'plugins', 'folder', 'change', 'dashboard', 'everywhere', 'outro']}
+CUTS = {'exec': ['agents', 'preview', 'squads', 'flow', 'plugins', 'tickets', 'work', 'change', 'dashboard', 'everywhere', 'outro']}
 JOIN = 0.3
 PAD, TAIL = 0.5, 1.0
 INTRO_LINES = [(0.5, 'Your agents are everywhere: terminals, tabs, chats.'), (4.9, 'Zana brings them all into one command center.')]

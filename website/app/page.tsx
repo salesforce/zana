@@ -114,7 +114,7 @@ export default function Home() {
                 </h2>
               </div>
               <p>
-                A two-minute tour of starting a task, following your agents,
+                A 90-second tour of starting a task, following your agents,
                 and reviewing the result.
               </p>
             </div>

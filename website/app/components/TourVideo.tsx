@@ -7,7 +7,7 @@ export const TOUR_VIDEO = {
 } as const;
 
 /**
- * The homepage tour: a two-minute narrated recording of the real app. The
+ * The homepage tour: a 90-second narrated recording of the real app. The
  * poster is the opener's title card (also the video's first frame), so the
  * player never shows a blank image before it plays.
  */
@@ -21,7 +21,7 @@ export function TourVideo() {
         poster={TOUR_VIDEO.poster}
         width={1440}
         height={900}
-        aria-label="A two-minute tour of Zana"
+        aria-label="A 90-second tour of Zana"
       >
         <source src={TOUR_VIDEO.src} type="video/mp4" />
         <track
@@ -33,7 +33,7 @@ export function TourVideo() {
         />
       </video>
       <div className="product-tour-more">
-        <span>A two-minute tour · Recorded in the app</span>
+        <span>A 90-second tour · Recorded in the app</span>
         <Link className="text-link" href="/features/">
           See all features <span aria-hidden="true">→</span>
         </Link>

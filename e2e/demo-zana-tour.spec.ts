@@ -1,8 +1,8 @@
 /**
  * Demo recording (not a regression test): a two-minute tour of Zana. Projects, any agent from one
- * composer and its preview, a Squad the agent launches from the thread, then plugins: Agent City from
- * the marketplace, the GUS plugin from a folder, a ticket handed to an agent, an agent adding a
- * Dashboard tab to GUS, sharing it, and the phone.
+ * composer and its preview, a Squad the agent launches from the thread, then plugins: the GUS plugin
+ * from the marketplace, a ticket handed to an agent, an agent adding a Dashboard tab to GUS, sharing
+ * it, and the phone.
  *
  *   ZCC_E2E_RECORD_VIDEO=$PWD/e2e/.artifacts/demo-zana-tour pnpm test:e2e -- e2e/demo-zana-tour.spec.ts
  *
@@ -12,13 +12,16 @@
  *
  * No model is called. Thread agents are the fake ACP agent on `opencode` playing FAKE_ACP_SCRIPT,
  * which the spec rewrites before each prompt; the Squad is the deterministic fake coordinator.
- * GUS is a copy of the GUS checkout's renderer (GUS_PLUGIN_ROOT, read only) on a sample-data server.
+ * GUS is a copy of the GUS checkout's renderer (GUS_PLUGIN_ROOT, read only) on a sample-data server,
+ * listed in a local marketplace catalog and served from a local git daemon.
  */
 import { test, expect } from './fixtures/app.js';
 import { makeJobTeamCoordinatorBinary } from './sdk/harness.js';
 import { stubOpenDialog } from './sdk/native-dialog.js';
+import { startGitDaemon } from './fixtures/git-daemon.js';
 import { dashboardChange, prepareGusFixture, rebuildGusFixture } from './fixtures/demo-zana-tour/gus-fixture.js';
 import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
@@ -103,6 +106,8 @@ test.use({
   initialConfig: { sponsorPromptDismissed: true, teamJobLaunchEnabled: true, composerShowAutonomousTeam: true, autoRenameTabs: false, harnessOpenCodeEnabled: true },
   launchEnv: {
     PATH: `${fixtureBin}${delimiter}${process.env.PATH ?? ''}`, FAKE_ACP_MODE_CONFIG: '1', FAKE_ACP_SCRIPT: script, FAKE_ACP_HTTP_MCP: '1',
+    // The tour's catalog is the only marketplace, so the search shows its GUS alone.
+    ZCC_OFFICIAL_MARKETPLACE_URL: 'off', ZCC_COMMUNITY_MARKETPLACE_SOURCE: 'off', ZCC_INTERNAL_MARKETPLACE_SOURCE: 'off',
     ...(process.platform === 'linux' ? { ZCC_E2E_VISIBLE: '1' } : {})
   }
 });
@@ -146,6 +151,20 @@ test('demo: a tour of Zana', async ({ app }) => {
   cpSync(gusDir, gusStage, { recursive: true, verbatimSymlinks: true });
   for (const file of files) writeFileSync(join(gusStage, file.path.slice(gusDir.length)), file.content);
   await rebuildGusFixture(gusStage);
+  // The marketplace lists GUS from a local catalog; installing it clones the built plugin over git.
+  const gusGit = await startGitDaemon(join(parent, 'git'), [{ repoName: 'zcc-plugin-gus', files: { 'README.md': '# GUS\n' } }]);
+  cpSync(gusDir, gusGit.sourceDir('zcc-plugin-gus'), { recursive: true, filter: (path) => !path.includes('node_modules') });
+  gusGit.publishUpdate('zcc-plugin-gus', 'Publish GUS');
+  // A release tag, so the marketplace shows the plugin's version.
+  execFileSync('git', ['tag', '0.2.0'], { cwd: gusGit.sourceDir('zcc-plugin-gus'), stdio: 'ignore' });
+  execFileSync('git', ['push', '-q', join(parent, 'git', 'bare', 'zcc-plugin-gus.git'), '0.2.0'], { cwd: gusGit.sourceDir('zcc-plugin-gus'), stdio: 'ignore' });
+  const catalogDir = join(parent, 'catalog');
+  mkdirSync(catalogDir);
+  writeFileSync(join(catalogDir, 'marketplace.json'), JSON.stringify({
+    schemaVersion: 1, name: 'atlas-plugins', displayName: 'Atlas Web',
+    plugins: [{ id: GUS_ID, displayName: 'GUS', description: 'Your GUS sprint board and tickets, with an agent one click away',
+      icon: { lucide: 'Bug' }, author: { name: 'Atlas Web' }, source: { git: { url: gusGit.urlFor('zcc-plugin-gus'), ref: '0.2.0' } } }]
+  }));
   let phoneBrowser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
   let gateway: Awaited<ReturnType<typeof startMobileGateway>> | undefined;
 
@@ -157,8 +176,11 @@ test('demo: a tour of Zana', async ({ app }) => {
       trustZccToolsEnabled: false, tmuxScope: 'off', defaultHarness: 'claude', opencodeBinary: undefined, theme
     }), { bin: agent.path, theme: light ? 'light' as const : 'dark' as const });
     await page.addStyleTag({ content: '.statusbar { display: none !important; }' });
-    // The project folder picker, then the plugin folder picker.
-    await stubOpenDialog(app.electron, [[projectDir], [gusDir]]);
+    // The project folder picker.
+    await stubOpenDialog(app.electron, [[projectDir]]);
+    expect(await page.evaluate(async (source) => (await fetch('/api/v1/marketplaces', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source })
+    })).ok, `path:${catalogDir}`)).toBe(true);
 
     const beat = (ms: number) => page.waitForTimeout(ms);
     const timeline: Array<{ id: string; at: number }> = [];
@@ -388,45 +410,36 @@ test('demo: a tour of Zana', async ({ app }) => {
     }, atlasId), { timeout: 60_000 }).toBe(true);
     await beat(900);
 
-    // 6. Modular: a plugin from the marketplace...
+    // 6. Modular: GUS from the marketplace.
     await say('plugins');
     await go(page.locator('.nav-item').filter({ hasText: 'Plugins' }).first());
-    await go(page.getByTestId('extensions-nav-marketplace'));
+    // Behind the veil, so the full catalog never shows: Browse opens already searching for GUS.
+    await tap(page, page.getByTestId('extensions-nav-marketplace'), async () => { await veil(1); await beat(160); });
     const search = page.getByRole('textbox', { name: 'Search plugins' });
-    await search.click();
-    await search.pressSequentially('Agent City', { delay: 30 });
-    const cityRow = page.getByTestId('plugin-card-agent-city');
-    await expect(cityRow.locator('.ext-market-item-action button')).toBeEnabled({ timeout: 20_000 });
-    await focus(cityRow, 2600);
+    await search.fill('GUS');
+    await beat(300);
+    await veil(0);
+    const gusCard = page.getByTestId(`plugin-card-${GUS_ID}`);
+    await expect(gusCard.locator('.ext-market-item-action button')).toBeEnabled({ timeout: 20_000 });
+    await focus(gusCard, 2600);
     await beat(500);
-    await tap(page, cityRow.locator('.ext-market-item-action button'));
+    await tap(page, gusCard.locator('.ext-market-item-action button'));
     await tap(page, page.getByRole('button', { name: 'Install with full trust' }));
-    await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find((p) => p.id === 'agent-city')?.status), { timeout: 60_000 }).toBe('running');
-
-    // 7. ...and one straight from a folder.
-    await say('folder');
-    await go(page.getByTestId('extensions-nav-installed'));
-    const collection = page.locator('.ext-installed-collection');
-    await tap(page, collection.getByRole('button', { name: 'Add plugin' }));
-    await beat(400);
-    await tap(page, page.getByRole('menuitem', { name: 'Install from folder' }));
     await expect.poll(() => page.evaluate(async (id) => (await window.cc.pluginApps.list()).find((p) => p.id === id)?.status, GUS_ID), { timeout: 60_000 }).toBe('running');
-    const gusRow = page.getByTestId(`plugin-row-${GUS_ID}`);
-    await expect(gusRow).toBeVisible({ timeout: 15_000 });
-    await gusRow.scrollIntoViewIfNeeded();
-    await focus(gusRow, 2200);
     await beat(1200);
 
-    await go(page.getByRole('link', { name: 'Back to app' }));
-
-    // 9. My tickets.
+    // 7. My tickets: from the plugin page straight into GUS.
     await say('tickets');
+    // Back to the app and into GUS under one veil, so the previous view never flashes.
     const gusNav = page.getByRole('button', { name: 'GUS', exact: true });
-    await go(gusNav);
+    await tap(page, page.getByRole('link', { name: 'Back to app' }), async () => { await veil(1); await beat(160); });
+    await gusNav.click();
+    await beat(200);
+    await veil(0);
     await expect(page.locator('.gus-board')).toBeVisible({ timeout: 20_000 });
     await beat(1500);
 
-    // 10. Work with agent.
+    // 8. Work with agent.
     await say('work');
     reply('Work GUS', [
       { pause: 700 },
@@ -448,7 +461,7 @@ test('demo: a tour of Zana', async ({ app }) => {
     await tap(page, compose.getByTestId('thread-command-send'));
     await expect(page.getByText(/Ready for review\.$/)).toBeVisible({ timeout: 30_000 });
 
-    // 11. Ask an agent to change the plugin, from the plugin's own project.
+    // 9. Ask an agent to change the plugin, from the plugin's own project.
     await say('change');
     reply('Dashboard tab', [
       { pause: 700 },
@@ -477,11 +490,14 @@ test('demo: a tour of Zana', async ({ app }) => {
     await expect(launcher).toBeHidden();
     const dashboardThread = await threadPath();
 
-    // 12. Live: the change was built ahead (gusStage), so the reload is immediate.
+    // 10. Live: the change was built ahead (gusStage), so the reload is immediate.
     await expect.poll(() => readFileSync(files[1]!.path, 'utf8').includes('GusDashboard'), { timeout: 30_000 }).toBe(true);
     await expect(page.getByText(/^Done: tickets by status/)).toBeVisible({ timeout: 15_000 });
+    const dataDir = await app.electron.evaluate(() => process.env.ZCC_DATA_DIR!);
+    const installed = JSON.parse(readFileSync(join(dataDir, 'plugins', 'installed.json'), 'utf8')) as { plugins: Array<{ id: string; rootDir: string }> };
+    const gusRoot = installed.plugins.find((row) => row.id === GUS_ID)!.rootDir;
     for (const built of ['app.js', 'app.meta.json', 'server.mjs', 'server.meta.json']) {
-      if (existsSync(join(gusStage, built))) copyFileSync(join(gusStage, built), join(gusDir, built));
+      if (existsSync(join(gusStage, built))) copyFileSync(join(gusStage, built), join(gusRoot, built));
     }
     await page.evaluate((id) => window.cc.pluginApps.reload(id), GUS_ID);
     await say('dashboard');
@@ -493,7 +509,7 @@ test('demo: a tour of Zana', async ({ app }) => {
     await expect(page.locator('.gus-dash')).toBeVisible();
     await beat(1500);
 
-    // 13. Share it: just ask the agent.
+    // 11. Share it: just ask the agent.
     await say('share');
     const phoneReady = openPhone();
     reply('Share it with the Atlas team', [
@@ -511,7 +527,7 @@ test('demo: a tour of Zana', async ({ app }) => {
     await expect(page.getByText(/updates when you push\.$/)).toBeVisible({ timeout: 30_000 });
     await beat(800);
 
-    // 14. On your phone (the real mobile web app, mirrored live), and soon in Slack.
+    // 12. On your phone (the real mobile web app, mirrored live), and soon in Slack.
     const phone = await phoneReady;
     await say('everywhere');
     await page.evaluate(() => document.getElementById('e2e-devices')!.classList.add('on'));
@@ -528,7 +544,7 @@ test('demo: a tour of Zana', async ({ app }) => {
     await dashboardTab.click();
     await expect(page.locator('.gus-dash')).toBeVisible();
 
-    // 15. Close on the dashboard.
+    // 13. Close on the dashboard.
     await say('outro');
     await beat(900);
     await page.evaluate(() => document.getElementById('e2e-devices')!.classList.remove('on'));
@@ -540,6 +556,7 @@ test('demo: a tour of Zana', async ({ app }) => {
     }
   } finally {
     await phoneBrowser?.close().catch(() => {});
+    await gusGit.close().catch(() => {});
     await gateway?.close().catch(() => {});
     await page.evaluate(async () => {
       for (const project of await window.cc.projects.list()) {
