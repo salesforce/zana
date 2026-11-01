@@ -186,6 +186,8 @@ export interface StartRuntimeSupervisorOptions {
   /** Env vars for the product-server utility only — never the host-daemon, never process.env. */
   extraEnv?: Record<string, string>;
   onUnexpectedExit?: (service: string) => void;
+  /** Trusted local activity snapshot; includes hidden workers, excludes remote work. */
+  onLocalThreadWork?: (working: boolean) => void;
 }
 
 type SquadOperation = 'squad-runtime-preflight' | 'squad-member-create' | 'squad-member-activate' | 'squad-member-deliver' | 'squad-member-delivery-complete' | 'squad-member-status' | 'squad-member-stop';
@@ -651,6 +653,7 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     if (closing || failed) return;
     failed = true;
     if (enrollRetry) { clearInterval(enrollRetry); enrollRetry = null; }
+    options.onLocalThreadWork?.(false);
     options.onUnexpectedExit?.(service);
   };
   const server = createUtilityRuntime(renderer, () => unexpectedExit('server'));
@@ -664,7 +667,10 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
   const enrollOnce = async (type: 'enroll' | 'relaunch' = 'enroll') => {
     if (failed || closing) throw new Error('Background service unavailable');
     const identity = await enrollHostUtility(host.child, enrollInput, type);
-    if (!failed && !closing) enrolledHostId = identity;
+    if (!failed && !closing) {
+      enrolledHostId = identity;
+      renderer.child.postMessage({ type: 'local-host', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, hostId: identity });
+    }
   };
   try {
     await enrollOnce();
@@ -722,6 +728,7 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
       return;
     }
     if (parsed.data.type === 'menubar-threads-changed') {
+      if (!closing && !failed) options.onLocalThreadWork?.(parsed.data.localThreadsWorking);
       for (const listener of menubarThreadListeners) listener();
       return;
     }
@@ -906,6 +913,7 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     },
     async close(): Promise<void> {
       closing = true;
+      options.onLocalThreadWork?.(false);
       productEvents.dispose();
       libraryListeners.clear();
       projectsListeners.clear();

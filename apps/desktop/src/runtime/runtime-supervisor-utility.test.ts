@@ -11,7 +11,7 @@ vi.mock('electron', () => ({
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { EventEmitter: Emitter } = require('node:events') as typeof import('node:events');
       const child: any = Object.assign(new Emitter(), { entry, pid: 7, kill: () => { child.emit('exit', 0); } });
-      child.postMessage = (message: any) => {
+      child.postMessage = vi.fn((message: any) => {
         if (message.type === 'start') {
           setImmediate(() => child.emit('message', {
             type: 'ready', protocolVersion: h.pv, url: `http://127.0.0.1/${entry}`, hostId: 'host-1', instanceId: 'inst-1'
@@ -24,7 +24,7 @@ vi.mock('electron', () => ({
         } else if (message.type === 'stop') {
           setImmediate(() => child.emit('message', { type: 'stopped', protocolVersion: h.pv }));
         }
-      };
+      });
       h.children.push(child);
       setImmediate(() => child.emit('spawn'));
       return child;
@@ -39,6 +39,35 @@ const { startRuntimeSupervisor } = await import('./runtime-supervisor.js');
 afterEach(() => { h.children.length = 0; });
 
 describe('utility-backed runtime supervisor', () => {
+  it('forwards validated local thread activity and clears it on runtime loss and shutdown', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-utility-power-'));
+    vi.stubEnv('ZCC_HOST_ENROLL_TOKEN', 'x'.repeat(32));
+    const onLocalThreadWork = vi.fn();
+    const runtime = await startRuntimeSupervisor({ rendererRoot: dataDir, dataDir, runtimeDir: dataDir, onLocalThreadWork });
+    const server = h.children.find(child => child.entry.endsWith('server-runtime.js'));
+    expect(server.postMessage).toHaveBeenCalledWith({ type: 'local-host', protocolVersion: h.pv, hostId: 'host-1' });
+    const emit = (localThreadsWorking: unknown) => server.emit('message', {
+      type: 'menubar-threads-changed', protocolVersion: h.pv, localThreadsWorking
+    });
+    try {
+      emit('true');
+      expect(onLocalThreadWork).not.toHaveBeenCalled();
+      emit(true);
+      expect(onLocalThreadWork).toHaveBeenLastCalledWith(true);
+      emit(false);
+      expect(onLocalThreadWork).toHaveBeenLastCalledWith(false);
+      emit(true);
+      server.emit('exit', 1);
+      expect(onLocalThreadWork).toHaveBeenLastCalledWith(false);
+      onLocalThreadWork.mockClear();
+      emit(true);
+      expect(onLocalThreadWork).not.toHaveBeenCalled();
+    } finally {
+      await runtime.close();
+      expect(onLocalThreadWork).toHaveBeenLastCalledWith(false);
+      vi.unstubAllEnvs();
+    }
+  });
   it('routes plugin pack operations to the server utility with reviewed identities and plans', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-utility-packs-'));
     vi.stubEnv('ZCC_HOST_ENROLL_TOKEN', 'x'.repeat(32));
