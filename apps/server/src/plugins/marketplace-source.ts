@@ -187,7 +187,8 @@ async function runGit(args: string[], options: MarketplaceMaterializeOptions = {
     const child = spawn('git', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       env,
-      detached: true
+      detached: true,
+      windowsHide: true
     });
     let stdout = '';
     let stderr = '';

@@ -22,7 +22,7 @@ export const GIT_COMMIT_MESSAGE_MAX = 2_000;
 async function commitRevision(cwd: string): Promise<string | null> {
   const result = await new Promise<{ ok: boolean; output: Buffer }>((resolve) => {
     execFile('git', ['status', '--porcelain=v2', '--branch', '-z'], {
-      cwd, timeout: STATUS_SCOPED_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, encoding: 'buffer'
+      cwd, timeout: STATUS_SCOPED_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, encoding: 'buffer', windowsHide: true
     }, (error, stdout) => resolve({ ok: !error, output: Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout ?? '') }));
   });
   return result.ok ? createHash('sha256').update(result.output).digest('hex') : null;
@@ -107,7 +107,7 @@ export async function getRecentCommits(cwd: string, limit = 50): Promise<GitComm
     execFile(
       'git',
       ['log', `--max-count=${n}`, `--pretty=format:${format}`],
-      { cwd: toplevel, timeout: TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 },
+      { cwd: toplevel, timeout: TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, windowsHide: true },
       (err, stdout) => {
         if (err) {
           resolve([]);
@@ -165,7 +165,7 @@ export async function gitCommonDir(cwd: string): Promise<string | null> {
     execFile(
       'git',
       ['rev-parse', '--path-format=absolute', '--git-common-dir'],
-      { cwd, timeout: TIMEOUT_MS, maxBuffer: 1 * 1024 * 1024 },
+      { cwd, timeout: TIMEOUT_MS, maxBuffer: 1 * 1024 * 1024, windowsHide: true },
       (err, stdout) => {
         if (err) {
           resolve(null);
@@ -203,7 +203,7 @@ export async function listWorktrees(cwd: string): Promise<Worktree[]> {
     execFile(
       'git',
       ['worktree', 'list', '--porcelain', '-z'],
-      { cwd, timeout: TIMEOUT_MS, maxBuffer: 1 * 1024 * 1024 },
+      { cwd, timeout: TIMEOUT_MS, maxBuffer: 1 * 1024 * 1024, windowsHide: true },
       (err, stdout) => {
         if (err) {
           resolve([]);
@@ -293,7 +293,7 @@ export async function listBranches(cwd: string): Promise<GitBranch[]> {
         '--format=%(HEAD)%09%(refname:short)',
         'refs/heads'
       ],
-      { cwd, timeout: TIMEOUT_MS, maxBuffer: 1 * 1024 * 1024 },
+      { cwd, timeout: TIMEOUT_MS, maxBuffer: 1 * 1024 * 1024, windowsHide: true },
       (err, stdout) => {
         if (err) {
           resolve([]);
@@ -379,7 +379,7 @@ export async function isGitRepo(cwd: string): Promise<boolean> {
     execFile(
       'git',
       ['rev-parse', '--is-inside-work-tree'],
-      { cwd, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024 },
+      { cwd, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024, windowsHide: true },
       (err, stdout) => resolve(!err && String(stdout).trim() === 'true')
     );
   });
@@ -415,7 +415,7 @@ async function branchRefExists(toplevel: string, name: string): Promise<boolean>
     execFile(
       'git',
       ['show-ref', '--verify', '--quiet', `refs/heads/${name}`],
-      { cwd: toplevel, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024 },
+      { cwd: toplevel, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024, windowsHide: true },
       (err) => resolve(!err)
     );
   });
@@ -451,7 +451,7 @@ async function hasDeclaredSubmodules(toplevel: string): Promise<boolean> {
     execFile(
       'git',
       ['config', '--file', '.gitmodules', '--get-regexp', '^submodule\..*\.path$'],
-      { cwd: toplevel, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024 },
+      { cwd: toplevel, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024, windowsHide: true },
       (err, stdout) => resolve(!err && String(stdout).trim().length > 0)
     );
   });
@@ -544,7 +544,7 @@ async function createWorktreeUnlocked(
     execFile(
       'git',
       args,
-      { cwd: toplevel, timeout: WORKTREE_ADD_TIMEOUT_MS, maxBuffer: 1 * 1024 * 1024 },
+      { cwd: toplevel, timeout: WORKTREE_ADD_TIMEOUT_MS, maxBuffer: 1 * 1024 * 1024, windowsHide: true },
       (err, _stdout, stderr) => {
         if (err) {
           resolve({
@@ -585,7 +585,7 @@ async function createWorktreeUnlocked(
 
 function runGitOutput(cwd: string, args: string[]): Promise<{ ok: boolean; output: string }> {
   return new Promise((resolve) => {
-    execFile('git', args, { cwd, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024 }, (err, stdout, stderr) => {
+    execFile('git', args, { cwd, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024, windowsHide: true }, (err, stdout, stderr) => {
       resolve({ ok: !err, output: String(stdout || stderr || '').trim() });
     });
   });
@@ -840,7 +840,7 @@ async function countUniqueCommits(worktreePath: string, branch: string): Promise
     execFile(
       'git',
       ['rev-list', '--count', 'HEAD', '--not', `--exclude=${branch}`, '--branches', '--remotes'],
-      { cwd: worktreePath, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024 },
+      { cwd: worktreePath, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024, windowsHide: true },
       (err, stdout) => {
         if (err) {
           resolve(0);
@@ -930,7 +930,7 @@ export async function getGitStatus(
     execFile(
       'git',
       args,
-      { cwd, timeout, maxBuffer: 4 * 1024 * 1024 },
+      { cwd, timeout, maxBuffer: 4 * 1024 * 1024, windowsHide: true },
       (err, stdout) => {
         if (err) {
           resolve(null);
@@ -966,7 +966,8 @@ export async function showHead(absPath: string): Promise<GitShowResult> {
         cwd: toplevel,
         timeout: TIMEOUT_MS,
         maxBuffer: SHOW_MAX_BYTES,
-        encoding: 'buffer'
+        encoding: 'buffer',
+        windowsHide: true
       },
       (err, stdout, stderr) => {
         if (err) {
@@ -998,7 +999,7 @@ function runGit(toplevel: string, args: string[]): Promise<{ ok: boolean; messag
     execFile(
       'git',
       args,
-      { cwd: toplevel, timeout: TIMEOUT_MS, maxBuffer: 1 * 1024 * 1024 },
+      { cwd: toplevel, timeout: TIMEOUT_MS, maxBuffer: 1 * 1024 * 1024, windowsHide: true },
       (err, _stdout, stderr) => {
         if (err) {
           const msg = String(stderr || (err as Error).message).trim();
@@ -1016,7 +1017,7 @@ function runGitMutation(cwd: string, args: string[]): Promise<GitWorkflowResult>
     execFile(
       'git',
       args,
-      { cwd, timeout: GIT_MUTATION_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 },
+      { cwd, timeout: GIT_MUTATION_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, windowsHide: true },
       (err, stdout, stderr) => {
         const output = String(stderr || stdout || '').trim();
         if (err) {
@@ -1096,7 +1097,7 @@ export async function discardChanges(absPath: string): Promise<GitDiscardResult>
     execFile(
       'git',
       ['status', '--porcelain=v2', '-z', '--', rel],
-      { cwd: toplevel, timeout: TIMEOUT_MS, maxBuffer: 1 * 1024 * 1024 },
+      { cwd: toplevel, timeout: TIMEOUT_MS, maxBuffer: 1 * 1024 * 1024, windowsHide: true },
       (err, stdout, stderr) => {
         if (err) {
           resolve({ xy: null, err: String(stderr || (err as Error).message).trim() });

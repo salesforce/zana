@@ -173,7 +173,7 @@ function gitCapture(dir: string, args: string[]): Promise<{ ok: boolean; out: st
     execFile(
       'git',
       ['-C', dir, ...args],
-      { timeout: 60_000, maxBuffer: 4 * 1024 * 1024 },
+      { timeout: 60_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true },
       (err, stdout, stderr) => {
         resolve({ ok: !err, out: String(stdout || '').trim(), err: String(stderr || '').trim() });
       }
@@ -228,7 +228,7 @@ function readOriginRemote(dir: string): Promise<string> {
     execFile(
       'git',
       ['-C', dir, 'remote', 'get-url', 'origin'],
-      { timeout: 10_000 },
+      { timeout: 10_000, windowsHide: true },
       (err, stdout) => resolve(err ? '' : String(stdout).trim())
     );
   });
@@ -346,7 +346,7 @@ export async function cloneProject(opts: CloneOptions): Promise<CloneResult> {
         const child = execFile(
           'git',
           ['clone', '--progress', ...extraArgs, '--', repo.cloneUrl, dest],
-          { timeout: CLONE_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 },
+          { timeout: CLONE_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024, windowsHide: true },
           (err, _stdout, stderr) => {
             if (err) {
               const msg = String(stderr || (err as Error).message)
