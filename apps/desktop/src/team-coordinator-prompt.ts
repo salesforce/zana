@@ -216,7 +216,11 @@ export function jobCoordinatorPrompt(input: {
     `Workers are already running:\n${rosterLines.join('\n') || '- No workers.'}`,
     ...(input.recoveryResume ? [
       'Recovery resume: this coordinator reopened its trusted native session for this same execution slot.',
-      'Resume the retained plan from durable execution state. Do not recreate completed work, replace workers, or start a new plan.'
+      // A planless run has no retained plan to resume: a plan this session
+      // remembers writing never registered, so it must follow the kickoff again.
+      input.planReady
+        ? 'Resume the retained plan from durable execution state. Do not recreate completed work, replace workers, or start a new plan.'
+        : 'No plan was registered before this recovery, so any plan you remember writing earlier was not received. Follow the kickoff below again from the start. Do not replace workers.'
     ] : []),
     planReadyLines.join('\n'),
     input.persona?.initialPrompt?.trim(),

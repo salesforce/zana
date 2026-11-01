@@ -1126,7 +1126,8 @@ describe('launchTeam CLI planless durable coordinator plan-file grant (B2)', () 
       join(projectDir, `.zana/execution-plan-corrected-${execution.id}.md`),
       join(projectDir, `.zana/execution-plan-correction-${execution.id}.md`)
     ]);
-    expect(JSON.stringify([orchestrator.openingPrompt, orchestrator.extraArgs])).toContain(`Write your COMPLETE portable-executable plan to \`${rel}\``);
+    // The prompt names the same absolute file the grant covers and the host reads.
+    expect(JSON.stringify([orchestrator.openingPrompt, orchestrator.extraArgs])).toContain(`Write your COMPLETE portable-executable plan to \`${join(projectDir, rel)}\``);
     expect(orchestrator.autonomous).toBe(false);
     for (const worker of h.creates.filter((create) => create.cohort?.role === 'worker')) {
       expect(worker.authoredPlanPaths).toBeUndefined();

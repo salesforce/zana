@@ -215,17 +215,36 @@ describe('exit teardown', () => {
 
   it('cleanup: prefers worktree path', async () => {
     const d = deps();
-    d.executionStore.getInProject.mockResolvedValue({ squadWorktree: { path: '/wt' } });
+    d.executionStore.getInProject.mockResolvedValue({ state: 'COMPLETED', workUnits: [{ id: 'a' }], squadWorktree: { path: '/wt' } });
     await cleanupOrchestratorOnExit(d, orch);
     expect(d.teamPlanHandoff.forget).toHaveBeenCalledWith('e');
     expect(d.inferredPlanCorrection.forget).toHaveBeenCalledWith('e');
-    expect(d.cleanupHandoffFiles).toHaveBeenCalledWith('/wt', 'e');
+    expect(d.cleanupHandoffFiles).toHaveBeenCalledWith('/wt', 'e', { keepAuthoredPlan: false });
+  });
+
+  it('cleanup: keeps the authored plan only while a planless run can still be relaunched', async () => {
+    const keepsPlan = async (record: object) => {
+      const d = deps();
+      d.executionStore.getInProject.mockResolvedValue(record);
+      await cleanupOrchestratorOnExit(d, orch);
+      return d.cleanupHandoffFiles.mock.calls[0][2].keepAuthoredPlan;
+    };
+    // A retry or recovery reads the same per-execution file, so it survives.
+    expect(await keepsPlan({ state: 'FAILED', workUnits: [] })).toBe(true);
+    expect(await keepsPlan({ state: 'STOPPED' })).toBe(true);
+    expect(await keepsPlan({ state: 'RUNNING', workUnits: [] })).toBe(true);
+    // Registered, superseded, or never relaunchable: nothing will read it again.
+    expect(await keepsPlan({ state: 'FAILED', workUnits: [{ id: 'a' }] })).toBe(false);
+    expect(await keepsPlan({ state: 'FAILED', workUnits: [], successorExecutionId: 'next' })).toBe(false);
+    expect(await keepsPlan({ state: 'COMPLETED', workUnits: [] })).toBe(false);
+    expect(await keepsPlan({ state: 'STOPPED', timeoutReason: 'unresolved-blocker' })).toBe(false);
+    expect(await keepsPlan({ state: 'STOPPED', timeoutReason: 'plan-correction-cancelled' })).toBe(false);
   });
 
   it('cleanup: falls back to project path, else nothing', async () => {
     const d = deps();
     await cleanupOrchestratorOnExit(d, orch);
-    expect(d.cleanupHandoffFiles).toHaveBeenCalledWith('/proj', 'e');
+    expect(d.cleanupHandoffFiles).toHaveBeenCalledWith('/proj', 'e', { keepAuthoredPlan: false });
     const d2 = deps({ projects: { listProjects: () => [] } });
     await cleanupOrchestratorOnExit(d2, orch);
     expect(d2.cleanupHandoffFiles).not.toHaveBeenCalled();
