@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { atomicDurableWrite } from '../durable-store.js';
 import { fsyncDirectory } from '../fsync-directory.js';
 import type { InstalledPluginRow } from './plugin-store.js';
+import { removePluginTemporaryDirectory } from './plugin-cleanup.js';
 
 const MAX_BYTES = 256 * 1024 * 1024;
 const MAX_FILES = 1024;
@@ -233,7 +234,7 @@ export function createPluginActivationStore(dataDir: string) {
       for await (const entry of await opendir(generations)) {
         if (++count > 4096) throw new Error('Too many plugin generations; cleanup requires attention');
         if (uuid.test(entry.name) && entry.isDirectory() && !retained.has(entry.name)) {
-          await rm(join(generations, entry.name), { recursive: true, force: true });
+          await removePluginTemporaryDirectory(join(generations, entry.name));
         }
       }
       flushDirectory(generations);
