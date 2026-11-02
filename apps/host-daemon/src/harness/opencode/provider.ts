@@ -389,7 +389,9 @@ function runOpenCodeCaptured(command: string, args: string[], cwd: string) {
         rmSync(outputPath, { force: true });
       }
     };
-    const child = spawn(command, args, { cwd, stdio: ['ignore', outputFd, 'ignore'] });
+    // windowsHide: without it every discovery command opens a visible console
+    // window on Windows (the daemon runs under Electron, a GUI process).
+    const child = spawn(command, args, { cwd, stdio: ['ignore', outputFd, 'ignore'], windowsHide: true });
     const timer = setTimeout(() => {
       child.kill();
       finish(new Error('OpenCode discovery timed out'));

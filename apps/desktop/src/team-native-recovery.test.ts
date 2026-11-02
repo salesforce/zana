@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compatibleNativeRecoverySnapshots, exactNativeRecoveryAvailability, nativeRecoveryLaunchSlot, nativeRecoveryProjection } from './team-native-recovery.js';
+import { modernRecoverySnapshot, compatibleNativeRecoverySnapshots, exactNativeRecoveryAvailability, nativeRecoveryLaunchSlot, nativeRecoveryProjection } from './team-native-recovery.js';
 
 describe('nativeRecoveryProjection', () => {
   const recovery = { mode: 'exact-native' as const, slots: [{
@@ -9,6 +9,14 @@ describe('nativeRecoveryProjection', () => {
   it('recomputes matching provider-native resume fields', () => {
     expect(nativeRecoveryProjection({ recovery, slotId: 'orchestrator:lead', role: 'orchestrator', personaId: 'lead', profile: 'codex' }))
       .toEqual({ profile: 'codex-resume', resumeSessionId: 'native-1' });
+  });
+
+  it('never projects a MODERN snapshot as a CLI resume (and excludes it from CLI availability)', () => {
+    const modern = { slotId: 'worker:claude', role: 'worker' as const, personaId: 'claude', profileId: 'claude', nativeConversationId: 'prov', transport: 'MODERN' as const };
+    const slot = { slotId: 'worker:claude', role: 'worker' as const, personaId: 'claude', profile: 'claude' as const };
+    expect(nativeRecoveryProjection({ recovery: { mode: 'exact-native', slots: [modern] }, ...slot })).toBeUndefined();
+    expect(exactNativeRecoveryAvailability({ snapshots: [modern], slots: [slot] })).toEqual({ available: false, restorableSlots: 0 });
+    expect(compatibleNativeRecoverySnapshots({ snapshots: [{ ...modern, transport: 'CLI' as const }], slots: [slot] })).toHaveLength(1);
   });
 
   it('keeps Claude on its same auth profile while projecting native resume args', () => {
@@ -109,5 +117,53 @@ describe('nativeRecovery fallbacks', () => {
       recovery: { mode: 'exact-native', slots: [{ slotId: 'w', role: 'worker', personaId: 'p', profileId: 'claude', nativeConversationId: 'n1' }] },
       slotId: 'w', role: 'worker', personaId: 'p', profile: 'claude'
     })).toEqual({ configuredProfile: 'claude', profile: 'claude', extraArgs: ['--resume', 'n1'], recoveryResume: true });
+  });
+});
+
+describe('Modern identity fence', () => {
+  const slot = { slotId: 'worker:claude', role: 'worker' as const, personaId: 'claude', profile: 'claude' as const };
+  const expected = { providerId: 'acp', hostId: 'host-1', environmentPath: '/wt/a' };
+  const snap = {
+    slotId: 'worker:claude', role: 'worker' as const, personaId: 'claude', profileId: 'claude', nativeConversationId: 'prov-1',
+    transport: 'MODERN' as const, threadId: 'thread-1', generation: 2, providerThreadId: 'prov-1',
+    providerId: 'acp', hostId: 'host-1', environmentPath: '/wt/a'
+  };
+  const fence = (snapshot: object, extra: object = {}) => modernRecoverySnapshot({
+    snapshots: [snapshot as typeof snap], ...slot, teamTransport: 'MODERN', expected, ...extra
+  });
+
+  it('accepts an exactly matching snapshot on a Modern team', () => {
+    expect(fence(snap)).toBe(snap);
+    expect(exactNativeRecoveryAvailability({ snapshots: [snap], teamTransport: 'MODERN', slots: [{ ...slot, modern: expected }] }))
+      .toEqual({ available: true, restorableSlots: 1 });
+  });
+
+  it('accepts when host is not pre-resolved (enforced at launch)', () => {
+    expect(fence(snap, { expected: { providerId: 'acp', environmentPath: '/wt/a' } })).toBe(snap);
+  });
+
+  it.each([
+    ['slot', { slotId: 'worker:other' }], ['role', { role: 'orchestrator' }], ['persona', { personaId: 'x' }],
+    ['profile', { profileId: 'codex' }], ['provider', { providerId: 'other' }], ['host', { hostId: 'host-2' }],
+    ['worktree', { environmentPath: '/wt/b' }], ['missing thread', { threadId: undefined }],
+    ['generation 0', { generation: 0 }], ['fractional generation', { generation: 1.5 }],
+    ['missing provider thread', { providerThreadId: undefined }], ['native id mismatch', { nativeConversationId: 'zzz' }],
+    ['missing host', { hostId: undefined }], ['CLI snapshot', { transport: 'CLI' }]
+  ])('rejects drift in %s', (_name, patch) => {
+    expect(fence({ ...snap, ...patch })).toBeUndefined();
+  });
+
+  it('is never usable without a Modern team or expectation', () => {
+    expect(fence(snap, { teamTransport: 'CLI' })).toBeUndefined();
+    expect(fence(snap, { teamTransport: undefined })).toBeUndefined();
+    expect(fence(snap, { expected: undefined })).toBeUndefined();
+  });
+
+  it('keeps CLI and Modern transports apart in availability', () => {
+    const cli = { slotId: 'worker:claude', role: 'worker' as const, personaId: 'claude', profileId: 'claude', nativeConversationId: 'n' };
+    expect(exactNativeRecoveryAvailability({ snapshots: [cli], teamTransport: 'MODERN', slots: [{ ...slot, modern: expected }] }).available).toBe(false);
+    expect(exactNativeRecoveryAvailability({ snapshots: [snap], teamTransport: 'CLI', slots: [{ ...slot, modern: expected }] }).available).toBe(false);
+    expect(exactNativeRecoveryAvailability({ snapshots: [snap], teamTransport: 'MODERN', slots: [slot] }).available).toBe(false);
+    expect(exactNativeRecoveryAvailability({ snapshots: [cli], teamTransport: 'CLI', slots: [slot] }).available).toBe(true);
   });
 });

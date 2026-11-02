@@ -82,6 +82,22 @@ test('scheduler: the Cron cadence UI validates, previews, and saves a cron sched
     await expect(editor.locator('.scheduler-interval-feedback--ok')).toContainText('Next:');
     await expect(createBtn).toBeEnabled();
 
+    // Required MCP servers: comma-separated, de-duplicated, hint visible while isolated.
+    await expect(editor).toContainText("The run fails clearly if one of these isn't available in the isolated config.");
+    await editor.locator('#sched-required-mcps').fill('slack, github, slack');
+
+    // Per-schedule Claude config control defaults to the global setting; opt in.
+    const configPicker = editor.getByRole('button', { name: 'Claude config for this schedule' });
+    await expect(configPicker).toContainText('Use global setting');
+    await configPicker.click();
+    await window
+      .getByRole('listbox', { name: 'Claude config for this schedule' })
+      .getByRole('option', { name: 'Use my Claude config', exact: true })
+      .click();
+    await expect(configPicker).toContainText('Use my Claude config');
+    // Opting out of isolation hides the requirement (it is not checked for those runs).
+    await expect(editor.locator('#sched-required-mcps')).toHaveCount(0);
+
     // Save through the real button.
     await createBtn.click();
     await expect(window.locator('[data-testid="schedule-detail"]')).toBeVisible({ timeout: 15_000 });
@@ -98,18 +114,20 @@ test('scheduler: the Cron cadence UI validates, previews, and saves a cron sched
               name?: string;
               projectId?: string;
               schedule?: { every?: string; cron?: string };
+              useUserConfig?: boolean;
+              requiredMcps?: string[];
             }>;
             const mine = tasks.find(
               (t) => t.name === 'E2E cron schedule' && t.projectId === pid
             );
             if (!mine) return 'missing';
-            if (mine.schedule?.cron) return `cron:${mine.schedule.cron}`;
+            if (mine.schedule?.cron) return `cron:${mine.schedule.cron}:${mine.useUserConfig}:${(mine.requiredMcps ?? []).join('|')}`;
             if (mine.schedule?.every) return `every:${mine.schedule.every}`;
             return 'no-cadence';
           }, projectId),
         { timeout: 15_000 }
       )
-      .toBe('cron:*/15 * * * *');
+      .toBe('cron:*/15 * * * *:true:slack|github');
   } finally {
     await window.evaluate(async (pid) => {
       try {

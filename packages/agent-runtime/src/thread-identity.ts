@@ -3,6 +3,7 @@ import { z } from "zod";
 export const threadIdentityResultSchema = z.object({
   providerThreadId: z.string().nullable().optional(),
   sessionRestorable: z.boolean().optional(),
+  nativeLoaded: z.boolean().optional(),
   thread: z
     .object({
       id: z.string(),

@@ -7,7 +7,8 @@ import {
   claimSquadWorktreeFollowUp, releaseSquadWorktreeFollowUp, squadWorktreeFollowUpExecution
 } from '../squad-worktree-lifecycle.js';
 import {
-  cleanupOrchestratorOnExit, createFollowUpClaims, createNativeRecoveryCapture, createPlanHandoffRetirement, teardownTerminalExecutionOnExit
+  cleanupOrchestratorOnExit, createFollowUpClaims, createModernNativeRecoveryCapture, createNativeRecoveryCapture, createPlanHandoffRetirement,
+  teardownTerminalExecutionOnExit
 } from '../squad-session-lifecycle.js';
 import { authoredPlanRelPath, cleanupHandoffFiles, sourceMirrorRelPath } from '../team-plan-handoff.js';
 
@@ -343,5 +344,80 @@ describe('createPlanHandoffRetirement', () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('createModernNativeRecoveryCapture', () => {
+  const member = {
+    projectId: 'p', executionId: 'e', slotId: 'sl', role: 'worker' as const, personaId: 'per', profileId: 'claude',
+    threadId: 'thr', generation: 2, providerId: 'acp-x', hostId: 'h', environmentPath: '/w'
+  };
+  const status = (over: any = {}) => ({ generation: 2, providerThreadId: 'prov', sessionRestorable: true, ...over });
+  const record = (over: any = {}) => ({ id: 'e', state: 'RUNNING', stateVersion: 3, attempt: 2, ...over });
+  function make(rec: any) {
+    const executionStore = { getInProject: vi.fn(async () => rec), upsertNativeRecoverySnapshot: vi.fn(async () => undefined) };
+    const logError = vi.fn();
+    return { executionStore, logError, capture: createModernNativeRecoveryCapture({ executionStore, logError }) };
+  }
+
+  it('writes a Modern snapshot when the member was restorable at start', async () => {
+    const { capture, executionStore } = make(record());
+    await expect(capture(member, status())).resolves.toBe(true);
+    expect(executionStore.upsertNativeRecoverySnapshot).toHaveBeenCalledWith('e', 3, {
+      attempt: 2, slotId: 'sl', role: 'worker', personaId: 'per', profileId: 'claude', nativeConversationId: 'prov',
+      transport: 'MODERN', threadId: 'thr', generation: 2, providerThreadId: 'prov', providerId: 'acp-x',
+      environmentPath: '/w', hostId: 'h'
+    });
+  });
+
+  it.each([
+    ['sessionRestorable false', status({ sessionRestorable: false })],
+    ['sessionRestorable absent', status({ sessionRestorable: undefined })],
+    ['no providerThreadId', status({ providerThreadId: undefined })],
+    ['generation mismatch', status({ generation: 1 })],
+    ['no status', undefined]
+  ])('does not write: %s', async (_n, st) => {
+    const { capture, executionStore } = make(record());
+    await expect(capture(member, st as never)).resolves.toBe(false);
+    expect(executionStore.getInProject).not.toHaveBeenCalled();
+    expect(executionStore.upsertNativeRecoverySnapshot).not.toHaveBeenCalled();
+  });
+
+  it.each(['COMPLETED', 'FAILED', 'STOPPED'])('does not write once the execution is %s (ordering guard)', async (state) => {
+    const { capture, executionStore } = make(record({ state }));
+    await expect(capture(member, status())).resolves.toBe(false);
+    expect(executionStore.upsertNativeRecoverySnapshot).not.toHaveBeenCalled();
+  });
+
+  it('does not write for a missing record', async () => {
+    const { capture, executionStore } = make(undefined);
+    await expect(capture(member, status())).resolves.toBe(false);
+    expect(executionStore.upsertNativeRecoverySnapshot).not.toHaveBeenCalled();
+  });
+
+  it('pre-stop write survives a later terminal state: second call after STOPPED is a no-op', async () => {
+    const rec: any = record();
+    const { capture, executionStore } = make(rec);
+    await expect(capture(member, status())).resolves.toBe(true);
+    rec.state = 'STOPPED';
+    await expect(capture(member, status())).resolves.toBe(false);
+    expect(executionStore.upsertNativeRecoverySnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('deduplicates an identical existing snapshot but rewrites on a new generation or provider thread', async () => {
+    const existing = { slotId: 'sl', attempt: 2, transport: 'MODERN', threadId: 'thr', generation: 2, nativeConversationId: 'prov' };
+    const same = make(record({ nativeRecoverySnapshots: [existing] }));
+    await expect(same.capture(member, status())).resolves.toBe(false);
+    const newer = make(record({ nativeRecoverySnapshots: [{ ...existing, generation: 1 }] }));
+    await expect(newer.capture(member, status())).resolves.toBe(true);
+    const replaced = make(record({ nativeRecoverySnapshots: [existing] }));
+    await expect(replaced.capture(member, status({ providerThreadId: 'prov2' }))).resolves.toBe(true);
+  });
+
+  it('logs and returns false when the upsert fails', async () => {
+    const { capture, executionStore, logError } = make(record());
+    executionStore.upsertNativeRecoverySnapshot.mockRejectedValueOnce(new Error('stale execution state'));
+    await expect(capture(member, status())).resolves.toBe(false);
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('thr'), expect.any(Error));
   });
 });

@@ -334,6 +334,13 @@ export function AgentsSettingsView({
             ]}
           />
         </Field>
+        <CheckboxField
+          label="Scheduled runs use my Claude config"
+          searchId="agents.scheduled.use-user-config"
+          help="Off by default: unattended scheduled Claude runs use an isolated config, so they don’t load your MCP servers, plugins or hooks (or their saved sign-ins). Turn on to let scheduled runs use your own Claude config, so they can call your MCP servers and plugins and run your hooks. The trade-off is giving up that isolation for unattended runs. A schedule can override this in its own settings."
+          checked={config.automatedUseUserConfig ?? false}
+          onChange={(v) => onUpdate({ automatedUseUserConfig: v })}
+        />
       </Section>
 
       {/* Agent automation — capabilities that let agents (or a bulk action) end or

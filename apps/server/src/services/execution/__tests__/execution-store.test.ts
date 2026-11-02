@@ -161,6 +161,58 @@ describe('execution store', () => {
     await writeFile(filePath, JSON.stringify(durable));
     await expect(createExecutionStore({ filePath }).get(record.id)).rejects.toThrow('corrupt execution store');
   }));
+  describe('Modern native recovery snapshots', () => {
+    const modern = (over: Record<string, unknown> = {}) => ({
+      attempt: 1, slotId: 'worker-1', role: 'worker' as const, personaId: 'builder', nativeConversationId: 'prov-1',
+      transport: 'MODERN' as const, threadId: 'thread-1', generation: 1, providerThreadId: 'prov-1',
+      providerId: 'acp-x', environmentPath: '/work/tree', hostId: 'host-1', ...over
+    });
+    it('persists a valid Modern snapshot with all optional fields across restart', async () => fixture(async (filePath) => {
+      const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+      let record = (await store.claim(request())).record;
+      record = await store.upsertNativeRecoverySnapshot(record.id, record.stateVersion, modern());
+      expect(record.nativeRecoverySnapshots).toEqual([expect.objectContaining(modern())]);
+      expect((await createExecutionStore({ filePath }).get(record.id))?.nativeRecoverySnapshots?.[0]).toMatchObject(modern());
+    }));
+    it.each([
+      ['missing threadId', { threadId: undefined }],
+      ['empty threadId', { threadId: '' }],
+      ['generation 0', { generation: 0 }],
+      ['fractional generation', { generation: 1.5 }],
+      ['missing generation', { generation: undefined }],
+      ['missing providerThreadId', { providerThreadId: undefined }],
+      ['providerThreadId differs from nativeConversationId', { providerThreadId: 'other' }],
+      ['unknown transport', { transport: 'WEB' }],
+      ['empty hostId', { hostId: '' }]
+    ])('rejects malformed Modern snapshot: %s', async (_name, over) => fixture(async (filePath) => {
+      const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+      const record = (await store.claim(request())).record;
+      await expect(store.upsertNativeRecoverySnapshot(record.id, record.stateVersion, modern(over) as never)).rejects.toThrow('invalid native recovery snapshot');
+    }));
+    it('rejects Modern identity fields on a CLI snapshot and accepts explicit CLI transport', async () => fixture(async (filePath) => {
+      const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+      let record = (await store.claim(request())).record;
+      await expect(store.upsertNativeRecoverySnapshot(record.id, record.stateVersion, {
+        attempt: 1, slotId: 'w', role: 'worker', personaId: 'b', nativeConversationId: 'n', threadId: 't'
+      })).rejects.toThrow('invalid native recovery snapshot');
+      record = await store.upsertNativeRecoverySnapshot(record.id, record.stateVersion, {
+        attempt: 1, slotId: 'w', role: 'worker', personaId: 'b', nativeConversationId: 'n', transport: 'CLI'
+      });
+      expect(record.nativeRecoverySnapshots).toHaveLength(1);
+    }));
+    it('loads durable legacy CLI snapshots and rejects durable malformed Modern ones', async () => fixture(async (filePath) => {
+      const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+      const record = (await store.claim(request())).record;
+      const legacy = { version: 1, attempt: 1, slotId: 'w', role: 'worker', personaId: 'b', nativeConversationId: 'n', capturedAt: 1 };
+      const durable = JSON.parse(await readFile(filePath, 'utf8'));
+      durable.records[0].nativeRecoverySnapshots = [legacy];
+      await writeFile(filePath, JSON.stringify(durable));
+      await expect(createExecutionStore({ filePath }).get(record.id)).resolves.toMatchObject({ nativeRecoverySnapshots: [legacy] });
+      durable.records[0].nativeRecoverySnapshots = [{ ...legacy, transport: 'MODERN' }];
+      await writeFile(filePath, JSON.stringify(durable));
+      await expect(createExecutionStore({ filePath }).get(record.id)).rejects.toThrow('corrupt execution store');
+    }));
+  });
   it('atomically starts retained recovery without durable BLOCKED state', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     let record = (await store.claim(request())).record;
@@ -189,6 +241,71 @@ describe('execution store', () => {
     await expect(store.beginRetainedRecovery(record.id, staleVersion)).rejects.toThrow('stale execution state');
     expect(await store.get(record.id)).toMatchObject({ state: 'FAILED', stateVersion: record.stateVersion, attempt: 1 });
   }));
+  describe('retained recovery slot pins', () => {
+    async function failedWithClaims(store: ReturnType<typeof createExecutionStore>) {
+      let record = (await store.claim(request())).record;
+      record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+      record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+      record = await store.setAuthorizationContext(record.id, record.stateVersion, {
+        version: 1, principalId: 'owner', authorizedAt: 1, expiresAt: 2,
+        slots: [{ slotId: 'worker-1', personaId: 'w', authorizationIdDigest: 'a' }, { slotId: 'worker-2', personaId: 'w', authorizationIdDigest: 'b' }]
+      }, 'context');
+      record = await store.registerPlan(record.id, record.stateVersion, [
+        { id: 'done', title: 'D', task: 'd', dependencies: [], readOnly: true },
+        { id: 'a', title: 'A', task: 'a', dependencies: [], readOnly: true },
+        { id: 'b', title: 'B', task: 'b', dependencies: [], readOnly: true }
+      ]);
+      record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'a');
+      record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-2' }, 'b');
+      record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-2' }, 'done');
+      const doneUnit = record.workUnits!.find((u) => u.id === 'done')!;
+      record = await store.completeWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-2' }, 'done', 'finished', { claimId: doneUnit.claimId!, claimGeneration: doneUnit.claimGeneration! });
+      record = await store.heartbeatWork(record.id, record.stateVersion, { role: 'worker', slotId: 'worker-1' }, 'a', {
+        claimId: record.workUnits!.find((u) => u.id === 'a')!.claimId!, claimGeneration: record.workUnits!.find((u) => u.id === 'a')!.claimGeneration!, turnCount: 3
+      });
+      return store.transition(record.id, record.stateVersion, 'FAILED', 'error', 'failed');
+    }
+
+    it('keeps the pin only for restorable slots and clears fences, progress and results', async () => fixture(async (filePath) => {
+      const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+      const failed = await failedWithClaims(store);
+      const before = new Map(failed.workUnits!.map((u) => [u.id, u]));
+      const recovered = await store.beginRetainedRecovery(failed.id, failed.stateVersion, { keepSlotIds: new Set(['worker-1']) });
+      const unit = (id: string) => recovered.workUnits!.find((u) => u.id === id)!;
+      expect(unit('a')).toMatchObject({ assignedSlotId: 'worker-1', claimGeneration: before.get('a')!.claimGeneration });
+      expect(unit('a').state).toBe('READY');
+      expect(unit('b').assignedSlotId).toBeUndefined();
+      expect(unit('b').claimGeneration).toBe(before.get('b')!.claimGeneration);
+      for (const id of ['a', 'b']) {
+        for (const field of ['claimId', 'claimedBy', 'claimedAt', 'leaseExpiresAt', 'heartbeatAt', 'progressAt', 'turnCount', 'result'] as const) {
+          expect(unit(id)[field]).toBeUndefined();
+        }
+      }
+      expect(unit('done')).toMatchObject({ state: 'COMPLETED', result: 'finished' });
+      expect(unit('done').assignedSlotId).toBe(before.get('done')!.assignedSlotId);
+    }));
+
+    it('clears every pin without keepSlotIds (fresh-plan behavior)', async () => fixture(async (filePath) => {
+      const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+      const failed = await failedWithClaims(store);
+      const recovered = await store.beginRetainedRecovery(failed.id, failed.stateVersion);
+      expect(recovered.workUnits!.filter((u) => u.state !== 'COMPLETED').map((u) => u.assignedSlotId)).toEqual([undefined, undefined]);
+    }));
+
+    it('dispatchReady hands a pinned unit only to its pinned slot', async () => fixture(async (filePath) => {
+      const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+      const failed = await failedWithClaims(store);
+      const recovered = await store.beginRetainedRecovery(failed.id, failed.stateVersion, { keepSlotIds: new Set(['worker-2']) });
+      let relaunched = await store.setAuthorizationContext(recovered.id, recovered.stateVersion, {
+        version: 1, principalId: 'owner', authorizedAt: 1, expiresAt: 2,
+        slots: [{ slotId: 'worker-1', personaId: 'w', authorizationIdDigest: 'a' }, { slotId: 'worker-2', personaId: 'w', authorizationIdDigest: 'b' }]
+      }, 'context-2');
+      relaunched = await store.transition(relaunched.id, relaunched.stateVersion, 'RUNNING', 'info', 'run');
+      const { assignments } = await store.dispatchReady(recovered.id);
+      expect(assignments.find((a) => a.workUnitId === 'b')?.slotId).toBe('worker-2');
+      expect(assignments.find((a) => a.workUnitId === 'a')?.slotId).toBe('worker-1');
+    }));
+  });
   it('clears only prior-attempt native recovery snapshots after fresh-plan launch', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     let record = (await store.claim(request())).record;

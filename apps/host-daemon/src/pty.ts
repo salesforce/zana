@@ -522,8 +522,8 @@ export class PtyManager extends EventEmitter {
   private automatedConfigSwept = false;
 
   /** Prepare an unattended Claude run's isolated config dir. Also sweeps stale leaves once per process. */
-  private planAutomatedClaude(sessionId: string, cwd: string): ReturnType<typeof planAutomatedClaudeLaunch> {
-    const plan = planAutomatedClaudeLaunch({ ownerId: sessionId, cwd });
+  private planAutomatedClaude(sessionId: string, cwd: string, requiredMcps?: readonly string[]): ReturnType<typeof planAutomatedClaudeLaunch> {
+    const plan = planAutomatedClaudeLaunch({ ownerId: sessionId, cwd, ...(requiredMcps?.length ? { requiredMcps } : {}) });
     this.automatedConfigDirs.set(sessionId, plan.configDir);
     if (!this.automatedConfigSwept) {
       this.automatedConfigSwept = true;
@@ -934,6 +934,19 @@ export class PtyManager extends EventEmitter {
      */
     scheduled?: boolean;
     /**
+     * Opt an unattended (headless / scheduled / autonomous) Claude spawn out of
+     * the per-run automated config isolation: no `--setting-sources user`, no
+     * forced CLAUDE_CONFIG_DIR, so the user's MCPs/plugins/hooks apply. Set only
+     * by trusted main-side callers (scheduler); never from renderer input.
+     */
+    useUserConfig?: boolean;
+    /**
+     * MCP server names an isolated unattended Claude run needs (scheduler-set).
+     * Launch is refused, before any process starts, when one is not carried into
+     * the isolated config. Ignored when the run is not isolated.
+     */
+    requiredMcps?: string[];
+    /**
      * Mark this spawn as part of an AUTONOMOUS team run (agents must act
      * unattended). Full bypass (`--dangerously-skip-permissions`) is NOT used —
      * an enterprise-managed Claude Code policy (`managed-settings.json:
@@ -1186,8 +1199,9 @@ export class PtyManager extends EventEmitter {
     const automatedClaude =
       caps.injectsClaudeMcpConfig &&
       (opts.headless || opts.scheduled || opts.autonomous) &&
+      !opts.useUserConfig &&
       (!opts.environment || opts.environment === 'local' || opts.environment === 'runtime-host')
-        ? this.planAutomatedClaude(sessionId, opts.cwd)
+        ? this.planAutomatedClaude(sessionId, opts.cwd, opts.requiredMcps)
         : null;
     // The per-session zcc-inbox MCP server URL, with the project + session
     // identity baked into the path so callbacks (inbox_push, hooks) can stamp the

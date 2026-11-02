@@ -19,7 +19,8 @@ export function runGitClone(remoteUrl: string, targetPath: string, onProgress?: 
     const child = spawn('git', ['clone', '--progress', '--', remoteUrl, targetPath], {
       cwd: dirname(targetPath),
       env: { ...gitChildEnv(), GIT_TERMINAL_PROMPT: '0' },
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
     });
     let stderrTail = '';
     let settled = false;
