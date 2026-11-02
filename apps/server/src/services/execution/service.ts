@@ -94,7 +94,7 @@ const DEFAULT_DURABLE_CLAIM_WALL_CLOCK_MS = 20 * 60_000;
  * streamed then hung is caught 10 min after it went silent, and a still-streaming worker (fresh
  * `progressAt`) is never reclaimed here.
  */
-const DEFAULT_DURABLE_CLAIM_STALL_MS = 10 * 60_000;
+export const DEFAULT_DURABLE_CLAIM_STALL_MS = 10 * 60_000;
 
 /**
  * Inject the durable-claim reclaim ceilings (wall-clock backstop + progress-aware stall) into a
@@ -547,14 +547,9 @@ export function dependencyResultsSection(record: ExecutionRecord, workUnitId: st
   return `\n\nUpstream results (outputs of your completed dependencies — use these, do NOT re-ask the human for information already decided here):\n${lines.join('\n')}`;
 }
 
-/** Minutes shown to the worker for the stall ceiling: the run's own `maxClaimStallMs`, else the durable default. */
-function stallMinutes(record: ExecutionRecord): number {
-  return Math.max(1, Math.round((record.request.policy?.maxClaimStallMs ?? DEFAULT_DURABLE_CLAIM_STALL_MS) / 60_000));
-}
-
-/** The heartbeat advice. A redelivered claim keeps its stored count, so the worker must continue from it, not from 1. */
-function longCommandLine(record: ExecutionRecord, turnCount: number | undefined): string {
-  return `Long commands: for any command that can run longer than 3 minutes (E2E, coverage, a full test run, a build), run it in the background and call execution.work.heartbeat with this claimId and claimGeneration every 2-3 minutes until it finishes, with a turnCount one higher than on your previous call (start at ${(turnCount ?? 0) + 1}); a claim with no progress for ${stallMinutes(record)} minutes is taken back.`;
+/** The heartbeat advice; the stall ceiling shown is the durable default every Squad run gets. A redelivered claim keeps its stored count, so the worker must continue from it, not from 1. */
+function longCommandLine(turnCount: number | undefined): string {
+  return `Long commands: for any command that can run longer than 3 minutes (E2E, coverage, a full test run, a build), run it in the background and call execution.work.heartbeat with this claimId and claimGeneration every 2-3 minutes until it finishes, with a turnCount one higher than on your previous call (start at ${(turnCount ?? 0) + 1}); a claim with no progress for ${DEFAULT_DURABLE_CLAIM_STALL_MS / 60_000} minutes is taken back.`;
 }
 const MAX_VERIFICATION_CHARS = 4_000;
 
@@ -575,7 +570,7 @@ function verificationSection(steps: string[] | undefined): string {
 export function assignmentText(record: ExecutionRecord, assignment: ExecutionDispatchAssignment): string {
   const upstream = dependencyResultsSection(record, assignment.workUnitId);
   const claim = assignment.claimId && assignment.claimGeneration
-    ? `\nClaim fence: claimId=${assignment.claimId}; claimGeneration=${assignment.claimGeneration}. Include both in execution.work.heartbeat and every structured work outcome.\n${longCommandLine(record, assignment.turnCount)}`
+    ? `\nClaim fence: claimId=${assignment.claimId}; claimGeneration=${assignment.claimGeneration}. Include both in execution.work.heartbeat and every structured work outcome.\n${longCommandLine(assignment.turnCount)}`
     : '';
   return `You are assigned work unit \`${assignment.workUnitId}\`${assignment.title ? ` — ${assignment.title}` : ''}.\nTask: ${assignment.task}${assignment.files?.length ? `\nFile scope: ${assignment.files.join(', ')}` : ''}${verificationSection(assignment.verification)}${upstream}${claim}\n\nClose the unit through exactly one structured outcome: execution.work.complete, execution.work.block, execution.work.fail, or execution.work.release. Do not send routine progress or results to the coordinator.`;
 }
