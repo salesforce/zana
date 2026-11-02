@@ -152,7 +152,9 @@ function run(cmd: string, args: readonly string[], timeoutMs = 15_000): Promise<
     execFile(
       cmd,
       [...args],
-      { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 },
+      // windowsHide: under Electron (a GUI process) each probe would otherwise open
+      // a visible console window on Windows.
+      { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, windowsHide: true },
       (err, stdout, stderr) => {
         resolve({
           ok: !err,

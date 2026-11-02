@@ -3,9 +3,10 @@ import type { AppConfig } from '@zana-ai/zcc-domain/product';
 
 // Mock the process module so the probe is deterministic — "installed" bins
 // resolve with version output, everything else errors (missing bin).
-const h = vi.hoisted(() => ({ installed: new Set<string>(), outputs: new Map<string, string>() }));
+const h = vi.hoisted(() => ({ installed: new Set<string>(), outputs: new Map<string, string>(), options: [] as unknown[] }));
 vi.mock('node:child_process', () => ({
-  execFile: (cmd: string, _args: string[], _opts: unknown, cb: (e: Error | null, out: string, err: string) => void) => {
+  execFile: (cmd: string, _args: string[], opts: unknown, cb: (e: Error | null, out: string, err: string) => void) => {
+    h.options.push(opts);
     if (h.installed.has(cmd)) cb(null, h.outputs.get(cmd) ?? `${cmd} 1.0.0`, '');
     else cb(new Error('ENOENT'), '', '');
   }
@@ -63,6 +64,16 @@ describe('verifyEditors', () => {
     const cursor = results.find((r) => r.target === 'cursor')!;
     expect(cursor.binary).toBe('/opt/cursor');
     expect(cursor.installed).toBe(true);
+  });
+
+  // The probe runs in the server under Electron (a GUI process), so on Windows
+  // it needs windowsHide or each editor probe opens a visible console window.
+  it('hides the console window of every version probe', async () => {
+    h.options = [];
+    h.installed = new Set(['cursor']);
+    await verifyEditors(baseConfig, 'linux');
+    expect(h.options).toHaveLength(3);
+    for (const opts of h.options) expect(opts).toMatchObject({ windowsHide: true });
   });
 
   it('on Windows reports the resolved executable instead of running the batch shim', async () => {
