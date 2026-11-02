@@ -143,6 +143,10 @@ const MAX_MCP_ARGS = 128;
  */
 const CREDENTIAL_ARG =
   /^-{1,2}[\w.-]*(token|api[-_]?key|apikey|secret|passw(or)?d|auth|access[-_]?key|credential)[\w.-]*(=|$)/i;
+const CREDENTIAL_ASSIGN =
+  /^[\w.-]*(token|api[-_]?key|apikey|secret|passw(or)?d|auth|access[-_]?key|credential)[\w.-]*=/i;
+const CREDENTIAL_JSON =
+  /"[^"]*(token|api[-_]?key|apikey|secret|passw(or)?d|auth|access[-_]?key|credential)[^"]*"\s*:/i;
 const CREDENTIAL_TEXT = /(\bbearer\s+\S|^\s*(authorization|x-api-key|proxy-authorization)\s*:)/i;
 const CREDENTIAL_QUERY_KEY = /(token|api[-_]?key|apikey|secret|passw(or)?d|auth|signature|sig|credential|key)$/i;
 
@@ -162,7 +166,7 @@ function urlCarriesCredential(raw: string): boolean {
 }
 
 function argCarriesCredential(arg: string): boolean {
-  if (CREDENTIAL_ARG.test(arg) || CREDENTIAL_TEXT.test(arg)) return true;
+  if (CREDENTIAL_ARG.test(arg) || CREDENTIAL_ASSIGN.test(arg) || CREDENTIAL_JSON.test(arg) || CREDENTIAL_TEXT.test(arg)) return true;
   const scheme = arg.indexOf('://');
   if (scheme < 0) return false;
   const start = arg.slice(0, scheme).search(/[a-z][a-z0-9+.-]*$/i);
@@ -212,6 +216,19 @@ export function sanitizeMcpServers(raw: unknown): Record<string, Record<string, 
   }
   // `fromEntries` defines own properties, so a `__proto__` name cannot reach the prototype.
   return picked.length > 0 ? Object.fromEntries(picked) : null;
+}
+
+const CREDENTIAL_FIELDS = ['env', 'headers', 'headersHelper', 'oauth', 'auth', 'authorization'] as const;
+
+/** Whether the raw entry held credential-bearing fields that the sanitizer strips. */
+function hasStrippedCredentialFields(entry: unknown): boolean {
+  if (!isPlainObject(entry)) return false;
+  return CREDENTIAL_FIELDS.some((key) => {
+    const value = entry[key];
+    if (value === undefined || value === null) return false;
+    if (isPlainObject(value)) return Object.keys(value).length > 0;
+    return value !== '' && value !== false;
+  });
 }
 
 function readJsonObject(file: string, maxBytes?: number): Record<string, unknown> | null {
@@ -271,7 +288,12 @@ function seedLeaf(
   const generated = buildSeedSettings(readJsonObject(join(sourceDir, 'settings.json')));
   const globalConfig = readJsonObject(sourceGlobalConfig(sourceDir, env, explicitSourceDir), MAX_GLOBAL_CONFIG_BYTES);
   const mcpServers = sanitizeMcpServers(globalConfig?.mcpServers);
-  const carriedMcps = new Set(mcpServers ? Object.keys(mcpServers) : []);
+  // A server whose env/headers/auth were stripped launches without them, so it
+  // is not "available" for required-MCP admission even though it is carried.
+  const rawServers = isPlainObject(globalConfig?.mcpServers) ? globalConfig.mcpServers : {};
+  const carriedMcps = new Set(
+    Object.keys(mcpServers ?? {}).filter((name) => !hasStrippedCredentialFields(rawServers[name]))
+  );
   if (!generated && !mcpServers) return { carriedMcps };
   writeAtomic0600(join(leaf, 'settings.json'), JSON.stringify(generated ?? {}));
   const projects = trustedProjects(globalConfig, cwd);

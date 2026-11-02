@@ -124,6 +124,10 @@ const MAX_MCP_ARGS = 128;
  */
 const CREDENTIAL_ARG =
   /^-{1,2}[\w.-]*(token|api[-_]?key|apikey|secret|passw(or)?d|auth|access[-_]?key|credential)[\w.-]*(=|$)/i;
+const CREDENTIAL_ASSIGN =
+  /^[\w.-]*(token|api[-_]?key|apikey|secret|passw(or)?d|auth|access[-_]?key|credential)[\w.-]*=/i;
+const CREDENTIAL_JSON =
+  /"[^"]*(token|api[-_]?key|apikey|secret|passw(or)?d|auth|access[-_]?key|credential)[^"]*"\s*:/i;
 const CREDENTIAL_TEXT = /(\bbearer\s+\S|^\s*(authorization|x-api-key|proxy-authorization)\s*:)/i;
 const CREDENTIAL_QUERY_KEY =
   /(token|api[-_]?key|apikey|secret|passw(or)?d|auth|signature|sig|credential|key)$/i;
@@ -144,7 +148,7 @@ function urlCarriesCredential(raw: string): boolean {
 }
 
 function argCarriesCredential(arg: string): boolean {
-  if (CREDENTIAL_ARG.test(arg) || CREDENTIAL_TEXT.test(arg)) return true;
+  if (CREDENTIAL_ARG.test(arg) || CREDENTIAL_ASSIGN.test(arg) || CREDENTIAL_JSON.test(arg) || CREDENTIAL_TEXT.test(arg)) return true;
   const scheme = arg.indexOf("://");
   if (scheme < 0) return false;
   const start = arg.slice(0, scheme).search(/[a-z][a-z0-9+.-]*$/i);

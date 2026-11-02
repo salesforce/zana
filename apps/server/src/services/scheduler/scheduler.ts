@@ -1545,6 +1545,8 @@ export class SchedulerManager extends EventEmitter {
     const promptArgs = live.task.prompt ? seedPromptArgs(effectiveProfile, live.task.prompt) : [];
     const extraArgs = [...userExtraArgs, ...promptArgs];
 
+    // Resolve once: the flag and requiredMcps must agree even if the global setting changes mid-launch.
+    const useUserConfig = this.useUserConfig(live.task);
     const launchOptions = {
       preallocatedSessionId: reservedSessionId,
       projectId: project.id,
@@ -1575,9 +1577,9 @@ export class SchedulerManager extends EventEmitter {
       inboxLevel: live.task.inboxLevel ?? 'quiet',
       // Opt-out of per-run Claude config isolation: schedule flag wins over the
       // global setting; omitted entirely (byte-identical) when not opted out.
-      ...(this.useUserConfig(live.task) ? { useUserConfig: true } : {}),
+      ...(useUserConfig ? { useUserConfig: true } : {}),
       // Only an isolated run is checked: an opted-out run uses the user's real config.
-      ...(!this.useUserConfig(live.task) && live.task.requiredMcps?.length ? { requiredMcps: [...live.task.requiredMcps] } : {})
+      ...(!useUserConfig && live.task.requiredMcps?.length ? { requiredMcps: [...live.task.requiredMcps] } : {})
     } as const;
     const unattendedLaunch = applyUnattendedScheduledLaunch(launchOptions);
     // Reserve before any process can start. Persist disabled so a downgrade
@@ -2131,7 +2133,12 @@ export class SchedulerManager extends EventEmitter {
   private useUserConfig(task: ScheduledTask): boolean {
     if (typeof task.useUserConfig === 'boolean') return task.useUserConfig;
     let configured: unknown;
-    try { configured = this.deps?.store.getConfig().automatedUseUserConfig; } catch { configured = undefined; }
+    try {
+      configured = this.deps?.store.getConfig().automatedUseUserConfig;
+    } catch (err) {
+      this.log(`read automatedUseUserConfig for schedule ${task.id} (defaulting to isolated)`, err);
+      configured = undefined;
+    }
     return configured === true;
   }
 

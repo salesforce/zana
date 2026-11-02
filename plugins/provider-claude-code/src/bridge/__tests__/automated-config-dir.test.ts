@@ -266,6 +266,9 @@ describe("automated config dir carry-over (MCP + bypass consent)", () => {
     ["Authorization header", ["Authorization: abc"]],
     ["url arg with userinfo", ["--endpoint", "https://u:p@host.example/x"]],
     ["url arg with token query", ["connect=wss://host.example/ws?access_token=abc"]],
+    ["TOKEN= assignment", ["TOKEN=abc"]],
+    ["API_KEY= assignment", ["API_KEY=abc"]],
+    ["json arg with token", ['{"apiToken":"abc"}']],
   ])("drops a server whose args carry %s", (_label, args) => {
     expect(sanitizeMcpServers({ bad: { command: "x", args }, ok: { command: "y" } })).toEqual({
       ok: { command: "y" },

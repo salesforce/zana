@@ -122,7 +122,11 @@ describe('automated claude isolation', () => {
           mcpServers: {
             slack: { command: 'npx', args: ['slack-mcp'] },
             secretive: { command: 'npx', args: ['x', '--api-key=abc'] },
-            oauthy: { type: 'http', url: 'https://example.com/mcp?token=abc' }
+            oauthy: { type: 'http', url: 'https://example.com/mcp?token=abc' },
+            assigned: { command: 'x', args: ['API_KEY=abc'] },
+            jsonarg: { command: 'x', args: ['{"token":"abc"}'] },
+            withenv: { command: 'npx', args: ['y'], env: { SLACK_TOKEN: 'abc' } },
+            emptyenv: { command: 'npx', args: ['z'], env: {} }
           }
         })
       );
@@ -131,6 +135,16 @@ describe('automated claude isolation', () => {
     it('launches when every required server is carried', () => {
       const result = plan(['slack']);
       expect(JSON.parse(readFileSync(join(result.configDir, '.claude.json'), 'utf8')).mcpServers).toHaveProperty('slack');
+    });
+
+    it('drops credential assignments and JSON args', () => {
+      expect(() => plan(['assigned'], 'a1')).toThrow(/not available/);
+      expect(() => plan(['jsonarg'], 'a2')).toThrow(/not available/);
+    });
+
+    it('treats a server whose env was stripped as unavailable, but not one with empty env', () => {
+      expect(() => plan(['withenv'], 'e1')).toThrow(/Required MCP server not available in the isolated config: withenv\./);
+      expect(() => plan(['emptyenv'], 'e2')).not.toThrow();
     });
 
     it('is a no-op when undeclared or empty', () => {
