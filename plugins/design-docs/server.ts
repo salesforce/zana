@@ -177,7 +177,10 @@ export default function plugin(zcc: ZccPluginApi): void {
   const endpoint = pluginHttpEndpoint(zcc.pluginId);
   const changed = (docId: string) => zcc.realtime.publish(CHANGED_CHANNEL, { docId });
   const actorFor = createActorResolver((threadId) => zcc.sdk.threads.get({ threadId }));
-  const projects = createProjectNames(() => zcc.sdk.projects.list());
+  const projects = createProjectNames(() => zcc.sdk.projects.list(), {
+    onRefresh: (list) => store.projectRefs.observe(list),
+    removedLabel: (id) => store.projectRefs.removedLabel(id),
+  });
   const reports = new RenderReports();
 
   registerDesignDocTools(zcc, { store, changed, actorFor, projects, listProjects: () => zcc.sdk.projects.list(), kit, reports });

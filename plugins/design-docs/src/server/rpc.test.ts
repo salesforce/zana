@@ -504,13 +504,13 @@ describe('Design Docs RPC', () => {
     expect(method.mock.calls.map(([name]) => name)).toContain('askAgent');
     expect(method.mock.calls.map(([name]) => name)).toEqual(expect.arrayContaining([
       'publish', 'pin', 'peerStatus', 'groupStatus', 'enablePeer', 'retryIntroductions', 'removePeer', 'connections', 'useConnection', 'stopUsingConnection',
-      'syncNow', 'peerConflicts', 'peerConflictReview', 'peerConflictFile', 'resolvePeerConflict', 'backupDatabase', 'backups'
+      'mapForeignProject', 'unmapForeignProject', 'listUnassignedProjects', 'removedProjects', 'syncNow', 'peerConflicts', 'peerConflictReview', 'peerConflictFile', 'resolvePeerConflict', 'backupDatabase', 'backups'
     ]));
     expect(method.mock.calls.map(([name]) => name)).not.toContain('agentSettings');
     expect(method.mock.calls.map(([name]) => name)).not.toContain('setAgentSettings');
     expect(method.mock.calls.map(([name]) => name)).not.toContain('agentHarnesses');
     expect(method.mock.calls.map(([name]) => name)).toEqual(expect.arrayContaining(['harnessDescriptors', 'harnessRouting', 'setHarnessRouting']));
-    expect(method).toHaveBeenCalledTimes(60);
+    expect(method).toHaveBeenCalledTimes(64);
   });
 });
 

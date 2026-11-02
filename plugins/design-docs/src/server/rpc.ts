@@ -149,7 +149,31 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       return docs;
     },
 
-    projects: async () => (await deps.sdk.projects.list()).map(({ id, name, quickAgent }) => ({ id, name, ...(quickAgent ? { quickAgent: true } : {}) })),
+    projects: async () => {
+      const projects = await deps.sdk.projects.list();
+      store.projectRefs.observe(projects);
+      return projects.map(({ id, name, quickAgent }) => ({ id, name, ...(quickAgent ? { quickAgent: true } : {}) }));
+    },
+
+    // Deleted projects' last names, so the UI shows "<name> (project removed)" instead of "Unknown project".
+    removedProjects: async () => {
+      const projects = await deps.sdk.projects.list();
+      store.projectRefs.observe(projects);
+      return store.projectRefs.removedProjects(projects.map((project) => project.id));
+    },
+    // Received docs whose foreign project id is not mapped; suggestions are advisory and never applied.
+    listUnassignedProjects: () => store.projectRefs.listUnassignedForeignProjects(() => deps.sdk.projects.list()),
+    mapForeignProject: async (raw) => {
+      const input = onlyKeys(raw, ['foreignProjectId', 'localProjectId']);
+      const result = await store.projectRefs.mapForeignProject(() => deps.sdk.projects.list(), input.foreignProjectId, input.localProjectId);
+      changed('');
+      return result;
+    },
+    unmapForeignProject: (raw) => {
+      const result = store.projectRefs.unmapForeignProject(onlyKeys(raw, ['foreignProjectId']).foreignProjectId);
+      changed('');
+      return result;
+    },
 
     // This plugin's own harness overrides. The host binds the plugin id, validates on write and
     // resolves them above the project/global chain for `harness: 'project-default'` spawns.
@@ -261,6 +285,7 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       const projectId = input.projectId;
       return store.list({
         projectId: typeof projectId === 'string' && projectId ? projectId : undefined,
+        ...(input.unassigned === true ? { unassigned: true } : {}),
         query: optionalString(input, 'query'),
         status,
         limit: optionalNumber(input, 'limit') ?? 200

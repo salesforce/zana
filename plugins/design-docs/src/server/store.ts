@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { DesignDocProjectRefs, FOREIGN_REF_EXISTS, MAPPED_TO_ANY, MAPPED_TO_PROJECT } from './project-refs.js';
 import type { PluginDatabase, PluginKvStorage } from '@zana-ai/zcc-plugin-sdk/server';
 import {
   isDocStatus,
@@ -106,6 +107,8 @@ export class DesignDocError extends Error {
 export interface ListFilter {
   /** Docs of this project plus global (project-less) docs. Omit for every doc. */
   projectId?: string | null;
+  /** Only received docs whose foreign project id is not mapped to a local project. Ignores `projectId`. */
+  unassigned?: boolean;
   query?: string;
   /** Also match `query` inside file contents. Default true; typeahead turns it off. */
   contents?: boolean;
@@ -271,6 +274,8 @@ export class DesignDocStore {
   private readonly now: () => number;
   private readonly randomId: (prefix: string) => string;
   private readonly maxHistoryBytes: number;
+  /** Local-only deleted-project names and foreign-project aliases; degrades to nothing if its tables cannot be created. */
+  readonly projectRefs: DesignDocProjectRefs;
 
   constructor(
     private readonly db: PluginDatabase,
@@ -282,6 +287,7 @@ export class DesignDocStore {
     this.maxHistoryBytes = options.maxHistoryBytes ?? MAX_HISTORY_BYTES_PER_DOC;
     repairLegacyPeerSyncMigrationIndexes(db);
     db.migrate(DESIGN_DOC_MIGRATIONS);
+    this.projectRefs = new DesignDocProjectRefs(db, { now: this.now });
     // docs-kind: allow Startup backfill repairs file identities for both kinds without peer capture.
     db.prepare("UPDATE doc_files SET sync_id = 'f_' || lower(hex(randomblob(16))) WHERE sync_id IS NULL").run();
     // Creation APIs are synchronous. A fresh database must therefore have a registry before callers use it.
@@ -469,12 +475,17 @@ export class DesignDocStore {
   list(filter: ListFilter = {}): DesignDocSummary[] {
     const where: string[] = [`d.${DOC_ONLY}`];
     const params: unknown[] = [];
-    if (filter.projectId !== undefined) {
+    const aliases = this.projectRefs.available;
+    if (filter.unassigned) {
+      where.push(`d.project_id IS NULL AND ${FOREIGN_REF_EXISTS}${aliases ? ` AND NOT ${MAPPED_TO_ANY}` : ''}`);
+    } else if (filter.projectId !== undefined) {
       if (filter.projectId === null) {
-        where.push('d.project_id IS NULL');
+        // Genuinely global: no project and no foreign project reference.
+        where.push(`d.project_id IS NULL AND NOT ${FOREIGN_REF_EXISTS}`);
       } else {
-        where.push('(d.project_id = ? OR d.project_id IS NULL)');
+        where.push(`(d.project_id = ? OR (d.project_id IS NULL AND (NOT ${FOREIGN_REF_EXISTS}${aliases ? ` OR ${MAPPED_TO_PROJECT}` : ''})))`);
         params.push(filter.projectId);
+        if (aliases) params.push(filter.projectId);
       }
     }
     const status = filter.status ?? 'all';
@@ -506,7 +517,25 @@ export class DesignDocStore {
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY d.updated_at DESC, d.id LIMIT ?`;
     const rows = this.db.prepare(sql).all(...params, limit) as DocRow[];
-    return rows.map(toSummary);
+    const mapped = aliases ? this.aliasedProjects(rows.filter((row) => row.project_id === null).map((row) => row.id)) : new Map<string, string>();
+    return rows.map((row) => {
+      const summary = toSummary(row);
+      const local = mapped.get(row.id);
+      return local ? { ...summary, projectId: local } : summary;
+    });
+  }
+
+  /** Effective project of received docs: the local project their foreign id is mapped to. */
+  private aliasedProjects(ids: string[]): Map<string, string> {
+    const out = new Map<string, string>();
+    for (let index = 0; index < ids.length; index += 500) {
+      const chunk = ids.slice(index, index + 500);
+      const rows = this.db.prepare(`SELECT r.doc_id AS id, a.local_project_id AS local FROM sync_doc_references r
+        JOIN dd_project_aliases a ON a.foreign_project_id = json_extract(r.project_json, '$')
+        WHERE r.doc_id IN (${chunk.map(() => '?').join(',')})`).all(...chunk) as Array<{ id: string; local: string }>;
+      for (const row of rows) out.set(row.id, row.local);
+    }
+    return out;
   }
 
   /** Look up a doc by id or slug; `null` when absent. */
