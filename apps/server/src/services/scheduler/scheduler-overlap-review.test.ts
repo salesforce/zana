@@ -16,7 +16,6 @@ vi.mock('../claude.js', () => ({
 
 import { EventEmitter } from 'node:events';
 import { SchedulerManager } from './scheduler.js';
-import { lastRunSkipped } from '@zana-ai/zcc-domain/schedule-skipped';
 import type { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
 import type { Project, ScheduleCreateInput, ScheduledTask, ScheduleRun } from '@zana-ai/zcc-domain/product';
 
@@ -74,7 +73,6 @@ const internals = (manager: SchedulerManager) => manager as unknown as {
 const autoFire = (manager: SchedulerManager, id: string) => internals(manager).fire(id, { manual: false });
 const runs = (manager: SchedulerManager, id: string) => T(manager, id).status.runs;
 const liveRow = (manager: SchedulerManager, id: string, sessionId: string) => runs(manager, id).find(run => run.sessionId === sessionId);
-const skipRows = (manager: SchedulerManager, id: string) => runs(manager, id).filter(run => run.reasonCode === 'overlap');
 
 // Review round 1 fixes for #586: the overlap guard's live session and a run's outcome must survive newer overlap rows.
 describe('overlap rows and history retention (#586 review)', () => {
@@ -127,11 +125,56 @@ describe('overlap rows and history retention (#586 review)', () => {
     const sessionId = ptys.sessions[0].id;
     expect(T(manager, id).status.lastRunSessionId).toBe(sessionId);
     await autoFire(manager, id);
-    expect(skipRows(manager, id)).toHaveLength(1);
+    expect(runs(manager, id).filter(run => run.reasonCode === 'overlap')).toHaveLength(1);
     expect(T(manager, id).status.lastRunSessionId).toBe(sessionId);
     expect(T(manager, id).status.lastRunResult).toBe('skipped');
     // Another kind of record still sets the field as before.
     await internals(manager).recordRun(id, { id: 'other', at: new Date().toISOString(), result: 'success', sessionId: 'other-session', trigger: 'schedule', attempt: 1 });
     expect(T(manager, id).status.lastRunSessionId).toBe('other-session');
+  });
+
+  it('A10: a row merged by an older version (skipped, overlap, live session) is kept, so no duplicate is launched', async () => {
+    const { manager, ptys, tasks } = await makeFixture([{ catchUp: null, retain: 1 }]);
+    const id = tasks[0].id;
+    await autoFire(manager, id);
+    const sessionId = ptys.sessions[0].id;
+    // Rewrite the live row the way an older Zana left it: the overlap skip spread over it.
+    const live = internals(manager).live.get(id)!;
+    live.task.status.runs[0] = { ...live.task.status.runs[0], result: 'skipped', reasonCode: 'overlap', message: 'previous run still active' };
+    await autoFire(manager, id);
+    await autoFire(manager, id);
+    expect(ptys.createCalls).toHaveLength(1);
+    expect(runs(manager, id).some(run => run.sessionId === sessionId)).toBe(true);
+  });
+
+  it('A10: the row a write closes survives that write while a newer real run is the newest', async () => {
+    const { manager, ptys, tasks } = await makeFixture([{ catchUp: null, retain: 1 }]);
+    const id = tasks[0].id;
+    await autoFire(manager, id);
+    const sessionId = ptys.sessions[0].id;
+    const liveId = runs(manager, id).find(run => run.sessionId === sessionId)!.id;
+    // A newer real run (a second, already-finished session) sits ahead of the live row, which is still open.
+    const live = internals(manager).live.get(id)!;
+    live.task.status.runs = [
+      { id: 'newer', at: new Date(Date.now() + 1000).toISOString(), result: 'success', durationMs: 1, sessionId: 'gone', trigger: 'schedule', attempt: 1 },
+      ...live.task.status.runs
+    ];
+    // The live session exits: its row is the one this write closes, so it must survive although retain is 1.
+    ptys.simulateExit(sessionId, 0);
+    await manager.attachReport('drain', 'x');
+    expect(runs(manager, id).find(run => run.id === liveId)?.durationMs).toBeTypeOf('number');
+  });
+
+  it('A14: an overlap skip points lastRunSessionId at the session that holds the slot, not at an exited manual run', async () => {
+    const { manager, ptys, tasks } = await makeFixture([{ catchUp: null }]);
+    const id = tasks[0].id;
+    await autoFire(manager, id);
+    const scheduled = ptys.sessions[0].id;
+    await internals(manager).fire(id, { manual: true });
+    const manual = ptys.sessions[1].id;
+    ptys.simulateExit(manual, 0);
+    await manager.attachReport('drain', 'x');
+    await autoFire(manager, id);
+    expect(T(manager, id).status.lastRunSessionId).toBe(scheduled);
   });
 });
