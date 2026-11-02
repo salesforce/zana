@@ -68,11 +68,14 @@ function setup(over: { realpath?: (p: string) => string; exists?: boolean; proje
     cancelTeamLaunch: vi.fn(async () => okCancel),
     launchFollowUpTerminal: vi.fn(async () => ({ ok: true, value: { id: 'sess' } })),
     git: {
-      getGitStatus: vi.fn(async () => ({ branch: 'zcc/w' })),
+      getGitStatus: vi.fn(async (path: string) => ({ branch: path === ROOT ? 'main' : 'zcc/w', dirty: false })),
       setWorktreePushProtection: vi.fn(async () => ({ ok: true })),
       createWorktree: vi.fn(async (_r: string, target: string, branch: string) => ({ ok: true, path: target, branch })),
       mergeWorktree: vi.fn(async () => ({ ok: true })),
       removeWorktree: vi.fn(async () => ({ ok: true })),
+      deleteBranch: vi.fn(async () => ({ ok: true })),
+      commitAllWorktreeChanges: vi.fn(async () => ({ ok: true })),
+      hasChangesBeyondZcc: vi.fn(async () => true),
       worktreeState: vi.fn(async () => ({ dirty: false, commits: 0 })),
       isGitRepo: vi.fn(async () => true),
       sanitizeBranchSlug: vi.fn((v: string) => v)
@@ -342,9 +345,233 @@ describe('handleSquadWorktreeTerminal', () => {
     serve(deps, r);
     await expect(runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('merged');
     expect(deps.git.mergeWorktree).toHaveBeenCalledWith(ROOT, WT, 'main');
-    expect(deps.git.removeWorktree).toHaveBeenCalledWith(ROOT, WT, false);
+    expect(deps.git.removeWorktree).toHaveBeenCalledWith(ROOT, WT, true);
     expect(deps.inboxStore.appendOnce).not.toHaveBeenCalled();
     expect(deps.executionStore.markSquadWorktreeTerminalEffects).toHaveBeenCalledTimes(1);
+  });
+
+  describe('delete on completion', () => {
+    const team = { id: 'team', orchestratorPersonaId: 'per', worktreeOnComplete: 'delete' };
+
+    it('squad default delete force-removes a COMPLETED worktree and deletes its branch, even when dirty with unmerged commits', async () => {
+      const { deps, runtime } = setup({ team });
+      const r = rec();
+      serve(deps, r);
+      deps.git.worktreeState.mockResolvedValue({ dirty: true, commits: 3 });
+      await expect(runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('deleted');
+      expect(deps.git.removeWorktree).toHaveBeenCalledWith(ROOT, WT, true);
+      expect(deps.git.deleteBranch).toHaveBeenCalledWith(ROOT, 'zcc/w', true);
+      expect(deps.git.mergeWorktree).not.toHaveBeenCalled();
+      expect(deps.inboxStore.appendOnce).not.toHaveBeenCalled();
+      expect(deps.executionStore.markSquadWorktreeTerminalEffects).toHaveBeenCalledWith(r.id, 3);
+    });
+
+    it('keeps the worktree and branch of FAILED and STOPPED runs', async () => {
+      for (const state of ['FAILED', 'STOPPED']) {
+        const { deps, runtime } = setup({ team });
+        const r = rec({ state });
+        serve(deps, r);
+        await expect(runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('kept');
+        expect(deps.git.removeWorktree).not.toHaveBeenCalled();
+        expect(deps.git.deleteBranch).not.toHaveBeenCalled();
+      }
+    });
+
+    it('a request-level onComplete wins over the squad default', async () => {
+      let s = setup({ team });
+      let r = rec({ request: { onComplete: 'leave' } });
+      serve(s.deps, r);
+      await expect(s.runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('kept');
+      expect(s.deps.git.removeWorktree).not.toHaveBeenCalled();
+
+      s = setup({ team });
+      r = rec({ request: { onComplete: 'merge' } });
+      serve(s.deps, r);
+      await expect(s.runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('merged');
+
+      s = setup({ team: { ...team, worktreeOnComplete: 'merge' } });
+      r = rec({ request: { onComplete: 'delete' } });
+      serve(s.deps, r);
+      await expect(s.runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('deleted');
+      expect(s.deps.git.mergeWorktree).not.toHaveBeenCalled();
+    });
+
+    it('a squad default merge merges when the request is silent', async () => {
+      const { deps, runtime } = setup({ team: { ...team, worktreeOnComplete: 'merge' } });
+      const r = rec();
+      serve(deps, r);
+      await expect(runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('merged');
+    });
+
+    it('a failed or throwing removal keeps the worktree and never touches the branch', async () => {
+      for (const fail of [(g: any) => g.removeWorktree.mockResolvedValue({ ok: false }), (g: any) => g.removeWorktree.mockRejectedValue(new Error('boom'))]) {
+        const { deps, runtime } = setup({ team });
+        const r = rec();
+        serve(deps, r);
+        fail(deps.git);
+        await expect(runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('kept');
+        expect(deps.git.deleteBranch).not.toHaveBeenCalled();
+        expect(deps.inboxStore.appendOnce).toHaveBeenCalledWith(expect.objectContaining({ subject: 'Squad worktree retained' }));
+      }
+    });
+
+    it.each([
+      ['the base branch', { path: WT, branch: 'main', baseBranch: 'main' }, undefined],
+      ['the project current branch', { path: WT, branch: 'zcc/w', baseBranch: 'main' }, 'zcc/w'],
+      ['an empty branch name', { path: WT, branch: '  ', baseBranch: 'main' }, undefined],
+      ['a missing branch name', { path: WT, baseBranch: 'main' }, undefined]
+    ])('still deletes the worktree but never %s', async (_n, squadWorktree, current) => {
+      const { deps, runtime } = setup({ team });
+      const r = rec({ squadWorktree });
+      serve(deps, r);
+      if (current) deps.git.getGitStatus.mockResolvedValue({ branch: current, dirty: false });
+      await expect(runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('deleted');
+      expect(deps.git.removeWorktree).toHaveBeenCalledWith(ROOT, WT, true);
+      expect(deps.git.deleteBranch).not.toHaveBeenCalled();
+    });
+
+    it('a branch deletion failure or throw after removal still reports deleted and warns', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        for (const fail of [(g: any) => g.deleteBranch.mockResolvedValue({ ok: false }), (g: any) => g.deleteBranch.mockRejectedValue(new Error('x'))]) {
+          warn.mockClear();
+          const { deps, runtime } = setup({ team });
+          const r = rec();
+          serve(deps, r);
+          fail(deps.git);
+          await expect(runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('deleted');
+          expect(deps.executionStore.markSquadWorktreeTerminalEffects).toHaveBeenCalledWith(r.id, 3);
+          expect(warn).toHaveBeenCalledWith(expect.stringContaining('zcc/w'));
+        }
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('a failing status read does not block branch deletion bookkeeping', async () => {
+      const { deps, runtime } = setup({ team });
+      const r = rec();
+      serve(deps, r);
+      deps.git.getGitStatus.mockRejectedValue(new Error('status'));
+      await expect(runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('deleted');
+      expect(deps.git.deleteBranch).toHaveBeenCalledWith(ROOT, 'zcc/w', true);
+    });
+
+    it('keeps without a project, and defers on follow-up claim or state loss', async () => {
+      let s = setup({ team, project: null });
+      let r = rec();
+      serve(s.deps, r);
+      await expect(s.runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('kept');
+
+      // state gone before removal
+      s = setup({ team });
+      r = rec();
+      s.deps.executionStore.get.mockResolvedValueOnce(r).mockResolvedValueOnce(r).mockResolvedValueOnce(undefined);
+      await expect(s.runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('kept');
+      expect(s.deps.git.removeWorktree).not.toHaveBeenCalled();
+      expect(s.deps.git.deleteBranch).not.toHaveBeenCalled();
+    });
+
+    it('never removes a user-owned target even with a squad delete default', async () => {
+      const { deps, runtime } = setup({ team });
+      const r = rec({ squadWorktree: { path: ROOT, branch: 'main', ownership: 'user', targetKind: 'project-root' } });
+      serve(deps, r);
+      await expect(runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('kept');
+      expect(deps.git.removeWorktree).not.toHaveBeenCalled();
+      expect(deps.git.deleteBranch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('merge everything on completion', () => {
+    it('commits pending changes, merges, removes the worktree, then deletes the merged branch with -d', async () => {
+      const { deps, runtime } = setup();
+      const r = rec({ request: { onComplete: 'merge' }, jobTitle: 'Ship it' });
+      serve(deps, r);
+      const order: string[] = [];
+      deps.git.commitAllWorktreeChanges.mockImplementation(async () => { order.push('commit'); return { ok: true }; });
+      deps.git.mergeWorktree.mockImplementation(async () => { order.push('merge'); return { ok: true }; });
+      deps.git.removeWorktree.mockImplementation(async () => { order.push('remove'); return { ok: true }; });
+      deps.git.deleteBranch.mockImplementation(async () => { order.push('branch'); return { ok: true }; });
+      await expect(runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('merged');
+      expect(order).toEqual(['commit', 'merge', 'remove', 'branch']);
+      expect(deps.git.commitAllWorktreeChanges).toHaveBeenCalledWith(WT, 'Squad Ship it: final changes');
+      expect(deps.git.removeWorktree).toHaveBeenCalledWith(ROOT, WT, true);
+      expect(deps.git.deleteBranch).toHaveBeenCalledWith(ROOT, 'zcc/w', false);
+    });
+
+    it('uses the execution id when the job has no title', async () => {
+      const { deps, runtime } = setup();
+      const r = rec({ request: { onComplete: 'merge' }, jobTitle: ' ' });
+      serve(deps, r);
+      await runtime.handleSquadWorktreeTerminal(r);
+      expect(deps.git.commitAllWorktreeChanges).toHaveBeenCalledWith(WT, `Squad ${r.id}: final changes`);
+    });
+
+    it('a branch -d refusal or throw after a successful merge still reports merged', async () => {
+      for (const fail of [(g: any) => g.deleteBranch.mockResolvedValue({ ok: false }), (g: any) => g.deleteBranch.mockRejectedValue(new Error('x'))]) {
+        const { deps, runtime } = setup();
+        const r = rec({ request: { onComplete: 'merge' } });
+        serve(deps, r);
+        fail(deps.git);
+        await expect(runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('merged');
+      }
+    });
+
+    it.each([
+      ['base checkout dirty', (g: any) => g.getGitStatus.mockResolvedValue({ branch: 'main', dirty: true })],
+      ['base on another branch', (g: any) => g.getGitStatus.mockResolvedValue({ branch: 'other', dirty: false })],
+      ['base status missing', (g: any) => g.getGitStatus.mockResolvedValue(null)],
+      ['auto-commit fails', (g: any) => g.commitAllWorktreeChanges.mockResolvedValue({ ok: false })],
+      ['merge conflicts', (g: any) => g.mergeWorktree.mockResolvedValue({ ok: false })],
+      ['worktree removal fails', (g: any) => g.removeWorktree.mockResolvedValue({ ok: false })]
+    ])('%s keeps the worktree and deletes no branch', async (_n, arrange) => {
+      const { deps, runtime } = setup();
+      const r = rec({ request: { onComplete: 'merge' } });
+      serve(deps, r);
+      arrange(deps.git);
+      await expect(runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('kept');
+      expect(deps.git.deleteBranch).not.toHaveBeenCalled();
+      expect(deps.inboxStore.appendOnce).toHaveBeenCalledWith(expect.objectContaining({ subject: 'Squad worktree retained' }));
+    });
+
+    it('a base that is dirty only through .zcc files still merges', async () => {
+      const { deps, runtime } = setup();
+      const r = rec({ request: { onComplete: 'merge' } });
+      serve(deps, r);
+      deps.git.getGitStatus.mockImplementation(async (path: string) => ({ branch: path === ROOT ? 'main' : 'zcc/w', dirty: path === ROOT }));
+      deps.git.hasChangesBeyondZcc.mockResolvedValue(false);
+      await expect(runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('merged');
+      expect(deps.git.hasChangesBeyondZcc).toHaveBeenCalledWith(ROOT);
+      expect(deps.git.mergeWorktree).toHaveBeenCalled();
+    });
+
+    it('a clean base never asks about .zcc files', async () => {
+      const { deps, runtime } = setup();
+      const r = rec({ request: { onComplete: 'merge' } });
+      serve(deps, r);
+      await runtime.handleSquadWorktreeTerminal(r);
+      expect(deps.git.hasChangesBeyondZcc).not.toHaveBeenCalled();
+    });
+
+    it('a dirty or conflicting base never triggers the automatic commit', async () => {
+      const { deps, runtime } = setup();
+      const r = rec({ request: { onComplete: 'merge' } });
+      serve(deps, r);
+      deps.git.getGitStatus.mockResolvedValue({ branch: 'main', dirty: true });
+      await runtime.handleSquadWorktreeTerminal(r);
+      expect(deps.git.commitAllWorktreeChanges).not.toHaveBeenCalled();
+    });
+
+    it('FAILED and STOPPED runs are left untouched, with no commit', async () => {
+      for (const state of ['FAILED', 'STOPPED']) {
+        const { deps, runtime } = setup();
+        const r = rec({ request: { onComplete: 'merge' }, state });
+        serve(deps, r);
+        await expect(runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('kept');
+        expect(deps.git.commitAllWorktreeChanges).not.toHaveBeenCalled();
+        expect(deps.git.mergeWorktree).not.toHaveBeenCalled();
+      }
+    });
   });
 
   it('falls back to retained notice when merge or remove fails', async () => {
@@ -475,6 +702,10 @@ describe('inbox / details actions', () => {
       const out = await runtime.runSquadWorktreeAction({ executionId: r.id, phase: 'choose', stateVersion: 3 }, { optionId: 'delete' });
       expect(out).toEqual({ keepPending: true });
       expect(deps.inboxStore.append).toHaveBeenCalledWith(expect.objectContaining({ hostActionRequired: true, executionId: r.id }));
+      const appended = JSON.stringify(deps.inboxStore.append.mock.calls[0]);
+      expect(appended).toContain('Delete refuses a worktree with uncommitted changes or unmerged commits.');
+      expect(appended).toContain('Force delete removes it anyway and permanently discards that work.');
+      expect(appended).not.toContain('never deleted');
       expect(deps.inboxActionRegistry.bind).toHaveBeenCalledWith(
         { id: 'e1' },
         { kind: SQUAD_WORKTREE_ACTION, ref: JSON.stringify({ executionId: r.id, phase: 'confirm', stateVersion: 3 }) }

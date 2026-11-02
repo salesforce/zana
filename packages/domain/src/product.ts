@@ -4697,6 +4697,13 @@ export interface Team {
   initialPrompt?: string;
   /** Shared-worktree override for execution-backed squad runs. Absent ⇒ use the next default. */
   worktreeIsolation?: boolean;
+  /**
+   * What happens to the shared Squad worktree when a run finishes. Absent ⇒ `'leave'` (keep).
+   * `'merge'` merges into the base branch then removes it; `'delete'` removes it only when the run
+   * COMPLETED and the worktree is clean with no unmerged commits (otherwise it is kept). A launch
+   * request's own `onComplete` wins. Never applies to user-owned targets.
+   */
+  worktreeOnComplete?: 'leave' | 'merge' | 'delete';
   /** Override global structured-work routing enforcement for this Team. */
   routingEnforced?: boolean;
   /** Transport selected for every squad member. Absent persisted teams remain CLI. */

@@ -257,6 +257,9 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
   );
   const [defaultProjectId, setDefaultProjectId] = useState(team?.defaultProjectId ?? '');
   const [worktreeIsolation, setWorktreeIsolation] = useState<boolean | undefined>(team?.worktreeIsolation);
+  const [worktreeOnComplete, setWorktreeOnComplete] = useState<'merge' | 'delete' | undefined>(
+    team?.worktreeOnComplete === 'merge' || team?.worktreeOnComplete === 'delete' ? team.worktreeOnComplete : undefined
+  );
   const [routingEnforced, setRoutingEnforced] = useState<boolean | undefined>(team?.routingEnforced);
   const [retainOrchestrator, setRetainOrchestrator] = useState(team?.retainOrchestrator === true);
   const [transport, setTransport] = useState<SquadTransport>(team?.transport ?? 'CLI');
@@ -345,6 +348,7 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
       initialPrompt: initialPrompt.trim() || undefined,
       defaultProjectId: defaultProjectId || undefined,
       worktreeIsolation,
+      worktreeOnComplete,
       routingEnforced,
       retainOrchestrator,
       transport,
@@ -619,6 +623,27 @@ function TeamForm({ team, onClose }: { team: Team | null; onClose: () => void })
             Creates one shared branch and checkout for durable squad runs. Use default follows
             the effective project-or-global setting; On forces a shared squad worktree; Off
             disables it.
+          </p>
+        </div>
+
+        <div className="scheduler-form-field">
+          <label htmlFor="team-worktree-on-complete">When a run finishes</label>
+          <PopoverPicklist
+            id="team-worktree-on-complete"
+            ariaLabel="Squad worktree on completion"
+            searchable={false}
+            value={worktreeOnComplete ?? 'inherit'}
+            onChange={(next) => setWorktreeOnComplete(next === 'merge' || next === 'delete' ? next : undefined)}
+            options={[
+              { value: 'inherit', label: 'Keep worktree (default)' },
+              { value: 'merge', label: 'Merge everything into base branch, then remove' },
+              { value: 'delete', label: 'Delete worktree and branch' }
+            ]}
+          />
+          <p className="settings-help">
+            Only applies when the run used a shared Squad worktree. Delete removes the worktree
+            and its branch even with uncommitted or unmerged work, and cannot be undone. Merge
+            and Delete only apply to completed runs; failed or stopped runs always keep the worktree.
           </p>
         </div>
 
