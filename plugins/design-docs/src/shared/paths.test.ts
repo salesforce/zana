@@ -9,7 +9,10 @@ import {
   imageMediaTypeOf,
   isBinaryKind,
   mediaTypeOf,
-  normalizeDocPath
+  isCrossDocScheme,
+  normalizeDocPath,
+  parseCrossDocLink,
+  resolveDocLink
 } from './paths.js';
 
 describe('normalizeDocPath', () => {
@@ -77,5 +80,32 @@ describe('file kinds', () => {
     const paths = ['b/x.md', 'README.md', 'a/z.md', 'a/b/c.md', 'file10.md', 'file2.md'];
     expect([...paths].sort(comparePaths)).toEqual(['file2.md', 'file10.md', 'README.md', 'a/z.md', 'a/b/c.md', 'b/x.md']);
     expect(comparePaths('a/b', 'a/b')).toBe(0);
+  });
+});
+
+describe('parseCrossDocLink', () => {
+  it('parses canonical and shorthand forms, with path and anchor', () => {
+    expect(parseCrossDocLink('doc://my-spec/api/auth.md#tokens')).toEqual({ docRef: 'my-spec', path: 'api/auth.md', anchor: 'tokens' });
+    expect(parseCrossDocLink('doc:my-spec/api.md')).toEqual({ docRef: 'my-spec', path: 'api.md', anchor: null });
+    expect(parseCrossDocLink('DOC://dd_abc123/My%20File.md?x=1')).toEqual({ docRef: 'dd_abc123', path: 'My File.md', anchor: null });
+  });
+  it('treats a doc-level link as the entry file', () => {
+    expect(parseCrossDocLink('doc://my-spec')).toEqual({ docRef: 'my-spec', path: null, anchor: null });
+    expect(parseCrossDocLink('doc://my-spec/#top')).toEqual({ docRef: 'my-spec', path: null, anchor: 'top' });
+    expect(parseCrossDocLink('doc:my-spec')).toEqual({ docRef: 'my-spec', path: null, anchor: null });
+  });
+  it('rejects traversal, empty segments, bad escapes and bad refs', () => {
+    for (const href of ['doc://x/../y.md', 'doc://x/a//b.md', 'doc://x/%2e%2e/y.md', 'doc://x/a%2Fb.md', 'doc://x/%E0%A4%A.md',
+      'doc://', 'doc:///x', 'doc://-bad/a.md', 'doc://../a.md', 'doc://x/.hidden.md', 'doc://%zz/a.md']) {
+      expect(parseCrossDocLink(href), href).toBeNull();
+    }
+  });
+  it('ignores everything that is not the doc scheme', () => {
+    for (const href of ['api.md', '#a', 'https://x/y', 'mailto:a@b.c', 'docs/x.md']) expect(parseCrossDocLink(href)).toBeNull();
+    expect(isCrossDocScheme(' doc:x')).toBe(true);
+    expect(isCrossDocScheme('docs/x')).toBe(false);
+  });
+  it('leaves resolveDocLink treating doc: as an external scheme', () => {
+    expect(resolveDocLink('a.md', 'doc://x/y.md')).toBeNull();
   });
 });

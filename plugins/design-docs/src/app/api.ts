@@ -71,6 +71,17 @@ export interface ListArgs {
   projectId?: string;
   query?: string;
   status?: DocStatus | 'active' | 'all';
+  /** Only received docs whose foreign project id is not mapped to a local project. */
+  unassigned?: boolean;
+}
+
+/** A foreign (peer) project id with docs not yet mapped to a local project. */
+export interface UnassignedProject {
+  foreignProjectId: string;
+  docCount: number;
+  sampleTitles: string[];
+  /** Advisory only; never applied without the user's confirmation. */
+  suggestion: { projectId: string; name: string; basis: 'tag' | 'name' } | null;
 }
 
 export interface CreateArgs {
@@ -99,6 +110,8 @@ export type HarnessRouting = PluginHarnessOverride;
 export type HarnessDescriptors = HarnessRoutingEditorProps['descriptors'];
 
 export interface DesignDocsApi {
+  /** Resolve a `doc://` link written in `fromDoc`; the server authorizes the target. */
+  resolveCrossDocLink(fromDoc: string, href: string): Promise<{ docId: string; path: string } | { error: 'missing-doc' | 'missing-file' | 'forbidden' }>;
   templates(): Promise<TemplateInfo[]>;
   templateNew(args: { label: string; description?: string }): Promise<DesignDocDetail>;
   templateDuplicate(template: string): Promise<DesignDocDetail>;
@@ -108,6 +121,11 @@ export interface DesignDocsApi {
   templatesExport(keys?: string[]): Promise<{ bundleText: string }>;
   templatesImport(bundleText: string): Promise<DesignDocDetail[]>;
   projects(): Promise<ProjectInfo[]>;
+  /** Deleted projects' last names, already labelled "<name> (project removed)". */
+  removedProjects(): Promise<Array<{ id: string; label: string }>>;
+  listUnassignedProjects(): Promise<UnassignedProject[]>;
+  mapForeignProject(foreignProjectId: string, localProjectId: string): Promise<{ foreignProjectId: string; localProjectId: string }>;
+  unmapForeignProject(foreignProjectId: string): Promise<{ removed: boolean }>;
   /** Harnesses on the project's host, or this computer's when no project is given. */
   harnessDescriptors(projectId?: string): Promise<HarnessDescriptors>;
   /** This plugin's override at one scope, null when it inherits. */
@@ -192,6 +210,7 @@ export function createApi(call: Call): DesignDocsApi {
     await promise;
   };
   return {
+    resolveCrossDocLink: (fromDoc, href) => typed('resolveCrossDocLink', { fromDoc, href }),
     templates: () => typed('templates'),
     templateNew: (args) => typed('templateNew', args),
     templateDuplicate: (template) => typed('templateDuplicate', { template }),
@@ -201,6 +220,10 @@ export function createApi(call: Call): DesignDocsApi {
     templatesExport: (keys) => typed('templatesExport', keys ? { keys } : undefined),
     templatesImport: (bundleText) => typed('templatesImport', { bundleText }),
     projects: () => typed('projects'),
+    removedProjects: () => typed('removedProjects'),
+    listUnassignedProjects: () => typed('listUnassignedProjects'),
+    mapForeignProject: (foreignProjectId, localProjectId) => typed('mapForeignProject', { foreignProjectId, localProjectId }),
+    unmapForeignProject: (foreignProjectId) => typed('unmapForeignProject', { foreignProjectId }),
     harnessDescriptors: (projectId) => typed('harnessDescriptors', projectId ? { projectId } : undefined),
     harnessRouting: (scope) => typed('harnessRouting', scope),
     setHarnessRouting: (scope, value) => typed('setHarnessRouting', { scope, value }),

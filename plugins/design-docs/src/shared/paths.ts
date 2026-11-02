@@ -197,6 +197,67 @@ export function resolveDocLink(fromPath: string, href: string): string | null {
   return base.length ? base.join('/') : null;
 }
 
+const DOC_SCHEME = /^doc:/i;
+const DOC_REF = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+export interface CrossDocLink {
+  /** A doc slug or `dd_...` id; the server resolves and authorizes it. */
+  docRef: string;
+  /** Canonical path inside that doc, or null for the doc's entry file. */
+  path: string | null;
+  anchor: string | null;
+}
+
+/** Whether an href uses the cross-doc scheme at all (even if malformed). */
+export function isCrossDocScheme(href: string): boolean {
+  return DOC_SCHEME.test(href.trim());
+}
+
+function decodeSafely(text: string): string | null {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse `doc://<ref>/<path>#anchor` (or the shorthand `doc:<ref>/<path>`).
+ * `doc://<ref>` alone targets the doc's entry file. Returns null for any other
+ * href and for malformed ones (empty or `..` segments, bad escapes, bad ref).
+ * Advisory only: the server re-validates and authorizes the target.
+ */
+export function parseCrossDocLink(href: string): CrossDocLink | null {
+  const raw = href.trim();
+  if (!DOC_SCHEME.test(raw)) return null;
+  let rest = raw.slice(4);
+  if (rest.startsWith('//')) rest = rest.slice(2);
+  const hash = rest.indexOf('#');
+  let anchor: string | null = null;
+  if (hash >= 0) {
+    anchor = decodeSafely(rest.slice(hash + 1)) || null;
+    rest = rest.slice(0, hash);
+  }
+  const query = rest.indexOf('?');
+  if (query >= 0) rest = rest.slice(0, query);
+  const segments = rest.split('/');
+  if (segments.length > 1 && segments[segments.length - 1] === '') segments.pop();
+  const ref = decodeSafely(segments[0]!);
+  if (ref === null || !DOC_REF.test(ref)) return null;
+  if (segments.length === 1) return { docRef: ref, path: null, anchor };
+  const decoded: string[] = [];
+  for (const segment of segments.slice(1)) {
+    const value = decodeSafely(segment);
+    if (!value || value.includes('/') || value.includes('\\')) return null;
+    decoded.push(value);
+  }
+  try {
+    return { docRef: ref, path: normalizeDocPath(decoded.join('/')), anchor };
+  } catch {
+    return null;
+  }
+}
+
 /** Sort paths so a folder's files precede its subfolders, both alphabetically. */
 export function comparePaths(a: string, b: string): number {
   const as = a.split('/');

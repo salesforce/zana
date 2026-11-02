@@ -19,6 +19,8 @@ import type { DesignDocPeerService } from './peer-service.js';
 import type { DesignDocPairing } from './pairing.js';
 import type { DesignDocBackups } from './backup.js';
 import { bundlePage } from './page-bundle.js';
+import { resolveCrossDocTarget } from './cross-doc.js';
+import { parseCrossDocLink } from '../shared/paths.js';
 import { MAX_TEXT_FILE_BYTES } from '../shared/limits.js';
 import { fileKindOf } from '../shared/paths.js';
 
@@ -352,6 +354,14 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       );
       changed(summary.id);
       return summary;
+    },
+
+    /** Resolve a `doc://` link written in `fromDoc`; main re-parses and authorizes, the renderer's parse is advisory. */
+    resolveCrossDocLink: (raw) => {
+      const input = onlyKeys(raw, ['fromDoc', 'href']);
+      const link = parseCrossDocLink(requiredString(input, 'href'));
+      if (!link) return { error: 'missing-doc' };
+      return resolveCrossDocTarget(store, link.docRef, link.path, { docId: requiredString(input, 'fromDoc') });
     },
 
     pin: (raw) => {

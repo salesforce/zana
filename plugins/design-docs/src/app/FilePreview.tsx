@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type MutableRefObject } from 'react';
-import { copyContextSelection, MAX_CONTEXT_REFERENCE_TEXT } from '@zana-ai/zcc-plugin-sdk/app';
+import { copyContextSelection, MAX_CONTEXT_REFERENCE_TEXT, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { passageContext } from '../shared/passage-context.js';
 import { Markdown } from '@zana-ai/zcc-plugin-sdk/app';
 import { MessageSquarePlus, Sparkles } from 'lucide-react';
 import type { DesignDocFileMeta } from '../shared/contract.js';
 import { MAX_QUOTE_LENGTH } from '../shared/limits.js';
-import type { FileKind } from '../shared/paths.js';
+import { isCrossDocScheme, parseCrossDocLink, type FileKind } from '../shared/paths.js';
 import { toast, useApi, type DocKind } from './api.js';
-import { codeFence, fenced, fileDataUrl, inlineImages, referencedImages, resolveDocLink } from './content.js';
+import { codeFence, fenced, fileDataUrl, formatSubPath, inlineImages, referencedImages, resolveDocLink } from './content.js';
 import { COMMENT_HIGHLIGHT, FOCUS_HIGHLIGHT, findQuoteRanges, paintRanges } from './highlight.js';
 import { PageFrame } from './PageFrame.js';
 
@@ -22,6 +22,14 @@ export interface PreviewHandle {
   /** Scroll to and flash a quoted passage; false when it is not on screen. */
   focusQuote(quote: string): boolean;
 }
+
+/** The nav panel's route segment; mirrors NAV_PATH in slots.tsx (which imports this module's tree). */
+const DOCS_PANEL = 'design-docs';
+const CROSS_DOC_ERRORS = {
+  'missing-doc': 'That design doc does not exist (or was removed)',
+  'missing-file': 'That file does not exist in the linked design doc',
+  forbidden: 'You cannot open that design doc from here'
+} as const;
 
 const MAX_INLINE_IMAGES = 24;
 const ASSET_CACHE_LIMIT = 64;
@@ -117,6 +125,8 @@ export function FilePreview({
   draft?: boolean;
   kind?: DocKind;
 }) {
+  const api = useApi();
+  const navigate = useZccNavigate();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const owner = useRef({});
@@ -186,6 +196,24 @@ export function FilePreview({
     if (href.startsWith('#')) {
       event.preventDefault();
       event.stopPropagation();
+      return;
+    }
+    if (isCrossDocScheme(href)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const link = parseCrossDocLink(href);
+      if (!link) {
+        toast('This doc link is not valid', 'error');
+        return;
+      }
+      void api.resolveCrossDocLink(docId, href).then(
+        (result) => {
+          if ('error' in result) toast(CROSS_DOC_ERRORS[result.error], 'error');
+          else if (result.docId === docId) onOpenPath?.(result.path);
+          else navigate.toPluginPanel(DOCS_PANEL, { subPath: formatSubPath({ docId: result.docId, path: result.path }) });
+        },
+        () => toast(CROSS_DOC_ERRORS['missing-doc'], 'error')
+      );
       return;
     }
     const target = resolveDocLink(file.path, href);

@@ -33,7 +33,8 @@ import type { DocLocation } from './content.js';
 import { useDocActions } from './DocActions.js';
 import { buildSections, parseCollapsed, projectSwatch, toggleCollapsed, type ListSection } from './doc-sections.js';
 import { DocView } from './DocView.js';
-import { useDocs, useNow, usePersistentState, useProjects, useTemplates } from './hooks.js';
+import { useDocs, useNow, usePersistentState, useProjects, useRemovedProjects, useTemplates, useUnassignedDocs, useUnassignedProjects } from './hooks.js';
+import { UNASSIGNED_LABEL, UnassignedProjectsDialog } from './UnassignedProjects.js';
 import { SyncButton, usePeerSync, type PeerSync } from './PeerSettings.js';
 import { SettingsToggle, SettingsView } from './Settings.js';
 import { markSeen, parseSeen, unseenAgentEdit } from './seen.js';
@@ -241,7 +242,18 @@ function DocList({
   const debounced = useDebounced(query.trim(), 200);
   const now = useNow();
   const docs = useDocs({ ...(projectId ? { projectId } : {}), ...(debounced ? { query: debounced } : {}), status });
-  const names = useMemo(() => new Map(projects.map((project) => [project.id, project.name])), [projects]);
+  const removed = useRemovedProjects();
+  const names = useMemo(() => {
+    const map = new Map((removed.data ?? []).map((item) => [item.id, item.label]));
+    for (const project of projects) map.set(project.id, project.name);
+    return map;
+  }, [projects, removed.data]);
+  const inUnassignedScope = showProjects && !projectFilter;
+  const unassignedDocs = useUnassignedDocs(inUnassignedScope, { ...(debounced ? { query: debounced } : {}), status });
+  const unassignedProjects = useUnassignedProjects(showProjects);
+  const [mapping, setMapping] = useState(false);
+  const unassignedList = inUnassignedScope ? unassignedDocs.data ?? [] : [];
+  const unassignedOpen = !(debounced ? new Set<string>() : parseCollapsed(collapsedRaw)).has('unassigned');
   const visible = useMemo(() => {
     const all = docs.data ?? [];
     if (!showProjects || !projectFilter) return all;
@@ -378,7 +390,35 @@ function DocList({
             </section>
           );
         })}
+        {unassignedList.length ? (
+          <section className="dd-list-group" aria-label={UNASSIGNED_LABEL}>
+            <SectionHead
+              section={{ key: 'unassigned', kind: 'recent', label: UNASSIGNED_LABEL, entries: [], count: unassignedList.length }}
+              open={unassignedOpen}
+              onToggle={() => setCollapsedRaw(toggleCollapsed(collapsedRaw, 'unassigned'))}
+            />
+            {unassignedOpen ? (
+              <>
+                <button type="button" className="btn dd-head-btn" onClick={() => setMapping(true)}>
+                  <FolderOpen size={12} aria-hidden /> Map to a Project…
+                </button>
+                {unassignedList.map((doc) => row(doc, { key: 'unassigned', kind: 'project', label: UNASSIGNED_LABEL, entries: [], count: 0 }, false))}
+              </>
+            ) : null}
+          </section>
+        ) : null}
       </div>
+      {mapping ? (
+        <UnassignedProjectsDialog
+          unassigned={unassignedProjects.data ?? []}
+          projects={projects}
+          onClose={() => setMapping(false)}
+          onChanged={() => {
+            unassignedProjects.reload();
+            unassignedDocs.reload();
+          }}
+        />
+      ) : null}
       {menu ? (
         <ContextMenu key={`${menu.doc.id}@${menu.at.x},${menu.at.y}`} at={menu.at} label={`Actions for ${menu.doc.title}`} onClose={() => setMenu(null)}>
           {docActions.items(
