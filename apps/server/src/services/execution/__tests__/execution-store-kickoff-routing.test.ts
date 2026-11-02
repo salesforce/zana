@@ -141,4 +141,24 @@ describe('kickoff reassignment honours routing (#577)', () => {
     record = await store.reassignKickoffToFreshSlot(record.id, 'unit');
     expect(record.workUnits![0]).toMatchObject({ state: 'READY', assignedSlotId: 'engineer:1' });
   }));
+
+  it('OBL-010: a routed unit with no eligible slot at all keeps today\'s exact question', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 1_000 });
+    let record = await running(store, [
+      { slotId: 'reviewer:0', personaId: 'reviewer' }, { slotId: 'reviewer:1', personaId: 'reviewer' }
+    ], { routing: engineerRouting });
+    record = await churn(store, record.id, 'reviewer:0', 1);
+    record = await store.blockKickoffFailure(record.id, 'unit');
+    expect(record.blockers![0].question).toBe(today());
+  }));
+
+  it('OBL-009: an unrouted unit skips a previously tried slot and takes the first untried one in roster order', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 1_000 });
+    let record = await running(store, [
+      { slotId: 'engineer:0', personaId: 'engineer' }, { slotId: 'engineer:1', personaId: 'engineer' }, { slotId: 'engineer:2', personaId: 'engineer' }
+    ]);
+    record = await churn(store, record.id, 'engineer:1');
+    record = await store.reassignKickoffToFreshSlot(record.id, 'unit');
+    expect(record.workUnits![0].assignedSlotId).toBe('engineer:0');
+  }));
 });
