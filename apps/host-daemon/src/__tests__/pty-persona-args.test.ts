@@ -519,6 +519,7 @@ describe('PtyManager.create — Codex MCP approval overrides', () => {
     expect(tools).toMatchObject({
       'execution.work.complete': { approval_mode: 'approve' },
       'execution.work.block': { approval_mode: 'approve' },
+      'execution.work.heartbeat': { approval_mode: 'approve' },
       inbox_push: { approval_mode: 'approve' }
     });
     expect(argv).not.toContain('--allowedTools');
