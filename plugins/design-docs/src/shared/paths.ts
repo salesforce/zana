@@ -213,6 +213,39 @@ export function isCrossDocScheme(href: string): boolean {
   return DOC_SCHEME.test(href.trim());
 }
 
+const SHIELD_PREFIX = 'https://doc-link.invalid/?h=';
+
+/**
+ * The host Markdown renderer drops hrefs with unknown schemes, so `doc:` links
+ * reach the DOM empty. Wrap them in an inert https href before rendering and
+ * restore them on click with `unshieldCrossDocHref`. Leaves code fences and
+ * inline code spans untouched.
+ */
+export function shieldCrossDocLinks(markdown: string): string {
+  let fence: string | null = null;
+  return markdown.split('\n').map((line) => {
+    const mark = line.match(/^\s{0,3}(`{3,}|~{3,})/)?.[1];
+    if (fence) {
+      if (mark && mark[0] === fence[0] && mark.length >= fence.length) fence = null;
+      return line;
+    }
+    if (mark) {
+      fence = mark;
+      return line;
+    }
+    return line.split(/(`+[^`]*`+)/).map((part, index) => index % 2 === 1
+      ? part
+      : part.replace(/\]\(\s*<?(doc:[^)\s>]*)>?/gi, (_match, href: string) => `](${SHIELD_PREFIX}${encodeURIComponent(href)}`)
+    ).join('');
+  }).join('\n');
+}
+
+/** Inverse of `shieldCrossDocLinks` for one href; returns the input otherwise. */
+export function unshieldCrossDocHref(href: string): string {
+  if (!href.startsWith(SHIELD_PREFIX)) return href;
+  return decodeSafely(href.slice(SHIELD_PREFIX.length)) ?? href;
+}
+
 function decodeSafely(text: string): string | null {
   try {
     return decodeURIComponent(text);

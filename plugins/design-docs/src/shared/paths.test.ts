@@ -12,7 +12,9 @@ import {
   isCrossDocScheme,
   normalizeDocPath,
   parseCrossDocLink,
-  resolveDocLink
+  resolveDocLink,
+  shieldCrossDocLinks,
+  unshieldCrossDocHref
 } from './paths.js';
 
 describe('normalizeDocPath', () => {
@@ -107,5 +109,30 @@ describe('parseCrossDocLink', () => {
   });
   it('leaves resolveDocLink treating doc: as an external scheme', () => {
     expect(resolveDocLink('a.md', 'doc://x/y.md')).toBeNull();
+  });
+});
+
+describe('shieldCrossDocLinks', () => {
+  it('wraps doc: links so the host renderer keeps them, and restores them', () => {
+    const shielded = shieldCrossDocLinks('See [API](doc://spec/api.md#top) and [<x>](<doc:a-b>) and [web](https://x.io).');
+    expect(shielded).not.toContain('](doc:');
+    expect(shielded).toContain('](https://x.io)');
+    const hrefs = [...shielded.matchAll(/\]\(([^)]+)\)/g)].map((m) => unshieldCrossDocHref(m[1]!));
+    expect(hrefs).toEqual(['doc://spec/api.md#top', 'doc:a-b', 'https://x.io']);
+  });
+
+  it('leaves fenced and inline code alone', () => {
+    const md = '```md\n[a](doc://x/y)\n```\n`[b](doc://x/y)` then [c](doc://x/y)\n~~~\n[d](doc://x/y)\n~~~';
+    const out = shieldCrossDocLinks(md);
+    expect(out).toContain('```md\n[a](doc://x/y)\n```');
+    expect(out).toContain('`[b](doc://x/y)`');
+    expect(out).toContain('~~~\n[d](doc://x/y)\n~~~');
+    expect(out).not.toContain('[c](doc://');
+  });
+
+  it('unshield returns other hrefs unchanged and tolerates bad escapes', () => {
+    expect(unshieldCrossDocHref('https://x.io')).toBe('https://x.io');
+    const bad = 'https://doc-link.invalid/?h=%E0%A4%A';
+    expect(unshieldCrossDocHref(bad)).toBe(bad);
   });
 });

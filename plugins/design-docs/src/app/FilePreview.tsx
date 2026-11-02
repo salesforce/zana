@@ -5,7 +5,7 @@ import { Markdown } from '@zana-ai/zcc-plugin-sdk/app';
 import { MessageSquarePlus, Sparkles } from 'lucide-react';
 import type { DesignDocFileMeta } from '../shared/contract.js';
 import { MAX_QUOTE_LENGTH } from '../shared/limits.js';
-import { isCrossDocScheme, parseCrossDocLink, type FileKind } from '../shared/paths.js';
+import { isCrossDocScheme, parseCrossDocLink, shieldCrossDocLinks, unshieldCrossDocHref, type FileKind } from '../shared/paths.js';
 import { toast, useApi, type DocKind } from './api.js';
 import { codeFence, fenced, fileDataUrl, formatSubPath, inlineImages, referencedImages, resolveDocLink } from './content.js';
 import { COMMENT_HIGHLIGHT, FOCUS_HIGHLIGHT, findQuoteRanges, paintRanges } from './highlight.js';
@@ -140,7 +140,7 @@ export function FilePreview({
   const known = useMemo(() => new Set(files.map((entry) => entry.path)), [files]);
 
   const markdown = useMemo(() => {
-    if (file.kind === 'markdown') return inlineImages(file.path, file.content, assets);
+    if (file.kind === 'markdown') return shieldCrossDocLinks(inlineImages(file.path, file.content, assets));
     if (file.kind === 'mermaid') return fenced(file.content, 'mermaid');
     if (file.kind === 'code') return codeFence(file.path, file.content);
     return null;
@@ -192,7 +192,7 @@ export function FilePreview({
   const onClickCapture = (event: ReactMouseEvent) => {
     const anchor = (event.target as Element | null)?.closest?.('a');
     if (!anchor) return;
-    const href = anchor.getAttribute('href') ?? '';
+    const href = unshieldCrossDocHref(anchor.getAttribute('href') ?? '');
     if (href.startsWith('#')) {
       event.preventDefault();
       event.stopPropagation();
