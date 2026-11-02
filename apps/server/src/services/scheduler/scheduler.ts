@@ -970,13 +970,17 @@ export class SchedulerManager extends EventEmitter {
     // execution reaches a terminal state, so they sit outside display history.
     const kept = trimRuns(runs, task.history.retain, Date.now(), run =>
       run.launchState === 'pending' || (this.runLaunchKind(task, run) === 'team' && this.isLiveSquadRun(run)));
-    // The newest live agent run also stays (one per schedule: the overlap guard allows no more), or newer overlap
-    // skips would push it out, the next fire would miss it and start a duplicate. The run this write is closing
-    // stays for this one write, so its exit is recorded rather than trimmed away.
+    // Three rows stay beyond `retain`, because dropping them breaks the overlap guard or loses a run's outcome:
+    // the newest row whose session is still alive (even once its Stop hook stamped finishedAt: the tab holds the
+    // overlap slot, and a trimmed row means the next fire starts a duplicate), the newest real (non-skip) run
+    // (overlap skips must not push it out of history), and the run this write is closing.
     const aliveIds = new Set(this.deps?.ptys.list(task.projectId)
       .filter(session => session.status === 'running' || session.status === 'starting').map(session => session.id));
-    const newestLive = runs.find(run => !!run.sessionId && aliveIds.has(run.sessionId) && !run.finishedAt && run.durationMs === undefined);
-    const protectedRuns = new Set([newestLive, runs.find(run => closingRunId !== undefined && run.id === closingRunId)].filter((run): run is ScheduleRun => !!run));
+    const protectedRuns = new Set([
+      runs.find(run => !!run.sessionId && aliveIds.has(run.sessionId)),
+      runs.find(run => run.result !== 'skipped'),
+      runs.find(run => closingRunId !== undefined && run.id === closingRunId)
+    ].filter((run): run is ScheduleRun => !!run));
     const missing = [...protectedRuns].filter(run => !kept.includes(run));
     return missing.length ? runs.filter(run => kept.includes(run) || missing.includes(run)) : kept;
   }
@@ -1915,7 +1919,7 @@ export class SchedulerManager extends EventEmitter {
     let closedLiveRunId: string | undefined;
     if (knownIdx !== undefined && knownIdx >= 0 && status.runs[knownIdx]) {
       const before = status.runs[knownIdx];
-      if (before.sessionId && !before.finishedAt && before.durationMs === undefined && (run.durationMs !== undefined || run.finishedAt)) closedLiveRunId = before.id;
+      if (before.sessionId && (run.durationMs !== undefined || run.finishedAt)) closedLiveRunId = before.id;
       status.runs[knownIdx] = { ...before, ...run };
     } else if (run.id && countedRunIds.has(run.id)) {
       // This run was already counted at fire time but has since scrolled past
