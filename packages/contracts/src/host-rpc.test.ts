@@ -18,6 +18,7 @@ import {
   HostEnvironmentEntrySchema,
   PeerForwardCommandSchema,
   PeerRequestEnvelopeSchema,
+  ThreadResumeResultSchema,
   parseHostRpcResult
 } from './host-rpc.js';
 
@@ -353,6 +354,20 @@ describe('host-rpc contract', () => {
       instructions: 'Use sf_apex.',
       dynamicTools: [expect.objectContaining({ name: 'sf_apex' })]
     });
+    const strictResume = {
+      type: 'thread.resume',
+      threadId,
+      environmentId,
+      projectId: 'p1',
+      providerId: 'opencode',
+      providerThreadId: 'prov-1'
+    };
+    expect(HostRpcCommandSchema.parse({ ...strictResume, requireNativeLoad: true }))
+      .toMatchObject({ requireNativeLoad: true });
+    expect(HostRpcCommandSchema.safeParse({ ...strictResume, requireNativeLoad: false }).success).toBe(false);
+    expect(ThreadResumeResultSchema.parse({ threadId, resumed: true, providerThreadId: 'prov-1', nativeLoaded: true }))
+      .toMatchObject({ nativeLoaded: true });
+    expect(ThreadResumeResultSchema.parse({ threadId, resumed: true })).not.toHaveProperty('nativeLoaded');
     expect(HostRpcCommandSchema.parse({
       type: 'thread.resize',
       threadId,

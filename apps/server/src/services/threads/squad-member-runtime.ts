@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { realpathSync, statSync } from 'node:fs';
 import {
   getConversationThread, getEnvironment, getPrimaryHost, nextConversationEventSequence,
   getThreadPluginMetadata, patchThreadPluginMetadata,
@@ -7,7 +8,8 @@ import {
 import {
   SquadMemberControlRequestSchema, SquadMemberDeliveryRequestSchema, SquadMemberRuntimeRequestSchema,
   SquadMemberDeliveryCompletionSchema, type SquadMemberDeliveryCompletion,
-  SquadRuntimePreflightRequestSchema,
+  SquadRuntimePreflightRequestSchema, SquadMemberResumeRequestSchema,
+  type SquadMemberResumeRequest, type SquadMemberResumeResult,
   SquadRuntimeOperationSchema, SQUAD_RUNTIME_OPERATION_PATH,
   type SquadMemberControlRequest, type SquadMemberDeliveryRequest, type SquadMemberDeliveryResult,
   type SquadMemberRuntimeRequest, type SquadMemberStatus,
@@ -23,6 +25,8 @@ import type { JsonObject } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProductHttpContext } from '../../http/product-context.js';
 import { activatePreparedConversation, createConversationFromRequest } from './conversation-create.js';
 import { stopConversation, sendConversationTurn } from './conversation-lifecycle.js';
+import { resumeConversationQueue } from './conversation-deferred-messages.js';
+import { resumeConversationStrict, StrictResumeError } from './conversation-host-rpc.js';
 import { bridgeLaunchForProvider, canonicalThreadProviderId, getThreadProvider, waitForThreadProvider } from './thread-provider-catalog.js';
 import { validateProviderModelSelection } from './provider-model-validation.js';
 import type { ModernTeamMember } from '../agents/modern-team-launch-tools.js';
@@ -32,13 +36,14 @@ import { threadAutomatedSkillIds } from './thread-automated-skill-selection.js';
 export const MODERN_SQUAD_BINDING_ORIGIN = MODERN_SQUAD_THREAD_ORIGIN;
 const pendingCreates = new WeakMap<object, Map<string, { fingerprint: string; promise: Promise<{ threadId: string }> }>>();
 const pendingActivations = new WeakMap<object, Map<string, Promise<{ threadId: string }>>>();
+const pendingResumes = new WeakMap<object, Map<string, { fingerprint: string; promise: Promise<SquadMemberResumeResult> }>>();
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 // Public pluginIdSchema rejects '.', so renderer/plugin metadata APIs cannot
 // address this row. Same DB metadata store, independent of transcript rewind.
 const PRIVATE_BINDING_NAMESPACE = MODERN_SQUAD_PRIVATE_NAMESPACE;
 
-function persistBindingMetadata(ctx: ProductHttpContext, threadId: string, set: JsonObject): void {
-  const result = patchThreadPluginMetadata(ctx.db, { threadId, pluginId: PRIVATE_BINDING_NAMESPACE, set, remove: [] });
+function persistBindingMetadata(ctx: ProductHttpContext, threadId: string, set: JsonObject, remove: string[] = []): void {
+  const result = patchThreadPluginMetadata(ctx.db, { threadId, pluginId: PRIVATE_BINDING_NAMESPACE, set, remove });
   if (!result.ok) throw new Error('squad runtime metadata exceeds limit');
 }
 
@@ -96,6 +101,7 @@ export async function handleMainSquadRuntimeHttp(
       case 'squad-member-delivery-complete': value = completeSquadMemberDelivery(ctx, operation.request); break;
       case 'squad-member-status': value = squadMemberStatus(ctx, operation.request); break;
       case 'squad-member-stop': value = await stopSquadMemberConversation(ctx, operation.request); break;
+      case 'squad-member-resume': value = await resumeSquadMemberConversation(ctx, operation.request); break;
     }
     sendJson(response, 200, { value });
   } catch (error) {
@@ -293,6 +299,8 @@ export function squadMemberStatus(ctx: ProductHttpContext, request: SquadMemberC
   const hostOnline = ctx.hostHub.connectedHostIds().includes(thread.hostId);
   return { ...request, live: (metadata.squadActivationAccepted === true || Boolean(thread.providerThreadId)) && !stopped && !stopping && hostOnline && thread.status !== 'error' && thread.status !== 'stopping',
     status: stopped ? 'stopped' : stopping ? 'stopping' : thread.status, hostOnline, providerStarted: Boolean(thread.providerThreadId),
+    ...(thread.providerThreadId ? { providerThreadId: thread.providerThreadId } : {}),
+    ...(typeof metadata.squadSessionRestorable === 'boolean' ? { sessionRestorable: metadata.squadSessionRestorable } : {}),
     eventSequence: Math.max(0, nextConversationEventSequence(ctx.db, thread.id) - 1), updatedAt: thread.updatedAt };
 }
 
@@ -359,8 +367,13 @@ export function completeSquadMemberDelivery(ctx: ProductHttpContext, input: Squa
 
 export async function stopSquadMemberConversation(ctx: ProductHttpContext, request: SquadMemberControlRequest): Promise<boolean> {
   const { thread, metadata } = boundMember(ctx, request);
-  if (metadata.squadStopped === true) return true;
-  persistBindingMetadata(ctx, request.bindingId, { squadStopRequested: true });
+  // A stop during an in-flight resume must not take the early return: the resume
+  // may have loaded the session on the host. Mark it cancelled so it cannot commit.
+  const resumeStarted = metadata.squadResumeStarted;
+  if (metadata.squadStopped === true && resumeStarted === undefined) return true;
+  persistBindingMetadata(ctx, request.bindingId, {
+    squadStopRequested: true, ...(resumeStarted !== undefined ? { squadResumeCancelled: resumeStarted } : {})
+  });
   let hostStop: Promise<unknown> | undefined;
   // Keep queue/send cancellation, but retain the RPC outcome that stopConversation swallows.
   await stopConversation({ ...ctx, hostHub: { ...ctx.hostHub,
@@ -380,4 +393,95 @@ export async function stopSquadMemberConversation(ctx: ProductHttpContext, reque
   boundMember(ctx, request);
   persistBindingMetadata(ctx, request.bindingId, { squadStopped: true });
   return true;
+}
+
+/** Typed resume failure; `code` is stable for main, message stays bounded. */
+export class SquadResumeError extends Error {
+  constructor(readonly code: 'WORKTREE_MISSING' | 'NOT_RESUMABLE' | 'STALE_BINDING' | 'RESUME_FAILED' | 'RESUME_CANCELLED' | StrictResumeError['code'], message: string) {
+    super(`${code}: ${message}`);
+    this.name = 'SquadResumeError';
+  }
+}
+
+function worktreeAvailable(environmentPath: unknown): boolean {
+  if (typeof environmentPath !== 'string' || !environmentPath) return false;
+  try { return statSync(realpathSync(environmentPath)).isDirectory(); } catch { return false; }
+}
+
+/**
+ * Un-retire a confirmed-stopped member on its stored provider session.
+ * Stop flags stay set (deliveries and owner tools keep rejecting) until the
+ * provider confirms a native load of exactly the expected provider thread; the
+ * flags clear and the generation bumps in ONE metadata write. Never session/new.
+ * Worktree confinement to a registered project/trusted root is main's job
+ * (managed worktrees live outside the project); here the stored environment path
+ * is only checked to still exist as a directory (realpath-resolvable). Its
+ * equality with the environment row is enforced by boundMember.
+ * A stop during the window sets `squadResumeCancelled`; the commit re-checks it
+ * and releases the host instead of un-retiring the member.
+ */
+export async function resumeSquadMemberConversation(
+  ctx: ProductHttpContext, input: SquadMemberResumeRequest
+): Promise<SquadMemberResumeResult> {
+  const request = SquadMemberResumeRequestSchema.parse(input);
+  const fingerprint = hash(request);
+  let pending = pendingResumes.get(ctx.db);
+  if (!pending) { pending = new Map(); pendingResumes.set(ctx.db, pending); }
+  const inFlight = pending.get(request.bindingId);
+  if (inFlight) {
+    if (inFlight.fingerprint !== fingerprint) throw new SquadResumeError('STALE_BINDING', 'squad resume retry context mismatch');
+    return inFlight.promise;
+  }
+  // Reserve before the first await so concurrent resumes join one host load.
+  const promise = (async (): Promise<SquadMemberResumeResult> => {
+    let member: ReturnType<typeof boundMember>;
+    try { member = boundMember(ctx, { bindingId: request.bindingId, generation: request.expectedGeneration, projectId: request.projectId }); }
+    catch (error) { throw new SquadResumeError('STALE_BINDING', error instanceof Error ? error.message : 'invalid squad binding'); }
+    const { thread, metadata } = member;
+    if (metadata.squadStopped !== true) throw new SquadResumeError('NOT_RESUMABLE', 'squad member is not stopped');
+    if (thread.archivedAt !== null) throw new SquadResumeError('NOT_RESUMABLE', 'squad member thread is archived');
+    if (!thread.providerThreadId || thread.providerThreadId !== request.expectedProviderThreadId) {
+      throw new SquadResumeError('NOT_RESUMABLE', 'stored provider thread does not match the snapshot');
+    }
+    if (request.newGeneration !== request.expectedGeneration + 1) throw new SquadResumeError('STALE_BINDING', 'resume generation must advance by one');
+    if (metadata.squadResumeStarted !== undefined && metadata.squadResumeStarted !== request.newGeneration) {
+      throw new SquadResumeError('STALE_BINDING', 'a resume to a different generation is already recorded');
+    }
+    if (!worktreeAvailable(metadata.squadEnvironmentPath)) throw new SquadResumeError('WORKTREE_MISSING', 'retained squad worktree is missing');
+    const stopHost = async () => {
+      try { await ctx.hostHub.callHostOnlineRpc({ hostId: thread.hostId, command: { type: 'thread.stop', threadId: thread.id } }); }
+      catch { /* best effort: a load that never started has nothing to release */ }
+    };
+    // Record the start (and drop any stale cancel marker) BEFORE any await so a stop
+    // arriving from here on is observed. A recorded start means an earlier attempt
+    // may have loaded the session: release it first.
+    const previouslyStarted = metadata.squadResumeStarted === request.newGeneration;
+    persistBindingMetadata(ctx, thread.id, { squadResumeStarted: request.newGeneration }, ['squadResumeCancelled']);
+    if (previouslyStarted) await stopHost();
+    try {
+      const assertCurrent = () => { boundMember(ctx, { bindingId: request.bindingId, generation: request.expectedGeneration, projectId: request.projectId }); };
+      await resumeConversationStrict(ctx, thread.id, request.expectedProviderThreadId, assertCurrent);
+      // Final check + commit are one synchronous step (no await): nothing can interleave.
+      const current = boundMember(ctx, { bindingId: request.bindingId, generation: request.expectedGeneration, projectId: request.projectId });
+      if (current.metadata.squadResumeCancelled === request.newGeneration) {
+        throw new SquadResumeError('RESUME_CANCELLED', 'squad member was stopped during resume');
+      }
+      persistBindingMetadata(ctx, thread.id, { squadStopped: false, squadStopRequested: false, squadGeneration: request.newGeneration },
+        ['squadResumeStarted', 'squadResumeFailed', 'squadResumeCancelled']);
+    } catch (error) {
+      await stopHost();
+      if (error instanceof SquadResumeError) {
+        try { persistBindingMetadata(ctx, thread.id, { squadResumeFailed: error.code }); } catch { /* retire stays in force */ }
+        throw error;
+      }
+      const code = error instanceof StrictResumeError ? error.code : 'RESUME_FAILED';
+      try { persistBindingMetadata(ctx, thread.id, { squadResumeFailed: code }); } catch { /* retire stays in force regardless */ }
+      throw new SquadResumeError(code, error instanceof Error ? error.message : 'squad member resume failed');
+    }
+    resumeConversationQueue(ctx, thread.id);
+    return { bindingId: request.bindingId, projectId: request.projectId, generation: request.newGeneration,
+      providerThreadId: request.expectedProviderThreadId };
+  })();
+  pending.set(request.bindingId, { fingerprint, promise });
+  try { return await promise; } finally { pending.delete(request.bindingId); }
 }

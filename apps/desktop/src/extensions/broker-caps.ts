@@ -467,7 +467,9 @@ export function createBrokerCapabilities(
           // ext calling `ctx.exec('printenv')` would read them verbatim. We pass
           // the SAME trimmed env as the extension's utilityProcess child, so the
           // brokered exec sees only PATH/HOME/locale/etc. — never a credential.
-          { cwd: checkedCwd, timeout, maxBuffer: SPAWN_MAX_BUFFER, shell: false, env: buildChildEnv() },
+          // windowsHide: main is a GUI process, so a console bin would otherwise
+          // open a visible console window on Windows. No effect elsewhere.
+          { cwd: checkedCwd, timeout, maxBuffer: SPAWN_MAX_BUFFER, shell: false, env: buildChildEnv(), windowsHide: true },
           (err, stdout, stderr) => {
             // S3: distinguish a *failure to run / watchdog kill* from a process
             // that ran and exited (cleanly or by its own non-zero code / a signal

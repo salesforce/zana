@@ -221,11 +221,32 @@ export const SquadMemberControlRequestSchema = z.object({
 }).strict();
 export type SquadMemberControlRequest = z.infer<typeof SquadMemberControlRequestSchema>;
 
+/** Main-signed Modern resume of a confirmed-stopped member on its stored provider thread. */
+export const SquadMemberResumeRequestSchema = z.object({
+  bindingId: z.string().uuid(),
+  projectId: ProjectIdSchema,
+  expectedGeneration: z.number().int().min(1),
+  newGeneration: z.number().int().min(2),
+  expectedProviderThreadId: z.string().min(1).max(512)
+}).strict();
+export type SquadMemberResumeRequest = z.infer<typeof SquadMemberResumeRequestSchema>;
+export const SquadMemberResumeResultSchema = z.object({
+  bindingId: z.string().uuid(),
+  projectId: ProjectIdSchema,
+  generation: z.number().int().min(2),
+  providerThreadId: z.string().min(1).max(512)
+}).strict();
+export type SquadMemberResumeResult = z.infer<typeof SquadMemberResumeResultSchema>;
+
 export const SquadMemberStatusSchema = SquadMemberControlRequestSchema.extend({
   live: z.boolean(),
   status: z.enum(['starting', 'active', 'idle', 'stopping', 'error', 'stopped', 'unknown']),
   hostOnline: z.boolean(),
   providerStarted: z.boolean(),
+  /** Provider session id; main-only (native ids never reach the renderer). */
+  providerThreadId: z.string().min(1).max(512).optional(),
+  /** Start-time provider-reported restore support recorded in binding metadata. */
+  sessionRestorable: z.boolean().optional(),
   eventSequence: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative()
 }).strict();
@@ -284,7 +305,8 @@ export const SquadRuntimeOperationSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('squad-member-deliver'), request: SquadMemberDeliveryRequestSchema }).strict(),
   z.object({ operation: z.literal('squad-member-delivery-complete'), request: SquadMemberDeliveryCompletionSchema }).strict(),
   z.object({ operation: z.literal('squad-member-status'), request: SquadMemberControlRequestSchema }).strict(),
-  z.object({ operation: z.literal('squad-member-stop'), request: SquadMemberControlRequestSchema }).strict()
+  z.object({ operation: z.literal('squad-member-stop'), request: SquadMemberControlRequestSchema }).strict(),
+  z.object({ operation: z.literal('squad-member-resume'), request: SquadMemberResumeRequestSchema }).strict()
 ]);
 export const SQUAD_RUNTIME_OPERATION_PATH = '/internal/main/squad-runtime';
 
@@ -346,6 +368,10 @@ export const ServerRuntimeRequestSchema = z.discriminatedUnion('operation', [
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('squad-member-stop'),
     request: SquadMemberControlRequestSchema
+  }).strict(),
+  ServerRuntimeRequestBaseSchema.extend({
+    operation: z.literal('squad-member-resume'),
+    request: SquadMemberResumeRequestSchema
   }).strict(),
   ServerRuntimeRequestBaseSchema.extend({
     operation: z.literal('projects-update'),

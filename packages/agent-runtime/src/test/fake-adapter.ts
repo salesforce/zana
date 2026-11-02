@@ -136,6 +136,9 @@ function buildCommandPlan(command: AdapterCommand): ProviderCommandPlan {
           options: command.options,
           providerThreadId: command.providerThreadId,
           threadId: command.threadId,
+          ...(command.requireNativeLoad === true
+            ? { requireNativeLoad: true }
+            : {}),
         },
       };
     case "thread/fork":

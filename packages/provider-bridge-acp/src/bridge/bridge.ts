@@ -182,6 +182,8 @@ interface AcpThreadSession {
   connection: AcpAgentConnection;
   supportsImageInput: boolean;
   supportsLoadSession: boolean;
+  /** True once session/load restored the requested session natively. */
+  nativeLoaded?: boolean;
   supportsAdditionalDirectories: boolean;
   policy: AcpSessionPolicy;
   pendingInstructions: string | undefined;
@@ -1713,6 +1715,11 @@ type AcpSessionStartRequest =
       kind: "resume";
       params: AcpSessionParams;
       resumeProviderThreadId: string;
+      /**
+       * Strict resume: the session must be reloaded natively (session/load).
+       * Never falls back to session/new and never emits the fresh-session warning.
+       */
+      requireNativeLoad?: boolean;
     }
   | {
       kind: "fork";
@@ -1873,6 +1880,15 @@ async function startAgentSession(
       );
     }
     session.supportsLoadSession = supportsLoadSession;
+    if (
+      request.kind === "resume" &&
+      request.requireNativeLoad === true &&
+      !supportsLoadSession
+    ) {
+      throw new Error(
+        `ACP agent "${agentLabel}" does not advertise session/load support; cannot natively load the previous session.`,
+      );
+    }
     session.supportsAdditionalDirectories = initializeResult.agentCapabilities?.sessionCapabilities?.additionalDirectories != null;
     const extraDirectories = additionalSessionDirectories(params, session.supportsAdditionalDirectories);
     const mcpServers = await buildSessionMcpServers(params);
@@ -1934,7 +1950,9 @@ async function startAgentSession(
         loadedConfigOptions = configState?.configOptions;
         loadedModels = configState?.models;
         sessionId = request.resumeProviderThreadId;
-      } catch {
+        session.nativeLoaded = true;
+      } catch (error) {
+        if (request.requireNativeLoad === true) throw error;
         sessionId = undefined;
         session.loading = false;
         session.loadingSessionId = undefined;
@@ -2890,6 +2908,9 @@ async function handleRequest(
               kind: "resume",
               params: sessionParams,
               resumeProviderThreadId: request.params.providerThreadId,
+              ...(request.params.requireNativeLoad === true
+                ? { requireNativeLoad: true }
+                : {}),
             }
           : request.method === "thread/fork"
             ? {
@@ -2902,6 +2923,10 @@ async function handleRequest(
       sendResult(request.id, {
         providerThreadId: session.providerThreadId,
         sessionRestorable: session.supportsLoadSession,
+        ...(request.method === "thread/resume" &&
+        request.params.requireNativeLoad === true
+          ? { nativeLoaded: session.nativeLoaded === true }
+          : {}),
       });
       return;
     }

@@ -1250,6 +1250,64 @@ rl.on("line", (line) => {
       await runtime.shutdown();
     });
 
+    it("reports nativeLoaded only for strict resumes the provider confirms", async () => {
+      const runtime = createAgentRuntimeWithAdapters({
+        workspacePath: tmpDir,
+        onEvent: () => undefined,
+        onToolCall: async () => ({ contentItems: [], success: true }),
+        adapterFactory: () => createFakeAdapter(scriptPath),
+      });
+      const base = {
+        environmentId: "env-1",
+        providerThreadId: "old-prov-123",
+        providerId: "fake",
+        options: fullRuntimeOptions,
+      };
+      const strict = await runtime.resumeThread({
+        ...base,
+        threadId: "t-strict",
+        requireNativeLoad: true,
+      });
+      expect(strict).toEqual({
+        providerThreadId: "old-prov-123",
+        nativeLoaded: true,
+      });
+      const plain = await runtime.resumeThread({ ...base, threadId: "t-plain" });
+      expect(plain).toEqual({ providerThreadId: "old-prov-123" });
+      await runtime.shutdown();
+    });
+
+    it("fails closed when a strict resume plan is a noop", async () => {
+      const runtime = createAgentRuntimeWithAdapters({
+        workspacePath: tmpDir,
+        onEvent: () => undefined,
+        onToolCall: async () => ({ contentItems: [], success: true }),
+        adapterFactory: () => {
+          const base = createFakeAdapter(scriptPath);
+          return {
+            ...base,
+            buildCommandPlan: (command: AdapterCommand) =>
+              command.type === "thread/resume"
+                ? { kind: "noop" as const, reason: "test" }
+                : base.buildCommandPlan(command),
+          };
+        },
+      });
+      const result = await runtime.resumeThread({
+        environmentId: "env-1",
+        threadId: "t-noop",
+        providerThreadId: "old-prov-123",
+        providerId: "fake",
+        options: fullRuntimeOptions,
+        requireNativeLoad: true,
+      });
+      expect(result).toEqual({
+        providerThreadId: "old-prov-123",
+        nativeLoaded: false,
+      });
+      await runtime.shutdown();
+    });
+
     it("preserves active turn state when stop command construction fails", async () => {
       const builtCommands: AdapterCommand[] = [];
       const events: ThreadEvent[] = [];

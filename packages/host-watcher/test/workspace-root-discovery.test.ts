@@ -26,7 +26,7 @@ it('prefixes ignored directories and reports nested status failures without losi
   expect(result.ignore).not.toContain('apps/good/ignored-file.txt');
   expect(result.failures).toEqual(['apps/broken: status unavailable']);
   expect(execFile).toHaveBeenCalledTimes(2);
-  expect(execFile.mock.calls[0]![2]).toMatchObject({ timeout: 5_000, maxBuffer: 10 * 1024 * 1024 });
+  expect(execFile.mock.calls[0]![2]).toMatchObject({ timeout: 5_000, maxBuffer: 10 * 1024 * 1024, windowsHide: true });
 });
 
 it('keeps base ignores when root status or directory enumeration fails', async () => {

@@ -255,6 +255,8 @@ export interface ExecutionServiceDeps {
   onHumanBlocker?: (record: ExecutionRecord, blocker: NonNullable<ExecutionRecord['blockers']>[number]) => void | Promise<void>;
   inbox?: { append: (input: InboxInput) => Promise<InboxEntry>; appendOnce?: (input: InboxInput) => Promise<InboxEntry> };
   preflightWorkflow?: (teamId: string, workflow: SquadBundleWorkflowMetadataV1) => { ok: boolean; code?: string; message?: string };
+  /** Trusted total slot count of the record's team; enables the all-slots-restorable gate. */
+  resolveExactNativeRecoveryTotalSlots?: (record: ExecutionRecord) => number | undefined;
   /** Trusted host resolver; filters retained snapshots against current Team slots. */
   resolveExactNativeRecoverySnapshots?: (record: ExecutionRecord) => NonNullable<ExecutionRecord['nativeRecoverySnapshots']>;
   admissionInput?: (projectId: string, request: ExecutionRequestV1) => Promise<TeamAdmissionInput> | TeamAdmissionInput;
@@ -2386,12 +2388,19 @@ export class ExecutionService {
     if (mode === 'exact-native' && (!snapshots || snapshots.length === 0)) {
       return { ok: false as const, code: 'NO_RESTORABLE_SLOTS', message: 'exact-native recovery requires at least one restorable native slot' };
     }
+    if (mode === 'exact-native' && snapshots) {
+      const totalSlots = this.deps.resolveExactNativeRecoveryTotalSlots?.(record);
+      if (totalSlots !== undefined && snapshots.length < totalSlots) {
+        return { ok: false as const, code: 'PARTIAL_RESTORE', message: `exact-native recovery requires every slot to be restorable: only ${snapshots.length} of ${totalSlots} can be resumed` };
+      }
+    }
 
     // Keep lifecycle polling from treating this valid STARTING replacement as a
     // missing Team record until every awaited admission and launch step settles.
     this.beginStarting(record.id);
     try {
-      const resumed = await this.beginRetainedRecoveryWithLifecycleLock(record.id, expectedStateVersion);
+      const keepSlotIds = snapshots ? new Set(snapshots.map((snapshot) => snapshot.slotId)) : undefined;
+      const resumed = await this.beginRetainedRecoveryWithLifecycleLock(record.id, expectedStateVersion, keepSlotIds ? { keepSlotIds } : undefined);
       return await this.launchRetry(callerPrincipalId, projectId, executionId, resumed.stateVersion, { mode, ...(snapshots ? { snapshots } : {}) });
     } catch (error) {
       return { ok: false as const, code: error instanceof Error && error.message === 'stale execution state' ? 'CONFLICT' : 'RECOVERY_NOT_ALLOWED', message: error instanceof Error ? error.message : String(error) };
@@ -3015,12 +3024,12 @@ export class ExecutionService {
       : begin();
   }
 
-  private async beginRetainedRecoveryWithLifecycleLock(executionId: string, expectedStateVersion: number): Promise<ExecutionRecord> {
+  private async beginRetainedRecoveryWithLifecycleLock(executionId: string, expectedStateVersion: number, opts?: { keepSlotIds?: ReadonlySet<string> }): Promise<ExecutionRecord> {
     const begin = () => {
       if (this.deps.mayResumeRetainedWorktree?.(executionId) === false) {
         throw new Error('retained squad worktree is owned by an active follow-up agent');
       }
-      return this.deps.store.beginRetainedRecovery(executionId, expectedStateVersion);
+      return this.deps.store.beginRetainedRecovery(executionId, expectedStateVersion, opts);
     };
     return this.deps.withExecutionLifecycleLock
       ? this.deps.withExecutionLifecycleLock(executionId, begin)

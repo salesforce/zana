@@ -54,9 +54,43 @@ function normalizePendingRetry(raw: unknown): ScheduleStatus['pendingRetry'] {
 
 // Keys this loader understands (carried, or deliberately dropped). Anything else
 // is a newer version's field and is preserved (C5) so it survives our saves.
+export const MAX_REQUIRED_MCPS = 32;
+export const MAX_REQUIRED_MCP_NAME_LENGTH = 128;
+
+/**
+ * Strict `requiredMcps` for create/update input: an array of non-empty strings
+ * (trimmed, de-duplicated, <=32 entries, each <=128 chars). Throws on anything else;
+ * an empty list means "no requirement" and returns undefined.
+ */
+export function normalizeRequiredMcps(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) throw new Error('requiredMcps must be an array of MCP server names');
+  const names = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== 'string' || entry.trim() === '') throw new Error('requiredMcps entries must be non-empty strings');
+    const name = entry.trim();
+    if (name.length > MAX_REQUIRED_MCP_NAME_LENGTH) throw new Error(`requiredMcps names must be at most ${MAX_REQUIRED_MCP_NAME_LENGTH} characters`);
+    names.add(name);
+  }
+  if (names.size > MAX_REQUIRED_MCPS) throw new Error(`requiredMcps allows at most ${MAX_REQUIRED_MCPS} servers`);
+  return names.size > 0 ? [...names] : undefined;
+}
+
+/** Lenient variant for hand-authored schedule files: drops invalid entries instead of rejecting the whole schedule. */
+function lenientRequiredMcps(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const names = new Set<string>();
+  for (const entry of raw) {
+    if (typeof entry !== 'string') continue;
+    const name = entry.trim();
+    if (name !== '' && name.length <= MAX_REQUIRED_MCP_NAME_LENGTH) names.add(name);
+    if (names.size >= MAX_REQUIRED_MCPS) break;
+  }
+  return names.size > 0 ? [...names] : undefined;
+}
+
 const KNOWN_TASK_KEYS = new Set([
   'id', 'name', 'description', 'enabled', 'projectId', 'profile', 'personaId', 'extraArgs', 'prompt',
-  'inboxLevel', 'notifyInbox', 'autoCloseOnFinish', 'maxDurationMinutes', 'group', 'schedule', 'overlap',
+  'inboxLevel', 'notifyInbox', 'autoCloseOnFinish', 'useUserConfig', 'requiredMcps', 'maxDurationMinutes', 'group', 'schedule', 'overlap',
   'history', 'status', 'createdAt', 'updatedAt', 'catchUp', 'retry', 'kind', 'teamId', 'planSource'
 ]);
 const KNOWN_STATUS_KEYS = new Set([
@@ -204,6 +238,9 @@ export function validateScheduleFile(raw: unknown): ScheduledTask | { error: str
     // background work and should close when the agent finishes. A schedule that
     // explicitly saved `false` keeps that choice.
     autoCloseOnFinish: typeof r.autoCloseOnFinish === 'boolean' ? r.autoCloseOnFinish : true,
+    // Only a literal boolean is honoured; anything else stays inherited (isolated by default).
+    useUserConfig: typeof r.useUserConfig === 'boolean' ? r.useUserConfig : undefined,
+    requiredMcps: lenientRequiredMcps(r.requiredMcps),
     maxDurationMinutes: typeof r.maxDurationMinutes === 'number' ? r.maxDurationMinutes : undefined,
     group: typeof r.group === 'string' && r.group.trim() ? r.group : undefined,
     schedule: cadence.cron

@@ -1,4 +1,10 @@
-import { execFile } from 'node:child_process';
+import {
+  execFile,
+  type ChildProcess,
+  type ExecFileException,
+  type ExecFileOptions,
+  type ExecFileOptionsWithBufferEncoding
+} from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
@@ -15,13 +21,30 @@ import type {
   WorktreeCreateResult
 } from '@zana-ai/zcc-domain/product';
 
+// Every git child goes through here. The server runs under Electron (a GUI
+// process), so on Windows each console child needs windowsHide or it opens a
+// visible console window. No effect on macOS or Linux.
+function execGit(
+  args: readonly string[],
+  options: ExecFileOptionsWithBufferEncoding,
+  callback: (error: ExecFileException | null, stdout: Buffer, stderr: Buffer) => void
+): ChildProcess;
+function execGit(
+  args: readonly string[],
+  options: ExecFileOptions,
+  callback: (error: ExecFileException | null, stdout: string, stderr: string) => void
+): ChildProcess;
+function execGit(args: readonly string[], options: ExecFileOptions, callback: (...result: never[]) => void): ChildProcess {
+  return execFile('git', args, { ...options, windowsHide: true }, callback as never);
+}
+
 const TIMEOUT_MS = 1500;
 const GIT_MUTATION_TIMEOUT_MS = 30_000;
 export const GIT_COMMIT_MESSAGE_MAX = 2_000;
 
 async function commitRevision(cwd: string): Promise<string | null> {
   const result = await new Promise<{ ok: boolean; output: Buffer }>((resolve) => {
-    execFile('git', ['status', '--porcelain=v2', '--branch', '-z'], {
+    execGit(['status', '--porcelain=v2', '--branch', '-z'], {
       cwd, timeout: STATUS_SCOPED_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, encoding: 'buffer'
     }, (error, stdout) => resolve({ ok: !error, output: Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout ?? '') }));
   });
@@ -104,8 +127,7 @@ export async function getRecentCommits(cwd: string, limit = 50): Promise<GitComm
   const format = ['%H', '%h', '%an', '%at', '%s'].join('%x1f') + '%x00';
 
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       ['log', `--max-count=${n}`, `--pretty=format:${format}`],
       { cwd: toplevel, timeout: TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 },
       (err, stdout) => {
@@ -162,8 +184,7 @@ function findToplevel(start: string): string | null {
 export async function gitCommonDir(cwd: string): Promise<string | null> {
   if (!cwd || typeof cwd !== 'string' || !isAbsolute(cwd)) return null;
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       ['rev-parse', '--path-format=absolute', '--git-common-dir'],
       { cwd, timeout: TIMEOUT_MS, maxBuffer: 1 * 1024 * 1024 },
       (err, stdout) => {
@@ -200,8 +221,7 @@ export async function listWorktrees(cwd: string): Promise<Worktree[]> {
   if (!toplevel) return [];
 
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       ['worktree', 'list', '--porcelain', '-z'],
       { cwd, timeout: TIMEOUT_MS, maxBuffer: 1 * 1024 * 1024 },
       (err, stdout) => {
@@ -283,8 +303,7 @@ export async function listBranches(cwd: string): Promise<GitBranch[]> {
   if (!toplevel) return [];
 
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       [
         'for-each-ref',
         `--count=${GIT_BRANCH_MAX}`,
@@ -376,8 +395,7 @@ export async function withWorktreeLock<T>(
 export async function isGitRepo(cwd: string): Promise<boolean> {
   if (!cwd || typeof cwd !== 'string' || !isAbsolute(cwd)) return false;
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       ['rev-parse', '--is-inside-work-tree'],
       { cwd, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024 },
       (err, stdout) => resolve(!err && String(stdout).trim() === 'true')
@@ -412,8 +430,7 @@ export async function isGitRepo(cwd: string): Promise<boolean> {
  */
 async function branchRefExists(toplevel: string, name: string): Promise<boolean> {
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       ['show-ref', '--verify', '--quiet', `refs/heads/${name}`],
       { cwd: toplevel, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024 },
       (err) => resolve(!err)
@@ -448,8 +465,7 @@ export async function createWorktree(
 async function hasDeclaredSubmodules(toplevel: string): Promise<boolean> {
   if (!existsSync(join(toplevel, '.gitmodules'))) return false;
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       ['config', '--file', '.gitmodules', '--get-regexp', '^submodule\..*\.path$'],
       { cwd: toplevel, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024 },
       (err, stdout) => resolve(!err && String(stdout).trim().length > 0)
@@ -541,8 +557,7 @@ async function createWorktreeUnlocked(
     : ['worktree', 'add', '-b', branchName, targetDir];
 
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       args,
       { cwd: toplevel, timeout: WORKTREE_ADD_TIMEOUT_MS, maxBuffer: 1 * 1024 * 1024 },
       (err, _stdout, stderr) => {
@@ -585,7 +600,7 @@ async function createWorktreeUnlocked(
 
 function runGitOutput(cwd: string, args: string[]): Promise<{ ok: boolean; output: string }> {
   return new Promise((resolve) => {
-    execFile('git', args, { cwd, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024 }, (err, stdout, stderr) => {
+    execGit(args, { cwd, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024 }, (err, stdout, stderr) => {
       resolve({ ok: !err, output: String(stdout || stderr || '').trim() });
     });
   });
@@ -733,6 +748,69 @@ export async function removeWorktree(
   return runGit(toplevel, args);
 }
 
+/**
+ * Delete a local branch. `force` uses `-D` (drops unmerged commits); otherwise
+ * `-d`, which git refuses unless the branch is merged. Git itself also refuses a
+ * branch that is checked out in any worktree. Never throws.
+ */
+export async function deleteBranch(
+  projectPath: string,
+  branch: string,
+  force = false
+): Promise<{ ok: boolean; message?: string }> {
+  if (!isAbsolute(projectPath) || typeof branch !== 'string' || !branch.trim() || branch.startsWith('-') || branch !== branch.trim()) {
+    return { ok: false, message: 'invalid branch' };
+  }
+  const toplevel = findToplevel(projectPath);
+  if (!toplevel) return { ok: false, message: 'not a git repo' };
+  return runGit(toplevel, ['branch', force ? '-D' : '-d', '--', branch]);
+}
+
+/**
+ * Commit every uncommitted and untracked change in a linked worktree so a merge
+ * carries all of its work. A clean worktree is a successful no-op. Signing is
+ * disabled for this one automated commit so a repo with `commit.gpgsign` cannot
+ * make it fail; hooks still run. Never throws.
+ */
+export async function commitAllWorktreeChanges(
+  worktreePath: string,
+  message: string
+): Promise<{ ok: boolean; message?: string }> {
+  if (!isAbsolute(worktreePath) || !message.trim()) return { ok: false, message: 'invalid path' };
+  const toplevel = findToplevel(worktreePath);
+  if (!toplevel) return { ok: false, message: 'not a git repo' };
+  const status = await getGitStatus(worktreePath);
+  if (!status) return { ok: false, message: 'worktree is unavailable' };
+  if (!status.dirty) return { ok: true };
+  // `.zana/` holds Zana's own plan handoff files; they must never reach the user's history.
+  // Untracked `.zcc/` files are Zana's own activity records, so they stay out of history too.
+  // Tracked `.zcc/` edits are the user's and are still committed.
+  const zccUntracked = await runGitOutput(toplevel, ['ls-files', '--others', '--exclude-standard', '-z', '--', '.zcc']);
+  const zccExcludes = zccUntracked.ok
+    ? zccUntracked.output.split('\0').filter(Boolean).map((file) => `:(exclude,literal)${file}`)
+    : [];
+  const added = await runGit(toplevel, ['add', '-A', '--', '.', ':(exclude).zana', ...zccExcludes]);
+  if (!added.ok) return added;
+  // Exit 0 means nothing was staged (only excluded files were dirty), so there is nothing to commit.
+  const nothingStaged = await runGit(toplevel, ['diff', '--cached', '--quiet']);
+  if (nothingStaged.ok) return { ok: true };
+  return runGit(toplevel, ['-c', 'commit.gpgsign=false', 'commit', '-m', message.trim()]);
+}
+
+/**
+ * True when the checkout has any change other than untracked files under `.zcc/`.
+ * Zana writes its own activity files there, so they must not block a merge.
+ * Fails closed: a git error counts as "has changes".
+ */
+export async function hasChangesBeyondZcc(cwd: string): Promise<boolean> {
+  if (!isAbsolute(cwd)) return true;
+  const status = await runGitOutput(cwd, ['status', '--porcelain', '--untracked-files=all']);
+  if (!status.ok) return true;
+  return status.output
+    .split('\n')
+    .some((line) => line.trim() !== '' && !/^\?\? "?\.zcc\//.test(line));
+}
+
 /** Merge a clean managed worktree into its recorded base checkout. */
 export async function mergeWorktree(
   projectPath: string,
@@ -744,11 +822,17 @@ export async function mergeWorktree(
   }
   const base = await getGitStatus(projectPath);
   if (!base) return { ok: false, message: 'base checkout is unavailable' };
-  if (base.dirty) return { ok: false, message: 'base checkout is dirty' };
+  if (base.dirty && (await hasChangesBeyondZcc(projectPath))) return { ok: false, message: 'base checkout is dirty' };
   if (base.branch !== baseBranch) return { ok: false, message: 'base checkout is not on recorded branch' };
   const source = await getGitStatus(worktreePath);
   if (!source) return { ok: false, message: 'worktree is unavailable' };
-  if (source.dirty) return { ok: false, message: 'worktree is dirty' };
+  if (source.dirty) {
+    // Zana's own `.zana/` handoff files alone never make a worktree "dirty" for a merge.
+    // Untracked `.zcc/` activity files are Zana's too.
+    const other = await runGitOutput(worktreePath, ['status', '--porcelain', '--untracked-files=all', '--', '.', ':(exclude).zana']);
+    const blocking = other.output.split('\n').some((line) => line.trim() !== '' && !/^\?\? "?\.zcc\//.test(line));
+    if (!other.ok || blocking) return { ok: false, message: 'worktree is dirty' };
+  }
   if (!source.branch) return { ok: false, message: 'worktree branch is unavailable' };
   const merged = await runGit(projectPath, ['merge', '--no-edit', source.branch]);
   if (!merged.ok) await runGit(projectPath, ['merge', '--abort']);
@@ -837,8 +921,7 @@ export async function worktreeState(
  */
 async function countUniqueCommits(worktreePath: string, branch: string): Promise<number> {
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       ['rev-list', '--count', 'HEAD', '--not', `--exclude=${branch}`, '--branches', '--remotes'],
       { cwd: worktreePath, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024 },
       (err, stdout) => {
@@ -927,8 +1010,7 @@ export async function getGitStatus(
   const timeout = useScope ? STATUS_SCOPED_TIMEOUT_MS : TIMEOUT_MS;
 
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       args,
       { cwd, timeout, maxBuffer: 4 * 1024 * 1024 },
       (err, stdout) => {
@@ -959,8 +1041,7 @@ export async function showHead(absPath: string): Promise<GitShowResult> {
   }
 
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       ['show', `HEAD:${rel}`],
       {
         cwd: toplevel,
@@ -995,8 +1076,7 @@ export async function showHead(absPath: string): Promise<GitShowResult> {
 
 function runGit(toplevel: string, args: string[]): Promise<{ ok: boolean; message?: string }> {
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       args,
       { cwd: toplevel, timeout: TIMEOUT_MS, maxBuffer: 1 * 1024 * 1024 },
       (err, _stdout, stderr) => {
@@ -1013,8 +1093,7 @@ function runGit(toplevel: string, args: string[]): Promise<{ ok: boolean; messag
 
 function runGitMutation(cwd: string, args: string[]): Promise<GitWorkflowResult> {
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       args,
       { cwd, timeout: GIT_MUTATION_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 },
       (err, stdout, stderr) => {
@@ -1093,8 +1172,7 @@ export async function discardChanges(absPath: string): Promise<GitDiscardResult>
 
   // Probe per-file status so we know which dance to do.
   const statusResult = await new Promise<{ xy: string | null; err?: string }>((resolve) => {
-    execFile(
-      'git',
+    execGit(
       ['status', '--porcelain=v2', '-z', '--', rel],
       { cwd: toplevel, timeout: TIMEOUT_MS, maxBuffer: 1 * 1024 * 1024 },
       (err, stdout, stderr) => {

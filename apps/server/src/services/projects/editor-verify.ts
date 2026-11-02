@@ -72,7 +72,9 @@ export function editorBinary(def: EditorDef | EditorTarget, config: AppConfig): 
 /** Result of a spawned probe — never rejects; a failure surfaces as `ok:false`. */
 function runVersion(cmd: string, timeoutMs = 8_000): Promise<{ ok: boolean; out: string }> {
   return new Promise((resolve) => {
-    execFile(cmd, ['--version'], { timeout: timeoutMs, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+    // windowsHide: the server runs under Electron (a GUI process), so a console
+    // child would otherwise open a visible console window on Windows.
+    execFile(cmd, ['--version'], { timeout: timeoutMs, maxBuffer: 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
       resolve({
         ok: !err,
         out: String(stdout ?? '').trim() || String(stderr ?? '').trim()
