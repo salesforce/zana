@@ -119,4 +119,19 @@ describe('overlap rows and history retention (#586 review)', () => {
     await internals(manager).recordRun(id, { id: 'later-skip', at: new Date().toISOString(), result: 'skipped', reasonCode: 'overlap', trigger: 'schedule', attempt: 1 });
     expect(runs(manager, id).some(run => run.id === liveId && run.result !== 'skipped')).toBe(true);
   });
+
+  it('F2/A4: an overlap skip leaves lastRunSessionId on the live run, and a later non-overlap run still replaces it', async () => {
+    const { manager, ptys, tasks } = await makeFixture([{ catchUp: null }]);
+    const id = tasks[0].id;
+    await autoFire(manager, id);
+    const sessionId = ptys.sessions[0].id;
+    expect(T(manager, id).status.lastRunSessionId).toBe(sessionId);
+    await autoFire(manager, id);
+    expect(skipRows(manager, id)).toHaveLength(1);
+    expect(T(manager, id).status.lastRunSessionId).toBe(sessionId);
+    expect(T(manager, id).status.lastRunResult).toBe('skipped');
+    // Another kind of record still sets the field as before.
+    await internals(manager).recordRun(id, { id: 'other', at: new Date().toISOString(), result: 'success', sessionId: 'other-session', trigger: 'schedule', attempt: 1 });
+    expect(T(manager, id).status.lastRunSessionId).toBe('other-session');
+  });
 });

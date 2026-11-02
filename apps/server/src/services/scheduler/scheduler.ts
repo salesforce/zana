@@ -1965,7 +1965,9 @@ export class SchedulerManager extends EventEmitter {
     } else {
       status.lastRunAt = run.at;
       status.lastRunResult = run.result;
-      status.lastRunSessionId = run.sessionId;
+      // An overlap skip spawns no session, so it keeps the live run's id here: readers such as the Stream Deck
+      // tile still see the run that holds the overlap slot. Oleg approved this as a deviation from D7.
+      if (!(run.result === 'skipped' && run.reasonCode === 'overlap' && !run.sessionId)) status.lastRunSessionId = run.sessionId;
     }
     await this.persist(next, enabled === undefined ? {} : { enabled });
     this.publishRuntime(live, next);
