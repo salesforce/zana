@@ -681,6 +681,8 @@ describe('SchedulerManager.recordRun — eviction of a long-lived run', () => {
 
     await manager.runNow(task.id); // run #1 — stays alive
     const sid1 = ptys.sessions[0].id;
+    // Its tab dies without the exit event arriving yet (a live session's row is never trimmed).
+    ptys.sessions[0].status = 'exited';
     await manager.runNow(task.id); // run #2 — evicts run #1 from the retain=1 buffer
     const sid2 = ptys.sessions[1].id;
 

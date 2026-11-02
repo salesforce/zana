@@ -940,12 +940,7 @@ export class SchedulerManager extends EventEmitter {
     const aliveIdsFor = (projectId: string): Set<string> => {
       let set = aliveByProject.get(projectId);
       if (!set) {
-        set = new Set(
-          this.deps!.ptys
-            .list(projectId)
-            .filter((s) => s.status === 'running' || s.status === 'starting')
-            .map((s) => s.id)
-        );
+        set = this.aliveSessionIds(projectId);
         aliveByProject.set(projectId, set);
       }
       return set;
@@ -984,19 +979,25 @@ export class SchedulerManager extends EventEmitter {
     );
   }
 
+  /** Ids of the project's sessions that are running or starting: the one rule for "this run's tab is alive". */
+  private aliveSessionIds(projectId: string): Set<string> {
+    return new Set(this.deps?.ptys.list(projectId)
+      .filter(session => session.status === 'running' || session.status === 'starting').map(session => session.id));
+  }
+
   private retainRuns(task: ScheduledTask, runs: ScheduleRun[], closingRunId?: string): ScheduleRun[] {
     // Squad runs are scheduler-owned overlap state until their durable
     // execution reaches a terminal state, so they sit outside display history.
     const kept = trimRuns(runs, task.history.retain, Date.now(), run =>
       run.launchState === 'pending' || (this.runLaunchKind(task, run) === 'team' && this.isLiveSquadRun(run)));
-    // Three rows stay beyond `retain`, because dropping them breaks the overlap guard or loses a run's outcome:
-    // the newest row whose session is still alive (even once its Stop hook stamped finishedAt: the tab holds the
-    // overlap slot, and a trimmed row means the next fire starts a duplicate), the newest real (non-skip) run
-    // (overlap skips must not push it out of history), and the run this write is closing.
-    const aliveIds = new Set(this.deps?.ptys.list(task.projectId)
-      .filter(session => session.status === 'running' || session.status === 'starting').map(session => session.id));
+    // Rows stay beyond `retain` when dropping them breaks the overlap guard or loses a run's outcome: EVERY row
+    // whose session is still alive (even once its Stop hook stamped finishedAt: the tab holds the overlap slot, and
+    // a trimmed row means the next fire starts a duplicate, or the exit is dropped; a manual run beside a scheduled
+    // one leaves two), the newest real (non-skip) run (overlap skips must not push it out of history), and the run
+    // this write is closing.
+    const aliveIds = this.aliveSessionIds(task.projectId);
     const protectedRuns = new Set([
-      runs.find(run => !!run.sessionId && aliveIds.has(run.sessionId)),
+      ...runs.filter(run => !!run.sessionId && aliveIds.has(run.sessionId)),
       runs.find(run => run.result !== 'skipped'),
       runs.find(run => closingRunId !== undefined && run.id === closingRunId)
     ].filter((run): run is ScheduleRun => !!run));
@@ -1449,12 +1450,7 @@ export class SchedulerManager extends EventEmitter {
       // success) and frees the slot.
       this.deps.ptys.reapDeadSessions();
 
-      const aliveIds = new Set(
-        this.deps.ptys
-          .list(live.task.projectId)
-          .filter((s) => s.status === 'running' || s.status === 'starting')
-          .map((s) => s.id)
-      );
+      const aliveIds = this.aliveSessionIds(live.task.projectId);
       const squad = live.task.kind === 'team';
       const aliveRunSessionId = squad ? undefined : live.task.status.runs
         .map((r) => r.sessionId)
@@ -1994,8 +1990,7 @@ export class SchedulerManager extends EventEmitter {
       // An overlap skip spawns no session, so it points at the run that holds the slot (the newest row whose session is
       // alive), keeping readers such as the Stream Deck tile on the live run.
       if (run.result === 'skipped' && run.reasonCode === 'overlap' && !run.sessionId) {
-        const aliveIds = new Set(this.deps?.ptys.list(live.task.projectId)
-          .filter(session => session.status === 'running' || session.status === 'starting').map(session => session.id));
+        const aliveIds = this.aliveSessionIds(live.task.projectId);
         status.lastRunSessionId = status.runs.find(row => !!row.sessionId && aliveIds.has(row.sessionId))?.sessionId ?? status.lastRunSessionId;
       } else status.lastRunSessionId = run.sessionId;
     }

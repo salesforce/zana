@@ -268,4 +268,21 @@ describe('overlap rows and history retention', () => {
     await autoFire(manager, id);
     expect(T(manager, id).status.lastRunSessionId).toBe(scheduled);
   });
+
+  it('keeps every row with a live session, so an older manual run still records its exit at retain 1', async () => {
+    const { manager, ptys, tasks } = await makeFixture([{ catchUp: null, retain: 1 }]);
+    const id = tasks[0].id;
+    await internals(manager).fire(id, { manual: true });
+    const manual = ptys.sessions[0].id;
+    const manualId = liveRow(manager, id, manual)!.id;
+    // A scheduled run is open beside the manual one (two live sessions); the newer row must not evict the older.
+    ptys.sessions.push({ id: 'scheduled-session', projectId: 'proj-1', title: 'x', profile: 'claude', cwd: '/tmp/proj', status: 'running', createdAt: Date.now() });
+    await internals(manager).recordRun(id, { id: 'scheduled-row', at: new Date(Date.now() + 1000).toISOString(), result: 'success', sessionId: 'scheduled-session', trigger: 'schedule', attempt: 1 });
+    expect(runs(manager, id).some(run => run.id === manualId)).toBe(true);
+
+    ptys.simulateExit(manual, 0);
+    await manager.attachReport('drain', 'x');
+
+    expect(runs(manager, id).find(run => run.id === manualId)?.durationMs).toBeTypeOf('number');
+  });
 });
