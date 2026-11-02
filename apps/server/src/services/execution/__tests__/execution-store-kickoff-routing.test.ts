@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createExecutionStore, KICKOFF_FAILURE_BLOCK_THRESHOLD, NO_PROGRESS_CLAIM_REASON, WorkUnitRecoveryGuardError, type ExecutionWorkUnitInput } from '../store.js';
+import { createExecutionStore, kickoffBlockerQuestion, KICKOFF_FAILURE_BLOCK_THRESHOLD, NO_PROGRESS_CLAIM_REASON, WorkUnitRecoveryGuardError, type ExecutionWorkUnitInput } from '../store.js';
 
 // Kickoff reassignment, the human question and dispatch must honour the unit's routing.
 
@@ -295,3 +295,48 @@ describe('single-slot kickoff question wording', () => {
   }));
 });
 
+describe('kickoff question stays useful at the edges', () => {
+  const block = async (filePath: string, roster: Roster, unit: Partial<ExecutionWorkUnitInput>, churnSlot = 'engineer:0') => {
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 1_000 });
+    let record = await running(store, roster, unit);
+    record = await churn(store, record.id, churnSlot, 1);
+    record = await store.blockKickoffFailure(record.id, 'unit');
+    return record.blockers![0].question;
+  };
+
+  it('keeps the slot id and the closing instruction when the title is 2,000 characters long', async () => fixture(async (filePath) => {
+    const question = await block(filePath, [{ slotId: 'engineer:0', personaId: 'engineer' }, { slotId: 'reviewer:0', personaId: 'reviewer' }], { title: 'T'.repeat(2_000), routing: engineerRouting });
+    expect(question.length).toBeLessThanOrEqual(2_048);
+    expect(question).toContain('(engineer:0) never started a turn');
+    expect(question.endsWith('then retry the unit or restart the run.')).toBe(true);
+  }));
+
+  it('keeps the closing instruction in the generic question when the title is 2,000 characters long', async () => fixture(async (filePath) => {
+    const question = await block(filePath, [{ slotId: 'engineer:0', personaId: 'engineer' }], { title: 'T'.repeat(2_000) });
+    expect(question.length).toBeLessThanOrEqual(2_048);
+    expect(question.endsWith('then retry the unit or restart the run.')).toBe(true);
+  }));
+
+  it('omits the title brackets for an untitled unit in both wordings', () => {
+    for (const title of [undefined, '']) {
+      for (const slot of ['engineer:0', undefined]) {
+        const question = kickoffBlockerQuestion({ id: 'unit', title }, slot, '');
+        expect(question).toContain('Work unit unit made no progress');
+        expect(question).not.toMatch(/\(\)|undefined/);
+      }
+    }
+  });
+
+  it('cuts the earlier-recovery note rather than the instructions when it is oversized', () => {
+    const question = kickoffBlockerQuestion({ id: 'unit', title: 'Unit' }, 'engineer:0', ` Earlier ${'x'.repeat(5_000)}`);
+    expect(question.length).toBeLessThanOrEqual(2_048);
+    expect(question).toContain('(Unit)');
+    expect(question.endsWith('then retry the unit or restart the run.')).toBe(true);
+  });
+
+  it('falls back to the generic question when the one capable slot was never tried', async () => fixture(async (filePath) => {
+    // The unit churned on the reviewer seat, so engineer:0 never received it and "never started a turn" would be false.
+    const question = await block(filePath, [{ slotId: 'engineer:0', personaId: 'engineer' }, { slotId: 'reviewer:0', personaId: 'reviewer' }], { routing: engineerRouting }, 'reviewer:0');
+    expect(question).toBe(today());
+  }));
+});

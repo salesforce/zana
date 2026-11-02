@@ -3,7 +3,7 @@ import { squadLaunchTextProblem } from '@zana-ai/zcc-domain/squad-proposal';
 import { fitRecoveryObjective } from './recovery-objective.js';
 import { createHash } from 'node:crypto';
 import { launchDigest } from '../launch/digest.js';
-import { EXECUTION_RETENTION_MS, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
+import { EXECUTION_RETENTION_MS, slotRouteSnapshot, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
 import type { createExecutionStore } from './store.js';
 import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './artifact-store.js';
 import { validateWorkflowPolicyResult, type WorkflowPolicyResultV1 } from './policy-result.js';
@@ -1893,12 +1893,7 @@ export class ExecutionService {
       const model = record.resolvedModels.find((candidate) => candidate.slotId === assignment.slotId);
       const authorization = record.authorizationContext?.slots.find((candidate) => candidate.slotId === assignment.slotId);
       if (this.deps.routingEnforcementEnabled?.(record) === true && unit?.routing && authorization) {
-        const eligibility = evaluateSlotEligibility(unit.routing, {
-          slotId: assignment.slotId, personaId: authorization.personaId, provider: model?.provider, model: model?.model,
-          level: model?.level, roleOwnedModel: model?.roleOwnedModel, capabilities: model?.capabilities,
-          modalities: model?.modalities, maxContextBytes: model?.maxContextBytes, health: model?.health,
-          observedAt: model?.observedAt, maxAgeMs: model?.maxAgeMs
-        });
+        const eligibility = evaluateSlotEligibility(unit.routing, slotRouteSnapshot(authorization, model));
         if (eligibility.status !== 'PASS') {
           await this.releaseUndeliveredAssignments(record.id, [assignment]);
           continue;

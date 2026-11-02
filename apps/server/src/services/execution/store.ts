@@ -1308,19 +1308,44 @@ function validUtf8String(value: unknown, maxBytes: number): value is string {
   return typeof value === 'string' && value.trim().length > 0 && Buffer.byteLength(value, 'utf8') <= maxBytes;
 }
 
+/** The record's resolved models keyed by slot, built once per dispatch or recovery so a roster is not rescanned per slot. */
+export function resolvedModelsBySlot(record: Pick<ExecutionRecord, 'resolvedModels'>): Map<string, ResolvedModelSnapshotV1> {
+  return new Map(record.resolvedModels.map((model) => [model.slotId, model]));
+}
+
 /**
  * The routing-policy view of one worker slot: persona from the authorization
  * context, model facts from the record's resolved models. One builder for
- * dispatch and for kickoff reassignment, so the two cannot drift.
+ * dispatch, kickoff reassignment and the delivery re-check, so they cannot drift.
  */
-function slotRouteSnapshot(record: ExecutionRecord, slot: { slotId: string; personaId: string }): SlotRouteSnapshotV1 {
-  const model = record.resolvedModels.find((candidate) => candidate.slotId === slot.slotId);
+export function slotRouteSnapshot(slot: { slotId: string; personaId: string }, model: ResolvedModelSnapshotV1 | undefined): SlotRouteSnapshotV1 {
   return {
     slotId: slot.slotId, personaId: slot.personaId, provider: model?.provider, model: model?.model,
     level: model?.level, roleOwnedModel: model?.roleOwnedModel, capabilities: model?.capabilities,
     modalities: model?.modalities, maxContextBytes: model?.maxContextBytes, health: model?.health,
     observedAt: model?.observedAt, maxAgeMs: model?.maxAgeMs
   };
+}
+
+const KICKOFF_TITLE_BUDGET = 200;
+
+/**
+ * The human question for a unit whose worker never started a turn. The fixed wording (unit id,
+ * slot id, instructions) is budgeted first; only the title and the earlier-recovery note are cut
+ * to fit MAX_STRING, so a long title can never push the slot or the instructions out of the text.
+ * Plans reject empty titles, so an untitled unit only reaches here from older records; it gets no brackets.
+ */
+export function kickoffBlockerQuestion(unit: { id: string; title?: string }, onlySlotId: string | undefined, earlier: string): string {
+  const build = (title: string, note: string) => {
+    const label = title ? ` (${title})` : '';
+    return onlySlotId
+      ? `Work unit ${unit.id}${label} made no progress, and the only worker slot that can take it (${onlySlotId}) never started a turn.${note} Check that worker's terminal, then retry the unit or restart the run.`
+      : `Work unit ${unit.id}${label} made no progress on every eligible worker slot; its worker never started a turn.${note} Check the worker terminal, then retry the unit or restart the run.`;
+  };
+  // The title is a label, so it gets a short share; the earlier-recovery note takes whatever the rest leaves.
+  const title = (unit.title ?? '').slice(0, KICKOFF_TITLE_BUDGET);
+  const note = earlier.slice(0, Math.max(0, MAX_STRING - build(title, '').length));
+  return build(title, note);
 }
 
 /** The authorized worker slots: every slot except the coordinator's. One definition for dispatch and kickoff recovery. */
@@ -2273,6 +2298,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         const workerSlots = workerSlotsOf(record);
         const busy = new Set((record.workUnits ?? []).filter((unit) => unit.state === 'CLAIMED' && unit.assignedSlotId).map((unit) => unit.assignedSlotId!));
         const freeSlots = workerSlots.filter((slot) => !busy.has(slot.slotId));
+        const modelBySlot = resolvedModelsBySlot(record);
         // Soft-deprioritize the slot whose completion/release triggered this
         // cascade: it just finished a turn and is still winding down, so send the
         // next unit to a genuinely-idle peer FIRST. It stays eligible (sorted
@@ -2298,7 +2324,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
             const existing = record.routingDecisions?.some((decision) => `${decision.workUnitId}\0${decision.attempt}\0${decision.policyVersion}` === key);
             if (!existing) {
               const candidates = workerSlots.map((slot) => {
-                const eligibility = evaluateSlotEligibility(unit.routing, slotRouteSnapshot(record, slot));
+                const eligibility = evaluateSlotEligibility(unit.routing, slotRouteSnapshot(slot, modelBySlot.get(slot.slotId)));
                 return { slotId: slot.slotId, status: eligibility.status, reasons: eligibility.reasons, ...(eligibility.estimatedInputUsd === undefined ? {} : { estimatedInputUsd: eligibility.estimatedInputUsd }), pricingCatalogId: eligibility.pricingCatalogId, pricingCatalogVersion: eligibility.pricingCatalogVersion };
               });
               if (opts?.enforceRouting && candidates.length && candidates.every((candidate) => candidate.status === 'UNKNOWN')) {
@@ -2331,7 +2357,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
               // Shadow evidence is immutable. Enforcement must re-evaluate free
               // slots, because availability changes without incrementing attempt.
               const candidates = workerSlots.map((slot) => {
-                const eligibility = evaluateSlotEligibility(unit.routing!, slotRouteSnapshot(record, slot));
+                const eligibility = evaluateSlotEligibility(unit.routing!, slotRouteSnapshot(slot, modelBySlot.get(slot.slotId)));
                 return { slotId: slot.slotId, status: eligibility.status, estimatedInputUsd: eligibility.estimatedInputUsd };
               });
               const qualified = candidates.filter((candidate) => candidate.status === 'PASS' && freeSlots.some((slot) => slot.slotId === candidate.slotId)).sort((left, right) => {
@@ -2766,16 +2792,16 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
           ? ` Earlier, Zana tried to recover ${recovery.slotId} after an API error: ${recovery.steps.map((entry) => entry.step).join(', ')}. Last error: ${lastError}.`
           : '';
         const routing = unit.routing;
+        const modelBySlot = resolvedModelsBySlot(record);
         const capable = routing
           ? workerSlotsOf(record)
             // Enforced routing dispatches to PASS slots only, so only they can "take it"; otherwise any non-FAIL slot can.
-            .filter((slot) => { const status = evaluateSlotEligibility(routing, slotRouteSnapshot(record, slot)).status; return opts?.enforceRouting ? status === 'PASS' : status !== 'FAIL'; })
+            .filter((slot) => { const status = evaluateSlotEligibility(routing, slotRouteSnapshot(slot, modelBySlot.get(slot.slotId))).status; return opts?.enforceRouting ? status === 'PASS' : status !== 'FAIL'; })
           : [];
-        question = capable.length === 1
-          ? `Work unit ${unit.id} (${unit.title}) made no progress, and the only worker slot that can take it (${capable[0].slotId}) never started a turn.${earlier} Check that worker's terminal, then retry the unit or restart the run.`
-          : `Work unit ${unit.id}${unit.title ? ` (${unit.title})` : ''} made no progress on every eligible worker slot; its worker never started a turn.${earlier} Check the worker terminal, then retry the unit or restart the run.`;
-        // A long title or slot id must not push the question past MAX_STRING, which would fail the persist and leave the unit unblocked.
-        question = question.slice(0, MAX_STRING);
+        // "never started a turn" is only true of a slot this unit was actually tried on in this attempt.
+        const triedHere = capable.length === 1 && (unit.history.some((entry) => entry.action === 'claimed' && entry.slotId === capable[0].slotId)
+          || (unit.noProgressSlots ?? []).some((entry) => entry.executionAttempt === record.attempt && entry.slotId === capable[0].slotId));
+        question = kickoffBlockerQuestion(unit, triedHere ? capable[0].slotId : undefined, earlier);
       }
       unit.state = 'BLOCKED';
       unit.history.push({ action: 'blocked', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp, detail: apiError ? 'stopped after an API error' : 'kickoff delivery produced no worker turn' });
@@ -2818,7 +2844,8 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       if (unit.routing) {
         // Routing decides who may take the unit: never a FAIL slot, PASS before UNKNOWN, each in roster order.
         const routing = unit.routing;
-        const ranked = untried.map((slot) => ({ slot, status: evaluateSlotEligibility(routing, slotRouteSnapshot(record, slot)).status }))
+        const modelBySlot = resolvedModelsBySlot(record);
+        const ranked = untried.map((slot) => ({ slot, status: evaluateSlotEligibility(routing, slotRouteSnapshot(slot, modelBySlot.get(slot.slotId))).status }))
           .filter((entry) => entry.status !== 'FAIL');
         // Enforced routing refuses anything but PASS at delivery, so UNKNOWN is not a candidate there.
         fresh = [...ranked.filter((entry) => entry.status === 'PASS'), ...(opts?.enforceRouting ? [] : ranked.filter((entry) => entry.status !== 'PASS'))][0]?.slot;
