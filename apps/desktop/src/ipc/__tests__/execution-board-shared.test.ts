@@ -7,15 +7,16 @@ vi.mock('@zana-ai/zcc-server/services/projects/store', () => ({ store: { listPro
 vi.mock('../shared-product-registry.js', () => ({ registerSharedProduct: (channel: string, fn: Function) => { state.shared.set(channel, fn); } }));
 import { bindIpcCtx } from '../ctx.js';
 import { registerExecutionBoardIpc } from '../execution-board.js';
-const get = vi.fn(), stop = vi.fn(), start = vi.fn(), list = vi.fn(), clear = vi.fn(), recoverTimedOut = vi.fn(), recoverRetained = vi.fn(), exactNativeRecoveryAvailability = vi.fn(), squadWorktreeAction = vi.fn();
+const get = vi.fn(), stop = vi.fn(), start = vi.fn(), list = vi.fn(), clear = vi.fn(), recoverTimedOut = vi.fn(), recoverRetained = vi.fn(), exactNativeRecoveryAvailability = vi.fn(), squadWorktreeAction = vi.fn(), dismiss = vi.fn(), retirePlanHandoff = vi.fn();
 const execution = { id: 'execution', projectId: 'registered', teamId: 'team-1', request: {}, jobTitle: 'Job', state: 'RUNNING', attempt: 1, stateVersion: 4, createdAt: 1, updatedAt: 2, workUnits: [] };
 beforeEach(() => {
   state.shared.clear(); state.windows.clear(); state.teams = []; state.lifecycle = []; state.lifecycleFail = false; state.lifecycleFailRaw = undefined; vi.clearAllMocks();
    get.mockImplementation(async (projectId: string, id: string) => projectId === 'registered' && id === 'execution' ? { id, projectId, callerPrincipalId: 'stored-owner' } : undefined);
    stop.mockResolvedValue({ ok: false, code: 'CONFLICT', message: 'Version changed' });
    recoverTimedOut.mockResolvedValue({ ok: false, code: 'CONFLICT', message: 'Already recovered' }); recoverRetained.mockResolvedValue({ ok: false, code: 'CONFLICT', message: 'Already recovered' });
+   dismiss.mockResolvedValue({ ok: false, code: 'DISMISS_NOT_ALLOWED', message: 'only terminal executions can be dismissed' }); retirePlanHandoff.mockResolvedValue(undefined);
    start.mockResolvedValue({ ok: true }); list.mockResolvedValue({ records: [], hasMore: false }); exactNativeRecoveryAvailability.mockReturnValue({ available: false, restorableSlots: 0 });
-     bindIpcCtx({ safeHandle: vi.fn(), safeHandleFromWindow: (channel: string, fn: Function) => state.windows.set(channel, fn), ptys: { list: () => [] }, teams: { list: () => state.teams }, teamLifecycle: { list: async () => { if (state.lifecycleFailRaw !== undefined) throw state.lifecycleFailRaw; if (state.lifecycleFail) throw new Error('corrupt lifecycle store'); return state.lifecycle; } }, personas: { list: () => [] }, windows: new Map([[7, { projectId: 'different' }]]), executionStore: { getInProject: get }, executionResumeTokens: { clear, status: () => ({ state: 'missing' }) }, executionSources: {}, squadExecutionService: { stop, listProject: list, recoverTimedOut, recoverRetained }, startTeamJobFromUi: start, exactNativeRecoveryAvailability, squadWorktreeAction } as any);
+     bindIpcCtx({ safeHandle: vi.fn(), safeHandleFromWindow: (channel: string, fn: Function) => state.windows.set(channel, fn), ptys: { list: () => [] }, teams: { list: () => state.teams }, teamLifecycle: { list: async () => { if (state.lifecycleFailRaw !== undefined) throw state.lifecycleFailRaw; if (state.lifecycleFail) throw new Error('corrupt lifecycle store'); return state.lifecycle; } }, personas: { list: () => [] }, windows: new Map([[7, { projectId: 'different' }]]), executionStore: { getInProject: get }, executionResumeTokens: { clear, status: () => ({ state: 'missing' }) }, executionSources: {}, squadExecutionService: { stop, listProject: list, recoverTimedOut, recoverRetained, dismiss }, startTeamJobFromUi: start, exactNativeRecoveryAvailability, squadWorktreeAction, retirePlanHandoff } as any);
   registerExecutionBoardIpc();
    });
   it('authorizes typed retained recovery and forwards only valid recovery inputs', async () => {
@@ -82,6 +83,26 @@ it('denies every shared execution operation for an unregistered project before r
       ok: false, code: 'UNAVAILABLE', message: 'timeout recovery unavailable'
     });
   });
+it('retires a kept plan handoff only after a dismissal succeeds', async () => {
+  const dismissRun = state.windows.get(IPC.executionBoard.dismiss)!;
+  expect(await dismissRun({ id: 8 }, 'registered', 'execution')).toMatchObject({ ok: false, code: 'DISMISS_NOT_ALLOWED' });
+  expect(retirePlanHandoff).not.toHaveBeenCalled();
+  dismiss.mockResolvedValueOnce({ ok: true, value: { dismissedSessionIds: ['worker-1'] } });
+  expect(await dismissRun({ id: 8 }, 'registered', 'execution')).toEqual({ ok: true, value: { dismissedSessionIds: ['worker-1'] } });
+  expect(dismiss).toHaveBeenLastCalledWith('stored-owner', 'registered', 'execution');
+  expect(retirePlanHandoff).toHaveBeenCalledExactlyOnceWith('registered', 'execution');
+  // An execution main cannot find in the project is never cleaned up.
+  expect(await dismissRun({ id: 8 }, 'registered', 'foreign-execution')).toMatchObject({ code: 'NOT_FOUND' });
+  expect(retirePlanHandoff).toHaveBeenCalledOnce();
+});
+it('retires the timed-out run plan handoff only after its successor starts', async () => {
+  const recover = state.windows.get(IPC.executionBoard.recoverTimedOut)!;
+  await recover({ id: 8 }, 'registered', 'execution', 3, 'request-1');
+  expect(retirePlanHandoff).not.toHaveBeenCalled();
+  recoverTimedOut.mockResolvedValueOnce({ ok: true, value: { ...execution, id: 'successor' } });
+  await expect(recover({ id: 8 }, 'registered', 'execution', 4, 'request-1')).resolves.toMatchObject({ ok: true, value: { executionId: 'successor' } });
+  expect(retirePlanHandoff).toHaveBeenCalledExactlyOnceWith('registered', 'execution');
+});
 it('does not fabricate a native window for shared launches and preserves local window confinement', async () => {
   const input = { projectId: 'registered' };
   await state.shared.get(IPC.teams.startJob)!(input);

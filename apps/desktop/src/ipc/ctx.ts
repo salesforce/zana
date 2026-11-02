@@ -129,6 +129,7 @@ export interface IpcCtx {
   skillBundles: any;
   squadExecutionService: any;
   squadWorktreeAction: any;
+  retirePlanHandoff: (projectId: string, executionId: string) => Promise<void>;
   sshHostProviderRegistry: any;
   stampFeedEvent: any;
   startTeamJobFromUi: any;

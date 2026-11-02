@@ -64,7 +64,7 @@ import {
 import { openExecutionStorage } from './execution-storage.js';
 import { createPlanCorrectionHandoff, createPlanCorrectionHost } from './plan-correction/host.js';
 import {
-  cleanupOrchestratorOnExit, createFollowUpClaims, createNativeRecoveryCapture, teardownTerminalExecutionOnExit
+  cleanupOrchestratorOnExit, createFollowUpClaims, createNativeRecoveryCapture, createPlanHandoffRetirement, teardownTerminalExecutionOnExit
 } from './squad-session-lifecycle.js';
 import { createSquadWorktreeRuntime, trustedSquadWorktreeRoot, isWithinSquadWorktreeBase, SQUAD_WORKTREE_ACTION } from './squad-worktree-runtime.js';
 import { createTriggeredSquadLauncher, goalSquadTrigger, scheduledSquadTrigger } from './triggered-squad.js';
@@ -6486,6 +6486,8 @@ export async function handleSquadTerminalWithReport(
     // instead of leaving the report waiting for effects that will not be applied.
     const outcome = worktree ?? (failed && record.squadWorktree ? 'kept' as const : undefined);
     void squadProposalNotifier.onTerminal(record, outcome ? { worktree: outcome } : undefined);
+    // A run that just became final (e.g. stopped on an unresolved blocker) drops a plan file kept for a retry.
+    void retirePlanHandoff(record.projectId, record.id);
   }
 }
 
@@ -6790,6 +6792,7 @@ const squadSessionExit = {
   cleanupHandoffFiles,
   logError: logMainError
 };
+const retirePlanHandoff = createPlanHandoffRetirement(squadSessionExit);
 
 export async function reportTeamTask(
   callerPrincipalId: string,
@@ -7993,6 +7996,7 @@ function registerIpc() {
     get skillBundles() { return skillBundles; },
     get squadExecutionService() { return squadExecutionService; },
     get squadWorktreeAction() { return squadWorktreeRuntime.squadWorktreeAction; },
+    get retirePlanHandoff() { return retirePlanHandoff; },
     get sshHostProviderRegistry() { return sshHostProviderRegistry; },
     get stampFeedEvent() { return stampFeedEvent; },
     get startTeamJobFromUi() { return startTeamJobFromUi; },
