@@ -12,9 +12,15 @@ export function summarizePluginHealthDetail(detail: string | null | undefined): 
       technical
     };
   }
+  if (/cannot find package/i.test(technical) || /cannot find module\s+['"][^'"\n]*[/\\]node_modules[/\\]/i.test(technical)) {
+    return {
+      summary: 'A plugin dependency is missing. Rebuild or reinstall this plugin.',
+      technical
+    };
+  }
   if (/cannot find module/i.test(technical)) {
     return {
-      summary: 'A required plugin file is missing from this build.',
+      summary: 'A required plugin file is missing. Rebuild or reinstall this plugin.',
       technical
     };
   }
