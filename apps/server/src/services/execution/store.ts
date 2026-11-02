@@ -2700,7 +2700,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
    * spuriously bumps the version / appends an event / re-cascades (mirrors {@link
    * escalateBlockerToHuman}); the service caller catches and ignores.
    */
-  async function blockKickoffFailure(executionId: string, workUnitId: string, apiError?: { claimId: string; claimGeneration: number }): Promise<ExecutionRecord> {
+  async function blockKickoffFailure(executionId: string, workUnitId: string, apiError?: { claimId: string; claimGeneration: number }, opts?: { enforceRouting?: boolean }): Promise<ExecutionRecord> {
     return mutateRecord(executionId, undefined, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
       if (unit.state === 'BLOCKED' || unit.state === 'COMPLETED' || unit.state === 'FAILED') throw new WorkUnitRecoveryGuardError('work unit is not blockable for kickoff failure');
@@ -2735,7 +2735,8 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         const routing = unit.routing;
         const capable = routing
           ? workerSlotsOf(record)
-            .filter((slot) => evaluateSlotEligibility(routing, slotRouteSnapshot(record, slot)).status !== 'FAIL')
+            // Enforced routing dispatches to PASS slots only, so only they can "take it"; otherwise any non-FAIL slot can.
+            .filter((slot) => { const status = evaluateSlotEligibility(routing, slotRouteSnapshot(record, slot)).status; return opts?.enforceRouting ? status === 'PASS' : status !== 'FAIL'; })
           : [];
         question = capable.length === 1
           ? `Work unit ${unit.id} (${unit.title}) made no progress, and the only worker slot that can take it (${capable[0].slotId}) never started a turn.${earlier} Check that worker's terminal, then retry the unit or restart the run.`

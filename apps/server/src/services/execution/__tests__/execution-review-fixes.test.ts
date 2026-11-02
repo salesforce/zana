@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assignmentText } from '../service.js';
+import { SquadExecutionService } from '../service.js';
+import { createExecutionArtifactStore } from '../artifact-store.js';
 import { createExecutionStore, KICKOFF_FAILURE_BLOCK_THRESHOLD, NO_PROGRESS_CLAIM_REASON, type ExecutionDispatchAssignment, type ExecutionRecord, type ExecutionWorkUnitInput } from '../store.js';
 
 // Review round 1 fixes for #577 (A7, A8, F5).
@@ -89,3 +90,64 @@ describe('worker slot set is one definition (#577 F5)', () => {
   }));
 });
 
+
+describe('enforced routing: question wording counts PASS slots only (#577 F10/A17)', () => {
+  const routing = { version: 1 as const, requiredRole: 'engineer', estimatedContextBytes: 1_000 };
+
+  it('names the only PASS slot even though another slot is UNKNOWN, when enforced', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 1_000 });
+    let record = await running(store, [{ slotId: 'engineer:0', personaId: 'engineer', maxContextBytes: 10_000 }, { slotId: 'engineer:1', personaId: 'engineer' }], { routing });
+    record = await churn(store, record.id, 'engineer:0');
+    record = await store.blockKickoffFailure(record.id, 'unit', undefined, { enforceRouting: true });
+    expect(record.blockers![0].question).toContain('the only worker slot that can take it (engineer:0)');
+  }));
+
+  it('keeps the generic wording under advisory routing, where the UNKNOWN slot could take it', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 1_000 });
+    let record = await running(store, [{ slotId: 'engineer:0', personaId: 'engineer', maxContextBytes: 10_000 }, { slotId: 'engineer:1', personaId: 'engineer' }], { routing });
+    record = await churn(store, record.id, 'engineer:0');
+    record = await store.blockKickoffFailure(record.id, 'unit');
+    expect(record.blockers![0].question).toContain('made no progress on every eligible worker slot');
+  }));
+});
+
+describe('the service passes the routing enforcement flag to kickoff recovery (#577 F9/A11)', () => {
+  it('an enforced run blocks to a human instead of moving the unit to an UNKNOWN slot', async () => fixture(async (filePath) => {
+    const clock = { t: 1_000 };
+    const now = () => clock.t;
+    const store = createExecutionStore({ filePath, id: () => 'execution-1', now });
+    const replyToSession = vi.fn(() => true);
+    const workers = [{ slotId: 'engineer:0', personaId: 'engineer' }, { slotId: 'engineer:1', personaId: 'engineer' }];
+    const service = new SquadExecutionService({
+      store,
+      artifacts: createExecutionArtifactStore({ filePath: `${filePath}.artifacts`, id: () => 'artifact-1' }),
+      authorizeTeamLaunch: () => ({ ok: true as const, value: { teamId: 'team-1', projectId: 'project-1', slots: [], context: {
+        version: 1 as const, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+          { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
+          ...workers.map((worker) => ({ ...worker, authorizationIdDigest: `${worker.slotId}-d` }))
+        ] } } }),
+      launchTeam: async () => ({ ok: true }),
+      getTeamLaunch: async () => ({ orchestratorSessionId: 'coordinator', workers: workers.map((worker) => ({ slotId: worker.slotId, sessionId: `session-${worker.slotId}`, projectId: 'project-1' })) }),
+      cancelTeamLaunch: async () => ({ ok: true, value: { canceledSessionIds: [], pendingSessionIds: [] } }),
+      // engineer:0 has a context fact (PASS), engineer:1 has none (UNKNOWN for a context estimate).
+      resolveTeamModelSnapshots: () => workers.map((worker) => ({ ...worker, provider: 'anthropic', model: 'm', ...(worker.slotId === 'engineer:0' ? { maxContextBytes: 10_000 } : {}) })),
+      routingEnforcementEnabled: () => true,
+      replyToSession, now, inbox: { append: vi.fn(async () => undefined) }, logError: vi.fn(),
+      claimRecoveryObserveEnabled: () => true, claimRecoveryEnforceEnabled: () => true,
+      resolveExactNativeRecoverySnapshots: (record: ExecutionRecord) => record.nativeRecoverySnapshots ?? []
+    } as never);
+    const unit = { id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], verification: ['check a'], routing: { version: 1 as const, requiredRole: 'engineer', estimatedContextBytes: 1_000 } };
+    const started = await service.start('owner', 'project-1', { version: 1, teamId: 'team-1', launchRequestId: 'request-1', summary: 'Build', slots: [{ initialTask: 'Run' }], coordinationMode: 'job-team', workUnits: [unit] } as never);
+    if (!started.ok) throw new Error(started.message);
+    await service.dispatchReady({ executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' });
+    expect((await store.get('execution-1'))!.workUnits![0]).toMatchObject({ state: 'CLAIMED', assignedSlotId: 'engineer:0' });
+    clock.t += 700_000;
+    await service.redispatchStalled();
+    const after = (await store.get('execution-1'))!.workUnits![0];
+    expect(after.state).toBe('BLOCKED');
+    expect(after.assignedSlotId).toBeUndefined();
+    // The same enforcement flag reaches the question: only the PASS slot is named as able to take the unit.
+    const blocker = (await store.get('execution-1'))!.blockers!.find((entry) => entry.workUnitId === 'a');
+    expect(blocker!.question).toContain('the only worker slot that can take it (engineer:0)');
+  }));
+});

@@ -1265,7 +1265,7 @@ export class ExecutionService {
    * so a churning unit left neither reassigned nor blocked is visible.
    */
   private async blockKickoffToHuman(reclaimed: ExecutionRecord, unit: NonNullable<ExecutionRecord['workUnits']>[number]): Promise<boolean> {
-    return this.blockUnitToHuman(reclaimed.id, unit.id, () => this.deps.store.blockKickoffFailure(reclaimed.id, unit.id),
+    return this.blockUnitToHuman(reclaimed.id, unit.id, () => this.deps.store.blockKickoffFailure(reclaimed.id, unit.id, undefined, { enforceRouting: this.deps.routingEnforcementEnabled?.(reclaimed) === true }),
       `NO_PROGRESS_EXHAUSTED: work unit ${unit.id} made no progress after attempts across every eligible worker slot — check the worker terminal or restart the run.`,
       'kickoff-failure block');
   }
