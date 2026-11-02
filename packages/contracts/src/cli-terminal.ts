@@ -79,6 +79,8 @@ export const CliTerminalStartCommandSchema = z.object({
   suppressPersonaInitialPrompt: z.boolean().optional(),
   headless: z.boolean().optional(),
   scheduled: z.boolean().optional(),
+  useUserConfig: z.boolean().optional(),
+  requiredMcps: z.array(z.string().min(1).max(128)).max(32).optional(),
   autonomous: z.boolean().optional()
 }).strict().refine(command => JSON.stringify(command).length <= 256 * 1024, 'CLI launch exceeds size limit');
 export type CliTerminalStartCommand = z.infer<typeof CliTerminalStartCommandSchema>;

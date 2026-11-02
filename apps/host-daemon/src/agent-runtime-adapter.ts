@@ -73,6 +73,16 @@ export function isAutomatedThreadStart(
   return Boolean(input.headless || input.scheduled || input.autonomous);
 }
 
+/**
+ * Session-kind admission: an automated start is isolated from the user's
+ * interactive config unless it explicitly opted out via `useUserConfig`.
+ */
+export function isIsolatedAutomatedStart(
+  input: Pick<ThreadWorkInput, 'headless' | 'scheduled' | 'autonomous' | 'useUserConfig'>
+): boolean {
+  return isAutomatedThreadStart(input) && input.useUserConfig !== true;
+}
+
 function automatedSkillSelection(input: { automatedSkillIds?: readonly string[] }): AutomatedSkillSelection | undefined {
   return input.automatedSkillIds ? { skillIds: input.automatedSkillIds } : undefined;
 }
@@ -539,7 +549,7 @@ export function createAgentRuntimeAdapter(options: {
             }
           } : {}),
           ...(input.bridgeLaunch ? { bridgeLaunch: await resolveLaunch(input.bridgeLaunch) } : {}),
-          ...(isAutomatedThreadStart(input) ? { sessionKind: 'automated' as const } : {}),
+          ...(isIsolatedAutomatedStart(input) ? { sessionKind: 'automated' as const } : {}),
           ...mergeSessionTooling({
             remoteProxy,
             dynamicTools: input.dynamicTools,

@@ -1,3 +1,4 @@
+import { launchFailure } from './launch-pre-spawn.js';
 import { createQuitGuard, readQuitThreadCount } from './runtime/quit-guard.js';
 import { createHostCliDiscovery } from './runtime/cli-discovery.js';
 import { ProjectCatalogs } from './runtime/project-catalogs.js';
@@ -4983,8 +4984,7 @@ async function launchBackgroundTerminal(
   } catch (error) {
     // Once process creation was attempted, a readiness/persistence error cannot
     // establish that execution never started. Managers retain their reservation.
-    if (spawnAttempted) throw new LaunchSpawnError('LAUNCH_UNCONFIRMED', error instanceof Error ? error.message : String(error));
-    throw error;
+    throw launchFailure(spawnAttempted, error);
   }
 
 }
