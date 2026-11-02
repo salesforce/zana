@@ -223,19 +223,33 @@ const SHIELD_PREFIX = 'https://doc-link.invalid/?h=';
  */
 export function shieldCrossDocLinks(markdown: string): string {
   let fence: string | null = null;
+  let previousBlank = true;
+  let inIndentedCode = false;
   return markdown.split('\n').map((line) => {
-    const mark = line.match(/^\s{0,3}(`{3,}|~{3,})/)?.[1];
+    const blank = line.trim() === '';
+    const wasBlank = previousBlank;
+    previousBlank = blank;
     if (fence) {
-      if (mark && mark[0] === fence[0] && mark.length >= fence.length) fence = null;
+      // A closing fence carries no info string: "``` js" inside an open fence stays content.
+      const close = line.match(/^\s{0,3}(`{3,}|~{3,})\s*$/)?.[1];
+      if (close && close[0] === fence[0] && close.length >= fence.length) fence = null;
       return line;
     }
+    const indented = /^( {4}|\t)/.test(line);
+    if (indented && (wasBlank || inIndentedCode)) {
+      inIndentedCode = true;
+      return line;
+    }
+    if (!blank) inIndentedCode = false;
+    const mark = line.match(/^\s{0,3}(`{3,}|~{3,})/)?.[1];
     if (mark) {
       fence = mark;
       return line;
     }
     return line.split(/(`+[^`]*`+)/).map((part, index) => index % 2 === 1
       ? part
-      : part.replace(/\]\(\s*<?(doc:[^)\s>]*)>?/gi, (_match, href: string) => `](${SHIELD_PREFIX}${encodeURIComponent(href)}`)
+      : part.replace(/\]\(\s*(?:<(doc:[^>\n]*)>|(doc:[^)\s>]*))/gi, (_match, angled: string | undefined, bare: string | undefined) =>
+        `](${SHIELD_PREFIX}${encodeURIComponent(angled ?? bare ?? '')}`)
     ).join('');
   }).join('\n');
 }

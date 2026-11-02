@@ -241,7 +241,7 @@ function DocList({
   const docActions = useDocActions(projects);
   const debounced = useDebounced(query.trim(), 200);
   const now = useNow();
-  const docs = useDocs({ ...(projectId ? { projectId } : {}), ...(debounced ? { query: debounced } : {}), status });
+  const docs = useDocs({ ...(projectId ? { projectId } : showProjects ? { excludeUnassigned: true } : {}), ...(debounced ? { query: debounced } : {}), status });
   const removed = useRemovedProjects();
   const names = useMemo(() => {
     const map = new Map((removed.data ?? []).map((item) => [item.id, item.label]));

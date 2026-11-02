@@ -130,6 +130,26 @@ describe('shieldCrossDocLinks', () => {
     expect(out).not.toContain('[c](doc://');
   });
 
+  it('accepts spaces inside angle-bracket destinations and round trips them', () => {
+    const shielded = shieldCrossDocLinks('[x](<doc://ref/my file.md>) then [y](doc://ref/a.md)');
+    expect(shielded).not.toContain('doc:');
+    const hrefs = [...shielded.matchAll(/\]\(([^)]+)\)/g)].map((m) => unshieldCrossDocHref(m[1]!));
+    expect(hrefs).toEqual(['doc://ref/my file.md', 'doc://ref/a.md']);
+    expect(parseCrossDocLink(hrefs[0]!)).toEqual({ docRef: 'ref', path: 'my file.md', anchor: null });
+  });
+
+  it('only closes a fence with a bare fence line and skips indented code blocks', () => {
+    const open = '```\n``` js\n[a](doc://x/y)\n```\n[b](doc://x/y)';
+    const out = shieldCrossDocLinks(open);
+    expect(out).toContain('``` js\n[a](doc://x/y)\n```');
+    expect(out).not.toContain('[b](doc://');
+    const indented = 'para\n\n    [a](doc://x/y)\n    [b](doc://x/y)\n\n[c](doc://x/y)';
+    const out2 = shieldCrossDocLinks(indented);
+    expect(out2).toContain('    [a](doc://x/y)\n    [b](doc://x/y)');
+    expect(out2).not.toContain('[c](doc://');
+    expect(shieldCrossDocLinks('text\n    [a](doc://x/y)')).not.toContain('    [a](doc://');
+  });
+
   it('unshield returns other hrefs unchanged and tolerates bad escapes', () => {
     expect(unshieldCrossDocHref('https://x.io')).toBe('https://x.io');
     const bad = 'https://doc-link.invalid/?h=%E0%A4%A';

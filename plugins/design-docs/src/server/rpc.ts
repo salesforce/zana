@@ -294,6 +294,7 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       return store.list({
         projectId: typeof projectId === 'string' && projectId ? projectId : undefined,
         ...(input.unassigned === true ? { unassigned: true } : {}),
+        ...(input.excludeUnassigned === true ? { excludeUnassigned: true } : {}),
         query: optionalString(input, 'query'),
         status,
         limit: optionalNumber(input, 'limit') ?? 200
@@ -362,7 +363,7 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       return summary;
     },
 
-    /** Resolve a `doc://` link written in `fromDoc`; main re-parses and authorizes, the renderer's parse is advisory. */
+    /** Resolve a `doc://` link written in `fromDoc`; main re-parses; `fromDoc` is renderer-supplied, so the scope check is UX scoping, not an authorization boundary. */
     resolveCrossDocLink: (raw) => {
       const input = onlyKeys(raw, ['fromDoc', 'href']);
       const link = parseCrossDocLink(requiredString(input, 'href'));

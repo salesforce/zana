@@ -27,7 +27,7 @@ export interface ProjectMapping {
   localProjectId: string;
   docCount: number;
   sampleTitles: string[];
-  /** False when the local project is no longer registered (the mapping is dead and pruned on the next project fetch). */
+  /** False when the local project is no longer registered (the mapping is ignored until it reappears). */
   localRegistered: boolean;
 }
 
@@ -39,10 +39,17 @@ const REMOVED_SUFFIX = ' (project removed)';
 
 /** SQL fragments over `docs d`; shared with the store's list scoping. */
 export const FOREIGN_REF_EXISTS = `EXISTS (SELECT 1 FROM sync_doc_references r WHERE r.doc_id = d.id AND r.project_json <> 'null')`;
+/**
+ * An alias counts only while its local project is in the last observed project list (or no list was
+ * observed yet). Aliases to absent projects are ignored at read time, never deleted, so a transient
+ * incomplete project list cannot destroy a user's mapping.
+ */
+export const ALIAS_LIVE = `(NOT EXISTS (SELECT 1 FROM dd_project_live)
+  OR EXISTS (SELECT 1 FROM dd_project_live l WHERE l.project_id = a.local_project_id))`;
 export const MAPPED_TO_ANY = `EXISTS (SELECT 1 FROM sync_doc_references r JOIN dd_project_aliases a
-  ON a.foreign_project_id = json_extract(r.project_json, '$') WHERE r.doc_id = d.id)`;
+  ON a.foreign_project_id = json_extract(r.project_json, '$') WHERE r.doc_id = d.id AND ${ALIAS_LIVE})`;
 export const MAPPED_TO_PROJECT = `EXISTS (SELECT 1 FROM sync_doc_references r JOIN dd_project_aliases a
-  ON a.foreign_project_id = json_extract(r.project_json, '$') WHERE r.doc_id = d.id AND a.local_project_id = ?)`;
+  ON a.foreign_project_id = json_extract(r.project_json, '$') WHERE r.doc_id = d.id AND a.local_project_id = ? AND ${ALIAS_LIVE})`;
 
 function cleanId(value: unknown, label: string): string {
   if (typeof value !== 'string' || !value.trim() || value.length > MAX_ID_LENGTH) {
@@ -53,6 +60,7 @@ function cleanId(value: unknown, label: string): string {
 
 export class DesignDocProjectRefs {
   private tables = false;
+  private lastObserved: string | null = null;
   private readonly now: () => number;
 
   constructor(private readonly db: PluginDatabase, options: { now?: () => number; onError?: (error: unknown) => void } = {}) {
@@ -68,7 +76,9 @@ export class DesignDocProjectRefs {
       this.db.runScript(`CREATE TABLE IF NOT EXISTS dd_project_refs (
           project_id TEXT PRIMARY KEY, name TEXT, tag TEXT, last_seen INTEGER);
         CREATE TABLE IF NOT EXISTS dd_project_aliases (
-          foreign_project_id TEXT PRIMARY KEY, local_project_id TEXT NOT NULL, updated_at INTEGER);`);
+          foreign_project_id TEXT PRIMARY KEY, local_project_id TEXT NOT NULL, updated_at INTEGER);
+        CREATE TABLE IF NOT EXISTS dd_project_live (project_id TEXT PRIMARY KEY);`);
+      this.lastObserved = null;
       this.tables = true;
     } catch (error) {
       this.tables = false;
@@ -78,32 +88,38 @@ export class DesignDocProjectRefs {
   }
 
   /**
-   * Called after every successful project-list fetch: keeps stored names current (renames),
-   * drops aliases to projects that are gone, and forgets removed projects no doc refers to.
+   * Called after every successful project-list fetch: keeps stored names current (renames), records
+   * which projects are registered (aliases to absent projects are ignored at read time, never
+   * deleted) and forgets removed projects no doc refers to. Skips the write transaction when the list is unchanged.
    * Never throws.
    */
   observe(projects: ProjectInfo[]): void {
     if (!this.available) return;
+    const signature = JSON.stringify(projects.map((p) => [p.id, p.name || null, p.tag || null]).sort());
     try {
+      if (signature === this.lastObserved) {
+        this.prune(projects.map((project) => project.id)); // read-only unless a name became unreferenced
+        return;
+      }
       const at = this.now();
       this.db.transaction(() => {
         const upsert = this.db.prepare(`INSERT INTO dd_project_refs (project_id, name, tag, last_seen) VALUES (?, ?, ?, ?)
           ON CONFLICT (project_id) DO UPDATE SET name = excluded.name, tag = excluded.tag, last_seen = excluded.last_seen`);
         for (const project of projects) upsert.run(project.id, project.name || null, project.tag || null, at);
+        this.db.prepare('DELETE FROM dd_project_live').run();
+        const live = this.db.prepare('INSERT OR IGNORE INTO dd_project_live (project_id) VALUES (?)');
+        for (const project of projects) live.run(project.id);
         this.prune(projects.map((project) => project.id));
       });
+      this.lastObserved = signature;
     } catch {
       this.tables = false; // re-probed on next use
     }
   }
 
-  /** Deletes alias rows whose local project is no longer registered, and unreferenced removed-project rows. */
+  /** Deletes unreferenced removed-project name rows. Aliases are never deleted here. */
   private prune(registered: string[]): void {
     const live = new Set(registered);
-    const aliases = this.db.prepare('SELECT DISTINCT local_project_id AS id FROM dd_project_aliases').all() as Array<{ id: string }>;
-    for (const { id } of aliases) {
-      if (!live.has(id)) this.db.prepare('DELETE FROM dd_project_aliases WHERE local_project_id = ?').run(id);
-    }
     const refs = this.db.prepare('SELECT project_id AS id FROM dd_project_refs').all() as Array<{ id: string }>;
     for (const { id } of refs) {
       if (live.has(id)) continue;
@@ -161,6 +177,8 @@ export class DesignDocProjectRefs {
       this.db.prepare(`INSERT INTO dd_project_aliases (foreign_project_id, local_project_id, updated_at) VALUES (?, ?, ?)
         ON CONFLICT (foreign_project_id) DO UPDATE SET local_project_id = excluded.local_project_id, updated_at = excluded.updated_at`)
         .run(foreign, local, this.now());
+      // Registered just now (asserted above); keeps the mapping effective before the next observe().
+      this.db.prepare('INSERT OR IGNORE INTO dd_project_live (project_id) SELECT ? WHERE EXISTS (SELECT 1 FROM dd_project_live)').run(local);
     });
     return { foreignProjectId: foreign, localProjectId: local };
   }

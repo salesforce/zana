@@ -175,14 +175,39 @@ describe('mapping and scoping', () => {
     expect(ids({ unassigned: true })).toEqual(['Moved']);
   });
 
-  it('prunes aliases to projects that are no longer registered', async () => {
+  it('ignores aliases to unregistered projects at read time without deleting them, and resumes on reappearance', async () => {
     const { received, ids, refs, db } = setup();
     received('A', 'f1'); received('B', 'f2');
     await refs.mapForeignProject(list, 'f1', 'p1');
     await refs.mapForeignProject(list, 'f2', 'p2');
-    refs.observe([PROJECTS[0]!]);
-    expect(db.prepare('SELECT foreign_project_id AS f FROM dd_project_aliases').all()).toEqual([{ f: 'f1' }]);
+    refs.observe([PROJECTS[0]!]); // incomplete list
+    expect(db.prepare('SELECT foreign_project_id AS f FROM dd_project_aliases ORDER BY 1').all()).toEqual([{ f: 'f1' }, { f: 'f2' }]);
     expect(ids({ unassigned: true })).toEqual(['B']);
+    expect(ids({ projectId: 'p2' })).not.toContain('B');
+    refs.observe(PROJECTS);
+    expect(ids({ unassigned: true })).toEqual([]);
+    expect(ids({ projectId: 'p2' })).toContain('B');
+  });
+
+  it('observe skips the write transaction when the list is unchanged', () => {
+    const { db, refs } = setup();
+    const spy = vi.spyOn(db, 'transaction');
+    refs.observe(PROJECTS);
+    refs.observe([...PROJECTS].reverse());
+    expect(spy).toHaveBeenCalledTimes(1);
+    refs.observe([{ ...PROJECTS[0]!, name: 'Renamed' }, PROJECTS[1]!]);
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('list excludeUnassigned drops only unmapped received docs', async () => {
+    const { store, received, ids, refs } = setup();
+    store.create({ title: 'Own', projectId: 'p1', template: 'blank' }, UI_USER);
+    store.create({ title: 'Global', template: 'blank' }, UI_USER);
+    received('Mapped', 'f1'); received('Unmapped', 'f2');
+    await refs.mapForeignProject(list, 'f1', 'p1');
+    expect(ids({ excludeUnassigned: true })).toEqual(['Global', 'Mapped', 'Own']);
+    expect(ids({ excludeUnassigned: true, unassigned: true })).toEqual(['Unmapped']);
+    expect((store.projectRefs as unknown) === refs).toBe(true);
   });
 
   it('does not change docs rows or the captured sync payload', async () => {

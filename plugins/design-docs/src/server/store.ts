@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { DesignDocProjectRefs, FOREIGN_REF_EXISTS, MAPPED_TO_ANY, MAPPED_TO_PROJECT } from './project-refs.js';
+import { ALIAS_LIVE, DesignDocProjectRefs, FOREIGN_REF_EXISTS, MAPPED_TO_ANY, MAPPED_TO_PROJECT } from './project-refs.js';
 import type { PluginDatabase, PluginKvStorage } from '@zana-ai/zcc-plugin-sdk/server';
 import {
   isDocStatus,
@@ -109,6 +109,8 @@ export interface ListFilter {
   projectId?: string | null;
   /** Only received docs whose foreign project id is not mapped to a local project. Ignores `projectId`. */
   unassigned?: boolean;
+  /** Drop unassigned received docs (the complement of `unassigned`); used by the all-projects view. Ignored when `unassigned` is set. */
+  excludeUnassigned?: boolean;
   query?: string;
   /** Also match `query` inside file contents. Default true; typeahead turns it off. */
   contents?: boolean;
@@ -488,6 +490,9 @@ export class DesignDocStore {
         if (aliases) params.push(filter.projectId);
       }
     }
+    if (filter.excludeUnassigned && !filter.unassigned) {
+      where.push(`NOT (d.project_id IS NULL AND ${FOREIGN_REF_EXISTS}${aliases ? ` AND NOT ${MAPPED_TO_ANY}` : ''})`);
+    }
     const status = filter.status ?? 'all';
     if (status === 'active') where.push(`d.status <> 'archived'`);
     else if (status !== 'all') {
@@ -532,7 +537,7 @@ export class DesignDocStore {
       const chunk = ids.slice(index, index + 500);
       const rows = this.db.prepare(`SELECT r.doc_id AS id, a.local_project_id AS local FROM sync_doc_references r
         JOIN dd_project_aliases a ON a.foreign_project_id = json_extract(r.project_json, '$')
-        WHERE r.doc_id IN (${chunk.map(() => '?').join(',')})`).all(...chunk) as Array<{ id: string; local: string }>;
+        WHERE ${ALIAS_LIVE} AND r.doc_id IN (${chunk.map(() => '?').join(',')})`).all(...chunk) as Array<{ id: string; local: string }>;
       for (const row of rows) out.set(row.id, row.local);
     }
     return out;
@@ -542,6 +547,22 @@ export class DesignDocStore {
   find(ref: unknown): DesignDocSummary | null {
     const row = this.findRow(ref);
     return row ? toSummary(row) : null;
+  }
+
+  /**
+   * Where a doc sits for visibility checks, computed by id (no list scan, no row cap): its own project,
+   * else the local project its foreign id is mapped to. `global` docs have neither a project nor a
+   * foreign reference; `unassigned` received docs have a foreign reference and no live mapping.
+   * Null for an unknown id or a template.
+   */
+  scopeOf(id: string): { projectId: string | null; global: boolean; unassigned: boolean } | null {
+    const row = this.db.prepare(`SELECT project_id FROM docs WHERE ${DOC_ONLY} AND id = ?`).get(id) as { project_id: string | null } | undefined;
+    if (!row) return null;
+    if (row.project_id !== null) return { projectId: row.project_id, global: false, unassigned: false };
+    const ref = this.db.prepare(`SELECT project_json FROM sync_doc_references WHERE doc_id = ?`).get(id) as { project_json: string } | undefined;
+    if (!ref || ref.project_json === 'null') return { projectId: null, global: true, unassigned: false };
+    const local = this.projectRefs.available ? this.aliasedProjects([id]).get(id) : undefined;
+    return local ? { projectId: local, global: false, unassigned: false } : { projectId: null, global: false, unassigned: true };
   }
 
   /** Like `find`, but throws a `not_found` error the agent can act on. */

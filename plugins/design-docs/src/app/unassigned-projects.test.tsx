@@ -121,8 +121,9 @@ describe('Mapped on this machine', () => {
 describe('Workbench unassigned bucket', () => {
   it('lists unassigned docs in their own group, shows removed names, and opens the mapping dialog', async () => {
     const doc = (id: string, title: string, projectId: string | null) => ({ id, title, summary: '', tags: [], status: 'draft', projectId, openComments: 0, pinnedAt: null, alternativeTo: null, lastComment: null, updatedAt: Date.now(), createdAt: Date.now(), updatedBy: { kind: 'user', label: 'me' } });
+    const calls: unknown[] = [];
     const { harness } = setup(async () => ({}), {
-      list: (args) => ((args as { unassigned?: boolean } | null)?.unassigned ? [doc('u1', 'Peer doc', null)] : [doc('d1', 'Gone doc', 'gone')]),
+      list: (args) => (calls.push(args), (args as { unassigned?: boolean } | null)?.unassigned ? [doc('u1', 'Peer doc', null)] : [doc('d1', 'Gone doc', 'gone')]),
       listUnassignedProjects: () => [item],
       removedProjects: () => [{ id: 'gone', label: 'Old (project removed)' }]
     });
@@ -132,5 +133,7 @@ describe('Workbench unassigned bucket', () => {
     expect((await screen.findAllByText('Old (project removed)')).length).toBeGreaterThan(0);
     fireEvent.click(within(group).getByRole('button', { name: /Map to a Project/ }));
     expect(await screen.findByRole('dialog', { name: 'Map peer projects' })).toBeTruthy();
+    // The all-projects list excludes unassigned docs so they are not also shown under Global.
+    expect(calls.some((args) => (args as { excludeUnassigned?: boolean }).excludeUnassigned === true)).toBe(true);
   });
 });

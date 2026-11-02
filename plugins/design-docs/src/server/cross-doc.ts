@@ -1,16 +1,16 @@
 /**
  * Main-side resolution of `doc://` cross-doc links. The renderer's parse is
- * advisory; every call here re-validates the ref and path and decides whether
- * the calling doc may read the target.
+ * advisory; every call here re-validates the ref and path.
  *
- * Visibility rule: the target must appear in the list the caller's own doc is
- * shown in, i.e. a doc in the caller's effective project (including a project
- * a received doc is mapped to) or a genuinely global doc. A global caller sees
- * only global docs. Unassigned received docs (foreign project, unmapped) are
- * visible only to themselves. A doc may always link to itself. Caller scope is
- * derived from the caller doc on the server, never from renderer input.
+ * Visibility rule (UX scoping, NOT an authorization boundary): `caller.docId`
+ * is supplied by the renderer, so a compromised renderer can name any doc as
+ * the caller. The rule only keeps links from crossing project boundaries in
+ * normal use. The target must be in the caller's effective project (including a
+ * project a received doc is mapped to) or genuinely global. A global caller
+ * sees only global docs. Unassigned received docs (foreign project, unmapped)
+ * are reachable only from themselves, and see only themselves. A doc may
+ * always link to itself. Scope is computed by doc id on the server.
  */
-import { MAX_LIST_LIMIT } from '../shared/limits.js';
 import { DesignDocPathError, normalizeDocPath } from '../shared/paths.js';
 import type { DesignDocStore } from './store.js';
 
@@ -28,9 +28,10 @@ export function resolveCrossDocTarget(
   const source = store.find(caller.docId);
   if (!source) return { error: 'forbidden' };
   if (source.id !== target.id) {
-    const scope = store.list({ query: source.slug, contents: false, limit: MAX_LIST_LIMIT }).find((row) => row.id === source.id);
-    const visible = store.list({ projectId: scope?.projectId ?? null, query: target.slug, contents: false, limit: MAX_LIST_LIMIT });
-    if (!visible.some((row) => row.id === target.id)) return { error: 'forbidden' };
+    const from = store.scopeOf(source.id);
+    const to = store.scopeOf(target.id);
+    if (!from || !to || from.unassigned || to.unassigned) return { error: 'forbidden' };
+    if (!to.global && (from.projectId === null || to.projectId !== from.projectId)) return { error: 'forbidden' };
   }
   let wanted = target.entryPath;
   if (path !== null) {

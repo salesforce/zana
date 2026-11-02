@@ -73,6 +73,8 @@ export interface ListArgs {
   status?: DocStatus | 'active' | 'all';
   /** Only received docs whose foreign project id is not mapped to a local project. */
   unassigned?: boolean;
+  /** Drop unassigned received docs; the all-projects view lists them in their own section. */
+  excludeUnassigned?: boolean;
 }
 
 /** An existing peer-to-local Project mapping on this machine. */

@@ -44,6 +44,31 @@ describe('resolveCrossDocTarget', () => {
     expect(resolveCrossDocTarget(store, g2.id, null, { docId: g1.id })).toMatchObject({ docId: g2.id });
     expect(resolveCrossDocTarget(store, g1.id, 'README.md', { docId: g1.id })).toMatchObject({ docId: g1.id });
   });
+  it('does not depend on a capped fuzzy list: >200 docs sharing a slug substring still resolve', () => {
+    const { store, a1 } = setup();
+    for (let i = 0; i < 205; i += 1) store.create({ title: `Shared ${i}`, projectId: 'p1', files: [{ path: 'README.md', content: 'x' }] }, UI_USER);
+    const last = store.create({ title: 'Shared', projectId: 'p1', files: [{ path: 'README.md', content: 'x' }] }, UI_USER);
+    const other = store.create({ title: 'Shared elsewhere', projectId: 'p2', files: [{ path: 'README.md', content: 'x' }] }, UI_USER);
+    expect(resolveCrossDocTarget(store, last.id, null, { docId: a1.id })).toMatchObject({ docId: last.id });
+    expect(resolveCrossDocTarget(store, a1.id, null, { docId: last.id })).toMatchObject({ docId: a1.id });
+    expect(resolveCrossDocTarget(store, other.id, null, { docId: last.id })).toEqual({ error: 'forbidden' });
+  });
+  it('treats unassigned received docs as reachable only from themselves and honours mappings', () => {
+    const { store, a1, g1 } = setup();
+    const received = (title: string, foreign: string) => {
+      const doc = store.create({ title, template: 'blank' }, UI_USER);
+      store.db.prepare('INSERT OR REPLACE INTO sync_doc_references (doc_id, project_json, threads_json) VALUES (?, ?, ?)').run(doc.id, JSON.stringify(foreign), '[]');
+      return doc;
+    };
+    const u = received('Peer', 'f1');
+    expect(resolveCrossDocTarget(store, u.id, null, { docId: u.id })).toMatchObject({ docId: u.id });
+    expect(resolveCrossDocTarget(store, u.id, null, { docId: a1.id })).toEqual({ error: 'forbidden' });
+    expect(resolveCrossDocTarget(store, g1.id, null, { docId: u.id })).toEqual({ error: 'forbidden' });
+    store.db.prepare('INSERT INTO dd_project_aliases (foreign_project_id, local_project_id, updated_at) VALUES (?, ?, ?)').run('f1', 'p1', 1);
+    expect(resolveCrossDocTarget(store, u.id, null, { docId: a1.id })).toMatchObject({ docId: u.id });
+    expect(resolveCrossDocTarget(store, a1.id, null, { docId: u.id })).toMatchObject({ docId: a1.id });
+    expect(resolveCrossDocTarget(store, g1.id, null, { docId: u.id })).toMatchObject({ docId: g1.id });
+  });
   it('forbids an unknown caller doc', () => {
     const { store, a2 } = setup();
     expect(resolveCrossDocTarget(store, a2.id, null, { docId: 'dd_missing' })).toEqual({ error: 'forbidden' });
