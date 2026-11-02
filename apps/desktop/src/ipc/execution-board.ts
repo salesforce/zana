@@ -52,14 +52,14 @@ export function registerExecutionBoardIpc(): void {
 
   const withDesktopExactNativeAvailability = (record: ExecutionRecord, projection: ExecutionBoardProjection): ExecutionBoardProjection => {
     if (projection.recovery?.actions.exactNative.reason !== 'NATIVE_RESTORE_UNAVAILABLE') return projection;
-    const exactNative = exactNativeRecoveryAvailability(record) as { available: boolean; restorableSlots: number };
+    const exactNative = exactNativeRecoveryAvailability(record) as { available: boolean; restorableSlots: number; totalSlots?: number; reason?: 'PARTIAL_RESTORE' };
     return {
       ...projection,
       recovery: {
         ...projection.recovery,
         actions: {
           ...projection.recovery.actions,
-          exactNative: exactNative.available ? exactNative : { ...exactNative, reason: 'NATIVE_RESTORE_UNAVAILABLE' }
+          exactNative: exactNative.available ? exactNative : { ...exactNative, reason: exactNative.reason ?? 'NATIVE_RESTORE_UNAVAILABLE' }
         }
       }
     };

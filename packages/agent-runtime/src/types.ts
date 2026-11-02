@@ -254,6 +254,8 @@ export interface StartThreadArgs {
 
 export interface StartThreadResult {
   providerThreadId: string;
+  /** Set only when the provider explicitly reported per-session restore support at start. */
+  sessionRestorable?: boolean;
 }
 
 export interface PrepareThreadRewindArgs {
@@ -300,10 +302,17 @@ export interface ResumeThreadArgs {
   instructionMode?: InstructionMode;
   /** Absent means interactive. Bridges enforce automated isolation themselves. */
   sessionKind?: AgentSessionKind;
+  /**
+   * Strict resume: the provider must natively reload the session or the call
+   * fails. A provider that cannot confirm a native load fails closed.
+   */
+  requireNativeLoad?: true;
 }
 
 export interface ResumeThreadResult {
   providerThreadId: string;
+  /** Present only for requireNativeLoad resumes. True only when the provider confirmed a native load. */
+  nativeLoaded?: boolean;
 }
 
 export interface RunTurnArgs {

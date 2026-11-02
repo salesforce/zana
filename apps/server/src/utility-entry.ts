@@ -36,7 +36,7 @@ import { sendConversationTurn } from './services/threads/conversation-lifecycle.
 import { ThreadCreateError } from './http/thread-create.js';
 import { isThreadLiveInProject } from './services/agents/thread-liveness.js';
 import { getConversationThread } from '@zana-ai/zcc-db';
-import { activateSquadMemberConversation, completeSquadMemberDelivery, createSquadMemberConversation, deliverSquadMemberConversation, isSquadMemberThread, preflightSquadRuntime, resolveSquadMember, squadMemberStatus, stopSquadMemberConversation } from './services/threads/squad-member-runtime.js';
+import { activateSquadMemberConversation, completeSquadMemberDelivery, createSquadMemberConversation, deliverSquadMemberConversation, isSquadMemberThread, preflightSquadRuntime, resolveSquadMember, resumeSquadMemberConversation, squadMemberStatus, stopSquadMemberConversation } from './services/threads/squad-member-runtime.js';
 import type { ZccDatabase } from '@zana-ai/zcc-db';
 import type { PluginService } from './plugins/plugin-service.js';
 import { decideMainOwnedToolPolicy } from './plugins/native-tool-policy.js';
@@ -341,6 +341,11 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
     if (message.operation === 'squad-member-status') {
       if (!productContext) throw new Error('squad member runtime is unavailable');
       const value = squadMemberStatus(productContext, message.request);
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value });
+    }
+    if (message.operation === 'squad-member-resume') {
+      if (!productContext) throw new Error('squad member runtime is unavailable');
+      const value = await resumeSquadMemberConversation(productContext, message.request);
       parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, value });
     }
     if (message.operation === 'squad-member-stop') {

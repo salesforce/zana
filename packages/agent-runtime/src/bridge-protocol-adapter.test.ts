@@ -563,6 +563,27 @@ describe("buildCommandPlan lifecycle commands", () => {
     );
   });
 
+  it("forwards requireNativeLoad on resume only when set", () => {
+    const adapter = makeAdapter();
+    const command = {
+      type: "thread/resume" as const,
+      threadId: "thr_1",
+      cwd: "/w",
+      providerThreadId: "p_1",
+      options: fullModeOptions,
+      instructionMode: "append" as const,
+    };
+    const strict = adapter.buildCommandPlan({ ...command, requireNativeLoad: true });
+    expect(strict).toMatchObject({
+      kind: "request",
+      params: { requireNativeLoad: true },
+    });
+    const plain = adapter.buildCommandPlan(command);
+    expect(plain.kind === "request" ? plain.params : {}).not.toHaveProperty(
+      "requireNativeLoad",
+    );
+  });
+
   it("forwards dynamic and disallowed tools on resume when provided", () => {
     const adapter = makeAdapter();
     const plan = adapter.buildCommandPlan({

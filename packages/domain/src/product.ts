@@ -4556,6 +4556,14 @@ export interface TeamLaunchAuthorizationInputSlot {
     personaId?: string;
     profileId?: string;
     nativeConversationId: string;
+    /** Absent means CLI. MODERN identity fields are optional and additive. */
+    transport?: 'CLI' | 'MODERN';
+    threadId?: string;
+    generation?: number;
+    providerThreadId?: string;
+    providerId?: string;
+    environmentPath?: string;
+    hostId?: string;
   };
 }
 
@@ -4615,7 +4623,8 @@ export interface TeamLaunchRequestInput {
   /** Trusted execution-service recovery input. Never accepted from renderer input. */
   retainedRecovery?: {
     mode: 'exact-native';
-    slots: Array<{ slotId: string; role: 'worker' | 'orchestrator'; personaId?: string; profileId?: string; nativeConversationId: string }>;
+    slots: Array<{ slotId: string; role: 'worker' | 'orchestrator'; personaId?: string; profileId?: string; nativeConversationId: string;
+      transport?: 'CLI' | 'MODERN'; threadId?: string; generation?: number; providerThreadId?: string; providerId?: string; environmentPath?: string; hostId?: string }>;
   };
 }
 
@@ -6531,7 +6540,9 @@ export interface ExecutionBoardProjection {
       exactNative: {
         available: boolean;
         restorableSlots: number;
-        reason?: 'RECOVERY_NOT_ALLOWED' | 'NO_RESTORABLE_SLOTS' | 'NATIVE_RESTORE_UNAVAILABLE';
+        /** Present with PARTIAL_RESTORE: only some slots can be restored, so Resume is blocked. */
+        totalSlots?: number;
+        reason?: 'RECOVERY_NOT_ALLOWED' | 'NO_RESTORABLE_SLOTS' | 'NATIVE_RESTORE_UNAVAILABLE' | 'PARTIAL_RESTORE';
       };
     };
   };

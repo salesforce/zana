@@ -337,6 +337,9 @@ export function createBridgeProtocolAdapter(
               ...(command.sessionKind !== undefined
                 ? { sessionKind: command.sessionKind }
                 : {}),
+              ...(command.requireNativeLoad === true
+                ? { requireNativeLoad: true as const }
+                : {}),
             },
           };
         case "thread/fork": {

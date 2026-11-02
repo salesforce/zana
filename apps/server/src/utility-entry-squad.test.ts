@@ -14,7 +14,8 @@ const h = vi.hoisted(() => ({
   squad: {
     preflightSquadRuntime: vi.fn(), createSquadMemberConversation: vi.fn(), activateSquadMemberConversation: vi.fn(),
     deliverSquadMemberConversation: vi.fn(), completeSquadMemberDelivery: vi.fn(), squadMemberStatus: vi.fn(),
-    stopSquadMemberConversation: vi.fn(), resolveSquadMember: vi.fn(), isSquadMemberThread: vi.fn()
+    stopSquadMemberConversation: vi.fn(), resolveSquadMember: vi.fn(), isSquadMemberThread: vi.fn(),
+    resumeSquadMemberConversation: vi.fn()
   }
 }));
 vi.mock('./services/threads/local-thread-work.js', () => ({ hasLocalThreadWork: h.localWork }));
@@ -52,6 +53,7 @@ const member = {
 };
 const delivery = { ...control, assignmentId: 'a1', idempotencyKey: 'k1', message: 'go' };
 const completion = { ...control, assignmentId: 'a1', idempotencyKey: 'k1' };
+const resume = { projectId, bindingId: control.bindingId, expectedGeneration: 1, newGeneration: 2, expectedProviderThreadId: 'provider-thread' };
 const preflight = { projectId, providerIds: ['claude-code'] };
 
 describe('squad member runtime operations over the runtime channel', () => {
@@ -80,7 +82,8 @@ describe('squad member runtime operations over the runtime channel', () => {
     ['squad-member-activate', member, 'activateSquadMemberConversation'],
     ['squad-member-deliver', delivery, 'deliverSquadMemberConversation'],
     ['squad-member-delivery-complete', completion, 'completeSquadMemberDelivery'],
-    ['squad-member-status', control, 'squadMemberStatus']
+    ['squad-member-status', control, 'squadMemberStatus'],
+    ['squad-member-resume', resume, 'resumeSquadMemberConversation']
   ];
 
   beforeAll(async () => {
@@ -130,6 +133,8 @@ describe('squad member runtime operations over the runtime channel', () => {
   it('replies with an error when a squad operation throws', async () => {
     h.squad.createSquadMemberConversation.mockRejectedValueOnce(new Error('provider unavailable'));
     await expect(send('squad-member-create', member)).resolves.toMatchObject({ type: 'error', message: 'provider unavailable' });
+    h.squad.resumeSquadMemberConversation.mockRejectedValueOnce(new Error('resume refused'));
+    await expect(send('squad-member-resume', resume)).resolves.toMatchObject({ type: 'error', message: 'resume refused' });
     h.squad.stopSquadMemberConversation.mockRejectedValueOnce(new Error('stop failed'));
     await expect(send('squad-member-stop', control)).resolves.toMatchObject({ type: 'error', message: 'stop failed' });
   });

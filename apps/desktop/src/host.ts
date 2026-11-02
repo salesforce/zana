@@ -47,7 +47,7 @@ import {
 } from 'electron';
 import { join, isAbsolute, resolve, sep, basename, relative, dirname } from 'node:path';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { existsSync, realpathSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, realpathSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isTrustedRendererUrl, productServerUrl, rendererUrl, setProductionRendererOrigin } from './window/renderer-url.js';
 import { refreshRemoteStartPathHosts, stampedProjectRemote } from './remote-workspace.js';
@@ -61,10 +61,11 @@ import {
   sweepUnretainedSquadWorktrees, teamAdmissionRequirements, teamJobFailureResponse, withProposalLaunch, findProposalExecution, type ProposalLaunchDeps,
   withRenewedSources, scopedSourceRenewal, splitProposedGoalSources
 } from './team-launch-support.js';
+import { modernRecoverySnapshot } from './team-native-recovery.js';
 import { openExecutionStorage } from './execution-storage.js';
 import { createPlanCorrectionHandoff, createPlanCorrectionHost } from './plan-correction/host.js';
 import {
-  cleanupOrchestratorOnExit, createFollowUpClaims, createNativeRecoveryCapture, teardownTerminalExecutionOnExit
+  cleanupOrchestratorOnExit, createFollowUpClaims, createModernNativeRecoveryCapture, createNativeRecoveryCapture, teardownTerminalExecutionOnExit
 } from './squad-session-lifecycle.js';
 import { createSquadWorktreeRuntime, trustedSquadWorktreeRoot, isWithinSquadWorktreeBase, SQUAD_WORKTREE_ACTION } from './squad-worktree-runtime.js';
 import { createTriggeredSquadLauncher, goalSquadTrigger, scheduledSquadTrigger } from './triggered-squad.js';
@@ -1230,8 +1231,13 @@ const teamLifecycleIntegration = createTeamLifecycleIntegration({
   closeSession: (sessionId) => terminateSession(sessionId),
   isLiveModernThread: (threadId, projectId, generation) =>
     squadRuntime().isSquadMemberLive(threadId, projectId, generation),
-  closeModernThread: (threadId, projectId, generation) =>
-    squadRuntime().stopSquadMember(threadId, projectId, generation),
+  closeModernThread: async (threadId, projectId, generation) => {
+    // Capture while the member is live (before the stop can retire it or the execution turns terminal), then once more after the confirmed stop.
+    await captureModernNativeRecoveryByThread(threadId, projectId, generation);
+    const closed = await squadRuntime().stopSquadMember(threadId, projectId, generation);
+    if (closed) await captureModernNativeRecoveryByThread(threadId, projectId, generation);
+    return closed;
+  },
   releaseCapacity: (authorizationId) => launchAuthorization.complete(authorizationId),
   restoreCapacity: (capacity, activeAuthorizationIds) => {
     launchPrincipals.set(capacity.principal.id, capacity.principal);
@@ -3202,6 +3208,25 @@ const modernStatusFailureLogged = new Set<string>();
 let modernReconcilePending: Promise<void> | undefined;
 let modernReconcileCursor = 0;
 
+const captureModernNativeRecovery = createModernNativeRecoveryCapture({ executionStore, logError: logMainError });
+function modernNativeRecoveryMember(worker: TeamLifecycleRecord['workers'][number]) {
+  const context = worker.modernContext;
+  if (worker.transport !== 'MODERN' || !worker.threadId || !worker.generation || !context?.executionId) return undefined;
+  return { projectId: worker.projectId, executionId: context.executionId, slotId: worker.slotId, role: context.role,
+    personaId: worker.personaId, profileId: context.personaSnapshot.profile, threadId: worker.threadId,
+    generation: worker.generation, providerId: context.providerId, hostId: context.hostId, environmentPath: context.worktreePath };
+}
+async function captureModernNativeRecoveryByThread(threadId: string, projectId: string, generation: number): Promise<void> {
+  try {
+    const worker = (await teamLifecycle.list()).flatMap(record => record.workers)
+      .find(candidate => candidate.threadId === threadId && candidate.generation === generation);
+    const member = worker && modernNativeRecoveryMember(worker);
+    if (!member) return;
+    const status = await squadRuntime().getSquadMemberStatus({ bindingId: threadId, generation, projectId });
+    await captureModernNativeRecovery(member, status);
+  } catch (error) { logMainError(`modern native recovery capture ${threadId}`, error); }
+}
+
 /** Only exact runtime binding evidence releases capacity. Missing runtime stays uncertain. */
 async function reconcileModernMembers(records?: readonly TeamLifecycleRecord[]): Promise<void> {
   if (!records && modernReconcilePending) return modernReconcilePending;
@@ -3215,11 +3240,15 @@ async function reconcileModernMembers(records?: readonly TeamLifecycleRecord[]):
       const observations: TeamModernWorkerObservation[] = [];
       for (const { record, worker } of page.slice(offset, offset + 100)) {
         const reference = { recordId: record.id, slotId: worker.slotId, generation: worker.generation!, threadId: worker.threadId! };
+        // The resuming launch owns this binding: the runtime is still on the old generation and stopped.
+        if (worker.bindingState === 'RESUMING') continue;
         try {
           const status = await squadRuntime().getSquadMemberStatus({ bindingId: reference.threadId,
             generation: reference.generation, projectId: worker.projectId });
           const previous = modernMemberStatus.get(reference.threadId);
           modernMemberStatus.set(reference.threadId, status);
+          const recoveryMember = modernNativeRecoveryMember(worker);
+          if (recoveryMember) await captureModernNativeRecovery(recoveryMember, status);
           modernStatusFailureLogged.delete(reference.threadId);
            // Prepared threads are not proof that main authorized a first turn.
            if (status.status === 'stopped' || status.live || worker.bindingState !== 'CREATING') {
@@ -5016,18 +5045,28 @@ function orchestratorPrompt(
   return [base, goalBriefing, briefing].filter(Boolean).join('\n\n');
 }
 
+// The standby line defers the snapshot until the prompt settles; a resumed worker
+// snapshots immediately, so it gets the immediate variant instead of a conflicting pair.
+const WORKER_SNAPSHOT_AFTER_STANDBY = 'After your standby prompt settles, call `execution.snapshot` once for this execution.';
+const WORKER_SNAPSHOT_NOW = 'Call `execution.snapshot` once for this execution now (see Recovery resume below).';
+
 export function jobWorkerPrompt(input: {
   executionId?: string;
   slotId: string;
   label: string;
   personaName: string;
+  recoveryResume?: boolean;
 }): string {
-  return [
+  const lines = [
     `Team worker standby. You are ${input.label} (${input.personaName}), slot \`${input.slotId}\`${input.executionId ? ` in execution \`${input.executionId}\`` : ''}.`,
     'Your working directory is the trusted project workspace. Wait for an assignment for this slot; each assignment carries a fully-specified work unit — its task is the complete instruction. When it arrives, EXECUTE it: do the task using the file scope, the upstream results included in the assignment, and your own reading of the project workspace. Do the work yourself; do not wait for extra "source context" to be pushed to you and do not ask the coordinator to re-explain a task you can carry out. Do not, however, start the overall job or units not assigned to this slot.',
-    'Do not poll `agent_inbox`. After your standby prompt settles, call `execution.snapshot` once for this execution. If it shows a work unit CLAIMED for your slot, execute that unit using its task and claim fence even when no pasted assignment is visible; this recovers a launch-time terminal-input race. Execute only bounded work assigned to this slot. Close every unit through exactly one structured outcome: `execution.work.complete`, `execution.work.fail`, `execution.work.block`, or `execution.work.release`. Call the ZCC execution MCP tool exposed in your own tool list, not a separate Python bridge or a colon-form tool name. On OpenCode, `execution.work.complete` is exposed as `zcc-inbox_execution_work_complete`. Do not use `agent_send` for routine progress or results.',
+    'Do not poll `agent_inbox`. ' + (input.recoveryResume ? WORKER_SNAPSHOT_NOW : WORKER_SNAPSHOT_AFTER_STANDBY) + ' If it shows a work unit CLAIMED for your slot, execute that unit using its task and claim fence even when no pasted assignment is visible; this recovers a launch-time terminal-input race. Execute only bounded work assigned to this slot. Close every unit through exactly one structured outcome: `execution.work.complete`, `execution.work.fail`, `execution.work.block`, or `execution.work.release`. Call the ZCC execution MCP tool exposed in your own tool list, not a separate Python bridge or a colon-form tool name. On OpenCode, `execution.work.complete` is exposed as `zcc-inbox_execution_work_complete`. Do not use `agent_send` for routine progress or results.',
     'Use `execution.work.block` ONLY when you genuinely cannot proceed, and pick the audience: `audience: "coordinator"` when you need ONE specific, decidable plan/spec choice from the coordinator (e.g. which of two interfaces to target, an ambiguous path) — phrase it as a single concrete question the coordinator can answer, and the worker resumes automatically once answered; `audience: "human"` (the default) only when a real human decision or credential is required. Do not block just because a task looks large or under-detailed — attempt it. Do not use AskUserQuestion. While blocked, do not poll `execution.delivery.pull`. Responses inject when idle. Call `execution.delivery.pull` only after an injected notification. Delivery is at-least-once and may repeat after a crash: use the stable deliveryId as an idempotency key, apply side effects idempotently or transactionally where possible, and persist a completed-application marker only after successful application (or atomically with it). If that completed marker already exists, do not apply the payload again. A crash before that marker may replay delivery, so do not claim exactly-once processing. Then call `execution.delivery.ack` with the deliveryId and leaseId: set `delivered: true` once you have applied the response in this session, and set `delivered: false` with an error ONLY when applying the payload genuinely failed. Pulling then acking IS the entire way to consume a response — never call `execution.resume` or `execution.respond` to accept your own delivered answer. Those are owner-only control tools; a worker or coordinator calling them fails with "execution not found for caller", and that authorization denial is NOT an application failure — do not report it as a delivery `error` or you will loop the response forever.'
-  ].join('\n\n');
+  ];
+  if (input.recoveryResume) {
+    lines.push(`Recovery resume: this worker reopened its own native session for slot \`${input.slotId}\`${input.executionId ? ` in execution \`${input.executionId}\`` : ''}. Your earlier conversation is prior context, not current authority. Call execution.snapshot once now. Continue only a unit currently CLAIMED for this slot, using its current claim fence; prior claim ids are invalid. Do not redo work the snapshot shows COMPLETED, and do not resume units not claimed for this slot.`);
+  }
+  return lines.join('\n\n');
 }
 
 /**
@@ -5152,7 +5191,16 @@ const desktopNativeRecovery = createDesktopNativeRecovery({
   teams,
   personas,
   expandTeamSlots,
-  resolveTeamProfile: resolvedTeamProfile
+  resolveTeamProfile: resolvedTeamProfile,
+  modernSlotExpectation: (record, project, profile) => {
+    // Main-side existence check: a Modern resume needs the retained checkout on disk.
+    try {
+      const environmentPath = realpathSync(record.squadWorktree?.path ?? project.path);
+      if (!statSync(environmentPath).isDirectory()) return undefined;
+      return { providerId: canonicalThreadProviderId(harnessFamilyOf(profile) ?? profile),
+        ...(project.hostId ? { hostId: project.hostId } : {}), environmentPath };
+    } catch { return undefined; }
+  }
 });
 
 /** Resolve Team slot route facts in main before durable execution is claimed. */
@@ -5201,6 +5249,17 @@ async function resolveTeamModelSnapshots(
       ...(roleOwnedModel ? { roleOwnedModel: true } : {})
     };
   }));
+}
+
+/** Identity-only Modern fence for authorization binding; provider/host/worktree are re-fenced at launch. */
+function modernSnapshotIdentityOk(
+  team: Team, snapshot: NonNullable<ExecutionRecord['nativeRecoverySnapshots']>[number] | undefined,
+  slotId: string, role: 'worker' | 'orchestrator', personaId: string, profile: LaunchProfileId
+): boolean {
+  return team.transport === 'MODERN' && snapshot?.transport === 'MODERN' && modernRecoverySnapshot({
+    snapshots: [snapshot], slotId, role, personaId, profile, teamTransport: 'MODERN',
+    expected: { providerId: snapshot.providerId ?? '', environmentPath: snapshot.environmentPath ?? '' }
+  }) !== undefined;
 }
 
 export function authorizeTeamLaunch(
@@ -5322,7 +5381,9 @@ export function authorizeTeamLaunch(
       authorizationId: decision.authorization.id,
       // Only a snapshot that passed the current slot's identity fence reaches
       // the launch payload. launchTeam consumes this main-issued slot data.
-      ...(projection.recoveryResume && requestedRecovery ? { nativeRecovery: requestedRecovery } : {})
+      ...((projection.recoveryResume || modernSnapshotIdentityOk(team, requestedRecovery, expected.slotId,
+        expected.slotId.startsWith('orchestrator:') ? 'orchestrator' : 'worker', expected.personaId, profileFor(persona)))
+        && requestedRecovery ? { nativeRecovery: requestedRecovery } : {})
     });
   }
   return {
@@ -5650,11 +5711,15 @@ export async function launchTeam(
     const persona = personaSnapshot.find((candidate) => candidate.id === personaId);
     return persona ? resolvedTeamProfile(project, personaSnapshot, persona) : 'claude';
   };
-  const recoveryFor = (slotId: string, role: 'worker' | 'orchestrator', personaId: string) =>
-    slotRecoveryLaunch({
+  /** Modern slots whose snapshot passed the full identity/provider/host/worktree fence (filled before any launch). */
+  const modernResumeSnapshots = new Map<string, NonNullable<ExecutionRecord['nativeRecoverySnapshots']>[number]>();
+  const recoveryFor = (slotId: string, role: 'worker' | 'orchestrator', personaId: string) => {
+    const cli = slotRecoveryLaunch({
       nativeRecovery: structured?.slots.find((slot) => slot.slotId === slotId)?.nativeRecovery,
       slotId, role, personaId, profile: profileFor(personaId)
     });
+    return modernResumeSnapshots.has(slotId) ? { ...cli, recoveryResume: true } : cli;
+  };
   const taskBindingFailure = (personaId: string): string | undefined => {
     if (!structured) return undefined;
     // ACP member creation supplies the first turn through the trusted runtime.
@@ -5783,7 +5848,6 @@ export async function launchTeam(
   if (team.transport === 'MODERN') {
     try {
       if (project.remote) throw new Error('Modern squad runtime requires a local project');
-      if (structured?.slots.some(slot => slot.nativeRecovery)) throw new Error('Modern squads cannot adopt CLI native recovery');
       const projectSettings = await getAuthoritativeProjectSettings(targetProjectId);
       for (const slot of expectedSlots) {
         const persona = personaSnapshot.find(candidate => candidate.id === slot.personaId);
@@ -5813,6 +5877,24 @@ export async function launchTeam(
         selections: [...modernSlots.values()].map(({ providerId, model, permissionMode }) => ({ providerId, model, permissionMode })) });
       if (!preflight.ready || preflight.providers.some(provider => !provider.available)) throw new Error(preflight.reason ?? 'Modern squad runtime is unavailable');
       modernHostId = preflight.hostId;
+      // Modern exact-native recovery: every slot must carry a snapshot passing the full fence
+      // (slot identity + provider + host + retained worktree). Anything else fails closed;
+      // a snapshot is never remapped and a CLI snapshot never resumes a Modern member.
+      if (structured?.slots.some(slot => slot.nativeRecovery)) {
+        const expectedEnvironment = realpathSync(squadWorktree?.path ?? project.path);
+        if (!statSync(expectedEnvironment).isDirectory()) throw new Error('Modern squad retained worktree is missing');
+        for (const slot of expectedSlots) {
+          const requested = structured.slots.find(candidate => candidate.slotId === slot.slotId)?.nativeRecovery;
+          const selected = modernSlots.get(slot.slotId);
+          const snapshot = requested && selected ? modernRecoverySnapshot({
+            snapshots: [{ slotId: slot.slotId, ...requested }], slotId: slot.slotId, role: slot.role, personaId: slot.personaId,
+            profile: profileFor(slot.personaId), teamTransport: 'MODERN',
+            expected: { providerId: selected.providerId, hostId: modernHostId, environmentPath: expectedEnvironment }
+          }) : undefined;
+          if (!snapshot) throw new Error(`Modern squad slot ${slot.slotId} has no restorable native session`);
+          modernResumeSnapshots.set(slot.slotId, snapshot as never);
+        }
+      }
     } catch (error) {
       revokeRequestAuthorizations();
       return { ok: false, code: 'UNSUPPORTED', message: error instanceof Error ? error.message : String(error) };
@@ -5921,6 +6003,66 @@ export async function launchTeam(
               permissionMode: selected.permissionMode, systemPrompt: selected.systemPrompt } }
         });
         teamLifecycleIntegration.track(record);
+        const resumeSnapshot = modernResumeSnapshots.get(slotId);
+        if (resumeSnapshot) {
+          // Parity with CLI resume: same binding and provider session, generation+1, never create/activate.
+          if (effective.cwd !== resumeSnapshot.environmentPath) throw new Error('Modern squad worktree differs from the snapshot');
+          reservation = await teamLifecycle.reserveModernWorker(record.id, slotId,
+            { threadId: resumeSnapshot.threadId!, snapshotGeneration: resumeSnapshot.generation! });
+          if (!reservation?.mayResume) return { ok: false, code: 'CANCEL_PENDING', message: 'Modern squad reservation cannot resume' };
+          const resumed = reservation;
+          const failResume = async (message: string, code: 'UNSUPPORTED' | 'CANCEL_PENDING' | 'UNCERTAIN' = 'UNSUPPORTED'): Promise<Result<{ id: string }>> => {
+            let stopConfirmed = false;
+            for (const generation of [resumed.generation, resumeSnapshot.generation!]) {
+              try { if (await squadRuntime().stopSquadMember(resumed.threadId, targetProjectId, generation)) { stopConfirmed = true; break; } }
+              catch (stopError) { logMainError(`squad resume stop failed (thread ${resumed.threadId}, generation ${generation})`, stopError); }
+            }
+            if (!stopConfirmed) {
+              // Unconfirmed stop: the member may still be running. Hold capacity and binding reuse (UNCERTAIN)
+              // so the existing reconcile/stop retry can finish it; never terminalize without runtime evidence.
+              logMainError(`squad resume stop unconfirmed (thread ${resumed.threadId}, generation ${resumed.generation})`, message);
+              await teamLifecycle.markModernWorkerUncertain(record.id, slotId, resumed.generation, resumed.threadId);
+              return { ok: false, code: 'UNCERTAIN', message: `${message} (stop unconfirmed; worker held UNCERTAIN)` };
+            }
+            await teamLifecycleIntegration.reconcileModernWorkers([{ recordId: record.id, slotId, generation: resumed.generation,
+              threadId: resumed.threadId, state: 'terminal' }]);
+            return { ok: false, code, message };
+          };
+          try {
+            await squadRuntime().resumeSquadMember({ bindingId: resumed.threadId, projectId: targetProjectId,
+              expectedGeneration: resumeSnapshot.generation!, newGeneration: resumed.generation,
+              expectedProviderThreadId: resumeSnapshot.providerThreadId! });
+          } catch (error) {
+            return failResume(`Modern squad resume failed closed: ${error instanceof Error ? error.message : String(error)}`);
+          }
+          if (!await teamLifecycle.acknowledgeModernWorker(record.id, slotId, resumed.generation, resumed.threadId)) {
+            return failResume('Modern squad launch canceled during resume', 'CANCEL_PENDING');
+          }
+          // Refresh the recovery snapshot to the new generation now: otherwise a stop or crash before the
+          // next reconcile leaves a generation-N snapshot and every later exact-native recovery fails STALE_BINDING.
+          await captureModernNativeRecoveryByThread(resumed.threadId, targetProjectId, resumed.generation);
+          const rebound = await teamLifecycle.get(record.id);
+          if (rebound) teamLifecycleIntegration.track(rebound);
+          const reboundWorker = rebound?.workers.find(worker => worker.slotId === slotId);
+          if (rebound?.state !== 'active' || reboundWorker?.bindingState !== 'BOUND' || reboundWorker.generation !== resumed.generation
+            || reboundWorker.threadId !== resumed.threadId || reboundWorker.capacityReleased) {
+            return failResume('Modern squad launch canceled before the resume prompt', 'CANCEL_PENDING');
+          }
+          launchAuthorizationBySession.set(resumed.threadId, authorization.id);
+          // Activation already happened in the original run (squadActivationStarted/Accepted stay true);
+          // only the resume prompt is delivered, under the NEW generation and a fresh idempotency key.
+          const assignmentId = `squad-resume:${resumed.threadId}:${resumed.generation}`;
+          let delivery: Awaited<ReturnType<ReturnType<typeof squadRuntime>['deliverSquadMember']>>;
+          try {
+            delivery = await squadRuntime().deliverSquadMember({ bindingId: resumed.threadId, generation: resumed.generation,
+              projectId: targetProjectId, assignmentId, idempotencyKey: assignmentId,
+              message: request.prompt ?? 'Await squad instructions.' });
+          } catch (error) {
+            return failResume(`Modern squad resume prompt delivery failed: ${error instanceof Error ? error.message : String(error)}`);
+          }
+          if (delivery.state === 'rejected') return failResume(`Modern squad resume prompt rejected: ${delivery.reason ?? 'rejected'}`);
+          return { ok: true, value: { id: resumed.threadId } };
+        }
         reservation = await teamLifecycle.reserveModernWorker(record.id, slotId);
         if (!reservation?.mayCreate) return { ok: false, code: 'CANCEL_PENDING', message: 'Modern squad reservation cannot create' };
         const runtimeRequest = { bindingId: reservation.threadId, generation: reservation.generation,
@@ -6036,10 +6178,10 @@ export async function launchTeam(
        // provide an OSC title or registration hook. Every worker gets a stable
        // host-owned label before the harness starts.
        const label = slotLabel || personaName(personaId) || slotId;
-       const workerTask = durableCoordination
-         ? jobWorkerPrompt({ executionId: structured?.executionId, slotId, label, personaName: personaName(personaId) })
-          : taskFor(slotId);
        const recovery = recoveryFor(slotId, 'worker', personaId);
+       const workerTask = durableCoordination
+         ? jobWorkerPrompt({ executionId: structured?.executionId, slotId, label, personaName: personaName(personaId), ...(recovery.recoveryResume ? { recoveryResume: true } : {}) })
+          : taskFor(slotId);
        const res = await launchSlot(expectedSlot,
           {
             projectId: targetProjectId,
@@ -6572,6 +6714,7 @@ const squadExecutionService = new SquadExecutionService({
     return team ? preflightWorkflowProfile(workflow, team, personas.list()) : { ok: false, code: 'INVALID_WORKFLOW_PROFILE', message: 'workflow profile Team is unavailable' };
   }
   , resolveExactNativeRecoverySnapshots: desktopNativeRecovery.compatibleSnapshots
+  , resolveExactNativeRecoveryTotalSlots: desktopNativeRecovery.totalSlots
   , resolveTeamModelSnapshots
   // E2E-ONLY transient dispatch fault: forces the FIRST assignment batch per
   // execution to release undelivered, reproducing the 0-CLAIMED wedge so the
