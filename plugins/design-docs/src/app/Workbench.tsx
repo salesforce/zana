@@ -25,7 +25,7 @@ import {
   X
 } from 'lucide-react';
 import { STATUS_LABELS, DOC_STATUSES, type DesignDocSummary, type DocStatus } from '../shared/contract.js';
-import { MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
+import { MAX_AGENT_PROMPT_LENGTH, TEMPLATE_COMMENTS_RULE } from '../shared/agent-actions.js';
 import { MAX_SUMMARY_LENGTH, MAX_TITLE_LENGTH } from '../shared/limits.js';
 import { draftDocAgent, showDocAgent } from './Agents.js';
 import { defaultAgentProject, errorMessage, toast, useApi, type ProjectInfo, type TemplateInfo } from './api.js';
@@ -79,6 +79,7 @@ export function projectOptions(docs: DesignDocSummary[], projects: ProjectInfo[]
 export function draftingPrompt(brief: string): string {
   return [
     'Draft this design doc from the brief below. Fill in every section of its template with concrete, specific content grounded in this project, add diagrams where they help, and mark open questions and assumptions explicitly. Keep it concise.',
+    TEMPLATE_COMMENTS_RULE,
     'Brief:',
     brief.trim()
   ].join('\n\n');
