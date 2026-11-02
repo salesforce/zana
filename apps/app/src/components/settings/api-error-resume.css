@@ -50,7 +50,7 @@
 .api-error-resume-row .settings-btn { height: 32px; }
 .api-error-resume-row .api-error-resume-match { flex: 1 1 240px; }
 .api-error-resume-row .api-error-resume-match input {
-  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  font-family: var(--font-mono, monospace);
   font-size: 12px;
 }
 .api-error-resume-row .api-error-resume-regex {
