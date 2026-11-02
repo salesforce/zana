@@ -24,24 +24,30 @@ describe('mermaidFigureHtml', () => {
   });
 });
 
-describe('renderDoc mermaid fences', () => {
-  it('renders published getting-started and cli diagrams as mermaid figures', async () => {
+describe('renderDoc published guides', () => {
+  it('keeps Getting Started focused on setup and links to the How To videos', async () => {
     const gettingStarted = DOCS.find((d) => d.slug === 'getting-started');
-    const cli = DOCS.find((d) => d.slug === 'cli');
     expect(gettingStarted).toBeTruthy();
-    expect(cli).toBeTruthy();
 
     const started = await renderDoc(gettingStarted!);
-    expect(started.html).toContain('class="doc-mermaid"');
+    expect(started.html).not.toContain('class="doc-mermaid"');
+    expect(started.html).toContain('Install Zana');
+    expect(started.html).toContain('Add a project');
     expect(started.html).toContain('Start a thread');
-    const diagramAt = started.html.indexOf('flowchart LR');
-    expect(diagramAt).toBeGreaterThan(started.html.indexOf('class="doc-mermaid"'));
-    expect(started.html.lastIndexOf('code-wrap', diagramAt)).toBeLessThan(started.html.indexOf('class="doc-mermaid"'));
+    expect(started.html).toContain('https://zana-ide.com/docs/getting-started/#how-to-heading');
+  });
 
+  it('renders the published CLI diagram as a mermaid figure alongside code examples', async () => {
+    const cli = DOCS.find((d) => d.slug === 'cli');
+    expect(cli).toBeTruthy();
     const cliDoc = await renderDoc(cli!);
     expect(cliDoc.html).toContain('class="doc-mermaid"');
     expect(cliDoc.html).toContain('control.sock');
     expect(cliDoc.html).toContain('class="code-wrap"');
+    const diagramAt = cliDoc.html.indexOf('flowchart TD');
+    const figureAt = cliDoc.html.indexOf('class="doc-mermaid"');
+    expect(diagramAt).toBeGreaterThan(figureAt);
+    expect(cliDoc.html.lastIndexOf('code-wrap', diagramAt)).toBeLessThan(figureAt);
   });
 
   it('renders ```text CLI dumps as readable plaintext, not shiki comment-gray', async () => {
