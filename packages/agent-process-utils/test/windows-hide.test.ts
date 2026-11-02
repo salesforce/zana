@@ -32,3 +32,14 @@ it("hides the console window for every portable spawn entry point", async () => 
   expect(crossSpawnCalls).toHaveLength(4);
   for (const call of crossSpawnCalls) expect(call.options.windowsHide).toBe(true);
 });
+
+// DETACHED_PROCESS leaves the child with no console, so the cmd.exe wrapping a
+// `.cmd` shim starts its console program in a new visible window on Windows.
+it("detaches only where process groups exist", async () => {
+  const script = ["-e", "process.stdout.write('ok')"];
+  const detached = spawnPortableProcess({ command: process.execPath, args: script, stdio: "ignore", detached: true });
+  const attached = spawnPortableProcess({ command: process.execPath, args: script, stdio: "ignore" });
+  await Promise.all([once(detached, "exit"), once(attached, "exit")]);
+
+  expect(crossSpawnCalls.map((call) => call.options.detached)).toEqual([process.platform !== "win32", undefined]);
+});

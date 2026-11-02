@@ -187,7 +187,10 @@ async function runGit(args: string[], options: MarketplaceMaterializeOptions = {
     const child = spawn('git', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       env,
-      detached: true,
+      // The process group lets killChild reap git's helpers on Unix. On Windows,
+      // DETACHED_PROCESS leaves git with no console, so a console helper it starts
+      // would open a visible window; killChild falls back to child.kill there.
+      detached: process.platform !== 'win32',
       windowsHide: true
     });
     let stdout = '';
