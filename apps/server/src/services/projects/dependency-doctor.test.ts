@@ -11,14 +11,17 @@ import type { SetupStatus } from '@zana-ai/zcc-domain/product';
  * are the {error, stdout, stderr} to return. A missing key ⇒ ENOENT.
  */
 let cmdMap: Record<string, { err?: boolean; stdout?: string; stderr?: string }> = {};
+/** Options of every execFile call, for the windowsHide assertion. */
+const execOptions: unknown[] = [];
 
 vi.mock('node:child_process', () => ({
   execFile: (
     cmd: string,
     args: string[],
-    _opts: unknown,
+    opts: unknown,
     cb: (err: Error | null, stdout: string, stderr: string) => void
   ) => {
+    execOptions.push(opts);
     const key = `${cmd} ${args.join(' ')}`;
     const hit = cmdMap[key];
     if (!hit) {
@@ -159,6 +162,21 @@ describe('dependency doctor — install / dismiss', () => {
     await doctor.install();
     expect(phaseOf(doctor.snapshot(), 'codex-cli')).toBe('failed');
     expect(doctor.snapshot().items.find((i) => i.id === 'codex-cli')?.note).toContain('permission denied');
+  });
+
+  // The doctor runs in the server under Electron (a GUI process), so on Windows
+  // each probe and install needs windowsHide or it opens a visible console.
+  it('hides the console window of every probe and install', async () => {
+    execOptions.length = 0;
+    cmdMap = { ...ALL_PRESENT };
+    delete cmdMap['codex --version'];
+    cmdMap['npm install -g @openai/codex@latest'] = { stdout: 'added 1 package' };
+    const { deps } = makeDeps();
+    const doctor = createDoctor(deps);
+    await doctor.check();
+    await doctor.install();
+    expect(execOptions.length).toBeGreaterThan(ALL_IDS.length);
+    for (const opts of execOptions) expect(opts).toMatchObject({ windowsHide: true });
   });
 
   it('installs the Cursor CLI via its official script', async () => {

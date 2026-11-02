@@ -53,6 +53,7 @@ describe('buildSquadReport', () => {
     expect(buildSquadReport(merge, { worktree: 'merged' })).toContain('Branch squad/x merged into main.');
     expect(buildSquadReport(merge, { worktree: 'kept' })).toContain('Branch squad/x, worktree kept at /tmp/wt.');
     expect(buildSquadReport(merge, { worktree: 'missing' })).toContain('Branch squad/x; its worktree was already removed.');
+    expect(buildSquadReport(merge, { worktree: 'deleted' })).toContain('Branch squad/x; its worktree and branch were deleted after completion.');
     // A run with a worktree but no outcome is described as kept (never guessed as merged).
     expect(buildSquadReport(merge)).toContain('worktree kept at /tmp/wt');
   });

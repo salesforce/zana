@@ -43,6 +43,14 @@ describe('sanitizeTeam', () => {
       .toMatchObject({ worktreeIsolation: undefined });
   });
 
+  it('keeps valid worktreeOnComplete values and drops others', () => {
+    for (const v of ['leave', 'merge', 'delete'] as const) {
+      expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], worktreeOnComplete: v })).toMatchObject({ worktreeOnComplete: v });
+    }
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], worktreeOnComplete: 'force' })?.worktreeOnComplete).toBeUndefined();
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [] })?.worktreeOnComplete).toBeUndefined();
+  });
+
   it('preserves a boolean routing enforcement override and drops invalid values', () => {
     expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], routingEnforced: true }))
       .toMatchObject({ routingEnforced: true });

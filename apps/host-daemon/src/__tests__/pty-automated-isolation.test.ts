@@ -124,6 +124,51 @@ describe('PtyManager.create — unattended Claude config isolation', () => {
     }
   );
 
+  it.each([['scheduled'], ['headless'], ['autonomous']])(
+    'useUserConfig opts a %s claude run out of isolation',
+    (kind) => {
+      create(new PtyManager(), { [kind]: true, useUserConfig: true });
+      const call = spawned[0]!;
+      expect(call.args).not.toContain('--setting-sources');
+      expect(call.env.CLAUDE_CONFIG_DIR).toBe(claudeHome);
+      expect(existsSync(join(dataDir, 'claude-automated-config'))).toBe(false);
+    }
+  );
+
+  it('useUserConfig=false keeps the run isolated', () => {
+    create(new PtyManager(), { scheduled: true, useUserConfig: false });
+    expect(spawned[0]!.args).toContain('--setting-sources');
+  });
+
+  describe('requiredMcps', () => {
+    beforeEach(() => {
+      writeFileSync(join(claudeHome, '.claude.json'), JSON.stringify({ mcpServers: { slack: { command: 'npx', args: ['slack-mcp'] } } }));
+    });
+
+    it('launches an isolated run when the required server is carried', () => {
+      create(new PtyManager(), { scheduled: true, requiredMcps: ['slack'] });
+      expect(spawned).toHaveLength(1);
+    });
+
+    it('refuses before spawning when a required server is missing, leaving no leaf', () => {
+      let error: unknown;
+      try { create(new PtyManager(), { scheduled: true, requiredMcps: ['slack', 'jira'] }); } catch (e) { error = e; }
+      expect((error as Error).message).toContain('Required MCP server not available in the isolated config: jira.');
+      expect((error as { preSpawn?: boolean }).preSpawn).toBe(true);
+      expect(spawned).toHaveLength(0);
+    });
+
+    it('does not check an opted-out run (uses the real config)', () => {
+      create(new PtyManager(), { scheduled: true, useUserConfig: true, requiredMcps: ['jira'] });
+      expect(spawned).toHaveLength(1);
+    });
+
+    it('ignores an empty list', () => {
+      create(new PtyManager(), { scheduled: true, requiredMcps: [] });
+      expect(spawned).toHaveLength(1);
+    });
+  });
+
   it('releases the config dir when the spawn throws', () => {
     spawnControl.failNext = true;
     expect(() => create(new PtyManager(), { scheduled: true })).toThrow('spawn failed');

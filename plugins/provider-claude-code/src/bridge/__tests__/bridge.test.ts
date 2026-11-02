@@ -3590,6 +3590,50 @@ describe("bridge", () => {
     }
   });
 
+  it("never claims nativeLoaded for a strict thread/resume (fails closed)", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const queries: ControlledClaudeQuery[] = [];
+    queryMock.mockImplementation(() => {
+      const query = createControlledClaudeQuery();
+      queries.push(query);
+      return query;
+    });
+
+    try {
+      bridge.sendRequest(1, "thread/resume", {
+        threadId: "thread-resume-strict",
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        providerThreadId: "provider-thread-strict",
+        requireNativeLoad: true,
+        options: {
+          permissionMode: "auto",
+          permissionScope: "workspace",
+          approvalReviewer: "automatic",
+          permissionEscalation: "deny",
+          providerOptions: { workflowsEnabled: false },
+        },
+      });
+      const response = await bridge.waitForResponse(1);
+      const result = response.result as Record<string, unknown>;
+      expect(result.providerThreadId).toBe("provider-thread-strict");
+      // Absent nativeLoaded is treated as false by the runtime and host.
+      expect(result.nativeLoaded).not.toBe(true);
+
+      bridge.sendRequest(2, "thread/stop", {
+        threadId: "thread-resume-strict",
+        providerThreadId: "provider-thread-strict",
+        intent: "interrupt",
+        activeTurnId: null,
+      });
+      await bridge.flushWork();
+      queries[0]?.finish();
+      await bridge.waitForResponse(2);
+    } finally {
+      bridge.restore();
+    }
+  });
+
   it("returns an existing live same-provider thread/resume session", async () => {
     const bridge = createBridgeJsonRpcTestHarness(handleLine);
     const queries: ControlledClaudeQuery[] = [];
