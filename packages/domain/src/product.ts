@@ -4032,7 +4032,11 @@ export interface ScheduleStatus {
   /** ISO-8601 timestamp of the next planned fire (informational; recomputed on load). */
   nextRunAt?: string;
   runCount: number;
-  /** Newest first. Capped at history.retain (default 10). */
+  /**
+   * Newest first. Trimmed to history.retain (default 10), except that the scheduler also keeps every row whose
+   * session is still alive, the newest real (non-skipped) run, the row a write is closing, and Squad runs that
+   * are still pending or live.
+   */
   runs: ScheduleRun[];
   /** Timing anchor: slots at or before this are handled. */
   slotCursorAt?: string;
