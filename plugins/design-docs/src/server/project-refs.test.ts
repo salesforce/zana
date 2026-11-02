@@ -252,3 +252,31 @@ describe('RPC', () => {
     expect(await gone.removedProjects!(undefined)).toEqual([{ id: 'p1', label: 'App (project removed)' }, { id: 'p2', label: 'Site (project removed)' }]);
   });
 });
+
+describe('listProjectMappings', () => {
+  it('is empty without mappings, lists counts and samples, flags dead local projects, degrades when unavailable', async () => {
+    const { received, refs, db } = setup();
+    expect(refs.listProjectMappings(PROJECTS)).toEqual([]);
+    received('A', 'f1'); received('B', 'f1'); received('C', 'f2');
+    await refs.mapForeignProject(list, 'f1', 'p1');
+    await refs.mapForeignProject(list, 'f2', 'p2');
+    const live = refs.listProjectMappings(PROJECTS);
+    expect(live).toHaveLength(2);
+    expect(live.find((m) => m.foreignProjectId === 'f1')).toMatchObject({ localProjectId: 'p1', docCount: 2, localRegistered: true });
+    expect(live.find((m) => m.foreignProjectId === 'f1')!.sampleTitles.sort()).toEqual(['A', 'B']);
+    const dead = refs.listProjectMappings([PROJECTS[0]!]);
+    expect(dead.find((m) => m.foreignProjectId === 'f2')?.localRegistered).toBe(false);
+    refs.unmapForeignProject('f1');
+    expect(refs.listProjectMappings(PROJECTS).map((m) => m.foreignProjectId)).toEqual(['f2']);
+    db.runScript('DROP TABLE dd_project_aliases');
+    expect(refs.listProjectMappings(PROJECTS)).toEqual([]);
+  });
+
+  it('RPC handler lists mappings', async () => {
+    const { store, received } = setup();
+    const rpc = createRpcHandlers({ store, changed: vi.fn(), sdk: { projects: { list } } as never });
+    received('A', 'f1');
+    await rpc.mapForeignProject!({ foreignProjectId: 'f1', localProjectId: 'p1' });
+    expect(await rpc.listProjectMappings!(undefined)).toMatchObject([{ foreignProjectId: 'f1', localProjectId: 'p1', docCount: 1, localRegistered: true }]);
+  });
+});

@@ -171,6 +171,12 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       changed('');
       return result;
     },
+    // Existing foreign-to-local mappings, so the UI can unmap them.
+    listProjectMappings: async () => {
+      const projects = await deps.sdk.projects.list();
+      store.projectRefs.observe(projects);
+      return store.projectRefs.listProjectMappings(projects);
+    },
     unmapForeignProject: (raw) => {
       const result = store.projectRefs.unmapForeignProject(onlyKeys(raw, ['foreignProjectId']).foreignProjectId);
       changed('');

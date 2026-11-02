@@ -6,7 +6,7 @@ import {
   type DesignDocFile,
   type DesignDocSummary
 } from '../shared/contract.js';
-import { errorMessage, useApi, type DocKind, type ListArgs, type ProjectInfo, type TemplateInfo, type UnassignedProject } from './api.js';
+import { errorMessage, useApi, type DocKind, type ListArgs, type ProjectInfo, type TemplateInfo, type ProjectMapping, type UnassignedProject } from './api.js';
 
 export interface Resource<T> {
   data: T | null;
@@ -150,6 +150,13 @@ export function useRemovedProjects(): Resource<Array<{ id: string; label: string
 export function useUnassignedProjects(enabled: boolean): Resource<UnassignedProject[]> {
   const api = useApi();
   const resource = useResource(enabled ? 'unassigned-projects' : null, () => api.listUnassignedProjects());
+  useDocChanges(() => resource.reload());
+  return resource;
+}
+
+export function useProjectMappings(enabled: boolean): Resource<ProjectMapping[]> {
+  const api = useApi();
+  const resource = useResource(enabled ? 'project-mappings' : null, () => api.listProjectMappings());
   useDocChanges(() => resource.reload());
   return resource;
 }

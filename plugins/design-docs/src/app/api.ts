@@ -75,6 +75,15 @@ export interface ListArgs {
   unassigned?: boolean;
 }
 
+/** An existing peer-to-local Project mapping on this machine. */
+export interface ProjectMapping {
+  foreignProjectId: string;
+  localProjectId: string;
+  docCount: number;
+  sampleTitles: string[];
+  localRegistered: boolean;
+}
+
 /** A foreign (peer) project id with docs not yet mapped to a local project. */
 export interface UnassignedProject {
   foreignProjectId: string;
@@ -124,6 +133,7 @@ export interface DesignDocsApi {
   /** Deleted projects' last names, already labelled "<name> (project removed)". */
   removedProjects(): Promise<Array<{ id: string; label: string }>>;
   listUnassignedProjects(): Promise<UnassignedProject[]>;
+  listProjectMappings(): Promise<ProjectMapping[]>;
   mapForeignProject(foreignProjectId: string, localProjectId: string): Promise<{ foreignProjectId: string; localProjectId: string }>;
   unmapForeignProject(foreignProjectId: string): Promise<{ removed: boolean }>;
   /** Harnesses on the project's host, or this computer's when no project is given. */
@@ -222,6 +232,7 @@ export function createApi(call: Call): DesignDocsApi {
     projects: () => typed('projects'),
     removedProjects: () => typed('removedProjects'),
     listUnassignedProjects: () => typed('listUnassignedProjects'),
+    listProjectMappings: () => typed('listProjectMappings'),
     mapForeignProject: (foreignProjectId, localProjectId) => typed('mapForeignProject', { foreignProjectId, localProjectId }),
     unmapForeignProject: (foreignProjectId) => typed('unmapForeignProject', { foreignProjectId }),
     harnessDescriptors: (projectId) => typed('harnessDescriptors', projectId ? { projectId } : undefined),

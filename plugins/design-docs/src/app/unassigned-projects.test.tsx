@@ -19,12 +19,14 @@ describe('api wrapper', () => {
     const api = createApi(call);
     await api.listUnassignedProjects();
     await api.removedProjects();
+    await api.listProjectMappings();
     await api.mapForeignProject('f', 'l');
     await api.unmapForeignProject('f');
     await api.list({ unassigned: true });
     expect(call.mock.calls).toEqual([
       ['listUnassignedProjects', undefined],
       ['removedProjects', undefined],
+      ['listProjectMappings', undefined],
       ['mapForeignProject', { foreignProjectId: 'f', localProjectId: 'l' }],
       ['unmapForeignProject', { foreignProjectId: 'f' }],
       ['list', { unassigned: true }]
@@ -79,6 +81,40 @@ describe('UnassignedProjectsDialog', () => {
     view.unmount();
     harness.render(<UnassignedProjectsDialog unassigned={[]} projects={[]} onClose={() => undefined} onChanged={onChanged} />);
     expect(screen.getByText('Nothing to map.')).toBeTruthy();
+  });
+});
+
+describe('Mapped on this machine', () => {
+  const mapping = { foreignProjectId: 'far-9', localProjectId: 'p1', docCount: 1, sampleTitles: ['Zed'], localRegistered: true };
+  const dead = { foreignProjectId: 'far-8', localProjectId: 'gone', docCount: 2, sampleTitles: [], localRegistered: false };
+  const open = (extra: Record<string, (args?: unknown) => unknown>) => {
+    const { harness } = setup(async () => ({}), { listProjectMappings: () => [mapping, dead], ...extra });
+    const onChanged = vi.fn();
+    harness.render(<UnassignedProjectsDialog unassigned={[]} projects={projects} onClose={() => undefined} onChanged={onChanged} />);
+    return { harness, onChanged };
+  };
+
+  it('lists mappings and unmaps only after confirmation', async () => {
+    const calls: unknown[] = [];
+    const { onChanged } = open({ unmapForeignProject: (args) => { calls.push(args); return { removed: true }; } });
+    const section = await screen.findByRole('region', { name: 'Mapped on this machine' });
+    expect(within(section).getByText(/far-9 → App · 1 doc/)).toBeTruthy();
+    expect(within(section).getByText(/far-8 → Project removed · 2 docs/)).toBeTruthy();
+    fireEvent.click(within(section).getByRole('button', { name: 'Unmap far-9' }));
+    expect(calls).toEqual([]);
+    fireEvent.click(within(section).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(within(section).getByRole('button', { name: 'Unmap far-9' }));
+    fireEvent.click(within(section).getByRole('button', { name: 'Confirm unmap' }));
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    expect(calls).toEqual([{ foreignProjectId: 'far-9' }]);
+  });
+
+  it('shows an error toast when unmap fails', async () => {
+    const { harness, onChanged } = open({ unmapForeignProject: () => { throw new Error('boom'); } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Unmap far-9' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm unmap' }));
+    await waitFor(() => expect(harness.toasts.some((toast) => toast.kind === 'error' && toast.message.includes('boom'))).toBe(true));
+    expect(onChanged).not.toHaveBeenCalled();
   });
 });
 

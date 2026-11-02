@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { errorMessage, toast, useApi, type ProjectInfo, type UnassignedProject } from './api.js';
+import { useProjectMappings } from './hooks.js';
 import { Dialog } from './ui.js';
 
 export const UNASSIGNED_LABEL = 'Unassigned from peers';
@@ -23,6 +24,27 @@ export function UnassignedProjectsDialog({
   const [picks, setPicks] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
 
+  const mappings = useProjectMappings(true);
+  const [unmapping, setUnmapping] = useState<string | null>(null);
+  const [confirmUnmap, setConfirmUnmap] = useState<string | null>(null);
+  const localName = (id: string) => projects.find((project) => project.id === id)?.name;
+
+  const unmap = async (foreignProjectId: string) => {
+    if (unmapping) return;
+    setUnmapping(foreignProjectId);
+    try {
+      await api.unmapForeignProject(foreignProjectId);
+      toast('Project unmapped. Its docs are back under Unassigned from peers.');
+      setConfirmUnmap(null);
+      mappings.reload();
+      onChanged();
+    } catch (error) {
+      toast(`Could not unmap the Project: ${errorMessage(error)}`, 'error');
+    } finally {
+      setUnmapping(null);
+    }
+  };
+
   const confirm = async (foreignProjectId: string) => {
     const local = picks[foreignProjectId];
     if (!local || busy) return;
@@ -30,6 +52,7 @@ export function UnassignedProjectsDialog({
     try {
       await api.mapForeignProject(foreignProjectId, local);
       toast('Project mapped. Its docs now show under that Project.');
+      mappings.reload();
       onChanged();
     } catch (error) {
       toast(`Could not map the Project: ${errorMessage(error)}`, 'error');
@@ -82,6 +105,34 @@ export function UnassignedProjectsDialog({
           </section>
         );
       })}
+      {mappings.data?.length ? (
+        <section className="dd-field" aria-label="Mapped on this machine">
+          <span className="dd-field-label">Mapped on this machine</span>
+          {mappings.data.map((mapping) => {
+            const name = localName(mapping.localProjectId);
+            return (
+              <span key={mapping.foreignProjectId} className="dd-field-inline" role="group" aria-label={`Mapping ${mapping.foreignProjectId}`}>
+                <span title={mapping.foreignProjectId}>
+                  {mapping.foreignProjectId} {'→'} {name ?? (mapping.localRegistered ? mapping.localProjectId : 'Project removed')} · {mapping.docCount} {mapping.docCount === 1 ? 'doc' : 'docs'}
+                  {mapping.sampleTitles.length ? <span className="dd-muted"> ({mapping.sampleTitles.join(' · ')})</span> : null}
+                </span>
+                {confirmUnmap === mapping.foreignProjectId ? (
+                  <>
+                    <button type="button" className="btn primary" disabled={unmapping !== null} onClick={() => void unmap(mapping.foreignProjectId)}>
+                      Confirm unmap
+                    </button>
+                    <button type="button" className="btn" onClick={() => setConfirmUnmap(null)}>Cancel</button>
+                  </>
+                ) : (
+                  <button type="button" className="btn" aria-label={`Unmap ${mapping.foreignProjectId}`} disabled={unmapping !== null} onClick={() => setConfirmUnmap(mapping.foreignProjectId)}>
+                    Unmap
+                  </button>
+                )}
+              </span>
+            );
+          })}
+        </section>
+      ) : null}
     </Dialog>
   );
 }

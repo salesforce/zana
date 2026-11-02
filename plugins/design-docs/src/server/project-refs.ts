@@ -22,6 +22,16 @@ export interface UnassignedForeignProject {
   suggestion: { projectId: string; name: string; basis: 'tag' | 'name' } | null;
 }
 
+export interface ProjectMapping {
+  foreignProjectId: string;
+  localProjectId: string;
+  docCount: number;
+  sampleTitles: string[];
+  /** False when the local project is no longer registered (the mapping is dead and pruned on the next project fetch). */
+  localRegistered: boolean;
+}
+
+const MAX_MAPPINGS = 200;
 const MAX_ID_LENGTH = 512;
 const MAX_UNASSIGNED = 200;
 const SAMPLE_TITLES = 3;
@@ -161,6 +171,29 @@ export class DesignDocProjectRefs {
     if (!this.available) throw new DesignDocError('invalid', 'project mapping is unavailable');
     const result = this.db.prepare('DELETE FROM dd_project_aliases WHERE foreign_project_id = ?').run(foreign) as { changes?: number };
     return { removed: (result?.changes ?? 0) > 0 };
+  }
+
+  /** Existing aliases with their doc counts and sample titles. `registered` is the current host project list. */
+  listProjectMappings(registered: ProjectInfo[]): ProjectMapping[] {
+    if (!this.available) return [];
+    try {
+      const live = new Set(registered.map((project) => project.id));
+      const rows = this.db.prepare(`SELECT foreign_project_id AS fid, local_project_id AS lid FROM dd_project_aliases
+        ORDER BY updated_at DESC, foreign_project_id LIMIT ${MAX_MAPPINGS}`).all() as Array<{ fid: string; lid: string }>;
+      return rows.map((row) => {
+        const key = JSON.stringify(row.fid);
+        // docs-kind: allow Counts and samples are restricted to kind = 'doc'.
+        const count = this.db.prepare(`SELECT COUNT(*) AS n FROM docs d JOIN sync_doc_references r ON r.doc_id = d.id
+          WHERE d.kind = 'doc' AND d.project_id IS NULL AND r.project_json = ?`).get(key) as { n: number } | undefined;
+        // docs-kind: allow Samples are joined to doc-kind rows only.
+        const titles = this.db.prepare(`SELECT d.title FROM docs d JOIN sync_doc_references r ON r.doc_id = d.id
+          WHERE d.kind = 'doc' AND d.project_id IS NULL AND r.project_json = ? ORDER BY d.updated_at DESC, d.id LIMIT ${SAMPLE_TITLES}`)
+          .all(key) as Array<{ title: string }>;
+        return { foreignProjectId: row.fid, localProjectId: row.lid, docCount: count?.n ?? 0, sampleTitles: titles.map((t) => t.title), localRegistered: live.has(row.lid) };
+      });
+    } catch {
+      return [];
+    }
   }
 
   /** Foreign project ids with unmapped docs, a few sample titles and a never-applied suggestion. */
