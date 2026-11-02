@@ -6,6 +6,7 @@
 import { DOC_STATUSES, isDocStatus, type DesignDocDetail, type DocActor, type DocStatus, type TextEdit } from '../shared/contract.js';
 import { pageText } from '../shared/html-scan.js';
 import { fileKindOf, imageMediaTypeOf } from '../shared/paths.js';
+import { renderTemplateFiles } from '../shared/templates.js';
 import {
   commentLine,
   formatBundle,
@@ -389,4 +390,52 @@ export function docHistory(ctx: OperationContext, raw: unknown): string {
   return formatHistory(
     ctx.store.history(ref, { path: optionalString(input, 'path'), limit: optionalInteger(input, 'limit') })
   );
+}
+
+// ── Templates ───────────────────────────────────────────────────────────
+
+export interface TemplateReadResult {
+  key: string;
+  files: Array<{ path: string; content: string; encoding: 'utf8' | 'base64' }>;
+}
+
+/** A template's files exactly as stored: placeholders and AI-instruction comments intact. */
+export function readTemplate(ctx: OperationContext, raw: unknown): TemplateReadResult {
+  const key = requiredString(asInput(raw), 'key');
+  const template = ctx.store.templateByKey(key);
+  if (!template) throw new DesignDocError('not_found', `unknown template ${JSON.stringify(key)}; call design_doc_templates_list for valid keys`);
+  return {
+    key: template.id,
+    files: template.files.map((file) => ({ path: file.path, content: file.content, encoding: file.encoding === 'base64' ? 'base64' : 'utf8' }))
+  };
+}
+
+/**
+ * Writes a template's files into an existing doc as one atomic change. Never
+ * overwrites: a path the doc already has (any letter case) fails the whole call.
+ * Size and count limits are the store's, as for any other write.
+ */
+export function addFromTemplate(ctx: OperationContext, raw: unknown, actor: DocActor): { added: string[] } {
+  const input = asInput(raw);
+  const ref = docRef(ctx, requiredString(input, 'docId'));
+  const templateKey = requiredString(input, 'templateKey');
+  const template = ctx.store.templateByKey(templateKey);
+  if (!template) throw new DesignDocError('not_found', `unknown template ${JSON.stringify(templateKey)}; call design_doc_templates_list for valid keys`);
+  const doc = ctx.store.get(ref);
+  const title = optionalString(input, 'title') ?? doc.title;
+  const summary = optionalString(input, 'summary') ?? doc.summary;
+  const files = renderTemplateFiles(template, { title, summary });
+  const existing = new Set(doc.files.map((file) => file.path.toLowerCase()));
+  for (const file of files) {
+    if (existing.has(file.path.toLowerCase())) {
+      throw new DesignDocError('conflict', `${file.path} already exists in ${doc.id}; add_from_template never overwrites. Rename or delete it first.`);
+    }
+  }
+  const results = ctx.store.writeFiles(
+    doc.id,
+    files.map((file) => ({ ...file, baseRevision: 0, baseFileId: null, note: `Added from template ${template.id}` })),
+    actor
+  );
+  ctx.changed(doc.id);
+  return { added: results.map((result) => result.path) };
 }

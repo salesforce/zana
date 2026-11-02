@@ -10,12 +10,14 @@ import { formatBytes } from '../shared/display.js';
 import { MAX_DOC_BYTES, MAX_FILES_PER_DOC } from '../shared/limits.js';
 import { formatBundle } from './format.js';
 import {
+  addFromTemplate,
   commentDoc,
   createDoc,
   docHistory,
   docRef,
   listDocs,
   readDoc,
+  readTemplate,
   updateDoc,
   writeDoc,
   type OperationContext
@@ -40,6 +42,8 @@ export const CLI_COMMANDS = [
   { name: 'sync', summary: 'Sync persisted database changes, including drafts', usage: 'sync' },
   { name: 'list', summary: 'List design docs', usage: 'list [--query <text>] [--status active|all|<status>] [--all-projects] [--json]' },
   { name: 'templates', summary: 'List, export, import or purge templates', usage: 'templates (list [--json] | export [key...] --out <file> | import <file> | purge --out <file>)' },
+  { name: 'template-read', summary: 'Print a template\'s full files as JSON', usage: 'template-read <key>' },
+  { name: 'add-from-template', summary: 'Add a template\'s files to an existing doc (never overwrites)', usage: 'add-from-template <doc> <template-key> [--title <t>] [--summary <s>]' },
   { name: 'show', summary: 'Show a doc manifest and its entry file', usage: 'show <doc> [--all] [--json]' },
   { name: 'read', summary: 'Print one text file raw', usage: 'read <doc> <path>' },
   {
@@ -297,6 +301,16 @@ async function dispatch(deps: CliDeps, argv: string[], ctx: PluginCliContext): P
         throw new DesignDocError('invalid', `${file.path} is a binary file; open it in the Design Docs panel or read it with the design_doc_read tool`);
       }
       return file.content;
+    }
+    case 'template-read':
+      return JSON.stringify(readTemplate(operation, { key: need(positional, 0, 'key') }), null, 2);
+    case 'add-from-template': {
+      const { added } = addFromTemplate(
+        operation,
+        { docId: need(positional, 0, 'doc'), templateKey: need(positional, 1, 'template-key'), title: stringFlag(flags, 'title'), summary: stringFlag(flags, 'summary') },
+        caller.actor
+      );
+      return `Added ${added.length} file(s): ${added.join(', ')}`;
     }
     case 'create':
       return createDoc(

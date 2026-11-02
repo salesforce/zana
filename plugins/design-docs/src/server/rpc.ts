@@ -9,7 +9,7 @@ import { isDocStatus, type CommentStatus, type DocActor, type TextEdit } from '.
 import type { PageFile } from '../shared/frame-protocol.js';
 import { normalizeDocPath } from '../shared/paths.js';
 import { buildPublishPrompt, parsePublishTarget, PublishTargetError } from '../shared/publish.js';
-import { asInput, optionalString, requiredString } from './operations.js';
+import { addFromTemplate, asInput, optionalString, readTemplate, requiredString } from './operations.js';
 import { docPageReader, NO_KIT, renderPage, type KitReader } from './pages.js';
 import { parseRenderReport, type RenderReports } from './render-reports.js';
 import { siteFiles } from './site-files.js';
@@ -133,6 +133,8 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       files: files.map((file) => file.path)
     })),
 
+    templateRead: (raw) => readTemplate({ store, changed }, raw),
+    addFromTemplate: (raw) => addFromTemplate({ store, changed }, raw, UI_USER),
     templateNew: (raw) => { const doc = store.templateNew(raw, UI_USER); changed(doc.id); return doc; },
     templateDuplicate: (raw) => { const doc = store.templateDuplicate(requiredString(asInput(raw), 'template'), UI_USER); changed(doc.id); return doc; },
     templateFromDoc: (raw) => { const doc = store.templateFromDoc(requiredString(asInput(raw), 'doc'), UI_USER); changed(doc.id); return doc; },

@@ -1,10 +1,12 @@
 import type { PluginAgentToolContext, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import { DOC_STATUSES, type DocActor } from '../shared/contract.js';
 import {
+  addFromTemplate,
   commentDoc,
   createDoc,
   listDocs,
   readDoc,
+  readTemplate,
   updateDoc,
   writeDoc,
   type OperationContext
@@ -21,6 +23,8 @@ const docRef = {
 
 export const TOOL_NAMES = [
   'design_doc_templates_list',
+  'design_doc_template_read',
+  'design_doc_add_from_template',
   'design_doc_list',
   'design_doc_read',
   'design_doc_create',
@@ -85,6 +89,34 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     presentation: { label: { pending: 'Listing templates', completed: 'Listed templates' }, icon: { glyph: 'Files' } },
     execute: async () => deps.store.listTemplates().map(({ id, label, description, files, entryPath }) => ({ key: id, label, description, files: files.map((file) => file.path), entryPath }))
+  });
+
+  zcc.agents.registerTool({
+    name: 'design_doc_template_read',
+    description: 'Read a template\'s full files (including any <!-- AI Instructions --> comments) by key from design_doc_templates_list. base64 files are marked encoding "base64".',
+    parameters: { type: 'object', properties: { key: { type: 'string', description: 'Template key.' } }, required: ['key'], additionalProperties: false },
+    presentation: { label: { pending: 'Reading template', completed: 'Read template' }, icon: { glyph: 'Files' } },
+    execute: async (input, ctx) => readTemplate(await context(ctx), input)
+  });
+
+  zcc.agents.registerTool({
+    name: 'design_doc_add_from_template',
+    description:
+      'Add a template\'s files to an EXISTING design doc ({{title}} and {{summary}} are filled in; they default to the doc\'s own). ' +
+      'Fails, changing nothing, if any file path already exists in the doc. Returns the added paths.',
+    parameters: {
+      type: 'object',
+      properties: {
+        docId: docRef,
+        templateKey: { type: 'string', description: 'Template key returned by design_doc_templates_list.' },
+        title: { type: 'string', description: 'Value for {{title}}; defaults to the doc title.' },
+        summary: { type: 'string', description: 'Value for {{summary}}; defaults to the doc summary.' }
+      },
+      required: ['docId', 'templateKey'],
+      additionalProperties: false
+    },
+    presentation: { label: { pending: 'Adding template files', completed: 'Added template files' }, icon: { glyph: 'File' } },
+    execute: async (input, ctx) => addFromTemplate(await context(ctx), input, await deps.actorFor(ctx.threadId))
   });
 
   zcc.agents.registerTool({

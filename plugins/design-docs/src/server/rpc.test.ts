@@ -510,7 +510,7 @@ describe('Design Docs RPC', () => {
     expect(method.mock.calls.map(([name]) => name)).not.toContain('setAgentSettings');
     expect(method.mock.calls.map(([name]) => name)).not.toContain('agentHarnesses');
     expect(method.mock.calls.map(([name]) => name)).toEqual(expect.arrayContaining(['harnessDescriptors', 'harnessRouting', 'setHarnessRouting']));
-    expect(method).toHaveBeenCalledTimes(58);
+    expect(method).toHaveBeenCalledTimes(60);
   });
 });
 
