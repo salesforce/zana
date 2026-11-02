@@ -21,6 +21,7 @@ import {
 } from './format.js';
 import { NO_KIT, renderPage, type KitReader } from './pages.js';
 import type { RenderReports } from './render-reports.js';
+import { resolveNamedProject, type ProjectLister } from './project-guard.js';
 import { DesignDocError, type DesignDocStore } from './store.js';
 
 export interface OperationContext {
@@ -29,6 +30,8 @@ export interface OperationContext {
   changed(docId: string): void;
   /** The calling thread's project, when there is one. */
   projectId?: string | null;
+  /** Registered projects, for verifying a named projectId. Without it a named project is refused. */
+  listProjects?: ProjectLister;
   /** A project's display name, when known. */
   projectName?(projectId: string | null): string | null;
   /** The plugin's site kit, which pages load from `zcc-kit/`. */
@@ -199,7 +202,7 @@ export function readDoc(ctx: OperationContext, raw: unknown): string | ImageTool
     .join('\n\n');
 }
 
-export function createDoc(ctx: OperationContext, raw: unknown, actor: DocActor): string {
+export async function createDoc(ctx: OperationContext, raw: unknown, actor: DocActor): Promise<string> {
   const input = asInput(raw);
   // Origin is trusted callsite state, never agent/renderer-controlled JSON.
   if (input.origin !== undefined) throw new DesignDocError('invalid', 'origin is not an authoring parameter');
@@ -212,7 +215,7 @@ export function createDoc(ctx: OperationContext, raw: unknown, actor: DocActor):
   }
   const files = input.files;
   if (files !== undefined && !Array.isArray(files)) throw new DesignDocError('invalid', 'files must be an array');
-  const global = input.global === true || input.global === 'true';
+  const named = await resolveNamedProject(ctx.listProjects, input);
   const detail = ctx.store.create(
     {
       title: requiredString(input, 'title'),
@@ -229,7 +232,7 @@ export function createDoc(ctx: OperationContext, raw: unknown, actor: DocActor):
         return { path: entry.path, content: entry.content, encoding };
       }),
       entryPath: optionalString(input, 'entryPath'),
-      projectId: global ? null : (ctx.projectId ?? null)
+      projectId: named === undefined ? (ctx.projectId ?? null) : named
     },
     actor
   );
@@ -295,9 +298,10 @@ function writtenPageNotes(ctx: OperationContext, docId: string, path: string): s
   return notes;
 }
 
-export function updateDoc(ctx: OperationContext, raw: unknown, actor: DocActor): string {
+export async function updateDoc(ctx: OperationContext, raw: unknown, actor: DocActor): Promise<string> {
   const input = asInput(raw);
   const ref = docRef(ctx, requiredString(input, 'doc'));
+  const moveTo = await resolveNamedProject(ctx.listProjects, input);
   const alternativeTo = optionalString(input, 'alternativeTo');
   const summary = ctx.store.update(
     ref,
@@ -308,7 +312,8 @@ export function updateDoc(ctx: OperationContext, raw: unknown, actor: DocActor):
       tags: optionalStringArray(input, 'tags'),
       entryPath: optionalString(input, 'entryPath'),
       alternativeTo: alternativeTo === undefined ? undefined : alternativeTo.trim() ? docRef(ctx, alternativeTo) : null,
-      expectedHead: input.expectedHead === null ? null : optionalString(input, 'expectedHead')
+      expectedHead: input.expectedHead === null ? null : optionalString(input, 'expectedHead'),
+      projectId: moveTo
     },
     actor
   );

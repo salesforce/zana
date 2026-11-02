@@ -12,6 +12,7 @@ import {
   type OperationContext
 } from './operations.js';
 import type { KitReader } from './pages.js';
+import type { ProjectLister } from './project-guard.js';
 import type { ProjectNames } from './project-names.js';
 import type { RenderReports } from './render-reports.js';
 import { AGENT_FALLBACK_LABEL, CLI_AGENT_LABEL, type DesignDocStore } from './store.js';
@@ -38,6 +39,8 @@ export interface ToolDeps {
   changed(docId: string): void;
   actorFor(threadId: string): Promise<DocActor>;
   projects?: ProjectNames;
+  /** Registered projects; a named projectId is verified against it (fail closed). */
+  listProjects?: ProjectLister;
   kit?: KitReader;
   reports?: RenderReports;
 }
@@ -77,6 +80,7 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
       store: deps.store,
       changed: deps.changed,
       projectId: ctx.projectId || null,
+      listProjects: deps.listProjects,
       projectName: (projectId) => deps.projects?.name(projectId) ?? null,
       kit: deps.kit,
       reports: deps.reports
@@ -169,7 +173,7 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
     name: 'design_doc_create',
     description:
       'Create a new design doc the user can review in the Design Docs panel. Pass files to write your own content, ' +
-      'or a template returned by design_doc_templates_list. The doc belongs to the current project unless global=true. ' +
+      'or a template returned by design_doc_templates_list. The doc belongs to the current project unless global=true or projectId names another registered project (give the id; a wrong id returns the valid ones). ' +
       'Write rich GitHub-flavoured markdown: headings, tables, task lists, ```mermaid diagrams and $math$ all render. ' +
       'Put larger diagrams in .mmd files and UI mockups in self-contained .html files (inline CSS and JS; nothing loads from a CDN). ' +
       'For a web page or site that will publish to GitHub Pages, start from the report or html-design template, or link zcc-kit/site.css and zcc-kit/site.js (see the design-docs skill).',
@@ -181,7 +185,8 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
         template: { type: 'string', description: 'Template key returned by design_doc_templates_list; starter files when files is omitted.' },
         tags: { type: 'array', items: { type: 'string' } },
         status: { type: 'string', enum: [...DOC_STATUSES] },
-        global: { type: 'boolean', description: 'Make the doc visible to every project.' },
+        global: { type: 'boolean', description: 'Make the doc visible to every project. Not with projectId.' },
+        projectId: { type: 'string', description: 'Create the doc in this registered project instead of the current one. Not with global.' },
         files: {
           type: 'array',
           description: 'Initial files. Include a README.md (a written doc) or an index.html (a site) as the entry point.',
@@ -251,7 +256,8 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
     name: 'design_doc_update',
     description:
       'Update design doc metadata: title, summary, status (draft → review → approved → implemented, or archived), tags, the entry file, ' +
-      'or alternativeTo (the doc this one is a competing proposal to, so it nests under it in the doc list). ' +
+      'alternativeTo (the doc this one is a competing proposal to, so it nests under it in the doc list), ' +
+      'or move it: projectId (a registered project) or global=true (visible to every project), never both. ' +
       'When paired, pass expectedHead from design_doc_read. On conflict, re-read and review the replacement before updating.',
     parameters: {
       type: 'object',
@@ -266,6 +272,8 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
           type: 'string',
           description: 'Id or slug of the doc this one is an alternative to. Empty string detaches it. One level deep: point at the original doc, not another alternative.'
         },
+        projectId: { type: 'string', description: 'Move the doc to this registered project. Not with global.' },
+        global: { type: 'boolean', description: 'Move the doc to global (every project). Not with projectId.' },
         expectedHead: { type: ['string', 'null'], description: 'Head observed by design_doc_read; null asserts no head exists. Required when paired.' }
       },
       required: ['doc'],

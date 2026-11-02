@@ -180,7 +180,7 @@ export default function plugin(zcc: ZccPluginApi): void {
   const projects = createProjectNames(() => zcc.sdk.projects.list());
   const reports = new RenderReports();
 
-  registerDesignDocTools(zcc, { store, changed, actorFor, projects, kit, reports });
+  registerDesignDocTools(zcc, { store, changed, actorFor, projects, listProjects: () => zcc.sdk.projects.list(), kit, reports });
   registerAgentContext(zcc, store, (message) => zcc.log.warn(message), projects);
   registerPanelThreadLinks(zcc, store, changed);
   const pageUrl = (docId: string, path: string) => standalonePageUrl(productServerUrl(), endpoint, docId, path);
@@ -188,6 +188,7 @@ export default function plugin(zcc: ZccPluginApi): void {
     store,
     changed,
     projects,
+    listProjects: () => zcc.sdk.projects.list(),
     caller: createCliCaller(zcc.sdk, actorFor),
     readLocalFile: createLocalFileReader(zcc.sdk),
     writeLocalFile: createLocalFileWriter(zcc.sdk),

@@ -3,6 +3,7 @@
  * user and announced on the realtime `changed` channel, exactly like agent
  * writes, so every open view refreshes.
  */
+import { assertRegisteredProject } from './project-guard.js';
 import type { HarnessOverrideScope, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import { agentActionById, buildAgentPrompt, MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
 import { isDocStatus, type CommentStatus, type DocActor, type TextEdit } from '../shared/contract.js';
@@ -93,13 +94,7 @@ function onlyKeys(raw: unknown, allowed: string[]): Record<string, unknown> {
 export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown) => unknown> {
   const { store, changed } = deps;
   /** A project the renderer picked must be one the host has registered. */
-  const requireProject = async (projectId: string | null | undefined) => {
-    if (!projectId) return;
-    const projects = await deps.sdk.projects.list();
-    if (!projects.some((project) => project.id === projectId)) {
-      throw new DesignDocError('invalid', `unknown project ${projectId}`);
-    }
-  };
+  const requireProject = (projectId: string | null | undefined) => assertRegisteredProject(() => deps.sdk.projects.list(), projectId);
   /** The scope the renderer names for this plugin's harness override; a project must be registered. */
   const harnessScope = async (raw: unknown): Promise<HarnessOverrideScope> => {
     const input = onlyKeys(raw, ['kind', 'projectId']);

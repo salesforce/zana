@@ -23,6 +23,7 @@ import {
   type OperationContext
 } from './operations.js';
 import { NO_KIT, type KitReader } from './pages.js';
+import type { ProjectLister } from './project-guard.js';
 import type { ProjectNames } from './project-names.js';
 import type { RenderReports } from './render-reports.js';
 import { importSkipReason, mapBounded, siteFiles } from './site-files.js';
@@ -49,7 +50,7 @@ export const CLI_COMMANDS = [
   {
     name: 'create',
     summary: 'Create a design doc',
-    usage: 'create --title <title> [--summary <text>] [--template <key>] [--status <status>] [--tags a,b] [--global]'
+    usage: 'create --title <title> [--summary <text>] [--template <key>] [--status <status>] [--tags a,b] [--project <id> | --global]'
   },
   {
     name: 'write',
@@ -66,7 +67,7 @@ export const CLI_COMMANDS = [
   {
     name: 'update',
     summary: 'Change title, summary, status, tags or entry file',
-    usage: 'update <doc> [--title <t>] [--summary <s>] [--status <status>] [--tags a,b] [--entry <path>] [--alternative-to <doc>] [--expected-head <head|null>]'
+    usage: 'update <doc> [--title <t>] [--summary <s>] [--status <status>] [--tags a,b] [--entry <path>] [--alternative-to <doc>] [--expected-head <head|null>] [--project <id> | --global]'
   },
   { name: 'comment', summary: 'Add a review comment', usage: 'comment <doc> <body> [--path <file>] [--quote <text>]' },
   { name: 'reply', summary: 'Reply to a comment', usage: 'reply <doc> <comment-id> <body>' },
@@ -168,6 +169,8 @@ export interface CliDeps {
   /** Write (creating folders) on the caller's host, confined to its project root. */
   writeLocalFile?(args: { files: FileRoot; path: string; content: string; encoding: 'utf8' | 'base64' }): Promise<void>;
   projects?: ProjectNames;
+  /** Registered projects; a named --project is verified against it (fail closed). */
+  listProjects?: ProjectLister;
   /** Absolute URL of a doc page on the product server. */
   pageUrl?(docId: string, path: string): string;
   kit?: KitReader;
@@ -218,6 +221,7 @@ async function dispatch(deps: CliDeps, argv: string[], ctx: PluginCliContext): P
     changed: deps.changed,
     projectId: caller.projectId,
     projectName,
+    listProjects: deps.listProjects,
     kit: deps.kit,
     reports: deps.reports
   };
@@ -321,7 +325,8 @@ async function dispatch(deps: CliDeps, argv: string[], ctx: PluginCliContext): P
           template: stringFlag(flags, 'template'),
           tags: stringFlag(flags, 'tags'),
           status: stringFlag(flags, 'status'),
-          global: flags.global === true
+          global: flags.global === true,
+          projectId: stringFlag(flags, 'project')
         },
         caller.actor
       );
@@ -394,6 +399,8 @@ async function dispatch(deps: CliDeps, argv: string[], ctx: PluginCliContext): P
           tags: stringFlag(flags, 'tags'),
           entryPath: stringFlag(flags, 'entry'),
           alternativeTo: stringFlag(flags, 'alternative-to'),
+          projectId: stringFlag(flags, 'project'),
+          global: flags.global === true ? true : undefined,
           expectedHead: stringFlag(flags, 'expected-head') === 'null' ? null : stringFlag(flags, 'expected-head')
         },
         caller.actor
