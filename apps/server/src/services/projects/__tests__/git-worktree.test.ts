@@ -15,6 +15,9 @@ import {
   consumeInstructWorktreePushAuthorization,
   mergeWorktree,
   removeWorktree,
+  deleteBranch,
+  commitAllWorktreeChanges,
+  hasChangesBeyondZcc,
   sweepManagedWorktrees,
   worktreeState,
   isGitRepo,
@@ -683,6 +686,51 @@ describe('git worktree support', () => {
       await expect(mergeWorktree(main, res.path, 'main')).resolves.toEqual({ ok: false, message: 'base checkout is dirty' });
     });
 
+    describe('hasChangesBeyondZcc', () => {
+      it('ignores untracked .zcc files but not other changes', async () => {
+        await mkdir(join(main, '.zcc'), { recursive: true });
+        await writeFile(join(main, '.zcc', 'activity.jsonl'), '{}\n');
+        await expect(hasChangesBeyondZcc(main)).resolves.toBe(false);
+
+        await writeFile(join(main, 'scratch.txt'), 'dirty\n');
+        await expect(hasChangesBeyondZcc(main)).resolves.toBe(true);
+        await rm(join(main, 'scratch.txt'), { force: true });
+        await rm(join(main, '.zcc'), { recursive: true, force: true });
+        await expect(hasChangesBeyondZcc(main)).resolves.toBe(false);
+      });
+
+      it('still counts tracked .zcc files that were modified', async () => {
+        await mkdir(join(main, '.zcc'), { recursive: true });
+        await writeFile(join(main, '.zcc', 'kept.txt'), 'one\n');
+        await git(main, 'add', '.zcc/kept.txt');
+        await git(main, 'commit', '-m', 'track zcc file');
+        await writeFile(join(main, '.zcc', 'kept.txt'), 'two\n');
+        await expect(hasChangesBeyondZcc(main)).resolves.toBe(true);
+        await git(main, 'checkout', '--', '.zcc/kept.txt');
+      });
+
+      it('fails closed for relative paths and non-repositories', async () => {
+        await expect(hasChangesBeyondZcc('relative/path')).resolves.toBe(true);
+        await expect(hasChangesBeyondZcc(join(base, 'not-a-repo'))).resolves.toBe(true);
+      });
+    });
+
+    it('merges even when the base only has untracked .zcc files', async () => {
+      const target = join(base, 'wt', 'merge-zcc');
+      const res = await createWorktree(main, target, 'zcc/merge-zcc');
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      await writeFile(join(res.path, 'zcc-feature.txt'), 'merged\n');
+      await git(res.path, 'add', '.');
+      await git(res.path, 'commit', '-m', 'feature');
+      await mkdir(join(main, '.zcc'), { recursive: true });
+      await writeFile(join(main, '.zcc', 'activity.jsonl'), '{}\n');
+
+      await expect(mergeWorktree(main, res.path, 'main')).resolves.toEqual({ ok: true });
+      await expect(readFile(join(main, 'zcc-feature.txt'), 'utf8')).resolves.toBe('merged\n');
+      await rm(join(main, '.zcc'), { recursive: true, force: true });
+    });
+
     it('merges only clean worktrees into their recorded base branch', async () => {
       const target = join(base, 'wt', 'merge-clean');
       const res = await createWorktree(main, target, 'zcc/merge-clean');
@@ -711,6 +759,134 @@ describe('git worktree support', () => {
       await expect(mergeWorktree(main, res.path, 'main')).resolves.toMatchObject({ ok: false });
       await expect(execFileP('git', ['rev-parse', '-q', '--verify', 'MERGE_HEAD'], { cwd: main, env: cleanGitEnv() })).rejects.toBeDefined();
       await expect(readFile(join(main, 'README.md'), 'utf8')).resolves.toBe('# main\n');
+    });
+
+    describe('deleteBranch', () => {
+      async function branches(): Promise<string[]> {
+        const { stdout } = await execFileP('git', ['branch', '--format=%(refname:short)'], { cwd: main, env: cleanGitEnv() });
+        return stdout.split('\n').filter(Boolean);
+      }
+
+      it('force-removes a dirty worktree, then -D drops the branch with its unmerged commits', async () => {
+        const res = await createWorktree(main, join(base, 'wt', 'del'), 'zcc/del');
+        expect(res.ok).toBe(true);
+        if (!res.ok) return;
+        await writeFile(join(res.path, 'a.txt'), 'x\n');
+        await git(res.path, 'add', '.');
+        await git(res.path, 'commit', '-m', 'unmerged');
+        await writeFile(join(res.path, 'untracked.txt'), 'u\n');
+
+        // A plain remove keeps the dirty worktree; `git worktree remove` never deletes the branch.
+        expect((await removeWorktree(main, res.path, false)).ok).toBe(false);
+        expect((await removeWorktree(main, res.path, true)).ok).toBe(true);
+        expect(await branches()).toContain('zcc/del');
+        expect((await deleteBranch(main, 'zcc/del', false)).ok).toBe(false);
+        expect((await deleteBranch(main, 'zcc/del', true)).ok).toBe(true);
+        expect(await branches()).not.toContain('zcc/del');
+      });
+
+      it('-d deletes a merged branch', async () => {
+        const res = await createWorktree(main, join(base, 'wt', 'merged'), 'zcc/merged');
+        expect(res.ok).toBe(true);
+        if (!res.ok) return;
+        expect((await removeWorktree(main, res.path, false)).ok).toBe(true);
+        expect((await deleteBranch(main, 'zcc/merged', false)).ok).toBe(true);
+        expect(await branches()).not.toContain('zcc/merged');
+      });
+
+      it('git refuses a branch that is checked out', async () => {
+        expect((await deleteBranch(main, 'main', true)).ok).toBe(false);
+        const res = await createWorktree(main, join(base, 'wt', 'live'), 'zcc/live');
+        expect(res.ok).toBe(true);
+        expect((await deleteBranch(main, 'zcc/live', true)).ok).toBe(false);
+      });
+
+      it('rejects invalid input without running git', async () => {
+        await expect(deleteBranch('rel', 'x', true)).resolves.toEqual({ ok: false, message: 'invalid branch' });
+        await expect(deleteBranch(main, '', true)).resolves.toEqual({ ok: false, message: 'invalid branch' });
+        await expect(deleteBranch(main, '  ', true)).resolves.toEqual({ ok: false, message: 'invalid branch' });
+        await expect(deleteBranch(main, '--force', true)).resolves.toEqual({ ok: false, message: 'invalid branch' });
+        await expect(deleteBranch(main, ' x', true)).resolves.toEqual({ ok: false, message: 'invalid branch' });
+        await expect(deleteBranch(join(base, 'nope'), 'x', true)).resolves.toEqual({ ok: false, message: 'not a git repo' });
+        expect((await deleteBranch(main, 'does-not-exist', true)).ok).toBe(false);
+      });
+    });
+
+    describe('commitAllWorktreeChanges', () => {
+      it('commits modified and untracked files so a merge carries them, even with gpgsign configured', async () => {
+        await git(main, 'config', 'user.name', 'T');
+        await git(main, 'config', 'user.email', 't@example.com');
+        // Signing would fail here; the helper must not attempt it.
+        await git(main, 'config', 'commit.gpgsign', 'true');
+        await git(main, 'config', 'gpg.program', '/nonexistent-gpg');
+        const res = await createWorktree(main, join(base, 'wt', 'auto'), 'zcc/auto');
+        expect(res.ok).toBe(true);
+        if (!res.ok) return;
+        await writeFile(join(res.path, 'README.md'), '# changed\n');
+        await writeFile(join(res.path, 'new.txt'), 'new\n');
+
+        await expect(commitAllWorktreeChanges(res.path, 'Squad X: final changes')).resolves.toEqual({ ok: true });
+        expect((await worktreeState(res.path)).dirty).toBe(false);
+
+        await expect(mergeWorktree(main, res.path, 'main')).resolves.toEqual({ ok: true });
+        await expect(readFile(join(main, 'new.txt'), 'utf8')).resolves.toBe('new\n');
+        await expect(readFile(join(main, 'README.md'), 'utf8')).resolves.toBe('# changed\n');
+        expect((await removeWorktree(main, res.path, false)).ok).toBe(true);
+        expect((await deleteBranch(main, 'zcc/auto', false)).ok).toBe(true);
+      });
+
+      it('is a successful no-op on a clean worktree', async () => {
+        const res = await createWorktree(main, join(base, 'wt', 'noop'), 'zcc/noop');
+        expect(res.ok).toBe(true);
+        if (!res.ok) return;
+        await expect(commitAllWorktreeChanges(res.path, 'm')).resolves.toEqual({ ok: true });
+        expect((await worktreeState(res.path)).commits).toBe(0);
+      });
+
+      it('never commits Zana .zana handoff files, and they do not block a merge', async () => {
+        await git(main, 'config', 'user.name', 'T');
+        await git(main, 'config', 'user.email', 't@example.com');
+        const res = await createWorktree(main, join(base, 'wt', 'zana'), 'zcc/zana');
+        expect(res.ok).toBe(true);
+        if (!res.ok) return;
+        await mkdir(join(res.path, '.zana'), { recursive: true });
+        await writeFile(join(res.path, '.zana', 'execution-plan-x.md'), 'plan\n');
+        await writeFile(join(res.path, 'real.txt'), 'real\n');
+
+        await expect(commitAllWorktreeChanges(res.path, 'm')).resolves.toEqual({ ok: true });
+        await expect(mergeWorktree(main, res.path, 'main')).resolves.toEqual({ ok: true });
+        await expect(readFile(join(main, 'real.txt'), 'utf8')).resolves.toBe('real\n');
+        await expect(readFile(join(main, '.zana', 'execution-plan-x.md'), 'utf8')).rejects.toThrow();
+      });
+
+      it('treats a worktree whose only changes are .zana files as nothing to commit', async () => {
+        const res = await createWorktree(main, join(base, 'wt', 'zonly'), 'zcc/zonly');
+        expect(res.ok).toBe(true);
+        if (!res.ok) return;
+        await mkdir(join(res.path, '.zana'), { recursive: true });
+        await writeFile(join(res.path, '.zana', 'p.md'), 'plan\n');
+        await expect(commitAllWorktreeChanges(res.path, 'm')).resolves.toEqual({ ok: true });
+        expect((await worktreeState(res.path)).commits).toBe(0);
+      });
+
+      it('rejects bad input and reports a commit failure', async () => {
+        await expect(commitAllWorktreeChanges('rel', 'm')).resolves.toEqual({ ok: false, message: 'invalid path' });
+        await expect(commitAllWorktreeChanges(join(base, 'wt', 'x'), '  ')).resolves.toEqual({ ok: false, message: 'invalid path' });
+        await expect(commitAllWorktreeChanges(join(base, 'nope'), 'm')).resolves.toEqual({ ok: false, message: 'not a git repo' });
+        const res = await createWorktree(main, join(base, 'wt', 'hook'), 'zcc/hook');
+        expect(res.ok).toBe(true);
+        if (!res.ok) return;
+        await writeFile(join(res.path, 'f.txt'), 'f\n');
+        // A failing user hook must surface as ok:false, never throw.
+        await git(main, 'config', 'extensions.worktreeConfig', 'true');
+        await mkdir(join(base, 'hooks'), { recursive: true });
+        await writeFile(join(base, 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n');
+        await chmod(join(base, 'hooks', 'pre-commit'), 0o755);
+        await git(res.path, 'config', '--worktree', 'core.hooksPath', join(base, 'hooks'));
+        const failed = await commitAllWorktreeChanges(res.path, 'm');
+        expect(failed.ok).toBe(false);
+        expect((await worktreeState(res.path)).dirty).toBe(true);
+      });
     });
 
     it('reports a fresh, empty worktree as prunable and removes it without --force', async () => {

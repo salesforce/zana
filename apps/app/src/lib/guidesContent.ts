@@ -108,11 +108,17 @@ Pick the persona when starting a new agent (Quick Agent, a project tab, or a
 Scheduler run) — its model/prompt/tools apply automatically instead of the
 profile defaults.
 
-## 3. Teams
+## 3. Start using Squads
 
-Related personas can be grouped into a **Squad** — a small team that works
-together on a task, each member with its own role. See **Squads** to set one
-up once you have a couple of personas you'd reuse together.
+A **Squad** groups Personas into a team led by an Orchestrator, so several
+agents can work on one goal together. Zana ships five built-in Squads, so you
+can launch one before you create any Persona of your own.
+
+Open **New Chat**, choose **Squad** under Launch mode, pick a Squad and a
+Project, and describe the goal. Follow the run in the Agents board and answer
+its questions in the Inbox.
+
+Read the step-by-step guide: https://zana-ide.com/docs/squads-start/
 `,
   shortcuts: `
 Zana is built to be driven from the keyboard once you know the

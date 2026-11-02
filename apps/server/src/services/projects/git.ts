@@ -733,6 +733,63 @@ export async function removeWorktree(
   return runGit(toplevel, args);
 }
 
+/**
+ * Delete a local branch. `force` uses `-D` (drops unmerged commits); otherwise
+ * `-d`, which git refuses unless the branch is merged. Git itself also refuses a
+ * branch that is checked out in any worktree. Never throws.
+ */
+export async function deleteBranch(
+  projectPath: string,
+  branch: string,
+  force = false
+): Promise<{ ok: boolean; message?: string }> {
+  if (!isAbsolute(projectPath) || typeof branch !== 'string' || !branch.trim() || branch.startsWith('-') || branch !== branch.trim()) {
+    return { ok: false, message: 'invalid branch' };
+  }
+  const toplevel = findToplevel(projectPath);
+  if (!toplevel) return { ok: false, message: 'not a git repo' };
+  return runGit(toplevel, ['branch', force ? '-D' : '-d', '--', branch]);
+}
+
+/**
+ * Commit every uncommitted and untracked change in a linked worktree so a merge
+ * carries all of its work. A clean worktree is a successful no-op. Signing is
+ * disabled for this one automated commit so a repo with `commit.gpgsign` cannot
+ * make it fail; hooks still run. Never throws.
+ */
+export async function commitAllWorktreeChanges(
+  worktreePath: string,
+  message: string
+): Promise<{ ok: boolean; message?: string }> {
+  if (!isAbsolute(worktreePath) || !message.trim()) return { ok: false, message: 'invalid path' };
+  const toplevel = findToplevel(worktreePath);
+  if (!toplevel) return { ok: false, message: 'not a git repo' };
+  const status = await getGitStatus(worktreePath);
+  if (!status) return { ok: false, message: 'worktree is unavailable' };
+  if (!status.dirty) return { ok: true };
+  // `.zana/` holds Zana's own plan handoff files; they must never reach the user's history.
+  const added = await runGit(toplevel, ['add', '-A', '--', '.', ':(exclude).zana']);
+  if (!added.ok) return added;
+  // Exit 0 means nothing was staged (only excluded files were dirty), so there is nothing to commit.
+  const nothingStaged = await runGit(toplevel, ['diff', '--cached', '--quiet']);
+  if (nothingStaged.ok) return { ok: true };
+  return runGit(toplevel, ['-c', 'commit.gpgsign=false', 'commit', '-m', message.trim()]);
+}
+
+/**
+ * True when the checkout has any change other than untracked files under `.zcc/`.
+ * Zana writes its own activity files there, so they must not block a merge.
+ * Fails closed: a git error counts as "has changes".
+ */
+export async function hasChangesBeyondZcc(cwd: string): Promise<boolean> {
+  if (!isAbsolute(cwd)) return true;
+  const status = await runGitOutput(cwd, ['status', '--porcelain', '--untracked-files=all']);
+  if (!status.ok) return true;
+  return status.output
+    .split('\n')
+    .some((line) => line.trim() !== '' && !/^\?\? "?\.zcc\//.test(line));
+}
+
 /** Merge a clean managed worktree into its recorded base checkout. */
 export async function mergeWorktree(
   projectPath: string,
@@ -744,11 +801,15 @@ export async function mergeWorktree(
   }
   const base = await getGitStatus(projectPath);
   if (!base) return { ok: false, message: 'base checkout is unavailable' };
-  if (base.dirty) return { ok: false, message: 'base checkout is dirty' };
+  if (base.dirty && (await hasChangesBeyondZcc(projectPath))) return { ok: false, message: 'base checkout is dirty' };
   if (base.branch !== baseBranch) return { ok: false, message: 'base checkout is not on recorded branch' };
   const source = await getGitStatus(worktreePath);
   if (!source) return { ok: false, message: 'worktree is unavailable' };
-  if (source.dirty) return { ok: false, message: 'worktree is dirty' };
+  if (source.dirty) {
+    // Zana's own `.zana/` handoff files alone never make a worktree "dirty" for a merge.
+    const other = await runGitOutput(worktreePath, ['status', '--porcelain', '--', '.', ':(exclude).zana']);
+    if (!other.ok || other.output.trim()) return { ok: false, message: 'worktree is dirty' };
+  }
   if (!source.branch) return { ok: false, message: 'worktree branch is unavailable' };
   const merged = await runGit(projectPath, ['merge', '--no-edit', source.branch]);
   if (!merged.ok) await runGit(projectPath, ['merge', '--abort']);

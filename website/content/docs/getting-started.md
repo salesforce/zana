@@ -26,6 +26,7 @@ reports and questions.
 ## Keep exploring
 
 - [Watch the How To videos](https://zana-ide.com/docs/getting-started/#how-to-heading) — your first project, Squads, mobile access, and Agentforce.
+- [Start using Squads](/docs/squads-start/) — put a group of agents on one job, then watch and review the result.
 - [Using Zana](/docs/using-zana/) — the full guide to projects, agents, and the Inbox.
 - [Connect another computer](/docs/multiple-devices/) — remote hosts need Node.js 22+.
 - [Browse plugins](/extensions/) — add tools for the way you work.

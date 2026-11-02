@@ -85,7 +85,7 @@ export function squadWorktreeSlug(
 }
 
 type GitOps = Pick<typeof GitModule,
-  'getGitStatus' | 'setWorktreePushProtection' | 'createWorktree' | 'mergeWorktree' | 'removeWorktree' | 'worktreeState' | 'isGitRepo' | 'sanitizeBranchSlug'>
+  'getGitStatus' | 'setWorktreePushProtection' | 'createWorktree' | 'mergeWorktree' | 'removeWorktree' | 'deleteBranch' | 'commitAllWorktreeChanges' | 'hasChangesBeyondZcc' | 'worktreeState' | 'isGitRepo' | 'sanitizeBranchSlug'>
   // Selected-target resolution only; when absent every selector is unavailable.
   & Partial<Pick<typeof GitModule, 'listWorktrees' | 'gitCommonDir'>>;
 
@@ -339,7 +339,7 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
 
   /**
    * Apply a terminal run's worktree policy. Resolves with what was done once the terminal
-   * effects are durably marked ('merged', 'kept' or 'missing'), and `undefined` when this
+   * effects are durably marked ('merged', 'deleted', 'kept' or 'missing'), and `undefined` when this
    * call applied nothing (no worktree, not terminal, an active follow-up, or team teardown
    * still pending; a later call applies them).
    */
@@ -380,21 +380,58 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
         const protection = await git.setWorktreePushProtection(project.path, worktree.path, false);
         if (!protection.ok) throw new Error(`could not disable squad worktree push guard: ${protection.reason}`);
       }
-      const requested = record.request.onComplete ?? 'leave';
+      const team = deps.teams.list().find((candidate) => candidate.id === record.teamId);
+      // A launch request's own choice wins over the Squad's default; both default to keeping.
+      const requested = record.request.onComplete ?? team?.worktreeOnComplete ?? 'leave';
       if (record.state === 'COMPLETED' && requested === 'merge') {
         const base = worktree.baseBranch;
         const beforeMerge = await currentTerminal();
         if (project && base && beforeMerge) {
           if (squadWorktreeHasActiveFollowUp(record.id)) return;
-          const merged = await git.mergeWorktree(project.path, beforeMerge.squadWorktree!.path, base);
-          if (merged.ok) {
-            const beforeRemove = await currentTerminal();
-            if (!beforeRemove) return;
-            const removed = await git.removeWorktree(project.path, beforeRemove.squadWorktree!.path, false);
-            if (removed.ok) {
-              await executionStore.markSquadWorktreeTerminalEffects(beforeRemove.id, beforeRemove.stateVersion);
-              return 'merged';
+          const wtPath = beforeMerge.squadWorktree!.path;
+          const wtBranch = beforeMerge.squadWorktree!.branch;
+          // Check the base first so an unmergeable base never costs the worktree an automatic commit.
+          const baseStatus = await git.getGitStatus(project.path);
+          // Zana's own untracked `.zcc/` files do not make the base dirty.
+          const baseClean = baseStatus ? !baseStatus.dirty || !(await git.hasChangesBeyondZcc(project.path)) : false;
+          if (baseStatus && baseClean && baseStatus.branch === base) {
+            // Merge everything: uncommitted and untracked work is committed to the worktree branch first.
+            // If the merge then fails, that commit stays on the (kept) worktree branch.
+            const committed = await git.commitAllWorktreeChanges(wtPath, `Squad ${(beforeMerge.jobTitle || '').trim() || beforeMerge.id}: final changes`);
+            const merged = committed.ok ? await git.mergeWorktree(project.path, wtPath, base) : committed;
+            if (merged.ok) {
+              const beforeRemove = await currentTerminal();
+              if (!beforeRemove) return;
+              // Everything is merged; force only discards Zana's own untracked `.zana/` handoff files.
+              const removed = await git.removeWorktree(project.path, beforeRemove.squadWorktree!.path, true);
+              if (removed.ok) {
+                // The branch is merged, so plain `-d` suffices; a refusal only leaves a harmless branch.
+                if (wtBranch && wtBranch !== base) await git.deleteBranch(project.path, wtBranch, false).catch(() => undefined);
+                await executionStore.markSquadWorktreeTerminalEffects(beforeRemove.id, beforeRemove.stateVersion);
+                return 'merged';
+              }
             }
+          }
+        }
+      }
+      if (record.state === 'COMPLETED' && requested === 'delete' && project) {
+        // Destructive by design: dirty, untracked and unmerged work is discarded (force removal, `branch -D`).
+        // A removal failure keeps the worktree and leaves the branch untouched.
+        const beforeDelete = await currentTerminal();
+        if (beforeDelete) {
+          if (squadWorktreeHasActiveFollowUp(record.id)) return;
+          const wtPath = beforeDelete.squadWorktree!.path;
+          const wtBranch = beforeDelete.squadWorktree!.branch;
+          const removed = await git.removeWorktree(project.path, wtPath, true).catch(() => ({ ok: false as const }));
+          if (removed.ok) {
+            // Only the branch recorded for this worktree; never the base, the project's current branch, or a blank name.
+            const current = (await git.getGitStatus(project.path).catch(() => null))?.branch;
+            if (wtBranch && wtBranch.trim() && wtBranch !== worktree.baseBranch && wtBranch !== current) {
+              await git.deleteBranch(project.path, wtBranch, true).catch(() => undefined);
+            }
+            // Like a merge, the record keeps its worktree reference so the report can name the branch.
+            await executionStore.markSquadWorktreeTerminalEffects(beforeDelete.id, beforeDelete.stateVersion);
+            return 'deleted';
           }
         }
       }
@@ -604,7 +641,7 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
       if (squadWorktreeHasActiveFollowUp(record.id)) throw new InboxActionOperatorError(ACTIVE_FOLLOW_UP_MESSAGE);
       await appendSquadWorktreeNotice(
         record,
-        `Confirm deletion of \`${record.squadWorktree.path}\`. Unmerged commits require Force delete; dirty worktrees are never deleted.`,
+        `Confirm deletion of \`${record.squadWorktree.path}\`. Delete refuses a worktree with uncommitted changes or unmerged commits. Force delete removes it anyway and permanently discards that work.`,
         [
           { id: 'confirm-delete', label: 'Delete permanently' },
           { id: 'force-delete', label: 'Force delete unmerged work' },

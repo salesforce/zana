@@ -196,6 +196,9 @@ import {
   listBranches,
   gitCommonDir,
   removeWorktree,
+  deleteBranch,
+  commitAllWorktreeChanges,
+  hasChangesBeyondZcc,
   mergeWorktree,
   sweepManagedWorktrees,
   withWorktreeLock,
@@ -5470,7 +5473,7 @@ export const squadWorktreeRuntime = createSquadWorktreeRuntime({
     request, { kind: 'interactive-user', id: `squad-follow-up:${executionId}` }, { retainWorktree: true },
     undefined, undefined, undefined, undefined, undefined, false, lifecycle, executionId
   ),
-  git: { getGitStatus, setWorktreePushProtection, createWorktree, mergeWorktree, removeWorktree, worktreeState, isGitRepo, sanitizeBranchSlug, listWorktrees, gitCommonDir },
+  git: { getGitStatus, setWorktreePushProtection, createWorktree, mergeWorktree, removeWorktree, deleteBranch, commitAllWorktreeChanges, hasChangesBeyondZcc, worktreeState, isGitRepo, sanitizeBranchSlug, listWorktrees, gitCommonDir },
   isTrustedWorkspacePath: isWithinTrustedWorkspace
 });
 inboxActionRegistry.register(SQUAD_WORKTREE_ACTION, squadWorktreeRuntime.handleInboxAction);

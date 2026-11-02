@@ -71,6 +71,7 @@ describe('retained Squad worktree controls', () => {
     expect(message).toContain('Delete retained worktree?');
     expect(message).toContain(WORKTREE.path);
     expect(message).toContain('This cannot be undone.');
+    expect(message).not.toContain('Uncommitted changes and unmerged commits');
     expect(worktreeAction).not.toHaveBeenCalled();
   });
 
@@ -83,7 +84,10 @@ describe('retained Squad worktree controls', () => {
   it('Force delete uses distinct confirmation copy and the force-delete action', async () => {
     mount();
     fireEvent.click(await screen.findByRole('button', { name: 'Force delete unmerged work' }));
-    expect(String(confirmSpy.mock.calls[0]?.[0])).toContain('Force delete unmerged worktree?');
+    const message = String(confirmSpy.mock.calls[0]?.[0]);
+    expect(message).toContain('Force delete worktree?');
+    expect(message).toContain('Uncommitted changes and unmerged commits in it will be lost.');
+    expect(message).toContain('This cannot be undone.');
     await waitFor(() => expect(worktreeAction).toHaveBeenCalledWith('project-1', 'execution-1', 7, 'force-delete', undefined, undefined));
   });
 
