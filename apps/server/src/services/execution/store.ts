@@ -265,6 +265,8 @@ export interface ExecutionDispatchAssignment {
   title: string;
   task: string;
   files?: string[];
+  /** The unit's Verification steps, shown to the worker so it knows what to run before completing. */
+  verification?: string[];
   claimId?: string;
   claimGeneration?: number;
 }
@@ -2345,7 +2347,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
           unit.failure = undefined;
           unit.history.push({ action: 'claimed', slotId: slot.slotId, attempt: unit.attempt, at: timestamp });
           freeSlots.splice(index, 1);
-           assignments.push({ workUnitId: unit.id, slotId: slot.slotId, title: unit.title, task: unit.task, claimId: unit.claimId, claimGeneration: unit.claimGeneration, ...(unit.files?.length ? { files: unit.files } : {}) });
+           assignments.push({ workUnitId: unit.id, slotId: slot.slotId, title: unit.title, task: unit.task, claimId: unit.claimId, claimGeneration: unit.claimGeneration, ...(unit.files?.length ? { files: unit.files } : {}), ...(unit.verification?.length ? { verification: unit.verification } : {}) });
         }
         if (assignments.length || decisionsChanged) {
           record.coordinatorState = 'PARKED';

@@ -63,15 +63,19 @@ export type WorkerLiveness = 'alive' | 'dead' | 'unknown';
 /**
  * Default wall-clock ceiling for a single durable work-unit claim (~20 min, generous).
  *
- * Durable job/structured/freeform workers never call `execution.work.heartbeat` — the worker
- * prompt omits it and an LLM cannot renew a lease mid-turn — so every claim's 90s lease
- * (WORK_CLAIM_LEASE_MS) expires while the worker is still alive. `reconcileActive` then only
- * reclaims a live-but-expired claim when the worker's detected agent-state is restful; a worker
- * stuck 'working'/'unknown' is never reclaimed AND its idle-gated assignment is never flushed
- * → permanent freeze (live run df216947, a 'structured' run frozen 224s past lease at turn 0).
- * The one state-agnostic escape is the wall-clock backstop in `reconcileActive`, but it is dead
- * unless `maxClaimWallClockMs` is set — no host/server default, and the coordinator prompt never
- * sets it. This default revives it so a stuck claim is force-reclaimed regardless of state.
+ * A claim holds a 5-minute lease (WORK_CLAIM_LEASE_MS). A worker keeps it alive by calling
+ * `execution.work.heartbeat` with its claim fence; a cohort heartbeat only moves the progress
+ * clock when its `turnCount` rises or the lease is nearly spent, so the assignment text tells
+ * the worker to heartbeat every 2-3 minutes during a command that can run longer than 3 minutes,
+ * with `turnCount` one higher each time. Without that, a long E2E or coverage run goes silent.
+ * `reconcileActive` reclaims a live-but-expired claim when the worker's detected agent-state is
+ * restful, or by the progress-aware {@link DEFAULT_DURABLE_CLAIM_STALL_MS} ceiling (10 min);
+ * a worker stuck 'working'/'unknown' would otherwise never be reclaimed and its idle-gated
+ * assignment never flushed → permanent freeze (live run df216947, a 'structured' run frozen
+ * 224s past lease at turn 0). The one state-agnostic escape is the wall-clock backstop in
+ * `reconcileActive`, dead unless `maxClaimWallClockMs` is set — no host/server default, and the
+ * coordinator prompt never sets it. This default revives it so a stuck claim is force-reclaimed
+ * regardless of state.
  *
  * Blunt by design: it fires on wall-clock-since-claim regardless of whether the worker ever
  * emitted output, so it is only the LAST resort. The progress-aware {@link
@@ -543,13 +547,29 @@ export function dependencyResultsSection(record: ExecutionRecord, workUnitId: st
   return `\n\nUpstream results (outputs of your completed dependencies — use these, do NOT re-ask the human for information already decided here):\n${lines.join('\n')}`;
 }
 
+const LONG_COMMAND_LINE = 'Long commands: for any command that can run longer than 3 minutes (E2E, coverage, a full test run, a build), run it in the background and call execution.work.heartbeat with this claimId and claimGeneration every 2-3 minutes until it finishes, with a turnCount one higher than on your previous call (start at 1); a claim with no progress for 10 minutes is taken back.';
+const MAX_VERIFICATION_CHARS = 4_000;
+
+/** The unit's Verification steps for the worker, cut on a line boundary when over {@link MAX_VERIFICATION_CHARS}. */
+function verificationSection(steps: string[] | undefined): string {
+  const lines = (steps ?? []).map((step) => step.trim()).filter(Boolean).map((step) => `- ${step}`);
+  if (!lines.length) return '';
+  const header = '\nVerification (run these before you complete the unit):';
+  let section = header;
+  for (const line of lines) {
+    if (section.length + 1 + line.length > MAX_VERIFICATION_CHARS) return `${section}\n- … (truncated)`;
+    section += `\n${line}`;
+  }
+  return section;
+}
+
 /** The text a worker receives for an assignment; shared by first delivery and recovery redelivery. */
 export function assignmentText(record: ExecutionRecord, assignment: ExecutionDispatchAssignment): string {
   const upstream = dependencyResultsSection(record, assignment.workUnitId);
   const claim = assignment.claimId && assignment.claimGeneration
-    ? `\nClaim fence: claimId=${assignment.claimId}; claimGeneration=${assignment.claimGeneration}. Include both in execution.work.heartbeat and every structured work outcome.`
+    ? `\nClaim fence: claimId=${assignment.claimId}; claimGeneration=${assignment.claimGeneration}. Include both in execution.work.heartbeat and every structured work outcome.\n${LONG_COMMAND_LINE}`
     : '';
-  return `You are assigned work unit \`${assignment.workUnitId}\`${assignment.title ? ` — ${assignment.title}` : ''}.\nTask: ${assignment.task}${assignment.files?.length ? `\nFile scope: ${assignment.files.join(', ')}` : ''}${upstream}${claim}\n\nClose the unit through exactly one structured outcome: execution.work.complete, execution.work.block, execution.work.fail, or execution.work.release. Do not send routine progress or results to the coordinator.`;
+  return `You are assigned work unit \`${assignment.workUnitId}\`${assignment.title ? ` — ${assignment.title}` : ''}.\nTask: ${assignment.task}${assignment.files?.length ? `\nFile scope: ${assignment.files.join(', ')}` : ''}${verificationSection(assignment.verification)}${upstream}${claim}\n\nClose the unit through exactly one structured outcome: execution.work.complete, execution.work.block, execution.work.fail, or execution.work.release. Do not send routine progress or results to the coordinator.`;
 }
 
 /** Build renderer-safe, resolved capability gaps from admission checks before any execution is claimed. */
@@ -1300,7 +1320,7 @@ export class ExecutionService {
       || unit.claimGeneration !== fence.claimGeneration || !unit.assignedSlotId) return false;
     const text = assignmentText(record, {
       workUnitId: unit.id, slotId: unit.assignedSlotId, title: unit.title ?? '', task: unit.task, files: unit.files,
-      claimId: unit.claimId, claimGeneration: unit.claimGeneration
+      claimId: unit.claimId, claimGeneration: unit.claimGeneration, ...(unit.verification?.length ? { verification: unit.verification } : {})
     });
     return Boolean(await (this.deps.deliverToWorker ?? this.deps.replyToSession)(sessionId, `${preface}\n\n${text}`));
   }
