@@ -129,4 +129,28 @@ describe('worker assignment text (#581, #582)', () => {
     expect(redelivered).toContain('\nVerification (run these before you complete the unit):\n- pnpm typecheck passes');
     expect(redelivered).toContain(LONG_LINE);
   }));
+
+  it('OBL-001: a single oversized first step yields only the truncation marker, never a partial step', async () => fixture(async (filePath) => {
+    const { record } = await deliver(filePath, { ...baseUnit, verification: ['x'] });
+    const text = assignmentText(record, withVerification(['w'.repeat(5_000), 'second step']));
+    expect(text).toContain('\nVerification (run these before you complete the unit):\n- … (truncated)');
+    expect(text).not.toContain('www');
+    expect(text).not.toContain('second step');
+  }));
+
+  it('OBL-003: blank Verification steps are dropped, and a list of only blanks adds no section', async () => fixture(async (filePath) => {
+    const { record } = await deliver(filePath, { ...baseUnit, verification: ['x'] });
+    const mixed = assignmentText(record, withVerification(['real step', '   ', '']));
+    expect(mixed).toContain('File scope: a.txt\nVerification (run these before you complete the unit):\n- real step\n\n');
+    expect(mixed).not.toMatch(/^- *$/m);
+    expect(assignmentText(record, withVerification(['  ', '']))).not.toContain('Verification (run these');
+  }));
+
+  it('OBL-003: redelivery places the Verification steps immediately after File scope', async () => fixture(async (filePath) => {
+    const { service, replyToSession, claimed, fence } = await deliver(filePath, { ...baseUnit, verification: ['step one', 'step two'] });
+    replyToSession.mockClear();
+    await service.redeliverClaim('execution-1', claimed.id, fence, 'worker-1', 'PREFACE');
+    const redelivered = replyToSession.mock.calls.find((call) => (call as unknown[])[0] === 'worker-1')![1] as string;
+    expect(redelivered).toContain('File scope: a.txt\nVerification (run these before you complete the unit):\n- step one\n- step two\nClaim fence:');
+  }));
 });
