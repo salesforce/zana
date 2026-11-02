@@ -331,9 +331,11 @@ class PageBundler {
     }
     tags.sort((a, b) => a.start - b.start);
     for (const tag of tags) {
-      if (tag.name === '/a') {
+      if (!('attributes' in tag)) {
         replace(tag.start, tag.end, '</span>');
-      } else if (tag.name === 'a' && isCrossDocScheme(attribute(tag, 'href') ?? '')) {
+        continue;
+      }
+      if (tag.name === 'a' && isCrossDocScheme(attribute(tag, 'href') ?? '')) {
         // A page is a standalone export: another doc is not there to open, so keep only the label.
         const href = attribute(tag, 'href') ?? '';
         this.warn(`Link to another design doc (${href.trim().slice(0, 80)}) was exported as plain text.`);
