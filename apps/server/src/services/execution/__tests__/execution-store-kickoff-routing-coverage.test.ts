@@ -15,7 +15,7 @@ async function fixture(run: (filePath: string) => Promise<void>): Promise<void> 
 type Store = ReturnType<typeof createExecutionStore>;
 type Seat = { slotId: string; personaId: string; model?: string };
 
-async function running(store: Store, seats: Seat[], unit: Partial<ExecutionWorkUnitInput> = {}) {
+async function running(store: Store, seats: Seat[], unit: Partial<ExecutionWorkUnitInput> = {}, extra: ExecutionWorkUnitInput[] = []) {
   let record = (await store.claim({
     callerPrincipalId: 'session-1', projectId: 'project-1', teamId: 'team-1', jobTitle: 'Ship feature',
     requestDigest: 'digest-1', launchRequestId: 'request-1', resolvedModels: [],
@@ -32,7 +32,7 @@ async function running(store: Store, seats: Seat[], unit: Partial<ExecutionWorkU
   record = await store.replaceResolvedModels(record.id, seats.map((seat) => ({
     slotId: seat.slotId, personaId: seat.personaId, provider: 'claude', model: seat.model ?? 'unpriced-model', maxContextBytes: 10_000_000
   })));
-  return store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true, ...unit }]);
+  return store.registerPlan(record.id, record.stateVersion, [...extra, { id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true, ...unit }]);
 }
 
 const routing = { version: 1 as const, requiredRole: 'engineer', estimatedContextBytes: 4_000_000 };
@@ -63,15 +63,18 @@ describe('dispatch recommends the cheapest priced eligible slot (#577 shared sna
     expect((await equal.dispatchReady(second.id, { enforceRouting: true })).assignments[0].slotId).toBe('engineer:0');
   }));
 
-  it('re-evaluates the same facts on a later enforced dispatch of a unit that already has a decision', async () => fixture(async (filePath) => {
+  it('keeps the recorded decision and still recommends the free slot on later advisory and enforced passes', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 1_000 });
-    const record = await running(store, [
-      { slotId: 'engineer:0', personaId: 'engineer' }, { slotId: 'engineer:1', personaId: 'engineer', model: 'claude-haiku-4' }
-    ], { routing });
-    // Advisory pass writes the decision; the enforced pass then must still pick the priced slot.
-    await store.dispatchReady(record.id);
-    const again = await store.get(record.id);
-    expect(again!.routingDecisions).toHaveLength(1);
+    // The only worker slot is taken by an unrouted unit, so the routed unit stays READY with a decision on record.
+    const record = await running(store, [{ slotId: 'engineer:0', personaId: 'engineer', model: 'claude-haiku-4' }], { routing },
+      [{ id: 'plain', title: 'Plain', task: 'Work', dependencies: [], readOnly: true }]);
+    const first = await store.dispatchReady(record.id);
+    expect(first.record.workUnits!.find((unit) => unit.id === 'plain')!.state).toBe('CLAIMED');
+    expect(first.record.routingDecisions).toHaveLength(1);
+    const advisory = await store.dispatchReady(record.id);
+    const enforced = await store.dispatchReady(record.id, { enforceRouting: true });
+    expect(advisory.record.routingDecisions).toEqual(first.record.routingDecisions);
+    expect(enforced.record.routingDecisions).toEqual(first.record.routingDecisions);
   }));
 });
 

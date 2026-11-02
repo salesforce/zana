@@ -2734,7 +2734,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
             .filter((slot) => evaluateSlotEligibility(routing, slotRouteSnapshot(record, slot)).status !== 'FAIL')
           : [];
         question = capable.length === 1
-          ? `Work unit ${unit.id}${unit.title ? ` (${unit.title})` : ''} made no progress, and the only worker slot that can take it (${capable[0].slotId}) never started a turn.${earlier} Check that worker's terminal, then retry the unit or restart the run.`
+          ? `Work unit ${unit.id} (${unit.title}) made no progress, and the only worker slot that can take it (${capable[0].slotId}) never started a turn.${earlier} Check that worker's terminal, then retry the unit or restart the run.`
           : `Work unit ${unit.id}${unit.title ? ` (${unit.title})` : ''} made no progress on every eligible worker slot; its worker never started a turn.${earlier} Check the worker terminal, then retry the unit or restart the run.`;
         if (earlier) question = question.slice(0, MAX_STRING);
       }
