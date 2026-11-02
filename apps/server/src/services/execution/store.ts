@@ -18,7 +18,7 @@ import { normalizeExecutionPlan } from '../launch/preflight.js';
 import type { ExecutionDatabase } from '@zana-ai/zcc-db';
 import { readExecutionStoreSqliteState, writeExecutionStoreSqliteState } from './storage/sqlite-state.js';
 import { isResumableExecutionState } from './storage/backend-policy.js';
-import { evaluateSlotEligibility, type WorkUnitRoutingV1 } from './routing-policy.js';
+import { evaluateSlotEligibility, type SlotRouteSnapshotV1, type WorkUnitRoutingV1 } from './routing-policy.js';
 import { MODEL_PRICING_CATALOG_ID, MODEL_PRICING_CATALOG_VERSION } from './model-pricing-catalog.js';
 import {
   assembleExecutionResult,
@@ -1275,6 +1275,21 @@ function validUtf8String(value: unknown, maxBytes: number): value is string {
   return typeof value === 'string' && value.trim().length > 0 && Buffer.byteLength(value, 'utf8') <= maxBytes;
 }
 
+/**
+ * The routing-policy view of one worker slot: persona from the authorization
+ * context, model facts from the record's resolved models. One builder for
+ * dispatch and for kickoff reassignment, so the two cannot drift.
+ */
+function slotRouteSnapshot(record: ExecutionRecord, slot: { slotId: string; personaId: string }): SlotRouteSnapshotV1 {
+  const model = record.resolvedModels.find((candidate) => candidate.slotId === slot.slotId);
+  return {
+    slotId: slot.slotId, personaId: slot.personaId, provider: model?.provider, model: model?.model,
+    level: model?.level, roleOwnedModel: model?.roleOwnedModel, capabilities: model?.capabilities,
+    modalities: model?.modalities, maxContextBytes: model?.maxContextBytes, health: model?.health,
+    observedAt: model?.observedAt, maxAgeMs: model?.maxAgeMs
+  };
+}
+
 export function createExecutionStore(options: ExecutionStoreOptions) {
   if (options.maxRecords !== undefined && (!Number.isInteger(options.maxRecords) || options.maxRecords < 1)) {
     throw new Error('invalid execution max records');
@@ -2244,15 +2259,8 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
             const key = `${unit.id}\0${decisionAttempt}\0${unit.routing.version}`;
             const existing = record.routingDecisions?.some((decision) => `${decision.workUnitId}\0${decision.attempt}\0${decision.policyVersion}` === key);
             if (!existing) {
-              const modelBySlot = new Map(record.resolvedModels.map((model) => [model.slotId, model]));
               const candidates = workerSlots.map((slot) => {
-                const model = modelBySlot.get(slot.slotId);
-                const eligibility = evaluateSlotEligibility(unit.routing, {
-                  slotId: slot.slotId, personaId: slot.personaId, provider: model?.provider, model: model?.model,
-                  level: model?.level, roleOwnedModel: model?.roleOwnedModel, capabilities: model?.capabilities,
-                  modalities: model?.modalities, maxContextBytes: model?.maxContextBytes, health: model?.health,
-                  observedAt: model?.observedAt, maxAgeMs: model?.maxAgeMs
-                });
+                const eligibility = evaluateSlotEligibility(unit.routing, slotRouteSnapshot(record, slot));
                 return { slotId: slot.slotId, status: eligibility.status, reasons: eligibility.reasons, ...(eligibility.estimatedInputUsd === undefined ? {} : { estimatedInputUsd: eligibility.estimatedInputUsd }), pricingCatalogId: eligibility.pricingCatalogId, pricingCatalogVersion: eligibility.pricingCatalogVersion };
               });
               if (opts?.enforceRouting && candidates.length && candidates.every((candidate) => candidate.status === 'UNKNOWN')) {
@@ -2284,15 +2292,8 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
             } else {
               // Shadow evidence is immutable. Enforcement must re-evaluate free
               // slots, because availability changes without incrementing attempt.
-              const modelBySlot = new Map(record.resolvedModels.map((model) => [model.slotId, model]));
               const candidates = workerSlots.map((slot) => {
-                const model = modelBySlot.get(slot.slotId);
-                const eligibility = evaluateSlotEligibility(unit.routing!, {
-                  slotId: slot.slotId, personaId: slot.personaId, provider: model?.provider, model: model?.model,
-                  level: model?.level, roleOwnedModel: model?.roleOwnedModel, capabilities: model?.capabilities,
-                  modalities: model?.modalities, maxContextBytes: model?.maxContextBytes, health: model?.health,
-                  observedAt: model?.observedAt, maxAgeMs: model?.maxAgeMs
-                });
+                const eligibility = evaluateSlotEligibility(unit.routing!, slotRouteSnapshot(record, slot));
                 return { slotId: slot.slotId, status: eligibility.status, estimatedInputUsd: eligibility.estimatedInputUsd };
               });
               const qualified = candidates.filter((candidate) => candidate.status === 'PASS' && freeSlots.some((slot) => slot.slotId === candidate.slotId)).sort((left, right) => {
@@ -2726,7 +2727,15 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         const earlier = recovery && recovery.executionAttempt === record.attempt
           ? ` Earlier, Zana tried to recover ${recovery.slotId} after an API error: ${recovery.steps.map((entry) => entry.step).join(', ')}. Last error: ${lastError}.`
           : '';
-        question = `Work unit ${unit.id}${unit.title ? ` (${unit.title})` : ''} made no progress on every eligible worker slot; its worker never started a turn.${earlier} Check the worker terminal, then retry the unit or restart the run.`;
+        const routing = unit.routing;
+        const capable = routing
+          ? (record.authorizationContext?.slots ?? [])
+            .filter((slot) => slot.slotId !== 'orchestrator' && !slot.slotId.startsWith('orchestrator:'))
+            .filter((slot) => evaluateSlotEligibility(routing, slotRouteSnapshot(record, slot)).status !== 'FAIL')
+          : [];
+        question = capable.length === 1
+          ? `Work unit ${unit.id}${unit.title ? ` (${unit.title})` : ''} made no progress, and the only worker slot that can take it (${capable[0].slotId}) never started a turn.${earlier} Check that worker's terminal, then retry the unit or restart the run.`
+          : `Work unit ${unit.id}${unit.title ? ` (${unit.title})` : ''} made no progress on every eligible worker slot; its worker never started a turn.${earlier} Check the worker terminal, then retry the unit or restart the run.`;
         if (earlier) question = question.slice(0, MAX_STRING);
       }
       unit.state = 'BLOCKED';
@@ -2767,7 +2776,16 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         unit.history.filter((entry) => entry.action === 'claimed' && entry.slotId).map((entry) => entry.slotId!),
         ...(unit.noProgressSlots ?? []).filter((entry) => entry.executionAttempt === record.attempt).map((entry) => entry.slotId)
       ]);
-      const fresh = workerSlots.find((slot) => !tried.has(slot.slotId));
+      const untried = workerSlots.filter((slot) => !tried.has(slot.slotId));
+      let fresh = untried[0];
+      if (unit.routing) {
+        // Routing decides who may take the unit: never a FAIL slot, PASS before UNKNOWN, each in roster order.
+        const routing = unit.routing;
+        const ranked = untried.map((slot) => ({ slot, status: evaluateSlotEligibility(routing, slotRouteSnapshot(record, slot)).status }))
+          .filter((entry) => entry.status !== 'FAIL');
+        fresh = [...ranked.filter((entry) => entry.status === 'PASS'), ...ranked.filter((entry) => entry.status !== 'PASS')][0]?.slot;
+        if (!fresh) throw new WorkUnitRecoveryGuardError('no untried eligible worker slot for kickoff reassignment');
+      }
       if (!fresh) throw new WorkUnitRecoveryGuardError('no untried worker slot for kickoff reassignment');
       unit.assignedSlotId = fresh.slotId;
       unit.kickoffFailures = undefined;
