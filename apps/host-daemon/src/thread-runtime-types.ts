@@ -19,7 +19,7 @@ export interface ThreadRuntimeAdapter {
     bridgeLaunch: HostBridgeLaunch;
     cwd?: string;
   }): Promise<ProviderHealthResult>;
-  startWork(input: ThreadWorkInput): Promise<{ providerThreadId?: string } | void>;
+  startWork(input: ThreadWorkInput): Promise<{ providerThreadId?: string; sessionRestorable?: boolean } | void>;
   submitTurn(input: {
     threadId: string;
     input: PromptInput[];
@@ -35,7 +35,7 @@ export interface ThreadRuntimeAdapter {
     permissionEscalation?: 'ask' | 'deny';
     expectedTurnId?: string;
   }): Promise<void>;
-  resumeWork(input: ThreadResumeInput): Promise<{ providerThreadId?: string } | void>;
+  resumeWork(input: ThreadResumeInput): Promise<{ providerThreadId?: string; nativeLoaded?: boolean } | void>;
   resizeWork(input: { threadId: string; cols: number; rows: number }): Promise<void>;
   writeWork(input: { threadId: string; data: string }): Promise<void>;
   stopWork(input: { threadId: string }): Promise<void>;

@@ -365,6 +365,10 @@ export const ThreadStartCommandSchema = z.object({
   persona: threadLaunchPersonaSchema.optional(),
   headless: z.boolean().optional(),
   scheduled: z.boolean().optional(),
+  /** Unattended run opts out of per-run config isolation and uses the user's interactive Claude config. */
+  useUserConfig: z.boolean().optional(),
+  /** MCP server names an isolated unattended run needs; the launch is refused when one is not carried over. */
+  requiredMcps: z.array(z.string().min(1).max(128)).max(32).optional(),
   autoCloseOnFinish: z.boolean().optional(),
   inboxLevel: z.enum(['silent', 'quiet', 'loud']).optional(),
   autonomous: z.boolean().optional(),
@@ -477,7 +481,12 @@ export const TurnSubmitCommandSchema = z.object({
 export const ThreadResumeCommandSchema = ThreadResumeFieldsSchema.extend({
   type: z.literal('thread.resume'),
   threadId: UuidSchema,
-  environmentId: UuidSchema
+  environmentId: UuidSchema,
+  /**
+   * Strict resume: the provider must natively reload its own session or the
+   * command fails. The result reports `nativeLoaded`; absent means false.
+   */
+  requireNativeLoad: z.literal(true).optional()
 }).strict();
 
 export const ThreadRewindPrepareCommandSchema = z.object({
@@ -1237,7 +1246,9 @@ export const EnvironmentDestroyResultSchema = z.object({
 export const ThreadStartResultSchema = z.object({
   threadId: UuidSchema,
   started: z.literal(true),
-  providerThreadId: z.string().min(1).optional()
+  providerThreadId: z.string().min(1).optional(),
+  /** Provider-reported per-session restore support; absent means unknown (treat as not restorable). */
+  sessionRestorable: z.boolean().optional()
 }).strict();
 export type ThreadStartResult = z.infer<typeof ThreadStartResultSchema>;
 
@@ -1280,7 +1291,9 @@ export type TurnSubmitResult = z.infer<typeof TurnSubmitResultSchema>;
 export const ThreadResumeResultSchema = z.object({
   threadId: UuidSchema,
   resumed: z.literal(true),
-  providerThreadId: z.string().min(1).optional()
+  providerThreadId: z.string().min(1).optional(),
+  /** Set when the command carried requireNativeLoad; true only on a confirmed native load. */
+  nativeLoaded: z.boolean().optional()
 }).strict();
 export type ThreadResumeResult = z.infer<typeof ThreadResumeResultSchema>;
 

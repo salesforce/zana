@@ -161,7 +161,9 @@ describe('createDesktopNativeRecovery', () => {
     expect(api.compatibleSnapshots(rec({ teamId: 'x' }))).toEqual([]);
     expect(api.compatibleSnapshots(rec({ nativeRecoverySnapshots: [] }))).toEqual([]);
     expect(api.compatibleSnapshots(rec({ nativeRecoverySnapshots: undefined }))).toEqual([]);
-    expect(api.availability(rec({ nativeRecoverySnapshots: undefined }))).toEqual({ available: false, restorableSlots: 0 });
+    expect(api.availability(rec({ nativeRecoverySnapshots: undefined }))).toEqual({ available: false, restorableSlots: 0, totalSlots: 2 });
+    expect(api.availability(rec({ teamId: 'x' }))).toEqual({ available: false, restorableSlots: 0, totalSlots: 0 });
+    expect(api.totalSlots(rec({ teamId: 'x' }))).toBeUndefined();
   });
 
   it('resolves profiles only for slots whose persona exists', () => {
@@ -169,7 +171,20 @@ describe('createDesktopNativeRecovery', () => {
     const out = api.compatibleSnapshots(rec());
     expect(resolveTeamProfile).toHaveBeenCalledTimes(1);
     expect(Array.isArray(out)).toBe(true);
-    expect(api.availability(rec())).toEqual({ available: out.length > 0, restorableSlots: out.length });
+    expect(api.availability(rec())).toEqual({ available: false, restorableSlots: out.length, totalSlots: 2, reason: 'PARTIAL_RESTORE' });
+  });
+
+  it('blocks partial restores and allows only when every slot is restorable', () => {
+    const partial = make();
+    expect(partial.api.availability(rec({ nativeRecoverySnapshots: [snap('s1')] })))
+      .toEqual({ available: false, restorableSlots: 1, totalSlots: 2, reason: 'PARTIAL_RESTORE' });
+    const full = make({
+      personas: { list: () => [{ id: 'pe' }] as never },
+      expandTeamSlots: () => [{ slotId: 's1', role: 'worker' as const, personaId: 'pe' }, { slotId: 's2', role: 'worker' as const, personaId: 'pe' }]
+    });
+    expect(full.api.availability(rec({ nativeRecoverySnapshots: [snap('s1'), snap('s2')] })))
+      .toEqual({ available: true, restorableSlots: 2, totalSlots: 2 });
+    expect(full.api.availability(rec({ nativeRecoverySnapshots: [snap('s1')] })).reason).toBe('PARTIAL_RESTORE');
   });
 });
 

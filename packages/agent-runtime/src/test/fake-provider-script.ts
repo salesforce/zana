@@ -581,7 +581,13 @@ function startOrResumeThread(
     id: getJsonRpcId(message.id) ?? 0,
     result: returnThreadIdAsProviderIdentity
       ? { threadId }
-      : { providerThreadId },
+      : {
+          providerThreadId,
+          // Emulates a bridge that natively reloads the session.
+          ...(mode === "resume" && params.requireNativeLoad === true
+            ? { nativeLoaded: true }
+            : {}),
+        },
   });
 
   if (mode === "start" || mode === "fork") {

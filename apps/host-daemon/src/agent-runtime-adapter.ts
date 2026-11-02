@@ -73,6 +73,16 @@ export function isAutomatedThreadStart(
   return Boolean(input.headless || input.scheduled || input.autonomous);
 }
 
+/**
+ * Session-kind admission: an automated start is isolated from the user's
+ * interactive config unless it explicitly opted out via `useUserConfig`.
+ */
+export function isIsolatedAutomatedStart(
+  input: Pick<ThreadWorkInput, 'headless' | 'scheduled' | 'autonomous' | 'useUserConfig'>
+): boolean {
+  return isAutomatedThreadStart(input) && input.useUserConfig !== true;
+}
+
 function automatedSkillSelection(input: { automatedSkillIds?: readonly string[] }): AutomatedSkillSelection | undefined {
   return input.automatedSkillIds ? { skillIds: input.automatedSkillIds } : undefined;
 }
@@ -539,7 +549,7 @@ export function createAgentRuntimeAdapter(options: {
             }
           } : {}),
           ...(input.bridgeLaunch ? { bridgeLaunch: await resolveLaunch(input.bridgeLaunch) } : {}),
-          ...(isAutomatedThreadStart(input) ? { sessionKind: 'automated' as const } : {}),
+          ...(isIsolatedAutomatedStart(input) ? { sessionKind: 'automated' as const } : {}),
           ...mergeSessionTooling({
             remoteProxy,
             dynamicTools: input.dynamicTools,
@@ -548,7 +558,10 @@ export function createAgentRuntimeAdapter(options: {
         });
         const location = threadLocation.get(input.threadId);
         if (location?.status === 'active') location.status = 'idle';
-        return { providerThreadId: result.providerThreadId };
+        return {
+          providerThreadId: result.providerThreadId,
+          ...(result.sessionRestorable !== undefined ? { sessionRestorable: result.sessionRestorable } : {})
+        };
       } catch (error) {
         const location = threadLocation.get(input.threadId);
         if (location) location.status = 'error';
@@ -619,11 +632,15 @@ export function createAgentRuntimeAdapter(options: {
             remoteProxy: false,
             dynamicTools: input.dynamicTools,
             instructions: input.instructions
-          })
+          }),
+          ...(input.requireNativeLoad === true ? { requireNativeLoad: true as const } : {})
         });
         const location = threadLocation.get(input.threadId);
         if (location?.status === 'active') location.status = 'idle';
-        return { providerThreadId: result.providerThreadId };
+        return {
+          providerThreadId: result.providerThreadId,
+          ...(input.requireNativeLoad === true ? { nativeLoaded: result.nativeLoaded === true } : {})
+        };
       } catch (error) {
         const location = threadLocation.get(input.threadId);
         if (location) location.status = 'error';

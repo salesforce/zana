@@ -770,6 +770,8 @@ async function doUnit(unitId) {
       throw new Error('dependent work was dispatched after its dependency failed');
     } else if (unitId === 'home') {
       fs.writeFileSync(path.join(CWD, 'home.txt'), 'HOME: ready\n');
+      // Zana's own handoff directory: Squad worktree merge must never commit it.
+      if (UNATTENDED) { fs.mkdirSync(path.join(CWD, '.zana'), { recursive: true }); fs.writeFileSync(path.join(CWD, '.zana', 'e2e-handoff.txt'), 'handoff\n'); }
       await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: 'home', result: 'HOME: ready', ...outcomeFence });
     } else if (unitId === 'about') {
       fs.writeFileSync(path.join(CWD, 'about.txt'), 'ABOUT: ready\n');

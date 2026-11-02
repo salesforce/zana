@@ -148,6 +148,15 @@ it('aligns desktop exact-native action with host-confirmed compatible slots with
   expect(unsupported.executions[0].recovery.actions.exactNative).toEqual({ available: false, restorableSlots: 0, reason: 'NATIVE_RESTORE_UNAVAILABLE' });
 });
 
+it('passes PARTIAL_RESTORE reason and counts through the desktop override', async () => {
+  const retained = { ...execution, state: 'FAILED', nativeRecoverySnapshots: [{ attempt: 1, slotId: 'slot', role: 'worker', nativeConversationId: 'native-secret' }] };
+  list.mockResolvedValueOnce({ records: [retained], hasMore: false });
+  exactNativeRecoveryAvailability.mockReturnValueOnce({ available: false, restorableSlots: 1, totalSlots: 3, reason: 'PARTIAL_RESTORE' });
+  const partial = await state.windows.get(IPC.executionBoard.listProject)!({ id: 8 }, 'registered');
+  expect(partial.executions[0].recovery.actions.exactNative).toEqual({ available: false, restorableSlots: 1, totalSlots: 3, reason: 'PARTIAL_RESTORE' });
+  expect(JSON.stringify(partial)).not.toContain('native-secret');
+});
+
 it('keeps native recovery available after a replacement launch fails without projecting snapshot ids', async () => {
   const retained = {
     ...execution,
