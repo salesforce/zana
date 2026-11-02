@@ -269,6 +269,8 @@ export interface ExecutionDispatchAssignment {
   verification?: string[];
   claimId?: string;
   claimGeneration?: number;
+  /** Heartbeat count already stored for this claim: non-zero only when a claim is redelivered after a restart. */
+  turnCount?: number;
 }
 
 export interface ExecutionBlocker {
