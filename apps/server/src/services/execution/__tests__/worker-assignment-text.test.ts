@@ -178,6 +178,37 @@ describe('heartbeat advice in the assignment text', () => {
   });
 });
 
+describe('heartbeat advice follows the run\'s own policy', () => {
+  const assignment = (): ExecutionDispatchAssignment =>
+    ({ workUnitId: 'a', slotId: 'slot-1', title: 'A', task: 'do a', claimId: 'c-1', claimGeneration: 1 });
+  const record = (policy?: Record<string, unknown>) => ({ request: { policy }, workUnits: [] } as unknown as ExecutionRecord);
+
+  it('names a 30 minute policy ceiling instead of the default', () => {
+    const text = assignmentText(record({ maxClaimStallMs: 30 * 60_000 }), assignment());
+    expect(text).toContain('no progress for 30 minutes is taken back');
+    expect(text).not.toContain('for 10 minutes');
+    expect(text).toContain('every 2-3 minutes');
+  });
+
+  it('with a short ceiling asks for heartbeats at least every half of it, never the 2-3 minute cadence', () => {
+    const text = assignmentText(record({ maxClaimStallMs: 90_000 }), assignment());
+    expect(text).toContain('at least every 45 seconds');
+    expect(text).toContain('no progress for 90 seconds is taken back');
+    expect(text).not.toContain('every 2-3 minutes');
+  });
+
+  it('reads a one minute ceiling as 1 minute and halves it to 30 seconds', () => {
+    const text = assignmentText(record({ maxClaimStallMs: 60_000 }), assignment());
+    expect(text).toContain('no progress for 1 minute is taken back');
+    expect(text).toContain('at least every 30 seconds');
+  });
+
+  it('tells the worker to stop heartbeating on a turn limit error only when the policy sets maxTurnsPerClaim', () => {
+    expect(assignmentText(record({ maxTurnsPerClaim: 5 }), assignment())).toContain('If a heartbeat fails with a turn limit error, stop sending heartbeats.');
+    expect(assignmentText(record(), assignment())).not.toContain('turn limit');
+  });
+});
+
 describe('redelivery carries the stored heartbeat count', () => {
   it('a claim heartbeated to 3 and then redelivered tells the worker to start at 4', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'zcc-heartbeat-advice-'));

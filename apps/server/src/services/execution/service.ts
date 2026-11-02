@@ -549,9 +549,24 @@ export function dependencyResultsSection(record: ExecutionRecord, workUnitId: st
   return `\n\nUpstream results (outputs of your completed dependencies — use these, do NOT re-ask the human for information already decided here):\n${lines.join('\n')}`;
 }
 
-/** The heartbeat advice; the stall ceiling shown is the durable default every Squad run gets. A redelivered claim keeps its stored count, so the worker must continue from it, not from 1. */
-function longCommandLine(turnCount: number | undefined): string {
-  return `Long commands: for any command that can run longer than 3 minutes (E2E, coverage, a full test run, a build), run it in the background and call execution.work.heartbeat with this claimId and claimGeneration every 2-3 minutes until it finishes, with a turnCount one higher than on your previous call (start at ${(turnCount ?? 0) + 1}); a claim with no progress for ${DEFAULT_DURABLE_CLAIM_STALL_MS / 60_000} minutes is taken back.`;
+/** "30 minutes", "1 minute", "90 seconds": whole minutes read as minutes, anything else in seconds. */
+function formatDuration(ms: number): string {
+  if (ms >= 60_000 && ms % 60_000 === 0) { const minutes = ms / 60_000; return `${minutes} minute${minutes === 1 ? '' : 's'}`; }
+  const seconds = Math.max(1, Math.ceil(ms / 1_000));
+  return `${seconds} second${seconds === 1 ? '' : 's'}`;
+}
+
+/**
+ * The heartbeat advice, using this run's own stall ceiling (its policy, else the durable default).
+ * A redelivered claim keeps its stored count, so the worker must continue from it, not from 1.
+ * A ceiling too short for the usual 2-3 minute cadence switches to "at least every half the ceiling".
+ */
+function longCommandLine(record: ExecutionRecord, turnCount: number | undefined): string {
+  const policy = record.request.policy;
+  const stallMs = policy?.maxClaimStallMs ?? DEFAULT_DURABLE_CLAIM_STALL_MS;
+  const cadence = stallMs >= 6 * 60_000 ? 'every 2-3 minutes' : `at least every ${formatDuration(Math.floor(stallMs / 2))}`;
+  const turnLimit = policy?.maxTurnsPerClaim === undefined ? '' : ' If a heartbeat fails with a turn limit error, stop sending heartbeats.';
+  return `Long commands: for any command that can run longer than 3 minutes (E2E, coverage, a full test run, a build), run it in the background and call execution.work.heartbeat with this claimId and claimGeneration ${cadence} until it finishes, with a turnCount one higher than on your previous call (start at ${(turnCount ?? 0) + 1}); a claim with no progress for ${formatDuration(stallMs)} is taken back.${turnLimit}`;
 }
 const MAX_VERIFICATION_CHARS = 4_000;
 
@@ -572,7 +587,7 @@ function verificationSection(steps: string[] | undefined): string {
 export function assignmentText(record: ExecutionRecord, assignment: ExecutionDispatchAssignment): string {
   const upstream = dependencyResultsSection(record, assignment.workUnitId);
   const claim = assignment.claimId && assignment.claimGeneration
-    ? `\nClaim fence: claimId=${assignment.claimId}; claimGeneration=${assignment.claimGeneration}. Include both in execution.work.heartbeat and every structured work outcome.\n${longCommandLine(assignment.turnCount)}`
+    ? `\nClaim fence: claimId=${assignment.claimId}; claimGeneration=${assignment.claimGeneration}. Include both in execution.work.heartbeat and every structured work outcome.\n${longCommandLine(record, assignment.turnCount)}`
     : '';
   return `You are assigned work unit \`${assignment.workUnitId}\`${assignment.title ? ` — ${assignment.title}` : ''}.\nTask: ${assignment.task}${assignment.files?.length ? `\nFile scope: ${assignment.files.join(', ')}` : ''}${verificationSection(assignment.verification)}${upstream}${claim}\n\nClose the unit through exactly one structured outcome: execution.work.complete, execution.work.block, execution.work.fail, or execution.work.release. Do not send routine progress or results to the coordinator.`;
 }
