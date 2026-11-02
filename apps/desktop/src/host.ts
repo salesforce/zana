@@ -1,3 +1,4 @@
+import { isPreSpawnRefusal } from './launch-pre-spawn.js';
 import { createQuitGuard, readQuitThreadCount } from './runtime/quit-guard.js';
 import { createHostCliDiscovery } from './runtime/cli-discovery.js';
 import { ProjectCatalogs } from './runtime/project-catalogs.js';
@@ -4946,22 +4947,14 @@ async function launchBackgroundTerminal(
         authorizedPlan.resolved.config
       );
       spawnAttempted = true;
-      let session: TerminalSession;
-      try {
-        session = createTerminalFromAuthorizedPlan({
-          ...request,
-          cwd: spawnLaunch.cwd,
-          projectSettings: authorizedPlan.resolved.projectSettings,
-          preallocatedSessionId: authorizedPlan.sessionId,
-          // Always the digest-bound preflight value — overrides any caller field.
-          authorizedModel: finalPlan.executionAuthorization.modelPin
-        });
-      } catch (error) {
-        // An admission refusal (e.g. a required MCP server is unavailable) happens
-        // before any process exists, so the launch is a definite failure, not unconfirmed.
-        if ((error as { preSpawn?: unknown } | null)?.preSpawn === true) spawnAttempted = false;
-        throw error;
-      }
+      const session = createTerminalFromAuthorizedPlan({
+        ...request,
+        cwd: spawnLaunch.cwd,
+        projectSettings: authorizedPlan.resolved.projectSettings,
+        preallocatedSessionId: authorizedPlan.sessionId,
+        // Always the digest-bound preflight value — overrides any caller field.
+        authorizedModel: finalPlan.executionAuthorization.modelPin
+      });
       return ptys.waitForReady(session.id);
     },
     onLaunched: ({ ledgerEntryId, authorizationId, session }) => {
@@ -4991,7 +4984,9 @@ async function launchBackgroundTerminal(
   } catch (error) {
     // Once process creation was attempted, a readiness/persistence error cannot
     // establish that execution never started. Managers retain their reservation.
-    if (spawnAttempted) throw new LaunchSpawnError('LAUNCH_UNCONFIRMED', error instanceof Error ? error.message : String(error));
+    // An admission refusal (e.g. a required MCP server is unavailable) happens before
+    // any process exists, so it is a definite failure, not unconfirmed.
+    if (spawnAttempted && !isPreSpawnRefusal(error)) throw new LaunchSpawnError('LAUNCH_UNCONFIRMED', error instanceof Error ? error.message : String(error));
     throw error;
   }
 
