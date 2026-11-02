@@ -1,6 +1,7 @@
 import {
   existsSync,
   readFileSync,
+  statSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -16,7 +17,9 @@ import { resolveZccDataDir } from '../../host-config.js';
 /**
  * Context isolation for unattended (headless / scheduled / autonomous) Claude
  * CLI sessions. The session gets a per-run `0700` CLAUDE_CONFIG_DIR holding only
- * a generated auth/gateway `settings.json`, and is told to load only the `user`
+ * a generated auth/gateway `settings.json` (plus the narrow exceptions in
+ * `seedLeaf`: the bypass-consent flag and non-secret user MCP launch config),
+ * and is told to load only the `user`
  * setting source — so the user's hooks, plugins, marketplaces and project/local
  * settings never reach an unattended worker. HOME is untouched.
  *
@@ -48,11 +51,36 @@ export interface AutomatedClaudeLaunchPlan {
   env: Record<string, string>;
 }
 
-export type AutomatedClaudeAdmissionReason = 'authentication-unavailable' | 'config-unavailable';
+export type AutomatedClaudeAdmissionReason =
+  | 'authentication-unavailable'
+  | 'config-unavailable'
+  | 'required-mcp-unavailable';
+
+/** Operator-facing explanation for a schedule whose required MCP servers did not reach the isolated config. */
+export function requiredMcpUnavailableMessage(missing: readonly string[]): string {
+  return (
+    `Required MCP server${missing.length === 1 ? '' : 's'} not available in the isolated config: ${missing.join(', ')}. ` +
+    'Unattended runs carry over only MCP servers whose launch config holds no secrets; servers that need ' +
+    'credentials or a sign-in are not available. Enable "Use my Claude config" for this schedule to use your own MCP servers.'
+  );
+}
 
 export class AutomatedClaudeAdmissionError extends Error {
-  constructor(readonly reason: AutomatedClaudeAdmissionReason, cause?: unknown) {
-    super(`Automated Claude admission blocked: ${reason}`, { cause });
+  /** True when the failure happened before any process could start, so the launch is safe to record as failed. */
+  readonly preSpawn: boolean;
+  constructor(
+    readonly reason: AutomatedClaudeAdmissionReason,
+    cause?: unknown,
+    /** Required MCP server names absent from the isolated config (`required-mcp-unavailable` only). */
+    readonly missing: readonly string[] = []
+  ) {
+    super(
+      reason === 'required-mcp-unavailable'
+        ? requiredMcpUnavailableMessage(missing)
+        : `Automated Claude admission blocked: ${reason}`,
+      { cause }
+    );
+    this.preSpawn = reason === 'required-mcp-unavailable';
   }
 }
 
@@ -62,6 +90,8 @@ export interface AutomatedClaudeLaunchInput {
   dataDir?: string;
   /** Directory holding the user's real settings.json. Defaults to `$CLAUDE_CONFIG_DIR` or `~/.claude`. */
   sourceConfigDir?: string;
+  /** MCP server names the run needs; admission fails when any is not carried into the isolated config. */
+  requiredMcps?: readonly string[];
   /** Launch cwd. Its workspace-trust acceptance is carried over so the TUI does not stop on the trust dialog. */
   cwd?: string;
   now?: number;
@@ -85,7 +115,113 @@ export function buildSeedSettings(source: unknown): Record<string, unknown> | nu
     }
     if (Object.keys(picked).length > 0) generated.env = picked;
   }
+  // Narrow behavioral exception: consent the user already gave, only when literally true.
+  if (record.skipDangerousModePermissionPrompt === true) generated.skipDangerousModePermissionPrompt = true;
   return Object.keys(generated).length > 0 ? generated : null;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** The real global config (`.claude.json`) is read only up to this size. */
+const MAX_GLOBAL_CONFIG_BYTES = 16 * 1024 * 1024;
+const MAX_MCP_SERVERS = 64;
+const MAX_MCP_NAME_LENGTH = 128;
+const MAX_MCP_STRING_LENGTH = 4096;
+const MAX_MCP_ARGS = 128;
+
+/**
+ * Credential heuristic for MCP launch strings — kept identical to the provider
+ * bridge's `sanitizeMcpServers` (parity test). A server whose `args` or `url`
+ * obviously embed a credential is dropped whole: a credential-named flag
+ * (`--token`, `--api-key=…`, `--secret`, `--password`, `--auth…`, with or without
+ * `=value`), an `Authorization:`/`X-Api-Key:` header or `Bearer <value>` arg, or a
+ * URL with userinfo (`user:pass@`) or a credential-named query parameter.
+ * Conservative and obviously incomplete; secrets belong in `env`/`headers`, which
+ * are never copied.
+ */
+const CREDENTIAL_ARG =
+  /^-{1,2}[\w.-]*(token|api[-_]?key|apikey|secret|passw(or)?d|auth|access[-_]?key|credential)[\w.-]*(=|$)/i;
+const CREDENTIAL_TEXT = /(\bbearer\s+\S|^\s*(authorization|x-api-key|proxy-authorization)\s*:)/i;
+const CREDENTIAL_QUERY_KEY = /(token|api[-_]?key|apikey|secret|passw(or)?d|auth|signature|sig|credential|key)$/i;
+
+function urlCarriesCredential(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    // An unparseable URL cannot be checked, so it cannot be trusted.
+    return true;
+  }
+  if (url.username !== '' || url.password !== '') return true;
+  for (const key of url.searchParams.keys()) {
+    if (CREDENTIAL_QUERY_KEY.test(key)) return true;
+  }
+  return false;
+}
+
+function argCarriesCredential(arg: string): boolean {
+  if (CREDENTIAL_ARG.test(arg) || CREDENTIAL_TEXT.test(arg)) return true;
+  const scheme = arg.indexOf('://');
+  if (scheme < 0) return false;
+  const start = arg.slice(0, scheme).search(/[a-z][a-z0-9+.-]*$/i);
+  return start >= 0 && urlCarriesCredential(arg.slice(start).split(/\s/)[0]!);
+}
+
+function boundedString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= MAX_MCP_STRING_LENGTH;
+}
+
+function sanitizeMcpServer(raw: unknown): Record<string, unknown> | null {
+  if (!isPlainObject(raw)) return null;
+  // Allowlist: `type`, `command`, `args`, `url`. `env`, `headers`, `headersHelper`,
+  // oauth/auth and every unknown field are dropped.
+  const server: Record<string, unknown> = {};
+  if (raw.type !== undefined) {
+    if (!boundedString(raw.type)) return null;
+    server.type = raw.type;
+  }
+  if (raw.command !== undefined) {
+    if (!boundedString(raw.command)) return null;
+    server.command = raw.command;
+  }
+  if (raw.args !== undefined) {
+    if (!Array.isArray(raw.args) || raw.args.length > MAX_MCP_ARGS) return null;
+    if (!raw.args.every((arg) => typeof arg === 'string' && arg.length <= MAX_MCP_STRING_LENGTH)) return null;
+    if (raw.args.some((arg: string) => argCarriesCredential(arg))) return null;
+    server.args = [...raw.args];
+  }
+  if (raw.url !== undefined) {
+    if (!boundedString(raw.url) || urlCarriesCredential(raw.url)) return null;
+    server.url = raw.url;
+  }
+  if (server.command === undefined && server.url === undefined) return null;
+  return server;
+}
+
+/** Non-secret launch config for user-scope MCP servers; malformed or credential-looking entries are skipped. */
+export function sanitizeMcpServers(raw: unknown): Record<string, Record<string, unknown>> | null {
+  if (!isPlainObject(raw)) return null;
+  const picked: Array<[string, Record<string, unknown>]> = [];
+  for (const [name, entry] of Object.entries(raw)) {
+    if (picked.length >= MAX_MCP_SERVERS) break;
+    if (name.length === 0 || name.length > MAX_MCP_NAME_LENGTH) continue;
+    const server = sanitizeMcpServer(entry);
+    if (server) picked.push([name, server]);
+  }
+  // `fromEntries` defines own properties, so a `__proto__` name cannot reach the prototype.
+  return picked.length > 0 ? Object.fromEntries(picked) : null;
+}
+
+function readJsonObject(file: string, maxBytes?: number): Record<string, unknown> | null {
+  try {
+    if (maxBytes !== undefined && statSync(file).size > maxBytes) return null;
+    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    return isPlainObject(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -94,15 +230,9 @@ export function buildSeedSettings(source: unknown): Record<string, unknown> | nu
  * decision the user already made (the cwd or an ancestor accepted in their real
  * `.claude.json`); never grant trust that was not there.
  */
-function trustedProjects(sourceDir: string, env: NodeJS.ProcessEnv, cwd: string | undefined): Record<string, unknown> | null {
+function trustedProjects(globalConfig: Record<string, unknown> | null, cwd: string | undefined): Record<string, unknown> | null {
   if (!cwd) return null;
-  const file = env.CLAUDE_CONFIG_DIR ? join(sourceDir, '.claude.json') : join(homedir(), '.claude.json');
-  let projects: unknown;
-  try {
-    projects = (JSON.parse(readFileSync(file, 'utf8')) as { projects?: unknown }).projects;
-  } catch {
-    return null;
-  }
+  const projects = globalConfig?.projects;
   if (typeof projects !== 'object' || projects === null) return null;
   const record = projects as Record<string, { hasTrustDialogAccepted?: unknown } | undefined>;
   for (let dir = resolve(cwd); ; dir = dirname(dir)) {
@@ -111,27 +241,49 @@ function trustedProjects(sourceDir: string, env: NodeJS.ProcessEnv, cwd: string 
   }
 }
 
-function seedLeaf(leaf: string, sourceDir: string, env: NodeJS.ProcessEnv, cwd?: string): 'seeded' | 'none' {
+/**
+ * The real global config: inside the config dir when one is set (env or an
+ * explicit source dir), otherwise `~/.claude.json` next to `~/.claude`.
+ */
+function sourceGlobalConfig(sourceDir: string, env: NodeJS.ProcessEnv, explicitSourceDir: boolean): string {
+  return explicitSourceDir || env.CLAUDE_CONFIG_DIR ? join(sourceDir, '.claude.json') : join(homedir(), '.claude.json');
+}
+
+/**
+ * Narrow, explicit behavioral exceptions to "auth only": `skipDangerousModePermissionPrompt: true`
+ * (via `buildSeedSettings`) and user-scope MCP servers from the real global `.claude.json`,
+ * reduced to non-secret launch config. The keychain is never shared: Claude's secure-storage
+ * service name follows `CLAUDE_CONFIG_DIR` (overridable by `CLAUDE_SECURESTORAGE_CONFIG_DIR`),
+ * and that store holds model OAuth credentials alongside MCP OAuth tokens.
+ */
+function seedLeaf(
+  leaf: string,
+  sourceDir: string,
+  env: NodeJS.ProcessEnv,
+  explicitSourceDir: boolean,
+  cwd?: string
+): { carriedMcps: ReadonlySet<string> } {
   // Transcripts keep landing in the real projects dir, so transcript-derived
   // features and `--resume` are unaffected by the relocated config dir.
   const realProjects = join(sourceDir, 'projects');
   const linkPath = join(leaf, 'projects');
   if (existsSync(sourceDir)) linkProjects(realProjects, linkPath);
-  let source: unknown;
-  try {
-    source = JSON.parse(readFileSync(join(sourceDir, 'settings.json'), 'utf8'));
-  } catch {
-    return 'none';
-  }
-  const generated = buildSeedSettings(source);
-  if (!generated) return 'none';
-  writeAtomic0600(join(leaf, 'settings.json'), JSON.stringify(generated));
-  const projects = trustedProjects(sourceDir, env, cwd);
+  const generated = buildSeedSettings(readJsonObject(join(sourceDir, 'settings.json')));
+  const globalConfig = readJsonObject(sourceGlobalConfig(sourceDir, env, explicitSourceDir), MAX_GLOBAL_CONFIG_BYTES);
+  const mcpServers = sanitizeMcpServers(globalConfig?.mcpServers);
+  const carriedMcps = new Set(mcpServers ? Object.keys(mcpServers) : []);
+  if (!generated && !mcpServers) return { carriedMcps };
+  writeAtomic0600(join(leaf, 'settings.json'), JSON.stringify(generated ?? {}));
+  const projects = trustedProjects(globalConfig, cwd);
   writeAtomic0600(
     join(leaf, '.claude.json'),
-    JSON.stringify({ hasCompletedOnboarding: true, ...(projects ? { projects } : {}) })
+    JSON.stringify({
+      hasCompletedOnboarding: true,
+      ...(mcpServers ? { mcpServers } : {}),
+      ...(projects ? { projects } : {})
+    })
   );
-  return 'seeded';
+  return { carriedMcps };
 }
 
 const AUTH_ENV_KEY = /^(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_USE_[A-Z_]+)$/;
@@ -194,10 +346,16 @@ export function planAutomatedClaudeLaunch(input: AutomatedClaudeLaunchInput): Au
     const sourceDir =
       input.sourceConfigDir ??
       (env.CLAUDE_CONFIG_DIR ? resolve(env.CLAUDE_CONFIG_DIR) : join(homedir(), '.claude'));
-    seedLeaf(leaf, sourceDir, env, input.cwd);
+    const { carriedMcps } = seedLeaf(leaf, sourceDir, env, input.sourceConfigDir !== undefined, input.cwd);
     if (!automatedConfigCanAuthenticate(leaf, env)) {
       removeAutomatedConfigDir(dataDir, leaf);
       throw new AutomatedClaudeAdmissionError('authentication-unavailable');
+    }
+    // The carried set is exactly what `seedLeaf` wrote to the leaf's `.claude.json`.
+    const missing = (input.requiredMcps ?? []).filter((name) => !carriedMcps.has(name));
+    if (missing.length > 0) {
+      removeAutomatedConfigDir(dataDir, leaf);
+      throw new AutomatedClaudeAdmissionError('required-mcp-unavailable', undefined, missing);
     }
     return {
       configDir: leaf,

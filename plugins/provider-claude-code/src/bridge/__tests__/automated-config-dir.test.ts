@@ -9,11 +9,14 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   automatedConfigParent,
+  automatedSourceGlobalConfig,
+  buildSeedSettings,
+  sanitizeMcpServers,
   createAutomatedConfigDir,
   removeAutomatedConfigDir,
   seedAutomatedConfigDir,
@@ -189,6 +192,203 @@ describe("automated config dir lifecycle", () => {
     expect(
       sweepAutomatedConfigDirs({ dataDir, liveOwnerIds: new Set(), ttlMs: 0 }),
     ).toEqual([]);
+  });
+});
+
+describe("automated config dir carry-over (MCP + bypass consent)", () => {
+  const SECRET = "sk-super-secret-value-123";
+  let dataDir: string;
+  let sourceDir: string;
+  const env = () => ({ CLAUDE_CONFIG_DIR: sourceDir, ANTHROPIC_API_KEY: "test-key" });
+  const writeGlobal = (value: unknown) =>
+    writeFileSync(join(sourceDir, ".claude.json"), JSON.stringify(value));
+  const seededGlobal = (leaf: string) =>
+    JSON.parse(readFileSync(join(leaf, ".claude.json"), "utf8"));
+  const seededSettings = (leaf: string) =>
+    JSON.parse(readFileSync(join(leaf, "settings.json"), "utf8"));
+
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "zcc-cfgmcp-data-"));
+    sourceDir = mkdtempSync(join(tmpdir(), "zcc-cfgmcp-src-"));
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(sourceDir, { recursive: true, force: true });
+  });
+
+  it("carries only type/command/args/url and never env, headers or unknown fields", () => {
+    const logs = [vi.spyOn(console, "log"), vi.spyOn(console, "warn"), vi.spyOn(console, "error"), vi.spyOn(console, "info"), vi.spyOn(console, "debug")];
+    writeGlobal({
+      oauthAccount: { emailAddress: "a@b.c" },
+      projects: { "/x": { hasTrustDialogAccepted: true } },
+      mcpServers: {
+        local: {
+          type: "stdio",
+          command: "npx",
+          args: ["-y", "server-fs", "/tmp"],
+          env: { GITHUB_TOKEN: SECRET },
+          extra: SECRET,
+        },
+        remote: {
+          type: "http",
+          url: "https://mcp.example/mcp",
+          headers: { Authorization: `Bearer ${SECRET}` },
+          headersHelper: "/bin/h",
+          oauth: { clientId: SECRET },
+        },
+      },
+    });
+    const leaf = createAutomatedConfigDir(dataDir, "t", { sourceConfigDir: sourceDir, env: env() });
+    expect(seededGlobal(leaf)).toEqual({
+      hasCompletedOnboarding: true,
+      mcpServers: {
+        local: { type: "stdio", command: "npx", args: ["-y", "server-fs", "/tmp"] },
+        remote: { type: "http", url: "https://mcp.example/mcp" },
+      },
+    });
+    // MCP alone still writes a (credential-free) settings.json.
+    expect(seededSettings(leaf)).toEqual({});
+    for (const file of ["settings.json", ".claude.json"]) {
+      expect(statSync(join(leaf, file)).mode & 0o777).toBe(0o600);
+      expect(readFileSync(join(leaf, file), "utf8")).not.toContain(SECRET);
+    }
+    expect(statSync(leaf).mode & 0o777).toBe(0o700);
+    for (const spy of logs) expect(spy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["--token=x", ["--token=abc"]],
+    ["bare --api-key flag", ["--api-key", "abc"]],
+    ["--client-secret", ["--client-secret=abc"]],
+    ["-password", ["-password=abc"]],
+    ["Bearer header", ["--header", "Bearer abc"]],
+    ["Authorization header", ["Authorization: abc"]],
+    ["url arg with userinfo", ["--endpoint", "https://u:p@host.example/x"]],
+    ["url arg with token query", ["connect=wss://host.example/ws?access_token=abc"]],
+  ])("drops a server whose args carry %s", (_label, args) => {
+    expect(sanitizeMcpServers({ bad: { command: "x", args }, ok: { command: "y" } })).toEqual({
+      ok: { command: "y" },
+    });
+  });
+
+  it.each([
+    ["userinfo", "https://user:pass@mcp.example/mcp"],
+    ["username only", "https://user@mcp.example/mcp"],
+    ["api_key query", "https://mcp.example/mcp?api_key=abc"],
+    ["token query", "https://mcp.example/mcp?token=abc"],
+    ["unparseable", "not a url"],
+  ])("drops a server whose url carries %s", (_label, url) => {
+    expect(sanitizeMcpServers({ bad: { type: "http", url } })).toBeNull();
+  });
+
+  it("keeps harmless url args and query params", () => {
+    expect(
+      sanitizeMcpServers({
+        a: { command: "x", args: ["--base", "https://host.example/api?region=us", "--port=3000"] },
+        b: { url: "https://mcp.example/mcp?region=eu" },
+      }),
+    ).toEqual({
+      a: { command: "x", args: ["--base", "https://host.example/api?region=us", "--port=3000"] },
+      b: { url: "https://mcp.example/mcp?region=eu" },
+    });
+  });
+
+  it.each([
+    ["non-object mcpServers", "x"],
+    ["array mcpServers", [{ command: "x" }]],
+    ["null mcpServers", null],
+  ])("seeds no MCP for %s", (_label, mcpServers) => {
+    expect(sanitizeMcpServers(mcpServers)).toBeNull();
+  });
+
+  it("skips malformed entries silently and bounds counts and sizes", () => {
+    const long = "x".repeat(5000);
+    const many = Object.fromEntries(Array.from({ length: 80 }, (_, i) => [`s${i}`, { command: "c" }]));
+    expect(Object.keys(sanitizeMcpServers(many)!)).toHaveLength(64);
+    expect(
+      sanitizeMcpServers({
+        arr: [],
+        str: "x",
+        nul: null,
+        noLaunch: { type: "stdio" },
+        badType: { type: 5, command: "c" },
+        emptyCommand: { command: "" },
+        badArgs: { command: "c", args: "x" },
+        nonStringArg: { command: "c", args: [1] },
+        longArg: { command: "c", args: [long] },
+        tooManyArgs: { command: "c", args: Array.from({ length: 200 }, () => "a") },
+        longCommand: { command: long },
+        badUrl: { url: 5 },
+        [long.slice(0, 200)]: { command: "c" },
+        "": { command: "c" },
+        __proto__: { command: "c" },
+        good: { command: "c", args: [] },
+      }),
+    ).toEqual({ good: { command: "c", args: [] } });
+  });
+
+  it("does not let a __proto__ server name pollute the prototype", () => {
+    const parsed = JSON.parse('{"__proto__":{"command":"c"}}');
+    const result = sanitizeMcpServers(parsed)!;
+    expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
+    expect(Object.hasOwn(result, "__proto__")).toBe(true);
+  });
+
+  it("never throws out of seeding on hostile global config", () => {
+    writeFileSync(join(sourceDir, ".claude.json"), "{not json");
+    writeFileSync(join(sourceDir, "settings.json"), JSON.stringify({ apiKeyHelper: "h" }));
+    const leaf = createAutomatedConfigDir(dataDir, "t", { sourceConfigDir: sourceDir, env: env() });
+    expect(seededGlobal(leaf)).toEqual({ hasCompletedOnboarding: true });
+    writeGlobal({ mcpServers: { a: { command: "c", args: [{}] } } });
+    expect(seedAutomatedConfigDir(leaf, { sourceConfigDir: sourceDir, env: env() })).toBe("seeded");
+    expect(seededGlobal(leaf)).toEqual({ hasCompletedOnboarding: true });
+  });
+
+  it("ignores an oversized global config", () => {
+    writeGlobal({ mcpServers: { a: { command: "c" } }, pad: "x".repeat(16 * 1024 * 1024) });
+    const leaf = createAutomatedConfigDir(dataDir, "t", { sourceConfigDir: sourceDir, env: env() });
+    expect(existsSync(join(leaf, ".claude.json"))).toBe(false);
+  });
+
+  it("reads the global config from ~/.claude.json when no config dir is set", () => {
+    // Without CLAUDE_CONFIG_DIR or an explicit source dir the real file lives in
+    // HOME; resolution is asserted without reading it.
+    expect(automatedSourceGlobalConfig("/s", {}, false)).toBe(join(homedir(), ".claude.json"));
+    expect(automatedSourceGlobalConfig("/s", { CLAUDE_CONFIG_DIR: "/s" }, false)).toBe(join("/s", ".claude.json"));
+    expect(automatedSourceGlobalConfig("/s", {}, true)).toBe(join("/s", ".claude.json"));
+  });
+
+  it.each([
+    [true, { skipDangerousModePermissionPrompt: true }],
+    [false, null],
+    ["true", null],
+    [1, null],
+    [null, null],
+  ])("carries skipDangerousModePermissionPrompt only when literally true (%j)", (value, expected) => {
+    expect(buildSeedSettings({ skipDangerousModePermissionPrompt: value })).toEqual(expected);
+  });
+
+  it("writes settings.json and .claude.json when only the skip flag is carried", () => {
+    writeFileSync(
+      join(sourceDir, "settings.json"),
+      JSON.stringify({ skipDangerousModePermissionPrompt: true, hooks: {} }),
+    );
+    const leaf = createAutomatedConfigDir(dataDir, "t", { sourceConfigDir: sourceDir, env: env() });
+    expect(seededSettings(leaf)).toEqual({ skipDangerousModePermissionPrompt: true });
+    expect(seededGlobal(leaf)).toEqual({ hasCompletedOnboarding: true });
+  });
+
+  it("MCP and the skip flag never make an OAuth-only home authenticate", () => {
+    writeFileSync(join(sourceDir, "settings.json"), JSON.stringify({ skipDangerousModePermissionPrompt: true }));
+    writeGlobal({ oauthAccount: { emailAddress: "a@b.c" }, mcpServers: { a: { command: "c" } } });
+    expect(() =>
+      createAutomatedConfigDir(dataDir, "oauth", {
+        sourceConfigDir: sourceDir,
+        env: { CLAUDE_CONFIG_DIR: sourceDir },
+      }),
+    ).toThrow(/authentication-unavailable/);
+    expect(existsSync(join(automatedConfigParent(dataDir), "oauth"))).toBe(false);
   });
 });
 

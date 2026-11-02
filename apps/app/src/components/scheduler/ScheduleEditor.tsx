@@ -26,6 +26,23 @@ type MissedRunChoice = MissedRunChoiceValue;
 
 const PROFILES = VALID_PROFILES;
 
+type UserConfigMode = 'inherit' | 'user' | 'isolated';
+
+const USER_CONFIG_OPTIONS: Array<{ value: UserConfigMode; label: string }> = [
+  { value: 'inherit', label: 'Use global setting' },
+  { value: 'user', label: 'Use my Claude config' },
+  { value: 'isolated', label: 'Isolated' }
+];
+
+/** Comma- or line-separated server names to a de-duplicated list. Main re-validates. */
+function parseRequiredMcps(text: string): string[] {
+  return [...new Set(text.split(/[,\n]/).map((part) => part.trim()).filter(Boolean))];
+}
+
+function userConfigModeOf(value: boolean | undefined): UserConfigMode {
+  return value === true ? 'user' : value === false ? 'isolated' : 'inherit';
+}
+
 export function ScheduleEditor({
   task,
   seed,
@@ -100,6 +117,13 @@ export function ScheduleEditor({
   );
   const [autoCloseOnFinish, setAutoCloseOnFinish] = useState<boolean>(
     task?.autoCloseOnFinish ?? seededTask?.autoCloseOnFinish ?? true
+  );
+  // 'inherit' = follow Settings > Agents > "Scheduled runs use my Claude config".
+  const [userConfigMode, setUserConfigMode] = useState<UserConfigMode>(
+    userConfigModeOf(task?.useUserConfig ?? seededTask?.useUserConfig)
+  );
+  const [requiredMcpsText, setRequiredMcpsText] = useState<string>(
+    (task?.requiredMcps ?? seededTask?.requiredMcps ?? []).join(', ')
   );
   const [scope, setScope] = useState<'global' | 'project'>(() => {
     if (task?.source && task.source !== 'global') return 'project';
@@ -222,6 +246,8 @@ export function ScheduleEditor({
           scope: scope === 'project' ? { projectId } : 'global',
           inboxLevel,
           autoCloseOnFinish,
+          ...(userConfigMode === 'inherit' ? {} : { useUserConfig: userConfigMode === 'user' }),
+          ...(parseRequiredMcps(requiredMcpsText).length > 0 ? { requiredMcps: parseRequiredMcps(requiredMcpsText) } : {}),
           group: scope === 'global' && group ? group : undefined,
           catchUp: catchUpValue(),
           retry: retryValue()
@@ -251,6 +277,8 @@ export function ScheduleEditor({
           prompt,
           inboxLevel,
           autoCloseOnFinish,
+          useUserConfig: userConfigMode === 'inherit' ? null : userConfigMode === 'user',
+          requiredMcps: parseRequiredMcps(requiredMcpsText).length > 0 ? parseRequiredMcps(requiredMcpsText) : null,
           catchUp: catchUpValue(),
           retry: retryValue(),
           ...(isGlobalTask ? { group: group || null } : {})
@@ -618,6 +646,39 @@ export function ScheduleEditor({
           </span>
         </label>
       </div>
+      <div className="scheduler-form-field">
+        <label htmlFor="sched-use-user-config">Claude config for this schedule</label>
+        <PopoverPicklist
+          id="sched-use-user-config"
+          ariaLabel="Claude config for this schedule"
+          value={userConfigMode}
+          searchable={false}
+          disabled={disabled || profile === 'shell'}
+          onChange={(next) => setUserConfigMode(next as UserConfigMode)}
+          options={USER_CONFIG_OPTIONS}
+        />
+        <p className="modal-hint">
+          Use my Claude config lets this unattended run use your MCP servers, plugins and hooks (and their saved
+          sign-ins) instead of the isolated config. Isolated never does. Use global setting follows Settings, Agents,
+          Scheduled.
+        </p>
+      </div>
+      {profile !== 'shell' && userConfigMode !== 'user' ? (
+        <div className="scheduler-form-field">
+          <label htmlFor="sched-required-mcps">
+            Required MCP servers <span className="scheduler-form-optional">(optional)</span>
+          </label>
+          <textarea
+            id="sched-required-mcps"
+            rows={2}
+            value={requiredMcpsText}
+            onChange={(e) => setRequiredMcpsText(e.target.value)}
+            disabled={disabled}
+            placeholder="slack, github"
+          />
+          <p className="modal-hint">The run fails clearly if one of these isn't available in the isolated config.</p>
+        </div>
+      ) : null}
       {showPolicies ? (
         <>
           <div className="scheduler-form-field">

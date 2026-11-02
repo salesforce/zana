@@ -365,6 +365,10 @@ export const ThreadStartCommandSchema = z.object({
   persona: threadLaunchPersonaSchema.optional(),
   headless: z.boolean().optional(),
   scheduled: z.boolean().optional(),
+  /** Unattended run opts out of per-run config isolation and uses the user's interactive Claude config. */
+  useUserConfig: z.boolean().optional(),
+  /** MCP server names an isolated unattended run needs; the launch is refused when one is not carried over. */
+  requiredMcps: z.array(z.string().min(1).max(128)).max(32).optional(),
   autoCloseOnFinish: z.boolean().optional(),
   inboxLevel: z.enum(['silent', 'quiet', 'loud']).optional(),
   autonomous: z.boolean().optional(),

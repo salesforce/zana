@@ -25,7 +25,7 @@ import { MAX_INTERVAL_MS, MIN_INTERVAL_MS, parseEvery as parseEveryShared } from
 import { nextCronRunAt } from '@zana-ai/zcc-domain/parse-cron';
 import { isCronCadence, previousCronSlots, slotsBetween, validateCadence } from '@zana-ai/zcc-domain/schedule-spec';
 import { collectRunRows, isOpenProblem, isProblemRun, isRecoveryMode, isValidConversationId, runReason, SCHEDULE_REASONS } from '@zana-ai/zcc-domain/schedule-health';
-import { normalizeCatchUp, normalizeRetry } from './schedule-validation.js';
+import { normalizeCatchUp, normalizeRequiredMcps, normalizeRetry } from './schedule-validation.js';
 import { providerCapabilities, seedPromptArgs } from '@zana-ai/zcc-domain/launch-provider';
 import { applyUnattendedScheduledLaunch } from '@zana-ai/zcc-host-daemon/harness/unattended-launch';
 import { registrationFor } from '@zana-ai/zcc-host-daemon/harness/registry';
@@ -64,6 +64,16 @@ const MAX_RETAIN = 100;
 const DEFAULT_SCHEDULED_RUN_LIMIT = 5;
 const MIN_SCHEDULED_RUN_LIMIT = 1;
 const MAX_SCHEDULED_RUN_LIMIT = 20;
+
+function requiredMcpsField(value: unknown): { requiredMcps?: string[] } {
+  const names = value == null ? undefined : normalizeRequiredMcps(value);
+  return names ? { requiredMcps: names } : {};
+}
+
+function requireBooleanFlag(name: string, value: unknown): boolean {
+  if (typeof value !== 'boolean') throw new Error(`${name} must be a boolean`);
+  return value;
+}
 
 /**
  * Fallback max-runtime for a scheduled `autoCloseOnFinish` run whose provider
@@ -556,7 +566,9 @@ export class SchedulerManager extends EventEmitter {
       // always sends an explicit value; this default only applies to callers
       // (e.g. the skill-authored create path) that omit it.
       autoCloseOnFinish: input.autoCloseOnFinish ?? true,
-      maxDurationMinutes: input.maxDurationMinutes
+      maxDurationMinutes: input.maxDurationMinutes,
+      ...(input.useUserConfig !== undefined ? { useUserConfig: requireBooleanFlag('useUserConfig', input.useUserConfig) } : {}),
+      ...requiredMcpsField(input.requiredMcps)
     };
     if (task.kind === 'team' && !task.teamId) throw new Error('teamId is required for team schedules');
     // New schedules start in Recovery; an explicit `catchUp: null` keeps Classic.
@@ -644,6 +656,13 @@ export class SchedulerManager extends EventEmitter {
     }
     if (patch.inboxLevel !== undefined) next.inboxLevel = patch.inboxLevel;
     if (patch.autoCloseOnFinish !== undefined) next.autoCloseOnFinish = patch.autoCloseOnFinish;
+    if (patch.useUserConfig === null) delete next.useUserConfig;
+    else if (patch.useUserConfig !== undefined) next.useUserConfig = requireBooleanFlag('useUserConfig', patch.useUserConfig);
+    if (patch.requiredMcps === null) delete next.requiredMcps;
+    else if (patch.requiredMcps !== undefined) {
+      const requiredMcps = normalizeRequiredMcps(patch.requiredMcps);
+      if (requiredMcps) next.requiredMcps = requiredMcps; else delete next.requiredMcps;
+    }
     if (patch.maxDurationMinutes !== undefined) {
       next.maxDurationMinutes = patch.maxDurationMinutes || undefined;
     }
@@ -1553,7 +1572,12 @@ export class SchedulerManager extends EventEmitter {
       // Bake the schedule's loudness into the session so an agent-initiated
       // inbox_push during this run is stamped (or dropped, when silent) with
       // the right level — independent of later edits to the schedule.
-      inboxLevel: live.task.inboxLevel ?? 'quiet'
+      inboxLevel: live.task.inboxLevel ?? 'quiet',
+      // Opt-out of per-run Claude config isolation: schedule flag wins over the
+      // global setting; omitted entirely (byte-identical) when not opted out.
+      ...(this.useUserConfig(live.task) ? { useUserConfig: true } : {}),
+      // Only an isolated run is checked: an opted-out run uses the user's real config.
+      ...(!this.useUserConfig(live.task) && live.task.requiredMcps?.length ? { requiredMcps: [...live.task.requiredMcps] } : {})
     } as const;
     const unattendedLaunch = applyUnattendedScheduledLaunch(launchOptions);
     // Reserve before any process can start. Persist disabled so a downgrade
@@ -2102,6 +2126,14 @@ export class SchedulerManager extends EventEmitter {
   }
 
   // ----- limit, queue and drain ------------------------------------------------
+
+  /** Schedule `useUserConfig` wins; otherwise the global `automatedUseUserConfig`. Default isolated. */
+  private useUserConfig(task: ScheduledTask): boolean {
+    if (typeof task.useUserConfig === 'boolean') return task.useUserConfig;
+    let configured: unknown;
+    try { configured = this.deps?.store.getConfig().automatedUseUserConfig; } catch { configured = undefined; }
+    return configured === true;
+  }
 
   /** The configured ceiling on concurrent scheduled runs, read fresh at each check. */
   private runLimit(): number {

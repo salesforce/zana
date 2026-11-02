@@ -1165,3 +1165,15 @@ describe('normalizeConfig — apiErrorResume (#421)', () => {
     expect(out.apiErrorResume!.rules.map(r => r.id)).toEqual(['ok']);
   });
 });
+
+describe('normalizeConfig — automatedUseUserConfig', () => {
+  it('keeps booleans', () => {
+    expect(normalizeConfig({ automatedUseUserConfig: true }).automatedUseUserConfig).toBe(true);
+    expect(normalizeConfig({ automatedUseUserConfig: false }).automatedUseUserConfig).toBe(false);
+  });
+
+  it('drops non-boolean values (stays isolated)', () => {
+    expect(normalizeConfig({ automatedUseUserConfig: 'true' as never }).automatedUseUserConfig).toBeUndefined();
+    expect(normalizeConfig({ automatedUseUserConfig: 1 as never }).automatedUseUserConfig).toBeUndefined();
+  });
+});

@@ -12,6 +12,7 @@ import {
 import {
   createAgentRuntimeAdapter,
   isAutomatedThreadStart,
+  isIsolatedAutomatedStart,
   mapRuntimeThreadEvent,
   mergeSessionTooling,
   resolveRuntimeBridgeLaunch,
@@ -1251,6 +1252,35 @@ describe('agent runtime thread adapter', () => {
     }
   });
 
+  it('omits sessionKind for an automated start that opted out via useUserConfig', async () => {
+    const captured: Record<string, unknown>[] = [];
+    const adapter = createAgentRuntimeAdapter({
+      dataDir: cwd,
+      emit: () => {},
+      createRuntime: options => {
+        const runtime = createAgentRuntimeWithAdapters({
+          ...options,
+          adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath })
+        });
+        vi.spyOn(runtime, 'startThread').mockImplementation(async input => {
+          captured.push(input);
+          return { providerThreadId: 'provider-thread' };
+        });
+        return runtime;
+      }
+    });
+    try {
+      const shared = { providerId: 'fake', cwd, environmentId: 'env-one', projectId: 'project', input: [] };
+      await adapter.startWork({ ...shared, threadId: 'thread-optout', scheduled: true, headless: true, useUserConfig: true });
+      await adapter.startWork({ ...shared, threadId: 'thread-default', scheduled: true, headless: true });
+      expect(captured).toHaveLength(2);
+      expect(captured[0]).not.toHaveProperty('sessionKind');
+      expect(captured[1]!.sessionKind).toBe('automated');
+    } finally {
+      adapter.dispose();
+    }
+  });
+
   it('lists fake provider models through AgentRuntime', async () => {
     const adapter = createAgentRuntimeAdapter({
       emit: () => undefined,
@@ -1715,6 +1745,19 @@ describe('mapRuntimeThreadEvent', () => {
       status: 'completed'
     } as ThreadEvent;
     expect(mapRuntimeThreadEvent(event).kind).toBe('turn.completed');
+  });
+});
+
+describe('isIsolatedAutomatedStart', () => {
+  it('is isolated for automated starts by default', () => {
+    expect(isIsolatedAutomatedStart({ scheduled: true })).toBe(true);
+    expect(isIsolatedAutomatedStart({ headless: true, useUserConfig: false })).toBe(true);
+  });
+
+  it('opt-out drops isolation; interactive stays non-automated', () => {
+    expect(isIsolatedAutomatedStart({ scheduled: true, useUserConfig: true })).toBe(false);
+    expect(isIsolatedAutomatedStart({ useUserConfig: true })).toBe(false);
+    expect(isIsolatedAutomatedStart({})).toBe(false);
   });
 });
 

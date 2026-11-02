@@ -860,6 +860,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (input.scheduledRunOverflow === 'auto' || input.scheduledRunOverflow === 'queue' || input.scheduledRunOverflow === 'skip') {
     normalized.scheduledRunOverflow = input.scheduledRunOverflow;
   }
+  if (typeof input.automatedUseUserConfig === 'boolean') {
+    normalized.automatedUseUserConfig = input.automatedUseUserConfig;
+  }
   if (input.schedulerRecoveryIntro === 'dismissed' || input.schedulerRecoveryIntro === 'applied') {
     normalized.schedulerRecoveryIntro = input.schedulerRecoveryIntro;
   }

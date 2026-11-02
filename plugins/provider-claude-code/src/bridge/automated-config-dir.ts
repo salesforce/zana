@@ -1,6 +1,7 @@
 import {
   existsSync,
   readFileSync,
+  statSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -68,7 +69,13 @@ export interface AutomatedSeedOptions {
   env?: NodeJS.ProcessEnv;
 }
 
-/** Top-level `settings.json` keys that carry credentials acquisition, never behavior. */
+/**
+ * Top-level `settings.json` keys that carry credentials acquisition, never behavior.
+ * The only behavioral carry-overs are the narrow, explicit exceptions below:
+ * `skipDangerousModePermissionPrompt` (only when literally `true`, so an
+ * unattended bypass run does not stop on the consent dialog the user already
+ * accepted) and non-secret user-scope MCP launch config (see `sanitizeMcpServers`).
+ */
 const SEED_SETTINGS_KEYS = [
   "apiKeyHelper",
   "awsAuthRefresh",
@@ -92,13 +99,159 @@ function isSeedEnvKey(key: string): boolean {
   return SEED_ENV_EXACT.has(key) || SEED_ENV_PREFIX.test(key);
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The real global config (`.claude.json`) is read only up to this size. */
+const MAX_GLOBAL_CONFIG_BYTES = 16 * 1024 * 1024;
+const MAX_MCP_SERVERS = 64;
+const MAX_MCP_NAME_LENGTH = 128;
+const MAX_MCP_STRING_LENGTH = 4096;
+const MAX_MCP_ARGS = 128;
+
+/**
+ * Credential heuristic for MCP launch strings. A server whose `args` or `url`
+ * obviously embed a credential is dropped whole rather than copied:
+ * - an arg naming a credential flag (`--token`, `--api-key=…`, `-password`,
+ *   `--secret`, `--auth…`, `--access-key`, `--client-secret`), with or without
+ *   an inline `=value` (a bare flag means the next arg is the secret);
+ * - an arg carrying an `Authorization:`/`X-Api-Key:` header or `Bearer <value>`;
+ * - a URL (the `url` field, or any arg containing `://`) with userinfo
+ *   (`user:pass@host`) or a credential-named query parameter (`?api_key=…`).
+ * This is deliberately conservative and obviously incomplete; it only catches
+ * the plain-text shapes. Secrets belong in `env`/`headers`, which are never copied.
+ */
+const CREDENTIAL_ARG =
+  /^-{1,2}[\w.-]*(token|api[-_]?key|apikey|secret|passw(or)?d|auth|access[-_]?key|credential)[\w.-]*(=|$)/i;
+const CREDENTIAL_TEXT = /(\bbearer\s+\S|^\s*(authorization|x-api-key|proxy-authorization)\s*:)/i;
+const CREDENTIAL_QUERY_KEY =
+  /(token|api[-_]?key|apikey|secret|passw(or)?d|auth|signature|sig|credential|key)$/i;
+
+function urlCarriesCredential(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    // An unparseable URL cannot be checked, so it cannot be trusted.
+    return true;
+  }
+  if (url.username !== "" || url.password !== "") return true;
+  for (const key of url.searchParams.keys()) {
+    if (CREDENTIAL_QUERY_KEY.test(key)) return true;
+  }
+  return false;
+}
+
+function argCarriesCredential(arg: string): boolean {
+  if (CREDENTIAL_ARG.test(arg) || CREDENTIAL_TEXT.test(arg)) return true;
+  const scheme = arg.indexOf("://");
+  if (scheme < 0) return false;
+  const start = arg.slice(0, scheme).search(/[a-z][a-z0-9+.-]*$/i);
+  return start >= 0 && urlCarriesCredential(arg.slice(start).split(/\s/)[0]!);
+}
+
+function boundedString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= MAX_MCP_STRING_LENGTH;
+}
+
+function sanitizeMcpServer(raw: unknown): Record<string, unknown> | null {
+  if (!isPlainObject(raw)) return null;
+  // Allowlist: `type`, `command`, `args`, `url`. `env`, `headers`,
+  // `headersHelper`, oauth/auth and every unknown field are dropped, so a
+  // server that needs a secret fails to authenticate loudly instead.
+  const server: Record<string, unknown> = {};
+  if (raw.type !== undefined) {
+    if (!boundedString(raw.type)) return null;
+    server.type = raw.type;
+  }
+  if (raw.command !== undefined) {
+    if (!boundedString(raw.command)) return null;
+    server.command = raw.command;
+  }
+  if (raw.args !== undefined) {
+    if (!Array.isArray(raw.args) || raw.args.length > MAX_MCP_ARGS) return null;
+    if (!raw.args.every((arg) => typeof arg === "string" && arg.length <= MAX_MCP_STRING_LENGTH)) {
+      return null;
+    }
+    if (raw.args.some((arg: string) => argCarriesCredential(arg))) return null;
+    server.args = [...raw.args];
+  }
+  if (raw.url !== undefined) {
+    if (!boundedString(raw.url) || urlCarriesCredential(raw.url)) return null;
+    server.url = raw.url;
+  }
+  if (server.command === undefined && server.url === undefined) return null;
+  return server;
+}
+
+/**
+ * Non-secret launch config for the user's user-scope MCP servers. Malformed
+ * or credential-looking entries are skipped; this never throws.
+ */
+export function sanitizeMcpServers(raw: unknown): Record<string, Record<string, unknown>> | null {
+  if (!isPlainObject(raw)) return null;
+  const picked: Array<[string, Record<string, unknown>]> = [];
+  for (const [name, entry] of Object.entries(raw)) {
+    if (picked.length >= MAX_MCP_SERVERS) break;
+    if (name.length === 0 || name.length > MAX_MCP_NAME_LENGTH) continue;
+    const server = sanitizeMcpServer(entry);
+    if (server) picked.push([name, server]);
+  }
+  // `fromEntries` defines own properties, so a `__proto__` name cannot
+  // reach the prototype.
+  return picked.length > 0 ? Object.fromEntries(picked) : null;
+}
+
+function readJsonObject(file: string, maxBytes?: number): Record<string, unknown> | null {
+  try {
+    if (maxBytes !== undefined && statSync(file).size > maxBytes) return null;
+    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+    return isPlainObject(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Builds the generated settings from the user's real ones; null when there is nothing to carry. */
+export function buildSeedSettings(source: unknown): Record<string, unknown> | null {
+  if (!isPlainObject(source)) return null;
+  const generated: Record<string, unknown> = {};
+  for (const key of SEED_SETTINGS_KEYS) {
+    if (typeof source[key] === "string") generated[key] = source[key];
+  }
+  const rawEnv = source.env;
+  if (isPlainObject(rawEnv)) {
+    const picked: Record<string, string> = {};
+    for (const [key, value] of Object.entries(rawEnv)) {
+      if (isSeedEnvKey(key) && typeof value === "string") picked[key] = value;
+    }
+    if (Object.keys(picked).length > 0) generated.env = picked;
+  }
+  if (source.skipDangerousModePermissionPrompt === true) {
+    generated.skipDangerousModePermissionPrompt = true;
+  }
+  return Object.keys(generated).length > 0 ? generated : null;
+}
+
 /**
  * Seed the per-run config dir with the minimum an unattended session needs to
  * authenticate: a generated `settings.json` holding only the credential-helper
  * keys and an allowlisted `env` subset, plus an onboarding-complete
- * `.claude.json`. Hooks, plugins, marketplaces, permissions and telemetry env
- * are never copied. Returns "none" (and writes nothing) when the real settings
- * cannot be read, in which case the session relies on its process env.
+ * `.claude.json`. The narrow, explicit behavioral exceptions are
+ * `skipDangerousModePermissionPrompt: true` and the user's user-scope MCP
+ * servers (read from the real global `.claude.json`, where `claude mcp add
+ * --scope user` stores them) reduced to non-secret launch config
+ * (`type`/`command`/`args`/`url`). Hooks, plugins, marketplaces, permissions,
+ * telemetry env and MCP `env`/`headers` are never copied. Returns "none" (and
+ * writes nothing) when there is nothing to carry, in which case the session
+ * relies on its process env.
+ *
+ * Keychain: Claude derives its secure-storage (keychain) service name from
+ * `CLAUDE_CONFIG_DIR`, overridable by `CLAUDE_SECURESTORAGE_CONFIG_DIR`. That
+ * store holds model OAuth credentials alongside MCP OAuth tokens, so pointing a
+ * leaf at the real one would share login state; it is deliberately not set,
+ * and OAuth-authenticated MCP servers need re-authentication in automated runs.
  */
 export function seedAutomatedConfigDir(
   leaf: string,
@@ -113,35 +266,33 @@ export function seedAutomatedConfigDir(
   const realProjects = join(sourceDir, "projects");
   const linkPath = join(leaf, "projects");
   if (existsSync(sourceDir)) linkProjects(realProjects, linkPath);
-  let source: unknown;
-  try {
-    source = JSON.parse(readFileSync(join(sourceDir, "settings.json"), "utf8"));
-  } catch {
-    return "none";
-  }
-  if (typeof source !== "object" || source === null || Array.isArray(source)) {
-    return "none";
-  }
-  const record = source as Record<string, unknown>;
-  const generated: Record<string, unknown> = {};
-  for (const key of SEED_SETTINGS_KEYS) {
-    if (typeof record[key] === "string") generated[key] = record[key];
-  }
-  const rawEnv = record.env;
-  if (typeof rawEnv === "object" && rawEnv !== null && !Array.isArray(rawEnv)) {
-    const picked: Record<string, string> = {};
-    for (const [key, value] of Object.entries(rawEnv)) {
-      if (isSeedEnvKey(key) && typeof value === "string") picked[key] = value;
-    }
-    if (Object.keys(picked).length > 0) generated.env = picked;
-  }
-  if (Object.keys(generated).length === 0) return "none";
-  writeAtomic0600(join(leaf, "settings.json"), JSON.stringify(generated));
+  const generated = buildSeedSettings(readJsonObject(join(sourceDir, "settings.json")));
+  const globalConfig = readJsonObject(
+    automatedSourceGlobalConfig(sourceDir, env, options.sourceConfigDir !== undefined),
+    MAX_GLOBAL_CONFIG_BYTES,
+  );
+  const mcpServers = sanitizeMcpServers(globalConfig?.mcpServers);
+  if (!generated && !mcpServers) return "none";
+  writeAtomic0600(join(leaf, "settings.json"), JSON.stringify(generated ?? {}));
   writeAtomic0600(
     join(leaf, ".claude.json"),
-    JSON.stringify({ hasCompletedOnboarding: true }),
+    JSON.stringify({ hasCompletedOnboarding: true, ...(mcpServers ? { mcpServers } : {}) }),
   );
   return "seeded";
+}
+
+/**
+ * The real global config: inside the config dir when one is set (env or an
+ * explicit source dir), otherwise `~/.claude.json` next to `~/.claude`.
+ */
+export function automatedSourceGlobalConfig(
+  sourceDir: string,
+  env: NodeJS.ProcessEnv,
+  explicitSourceDir: boolean,
+): string {
+  return explicitSourceDir || env.CLAUDE_CONFIG_DIR
+    ? join(sourceDir, ".claude.json")
+    : join(homedir(), ".claude.json");
 }
 
 const AUTH_ENV_KEY = /^(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_USE_[A-Z_]+)$/;

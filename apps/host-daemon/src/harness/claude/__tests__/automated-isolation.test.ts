@@ -14,11 +14,17 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   buildSeedSettings,
+  AutomatedClaudeAdmissionError,
   planAutomatedClaudeLaunch,
+  requiredMcpUnavailableMessage,
   removeAutomatedConfigDir,
+  sanitizeMcpServers,
   sweepStaleAutomatedConfigDirs
 } from '../automated-isolation.js';
-import { createAutomatedConfigDir } from '../../../../../../plugins/provider-claude-code/src/bridge/automated-config-dir.js';
+import {
+  createAutomatedConfigDir,
+  sanitizeMcpServers as bridgeSanitizeMcpServers
+} from '../../../../../../plugins/provider-claude-code/src/bridge/automated-config-dir.js';
 
 describe('automated claude isolation', () => {
   // Isolation only applies when the isolated dir can authenticate.
@@ -103,6 +109,56 @@ describe('automated claude isolation', () => {
     it('sanitizes path separators in the owner id', () => {
       const plan = planAutomatedClaudeLaunch({ ownerId: '../../x', env: authEnv, dataDir, sourceConfigDir: sourceDir })!;
       expect(plan.configDir.startsWith(join(dataDir, 'claude-automated-config'))).toBe(true);
+    });
+  });
+
+  describe('required MCP servers', () => {
+    const plan = (requiredMcps?: string[], ownerId = 'req') =>
+      planAutomatedClaudeLaunch({ ownerId, env: authEnv, dataDir, sourceConfigDir: sourceDir, ...(requiredMcps ? { requiredMcps } : {}) });
+    beforeEach(() => {
+      writeFileSync(
+        join(sourceDir, '.claude.json'),
+        JSON.stringify({
+          mcpServers: {
+            slack: { command: 'npx', args: ['slack-mcp'] },
+            secretive: { command: 'npx', args: ['x', '--api-key=abc'] },
+            oauthy: { type: 'http', url: 'https://example.com/mcp?token=abc' }
+          }
+        })
+      );
+    });
+
+    it('launches when every required server is carried', () => {
+      const result = plan(['slack']);
+      expect(JSON.parse(readFileSync(join(result.configDir, '.claude.json'), 'utf8')).mcpServers).toHaveProperty('slack');
+    });
+
+    it('is a no-op when undeclared or empty', () => {
+      expect(() => plan()).not.toThrow();
+      expect(() => plan([], 'empty')).not.toThrow();
+    });
+
+    it('refuses, naming every missing server, and removes the leaf', () => {
+      let error: unknown;
+      try { plan(['slack', 'secretive', 'oauthy', 'absent']); } catch (e) { error = e; }
+      expect(error).toBeInstanceOf(AutomatedClaudeAdmissionError);
+      const admission = error as AutomatedClaudeAdmissionError;
+      expect(admission.reason).toBe('required-mcp-unavailable');
+      expect(admission.missing).toEqual(['secretive', 'oauthy', 'absent']);
+      expect(admission.preSpawn).toBe(true);
+      expect(admission.message).toBe(requiredMcpUnavailableMessage(['secretive', 'oauthy', 'absent']));
+      expect(admission.message).toContain('Required MCP servers not available');
+      expect(admission.message).toContain('Use my Claude config');
+      expect(existsSync(join(dataDir, 'claude-automated-config', 'req'))).toBe(false);
+    });
+
+    it('uses the singular form for one missing server and refuses when no config exists', () => {
+      rmSync(join(sourceDir, '.claude.json'));
+      expect(() => plan(['slack'], 'none')).toThrow(/Required MCP server not available in the isolated config: slack\./);
+    });
+
+    it('other admission errors are not pre-spawn', () => {
+      expect(new AutomatedClaudeAdmissionError('authentication-unavailable').preSpawn).toBe(false);
     });
   });
 
@@ -207,6 +263,60 @@ describe('automated claude isolation', () => {
       }
     );
 
+    it.each([[true, { skipDangerousModePermissionPrompt: true }], [false, null], ['true', null]])(
+      'carries skipDangerousModePermissionPrompt only when literally true (%j)',
+      (value, expected) => {
+        expect(buildSeedSettings({ skipDangerousModePermissionPrompt: value })).toEqual(expected);
+      }
+    );
+
+    it('sanitizes MCP servers identically to the provider bridge', () => {
+      const raw = {
+        a: { type: 'stdio', command: 'c', args: ['-y', 'pkg'], env: { K: 'v' }, extra: 1 },
+        b: { url: 'https://h.example/mcp?region=eu', headers: { X: 'y' } },
+        c: { command: 'c', args: ['--api-key', 'v'] },
+        d: { command: 'c', args: ['Bearer v'] },
+        e: { url: 'https://h.example/mcp?token=v' },
+        f: { url: 'nope' },
+        g: { type: 1, command: 'c' },
+        h: { command: 'c', args: [1] },
+        i: { type: 'stdio' },
+        j: 'x',
+        '': { command: 'c' }
+      };
+      expect(sanitizeMcpServers(raw)).toEqual(bridgeSanitizeMcpServers(raw));
+      expect(sanitizeMcpServers(raw)).toEqual({
+        a: { type: 'stdio', command: 'c', args: ['-y', 'pkg'] },
+        b: { url: 'https://h.example/mcp?region=eu' }
+      });
+      expect(sanitizeMcpServers([])).toBeNull();
+      expect(Object.keys(sanitizeMcpServers(Object.fromEntries(Array.from({ length: 70 }, (_, i) => [`s${i}`, { command: 'c' }])))!)).toHaveLength(64);
+      expect(sanitizeMcpServers({ a: { command: 'c', args: Array.from({ length: 200 }, () => 'a') } })).toBeNull();
+    });
+
+    it('seeds MCP servers and trust together even without settings, never authenticating', () => {
+      writeFileSync(
+        join(sourceDir, '.claude.json'),
+        JSON.stringify({ mcpServers: { a: { command: 'c' } }, projects: { '/w': { hasTrustDialogAccepted: true } } })
+      );
+      const p = planAutomatedClaudeLaunch({ ownerId: 'm', env: authEnv, dataDir, sourceConfigDir: sourceDir, cwd: '/w' });
+      expect(JSON.parse(readFileSync(join(p.configDir, '.claude.json'), 'utf8'))).toEqual({
+        hasCompletedOnboarding: true,
+        mcpServers: { a: { command: 'c' } },
+        projects: { '/w': { hasTrustDialogAccepted: true } }
+      });
+      expect(JSON.parse(readFileSync(join(p.configDir, 'settings.json'), 'utf8'))).toEqual({});
+      expect(statSync(join(p.configDir, '.claude.json')).mode & 0o777).toBe(0o600);
+      expect(() => planAutomatedClaudeLaunch({ ownerId: 'n', env: {}, dataDir, sourceConfigDir: sourceDir }))
+        .toThrow(/authentication-unavailable/);
+    });
+
+    it('ignores an oversized global config', () => {
+      writeFileSync(join(sourceDir, '.claude.json'), JSON.stringify({ mcpServers: { a: { command: 'c' } }, pad: 'x'.repeat(16 * 1024 * 1024) }));
+      const p = planAutomatedClaudeLaunch({ ownerId: 'o', env: authEnv, dataDir, sourceConfigDir: sourceDir });
+      expect(existsSync(join(p.configDir, '.claude.json'))).toBe(false);
+    });
+
     it('keeps only string auth keys and allowlisted env', () => {
       expect(
         buildSeedSettings({
@@ -229,13 +339,30 @@ describe('automated claude isolation', () => {
         apiKeyHelper: 'h',
         forceLoginMethod: 'console',
         hooks: { a: 1 },
+        skipDangerousModePermissionPrompt: true,
         env: { ANTHROPIC_BASE_URL: 'u', AWS_REGION: 'r', OTEL_X: '1', NODE_EXTRA_CA_CERTS: '/ca' }
       })
     );
-    const plan = planAutomatedClaudeLaunch({ ownerId: 's1', env: authEnv, dataDir, sourceConfigDir: sourceDir })!;
+    writeFileSync(
+      join(sourceDir, '.claude.json'),
+      JSON.stringify({
+        mcpServers: {
+          fs: { type: 'stdio', command: 'npx', args: ['-y', 'fs'], env: { T: 'secret' } },
+          web: { type: 'http', url: 'https://mcp.example/mcp', headers: { Authorization: 'secret' } },
+          leaky: { command: 'x', args: ['--token=secret'] },
+          bad: { url: 'https://u:p@h.example' }
+        }
+      })
+    );
+    const env = { ...authEnv, CLAUDE_CONFIG_DIR: sourceDir };
+    const plan = planAutomatedClaudeLaunch({ ownerId: 's1', env, dataDir, sourceConfigDir: sourceDir })!;
     const bridgeData = mkdtempSync(join(tmpdir(), 'zcc-iso-bridge-'));
     try {
-      const bridgeLeaf = createAutomatedConfigDir(bridgeData, 's1', { sourceConfigDir: sourceDir });
+      const bridgeLeaf = createAutomatedConfigDir(bridgeData, 's1', { sourceConfigDir: sourceDir, env });
+      expect(JSON.parse(readFileSync(join(plan.configDir, '.claude.json'), 'utf8')).mcpServers).toEqual({
+        fs: { type: 'stdio', command: 'npx', args: ['-y', 'fs'] },
+        web: { type: 'http', url: 'https://mcp.example/mcp' }
+      });
       for (const file of ['settings.json', '.claude.json']) {
         expect(readFileSync(join(plan.configDir, file), 'utf8')).toBe(readFileSync(join(bridgeLeaf, file), 'utf8'));
       }

@@ -4946,14 +4946,22 @@ async function launchBackgroundTerminal(
         authorizedPlan.resolved.config
       );
       spawnAttempted = true;
-      const session = createTerminalFromAuthorizedPlan({
-        ...request,
-        cwd: spawnLaunch.cwd,
-        projectSettings: authorizedPlan.resolved.projectSettings,
-        preallocatedSessionId: authorizedPlan.sessionId,
-        // Always the digest-bound preflight value — overrides any caller field.
-        authorizedModel: finalPlan.executionAuthorization.modelPin
-      });
+      let session: TerminalSession;
+      try {
+        session = createTerminalFromAuthorizedPlan({
+          ...request,
+          cwd: spawnLaunch.cwd,
+          projectSettings: authorizedPlan.resolved.projectSettings,
+          preallocatedSessionId: authorizedPlan.sessionId,
+          // Always the digest-bound preflight value — overrides any caller field.
+          authorizedModel: finalPlan.executionAuthorization.modelPin
+        });
+      } catch (error) {
+        // An admission refusal (e.g. a required MCP server is unavailable) happens
+        // before any process exists, so the launch is a definite failure, not unconfirmed.
+        if ((error as { preSpawn?: unknown } | null)?.preSpawn === true) spawnAttempted = false;
+        throw error;
+      }
       return ptys.waitForReady(session.id);
     },
     onLaunched: ({ ledgerEntryId, authorizationId, session }) => {
