@@ -177,8 +177,31 @@ test('Settings → Agents adds a suggested rule and checks an error against it',
     await win.getByLabel('Error text to check').fill('API Error: Connection lost mid-response. The response above may be incomplete.');
     await win.getByRole('button', { name: 'Check', exact: true }).click();
     await expect(win.getByText(/Matches rule 1: Zana would send “continue” after 30 s\./)).toBeVisible({ timeout: 15_000 });
-    await captureElectronScreenshot(stub.app.electron, win, testInfo.outputPath('settings.png'));
-    await testInfo.attach('settings', { path: testInfo.outputPath('settings.png'), contentType: 'image/png' });
+    // The fields follow the app theme (not the native white control): the same
+    // fill and text colour as the other Settings fields, in light and dark.
+    const fields = ['When the error matches (rule 1)', 'Send (rule 1)', 'After (seconds) (rule 1)', 'Messages before stopping', 'Error text to check'];
+    for (const theme of ['dark', 'light'] as const) {
+      await win.evaluate((theme) => window.cc.config.set({ theme }), theme);
+      await expect(win.locator('html')).toHaveAttribute('data-theme', theme);
+      const want = await win.evaluate(() => {
+        const probe = document.createElement('div');
+        probe.style.cssText = 'background: var(--bg-base); color: var(--text-primary)';
+        document.body.append(probe);
+        const { backgroundColor, color } = getComputedStyle(probe);
+        probe.remove();
+        return { backgroundColor, color };
+      });
+      for (const label of fields) {
+        const got = await win.getByLabel(label, { exact: true }).evaluate((el) => {
+          const s = getComputedStyle(el);
+          return { backgroundColor: s.backgroundColor, color: s.color };
+        });
+        expect(got, `${label} in ${theme}`).toEqual(want);
+      }
+      await win.locator('#settings-anchor-api-error-resume').scrollIntoViewIfNeeded();
+      await captureElectronScreenshot(stub.app.electron, win, testInfo.outputPath(`settings-${theme}.png`));
+      await testInfo.attach(`settings-${theme}`, { path: testInfo.outputPath(`settings-${theme}.png`), contentType: 'image/png' });
+    }
   } finally {
     await stub.cleanup();
   }

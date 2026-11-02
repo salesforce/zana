@@ -395,6 +395,14 @@ describe('ApiErrorResumeSection', () => {
     expect(screen.getByText('No rule matches. Zana would leave the agent waiting for you.')).toBeTruthy();
   });
 
+  it('every field uses the shared themed settings input, not the native control', () => {
+    setup(on([rule()]));
+    for (const label of ['When the error matches (rule 1)', 'Send (rule 1)', 'After (seconds) (rule 1)', 'Messages before stopping', 'Minutes in the window']) {
+      expect(screen.getByLabelText(label).classList.contains('settings-input')).toBe(true);
+    }
+    expect(screen.getByLabelText('Error text to check').classList.contains('settings-textarea')).toBe(true);
+  });
+
   it('Check says it is desktop-only when the API is missing', async () => {
     delete (window as any).cc;
     setup(on());

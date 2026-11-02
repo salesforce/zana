@@ -20,18 +20,54 @@
   align-items: flex-end;
   gap: 8px 12px;
 }
-.api-error-resume-row label {
+.api-error-resume-row label,
+.api-error-resume-check label {
   display: flex;
   flex-direction: column;
   gap: 4px;
   font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
 }
+/* The fields use the shared `.settings-input` / `.settings-textarea` look, with
+   the same `--bg-base` fill as the `.settings-field` inputs elsewhere on this
+   page. Native parts (number spinners, the Regex checkbox) follow the app theme,
+   not the OS. */
+.api-error-resume-row .settings-input,
+.api-error-resume-cap-line .settings-input {
+  background: var(--bg-base);
+}
+.api-error-resume-row input,
+.api-error-resume-cap-line input {
+  box-sizing: border-box;
+  height: 32px;
+  color-scheme: dark;
+}
+:root[data-theme='light'] .api-error-resume-row input,
+:root[data-theme='light'] .api-error-resume-cap-line input {
+  color-scheme: light;
+}
+.api-error-resume-row .settings-btn { height: 32px; }
 .api-error-resume-row .api-error-resume-match { flex: 1 1 240px; }
-.api-error-resume-row .api-error-resume-match input { font-family: var(--font-mono, monospace); }
-.api-error-resume-row .api-error-resume-regex { flex-direction: row; align-items: center; gap: 6px; }
+.api-error-resume-row .api-error-resume-match input {
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  font-size: 12px;
+}
+.api-error-resume-row .api-error-resume-regex {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+}
+.api-error-resume-row .api-error-resume-regex input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+}
 .api-error-resume-row input[type='number'] { width: 80px; }
 .api-error-resume-error { color: var(--danger, #d14343); font-size: 12px; margin: 0; flex-basis: 100%; }
 .api-error-resume-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .api-error-resume-cap-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
 .api-error-resume-cap-line input { width: 64px; }
-.api-error-resume-check textarea { width: 100%; min-height: 56px; }
+.api-error-resume-check textarea { min-height: 56px; }
