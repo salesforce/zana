@@ -206,7 +206,17 @@ export function useDocActions(projects: ProjectInfo[]): {
         <MenuItem icon={Copy} label="Copy chat reference" hint="Paste into any thread" onSelect={run(() => void copy(designDocDirective(doc.id), 'reference'))} />
         <MenuItem icon={Hash} label="Copy id" hint={doc.slug} onSelect={run(() => void copy(doc.id, 'id'))} />
         <MenuItem icon={Download} label="Download .zip" hint={`${doc.slug}.zip`} onSelect={run(() => void download(doc))} />
-        <MenuItem icon={FolderInput} label="Move to project…" onSelect={run(() => setMoving(doc))} />
+        {doc.projectLocked ? (
+          <MenuItem
+            icon={FolderInput}
+            label="Move to project…"
+            hint="Peer-owned"
+            disabledReason={'This doc came from a peer, so its project belongs to the peer. Use "Map to a Project…" in the Design Docs panel to file it on this machine.'}
+            onSelect={() => undefined}
+          />
+        ) : (
+          <MenuItem icon={FolderInput} label="Move to project…" onSelect={run(() => setMoving(doc))} />
+        )}
         <MenuItem
           icon={GitFork}
           label="Alternative to…"

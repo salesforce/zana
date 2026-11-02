@@ -1136,3 +1136,44 @@ describe('DesignDocStore — summary lastComment', () => {
     expect(store.summary(doc.id).lastComment).toMatchObject({ body: 'hello', author: user, createdAt: 0 });
   });
 });
+
+describe('DesignDocStore received project lock', () => {
+  const setup = () => {
+    const db = createTestDatabase(), store = new DesignDocStore(db);
+    const bind = (id: string, logical: string | null) => db.prepare('INSERT OR REPLACE INTO sync_doc_references VALUES (?, ?, ?)').run(id, JSON.stringify(logical), '[]');
+    return { db, store, bind };
+  };
+  it('blocks moving a peer-received doc to a project or Global', () => {
+    const { db, store, bind } = setup();
+    const doc = store.create({ title: 'Received', template: 'blank' }, user);
+    bind(doc.id, 'foreign-project');
+    expect(store.isReceivedProjectLocked(doc.id)).toBe(true);
+    expect(store.summary(doc.id).projectLocked).toBe(true);
+    expect(() => store.update(doc.id, { projectId: 'local' }, user)).toThrow(/came from a peer.*Map to a Project/);
+    expect(() => store.update(doc.id, { projectId: null }, user)).toThrow(/Map to a Project/); // bare same-value request is still a move attempt
+    expect(store.update(doc.id, { projectId: null, title: 'Echo' }, user).title).toBe('Echo'); // echo with other fields is ignored
+    expect(JSON.parse((db.prepare('SELECT project_json FROM sync_doc_references WHERE doc_id = ?').get(doc.id) as { project_json: string }).project_json)).toBe('foreign-project');
+    db.prepare('UPDATE docs SET project_id = ? WHERE id = ?').run('stale', doc.id);
+    expect(() => store.update(doc.id, { projectId: null }, user)).toThrow(DesignDocError);
+    expect(store.list().find((d) => d.id === doc.id)?.projectLocked).toBe(true);
+  });
+  it('allows no-op, local and round-tripped moves', () => {
+    const { store, bind } = setup();
+    const local = store.create({ title: 'Local', template: 'blank', projectId: 'p1' }, user);
+    expect(store.isReceivedProjectLocked(local.id)).toBe(false);
+    expect(store.update(local.id, { projectId: 'p2' }, user).projectId).toBe('p2');
+    expect(store.update(local.id, { projectId: null }, user).projectId).toBeNull();
+    const trip = store.create({ title: 'Trip', template: 'blank', projectId: 'p1' }, user);
+    bind(trip.id, 'p1');
+    expect(store.summary(trip.id).projectLocked).toBe(false);
+    expect(store.update(trip.id, { projectId: 'p3' }, user).projectId).toBe('p3');
+    const received = store.create({ title: 'Recv', template: 'blank' }, user);
+    bind(received.id, 'foreign');
+    expect(store.update(received.id, { projectId: null, title: 'Renamed' }, user)).toMatchObject({ title: 'Renamed', projectLocked: true });
+    expect(() => store.update(received.id, { projectId: null }, user)).toThrow(DesignDocError);
+    const bound = store.create({ title: 'Bound', template: 'blank', projectId: 'p1' }, user);
+    bind(bound.id, 'foreign');
+    expect(store.update(bound.id, { projectId: 'p1', status: 'review' }, user).status).toBe('review');
+    expect(() => store.update(bound.id, { projectId: 'p2' }, user)).toThrow(DesignDocError);
+  });
+});

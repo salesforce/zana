@@ -597,17 +597,14 @@ describe('immutable sync store', () => {
     expect(() => sync.freezeManual()).not.toThrow();
   });
 
-  it('journals logical project reset even when local binding already equals requested value', () => {
+  it('refuses a project change on a peer-received doc and keeps the peer reference', () => {
     const { sync, store, doc, localHead, remote } = fork('local-project', 'foreign');
     const resolved = sync.resolveConflict({ docId: doc.id, expectedHead: localHead, remoteHead: remote.operation.id, choice: 'remote' }, actor);
-    store.update(doc.id, { projectId: null, expectedHead: resolved }, actor);
-    const reset = sync.head('repo-a', doc.id)!;
-    expect(reset).not.toBe(resolved);
-    expect(sync.version('repo-a', reset)!.closure.doc.project_id).toBeNull();
-    store.update(doc.id, { projectId: null, expectedHead: reset }, actor);
-    expect(sync.head('repo-a', doc.id)).toBe(reset);
+    expect(() => store.update(doc.id, { projectId: null, expectedHead: resolved }, actor)).toThrow(/Map to a Project/);
+    expect(sync.head('repo-a', doc.id)).toBe(resolved);
+    expect(store.isReceivedProjectLocked(doc.id)).toBe(true);
     sync.freezeManual();
-    expect(sync.head('repo-a', doc.id)).toBe(reset);
+    expect(sync.head('repo-a', doc.id)).toBe(resolved);
   });
 
   it.each(['merge', 'local', 'remote'] as const)('preserves reviewed causal history in %s resolution and restore UI', (choice) => {

@@ -3,7 +3,8 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest';
 import { collectTestPluginApp } from '@zana-ai/zcc-plugin-sdk/testing/app';
 import { UI_USER } from '../server/rpc.js';
-import type { DesignDocStore } from '../server/store.js';
+import { DesignDocStore } from '../server/store.js';
+import { createTestDatabase } from '../server/test-db.js';
 import { NavPanel, ProjectTab } from './slots.js';
 import { PEER_STATUS_POLL_MS } from './PeerSettings.js';
 import { projectOptions } from './Workbench.js';
@@ -536,6 +537,24 @@ describe('doc list', () => {
     fireEvent.click(menuItem('Delete…'));
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete design doc' })).getByRole('button', { name: 'Delete' }));
     expect(await screen.findByText('Design docs your agents work on with you')).toBeTruthy();
+  });
+
+  it('does not offer Move for a peer-received doc', async () => {
+    const db = createTestDatabase();
+    const harness = createHarness({ store: new DesignDocStore(db) });
+    const doc = seed(harness.store, { title: 'Peer owned', projectId: 'p1' });
+    db.prepare('INSERT INTO sync_doc_references VALUES (?, ?, ?)').run(doc.id, '"foreign"', '[]');
+    seed(harness.store, { title: 'Mine', projectId: 'p1' });
+    harness.render(<NavPanel pluginId="design-docs" subPath="" />);
+    await screen.findByText('Peer owned', { selector: '.dd-doc-row-title' });
+    const rightClick = (title: string) => fireEvent.contextMenu(screen.getByText(title, { selector: '.dd-doc-row-title' }).closest('button')!, { clientX: 40, clientY: 60 });
+    rightClick('Peer owned');
+    const locked = menuItem(/Move to project/) as HTMLButtonElement;
+    expect(locked.disabled).toBe(true);
+    expect(locked.title).toContain('Map to a Project');
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    rightClick('Mine');
+    expect((menuItem(/Move to project/) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('downloads a doc as a zip from the right-click menu and the header menu', async () => {

@@ -188,6 +188,7 @@ interface DocRow {
   pinned_at: number | null;
   alternative_to: string | null;
   file_count?: number;
+  project_locked?: number;
   open_comments?: number;
   head?: string | null;
   last_comment?: string | null;
@@ -249,11 +250,16 @@ export const DOC_ONLY = `kind = 'doc'`;
 export const TEMPLATE_ONLY = `kind = 'template'`;
 export type DocKind = 'doc' | 'template';
 
+const RECEIVED_PROJECT_LOCKED =
+  'This doc came from a peer, so its project belongs to the peer. Use "Map to a Project…" in the Design Docs panel to file it on this machine.';
+
 // docs-kind: allow Correlated file counts inherit the outer docs kind predicate.
 const SUMMARY_COLUMNS = `d.*,
   (SELECT h.head_id FROM sync_doc_heads h WHERE h.doc_id = d.id
     AND h.repo_id = (SELECT repo_id FROM sync_repositories ORDER BY created_at LIMIT 1)) AS head,
   (SELECT COUNT(*) FROM doc_files f WHERE f.doc_id = d.id) AS file_count,
+  EXISTS (SELECT 1 FROM sync_doc_references pr WHERE pr.doc_id = d.id AND pr.project_json <> 'null'
+    AND json_extract(pr.project_json, '$') IS NOT d.project_id) AS project_locked,
   (SELECT COUNT(*) FROM doc_comments c WHERE c.doc_id = d.id AND c.status = 'open' AND c.parent_id IS NULL) AS open_comments,
   (SELECT json_object('body', substr(c.body, 1, ${COMMENT_EXCERPT_LENGTH}), 'author', c.author, 'at', c.created_at)
     FROM doc_comments c LEFT JOIN doc_comments p ON p.id = c.parent_id
@@ -741,7 +747,9 @@ export class DesignDocStore {
       sets.push('entry_path = ?');
       params.push(entryPath);
     }
-    if (patch.projectId !== undefined) {
+    // Setting the project it already has is a no-op; it must not rewrite the replicated project reference either.
+    const moveProject = patch.projectId !== undefined && patch.projectId !== row.project_id;
+    if (moveProject) {
       sets.push('project_id = ?');
       params.push(patch.projectId);
     }
@@ -765,12 +773,18 @@ export class DesignDocStore {
           throw new DesignDocError('conflict', 'design doc head changed; re-read the doc before updating metadata');
         }
       }
+      // A same-value projectId alongside other fields is an echo and is ignored; a bare project request is a move attempt.
+      const bareMove = patch.projectId !== undefined && Object.entries(patch)
+        .every(([key, value]) => key === 'projectId' || key === 'expectedHead' || value === undefined);
+      if ((moveProject || bareMove) && this.isReceivedProjectLocked(row.id)) {
+        throw new DesignDocError('invalid', RECEIVED_PROJECT_LOCKED);
+      }
       if (sets.length === 0) return;
       const references = this.db.prepare('SELECT project_json FROM sync_doc_references WHERE doc_id = ?')
         .get(row.id) as { project_json: string } | undefined;
-      const projectReferenceChanged = patch.projectId !== undefined && references && JSON.parse(references.project_json) !== patch.projectId;
+      const projectReferenceChanged = moveProject && references && JSON.parse(references.project_json) !== patch.projectId;
       this.db.prepare(`UPDATE docs SET ${sets.join(', ')} WHERE ${DOC_ONLY} AND id = ?`).run(...params, row.id);
-      if (patch.projectId !== undefined) this.db.prepare('UPDATE sync_doc_references SET project_json = ? WHERE doc_id = ?')
+      if (moveProject) this.db.prepare('UPDATE sync_doc_references SET project_json = ? WHERE doc_id = ?')
         .run(JSON.stringify(patch.projectId), row.id);
       const after = this.requireRow(row.id);
       const semanticChange = !!projectReferenceChanged || ['title', 'summary', 'status', 'tags', 'entry_path', 'project_id'].some((key) =>
@@ -781,6 +795,19 @@ export class DesignDocStore {
         statusBefore: before.status as DocStatus, statusAfter: after.status as DocStatus });
     });
     return toSummary(this.requireRow(row.id));
+  }
+
+  /**
+   * True when the doc's logical project (as replicated from a peer) is foreign to this machine's binding:
+   * moving it would rewrite the peer's project. Locally created docs and docs whose binding equals the
+   * logical project are movable.
+   */
+  isReceivedProjectLocked(docId: string): boolean {
+    const row = this.db.prepare(`SELECT d.project_id AS project_id, r.project_json AS project_json FROM docs d
+      JOIN sync_doc_references r ON r.doc_id = d.id WHERE d.${DOC_ONLY} AND d.id = ?`).get(docId) as { project_id: string | null; project_json: string } | undefined;
+    if (!row) return false;
+    const logical = JSON.parse(row.project_json) as string | null;
+    return logical !== null && logical !== row.project_id;
   }
 
   /** Pin a doc to the top of the list, or unpin it. Not an edit: revision and "updated" stay put. */
@@ -1762,6 +1789,7 @@ function toSummary(row: DocRow): DesignDocSummary {
     tags: parseTags(row.tags),
     entryPath: row.entry_path,
     fileCount: Number(row.file_count ?? 0),
+    projectLocked: !!row.project_locked,
     openComments: Number(row.open_comments ?? 0),
     lastComment: parseExcerpt(row.last_comment),
     pinnedAt: row.pinned_at ?? null,
