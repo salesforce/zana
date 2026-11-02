@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { createExecutionStore, KICKOFF_FAILURE_BLOCK_THRESHOLD, NO_PROGRESS_CLAIM_REASON, type ExecutionWorkUnitInput } from '../store.js';
 
 // Extra branch coverage for #577: the shared slot snapshot in dispatch, cost ordering of eligible
-// slots, and the single-slot question wording for untitled units and orchestrator-prefixed seats.
+// slots, and the single-slot question wording for orchestrator-prefixed seats.
 
 async function fixture(run: (filePath: string) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), 'zcc-execution-kickoff-routing-cov-'));
@@ -63,18 +63,31 @@ describe('dispatch recommends the cheapest priced eligible slot (#577 shared sna
     expect((await equal.dispatchReady(second.id, { enforceRouting: true })).assignments[0].slotId).toBe('engineer:0');
   }));
 
-  it('keeps the recorded decision and still recommends the free slot on later advisory and enforced passes', async () => fixture(async (filePath) => {
+  it('assigns the freed slot on a later advisory pass without recording a second decision', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 1_000 });
-    // The only worker slot is taken by an unrouted unit, so the routed unit stays READY with a decision on record.
+    // 'plain' takes the only worker slot, so the routed unit stays READY with its decision recorded.
     const record = await running(store, [{ slotId: 'engineer:0', personaId: 'engineer', model: 'claude-haiku-4' }], { routing },
       [{ id: 'plain', title: 'Plain', task: 'Work', dependencies: [], readOnly: true }]);
     const first = await store.dispatchReady(record.id);
     expect(first.record.workUnits!.find((unit) => unit.id === 'plain')!.state).toBe('CLAIMED');
     expect(first.record.routingDecisions).toHaveLength(1);
-    const advisory = await store.dispatchReady(record.id);
-    const enforced = await store.dispatchReady(record.id, { enforceRouting: true });
-    expect(advisory.record.routingDecisions).toEqual(first.record.routingDecisions);
-    expect(enforced.record.routingDecisions).toEqual(first.record.routingDecisions);
+    // Free the slot: the advisory pass reuses the stored decision.
+    const plain = first.record.workUnits!.find((unit) => unit.id === 'plain')!;
+    const done = await store.completeWork(record.id, first.record.stateVersion, { role: 'worker', slotId: 'engineer:0' }, 'plain', 'ok', { claimId: plain.claimId!, claimGeneration: plain.claimGeneration! });
+    const advisory = await store.dispatchReady(done.id);
+    expect(advisory.assignments).toMatchObject([{ workUnitId: 'unit', slotId: 'engineer:0' }]);
+    expect(advisory.record.routingDecisions).toHaveLength(1);
+  }));
+
+  it('assigns the free slot on an enforced pass when a decision is already on record', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 1_000 });
+    const record = await running(store, [{ slotId: 'engineer:0', personaId: 'engineer', model: 'claude-haiku-4' }], { routing },
+      [{ id: 'plain', title: 'Plain', task: 'Work', dependencies: [], readOnly: true }]);
+    const first = await store.dispatchReady(record.id);
+    const plain = first.record.workUnits!.find((unit) => unit.id === 'plain')!;
+    const done = await store.completeWork(record.id, first.record.stateVersion, { role: 'worker', slotId: 'engineer:0' }, 'plain', 'ok', { claimId: plain.claimId!, claimGeneration: plain.claimGeneration! });
+    const enforced = await store.dispatchReady(done.id, { enforceRouting: true });
+    expect(enforced.assignments).toMatchObject([{ workUnitId: 'unit', slotId: 'engineer:0' }]);
   }));
 });
 

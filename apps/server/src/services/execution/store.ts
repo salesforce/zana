@@ -1290,6 +1290,11 @@ function slotRouteSnapshot(record: ExecutionRecord, slot: { slotId: string; pers
   };
 }
 
+/** The authorized worker slots: every slot except the coordinator's. One definition for dispatch and kickoff recovery. */
+function workerSlotsOf(record: ExecutionRecord): Array<{ slotId: string; personaId: string }> {
+  return (record.authorizationContext?.slots ?? []).filter((slot) => slot.slotId !== 'orchestrator' && !slot.slotId.startsWith('orchestrator:'));
+}
+
 export function createExecutionStore(options: ExecutionStoreOptions) {
   if (options.maxRecords !== undefined && (!Number.isInteger(options.maxRecords) || options.maxRecords < 1)) {
     throw new Error('invalid execution max records');
@@ -2232,7 +2237,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       const assignments: ExecutionDispatchAssignment[] = [];
       const slots = record.authorizationContext?.slots;
       if (!terminalStates.has(record.state) && !record.resourceBlock && record.workUnits?.length && slots?.length) {
-        const workerSlots = slots.filter((slot) => slot.slotId !== 'orchestrator' && !slot.slotId.startsWith('orchestrator:'));
+        const workerSlots = workerSlotsOf(record);
         const busy = new Set((record.workUnits ?? []).filter((unit) => unit.state === 'CLAIMED' && unit.assignedSlotId).map((unit) => unit.assignedSlotId!));
         const freeSlots = workerSlots.filter((slot) => !busy.has(slot.slotId));
         // Soft-deprioritize the slot whose completion/release triggered this
@@ -2729,14 +2734,14 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
           : '';
         const routing = unit.routing;
         const capable = routing
-          ? (record.authorizationContext?.slots ?? [])
-            .filter((slot) => slot.slotId !== 'orchestrator' && !slot.slotId.startsWith('orchestrator:'))
+          ? workerSlotsOf(record)
             .filter((slot) => evaluateSlotEligibility(routing, slotRouteSnapshot(record, slot)).status !== 'FAIL')
           : [];
         question = capable.length === 1
           ? `Work unit ${unit.id} (${unit.title}) made no progress, and the only worker slot that can take it (${capable[0].slotId}) never started a turn.${earlier} Check that worker's terminal, then retry the unit or restart the run.`
           : `Work unit ${unit.id}${unit.title ? ` (${unit.title})` : ''} made no progress on every eligible worker slot; its worker never started a turn.${earlier} Check the worker terminal, then retry the unit or restart the run.`;
-        if (earlier) question = question.slice(0, MAX_STRING);
+        // A long title or slot id must not push the question past MAX_STRING, which would fail the persist and leave the unit unblocked.
+        question = question.slice(0, MAX_STRING);
       }
       unit.state = 'BLOCKED';
       unit.history.push({ action: 'blocked', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp, detail: apiError ? 'stopped after an API error' : 'kickoff delivery produced no worker turn' });
@@ -2763,15 +2768,13 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
    * so the service caller falls through to the human block; a single-worker team or
    * a unit that has already tried every slot always throws here and blocks.
    */
-  async function reassignKickoffToFreshSlot(executionId: string, workUnitId: string): Promise<ExecutionRecord> {
+  async function reassignKickoffToFreshSlot(executionId: string, workUnitId: string, opts?: { enforceRouting?: boolean }): Promise<ExecutionRecord> {
     return mutateRecord(executionId, undefined, (record, timestamp) => {
       const unit = findUnit(record, workUnitId);
       if (unit.state !== 'READY') throw new WorkUnitRecoveryGuardError('work unit is not reassignable for kickoff failure');
       if (!(unit.noProgressSlots ?? []).some((entry) => entry.executionAttempt === record.attempt)
         && (unit.kickoffFailures ?? 0) < KICKOFF_FAILURE_BLOCK_THRESHOLD) throw new WorkUnitRecoveryGuardError('kickoff failures below block threshold');
-      const workerSlots = (record.authorizationContext?.slots ?? []).filter(
-        (slot) => slot.slotId !== 'orchestrator' && !slot.slotId.startsWith('orchestrator:')
-      );
+      const workerSlots = workerSlotsOf(record);
       const tried = new Set([...
         unit.history.filter((entry) => entry.action === 'claimed' && entry.slotId).map((entry) => entry.slotId!),
         ...(unit.noProgressSlots ?? []).filter((entry) => entry.executionAttempt === record.attempt).map((entry) => entry.slotId)
@@ -2783,7 +2786,8 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         const routing = unit.routing;
         const ranked = untried.map((slot) => ({ slot, status: evaluateSlotEligibility(routing, slotRouteSnapshot(record, slot)).status }))
           .filter((entry) => entry.status !== 'FAIL');
-        fresh = [...ranked.filter((entry) => entry.status === 'PASS'), ...ranked.filter((entry) => entry.status !== 'PASS')][0]?.slot;
+        // Enforced routing refuses anything but PASS at delivery, so UNKNOWN is not a candidate there.
+        fresh = [...ranked.filter((entry) => entry.status === 'PASS'), ...(opts?.enforceRouting ? [] : ranked.filter((entry) => entry.status !== 'PASS'))][0]?.slot;
         if (!fresh) throw new WorkUnitRecoveryGuardError('no untried eligible worker slot for kickoff reassignment');
       }
       if (!fresh) throw new WorkUnitRecoveryGuardError('no untried worker slot for kickoff reassignment');

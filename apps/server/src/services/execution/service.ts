@@ -1225,7 +1225,7 @@ export class ExecutionService {
       // EVERY distinct worker slot has been exhausted (or a single-worker team) does
       // the store throw here and we fall through to the human block below.
       try {
-        await this.deps.store.reassignKickoffToFreshSlot(reclaimed.id, unit.id);
+        await this.deps.store.reassignKickoffToFreshSlot(reclaimed.id, unit.id, { enforceRouting: this.deps.routingEnforcementEnabled?.(reclaimed) === true });
         changed = true;
         continue; // reassigned to a fresh slot — the caller's cascadeDispatch redispatches it
       } catch (error) {
