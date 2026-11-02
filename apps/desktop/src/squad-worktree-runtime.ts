@@ -406,7 +406,7 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
               const removed = await git.removeWorktree(project.path, beforeRemove.squadWorktree!.path, true);
               if (removed.ok) {
                 // The branch is merged, so plain `-d` suffices; a refusal only leaves a harmless branch.
-                if (wtBranch && wtBranch !== base) await git.deleteBranch(project.path, wtBranch, false).catch(() => undefined);
+                if (wtBranch && wtBranch !== base) await deleteBranchOrWarn(project.path, wtBranch, false, beforeRemove.id);
                 await executionStore.markSquadWorktreeTerminalEffects(beforeRemove.id, beforeRemove.stateVersion);
                 return 'merged';
               }
@@ -427,7 +427,7 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
             // Only the branch recorded for this worktree; never the base, the project's current branch, or a blank name.
             const current = (await git.getGitStatus(project.path).catch(() => null))?.branch;
             if (wtBranch && wtBranch.trim() && wtBranch !== worktree.baseBranch && wtBranch !== current) {
-              await git.deleteBranch(project.path, wtBranch, true).catch(() => undefined);
+              await deleteBranchOrWarn(project.path, wtBranch, true, beforeDelete.id);
             }
             // Like a merge, the record keeps its worktree reference so the report can name the branch.
             await executionStore.markSquadWorktreeTerminalEffects(beforeDelete.id, beforeDelete.stateVersion);
@@ -449,6 +449,12 @@ export function createSquadWorktreeRuntime(deps: SquadWorktreeRuntimeDeps) {
       await executionStore.markSquadWorktreeTerminalEffects(record.id, record.stateVersion);
       return 'kept';
     });
+  }
+
+  /** The worktree is already gone, so a branch that survives is reported, never fatal. */
+  async function deleteBranchOrWarn(projectPath: string, branch: string, force: boolean, executionId: string): Promise<void> {
+    const result = await git.deleteBranch(projectPath, branch, force).catch(() => ({ ok: false as const }));
+    if (!result.ok) console.warn(`squad worktree: branch ${branch} of execution ${executionId} was not deleted and remains in the project`);
   }
 
   async function replayUndisposedTerminalEffects(): Promise<void> {

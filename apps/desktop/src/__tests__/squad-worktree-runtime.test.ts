@@ -430,14 +430,21 @@ describe('handleSquadWorktreeTerminal', () => {
       expect(deps.git.deleteBranch).not.toHaveBeenCalled();
     });
 
-    it('a branch deletion failure or throw after removal still reports deleted', async () => {
-      for (const fail of [(g: any) => g.deleteBranch.mockResolvedValue({ ok: false }), (g: any) => g.deleteBranch.mockRejectedValue(new Error('x'))]) {
-        const { deps, runtime } = setup({ team });
-        const r = rec();
-        serve(deps, r);
-        fail(deps.git);
-        await expect(runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('deleted');
-        expect(deps.executionStore.markSquadWorktreeTerminalEffects).toHaveBeenCalledWith(r.id, 3);
+    it('a branch deletion failure or throw after removal still reports deleted and warns', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        for (const fail of [(g: any) => g.deleteBranch.mockResolvedValue({ ok: false }), (g: any) => g.deleteBranch.mockRejectedValue(new Error('x'))]) {
+          warn.mockClear();
+          const { deps, runtime } = setup({ team });
+          const r = rec();
+          serve(deps, r);
+          fail(deps.git);
+          await expect(runtime.handleSquadWorktreeTerminal(r)).resolves.toBe('deleted');
+          expect(deps.executionStore.markSquadWorktreeTerminalEffects).toHaveBeenCalledWith(r.id, 3);
+          expect(warn).toHaveBeenCalledWith(expect.stringContaining('zcc/w'));
+        }
+      } finally {
+        warn.mockRestore();
       }
     });
 

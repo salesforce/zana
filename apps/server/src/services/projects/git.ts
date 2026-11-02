@@ -768,7 +768,13 @@ export async function commitAllWorktreeChanges(
   if (!status) return { ok: false, message: 'worktree is unavailable' };
   if (!status.dirty) return { ok: true };
   // `.zana/` holds Zana's own plan handoff files; they must never reach the user's history.
-  const added = await runGit(toplevel, ['add', '-A', '--', '.', ':(exclude).zana']);
+  // Untracked `.zcc/` files are Zana's own activity records, so they stay out of history too.
+  // Tracked `.zcc/` edits are the user's and are still committed.
+  const zccUntracked = await runGitOutput(toplevel, ['ls-files', '--others', '--exclude-standard', '-z', '--', '.zcc']);
+  const zccExcludes = zccUntracked.ok
+    ? zccUntracked.output.split('\0').filter(Boolean).map((file) => `:(exclude,literal)${file}`)
+    : [];
+  const added = await runGit(toplevel, ['add', '-A', '--', '.', ':(exclude).zana', ...zccExcludes]);
   if (!added.ok) return added;
   // Exit 0 means nothing was staged (only excluded files were dirty), so there is nothing to commit.
   const nothingStaged = await runGit(toplevel, ['diff', '--cached', '--quiet']);
@@ -807,8 +813,10 @@ export async function mergeWorktree(
   if (!source) return { ok: false, message: 'worktree is unavailable' };
   if (source.dirty) {
     // Zana's own `.zana/` handoff files alone never make a worktree "dirty" for a merge.
-    const other = await runGitOutput(worktreePath, ['status', '--porcelain', '--', '.', ':(exclude).zana']);
-    if (!other.ok || other.output.trim()) return { ok: false, message: 'worktree is dirty' };
+    // Untracked `.zcc/` activity files are Zana's too.
+    const other = await runGitOutput(worktreePath, ['status', '--porcelain', '--untracked-files=all', '--', '.', ':(exclude).zana']);
+    const blocking = other.output.split('\n').some((line) => line.trim() !== '' && !/^\?\? "?\.zcc\//.test(line));
+    if (!other.ok || blocking) return { ok: false, message: 'worktree is dirty' };
   }
   if (!source.branch) return { ok: false, message: 'worktree branch is unavailable' };
   const merged = await runGit(projectPath, ['merge', '--no-edit', source.branch]);

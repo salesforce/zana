@@ -843,6 +843,43 @@ describe('git worktree support', () => {
         expect((await worktreeState(res.path)).commits).toBe(0);
       });
 
+      it('never commits untracked .zcc activity files, and they do not block a merge', async () => {
+        await git(main, 'config', 'user.name', 'T');
+        await git(main, 'config', 'user.email', 't@example.com');
+        const res = await createWorktree(main, join(base, 'wt', 'zcc'), 'zcc/zcc');
+        expect(res.ok).toBe(true);
+        if (!res.ok) return;
+        await mkdir(join(res.path, '.zcc'), { recursive: true });
+        await writeFile(join(res.path, '.zcc', 'activity.jsonl'), '{}\n');
+        await writeFile(join(res.path, 'work.txt'), 'work\n');
+        // The base also has its own untracked activity file; a tracked copy would collide with it.
+        await mkdir(join(main, '.zcc'), { recursive: true });
+        await writeFile(join(main, '.zcc', 'activity.jsonl'), '{"base":1}\n');
+
+        await expect(commitAllWorktreeChanges(res.path, 'm')).resolves.toEqual({ ok: true });
+        const { stdout: committed } = await execFileP('git', ['ls-tree', '-r', '--name-only', 'zcc/zcc'], { cwd: main, env: cleanGitEnv() });
+        expect(committed).toContain('work.txt');
+        expect(committed).not.toContain('.zcc/');
+        await expect(mergeWorktree(main, res.path, 'main')).resolves.toEqual({ ok: true });
+        await expect(readFile(join(main, 'work.txt'), 'utf8')).resolves.toBe('work\n');
+        await expect(readFile(join(main, '.zcc', 'activity.jsonl'), 'utf8')).resolves.toBe('{"base":1}\n');
+      });
+
+      it('still commits edits to already tracked .zcc files', async () => {
+        await git(main, 'config', 'user.name', 'T');
+        await git(main, 'config', 'user.email', 't@example.com');
+        await mkdir(join(main, '.zcc'), { recursive: true });
+        await writeFile(join(main, '.zcc', 'team.json'), '{}\n');
+        await git(main, 'add', '.zcc/team.json');
+        await git(main, 'commit', '-m', 'track zcc file');
+        const res = await createWorktree(main, join(base, 'wt', 'zcc-tracked'), 'zcc/zcc-tracked');
+        expect(res.ok).toBe(true);
+        if (!res.ok) return;
+        await writeFile(join(res.path, '.zcc', 'team.json'), '{"edited":true}\n');
+        await expect(commitAllWorktreeChanges(res.path, 'm')).resolves.toEqual({ ok: true });
+        expect((await worktreeState(res.path)).commits).toBe(1);
+      });
+
       it('never commits Zana .zana handoff files, and they do not block a merge', async () => {
         await git(main, 'config', 'user.name', 'T');
         await git(main, 'config', 'user.email', 't@example.com');
