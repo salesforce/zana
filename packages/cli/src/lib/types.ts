@@ -173,6 +173,10 @@ export interface ScheduledTask {
   source?: 'global' | { projectId: string };
   inboxLevel?: InboxNotifyLevel;
   autoCloseOnFinish?: boolean;
+  /** Per-schedule override of `automatedUseUserConfig`; unset follows the global setting. */
+  useUserConfig?: boolean;
+  /** MCP server names the isolated run must have; the run fails without launching if one is unavailable. */
+  requiredMcps?: string[];
   maxDurationMinutes?: number;
   group?: string;
 }

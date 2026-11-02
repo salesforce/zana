@@ -3375,6 +3375,46 @@ describe('SquadExecutionService', () => {
     expect(launchTeam.mock.calls[0]?.[2]).not.toHaveProperty('retainedRecovery');
   }));
 
+  it.each([[2, false], [1, true]] as const)('exact-native with total slots %i allows=%s when 1 snapshot is restorable', async (total, allowed) => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const beginRetainedRecovery = vi.fn(store.beginRetainedRecovery);
+    const service = new SquadExecutionService(deps(filePath, {
+      store: { ...store, beginRetainedRecovery },
+      resolveExactNativeRecoverySnapshots: (rec) => rec.nativeRecoverySnapshots ?? [],
+      resolveExactNativeRecoveryTotalSlots: () => total
+    }));
+    const started = await service.start('owner', 'project-1', request);
+    if (!started.ok) throw new Error('source launch failed');
+    let failed = await store.transition(started.value.id, started.value.stateVersion, 'FAILED', 'error', 'failed');
+    failed = await store.upsertNativeRecoverySnapshot(failed.id, failed.stateVersion, {
+      attempt: failed.attempt, slotId: 'worker-1', role: 'worker', personaId: 'builder', nativeConversationId: 'native-1'
+    });
+    const result = await service.recoverRetained('owner', 'project-1', failed.id, failed.stateVersion, 'exact-native');
+    if (allowed) { expect(beginRetainedRecovery).toHaveBeenCalled(); return; }
+    expect(result).toEqual({ ok: false, code: 'PARTIAL_RESTORE', message: expect.stringContaining('only 1 of 2') });
+    expect(beginRetainedRecovery).not.toHaveBeenCalled();
+    expect(await store.get(failed.id)).toMatchObject({ state: 'FAILED', stateVersion: failed.stateVersion });
+  }));
+
+  it.each(['exact-native', 'fresh-plan'] as const)('%s recovery passes keepSlotIds to the store only for snapshot slots', async (mode) => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const beginRetainedRecovery = vi.fn(store.beginRetainedRecovery);
+    const service = new SquadExecutionService(deps(filePath, {
+      store: { ...store, beginRetainedRecovery },
+      resolveExactNativeRecoverySnapshots: (rec) => rec.nativeRecoverySnapshots ?? []
+    }));
+    const started = await service.start('owner', 'project-1', request);
+    if (!started.ok) throw new Error('source launch failed');
+    let failed = await store.transition(started.value.id, started.value.stateVersion, 'FAILED', 'error', 'failed');
+    failed = await store.upsertNativeRecoverySnapshot(failed.id, failed.stateVersion, {
+      attempt: failed.attempt, slotId: 'worker-1', role: 'worker', personaId: 'builder', nativeConversationId: 'native-1'
+    });
+    await service.recoverRetained('owner', 'project-1', failed.id, failed.stateVersion, mode);
+    const opts = beginRetainedRecovery.mock.calls[0]?.[2];
+    if (mode === 'exact-native') expect(opts?.keepSlotIds).toEqual(new Set(['worker-1']));
+    else expect(opts).toBeUndefined();
+  }));
+
   it('preserves retained native identities when fresh-plan recovery fails before launch', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     let admissionCalls = 0;

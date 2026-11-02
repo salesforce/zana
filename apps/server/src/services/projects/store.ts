@@ -335,7 +335,8 @@ function deriveNameFromGitOrigin(dir: string): string | null {
   try {
     const origin = execFileSync('git', ['-C', dir, 'remote', 'get-url', 'origin'], {
       timeout: 5_000,
-      stdio: ['ignore', 'pipe', 'ignore']
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true
     })
       .toString('utf8')
       .trim();
@@ -858,6 +859,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (input.scheduledRunOverflow === 'auto' || input.scheduledRunOverflow === 'queue' || input.scheduledRunOverflow === 'skip') {
     normalized.scheduledRunOverflow = input.scheduledRunOverflow;
+  }
+  if (typeof input.automatedUseUserConfig === 'boolean') {
+    normalized.automatedUseUserConfig = input.automatedUseUserConfig;
   }
   if (input.schedulerRecoveryIntro === 'dismissed' || input.schedulerRecoveryIntro === 'applied') {
     normalized.schedulerRecoveryIntro = input.schedulerRecoveryIntro;

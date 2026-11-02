@@ -29,7 +29,7 @@ describe('Git clone diagnostics', () => {
     const { child, result } = start();
     expect(mocks.spawn).toHaveBeenCalledWith('git',
       ['clone', '--progress', '--', 'https://example.test/private/repo.git', '/tmp/clone/repo'],
-      expect.objectContaining({ cwd: '/tmp/clone', stdio: ['ignore', 'pipe', 'pipe'],
+      expect.objectContaining({ cwd: '/tmp/clone', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
         env: expect.objectContaining({ HOME: '/tmp/isolated-home', PATH: process.env.PATH, GIT_TERMINAL_PROMPT: '0' }) }));
     expect(mocks.spawn.mock.calls[0][2].env).not.toHaveProperty('GIT_DIR');
     child.emit('close', 0);

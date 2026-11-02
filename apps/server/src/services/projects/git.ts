@@ -1,4 +1,10 @@
-import { execFile } from 'node:child_process';
+import {
+  execFile,
+  type ChildProcess,
+  type ExecFileException,
+  type ExecFileOptions,
+  type ExecFileOptionsWithBufferEncoding
+} from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
@@ -15,13 +21,30 @@ import type {
   WorktreeCreateResult
 } from '@zana-ai/zcc-domain/product';
 
+// Every git child goes through here. The server runs under Electron (a GUI
+// process), so on Windows each console child needs windowsHide or it opens a
+// visible console window. No effect on macOS or Linux.
+function execGit(
+  args: readonly string[],
+  options: ExecFileOptionsWithBufferEncoding,
+  callback: (error: ExecFileException | null, stdout: Buffer, stderr: Buffer) => void
+): ChildProcess;
+function execGit(
+  args: readonly string[],
+  options: ExecFileOptions,
+  callback: (error: ExecFileException | null, stdout: string, stderr: string) => void
+): ChildProcess;
+function execGit(args: readonly string[], options: ExecFileOptions, callback: (...result: never[]) => void): ChildProcess {
+  return execFile('git', args, { ...options, windowsHide: true }, callback as never);
+}
+
 const TIMEOUT_MS = 1500;
 const GIT_MUTATION_TIMEOUT_MS = 30_000;
 export const GIT_COMMIT_MESSAGE_MAX = 2_000;
 
 async function commitRevision(cwd: string): Promise<string | null> {
   const result = await new Promise<{ ok: boolean; output: Buffer }>((resolve) => {
-    execFile('git', ['status', '--porcelain=v2', '--branch', '-z'], {
+    execGit(['status', '--porcelain=v2', '--branch', '-z'], {
       cwd, timeout: STATUS_SCOPED_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, encoding: 'buffer'
     }, (error, stdout) => resolve({ ok: !error, output: Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout ?? '') }));
   });
@@ -104,8 +127,7 @@ export async function getRecentCommits(cwd: string, limit = 50): Promise<GitComm
   const format = ['%H', '%h', '%an', '%at', '%s'].join('%x1f') + '%x00';
 
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       ['log', `--max-count=${n}`, `--pretty=format:${format}`],
       { cwd: toplevel, timeout: TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 },
       (err, stdout) => {
@@ -162,8 +184,7 @@ function findToplevel(start: string): string | null {
 export async function gitCommonDir(cwd: string): Promise<string | null> {
   if (!cwd || typeof cwd !== 'string' || !isAbsolute(cwd)) return null;
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       ['rev-parse', '--path-format=absolute', '--git-common-dir'],
       { cwd, timeout: TIMEOUT_MS, maxBuffer: 1 * 1024 * 1024 },
       (err, stdout) => {
@@ -200,8 +221,7 @@ export async function listWorktrees(cwd: string): Promise<Worktree[]> {
   if (!toplevel) return [];
 
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       ['worktree', 'list', '--porcelain', '-z'],
       { cwd, timeout: TIMEOUT_MS, maxBuffer: 1 * 1024 * 1024 },
       (err, stdout) => {
@@ -283,8 +303,7 @@ export async function listBranches(cwd: string): Promise<GitBranch[]> {
   if (!toplevel) return [];
 
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       [
         'for-each-ref',
         `--count=${GIT_BRANCH_MAX}`,
@@ -376,8 +395,7 @@ export async function withWorktreeLock<T>(
 export async function isGitRepo(cwd: string): Promise<boolean> {
   if (!cwd || typeof cwd !== 'string' || !isAbsolute(cwd)) return false;
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       ['rev-parse', '--is-inside-work-tree'],
       { cwd, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024 },
       (err, stdout) => resolve(!err && String(stdout).trim() === 'true')
@@ -412,8 +430,7 @@ export async function isGitRepo(cwd: string): Promise<boolean> {
  */
 async function branchRefExists(toplevel: string, name: string): Promise<boolean> {
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       ['show-ref', '--verify', '--quiet', `refs/heads/${name}`],
       { cwd: toplevel, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024 },
       (err) => resolve(!err)
@@ -448,8 +465,7 @@ export async function createWorktree(
 async function hasDeclaredSubmodules(toplevel: string): Promise<boolean> {
   if (!existsSync(join(toplevel, '.gitmodules'))) return false;
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       ['config', '--file', '.gitmodules', '--get-regexp', '^submodule\..*\.path$'],
       { cwd: toplevel, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024 },
       (err, stdout) => resolve(!err && String(stdout).trim().length > 0)
@@ -541,8 +557,7 @@ async function createWorktreeUnlocked(
     : ['worktree', 'add', '-b', branchName, targetDir];
 
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       args,
       { cwd: toplevel, timeout: WORKTREE_ADD_TIMEOUT_MS, maxBuffer: 1 * 1024 * 1024 },
       (err, _stdout, stderr) => {
@@ -585,7 +600,7 @@ async function createWorktreeUnlocked(
 
 function runGitOutput(cwd: string, args: string[]): Promise<{ ok: boolean; output: string }> {
   return new Promise((resolve) => {
-    execFile('git', args, { cwd, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024 }, (err, stdout, stderr) => {
+    execGit(args, { cwd, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024 }, (err, stdout, stderr) => {
       resolve({ ok: !err, output: String(stdout || stderr || '').trim() });
     });
   });
@@ -906,8 +921,7 @@ export async function worktreeState(
  */
 async function countUniqueCommits(worktreePath: string, branch: string): Promise<number> {
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       ['rev-list', '--count', 'HEAD', '--not', `--exclude=${branch}`, '--branches', '--remotes'],
       { cwd: worktreePath, timeout: TIMEOUT_MS, maxBuffer: 64 * 1024 },
       (err, stdout) => {
@@ -996,8 +1010,7 @@ export async function getGitStatus(
   const timeout = useScope ? STATUS_SCOPED_TIMEOUT_MS : TIMEOUT_MS;
 
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       args,
       { cwd, timeout, maxBuffer: 4 * 1024 * 1024 },
       (err, stdout) => {
@@ -1028,8 +1041,7 @@ export async function showHead(absPath: string): Promise<GitShowResult> {
   }
 
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       ['show', `HEAD:${rel}`],
       {
         cwd: toplevel,
@@ -1064,8 +1076,7 @@ export async function showHead(absPath: string): Promise<GitShowResult> {
 
 function runGit(toplevel: string, args: string[]): Promise<{ ok: boolean; message?: string }> {
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       args,
       { cwd: toplevel, timeout: TIMEOUT_MS, maxBuffer: 1 * 1024 * 1024 },
       (err, _stdout, stderr) => {
@@ -1082,8 +1093,7 @@ function runGit(toplevel: string, args: string[]): Promise<{ ok: boolean; messag
 
 function runGitMutation(cwd: string, args: string[]): Promise<GitWorkflowResult> {
   return new Promise((resolve) => {
-    execFile(
-      'git',
+    execGit(
       args,
       { cwd, timeout: GIT_MUTATION_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 },
       (err, stdout, stderr) => {
@@ -1162,8 +1172,7 @@ export async function discardChanges(absPath: string): Promise<GitDiscardResult>
 
   // Probe per-file status so we know which dance to do.
   const statusResult = await new Promise<{ xy: string | null; err?: string }>((resolve) => {
-    execFile(
-      'git',
+    execGit(
       ['status', '--porcelain=v2', '-z', '--', rel],
       { cwd: toplevel, timeout: TIMEOUT_MS, maxBuffer: 1 * 1024 * 1024 },
       (err, stdout, stderr) => {

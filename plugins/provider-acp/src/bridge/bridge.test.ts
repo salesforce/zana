@@ -4094,6 +4094,109 @@ describe("acp bridge", () => {
     expect(threadEventsOfType("provider/warning")).not.toHaveLength(0);
   });
 
+  describe("strict native load (requireNativeLoad)", () => {
+    function strictResume(args: {
+      threadId: string;
+      providerThreadId: string;
+      envVars: Record<string, string>;
+      requireNativeLoad?: boolean;
+    }): number {
+      return sendRequest("thread/resume", {
+        threadId: args.threadId,
+        cwd: workspaceDir,
+        instructionMode: "append",
+        options: executionOptions({
+          providerOptions: {
+            acpLaunchSpec: acpLaunchSpec({ envVars: args.envVars }),
+          },
+        }),
+        providerThreadId: args.providerThreadId,
+        ...(args.requireNativeLoad === false ? {} : { requireNativeLoad: true }),
+      });
+    }
+
+    it("rejects before session/new when the agent cannot load sessions", async () => {
+      const requestLog = join(workspaceDir, "strict-unsupported.jsonl");
+      const id = strictResume({
+        threadId: "thread-strict-unsupported",
+        providerThreadId: "fake-sess-stale",
+        envVars: { FAKE_ACP_REQUEST_LOG: requestLog },
+      });
+      const response = await waitForResponse(id);
+      expect(response.error).toBeDefined();
+      expect(response.result).toBeUndefined();
+      const methods = loggedAcpRequests(requestLog).map((r) => r.method);
+      expect(methods).not.toContain("session/new");
+      expect(methods).not.toContain("session/load");
+      expect(threadEventsOfType("provider/warning")).toEqual([]);
+    });
+
+    it("rethrows a session/load failure without a fresh session or warning", async () => {
+      const first = await startThread({
+        envVars: { FAKE_ACP_LOAD_SESSION: "1" },
+      });
+      await stopThread(first.providerThreadId);
+      startedProviderThreadIds.pop();
+
+      const requestLog = join(workspaceDir, "strict-fail-load.jsonl");
+      const id = strictResume({
+        threadId: first.bbThreadId,
+        providerThreadId: first.providerThreadId,
+        envVars: { FAKE_ACP_FAIL_LOAD: "1", FAKE_ACP_REQUEST_LOG: requestLog },
+      });
+      const response = await waitForResponse(id);
+      expect(response.error).toBeDefined();
+      expect(response.result).toBeUndefined();
+      const methods = loggedAcpRequests(requestLog).map((r) => r.method);
+      expect(methods).toContain("session/load");
+      expect(methods).not.toContain("session/new");
+      expect(threadEventsOfType("provider/warning")).toEqual([]);
+    });
+
+    it("reports nativeLoaded: true after a successful session/load", async () => {
+      const first = await startThread({
+        envVars: { FAKE_ACP_LOAD_SESSION: "1" },
+      });
+      await stopThread(first.providerThreadId);
+      startedProviderThreadIds.pop();
+
+      const id = strictResume({
+        threadId: first.bbThreadId,
+        providerThreadId: first.providerThreadId,
+        envVars: { FAKE_ACP_LOAD_SESSION: "1" },
+      });
+      const response = await waitForResponse(id);
+      expect(response.result).toEqual({
+        providerThreadId: first.providerThreadId,
+        sessionRestorable: true,
+        nativeLoaded: true,
+      });
+      expect(threadEventsOfType("provider/warning")).toEqual([]);
+      startedProviderThreadIds.push(first.providerThreadId);
+    });
+
+    it("keeps the fresh-session fallback when the flag is absent", async () => {
+      const first = await startThread({
+        envVars: { FAKE_ACP_LOAD_SESSION: "1" },
+      });
+      await stopThread(first.providerThreadId);
+      startedProviderThreadIds.pop();
+
+      const id = strictResume({
+        threadId: first.bbThreadId,
+        providerThreadId: first.providerThreadId,
+        envVars: { FAKE_ACP_FAIL_LOAD: "1" },
+        requireNativeLoad: false,
+      });
+      const response = await waitForResponse(id);
+      const result = response.result as Record<string, unknown>;
+      expect(result.providerThreadId).not.toBe(first.providerThreadId);
+      expect(result).not.toHaveProperty("nativeLoaded");
+      expect(threadEventsOfType("provider/warning")).not.toHaveLength(0);
+      startedProviderThreadIds.push(result.providerThreadId as string);
+    });
+  });
+
   it("reports unexpected agent exits as a single provider error", async () => {
     const { bbThreadId, providerThreadId } = await startThread();
     const turnId = sendTurnRequest("turn/start", providerThreadId, {

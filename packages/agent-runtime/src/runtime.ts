@@ -1796,6 +1796,7 @@ function createAgentRuntimeInternal(
                 ...(outputSchema !== undefined ? { outputSchema } : {}),
               };
           let resolved: string;
+          let reportedSessionRestorable: boolean | undefined;
           try {
             // Inside the try: building the plan can itself reject the command
             // (a fork the bridge's handshake says it cannot perform), and that
@@ -1828,6 +1829,7 @@ function createAgentRuntimeInternal(
               threadId,
             });
             updateSessionRestoreCapability(threadId, result.sessionRestorable);
+            reportedSessionRestorable = result.sessionRestorable;
             if (providerThreadId) {
               recordProviderThreadIdentity(proc, threadId, providerThreadId);
             }
@@ -1883,7 +1885,12 @@ function createAgentRuntimeInternal(
           }
 
           markHostedProviderSessionIdle(threadId);
-          return { providerThreadId: resolved };
+          return {
+            providerThreadId: resolved,
+            ...(reportedSessionRestorable !== undefined
+              ? { sessionRestorable: reportedSessionRestorable }
+              : {}),
+          };
         },
       });
     },
@@ -2093,6 +2100,7 @@ function createAgentRuntimeInternal(
       disallowedTools,
       instructionMode = "append",
       sessionKind,
+      requireNativeLoad,
     }) {
       return runThreadOperation({
         threadId,
@@ -2177,6 +2185,9 @@ function createAgentRuntimeInternal(
             disallowedTools,
             instructionMode,
             ...(sessionKind !== undefined ? { sessionKind } : {}),
+            ...(requireNativeLoad === true
+              ? { requireNativeLoad: true as const }
+              : {}),
           };
           const plan = proc.adapter.buildCommandPlan(adapterCommand);
           if (plan.kind === "noop") {
@@ -2188,7 +2199,11 @@ function createAgentRuntimeInternal(
                 `No provider thread id available for ${threadId}`,
               );
             }
-            return { providerThreadId: currentProviderThreadId };
+            // A noop plan never reloaded anything: strict callers fail closed.
+            return {
+              providerThreadId: currentProviderThreadId,
+              ...(requireNativeLoad === true ? { nativeLoaded: false } : {}),
+            };
           }
           const cmd = plan;
 
@@ -2222,7 +2237,12 @@ function createAgentRuntimeInternal(
           });
 
           markHostedProviderSessionIdle(threadId);
-          return { providerThreadId: resolvedId };
+          return {
+            providerThreadId: resolvedId,
+            ...(requireNativeLoad === true
+              ? { nativeLoaded: result.nativeLoaded === true }
+              : {}),
+          };
         },
       });
     },

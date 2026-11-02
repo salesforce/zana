@@ -261,6 +261,30 @@ describe('host command dispatch', () => {
     expect(startedWork).toEqual([{ clientRequestId: 'creq_23456789ab' }]);
   });
 
+  it.each([true, false])('returns the provider-reported sessionRestorable=%s from thread.start', async (reported) => {
+    const project = mkdtempSync(join(tmpdir(), 'zcc-thread-restorable-'));
+    const runtime = createCommandRuntime({
+      verifyProviders: async () => installedClaude,
+      startWork: async () => ({ providerThreadId: 'prov-1', sessionRestorable: reported })
+    });
+    const environmentId = randomUUID();
+    await dispatchHostCommand(runtime, { type: 'environment.provision', environmentId, workspaceProvisionType: 'unmanaged', path: project });
+    await expect(dispatchHostCommand(runtime, {
+      type: 'thread.start', threadId: randomUUID(), environmentId, projectId: 'proj-1', providerId: 'claude', input: prompt('hi')
+    })).resolves.toEqual({ threadId: expect.any(String), started: true, providerThreadId: 'prov-1', sessionRestorable: reported });
+  });
+
+  it('omits sessionRestorable from thread.start when the runtime does not report it', async () => {
+    const project = mkdtempSync(join(tmpdir(), 'zcc-thread-norestorable-'));
+    const runtime = createCommandRuntime({ verifyProviders: async () => installedClaude, startWork: async () => ({ providerThreadId: 'prov-1' }) });
+    const environmentId = randomUUID();
+    await dispatchHostCommand(runtime, { type: 'environment.provision', environmentId, workspaceProvisionType: 'unmanaged', path: project });
+    const result = await dispatchHostCommand(runtime, {
+      type: 'thread.start', threadId: randomUUID(), environmentId, projectId: 'proj-1', providerId: 'claude', input: prompt('hi')
+    });
+    expect(result).not.toHaveProperty('sessionRestorable');
+  });
+
   it('forwards remote reconnect fields into startWork', async () => {
     const project = mkdtempSync(join(tmpdir(), 'zcc-thread-remote-'));
     const started: Array<{ remote?: unknown; reconnectTmuxId?: string }> = [];
@@ -1083,6 +1107,80 @@ describe('host command dispatch', () => {
     } finally {
       rmSync(project, { recursive: true, force: true });
     }
+  });
+
+  describe('thread.resume requireNativeLoad', () => {
+    async function resumeWith(
+      resumeWork: ((input: { requireNativeLoad?: true }) => Promise<unknown>) | undefined,
+      requireNativeLoad: true | undefined,
+      providerThreadId = 'prov-1'
+    ) {
+      const project = mkdtempSync(join(tmpdir(), 'zcc-thread-strict-'));
+      const seen: Array<true | undefined> = [];
+      const runtime = createCommandRuntime({
+        resumeWork: resumeWork
+          ? (async (input: { requireNativeLoad?: true }) => {
+            seen.push(input.requireNativeLoad);
+            return resumeWork(input);
+          }) as never
+          : undefined
+      });
+      const environmentId = randomUUID();
+      try {
+        await dispatchHostCommand(runtime, {
+          type: 'environment.provision',
+          environmentId,
+          workspaceProvisionType: 'unmanaged',
+          path: project
+        });
+        const result = await dispatchHostCommand(runtime, {
+          type: 'thread.resume',
+          threadId: randomUUID(),
+          environmentId,
+          projectId: 'proj-1',
+          providerId: 'claude',
+          providerThreadId,
+          cwd: project,
+          ...(requireNativeLoad ? { requireNativeLoad } : {})
+        });
+        return { result, seen };
+      } finally {
+        rmSync(project, { recursive: true, force: true });
+      }
+    }
+
+    it('passes the flag through and surfaces nativeLoaded and providerThreadId', async () => {
+      const { result, seen } = await resumeWith(
+        async () => ({ providerThreadId: 'prov-1', nativeLoaded: true }),
+        true
+      );
+      expect(seen).toEqual([true]);
+      expect(result).toMatchObject({ resumed: true, providerThreadId: 'prov-1', nativeLoaded: true });
+    });
+
+    it('reports nativeLoaded false when the runtime does not confirm a load', async () => {
+      const missing = await resumeWith(async () => ({ providerThreadId: 'prov-1' }), true);
+      expect(missing.result).toMatchObject({ nativeLoaded: false });
+      const voided = await resumeWith(async () => undefined, true);
+      expect(voided.result).toMatchObject({ providerThreadId: 'prov-1', nativeLoaded: false });
+      const noHook = await resumeWith(undefined, true);
+      expect(noHook.result).toMatchObject({ nativeLoaded: false });
+    });
+
+    it('omits providerThreadId when neither the command nor the runtime supplies one', async () => {
+      const { result } = await resumeWith(async () => undefined, true, '');
+      expect(result).toMatchObject({ resumed: true, nativeLoaded: false });
+      expect(result).not.toHaveProperty('providerThreadId');
+    });
+
+    it('does not send the flag or report nativeLoaded for an ordinary resume', async () => {
+      const { result, seen } = await resumeWith(
+        async () => ({ providerThreadId: 'prov-2', nativeLoaded: true }),
+        undefined
+      );
+      expect(seen).toEqual([undefined]);
+      expect(result).not.toHaveProperty('nativeLoaded');
+    });
   });
 
   it('starts and drives a confined terminal session', async () => {

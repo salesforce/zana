@@ -2,7 +2,7 @@ import { isAbsolute, join, relative, sep } from 'node:path';
 import type { LaunchProfileId, Persona, Project, Team, TeamJobLaunchResponse, TeamJobRenewedSources } from '@zana-ai/zcc-domain/product';
 import type { ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
 import type { InboxInput } from '@zana-ai/zcc-server/services/inbox/inbox-store';
-import { compatibleNativeRecoverySnapshots, nativeRecoveryLaunchSlot } from './team-native-recovery.js';
+import { compatibleNativeRecoverySnapshots, nativeRecoveryLaunchSlot, type ModernSlotExpectation } from './team-native-recovery.js';
 
 type NativeRecoverySnapshots = NonNullable<ExecutionRecord['nativeRecoverySnapshots']>;
 
@@ -31,6 +31,13 @@ export interface DesktopNativeRecoveryDeps {
   personas: { list(): Persona[] };
   expandTeamSlots(team: Team): ReadonlyArray<{ slotId: string; role: 'worker' | 'orchestrator'; personaId: string }>;
   resolveTeamProfile(project: Project, personas: readonly Persona[], persona: Persona): LaunchProfileId;
+  /**
+   * Modern teams only: the provider/host/worktree a slot must resume on, or undefined when it
+   * cannot (provider unresolved, retained worktree missing on disk). Main-side existence check.
+   * TODO(delivery-receipt-cap): also return undefined when the member nears the 128 delivery
+   * receipt cap (squad-member-runtime); that count lives in the server runtime, not in main.
+   */
+  modernSlotExpectation?(record: ExecutionRecord, project: Project, profile: LaunchProfileId): ModernSlotExpectation | undefined;
 }
 
 /** Trusted desktop-only exact-native snapshots. Native ids never leave main/service. */
@@ -44,15 +51,27 @@ export function createDesktopNativeRecovery(deps: DesktopNativeRecoveryDeps) {
     const personasById = new Map(personaSnapshot.map((persona) => [persona.id, persona]));
     const slots = deps.expandTeamSlots(team).flatMap((slot) => {
       const persona = personasById.get(slot.personaId);
-      return persona ? [{ ...slot, profile: deps.resolveTeamProfile(project, personaSnapshot, persona) }] : [];
+      if (!persona) return [];
+      const profile = deps.resolveTeamProfile(project, personaSnapshot, persona);
+      const modern = team.transport === 'MODERN' ? deps.modernSlotExpectation?.(record, project, profile) : undefined;
+      return [{ ...slot, profile, ...(modern ? { modern } : {}) }];
     });
-    return compatibleNativeRecoverySnapshots({ snapshots, slots });
+    // A MODERN snapshot is only usable on a Modern team, a CLI snapshot only on a CLI team.
+    return compatibleNativeRecoverySnapshots({ snapshots, slots, teamTransport: team.transport === 'MODERN' ? 'MODERN' : 'CLI' });
   }
-  function availability(record: ExecutionRecord): { available: boolean; restorableSlots: number } {
-    const snapshots = compatibleSnapshots(record);
-    return { available: snapshots.length > 0, restorableSlots: snapshots.length };
+  /** Total slots of the record's team, or undefined when the team is unknown. */
+  function totalSlots(record: ExecutionRecord): number | undefined {
+    const team = deps.teams.list().find((candidate) => candidate.id === record.teamId);
+    return team ? deps.expandTeamSlots(team).length : undefined;
   }
-  return { compatibleSnapshots, availability };
+  function availability(record: ExecutionRecord): { available: boolean; restorableSlots: number; totalSlots: number; reason?: 'PARTIAL_RESTORE' } {
+    const restorableSlots = compatibleSnapshots(record).length;
+    const total = totalSlots(record) ?? 0;
+    // Resume only when every slot is restorable; a partial restore would start the rest cold.
+    if (restorableSlots > 0 && restorableSlots < total) return { available: false, restorableSlots, totalSlots: total, reason: 'PARTIAL_RESTORE' };
+    return { available: restorableSlots > 0 && restorableSlots === total, restorableSlots, totalSlots: total };
+  }
+  return { compatibleSnapshots, availability, totalSlots };
 }
 
 interface UnitRequires { requires?: { skills?: string[]; mcpServers?: string[] } }

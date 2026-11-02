@@ -2095,6 +2095,13 @@ export interface AppConfig {
   scheduledRunConcurrency?: number;
   /** Over the limit: `auto` (default) skips Classic schedules and queues Recovery ones; retries always queue. */
   scheduledRunOverflow?: 'auto' | 'queue' | 'skip';
+  /**
+   * Global opt-out of per-run Claude config isolation for unattended (scheduled)
+   * runs. Default (unset/false): isolated. When true, scheduled Claude runs use
+   * the user's interactive config (MCPs, plugins, hooks). A schedule's own
+   * `useUserConfig` overrides this.
+   */
+  automatedUseUserConfig?: boolean;
   /** State of the one-time "turn on recovery" card on the Scheduler overview. */
   schedulerRecoveryIntro?: 'dismissed' | 'applied';
   /** How the inbox Feed groups rows within each day bucket: per-project
@@ -4128,6 +4135,10 @@ export interface ScheduledTask {
    * interactive CLI never exits on its own. Default false.
    */
   autoCloseOnFinish?: boolean;
+  /** Opt this schedule out of per-run config isolation (uses the user's interactive Claude config). Unset inherits `AppConfig.automatedUseUserConfig`. */
+  useUserConfig?: boolean;
+  /** MCP server names (<=32, each <=128 chars) the isolated run must have; the run fails clearly, without launching, if one isn't carried into the isolated config. Ignored when the schedule opts out of isolation. */
+  requiredMcps?: string[];
   /**
    * Optional maximum runtime for this scheduled run in minutes.
    * If the run is still alive after this, the scheduler will force-close it.
@@ -4183,6 +4194,10 @@ export interface ScheduleCreateInput {
   /** Inbox loudness; defaults to `quiet` when omitted. See {@link InboxNotifyLevel}. */
   inboxLevel?: InboxNotifyLevel;
   autoCloseOnFinish?: boolean;
+  /** Opt this schedule out of per-run config isolation (uses the user's interactive Claude config). Unset inherits `AppConfig.automatedUseUserConfig`. */
+  useUserConfig?: boolean;
+  /** MCP server names (<=32, each <=128 chars) the isolated run must have; the run fails clearly, without launching, if one isn't carried into the isolated config. Ignored when the schedule opts out of isolation. */
+  requiredMcps?: string[];
   maxDurationMinutes?: number;
   /** Group id (see {@link ScheduleGroup}). Only meaningful for global scope. */
   group?: string;
@@ -4556,6 +4571,14 @@ export interface TeamLaunchAuthorizationInputSlot {
     personaId?: string;
     profileId?: string;
     nativeConversationId: string;
+    /** Absent means CLI. MODERN identity fields are optional and additive. */
+    transport?: 'CLI' | 'MODERN';
+    threadId?: string;
+    generation?: number;
+    providerThreadId?: string;
+    providerId?: string;
+    environmentPath?: string;
+    hostId?: string;
   };
 }
 
@@ -4615,7 +4638,8 @@ export interface TeamLaunchRequestInput {
   /** Trusted execution-service recovery input. Never accepted from renderer input. */
   retainedRecovery?: {
     mode: 'exact-native';
-    slots: Array<{ slotId: string; role: 'worker' | 'orchestrator'; personaId?: string; profileId?: string; nativeConversationId: string }>;
+    slots: Array<{ slotId: string; role: 'worker' | 'orchestrator'; personaId?: string; profileId?: string; nativeConversationId: string;
+      transport?: 'CLI' | 'MODERN'; threadId?: string; generation?: number; providerThreadId?: string; providerId?: string; environmentPath?: string; hostId?: string }>;
   };
 }
 
@@ -4999,6 +5023,10 @@ export interface ScheduleUpdateInput {
   /** Inbox loudness. Omit to leave unchanged. See {@link InboxNotifyLevel}. */
   inboxLevel?: InboxNotifyLevel;
   autoCloseOnFinish?: boolean;
+  /** Opt this schedule out of per-run config isolation (uses the user's interactive Claude config). Unset inherits `AppConfig.automatedUseUserConfig`; `null` (update only) clears the override. */
+  useUserConfig?: boolean | null;
+  /** MCP server names (<=32, each <=128 chars) the isolated run must have; the run fails clearly, without launching, if one isn't carried into the isolated config. `null` (update only) clears it. Ignored when the schedule opts out of isolation. */
+  requiredMcps?: string[] | null;
   maxDurationMinutes?: number;
   /** Group id, or null to clear (move to Ungrouped). Omit to leave unchanged. */
   group?: string | null;
@@ -6538,7 +6566,9 @@ export interface ExecutionBoardProjection {
       exactNative: {
         available: boolean;
         restorableSlots: number;
-        reason?: 'RECOVERY_NOT_ALLOWED' | 'NO_RESTORABLE_SLOTS' | 'NATIVE_RESTORE_UNAVAILABLE';
+        /** Present with PARTIAL_RESTORE: only some slots can be restored, so Resume is blocked. */
+        totalSlots?: number;
+        reason?: 'RECOVERY_NOT_ALLOWED' | 'NO_RESTORABLE_SLOTS' | 'NATIVE_RESTORE_UNAVAILABLE' | 'PARTIAL_RESTORE';
       };
     };
   };
