@@ -468,6 +468,20 @@ export interface ExecutionNativeRecoverySnapshotV1 {
   profileVersion?: string;
   nativeConversationId: string;
   capturedAt: number;
+  /**
+   * Absent means a CLI snapshot. MODERN snapshots identify a provider-native
+   * ACP session on a bound squad thread; no version bump (all fields optional).
+   */
+  transport?: 'CLI' | 'MODERN';
+  /** MODERN only: squad binding/thread id. */
+  threadId?: string;
+  /** MODERN only: squad binding generation at capture (>= 1). */
+  generation?: number;
+  /** MODERN only: provider session id; equals nativeConversationId. */
+  providerThreadId?: string;
+  providerId?: string;
+  environmentPath?: string;
+  hostId?: string;
 }
 
 /** Trusted host's frozen automated MCP tool surface for one execution member. */
@@ -804,7 +818,24 @@ function validNativeRecoverySnapshot(value: unknown): value is ExecutionNativeRe
     && (snapshot.profileVersion === undefined || validString(snapshot.profileVersion))
     && (snapshot.personaId !== undefined || snapshot.profileId !== undefined)
     && validString(snapshot.nativeConversationId)
-    && typeof snapshot.capturedAt === 'number' && Number.isFinite(snapshot.capturedAt);
+    && typeof snapshot.capturedAt === 'number' && Number.isFinite(snapshot.capturedAt)
+    && validNativeRecoveryTransportFields(snapshot);
+}
+
+function validNativeRecoveryTransportFields(snapshot: Partial<ExecutionNativeRecoverySnapshotV1>): boolean {
+  if (snapshot.transport !== undefined && snapshot.transport !== 'CLI' && snapshot.transport !== 'MODERN') return false;
+  if (snapshot.providerId !== undefined && !validString(snapshot.providerId)) return false;
+  if (snapshot.environmentPath !== undefined && !validString(snapshot.environmentPath)) return false;
+  if (snapshot.hostId !== undefined && !validString(snapshot.hostId)) return false;
+  if (snapshot.threadId !== undefined && !validString(snapshot.threadId)) return false;
+  if (snapshot.providerThreadId !== undefined && !validString(snapshot.providerThreadId)) return false;
+  if (snapshot.generation !== undefined && !(Number.isSafeInteger(snapshot.generation) && snapshot.generation >= 1)) return false;
+  if (snapshot.transport !== 'MODERN') {
+    // A CLI snapshot must not carry Modern identity (it would be unfenced).
+    return snapshot.threadId === undefined && snapshot.generation === undefined && snapshot.providerThreadId === undefined;
+  }
+  return validString(snapshot.threadId) && snapshot.generation !== undefined && validString(snapshot.providerThreadId)
+    && snapshot.providerThreadId === snapshot.nativeConversationId;
 }
 
 function validAutomatedMcpCatalogueProvenanceMap(value: unknown): value is Record<string, ExecutionSlotMcpCatalogueProvenanceV1> {
@@ -903,11 +934,13 @@ function clearClaim(unit: ExecutionWorkUnit): void {
   unit.turnCount = undefined;
 }
 
-function resetRetainedWork(record: ExecutionRecord): void {
+function resetRetainedWork(record: ExecutionRecord, opts?: { keepSlotIds?: ReadonlySet<string> }): void {
   for (const unit of record.workUnits ?? []) {
     if (unit.state === 'COMPLETED') continue;
+    const slot = unit.assignedSlotId ?? unit.claimedBy?.slotId;
+    const keep = slot !== undefined && opts?.keepSlotIds?.has(slot) === true;
     unit.state = 'PENDING';
-    unit.assignedSlotId = undefined;
+    unit.assignedSlotId = keep ? slot : undefined;
     unit.claimId = undefined;
     unit.claimedBy = undefined;
     unit.claimedAt = undefined;
@@ -2074,7 +2107,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   }
 
   /** Reset retained work and reserve its replacement launch in one terminal-state CAS. */
-  async function beginRetainedRecovery(executionId: string, expectedStateVersion: number): Promise<ExecutionRecord> {
+  async function beginRetainedRecovery(executionId: string, expectedStateVersion: number, opts?: { keepSlotIds?: ReadonlySet<string> }): Promise<ExecutionRecord> {
     return storeQueue.run(async () => {
       const snapshot = read();
       const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
@@ -2083,7 +2116,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       if ((record.state !== 'FAILED' && record.state !== 'STOPPED') || record.successorExecutionId
         || record.state === 'STOPPED' && record.timeoutReason === 'unresolved-blocker') throw new Error('execution retry is not allowed');
       const fromState = record.state;
-      resetRetainedWork(record);
+      resetRetainedWork(record, opts);
       beginRetryAttempt(record, now());
       append(snapshot.state, record, record.state, 'info', 'Execution retained recovery started', record.updatedAt, { kind: 'transition', fromState, toState: 'STARTING' });
       persist(snapshot.state, snapshot.hash);

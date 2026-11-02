@@ -113,6 +113,8 @@ export type AdapterCommand =
       disallowedTools?: readonly string[];
       instructionMode: InstructionMode;
       sessionKind?: AgentSessionKind;
+      /** Strict resume: native session load or failure, never a fresh session. */
+      requireNativeLoad?: true;
     }
   | {
       type: "thread/fork";

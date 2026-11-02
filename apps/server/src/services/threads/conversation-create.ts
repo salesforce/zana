@@ -15,6 +15,7 @@ import {
   updateEnvironmentStatus,
   updateConversationThreadStatus,
   setConversationProviderThreadId,
+  patchThreadPluginMetadata,
   type ConversationThreadRow,
   type ConversationThreadTitleSource,
   type EnvironmentRow
@@ -284,6 +285,13 @@ async function startConversationOnHost(
           const started = result as ThreadStartResult;
           if (!args.lease.cancelled && started?.providerThreadId) {
             setConversationProviderThreadId(ctx.db, args.thread.id, started.providerThreadId);
+            // Squad members only: durable start-time restore support, read later by main's native-recovery capture.
+            if (args.thread.originPluginId === MODERN_SQUAD_THREAD_ORIGIN && started.sessionRestorable !== undefined) {
+              patchThreadPluginMetadata(ctx.db, {
+                threadId: args.thread.id, pluginId: MODERN_SQUAD_PRIVATE_NAMESPACE,
+                set: { squadSessionRestorable: started.sessionRestorable }, remove: []
+              });
+            }
             // Steers sent while the session was starting can land now.
             scheduleConversationSteerFlush(ctx, args.thread.id);
           }

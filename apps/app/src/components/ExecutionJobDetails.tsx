@@ -284,6 +284,8 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
     && execution.timeoutReason === 'plan-correction-cancelled' && !execution.successorExecutionId;
   const exactNativeUnavailableReason = planCorrectionCancelled
     ? 'Cancelled at plan correction. Start a new Squad to try again.'
+    : retainedRecovery?.exactNative.reason === 'PARTIAL_RESTORE'
+      ? `Only ${retainedRecovery.exactNative.restorableSlots} of ${retainedRecovery.exactNative.totalSlots ?? '?'} agents can be resumed. Use Relaunch Squad from retained plan.`
     : retainedRecovery?.exactNative.reason === 'NATIVE_RESTORE_UNAVAILABLE'
       ? 'Existing Squad sessions cannot be restored on this device.'
       : undefined;

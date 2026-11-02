@@ -123,6 +123,20 @@ describe('ExecutionJobDetails phase 5 projection', () => {
     expect(unavailable.getAttribute('title')).toBe('Existing Squad sessions cannot be restored on this device.');
   });
 
+  it('explains partial restore with N of M copy and disables Resume', async () => {
+    const snapshot: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
+    snapshot.execution.state = 'FAILED';
+    snapshot.execution.recovery = { status: 'terminal', actions: {
+      freshPlan: { available: true },
+      exactNative: { available: false, restorableSlots: 1, totalSlots: 3, reason: 'PARTIAL_RESTORE' }
+    } };
+    (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(snapshot);
+    render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+    const blocked = await screen.findByRole('button', { name: 'Resume existing Squad' });
+    expect((blocked as HTMLButtonElement).disabled).toBe(true);
+    expect(blocked.getAttribute('title')).toBe('Only 1 of 3 agents can be resumed. Use Relaunch Squad from retained plan.');
+  });
+
   it('offers native recovery after a failed replacement when main retains a usable snapshot', async () => {
     const snapshot: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
     snapshot.execution.state = 'FAILED';

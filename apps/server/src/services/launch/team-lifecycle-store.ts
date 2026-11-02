@@ -39,7 +39,7 @@ export type TeamWorkerAttentionState = 'active' | 'blocked';
 export type TeamWorkerTaskState = 'unknown' | 'caller-reported-complete' | 'caller-reported-failed';
 export type TeamWorkerDeliveryState = 'bound-at-spawn' | 'delivery-attempted' | 'adapter-acknowledged';
 export type TeamWorkerTransport = 'CLI' | 'MODERN';
-export type TeamWorkerBindingState = 'RESERVED' | 'CREATING' | 'BOUND' | 'UNCERTAIN' | 'TERMINAL';
+export type TeamWorkerBindingState = 'RESERVED' | 'CREATING' | 'RESUMING' | 'BOUND' | 'UNCERTAIN' | 'TERMINAL';
 
 export interface TeamLaunchedWorker {
   sessionId: string;
@@ -185,6 +185,15 @@ export interface TeamModernWorkerReservation {
   threadId: string;
   /** Only the transaction that first persists intent may start creation. */
   mayCreate: boolean;
+  /** Only the transaction that first persists RESUMING intent may start the Modern resume. */
+  mayResume?: boolean;
+}
+
+/** Existing Modern binding to resume instead of creating a new thread. */
+export interface TeamModernResumeTarget {
+  threadId: string;
+  /** Generation captured in the native-recovery snapshot; the resume runs at +1. */
+  snapshotGeneration: number;
 }
 
 export interface TeamModernWorkerReference {
@@ -233,7 +242,7 @@ const MAX_WORKERS = 100;
 const MAX_FAILED_SLOTS = 100;
 const MAX_RECORDS = 2_000;
 const terminalProcesses = new Set<TeamWorkerProcessState>(['exited', 'spawn-failed', 'canceled']);
-const modernBindingStates = new Set<TeamWorkerBindingState>(['RESERVED', 'CREATING', 'BOUND', 'UNCERTAIN', 'TERMINAL']);
+const modernBindingStates = new Set<TeamWorkerBindingState>(['RESERVED', 'CREATING', 'RESUMING', 'BOUND', 'UNCERTAIN', 'TERMINAL']);
 const processTransitions: Readonly<Record<TeamWorkerProcessState, ReadonlySet<TeamWorkerProcessState>>> = {
   authorized: new Set(['spawning', 'spawn-failed', 'canceled']),
   spawning: new Set(['running', 'spawn-failed', 'canceled']),
@@ -527,7 +536,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
           worker.capacityReleased = true;
           releasedSlotIds.push(worker.slotId);
         }
-        if (worker.transport === 'MODERN' && worker.bindingState === 'CREATING') worker.bindingState = 'UNCERTAIN';
+        if (worker.transport === 'MODERN' && (worker.bindingState === 'CREATING' || worker.bindingState === 'RESUMING')) worker.bindingState = 'UNCERTAIN';
       }
       record.state = record.workers.every((worker) => terminalProcesses.has(worker.process)) ? 'canceled' : 'cancel-pending';
       record.revision += 1;
@@ -569,7 +578,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
    * Persist Modern-thread intent before the ACP thread exists. This is the
    * crash boundary: callers must reserve before asking ACP to create a thread.
    */
-  async function reserveModernWorker(recordId: string, slotId: string): Promise<TeamModernWorkerReservation | undefined> {
+  async function reserveModernWorker(recordId: string, slotId: string, resume?: TeamModernResumeTarget): Promise<TeamModernWorkerReservation | undefined> {
     const safeRecordId = boundedString(recordId, 'record id');
     const safeSlotId = boundedString(slotId, 'slot id');
     return runExclusive(async () => {
@@ -580,6 +589,22 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       if (worker.transport !== 'MODERN' || terminalProcesses.has(worker.process)) return undefined;
       if (worker.bindingState !== 'RESERVED') {
         return { record: clone(record), worker: clone(worker), generation: worker.generation!, threadId: worker.threadId!, mayCreate: false };
+      }
+      if (resume) {
+        // Reuse the snapshot binding; the runtime op validates stored generation/provider thread.
+        const threadId = boundedModernThreadId(resume.threadId);
+        validateModernGeneration(resume.snapshotGeneration);
+        worker.threadId = threadId;
+        // A Modern member's session id is its thread id; the launch result reports the resumed binding.
+        worker.sessionId = threadId;
+        worker.generation = resume.snapshotGeneration + 1;
+        worker.bindingState = 'RESUMING';
+        worker.process = 'spawning';
+        assertUniqueModernThread(snapshot.state, worker);
+        record.revision += 1;
+        record.updatedAt = now();
+        persist(snapshot.state, snapshot.hash);
+        return { record: clone(record), worker: clone(worker), generation: worker.generation, threadId, mayCreate: false, mayResume: true };
       }
       const generation = 1;
       worker.threadId = isModernThreadId(worker.sessionId) ? worker.sessionId : randomUUID();
@@ -613,7 +638,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
         || worker.transport !== 'MODERN' || worker.generation !== generation || worker.threadId !== safeThreadId
         || terminalProcesses.has(worker.process)) return false;
       if (worker.bindingState === 'BOUND') return true;
-      if (worker.bindingState !== 'CREATING' && worker.bindingState !== 'UNCERTAIN') return false;
+      if (worker.bindingState !== 'CREATING' && worker.bindingState !== 'RESUMING' && worker.bindingState !== 'UNCERTAIN') return false;
       worker.bindingState = 'BOUND';
       worker.process = 'running';
       record.revision += 1;
@@ -631,7 +656,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       const worker = record?.workers.find((candidate) => candidate.slotId === reference.slotId);
       if (!record || !matchesModernReference(worker, reference)) return false;
       if (worker.bindingState === 'UNCERTAIN') return true;
-      if (worker.bindingState !== 'CREATING' && worker.bindingState !== 'BOUND') return false;
+      if (worker.bindingState !== 'CREATING' && worker.bindingState !== 'RESUMING' && worker.bindingState !== 'BOUND') return false;
       worker.bindingState = 'UNCERTAIN';
       record.revision += 1;
       record.updatedAt = now();
@@ -706,7 +731,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
           // ACP threads survive process restart independently of PTYs. Their
           // durable intent keeps capacity until generation-attested terminal evidence.
           if ((worker.transport ?? 'CLI') === 'MODERN') {
-            if (worker.bindingState === 'CREATING' || worker.bindingState === 'BOUND') {
+            if (worker.bindingState === 'CREATING' || worker.bindingState === 'RESUMING' || worker.bindingState === 'BOUND') {
               worker.bindingState = 'UNCERTAIN';
               changed = true;
             }
@@ -1305,7 +1330,7 @@ function isModernWorkerState(worker: Partial<TeamLifecycleWorker>): boolean {
   if (worker.bindingState === 'RESERVED') return worker.generation === 0 && worker.threadId === undefined && worker.process === 'authorized';
   if (worker.bindingState === 'TERMINAL' && worker.generation === 0) return worker.threadId === undefined && terminalProcesses.has(worker.process!);
   if (Number(worker.generation) < 1 || !isModernThreadId(worker.threadId)) return false;
-  return worker.bindingState === 'CREATING' ? worker.process === 'spawning'
+  return worker.bindingState === 'CREATING' || worker.bindingState === 'RESUMING' ? worker.process === 'spawning'
     : worker.bindingState === 'BOUND' ? worker.process === 'running'
       : worker.bindingState === 'UNCERTAIN' ? worker.process === 'spawning' || worker.process === 'running'
         : worker.bindingState === 'TERMINAL' && terminalProcesses.has(worker.process!);
@@ -1336,8 +1361,17 @@ function matchesModernReference(worker: TeamLifecycleWorker | undefined, referen
 }
 
 function assertUniqueModernThread(state: TeamLifecycleStateFile, worker: Omit<TeamLifecycleWorker, 'capacityReleased'>): void {
+  // A resumed binding reuses the thread of the prior, fully retired worker for the SAME
+  // team/project/slot at the snapshot generation (RESUMING generation - 1); every other holder collides.
+  const retired = (candidate: Omit<TeamLifecycleWorker, 'capacityReleased'>) => worker.bindingState === 'RESUMING'
+    && candidate.bindingState === 'TERMINAL' && terminalProcesses.has(candidate.process)
+    && candidate.modernContext !== undefined && worker.modernContext !== undefined
+    && candidate.modernContext.teamId === worker.modernContext.teamId
+    && candidate.modernContext.projectId === worker.modernContext.projectId
+    && candidate.slotId === worker.slotId
+    && typeof worker.generation === 'number' && candidate.generation === worker.generation - 1;
   if (worker.transport === 'MODERN' && worker.threadId && state.records.some((record) => record.workers.some((candidate) =>
-    candidate !== worker && (candidate.threadId === worker.threadId || candidate.sessionId === worker.threadId)))) {
+    candidate !== worker && !retired(candidate) && (candidate.threadId === worker.threadId || candidate.sessionId === worker.threadId)))) {
     throw new Error('duplicate modern thread identity');
   }
 }

@@ -548,7 +548,10 @@ export function createAgentRuntimeAdapter(options: {
         });
         const location = threadLocation.get(input.threadId);
         if (location?.status === 'active') location.status = 'idle';
-        return { providerThreadId: result.providerThreadId };
+        return {
+          providerThreadId: result.providerThreadId,
+          ...(result.sessionRestorable !== undefined ? { sessionRestorable: result.sessionRestorable } : {})
+        };
       } catch (error) {
         const location = threadLocation.get(input.threadId);
         if (location) location.status = 'error';
@@ -619,11 +622,15 @@ export function createAgentRuntimeAdapter(options: {
             remoteProxy: false,
             dynamicTools: input.dynamicTools,
             instructions: input.instructions
-          })
+          }),
+          ...(input.requireNativeLoad === true ? { requireNativeLoad: true as const } : {})
         });
         const location = threadLocation.get(input.threadId);
         if (location?.status === 'active') location.status = 'idle';
-        return { providerThreadId: result.providerThreadId };
+        return {
+          providerThreadId: result.providerThreadId,
+          ...(input.requireNativeLoad === true ? { nativeLoaded: result.nativeLoaded === true } : {})
+        };
       } catch (error) {
         const location = threadLocation.get(input.threadId);
         if (location) location.status = 'error';

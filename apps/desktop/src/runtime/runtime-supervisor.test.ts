@@ -206,6 +206,24 @@ describe('main-owned squad runtime adapter', () => {
     }
   });
 
+  it('validates resume request and correlates every resume result field', async () => {
+    const resume = { bindingId: create.cohortId, projectId: control.projectId, expectedGeneration: 1, newGeneration: 2, expectedProviderThreadId: 'provider-thread-1' };
+    const ok = { bindingId: resume.bindingId, projectId: resume.projectId, generation: 2, providerThreadId: 'provider-thread-1' };
+    const call = vi.fn(async () => ok);
+    const adapter = createSquadMemberRuntimeAdapter(call);
+    await expect(adapter.resumeSquadMember(resume)).resolves.toEqual(ok);
+    expect(call).toHaveBeenLastCalledWith('squad-member-resume', resume);
+    for (const field of ['bindingId', 'projectId', 'generation', 'providerThreadId'] as const) {
+      call.mockResolvedValue({ ...ok, [field]: field === 'generation' ? 5 : field === 'bindingId' ? randomUUID() : 'wrong' } as never);
+      await expect(adapter.resumeSquadMember(resume)).rejects.toThrow('resume correlation');
+    }
+    call.mockResolvedValue({ ...ok, extra: 1 } as never);
+    await expect(adapter.resumeSquadMember(resume)).rejects.toThrow();
+    call.mockClear();
+    await expect(adapter.resumeSquadMember({ ...resume, newGeneration: 1 })).rejects.toThrow();
+    expect(call).not.toHaveBeenCalled();
+  });
+
   it('transports generation-bound status/stop and assignment correlation over utility IPC', async () => {
     const listeners: Array<(message: unknown) => void> = [];
     const posted: any[] = [];

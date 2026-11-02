@@ -242,7 +242,7 @@ const host = await import('../host.js');
 const { IPC } = await import('@zana-ai/zcc-desktop-contract');
 const { store } = await import('@zana-ai/zcc-server/services/projects/store');
 const registry = await import('@zana-ai/zcc-host-daemon/harness/registry');
-const { mkdirSync, symlinkSync } = await import('node:fs');
+const { mkdirSync, symlinkSync, realpathSync, writeFileSync } = await import('node:fs');
 
 
 const settle = () => new Promise<void>((r) => setImmediate(r));
@@ -376,13 +376,49 @@ describe('host bootstrap wiring', () => {
     expect(c.restorePrincipal({ id: 'c', request: {} })).toEqual({ kind: 'automation', id: 'restore:c' });
     // Real wiring: no matching project/team/snapshots -> nothing restorable.
     expect(c.exactNativeRecoveryAvailability({ projectId: 'no-such-project', teamId: 'no-such-team', nativeRecoverySnapshots: [{ slotId: 's' }] }))
-      .toEqual({ available: false, restorableSlots: 0 });
+      .toMatchObject({ available: false, restorableSlots: 0 });
     expect(c.exactNativeRecoveryAvailability({ projectId: project.id, teamId: 't1' }))
-      .toEqual({ available: false, restorableSlots: 0 });
+      .toMatchObject({ available: false, restorableSlots: 0 });
     // Real wiring: unknown execution fences as CONFLICT before any worktree action runs.
     expect(await c.squadWorktreeAction(project.id, 'no-such-exec', 1, 'leave'))
       .toMatchObject({ ok: false, code: 'CONFLICT', message: expect.stringContaining('Squad run changed') });
     expect(c.restoreSquadWorktreeFollowUpClaim).toBeTypeOf('function');
+  });
+
+  it('fences Modern exact-native availability on the retained worktree and the project host', async () => {
+    const c = ctx();
+    const environmentPath = realpathSync(project.path);
+    const file = `${h.root}/not-a-directory`;
+    writeFileSync(file, 'x');
+    vi.spyOn(c.teams, 'list').mockReturnValue([{ id: 'tm', transport: 'MODERN', slots: [{ personaId: 'ma' }], orchestratorPersonaId: 'mo' }]);
+    vi.spyOn(c.personas, 'list').mockReturnValue([
+      { id: 'ma', name: 'A', baseProfile: 'claude' }, { id: 'mo', name: 'O', baseProfile: 'claude' }
+    ]);
+    const projects = vi.spyOn(store, 'listProjects');
+    const snapshot = {
+      slotId: '0:ma:0', role: 'worker', personaId: 'ma', profileId: 'claude', nativeConversationId: 'prov-1', transport: 'MODERN',
+      threadId: 'thread-1', generation: 1, providerThreadId: 'prov-1', providerId: 'claude-code', hostId: 'host-1', environmentPath
+    };
+    const availability = (record: Record<string, unknown> = {}) => c.exactNativeRecoveryAvailability({
+      projectId: project.id, teamId: 'tm', nativeRecoverySnapshots: [snapshot], ...record });
+    try {
+      // Project carries a host: the snapshot's host must match it.
+      projects.mockReturnValue([{ ...project, remote: undefined, hostId: 'host-1' }] as never);
+      expect(availability()).toMatchObject({ available: false, restorableSlots: 1, totalSlots: 2, reason: 'PARTIAL_RESTORE' });
+      projects.mockReturnValue([{ ...project, remote: undefined, hostId: 'host-2' }] as never);
+      expect(availability()).toMatchObject({ restorableSlots: 0 });
+      // No project host: any recorded snapshot host is accepted.
+      projects.mockReturnValue([{ ...project, remote: undefined, hostId: undefined }] as never);
+      expect(availability()).toMatchObject({ restorableSlots: 1 });
+      // A retained Squad worktree replaces the project path; it must exist and be a directory.
+      expect(availability({ squadWorktree: { path: `${h.root}/gone` } })).toMatchObject({ restorableSlots: 0 });
+      expect(availability({ squadWorktree: { path: file } })).toMatchObject({ restorableSlots: 0 });
+      expect(availability({ squadWorktree: { path: environmentPath } })).toMatchObject({ restorableSlots: 1 });
+    } finally {
+      projects.mockRestore();
+      vi.mocked(c.teams.list).mockRestore();
+      vi.mocked(c.personas.list).mockRestore();
+    }
   });
 
   it('builds the app menu with a working GitHub link and bug report entry', async () => {

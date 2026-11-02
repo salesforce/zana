@@ -1034,4 +1034,110 @@ describe('team lifecycle integration', () => {
     await expect(integration.reportWorkerTask('other-session', 'request-1', 'slot-1', 'complete')).resolves.toEqual({ ok: false, code: 'NOT_FOUND' });
     await expect(integration.reportWorkerTask('session-1', 'request-1', 'slot-1', 'complete')).resolves.toMatchObject({ ok: true, record: { workers: [{ task: 'caller-reported-complete' }] } });
   }));
+
+  describe('Modern RESUMING reservation', () => {
+    const resumeTarget = { threadId, snapshotGeneration: 2 };
+
+    it('reserves RESUMING on the snapshot thread at generation+1 without permitting create, and is idempotent', async () => fixture(async (filePath) => {
+      const store = createTeamLifecycleStore({ filePath });
+      const claimed = await store.claim(modernClaimInput());
+      const first = (await store.reserveModernWorker(claimed.record.id, 'slot-1', resumeTarget))!;
+      expect(first).toMatchObject({ threadId, generation: 3, mayCreate: false, mayResume: true,
+        worker: { bindingState: 'RESUMING', process: 'spawning', threadId, generation: 3 } });
+      const again = await store.reserveModernWorker(claimed.record.id, 'slot-1', resumeTarget);
+      expect(again).toMatchObject({ threadId, generation: 3, mayCreate: false });
+      expect(again!.mayResume).toBeUndefined();
+      // survives restart (state validation accepts RESUMING)
+      const restarted = createTeamLifecycleStore({ filePath });
+      expect(await restarted.get(claimed.record.id)).toMatchObject({ workers: [{ bindingState: 'RESUMING', generation: 3 }] });
+      await expect(store.reserveModernWorker(claimed.record.id, 'slot-1', { threadId: 'not-a-uuid', snapshotGeneration: 2 }).then(() => 'x')).resolves.toBe('x');
+    }));
+
+    it('rejects invalid resume targets', async () => fixture(async (filePath) => {
+      const store = createTeamLifecycleStore({ filePath });
+      const claimed = await store.claim(modernClaimInput());
+      await expect(store.reserveModernWorker(claimed.record.id, 'slot-1', { threadId: 'not-a-uuid', snapshotGeneration: 2 })).rejects.toThrow();
+      await expect(store.reserveModernWorker(claimed.record.id, 'slot-1', { threadId, snapshotGeneration: 0 })).rejects.toThrow();
+      expect(await store.get(claimed.record.id)).toMatchObject({ workers: [{ bindingState: 'RESERVED', generation: 0 }] });
+    }));
+
+    it('acknowledges RESUMING -> BOUND only for the exact generation and thread', async () => fixture(async (filePath) => {
+      const store = createTeamLifecycleStore({ filePath });
+      const claimed = await store.claim(modernClaimInput());
+      await store.reserveModernWorker(claimed.record.id, 'slot-1', resumeTarget);
+      expect(await store.acknowledgeModernWorker(claimed.record.id, 'slot-1', 2, threadId)).toBe(false);
+      expect(await store.acknowledgeModernWorker(claimed.record.id, 'slot-1', 3, otherThreadId)).toBe(false);
+      expect(await store.acknowledgeModernWorker(claimed.record.id, 'slot-1', 3, threadId)).toBe(true);
+      expect(await store.get(claimed.record.id)).toMatchObject({ workers: [{ bindingState: 'BOUND', process: 'running', generation: 3, threadId }] });
+    }));
+
+    it('cancel and startup reconcile treat RESUMING like CREATING (uncertain, capacity kept, late ack still binds only while active)', async () => fixture(async (filePath) => {
+      const store = createTeamLifecycleStore({ filePath });
+      const claimed = await store.claim(modernClaimInput());
+      await store.reserveModernWorker(claimed.record.id, 'slot-1', resumeTarget);
+      await store.fenceCancel(claimed.record.id);
+      const canceled = await store.get(claimed.record.id);
+      expect(canceled).toMatchObject({ state: 'cancel-pending', workers: [{ bindingState: 'UNCERTAIN', capacityReleased: false }] });
+      expect(await store.acknowledgeModernWorker(claimed.record.id, 'slot-1', 3, threadId)).toBe(false);
+      expect(await store.modernWorkerMayClose(claimed.record.id, 'slot-1', 3, threadId)).toBe(true);
+      const released = await store.reconcileModernWorkers([{ recordId: claimed.record.id, slotId: 'slot-1', generation: 3, threadId, state: 'terminal' }]);
+      expect(released.releasedSlotIds).toEqual(['slot-1']);
+    }));
+
+    it('startup reconcile and markModernWorkerUncertain move RESUMING to UNCERTAIN without releasing capacity', async () => fixture(async (filePath) => {
+      const store = createTeamLifecycleStore({ filePath });
+      const claimed = await store.claim(modernClaimInput());
+      await store.reserveModernWorker(claimed.record.id, 'slot-1', resumeTarget);
+      const restart = createTeamLifecycleStore({ filePath });
+      await restart.reconcileStartup(new Set());
+      expect(await restart.get(claimed.record.id)).toMatchObject({ workers: [{ bindingState: 'UNCERTAIN', capacityReleased: false }] });
+      const restarted = createTeamLifecycleStore({ filePath });
+      await restarted.reconcileStartup(new Set());
+      expect(await restarted.get(claimed.record.id)).toMatchObject({ workers: [{ bindingState: 'UNCERTAIN', capacityReleased: false }] });
+    }));
+
+    it('refuses to reuse a thread still held by a live worker but allows one held by a retired worker', async () => fixture(async (filePath) => {
+      const store = createTeamLifecycleStore({ filePath, id: (() => { let n = 0; return () => `record-${++n}`; })() });
+      const claimed = await store.claim(modernClaimInput());
+      const first = (await store.reserveModernWorker(claimed.record.id, 'slot-1'))!;
+      await store.acknowledgeModernWorker(claimed.record.id, 'slot-1', 1, first.threadId);
+      const other = modernClaimInput();
+      other.callerPrincipalId = 'principal-2'; other.launchRequestId = 'request-2';
+      other.launchResult = { ...other.launchResult!, launchRequestId: 'request-2',
+        workers: other.launchResult!.workers.map((w) => ({ ...w, sessionId: 'session-2', authorizationId: 'authorization-2' })) };
+      other.workers[0] = { ...other.workers[0], sessionId: 'session-2', authorizationId: 'authorization-2' };
+      const second = await store.claim(other);
+      await expect(store.reserveModernWorker(second.record.id, 'slot-1', { threadId: first.threadId, snapshotGeneration: 1 }))
+        .rejects.toThrow('duplicate modern thread identity');
+      await store.reconcileModernWorkers([{ recordId: claimed.record.id, slotId: 'slot-1', generation: 1, threadId: first.threadId, state: 'terminal' }]);
+      await expect(store.reserveModernWorker(second.record.id, 'slot-1', { threadId: first.threadId, snapshotGeneration: 1 }))
+        .resolves.toMatchObject({ generation: 2, threadId: first.threadId, mayResume: true });
+    }));
+
+    it('does not exempt a terminal holder with a different team, slot, or generation', async () => fixture(async (filePath) => {
+      const mk = (patchContext: Record<string, string>, slotPatch: Record<string, string> = {}) => {
+        const input = modernClaimInput();
+        input.callerPrincipalId = 'principal-2'; input.launchRequestId = 'request-2';
+        input.launchResult = { ...input.launchResult!, launchRequestId: 'request-2',
+          workers: input.launchResult!.workers.map((w) => ({ ...w, sessionId: 'session-2', authorizationId: 'authorization-2' })) };
+        input.workers[0] = { ...input.workers[0], sessionId: 'session-2', authorizationId: 'authorization-2', ...slotPatch,
+          modernContext: { ...input.workers[0].modernContext!, ...patchContext } } as typeof input.workers[0];
+        return input;
+      };
+      const store = createTeamLifecycleStore({ filePath, id: (() => { let n = 0; return () => `record-${++n}`; })() });
+      const claimed = await store.claim(modernClaimInput());
+      const first = (await store.reserveModernWorker(claimed.record.id, 'slot-1'))!;
+      await store.acknowledgeModernWorker(claimed.record.id, 'slot-1', 1, first.threadId);
+      await store.reconcileModernWorkers([{ recordId: claimed.record.id, slotId: 'slot-1', generation: 1, threadId: first.threadId, state: 'terminal' }]);
+      // different team
+      const otherTeam = await store.claim(mk({ teamId: 'another-team' }));
+      await expect(store.reserveModernWorker(otherTeam.record.id, 'slot-1', { threadId: first.threadId, snapshotGeneration: 1 }))
+        .rejects.toThrow('duplicate modern thread identity');
+      // wrong snapshot generation (terminal holder is gen 1, snapshot says 2)
+      const sameTeam = await store.claim({ ...mk({}), callerPrincipalId: 'principal-3', launchRequestId: 'request-3',
+        launchResult: { ...mk({}).launchResult!, launchRequestId: 'request-3' } });
+      await expect(store.reserveModernWorker(sameTeam.record.id, 'slot-1', { threadId: first.threadId, snapshotGeneration: 2 }))
+        .rejects.toThrow('duplicate modern thread identity');
+    }));
+  });
 });

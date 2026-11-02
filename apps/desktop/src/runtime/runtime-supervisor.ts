@@ -30,6 +30,8 @@ import {
   RuntimeOutboundSchema,
   SERVER_RUNTIME_PROTOCOL_VERSION,
   SquadMemberControlRequestSchema,
+  SquadMemberResumeRequestSchema,
+  SquadMemberResumeResultSchema,
   SquadMemberDeliveryRequestSchema,
   SquadMemberDeliveryResultSchema,
   SquadMemberDeliveryCompletionSchema,
@@ -45,6 +47,8 @@ import {
   type SquadMemberControlRequest,
   type SquadMemberDeliveryResult,
   type SquadMemberDeliveryCompletion,
+  type SquadMemberResumeRequest,
+  type SquadMemberResumeResult,
   type SquadMemberStatus,
   type SquadRuntimePreflightRequest,
   type SquadRuntimePreflightResult,
@@ -97,6 +101,7 @@ export interface RuntimeSupervisor {
   getSquadMemberStatus(request: SquadMemberControlRequest): Promise<SquadMemberStatus>;
   isSquadMemberLive(threadId: string, projectId: string, generation: number): Promise<boolean>;
   stopSquadMember(threadId: string, projectId: string, generation: number): Promise<boolean>;
+  resumeSquadMember(request: SquadMemberResumeRequest): Promise<SquadMemberResumeResult>;
   /**
    * Queue a text turn into a live Modern thread. Never rejects for a dead
    * thread or a missing runtime; resolves `{ ok: false, reason }`.
@@ -190,8 +195,8 @@ export interface StartRuntimeSupervisorOptions {
   onLocalThreadWork?: (working: boolean) => void;
 }
 
-type SquadOperation = 'squad-runtime-preflight' | 'squad-member-create' | 'squad-member-activate' | 'squad-member-deliver' | 'squad-member-delivery-complete' | 'squad-member-status' | 'squad-member-stop';
-type SquadRequest = SquadRuntimePreflightRequest | SquadMemberRuntimeRequest | SquadMemberDeliveryRequest | SquadMemberControlRequest | SquadMemberDeliveryCompletion;
+type SquadOperation = 'squad-runtime-preflight' | 'squad-member-create' | 'squad-member-activate' | 'squad-member-deliver' | 'squad-member-delivery-complete' | 'squad-member-status' | 'squad-member-stop' | 'squad-member-resume';
+type SquadRequest = SquadMemberResumeRequest | SquadRuntimePreflightRequest | SquadMemberRuntimeRequest | SquadMemberDeliveryRequest | SquadMemberControlRequest | SquadMemberDeliveryCompletion;
 
 /** Main-only adapter; every response must retain the requested binding/correlation. */
 export function createSquadMemberRuntimeAdapter(call: (operation: SquadOperation, request: SquadRequest) => Promise<unknown>) {
@@ -246,6 +251,15 @@ export function createSquadMemberRuntimeAdapter(call: (operation: SquadOperation
     async stopSquadMember(threadId: string, projectId: string, generation: number) {
       const request = SquadMemberControlRequestSchema.parse({ bindingId: threadId, projectId, generation });
       return zod.boolean().parse(await call('squad-member-stop', request));
+    },
+    async resumeSquadMember(input: SquadMemberResumeRequest) {
+      const request = SquadMemberResumeRequestSchema.parse(input);
+      const value = SquadMemberResumeResultSchema.parse(await call('squad-member-resume', request));
+      if (value.bindingId !== request.bindingId || value.projectId !== request.projectId
+        || value.generation !== request.newGeneration || value.providerThreadId !== request.expectedProviderThreadId) {
+        throw new Error('invalid squad member resume correlation');
+      }
+      return value;
     }
   };
 }
@@ -260,7 +274,7 @@ export function createProductRouteSquadRuntime(options: { serverUrl(): string; c
     const credential = options.credential();
     if (credential.length < 32) throw new Error('squad runtime requires the product server credential');
     const body = JSON.stringify(SquadRuntimeOperationSchema.parse({ operation, request }));
-    const response = await fetch(url, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(20_000),
+    const response = await fetch(url, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(operation === 'squad-member-resume' ? 90_000 : 20_000),
       headers: { 'content-type': 'application/json', [NATIVE_TOOL_POLICY_PROOF_HEADER]: signNativeToolPolicyRequest(credential, body) }, body });
     const reader = response.body?.getReader();
     if (!reader) throw new Error('invalid squad runtime response');
@@ -371,6 +385,7 @@ export async function startRuntimeSupervisor(options: StartRuntimeSupervisorOpti
     getSquadMemberStatus: async () => { throw new Error('Modern squad runtime is unavailable'); },
     isSquadMemberLive: async () => false,
     stopSquadMember: async () => false,
+    resumeSquadMember: async () => { throw new Error('Modern squad runtime is unavailable'); },
     queueThreadTurn: async () => ({ ok: false, reason: 'runtime-unavailable' }),
     listMenubarThreads: async () => ({ agents: [], needsYou: 0, working: 0 }),
     openMenubarThread: async () => ({ ok: false, reason: 'thread service unavailable' }),
@@ -474,6 +489,7 @@ interface UtilityRuntime {
   request(operation: 'squad-member-delivery-complete', request: SquadMemberDeliveryCompletion): Promise<unknown>;
   request(operation: 'squad-runtime-preflight', request: SquadRuntimePreflightRequest): Promise<unknown>;
   request(operation: 'squad-member-status' | 'squad-member-stop', request: SquadMemberControlRequest): Promise<unknown>;
+  request(operation: 'squad-member-resume', request: SquadMemberResumeRequest): Promise<unknown>;
   request(operation: 'thread-queue-turn', threadId: string, projectId: string, text: string): Promise<unknown>;
   request(operation: 'menubar-threads-list', limit: number): Promise<unknown>;
   request(operation: 'menubar-thread-open', threadId: string, projectId: string): Promise<unknown>;
@@ -962,7 +978,7 @@ export function createUtilityRuntime(runtime: { child: UtilityChild; url: string
   return {
     ...runtime,
     request(
-      operation: 'cli-callback-grant' | 'cli-discovery' | 'library-agent' | 'library-document' | 'project-metadata' | 'project-catalogs' | 'project-history' | 'project-feed' | 'product-event' | 'app-version' | 'thread-live' | 'thread-queue-turn' | 'squad-runtime-preflight' | 'squad-member-create' | 'squad-member-activate' | 'squad-member-deliver' | 'squad-member-delivery-complete' | 'squad-member-status' | 'squad-member-stop' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'projects-touch' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugin-packs-list' | 'plugin-packs-installed' | 'plugin-packs-plan' | 'plugin-packs-install' | 'plugin-packs-forget' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-repair' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-update-all' | 'plugins-call-rpc' | 'plugins-tool-policy' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
+      operation: 'cli-callback-grant' | 'cli-discovery' | 'library-agent' | 'library-document' | 'project-metadata' | 'project-catalogs' | 'project-history' | 'project-feed' | 'product-event' | 'app-version' | 'thread-live' | 'thread-queue-turn' | 'squad-runtime-preflight' | 'squad-member-create' | 'squad-member-activate' | 'squad-member-deliver' | 'squad-member-delivery-complete' | 'squad-member-status' | 'squad-member-stop' | 'squad-member-resume' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'projects-touch' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugin-packs-list' | 'plugin-packs-installed' | 'plugin-packs-plan' | 'plugin-packs-install' | 'plugin-packs-forget' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-repair' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-update-all' | 'plugins-call-rpc' | 'plugins-tool-policy' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
         ...args: [PluginPackIdentity] | [PluginPackInstallRequest] | [number] | [CliCallbackControl] | [CliDiscoveryRequest] | [LibraryAgentRequest] | [LibraryDocumentRequest] | [ProjectMetadataRequest] | [ProjectCatalogRequest] | [NativeToolPolicyRequest] | [SquadMemberRuntimeRequest] | [SquadMemberDeliveryRequest] | [SquadMemberDeliveryCompletion] | [SquadMemberControlRequest] | [SquadRuntimePreflightRequest] | [string, unknown[]] | [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, string?] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, string, string] | [string, Record<string, string | number | boolean | null>] | [string, string[]] | [string, string[], { projectId?: string; threadId?: string; cwd?: string }?] | []
     ) {
       if (stopped || stopping) return Promise.reject(new Error('Background service stopped. Restart Zana to reconnect.'));
@@ -989,6 +1005,7 @@ export function createUtilityRuntime(runtime: { child: UtilityChild; url: string
            ...(operation === 'thread-live' ? { threadId: args[0] as string, projectId: args[1] as string } : {}),
              ...((operation === 'squad-member-create' || operation === 'squad-member-activate') ? { request: args[0] as SquadMemberRuntimeRequest } : {}),
             ...(operation === 'squad-member-deliver' ? { request: args[0] as SquadMemberDeliveryRequest } : {}),
+            ...(operation === 'squad-member-resume' ? { request: args[0] as SquadMemberResumeRequest } : {}),
             ...(operation === 'squad-member-delivery-complete' ? { request: args[0] as SquadMemberDeliveryCompletion } : {}),
            ...(operation === 'squad-runtime-preflight' ? { request: args[0] as SquadRuntimePreflightRequest } : {}),
            ...((operation === 'squad-member-status' || operation === 'squad-member-stop') ? { request: args[0] as SquadMemberControlRequest } : {}),

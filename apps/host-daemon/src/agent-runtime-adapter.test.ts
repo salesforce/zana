@@ -80,6 +80,50 @@ describe('agent runtime thread adapter', () => {
     } finally { adapter.dispose(); }
   });
 
+  it.each([
+    { reported: true, expected: { sessionRestorable: true } },
+    { reported: false, expected: { sessionRestorable: false } },
+    { reported: undefined, expected: {} }
+  ])('passes through startWork sessionRestorable=$reported only when reported', async ({ reported, expected }) => {
+    const adapter = createAgentRuntimeAdapter({ dataDir: cwd, emit: () => {}, createRuntime: options => {
+      const runtime = createAgentRuntimeWithAdapters({ ...options, adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath }) });
+      vi.spyOn(runtime, 'startThread').mockResolvedValue({
+        providerThreadId: 'prov-start', ...(reported === undefined ? {} : { sessionRestorable: reported })
+      } as never);
+      return runtime;
+    } });
+    try {
+      const result = await adapter.startWork({ threadId: randomUUID(), environmentId: randomUUID(), projectId: 'p1', providerId: 'fake', input: [], cwd });
+      expect(result).toEqual({ providerThreadId: 'prov-start', ...expected });
+    } finally { adapter.dispose(); }
+  });
+
+  it.each([
+    { name: 'strict and loaded', strict: true, loaded: true, expected: { nativeLoaded: true } },
+    { name: 'strict but runtime does not confirm', strict: true, loaded: undefined, expected: { nativeLoaded: false } },
+    { name: 'strict and not loaded', strict: true, loaded: false, expected: { nativeLoaded: false } },
+    { name: 'ordinary resume ignores a reported load', strict: false, loaded: true, expected: {} }
+  ])('resumeWork $name', async ({ strict, loaded, expected }) => {
+    let resumeThread!: ReturnType<typeof vi.spyOn>;
+    const adapter = createAgentRuntimeAdapter({ dataDir: cwd, emit: () => {}, createRuntime: options => {
+      const runtime = createAgentRuntimeWithAdapters({ ...options, adapterFactory: () => createFakeAdapter({ scriptPath: fakeProviderScriptPath }) });
+      resumeThread = vi.spyOn(runtime, 'resumeThread').mockResolvedValue({
+        providerThreadId: 'prov-resume', ...(loaded === undefined ? {} : { nativeLoaded: loaded })
+      } as never);
+      return runtime;
+    } });
+    try {
+      const result = await adapter.resumeWork({
+        threadId: randomUUID(), environmentId: randomUUID(), projectId: 'p1', providerId: 'fake', providerThreadId: 'prov-resume', cwd,
+        ...(strict ? { requireNativeLoad: true as const } : {})
+      });
+      expect(result).toEqual({ providerThreadId: 'prov-resume', ...expected });
+      const forwarded = resumeThread.mock.calls[0]![0] as { requireNativeLoad?: true };
+      if (strict) expect(forwarded.requireNativeLoad).toBe(true);
+      else expect(forwarded).not.toHaveProperty('requireNativeLoad');
+    } finally { adapter.dispose(); }
+  });
+
   it('merges plugin tools with remote proxy tooling', () => {
     expect(mergeSessionTooling({
       remoteProxy: false,

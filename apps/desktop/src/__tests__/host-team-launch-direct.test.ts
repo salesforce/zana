@@ -43,7 +43,8 @@ const h = vi.hoisted(() => {
       isSquadMemberLive: vi.fn<(threadId: string, projectId: string, generation: number) => Promise<boolean>>(),
       stopSquadMember: vi.fn<(threadId: string, projectId: string, generation: number) => Promise<boolean>>(),
       deliverSquadMember: vi.fn<(request: SquadMemberDeliveryRequest) => Promise<SquadMemberDeliveryResult>>(),
-      completeSquadMemberDelivery: vi.fn<(request: SquadMemberDeliveryCompletion) => Promise<SquadMemberDeliveryResult>>()
+      completeSquadMemberDelivery: vi.fn<(request: SquadMemberDeliveryCompletion) => Promise<SquadMemberDeliveryResult>>(),
+      resumeSquadMember: vi.fn<(request: any) => Promise<any>>()
     }
   };
 });
@@ -545,6 +546,29 @@ describe('launchTeam non-claude recovery, orchestrator binding failure and orche
     expect(h.creates.every((c) => c.profile === 'codex-resume')).toBe(true);
   });
 
+  it('gives resumed durable workers a resume-aware prompt while the fresh worker keeps the standby prompt', async () => {
+    h.personas = [persona('cxo', { baseProfile: 'codex' }), persona('cx', { baseProfile: 'codex' }), persona('cx2', { baseProfile: 'codex' })];
+    h.teams = [{ id: 'cxteam2', name: 'CX2', orchestratorPersonaId: 'cxo', slots: [{ personaId: 'cx' }, { personaId: 'cx2' }] }];
+    const launchRequestId = reqId();
+    const nativeRecovery = [{ role: 'worker', slotId: '0:cx:0', personaId: 'cx', profileId: 'codex', nativeConversationId: NATIVE }];
+    const authorized = authorizeTeamLaunch('owner', 'cxteam2', 'p1', launchRequestId, {},
+      [{ initialTask: 'w' }, { initialTask: 'w2' }, { initialTask: 'o' }], 'structured', undefined, nativeRecovery as never);
+    expect(authorized.ok).toBe(true);
+    if (!authorized.ok) return;
+    const result = await launchTeam('cxteam2', 'p1', {
+      callerPrincipalId: 'owner', launchRequestId, requirePreauthorization: true, coordinationMode: 'structured',
+      slots: authorized.value.slots.map(({ slotId, initialTask, authorizationId, nativeRecovery: recovery }) => ({ slotId, initialTask, authorizationId, nativeRecovery: recovery }))
+    } as never);
+    expect(result.ok).toBe(true);
+    const resumed = h.creates.find((c) => c.cohort?.slotId === '0:cx:0');
+    const fresh = h.creates.find((c) => c.cohort?.slotId === '1:cx2:0');
+    expect(resumed.resumeSessionId).toBe(NATIVE);
+    expect((resumed.extraArgs ?? []).join('\n')).toContain('Recovery resume: this worker reopened its own native session for slot `0:cx:0`');
+    expect(fresh.resumeSessionId).toBeUndefined();
+    expect((fresh.extraArgs ?? []).join('\n')).toContain('Team worker standby.');
+    expect((fresh.extraArgs ?? []).join('\n')).not.toContain('Recovery resume');
+  });
+
   it('fails an orchestrator whose adapter cannot bind the initial task', async () => {
     h.personas = [persona('orch', { baseProfile: 'shell' }), persona('w1'), persona('w2')];
     const slots = SLOT_IDS.map((slotId) => ({ slotId, initialTask: `t ${slotId}` }));
@@ -628,6 +652,9 @@ describe('launchTeam Modern structured path', () => {
       assignmentId: request.assignmentId, idempotencyKey: request.idempotencyKey, state: 'accepted'
     }));
     h.runtime.completeSquadMemberDelivery.mockReset().mockImplementation(async request => ({ ...request, state: 'completed' }));
+    h.runtime.resumeSquadMember.mockReset().mockImplementation(async request => ({
+      bindingId: request.bindingId, projectId: request.projectId, generation: request.newGeneration, providerThreadId: request.expectedProviderThreadId
+    }));
     h.runtime.stopSquadMember.mockReset().mockImplementation(async (bindingId, projectId, generation) => {
       const member = h.modernMembers.get(bindingId);
       if (!member || member.projectId !== projectId || member.generation !== generation) return false;
@@ -858,10 +885,179 @@ describe('launchTeam Modern structured path', () => {
     expect(settled.workers.find(worker => worker.threadId === canceledThread)).toMatchObject({ capacityReleased: false });
   });
 
+  describe('Modern native resume', () => {
+    // Unique per test: a live binding in an earlier record legitimately blocks reuse of its thread.
+    const threadIds = new Map<string, string>();
+    const threadIdFor = (index: number) => {
+      const key = `${seq}:${index}`;
+      if (!threadIds.has(key)) threadIds.set(key, `${String(seq).padStart(8, '0')}-0000-4000-8000-00000000000${index}`);
+      return threadIds.get(key)!;
+    };
+    const snapshotFor = (slotId: string, index: number, patch: Record<string, unknown> = {}) => {
+      const threadId = threadIdFor(index);
+      return {
+        role: slotId.startsWith('orchestrator:') ? 'orchestrator' : 'worker',
+        slotId, personaId: slotId.startsWith('orchestrator:') ? 'orch' : slotId.split(':')[1], profileId: 'claude',
+        nativeConversationId: `provider-${index}`, transport: 'MODERN', threadId, generation: 1,
+        providerThreadId: `provider-${index}`, providerId: 'claude-code', hostId: HOST_ID, environmentPath: projectDir, ...patch
+      };
+    };
+    const resumeReq = (patch: (snapshot: any, index: number) => Record<string, unknown> = () => ({})) => {
+      const req = structuredReq();
+      return { ...req, slots: req.slots.map((slot, index) => ({ ...slot, nativeRecovery: snapshotFor(slot.slotId, index, patch(slot, index)) })) };
+    };
+
+    it('resumes every slot on its stored binding at generation+1 without create/activate or CLI spawn', async () => {
+      const req = resumeReq();
+      const result = await launchTeam('team1', 'p1', req as never);
+      expect(result).toMatchObject({ ok: true, value: { launched: 4, failedSlots: [] } });
+      expect(h.runtime.createSquadMember).not.toHaveBeenCalled();
+      expect(h.runtime.activateSquadMember).not.toHaveBeenCalled();
+      expect(h.creates).toEqual([]);
+      const resumes = h.runtime.resumeSquadMember.mock.calls.map(([request]) => request);
+      expect(resumes).toHaveLength(4);
+      for (const [index, request] of resumes.entries()) {
+        expect(request).toEqual({ bindingId: threadIdFor(index), projectId: 'p1',
+          expectedGeneration: 1, newGeneration: 2, expectedProviderThreadId: `provider-${index}` });
+      }
+      const deliveries = h.runtime.deliverSquadMember.mock.calls.map(([request]) => request);
+      expect(deliveries.map(request => request.generation)).toEqual([2, 2, 2, 2]);
+      expect(new Set(deliveries.map(request => request.idempotencyKey)).size).toBe(4);
+      expect(deliveries.every(request => request.message.includes('task') || request.message.length > 0)).toBe(true);
+      const record = lifecycle(req.launchRequestId);
+      expect(record.state).toBe('active');
+      for (const worker of record.workers) {
+        expect(worker).toMatchObject({ transport: 'MODERN', generation: 2, bindingState: 'BOUND', process: 'running', capacityReleased: false });
+        expect(worker.threadId).toMatch(/^\d{8}-0000-4000-8000-00000000000\d$/);
+      }
+      // resume ordered before its own prompt delivery
+      expect(h.runtime.resumeSquadMember.mock.invocationCallOrder[0]).toBeLessThan(h.runtime.deliverSquadMember.mock.invocationCallOrder[0]);
+    });
+
+    it('refreshes the execution recovery snapshot to the resumed generation at acknowledge time', async () => {
+      const execution = (await h.squadOpts.store.claim({
+        callerPrincipalId: `exec-owner-${seq}`, projectId: 'p1', teamId: 'team1', jobTitle: 'Work', requestDigest: `digest-resume-${seq}`,
+        launchRequestId: `exec-resume-${seq}`, resolvedModels: [], request: { version: 1, slots: [{ initialTask: 'Work' }], resolvedModels: [] }
+      })).record as { id: string };
+      h.runtime.getSquadMemberStatus.mockImplementation(async request => ({
+        ...statusFor(request), providerThreadId: `provider-${[0, 1, 2, 3].findIndex(i => threadIdFor(i) === request.bindingId)}`, sessionRestorable: true
+      }));
+      const req = { ...resumeReq(), executionId: execution.id };
+      const result = await launchTeam('team1', 'p1', req as never);
+      expect(result).toMatchObject({ ok: true, value: { launched: 4 } });
+      const record = await h.squadOpts.store.getInProject('p1', execution.id);
+      const snapshots = (record?.nativeRecoverySnapshots ?? []).filter((snapshot: any) => snapshot.transport === 'MODERN');
+      expect(snapshots.length).toBeGreaterThan(0);
+      expect(snapshots.every((snapshot: any) => snapshot.generation === 2)).toBe(true);
+    });
+
+    it.each([
+      ['provider drift', { providerId: 'acp-opencode' }],
+      ['host drift', { hostId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' }],
+      ['worktree drift', { environmentPath: '/somewhere/else' }],
+      ['CLI transport snapshot', { transport: 'CLI' }],
+      ['wrong persona', { personaId: 'nobody' }]
+    ])('fails closed before any runtime mutation on %s', async (_name, patch) => {
+      const result = await launchTeam('team1', 'p1', resumeReq((_slot, index) => index === 0 ? patch : {}) as never);
+      expect(result).toMatchObject({ ok: false, code: 'UNSUPPORTED', message: expect.stringMatching(/no restorable native session/) });
+      expect(h.runtime.resumeSquadMember).not.toHaveBeenCalled();
+      expect(h.runtime.createSquadMember).not.toHaveBeenCalled();
+      expect(h.runtime.deliverSquadMember).not.toHaveBeenCalled();
+    });
+
+    it('fails closed, stops the thread and terminalizes the worker when the runtime resume is refused', async () => {
+      const req = resumeReq();
+      h.runtime.resumeSquadMember.mockRejectedValue(new Error('NOT_RESUMABLE: nope'));
+      const result = await launchTeam('team1', 'p1', req as never);
+      expect(h.runtime.createSquadMember).not.toHaveBeenCalled();
+      expect(h.runtime.activateSquadMember).not.toHaveBeenCalled();
+      expect(h.runtime.deliverSquadMember).not.toHaveBeenCalled();
+      expect(h.runtime.stopSquadMember).toHaveBeenCalled();
+      expect(result.ok && result.value.launched).not.toBe(4);
+      const record = lifecycle(req.launchRequestId);
+      expect(record.workers.some(worker => worker.bindingState === 'BOUND')).toBe(false);
+    });
+
+    it('fails closed when the resume prompt is rejected under the new generation', async () => {
+      h.runtime.deliverSquadMember.mockResolvedValue({ bindingId: 'x', projectId: 'p1', generation: 2, assignmentId: 'a', idempotencyKey: 'k', state: 'rejected', reason: 'stale' } as never);
+      const req = resumeReq();
+      const result = await launchTeam('team1', 'p1', req as never);
+      expect(result.ok && result.value.launched).not.toBe(4);
+      expect(h.runtime.stopSquadMember).toHaveBeenCalled();
+      expect(h.runtime.createSquadMember).not.toHaveBeenCalled();
+    });
+
+    it('does not resume when the retained worktree is missing', async () => {
+      const req = resumeReq((_slot, _index) => ({ environmentPath: join(h.root, 'gone') }));
+      expect(await launchTeam('team1', 'p1', req as never)).toMatchObject({ ok: false, code: 'UNSUPPORTED' });
+      expect(h.runtime.resumeSquadMember).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when only some slots carry a native snapshot', async () => {
+      const req = resumeReq();
+      const partial = { ...req, slots: req.slots.map((slot, index) => index === 1 ? { slotId: slot.slotId, initialTask: slot.initialTask } : slot) };
+      expect(await launchTeam('team1', 'p1', partial as never)).toMatchObject({
+        ok: false, code: 'UNSUPPORTED', message: expect.stringMatching(/no restorable native session/)
+      });
+      expect(h.runtime.resumeSquadMember).not.toHaveBeenCalled();
+      expect(h.runtime.deliverSquadMember).not.toHaveBeenCalled();
+    });
+
+    it('reports a rejected resume prompt with a default reason when the runtime gives none', async () => {
+      h.runtime.deliverSquadMember.mockResolvedValue({ bindingId: 'x', projectId: 'p1', generation: 2, assignmentId: 'a', idempotencyKey: 'k', state: 'rejected' } as never);
+      const req = resumeReq();
+      const result = await launchTeam('team1', 'p1', req as never);
+      expect(result).toMatchObject({ ok: false, code: 'TEAM_LAUNCH_FAILED', message: expect.stringContaining('Modern squad resume prompt rejected: rejected') });
+      expect(h.runtime.stopSquadMember).toHaveBeenCalled();
+    });
+
+    it('stops the resumed thread without delivering a prompt when the launch is canceled before the acknowledge', async () => {
+      const req = resumeReq();
+      let canceled = false;
+      h.runtime.resumeSquadMember.mockImplementation(async request => {
+        if (!canceled) {
+          canceled = true;
+          expect((await host.cancelTeamLaunch(req.callerPrincipalId, req.launchRequestId)).ok).toBe(true);
+        }
+        return { bindingId: request.bindingId, projectId: request.projectId, generation: request.newGeneration, providerThreadId: request.expectedProviderThreadId };
+      });
+      const result = await launchTeam('team1', 'p1', req as never);
+      expect(result.ok && result.value.launched).not.toBe(4);
+      expect(h.runtime.deliverSquadMember).not.toHaveBeenCalled();
+      expect(h.runtime.stopSquadMember).toHaveBeenCalled();
+      expect(lifecycle(req.launchRequestId).workers.some(worker => worker.bindingState === 'BOUND')).toBe(false);
+    });
+
+    it('cancels before the resume prompt and refuses later reservations once the launch is canceled after the acknowledge', async () => {
+      const req = resumeReq();
+      let canceledThread: string | undefined;
+      h.afterModernAck = async (_recordId, slotId, acknowledged) => {
+        if (canceledThread || !acknowledged) return;
+        canceledThread = lifecycle(req.launchRequestId).workers.find(worker => worker.slotId === slotId)!.threadId;
+        await host.cancelTeamLaunch(req.callerPrincipalId, req.launchRequestId);
+      };
+      const result = await launchTeam('team1', 'p1', req as never);
+      expect(canceledThread).toBeDefined();
+      expect(result).toMatchObject({ ok: false, message: expect.stringContaining('Modern squad launch canceled before the resume prompt') });
+      expect(h.runtime.deliverSquadMember).not.toHaveBeenCalled();
+      expect(h.runtime.createSquadMember).not.toHaveBeenCalled();
+      expect(h.runtime.stopSquadMember).toHaveBeenCalledWith(canceledThread, 'p1', expect.any(Number));
+      expect(['canceled', 'cancel-pending']).toContain(lifecycle(req.launchRequestId).state);
+    });
+
+    it('still resumes when refreshing the recovery snapshot fails', async () => {
+      h.runtime.getSquadMemberStatus.mockRejectedValue(new Error('status unavailable'));
+      const req = resumeReq();
+      const result = await launchTeam('team1', 'p1', req as never);
+      expect(result).toMatchObject({ ok: true, value: { launched: 4 } });
+      expect(h.runtime.deliverSquadMember).toHaveBeenCalledTimes(4);
+    });
+  });
+
   describe('Modern preflight refusals and permission mapping', () => {
     it.each([
       ['a remote project', () => { h.projects[0].remote = { host: 'ssh-box' }; h.projects[0].hostId = 'other-host'; }, {}, /requires a local project/],
-      ['a native-recovery slot', () => {}, { nativeRecovery: true }, /cannot adopt CLI native recovery/],
+      ['a CLI-shaped native-recovery slot', () => {}, { nativeRecovery: true }, /no restorable native session/],
       ['persona tool overrides', () => { h.personas[1] = persona('w1', { allowedTools: ['Bash'] }); }, {}, /tool or sandbox overrides/],
       ['plan-only personas', () => { h.personas[1] = persona('w1', { permissionMode: 'plan' }); }, {}, /plan-only execution/]
     ] as const)('refuses %s before preflight or create', async (_label, arrange, slotExtra, message) => {
@@ -872,7 +1068,8 @@ describe('launchTeam Modern structured path', () => {
         : slot);
       const result = await launchTeam('team1', 'p1', { ...req, slots } as never);
       expect(result).toMatchObject({ ok: false, code: 'UNSUPPORTED', message: expect.stringMatching(message) });
-      expect(h.runtime.preflightSquadRuntime).not.toHaveBeenCalled();
+      // The CLI-shaped recovery fence runs after preflight (it needs the resolved host); nothing is created.
+      if (!/no restorable native session/.test(String(message))) expect(h.runtime.preflightSquadRuntime).not.toHaveBeenCalled();
       expect(h.runtime.createSquadMember).not.toHaveBeenCalled();
       expect(h.creates).toEqual([]);
     });
