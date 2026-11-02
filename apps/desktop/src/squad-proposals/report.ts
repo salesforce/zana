@@ -53,6 +53,7 @@ function branchText(record: ExecutionRecord, worktree: SquadWorktreeOutcome | un
   if (worktree === 'merged') {
     return `Branch ${branch} merged into ${trimTo(oneLine(recorded.baseBranch), BRANCH_CHARS) || 'the base branch'}`;
   }
+  if (worktree === 'deleted') return `Branch ${branch}; its worktree and branch were deleted after completion`;
   if (worktree === 'missing') return `Branch ${branch}; its worktree was already removed`;
   const where = trimTo(oneLine(recorded.path), PATH_CHARS);
   // A user-owned target is the user's own checkout: Squad never created or kept it.

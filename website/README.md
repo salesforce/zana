@@ -26,6 +26,7 @@ npm run build        # production standalone build in .next/
 | `/marketplace` | Same-origin `GET /marketplace/v1/marketplace.json` — official first-party plugin pointers (`schemaVersion: 1`). Generated from repo `plugins/*/package.json`. |
 | `/marketplace/v1/marketplace.json` | Public catalog for `zcc marketplace add` (CORS `*`). Alias: `/plugins/index.json`. |
 | `/docs/*` | Rendered at build time from allowlisted `docs/*.md` via `scripts/sync-docs.mjs` (internal audits, architecture notes, and the root README are NOT published) |
+| `/docs/getting-started/` | Three setup steps and the same public How To video catalogue as desktop Help, refreshed every five minutes. `scripts/sync-help-videos.mjs` keeps a metadata fallback for upstream outages and website-only builds; media stays in `content/videos/media/` on the public repository. |
 | `/extensions` | In-app Plugin Guide `ProductMap` synced from `plugins/plugin-guide/` via `scripts/sync-plugin-guide.mjs` |
 | `/extensions/sdk` | SDK overview — four layers and a link to the Plugin Guide map |
 | `/download` | Server-side GitHub latest-release lookup (cached 10 min) for direct macOS `.dmg` and Windows `.exe` links; falls back to GitHub Releases |

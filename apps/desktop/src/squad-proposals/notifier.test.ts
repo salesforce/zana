@@ -1038,6 +1038,16 @@ describe('local Composer runs (no reportTo, no proposal)', () => {
     expect(deps.appendInbox).toHaveBeenCalledWith(expect.objectContaining({ subject: 'Squad ended, worktree kept: Ship it' }));
   });
 
+  it('calls a deleted worktree a completion and says it was deleted', async () => {
+    const rec = local({ squadWorktree: { path: '/wt', branch: 'sq', baseBranch: 'main', ownership: 'managed' } } as never);
+    const { deps, notifier } = setup({}, () => rec);
+    await notifier.onTerminal(rec, { worktree: 'deleted' });
+    expect(deps.appendInbox).toHaveBeenCalledWith(expect.objectContaining({
+      subject: 'Squad completed: Ship it',
+      comments: expect.stringContaining('worktree and branch were deleted after completion')
+    }));
+  });
+
   it('calls a run with no worktree completed', async () => {
     const rec = local();
     const { deps, notifier } = setup({}, () => rec);

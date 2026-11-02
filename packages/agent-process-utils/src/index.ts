@@ -113,9 +113,16 @@ export function spawnPortableProcess(
 ): PortableChildProcess {
   return crossSpawn(request.command, request.args, {
     cwd: request.cwd,
-    detached: request.detached,
+    // Windows has no process groups to kill (see supportsProcessGroups), and
+    // DETACHED_PROCESS leaves the child with no console, so the cmd.exe that
+    // wraps a `.cmd` shim starts its console program in a new visible window.
+    detached: request.detached && supportsProcessGroups(),
     env: request.env,
     stdio: request.stdio,
+    // Electron is a GUI process, so on Windows each console child (and the
+    // cmd.exe cross-spawn wraps `.cmd` shims in) would open its own visible
+    // console window. No effect on macOS or Linux.
+    windowsHide: true,
   });
 }
 

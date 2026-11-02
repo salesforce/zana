@@ -1,5 +1,5 @@
 import type { RestoreCapability } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
-import type { ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
+import type { ExecutionNativeRecoverySnapshotV1, ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
 import { isResumableExecutionState } from '@zana-ai/zcc-server/services/execution/storage/backend-policy';
 import type { TerminalSession } from '@zana-ai/zcc-domain/product';
 import { isTerminalSquadExecution } from './inbox-actions/squad-instruct.js';
@@ -104,6 +104,71 @@ export function createNativeRecoveryCapture(deps: NativeRecoveryCaptureDeps) {
         attempt: record.attempt, ...snapshotInput
       });
     }).catch((error) => deps.logError(`execution native recovery snapshot ${session.id}`, error));
+  };
+}
+
+export interface ModernNativeRecoveryCaptureDeps {
+  executionStore: {
+    getInProject(projectId: string, executionId: string): Promise<ExecutionRecord | undefined>;
+    upsertNativeRecoverySnapshot(executionId: string, stateVersion: number, snapshot: Omit<ExecutionNativeRecoverySnapshotV1, 'version' | 'capturedAt'>): Promise<unknown>;
+  };
+  logError(context: string, error: unknown): void;
+}
+
+export interface ModernNativeRecoveryMember {
+  projectId: string;
+  executionId: string;
+  slotId: string;
+  role: 'worker' | 'orchestrator';
+  personaId: string;
+  profileId: string;
+  threadId: string;
+  generation: number;
+  providerId: string;
+  hostId: string;
+  environmentPath: string;
+}
+
+/** Runtime evidence for one member: only the fields capture reads. */
+export interface ModernNativeRecoveryStatus {
+  generation: number;
+  providerThreadId?: string;
+  sessionRestorable?: boolean;
+}
+
+/**
+ * Persist a Modern (ACP) squad member's provider session so a stopped squad can
+ * later be resumed. Mirrors the CLI capture: written while the execution is
+ * still live and never after it is terminal (the store would reject a stale
+ * attempt anyway). Callers invoke it while the member is live, immediately before
+ * a stop request, and again after a confirmed stop; the first writes the
+ * snapshot, later calls are deduplicated or fall to the terminal guard.
+ * Only members whose start reported `sessionRestorable === true` are captured.
+ */
+export function createModernNativeRecoveryCapture(deps: ModernNativeRecoveryCaptureDeps) {
+  return async function captureModernNativeRecoverySnapshot(
+    member: ModernNativeRecoveryMember, status: ModernNativeRecoveryStatus | undefined
+  ): Promise<boolean> {
+    if (!status || status.sessionRestorable !== true || !status.providerThreadId
+      || status.generation !== member.generation || member.generation < 1) return false;
+    const providerThreadId = status.providerThreadId;
+    try {
+      const record = await deps.executionStore.getInProject(member.projectId, member.executionId);
+      if (!record || record.state === 'COMPLETED' || record.state === 'FAILED' || record.state === 'STOPPED') return false;
+      const existing = record.nativeRecoverySnapshots?.find((snapshot) => snapshot.slotId === member.slotId);
+      if (existing?.attempt === record.attempt && existing.transport === 'MODERN' && existing.threadId === member.threadId
+        && existing.generation === member.generation && existing.nativeConversationId === providerThreadId) return false;
+      await deps.executionStore.upsertNativeRecoverySnapshot(record.id, record.stateVersion, {
+        attempt: record.attempt, slotId: member.slotId, role: member.role, personaId: member.personaId,
+        profileId: member.profileId, nativeConversationId: providerThreadId, transport: 'MODERN',
+        threadId: member.threadId, generation: member.generation, providerThreadId, providerId: member.providerId,
+        environmentPath: member.environmentPath, hostId: member.hostId
+      });
+      return true;
+    } catch (error) {
+      deps.logError(`execution modern native recovery snapshot ${member.threadId}`, error);
+      return false;
+    }
   };
 }
 

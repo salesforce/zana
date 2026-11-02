@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildPlugin, buildPluginApp, buildPluginServer, syncPluginTypes } from './build-plugin.js';
 import { getPluginBuildToolchain } from './toolchain.js';
@@ -189,6 +190,31 @@ export default definePluginApp((app) => {
 });
 
 describe('buildPluginServer', () => {
+  it('bundles SDK app helpers so the backend loads without plugin node_modules', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-server-sdk-app-')); dirs.push(dir);
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'zcc-plugin-server-sdk-app', version: '0.1.0', zcc: { server: './server.ts' } }));
+    writeFileSync(join(dir, 'server.ts'), `import { MAX_CONTEXT_REFERENCE_TEXT } from '@zana-ai/zcc-plugin-sdk/app';
+export default function plugin() { return MAX_CONTEXT_REFERENCE_TEXT; }
+`);
+    const result = await buildPluginServer(dir, '2.5.1');
+    const output = execFileSync(process.execPath, ['--input-type=module', '-e', `const { default: plugin } = await import(${JSON.stringify(pathToFileURL(result!.jsPath).href)}); process.stdout.write(String(plugin()));`], { encoding: 'utf8' });
+    expect(output).toBe('100000');
+  });
+
+  it('keeps only the exact host-provided SDK entries external', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-server-sdk-externals-')); dirs.push(dir);
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'zcc-plugin-server-sdk-externals', version: '0.1.0', zcc: { server: './server.ts' } }));
+    writeFileSync(join(dir, 'server.ts'), `export { defineRpcContract } from '@zana-ai/zcc-plugin-sdk';
+export { normalizePluginDatabaseBackupOptions } from '@zana-ai/zcc-plugin-sdk/server';
+export { MAX_CONTEXT_REFERENCE_TEXT } from '@zana-ai/zcc-plugin-sdk/app';
+`);
+    const result = await buildPluginServer(dir, '2.5.1');
+    const js = readFileSync(result!.jsPath, 'utf8');
+    expect(js).toMatch(/from\s*["']@zana-ai\/zcc-plugin-sdk["']/);
+    expect(js).toMatch(/from\s*["']@zana-ai\/zcc-plugin-sdk\/server["']/);
+    expect(js).not.toContain('@zana-ai/zcc-plugin-sdk/app');
+  });
+
   it('preserves an already compiled backend without an editable source sibling', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zcc-prebuilt-backend-')); dirs.push(dir);
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'zcc-plugin-prebuilt', version: '0.1.0', zcc: { server: './server.mjs' } }));

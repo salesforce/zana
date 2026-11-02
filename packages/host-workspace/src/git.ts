@@ -57,7 +57,8 @@ function runGitProcess(
     const child = spawn('git', args, {
       cwd,
       env: { ...gitChildEnv(), ...extraEnv },
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
     });
     if (lowPriority && child.pid !== undefined) {
       // Background scans yield the CPU to interactive work. Best effort: the
@@ -175,7 +176,8 @@ export async function runGitWithNullRecordLimit(
     const child = spawn('git', args, {
       cwd,
       env: { ...gitChildEnv(), ...extraEnv },
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
     });
     const records: Buffer[] = [];
     let pending = Buffer.alloc(0);

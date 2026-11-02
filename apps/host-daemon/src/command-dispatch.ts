@@ -136,6 +136,8 @@ export type ThreadResumeInput = {
   instructions?: ThreadStartFields['instructions'];
   sessionKind?: 'automated';
   automatedSkillIds?: ThreadStartFields['automatedSkillIds'];
+  /** Strict resume: reload natively or fail; never fall back to a fresh session. */
+  requireNativeLoad?: true;
 };
 
 export type ThreadRewindPrepareInput = {
@@ -180,7 +182,7 @@ export interface CommandRuntime {
   loadConfig: () => AppConfig;
   verifyProviders: () => Promise<ProviderStatusResult>;
   emit: (event: HostEventEnvelope) => void;
-  startWork?: (input: ThreadWorkInput) => Promise<{ providerThreadId?: string } | void>;
+  startWork?: (input: ThreadWorkInput) => Promise<{ providerThreadId?: string; sessionRestorable?: boolean } | void>;
   submitTurn?: (input: {
     threadId: string;
     input: PromptInput[];
@@ -196,7 +198,7 @@ export interface CommandRuntime {
     permissionEscalation?: 'ask' | 'deny';
     expectedTurnId?: string;
   }) => Promise<void>;
-  resumeWork?: (input: ThreadResumeInput) => Promise<{ providerThreadId?: string } | void>;
+  resumeWork?: (input: ThreadResumeInput) => Promise<{ providerThreadId?: string; nativeLoaded?: boolean } | void>;
   resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
   writeWork?: (input: { threadId: string; data: string }) => Promise<void>;
   stopWork?: (input: { threadId: string }) => Promise<void>;
@@ -245,7 +247,7 @@ export function createCommandRuntime(options: {
   loadConfig?: () => AppConfig;
   verifyProviders?: () => Promise<ProviderStatusResult>;
   emit?: (event: HostEventEnvelope) => void;
-  startWork?: (input: ThreadWorkInput) => Promise<{ providerThreadId?: string } | void>;
+  startWork?: (input: ThreadWorkInput) => Promise<{ providerThreadId?: string; sessionRestorable?: boolean } | void>;
   submitTurn?: (input: {
     threadId: string;
     input: PromptInput[];
@@ -261,7 +263,7 @@ export function createCommandRuntime(options: {
     permissionEscalation?: 'ask' | 'deny';
     expectedTurnId?: string;
   }) => Promise<void>;
-  resumeWork?: (input: ThreadResumeInput) => Promise<{ providerThreadId?: string } | void>;
+  resumeWork?: (input: ThreadResumeInput) => Promise<{ providerThreadId?: string; nativeLoaded?: boolean } | void>;
   resizeWork?: (input: { threadId: string; cols: number; rows: number }) => Promise<void>;
   writeWork?: (input: { threadId: string; data: string }) => Promise<void>;
   stopWork?: (input: { threadId: string }) => Promise<void>;
@@ -422,8 +424,8 @@ async function applyThreadResume(
   command: {
     threadId: string;
     environmentId: string;
-  } & ThreadResumeFields
-): Promise<{ threadId: string; resumed: true; providerThreadId?: string }> {
+  } & ThreadResumeFields & { requireNativeLoad?: true }
+): Promise<{ threadId: string; resumed: true; providerThreadId?: string; nativeLoaded?: boolean }> {
   const environment = runtime.environments.get(command.environmentId);
   const environmentPath = environment?.path ?? command.cwd;
   if (!environmentPath) {
@@ -431,6 +433,7 @@ async function applyThreadResume(
   }
   const cwd = confineThreadCwd(environmentPath, command.cwd);
   let providerThreadId = command.providerThreadId;
+  let nativeLoaded = false;
   if (runtime.resumeWork) {
     const resumed = await runtime.resumeWork({
       threadId: command.threadId,
@@ -450,9 +453,11 @@ async function applyThreadResume(
       dynamicTools: command.dynamicTools,
       instructions: command.instructions,
       sessionKind: command.sessionKind,
-      automatedSkillIds: command.automatedSkillIds
+      automatedSkillIds: command.automatedSkillIds,
+      ...(command.requireNativeLoad === true ? { requireNativeLoad: true as const } : {})
     });
     providerThreadId = resumed?.providerThreadId ?? providerThreadId;
+    nativeLoaded = resumed?.nativeLoaded === true;
   }
   runtime.threads.set(command.threadId, {
     environmentId: command.environmentId,
@@ -467,7 +472,9 @@ async function applyThreadResume(
   return {
     threadId: command.threadId,
     resumed: true as const,
-    ...(providerThreadId ? { providerThreadId } : {})
+    ...(providerThreadId ? { providerThreadId } : {}),
+    // Only strict resumes report it; a runtime that cannot confirm fails closed (false).
+    ...(command.requireNativeLoad === true ? { nativeLoaded } : {})
   };
 }
 
@@ -754,10 +761,12 @@ export async function dispatchHostCommand(
       }
       const cwd = confineThreadCwd(environment.path, command.cwd);
       let providerThreadId: string | undefined;
+      let sessionRestorable: boolean | undefined;
       if (runtime.startWork) {
         const { type: _type, cwd: _cwd, ...rest } = command;
         const started = await runtime.startWork({ ...rest, cwd });
         providerThreadId = started?.providerThreadId;
+        sessionRestorable = started?.sessionRestorable;
       }
       runtime.threads.set(command.threadId, {
         environmentId: command.environmentId,
@@ -767,7 +776,8 @@ export async function dispatchHostCommand(
       return {
         threadId: command.threadId,
         started: true as const,
-        ...(providerThreadId ? { providerThreadId } : {})
+        ...(providerThreadId ? { providerThreadId } : {}),
+        ...(sessionRestorable !== undefined ? { sessionRestorable } : {})
       };
     }
     case 'thread.resize': {

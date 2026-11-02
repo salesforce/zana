@@ -77,6 +77,38 @@ describe('AgentsTab worktree isolation', () => {
     );
   });
 
+  describe('Scheduled runs use my Claude config', () => {
+    const toggle = () => screen.getByRole('switch', { name: 'Scheduled runs use my Claude config' });
+    const mount = (cfg: AppConfig, onUpdate = vi.fn().mockResolvedValue(undefined)) => {
+      render(<AgentsTab config={cfg} onConfigDraft={vi.fn()} onUpdate={onUpdate} />);
+      return onUpdate;
+    };
+
+    it('defaults off, explains the trade-off, and persists a toggle on', () => {
+      const onUpdate = mount(config);
+      expect(toggle().getAttribute('aria-checked')).toBe('false');
+      expect(document.body.textContent).toContain('MCP servers, plugins or hooks');
+      expect(document.body.textContent).toContain('giving up that isolation');
+      fireEvent.click(toggle());
+      expect(onUpdate).toHaveBeenCalledWith({ automatedUseUserConfig: true });
+    });
+
+    it('reflects a persisted on value and toggles off', () => {
+      const onUpdate = mount({ ...config, automatedUseUserConfig: true });
+      expect(toggle().getAttribute('aria-checked')).toBe('true');
+      fireEvent.click(toggle());
+      expect(onUpdate).toHaveBeenCalledWith({ automatedUseUserConfig: false });
+    });
+
+    it('has a settings-search entry in the Scheduled subsection that reports the value', () => {
+      const entry = agentsEntries.find(e => e.id === 'agents.scheduled.use-user-config')!;
+      expect(entry.anchor).toBe('scheduled');
+      expect(entry.label).toBe('Scheduled runs use my Claude config');
+      expect(entry.value!({ config } as never)).toBe('Off');
+      expect(entry.value!({ config: { ...config, automatedUseUserConfig: true } } as never)).toBe('On');
+    });
+  });
+
   it('exposes a Default plan mode picklist that defaults to Infer (freeform)', () => {
     const html = renderToStaticMarkup(
       <AgentsTab

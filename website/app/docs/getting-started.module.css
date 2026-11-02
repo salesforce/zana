@@ -1,0 +1,44 @@
+.guide { min-width: 0; }
+.intro { max-width: 660px; }
+.intro h1 { font-size: clamp(30px, 4vw, 44px); line-height: 1.12; letter-spacing: -.04em; margin: 12px 0 18px; }
+.intro p, .watch > p { color: var(--text-2); }
+.steps { list-style: none; padding: 0; margin: 28px 0 20px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.steps li { padding: 18px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; }
+.steps li > span { font: 12px var(--font-mono); color: var(--accent-blue); }
+.steps h2 { font-size: 16px; margin: 8px 0; }
+.steps p { font-size: 13px; color: var(--text-2); margin: 0 0 10px; }
+.steps a { font-size: 13px; font-weight: 650; }
+.requirements { font-size: 13px; color: var(--text-2); margin-bottom: 36px; }
+.requirements summary { cursor: pointer; color: var(--accent); padding: 6px 0; }
+.requirements p { max-width: 720px; }
+.watch { scroll-margin-top: calc(var(--nav-h) + 24px); }
+.watch > h2 { font-size: 24px; letter-spacing: -.025em; margin: 0 0 6px; }
+.watch > p { margin: 0 0 22px; font-size: 14px; }
+.nowPlaying { display: flex; flex-wrap: wrap; gap: 6px 16px; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
+.nowPlaying h3 { margin: 0; font-size: 16px; }
+.nowPlaying > span { color: var(--muted); font-size: 12px; }
+.player { width: 100%; aspect-ratio: 16 / 10; background: #000; border: 1px solid var(--border); border-radius: 12px; display: block; }
+.watch > .description { margin: 12px 0 24px; color: var(--muted); }
+.videos { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.card { text-align: left; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg-panel); padding: 0; color: var(--text); cursor: pointer; font: inherit; }
+.card:hover { border-color: var(--accent); background: var(--bg-elevated); }
+.card[aria-pressed='true'] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.thumbnail { position: relative; }
+.thumbnail img { display: block; width: 100%; height: auto; aspect-ratio: 16 / 10; object-fit: cover; }
+.play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; font-size: 12px; background: #0d152bda; color: #fff; }
+.duration { position: absolute; bottom: 8px; right: 8px; font-size: 11px; border-radius: 4px; padding: 1px 5px; background: #0d152bdf; color: #fff; }
+.cardCopy { padding: 12px; }
+.cardCopy > span { display: block; color: var(--muted); font-size: 11px; margin-bottom: 5px; }
+.cardCopy strong { display: block; font-size: 13px; line-height: 1.4; }
+.error { padding: 12px; margin-top: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
+.error button { color: var(--accent); border: 0; padding: 0; background: none; font: inherit; text-decoration: underline; cursor: pointer; }
+.next { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 24px 0 0; margin-top: 28px; border-top: 1px solid var(--border); font-size: 14px; }
+.next > span { color: var(--muted); }
+@media (max-width: 600px) {
+  .steps { grid-template-columns: 1fr; }
+  .steps li { padding: 14px 16px; }
+  .steps h2 { display: inline; margin-left: 12px; }
+  .steps p { margin: 6px 0; }
+  .videos { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .cardCopy { padding: 10px; }
+}

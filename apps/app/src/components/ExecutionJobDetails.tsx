@@ -284,6 +284,8 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
     && execution.timeoutReason === 'plan-correction-cancelled' && !execution.successorExecutionId;
   const exactNativeUnavailableReason = planCorrectionCancelled
     ? 'Cancelled at plan correction. Start a new Squad to try again.'
+    : retainedRecovery?.exactNative.reason === 'PARTIAL_RESTORE'
+      ? `Only ${retainedRecovery.exactNative.restorableSlots} of ${retainedRecovery.exactNative.totalSlots ?? '?'} agents can be resumed. Use Relaunch Squad from retained plan.`
     : retainedRecovery?.exactNative.reason === 'NATIVE_RESTORE_UNAVAILABLE'
       ? 'Existing Squad sessions cannot be restored on this device.'
       : undefined;
@@ -332,7 +334,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
   const worktreeAction = async (action: 'leave' | 'instruct' | 'delete' | 'force-delete') => {
     if (!execution.retainedWorktree || execution.stateVersion === undefined) return;
     if ((action === 'delete' || action === 'force-delete') && !window.confirm(
-      `${action === 'force-delete' ? 'Force delete unmerged worktree' : 'Delete retained worktree'}?\n\n${execution.retainedWorktree.path}\n\nThis cannot be undone.`
+      `${action === 'force-delete' ? 'Force delete worktree' : 'Delete retained worktree'}?\n\n${execution.retainedWorktree.path}\n\n${action === 'force-delete' ? 'Uncommitted changes and unmerged commits in it will be lost. ' : ''}This cannot be undone.`
     )) return;
     if (action === 'instruct' && !followUpInstruction.trim()) {
       useUi.getState().pushToast('Enter an instruction for the follow-up agent.', 'error');
@@ -371,7 +373,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
          <h4>Retained worktree</h4>
          <p><code>{execution.retainedWorktree.path}</code> · {execution.retainedWorktree.branch}</p>
          {execution.retainedWorktree.disposition === 'left' ? <p role="status">Worktree left by user. No further lifecycle action is pending.</p> : <>
-           <p>Leave preserves this checkout. Delete requires confirmation and refuses dirty worktrees.</p>
+           <p>Leave preserves this checkout. Delete requires confirmation and refuses a worktree with uncommitted changes or unmerged commits. Force delete removes it anyway and permanently discards that work.</p>
            {followUpRoster.length > 0 && <label className="execution-follow-up-persona">Follow-up persona{' '}
              <select aria-label="Follow-up persona" value={followUpPersonaId} onChange={(event) => setFollowUpPersonaId(event.target.value)}>
                <option value="">Squad coordinator (default)</option>

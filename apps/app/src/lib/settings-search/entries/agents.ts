@@ -313,6 +313,16 @@ export const entries: readonly SettingsSearchEntry[] = [
     value: (s) => ({ auto: 'Automatic (recommended)', queue: 'Always queue', skip: 'Always skip' })[s.config.scheduledRunOverflow ?? 'auto'],
   },
   {
+    id: 'agents.scheduled.use-user-config',
+    section: 'agents',
+    anchor: 'scheduled',
+    label: 'Scheduled runs use my Claude config',
+    help: 'Off by default: unattended scheduled Claude runs use an isolated config, so they don’t load your MCP servers, plugins or hooks (or their saved sign-ins). Turn on to let scheduled runs use your own Claude config, so they can call your MCP servers and plugins and run your hooks. The trade-off is giving up that isolation for unattended runs. A schedule can override this in its own settings.',
+    keywords: ['scheduled', 'unattended', 'mcp', 'plugins', 'hooks', 'isolation', 'claude config', 'sign-ins'],
+    kind: 'setting',
+    value: (s) => onOff(s.config.automatedUseUserConfig ?? false),
+  },
+  {
     id: 'agents.agent-automation.intro',
     section: 'agents',
     anchor: 'agent-automation',

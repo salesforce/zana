@@ -40,9 +40,19 @@ test('packaged CLI creates, exercises, reloads, and diagnoses a plugin in built 
   expect(scaffold.code, scaffold.stderr).toBe(0);
   const packagePath = join(source, 'package.json');
   const manifest = JSON.parse(readFileSync(packagePath, 'utf8'));
+  // Shared plugin code can use pure SDK app helpers in its backend. The built
+  // artifact must load in Electron even though this plugin has no node_modules.
+  const serverPath = join(source, 'server.ts');
+  writeFileSync(serverPath, `import { MAX_CONTEXT_REFERENCE_TEXT } from '@zana-ai/zcc-plugin-sdk/app';
+if (MAX_CONTEXT_REFERENCE_TEXT !== 100_000) throw new Error('SDK helper was not bundled');
+${readFileSync(serverPath, 'utf8')}`);
   const panelEntry = manifest.zcc.app;
   delete manifest.zcc.app;
+  // Match plugins that declare compiled entries with editable TS siblings.
+  manifest.zcc.server = './server.mjs';
   writeFileSync(packagePath, JSON.stringify(manifest));
+  const compiled = await run(['plugin', 'build']);
+  expect(compiled.code, compiled.stderr).toBe(0);
   const installed = await run(['plugin', 'install', '.']);
   expect(installed.code, installed.stderr).toBe(0);
   try {
@@ -81,7 +91,6 @@ test('packaged CLI creates, exercises, reloads, and diagnoses a plugin in built 
     await expect(todo).toBeChecked();
     writeFileSync(appPath, updated);
 
-    const serverPath = join(source, 'server.ts');
     const server = readFileSync(serverPath, 'utf8');
     writeFileSync(serverPath, 'export default function () { throw new Error("intentional factory failure"); }');
     const factoryFailure = await run(['plugin', 'dev', '--once']);
