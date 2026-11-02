@@ -90,6 +90,12 @@ describe('lastRunSkipped: record signal', () => {
     expect(lastRunSkipped(every('6h', [late]), NOW)?.slotAt).toBe('2026-10-14T09:00:00.200Z');
     expect(lastRunSkipped(task([late]), NOW)?.slotAt).toBe('2026-10-14T09:00:00.100Z');
   });
+  it('takes the pill time of a new-style overlap row (no session) from its own slotAt', () => {
+    const own = skip({ reasonCode: 'overlap', at: '2026-10-14T09:00:00.200Z', slotAt: SLOT_9, trigger: 'schedule', attempt: 1, message: 'previous run still active' });
+    expect('sessionId' in own).toBe(false);
+    expect(lastRunSkipped(task([own]), NOW)).toEqual({ slotAt: SLOT_9, reason: 'overlap' });
+    expect(lastRunSkipped(every('6h', [own]), NOW)).toEqual({ slotAt: SLOT_9, reason: 'overlap' });
+  });
   it('reads records stored oldest first as newest first', () => {
     expect(lastRunSkipped(task([run({ at: iso(5 * H) }), skip({ reasonCode: 'overlap', at: iso(H) })]), NOW)?.reason).toBe('overlap');
     expect(lastRunSkipped(task([skip({ reasonCode: 'overlap', at: iso(5 * H) }), run({ at: iso(H) })]), NOW)).toBeNull();

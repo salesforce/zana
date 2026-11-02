@@ -965,11 +965,20 @@ export class SchedulerManager extends EventEmitter {
     );
   }
 
-  private retainRuns(task: ScheduledTask, runs: ScheduleRun[]): ScheduleRun[] {
+  private retainRuns(task: ScheduledTask, runs: ScheduleRun[], closingRunId?: string): ScheduleRun[] {
     // Squad runs are scheduler-owned overlap state until their durable
     // execution reaches a terminal state, so they sit outside display history.
-    return trimRuns(runs, task.history.retain, Date.now(), run =>
+    const kept = trimRuns(runs, task.history.retain, Date.now(), run =>
       run.launchState === 'pending' || (this.runLaunchKind(task, run) === 'team' && this.isLiveSquadRun(run)));
+    // The newest live agent run also stays (one per schedule: the overlap guard allows no more), or newer overlap
+    // skips would push it out, the next fire would miss it and start a duplicate. The run this write is closing
+    // stays for this one write, so its exit is recorded rather than trimmed away.
+    const aliveIds = new Set(this.deps?.ptys.list(task.projectId)
+      .filter(session => session.status === 'running' || session.status === 'starting').map(session => session.id));
+    const newestLive = runs.find(run => !!run.sessionId && aliveIds.has(run.sessionId) && !run.finishedAt && run.durationMs === undefined);
+    const protectedRuns = new Set([newestLive, runs.find(run => closingRunId !== undefined && run.id === closingRunId)].filter((run): run is ScheduleRun => !!run));
+    const missing = [...protectedRuns].filter(run => !kept.includes(run));
+    return missing.length ? runs.filter(run => kept.includes(run) || missing.includes(run)) : kept;
   }
 
   private async observeSquadExecutions() {
@@ -1439,9 +1448,9 @@ export class SchedulerManager extends EventEmitter {
           id: randomUUID(),
           at: new Date().toISOString(),
           result: 'skipped',
-          ...(aliveRunSessionId ? { sessionId: aliveRunSessionId } : {}),
           reasonCode: 'overlap',
-          ...runMeta(opts),
+          // No sessionId: the skip is its own row. Carrying the live run's session made recordRun merge it over that run.
+          ...runMeta({ ...opts, slotAt: opts.slotAt ?? live.targetAt }),
           message: squad ? 'previous squad run still active' : 'previous run still active'
         });
         if (live.task.enabled) this.arm(id);
@@ -1894,14 +1903,20 @@ export class SchedulerManager extends EventEmitter {
     const knownIdxById = run.id
       ? status.runs.findIndex((r) => r.id === run.id)
       : -1;
-    const knownIdx =
+    let knownIdx =
       knownIdxById >= 0
         ? knownIdxById
         : run.sessionId
         ? runIndexBySession.get(run.sessionId)
         : undefined;
+    // The session fallback never merges a record with its own id onto a row that has a different id.
+    const fallbackRow = knownIdxById < 0 && knownIdx !== undefined ? status.runs[knownIdx] : undefined;
+    if (run.id && fallbackRow?.id && fallbackRow.id !== run.id) knownIdx = undefined;
+    let closedLiveRunId: string | undefined;
     if (knownIdx !== undefined && knownIdx >= 0 && status.runs[knownIdx]) {
-      status.runs[knownIdx] = { ...status.runs[knownIdx], ...run };
+      const before = status.runs[knownIdx];
+      if (before.sessionId && !before.finishedAt && before.durationMs === undefined && (run.durationMs !== undefined || run.finishedAt)) closedLiveRunId = before.id;
+      status.runs[knownIdx] = { ...before, ...run };
     } else if (run.id && countedRunIds.has(run.id)) {
       // This run was already counted at fire time but has since scrolled past
       // `retain` and been evicted by newer fires. This is its exit-time tail,
@@ -1930,7 +1945,7 @@ export class SchedulerManager extends EventEmitter {
     }
     // Terminal records obey the configured history cap even when this was an
     // update to a formerly-active squad run. Rebuild indexes from survivors.
-    status.runs = this.retainRuns(live.task, status.runs);
+    status.runs = this.retainRuns(live.task, status.runs, closedLiveRunId);
     runIndexBySession.clear();
     status.runs.forEach((r, idx) => {
       if (r.sessionId) runIndexBySession.set(r.sessionId, idx);
