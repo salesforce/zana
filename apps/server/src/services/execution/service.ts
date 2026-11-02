@@ -251,9 +251,9 @@ export interface ExecutionServiceDeps {
   onHumanBlocker?: (record: ExecutionRecord, blocker: NonNullable<ExecutionRecord['blockers']>[number]) => void | Promise<void>;
   inbox?: { append: (input: InboxInput) => Promise<InboxEntry>; appendOnce?: (input: InboxInput) => Promise<InboxEntry> };
   preflightWorkflow?: (teamId: string, workflow: SquadBundleWorkflowMetadataV1) => { ok: boolean; code?: string; message?: string };
-  /** Trusted host resolver; filters retained snapshots against current Team slots. */
   /** Trusted total slot count of the record's team; enables the all-slots-restorable gate. */
   resolveExactNativeRecoveryTotalSlots?: (record: ExecutionRecord) => number | undefined;
+  /** Trusted host resolver; filters retained snapshots against current Team slots. */
   resolveExactNativeRecoverySnapshots?: (record: ExecutionRecord) => NonNullable<ExecutionRecord['nativeRecoverySnapshots']>;
   admissionInput?: (projectId: string, request: ExecutionRequestV1) => Promise<TeamAdmissionInput> | TeamAdmissionInput;
   /**

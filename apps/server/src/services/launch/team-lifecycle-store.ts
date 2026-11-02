@@ -1361,15 +1361,15 @@ function matchesModernReference(worker: TeamLifecycleWorker | undefined, referen
 }
 
 function assertUniqueModernThread(state: TeamLifecycleStateFile, worker: Omit<TeamLifecycleWorker, 'capacityReleased'>): void {
-  // A resumed binding reuses the thread of the prior, fully retired worker for the SAME
-  // team/project/slot at the snapshot generation (RESUMING generation - 1); every other holder collides.
+  // A resumed binding reuses the thread of prior, fully retired workers for the SAME
+  // team/project/slot at any lower generation (repeat resumes leave gen 1, 2, ... all TERMINAL); every other holder collides.
   const retired = (candidate: Omit<TeamLifecycleWorker, 'capacityReleased'>) => worker.bindingState === 'RESUMING'
     && candidate.bindingState === 'TERMINAL' && terminalProcesses.has(candidate.process)
     && candidate.modernContext !== undefined && worker.modernContext !== undefined
     && candidate.modernContext.teamId === worker.modernContext.teamId
     && candidate.modernContext.projectId === worker.modernContext.projectId
     && candidate.slotId === worker.slotId
-    && typeof worker.generation === 'number' && candidate.generation === worker.generation - 1;
+    && typeof worker.generation === 'number' && typeof candidate.generation === 'number' && candidate.generation < worker.generation;
   if (worker.transport === 'MODERN' && worker.threadId && state.records.some((record) => record.workers.some((candidate) =>
     candidate !== worker && !retired(candidate) && (candidate.threadId === worker.threadId || candidate.sessionId === worker.threadId)))) {
     throw new Error('duplicate modern thread identity');

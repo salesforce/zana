@@ -65,6 +65,10 @@ import type { MenubarThreadAgent } from '@zana-ai/zcc-domain';
 import type { PluginPackCatalogEntry, PluginPackIdentity, PluginPackInstallation, PluginPackInstallRequest, PluginPackPlan } from '@zana-ai/zcc-domain';
 import { NATIVE_TOOL_POLICY_PROOF_HEADER, signNativeToolPolicyRequest } from '@zana-ai/zcc-server/http/native-tool-policy-proof';
 
+/** Resume reopens a native provider session and can legitimately take longer than other squad operations. */
+const SQUAD_RESUME_TIMEOUT_MS = 90_000;
+const SQUAD_OPERATION_TIMEOUT_MS = 20_000;
+
 export type RuntimeProject = z.infer<typeof ProjectRecordSchema>;
 export type RuntimeProjectPatch = z.infer<typeof ProjectMutationPatchSchema>;
 export type RuntimeProjectSettings = ProjectSettingsPatch;
@@ -274,7 +278,7 @@ export function createProductRouteSquadRuntime(options: { serverUrl(): string; c
     const credential = options.credential();
     if (credential.length < 32) throw new Error('squad runtime requires the product server credential');
     const body = JSON.stringify(SquadRuntimeOperationSchema.parse({ operation, request }));
-    const response = await fetch(url, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(operation === 'squad-member-resume' ? 90_000 : 20_000),
+    const response = await fetch(url, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(operation === 'squad-member-resume' ? SQUAD_RESUME_TIMEOUT_MS : SQUAD_OPERATION_TIMEOUT_MS),
       headers: { 'content-type': 'application/json', [NATIVE_TOOL_POLICY_PROOF_HEADER]: signNativeToolPolicyRequest(credential, body) }, body });
     const reader = response.body?.getReader();
     if (!reader) throw new Error('invalid squad runtime response');

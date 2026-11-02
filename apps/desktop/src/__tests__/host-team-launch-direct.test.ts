@@ -1011,6 +1011,28 @@ describe('launchTeam Modern structured path', () => {
       expect(h.runtime.stopSquadMember).toHaveBeenCalled();
     });
 
+    it('routes a thrown resume prompt delivery (transport/timeout) through failResume', async () => {
+      h.runtime.deliverSquadMember.mockRejectedValue(new Error('delivery timeout'));
+      const req = resumeReq();
+      const result = await launchTeam('team1', 'p1', req as never);
+      expect(result).toMatchObject({ ok: false, code: 'TEAM_LAUNCH_FAILED', message: expect.stringContaining('Modern squad resume prompt delivery failed: delivery timeout') });
+      expect(h.runtime.stopSquadMember).toHaveBeenCalled();
+      expect(lifecycle(req.launchRequestId).workers.some(worker => worker.bindingState === 'BOUND' && !worker.capacityReleased && worker.process === 'running')).toBe(false);
+    });
+
+    it('holds the worker UNCERTAIN, with capacity kept, and reports the failed slot when no stop is confirmed', async () => {
+      h.runtime.deliverSquadMember.mockResolvedValue({ bindingId: 'x', projectId: 'p1', generation: 2, assignmentId: 'a', idempotencyKey: 'k', state: 'rejected', reason: 'stale' } as never);
+      h.runtime.stopSquadMember.mockRejectedValueOnce(new Error('stop transport down')).mockResolvedValue(false);
+      const req = resumeReq();
+      const result = await launchTeam('team1', 'p1', req as never);
+      expect(result).toMatchObject({ ok: false, code: 'TEAM_LAUNCH_FAILED', message: expect.stringContaining('stop unconfirmed') });
+      const record = lifecycle(req.launchRequestId);
+      const uncertain = record.workers.filter(worker => worker.bindingState === 'UNCERTAIN');
+      expect(uncertain.length).toBeGreaterThan(0);
+      expect(uncertain.every(worker => worker.capacityReleased === false && worker.generation === 2)).toBe(true);
+      expect(record.workers.some(worker => worker.bindingState === 'TERMINAL')).toBe(false);
+    });
+
     it('stops the resumed thread without delivering a prompt when the launch is canceled before the acknowledge', async () => {
       const req = resumeReq();
       let canceled = false;

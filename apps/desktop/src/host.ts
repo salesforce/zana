@@ -5045,6 +5045,11 @@ function orchestratorPrompt(
   return [base, goalBriefing, briefing].filter(Boolean).join('\n\n');
 }
 
+// The standby line defers the snapshot until the prompt settles; a resumed worker
+// snapshots immediately, so it gets the immediate variant instead of a conflicting pair.
+const WORKER_SNAPSHOT_AFTER_STANDBY = 'After your standby prompt settles, call `execution.snapshot` once for this execution.';
+const WORKER_SNAPSHOT_NOW = 'Call `execution.snapshot` once for this execution now (see Recovery resume below).';
+
 export function jobWorkerPrompt(input: {
   executionId?: string;
   slotId: string;
@@ -5055,13 +5060,10 @@ export function jobWorkerPrompt(input: {
   const lines = [
     `Team worker standby. You are ${input.label} (${input.personaName}), slot \`${input.slotId}\`${input.executionId ? ` in execution \`${input.executionId}\`` : ''}.`,
     'Your working directory is the trusted project workspace. Wait for an assignment for this slot; each assignment carries a fully-specified work unit — its task is the complete instruction. When it arrives, EXECUTE it: do the task using the file scope, the upstream results included in the assignment, and your own reading of the project workspace. Do the work yourself; do not wait for extra "source context" to be pushed to you and do not ask the coordinator to re-explain a task you can carry out. Do not, however, start the overall job or units not assigned to this slot.',
-    'Do not poll `agent_inbox`. After your standby prompt settles, call `execution.snapshot` once for this execution. If it shows a work unit CLAIMED for your slot, execute that unit using its task and claim fence even when no pasted assignment is visible; this recovers a launch-time terminal-input race. Execute only bounded work assigned to this slot. Close every unit through exactly one structured outcome: `execution.work.complete`, `execution.work.fail`, `execution.work.block`, or `execution.work.release`. Call the ZCC execution MCP tool exposed in your own tool list, not a separate Python bridge or a colon-form tool name. On OpenCode, `execution.work.complete` is exposed as `zcc-inbox_execution_work_complete`. Do not use `agent_send` for routine progress or results.',
+    'Do not poll `agent_inbox`. ' + (input.recoveryResume ? WORKER_SNAPSHOT_NOW : WORKER_SNAPSHOT_AFTER_STANDBY) + ' If it shows a work unit CLAIMED for your slot, execute that unit using its task and claim fence even when no pasted assignment is visible; this recovers a launch-time terminal-input race. Execute only bounded work assigned to this slot. Close every unit through exactly one structured outcome: `execution.work.complete`, `execution.work.fail`, `execution.work.block`, or `execution.work.release`. Call the ZCC execution MCP tool exposed in your own tool list, not a separate Python bridge or a colon-form tool name. On OpenCode, `execution.work.complete` is exposed as `zcc-inbox_execution_work_complete`. Do not use `agent_send` for routine progress or results.',
     'Use `execution.work.block` ONLY when you genuinely cannot proceed, and pick the audience: `audience: "coordinator"` when you need ONE specific, decidable plan/spec choice from the coordinator (e.g. which of two interfaces to target, an ambiguous path) — phrase it as a single concrete question the coordinator can answer, and the worker resumes automatically once answered; `audience: "human"` (the default) only when a real human decision or credential is required. Do not block just because a task looks large or under-detailed — attempt it. Do not use AskUserQuestion. While blocked, do not poll `execution.delivery.pull`. Responses inject when idle. Call `execution.delivery.pull` only after an injected notification. Delivery is at-least-once and may repeat after a crash: use the stable deliveryId as an idempotency key, apply side effects idempotently or transactionally where possible, and persist a completed-application marker only after successful application (or atomically with it). If that completed marker already exists, do not apply the payload again. A crash before that marker may replay delivery, so do not claim exactly-once processing. Then call `execution.delivery.ack` with the deliveryId and leaseId: set `delivered: true` once you have applied the response in this session, and set `delivered: false` with an error ONLY when applying the payload genuinely failed. Pulling then acking IS the entire way to consume a response — never call `execution.resume` or `execution.respond` to accept your own delivered answer. Those are owner-only control tools; a worker or coordinator calling them fails with "execution not found for caller", and that authorization denial is NOT an application failure — do not report it as a delivery `error` or you will loop the response forever.'
   ];
   if (input.recoveryResume) {
-    // The standby line defers the snapshot until the prompt settles; a resumed
-    // worker snapshots immediately, so avoid a second, conflicting instruction.
-    lines[2] = lines[2].replace('After your standby prompt settles, call `execution.snapshot` once for this execution.', 'Call `execution.snapshot` once for this execution now (see Recovery resume below).');
     lines.push(`Recovery resume: this worker reopened its own native session for slot \`${input.slotId}\`${input.executionId ? ` in execution \`${input.executionId}\`` : ''}. Your earlier conversation is prior context, not current authority. Call execution.snapshot once now. Continue only a unit currently CLAIMED for this slot, using its current claim fence; prior claim ids are invalid. Do not redo work the snapshot shows COMPLETED, and do not resume units not claimed for this slot.`);
   }
   return lines.join('\n\n');
@@ -6009,9 +6011,18 @@ export async function launchTeam(
             { threadId: resumeSnapshot.threadId!, snapshotGeneration: resumeSnapshot.generation! });
           if (!reservation?.mayResume) return { ok: false, code: 'CANCEL_PENDING', message: 'Modern squad reservation cannot resume' };
           const resumed = reservation;
-          const failResume = async (message: string, code: 'UNSUPPORTED' | 'CANCEL_PENDING' = 'UNSUPPORTED'): Promise<Result<{ id: string }>> => {
+          const failResume = async (message: string, code: 'UNSUPPORTED' | 'CANCEL_PENDING' | 'UNCERTAIN' = 'UNSUPPORTED'): Promise<Result<{ id: string }>> => {
+            let stopConfirmed = false;
             for (const generation of [resumed.generation, resumeSnapshot.generation!]) {
-              try { if (await squadRuntime().stopSquadMember(resumed.threadId, targetProjectId, generation)) break; } catch { /* best effort */ }
+              try { if (await squadRuntime().stopSquadMember(resumed.threadId, targetProjectId, generation)) { stopConfirmed = true; break; } }
+              catch (stopError) { logMainError(`squad resume stop failed (thread ${resumed.threadId}, generation ${generation})`, stopError); }
+            }
+            if (!stopConfirmed) {
+              // Unconfirmed stop: the member may still be running. Hold capacity and binding reuse (UNCERTAIN)
+              // so the existing reconcile/stop retry can finish it; never terminalize without runtime evidence.
+              logMainError(`squad resume stop unconfirmed (thread ${resumed.threadId}, generation ${resumed.generation})`, message);
+              await teamLifecycle.markModernWorkerUncertain(record.id, slotId, resumed.generation, resumed.threadId);
+              return { ok: false, code: 'UNCERTAIN', message: `${message} (stop unconfirmed; worker held UNCERTAIN)` };
             }
             await teamLifecycleIntegration.reconcileModernWorkers([{ recordId: record.id, slotId, generation: resumed.generation,
               threadId: resumed.threadId, state: 'terminal' }]);
@@ -6041,9 +6052,14 @@ export async function launchTeam(
           // Activation already happened in the original run (squadActivationStarted/Accepted stay true);
           // only the resume prompt is delivered, under the NEW generation and a fresh idempotency key.
           const assignmentId = `squad-resume:${resumed.threadId}:${resumed.generation}`;
-          const delivery = await squadRuntime().deliverSquadMember({ bindingId: resumed.threadId, generation: resumed.generation,
-            projectId: targetProjectId, assignmentId, idempotencyKey: assignmentId,
-            message: request.prompt ?? 'Await squad instructions.' });
+          let delivery: Awaited<ReturnType<ReturnType<typeof squadRuntime>['deliverSquadMember']>>;
+          try {
+            delivery = await squadRuntime().deliverSquadMember({ bindingId: resumed.threadId, generation: resumed.generation,
+              projectId: targetProjectId, assignmentId, idempotencyKey: assignmentId,
+              message: request.prompt ?? 'Await squad instructions.' });
+          } catch (error) {
+            return failResume(`Modern squad resume prompt delivery failed: ${error instanceof Error ? error.message : String(error)}`);
+          }
           if (delivery.state === 'rejected') return failResume(`Modern squad resume prompt rejected: ${delivery.reason ?? 'rejected'}`);
           return { ok: true, value: { id: resumed.threadId } };
         }

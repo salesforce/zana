@@ -1119,7 +1119,7 @@ describe('team lifecycle integration', () => {
         const input = modernClaimInput();
         input.callerPrincipalId = 'principal-2'; input.launchRequestId = 'request-2';
         input.launchResult = { ...input.launchResult!, launchRequestId: 'request-2',
-          workers: input.launchResult!.workers.map((w) => ({ ...w, sessionId: 'session-2', authorizationId: 'authorization-2' })) };
+          workers: input.launchResult!.workers.map((w) => ({ ...w, sessionId: 'session-2', authorizationId: 'authorization-2', ...slotPatch })) };
         input.workers[0] = { ...input.workers[0], sessionId: 'session-2', authorizationId: 'authorization-2', ...slotPatch,
           modernContext: { ...input.workers[0].modernContext!, ...patchContext } } as typeof input.workers[0];
         return input;
@@ -1133,11 +1133,51 @@ describe('team lifecycle integration', () => {
       const otherTeam = await store.claim(mk({ teamId: 'another-team' }));
       await expect(store.reserveModernWorker(otherTeam.record.id, 'slot-1', { threadId: first.threadId, snapshotGeneration: 1 }))
         .rejects.toThrow('duplicate modern thread identity');
-      // wrong snapshot generation (terminal holder is gen 1, snapshot says 2)
-      const sameTeam = await store.claim({ ...mk({}), callerPrincipalId: 'principal-3', launchRequestId: 'request-3',
-        launchResult: { ...mk({}).launchResult!, launchRequestId: 'request-3' } });
-      await expect(store.reserveModernWorker(sameTeam.record.id, 'slot-1', { threadId: first.threadId, snapshotGeneration: 2 }))
+      // different slot
+      const slotInput = mk({}, { slotId: 'slot-2' });
+      const otherSlot = await store.claim({ ...slotInput, callerPrincipalId: 'principal-4', launchRequestId: 'request-4',
+        launchResult: { ...slotInput.launchResult!, launchRequestId: 'request-4' } });
+      await expect(store.reserveModernWorker(otherSlot.record.id, 'slot-2', { threadId: first.threadId, snapshotGeneration: 1 }))
         .rejects.toThrow('duplicate modern thread identity');
+    }));
+
+    it('allows repeated resumes over every lower terminal generation but rejects a terminal holder at or above the new generation and live holders', async () => fixture(async (filePath) => {
+      const mk = (n: number) => {
+        const input = modernClaimInput();
+        input.callerPrincipalId = `principal-${n}`; input.launchRequestId = `request-${n}`;
+        input.launchResult = { ...input.launchResult!, launchRequestId: `request-${n}`,
+          workers: input.launchResult!.workers.map((w) => ({ ...w, sessionId: `session-${n}`, authorizationId: `authorization-${n}` })) };
+        input.workers[0] = { ...input.workers[0], sessionId: `session-${n}`, authorizationId: `authorization-${n}` };
+        return input;
+      };
+      const store = createTeamLifecycleStore({ filePath, id: (() => { let n = 0; return () => `record-${++n}`; })() });
+      const retire = (recordId: string, generation: number, threadId: string) =>
+        store.reconcileModernWorkers([{ recordId, slotId: 'slot-1', generation, threadId, state: 'terminal' }]);
+      const r1 = await store.claim(mk(1));
+      const first = (await store.reserveModernWorker(r1.record.id, 'slot-1'))!;
+      await store.acknowledgeModernWorker(r1.record.id, 'slot-1', 1, first.threadId);
+      await retire(r1.record.id, 1, first.threadId);
+      // first resume: gen 2 over terminal gen 1
+      const r2 = await store.claim(mk(2));
+      const second = await store.reserveModernWorker(r2.record.id, 'slot-1', { threadId: first.threadId, snapshotGeneration: 1 });
+      expect(second).toMatchObject({ generation: 2, mayResume: true });
+      await store.acknowledgeModernWorker(r2.record.id, 'slot-1', 2, first.threadId);
+      await retire(r2.record.id, 2, first.threadId);
+      // a terminal holder at generation >= the new generation is still a collision (gen 2 snapshot-1 resume -> worker gen 2)
+      const r3 = await store.claim(mk(3));
+      await expect(store.reserveModernWorker(r3.record.id, 'slot-1', { threadId: first.threadId, snapshotGeneration: 1 }))
+        .rejects.toThrow('duplicate modern thread identity');
+      // second resume: gen 3 over terminal gen 1 and 2
+      await expect(store.reserveModernWorker(r3.record.id, 'slot-1', { threadId: first.threadId, snapshotGeneration: 2 }))
+        .resolves.toMatchObject({ generation: 3, threadId: first.threadId, mayResume: true });
+      await store.acknowledgeModernWorker(r3.record.id, 'slot-1', 3, first.threadId);
+      // live gen 3 holder blocks a further resume
+      const r4 = await store.claim(mk(4));
+      await expect(store.reserveModernWorker(r4.record.id, 'slot-1', { threadId: first.threadId, snapshotGeneration: 3 }))
+        .rejects.toThrow('duplicate modern thread identity');
+      await retire(r3.record.id, 3, first.threadId);
+      await expect(store.reserveModernWorker(r4.record.id, 'slot-1', { threadId: first.threadId, snapshotGeneration: 3 }))
+        .resolves.toMatchObject({ generation: 4, mayResume: true });
     }));
   });
 });
