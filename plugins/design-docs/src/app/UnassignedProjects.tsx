@@ -10,11 +10,11 @@ function senderLabel(item: { senderName: string | null }): string {
   return item.senderName ?? 'Unnamed project';
 }
 
-function Titles({ titles, total }: { titles: string[]; total: number }) {
+function Titles({ titles, total, primary = false }: { titles: string[]; total: number; primary?: boolean }) {
   if (!titles.length) return null;
   const more = total - titles.length;
   return (
-    <span className="dd-muted dd-map-titles">
+    <span className={primary ? 'dd-map-titles-primary' : 'dd-muted dd-map-titles'}>
       {titles.map((title) => `“${title}”`).join(' · ')}
       {more > 0 ? ` · +${more} more` : ''}
     </span>
@@ -101,11 +101,12 @@ export function UnassignedProjectsDialog({
         return (
           <section key={item.foreignProjectId} className="dd-field dd-map-row" aria-label={`Project ${label}`}>
             <span className="dd-field-label">
-              {label}
-              {item.senderTag ? <span className="dd-muted"> · {item.senderTag}</span> : null}
-              <span className="dd-muted"> · from another computer · {item.docCount} {item.docCount === 1 ? 'doc' : 'docs'}</span>
+              <Titles titles={item.sampleTitles} total={item.docCount} primary />
+              {!item.sampleTitles.length ? `${item.docCount} ${item.docCount === 1 ? 'doc' : 'docs'}` : null}
             </span>
-            <Titles titles={item.sampleTitles} total={item.docCount} />
+            <span className="dd-muted dd-map-source">
+              From the project “{label}”{item.senderTag ? ` (${item.senderTag})` : ''} on another computer · {item.docCount} {item.docCount === 1 ? 'doc' : 'docs'}
+            </span>
             <span className="dd-field-inline">
               <select
                 className="dd-input dd-select"
@@ -129,7 +130,7 @@ export function UnassignedProjectsDialog({
         );
       })}
       {mappings.data?.length ? (
-        <section className="dd-field dd-map-row" aria-label="Already mapped">
+        <section className="dd-field dd-map-row dd-map-mapped" aria-label="Already mapped">
           <span className="dd-field-label">Already mapped</span>
           {mappings.data.map((mapping) => {
             const name = localName(mapping.localProjectId);
@@ -137,8 +138,9 @@ export function UnassignedProjectsDialog({
             return (
               <span key={mapping.foreignProjectId} className="dd-field-inline" role="group" aria-label={`Mapping ${label}`}>
                 <span>
-                  <strong>{label}</strong> <span className="dd-muted">(other computer)</span> {'→'} {name ?? (mapping.localRegistered ? 'Another Project' : 'Project removed from this machine')} · {mapping.docCount} {mapping.docCount === 1 ? 'doc' : 'docs'}
-                  <Titles titles={mapping.sampleTitles} total={mapping.docCount} />
+                  {mapping.sampleTitles.length ? <Titles titles={mapping.sampleTitles} total={mapping.docCount} primary /> : <strong>{mapping.docCount} {mapping.docCount === 1 ? 'doc' : 'docs'}</strong>}
+                  {' '}{'→'} <strong>{name ?? (mapping.localRegistered ? 'Another Project' : 'Project removed from this computer')}</strong>
+                  <span className="dd-muted dd-map-source">From the project “{label}” on another computer · {mapping.docCount} {mapping.docCount === 1 ? 'doc' : 'docs'}</span>
                 </span>
                 {confirmUnmap === mapping.foreignProjectId ? (
                   <>

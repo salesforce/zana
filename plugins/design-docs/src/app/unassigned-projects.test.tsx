@@ -57,8 +57,8 @@ describe('UnassignedProjectsDialog', () => {
     const onChanged = vi.fn();
     harness.render(<UnassignedProjectsDialog unassigned={[{ ...item, docCount: 5 }]} projects={projects} onClose={() => undefined} onChanged={onChanged} />);
     const dialog = screen.getByRole('dialog', { name: 'Map projects from other computers' });
-    expect(within(dialog).getByText('Sender App')).toBeTruthy();
-    expect(within(dialog).getByText(/from another computer · 5 docs/)).toBeTruthy();
+    expect(dialog.textContent).toContain('“Sender App”');
+    expect(within(dialog).getByText(/From the project “Sender App”.*on another computer · 5 docs/)).toBeTruthy();
     expect(within(dialog).getByText('“Alpha” · “Beta” · +3 more')).toBeTruthy();
     expect(dialog.textContent).not.toContain('far-1');
     const select = within(dialog).getByLabelText('Your Project for Sender App') as HTMLSelectElement;
@@ -129,8 +129,8 @@ describe('Already mapped', () => {
     const calls: unknown[] = [];
     const { onChanged } = open({ unmapForeignProject: (args) => { calls.push(args); return { removed: true }; } });
     const section = await screen.findByRole('region', { name: 'Already mapped' });
-    expect(within(section).getByRole('group', { name: 'Mapping Nine' }).textContent).toMatch(/Nine.*→ App · 1 doc.*“Zed”/);
-    expect(within(section).getByRole('group', { name: 'Mapping Unnamed project' }).textContent).toMatch(/→ Project removed from this machine · 2 docs/);
+    expect(within(section).getByRole('group', { name: 'Mapping Nine' }).textContent).toMatch(/“Zed”.*→ App.*“Nine”.*1 doc/);
+    expect(within(section).getByRole('group', { name: 'Mapping Unnamed project' }).textContent).toMatch(/2 docs.*→ Project removed from this computer/);
     expect(section.textContent).not.toMatch(/far-/);
     fireEvent.click(within(section).getByRole('button', { name: 'Unmap Nine' }));
     expect(calls).toEqual([]);

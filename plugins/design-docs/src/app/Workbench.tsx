@@ -400,7 +400,7 @@ function DocList({
           );
         })}
         {unassignedList.length ? (
-          <section className="dd-list-group" aria-label={UNASSIGNED_LABEL}>
+          <section className="dd-list-group dd-list-unassigned" aria-label={UNASSIGNED_LABEL}>
             <SectionHead
               section={{ key: 'unassigned', kind: 'recent', label: UNASSIGNED_LABEL, entries: [], count: unassignedList.length }}
               open={unassignedOpen}
