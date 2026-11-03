@@ -1,7 +1,27 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { IPC } from '@zana-ai/zcc-desktop-contract';
+import { SHARED_PRODUCT_METHODS } from '@zana-ai/zcc-contracts/shared-product';
+import { registerSchedulerIpc } from '../ipc/scheduler.js';
 import type { Goal, GoalIteration, Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { registrationFor } from '@zana-ai/zcc-host-daemon/harness/registry';
 import { resumeGoalIteration } from '../goal-resume-run.js';
+
+const ipc = vi.hoisted(() => ({
+  handlers: new Map<string, (...args: unknown[]) => unknown>(),
+  goalsList: vi.fn(), ptysList: vi.fn(), create: vi.fn(), listProjects: vi.fn(), realpath: vi.fn(), logMainError: vi.fn()
+}));
+vi.mock('../ipc/shared-product-registration.js', () => ({
+  productHandle: (channel: string, handler: (...args: unknown[]) => unknown) => ipc.handlers.set(channel, handler),
+  safeProductHandle: (channel: string, handler: (...args: unknown[]) => unknown) => ipc.handlers.set(channel, handler)
+}));
+vi.mock('../ipc/ctx.js', () => ({ ctx: {
+  scheduler: { on: vi.fn() }, goals: { list: ipc.goalsList, on: vi.fn() }, ptys: { list: ipc.ptysList },
+  createInteractiveTerminal: ipc.create, logMainError: ipc.logMainError,
+  followups: { on: vi.fn() }, feedStore: { on: vi.fn() }, templates: { on: vi.fn() }, scheduleGroups: { on: vi.fn() }
+} }));
+vi.mock('../ipc/shared.js', () => ({ isExternalId: () => false, externalReject: () => ({ ok: false }), listSchedulesForUi: () => [] }));
+vi.mock('@zana-ai/zcc-server/services/projects/store', () => ({ store: { listProjects: ipc.listProjects } }));
+vi.mock('node:fs', async (importOriginal) => ({ ...(await importOriginal<typeof import('node:fs')>()), realpathSync: ipc.realpath }));
 
 const local: Project = { id: 'p1', name: 'P', path: '/proj', createdAt: 0, lastActiveAt: 0 };
 const at = (minutesAgo: number) => new Date(Date.parse('2026-10-27T12:00:00Z') - minutesAgo * 60_000).toISOString();
@@ -47,6 +67,15 @@ describe('REQ-7 resumeGoalIteration opens the conversation', () => {
     const { deps, spy } = setup(g);
     await go(deps);
     expect((spy.createInteractiveTerminal!.mock.calls[0]![0] as { extraArgs: string[] }).extraArgs).toEqual(['--resume', 'good-conv']);
+  });
+  it('OBL-002 with no iterationId, reopens the newest FINISHED iteration, not a newer one still running', async () => {
+    const g = goal([
+      iter({ id: 'running', finishedAt: undefined, verdict: undefined, conversation: conv({ id: 'running-conv' }) as never }),
+      iter({ id: 'finished', conversation: conv({ id: 'finished-conv' }) as never })
+    ]);
+    const { deps, spy } = setup(g);
+    await go(deps);
+    expect((spy.createInteractiveTerminal!.mock.calls[0]![0] as { extraArgs: string[] }).extraArgs).toEqual(['--resume', 'finished-conv']);
   });
   it('uses an explicit iterationId', async () => {
     const g = goal([iter({ id: 'new', conversation: conv({ id: 'new-conv' }) as never }), iter({ id: 'old', conversation: conv({ id: 'old-conv' }) as never })]);
@@ -134,5 +163,45 @@ describe('REQ-9 plain refusals', () => {
     const failure = { ok: false as const, code: 'PROFILE_CONFLICT', message: 'nope' };
     const { deps } = setup(goal([iter()]), { createInteractiveTerminal: vi.fn(async () => failure) });
     await expect(go(deps)).resolves.toBe(failure);
+  });
+});
+
+describe('REQ-7 / REQ-9 goals:resumeIteration (IPC handler)', () => {
+  beforeEach(() => { vi.clearAllMocks(); ipc.handlers.clear(); registerSchedulerIpc(); });
+  const call = (arg: unknown) => ipc.handlers.get(IPC.goals.resumeIteration)!(arg) as Promise<unknown>;
+
+  it('stays desktop-only: it starts an interactive terminal', () => {
+    expect([...SHARED_PRODUCT_METHODS.keys()]).not.toContain('goals.resumeIteration');
+    expect([...SHARED_PRODUCT_METHODS.values()]).not.toContain(IPC.goals.resumeIteration);
+  });
+  it.each([undefined, 'x', {}, { goalId: '' }, { goalId: 'g', extra: 1 }, { goalId: 'g', iterationId: '' }, { goalId: 'x'.repeat(257) }])(
+    'rejects malformed input %j before doing any work', async (input) => {
+      await expect(call(input)).resolves.toMatchObject({ ok: false, code: 'BAD_INPUT' });
+      expect(ipc.goalsList).not.toHaveBeenCalled();
+    });
+  it('reopens the goal conversation end to end with dependencies read from main services', async () => {
+    const created = session('new-pty');
+    ipc.goalsList.mockReturnValue([goal([iter()])]);
+    ipc.listProjects.mockReturnValue([local]);
+    ipc.ptysList.mockReturnValue([session('dead', { status: 'exited', claudeSessionId: 'conv-1' })]);
+    ipc.realpath.mockImplementation((p: string) => `/real${p}`);
+    ipc.create.mockResolvedValue({ ok: true, value: created });
+    await expect(call({ goalId: 'g1' })).resolves.toEqual({ ok: true, value: { session: created, reused: false } });
+    expect(ipc.create.mock.calls[0]![0]).toMatchObject({ extraArgs: ['--resume', 'conv-1'], title: '↺ Goal: Green suite', cwd: '/real/proj' });
+  });
+  it('refuses an unknown goal without launching', async () => {
+    ipc.goalsList.mockReturnValue([]);
+    await expect(call({ goalId: 'gone' })).resolves.toMatchObject({ ok: false, code: 'NOT_FOUND' });
+    expect(ipc.create).not.toHaveBeenCalled();
+  });
+  it('turns a thrown error into RESUME_FAILED without leaking it, and logs it with the ids', async () => {
+    ipc.goalsList.mockImplementation(() => { throw new Error('ENOENT: /Users/someone/secret/path'); });
+    const result = await call({ goalId: 'g1', iterationId: 'i9' });
+    expect(result).toEqual({ ok: false, code: 'RESUME_FAILED', message: "Couldn't reopen this run's conversation. Try again in a moment." });
+    expect(JSON.stringify(result)).not.toContain('secret');
+    expect(ipc.logMainError).toHaveBeenCalledWith('goal resume iteration (goalId=g1, iterationId=i9)', expect.any(Error));
+    ipc.goalsList.mockImplementation(() => { throw 'odd'; });
+    await call({ goalId: 'g1' });
+    expect(ipc.logMainError).toHaveBeenLastCalledWith('goal resume iteration (goalId=g1, iterationId=latest)', 'odd');
   });
 });

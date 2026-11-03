@@ -1786,3 +1786,39 @@ describe('REQ-1..REQ-3, REQ-6, REQ-12 recording the conversation of an iteration
     manager.stopAll();
   });
 });
+
+describe('OBL-005 / OBL-006 the shared conversation builder', () => {
+  it('OBL-005 stores startedAt from the launched session creation time', async () => {
+    const { manager, deps, input, ptys } = durableManager();
+    const createdAt = Date.parse('2026-02-03T04:05:06.000Z');
+    vi.mocked(deps.launchTerminal).mockImplementation((async (options: unknown) => {
+      const session = ptys.create(options as Record<string, unknown>) as Record<string, unknown>;
+      session.createdAt = createdAt;
+      return session;
+    }) as never);
+    const goal = await manager.create({ ...input, activate: true });
+    expect(current(manager, goal.id).history.iterations[0]!.conversation).toMatchObject({ startedAt: '2026-02-03T04:05:06.000Z', cwd: project.path, id: 'claude-1' });
+    manager.stopAll();
+  });
+
+  it('OBL-006 buildRunConversation: same condition and fields as the scheduler used', async () => {
+    const { buildRunConversation, withDetectedConversationId } = await import('../scheduler/run-conversation.js');
+    const resumable = { id: 'x', nativeConversationResume: () => undefined, nativeConversationId: (s: { cwd: string }) => (s.cwd === '/known' ? 'minted-1' : undefined) } as never;
+    const withAdapter = { id: 'x', nativeConversationResume: () => undefined, nativeConversationId: () => undefined, createTranscriptAdapter: () => ({}) } as never;
+    const fallback = '2026-01-01T00:00:00.000Z';
+    expect(buildRunConversation(resumable, { cwd: '/known' }, 'claude', fallback)).toEqual({ profile: 'claude', id: 'minted-1', cwd: '/known', startedAt: fallback });
+    expect(buildRunConversation(resumable, { cwd: '/unknown' }, 'claude', fallback)).toBeUndefined();
+    expect(buildRunConversation(withAdapter, { cwd: '/p', createdAt: 0 }, 'codex', fallback)).toEqual({ profile: 'codex', id: undefined, cwd: '/p', startedAt: '1970-01-01T00:00:00.000Z' });
+    expect(buildRunConversation(withAdapter, { cwd: '/p', createdAt: Number.NaN }, 'codex', fallback)!.startedAt).toBe(fallback);
+    expect(buildRunConversation({ id: 'x', nativeConversationId: () => 'a' } as never, { cwd: '/p' }, 'claude', fallback)).toBeUndefined();
+    expect(buildRunConversation(undefined, { cwd: '/p' }, 'claude', fallback)).toBeUndefined();
+
+    const base = { profile: 'codex', cwd: '/p', startedAt: fallback } as const;
+    const detecting = (id: string | undefined) => ({ id: 'x', nativeConversationId: () => id }) as never;
+    expect(withDetectedConversationId(base as never, detecting('d-1'), { cwd: '/p' })).toEqual({ ...base, id: 'd-1' });
+    expect(withDetectedConversationId(base as never, detecting('--x'), { cwd: '/p' })).toBeUndefined();
+    expect(withDetectedConversationId(base as never, detecting('d-1'), undefined)).toBeUndefined();
+    expect(withDetectedConversationId({ ...base, id: 'kept' } as never, detecting('d-1'), { cwd: '/p' })).toBeUndefined();
+    expect(withDetectedConversationId(undefined, detecting('d-1'), { cwd: '/p' })).toBeUndefined();
+  });
+});
