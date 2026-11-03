@@ -156,11 +156,17 @@ export function createClaudeSkillPluginsRoot(baseDir = tmpdir()): string {
   return mkdtempSync(join(baseDir, "zcc-claude-skill-plugins-"));
 }
 
-/** Per-root caps for the copy (#587). */
+/**
+ * Per-root caps for the copy (#587). The byte cap is sized for real setups: one
+ * owner's `~/.claude/skills` is about 20 MB once its links are followed (a
+ * single skill with bundled media is 17 MB), so 16 MiB would drop every skill
+ * of that root. It stays under the 64 MiB budget shared by all roots of one
+ * configure.
+ */
 export const SKILL_COPY_LIMITS: CopySkillTreeLimits = {
   maxDepth: 16,
   maxFiles: 2000,
-  maxBytes: 16 * 1024 * 1024,
+  maxBytes: 48 * 1024 * 1024,
 };
 
 /** What all user roots of one configure may use together, and by when. */

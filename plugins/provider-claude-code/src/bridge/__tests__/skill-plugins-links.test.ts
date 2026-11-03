@@ -17,6 +17,7 @@ import {
   createClaudeSkillPluginsRoot,
   defaultSkillLinkPolicy,
   ensureClaudeSkillPlugin,
+  SKILL_COPY_LIMITS,
 } from "../skill-plugins.js";
 
 const LIMITS = { maxDepth: 16, maxFiles: 2000, maxBytes: 16 * 1024 * 1024 };
@@ -153,6 +154,12 @@ describe("links inside a user skills folder are followed only under the home fol
     expect(() =>
       copySkillTree(skills, join(base, "dest2"), { ...LIMITS, maxBytes: 1 }, policy()),
     ).toThrow(/maxBytes/);
+  });
+
+  it("the shipped per-root byte cap holds a skills folder of about 20 MB (one owner's real size)", () => {
+    expect(SKILL_COPY_LIMITS.maxBytes).toBeGreaterThanOrEqual(24 * 1024 * 1024);
+    // Stays under the budget shared by all roots of one configure (64 MiB), so one root cannot use it all.
+    expect(SKILL_COPY_LIMITS.maxBytes).toBeLessThanOrEqual(64 * 1024 * 1024);
   });
 
   it("follows nothing without a policy (the default for copySkillTree)", () => {
