@@ -134,12 +134,12 @@ test('shows the stored name for a removed project and maps a peer project on con
   await expect(section).toContainText('Peer received doc');
   await section.getByRole('button', { name: /Map to a Project/ }).click();
 
-  const dialog = win.getByRole('dialog', { name: 'Map peer projects' });
+  const dialog = win.getByRole('dialog', { name: 'Map projects from other computers' });
   await expect(dialog).toBeVisible();
-  await dialog.getByLabel(`Local Project for ${foreign}`).selectOption(targetId);
-  // Picking alone applies nothing: only Confirm maps.
+  await dialog.getByLabel('Your Project for Unnamed project').selectOption(targetId);
+  // Picking alone applies nothing: only Map applies it.
   expect((await rpc<unknown[]>(win, 'listUnassignedProjects')).length).toBeGreaterThan(0);
-  await dialog.getByRole('button', { name: 'Confirm' }).click();
+  await dialog.getByRole('button', { name: 'Map', exact: true }).click();
   await expect.poll(async () =>
     (await rpc<Array<{ foreignProjectId: string }>>(win, 'listUnassignedProjects')).map((p) => p.foreignProjectId),
   { timeout: 30_000 }).not.toContain(foreign);

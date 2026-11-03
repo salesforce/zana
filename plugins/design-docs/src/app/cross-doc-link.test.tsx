@@ -33,6 +33,8 @@ function open(harness: Harness, docId: string, opened: string[]) {
 
 async function readme() {
   await waitFor(() => expect(document.querySelector('section[aria-label="README.md"]')).not.toBeNull());
+  // The preview renders asynchronously; wait for rendered content before the test clicks a link.
+  await waitFor(() => expect(document.querySelector('section[aria-label="README.md"] p, section[aria-label="README.md"] a')).not.toBeNull());
   return document.querySelector<HTMLElement>('section[aria-label="README.md"]')!;
 }
 
