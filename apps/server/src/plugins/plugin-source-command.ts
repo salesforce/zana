@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
-import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { closeSync, mkdtempSync, openSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { removePluginTemporaryDirectory } from './plugin-cleanup.js';
 
 /** File capture also works across Electron's child-process stdout boundary. */
 export async function runPluginSourceCommand(command: string, args: string[], cwd: string, options: {
@@ -17,7 +18,9 @@ export async function runPluginSourceCommand(command: string, args: string[], cw
   try {
     return await new Promise((resolve, reject) => {
       const child = spawn(command, args, {
-        cwd, shell: false, detached: process.platform !== 'win32',
+        // windowsHide: the server runs under Electron (a GUI process), so on
+        // Windows a console child such as git would otherwise open a window.
+        cwd, shell: false, detached: process.platform !== 'win32', windowsHide: true,
         env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never', npm_config_update_notifier: 'false', ...options.env },
         stdio: ['ignore', stdoutFd, stderrFd]
       });
@@ -53,6 +56,6 @@ export async function runPluginSourceCommand(command: string, args: string[], cw
   } finally {
     closeSync(stdoutFd);
     closeSync(stderrFd);
-    rmSync(root, { recursive: true, force: true });
+    await removePluginTemporaryDirectory(root);
   }
 }
