@@ -16,11 +16,12 @@ import {
   readlinkSync,
   renameSync,
   rmdirSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join, sep } from "node:path";
 
 export interface ClaudeSkillPluginRoot {
   id: string;
@@ -85,6 +86,8 @@ export function ensureClaudeSkillPlugin(args: {
   takenNames?: Map<string, string>;
   /** Shared across the roots of one configure; user roots draw on it (#587). */
   budget?: SkillCopyBudget;
+  /** Which links inside a user root may be followed; defaults to links under the home folder. */
+  linkPolicy?: SkillLinkPolicy;
 }): string {
   const directory = pluginDirectoryName(args.root);
   const pluginPath = join(args.pluginsRoot, directory);
@@ -106,7 +109,7 @@ export function ensureClaudeSkillPlugin(args: {
   );
   const skillsLink = join(pluginPath, "skills");
   if ((args.root.owned ?? "user") === "user") {
-    refreshSkillCopy(pluginPath, skillsLink, args.root.path, args.budget);
+    refreshSkillCopy(pluginPath, skillsLink, args.root.path, args.budget, args.linkPolicy);
     return pluginPath;
   }
   let current: string | null = null;
@@ -184,55 +187,180 @@ const ENTRY_CAP_FACTOR = 4;
 
 const COPY_MARKER = ".zcc-skill-copy";
 
+/**
+ * Which links inside a user skills folder the copy may follow. A link is
+ * followed (its target copied as real files, never as a link) only when the
+ * target's real path is under `followLinksUnder` and not under any `denyUnder`
+ * folder. Absent means no link is followed.
+ */
+export interface SkillLinkPolicy {
+  followLinksUnder?: string;
+  denyUnder?: readonly string[];
+}
+
+/** Folders that hold credentials and are never followed, even under the home folder. */
+const CREDENTIAL_FOLDERS = [".ssh", ".aws", ".gnupg", ".kube", ".docker", ".config/gcloud"];
+
+/** The policy for the user's real skill folders: links under the home folder, never into credential folders. */
+export function defaultSkillLinkPolicy(home = homedir()): SkillLinkPolicy {
+  return {
+    followLinksUnder: home,
+    denyUnder: CREDENTIAL_FOLDERS.map((folder) => join(home, folder)),
+  };
+}
+
+interface ScannedFile {
+  rel: string;
+  size: number;
+  exec: boolean;
+  /** Where to read it: the file itself, or the real path a followed link points at. */
+  abs: string;
+  /** The directory holding `abs`, and the real path it must still have when the file is read. */
+  parentAbs: string;
+  parentReal: string;
+}
+
 interface TreeScan {
   dirs: string[];
-  files: { rel: string; size: number; exec: boolean }[];
+  files: ScannedFile[];
   skipped: number;
   bytes: number;
   /** One line per entry (path, kind, size, mtime): the refresh fingerprint. */
   entries: string[];
 }
 
-function scanTree(source: string, limits: CopySkillTreeLimits): TreeScan {
+function isUnderPath(path: string, root: string): boolean {
+  const [a, b] =
+    process.platform === "win32"
+      ? [path.toLowerCase(), root.toLowerCase()]
+      : [path, root];
+  return a === b || a.startsWith(b.endsWith(sep) ? b : b + sep);
+}
+
+function realPathOrSelf(path: string): string {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return path;
+  }
+}
+
+function scanTree(
+  source: string,
+  limits: CopySkillTreeLimits,
+  policy: SkillLinkPolicy = {},
+): TreeScan {
   const scan: TreeScan = { dirs: [], files: [], skipped: 0, bytes: 0, entries: [] };
   const realRoot = realpathSync.native(source);
+  const followRoot =
+    policy.followLinksUnder === undefined
+      ? undefined
+      : realPathOrSelf(policy.followLinksUnder);
+  const denied = (policy.denyUnder ?? []).map(realPathOrSelf);
+  // Real directories already entered: a link back to one is a cycle or a repeat.
+  const entered = new Set<string>([realRoot]);
   let seen = 0;
-  const walk = (relDir: string, depth: number): void => {
-    for (const name of listNames(join(source, relDir), () => seen, limits)) {
+
+  /** The real target of a link when it may be followed, else null. */
+  const followableTarget = (linkPath: string): string | null => {
+    if (followRoot === undefined) return null;
+    let target: string;
+    try {
+      target = realpathSync.native(linkPath);
+    } catch {
+      return null; // dangling
+    }
+    if (!isUnderPath(target, followRoot)) return null;
+    if (denied.some((folder) => isUnderPath(target, folder))) return null;
+    // A link into the folder being copied would copy it twice; one to an
+    // ancestor of it would copy far more than the skills.
+    if (isUnderPath(target, realRoot) || isUnderPath(realRoot, target)) return null;
+    return target;
+  };
+
+  const skip = (rel: string): void => {
+    scan.skipped += 1;
+    scan.entries.push(`${rel}\0l`);
+  };
+
+  const addFile = (
+    rel: string,
+    abs: string,
+    parentAbs: string,
+    parentReal: string,
+    stat: { size: number; mode: number; mtimeMs: number },
+  ): void => {
+    if (scan.files.length + 1 > limits.maxFiles) {
+      throw new Error(`skill root exceeds maxFiles (${limits.maxFiles})`);
+    }
+    scan.bytes += stat.size;
+    if (scan.bytes > limits.maxBytes) {
+      throw new Error(`skill root exceeds maxBytes (${limits.maxBytes})`);
+    }
+    scan.files.push({
+      rel,
+      size: stat.size,
+      exec: (stat.mode & 0o100) !== 0,
+      abs,
+      parentAbs,
+      parentReal,
+    });
+    scan.entries.push(`${rel}\0f\0${stat.size}\0${stat.mtimeMs}\0${stat.mode & 0o100}`);
+  };
+
+  const walk = (relDir: string, absDir: string, expectedReal: string, depth: number): void => {
+    for (const name of listNames(absDir, () => seen, limits)) {
       // Every entry counts, so many empty dirs or links cannot dodge a cap.
       seen += 1;
       if (seen > limits.maxFiles * ENTRY_CAP_FACTOR) {
         throw new Error(`skill root exceeds maxEntries (${limits.maxFiles * ENTRY_CAP_FACTOR})`);
       }
       const rel = relDir === "" ? name : join(relDir, name);
-      const stat = lstatSync(join(source, rel));
+      const abs = join(absDir, name);
+      const expected = join(expectedReal, name);
+      const stat = lstatSync(abs);
       if (stat.isSymbolicLink()) {
-        scan.skipped += 1;
-        scan.entries.push(`${rel}\0l`);
+        const target = followableTarget(abs);
+        if (target === null) {
+          skip(rel);
+          continue;
+        }
+        // The target is a real path, so this stat follows nothing further.
+        const targetStat = statSync(target);
+        if (targetStat.isDirectory()) {
+          if (entered.has(target) || depth + 1 > limits.maxDepth) {
+            if (depth + 1 > limits.maxDepth) {
+              throw new Error(`skill root exceeds maxDepth (${limits.maxDepth})`);
+            }
+            skip(rel);
+            continue;
+          }
+          entered.add(target);
+          scan.dirs.push(rel);
+          scan.entries.push(`${rel}\0L\0${target}\0${targetStat.mtimeMs}`);
+          walk(rel, target, target, depth + 1);
+        } else if (targetStat.isFile()) {
+          scan.entries.push(`${rel}\0L\0${target}`);
+          addFile(rel, target, dirname(target), dirname(target), targetStat);
+        } else {
+          skip(rel);
+        }
       } else if (stat.isDirectory()) {
         // A Windows junction can be reported as a plain directory: only enter
         // it when its real path is the path walked to.
-        if (!sameRealPath(join(source, rel), join(realRoot, rel))) {
-          scan.skipped += 1;
-          scan.entries.push(`${rel}\0l`);
+        if (!sameRealPath(abs, expected)) {
+          skip(rel);
           continue;
         }
         if (depth + 1 > limits.maxDepth) {
           throw new Error(`skill root exceeds maxDepth (${limits.maxDepth})`);
         }
+        entered.add(expected);
         scan.dirs.push(rel);
         scan.entries.push(`${rel}\0d\0${stat.mtimeMs}`);
-        walk(rel, depth + 1);
+        walk(rel, abs, expected, depth + 1);
       } else if (stat.isFile()) {
-        if (scan.files.length + 1 > limits.maxFiles) {
-          throw new Error(`skill root exceeds maxFiles (${limits.maxFiles})`);
-        }
-        scan.bytes += stat.size;
-        if (scan.bytes > limits.maxBytes) {
-          throw new Error(`skill root exceeds maxBytes (${limits.maxBytes})`);
-        }
-        scan.files.push({ rel, size: stat.size, exec: (stat.mode & 0o100) !== 0 });
-        scan.entries.push(`${rel}\0f\0${stat.size}\0${stat.mtimeMs}\0${stat.mode & 0o100}`);
+        addFile(rel, abs, absDir, expectedReal, stat);
       } else {
         scan.skipped += 1;
         scan.entries.push(`${rel}\0o`);
@@ -240,7 +368,7 @@ function scanTree(source: string, limits: CopySkillTreeLimits): TreeScan {
     }
   };
   scan.entries.push(`.\0d\0${lstatSync(source).mtimeMs}`);
-  walk("", 0);
+  walk("", source, realRoot, 0);
   scan.entries.sort();
   return scan;
 }
@@ -313,13 +441,11 @@ function readRegularFile(path: string, size: number): Buffer {
 }
 
 function copyScanned(
-  source: string,
   destination: string,
   scan: TreeScan,
   limits: CopySkillTreeLimits,
 ): CopySkillTreeResult {
   mkdirSync(destination, { recursive: true, mode: 0o700 });
-  const realSource = realpathSync.native(source);
   for (const rel of scan.dirs) {
     mkdirSync(join(destination, rel), { mode: 0o700 });
   }
@@ -327,11 +453,10 @@ function copyScanned(
   for (const file of scan.files) {
     // The scan and this read resolve paths separately: re-check the parent
     // right before every open, which leaves only the open itself unchecked.
-    const parent = file.rel.includes(sep) ? file.rel.slice(0, file.rel.lastIndexOf(sep)) : "";
-    if (!sameRealPath(join(source, parent), join(realSource, parent))) {
+    if (!sameRealPath(file.parentAbs, file.parentReal)) {
       throw new Error("skill folder changed while it was copied");
     }
-    const data = readRegularFile(join(source, file.rel), file.size);
+    const data = readRegularFile(file.abs, file.size);
     bytes += data.length;
     if (bytes > limits.maxBytes) {
       throw new Error(`skill root exceeds maxBytes (${limits.maxBytes})`);
@@ -344,9 +469,10 @@ function copyScanned(
 }
 
 /**
- * Copy the regular files of `source` into a new `destination` without
- * following any link inside the source. Links and other non-regular entries
- * are skipped and counted. Throws when a limit is exceeded, a file cannot be
+ * Copy the regular files of `source` into a new `destination`. A link inside
+ * the source is followed only when `policy` allows its target (real files are
+ * copied, never a link); every other link and every non-regular entry is
+ * skipped and counted. Throws when a limit is exceeded, a file cannot be
  * read, or `destination` already exists; it removes the partial `destination`
  * it created and never an existing one.
  */
@@ -354,8 +480,9 @@ export function copySkillTree(
   source: string,
   destination: string,
   limits: CopySkillTreeLimits,
+  policy: SkillLinkPolicy = {},
 ): CopySkillTreeResult {
-  return copyScannedInto(source, destination, scanTree(source, limits), limits);
+  return copyScannedInto(source, destination, scanTree(source, limits, policy), limits);
 }
 
 function copyScannedInto(
@@ -368,7 +495,7 @@ function copyScannedInto(
     throw new Error(`copy destination already exists: ${destination}`);
   }
   try {
-    return copyScanned(source, destination, scan, limits);
+    return copyScanned(destination, scan, limits);
   } catch (error) {
     removeCopiedTree(destination);
     throw error;
@@ -390,11 +517,12 @@ function refreshSkillCopy(
   skills: string,
   sourcePath: string,
   budget?: SkillCopyBudget,
+  linkPolicy: SkillLinkPolicy = defaultSkillLinkPolicy(),
 ): void {
   if (budget !== undefined && Date.now() > budget.deadlineMs) {
     throw new Error("total budget: time limit for skill copies reached");
   }
-  const scan = scanTree(sourcePath, SKILL_COPY_LIMITS);
+  const scan = scanTree(sourcePath, SKILL_COPY_LIMITS, linkPolicy);
   if (budget !== undefined) {
     budget.files -= scan.files.length;
     budget.bytes -= scan.bytes;

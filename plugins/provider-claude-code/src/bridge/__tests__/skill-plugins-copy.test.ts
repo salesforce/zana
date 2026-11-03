@@ -124,8 +124,8 @@ describe("claude skill plugins copy user-owned roots (#587)", () => {
     });
   });
 
-  describe("REQ-3 links inside the source are never followed", () => {
-    it("REQ-3: copySkillTree skips symlinks to files and folders and counts them", () => {
+  describe("REQ-3 links inside the source are followed only as skill-plugins-links.test.ts allows", () => {
+    it("REQ-3: copySkillTree with no link policy skips symlinks to files and folders and counts them", () => {
       symlinkSync(secret, join(userSkills, "escape"), "junction");
       symlinkSync(join(secret, "token.txt"), join(userSkills, "token-link.txt"));
       const destination = join(baseDir, "dest");
@@ -142,7 +142,7 @@ describe("claude skill plugins copy user-owned roots (#587)", () => {
       );
     });
 
-    it("REQ-3: a link to a secret folder inside a user root leaks nothing into the plugin", () => {
+    it("REQ-3: a link to a folder outside the home folder inside a user root leaks nothing into the plugin", () => {
       symlinkSync(secret, join(userSkills, "demo", "escape"), "junction");
       const pluginPath = ensureUser({ owned: "user" });
       const copied = listTree(join(pluginPath, "skills"));
