@@ -33,6 +33,7 @@ import type { DocActor, PeerConflictPage, PeerConflictReview, PeerConflictFile, 
 import { normalizeDocPath } from '../shared/paths.js';
 import { mergeDocument, mergeHistory, type DocumentMergeResult } from './peer-merge.js';
 import { DOC_ONLY, TEMPLATE_ONLY } from './store.js';
+import { cleanLabel } from './project-refs.js';
 
 export interface SyncStoreOptions {
   now?: () => number;
@@ -729,7 +730,7 @@ export class DesignDocSyncStore {
     try {
       this.db.prepare(`INSERT INTO dd_project_refs (project_id, name, tag, last_seen) VALUES (?, ?, ?, ?)
         ON CONFLICT (project_id) DO UPDATE SET name = excluded.name, tag = excluded.tag, last_seen = excluded.last_seen
-        WHERE project_id NOT IN (SELECT project_id FROM dd_project_live)`).run(hint.id, hint.name ?? null, hint.tag ?? null, Date.now());
+        WHERE project_id NOT IN (SELECT project_id FROM dd_project_live)`).run(hint.id, cleanLabel(hint.name), cleanLabel(hint.tag), Date.now());
     } catch {
       // Lazy tables absent (restore in progress): the hint is only a convenience.
     }

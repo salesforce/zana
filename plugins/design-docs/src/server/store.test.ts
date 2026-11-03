@@ -1157,6 +1157,13 @@ describe('DesignDocStore received project lock', () => {
     expect(() => store.update(doc.id, { projectId: null }, user)).toThrow(DesignDocError);
     expect(store.list().find((d) => d.id === doc.id)?.projectLocked).toBe(true);
   });
+  it('treats a mapped-project echo as no move', () => {
+    const { store, bind } = setup();
+    const doc = store.create({ title: 'Mapped', template: 'blank' }, user);
+    bind(doc.id, 'foreign-project');
+    vi.spyOn(store, 'scopeOf').mockReturnValue({ projectId: 'local', global: false, unassigned: false });
+    expect(store.update(doc.id, { projectId: 'local', title: 'Echo2' }, user).title).toBe('Echo2');
+  });
   it('allows no-op, local and round-tripped moves', () => {
     const { store, bind } = setup();
     const local = store.create({ title: 'Local', template: 'blank', projectId: 'p1' }, user);

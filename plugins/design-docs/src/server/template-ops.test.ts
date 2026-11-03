@@ -101,6 +101,26 @@ describe('addFromTemplate', () => {
     expect(store.readFile(doc.id, 'NOTES/A.md').content).toBe('mine');
   });
 
+  it('rewrites only exact link targets of renamed files, relative to each file', () => {
+    const { ctx, store, doc } = setup();
+    const tpl = store.templateNew({
+      label: 'Links', entryPath: 'README.md',
+      files: [
+        { path: 'README.md', content: '[ok](README.md) [frag](README.md#top) [bak](README.md.bak) [sub](notes/page.html)\n<a href="README.mdx">x</a> <a href="README.md?x=1">y</a>' },
+        { path: 'notes/page.html', content: '<a href="../README.md#s">up</a> <img src=\'../README.md\'> [m](../README.md.bak)' }
+      ]
+    }, agent);
+    const key = store.listTemplateRecords().find((t) => t.docId === tpl.id)!.id;
+    const result = addFromTemplate(ctx, { docId: doc.id, templateKey: key, renameOnConflict: true }, agent);
+    expect(result.renamed).toEqual([{ from: 'README.md', to: 'README-2.md' }]);
+    expect(store.readFile(doc.id, 'README-2.md').content).toBe(
+      '[ok](README-2.md) [frag](README-2.md#top) [bak](README.md.bak) [sub](notes/page.html)\n<a href="README.mdx">x</a> <a href="README-2.md?x=1">y</a>'
+    );
+    expect(store.readFile(doc.id, 'notes/page.html').content).toBe(
+      '<a href="../README-2.md#s">up</a> <img src=\'../README-2.md\'> [m](../README.md.bak)'
+    );
+  });
+
   it('adds the same template repeatedly with rising numbers', () => {
     const { ctx, store, doc } = setup();
     addFromTemplate(ctx, { docId: doc.id, templateKey: 'blank', renameOnConflict: true }, agent);

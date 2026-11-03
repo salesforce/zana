@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PluginDatabase } from '@zana-ai/zcc-plugin-sdk/server';
 import { createProjectNames } from './project-names.js';
-import { DesignDocProjectRefs } from './project-refs.js';
+import { cleanLabel, DesignDocProjectRefs } from './project-refs.js';
 import { createRpcHandlers, UI_USER } from './rpc.js';
 import { DesignDocStore } from './store.js';
 import { DesignDocSyncStore } from './sync-store.js';
@@ -187,6 +187,28 @@ describe('mapping and scoping', () => {
     refs.observe(PROJECTS);
     expect(ids({ unassigned: true })).toEqual([]);
     expect(ids({ projectId: 'p2' })).toContain('B');
+  });
+
+  it('an observed empty list makes aliases dead; never-observed does not', async () => {
+    const { received, ids, refs } = setup();
+    received('A', 'f1');
+    await refs.mapForeignProject(list, 'f1', 'p1');
+    refs.observe([]);
+    expect(ids({ unassigned: true })).toEqual(['A']);
+    refs.observe(PROJECTS);
+    expect(ids({ unassigned: true })).toEqual([]);
+  });
+
+  it('listUnassignedForeignProjects degrades to [] when a table vanishes', async () => {
+    const { db, received, refs } = setup();
+    received('A', 'f1');
+    refs.observe(PROJECTS);
+    db.runScript('DROP TABLE dd_project_aliases;');
+    expect(await refs.listUnassignedForeignProjects(list)).toEqual([]);
+  });
+
+  it('cleanLabel strips control and bidi characters', () => {
+    expect(cleanLabel('Bi‮g\u0007 Name\n')).toBe('Big Name');
   });
 
   it('observe skips the write transaction when the list is unchanged', () => {

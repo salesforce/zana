@@ -246,12 +246,58 @@ export function shieldCrossDocLinks(markdown: string): string {
       fence = mark;
       return line;
     }
-    return line.split(/(`+[^`]*`+)/).map((part, index) => index % 2 === 1
+    return splitInlineCode(line).map((part, index) => index % 2 === 1
       ? part
       : part.replace(/\]\(\s*(?:<(doc:[^>\n]*)>|(doc:[^)\s>]*))/gi, (_match, angled: string | undefined, bare: string | undefined) =>
         `](${SHIELD_PREFIX}${encodeURIComponent(angled ?? bare ?? '')}`)
     ).join('');
   }).join('\n');
+}
+
+/**
+ * Split a line into alternating [text, code, text, code, ...] parts following
+ * CommonMark backtick-run matching: a run of N backticks opens a code span that
+ * closes at the next run of exactly N; an unmatched opener is literal text.
+ */
+function splitInlineCode(line: string): string[] {
+  const parts: string[] = [];
+  let text = '';
+  let i = 0;
+  while (i < line.length) {
+    if (line[i] !== '`') {
+      text += line[i];
+      i += 1;
+      continue;
+    }
+    let end = i;
+    while (line[end] === '`') end += 1;
+    const run = end - i;
+    let close = -1;
+    let scan = end;
+    while (scan < line.length) {
+      if (line[scan] !== '`') {
+        scan += 1;
+        continue;
+      }
+      let runEnd = scan;
+      while (line[runEnd] === '`') runEnd += 1;
+      if (runEnd - scan === run) {
+        close = runEnd;
+        break;
+      }
+      scan = runEnd;
+    }
+    if (close < 0) {
+      text += line.slice(i, end);
+      i = end;
+      continue;
+    }
+    parts.push(text, line.slice(i, close));
+    text = '';
+    i = close;
+  }
+  parts.push(text);
+  return parts;
 }
 
 /** Inverse of `shieldCrossDocLinks` for one href; returns the input otherwise. */

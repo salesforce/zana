@@ -134,6 +134,19 @@ describe('shieldCrossDocLinks', () => {
     expect(out).not.toContain('[c](doc://');
   });
 
+  it('matches backtick runs of equal length, CommonMark style', () => {
+    const md = '``a ` [x](doc://x/y)`` then [c](doc://x/y)';
+    const out = shieldCrossDocLinks(md);
+    expect(out).toContain('``a ` [x](doc://x/y)``');
+    expect(out).not.toContain('[c](doc://');
+    // Different-length runs do not close each other.
+    const mixed = 'x ```not closed `` [d](doc://x/y)';
+    expect(shieldCrossDocLinks(mixed)).not.toContain('[d](doc://');
+    // An unmatched opener is literal, so the link after it is shielded.
+    expect(shieldCrossDocLinks('a ` b [e](doc://x/y)')).not.toContain('[e](doc://');
+    expect(shieldCrossDocLinks('`` a ` [f](doc://x/y)')).not.toContain('[f](doc://');
+  });
+
   it('accepts spaces inside angle-bracket destinations and round trips them', () => {
     const shielded = shieldCrossDocLinks('[x](<doc://ref/my file.md>) then [y](doc://ref/a.md)');
     expect(shielded).not.toContain('doc:');

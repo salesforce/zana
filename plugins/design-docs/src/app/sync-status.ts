@@ -40,13 +40,14 @@ export function syncResultMessage(result: SyncSummary): { text: string; kind: 'i
 const POLL_MS = 15_000;
 
 /** Per-doc sync state, refreshed on a timer and whenever `refreshKey` changes. Empty when sync is not set up. */
-export function useDocSyncStatuses(refreshKey?: unknown): ReadonlyMap<string, DocSyncStatus> {
+export function useDocSyncStatuses(refreshKey?: unknown, docId?: string): ReadonlyMap<string, DocSyncStatus> {
   const api = useApi();
   const [rows, setRows] = useState<DocSyncStatus[]>([]);
   const alive = useRef(true);
   const load = useCallback(() => {
-    api.docSyncStatuses().then((next) => { if (alive.current) setRows(next); }, () => undefined);
-  }, [api]);
+    // A failed poll keeps the last good rows; the next tick retries.
+    api.docSyncStatuses(docId).then((next) => { if (alive.current) setRows(next); }, (error) => console.warn('[design-docs] docSyncStatuses poll failed', error));
+  }, [api, docId]);
   useEffect(() => {
     alive.current = true;
     load();

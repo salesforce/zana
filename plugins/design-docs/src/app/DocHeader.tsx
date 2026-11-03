@@ -182,7 +182,7 @@ function StatusMenu({ status, onChange }: { status: DocStatus; onChange(status: 
 
 /** Sync state of this doc against the other computers; renders nothing when sync is not set up. */
 function SyncLine({ docId, refreshKey, onResolve }: { docId: string; refreshKey: unknown; onResolve(): void }) {
-  const status = useDocSyncStatuses(refreshKey).get(docId);
+  const status = useDocSyncStatuses(refreshKey, docId).get(docId);
   const [open, setOpen] = useState(false);
   if (!status) return null;
   const { state } = status;

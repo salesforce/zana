@@ -45,12 +45,12 @@ there, and do not create a doc or offer to write one.
 | --- | --- |
 | `design_doc_list` | Find docs. Defaults to active docs of this project plus global docs. `query` searches titles, summaries, tags and contents. |
 | `design_doc_read` | Without `path`: manifest, open comments and the entry file. With `path`: one file and its revision. `includeAll: true` returns every text file. For HTML pages it adds the page check and what the panel saw when it last ran the page. |
-| `design_doc_create` | New doc from `files` or a `template`. Pass `projectId` to assign to a Project, or omit for global. |
+| `design_doc_create` | New doc from `files` or a `template`. Omit both `projectId` and `global` to use the current thread's project; pass `projectId` for another Project or `global: true` for every project. |
 | `design_doc_write` | Change one file: `edits` (preferred), `content` (whole file, creates it), `delete`, or `renameTo`. Writing an HTML page returns its page check. |
 | `design_doc_update` | Title, summary, status, tags, entry file, `alternativeTo` (compete with another doc), or `projectId`/`global: true` to move between scopes. |
 | `design_doc_comment` | Add a comment, reply in one's thread (`replyTo`), or `resolve` / `reopen` one by id (`body` becomes a reply). |
 | `design_doc_template_read` | Read a template by key. |
-| `design_doc_add_from_template` | Create a doc from a template with `projectId` or `global: true`. |
+| `design_doc_add_from_template` | Add a template's files to an existing doc. Never overwrites: clashing files get a numbered name. |
 
 The same operations exist on the CLI for shells and scripts. Run
 `zcc design-docs --help` to see them, for example `zcc design-docs show <doc>`,
@@ -63,7 +63,7 @@ files into a doc and `export --out` writes a doc out as a site (see
 
 CLI `create` and `update` accept `--project <id> | --global` to assign or move
 docs; unknown id returns the list of valid Projects. `template-read` and
-`add-from-template` read and create docs from templates on the CLI.
+`add-from-template` read templates and add a template's files to an existing doc on the CLI.
 
 A doc reference is its id or its slug. A slug only names a doc of this project
 or a global one; use the id to reach another project's doc. Cross-doc links use
@@ -87,7 +87,7 @@ them from **Templates** in the Design Docs workbench: create, edit, duplicate,
 export, import, delete, and restore built-ins.
 
 New tools `design_doc_template_read` and `design_doc_add_from_template` let
-agents read templates and add docs from them (CLI: `template-read`,
+agents read templates and add a template's files to an existing doc (CLI: `template-read`,
 `add-from-template`).
 
 An export is a JSON template bundle. Import accepts that bundle only. Templates

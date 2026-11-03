@@ -748,7 +748,10 @@ export class DesignDocStore {
       params.push(entryPath);
     }
     // Setting the project it already has is a no-op; it must not rewrite the replicated project reference either.
-    const moveProject = patch.projectId !== undefined && patch.projectId !== row.project_id;
+    // A mapped received doc lists under its local project while its own binding stays null; a client echoing
+    // that listed project back with an edit is not asking to move it.
+    const echoesMapping = patch.projectId !== undefined && row.project_id === null && patch.projectId === this.scopeOf(row.id)?.projectId;
+    const moveProject = patch.projectId !== undefined && patch.projectId !== row.project_id && !echoesMapping;
     if (moveProject) {
       sets.push('project_id = ?');
       params.push(patch.projectId);

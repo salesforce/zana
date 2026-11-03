@@ -182,7 +182,7 @@ export const repairPeerLinkResponseSchema = z.object({
   /** Whether the connection is up after the repair attempt. Absent from older servers. */
   connected: z.boolean().optional(),
   /** Why it is still down, when the owner store knows. */
-  reason: z.enum(["ssh-down", "peer-offline", "paused", "revoked", "expired", "fenced", "conflict", "unreachable"]).optional()
+  reason: z.enum(["ssh-down", "peer-offline", "paused", "revoked", "expired", "fenced", "conflict", "unreachable"]) // keep in step with PEER_LINK_REPAIR_REASONS.optional()
 });
 export type RepairPeerLinkResponse = z.infer<typeof repairPeerLinkResponseSchema>;
 

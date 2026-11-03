@@ -5,7 +5,7 @@
  */
 import { DOC_STATUSES, isDocStatus, type DesignDocDetail, type DocActor, type DocStatus, type TextEdit } from '../shared/contract.js';
 import { pageText } from '../shared/html-scan.js';
-import { fileKindOf, imageMediaTypeOf, renameClashingPaths } from '../shared/paths.js';
+import { fileKindOf, imageMediaTypeOf, relativeDocPath, renameClashingPaths, resolveDocLink } from '../shared/paths.js';
 import { renderTemplateFiles } from '../shared/templates.js';
 import {
   commentLine,
@@ -415,12 +415,16 @@ export function readTemplate(ctx: OperationContext, raw: unknown): TemplateReadR
   };
 }
 
+/** Markdown `](target` or html `="target"` / `='target'`; the target must end at the delimiter, so prefixes never match. */
+const LINK_TARGET = /\]\(([^)\s]*)(?=[)\s])|=(["'])([^"']*)\2/g;
+
 /**
  * Writes a template's files into an existing doc as one atomic change. Never
  * overwrites: a path the doc already has (any letter case) fails the whole call,
  * unless `renameOnConflict` is true, which numbers the clashing files (`a-2.md`).
  * Size and count limits are the store's, as for any other write.
  */
+
 export function addFromTemplate(ctx: OperationContext, raw: unknown, actor: DocActor): { added: string[]; renamed: Array<{ from: string; to: string }> } {
   const input = asInput(raw);
   const renameOnConflict = input.renameOnConflict === true;
@@ -442,10 +446,17 @@ export function addFromTemplate(ctx: OperationContext, raw: unknown, actor: DocA
     const path = renames.get(file.path) ?? file.path;
     if (!renames.size || file.encoding === 'base64' || typeof file.content !== 'string') return { ...file, path };
     // Keep links between the added files pointing at each other, not at the doc's older copies.
-    let content = file.content;
-    for (const [from, to] of renames) {
-      content = content.split(`](${from}`).join(`](${to}`).split(`="${from}`).join(`="${to}`).split(`='${from}`).join(`='${to}`);
-    }
+    const content = file.content.replace(LINK_TARGET, (match, mdTarget: string | undefined, quote: string | undefined, attrTarget: string | undefined) => {
+      const target = mdTarget ?? attrTarget ?? '';
+      const cut = target.search(/[?#]/);
+      const bare = cut < 0 ? target : target.slice(0, cut);
+      const suffix = cut < 0 ? '' : target.slice(cut);
+      const resolved = resolveDocLink(file.path, bare);
+      const renamed = resolved === null ? undefined : renames.get(resolved);
+      if (renamed === undefined) return match;
+      const next = relativeDocPath(path, renamed) + suffix;
+      return mdTarget !== undefined ? `](${next}` : `=${quote}${next}${quote}`;
+    });
     return { ...file, path, content };
   });
   const results = ctx.store.writeFiles(

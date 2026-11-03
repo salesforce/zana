@@ -319,6 +319,7 @@ class PageBundler {
       last = end;
     };
     const tags: Array<HtmlTag | { name: '/a'; start: number; end: number }> = [];
+    const claimed = new Set<number>(); // an unclosed cross-doc anchor must not share its </a> with a later one
     for (const tag of scanTags(html)) {
       tags.push(tag);
       if (tag.name === 'a' && isCrossDocScheme(attribute(tag, 'href') ?? '')) {
@@ -326,7 +327,10 @@ class PageBundler {
         const closer = /<\/a\s*>/gi;
         closer.lastIndex = tag.end;
         const match = closer.exec(html);
-        if (match) tags.push({ name: '/a', start: match.index, end: match.index + match[0].length });
+        if (match && !claimed.has(match.index)) {
+          claimed.add(match.index);
+          tags.push({ name: '/a', start: match.index, end: match.index + match[0].length });
+        }
       }
     }
     tags.sort((a, b) => a.start - b.start);

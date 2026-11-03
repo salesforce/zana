@@ -56,6 +56,12 @@ export const MAPPED_TO_ANY = `EXISTS (SELECT 1 FROM sync_doc_references r JOIN d
 export const MAPPED_TO_PROJECT = `EXISTS (SELECT 1 FROM sync_doc_references r JOIN dd_project_aliases a
   ON a.foreign_project_id = json_extract(r.project_json, '$') WHERE r.doc_id = d.id AND a.local_project_id = ? AND ${ALIAS_LIVE})`;
 
+/** Display-safe text: control and bidirectional characters removed, blank as null. */
+export function cleanLabel(value: string | null | undefined): string | null {
+  // eslint-disable-next-line no-control-regex
+  return (value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, '').trim() || null;
+}
+
 function cleanId(value: unknown, label: string): string {
   if (typeof value !== 'string' || !value.trim() || value.length > MAX_ID_LENGTH) {
     throw new DesignDocError('invalid', `${label} must be a non-empty string of at most ${MAX_ID_LENGTH} characters`);
@@ -114,6 +120,8 @@ export class DesignDocProjectRefs {
         this.db.prepare('DELETE FROM dd_project_live').run();
         const live = this.db.prepare('INSERT OR IGNORE INTO dd_project_live (project_id) VALUES (?)');
         for (const project of projects) live.run(project.id);
+        // Marks the list as observed, so a successfully observed EMPTY list is not mistaken for "never observed".
+        live.run('');
         this.prune(projects.map((project) => project.id));
       });
       this.lastObserved = signature;
@@ -222,11 +230,17 @@ export class DesignDocProjectRefs {
   /** Foreign project ids with unmapped docs, a few sample titles and a never-applied suggestion. */
   async listUnassignedForeignProjects(list?: ProjectLister): Promise<UnassignedForeignProject[]> {
     if (!this.available) return [];
-    // docs-kind: allow Grouped over kind = 'doc' only.
-    const rows = this.db.prepare(`SELECT json_extract(r.project_json, '$') AS fid, COUNT(*) AS n
+    let rows: Array<{ fid: string | null; n: number }>;
+    try {
+      // docs-kind: allow Grouped over kind = 'doc' only.
+      rows = this.db.prepare(`SELECT json_extract(r.project_json, '$') AS fid, COUNT(*) AS n
       FROM docs d JOIN sync_doc_references r ON r.doc_id = d.id
       WHERE d.kind = 'doc' AND d.project_id IS NULL AND r.project_json <> 'null' AND NOT ${MAPPED_TO_ANY}
       GROUP BY fid ORDER BY n DESC, fid LIMIT ${MAX_UNASSIGNED}`).all() as Array<{ fid: string | null; n: number }>;
+    } catch {
+      this.tables = false; // re-probed on next use
+      return [];
+    }
     let registered: Array<ProjectInfo> = [];
     if (list) {
       try { registered = await list(); } catch { registered = []; }
@@ -250,9 +264,7 @@ export class DesignDocProjectRefs {
   private senderLabel(foreignId: string): { senderName: string | null; senderTag: string | null } {
     try {
       const stored = this.db.prepare('SELECT name, tag FROM dd_project_refs WHERE project_id = ?').get(foreignId) as { name: string | null; tag: string | null } | undefined;
-      // eslint-disable-next-line no-control-regex
-      const clean = (value: string | null | undefined) => (value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, '').trim() || null;
-      return { senderName: clean(stored?.name), senderTag: clean(stored?.tag) };
+      return { senderName: cleanLabel(stored?.name), senderTag: cleanLabel(stored?.tag) };
     } catch {
       return { senderName: null, senderTag: null };
     }

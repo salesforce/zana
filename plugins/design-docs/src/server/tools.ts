@@ -107,7 +107,7 @@ export function registerDesignDocTools(zcc: Pick<ZccPluginApi, 'agents'>, deps: 
     name: 'design_doc_add_from_template',
     description:
       'Add a template\'s files to an EXISTING design doc ({{title}} and {{summary}} are filled in; they default to the doc\'s own). ' +
-      'Fails, changing nothing, if any file path already exists in the doc. Returns the added paths.',
+      'Never overwrites: a file whose path already exists is added under a numbered name (README-2.md) and links between the added files are updated. Returns the added paths.',
     parameters: {
       type: 'object',
       properties: {

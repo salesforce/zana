@@ -27,11 +27,11 @@ A doc with HTML pages can be published as a GitHub Pages site. Publish asks for 
 
 ## Project scoping
 
-Docs now belong to a Project or are global. Create with `--project <id>` or omit for global; move with `design_doc_update projectId` or `--global`. Agent prompts tell agents to follow `<!-- AI Instructions -->` template comments for guidance.
+Docs now belong to a Project or are global. Create with `--project <id>`, `--global`, or neither (the current project); move with `design_doc_update projectId` or `--global`. Agent prompts tell agents to follow `<!-- AI Instructions -->` template comments for guidance.
 
 ## Peer docs
 
-Received peer docs map to local Projects automatically when possible. Unmapped docs appear under 'Unassigned from peers' until you map them. Deleted Projects show as '<name> (project removed)'.
+Received peer docs appear under 'Unassigned from peers' until you map them. The app suggests a matching local Project (same tag, then name) and nothing is mapped until you confirm. Deleted Projects show as '<name> (project removed)'.
 
 ## Data
 

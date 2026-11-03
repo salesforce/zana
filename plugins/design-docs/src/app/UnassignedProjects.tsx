@@ -23,7 +23,7 @@ function Titles({ titles, total, primary = false }: { titles: string[]; total: n
 
 /**
  * Map projects of other computers to local ones. Nothing is applied unless the user confirms a row;
- * suggestions only preselect nothing. The server re-validates every mapping.
+ * suggestions are preselected but applied only when the user presses Map. The server re-validates every mapping.
  */
 export function UnassignedProjectsDialog({
   unassigned,

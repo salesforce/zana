@@ -51,6 +51,15 @@ describe('project hint on the wire', () => {
     expect(out[0]).toMatchObject({ foreignProjectId: 'pa', suggestion: { projectId: 'local-1', basis: 'tag' } });
   });
 
+  it('sanitizes control and bidi characters in a received hint', () => {
+    const a = peer('a'), b = peer('b');
+    a.store.projectRefs.observe([{ id: 'pa', name: 'Bill‮ing\u0007', tag: 'b\nill' }]);
+    const { intent } = sentDoc(a, 'pa');
+    const offer = a.service.createOffer(intent);
+    expect(b.sync.apply(offer).stage).toBe('synced');
+    expect(b.db.prepare('SELECT name, tag FROM dd_project_refs WHERE project_id = ?').get('pa')).toEqual({ name: 'Billing', tag: 'bill' });
+  });
+
   it('is also carried by transfers and kept out of the transfer hash', () => {
     const a = peer('a');
     a.store.projectRefs.observe([{ id: 'pa', name: 'Billing' }]);
