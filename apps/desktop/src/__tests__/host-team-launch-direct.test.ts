@@ -663,6 +663,28 @@ describe('launchTeam Modern structured path', () => {
     });
   });
 
+  it('passes a persona reasoning effort to its Modern squad seats and leaves other seats unset (#584)', async () => {
+    h.personas[1] = persona('w1', { reasoningLevel: 'high' });
+    const req = structuredReq();
+    const result = await launchTeam('team1', 'p1', req);
+    expect(result).toMatchObject({ ok: true, value: { failedSlots: [] } });
+    if (!result.ok) return;
+    const creates = h.runtime.createSquadMember.mock.calls.map(([request]) => request);
+    const effortBySlot = new Map(result.value.workers.map((worker) => [worker.slotId,
+      creates.find((request) => request.bindingId === worker.sessionId)?.reasoningLevel]));
+    // Both seats of the persona that sets an effort carry it; the seats of the personas that do not stay unset.
+    expect(effortBySlot.get('0:w1:0')).toBe('high');
+    expect(effortBySlot.get('0:w1:1')).toBe('high');
+    expect(effortBySlot.get('1:w2:0')).toBeUndefined();
+    expect(creates.find((request) => request.role === 'orchestrator')?.reasoningLevel).toBeUndefined();
+    // The effort is also recorded in the durable persona snapshot, so a resumed seat keeps it.
+    const record = lifecycle(req.launchRequestId);
+    const snapshotEffort = (slotId: string) => record.workers.find((worker) => worker.slotId === slotId)?.modernContext?.personaSnapshot.reasoningLevel;
+    expect(snapshotEffort('0:w1:0')).toBe('high');
+    expect(snapshotEffort('0:w1:1')).toBe('high');
+    expect(snapshotEffort('1:w2:0')).toBeUndefined();
+  });
+
   it.each([
     ['claude', 'claude-code'],
     ['opencode', 'acp-opencode']
