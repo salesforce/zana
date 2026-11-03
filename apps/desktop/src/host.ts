@@ -3260,11 +3260,11 @@ async function reconcileModernMembers(records?: readonly TeamLifecycleRecord[]):
              observations.push({ ...reference, state: status.status === 'stopped' ? 'terminal' : status.live ? 'bound' : 'unknown' });
            }
           if (status.live) {
-            executionDeliveryDrain.observe(worker.sessionId, status.status === 'idle' ? 'idle' : 'working');
+            if (worker.sessionId) executionDeliveryDrain.observe(worker.sessionId, status.status === 'idle' ? 'idle' : 'working');
             if (status.eventSequence > (previous?.eventSequence ?? 0) && status.status === 'active' && worker.modernContext?.executionId) {
               await squadExecutionService.renewWorkerLease(worker.modernContext.executionId, worker.slotId);
             }
-          } else executionDeliveryDrain.remove(worker.sessionId);
+          } else if (worker.sessionId) executionDeliveryDrain.remove(worker.sessionId);
           if (status.status === 'stopped') { modernMemberStatus.delete(reference.threadId); modernStatusFailureLogged.delete(reference.threadId); }
         } catch (error) {
           if (!modernStatusFailureLogged.has(reference.threadId)) {

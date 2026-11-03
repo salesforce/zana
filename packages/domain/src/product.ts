@@ -4553,6 +4553,11 @@ export interface TeamSlot {
   quantity?: number;
   /** Optional tab label override. */
   label?: string;
+  /**
+   * Opt-in: keep this seat closed until the engine has a first unit for it.
+   * Only the boolean `true` is stored; absent means the seat starts at launch.
+   */
+  startOnDemand?: boolean;
 }
 
 /** Whole-squad execution transport. Mixed transports are deliberately unsupported. */

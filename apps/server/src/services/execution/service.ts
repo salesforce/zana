@@ -208,6 +208,8 @@ function assignmentCorrelation(executionId: string, claim: { claimId?: string; c
   return { executionId, assignmentId: claim.claimId, idempotencyKey: `${executionId}:${claim.claimId}:${claim.claimGeneration}` };
 }
 
+export type DeferredWorkerSpawnResult = { ok: true; sessionId: string } | { ok: false; message: string };
+
 export interface ExecutionServiceDeps {
   store: ReturnType<typeof createExecutionStore>;
   artifacts: ReturnType<typeof createExecutionArtifactStore>;
@@ -247,6 +249,11 @@ export interface ExecutionServiceDeps {
   /** Receipt-aware transport. Only rejection proves an assignment was not accepted. */
   deliverAssignment?: (workerSessionId: string, text: string, correlation: ExecutionAssignmentCorrelation) =>
     Promise<{ state: 'accepted' | 'completed' | 'uncertain' | 'rejected' }>;
+  /**
+   * Start a seat that was left closed at launch (`startOnDemand`). Resolves with the new
+   * session id, or a failure message; the engine then delivers the assignment or releases it.
+   */
+  spawnDeferredWorker?: (recordId: string, slotId: string) => Promise<DeferredWorkerSpawnResult>;
   /** Project a runtime receipt only after authenticated work completion is durable. */
   onWorkSettled?: (correlation: ExecutionAssignmentCorrelation & { workerSessionId: string }) => void | Promise<void>;
   triggerDeliveryDrain?: (sessionId: string) => void;

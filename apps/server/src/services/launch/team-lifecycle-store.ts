@@ -66,7 +66,12 @@ export interface TeamLaunchResult {
   workerSessionIds?: string[];
 }
 
-export interface TeamLifecycleWorker extends TeamLaunchedWorker {
+export interface TeamLifecycleWorker extends Omit<TeamLaunchedWorker, 'sessionId'> {
+  /**
+   * Absent only for a seat that starts on demand and has not started yet
+   * (`process: 'authorized'`, CLI transport). Every other worker has one.
+   */
+  sessionId?: string;
   process: TeamWorkerProcessState;
   attention: TeamWorkerAttentionState;
   task: TeamWorkerTaskState;
@@ -737,7 +742,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
             }
             continue;
           }
-          if (recoveredSessionIds.has(worker.sessionId)) continue;
+          if (worker.sessionId !== undefined && recoveredSessionIds.has(worker.sessionId)) continue;
           const reconciledProcess = worker.process === 'spawning' ? 'spawn-failed'
             : worker.process === 'running' ? 'exited'
               : undefined;
@@ -885,12 +890,12 @@ export function createTeamLifecycleIntegration(opts: TeamLifecycleIntegrationOpt
             ...(worker.modernContext.executionId ? { executionId: worker.modernContext.executionId } : {})
           } : {})
         };
-        bySession.set(worker.sessionId, tracked);
+        if (worker.sessionId !== undefined) bySession.set(worker.sessionId, tracked);
         // Main routes ACP DynamicTool calls by conversation thread id. Preserve
         // the opaque reservation key too for cancellation while creation races.
         if (worker.transport === 'MODERN' && worker.threadId) bySession.set(worker.threadId, tracked);
       } else {
-        bySession.delete(worker.sessionId);
+        if (worker.sessionId !== undefined) bySession.delete(worker.sessionId);
         if (worker.transport === 'MODERN' && worker.threadId) bySession.delete(worker.threadId);
       }
     }
@@ -975,6 +980,7 @@ export function createTeamLifecycleIntegration(opts: TeamLifecycleIntegrationOpt
         const pendingSessionIds: string[] = [];
         for (const worker of canceled.workers) {
           if (terminalProcesses.has(worker.process)) continue;
+          if (worker.sessionId === undefined) continue;
           if (retainOrchestrator && worker.sessionId === orchestratorSessionId) continue;
           if (closeRequested.has(worker.sessionId)) continue;
           const isModern = (worker.transport ?? 'CLI') === 'MODERN';
@@ -1071,7 +1077,7 @@ export function createTeamLifecycleIntegration(opts: TeamLifecycleIntegrationOpt
         const recovered = new Set(recoveredSessionIds);
         const before = await opts.store.list();
         const releasable = new Map(before.flatMap((record) => record.workers
-          .filter((worker) => (worker.transport ?? 'CLI') !== 'MODERN' && !recovered.has(worker.sessionId)
+          .filter((worker) => (worker.transport ?? 'CLI') !== 'MODERN' && (worker.sessionId === undefined || !recovered.has(worker.sessionId))
             && (worker.process === 'spawning' || worker.process === 'running')
             && !worker.capacityReleased)
           .map((worker) => [`${record.id}\u0000${worker.slotId}`, worker.authorizationId] as const)));
@@ -1197,7 +1203,7 @@ function validateClaimWorkers(
     const key = identityKey(worker);
     if (worker.cohortId !== launchResult.cohortId
       || hasOrAdd(workerSlotIds, worker.slotId)
-      || hasOrAdd(workerSessionIds, worker.sessionId)
+      || (worker.sessionId !== undefined && hasOrAdd(workerSessionIds, worker.sessionId))
       || hasOrAdd(workerAuthorizationIds, worker.authorizationId)) {
       throw new Error('duplicate team lifecycle worker');
     }
@@ -1208,8 +1214,8 @@ function validateClaimWorkers(
   }
 }
 
-function identityKey(worker: TeamLaunchedWorker): string {
-  return [worker.slotId, worker.sessionId, worker.cohortId, worker.personaId, worker.projectId, worker.authorizationId].join('\u0000');
+function identityKey(worker: Omit<TeamLaunchedWorker, 'sessionId'> & { sessionId?: string }): string {
+  return [worker.slotId, worker.sessionId ?? '', worker.cohortId, worker.personaId, worker.projectId, worker.authorizationId].join('\u0000');
 }
 
 function hasOrAdd(values: Set<string>, value: string): boolean {
@@ -1263,7 +1269,7 @@ function boundedOperationResult(result: TeamLaunchOperationResult): TeamLaunchOp
   throw new Error('invalid team launch operation result');
 }
 
-function boundedIdentity(worker: TeamLaunchedWorker): TeamLaunchedWorker {
+function boundedIdentity(worker: Omit<TeamLaunchedWorker, 'sessionId'> & { sessionId?: string }): TeamLaunchedWorker {
   if (!worker || typeof worker !== 'object') throw new Error('invalid team worker identity');
   return {
     sessionId: boundedString(worker.sessionId, 'session id'),
