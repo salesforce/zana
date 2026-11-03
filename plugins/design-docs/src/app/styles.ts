@@ -75,6 +75,8 @@ export const DESIGN_DOCS_STYLES = `
 .dd-field-help { margin: 8px 0 0; font-size: 12px; }
 .dd-field-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
 .dd-field-inline .dd-select { width: auto; max-width: 180px; }
+.dd-map-row .dd-field-inline { flex-wrap: wrap; }
+.dd-map-row .dd-field-inline .dd-select { flex: 1 1 auto; min-width: 180px; max-width: 100%; width: auto; }
 .dd-form { display: flex; flex-direction: column; gap: 14px; }
 
 .dd-segmented {
