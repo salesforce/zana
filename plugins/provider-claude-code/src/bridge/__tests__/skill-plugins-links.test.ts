@@ -42,10 +42,7 @@ describe("links inside a user skills folder are followed only under the home fol
   let home: string;
   let skills: string;
   let outside: string;
-  const policy = () => ({
-    followLinksUnder: home,
-    denyUnder: [join(home, ".ssh")],
-  });
+  const policy = () => defaultSkillLinkPolicy(home);
 
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), "zcc-skill-links-"));
@@ -196,15 +193,125 @@ describe("links inside a user skills folder are followed only under the home fol
     );
   });
 
-  it("the default policy follows links under the real home folder and refuses credential folders", () => {
+  it("the default policy is an allowlist of install locations plus a credential denylist", () => {
     const real = defaultSkillLinkPolicy("/Users/someone");
-    expect(real.followLinksUnder).toBe("/Users/someone");
+    expect(real.home).toBe("/Users/someone");
+    expect(real.allowUnder).toEqual(
+      expect.arrayContaining([join("/Users/someone", ".claude/skills"), join("/Users/someone", ".agents")]),
+    );
     expect(real.denyUnder).toEqual(
       expect.arrayContaining([
         join("/Users/someone", ".ssh"),
-        join("/Users/someone", ".aws"),
-        join("/Users/someone", ".gnupg"),
+        join("/Users/someone", ".config/gh"),
+        join("/Users/someone", "Library/Keychains"),
+        join("/Users/someone", ".claude/.credentials.json"),
       ]),
     );
+  });
+
+  describe("credentials and unlisted locations are never copied", () => {
+    const put = (rel: string, content = "SECRET\n"): string => {
+      const full = join(home, rel);
+      mkdirSync(join(full, ".."), { recursive: true });
+      writeFileSync(full, content);
+      return full;
+    };
+    const copy = () => {
+      const destination = join(base, "dest");
+      const result = copySkillTree(skills, destination, LIMITS, policy());
+      return { destination, result };
+    };
+
+    it.each([
+      [".netrc"],
+      [".npmrc"],
+      [".git-credentials"],
+      [".config/gh/hosts.yml"],
+      [".claude/.credentials.json"],
+      [".claude/settings.json"],
+      [".azure/accessTokens.json"],
+      ["Library/Keychains/login.keychain-db"],
+    ])("skips a file link to ~/%s", (rel) => {
+      symlinkSync(put(rel), join(skills, "link.md"));
+      const { destination, result } = copy();
+      expect(result.files).toBe(0);
+      expect(result.skipped).toBe(1);
+      expect(existsSync(join(destination, "link.md"))).toBe(false);
+    });
+
+    it.each([[".azure"], [".config/gh"], ["Library/Keychains"], [".kube"]])(
+      "skips a folder link to ~/%s",
+      (rel) => {
+        put(`${rel}/token`);
+        symlinkSync(join(home, rel), join(skills, "dir"), "junction");
+        const { destination, result } = copy();
+        expect(result.files).toBe(0);
+        expect(existsSync(join(destination, "dir"))).toBe(false);
+      },
+    );
+
+    it("skips a credential file or folder even inside an allowed location", () => {
+      symlinkSync(put(".agents/.npmrc"), join(skills, "rc"));
+      put("work/Skills/.aws/credentials");
+      symlinkSync(join(home, "work", "Skills", ".aws"), join(skills, "aws"), "junction");
+      const { destination, result } = copy();
+      expect(result.files).toBe(0);
+      expect(result.skipped).toBe(2);
+      expect(existsSync(join(destination, "rc"))).toBe(false);
+    });
+
+    it("skips a home file that is not in an install location, however it is named", () => {
+      symlinkSync(put("notes/plain.md", "notes\n"), join(skills, "plain.md"));
+      expect(copy().result.skipped).toBe(1);
+    });
+
+    it("follows a skills library kept elsewhere under the home folder", () => {
+      put("work/Skills/mine/SKILL.md", "mine\n");
+      symlinkSync(join(home, "work", "Skills", "mine"), join(skills, "mine"), "junction");
+      const { destination } = copy();
+      expect(readFileSync(join(destination, "mine", "SKILL.md"), "utf8")).toBe("mine\n");
+    });
+
+    it("does not copy credentials found below an allowed link (descendants are checked)", () => {
+      put(".agents/skills/ok/SKILL.md", "ok\n");
+      put(".agents/skills/ok/.netrc");
+      put(".agents/skills/ok/.credentials.json");
+      put(".agents/skills/ok/.aws/credentials");
+      symlinkSync(join(home, ".agents", "skills", "ok"), join(skills, "ok"), "junction");
+      const { destination, result } = copy();
+      expect(readFileSync(join(destination, "ok", "SKILL.md"), "utf8")).toBe("ok\n");
+      expect(listTree(destination).filter((p) => /netrc|credentials/u.test(p))).toEqual([]);
+      expect(result.files).toBe(1);
+      expect(result.skipped).toBe(3);
+    });
+
+    it("a link to a folder holding a link to credentials does not reach them", () => {
+      put(".agents/skills/hop/SKILL.md", "hop\n");
+      symlinkSync(put(".npmrc"), join(home, ".agents", "skills", "hop", "rc"));
+      symlinkSync(join(home, ".agents", "skills", "hop"), join(skills, "hop"), "junction");
+      const { destination } = copy();
+      expect(existsSync(join(destination, "hop", "rc"))).toBe(false);
+      expect(existsSync(join(destination, "hop", "SKILL.md"))).toBe(true);
+    });
+
+    it("a link to ~/.config is not followed, so ~/.config/gcloud is not copied", () => {
+      put(".config/gcloud/credentials.db");
+      symlinkSync(join(home, ".config"), join(skills, "cfg"), "junction");
+      const { destination, result } = copy();
+      expect(result.files).toBe(0);
+      expect(existsSync(join(destination, "cfg"))).toBe(false);
+    });
+
+    it("a credential file inside the skills folder itself is skipped too", () => {
+      writeFileSync(join(skills, ".npmrc"), "//registry:_authToken=x\n");
+      mkdirSync(join(skills, "plain", ".ssh"), { recursive: true });
+      writeFileSync(join(skills, "plain", ".ssh", "id"), "k");
+      writeFileSync(join(skills, "plain", "SKILL.md"), "p\n");
+      const { destination, result } = copy();
+      expect(result.files).toBe(1);
+      expect(result.skipped).toBe(2);
+      expect(existsSync(join(destination, ".npmrc"))).toBe(false);
+      expect(existsSync(join(destination, "plain", ".ssh"))).toBe(false);
+    });
   });
 });

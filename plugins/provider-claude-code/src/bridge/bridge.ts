@@ -441,7 +441,12 @@ function assembleSkillPlugins(
 }
 
 // Thread starts refresh user skill copies at most this often; configure always
-// refreshes. A scan of every root blocks the shared bridge's event loop.
+// refreshes. The refresh is synchronous (so two thread starts never write one
+// copy at once) and blocks the shared event loop, so it is bounded by the
+// shared budget deadline inside every walk and copy, and an unchanged root
+// costs one scan and no copy. Known limit: "owned" is inferred from the id
+// prefix below, not from the real source, so a user folder that arrives under
+// another id is still junction-linked (a follow-up issue is needed).
 const SKILL_REFRESH_MIN_INTERVAL_MS = 5_000;
 let lastSkillRefreshMs = 0;
 
@@ -2556,6 +2561,8 @@ async function handleRequest(request: ClaudeCodeJsonRpcRequest): Promise<void> {
       );
       break;
     case "thread/start":
+      // Explicit, not hidden in the params builder: this writes skill copies.
+      refreshSkillRootsForThreadStart();
       await handleThreadStart(
         request.id,
         claudeThreadStartParamsSchema.parse(
@@ -2564,6 +2571,8 @@ async function handleRequest(request: ClaudeCodeJsonRpcRequest): Promise<void> {
       );
       break;
     case "thread/resume":
+      // Explicit, not hidden in the params builder: this writes skill copies.
+      refreshSkillRootsForThreadStart();
       await handleThreadResume(
         request.id,
         claudeThreadResumeParamsSchema.parse({
@@ -2573,6 +2582,8 @@ async function handleRequest(request: ClaudeCodeJsonRpcRequest): Promise<void> {
       );
       break;
     case "thread/fork":
+      // Explicit, not hidden in the params builder: this writes skill copies.
+      refreshSkillRootsForThreadStart();
       await handleThreadFork(
         request.id,
         claudeThreadForkParamsSchema.parse({
@@ -2880,8 +2891,6 @@ async function handleThreadFork(
 function toClaudeSessionParams(
   params: z.infer<typeof canonicalThreadStartParamsSchema>,
 ): Record<string, unknown> {
-  // Synchronous, so two thread starts never write the same copy at once.
-  refreshSkillRootsForThreadStart();
   return buildClaudeSessionParams({
     threadId: params.threadId,
     cwd: params.cwd,
