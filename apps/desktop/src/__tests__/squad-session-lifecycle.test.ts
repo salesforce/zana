@@ -1,10 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   claimSquadWorktreeFollowUp, releaseSquadWorktreeFollowUp, squadWorktreeFollowUpExecution
 } from '../squad-worktree-lifecycle.js';
 import {
-  cleanupOrchestratorOnExit, createFollowUpClaims, createModernNativeRecoveryCapture, createNativeRecoveryCapture, teardownTerminalExecutionOnExit
+  cleanupOrchestratorOnExit, createFollowUpClaims, createModernNativeRecoveryCapture, createNativeRecoveryCapture, createPlanHandoffRetirement,
+  teardownTerminalExecutionOnExit
 } from '../squad-session-lifecycle.js';
+import { authoredPlanRelPath, cleanupHandoffFiles, sourceMirrorRelPath } from '../team-plan-handoff.js';
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
@@ -239,6 +245,8 @@ describe('exit teardown', () => {
     expect(await keepsPlan({ state: 'COMPLETED', workUnits: [] })).toBe(false);
     expect(await keepsPlan({ state: 'STOPPED', timeoutReason: 'unresolved-blocker' })).toBe(false);
     expect(await keepsPlan({ state: 'STOPPED', timeoutReason: 'plan-correction-cancelled' })).toBe(false);
+    // A dismissed run is hidden for good, so nothing will retry it.
+    expect(await keepsPlan({ state: 'FAILED', workUnits: [], dismissedAt: 1 })).toBe(false);
   });
 
   it('cleanup: falls back to project path, else nothing', async () => {
@@ -257,6 +265,85 @@ describe('exit teardown', () => {
     const d2 = deps();
     d2.cleanupHandoffFiles.mockRejectedValue(new Error('y'));
     await expect(cleanupOrchestratorOnExit(d2, orch)).resolves.toBeUndefined();
+  });
+});
+
+describe('createPlanHandoffRetirement', () => {
+  function deps(record: unknown, over: any = {}) {
+    return {
+      executionStore: { get: vi.fn(async () => undefined as any), getInProject: vi.fn(async () => record as any) },
+      projects: { listProjects: vi.fn(() => [{ id: 'p', path: '/proj' }]) },
+      cleanupHandoffFiles: vi.fn(async () => undefined),
+      logError: vi.fn(),
+      ...over
+    };
+  }
+
+  it('removes every handoff file, the authored plan included, once a planless run is dismissed or superseded', async () => {
+    for (const record of [
+      { state: 'FAILED', workUnits: [], dismissedAt: 5 },
+      { state: 'STOPPED', successorExecutionId: 'next' },
+      { state: 'COMPLETED', workUnits: [] },
+      { state: 'STOPPED', timeoutReason: 'unresolved-blocker' }
+    ]) {
+      const d = deps(record);
+      await createPlanHandoffRetirement(d)('p', 'e');
+      expect(d.executionStore.getInProject).toHaveBeenCalledWith('p', 'e');
+      expect(d.cleanupHandoffFiles).toHaveBeenCalledExactlyOnceWith('/proj', 'e');
+    }
+  });
+
+  it('prefers the run worktree over the project folder', async () => {
+    const d = deps({ state: 'FAILED', workUnits: [], dismissedAt: 5, squadWorktree: { path: '/wt' } });
+    await createPlanHandoffRetirement(d)('p', 'e');
+    expect(d.cleanupHandoffFiles).toHaveBeenCalledExactlyOnceWith('/wt', 'e');
+  });
+
+  it('keeps the plan of a run a retry or recovery can still relaunch, and of a run main cannot find', async () => {
+    for (const record of [{ state: 'FAILED', workUnits: [] }, { state: 'STOPPED' }, { state: 'RUNNING' }, undefined]) {
+      const d = deps(record);
+      await createPlanHandoffRetirement(d)('p', 'e');
+      expect(d.cleanupHandoffFiles).not.toHaveBeenCalled();
+    }
+  });
+
+  it('does nothing without a handoff root', async () => {
+    const d = deps({ state: 'FAILED', workUnits: [], dismissedAt: 5 }, { projects: { listProjects: () => [] } });
+    await createPlanHandoffRetirement(d)('p', 'e');
+    expect(d.cleanupHandoffFiles).not.toHaveBeenCalled();
+  });
+
+  it('logs a store or cleanup failure and never throws', async () => {
+    const d = deps(undefined);
+    d.executionStore.getInProject.mockRejectedValueOnce(new Error('store offline'));
+    await expect(createPlanHandoffRetirement(d)('p', 'e')).resolves.toBeUndefined();
+    expect(d.logError).toHaveBeenCalledWith('execution plan handoff cleanup e', expect.objectContaining({ message: 'store offline' }));
+    const d2 = deps({ state: 'FAILED', workUnits: [], dismissedAt: 5 });
+    d2.cleanupHandoffFiles.mockRejectedValueOnce(new Error('disk'));
+    await expect(createPlanHandoffRetirement(d2)('p', 'e')).resolves.toBeUndefined();
+    expect(d2.logError).toHaveBeenCalledWith('execution plan handoff cleanup e', expect.objectContaining({ message: 'disk' }));
+  });
+
+  it('deletes the kept plan file from disk after a dismissal, after coordinator exit had kept it', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'zana-retire-plan-'));
+    try {
+      await mkdir(join(root, '.zana'), { recursive: true });
+      const plan = join(root, authoredPlanRelPath('e'));
+      const mirror = join(root, sourceMirrorRelPath('e'));
+      await writeFile(plan, '# plan');
+      await writeFile(mirror, '# source');
+      const record: any = { state: 'FAILED', workUnits: [] };
+      const d = deps(record, { projects: { listProjects: () => [{ id: 'p', path: root }] }, cleanupHandoffFiles });
+      const exit = { ...d, handleSquadWorktreeTerminal: vi.fn(), teamPlanHandoff: { forget: vi.fn() }, inferredPlanCorrection: { forget: vi.fn() } };
+      await cleanupOrchestratorOnExit(exit, { projectId: 'p', cohort: { executionId: 'e', role: 'orchestrator' } });
+      expect(existsSync(plan)).toBe(true);
+      expect(existsSync(mirror)).toBe(false);
+      record.dismissedAt = 10;
+      await createPlanHandoffRetirement(d)('p', 'e');
+      expect(existsSync(plan)).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 
