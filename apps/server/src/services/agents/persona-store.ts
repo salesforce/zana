@@ -14,7 +14,7 @@ import {
   type FSWatcher
 } from 'node:fs';
 import { join } from 'node:path';
-import type { Project, Persona, CreateTerminalRequest, PersonaHarnessIntentV1, PersonaHarnessRoutingV1, HarnessFamily } from '@zana-ai/zcc-domain/product';
+import { PERSONA_REASONING_LEVELS, type Project, type Persona, type CreateTerminalRequest, type PersonaHarnessIntentV1, type PersonaHarnessRoutingV1, type HarnessFamily } from '@zana-ai/zcc-domain/product';
 import { VALID_PROFILES, seedPromptArgs, harnessFamilyOf } from '@zana-ai/zcc-domain/launch-provider';
 import type { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-team-registry.js';
 import { atomicDurableWrite } from '../harness-routing/storage.js';
@@ -154,6 +154,11 @@ export function sanitizePersona(raw: unknown): Persona | null {
       return null;
     }
   }
+  if (r.reasoningLevel !== undefined) {
+    if (typeof r.reasoningLevel !== 'string' || !(PERSONA_REASONING_LEVELS as readonly string[]).includes(r.reasoningLevel)) {
+      return null;
+    }
+  }
   if (r.executionState !== undefined) {
     if (typeof r.executionState !== 'string' || !['plan', 'interactive', 'accept-edits', 'autonomous'].includes(r.executionState)) {
       return null;
@@ -180,6 +185,7 @@ export function sanitizePersona(raw: unknown): Persona | null {
     codexSandbox: r.codexSandbox,
     codexApproval: r.codexApproval,
     modelLevel: r.modelLevel,
+    ...(r.reasoningLevel !== undefined ? { reasoningLevel: r.reasoningLevel } : {}),
     executionState: r.executionState,
     harnessRouting,
     appendSystemPrompt:

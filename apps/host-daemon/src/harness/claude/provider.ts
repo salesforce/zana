@@ -221,6 +221,11 @@ export function personaArgs_build(p: Persona, baseProfile: LaunchProfileId): str
   if (permMode && baseProfile !== 'claude-yolo') {
     args.push('--permission-mode', permMode);
   }
+  // Reasoning effort applies to claude and claude-yolo alike; other profiles
+  // ignore it; absent = no flag.
+  if (p.reasoningLevel && (baseProfile === 'claude' || baseProfile === 'claude-yolo')) {
+    args.push('--effort', p.reasoningLevel);
+  }
   return args;
 }
 
