@@ -533,6 +533,8 @@ describe('golden argv — durable job-team allowlist is result-only', () => {
     });
     const joined = spawns[0].args.join(' ');
     expect(joined).toContain('mcp__zcc-inbox__execution.work.complete');
+    // Workers are told to heartbeat during long commands, so it must not hit a permission prompt.
+    expect(joined).toContain('mcp__zcc-inbox__execution.work.heartbeat');
     expect(joined).not.toContain('execution.artifact');
   });
 });
