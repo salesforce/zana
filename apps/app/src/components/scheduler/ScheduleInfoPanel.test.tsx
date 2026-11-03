@@ -294,6 +294,18 @@ describe('ScheduleInfoPanel', () => {
       expect(container.querySelectorAll('.scheduler-run-row')).toHaveLength(2);
     });
 
+    it('still lists a long run after more than retain overlap skips', () => {
+      const skips = Array.from({ length: 3 }, (_, i) => ({
+        id: `skip${i}`, at: new Date(Date.now() - i * 1000).toISOString(), result: 'skipped', reasonCode: 'overlap',
+        message: 'previous run still active'
+      }));
+      const longRun = { id: 'long', at: new Date(Date.now() - 3 * 3_600_000).toISOString(), result: 'success', durationMs: 3 * 3_600_000 };
+      const { container } = render(<ScheduleInfoPanel task={withRuns([...skips, longRun], { history: { retain: 2 } })} />);
+      const rows = container.querySelectorAll('.scheduler-run-row');
+      expect(rows).toHaveLength(3);
+      expect(rows[2].textContent).toContain('3h');
+    });
+
     it('hides actions for a failure a later finished success closed, even without resolvedBy', () => {
       const ok = { id: 'ok', at: new Date().toISOString(), result: 'success', durationMs: 5 };
       render(<ScheduleInfoPanel task={withRuns([ok, failedRun])} />);

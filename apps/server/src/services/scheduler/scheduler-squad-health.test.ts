@@ -110,10 +110,15 @@ describe('scheduled Squads and self-healing', () => {
     const { manager, input } = fixture();
     const task = await manager.create(input);
     await manager.runNow(task.id);
+    const before = manager.get(task.id).status.lastRunSessionId;
+    const due = Date.now() - 60_000;
+    (manager as any).live.get(task.id).targetAt = due;
     await (manager as any).fire(task.id, { manual: false });
     const skip = runs(manager, task.id)[0];
     expect(skip).toMatchObject({ result: 'skipped', reasonCode: 'overlap', message: 'previous squad run still active' });
     expect(skip.sessionId).toBeUndefined();
+    expect(skip.slotAt).toBe(new Date(due).toISOString());
+    expect(manager.get(task.id).status.lastRunSessionId).toBe(before);
   });
 
   it('marks a recovered failed Squad launch as "squad-failed"', async () => {

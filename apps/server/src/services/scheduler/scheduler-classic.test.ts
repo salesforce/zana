@@ -185,8 +185,12 @@ describe('Classic timing characterization', () => {
   });
 
   it('9. history.retain is respected in Recent runs', async () => {
-    const { manager, tasks } = await makeManager([{ retain: 2 }]);
-    for (let i = 0; i < 4; i += 1) await manager.runNow(tasks[0].id);
+    const { manager, ptys, tasks } = await makeManager([{ retain: 2 }]);
+    for (let i = 0; i < 4; i += 1) {
+      await manager.runNow(tasks[0].id);
+      // A run whose tab is still open keeps its row beyond retain, so close each one.
+      for (const session of ptys.sessions) session.status = 'exited';
+    }
     expect(T(manager, tasks[0].id).status.runs).toHaveLength(2);
     expect(T(manager, tasks[0].id).status.runCount).toBe(4);
   });

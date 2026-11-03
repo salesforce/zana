@@ -92,8 +92,9 @@ export function lastRunSkipped(task: ScheduledTask, nowMs: number): SkippedLastR
       && !(newest.launchState === 'running' && newest.executionId)
     ) {
       let slotMs = [parseMs(newest.slotAt), parseMs(newest.missed?.to), parseMs(newest.at)].find(Number.isFinite)!;
-      // An on-time overlap skip is merged into the live run's record (matched by its session), which keeps that
-      // run's own older slotAt: the skipped time is the due time at the skip itself.
+      // Only rows merged by an older version carry a session: an overlap skip used to be spread over the live run's
+      // record (matched by its session), keeping that run's older slotAt, so the skipped time is the due time at the
+      // skip itself. New overlap rows are their own record without a session and carry their own slotAt.
       if (newest.sessionId) {
         const atMs = parseMs(newest.at);
         const due = isCronCadence(task.schedule) ? previousCronSlots(task.schedule.cron!, task.schedule.tz, atMs, 1)[0] : atMs;

@@ -81,3 +81,13 @@ it('does not count a finished-but-open scheduled run as actively running, but fi
   expect(projectAgentsView([...sessions, make(false)], [], 'medium').schedules[0].running).toBe(false);
   expect(projectAgentsView([...sessions, make(true)], [], 'medium').schedules[0].running).toBe(true);
 });
+
+it('still reads a schedule as running when its newest row is an overlap skip without a session and an older row is live', () => {
+  const schedule = scheduleFleetItem({ id: 's', name: 'Plan', projectId: 'p', enabled: true, status: { runs: [
+    { id: 'skip', at: '2026-10-03T18:00:00Z', result: 'skipped', reasonCode: 'overlap', slotAt: '2026-10-03T18:00:00Z' },
+    { id: 'live', at: '2026-10-03T17:00:00Z', sessionId: 'live', result: 'success' }
+  ] } } as ScheduledTask);
+  const running = (live: boolean) => projectAgentsView([...(live ? [card('live', 'working', { scheduled: true })] : []), schedule], [], 'medium').schedules[0].running;
+  expect(running(true)).toBe(true);
+  expect(running(false)).toBe(false);
+});

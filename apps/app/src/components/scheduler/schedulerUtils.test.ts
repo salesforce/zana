@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { ScheduledTask } from '@zana-ai/zcc-domain/product';
+import type { ScheduledTask, ScheduleRun } from '@zana-ai/zcc-domain/product';
 import { reasonHint } from '@zana-ai/zcc-domain/schedule-health';
-import { isSessionAlive, liveSessionIdForTask, skippedLastRunLabel, skippedLastRunPill } from './schedulerUtils.js';
+import { isSessionAlive, liveSessionIdForTask, recentRunRows, skippedLastRunLabel, skippedLastRunPill } from './schedulerUtils.js';
 
 const sessions = [
   { id: 'run', status: 'running' }, { id: 'boot', status: 'starting' }, { id: 'done', status: 'exited' }
@@ -24,6 +24,32 @@ describe('liveSessionIdForTask', () => {
     expect(liveSessionIdForTask(t, { p1: sessions })).toBe('run');
     expect(liveSessionIdForTask(t, { p1: [{ id: 'run', status: 'exited' }] as never })).toBeNull();
     expect(liveSessionIdForTask(t, {})).toBeNull();
+  });
+});
+
+describe('recentRunRows', () => {
+  const skip = (id: string): ScheduleRun => ({ id, at: '2026-01-01T00:00:00Z', result: 'skipped', reasonCode: 'overlap' });
+  const real = (id: string, result: ScheduleRun['result'] = 'success'): ScheduleRun => ({ id, at: '2026-01-01T00:00:00Z', result });
+  const ids = (rows: ScheduleRun[]) => rows.map((run) => run.id);
+
+  it('shows the newest retain rows when the newest real run is among them', () => {
+    expect(ids(recentRunRows([skip('s1'), real('r1'), real('r2'), real('r3')], 2))).toEqual(['s1', 'r1']);
+  });
+
+  it('adds the newest real run after the retain rows when overlap skips pushed it out', () => {
+    expect(ids(recentRunRows([skip('s1'), skip('s2'), skip('s3'), real('long', 'error'), real('old')], 2)))
+      .toEqual(['s1', 's2', 'long']);
+  });
+
+  it('adds nothing when every row is a skip', () => {
+    expect(ids(recentRunRows([skip('s1'), skip('s2'), skip('s3')], 2))).toEqual(['s1', 's2']);
+  });
+
+  it('falls back to 10 rows without a retain setting and shows at least one', () => {
+    const many = Array.from({ length: 12 }, (_, i) => real(`r${i}`));
+    expect(recentRunRows(many, undefined)).toHaveLength(10);
+    expect(ids(recentRunRows([real('a'), real('b')], 0))).toEqual(['a']);
+    expect(recentRunRows([], 5)).toEqual([]);
   });
 });
 
