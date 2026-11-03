@@ -410,7 +410,12 @@ function assembleSkillPlugins(
         id: root.id,
         localPluginPath: ensureClaudeSkillPlugin({
           pluginsRoot: requireSkillPluginsRoot(),
-          root: { id: root.id, path: root.path },
+          root: {
+            id: root.id,
+            path: root.path,
+            // native-* roots are the user's own folders: copied, never linked.
+            owned: root.id.startsWith("native-") ? "user" : "zana",
+          },
           takenNames,
         }),
       });

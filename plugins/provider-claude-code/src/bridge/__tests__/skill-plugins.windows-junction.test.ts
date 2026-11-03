@@ -96,7 +96,7 @@ describe("claude skill plugins on Windows-like runtimes", () => {
     pluginsRoot = createClaudeSkillPluginsRoot(baseDir);
     const pluginPath = ensureClaudeSkillPlugin({
       pluginsRoot,
-      root: { id: "native-claude-0", path: otherRoot },
+      root: { id: "native-claude-0", path: otherRoot, owned: "zana" },
     });
     skillsLink = join(pluginPath, "skills");
     // The link now points at the user's real folder, as after a catalog change.
