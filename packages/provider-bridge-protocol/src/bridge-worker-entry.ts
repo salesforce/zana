@@ -58,6 +58,9 @@ if (
 const tempDir = await createPluginProcessTempDir({
   pluginId,
   prefix: "bb-provider-bridge",
+  // The parent removes `bb-provider-bridge-<child pid>-*` after this process
+  // exits, and a later sweep finds orphans by the same pid.
+  ownerPid: process.pid,
 });
 
 let removedTempDir = false;

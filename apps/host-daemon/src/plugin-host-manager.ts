@@ -2,7 +2,6 @@
 import { operationEnvironment } from "./operation-environment.js";
 import { fork, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
-import { rm } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
@@ -17,7 +16,9 @@ import {
   killProcessGroup,
   supportsProcessGroups,
   ensurePluginProcessDataDir,
+  removeTreeWithoutFollowingLinksAsync,
   sanitizeInheritedChildProcessEnv,
+  sweepOrphanTempDirs,
 } from "@zana-ai/zcc-agent-process-utils";
 import type { HostRpcCommand as HostDaemonOnlineRpcCommand } from '@zana-ai/zcc-contracts/host-rpc';
 interface HostDaemonLogger {
@@ -238,6 +239,29 @@ function sendToWorker(child: ChildProcess, message: object): boolean {
   }
 }
 
+let orphanSweepStarted = false;
+
+/**
+ * Once per daemon process, in the background and never awaited: remove temp
+ * dirs of host workers and provider bridges whose owner process is gone, so a
+ * crash or hard kill does not leave link-holding dirs in the temp folder.
+ */
+function sweepOrphanTempDirsOnce(
+  logger: PluginHostManagerOptions["logger"],
+): void {
+  if (orphanSweepStarted) return;
+  orphanSweepStarted = true;
+  void sweepOrphanTempDirs({ prefixes: ["bb-provider-bridge", "zcc-host"] })
+    .then((result) => {
+      if (result.removed > 0 || result.failed > 0) {
+        logger.info({ ...result }, "Swept orphaned plugin temp directories");
+      }
+    })
+    .catch((error) => {
+      logger.warn({ err: error }, "Orphaned plugin temp directory sweep failed");
+    });
+}
+
 export class PluginHostManager {
   private readonly workers = new Map<string, WorkerState>();
   private readonly activeCalls = new Map<string, ActiveCallState>();
@@ -249,7 +273,9 @@ export class PluginHostManager {
   private readonly workerMutationTails = new Map<string, Promise<void>>();
   private shuttingDown = false;
 
-  constructor(private readonly options: PluginHostManagerOptions) {}
+  constructor(private readonly options: PluginHostManagerOptions) {
+    sweepOrphanTempDirsOnce(options.logger);
+  }
 
   async call(command: PluginHostCallCommand): Promise<PluginHostCallResult> {
     if (this.shuttingDown) {
@@ -496,12 +522,17 @@ export class PluginHostManager {
         },
         "Failed to start host plugin worker",
       );
-      await rm(tempDir, { recursive: true, force: true });
+      await removeTreeWithoutFollowingLinksAsync(tempDir).catch((cleanupError) => {
+        this.options.logger.warn(
+          { pluginId: command.pluginId, err: cleanupError },
+          "Failed to remove host plugin temporary directory",
+        );
+      });
       throw error;
     }
     const closed = new Promise<void>((resolve) => child.once("close", resolve));
     void closed
-      .then(() => rm(tempDir, { recursive: true, force: true }))
+      .then(() => removeTreeWithoutFollowingLinksAsync(tempDir))
       .catch((error) => {
         this.options.logger.warn(
           { pluginId: command.pluginId, err: error },
@@ -1026,7 +1057,16 @@ export class PluginHostManager {
       "Host plugin worker stopped",
     );
     this.rejectPendingCalls(worker, reason);
-    await rm(worker.tempDir, { recursive: true, force: true });
+    try {
+      await removeTreeWithoutFollowingLinksAsync(worker.tempDir);
+    } catch (error) {
+      // Never thrown from the stop path: a leftover temp dir is cheap, and the
+      // next daemon start sweeps it once its owner pid is gone.
+      this.options.logger.warn(
+        { pluginId: worker.pluginId, err: error },
+        "Failed to remove host plugin temporary directory",
+      );
+    }
   }
 
   private cancelWorkerIdleTimer(worker: WorkerState): void {

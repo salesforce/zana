@@ -1,10 +1,14 @@
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { lstat, readdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HostDaemonAcpLaunchSpec } from "@zana-ai/zcc-host-daemon-contract";
 import {
+  removeTreeWithoutFollowingLinksAsync,
   sanitizeInheritedChildProcessEnv,
   spawnPortablePipedProcess,
+  sweepOrphanTempDirs,
 } from "@zana-ai/zcc-agent-process-utils";
 import type {
   ProviderAdapter,
@@ -26,6 +30,32 @@ import type {
   AgentRuntimeProcessExitThreadState,
   AgentRuntimeSkillRoot,
 } from "./types.js";
+
+/**
+ * Remove the `bb-provider-bridge-<pid>-*` temp dirs a bridge child left in the
+ * temp folder. The child cleans up after itself when it can; a hard kill or a
+ * crash skips that, so the parent does it once the child is gone. Matches the
+ * exact pid prefix only, and a matching entry that is a link is unlinked as a
+ * link by the link-safe walk. Never throws: it must not change exit handling.
+ */
+async function removeBridgeTempDirs(pid: number): Promise<void> {
+  try {
+    const root = tmpdir();
+    const prefix = `bb-provider-bridge-${pid}-`;
+    for (const name of await readdir(root)) {
+      if (!name.startsWith(prefix)) continue;
+      const path = join(root, name);
+      try {
+        if ((await lstat(path)).isFile()) continue;
+        await removeTreeWithoutFollowingLinksAsync(path);
+      } catch {
+        // A leftover dir is swept at the next start.
+      }
+    }
+  } catch {
+    // Unreadable temp folder: nothing to clean up.
+  }
+}
 
 export interface RuntimeProviderProcess {
   adapter: ProviderAdapter;
@@ -156,6 +186,7 @@ export class RuntimeProviderProcessManager {
    */
   private readonly currentProcessByConfiguration = new Map<string, string>();
   private shuttingDown = false;
+  private orphanSweepStarted = false;
 
   constructor(args: RuntimeProviderProcessManagerArgs) {
     this.args = args;
@@ -405,6 +436,19 @@ export class RuntimeProviderProcessManager {
     await Promise.all(shutdownPromises);
   }
 
+  /**
+   * Once per manager, in the background and never awaited: remove temp dirs of
+   * bridges and host workers whose owner is gone (a crash or hard kill leaves
+   * them, with links into user folders).
+   */
+  private sweepOrphanTempDirsOnce(): void {
+    if (this.orphanSweepStarted) return;
+    this.orphanSweepStarted = true;
+    void sweepOrphanTempDirs({
+      prefixes: ["bb-provider-bridge", "zcc-host"],
+    }).catch(() => undefined);
+  }
+
   private getAdapter(
     providerId: string,
     acpLaunchSpec: HostDaemonAcpLaunchSpec | undefined,
@@ -446,6 +490,7 @@ export class RuntimeProviderProcessManager {
       env[PROVIDER_BRIDGE_RECORD_DIR_ENV] = join(recordRoot, args.providerId);
     }
 
+    this.sweepOrphanTempDirsOnce();
     const child = spawnPortablePipedProcess({
       command: processConfig.command,
       args: processConfig.args,
@@ -546,6 +591,7 @@ export class RuntimeProviderProcessManager {
         });
       } finally {
         finalizeExit();
+        if (child.pid !== undefined) void removeBridgeTempDirs(child.pid);
       }
     };
 

@@ -158,7 +158,7 @@ describe("PluginHostManager temp dir cleanup (#552)", () => {
 
     await dispose(manager);
 
-    expect(hoisted.removeSpy).toHaveBeenCalledWith(tempDir, expect.anything());
+    expect(hoisted.removeSpy).toHaveBeenCalledWith(tempDir);
     expect(existsSync(tempDir)).toBe(false);
   });
 
@@ -211,7 +211,7 @@ describe("PluginHostManager temp dir cleanup (#552)", () => {
       .catch(() => undefined);
     await waitFor(() => !existsSync(tempDir));
 
-    expect(hoisted.removeSpy).toHaveBeenCalledWith(tempDir, expect.anything());
+    expect(hoisted.removeSpy).toHaveBeenCalledWith(tempDir);
   });
 
   it("REQ-5 close site: a failed remove after the worker dies is logged as a warning", async () => {
@@ -222,7 +222,11 @@ describe("PluginHostManager temp dir cleanup (#552)", () => {
     await manager
       .call(callCommand({ method: "crash", callId: randomUUID() }))
       .catch(() => undefined);
-    await waitFor(() => logger.warn.mock.calls.length > 0);
+    await waitFor(() =>
+      logger.warn.mock.calls.some(([, message]) =>
+        /temporary directory/i.test(String(message)),
+      ),
+    );
 
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ pluginId: "fixture" }),
