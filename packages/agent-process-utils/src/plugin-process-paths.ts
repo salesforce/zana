@@ -49,6 +49,8 @@ export async function ensurePluginProcessDataDir(args: {
 export async function createPluginProcessTempDir(args: {
   pluginId: string;
   prefix: string;
+  /** Owner pid to put in the name (D3). Accepted now; not used until u-core. */
+  ownerPid?: number;
 }): Promise<string> {
   return mkdtemp(
     join(tmpdir(), `${args.prefix}-${safePluginSegment(args.pluginId)}-`),

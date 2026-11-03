@@ -122,3 +122,19 @@ function samePath(left: string, right: string): boolean {
     ? left.toLowerCase() === right.toLowerCase()
     : left === right;
 }
+
+/**
+ * Async twin of `removeTreeWithoutFollowingLinks`, with the same safety rules.
+ * Contract stub: behaviour lands in u-core.
+ */
+export async function removeTreeWithoutFollowingLinksAsync(
+  _root: string,
+  _options?: RemoveTreeAsyncOptions,
+): Promise<void> {
+  throw new Error("not implemented: removeTreeWithoutFollowingLinksAsync");
+}
+
+export interface RemoveTreeAsyncOptions {
+  /** Reserved for the async walk (for example a cancellation signal). */
+  signal?: AbortSignal;
+}
