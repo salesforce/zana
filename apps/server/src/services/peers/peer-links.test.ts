@@ -1380,7 +1380,7 @@ describe('pause (owner Disconnect) and unpause (Reconnect)', () => {
     expect(await links.directory.repair(randomUUID())).toBeUndefined();
     const ctx = await f.redeemerLinked(links);
     const rotate = vi.spyOn(links, 'rotate');
-    expect(await links.directory.repair(ctx.inboundId)).toEqual({ repaired: true });
+    expect(await links.directory.repair(ctx.inboundId)).toMatchObject({ repaired: true });
     expect(rotate).toHaveBeenCalledWith(ctx.peer.id);
     await links.pause(ctx.peer.id);
     rotate.mockClear();

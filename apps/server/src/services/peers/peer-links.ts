@@ -296,8 +296,11 @@ export class PeerLinks implements PeerLinksControlPort {
     repair: async hostId => {
       const rec = this.byInbound(hostId);
       if (!rec?.peer || rec.phase !== 'linked' || rec.paused) return undefined;
-      await this.rotate(rec.peer);
-      return { repaired: true };
+      const views = await this.rotate(rec.peer);
+      const after = views.find(view => view.pairingId === rec.invitationId) ?? views[0];
+      if (!after) return { repaired: true };
+      const reason = after.failure ?? after.reason;
+      return { repaired: true, connected: after.state === 'connected', ...(reason ? { reason } : {}) };
     }
   };
 

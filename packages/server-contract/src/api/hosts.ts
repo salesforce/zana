@@ -177,7 +177,13 @@ export const forgetPeerLeftoverResponseSchema = z.object({ ok: z.literal(true) }
 export type ForgetPeerLeftoverResponse = z.infer<typeof forgetPeerLeftoverResponseSchema>;
 
 /** Owner Repair of a dropped or unhealthy link: re-keys and reopens it; the record survives. */
-export const repairPeerLinkResponseSchema = z.object({ ok: z.literal(true) });
+export const repairPeerLinkResponseSchema = z.object({
+  ok: z.literal(true),
+  /** Whether the connection is up after the repair attempt. Absent from older servers. */
+  connected: z.boolean().optional(),
+  /** Why it is still down, when the owner store knows. */
+  reason: z.enum(["ssh-down", "peer-offline", "paused", "revoked", "expired", "fenced", "conflict", "unreachable"]).optional()
+});
 export type RepairPeerLinkResponse = z.infer<typeof repairPeerLinkResponseSchema>;
 
 /**

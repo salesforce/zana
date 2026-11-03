@@ -34,7 +34,7 @@ export interface PeerLinkDirectory {
   pause?(hostId: string): Promise<{ paused: true } | undefined>;
   resume?(hostId: string): Promise<{ paused: false } | undefined>;
   /** Owner Repair: re-key and reopen a dropped link. `undefined` means the owner store does not claim a repairable link here. */
-  repair?(hostId: string): Promise<{ repaired: true } | undefined>;
+  repair?(hostId: string): Promise<{ repaired: true; connected?: boolean; reason?: string } | undefined>;
 }
 
 type LinkCtx = ProductHttpContext;
@@ -244,7 +244,7 @@ export async function resumePeerLink(ctx: LinkCtx, hostId: string): Promise<Peer
 }
 
 export type PeerLinkRepair =
-  | { status: 'ok' }
+  | { status: 'ok'; connected?: boolean; reason?: string }
   | { status: 'not-found' }
   | { status: 'unavailable' };
 
@@ -253,6 +253,6 @@ export async function repairPeerLink(ctx: LinkCtx, hostId: string): Promise<Peer
   if (!pluginLink(ctx, hostId)) return { status: 'not-found' };
   try {
     const result = await ctx.peerLinkDirectory?.repair?.(hostId);
-    return result ? { status: 'ok' } : { status: 'not-found' };
+    return result ? { status: 'ok', ...(result.connected === undefined ? {} : { connected: result.connected }), ...(result.reason ? { reason: result.reason } : {}) } : { status: 'not-found' };
   } catch (error) { return unavailable('repair', hostId, error); }
 }
