@@ -1,5 +1,5 @@
 import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { ChevronDown, ChevronRight, FilePlus2, Folder, FolderOpen, Home, LayoutTemplate, Link2, MoreHorizontal, PanelLeftClose, Pencil, Plus, Star, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, FilePlus2, Folder, FolderOpen, Home, LayoutTemplate, Link2, MoreHorizontal, PanelLeftClose, Pencil, Plus, Star, Trash2, Upload } from 'lucide-react';
 import type { DesignDocDetail, DesignDocFileMeta } from '../shared/contract.js';
 import { formatBytes } from '../shared/display.js';
 import { MAX_BINARY_FILE_BYTES, MAX_FILES_PER_DOC, MAX_TEXT_FILE_BYTES } from '../shared/limits.js';
@@ -281,6 +281,7 @@ export function FileTree({
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [creating, setCreating] = useState(false);
   const [fromTemplate, setFromTemplate] = useState(false);
+  const [addMenu, setAddMenu] = useState(false);
   const [renaming, setRenaming] = useState<DesignDocFileMeta | null>(null);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
   const uploadRef = useRef<HTMLInputElement | null>(null);
@@ -432,9 +433,16 @@ export function FileTree({
         <span className="dd-section-label">Files</span>
         <span className="dd-tree-count">{doc.files.length}</span>
         <span className="dd-spacer" />
-        <IconButton icon={FilePlus2} label="Add files" hint="Upload files or images from your computer" size={13} disabled={full} onClick={() => uploadRef.current?.click()} />
-        <IconButton icon={Plus} label="New file" hint="New blank file: type a name like notes.md" size={13} disabled={full} onClick={() => setCreating(true)} />
-        <IconButton icon={LayoutTemplate} label="Add from template" hint="Add a template's files to this doc" size={13} disabled={full} onClick={() => setFromTemplate(true)} />
+        <Popover
+          open={addMenu}
+          onClose={() => setAddMenu(false)}
+          className="dd-menu"
+          anchor={<IconButton icon={Plus} label="Add to doc" size={13} active={addMenu} disabled={full} onClick={() => setAddMenu(!addMenu)} />}
+        >
+          <MenuItem icon={FilePlus2} label="New blank file…" hint="Type a name like notes.md" onSelect={() => { setAddMenu(false); setCreating(true); }} />
+          <MenuItem icon={LayoutTemplate} label="From template…" hint="Add a template's files" onSelect={() => { setAddMenu(false); setFromTemplate(true); }} />
+          <MenuItem icon={Upload} label="Upload files…" hint="From your computer" onSelect={() => { setAddMenu(false); uploadRef.current?.click(); }} />
+        </Popover>
         {onHide ? <IconButton icon={PanelLeftClose} label="Hide files" hint="Hide the file list" size={13} onClick={onHide} /> : null}
         <input
           ref={uploadRef}

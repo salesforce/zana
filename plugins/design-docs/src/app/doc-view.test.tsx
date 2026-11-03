@@ -467,10 +467,16 @@ describe('adding from a template', () => {
     const doc = harness.store.create({ title: 'Tpl', projectId: 'p1', files: [{ path: 'notes.md', content: 'x' }] }, UI_USER);
     renderDoc(harness, doc.id);
     await findPane('notes.md');
-    expect(screen.getByRole('button', { name: 'Add files' }).getAttribute('data-tip')).toMatch(/Upload/);
-    expect(screen.getByRole('button', { name: 'New file' }).getAttribute('data-tip')).toMatch(/blank/);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Add from template' }));
+    expect(screen.getByRole('button', { name: 'Hide files' }).getAttribute('data-tip')).toMatch(/Hide/);
+    const openTemplates = () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Add to doc' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: /^From template/ }));
+    };
+    fireEvent.click(screen.getByRole('button', { name: 'Add to doc' }));
+    expect(screen.getByRole('menuitem', { name: /^New blank file/ })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: /^Upload files/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Add to doc' }));
+    openTemplates();
     const select = await screen.findByRole('combobox');
     await waitFor(() => expect(select.querySelectorAll('option').length).toBeGreaterThan(1));
     expect((within(screen.getByRole('dialog')).getByRole('button', { name: 'Add files' }) as HTMLButtonElement).disabled).toBe(true);
@@ -480,7 +486,7 @@ describe('adding from a template', () => {
     await waitFor(() => expect(harness.toasts.some((toast) => toast.message.startsWith('Added'))).toBe(true));
 
     // Second add clashes on the same paths: nothing is overwritten and the error is shown.
-    fireEvent.click(screen.getByRole('button', { name: 'Add from template' }));
+    openTemplates();
     const again = await screen.findByRole('combobox');
     await waitFor(() => expect(again.querySelectorAll('option').length).toBeGreaterThan(1));
     fireEvent.change(again, { target: { value: 'technical' } });
@@ -657,7 +663,8 @@ describe('file tree', () => {
     const { opened } = renderDoc(harness, doc.id);
     await findPane('README.md');
     const newPath = (value: string) => {
-      fireEvent.click(screen.getByRole('button', { name: 'New file' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Add to doc' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^New blank file/ }));
       const input = screen.getByRole('textbox', { name: 'path/name.md, .mmd, .html…' });
       fireEvent.change(input, { target: { value } });
       fireEvent.submit(input.closest('form')!);
@@ -677,7 +684,8 @@ describe('file tree', () => {
     newPath('extra.md');
     await waitFor(() => expect(harness.toasts).toContainEqual({ message: 'Could not create extra.md: too many files', kind: 'error' }));
 
-    fireEvent.click(screen.getByRole('button', { name: 'New file' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add to doc' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^New blank file/ }));
     const input = screen.getByRole('textbox', { name: 'path/name.md, .mmd, .html…' });
     fireEvent.change(input, { target: { value: 'ignored.md' } });
     fireEvent.keyDown(input, { key: 'Escape' });
@@ -802,7 +810,8 @@ describe('file tree', () => {
     await findPane('README.md');
     const input = tree().querySelector<HTMLInputElement>('input[type="file"]')!;
     const clicked = vi.spyOn(input, 'click').mockImplementation(() => undefined);
-    fireEvent.click(screen.getByRole('button', { name: 'Add files' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add to doc' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Upload files/ }));
     expect(clicked).toHaveBeenCalled();
 
     const svg = new File(['<svg xmlns="http://www.w3.org/2000/svg"/>'], 'My Logo.svg', { type: 'image/svg+xml' });
