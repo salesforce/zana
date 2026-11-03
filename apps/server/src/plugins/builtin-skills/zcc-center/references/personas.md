@@ -18,4 +18,4 @@ Personas are reusable launch flag bundles, not runtimes. Store in `~/.zcc/person
 }
 ```
 
-Required fields: `id`, `name`. `baseProfile`: `claude`, `claude-resume`, `claude-yolo`, or `shell`. `model`: `opus`, `sonnet`, `haiku`, or `default`. `permissionMode`: `default`, `acceptEdits`, `plan`, or `bypassPermissions`; ignored for `claude-yolo`. `initialPrompt` is Claude-only. Invalid JSON or invalid enum is silently skipped. Matching `builtin:*` ID shadows built-in persona.
+Required fields: `id`, `name`. `baseProfile`: `claude`, `claude-resume`, `claude-yolo`, or `shell`. `model`: `opus`, `sonnet`, `haiku`, or `default`. `permissionMode`: `default`, `acceptEdits`, `plan`, or `bypassPermissions`; ignored for `claude-yolo`. `reasoningLevel` (optional, Claude only): `low`, `medium`, `high`, `xhigh`, or `max`; other agents ignore it, and any other value skips the persona. `initialPrompt` is Claude-only. Invalid JSON or invalid enum is silently skipped. Matching `builtin:*` ID shadows built-in persona.

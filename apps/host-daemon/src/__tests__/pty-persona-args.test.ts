@@ -753,3 +753,31 @@ describe('PtyManager.create — persona reasoning effort (#584)', () => {
     expect(withLevel).not.toContain('--effort');
   });
 });
+
+describe('persona reasoning effort on claude-resume and remote (#584 review round 1)', () => {
+  it('F1/A4: claude-resume gets --effort after --permission-mode', () => {
+    const args = personaArgs_build(
+      { id: 'p', name: 'P', permissionMode: 'plan', reasoningLevel: 'high' },
+      'claude-resume'
+    );
+    expect(args).toEqual(['--permission-mode', 'plan', '--effort', 'high']);
+  });
+
+  it('A5: the remote command carries the persona --effort', async () => {
+    const { ClaudeCodeProvider } = await import('../harness/claude/provider.js');
+    const { cmd } = new ClaudeCodeProvider().buildRemoteCommand({
+      profile: 'claude',
+      config: CONFIG,
+      remote: { host: 'devbox', user: 'sfwork', remotePath: '/home/sfwork/core' },
+      persona: { id: 'p', name: 'P', reasoningLevel: 'high' }
+    });
+    expect(cmd).toContain("'--effort' 'high'");
+    const bare = new ClaudeCodeProvider().buildRemoteCommand({
+      profile: 'claude',
+      config: CONFIG,
+      remote: { host: 'devbox', user: 'sfwork', remotePath: '/home/sfwork/core' },
+      persona: { id: 'p', name: 'P' }
+    });
+    expect(bare.cmd).not.toContain('--effort');
+  });
+});

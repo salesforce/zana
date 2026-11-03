@@ -61,6 +61,11 @@ describe('PersonaEditor reasoning effort save payload (#584)', () => {
     expect((await clickSave()).reasoningLevel).toBeUndefined();
   });
 
+  it('keeps the level for a claude-resume persona', async () => {
+    open({ id: 'r', name: 'Resume', source: 'user', baseProfile: 'claude-resume', reasoningLevel: 'low' });
+    expect((await clickSave()).reasoningLevel).toBe('low');
+  });
+
   it('drops a stale level for a persona pinned to a non-Claude harness', async () => {
     open({ id: 'o', name: 'Codex', source: 'user', baseProfile: 'codex', reasoningLevel: 'high' });
     expect((await clickSave()).reasoningLevel).toBeUndefined();

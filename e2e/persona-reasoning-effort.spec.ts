@@ -16,8 +16,8 @@ async function openPersonas(window: Page) {
   await window.locator('.settings-section-item').filter({ hasText: 'Personas' }).click();
 }
 
-async function savedLevel(window: Page, name: string) {
-  return window.evaluate(async (personaName) => {
+async function savedLevel(page: Page, name: string) {
+  return page.evaluate(async (personaName) => {
     const all = await window.cc.personas.list();
     return all.find((p) => p.name === personaName)?.reasoningLevel ?? null;
   }, name);
